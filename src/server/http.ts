@@ -354,8 +354,8 @@ async function dispatch(
     }
     case "/api/agents/:agentId/events": {
       const since = Number(inArgs.since ?? 0);
-      // home is required to locate the project; find via env default by scanning all projects
-      const homeAbs = resolveArborHome((inArgs.home as string | undefined) ?? "", process.env);
+      // scan all projects under the effective home (request home > server home)
+      const homeAbs = resolveArborHome(home, process.env);
       const projectsRoot = join(homeAbs, "projects");
       let events: Array<Record<string, unknown>> = [];
       let lastSeq = since;
