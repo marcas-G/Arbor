@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { OpenAiProviderLive } from "../../src/agent-runtime/openai-provider.js";
 import { ModelPort } from "../../src/agent-runtime/provider.js";
+import { OpenAiProviderLive } from "../../src/infrastructure/openai-chat-provider.js";
 
 const okBody = {
   choices: [

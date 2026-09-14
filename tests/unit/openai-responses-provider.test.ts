@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { OpenAiResponsesProviderLive } from "../../src/agent-runtime/openai-responses-provider.js";
 import { ModelPort } from "../../src/agent-runtime/provider.js";
+import { OpenAiResponsesProviderLive } from "../../src/infrastructure/openai-responses-provider.js";
 
 const toolCallBody = {
   status: "completed",

@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect";
-import { ModelError, ModelPort, type ModelTurn } from "./provider.js";
+import { ModelError, ModelPort, type ModelTurn } from "../agent-runtime/provider.js";
 
 /** Scripted fake: each `complete` consumes the next scripted turn.
  * An exhausted script is a typed ModelError. */

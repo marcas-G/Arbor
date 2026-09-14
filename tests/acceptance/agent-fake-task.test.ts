@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { runAgent } from "../../src/agent-runtime/agent-loop.js";
-import { FakeProviderLive } from "../../src/agent-runtime/fake-provider.js";
 import type { ModelTurn } from "../../src/agent-runtime/provider.js";
 import { makeEditFileTool } from "../../src/agent-runtime/tools/edit-file.js";
 import { makeGitStatusTool } from "../../src/agent-runtime/tools/git-status.js";
 import { makeReadFileTool } from "../../src/agent-runtime/tools/read-file.js";
 import { makeRunCommandTool } from "../../src/agent-runtime/tools/run-command.js";
 import { makeWriteFileTool } from "../../src/agent-runtime/tools/write-file.js";
+import { FakeProviderLive } from "../../src/infrastructure/fake-provider.js";
 
 const dirs: string[] = [];
 const tmp = () => {

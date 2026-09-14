@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { runAgent } from "../../src/agent-runtime/agent-loop.js";
-import { FakeProviderLive } from "../../src/agent-runtime/fake-provider.js";
 import type { ModelTurn } from "../../src/agent-runtime/provider.js";
 import { makeWriteFileTool } from "../../src/agent-runtime/tools/write-file.js";
+import { FakeProviderLive } from "../../src/infrastructure/fake-provider.js";
 
 const dirs: string[] = [];
 const tmp = () => {

@@ -5,7 +5,7 @@ import {
   ModelPort,
   type ModelToolSpec,
   type ModelTurn,
-} from "./provider.js";
+} from "../agent-runtime/provider.js";
 
 interface Deps {
   readonly fetchImpl?: typeof fetch | undefined;

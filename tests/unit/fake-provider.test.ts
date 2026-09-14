@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { FakeProviderLive } from "../../src/agent-runtime/fake-provider.js";
 import { ModelPort } from "../../src/agent-runtime/provider.js";
+import { FakeProviderLive } from "../../src/infrastructure/fake-provider.js";
 
 describe("FakeProvider (scripted)", () => {
   it("returns scripted turns in order", async () => {
