@@ -52,7 +52,20 @@ export const EventsIn = Schema.Struct({
   agentId: Schema.String, // path param
 });
 export const EventsOut = Schema.Struct({
-  events: Schema.Array(Schema.Struct({ sequence: Schema.Number, type: Schema.String, timestamp: Schema.String })),
+  events: Schema.Array(
+    Schema.Struct({
+      sequence: Schema.Number,
+      type: Schema.String,
+      timestamp: Schema.String,
+      text: Schema.optional(Schema.String), // user_input
+      content: Schema.optional(Schema.String), // model turn text
+      toolCalls: Schema.optional(
+        Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String, arguments: Schema.String })),
+      ),
+      callId: Schema.optional(Schema.String), // tool results
+      output: Schema.optional(Schema.String),
+    }),
+  ),
   lastSeq: Schema.Number,
 });
 

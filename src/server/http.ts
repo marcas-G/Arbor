@@ -235,7 +235,7 @@ async function dispatch(path: string, inArgs: Record<string, string | number | b
       // home is required to locate the project; find via env default by scanning all projects
       const homeAbs = resolveArborHome((inArgs.home as string | undefined) ?? "", process.env);
       const projectsRoot = join(homeAbs, "projects");
-      let events: Array<{ sequence: number; type: string; timestamp: string }> = [];
+      let events: Array<Record<string, unknown>> = [];
       let lastSeq = since;
       for (const proj of existsSync(projectsRoot) ? readdirSync(projectsRoot) : []) {
         const agentState = join(projectsRoot, proj, "agent-state");
@@ -247,7 +247,27 @@ async function dispatch(path: string, inArgs: Record<string, string | number | b
             Effect.catchCause(() => Effect.succeed([] as never[])),
           ),
         );
-        const filtered = evts.filter((e) => e.sequence > since).map((e) => ({ sequence: e.sequence, type: e.type, timestamp: e.timestamp }));
+        const filtered = evts
+          .filter((e) => e.sequence > since)
+          .map((e) => {
+            const p = e.payload as {
+              text?: string;
+              content?: string;
+              toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+              callId?: string;
+              output?: string;
+            };
+            return {
+              sequence: e.sequence,
+              type: e.type,
+              timestamp: e.timestamp,
+              ...(p.text !== undefined ? { text: p.text } : {}),
+              ...(p.content !== undefined ? { content: p.content } : {}),
+              ...(p.toolCalls !== undefined ? { toolCalls: p.toolCalls } : {}),
+              ...(p.callId !== undefined ? { callId: p.callId } : {}),
+              ...(p.output !== undefined ? { output: p.output.slice(0, 500) } : {}),
+            };
+          });
         events = filtered;
         lastSeq = evts.at(-1)?.sequence ?? since;
         break;
