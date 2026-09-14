@@ -55,15 +55,32 @@ main{flex:1;display:grid;grid-template-columns:296px 1fr;min-height:0}
   color:var(--ink-soft);margin:14px 0 10px;display:flex;align-items:center;gap:8px}
 .sideTitle:first-child{margin-top:0}
 .sideTitle::after{content:"";flex:1;height:1px;background:var(--line)}
-.miniNode{font-family:var(--mono);font-size:10px;background:#fffdf7;border:1px solid var(--line);
-  border-left:3px solid var(--leaf);border-radius:2px;padding:7px 9px;margin-bottom:6px;cursor:pointer;
-  transition:all .12s}
-.miniNode.child{border-left-color:var(--amber)}
-.miniNode:hover{transform:translateX(2px)}
-.miniNode.sel{outline:1.5px solid var(--leaf-bright)}
-.miniNode .t{display:flex;justify-content:space-between;color:var(--ink)}
-.miniNode .m{color:var(--ink-soft);font-size:9px;margin-top:3px}
-.miniNode .eff{color:var(--leaf-bright)}
+.tree{position:relative;padding:2px 0 8px}
+.branch{position:relative;margin-left:0}
+.branch .branch{margin-left:20px;position:relative}
+.branch .branch::before{content:"";position:absolute;left:-13px;top:-7px;width:10px;height:16px;
+  border-left:1.5px solid var(--line);border-bottom:1.5px solid var(--line);border-radius:0 0 0 6px}
+.branch .branch::after{content:"";position:absolute;left:-13px;top:9px;width:1.5px;height:calc(50% - 6px);
+  background:var(--line)}
+.branch .branch:last-child::after{display:none}
+.wsNode{font-family:var(--mono);font-size:10px;background:#fffdf7;border:1px solid var(--line);
+  border-left:3px solid var(--leaf);border-radius:3px;padding:8px 10px;margin:7px 0;cursor:pointer;
+  transition:transform .14s ease, box-shadow .14s ease, border-color .14s;position:relative}
+.wsNode.child{border-left-color:var(--amber)}
+.wsNode:hover{transform:translateX(3px);box-shadow:2px 3px 0 rgba(38,51,43,.1)}
+.wsNode.sel{border-color:var(--leaf-bright);box-shadow:0 0 0 1px var(--leaf-bright),2px 3px 0 rgba(63,125,84,.16)}
+.wsNode.sel::after{content:"◂ 对话中";position:absolute;right:8px;top:-7px;font-size:7.5px;letter-spacing:.16em;
+  background:var(--leaf);color:#f2f0e4;padding:2px 6px;border-radius:2px}
+.wsNode .row1{display:flex;justify-content:space-between;align-items:center}
+.wsNode .id8{font-weight:700;letter-spacing:.04em}
+.wsNode .kind{font-size:8px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-soft)}
+.wsNode .row2{display:flex;justify-content:space-between;margin-top:5px;color:var(--ink-soft);font-size:9px}
+.wsNode .eff{color:var(--leaf-bright);font-weight:600}
+.wsNode .flash{animation:flashNew 1.6s ease 3}
+@keyframes flashNew{0%,100%{background:#fffdf7}50%{background:#eaf3ea}}
+.wsNode .runDot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--leaf-bright);
+  margin-right:5px;animation:breathe2 2s ease-in-out infinite}
+@keyframes breathe2{0%,100%{opacity:1}50%{opacity:.3}}
 .mile{font-family:var(--mono);font-size:10px;color:var(--ink-soft);line-height:1.8;border-top:1px dashed var(--line);padding-top:10px}
 .mile b{color:var(--amber)}
 .env{font-family:var(--mono);font-size:10px;background:#fffdf7;border:1px solid var(--line);
@@ -244,6 +261,30 @@ async function loadAll(){
 }
 function pick(id){sel=id;$('wsSel').value=id==='root'?'':id;loadAll();
  $('whoami').textContent='对话对象 '+id.slice(0,8)}
+
+/* ——— 精雕侧栏树：枝干缩进式 ——— */
+const lastEff={};
+function renderTreeSide(nodes){
+ if(!nodes.length){$('treeBox').innerHTML='<div class="none">装订后显影</div>';return}
+ const byParent={};
+ for(const n of nodes)(byParent[n.parentId??'__root']=byParent[n.parentId??'__root']||[]).push(n);
+ const draw=(list,depth)=>list.map(n=>{
+  const eff=n.effective||'—';
+  const flash=lastEff[n.workspaceId]&&lastEff[n.workspaceId]!==eff?' flash':'';
+  lastEff[n.workspaceId]=eff;
+  return '<div class="branch"><div class="wsNode '+(n.kind==='root'?'root':'child')+(sel===n.workspaceId?' sel':'')+flash+
+   '" title="'+n.workspaceId+'\n写域: '+n.writablePrefixes.join(', ')+'\n有效修订: '+eff+'" onclick="pick(\''+n.workspaceId+'\')">'+
+   '<div class="row1"><span class="id8">'+(n.running?'<span class="runDot"></span>':'')+n.workspaceId.slice(0,8)+'</span>'+
+   '<span class="kind">'+(n.kind==='root'?'根 · root':'枝 · child')+'</span></div>'+
+   '<div class="row2"><span>写 '+n.writablePrefixes.join(',')+'</span><span class="eff">效 '+eff+'</span></div>'+
+   '</div>'+(byParent[n.workspaceId]?draw(byParent[n.workspaceId],depth+1):'')+'</div>';
+ }).join('');
+ $('treeBox').innerHTML='<div class="tree">'+draw(byParent['__root']||nodes,0)+'</div>';
+ // keep the workspace dropdown in sync
+ const sel0=$('wsSel');sel0.innerHTML='<option value="">root</option>'+nodes.filter(n=>n.kind==='child')
+  .map(n=>'<option value="'+n.workspaceId+'">'+n.workspaceId.slice(0,8)+'</option>').join('');
+ if(sel&&sel!=='root')sel0.value=sel;
+}
 
 async function loadApprovals(){
  if(!PID)return;

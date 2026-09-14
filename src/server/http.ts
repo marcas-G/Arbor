@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Effect, Schema } from "effect";
 import { API, openapiManifest } from "./api-contract.js";
@@ -266,7 +266,35 @@ async function dispatch(
     }
     case "/api/agent/runs": {
       const dirs = projectDirs(resolveArborHome(home, process.env), inArgs.projectId as never);
-      const before = new Set(readdirSync(dirs.agentStateDir).filter((f) => existsSync(join(dirs.agentStateDir, f, "transcript.jsonl"))));
+      const Database = (await import("better-sqlite3")).default;
+      const db = new Database(dirs.dbFile, { readonly: true });
+      const wsRow = db
+        .prepare(
+          inArgs.workspaceId !== undefined
+            ? "SELECT workspace_id FROM workspaces WHERE project_id = ? AND workspace_id = ?"
+            : "SELECT workspace_id FROM workspaces WHERE project_id = ? AND kind = 'root'",
+        )
+        .get(
+          ...(inArgs.workspaceId !== undefined
+            ? [inArgs.projectId, inArgs.workspaceId]
+            : [inArgs.projectId]),
+        ) as { workspace_id: string } | undefined;
+      const agentRow = wsRow
+        ? (db
+            .prepare("SELECT agent_id FROM agents WHERE project_id = ? AND workspace_id = ?")
+            .get(inArgs.projectId, wsRow.workspace_id) as { agent_id: string } | undefined)
+        : undefined;
+      db.close();
+      const agentId = agentRow?.agent_id;
+      const transcript = agentId !== undefined ? join(dirs.agentStateDir, agentId, "transcript.jsonl") : undefined;
+      const size = (f: string): number => {
+        try {
+          return statSync(f).size;
+        } catch {
+          return -1;
+        }
+      };
+      const before = transcript !== undefined && existsSync(transcript) ? size(transcript) : -1;
       const args = [
         join("dist", "entrypoints", "main.js"),
         "agent",
@@ -283,33 +311,46 @@ async function dispatch(
         args.push("--task", inArgs.task as string);
       }
       const child = spawn(process.execPath, args, { cwd: process.cwd(), stdio: "ignore", detached: false });
-      // resolve the agent id once its transcript directory appears
-      const agentId = await new Promise<string>((resolve, reject) => {
-        const deadline = Date.now() + 15_000;
+      // first run of a workspace: the child creates the agent lazily — wait for
+      // a NEW transcript dir; subsequent runs reuse the agent — wait for growth
+      const beforeDirs = new Set(
+        existsSync(dirs.agentStateDir) ? readdirSync(dirs.agentStateDir) : [],
+      );
+      const resolvedId = await new Promise<string>((resolve, reject) => {
+        const deadline = Date.now() + 20_000;
         const poll = () => {
-          try {
-            const after = readdirSync(dirs.agentStateDir).filter((f) => existsSync(join(dirs.agentStateDir, f, "transcript.jsonl")));
-            const fresh = after.find((f) => !before.has(f));
-            if (fresh !== undefined) {
-              resolve(fresh);
+          if (agentId !== undefined && transcript !== undefined) {
+            const now = existsSync(transcript) ? size(transcript) : -1;
+            if (now > before || (before === -1 && now >= 0)) {
+              resolve(agentId);
               return;
             }
-          } catch {
-            // dir not created yet
+          } else {
+            try {
+              const fresh = readdirSync(dirs.agentStateDir).find(
+                (d) => !beforeDirs.has(d) && existsSync(join(dirs.agentStateDir, d, "transcript.jsonl")),
+              );
+              if (fresh !== undefined) {
+                resolve(fresh);
+                return;
+              }
+            } catch {
+              // dir not created yet
+            }
           }
           if (Date.now() > deadline) {
-            reject(new Error("agent transcript did not appear in time"));
+            reject(new Error("agent transcript did not start in time (run may have failed — check server env/keys)"));
             return;
           }
           setTimeout(poll, 200);
         };
         poll();
       });
-      running.set(agentId, { pid: child.pid ?? -1, agentId });
+      running.set(resolvedId, { pid: child.pid ?? -1, agentId: resolvedId });
       child.on("exit", () => {
-        running.delete(agentId);
+        running.delete(resolvedId);
       });
-      return { pid: child.pid ?? -1, agentId };
+      return { pid: child.pid ?? -1, agentId: resolvedId };
     }
     case "/api/agents/:agentId/events": {
       const since = Number(inArgs.since ?? 0);
