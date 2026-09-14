@@ -19,11 +19,20 @@ export interface Tool {
 /** Model-facing JSON Schema is derived from the Effect Schema (D-032);
  * decode failures become typed tool error results, never throws. */
 export function toolFromSchema<P>(t: ToolParams<P>): Tool {
-  const doc = Schema.toJsonSchemaDocument(t.params as never);
+  const doc = Schema.toJsonSchemaDocument(t.params as never) as {
+    schema: Record<string, unknown>;
+    definitions?: Record<string, unknown>;
+  };
+  // providers expect the parameters schema itself (type:"object" at the top
+  // level), not the draft-2020-12 document envelope
+  const jsonSchema: Record<string, unknown> = { ...doc.schema };
+  if (doc.definitions !== undefined && Object.keys(doc.definitions).length > 0) {
+    jsonSchema.$defs = doc.definitions;
+  }
   return {
     name: t.name,
     description: t.description,
-    jsonSchema: doc as object,
+    jsonSchema,
     run: async (raw: unknown) => {
       try {
         const decoded = Schema.decodeUnknownSync(t.params as never)(raw) as P;

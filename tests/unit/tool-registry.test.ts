@@ -16,6 +16,12 @@ describe("tool registry", () => {
     expect(json.toLowerCase()).toContain("string");
   });
 
+  it("jsonSchema is a bare object schema (providers reject document envelopes)", () => {
+    const s = echo.jsonSchema as { type?: string };
+    expect(s.type).toBe("object");
+    expect(JSON.stringify(echo.jsonSchema)).not.toContain("dialect");
+  });
+
   it("runs valid args", async () => {
     expect(await runTool([echo], "echo", { text: "hi" })).toEqual({ ok: true, output: "echo:hi" });
   });
