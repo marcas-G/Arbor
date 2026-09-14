@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Effect, type Layer } from "effect";
 import { parse as parseYaml } from "yaml";
+import type { ModelPort } from "../agent-runtime/provider.js";
+import { runVerifierAgent } from "../agent-runtime/verifier.js";
 import { type TreeNode, validateAddChild } from "../domain/engineering-tree.js";
 import { newWorkspaceId } from "../domain/ids.js";
 import { commitTree, readTree, treeRefCommit } from "../infrastructure/tree-store.js";
@@ -54,6 +56,8 @@ export async function createChild(
     readonly responsibility: string;
     readonly deliverables: string;
     readonly writablePrefixes: ReadonlyArray<string>;
+    /** P4-04: provider layer for the experimental LLM governance verifier. */
+    readonly providerLayer?: Layer.Layer<ModelPort> | undefined;
   },
   sql: SqlitePort,
 ): Promise<CreateChildResult> {
@@ -102,12 +106,49 @@ export async function createChild(
     // --- H5 (D-042): optional semantic governance gate — the proposal JSON
     // goes to a configured command's stdin; a fresh independent process
     // (isolated verifier) decides. Non-zero exit rejects with its first line.
-    const gov =
-      (
-        parentYaml as {
-          governance?: { commands?: Array<{ name?: string; argv?: string[]; timeoutMs?: number }> };
-        }
-      ).governance?.commands ?? [];
+    const govConfig = (
+      parentYaml as {
+        governance?: {
+          commands?: Array<{ name?: string; argv?: string[]; timeoutMs?: number }>;
+          llm?: { enabled?: boolean };
+        };
+      }
+    ).governance;
+    const gov = govConfig?.commands ?? [];
+
+    // P4-04 (D-043 I4, experimental): same-kernel verifier agent judges the
+    // proposal semantically; inconclusive blocks (never a silent pass).
+    if (govConfig?.llm?.enabled === true) {
+      if (input.providerLayer === undefined) {
+        return { ok: false, reason: "error", detail: "governance.llm requires a provider layer" };
+      }
+      const verdict = await runVerifierAgent({
+        providerLayer: input.providerLayer,
+        worktreeRoot: dirs.worktreeDir,
+        task: [
+          "Judge whether this workspace decomposition is sound (sufficiently independent, complete, clear ownership).",
+          `Parent writable: ${parentWritable.join(", ")}`,
+          `Proposal: ${JSON.stringify(
+            {
+              intent: input.intent,
+              responsibility: input.responsibility,
+              deliverables: input.deliverables,
+              writablePrefixes: input.writablePrefixes,
+            },
+            null,
+            2,
+          )}`,
+          "Investigate the workspace with your read-only tools, then emit the verdict JSON.",
+        ].join("\n"),
+      });
+      if (verdict.verdict !== "pass") {
+        return {
+          ok: false,
+          reason: "invalid",
+          detail: `governance (verifier agent): ${verdict.verdict} — ${verdict.reason}`,
+        };
+      }
+    }
     if (gov.length > 0) {
       const proposal = JSON.stringify(
         {

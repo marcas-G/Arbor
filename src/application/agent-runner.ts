@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, type Layer as LayerType } from "effect";
+import { parse as parseYaml } from "yaml";
 import type { AgentFinish } from "../agent-runtime/agent-loop.js";
 import { runAgent } from "../agent-runtime/agent-loop.js";
 import { compactMessages } from "../agent-runtime/compaction.js";
@@ -17,13 +19,17 @@ import { makeEditFileTool } from "../agent-runtime/tools/edit-file.js";
 import { makeGitStatusTool } from "../agent-runtime/tools/git-status.js";
 import { makeReadFileTool } from "../agent-runtime/tools/read-file.js";
 import { makeRunCommandTool } from "../agent-runtime/tools/run-command.js";
+import { makeWebFetchTool } from "../agent-runtime/tools/web-fetch.js";
 import { makeWorkspaceRequestTools } from "../agent-runtime/tools/workspace-requests.js";
 import { makeWriteFileTool } from "../agent-runtime/tools/write-file.js";
 import { acquireAgentLock } from "../infrastructure/agent-lock.js";
 import type { TranscriptWriter } from "../infrastructure/transcript-store.js";
 import { openTranscriptWriter, readTranscript } from "../infrastructure/transcript-store.js";
+import { readTree } from "../infrastructure/tree-store.js";
 import { readContextPackage } from "../infrastructure/workspace-projection-reader.js";
+import { latestChildEffective } from "./boundary.js";
 import { createChild } from "./child-creation.js";
+import { answerInformation, listInbox, sendInformation } from "./communication.js";
 import { finalizeCompletion } from "./finalization.js";
 import { effectiveRefName, projectDirs, resolveArborHome, type SqlitePort } from "./ports.js";
 
@@ -155,16 +161,52 @@ export async function runAgentSession(
     }),
   );
   const system = renderSystemPrompt(pkg);
+  // P4-01 (I2): children effective summary — read-only projection from store history
+  let childrenSummary: string | undefined;
+  {
+    const tree = await readTree(dirs.storeDir);
+    const kids = tree.nodes.filter((n) => n.parentId === workspaceId);
+    if (kids.length > 0) {
+      const lines: string[] = [];
+      for (const kid of kids) {
+        const eff = await latestChildEffective(dirs.storeDir, kid.workspaceId);
+        lines.push(
+          `- ${kid.workspaceId} writable: ${kid.writablePrefixes.join(", ")} — ` +
+            (eff === undefined
+              ? "no effective result yet"
+              : `result ${eff.resultId.slice(0, 8)} @ ${eff.candidateCommit.slice(0, 8)}`),
+        );
+      }
+      childrenSummary = lines.join("\n");
+    }
+  }
   // transcript writer is created later; tools bind to it lazily (loop runs after binding)
   let activeWriter: TranscriptWriter | undefined;
+  // P4-03 (I3): sandbox config from the workspace's formal yaml
+  const sandboxConfig = (() => {
+    try {
+      const y = parseYaml(
+        readFileSync(join(dirs.storeDir, "workspaces", workspaceId, "workspace.yaml"), "utf8"),
+      ) as {
+        sandbox?: { enabled?: boolean; allowNetwork?: boolean };
+      };
+      return y.sandbox?.enabled === true
+        ? { enabled: true, allowNetwork: y.sandbox.allowNetwork === true }
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  })();
   const tools = [
     makeReadFileTool(worktreeDir),
     makeWriteFileTool(worktreeDir),
     makeEditFileTool(worktreeDir),
-    makeRunCommandTool(worktreeDir),
+    makeRunCommandTool(worktreeDir, sandboxConfig),
     makeGitStatusTool(worktreeDir),
+    makeWebFetchTool(),
     ...makeWorkspaceRequestTools({
       pkg,
+      childrenSummary,
       record: async (requestType, payloadJson) => {
         if (activeWriter === undefined) {
           throw new Error("transcript writer not bound");
@@ -177,12 +219,46 @@ export async function runAgentSession(
           }),
         );
       },
+      onAsk: async (req) => {
+        const rec = await sendInformation({
+          storeDir: dirs.storeDir,
+          from: workspaceId,
+          to: req.target,
+          question: req.question,
+          reason: req.reason,
+        });
+        return `QUESTION DELIVERED (${rec.id.slice(0, 8)}), routed via ${rec.routingPath.map((w) => w.slice(0, 8)).join(" -> ")}. The target will answer in its own run.`;
+      },
+      onListInbox: async () => {
+        const inbox = await listInbox(dirs.storeDir, workspaceId);
+        if (inbox.length === 0) {
+          return "(inbox empty)";
+        }
+        return inbox
+          .map(
+            (c) =>
+              `- ${c.id.slice(0, 8)} from ${c.from.slice(0, 8)}: ${c.question}` +
+              (c.answer !== undefined ? ` [ANSWERED: ${c.answer}]` : " [UNANSWERED]"),
+          )
+          .join("\n");
+      },
+      onAnswer: async (req) => {
+        await answerInformation({
+          storeDir: dirs.storeDir,
+          workspaceId,
+          id: req.id,
+          answer: req.answer,
+          evidence: req.evidence,
+        });
+        return "answer recorded and committed to communication history";
+      },
       onCreateChild: async (req) => {
         const r = await createChild(
           {
             projectId: input.projectId,
             home: input.home,
             parentWorkspaceId: workspaceId,
+            providerLayer: input.providerLayer,
             intent: req.intent,
             responsibility: req.responsibility,
             deliverables: req.deliverables,

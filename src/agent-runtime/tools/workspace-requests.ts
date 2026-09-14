@@ -19,7 +19,65 @@ export function makeWorkspaceRequestTools(deps: {
         writablePrefixes: string[];
       }) => Promise<string>)
     | undefined;
+  /** P4-01 (I2): read-only projection of children's effective state. */
+  readonly childrenSummary?: string | undefined;
+  /** P4-02 (I1): communication hooks, performed by the Runtime. */
+  readonly onAsk?:
+    | ((req: { target: string; question: string; reason: string }) => Promise<string>)
+    | undefined;
+  readonly onListInbox?: (() => Promise<string>) | undefined;
+  readonly onAnswer?:
+    | ((req: { id: string; answer: string; evidence: string }) => Promise<string>)
+    | undefined;
 }): Tool[] {
+  const commTools: Tool[] = [];
+  if (deps.onAsk !== undefined) {
+    commTools.push(
+      toolFromSchema({
+        name: "request_information",
+        description:
+          "Ask another workspace a question through formal communication (routed via the common ancestor). " +
+          "Communication carries information only; it never changes engineering state.",
+        params: Schema.Struct({
+          target: Schema.String,
+          question: Schema.String,
+          reason: Schema.String,
+        }),
+        execute: async (p) => {
+          await deps.record("request_information", JSON.stringify(p));
+          return (deps.onAsk as (x: typeof p) => Promise<string>)(p);
+        },
+      }),
+    );
+  }
+  if (deps.onListInbox !== undefined) {
+    commTools.push(
+      toolFromSchema({
+        name: "list_inbox",
+        description:
+          "List this workspace's formal communication inbox (questions from other workspaces).",
+        params: Schema.Struct({}),
+        execute: async () => (deps.onListInbox as () => Promise<string>)(),
+      }),
+    );
+  }
+  if (deps.onAnswer !== undefined) {
+    commTools.push(
+      toolFromSchema({
+        name: "answer_information",
+        description: "Answer a question in this workspace's inbox with evidence.",
+        params: Schema.Struct({
+          id: Schema.String,
+          answer: Schema.String,
+          evidence: Schema.String,
+        }),
+        execute: async (p) => {
+          await deps.record("answer_information", JSON.stringify(p));
+          return (deps.onAnswer as (x: typeof p) => Promise<string>)(p);
+        },
+      }),
+    );
+  }
   const createChildTool =
     deps.onCreateChild === undefined
       ? []
@@ -56,6 +114,9 @@ export function makeWorkspaceRequestTools(deps: {
         `deliverables: ${deps.pkg.contract.deliverables}`,
         `writable: ${deps.pkg.resources.writable.join(", ")}`,
         `effective store revision: ${deps.pkg.effective.storeCommitSha}`,
+        ...(deps.childrenSummary !== undefined
+          ? ["", "children (read-only projection):", deps.childrenSummary]
+          : []),
       ].join("\n"),
   });
 
@@ -91,5 +152,5 @@ export function makeWorkspaceRequestTools(deps: {
     },
   });
 
-  return [inspect, status, blocker, completion, ...createChildTool];
+  return [inspect, status, blocker, completion, ...createChildTool, ...commTools];
 }
