@@ -73,6 +73,26 @@ main{flex:1;display:grid;grid-template-columns:296px 1fr;min-height:0}
 .env .ops button{padding:3px 10px;font-size:10px}
 .none{font-style:italic;font-size:12px;color:#b3ab99}
 
+/* ——— project picker ——— */
+#picker{position:fixed;inset:0;z-index:50;background:var(--paper);display:flex;align-items:center;justify-content:center;
+  flex-direction:column;gap:0;animation:rise .4s ease both}
+#picker .card{width:min(560px,92vw);background:#fffdf7;border:1px solid var(--line);border-radius:5px;
+  box-shadow:4px 7px 0 rgba(38,51,43,.1);padding:30px 34px}
+#picker h2{font-size:22px;color:var(--leaf);margin-bottom:4px}
+#picker .sub2{font-family:var(--mono);font-size:9px;letter-spacing:.3em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:22px}
+.projItem{display:flex;align-items:center;gap:12px;padding:11px 12px;border:1px solid var(--line);border-left:3px solid var(--leaf);
+  border-radius:3px;margin-bottom:8px;cursor:pointer;transition:all .13s;background:#fffdf7}
+.projItem:hover{transform:translateX(3px);box-shadow:2px 3px 0 rgba(38,51,43,.1)}
+.projItem .pi{font-family:var(--mono);font-size:10px;color:var(--ink-soft)}
+.projItem .pn{font-size:14.5px;flex:1}
+.projItem .pn b{color:var(--leaf)}
+.projItem .badge2{font-family:var(--mono);font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber)}
+.newRow{display:flex;gap:8px;margin-top:18px;padding-top:18px;border-top:1px dashed var(--line)}
+.newRow input{flex:1;font-family:var(--mono);font-size:12px;padding:9px 12px;border:1px solid var(--line);border-radius:2px;
+  background:transparent;color:var(--ink);outline:none}
+.newRow input:focus{border-color:var(--leaf)}
+.projEmpty{font-style:italic;color:#b3ab99;font-size:14px;padding:6px 2px 14px}
+
 /* ——— chat column ——— */
 #chatCol{display:flex;flex-direction:column;min-height:0}
 #chat{flex:1;overflow-y:auto;padding:30px 40px 20px;scroll-behavior:smooth}
@@ -126,9 +146,8 @@ main{flex:1;display:grid;grid-template-columns:296px 1fr;min-height:0}
 <header>
   <div class="brand"><h1>Arbor</h1><div class="sub">dialogue</div></div>
   <div class="connect">
-    <input id="pid" placeholder="project uuid">
-    <input id="home" placeholder="home（可空）">
-    <button class="btn ghost" onclick="loadAll()">装订</button>
+    <span id="projName" style="font-family:var(--mono);font-size:11px;color:var(--ink-soft)">未选择项目</span>
+    <button class="btn ghost" onclick="openPicker()">切换</button>
   </div>
 </header>
 <main>
@@ -147,7 +166,7 @@ main{flex:1;display:grid;grid-template-columns:296px 1fr;min-height:0}
     <svg width="64" height="64" viewBox="0 0 70 70" fill="none" stroke="#b3ab99" stroke-width="1.4">
       <path d="M35 62 V30 M35 44 C26 40 22 34 21 26 M35 38 C44 34 48 28 49 20 M21 26 C16 25 13 22 13 17 M49 20 C54 19 57 16 57 11"/>
       <circle cx="13" cy="16" r="2.6"/><circle cx="57" cy="10" r="2.6"/><circle cx="35" cy="27" r="2.6"/>
-    </svg><br>装订 project，选中一个 workspace，开始对话<br>它会干活、验证、并把成果刻进树里
+    </svg><br>选中左侧的 workspace，开始对话<br>它会干活、验证、并把成果刻进树里
   </div></div></div>
   <div id="composer">
     <div class="compRow">
@@ -159,20 +178,60 @@ main{flex:1;display:grid;grid-template-columns:296px 1fr;min-height:0}
   </div>
 </div>
 </main>
+<div id="picker" style="display:none">
+  <div class="card">
+    <h2>Arbor · 项目</h2>
+    <div class="sub2">choose a specimen or press a new one</div>
+    <div id="projList"></div>
+    <div class="newRow">
+      <input id="newRepo" placeholder="git 仓库路径（如 /home/you/myapp）">
+      <button class="btn" onclick="createProject()">新建 ▸</button>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
 const $=id=>document.getElementById(id);
-let sel=null, selKind='root', watched=null, lastSeq=0, timer=null, agents=[];
+let PID=null, sel=null, selKind='root', watched=null, lastSeq=0, timer=null, agents=[];
+function esc2(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function repoName(p){const parts=String(p).split('/').filter(Boolean);return parts[parts.length-1]||p}
+
+async function openPicker(){
+  $('picker').style.display='flex';
+  const box=$('projList');
+  try{
+    const r=await api('GET','/api/projects');
+    box.innerHTML=r.projects.length?r.projects.map(pr=>
+      '<div class="projItem" onclick="enterProject(\''+pr.projectId+'\',\''+esc2(repoName(pr.sourceRepoPath))+'\')">'+
+      '<div class="pn"><b>'+esc2(repoName(pr.sourceRepoPath))+'</b> <span class="pi">'+pr.createdAt.slice(0,10)+'</span></div>'+
+      (pr.hasTree?'<span class="badge2">tree</span>':'')+'</div>').join('')
+      :'<div class="projEmpty">还没有项目——在下方按下一个</div>';
+  }catch(e){box.innerHTML='<div class="projEmpty">读取失败：'+esc2(e.message)+'</div>'}
+}
+async function createProject(){
+  const repo=$('newRepo').value.trim();if(!repo)return toast('填入 git 仓库路径');
+  toast('装订中…');
+  try{const r=await api('POST','/api/projects',{repoPath:repo});
+    enterProject(r.projectId,repoName(repo));
+  }catch(e){toast('新建失败: '+e.message)}
+}
+function enterProject(pid,name){
+  PID=pid;localStorage.setItem('arbor.pid',pid);
+  $('projName').textContent=name;
+  $('picker').style.display='none';
+  loadAll();
+}
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2400)}
 function home(){return $('home').value.trim()}
 async function api(m,p,b){const r=await fetch(p,{method:m,...(m==='POST'?{body:JSON.stringify(b||{}),headers:{'content-type':'application/json'}}:{})});
  const j=await r.json();if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j}
 
 async function loadAll(){
- const pid=$('pid').value.trim();if(!pid)return toast('先填 project uuid');
+ if(!PID)return;
+ const pid=PID;
  try{
-  const t=await api('GET','/api/tree?projectId='+pid+(home()?'&home='+home():''));
+  const t=await api('GET','/api/tree?projectId='+pid);
   const box=$('treeBox');
   box.innerHTML=t.nodes.map(n=>'<div class="miniNode '+(n.kind==='root'?'root':'child')+(sel===n.workspaceId?' sel':'')+
    '" onclick="pick(\\''+n.workspaceId+'\\')"><div class="t"><span>'+n.workspaceId.slice(0,8)+'</span><span>'+(n.kind==='root'?'根':'枝')+'</span></div>'+
@@ -188,8 +247,9 @@ function pick(id){sel=id;$('wsSel').value=id==='root'?'':id;loadAll();
  $('whoami').textContent='对话对象 '+id.slice(0,8)}
 
 async function loadApprovals(){
- const pid=$('pid').value.trim();if(!pid)return;
- try{const r=await api('GET','/api/approvals?projectId='+pid+(home()?'&home='+home():''));
+ if(!PID)return;
+ const pid=PID;
+ try{const r=await api('GET','/api/approvals?projectId='+pid);
   $('approvals').innerHTML=r.approvals.length?r.approvals.map(a=>
    '<div class="env"><div class="st">'+a.status+' · accept</div><div>'+a.materials+'</div>'+
    (a.status==='pending'?'<div class="ops"><button class="btn grant" onclick="decide(\\''+a.id+'\\',true)">准</button><button class="btn deny" onclick="decide(\\''+a.id+'\\',false)">驳</button></div>':'')+'</div>').join('')
@@ -220,12 +280,13 @@ function renderEvent(e){
 }
 
 async function send(){
- const pid=$('pid').value.trim();if(!pid)return toast('先填 project uuid');
+ if(!PID)return toast('先选择项目');
+ const pid=PID;
  const task=$('task').value.trim();if(!task)return;
  $('task').value='';
  if(watched){const d=document.createElement('div');d.className='sysline';d.textContent='— 切换新委派 —';chatInner().appendChild(d)}
  try{
-  const r=await api('POST','/api/agent/runs',{projectId:pid,...(home()?{home:home()}:{}),
+  const r=await api('POST','/api/agent/runs',{projectId:pid,
    ...(sel&&sel!=='root'?{workspaceId:sel}:{}),task});
   watched=r.agentId;lastSeq=0;chatInner().innerHTML='';
   if(timer)clearInterval(timer);timer=setInterval(poll,1800);$('liveState').innerHTML='<span class="liveDot">● live</span>';
@@ -234,7 +295,7 @@ async function send(){
 async function poll(){
  if(!watched)return;
  try{
-  const r=await api('GET','/api/agents/'+watched+'/events?since='+lastSeq+(home()?'&home='+home():''));
+  const r=await api('GET','/api/agents/'+watched+'/events?since='+lastSeq);
   const arr=r.events||[];
   for(const e of r.events)renderEvent(e);
   lastSeq=r.lastSeq;$('chat').scrollTop=1e9;
@@ -242,10 +303,15 @@ async function poll(){
    clearInterval(timer);timer=null;watched=null;$('liveState').textContent='idle';loadAll()}
  }catch(e){}}
 $('task').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
-$('pid').addEventListener('keydown',e=>{if(e.key==='Enter')loadAll()});
+$('newRepo').addEventListener('keydown',e=>{if(e.key==='Enter')createProject()});
 $('wsSel').addEventListener('change',e=>{sel=e.target.value||'root';$('whoami').textContent='对话对象 '+(e.target.value?e.target.value.slice(0,8):'root')});
+(async function boot(){
+  const saved=localStorage.getItem('arbor.pid');
+  if(saved){PID=saved;$('projName').textContent=saved.slice(0,8)+'…';loadAll()}
+  else openPicker();
+})();
 async function decide(id,ok){
- try{const r=await api('POST','/api/approvals/'+id,{projectId:$('pid').value.trim(),approve:ok,...(home()?{home:home()}:{})});
+ try{const r=await api('POST','/api/approvals/'+id,{projectId:PID,approve:ok});
  toast('已'+(ok?'核准':'驳回')+(r.continued?' · accept 续行走完':''));loadApprovals();loadAll();
 }catch(e){toast(e.message)}}
 </script></body></html>`;

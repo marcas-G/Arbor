@@ -118,7 +118,19 @@ export interface ApiEndpoint {
   readonly summary: string;
 }
 
+export const ProjectsOut = Schema.Struct({
+  projects: Schema.Array(
+    Schema.Struct({
+      projectId: Schema.String,
+      sourceRepoPath: Schema.String,
+      createdAt: Schema.String,
+      hasTree: Schema.Boolean,
+    }),
+  ),
+});
+
 export const API: ReadonlyArray<ApiEndpoint> = [
+  { method: "GET", path: "/api/projects", in: Schema.Struct({}) as unknown as Schema.Schema<unknown>, out: ProjectsOut as unknown as Schema.Schema<unknown>, summary: "list runtime projects under the server home" },
   { method: "POST", path: "/api/projects", in: ProjectInitIn as unknown as Schema.Schema<unknown>, out: ProjectInitOut as unknown as Schema.Schema<unknown>, summary: "initialize a runtime project" },
   { method: "GET", path: "/api/tree", in: TreeIn as unknown as Schema.Schema<unknown>, out: TreeOut as unknown as Schema.Schema<unknown>, summary: "engineering tree + milestone" },
   { method: "POST", path: "/api/agent/runs", in: AgentRunIn as unknown as Schema.Schema<unknown>, out: AgentRunOut as unknown as Schema.Schema<unknown>, summary: "start an agent run (spawned child process)" },

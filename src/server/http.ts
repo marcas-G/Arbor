@@ -73,6 +73,7 @@ export async function startArborServer(opts: {
   readonly home: string;
   readonly port?: number;
 }): Promise<ServerHandle> {
+  const serverHome = opts.home;
   const server: Server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://local");
     res.setHeader("content-type", "application/json");
@@ -120,7 +121,8 @@ export async function startArborServer(opts: {
         string,
         string | number | boolean | undefined
       >;
-      const out = await dispatch(match.endpoint.path, decoded);
+      // the server's --home is the default; requests may override per call
+      const out = await dispatch(match.endpoint.path, match.endpoint.method, decoded, serverHome);
       res.end(JSON.stringify(out));
     } catch (e) {
       res.statusCode = 400;
@@ -142,10 +144,52 @@ export async function startArborServer(opts: {
 }
 
 /** The one place endpoints map to application calls. */
-async function dispatch(path: string, inArgs: Record<string, string | number | boolean | undefined>): Promise<unknown> {
-  const home = (inArgs.home as string | undefined) ?? "";
+async function dispatch(
+  path: string,
+  method: string,
+  inArgs: Record<string, string | number | boolean | undefined>,
+  serverHome: string,
+): Promise<unknown> {
+  const home = (inArgs.home as string | undefined) ?? serverHome;
   switch (path) {
     case "/api/projects": {
+      if (method === "GET") {
+        // list projects under the server home
+        const Database = (await import("better-sqlite3")).default;
+        const root = join(resolveArborHome(serverHome, process.env), "projects");
+        const out: Array<{ projectId: string; sourceRepoPath: string; createdAt: string; hasTree: boolean }> = [];
+        let entries: string[] = [];
+        try {
+          entries = readdirSync(root);
+        } catch {
+          entries = [];
+        }
+        for (const proj of entries) {
+          const dbFile = join(root, proj, "runtime.db");
+          if (!existsSync(dbFile)) {
+            continue;
+          }
+          try {
+            const db = new Database(dbFile, { readonly: true });
+            const row = db
+              .prepare("SELECT project_id, source_repo_path, created_at FROM projects LIMIT 1")
+              .get() as { project_id: string; source_repo_path: string; created_at: string } | undefined;
+            db.close();
+            if (row === undefined) {
+              continue;
+            }
+            out.push({
+              projectId: row.project_id,
+              sourceRepoPath: row.source_repo_path,
+              createdAt: row.created_at,
+              hasTree: existsSync(join(root, proj, "workspace-store", "engineering-tree.json")),
+            });
+          } catch {
+            // unreadable db — skip
+          }
+        }
+        return { projects: out };
+      }
       const { Effect, Layer } = await import("effect");
       const BootstrapLayers = ProjectBootstrapLive.pipe(
         Layer.provideMerge(GitCliLive),
