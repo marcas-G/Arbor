@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { Effect, type Layer as LayerType } from "effect";
 import type { AgentFinish } from "../agent-runtime/agent-loop.js";
 import { runAgent } from "../agent-runtime/agent-loop.js";
-import type { ModelPort } from "../agent-runtime/provider.js";
+import { compactMessages } from "../agent-runtime/compaction.js";
+import type { ChatMessage, ModelPort } from "../agent-runtime/provider.js";
 import {
   installSigintPause,
   isResumable,
@@ -158,13 +160,54 @@ export async function runAgentSession(
   let pauseChecks = 0;
   const removeSigint = installSigintPause(() => pause.requestPause());
 
+  // --- compaction (P1-06A D-036): mechanical, rebuildable, applied at resume
+  let resumeMessages: ReadonlyArray<ChatMessage> | undefined;
+  if (resumable) {
+    const replayed = replayMessages(priorEvents);
+    const plan = compactMessages(replayed);
+    if (plan !== null) {
+      const compactionDir = `${dirs.agentStateDir}/${agentId}/compaction`;
+      const summaryFile = `${compactionDir}/summary-${lastSeq}.json`;
+      await Effect.runPromise(
+        Effect.tryPromise({
+          try: async () => {
+            await mkdir(compactionDir, { recursive: true });
+            await writeFile(
+              summaryFile,
+              JSON.stringify(
+                {
+                  schemaVersion: 1,
+                  coveredFrom: plan.coveredFrom,
+                  coveredTo: plan.coveredTo,
+                  droppedCount: plan.droppedCount,
+                  summaryText: plan.summaryText,
+                  createdAt: new Date().toISOString(),
+                },
+                null,
+                2,
+              ),
+              "utf8",
+            );
+          },
+          catch: (e) => new Error(`write compaction: ${String(e)}`),
+        }),
+      );
+      await Effect.runPromise(
+        writer.append("compaction_reference", { summaryFile, droppedCount: plan.droppedCount }),
+      );
+      resumeMessages = plan.kept;
+    } else {
+      resumeMessages = replayed;
+    }
+  }
+
   const result = await runAgent({
     providerLayer: input.providerLayer,
     tools,
     system,
     task,
     stepLimit: input.stepLimit ?? 25,
-    ...(resumable ? { resumeMessages: replayMessages(priorEvents) } : {}),
+    ...(resumeMessages !== undefined ? { resumeMessages } : {}),
     hooks: {
       onEvent: async (type, payload) => {
         await Effect.runPromise(writer.append(type, payload));

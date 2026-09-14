@@ -33,6 +33,16 @@ export const ToolResult = Schema.Struct({
 export const RunFinished = Schema.Struct({ finish: Schema.String, steps: Schema.Number });
 export const PauseMarker = Schema.Struct({});
 export const ResumeMarker = Schema.Struct({});
+export const CompactionReference = Schema.Struct({
+  summaryFile: Schema.String,
+  droppedCount: Schema.Number,
+});
+/** P1-07: agent-side workspace requests (requestId is the idempotency key). */
+export const WorkspaceRequest = Schema.Struct({
+  requestId: Schema.String,
+  requestType: Schema.String,
+  payloadJson: Schema.String,
+});
 
 export const TRANSCRIPT_SCHEMA_VERSION = 1;
 
@@ -57,4 +67,6 @@ export const transcriptEventSchema = Schema.Union([
   Schema.Struct({ type: Schema.Literal("run_finished"), payload: RunFinished }),
   Schema.Struct({ type: Schema.Literal("pause_marker"), payload: PauseMarker }),
   Schema.Struct({ type: Schema.Literal("resume_marker"), payload: ResumeMarker }),
+  Schema.Struct({ type: Schema.Literal("compaction_reference"), payload: CompactionReference }),
+  Schema.Struct({ type: Schema.Literal("workspace_request"), payload: WorkspaceRequest }),
 ]);
