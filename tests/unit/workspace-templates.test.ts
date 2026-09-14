@@ -13,7 +13,7 @@ describe("root workspace skeleton templates (§18.1)", () => {
     expect(y).toContain("schemaVersion: 1");
     expect(y).toContain('projectId: "p-1"');
     expect(y).toContain('workspaceId: "w-1"');
-    expect(y).toContain('writable:');
+    expect(y).toContain("writable:");
     expect(y).toContain('    - "."');
     expect(y).toContain("commands: []");
   });
