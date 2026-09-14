@@ -84,15 +84,15 @@ export function resolveArborHome(cliHome: string | undefined, env: NodeJS.Proces
   if (cliHome !== undefined && cliHome !== "") {
     return cliHome;
   }
-  const fromEnv = env["ARBOR_HOME"];
+  const fromEnv = env.ARBOR_HOME;
   if (fromEnv !== undefined && fromEnv !== "") {
     return fromEnv;
   }
-  const xdg = env["XDG_STATE_HOME"];
+  const xdg = env.XDG_STATE_HOME;
   if (xdg !== undefined && xdg !== "") {
     return `${xdg}/arbor`;
   }
-  return `${env["HOME"] ?? "."}/.local/state/arbor`;
+  return `${env.HOME ?? "."}/.local/state/arbor`;
 }
 
 export function effectiveRefName(workspaceId: WorkspaceId): string {
