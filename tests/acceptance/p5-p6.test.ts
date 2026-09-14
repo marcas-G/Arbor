@@ -52,18 +52,18 @@ describe("P5+P6 acceptance (D-044)", () => {
     );
     const init = await FakeRun.initProject(home, repo);
     const d = projectDirs(home, init.projectId);
-    const mk = async (prefixes: string[]) =>
-      (
-        await createChild(
-          { projectId: init.projectId, home, parentWorkspaceId: init.workspaceId, intent: "x", responsibility: "x", deliverables: "x", writablePrefixes: prefixes },
-          sql,
-        )
-      ).ok;
-    expect(await mk(["src/a"])).toBe(true);
-    expect(await mk(["src/b"])).toBe(true);
-    const kids = execSync(`ls ${d.storeDir}/workspaces`).toString().trim().split("\n");
-    const childA = kids.find((k) => k !== init.workspaceId && k.length === 36) as string;
-    const childB = kids.filter((k) => k !== init.workspaceId && k !== childA)[0] as string;
+    const mk = async (prefixes: string[]) => {
+      const r = await createChild(
+        { projectId: init.projectId, home, parentWorkspaceId: init.workspaceId, intent: "x", responsibility: "x", deliverables: "x", writablePrefixes: prefixes },
+        sql,
+      );
+      if (!r.ok) {
+        throw new Error(r.detail);
+      }
+      return r.childWorkspaceId;
+    };
+    const childA = await mk(["src/a"]);
+    const childB = await mk(["src/b"]);
 
     // both children activate independently
     const activate = async (ws: string, file: string) => {

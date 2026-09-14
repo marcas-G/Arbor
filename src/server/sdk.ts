@@ -1,4 +1,4 @@
-import type * as C from "./api-contract.js";
+
 
 /** D-045: the single SDK. Every client (web console now; tui/app later) goes
  * through here — types derive from the same contract schemas. No client
@@ -20,7 +20,7 @@ export class ArborSdk {
   }
 
   initProject(repoPath: string, home?: string) {
-    return this.call<C.ProjectInitOut extends never ? never : { projectId: string; workspaceId: string; effectiveRefSha: string }>(
+    return this.call<{ projectId: string; workspaceId: string; effectiveRefSha: string }>(
       "POST",
       `/api/projects`,
       { repoPath, ...(home !== undefined ? { home } : {}) },
