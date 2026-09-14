@@ -1,6 +1,6 @@
-import Database from "better-sqlite3";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import Database from "better-sqlite3";
 import { Effect, Layer } from "effect";
 import { DbError, type DbHandle, SqlitePort } from "../application/ports.js";
 

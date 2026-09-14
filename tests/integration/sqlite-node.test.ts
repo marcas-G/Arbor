@@ -37,7 +37,10 @@ describe("SqliteNodeLive", () => {
           "/rt",
           "2026-09-14T00:00:00Z",
         );
-        const row = yield* db2.queryOne("SELECT project_id FROM projects WHERE project_id = ?", "pid");
+        const row = yield* db2.queryOne(
+          "SELECT project_id FROM projects WHERE project_id = ?",
+          "pid",
+        );
         expect(row).toMatchObject({ project_id: "pid" });
         yield* db2.close();
       }).pipe(Effect.provide(SqliteNodeLive)),
@@ -67,8 +70,8 @@ describe("SqliteNodeLive", () => {
             "2026-09-14T00:00:00Z",
           );
         yield* ins("w1");
-        const exit = yield* Effect.either(ins("w2"));
-        expect(exit._tag).toBe("Left");
+        const exit = yield* ins("w2").pipe(Effect.result);
+        expect(exit._tag).toBe("Failure");
         yield* db.close();
       }).pipe(Effect.provide(SqliteNodeLive)),
     );
