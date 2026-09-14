@@ -136,6 +136,20 @@ main{flex:1;display:grid;grid-template-columns:296px 1fr;min-height:0}
 .sysline{text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);
   letter-spacing:.2em;text-transform:uppercase;margin:14px 0;animation:rise .3s ease both}
 .sysline.finish{color:var(--rust);font-weight:700}
+#working{display:none;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;
+  color:var(--leaf-bright);padding:8px 0 2px;letter-spacing:.1em}
+#working.on{display:flex}
+#working .dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--leaf-bright);
+  margin-right:3px;animation:hop 1.2s ease-in-out infinite}
+#working .dots span:nth-child(2){animation-delay:.2s}
+#working .dots span:nth-child(3){animation-delay:.4s}
+@keyframes hop{0%,100%{transform:translateY(0);opacity:.4}50%{transform:translateY(-4px);opacity:1}}
+.finishCard{max-width:78%;margin:0 auto 18px;display:flex;align-items:center;gap:10px;
+  background:var(--leaf-pale);border:1px solid var(--leaf-bright);border-radius:4px;
+  padding:10px 16px;font-family:var(--mono);font-size:12px;color:var(--leaf);
+  animation:rise .35s ease both}
+.finishCard .tick{width:18px;height:18px;border-radius:50%;background:var(--leaf);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:11px}
 .sysCard{max-width:70%;margin:0 auto 16px;background:#faf3e3;border:1px solid var(--line);
   border-left:3px solid var(--amber);border-radius:3px;padding:9px 14px;font-family:var(--mono);
   font-size:11px;color:var(--amber);animation:rise .3s ease both;text-align:center}
@@ -184,14 +198,15 @@ main{flex:1;display:grid;grid-template-columns:296px 1fr;min-height:0}
       <path d="M35 62 V30 M35 44 C26 40 22 34 21 26 M35 38 C44 34 48 28 49 20 M21 26 C16 25 13 22 13 17 M49 20 C54 19 57 16 57 11"/>
       <circle cx="13" cy="16" r="2.6"/><circle cx="57" cy="10" r="2.6"/><circle cx="35" cy="27" r="2.6"/>
     </svg><br>选中左侧的 workspace，开始对话<br>它会干活、验证、并把成果刻进树里
-  </div></div></div>
+  </div></div>  <div id="working"><span class="dots"><span></span><span></span><span></span></span> agent 正在工作…</div>
+  </div>
   <div id="composer">
     <div class="compRow">
       <select id="wsSel"><option value="">root</option></select>
       <input id="task" placeholder="向 agent 委派任务…（Enter 发送）">
       <button class="btn" onclick="send()">派工 ▸</button>
     </div>
-    <div class="compHint"><span id="whoami">— 未选中 workspace —</span><span id="liveState">idle</span></div>
+    <div class="compHint"><span id="whoami">— 未选中 workspace —</span><span id="liveState">空闲</span></div>
   </div>
 </div>
 </main>
@@ -301,6 +316,21 @@ function bubble(html,cls){const d=document.createElement('div');d.className='msg
  d.innerHTML=html;chatInner().appendChild(d);$('chat').scrollTop=1e9;return d}
 function chatInner(){return $('chat').firstElementChild}
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function humanize(t){
+ let x=String(t);
+ x=x.replace(/project: ([0-9a-f-]{36})/g,'项目 $1'.slice(0,0)+'项目 '+"'$1'".slice(1,9)+'…');
+ x=x.replace(/project: ([0-9a-f]{8})[0-9a-f-]+/g,'项目 $1…');
+ x=x.replace(/workspace: ([0-9a-f]{8})[0-9a-f-]+/g,'工作区 $1…');
+ x=x.replace(/intent: TBD \(user to fill\)/g,'目标：待填写');
+ x=x.replace(/responsibility: TBD \(user to fill\)/g,'职责：待填写');
+ x=x.replace(/deliverables: TBD \(user to fill\)/g,'交付物：待填写');
+ x=x.replace(/writable: \./g,'可写范围：整个仓库');
+ x=x.replace(/writable: (.+)/g,'可写范围：$1');
+ x=x.replace(/effective store revision: ([0-9a-f]{8})[0-9a-f]+/g,'工程基线：$1');
+ x=x.replace(/^\(clean\)$/gm,'（工作区干净，无未提交改动）');
+ x=x.replace(/no effective result yet/g,'尚无正式成果');
+ x=x.replace(/result ([0-9a-f]{8})[0-9a-f-]+ @ ([0-9a-f]{8})[0-9a-f]+/g,'成果 $1（基于 $2）');
+ return x}
 
 function renderEvent(e){
  if(e.type==='user_input'){bubble('<div><div class="who">委派 · you</div><div class="bubble">'+esc(e.text||'')+'</div></div>','user')}
@@ -309,7 +339,7 @@ function renderEvent(e){
   bubble('<div class="who">agent</div><div class="bubble">'+(e.content?esc(e.content):'<span style="color:var(--ink-soft);font-style:italic">（调用工具）</span>')+
    (calls?'<div class="chips">'+calls+'</div>':'')+'</div>','agent')}
  else if(e.type==='tool_result'){
-  const d=document.createElement('div');d.className='toolOut';d.textContent='▸ '+(e.output||'');
+  const d=document.createElement('div');d.className='toolOut';d.innerHTML='▸ '+esc(humanize(e.output||''));
   chatInner().appendChild(d);$('chat').scrollTop=1e9}
  else if(e.type==='workspace_request'){const d=document.createElement('div');d.className='sysCard';
   d.textContent='⚒ 工程请求 · '+e.type;d.onclick=()=>loadApprovals();chatInner().appendChild(d)}
@@ -329,7 +359,7 @@ async function send(){
   const r=await api('POST','/api/agent/runs',{projectId:pid,
    ...(sel&&sel!=='root'?{workspaceId:sel}:{}),task});
   watched=r.agentId;lastSeq=0;chatInner().innerHTML='';
-  if(timer)clearInterval(timer);timer=setInterval(poll,1800);$('liveState').innerHTML='<span class="liveDot">● live</span>';
+  if(timer)clearInterval(timer);timer=setInterval(poll,1800);$('liveState').innerHTML='<span class="liveDot">● live</span>';$('working').classList.add('on');
  }catch(e){toast('派工失败: '+e.message)}
 }
 async function poll(){
@@ -340,7 +370,10 @@ async function poll(){
   for(const e of r.events)renderEvent(e);
   lastSeq=r.lastSeq;$('chat').scrollTop=1e9;
   if(arr.some(e=>e.type==='run_finished')||arr.some(e=>e.type==='pause_marker')){
-   clearInterval(timer);timer=null;watched=null;$('liveState').textContent='idle';loadAll()}
+   clearInterval(timer);timer=null;watched=null;$('liveState').textContent='空闲';$('working').classList.remove('on');
+   const d=document.createElement('div');d.className='finishCard';
+   d.innerHTML='<span class="tick">✓</span> 已收工'+(arr.some(e=>e.type==='run_finished')?' · 成果已验证入库':' · 已暂停');
+   chatInner().appendChild(d);$('chat').scrollTop=1e9;loadAll()}
  }catch(e){}}
 $('task').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
 $('newRepo').addEventListener('keydown',e=>{if(e.key==='Enter')createProject()});
