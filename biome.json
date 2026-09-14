@@ -14,10 +14,10 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "preset": "recommended"
     }
   },
-  "assists": {
+  "assist": {
     "actions": {
       "source": {
         "organizeImports": "on"
