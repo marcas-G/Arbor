@@ -22,6 +22,16 @@ describe("tool registry", () => {
     expect(JSON.stringify(echo.jsonSchema)).not.toContain("dialect");
   });
 
+  it("empty-params tools still derive type:object (not the not-null form)", () => {
+    const noArgs = toolFromSchema({
+      name: "noop",
+      description: "takes nothing",
+      params: Schema.Struct({}),
+      execute: async () => "ok",
+    });
+    expect((noArgs.jsonSchema as { type?: string }).type).toBe("object");
+  });
+
   it("runs valid args", async () => {
     expect(await runTool([echo], "echo", { text: "hi" })).toEqual({ ok: true, output: "echo:hi" });
   });

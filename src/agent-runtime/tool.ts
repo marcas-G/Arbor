@@ -24,8 +24,11 @@ export function toolFromSchema<P>(t: ToolParams<P>): Tool {
     definitions?: Record<string, unknown>;
   };
   // providers expect the parameters schema itself (type:"object" at the top
-  // level), not the draft-2020-12 document envelope
-  const jsonSchema: Record<string, unknown> = { ...doc.schema };
+  // level), not the draft-2020-12 document envelope; an empty Struct derives
+  // to {"not":{"type":"null"}} which providers reject — normalize to an object schema
+  const raw = doc.schema;
+  const jsonSchema: Record<string, unknown> =
+    raw.type === "object" ? { ...raw } : { type: "object", properties: {} };
   if (doc.definitions !== undefined && Object.keys(doc.definitions).length > 0) {
     jsonSchema.$defs = doc.definitions;
   }
