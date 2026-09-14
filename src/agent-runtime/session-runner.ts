@@ -31,12 +31,23 @@ export function replayMessages(events: ReadonlyArray<TranscriptEnvelope>): ChatM
   return messages;
 }
 
-/** True when the transcript's last run has no run_finished (paused or crashed). */
+/** True when a started run was never closed by run_finished — this covers
+ * BOTH graceful pause (pause_marker) and hard crash (no marker at all, e.g.
+ * SIGKILL): recovery replays the durable events either way (E5 semantic
+ * resume; an incomplete trailing model turn was never committed). */
 export function isResumable(events: ReadonlyArray<TranscriptEnvelope>): boolean {
-  const last = [...events]
-    .reverse()
-    .find((e) => e.type === "run_finished" || e.type === "pause_marker");
-  return last?.type === "pause_marker";
+  if (events.length === 0) {
+    return false;
+  }
+  const lastFinishIdx = (() => {
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      if (events[i]?.type === "run_finished") {
+        return i;
+      }
+    }
+    return -1;
+  })();
+  return events.slice(lastFinishIdx + 1).some((e) => e.type === "user_input");
 }
 
 /** SIGINT pause controller (E4): flag + abort channel; the loop checks the

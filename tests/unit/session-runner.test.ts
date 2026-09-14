@@ -63,8 +63,26 @@ describe("replayMessages (E5)", () => {
     ]);
   });
 
-  it("isResumable: pause_marker yes, run_finished no, empty no", () => {
-    expect(isResumable([env("pause_marker", { finish: "paused", steps: 2 }, 3)])).toBe(true);
+  it("isResumable: paused yes, crashed (no marker) yes, finished no, empty no", () => {
+    expect(
+      isResumable([
+        env("user_input", { text: "t" }, 1),
+        env("pause_marker", { finish: "paused", steps: 2 }, 2),
+      ]),
+    ).toBe(true);
+    // crash: user_input + tool events with NO terminal marker at all
+    expect(
+      isResumable([
+        env("user_input", { text: "t" }, 1),
+        env("tool_result", { callId: "c", ok: true, output: "o", state: "succeeded" }, 2),
+      ]),
+    ).toBe(true);
+    expect(
+      isResumable([
+        env("user_input", { text: "t" }, 1),
+        env("run_finished", { finish: "stop", steps: 3 }, 2),
+      ]),
+    ).toBe(false);
     expect(isResumable([env("run_finished", { finish: "stop", steps: 3 }, 3)])).toBe(false);
     expect(isResumable([])).toBe(false);
   });

@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect";
 import { runAgentSession } from "../application/agent-runner.js";
 import { SqlitePort } from "../application/ports.js";
 import { ProjectBootstrap, ProjectBootstrapLive } from "../application/project-bootstrap.js";
+import { FakeProviderLive } from "../infrastructure/fake-provider.js";
 import { FsNodeLive } from "../infrastructure/fs-node.js";
 import { GitCliLive } from "../infrastructure/git-cli.js";
 import { OpenAiProviderLive } from "../infrastructure/openai-chat-provider.js";
@@ -74,7 +75,11 @@ export async function run(argv: string[]): Promise<number> {
   if (args.cmd === "agent-run") {
     const style = process.env.OPENAI_API_STYLE ?? "chat_completions";
     const providerLayer =
-      style === "responses" ? OpenAiResponsesProviderLive() : OpenAiProviderLive();
+      style === "fake"
+        ? FakeProviderLive.fromEnvFile(process.env)
+        : style === "responses"
+          ? OpenAiResponsesProviderLive()
+          : OpenAiProviderLive();
     const sql = await Effect.runPromise(SqlitePort.pipe(Effect.provide(SqliteNodeLive)));
     try {
       const r = await runAgentSession(
