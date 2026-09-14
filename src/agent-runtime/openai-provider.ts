@@ -89,7 +89,13 @@ export const OpenAiProviderLive = (deps: Deps = {}) =>
             catch: (e) => new ModelError({ message: `network: ${String(e)}` }),
           });
           if (!res.ok) {
-            return yield* new ModelError({ message: `openai ${res.status}: ${res.statusText}` });
+            const errBody = yield* Effect.tryPromise({
+              try: () => res.text(),
+              catch: (e) => new ModelError({ message: String(e) }),
+            }).pipe(Effect.orElseSucceed(() => "(unreadable body)" as const));
+            return yield* new ModelError({
+              message: `openai ${res.status}: ${errBody.slice(0, 500)}`,
+            });
           }
           const body = (yield* Effect.tryPromise({
             try: () => res.json(),
