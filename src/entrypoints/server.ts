@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, request } from "node:http";
 import { startArborServer } from "../server/http.js";
 /**
  * Arbor console — chat-first (opencode form) on a botanical-plate ground:
@@ -332,7 +332,6 @@ async function main(): Promise<number> {
     // same-origin: /api/* is reverse-proxied to the api port, so the page's
     // relative fetches always reach the contract executor
     if ((req.url ?? "").startsWith("/api/")) {
-      const { request } = require("node:http") as typeof import("node:http");
       const proxied = request(
         { host: "127.0.0.1", port: API_PORT, path: req.url, method: req.method, headers: req.headers },
         (up) => {
