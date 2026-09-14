@@ -114,6 +114,26 @@ describe("D-045: unified server API", () => {
     }
   }, 60_000);
 
+  it("events endpoint works WITHOUT an explicit home (production console path)", async () => {
+    // regression guard: the console never sends home — the server's --home must
+    // be the fallback (this exact gap once made the chat stream silently empty)
+    const home = tmp();
+    const repo = tmp();
+    execSync("git init -q && echo r > README.md && git add -A && git -c user.name=t -c user.email=t@t commit -qm base", { cwd: repo });
+    const s = await startArborServer({ home });
+    try {
+      const init = await new ArborSdk(s.url).initProject(repo, home);
+      // events for an unknown agent under the SERVER home (no home param sent)
+      const res = await fetch(`${s.url}/api/agents/00000000-0000-4000-8000-000000000000/events?since=0`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { events: unknown[]; lastSeq: number };
+      expect(body.events).toEqual([]);
+      void init;
+    } finally {
+      s.close();
+    }
+  });
+
   it("contract validation: bad input is a 400, unknown path a 404", async () => {
     const s = await startArborServer({ home: "" });
     try {

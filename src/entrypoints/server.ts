@@ -6,7 +6,7 @@ import { startArborServer } from "../server/http.js";
  * and milestone sit in a quiet left margin. All data flows through contract
  * endpoints only.
  */
-const PAGE = `<!doctype html><html lang="zh"><head><meta charset="utf-8">
+export const PAGE = `<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Arbor — 对话</title>
 <style>
@@ -273,7 +273,7 @@ function renderTreeSide(nodes){
   const flash=lastEff[n.workspaceId]&&lastEff[n.workspaceId]!==eff?' flash':'';
   lastEff[n.workspaceId]=eff;
   return '<div class="branch"><div class="wsNode '+(n.kind==='root'?'root':'child')+(sel===n.workspaceId?' sel':'')+flash+
-   '" title="'+n.workspaceId+'\n写域: '+n.writablePrefixes.join(', ')+'\n有效修订: '+eff+'" onclick="pick(\''+n.workspaceId+'\')">'+
+   '" title="'+n.workspaceId+' · 写域 '+n.writablePrefixes.join(', ')+' · 有效修订 '+eff+'" onclick="pick(\\''+n.workspaceId+'\\')">'+
    '<div class="row1"><span class="id8">'+(n.running?'<span class="runDot"></span>':'')+n.workspaceId.slice(0,8)+'</span>'+
    '<span class="kind">'+(n.kind==='root'?'根 · root':'枝 · child')+'</span></div>'+
    '<div class="row2"><span>写 '+n.writablePrefixes.join(',')+'</span><span class="eff">效 '+eff+'</span></div>'+
@@ -404,12 +404,15 @@ async function main(): Promise<number> {
   return 0;
 }
 
-main().then(
-  (code) => {
-    process.exitCode = code;
-  },
-  (e) => {
-    console.error(e);
-    process.exitCode = 1;
-  },
-);
+// run only when executed directly (imports — e.g. the page tests — stay pure)
+if (process.argv[1]?.endsWith("server.js")) {
+  main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (e) => {
+      console.error(e);
+      process.exitCode = 1;
+    },
+  );
+}
