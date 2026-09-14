@@ -129,10 +129,14 @@ main{flex:1;display:grid;grid-template-columns:296px 1fr;min-height:0}
 .chip{font-family:var(--mono);font-size:10px;background:var(--leaf-pale);color:var(--leaf);
   border-radius:2px;padding:3px 8px}
 .chip small{color:var(--ink-soft);margin-left:5px}
-.toolOut{font-family:var(--mono);font-size:10.5px;color:var(--ink-soft);background:var(--paper2);
+.toolOut{position:relative;font-family:var(--mono);font-size:10.5px;color:var(--ink-soft);background:var(--paper2);
   border:1px dashed var(--line);border-left:3px solid var(--sky);border-radius:2px;
   padding:7px 10px;margin:6px 0 0 44px;max-width:70%;white-space:pre-wrap;
-  max-height:90px;overflow-y:auto;animation:rise .3s ease both}
+  max-height:90px;overflow-y:auto;animation:rise .3s ease both;cursor:pointer}
+.toolOut .sum{color:var(--ink);display:block}
+.toolOut .raw{display:none;white-space:pre-wrap;margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}
+.toolOut.open .raw{display:block}
+.toolOut .hintx{position:absolute;right:8px;top:6px;font-size:8px;letter-spacing:.1em;color:#b3ab99}
 .sysline{text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--ink-soft);
   letter-spacing:.2em;text-transform:uppercase;margin:14px 0;animation:rise .3s ease both}
 .sysline.finish{color:var(--rust);font-weight:700}
@@ -339,7 +343,11 @@ function renderEvent(e){
   bubble('<div class="who">agent</div><div class="bubble">'+(e.content?esc(e.content):'<span style="color:var(--ink-soft);font-style:italic">（调用工具）</span>')+
    (calls?'<div class="chips">'+calls+'</div>':'')+'</div>','agent')}
  else if(e.type==='tool_result'){
-  const d=document.createElement('div');d.className='toolOut';d.innerHTML='▸ '+esc(humanize(e.output||''));
+  const d=document.createElement('div');d.className='toolOut';
+  const raw=String(e.output||'');const first=raw.split(String.fromCharCode(10)).find(l=>l.trim())||'空';
+  d.innerHTML='<span class="sum">▸ '+esc(humanize(first).slice(0,120))+'</span>'+
+   '<span class="hintx">原文</span><span class="raw">'+esc(humanize(raw))+'</span>';
+  d.onclick=()=>d.classList.toggle('open');
   chatInner().appendChild(d);$('chat').scrollTop=1e9}
  else if(e.type==='workspace_request'){const d=document.createElement('div');d.className='sysCard';
   d.textContent='⚒ 工程请求 · '+e.type;d.onclick=()=>loadApprovals();chatInner().appendChild(d)}

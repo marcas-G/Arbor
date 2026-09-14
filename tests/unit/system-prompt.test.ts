@@ -20,20 +20,21 @@ describe("renderSystemPrompt (D-034 C3)", () => {
   const prompt = renderSystemPrompt(pkg);
 
   it("declares the role", () => {
-    expect(prompt).toContain("Arbor Root Workspace Primary Agent");
+    expect(prompt).toContain("Arbor");
+    expect(prompt).toContain("主智能体");
   });
 
   it("renders all four context sections", () => {
-    expect(prompt).toContain("### Identity");
-    expect(prompt).toContain("### Contract");
-    expect(prompt).toContain("### Resources");
-    expect(prompt).toContain("### Effective State");
+    expect(prompt).toContain("### 身份");
+    expect(prompt).toContain("### 合同");
+    expect(prompt).toContain("### 资源");
+    expect(prompt).toContain("### 工程基线");
     expect(prompt).toContain("build the bootstrap");
-    expect(prompt).toContain(`${"a".repeat(40)}`);
+    expect(prompt).toContain("a".repeat(12)); // template truncates for the model
   });
 
   it("renders empty constraints as (none)", () => {
-    expect(prompt).toContain("inherited constraints: (none)");
+    expect(prompt).toContain("继承约束: （无）");
   });
 
   it("lists non-empty constraints joined", () => {
@@ -45,9 +46,10 @@ describe("renderSystemPrompt (D-034 C3)", () => {
   });
 
   it("includes tool discipline and no future-phase tool sections", () => {
-    expect(prompt).toContain("## Tool Discipline");
-    expect(prompt).toContain("exactly once");
-    expect(prompt).not.toContain("report_completion");
+    expect(prompt).toContain("## 工具纪律");
+    expect(prompt).toContain("恰好匹配一次");
+    expect(prompt).toContain("report_completion");
+    expect(prompt).not.toContain("propose_change");
     expect(prompt).not.toContain("propose_change");
   });
 });
