@@ -20,5 +20,14 @@
     "@types/node": "26.5.1",
     "typescript": "7.0.2",
     "vitest": "5.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "effect": "4.0.0-rc.115"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }
