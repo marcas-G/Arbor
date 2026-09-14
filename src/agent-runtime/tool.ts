@@ -26,7 +26,7 @@ export function toolFromSchema<P>(t: ToolParams<P>): Tool {
     jsonSchema: doc as object,
     run: async (raw: unknown) => {
       try {
-        const decoded = Schema.decodeUnknownSync(t.params)(raw);
+        const decoded = Schema.decodeUnknownSync(t.params as never)(raw) as P;
         try {
           return { ok: true, output: await t.execute(decoded) };
         } catch (e) {
