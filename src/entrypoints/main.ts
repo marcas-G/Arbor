@@ -1,8 +1,13 @@
-import { arborVersion } from "./version.js";
+import { run } from "./cli.js";
 
-export function main(): number {
-  console.log(`arbor ${arborVersion} — P1-01A toolchain bootstrap OK (node ${process.version})`);
-  return 0;
+export function main(): void {
+  run(process.argv.slice(2))
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch(() => {
+      process.exitCode = 1;
+    });
 }
 
 main();
