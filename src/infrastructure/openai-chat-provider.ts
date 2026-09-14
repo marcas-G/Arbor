@@ -59,7 +59,7 @@ export const OpenAiProviderLive = (deps: Deps = {}) =>
   Layer.succeed(
     ModelPort,
     ModelPort.of({
-      complete: (req) =>
+      complete: (req, signal) =>
         Effect.gen(function* () {
           const env = deps.env ?? process.env;
           const key = env.OPENAI_API_KEY;
@@ -72,9 +72,15 @@ export const OpenAiProviderLive = (deps: Deps = {}) =>
           }
           const base = (env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, "");
           const f = deps.fetchImpl ?? fetch;
+          // B4: 120s model-call timeout, composable with the caller's pause signal
+          const callSignal =
+            signal === undefined
+              ? AbortSignal.timeout(120_000)
+              : AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
           const res = yield* Effect.tryPromise({
             try: () =>
               f(`${base}/chat/completions`, {
+                signal: callSignal,
                 method: "POST",
                 headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
                 body: JSON.stringify({

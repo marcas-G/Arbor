@@ -39,7 +39,12 @@ export interface ModelRequest {
 }
 
 export interface ModelPort {
-  readonly complete: (req: ModelRequest) => Effect.Effect<ModelTurn, ModelError>;
+  /** signal: cancellation/pause channel; providers must also enforce the
+   * B4 120s model-call timeout internally. */
+  readonly complete: (
+    req: ModelRequest,
+    signal?: AbortSignal,
+  ) => Effect.Effect<ModelTurn, ModelError>;
 }
 
 export const ModelPort = Context.Service<ModelPort>("agent-runtime/ModelPort");

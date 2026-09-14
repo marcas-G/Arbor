@@ -9,7 +9,7 @@ export const FakeProviderLive = {
     return Layer.succeed(
       ModelPort,
       ModelPort.of({
-        complete: () =>
+        complete: (_req, _signal) =>
           Effect.gen(function* () {
             const next = script.shift();
             if (next === undefined) {
