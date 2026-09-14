@@ -109,7 +109,13 @@ export async function boundaryVerify(input: {
 }
 
 export type AcceptResult =
-  | { readonly status: "accepted"; readonly mergedCommit: string; readonly storeCommit: string }
+  | {
+      readonly status: "accepted";
+      readonly mergedCommit: string;
+      readonly storeCommit: string;
+      readonly invalidated: ReadonlyArray<string>;
+    }
+  | { readonly status: "pending-approval"; readonly approvalId: string; readonly detail: string }
   | {
       readonly status:
         | "boundary-failed"
@@ -130,6 +136,8 @@ export async function acceptWorkspace(input: {
   readonly childWorkspaceId: string;
   readonly parentWorktreeDir: string;
   readonly parentLocalCommands: ReadonlyArray<VerificationCommand>;
+  /** internal: resume after an approval decision (skips the gate) */
+  readonly skipApproval?: boolean;
 }): Promise<AcceptResult> {
   const boundary = await boundaryVerify({
     storeDir: input.storeDir,
@@ -142,6 +150,19 @@ export async function acceptWorkspace(input: {
   }
   if (boundary.result.verdict !== "pass") {
     return { status: "boundary-failed", detail: boundary.filteredDetail };
+  }
+
+  // K1 (D-044): human approval gate — acceptance waits for a decision
+  const { approvalRequired, createPendingApproval } = await import("./approvals.js");
+  if (input.skipApproval !== true && (await approvalRequired(input.storeDir, input.parentWorkspaceId))) {
+    const approvalId = await createPendingApproval({
+      storeDir: input.storeDir,
+      parentWorkspaceId: input.parentWorkspaceId,
+      childWorkspaceId: input.childWorkspaceId,
+      boundaryVerdict: boundary.filteredDetail,
+      materials: `child result ${boundary.child.resultId} @ ${boundary.child.candidateCommit.slice(0, 8)}`,
+    });
+    return { status: "pending-approval", approvalId, detail: boundary.filteredDetail };
   }
 
   // merge child candidate into the parent branch
@@ -196,6 +217,7 @@ export async function acceptWorkspace(input: {
         childResultId: boundary.child.resultId,
         mergedCommit,
         acceptedAt: new Date().toISOString(),
+        status: "current",
       },
       null,
       2,
@@ -231,5 +253,28 @@ export async function acceptWorkspace(input: {
   if (!cas) {
     return { status: "merge-conflict", detail: "parent effective ref moved concurrently" };
   }
-  return { status: "accepted", mergedCommit, storeCommit };
+  // P5 (D-044 J1/J2): automatic propagation — impact analysis against the
+  // parent's previous accepted state, then selective invalidation
+  const { analyzeImpact, appendAcceptLog, invalidateAffected, lastAcceptedCommit } = await import(
+    "./impact.js"
+  );
+  const prev = await lastAcceptedCommit(input.storeDir, input.parentWorkspaceId);
+  const affected = await analyzeImpact({
+    storeDir: input.storeDir,
+    projectWorktreeDir: input.parentWorktreeDir,
+    parentWorkspaceId: input.parentWorkspaceId,
+    prevMergedCommit: prev,
+    currentMergedCommit: mergedCommit,
+    excludeChildId: input.childWorkspaceId,
+  });
+  const invalidated = await invalidateAffected({
+    storeDir: input.storeDir,
+    parentWorkspaceId: input.parentWorkspaceId,
+    affected,
+  });
+  await appendAcceptLog(input.storeDir, input.parentWorkspaceId, {
+    child: input.childWorkspaceId,
+    mergedCommit,
+  });
+  return { status: "accepted", mergedCommit, storeCommit, invalidated };
 }

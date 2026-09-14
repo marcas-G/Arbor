@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { Effect, Layer } from "effect";
 import { runAgentSession } from "../application/agent-runner.js";
@@ -20,7 +21,10 @@ export type CliArgs =
         | "project-tree"
         | "verify"
         | "boundary-verify"
-        | "workspace-accept";
+        | "workspace-accept"
+        | "approvals"
+        | "milestone"
+        | "dashboard";
       readonly repo?: string | undefined;
       readonly home?: string | undefined;
       readonly project?: string | undefined;
@@ -110,6 +114,35 @@ export function parseArgs(argv: string[]): CliArgs {
       project,
       workspace,
     };
+  }
+  if (argv[0] === "approvals" && ["list", "approve", "reject"].includes(argv[1] ?? "")) {
+    const project = flag("project");
+    if (project === undefined) {
+      return { kind: "err", message: "approvals requires --project <uuid> [--id <uuid>] [--note <text>]" };
+    }
+    return {
+      kind: "ok",
+      cmd: "approvals",
+      repo: undefined,
+      home: flag("home"),
+      project,
+      task: flag("id"),
+      workspace: flag("note"),
+    };
+  }
+  if (argv[0] === "project" && argv[1] === "milestone") {
+    const project = flag("project");
+    if (project === undefined) {
+      return { kind: "err", message: "project milestone requires --project <uuid> --summary <text>" };
+    }
+    return { kind: "ok", cmd: "milestone", repo: undefined, home: flag("home"), project, task: flag("summary") };
+  }
+  if (argv[0] === "dashboard") {
+    const project = flag("project");
+    if (project === undefined) {
+      return { kind: "err", message: "dashboard requires --project <uuid>" };
+    }
+    return { kind: "ok", cmd: "dashboard", repo: undefined, home: flag("home"), project };
   }
   if (argv[0] !== "project" || (argv[1] !== "init" && argv[1] !== "show")) {
     return {
@@ -230,12 +263,88 @@ export async function run(argv: string[]): Promise<number> {
     });
     if (r.status === "accepted") {
       console.log(
-        `accepted: merged ${r.mergedCommit.slice(0, 8)}, store ${r.storeCommit.slice(0, 8)}`,
+        `accepted: merged ${r.mergedCommit.slice(0, 8)}, store ${r.storeCommit.slice(0, 8)}` +
+          (r.invalidated.length > 0 ? `; invalidated: ${r.invalidated.map((w) => w.slice(0, 8)).join(", ")}` : ""),
       );
+      return 0;
+    }
+    if (r.status === "pending-approval") {
+      console.log(`pending approval ${r.approvalId} — decide with: arbor approvals approve --project <id> --id ${r.approvalId}`);
       return 0;
     }
     console.error(`accept failed (${r.status}): ${r.detail}`);
     return 1;
+  }
+  if (args.cmd === "approvals" || args.cmd === "milestone" || args.cmd === "dashboard") {
+    const { projectDirs, resolveArborHome } = await import("../application/ports.js");
+    const dirs = projectDirs(
+      resolveArborHome(args.home ?? "", process.env),
+      (args.project ?? "") as never,
+    );
+    const { readdir: rd } = await import("node:fs/promises");
+    const rootWs = (await rd(join(dirs.storeDir, "workspaces")))[0] as string;
+    if (args.cmd === "dashboard") {
+      const { startDashboard } = await import("./dashboard.js");
+      const d = await startDashboard({ projectId: args.project ?? "", home: args.home ?? "" });
+      console.log(`dashboard: ${d.url}`);
+      await new Promise(() => {});
+    }
+    if (args.cmd === "milestone") {
+      const { confirmMilestone } = await import("../application/approvals.js");
+      const rootCommit = execSync(`git -C ${dirs.worktreeDir} rev-parse HEAD`).toString().trim();
+      const m = await confirmMilestone({
+        storeDir: dirs.storeDir,
+        rootWorkspaceId: rootWs,
+        rootCommit,
+        summary: args.task ?? "(no summary)",
+      });
+      console.log(`milestone ${m.n} fixed @ ${rootCommit.slice(0, 8)}`);
+      return 0;
+    }
+    const { listApprovals, decideApproval } = await import("../application/approvals.js");
+    const sub = argv[1];
+    if (sub === "list") {
+      const list = await listApprovals(dirs.storeDir, rootWs);
+      for (const a of list) {
+        console.log(`${a.id} [${a.status}] accept ${a.childWorkspaceId.slice(0, 8)} — ${a.materials}`);
+      }
+      return 0;
+    }
+    const id = args.task;
+    if (id === undefined) {
+      console.error("approve/reject requires --id <uuid>");
+      return 2;
+    }
+    const decided = await decideApproval({
+      storeDir: dirs.storeDir,
+      parentWorkspaceId: rootWs,
+      id,
+      approve: sub === "approve",
+      ...(args.workspace !== undefined ? { note: args.workspace } : {}),
+    });
+    console.log(`approval ${decided?.status}: ${id.slice(0, 8)}`);
+    if (sub === "approve" && decided?.status === "approved") {
+      // continue the gated acceptance
+      const { acceptWorkspace } = await import("../application/boundary.js");
+      const { readFile: rf } = await import("node:fs/promises");
+      const { parse: py } = await import("yaml");
+      const y = py(await rf(join(dirs.storeDir, "workspaces", rootWs, "workspace.yaml"), "utf8")) as {
+        verification?: { local?: { commands?: object[] } };
+      };
+      const r = await acceptWorkspace({
+        projectId: args.project ?? "",
+        home: args.home ?? "",
+        storeDir: dirs.storeDir,
+        parentWorkspaceId: rootWs,
+        childWorkspaceId: decided.childWorkspaceId,
+        parentWorktreeDir: dirs.worktreeDir,
+        parentLocalCommands: (y.verification?.local?.commands ?? []) as never,
+        skipApproval: true,
+      });
+      console.log(r.status === "accepted" ? `accepted: merged ${r.mergedCommit.slice(0, 8)}` : `accept: ${r.status} ${r.detail}`);
+      return r.status === "accepted" ? 0 : 1;
+    }
+    return 0;
   }
   if (args.cmd === "project-tree") {
     const { projectDirs, resolveArborHome } = await import("../application/ports.js");
