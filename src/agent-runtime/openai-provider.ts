@@ -70,10 +70,11 @@ export const OpenAiProviderLive = (deps: Deps = {}) =>
           if (key === undefined || key === "") {
             return yield* new ModelError({ message: "OPENAI_API_KEY is required" });
           }
+          const base = (env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, "");
           const f = deps.fetchImpl ?? fetch;
           const res = yield* Effect.tryPromise({
             try: () =>
-              f("https://api.openai.com/v1/chat/completions", {
+              f(`${base}/chat/completions`, {
                 method: "POST",
                 headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
                 body: JSON.stringify({

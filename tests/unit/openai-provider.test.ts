@@ -97,6 +97,35 @@ describe("OpenAIProvider (A1/A3/A4)", () => {
     expect(msgs[3]).toEqual({ role: "tool", tool_call_id: "c1", content: "result" });
   });
 
+  it("OPENAI_BASE_URL overrides the endpoint (DeepSeek-compatible gateways)", async () => {
+    let hit = "";
+    const fakeFetch: typeof fetch = async (url) => {
+      hit = String(url);
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }),
+        { status: 200 },
+      );
+    };
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const p = yield* ModelPort;
+        yield* p.complete({ system: "s", messages: [{ role: "user", content: "x" }] });
+      }).pipe(
+        Effect.provide(
+          OpenAiProviderLive({
+            fetchImpl: fakeFetch,
+            env: {
+              OPENAI_API_KEY: "k",
+              OPENAI_MODEL: "deepseek-chat",
+              OPENAI_BASE_URL: "https://api.deepseek.com/v1/",
+            },
+          }),
+        ),
+      ),
+    );
+    expect(hit).toBe("https://api.deepseek.com/v1/chat/completions");
+  });
+
   it("missing OPENAI_MODEL fails (A2)", async () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
