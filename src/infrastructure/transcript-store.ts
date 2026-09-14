@@ -11,6 +11,8 @@ export class TranscriptError extends Data.TaggedError("TranscriptError")<{
   message: string;
 }> {}
 
+class SkipLine extends Data.TaggedError("SkipLine")<{}> {}
+
 /** Append-only JSONL transcript. The writer owns sequence monotonicity. */
 export interface TranscriptWriter {
   readonly append: (
@@ -60,14 +62,27 @@ export function readTranscript(file: string): Effect.Effect<TranscriptEnvelope[]
       catch: (e) => new TranscriptError({ message: `read: ${String(e)}` }),
     });
     const events: TranscriptEnvelope[] = [];
-    for (const line of text.split("\n")) {
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i] as string;
+      const isLast = i === lines.length - 1 || lines.slice(i + 1).every((l) => l.trim() === "");
       if (line.trim() === "") {
         continue;
       }
       const parsed = yield* Effect.try({
         try: () => JSON.parse(line) as TranscriptEnvelope,
-        catch: (e) => new TranscriptError({ message: `bad json line: ${String(e)}` }),
-      });
+        // a torn FINAL line is a crash remnant of an interrupted append —
+        // ignore it (append-only: the writer resumes after the last whole line)
+        catch: (e) =>
+          isLast
+            ? new SkipLine()
+            : new TranscriptError({ message: `bad json line ${i + 1}: ${String(e)}` }),
+      }).pipe(
+        Effect.catchTag("SkipLine", () => Effect.succeed(undefined as unknown as TranscriptEnvelope)),
+      );
+      if (parsed === undefined) {
+        continue;
+      }
       yield* Effect.try({
         try: () =>
           void Schema.decodeUnknownSync(transcriptEventSchema)({

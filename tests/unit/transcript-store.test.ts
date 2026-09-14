@@ -78,4 +78,26 @@ describe("transcript writer/reader (D-035 E1)", () => {
     const events = await Effect.runPromise(readTranscript(file));
     expect(events).toEqual([]);
   });
+
+  it("a torn final line (crash remnant) is ignored; a torn middle line is fatal", async () => {
+    const dir = join(tmp(), "a5");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "transcript.jsonl");
+    const good = JSON.stringify({
+      schemaVersion: 1,
+      eventId: "e1",
+      agentId: "a",
+      sequence: 1,
+      timestamp: "2026-09-14T00:00:00Z",
+      type: "user_input",
+      payload: { text: "hi" },
+    });
+    writeFileSync(file, `${good}\n{"schemaVersion":1,"eventId":"e2","agentId`); // torn tail
+    const events = await Effect.runPromise(readTranscript(file));
+    expect(events.length).toBe(1);
+
+    writeFileSync(file, `${good}\n{"broken\n${good}\n`);
+    const exit = await Effect.runPromiseExit(readTranscript(file));
+    expect(exit._tag).toBe("Failure");
+  });
 });
