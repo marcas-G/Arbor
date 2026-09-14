@@ -65,7 +65,7 @@ describe("transcript writer/reader (D-035 E1)", () => {
     const dir = join(tmp(), "a3");
     mkdirSync(dir, { recursive: true });
     const file = join(dir, "transcript.jsonl");
-    writeFileSync(file, JSON.stringify({ type: "bogus_event", payload: {} }) + "\n");
+    writeFileSync(file, `${JSON.stringify({ type: "bogus_event", payload: {} })}\n`);
     const exit = await Effect.runPromiseExit(readTranscript(file));
     expect(exit._tag).toBe("Failure");
   });

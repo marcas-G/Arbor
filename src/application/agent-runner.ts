@@ -19,6 +19,7 @@ import { makeReadFileTool } from "../agent-runtime/tools/read-file.js";
 import { makeRunCommandTool } from "../agent-runtime/tools/run-command.js";
 import { makeWorkspaceRequestTools } from "../agent-runtime/tools/workspace-requests.js";
 import { makeWriteFileTool } from "../agent-runtime/tools/write-file.js";
+import { acquireAgentLock } from "../infrastructure/agent-lock.js";
 import type { TranscriptWriter } from "../infrastructure/transcript-store.js";
 import { openTranscriptWriter, readTranscript } from "../infrastructure/transcript-store.js";
 import { readContextPackage } from "../infrastructure/workspace-projection-reader.js";
@@ -119,6 +120,16 @@ export async function runAgentSession(
     setup.value.kind === "root"
       ? dirs.worktreeDir
       : join(dirs.projectDir, "worktrees", workspaceId);
+
+  // --- single-writer gate: one active primary writer per agent transcript
+  const lock = await acquireAgentLock(`${dirs.agentStateDir}/${agentId}/transcript.lock`);
+  if (!lock.ok) {
+    throw new Error(
+      lock.heldByPid > 0
+        ? `another agent run holds this workspace (pid ${lock.heldByPid}); refusing to start`
+        : "could not acquire the agent lock",
+    );
+  }
 
   // --- transcript resume (E5)
   const transcriptFile = `${dirs.agentStateDir}/${agentId}/transcript.jsonl`;
@@ -317,5 +328,8 @@ export async function runAgentSession(
       yield* db.close();
     }),
   );
+  // normal path releases the lock; crash/exception paths leave it to
+  // stale-pid reclaim (a held lock whose owner died is reclaimable by design)
+  await lock.lock.release();
   return { finish: result.finish, steps: result.steps, agentId, runId, resumed: resumable };
 }

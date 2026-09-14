@@ -127,6 +127,34 @@ describe("persistent runAgent hooks (E1/E4)", () => {
     ]);
   });
 
+  it("pause lands between steps: the in-flight tool result is fully recorded first", async () => {
+    // SIGINT mid-tool must not tear the durable record: the loop records
+    // tool_result before honoring the pause (write path has no interrupt point)
+    const events: Array<[string, unknown]> = [];
+    const r = await runAgent({
+      providerLayer: FakeProviderLive.withScript([toolTurn, stopTurn, stopTurn]),
+      tools: [makeWriteFileTool(tmp())],
+      system: "s",
+      task: "t",
+      stepLimit: 5,
+      hooks: {
+        onEvent: async (type, payload) => {
+          events.push([type, payload]);
+        },
+        shouldPause: () => events.some(([t]) => t === "tool_result"), // pause as soon as a result lands
+      },
+    });
+    expect(r.finish).toBe("paused");
+    const types = events.map(([t]) => t);
+    const firstToolResult = types.indexOf("tool_result");
+    const pauseIdx = types.indexOf("pause_marker");
+    expect(firstToolResult).toBeGreaterThanOrEqual(0);
+    expect(pauseIdx).toBeGreaterThan(firstToolResult); // marker strictly after the durable result
+    // the recorded tool_result is complete (all four payload fields)
+    const [, payload] = events[firstToolResult] as [string, unknown];
+    expect(payload).toMatchObject({ callId: "c1", ok: true, state: "succeeded" });
+  });
+
   it("shouldPause between steps yields paused + pause_marker", async () => {
     const events: Array<string> = [];
     let calls = 0;

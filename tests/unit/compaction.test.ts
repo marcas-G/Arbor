@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  compactMessages,
-  DEFAULT_KEEP_TAIL,
-  DEFAULT_THRESHOLD,
-} from "../../src/agent-runtime/compaction.js";
+import { compactMessages, DEFAULT_KEEP_TAIL } from "../../src/agent-runtime/compaction.js";
 import type { ChatMessage } from "../../src/agent-runtime/provider.js";
 
 const mk = (i: number): ChatMessage[] => [
@@ -38,7 +34,7 @@ describe("compactMessages (D-036)", () => {
   });
 
   it("summary is char-capped for huge histories", () => {
-    const big: ChatMessage[] = Array.from({ length: 100 }, (_, i) => ({
+    const big: ChatMessage[] = Array.from({ length: 100 }, (_, _i) => ({
       role: "user",
       content: "x".repeat(200),
     }));

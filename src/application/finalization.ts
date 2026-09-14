@@ -82,7 +82,7 @@ export async function finalizeCompletion(input: {
   if (status === "") {
     return { status: "no-changes", detail: "working copy has no changes to commit" };
   }
-  const candidate = await git(worktreeDir, [
+  const _candidate = await git(worktreeDir, [
     "-c",
     "user.name=arbor",
     "-c",

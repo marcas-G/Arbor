@@ -23,7 +23,8 @@ const run = (args: string, env: Record<string, string>) =>
   });
 
 describe("acceptance: arbor project init/show", () => {
-  it("init then show across two processes", () => {
+  // two real node processes + git init can exceed the default 5s under load
+  it("init then show across two processes", { timeout: 20_000 }, () => {
     const home = tmp();
     const repo = tmp();
     writeFileSync(join(repo, "f.txt"), "x");

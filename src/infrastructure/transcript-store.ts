@@ -78,7 +78,9 @@ export function readTranscript(file: string): Effect.Effect<TranscriptEnvelope[]
             ? new SkipLine()
             : new TranscriptError({ message: `bad json line ${i + 1}: ${String(e)}` }),
       }).pipe(
-        Effect.catchTag("SkipLine", () => Effect.succeed(undefined as unknown as TranscriptEnvelope)),
+        Effect.catchTag("SkipLine", () =>
+          Effect.succeed(undefined as unknown as TranscriptEnvelope),
+        ),
       );
       if (parsed === undefined) {
         continue;
