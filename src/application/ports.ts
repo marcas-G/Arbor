@@ -1,4 +1,4 @@
-import { Context, Data, Effect } from "effect";
+import { Context, Data, type Effect } from "effect";
 import type { ProjectId, WorkspaceId } from "../domain/ids.js";
 
 // ---- tagged errors (EFFECT_TS_ARCHITECTURE error families)
@@ -55,7 +55,10 @@ export const GitPort = Context.Service<GitPort>("application/GitPort");
 
 // ---- SqlitePort (open implies auto-migration, §7)
 export interface DbHandle {
-  readonly queryOne: (sql: string, ...params: unknown[]) => Effect.Effect<unknown | undefined, DbError>;
+  readonly queryOne: (
+    sql: string,
+    ...params: unknown[]
+  ) => Effect.Effect<unknown | undefined, DbError>;
   readonly execute: (sql: string, ...params: unknown[]) => Effect.Effect<void, DbError>;
   readonly close: () => Effect.Effect<void, DbError>;
 }
