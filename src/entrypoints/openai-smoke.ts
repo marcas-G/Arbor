@@ -1,8 +1,11 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Layer } from "effect";
 import { runAgent } from "../agent-runtime/agent-loop.js";
 import { OpenAiProviderLive } from "../agent-runtime/openai-provider.js";
+import { OpenAiResponsesProviderLive } from "../agent-runtime/openai-responses-provider.js";
+import type { ModelPort } from "../agent-runtime/provider.js";
 import { makeEditFileTool } from "../agent-runtime/tools/edit-file.js";
 import { makeGitStatusTool } from "../agent-runtime/tools/git-status.js";
 import { makeReadFileTool } from "../agent-runtime/tools/read-file.js";
@@ -10,12 +13,17 @@ import { makeRunCommandTool } from "../agent-runtime/tools/run-command.js";
 import { makeWriteFileTool } from "../agent-runtime/tools/write-file.js";
 
 /** P1-03 acceptance: one real OpenAI-backed small coding task.
- * Usage: OPENAI_API_KEY=... OPENAI_MODEL=... node dist/entrypoints/openai-smoke.js */
+ * Usage: OPENAI_API_KEY=... OPENAI_MODEL=... [OPENAI_BASE_URL=...] \
+ *   [OPENAI_API_STYLE=responses|chat_completions] node dist/entrypoints/openai-smoke.js */
 async function main(): Promise<number> {
+  const style = process.env.OPENAI_API_STYLE ?? "chat_completions";
+  const providerLayer: Layer.Layer<ModelPort> =
+    style === "responses" ? OpenAiResponsesProviderLive() : OpenAiProviderLive();
+  console.log(`provider style: ${style}`);
   const root = mkdtempSync(join(tmpdir(), "arbor-openai-smoke-"));
   try {
     const r = await runAgent({
-      providerLayer: OpenAiProviderLive(),
+      providerLayer,
       tools: [
         makeReadFileTool(root),
         makeWriteFileTool(root),
