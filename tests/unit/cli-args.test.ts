@@ -26,6 +26,21 @@ describe("parseArgs", () => {
     expect(parseArgs(["project", "init", "--repo", "/r"])).toMatchObject({ home: undefined });
   });
 
+  it("agent run with project and task", () => {
+    expect(parseArgs(["agent", "run", "--project", "uuid-1", "--task", "do x"])).toEqual({
+      kind: "ok",
+      cmd: "agent-run",
+      repo: undefined,
+      home: undefined,
+      project: "uuid-1",
+      task: "do x",
+    });
+  });
+
+  it("agent run without --project → err", () => {
+    expect(parseArgs(["agent", "run"])).toMatchObject({ kind: "err" });
+  });
+
   it("unknown command → err", () => {
     expect(parseArgs(["nope"])).toMatchObject({ kind: "err" });
   });

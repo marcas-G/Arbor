@@ -1,16 +1,21 @@
 import { Effect, Layer } from "effect";
+import { runAgentSession } from "../application/agent-runner.js";
+import { SqlitePort } from "../application/ports.js";
 import { ProjectBootstrap, ProjectBootstrapLive } from "../application/project-bootstrap.js";
 import { FsNodeLive } from "../infrastructure/fs-node.js";
 import { GitCliLive } from "../infrastructure/git-cli.js";
+import { OpenAiProviderLive } from "../infrastructure/openai-chat-provider.js";
+import { OpenAiResponsesProviderLive } from "../infrastructure/openai-responses-provider.js";
 import { SqliteNodeLive } from "../infrastructure/sqlite-node.js";
 
 export type CliArgs =
   | {
       readonly kind: "ok";
-      readonly cmd: "project-init" | "project-show";
+      readonly cmd: "project-init" | "project-show" | "agent-run";
       readonly repo?: string | undefined;
       readonly home?: string | undefined;
       readonly project?: string | undefined;
+      readonly task?: string | undefined;
     }
   | { readonly kind: "err"; readonly message: string };
 
@@ -19,11 +24,25 @@ export function parseArgs(argv: string[]): CliArgs {
     const i = argv.indexOf(`--${name}`);
     return i >= 0 ? argv[i + 1] : undefined;
   };
+  if (argv[0] === "agent" && argv[1] === "run") {
+    const project = flag("project");
+    if (project === undefined) {
+      return { kind: "err", message: "agent run requires --project <uuid>" };
+    }
+    return {
+      kind: "ok",
+      cmd: "agent-run",
+      repo: undefined,
+      home: flag("home"),
+      project,
+      task: flag("task"),
+    };
+  }
   if (argv[0] !== "project" || (argv[1] !== "init" && argv[1] !== "show")) {
     return {
       kind: "err",
       message:
-        "usage: arbor project init --repo <path> [--home <path>] | arbor project show --project <uuid> [--home <path>]",
+        "usage: arbor project init --repo <path> [--home <path>] | arbor project show --project <uuid> [--home <path>] | arbor agent run --project <uuid> [--task <text>] [--home <path>]",
     };
   }
   if (argv[1] === "init") {
@@ -51,6 +70,30 @@ export async function run(argv: string[]): Promise<number> {
   if (args.kind === "err") {
     console.error(args.message);
     return 2;
+  }
+  if (args.cmd === "agent-run") {
+    const style = process.env.OPENAI_API_STYLE ?? "chat_completions";
+    const providerLayer =
+      style === "responses" ? OpenAiResponsesProviderLive() : OpenAiProviderLive();
+    const sql = await Effect.runPromise(SqlitePort.pipe(Effect.provide(SqliteNodeLive)));
+    try {
+      const r = await runAgentSession(
+        {
+          projectId: args.project ?? "",
+          home: args.home ?? "",
+          providerLayer,
+          task: args.task,
+        },
+        sql,
+      );
+      console.log(`agent ${r.agentId}`);
+      console.log(`run ${r.runId} (${r.resumed ? "resumed" : "fresh"})`);
+      console.log(`finish=${r.finish} steps=${r.steps}`);
+      return r.finish === "stop" ? 0 : 1;
+    } catch (e) {
+      console.error(String(e));
+      return 1;
+    }
   }
   const program =
     args.cmd === "project-init"
