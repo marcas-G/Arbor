@@ -184,7 +184,7 @@ main{flex:1;display:grid;grid-template-columns:296px 1fr;min-height:0}
     <div class="sub2">choose a specimen or press a new one</div>
     <div id="projList"></div>
     <div class="newRow">
-      <input id="newRepo" placeholder="git 仓库路径（如 /home/you/myapp）">
+      <input id="newRepo" placeholder="路径（已有的 git 仓库，或任意新路径——会自动建库）">
       <button class="btn" onclick="createProject()">新建 ▸</button>
     </div>
   </div>
@@ -329,6 +329,24 @@ async function main(): Promise<number> {
     port: API_PORT,
   });
   const ui = createServer((req, res) => {
+    // same-origin: /api/* is reverse-proxied to the api port, so the page's
+    // relative fetches always reach the contract executor
+    if ((req.url ?? "").startsWith("/api/")) {
+      const { request } = require("node:http") as typeof import("node:http");
+      const proxied = request(
+        { host: "127.0.0.1", port: API_PORT, path: req.url, method: req.method, headers: req.headers },
+        (up) => {
+          res.writeHead(up.statusCode ?? 502, up.headers);
+          up.pipe(res);
+        },
+      );
+      proxied.on("error", () => {
+        res.statusCode = 502;
+        res.end(JSON.stringify({ error: "api upstream unreachable" }));
+      });
+      req.pipe(proxied);
+      return;
+    }
     res.setHeader("content-type", "text/html");
     res.end(PAGE);
   });

@@ -143,6 +143,42 @@ export async function startArborServer(opts: {
   };
 }
 
+
+/** D-046: explicit project creation may initialize the given path —
+ * mkdir -p, git init if absent, and a base commit if the history is empty.
+ * (Relaxes the P1 rule against silently git-init'ing arbitrary directories:
+ * this runs only on an explicit user request from the console.) */
+async function ensureSourceRepo(repoPath: string): Promise<void> {
+  const { execFile } = await import("node:child_process");
+  const { mkdirSync, existsSync, writeFileSync } = await import("node:fs");
+  const run = (args: string[], cwd: string) =>
+    new Promise<void>((resolve, reject) => {
+      execFile("git", args, { cwd, windowsHide: true }, (err, so, se) => {
+        if (err !== null) {
+          reject(new Error(String(se || so || err.message)));
+        } else {
+          resolve();
+        }
+      });
+    });
+  mkdirSync(repoPath, { recursive: true });
+  if (!existsSync(join(repoPath, ".git"))) {
+    await run(["init", "--quiet"], repoPath);
+  }
+  const hasCommit = await new Promise<boolean>((resolve) => {
+    execFile("git", ["-C", repoPath, "rev-parse", "--verify", "--quiet", "HEAD"], { windowsHide: true }, (err) => {
+      resolve(err === null);
+    });
+  });
+  if (!hasCommit) {
+    if (!existsSync(join(repoPath, "README.md"))) {
+      writeFileSync(join(repoPath, "README.md"), "# created by arbor\n", "utf8");
+    }
+    await run(["add", "-A"], repoPath);
+    await run(["-c", "user.name=arbor", "-c", "user.email=arbor@local", "commit", "--quiet", "-m", "base"], repoPath);
+  }
+}
+
 /** The one place endpoints map to application calls. */
 async function dispatch(
   path: string,
@@ -190,6 +226,7 @@ async function dispatch(
         }
         return { projects: out };
       }
+      await ensureSourceRepo(inArgs.repoPath as string);
       const { Effect, Layer } = await import("effect");
       const BootstrapLayers = ProjectBootstrapLive.pipe(
         Layer.provideMerge(GitCliLive),
