@@ -16,9 +16,12 @@ import { makeEditFileTool } from "../agent-runtime/tools/edit-file.js";
 import { makeGitStatusTool } from "../agent-runtime/tools/git-status.js";
 import { makeReadFileTool } from "../agent-runtime/tools/read-file.js";
 import { makeRunCommandTool } from "../agent-runtime/tools/run-command.js";
+import { makeWorkspaceRequestTools } from "../agent-runtime/tools/workspace-requests.js";
 import { makeWriteFileTool } from "../agent-runtime/tools/write-file.js";
+import type { TranscriptWriter } from "../infrastructure/transcript-store.js";
 import { openTranscriptWriter, readTranscript } from "../infrastructure/transcript-store.js";
 import { readContextPackage } from "../infrastructure/workspace-projection-reader.js";
+import { finalizeCompletion } from "./finalization.js";
 import { effectiveRefName, projectDirs, resolveArborHome, type SqlitePort } from "./ports.js";
 
 export interface AgentSessionInput {
@@ -121,17 +124,55 @@ export async function runAgentSession(
     }),
   );
   const system = renderSystemPrompt(pkg);
+  // transcript writer is created later; tools bind to it lazily (loop runs after binding)
+  let activeWriter: TranscriptWriter | undefined;
   const tools = [
     makeReadFileTool(dirs.worktreeDir),
     makeWriteFileTool(dirs.worktreeDir),
     makeEditFileTool(dirs.worktreeDir),
     makeRunCommandTool(dirs.worktreeDir),
     makeGitStatusTool(dirs.worktreeDir),
+    ...makeWorkspaceRequestTools({
+      pkg,
+      record: async (requestType, payloadJson) => {
+        if (activeWriter === undefined) {
+          throw new Error("transcript writer not bound");
+        }
+        await Effect.runPromise(
+          activeWriter.append("workspace_request", {
+            requestId: crypto.randomUUID(),
+            requestType,
+            payloadJson,
+          }),
+        );
+      },
+      onCompletion: async (summary) => {
+        const r = await finalizeCompletion({
+          worktreeDir: dirs.worktreeDir,
+          storeDir: dirs.storeDir,
+          workspaceId,
+          summary,
+        });
+        switch (r.status) {
+          case "pass":
+            return `ACTIVATED: result ${r.resultId} (candidate ${r.candidateCommit?.slice(0, 8)}) is now the effective state. Finish now.`;
+          case "fail":
+            return `VERIFICATION FAILED, result NOT activated: ${r.detail}. Fix the issues; the candidate commit remains for inspection.`;
+          case "inconclusive":
+            return `VERIFICATION INCONCLUSIVE (process problem, not a test failure): ${r.detail}. The result is not activated.`;
+          case "no-changes":
+            return "COMPLETION REJECTED: the working copy has no changes to commit.";
+          case "activation-conflict":
+            return `ACTIVATION CONFLICT: ${r.detail}.`;
+        }
+      },
+    }),
   ];
 
   // --- run row + transcript writer
   const lastSeq = priorEvents.at(-1)?.sequence ?? 0;
   const writer = await Effect.runPromise(openTranscriptWriter(transcriptFile, agentId, lastSeq));
+  activeWriter = writer;
   if (resumable) {
     await Effect.runPromise(writer.append("resume_marker", {}));
   }
