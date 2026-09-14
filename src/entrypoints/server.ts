@@ -203,7 +203,7 @@ async function openPicker(){
   try{
     const r=await api('GET','/api/projects');
     box.innerHTML=r.projects.length?r.projects.map(pr=>
-      '<div class="projItem" onclick="enterProject(\''+pr.projectId+'\',\''+esc2(repoName(pr.sourceRepoPath))+'\')">'+
+      '<div class="projItem" onclick="enterProject(\\''+pr.projectId+'\\',\\''+esc2(repoName(pr.sourceRepoPath))+'\\')">'+
       '<div class="pn"><b>'+esc2(repoName(pr.sourceRepoPath))+'</b> <span class="pi">'+pr.createdAt.slice(0,10)+'</span></div>'+
       (pr.hasTree?'<span class="badge2">tree</span>':'')+'</div>').join('')
       :'<div class="projEmpty">还没有项目——在下方按下一个</div>';
@@ -223,7 +223,6 @@ function enterProject(pid,name){
   loadAll();
 }
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2400)}
-function home(){return $('home').value.trim()}
 async function api(m,p,b){const r=await fetch(p,{method:m,...(m==='POST'?{body:JSON.stringify(b||{}),headers:{'content-type':'application/json'}}:{})});
  const j=await r.json();if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j}
 
@@ -323,22 +322,26 @@ async function main(): Promise<number> {
     const i = args.indexOf(`--${name}`);
     return i >= 0 ? args[i + 1] : undefined;
   };
+  const API_PORT = flag("port") !== undefined ? Number(flag("port")) : 7840;
+  const CONSOLE_PORT = API_PORT + 1;
   const server = await startArborServer({
     home: flag("home") ?? "",
-    ...(flag("port") !== undefined ? { port: Number(flag("port")) } : {}),
+    port: API_PORT,
   });
   const ui = createServer((req, res) => {
     res.setHeader("content-type", "text/html");
     res.end(PAGE);
   });
-  await new Promise<void>((resolve) => {
-    ui.listen(0, "127.0.0.1", resolve);
+  await new Promise<void>((resolve, reject) => {
+    ui.once("error", reject);
+    ui.listen(CONSOLE_PORT, "127.0.0.1", resolve);
+  }).catch((e) => {
+    console.error(`console port ${CONSOLE_PORT} busy — stop the old server first (pkill -f entrypoints/server.js) or pass --port`);
+    throw e;
   });
-  const uiAddr = ui.address();
-  const uiPort = typeof uiAddr === "object" && uiAddr !== null ? uiAddr.port : 0;
   console.log(`arbor api:      ${server.url}`);
   console.log(`arbor openapi:  ${server.url}/api/openapi.json`);
-  console.log(`arbor console:  http://127.0.0.1:${uiPort}`);
+  console.log(`arbor console:  http://127.0.0.1:${CONSOLE_PORT}  (固定端口，不随重启变化)`);
   await new Promise(() => {});
   return 0;
 }
