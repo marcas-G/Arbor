@@ -13,6 +13,7 @@
     "useUnknownInCatchVariables": true,
     "verbatimModuleSyntax": true,
     "noImplicitOverride": true,
+    "skipLibCheck": true,
     "lib": ["ESNext"],
     "types": ["node"]
   },
