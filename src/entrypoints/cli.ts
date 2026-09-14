@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { Effect, Layer } from "effect";
 import { runAgentSession } from "../application/agent-runner.js";
 import { SqlitePort } from "../application/ports.js";
@@ -12,7 +13,14 @@ import { SqliteNodeLive } from "../infrastructure/sqlite-node.js";
 export type CliArgs =
   | {
       readonly kind: "ok";
-      readonly cmd: "project-init" | "project-show" | "agent-run" | "project-tree";
+      readonly cmd:
+        | "project-init"
+        | "project-show"
+        | "agent-run"
+        | "project-tree"
+        | "verify"
+        | "boundary-verify"
+        | "workspace-accept";
       readonly repo?: string | undefined;
       readonly home?: string | undefined;
       readonly project?: string | undefined;
@@ -47,6 +55,61 @@ export function parseArgs(argv: string[]): CliArgs {
       return { kind: "err", message: "project tree requires --project <uuid>" };
     }
     return { kind: "ok", cmd: "project-tree", repo: undefined, home: flag("home"), project };
+  }
+  if (argv[0] === "verify") {
+    const project = flag("project");
+    const candidate = flag("candidate");
+    if (project === undefined || candidate === undefined) {
+      return {
+        kind: "err",
+        message: "verify requires --project <uuid> --candidate <sha> [--workspace <uuid>]",
+      };
+    }
+    return {
+      kind: "ok",
+      cmd: "verify",
+      repo: undefined,
+      home: flag("home"),
+      project,
+      task: candidate,
+      workspace: flag("workspace"),
+    };
+  }
+  if (argv[0] === "boundary" && argv[1] === "verify") {
+    const project = flag("project");
+    const workspace = flag("workspace");
+    if (project === undefined || workspace === undefined) {
+      return {
+        kind: "err",
+        message: "boundary verify requires --project <uuid> --workspace <child-uuid>",
+      };
+    }
+    return {
+      kind: "ok",
+      cmd: "boundary-verify",
+      repo: undefined,
+      home: flag("home"),
+      project,
+      workspace,
+    };
+  }
+  if (argv[0] === "workspace" && argv[1] === "accept") {
+    const project = flag("project");
+    const workspace = flag("workspace");
+    if (project === undefined || workspace === undefined) {
+      return {
+        kind: "err",
+        message: "workspace accept requires --project <uuid> --workspace <child-uuid>",
+      };
+    }
+    return {
+      kind: "ok",
+      cmd: "workspace-accept",
+      repo: undefined,
+      home: flag("home"),
+      project,
+      workspace,
+    };
   }
   if (argv[0] !== "project" || (argv[1] !== "init" && argv[1] !== "show")) {
     return {
@@ -109,6 +172,70 @@ export async function run(argv: string[]): Promise<number> {
       console.error(String(e));
       return 1;
     }
+  }
+  if (args.cmd === "verify" || args.cmd === "boundary-verify" || args.cmd === "workspace-accept") {
+    const { projectDirs, resolveArborHome } = await import("../application/ports.js");
+    const dirs = projectDirs(
+      resolveArborHome(args.home ?? "", process.env),
+      (args.project ?? "") as never,
+    );
+    const { readdir, readFile } = await import("node:fs/promises");
+    const { parse: parseYaml } = await import("yaml");
+    const rootWs = (await readdir(join(dirs.storeDir, "workspaces"))).find(
+      (w) => w.length > 0,
+    ) as string;
+    const wsArg = args.workspace ?? rootWs;
+    if (args.cmd === "verify") {
+      const { verifyCandidate } = await import("../application/verify.js");
+      const r = await verifyCandidate({
+        projectId: args.project ?? "",
+        home: args.home ?? "",
+        workspaceId: wsArg,
+        storeDir: dirs.storeDir,
+        worktreeDir:
+          wsArg === rootWs ? dirs.worktreeDir : join(dirs.projectDir, "worktrees", wsArg),
+        candidateSha: args.task ?? "",
+      });
+      console.log(`verdict=${r.verdict}`);
+      for (const o of r.outcomes) {
+        console.log(`  ${o.name}: ${o.exit}`);
+      }
+      return r.verdict === "pass" ? 0 : 1;
+    }
+    if (args.cmd === "boundary-verify") {
+      const { boundaryVerify } = await import("../application/boundary.js");
+      const r = await boundaryVerify({
+        storeDir: dirs.storeDir,
+        parentWorkspaceId: rootWs,
+        childWorkspaceId: args.workspace ?? "",
+        projectWorktreeDir: dirs.worktreeDir,
+      });
+      console.log(`verdict=${r.result.verdict}`);
+      console.log(r.filteredDetail);
+      return r.result.verdict === "pass" ? 0 : 1;
+    }
+    // workspace-accept
+    const { acceptWorkspace } = await import("../application/boundary.js");
+    const y = parseYaml(
+      await readFile(join(dirs.storeDir, "workspaces", rootWs, "workspace.yaml"), "utf8"),
+    ) as { verification?: { local?: { commands?: object[] } } };
+    const r = await acceptWorkspace({
+      projectId: args.project ?? "",
+      home: args.home ?? "",
+      storeDir: dirs.storeDir,
+      parentWorkspaceId: rootWs,
+      childWorkspaceId: args.workspace ?? "",
+      parentWorktreeDir: dirs.worktreeDir,
+      parentLocalCommands: (y.verification?.local?.commands ?? []) as never,
+    });
+    if (r.status === "accepted") {
+      console.log(
+        `accepted: merged ${r.mergedCommit.slice(0, 8)}, store ${r.storeCommit.slice(0, 8)}`,
+      );
+      return 0;
+    }
+    console.error(`accept failed (${r.status}): ${r.detail}`);
+    return 1;
   }
   if (args.cmd === "project-tree") {
     const { projectDirs, resolveArborHome } = await import("../application/ports.js");

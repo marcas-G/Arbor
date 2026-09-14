@@ -99,6 +99,56 @@ export async function createChild(
       };
     }
 
+    // --- H5 (D-042): optional semantic governance gate — the proposal JSON
+    // goes to a configured command's stdin; a fresh independent process
+    // (isolated verifier) decides. Non-zero exit rejects with its first line.
+    const gov =
+      (
+        parentYaml as {
+          governance?: { commands?: Array<{ name?: string; argv?: string[]; timeoutMs?: number }> };
+        }
+      ).governance?.commands ?? [];
+    if (gov.length > 0) {
+      const proposal = JSON.stringify(
+        {
+          parentWorkspaceId: input.parentWorkspaceId,
+          intent: input.intent,
+          responsibility: input.responsibility,
+          deliverables: input.deliverables,
+          writablePrefixes: input.writablePrefixes,
+        },
+        null,
+        2,
+      );
+      for (const cmd of gov) {
+        if (cmd.argv === undefined || cmd.argv.length === 0) {
+          return { ok: false, reason: "invalid", detail: "governance command misconfigured" };
+        }
+        const verdict = await new Promise<{ pass: boolean; reason: string }>((resolve) => {
+          const child = execFile(
+            cmd.argv?.[0] as string,
+            cmd.argv?.slice(1) ?? [],
+            { windowsHide: true, timeout: cmd.timeoutMs ?? 60_000 },
+            (err, stdout) => {
+              if (err === null) {
+                resolve({ pass: true, reason: "governance pass" });
+              } else {
+                const first =
+                  String(stdout)
+                    .split("\n")
+                    .find((l) => l.trim().length > 0) ?? "rejected by governance";
+                resolve({ pass: false, reason: first.slice(0, 200) });
+              }
+            },
+          );
+          child.stdin?.end(proposal, "utf8");
+        });
+        if (!verdict.pass) {
+          return { ok: false, reason: "invalid", detail: `governance: ${verdict.reason}` };
+        }
+      }
+    }
+
     // --- child skeleton in the store (P1-01B templates, child resource set)
     const wsDir = join(storeDir, "workspaces", childWorkspaceId);
     await mkdir(join(wsDir, "design"), { recursive: true });

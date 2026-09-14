@@ -169,6 +169,9 @@ export async function finalizeCompletion(input: {
     verificationId,
     outcome: "PASS",
     commands: outcomes,
+    // H1 (D-042): frozen snapshot of the command definitions as read at
+    // prepare time — weakening workspace.yaml afterwards cannot rewrite history
+    commandsSnapshot: commands,
     verifiedCommit: candidateCommit,
   });
   await writeJson(`history/effective-results/${resultId}.json`, {
