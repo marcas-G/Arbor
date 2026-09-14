@@ -24,10 +24,5 @@
   "dependencies": {
     "better-sqlite3": "13.0.3",
     "effect": "4.0.0-rc.115"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3"
-    ]
   }
 }
