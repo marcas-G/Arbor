@@ -59,6 +59,7 @@ export interface DbHandle {
     sql: string,
     ...params: unknown[]
   ) => Effect.Effect<unknown | undefined, DbError>;
+  readonly queryMany: (sql: string, ...params: unknown[]) => Effect.Effect<unknown[], DbError>;
   readonly execute: (sql: string, ...params: unknown[]) => Effect.Effect<void, DbError>;
   readonly close: () => Effect.Effect<void, DbError>;
 }

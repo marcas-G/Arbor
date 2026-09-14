@@ -39,6 +39,7 @@ export const SqliteNodeLive = Layer.succeed(
         const handle: DbHandle = {
           queryOne: (sql, ...params) =>
             tryE(() => db.prepare(sql).get(...params) as Record<string, unknown> | undefined),
+          queryMany: (sql, ...params) => tryE(() => db.prepare(sql).all(...params) as unknown[]),
           execute: (sql, ...params) => tryE(() => void db.prepare(sql).run(...params)),
           close: () => tryE(() => void db.close()),
         };
