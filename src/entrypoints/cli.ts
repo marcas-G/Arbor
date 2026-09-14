@@ -12,11 +12,12 @@ import { SqliteNodeLive } from "../infrastructure/sqlite-node.js";
 export type CliArgs =
   | {
       readonly kind: "ok";
-      readonly cmd: "project-init" | "project-show" | "agent-run";
+      readonly cmd: "project-init" | "project-show" | "agent-run" | "project-tree";
       readonly repo?: string | undefined;
       readonly home?: string | undefined;
       readonly project?: string | undefined;
       readonly task?: string | undefined;
+      readonly workspace?: string | undefined;
     }
   | { readonly kind: "err"; readonly message: string };
 
@@ -37,7 +38,15 @@ export function parseArgs(argv: string[]): CliArgs {
       home: flag("home"),
       project,
       task: flag("task"),
+      workspace: flag("workspace"),
     };
+  }
+  if (argv[0] === "project" && argv[1] === "tree") {
+    const project = flag("project");
+    if (project === undefined) {
+      return { kind: "err", message: "project tree requires --project <uuid>" };
+    }
+    return { kind: "ok", cmd: "project-tree", repo: undefined, home: flag("home"), project };
   }
   if (argv[0] !== "project" || (argv[1] !== "init" && argv[1] !== "show")) {
     return {
@@ -88,6 +97,7 @@ export async function run(argv: string[]): Promise<number> {
           home: args.home ?? "",
           providerLayer,
           task: args.task,
+          ...(args.workspace !== undefined ? { workspaceId: args.workspace } : {}),
         },
         sql,
       );
@@ -99,6 +109,40 @@ export async function run(argv: string[]): Promise<number> {
       console.error(String(e));
       return 1;
     }
+  }
+  if (args.cmd === "project-tree") {
+    const { projectDirs, resolveArborHome } = await import("../application/ports.js");
+    const { readTree } = await import("../infrastructure/tree-store.js");
+    const dirs = projectDirs(
+      resolveArborHome(args.home ?? "", process.env),
+      (args.project ?? "") as never,
+    );
+    const tree = await readTree(dirs.storeDir);
+    if (tree.nodes.length === 0) {
+      console.log("(no engineering tree committed yet — root only)");
+      return 0;
+    }
+    const byParent = new Map<string | undefined, Array<(typeof tree.nodes)[number]>>();
+    for (const n of tree.nodes) {
+      const list = byParent.get(n.parentId) ?? [];
+      list.push(n);
+      byParent.set(n.parentId, list);
+    }
+    const print = (id: string, depth: number) => {
+      const node = tree.nodes.find((n) => n.workspaceId === id);
+      const pad = "  ".repeat(depth);
+      console.log(
+        `${pad}${id.slice(0, 8)} [${node?.kind}] writable: ${node?.writablePrefixes.join(", ")}`,
+      );
+      for (const child of byParent.get(id) ?? []) {
+        print(child.workspaceId, depth + 1);
+      }
+    };
+    const root = tree.nodes.find((n) => n.parentId === undefined);
+    if (root !== undefined) {
+      print(root.workspaceId, 0);
+    }
+    return 0;
   }
   const program =
     args.cmd === "project-init"

@@ -11,7 +11,37 @@ export function makeWorkspaceRequestTools(deps: {
   readonly pkg: ContextPackage;
   readonly record: (requestType: string, payloadJson: string) => Promise<void>;
   readonly onCompletion: (summary: string) => Promise<string>;
+  readonly onCreateChild?:
+    | ((req: {
+        intent: string;
+        responsibility: string;
+        deliverables: string;
+        writablePrefixes: string[];
+      }) => Promise<string>)
+    | undefined;
 }): Tool[] {
+  const createChildTool =
+    deps.onCreateChild === undefined
+      ? []
+      : [
+          toolFromSchema({
+            name: "request_create_child",
+            description:
+              "Propose a child workspace for an independent sub-responsibility. writablePrefixes must be inside " +
+              "this workspace's writable set and must not overlap sibling workspaces. The runtime validates the " +
+              "structure and creates the child if it holds.",
+            params: Schema.Struct({
+              intent: Schema.String,
+              responsibility: Schema.String,
+              deliverables: Schema.String,
+              writablePrefixes: Schema.Array(Schema.String),
+            }),
+            execute: async (p) => {
+              await deps.record("request_create_child", JSON.stringify(p));
+              return (deps.onCreateChild as (req: typeof p) => Promise<string>)(p);
+            },
+          }),
+        ];
   const inspect = toolFromSchema({
     name: "inspect_workspace",
     description:
@@ -61,5 +91,5 @@ export function makeWorkspaceRequestTools(deps: {
     },
   });
 
-  return [inspect, status, blocker, completion];
+  return [inspect, status, blocker, completion, ...createChildTool];
 }

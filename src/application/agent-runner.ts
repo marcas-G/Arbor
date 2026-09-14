@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { Effect, type Layer as LayerType } from "effect";
 import type { AgentFinish } from "../agent-runtime/agent-loop.js";
 import { runAgent } from "../agent-runtime/agent-loop.js";
@@ -21,6 +22,7 @@ import { makeWriteFileTool } from "../agent-runtime/tools/write-file.js";
 import type { TranscriptWriter } from "../infrastructure/transcript-store.js";
 import { openTranscriptWriter, readTranscript } from "../infrastructure/transcript-store.js";
 import { readContextPackage } from "../infrastructure/workspace-projection-reader.js";
+import { createChild } from "./child-creation.js";
 import { finalizeCompletion } from "./finalization.js";
 import { effectiveRefName, projectDirs, resolveArborHome, type SqlitePort } from "./ports.js";
 
@@ -30,6 +32,8 @@ export interface AgentSessionInput {
   readonly providerLayer: LayerType.Layer<ModelPort>;
   readonly task?: string | undefined;
   readonly stepLimit?: number | undefined;
+  /** P2-03: target workspace (default: root) */
+  readonly workspaceId?: string | undefined;
   /** test seam: pause after the first completed step (SIGINT in production) */
   readonly pauseAfterFirstStep?: boolean | undefined;
 }
@@ -67,38 +71,54 @@ export async function runAgentSession(
 
   const open = () => sql.open(dirs.dbFile);
 
-  // --- ensure agent row (exactly one per project, E2) + workspace lookup
+  // --- resolve workspace (P2-03: --workspace, default root) + ensure agent
+  //     (exactly one per project+workspace, D-041 G6)
   const setup = await Effect.runPromiseExit(
     Effect.gen(function* () {
       const db = yield* open();
+      const ws = (yield* db.queryOne(
+        input.workspaceId !== undefined
+          ? "SELECT workspace_id, kind FROM workspaces WHERE project_id = ? AND workspace_id = ?"
+          : "SELECT workspace_id, kind FROM workspaces WHERE project_id = ? AND kind = 'root'",
+        ...(input.workspaceId !== undefined
+          ? [input.projectId, input.workspaceId]
+          : [input.projectId]),
+      )) as { workspace_id: string; kind: string } | undefined;
+      if (ws === undefined) {
+        return yield* Effect.fail(new Error(`unknown workspace ${input.workspaceId ?? "(root)"}`));
+      }
       const existing = yield* db.queryOne(
-        "SELECT agent_id FROM agents WHERE project_id = ?",
+        "SELECT agent_id FROM agents WHERE project_id = ? AND workspace_id = ?",
         input.projectId,
+        ws.workspace_id,
       );
       if (existing === undefined) {
         yield* db.execute(
-          "INSERT INTO agents (agent_id, project_id, created_at) VALUES (?, ?, ?)",
+          "INSERT INTO agents (agent_id, project_id, workspace_id, created_at) VALUES (?, ?, ?, ?)",
           crypto.randomUUID(), // AgentId is an application-level identifier (P1_DOMAIN_CONTRACT)
           input.projectId,
+          ws.workspace_id,
           new Date().toISOString(),
         );
       }
       const agent = (yield* db.queryOne(
-        "SELECT agent_id FROM agents WHERE project_id = ?",
+        "SELECT agent_id FROM agents WHERE project_id = ? AND workspace_id = ?",
         input.projectId,
+        ws.workspace_id,
       )) as { agent_id: string };
-      const ws = (yield* db.queryOne(
-        "SELECT workspace_id FROM workspaces WHERE project_id = ? AND kind = 'root'",
-        input.projectId,
-      )) as { workspace_id: string };
       yield* db.close();
-      return { agentId: agent.agent_id, workspaceId: ws.workspace_id };
+      return { agentId: agent.agent_id, workspaceId: ws.workspace_id, kind: ws.kind };
     }),
   );
   if (setup._tag !== "Success") {
-    throw new Error(`agent setup failed (unknown project?): ${String(setup.cause)}`);
+    throw new Error(`agent setup failed (unknown project/workspace?): ${String(setup.cause)}`);
   }
   const { agentId, workspaceId } = setup.value;
+  // worktree per workspace: root keeps worktrees/root; children use worktrees/<ws-id> (G1)
+  const worktreeDir =
+    setup.value.kind === "root"
+      ? dirs.worktreeDir
+      : join(dirs.projectDir, "worktrees", workspaceId);
 
   // --- transcript resume (E5)
   const transcriptFile = `${dirs.agentStateDir}/${agentId}/transcript.jsonl`;
@@ -119,7 +139,7 @@ export async function runAgentSession(
     readContextPackage({
       storeDir: dirs.storeDir,
       workspaceId,
-      worktreeRoot: dirs.worktreeDir,
+      worktreeRoot: worktreeDir,
       effectiveStoreCommitSha: sha,
     }),
   );
@@ -127,11 +147,11 @@ export async function runAgentSession(
   // transcript writer is created later; tools bind to it lazily (loop runs after binding)
   let activeWriter: TranscriptWriter | undefined;
   const tools = [
-    makeReadFileTool(dirs.worktreeDir),
-    makeWriteFileTool(dirs.worktreeDir),
-    makeEditFileTool(dirs.worktreeDir),
-    makeRunCommandTool(dirs.worktreeDir),
-    makeGitStatusTool(dirs.worktreeDir),
+    makeReadFileTool(worktreeDir),
+    makeWriteFileTool(worktreeDir),
+    makeEditFileTool(worktreeDir),
+    makeRunCommandTool(worktreeDir),
+    makeGitStatusTool(worktreeDir),
     ...makeWorkspaceRequestTools({
       pkg,
       record: async (requestType, payloadJson) => {
@@ -146,9 +166,26 @@ export async function runAgentSession(
           }),
         );
       },
+      onCreateChild: async (req) => {
+        const r = await createChild(
+          {
+            projectId: input.projectId,
+            home: input.home,
+            parentWorkspaceId: workspaceId,
+            intent: req.intent,
+            responsibility: req.responsibility,
+            deliverables: req.deliverables,
+            writablePrefixes: req.writablePrefixes,
+          },
+          sql,
+        );
+        return r.ok
+          ? `CHILD CREATED: workspace ${r.childWorkspaceId} (branch ${r.branch}). It has its own agent; run it with: arbor agent run --project <id> --workspace ${r.childWorkspaceId}.`
+          : `CHILD REJECTED (${r.reason}): ${r.detail}`;
+      },
       onCompletion: async (summary) => {
         const r = await finalizeCompletion({
-          worktreeDir: dirs.worktreeDir,
+          worktreeDir: worktreeDir,
           storeDir: dirs.storeDir,
           workspaceId,
           summary,
