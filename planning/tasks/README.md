@@ -110,7 +110,8 @@ are unchanged.
 
 ## Entry blocker
 
-P0-001 owns the frozen technical baseline (§14.1). The current environment
-does not meet it (Node `v8.10.0`, broken pnpm, no npm). `pnpm check` cannot
-run until this is fixed. The six Design Gaps are `RESOLVED`, so no task
-remains design-blocked.
+P0-001 owned the frozen technical baseline (§14.1). It is now satisfied via
+the pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
+project `env.sh` wrapper; `pnpm check` is green. The six Design Gaps are
+`RESOLVED`, so no task remains design-blocked. See
+`planning/results/P0-001.result.md`.
