@@ -44,16 +44,20 @@ P1 phase-scoped contracts.
 
 | ID | Title | Owning design doc | Status |
 |---|---|---|---|
-| P1-DG-01 | Error algebra incomplete (`FencingRejected` / `PersistenceUnavailable`) | DID §6A.4, §6A.5, §4.1, §12.5 | OPEN |
-| P1-DG-02 | Resolution states / receipt shape / attempt vocabulary | DID §4.1, §7.4, §9.9 | OPEN |
-| P1-DG-03 | Idempotency identity: `payload_hash` vs `semanticRequestFingerprint` | DID §4.1, §9.9 | OPEN |
-| P1-DG-04 | P1 fencing scope, predicate, Stop-quiescence interaction | DID §11, §6.3, §9.7, §12.3, §3.4 | OPEN |
-| P1-DG-05 | `CreateProject` bootstrap paradox + root contents | DID §4.1, §3.1, §3.2, §12.11, §9.13 | OPEN |
-| P1-DG-06 | Event journal: sequence scope, `eventVersion`, offset atomicity | DID §2.3, §5.2, §5.4, §9.9 | OPEN |
-| P1-DG-07 | Schema precision: cyclic FKs, table↔domain mapping, root uniqueness | DID §9.1, §9.3, §9.13 | OPEN |
-| P1-DG-08 | `resource_ownership` persistence lifecycle | DID §9.5, §1.4A, §1.5 | OPEN |
-| P1-DG-09 | Retention / delete policy and migration mechanism | DID §9.1, §12.11, §5.4 | OPEN |
-| P1-DG-10 | Port ownership, ID generation, `AssignWork` errors, child-workspace phase | DID §7.2, Appendix B, §0A.1, §11 | OPEN |
+| P1-DG-01 | Error algebra incomplete (`FencingRejected` / `PersistenceUnavailable`) | DID §6A.4, §6A.5, §4.1, §12.5 | RESOLVED |
+| P1-DG-02 | Resolution states / receipt shape / attempt vocabulary | DID §4.1, §7.4, §9.9 | RESOLVED |
+| P1-DG-03 | Idempotency identity: `payload_hash` vs `semanticRequestFingerprint` | DID §4.1, §9.9 | RESOLVED |
+| P1-DG-04 | P1 fencing scope, predicate, Stop-quiescence interaction | DID §11, §6.3, §9.7, §12.3, §3.4 | RESOLVED |
+| P1-DG-05 | `CreateProject` bootstrap paradox + root contents | DID §4.1, §3.1, §3.2, §12.11, §9.13 | RESOLVED |
+| P1-DG-06 | Event journal: sequence scope, `eventVersion`, offset atomicity | DID §2.3, §5.2, §5.4, §9.9 | OPEN (phase-scoped) |
+| P1-DG-07 | Schema precision: cyclic FKs, table↔domain mapping, root uniqueness | DID §9.1, §9.3, §9.13 | OPEN (phase-scoped) |
+| P1-DG-08 | `resource_ownership` persistence lifecycle | DID §9.5, §1.4A, §1.5 | OPEN (phase-scoped) |
+| P1-DG-09 | Retention / delete policy and migration mechanism | DID §9.1, §12.11, §5.4 | OPEN (phase-scoped) |
+| P1-DG-10 | Port ownership, ID generation, `AssignWork` errors, child-workspace phase | DID §7.2, Appendix B, §0A.1, §11 | RESOLVED |
+
+`P1-DG-01/02/03/04/05/10` were resolved by the **DID v1.4 → v1.5** governance
+patch (`planning/p1-governance-patch.md`). `P1-DG-06/07/08/09` are explicitly
+P1 phase-scoped and are closed by `docs/design/implementation/P1/**`.
 
 Items explicitly delegated to P1 by DID §13 (exact DDL/migration/indexes;
 exact per-command contracts; exact repository/port signatures; resource-region

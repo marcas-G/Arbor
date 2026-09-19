@@ -2,7 +2,20 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+RESOLVED — DID v1.5.
+
+## Resolution
+
+DID §9.9 freezes `commands.resolution = Committed | TerminalRejected` only;
+one semantic command uses a single transaction (canonical state + receipt +
+events atomic); no durable `Pending` and no dual-transaction model;
+operational failure produces no authoritative resolution and no `commands`
+row; `CommandAttempt` is a non-authoritative trace (no FK to `commands`);
+`attempt_no` 0-based; `outcome ∈ {Committed, TerminalRejected,
+RetryableOperationalFailure}`.
+
+Authority: DID v1.5 §9.9, §7.4.
+
 
 ## Owning design document
 

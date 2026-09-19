@@ -2,7 +2,17 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+RESOLVED — DID v1.5.
+
+## Resolution
+
+DID §9.9 unifies the persisted column to `semantic_request_fingerprint`
+(with `schema_version` and `fingerprint_algorithm_version`); DID §4.1 defers
+the concrete canonical serialization/hash algorithm to the P1 phase
+contract; the P0 32-bit FNV-1a is marked interim.
+
+Authority: DID v1.5 §4.1, §9.9.
+
 
 ## Owning design document
 

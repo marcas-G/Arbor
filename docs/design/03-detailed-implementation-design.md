@@ -1,13 +1,13 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.4  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P0-RELEVANT CLOSURE CLOSED)  
-**Supersedes:** v1.3  
+**Version:** 1.5  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P0 + P1-RELEVANT CLOSURE)  
+**Supersedes:** v1.4  
 **Date:** 2026-09-20  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
-**Scope:** 将已冻结的系统级设计落实为可实现且可测试的契约。v1.4 是 governance patch：闭合 P0 planning 审阅发现的 DG-01…DG-06，不改变 C1–C10 / X1–X11 的语义结论；P1+ 的 exact DDL、逐 Command payload/signature、Prompt 正文与经验参数仍按 phase-scoped closure 管理。
+**Scope:** 将已冻结的系统级设计落实为可实现且可测试的契约。v1.4 是 governance patch：闭合 P0 planning 审阅发现的 DG-01…DG-06，不改变 C1–C10 / X1–X11 的语义结论；v1.5 闭合 P1 pre-implementation 审阅发现的 P1-DG-01…05 与 P1-DG-10，P1+ 的 exact DDL、逐 Command payload/signature、Prompt 正文与经验参数仍按 phase-scoped closure 管理。
 
 **Governance changes (v1.3 → v1.4):**
 
@@ -17,6 +17,15 @@
 - DG-04: `PermissionGrantId` prefix `pgr_` added to Appendix A.
 - DG-05: `AgentBinding` split into `ResponsibilityBoundAgentBinding` / `ExecutionBoundAgentBinding`; Workspace constrained.
 - DG-06: canonical architecture-test location `tests/architecture/**`.
+
+**Governance changes (v1.4 → v1.5):**
+
+- P1-DG-01: parameterized `CommandResolution<Result, Rejection>`; Application-owned `CommandRejection = DomainError | FencingRejected | ExecutionStopping` (§6A.15).
+- P1-DG-02: single-transaction command resolution; `commands.resolution = Committed | TerminalRejected` only; `CommandAttempt` is a non-authoritative operational trace (§9.9).
+- P1-DG-03: idempotency identity unified on `semantic_request_fingerprint` + `schema_version` + `fingerprint_algorithm_version`; concrete algorithm is a P1 phase contract (§4.1, §9.9).
+- P1-DG-04: authoritative fence validation separated from stop/quiescence admission; `FencingRejected` is only for invalid ownership/fence; stop admission returns Application `ExecutionStopping` (§9.7, §11).
+- P1-DG-05: `CreateProject` single-transaction bootstrap contract; no Session Domain Event (§4.1, §12.11).
+- P1-DG-10: `TransactionPort` / `CommandStore` / `DomainEventJournal` classified as Persistence ports (Appendix B aligned to §7.2).
 
 `Problem & Goals` and `Scenarios` are unchanged.
 
@@ -1104,6 +1113,8 @@ same CommandId + different semanticRequestFingerprint
 
 修改 expected revision、target revision、scope、actor intent 或其他语义 payload 后，已经是新的 logical request，必须使用新的 CommandId。
 
+`semanticRequestFingerprint` 的**具体 canonical serialization 与 hash 算法**在 P1 phase contract 冻结，并随 `fingerprint_algorithm_version` 持久化；P0 的 32-bit FNV-1a 是 interim，不是冻结算法。持久化列名统一为 `semantic_request_fingerprint`。
+
 ### CommandSubmissionContext
 
 `CommandEnvelope` 不承载可信执行来源。Runtime 额外提供不可由模型/调用 payload 伪造的 authenticated context：
@@ -1796,6 +1807,51 @@ Command terminal rejection 不是 Domain Event，因为 Domain truth 未变化�
 ## 6A.14 Error 不直接改变 Work lifecycle
 
 ProviderUnavailable、WorkerCrash、ToolRuntimeFailure、ContextUnsatisfiable、ExecutionFailed 都不能自动将 Work 改为 Cancelled。Work Cancelled 只来自正式治理意图。
+
+## 6A.15 Failure algebra layering
+
+三类 failure 必须分开，且各有归属：
+
+```text
+1) DomainError — pure domain transition 的 expected rejection。
+   Domain 不得依赖 Application 的任何 rejection 类型。
+   DomainError =
+     IdempotencyConflict | AuthorityDenied | RevisionConflict | WorkNotOpen |
+     TerminalLifecycleMutation | RetirePreconditionFailed |
+     ActiveExecutionConflict | VerificationAcceptanceMismatch |
+     DependencyNotSatisfiable | PermissionRevoked
+
+2) CommandRejection (Application-owned)
+   = CommandResolution.TerminalRejected 的 payload
+   = DomainError | FencingRejected | ExecutionStopping
+     - FencingRejected: ownership/fence 无效。
+     - ExecutionStopping: fence 仍有效，但 stopRequestedAt != null，
+       禁止新的 execution-originated mutation。
+       (ExecutionStopRequested 仍是既有 Domain Event / stop-request fact
+        名称，不新增 DomainError tag。)
+
+3) OperationalFailure — 非 authoritative、非 terminal；不进入
+   CommandResolution；不冻结为顶层单一 closed union，由 owning layer
+   按 phase 细化（如 PersistenceUnavailable / transport / transient）。
+```
+
+`CommandResolution` 是参数化 ADT：
+
+```text
+CommandResolution<Result, Rejection> =
+    Committed(Result)
+  | TerminalRejected(Rejection)
+
+Domain 内部：CommandResolution<R, DomainError>
+Application boundary：CommandResolution<R, CommandRejection>
+```
+
+规则：
+
+```text
+FencingRejected 属于 Application CommandRejection，不是 DomainError。
+OperationalFailure 不产生 authoritative resolution，可 retry。
+```
 
 ---
 
@@ -2859,6 +2915,27 @@ updated_at
 
 Worker durable mutation 必须检查 current fencing generation；对 canonical command，该 generation check 与 canonical read/write、Command resolution、Domain Event append 共享同一 transaction/session。事务外 pre-check 不具权威性。
 
+Authoritative fence validation 与 stop/quiescence mutation admission 是**两个独立检查**：
+
+```text
+fence validation
+  = ownership/generation 是否有效
+  = 失败返回 Application CommandRejection.FencingRejected
+
+stop / quiescence admission
+  = fence 仍有效，但 stopRequestedAt != null
+  = 禁止新的 execution-originated mutation
+  = 失败返回 Application CommandRejection.ExecutionStopping
+    （ExecutionStopRequested 仍是既有 Domain Event / stop-request fact 名称）
+
+一个 generation 仍然有效的合法 Worker，仅因 stopRequestedAt 被拒绝时，
+不得返回 FencingRejected。
+```
+
+P1 冻结 persistence hook 与 transaction integration（fence validation +
+canonical read/write + receipt + event 同一事务）；P2 负责 lease
+acquisition/renewal/loss lifecycle。精确 SQL predicate 在 P1 phase contract 冻结。
+
 ## 9.8 Session / Epoch / Entries
 
 Session metadata 与 history 分离。`session_entries` 使用 Session-local sequence，保存有限认知 entry 类型：
@@ -2875,24 +2952,26 @@ streaming delta 不直接进入 Session history。
 
 ## 9.9 Commands / Events
 
-`commands` 保存 logical request，而不是只保存成功 mutation：
+`commands` 保存 logical request 的 authoritative resolution，而不是只保存成功 mutation：
 
 ```text
 commands
 ────────────────────────────
-command_id                PK
+command_id                    PK
 project_id
-payload_hash
-resolution                Pending | Committed | TerminalRejected
-result_json?              // Committed
-terminal_error_json?      // TerminalRejected
+semantic_request_fingerprint
+schema_version
+fingerprint_algorithm_version
+resolution                    Committed | TerminalRejected
+result_json?                  // Committed
+terminal_error_json?          // TerminalRejected
 created_at
 settled_at?
 ```
 
-同一 `command_id` 的 payload hash 不一致 → `IdempotencyConflict`。
+同一 `command_id` 且 `semantic_request_fingerprint` 不一致 → `IdempotencyConflict`。
 
-Operational attempts 单独记录：
+Operational attempts 单独记录为非权威 trace：
 
 ```text
 command_attempts
@@ -2901,22 +2980,35 @@ command_id
 attempt_no
 started_at
 settled_at?
-outcome
+outcome                    // Committed | TerminalRejected | RetryableOperationalFailure
 failure_kind?
 metadata_json?
 
 PRIMARY KEY(command_id, attempt_no)
 ```
 
+`command_attempts` 是非权威 operational trace，不要求 FK 到 `commands`
+（一个 attempt 可能在任何 authoritative resolution 之前发生）。
+`attempt_no` 从 0 开始。
+
 `CommandReceipt` 是 `commands.resolution + result/error` 的稳定读取视图，不要求独立 table。
 
 语义：
 
-- `Committed` 与对应 Canonical State + Domain Events 原子；
+- `commands` 只持久化 authoritative resolution：`Committed | TerminalRejected`；
+- 一个 semantic command 使用**单一事务**完成：
+  canonical reads + authority/preconditions + fence validation +
+  domain transition + canonical writes + authoritative receipt +
+  Domain Events（仅 `Committed`），原子提交；
+- 不引入 durable `Pending` 预登记，不引入双事务模型；
+- 未 commit 的 operational failure：ROLLBACK → 不产生 authoritative
+  resolution → 不写 `commands` row；同一 CommandId 可重试（语义请求不变）；
+- 一旦存在 `Committed` / `TerminalRejected` row，same CommandId 重试：
+  same fingerprint → 返回既有 Receipt；different fingerprint →
+  `IdempotencyConflict`；
 - `TerminalRejected` 是 durable command truth，但不产生 Domain Event；
-- `Pending` 可以在 retry policy 允许时产生新的 `CommandAttempt`；
 - semantic stale precondition 改 payload 后必须新 CommandId；
-- `FencingRejected` 对旧 Execution-originated Command terminal。
+- `FencingRejected` / `ExecutionStopping` 对 Execution-originated Command terminal。
 
 `domain_events` 同时承担 durable outbox；多 Consumer 通过 `consumer_offsets` 分别推进，不额外维护单一 outbox delivery flag。
 
@@ -3173,7 +3265,8 @@ Repositories
 Command logical-request / attempt / receipt persistence
 DomainEventJournal
 CreateProject / Workspace / Work commands
-atomic State + Receipt + Event + authoritative fencing
+atomic State + Receipt + Event + authoritative fence *validation hook*
+(lease acquisition / lease lifecycle 仍属于 P2)
 ```
 
 ## P2 — Execution / Session Kernel
@@ -3578,6 +3671,23 @@ Package-level ownership由 §10.4.1 的 allowed-edge matrix 强制。
 | Closed | lifecycle mutation | — | **illegal** | Closed lifecycle terminal |
 
 `Closed` 后不 admission 新 autonomous Execution；read/recovery/audit 仍允许。
+
+`CreateProject` bootstrap contract（P1 closure）：
+
+```text
+- projectId 由 caller 预分配（prj_ + UUIDv7）；CommandEnvelope.projectId 即该值。
+- payload 提供 Root Workspace 的 ResponsibilityDefinition /
+  ResourceBoundary / ResponsibilityBoundAgentBinding / WorkspacePolicy /
+  ProjectPolicy / default configuration / environmentRef。
+- rootWorkspaceId 与 primarySessionId 由 caller 预分配。
+- 单一事务原子创建 Project + Root Workspace + WorkspacePrimary Session
+  （§9.13 deferred FK 在同一 COMMIT 校验）。
+- emitted events: ProjectCreated → WorkspaceCreated（同一事务）。
+- Primary Session 创建不产生 Domain Event（§5.3 catalog 无 Session event；
+  Session 仅通过 workspace.primarySessionId 被引用）。实现阶段不得自行
+  新增 Session event。
+- authority: bootstrap principal；无 authority → DomainError.AuthorityDenied。
+```
 
 ### Workspace
 
@@ -3985,6 +4095,9 @@ Long-lived Agent != long-running process.
 ```text
 Application (Effect services)
 ├── CommandGateway(CommandEnvelope, CommandSubmissionContext)
+│     (uses the Persistence ports below)
+
+Persistence ports (§7.2)
 ├── TransactionPort
 ├── CommandStore / Receipt
 └── DomainEventJournal

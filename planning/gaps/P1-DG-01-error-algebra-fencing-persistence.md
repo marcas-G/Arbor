@@ -2,7 +2,18 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+RESOLVED — DID v1.5.
+
+## Resolution
+
+DID §6A.15 freezes the three-layer failure model: `DomainError` (pure
+domain), Application-owned `CommandRejection = DomainError | FencingRejected
+| ExecutionStopping`, and `OperationalFailure` (not a top-level closed
+union). `CommandResolution<Result, Rejection>` is parameterized; Domain does
+not depend on `CommandRejection`.
+
+Authority: DID v1.5 §6A.15, §4.1.
+
 
 ## Owning design document
 

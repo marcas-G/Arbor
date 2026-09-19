@@ -2,7 +2,19 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+RESOLVED — DID v1.5.
+
+## Resolution
+
+DID §9.7/§11 separate authoritative fence validation from stop/quiescence
+mutation admission. `FencingRejected` is only for invalid ownership/fence;
+a still-valid worker rejected due to `stopRequestedAt` returns Application
+`ExecutionStopping` (not `FencingRejected`). P1 owns the persistence hook +
+transaction integration; P2 owns lease lifecycle; the exact SQL predicate is
+a P1 phase contract.
+
+Authority: DID v1.5 §9.7, §11, §6A.15.
+
 
 ## Owning design document
 

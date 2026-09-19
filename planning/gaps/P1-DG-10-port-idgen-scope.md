@@ -2,7 +2,18 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+RESOLVED — DID v1.5.
+
+## Resolution
+
+DID Appendix B is aligned to §7.2: `TransactionPort`, `CommandStore`,
+`DomainEventJournal` are Persistence ports; `CommandGateway` is an
+Application service that uses them. The remaining sub-items (ID-generation
+ownership, `AssignWork` rejection set, `CreateChildWorkspace` P1-vs-P6
+ownership) are P1 phase-scoped closures.
+
+Authority: DID v1.5 §7.2, Appendix B.
+
 
 ## Owning design document
 

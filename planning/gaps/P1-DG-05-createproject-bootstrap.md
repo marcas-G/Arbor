@@ -2,7 +2,19 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+RESOLVED — DID v1.5.
+
+## Resolution
+
+DID §12.11/§4.1 freeze the `CreateProject` bootstrap contract: caller
+preallocates `projectId` / `rootWorkspaceId` / `primarySessionId`; payload
+provides root Workspace/Project inputs; a single transaction creates Project
++ Root Workspace + `WorkspacePrimary` Session; events
+`ProjectCreated → WorkspaceCreated`; **no** Session Domain Event (the §5.3
+catalog has none); authority failure → `DomainError.AuthorityDenied`.
+
+Authority: DID v1.5 §4.1, §12.11, §9.13.
+
 
 ## Owning design document
 
