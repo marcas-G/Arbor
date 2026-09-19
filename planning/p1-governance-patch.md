@@ -1,27 +1,31 @@
-# P1 Governance Patch (DRAFT — not applied)
+# P1 Governance Patch (DRAFT v2 — not applied)
 
-Status: **DRAFT / AWAITING REVIEW**. Nothing in `docs/design/**` has been
-modified. This file is the proposed patch for `P1-DG-01` … `P1-DG-10`.
+Status: **DRAFT / AWAITING REVIEW**. Nothing in `docs/design/**` modified.
+Version plan: **DID v1.4 → v1.5**. System Design v1.3 **unchanged**.
 
-Version plan (proposed): **DID v1.4 → v1.5** (governance patch).
-System Design v1.3 is **unchanged** (no P1 gap changes System-level semantics).
+Revision basis (user rulings): DG-01 parameterized `CommandResolution` +
+Application-owned `CommandRejection`; DG-02 single-transaction, no durable
+`Pending`; DG-03 unified fingerprint name + version columns, algorithm →
+P1 phase contract; DG-04 fence validation separated from stop/quiescence
+admission; DG-05 single-tx bootstrap + explicit Session-event rule; DG-10 as
+drafted.
 
 ## 1. Authority classification
 
-| Gap | Classification | Needs DID edit |
+| Gap | Classification | DID edit |
 |---|---|---|
-| P1-DG-01 | **upstream frozen-design defect** — error-algebra layering unspecified; frozen `FencingRejected` has no owner | yes |
-| P1-DG-02 | **upstream frozen-design defect** — §9.9 `Pending` durability contradicts §7.4 rollback | yes |
-| P1-DG-03 | **upstream frozen-design defect** — `payload_hash` (§9.9) vs `semanticRequestFingerprint` (§4.1) | yes |
-| P1-DG-04 | **upstream frozen-design defect** — §11 P1 vs P2 fencing scope; Stop-quiescence vs fence predicate | yes |
-| P1-DG-05 | **upstream frozen-design defect** — `CreateProject` bootstrap contradiction | yes |
-| P1-DG-06 | **P1 phase-scoped closure** — §2.3 leaves sequence scope open; version/offset are P1 contracts | no |
-| P1-DG-07 | **P1 phase-scoped closure** — §13 delegates DDL/migration; mapping is a contract | no |
-| P1-DG-08 | **P1 phase-scoped closure** — P1 owns ownership persistence | no |
-| P1-DG-09 | **P1 phase-scoped closure** — §13 delegates migration; retention is P1 | no |
-| P1-DG-10 | **upstream frozen-design defect** (port classification §7.2 vs Appendix B) + phase-scoped sub-items (ID gen, `AssignWork` errors, child-workspace phase) | yes (classification) |
+| P1-DG-01 | upstream frozen-design defect | yes |
+| P1-DG-02 | upstream frozen-design defect | yes |
+| P1-DG-03 | upstream frozen-design defect | yes |
+| P1-DG-04 | upstream frozen-design defect | yes |
+| P1-DG-05 | upstream frozen-design defect | yes |
+| P1-DG-06 | P1 phase-scoped closure | no |
+| P1-DG-07 | P1 phase-scoped closure | no |
+| P1-DG-08 | P1 phase-scoped closure | no |
+| P1-DG-09 | P1 phase-scoped closure | no |
+| P1-DG-10 | upstream defect (port classification) + phase-scoped sub-items | yes |
 
-## 2. Patch — DID v1.4 → v1.5
+## 2. DID v1.4 → v1.5 diff
 
 ### 2.0 Header
 
@@ -32,136 +36,117 @@ System Design v1.3 is **unchanged** (no P1 gap changes System-level semantics).
 +**Version:** 1.5
 +**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P0 + P1-RELEVANT CLOSURE)
 +**Supersedes:** v1.4
- **Date:** 2026-09-20
 ```
-
-Add changelog block:
 
 ```text
 Governance changes (v1.4 → v1.5):
-- P1-DG-01: error-algebra layering (DomainError / CommandRejection / operational)
-- P1-DG-02: command resolution states reconciled with the transaction rollback rule
-- P1-DG-03: idempotency identity unified on semanticRequestFingerprint
-- P1-DG-04: P1 vs P2 fencing scope + fence predicate owner + Stop-quiescence
-- P1-DG-05: CreateProject bootstrap contract
+- P1-DG-01: parameterized CommandResolution + Application-owned CommandRejection
+- P1-DG-02: single-transaction command resolution; commands persist Committed | TerminalRejected only
+- P1-DG-03: semantic_request_fingerprint unified + algorithm/version columns
+- P1-DG-04: fence validation separated from stop/quiescence admission
+- P1-DG-05: CreateProject single-transaction bootstrap + explicit Session-event rule
 - P1-DG-10: TransactionPort/CommandStore/DomainEventJournal package ownership
 ```
 
-### 2.1 P1-DG-01 — error-algebra layering
-
-Insert a new §6A.15 after §6A.14:
+### 2.1 P1-DG-01 — failure algebra layering (new §6A.15)
 
 ```text
-## 6A.15 Error algebra layering (P1 closure)
+## 6A.15 Failure algebra layering (P1 closure)
 
-三类 failure 必须分开，且各有归属：
+三层分离：
 
-DomainError (pure domain transition 的 expected rejection)
-  IdempotencyConflict / AuthorityDenied / RevisionConflict / WorkNotOpen /
-  TerminalLifecycleMutation / RetirePreconditionFailed /
-  ActiveExecutionConflict / VerificationAcceptanceMismatch /
-  DependencyNotSatisfiable / PermissionRevoked
+1) DomainError — pure domain transition 的 expected rejection。
+   Domain 不得依赖 Application 的任何 rejection 类型。
+   DomainError =
+     IdempotencyConflict | AuthorityDenied | RevisionConflict | WorkNotOpen |
+     TerminalLifecycleMutation | RetirePreconditionFailed |
+     ActiveExecutionConflict | VerificationAcceptanceMismatch |
+     DependencyNotSatisfiable | PermissionRevoked | ExecutionStopRequested
 
-CommandRejection = DomainError | FencingRejected
-  = CommandResolution.TerminalRejected 的 payload
+2) CommandRejection (Application-owned) — CommandResolution.TerminalRejected
+   的 payload。
+     CommandRejection ⊇ DomainError
+     CommandRejection 额外包含 persistence/ownership terminal rejection：
+       FencingRejected
 
-OperationalFailure (非 authoritative)
-  PersistenceUnavailable / transport / transient
-  = 不产生 CommandResolution；可 retry，产生新的 CommandAttempt
+3) OperationalFailure — 非 authoritative、非 terminal；不进入
+   CommandResolution；不冻结为顶层单一 closed union，由 owning layer
+   按 phase 细化（如 PersistenceUnavailable / transport / transient）。
+
+CommandResolution 是参数化 ADT：
+
+  CommandResolution<Result, Rejection> =
+      Committed(Result)
+    | TerminalRejected(Rejection)
+
+  Domain 内部：CommandResolution<R, DomainError>
+  Application boundary：CommandResolution<R, CommandRejection>
 
 规则：
-- FencingRejected 由 persistence enforcement 产生（§6A.5），是 terminal
-  CommandRejection，不是 DomainError；payload 至少含 executionId 与
-  observedGeneration。
-- PersistenceUnavailable 是 retryable operational failure，绝不写入
-  commands.terminal_error_json。
-- CommandResolution.TerminalRejected 携带 CommandRejection。
+- FencingRejected 属于 Application CommandRejection，不是 DomainError。
+- OperationalFailure 不产生 authoritative resolution，可 retry。
 ```
 
-**P0 artifact impact:** `packages/domain/src/command.ts` currently types
-`TerminalRejected` as `DomainError`. P1 must widen it to `CommandRejection`
-(add `FencingRejected`). Recorded as a P0→P1 contract evolution, not a P0
-reopen.
-
-### 2.2 P1-DG-02 — resolution states vs rollback
-
-Amend §9.9 `commands.resolution` semantics:
+### 2.2 P1-DG-02 — single-transaction resolution (amend §9.9)
 
 ```diff
--resolution                Pending | Committed | TerminalRejected
-+resolution                Pending | Committed | TerminalRejected
-+  Pending 是 durable 预登记状态，写入独立的 pre-attempt transaction，
-+  不是 authoritative CommandResolution。
-```
-
-Add the resolution/rollback contract:
-
-```text
-Pre-attempt registration (separate tx):
-  INSERT commands(command_id, project_id, semantic_request_fingerprint,
-                   resolution = Pending, created_at)
-  COMMIT
-
-Semantic attempt (one tx):
-  BEGIN
-  → authoritative fence (if ExecutionOrigin)
-  → canonical reads + preconditions + transition
-  → canonical writes
-  → UPDATE commands SET resolution = Committed | TerminalRejected,
-       result_json / terminal_error_json, settled_at = now
-  → append Domain Events (Committed only)
-  COMMIT
-
-Retryable operational failure:
-  ROLLBACK semantic tx
-  → command row remains Pending
-  → record command_attempts(outcome = RetryableOperationalFailure)
-  → bounded retry
-
-Authoritative CommandResolution = Committed | TerminalRejected
-(no Pending); Pending is a durable pre-registration, not a resolution.
-```
-
-Also freeze attempt vocabulary (amend §9.9 `command_attempts`):
-
-```text
-outcome ∈ { Committed | TerminalRejected | RetryableOperationalFailure }
-failure_kind? = operational failure category (nullable)
-attempt_no 从 0 开始（与 P0 createCommandAttempt 一致）
-```
-
-**P0 artifact impact:** `CommandResolution` stays `Committed |
-TerminalRejected` (correct); `CommandReceipt` view fields are frozen in the
-P1 contract (projectId, fingerprint, resolution, result/error, createdAt,
-settledAt), not in P0.
-
-### 2.3 P1-DG-03 — idempotency identity
-
-Amend §9.9 `commands` column:
-
-```diff
+ commands
+ ────────────────────────────
+ command_id                PK
+ project_id
 -payload_hash
-+semantic_request_fingerprint   // 与 §4.1 semanticRequestFingerprint 同一值
-+schema_version                 // 独立列
-+fingerprint_algorithm_version  // 序列化/哈希算法版本
++semantic_request_fingerprint
++schema_version
++fingerprint_algorithm_version
+-resolution                Pending | Committed | TerminalRejected
++resolution                Committed | TerminalRejected
+ result_json?              // Committed
+ terminal_error_json?      // TerminalRejected
+ created_at
+ settled_at?
 ```
-
-Add to §4.1:
 
 ```text
-Canonical serialization contract (frozen):
-- 稳定 key 排序；undefined 视为 absent；number/boolean/string/array/object 的
-  规范编码；tagged union 以 _tag 参与。
-Hash: 由 P1 contract 冻结算法与宽度（不得使用 32-bit 作为 durable identity）。
-IdempotencyConflict 当且仅当 same command_id 且 fingerprint 不同。
+语义（P1 closure）：
+- commands 只持久化 authoritative resolution：Committed | TerminalRejected。
+- 一个 semantic command 使用单一事务完成：
+    canonical reads + authority/preconditions + fence validation +
+    domain transition + canonical writes +
+    authoritative receipt (Committed/TerminalRejected) +
+    Domain Events (Committed only)
+  原子提交。
+- 不引入 durable Pending 预登记，不引入双事务模型。
+- 未 commit 的 operational failure：ROLLBACK → 不产生 authoritative
+  resolution → 不写 commands row；同一 CommandId 可重试（语义请求不变）。
+- 一旦存在 Committed/TerminalRejected row，same CommandId 重试：
+    same fingerprint → 返回既有 Receipt；
+    different fingerprint → IdempotencyConflict。
+- CommandAttempt 仅是非权威 operational trace：
+    (command_id, attempt_no)，不要求 FK 到 commands；
+    outcome ∈ { Committed | TerminalRejected | RetryableOperationalFailure }；
+    attempt_no 从 0 开始。
 ```
 
-**P0 artifact impact:** P0's FNV-1a 32-bit fingerprint is an interim value;
-P1 freezes the durable algorithm + version. P0 tests remain valid.
+### 2.3 P1-DG-03 — idempotency identity (amend §4.1 / §9.9)
 
-### 2.4 P1-DG-04 — fencing scope + predicate owner + Stop
+```diff
+-commands.payload_hash
++commands.semantic_request_fingerprint   // 与 §4.1 同一值
++commands.schema_version
++commands.fingerprint_algorithm_version
+```
 
-Amend §11 P1/P2 scope:
+```text
+§4.1：
+- semanticRequestFingerprint 覆盖 commandType、projectId、declared actor、
+  schemaVersion 与 semantic payload。
+- 具体 canonical serialization 与 hash 算法在 P1 phase contract 冻结
+  （并随 fingerprint_algorithm_version 持久化）。
+- P0 的 32-bit FNV-1a 为 interim，不是冻结算法。
+- IdempotencyConflict 当且仅当 same CommandId 且 fingerprint 不同。
+```
+
+### 2.4 P1-DG-04 — fence vs stop admission (amend §11 / §9.7 / §3.4)
 
 ```diff
  P1 — Persistence + Command Core
@@ -171,42 +156,40 @@ Amend §11 P1/P2 scope:
 +(lease acquisition/lifecycle remains P2)
 ```
 
-Amend §9.7:
-
 ```text
-Authoritative fence validation 由 CommandStore/TransactionPort 的 canonical
-mutation path 执行；ExecutionRepository 只提供 lease/generation 读写。
-Fence predicate（对 ExecutionOrigin command）：
-  execution_id = ? AND generation = ? AND settled_at IS NULL
-  AND stop_requested_at IS NULL
-Stop-quiescence（§3.4）由 stop_requested_at 参与同一 predicate 表达；
-不新增独立 lifecycle state。
+§9.7 / §6A.15：
+- Authoritative fence validation 与 stop/quiescence mutation admission 是
+  两个独立的检查。
+- FencingRejected 只表示 ownership/fence 无效（generation 不匹配 /
+  非当前 owner）。一个仍然合法（generation 有效）的 Worker，仅因
+  stop_requested_at 被拒绝时，**不得**返回 FencingRejected。
+- stop/quiescence admission 是 domain admission precondition，返回
+  DomainError.ExecutionStopRequested（见 §6A.15）。
+- P1 冻结 persistence hook 与 transaction integration（fence validation +
+  canonical read/write + receipt + event 同一事务）。
+- P2 负责 lease acquisition/renewal/loss lifecycle。
+- 精确 SQL predicate 在 P1 phase contract 冻结。
 ```
 
-**P0 artifact impact:** `Execution` needs durable `stopRequestedAt` /
-`settledAt` at P1; P0's in-memory `stopRequested` is the domain projection.
-
-### 2.5 P1-DG-05 — CreateProject bootstrap
-
-Amend §12.11 Project `CreateProject` row / §4.1:
+### 2.5 P1-DG-05 — CreateProject bootstrap (amend §12.11 / §4.1)
 
 ```text
 CreateProject bootstrap contract:
-- projectId 由 caller 预分配（UUIDv7 + prj_），CommandEnvelope.projectId 即该值；
-  CreateProject 不依赖一个已存在的 Project row。
-- payload 必须提供 Root Workspace 的 ResponsibilityDefinition /
+- projectId 由 caller 预分配（prj_ + UUIDv7）；CommandEnvelope.projectId 即该值。
+- payload 提供 Root Workspace 的 ResponsibilityDefinition /
   ResourceBoundary / ResponsibilityBoundAgentBinding / WorkspacePolicy /
   ProjectPolicy / default configuration / environmentRef。
-- rootWorkspaceId 与 root primarySessionId 由 caller 预分配。
-- 单事务原子创建 Project + Root Workspace + Primary Session（§9.13 deferred FK）。
-- authority: bootstrap principal；无 authority → AuthorityDenied。
-- emitted events: ProjectCreated 与 WorkspaceCreated（同一事务，顺序
-  ProjectCreated → WorkspaceCreated）。
+- rootWorkspaceId 与 primarySessionId 由 caller 预分配。
+- 单一事务原子创建 Project + Root Workspace + WorkspacePrimary Session
+  （§9.13 deferred FK 在同一 COMMIT 校验）。
+- emitted events: ProjectCreated → WorkspaceCreated（同一事务）。
+- Primary Session 创建 **不产生** Domain Event（§5.3 catalog 无 Session
+  event；Session 仅通过 workspace.primarySessionId 被引用）。
+  实现阶段不得自行新增 Session event。
+- authority: bootstrap principal；无 authority → DomainError.AuthorityDenied。
 ```
 
-### 2.6 P1-DG-10 — port ownership
-
-Amend Appendix B to match §7.2 (Persistence ports):
+### 2.6 P1-DG-10 — port ownership (amend Appendix B)
 
 ```diff
 -Application (Effect services)
@@ -216,39 +199,48 @@ Amend Appendix B to match §7.2 (Persistence ports):
 -└── DomainEventJournal
 +Application (Effect services)
 +├── CommandGateway(CommandEnvelope, CommandSubmissionContext)
-+│     (uses Persistence ports below)
 +Persistence ports (§7.2)
 +├── TransactionPort
 +├── CommandStore / Receipt
 +└── DomainEventJournal
 ```
 
-Phase-scoped sub-items (closed in P1 contracts, no DID edit):
-ID-generation ownership; `AssignWork` rejection set; `CreateChildWorkspace`
-P1-vs-P6 ownership + child Primary Session atomicity.
-
 ## 3. Phase-scoped closures (no DID edit)
 
 | Gap | Closed by |
 |---|---|
-| P1-DG-06 | P1 `05-event-journal.md`: one sequence mechanism + `eventVersion` policy + offset/projection tx boundary |
-| P1-DG-07 | P1 `04-sqlite-schema.md`: deferred-FK declarations, table↔domain mapping, root uniqueness constraint |
-| P1-DG-08 | P1 `04-sqlite-schema.md`: claim release/supersede, CAS columns, conflict-load index |
-| P1-DG-09 | P1 `04-sqlite-schema.md` + `06-recovery-matrix.md`: retention/delete + migration mechanism |
+| P1-DG-06 | `05-event-journal.md`: sequence mechanism + `eventVersion` policy + offset/projection tx boundary |
+| P1-DG-07 | `04-sqlite-schema.md`: deferred-FK declarations, table↔domain mapping, root uniqueness |
+| P1-DG-08 | `04-sqlite-schema.md`: claim release/supersede, CAS columns, conflict-load index |
+| P1-DG-09 | `04-sqlite-schema.md` + `06-recovery-matrix.md`: retention/delete + migration |
 
-## 4. Post-apply audit (proposed)
+## 4. P0 artifact impacts (P0→P1 contract evolution, not a P0 reopen)
+
+| P0 artifact | Change |
+|---|---|
+| `command.ts CommandResolution<R>` | becomes `CommandResolution<Result, Rejection>`; Domain instantiates `DomainError`, Application `CommandRejection` |
+| `command.ts CommandReceipt<R>` | Application-side rejection widens to `CommandRejection`; view fields frozen in P1 contract |
+| `errors.ts DomainError` | add `ExecutionStopRequested` (new admission rejection); `FencingRejected` stays **out** of DomainError |
+| `command.ts CommandAttempt` | becomes non-authoritative trace; add outcome/attempt_no semantics at P1 |
+| `semanticRequestFingerprint` | P0 FNV-1a marked interim; P1 freezes durable algorithm + version |
+
+## 5. Post-apply audit (proposed)
 
 ```bash
-grep -n "FencingRejected" docs/design/03-detailed-implementation-design.md   # §6A.15 + refs
+grep -n "ExecutionStopRequested" docs/design/03-detailed-implementation-design.md
+grep -n "CommandRejection" docs/design/03-detailed-implementation-design.md
 grep -n "semantic_request_fingerprint" docs/design/03-detailed-implementation-design.md
-grep -n "stop_requested_at" docs/design/03-detailed-implementation-design.md
-grep -n "CreateProject bootstrap" docs/design/03-detailed-implementation-design.md
-grep -n "payload_hash" docs/design/03-detailed-implementation-design.md      # 0 live uses
+grep -n "payload_hash" docs/design/03-detailed-implementation-design.md   # 0 live uses
+grep -n "Pending" docs/design/03-detailed-implementation-design.md        # 0 in commands.resolution
 ```
 
-## 5. Apply gate
+## 6. Apply gate
 
-**Not applied.** Awaiting explicit approval of this diff. On approval:
-apply to DID (v1.5), mark P1-DG-01/02/03/04/05/10 `RESOLVED`, leave
-P1-DG-06/07/08/09 `OPEN (phase-scoped)`, then write
+**Not applied.** On approval: apply to DID (v1.5); mark P1-DG-01/02/03/04/05/10
+`RESOLVED`; leave P1-DG-06/07/08/09 `OPEN (phase-scoped)`; then write
 `docs/design/implementation/P1/**`.
+
+One item needs your explicit confirmation before apply:
+**`ExecutionStopRequested`** is a new `DomainError` tag proposed for the
+stop/quiescence admission rejection (DG-04). Confirm the name or supply the
+intended tag.
