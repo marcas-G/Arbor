@@ -2,7 +2,7 @@
 
 **Authority:** DID v1.6 §7.4, §12.6, §6.3, §6A.15, §9.1, §9.7
 **Status:** P1 phase-scoped closure (revised after 4-way review)
-**Closes:** A3 (concrete transaction mechanism); supports P1-DG-02 / P1-DG-04.
+**Implements:** concrete transaction mechanism; supports P1-DG-02 / P1-DG-04.
 
 This document freezes the concrete transaction interface that DID §7.4 leaves
 open ("v1.2 不冻结具体机制，只冻结可观察保证"). It does not change the DID.
@@ -70,7 +70,7 @@ transact {
          AND stored.fingerprint_algorithm_version == incoming.algorithmVersion:
            return existing Receipt            // no domain re-execution
       else:
-           return TerminalRejected(IdempotencyConflict)   // durable
+           return TerminalRejected(IdempotencyConflict)   // deterministic replay response; the existing row is not overwritten
   if ExecutionOrigin:
       fence check   (see §4)
       stop check    (see §4)
@@ -151,9 +151,12 @@ Two **independent** checks (DID §9.7 / §6A.15):
 ```
 
 The checks must be evaluated separately so the caller can distinguish the
-outcomes (exact SQL in `04-sqlite-schema.md` §4). P1 provides the hook; P2
-provides lease acquisition/renewal/loss and the generation source. In P1 all
-commands are `External`/`System`, so the hook is inert and tested with a stub.
+outcomes (exact SQL in `04-sqlite-schema.md` §4). `FencingRejected` and
+`ExecutionStopping` are **terminal**: they are persisted via the §3.2 path as
+a `TerminalRejected` receipt (no Domain Event), per DID §9.9. P1 provides the
+hook; P2 provides lease acquisition/renewal/loss and the generation source. In
+P1 all commands are `External`/`System`, so the hook is inert and tested with
+a stub.
 
 ## 5. Effect channels
 

@@ -2,7 +2,7 @@
 
 **Authority:** DID v1.6 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10
 **Status:** P1 phase-scoped closure (revised after 4-way review)
-**Closes:** A2 for P1 ports; P1-DG-08 persistence access; P1-DG-10 port ownership.
+**Implements:** P1 port contracts; P1-DG-08 persistence access; P1-DG-10 port ownership.
 
 Ports are Effect services (DID §7.1/§7.7); adapters are Layers. All P1
 repositories **require `TransactionScope`** and never open their own
@@ -37,6 +37,9 @@ interface TransactionPort {
 }
 ```
 
+`AdapterSession` is an **opaque `ports`-owned type** (`interface AdapterSession
+{ readonly id: string }`); it must not reference `adapters/*` (DID §10.4.1).
+
 See `03-transaction-model.md`.
 
 ## 3. Repositories
@@ -46,7 +49,7 @@ See `03-transaction-model.md`.
 | Method | Semantics |
 |---|---|
 | `findById(projectId): Effect<Option<Project>, ProjectRepositoryError>` | |
-| `create(project)` | insert; `UNIQUE(root_workspace_id)` |
+| `create(project)` | insert; composite `(root_workspace_id, project_id)` FK + `UNIQUE(workspace_id, project_id)` |
 | `updatePolicyIfRevision(projectId, expectedRevision, policy, newPolicyRevision, newRevision)` | CAS |
 | `closeIfRevision(projectId, expectedRevision, newRevision)` | CAS |
 
@@ -92,6 +95,14 @@ See `03-transaction-model.md`.
 | `releaseClaim(claimId, releasedAt)` | `UPDATE ... WHERE released_at IS NULL` |
 | `listActiveByWorkspace(workspaceId)` | retire precondition |
 
+P1 `ResourceOwnershipClaim` record (matches the DDL columns):
+
+```ts
+{ claimId, workspaceId, region: CanonicalResourceRegion,
+  sourceAddressSnapshot: ResourceAddress, resourceBoundaryRevision,
+  resolvedAtEnvironmentRevision, createdAt, releasedAt: string | null }
+```
+
 ### CommandStore
 
 | Method | Semantics |
@@ -120,15 +131,15 @@ See `03-transaction-model.md`.
 
 | Method | Semantics |
 |---|---|
-| `read(consumerId, projectId): Effect<number, ConsumerOffsetStoreError>` | |
-| `advance(consumerId, projectId, lastSequence)` | same transaction as the projection write (05 §4) |
+| `read(consumerId, projectId): Effect<number, ConsumerOffsetStoreError>` | returns `0` when the row is absent |
+| `advance(consumerId, projectId, lastSequence)` | upsert (`INSERT ... ON CONFLICT(consumer_id, project_id) DO UPDATE`); same transaction as the projection write (05 §4) |
 
 ### EnvironmentRevisionStore
 
 | Method | Semantics |
 |---|---|
 | `current(projectId): Effect<Option<string>, EnvironmentRevisionStoreError>` | read **inside** the ownership write tx; `None` = not observed (treated as not stale) |
-| `record(projectId, revision)` | updated by environment change (owner: later phase) |
+| `record(projectId, revision)` | called by the ownership write (lazy init with the observed revision) and by environment-change (later phase) |
 
 ### Error classification
 

@@ -1,8 +1,20 @@
 # P1 Contract Review Findings (draft — contracts not modified)
 
-Status: **BLOCKED** — 4-way independent review of
-`docs/design/implementation/P1/**` against DID v1.5. Contracts were **not**
-modified. P1-DG-06..09 remain `OPEN`.
+Status: **ROUND 1 record**. Later rounds tracked below.
+
+## Round history
+
+```text
+Round 1 (DID v1.5): 16 blocking (B1–B16) + 11 important + minors.
+Round 2 (after revision): B1–B16 CLEARED; new blockers N1 (poison offset),
+  N2 (recordAttempt scope), N3 (sequence seed), N2b (resolve/init).
+Round 3 (after revision): all above CLEARED; Blocking = 1
+  (ConsumerOffsetStore absent-row semantics) + important residuals.
+Round 4 (after revision): pending.
+```
+
+The round-1 findings below are retained for provenance.
+
 
 Reviewers: Command/Port, Transaction/DDL, Event/Recovery, Cross-document
 Consistency.
