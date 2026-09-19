@@ -1,83 +1,87 @@
 # P1 — 02 Port Contracts
 
-**Authority:** DID v1.5 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10
-**Status:** P1 phase-scoped closure (draft for review)
+**Authority:** DID v1.6 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10
+**Status:** P1 phase-scoped closure (revised after 4-way review)
 **Closes:** A2 for P1 ports; P1-DG-08 persistence access; P1-DG-10 port ownership.
 
 Ports are Effect services (DID §7.1/§7.7); adapters are Layers. All P1
 repositories **require `TransactionScope`** and never open their own
-connection. No generic CRUD `Repository<T>{findById, save, delete}` (DID §7.3).
+connection. No generic CRUD (DID §7.3). Owning package: **`ports`**.
+Adapters: `adapters/persistence-sqlite`, `adapters/environment-local`.
 
-Owning package: **`ports`** (except where noted). Adapters:
-`adapters/persistence-sqlite`, `adapters/environment-local`.
+## 1. Effect channel rules
 
-## 1. Transaction
+```text
+Repository method:
+  A = typed result (ADT / Option where absence is a normal alternative)
+  E = <RepositoryName>Error   // per-repository semantic error, NOT a catch-all
+  R = TransactionScope        // the tag enters R at the call site; the method
+                              // itself requires only TransactionScope
+TransactionPort.transact adds TransactionOperationalFailure to E.
+```
+
+- There is **no** universal `RepositoryError` (DID §6A.2 / §0A.6). Each
+  repository declares its own narrow error (`ProjectRepositoryError`, …).
+- CAS failures are typed errors of the owning repository.
+- Adapter errors (`SqliteError`, …) are translated at the adapter boundary and
+  never appear in a port `E` (DID §0A.6).
+
+## 2. Transaction
 
 ```ts
-interface TransactionScope { readonly sessionId: string }
+class TransactionScope extends Context.Tag("arbor/TransactionScope")<
+  TransactionScope, { readonly session: AdapterSession }>() {}
 interface TransactionPort {
   transact: <A, E, R>(body: Effect<A, E, R | TransactionScope>)
     => Effect<A, E | TransactionOperationalFailure, Exclude<R, TransactionScope>>
 }
 ```
 
-See `03-transaction-model.md`. `TransactionOperationalFailure` is
-non-authoritative and retryable.
+See `03-transaction-model.md`.
 
-## 2. Repositories
-
-Every method:
-
-```text
-E = RepositoryError | (typed CAS conflict, e.g. RevisionConflict) | TransactionOperationalFailure
-R = TransactionScope | <owning repository service>
-```
-
-`RepositoryError` is adapter-specific and never crosses the semantic
-boundary (DID §0A.6).
+## 3. Repositories
 
 ### ProjectRepository
 
 | Method | Semantics |
 |---|---|
-| `findById(projectId)` | `Effect<Project \| null, …>` |
-| `create(project)` | insert; `UNIQUE(root_workspace_id)` enforced |
-| `updatePolicyIfRevision(projectId, expectedRevision, policy, newPolicyRevision, newRevision)` | CAS on `revision` |
-| `closeIfRevision(projectId, expectedRevision, newRevision)` | CAS on `revision` |
+| `findById(projectId): Effect<Option<Project>, ProjectRepositoryError>` | |
+| `create(project)` | insert; `UNIQUE(root_workspace_id)` |
+| `updatePolicyIfRevision(projectId, expectedRevision, policy, newPolicyRevision, newRevision)` | CAS |
+| `closeIfRevision(projectId, expectedRevision, newRevision)` | CAS |
 
 ### WorkspaceRepository
 
 | Method | Semantics |
 |---|---|
-| `findById(workspaceId)` | |
-| `create(workspace)` | parent immutable; child inherits project |
+| `findById(workspaceId): Effect<Option<Workspace>, WorkspaceRepositoryError>` | |
+| `create(workspace)` | parent immutable |
 | `changeResponsibilityIfRevision(...)` | CAS; `responsibility_revision++` |
 | `updateResourceBoundaryIfRevision(...)` | CAS; `resource_boundary_revision++` |
 | `updatePolicyIfRevision(...)` | CAS; `workspace_policy_revision++` |
-| `selectCurrentWorkIfRevision(workspaceId, expectedRevision, workId, newRevision)` | CAS; sets `current_work_id` |
-| `replacePrimarySessionIfRevision(...)` | CAS; sets `primary_session_id` |
-| `retireIfRevision(...)` | CAS; lifecycle = Retired |
+| `selectCurrentWorkIfRevision(...)` | CAS |
+| `replacePrimarySessionIfRevision(...)` | CAS |
+| `retireIfRevision(...)` | CAS |
 | `countActiveChildren(workspaceId)` | retire precondition |
-| `hasOpenWork(workspaceId)` | retire precondition (or via WorkRepository) |
+| `hasOpenWork(workspaceId)` | retire precondition |
 
 ### WorkRepository
 
 | Method | Semantics |
 |---|---|
-| `findById(workId)` | |
+| `findById(workId): Effect<Option<Work>, WorkRepositoryError>` | |
 | `create(work)` | lifecycle Open |
-| `refineIfRevision(workId, expectedRevision, fields, newRevision)` | CAS |
-| `completeIfRevision(workId, expectedRevision)` | CAS; lifecycle Completed |
-| `cancelIfRevision(workId, expectedRevision)` | CAS; lifecycle Cancelled |
-| `listByWorkspace(workspaceId, lifecycle?)` | open-work / current-work checks |
+| `refineIfRevision(...)` / `completeIfRevision(...)` / `cancelIfRevision(...)` | CAS |
+| `listByWorkspace(workspaceId, lifecycle?)` | open-work / current checks |
 
 ### SessionRepository
 
 | Method | Semantics |
 |---|---|
-| `findById(sessionId)` | |
-| `create(session)` | `WorkspacePrimary` / `ExecutionScoped` binding |
-| `appendEntry(sessionId, entry)` | Session-local monotonic sequence |
+| `findById(sessionId): Effect<Option<Session>, SessionRepositoryError>` | |
+| `create(session)` | `WorkspacePrimary` / `ExecutionScoped` binding; P1 bootstrap |
+
+`appendEntry` (runtime operational mutation, DID §4.4) is **P2**, not P1.
 
 ### ResourceOwnershipRepository
 
@@ -85,19 +89,17 @@ boundary (DID §0A.6).
 |---|---|
 | `loadActiveConflicts(resourceSpaceId)` | conflict load inside `BEGIN IMMEDIATE` |
 | `insertClaim(claim)` | resolved `CanonicalResourceRegion` |
-| `releaseClaim(claimId, releasedAt)` | lifecycle (P1-DG-08) |
+| `releaseClaim(claimId, releasedAt)` | `UPDATE ... WHERE released_at IS NULL` |
 | `listActiveByWorkspace(workspaceId)` | retire precondition |
 
 ### CommandStore
 
 | Method | Semantics |
 |---|---|
-| `findResolution(commandId)` | `Effect<CommandReceipt \| null, …>` |
-| `insertCommitted(commandId, projectId, fingerprint, schemaVersion, resultJson)` | authoritative |
-| `insertTerminalRejected(commandId, projectId, fingerprint, schemaVersion, terminalErrorJson)` | authoritative, no event |
-| `recordAttempt(commandId, attemptNo, outcome, failureKind?)` | non-authoritative trace; no FK to commands |
-
-No generic `save`. `CommandReceipt` is a read view of the `commands` row.
+| `findResolution(commandId): Effect<Option<CommandReceipt>, CommandStoreError>` | |
+| `insertCommitted(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, resultJson)` | authoritative |
+| `insertTerminalRejected(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, terminalErrorJson)` | authoritative, no event |
+| `recordAttempt(commandId, attemptNo, outcome, failureKind?, startedAt, settledAt?)` | non-authoritative trace; written in a **separate** short transaction after rollback (03 §3.3) |
 
 ### DomainEventJournal
 
@@ -105,31 +107,42 @@ No generic `save`. `CommandReceipt` is a read view of the `commands` row.
 |---|---|
 | `append(events)` | append in the semantic transaction; allocates project-local sequence |
 | `readAfter(projectId, sequence, limit)` | consumer catch-up |
-| `lastSequence(projectId)` | allocation support |
+| `lastSequence(projectId)` | allocation support (reads `project_event_sequences`) |
 
-## 3. Other P1 ports
+### ConsumerOffsetStore
+
+| Method | Semantics |
+|---|---|
+| `read(consumerId, projectId): Effect<number, ConsumerOffsetStoreError>` | |
+| `advance(consumerId, projectId, lastSequence)` | same transaction as the projection write (05 §4) |
+
+### EnvironmentRevisionStore
+
+| Method | Semantics |
+|---|---|
+| `current(projectId): Effect<string, EnvironmentRevisionStoreError>` | read **inside** the ownership write tx (no I/O) for the stale re-check |
+| `record(projectId, revision)` | updated by environment change (owner: later phase) |
+
+## 4. Other P1 ports
 
 | Port | Method | Notes |
 |---|---|---|
-| `Clock` | `now(): Effect<string, never>` | ISO timestamp; adapter-provided; testable |
-| `IdGenerator` | `generate<T>(kind): Effect<T, never>` | used by **callers**, not command handlers |
-| `ProjectEnvironmentPort` | `resolve(addresses): Effect<ReadonlyArray<CanonicalResourceRegion>, EnvironmentError>`; `currentEnvironmentRevision(): Effect<string, EnvironmentError>` | resolve **outside** write tx (DID §9.5) |
+| `Clock` | `now(): Effect<string, never>` | ISO timestamp; testable |
+| `IdGenerator` | `generate<T>(kind): Effect<T, never>` | used by **callers**, not handlers |
+| `ProjectEnvironmentPort` | `resolve(addresses): Effect<{ regions: ReadonlyArray<CanonicalResourceRegion>; observedEnvironmentRevision: string }, EnvironmentError>` | resolve **outside** write tx (DID §1.5); returns regions + revision together |
 
-## 4. Transaction participation summary
+## 5. Transaction participation summary
 
 ```text
-ProjectRepository            -> requires TransactionScope
-WorkspaceRepository          -> requires TransactionScope
-WorkRepository               -> requires TransactionScope
-SessionRepository            -> requires TransactionScope
-ResourceOwnershipRepository  -> requires TransactionScope
-CommandStore                 -> requires TransactionScope
-DomainEventJournal           -> requires TransactionScope
-ProjectEnvironmentPort       -> NO TransactionScope (slow I/O outside write tx)
-Clock / IdGenerator          -> NO TransactionScope
+ProjectRepository / WorkspaceRepository / WorkRepository / SessionRepository
+ResourceOwnershipRepository / CommandStore / DomainEventJournal
+ConsumerOffsetStore / EnvironmentRevisionStore     -> require TransactionScope
+ProjectEnvironmentPort                             -> NO TransactionScope (slow I/O)
+Clock / IdGenerator                                -> NO TransactionScope
+CommandStore.recordAttempt                         -> separate scope (after rollback)
 ```
 
-## 5. Out of scope
+## 6. Out of scope
 
-- Execution/lease ports (P2).
+- Execution/lease ports (P2), including `SessionRepository.appendEntry`.
 - Provider/Tool/Blob/Projection ports (P3+).

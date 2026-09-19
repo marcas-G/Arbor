@@ -1,45 +1,52 @@
 # P1 — Contract Index
 
-**Authority:** DID v1.5 (phase-scoped closure). These documents are **not** a
+**Authority:** DID v1.6 (phase-scoped closure). These documents are **not** a
 fifth design layer; they are the P1-owned implementation contracts authorized
 by DID §13.
 
 ```text
-Detailed Implementation Design (frozen)
+Detailed Implementation Design v1.6 (frozen)
         ↓ delegates phase-scoped closure
 docs/design/implementation/P1/**   (these contracts)
 ```
 
-Once reviewed, a small DID v1.6 governance patch adds the authority index line
-pointing here. Until then these documents are drafts for review and
-`P1-DG-06..09` remain `OPEN`.
+DID §13 now points at `docs/design/implementation/P1/**`; a conflict resolves
+in favor of the DID.
 
 ## Documents
 
-| Doc | Owns | Closes |
+| Doc | Owns |
+|---|---|
+| `03-transaction-model.md` | `TransactionScope` service, single-transaction command resolution, fingerprint comparison, concurrent duplicate protocol, fence/stop split |
+| `01-command-contracts.md` | failure vocabulary, generic pipeline, fingerprint algorithm, P1 command payload/result/rejection/event |
+| `02-port-contracts.md` | P1 repository/port method sets, Effect A/E/R, transaction participation |
+| `05-event-journal.md` | sequence scope + durable counter, `eventVersion`, offset/projection boundary, poison handling |
+| `04-sqlite-schema.md` | DDL, cyclic FKs, indexes, resource-region encoding, migration, retention |
+| `06-recovery-matrix.md` | crash-point matrix, durability, attempt recording |
+| `00-contract-index.md` | this index |
+
+## Gap closure mapping
+
+| Gap | Status | Closed by |
 |---|---|---|
-| `03-transaction-model.md` | TransactionPort / TransactionScope / single-transaction command resolution / fence hook | A3 |
-| `01-command-contracts.md` | P1 command payload/result/rejection/event; generic pipeline | A1, P1-DG-02, P1-DG-05, P1-DG-10 sub-items |
-| `02-port-contracts.md` | P1 repository/port method sets + Effect A/E/R + tx participation | A2, P1-DG-08 access, P1-DG-10 port ownership |
-| `04-sqlite-schema.md` | Exact DDL, cyclic FKs, indexes, migration, retention | A4, P1-DG-07, P1-DG-08, P1-DG-09 |
-| `05-event-journal.md` | sequence scope, eventVersion, offset atomicity | A6, P1-DG-06 |
-| `06-recovery-matrix.md` | crash-point matrix | A8 |
-| `00-contract-index.md` | this index | — |
+| P1-DG-01 | RESOLVED (DID v1.5) | DID §6A.15 |
+| P1-DG-02 | RESOLVED (DID v1.5) | DID §9.9; implemented by 01/03/04 |
+| P1-DG-03 | RESOLVED (DID v1.5) | algorithm frozen in 01 §4 |
+| P1-DG-04 | RESOLVED (DID v1.5) | DID §9.7; implemented by 03/04 |
+| P1-DG-05 | RESOLVED (DID v1.5) | DID §12.11; implemented by 01 |
+| P1-DG-06 | **OPEN** (phase-scoped) | 05 (+ 04 sequence table) — closes on review |
+| P1-DG-07 | **OPEN** (phase-scoped) | 04 — closes on review |
+| P1-DG-08 | **OPEN** (phase-scoped) | 04 (+ 02) — closes on review |
+| P1-DG-09 | **OPEN** (phase-scoped) | 04 (+ 06) — closes on review |
+| P1-DG-10 | RESOLVED (DID v1.5, port classification) | sub-items closed by 01 (AssignWork, child-workspace, ID generation) and 02 (port ownership) |
 
 ## P1 command set
 
-`CreateProject`, `CreateChildWorkspace`, `AssignWork` (DID §11 P1). All other
-commands close in their owning phase.
-
-## Open items carried into review
-
-1. `AssignWork` rejections `WorkspaceNotFound` / `ProjectClosed` /
-   `ResponsibilityViolation` (DID §0A.1) are not yet in the frozen
-   `DomainError`; proposed for the DID v1.6 patch.
-2. Resource-region physical encoding per resource kind is a P1 contract for
-   `ProjectEnvironmentPort` (overlap stays in the domain function).
+`CreateProject`, `CreateChildWorkspace`, `AssignWork` (DID §11).
 
 ## Status
 
-DRAFT — awaiting four-way review. No `docs/design/**` frozen document was
-modified while producing these contracts.
+REVISED after the first 4-way review (16 blocking findings addressed). Not yet
+frozen: awaiting re-review. `P1-DG-06..09` remain `OPEN` until the re-review
+passes with Blocking = 0. No frozen DID document was modified while producing
+these contracts (DID v1.6 was a separate governance patch).
