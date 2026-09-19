@@ -205,12 +205,18 @@ No Session Domain Event. Child `WorkspacePrimary` Session created atomically.
 | Condition | Rejection |
 |---|---|
 | workspace not found | `CommandRejection.WorkspaceNotFound` |
+| `workspace.projectId != envelope.projectId` | `DomainError.AuthorityDenied` |
 | project lifecycle != Open | `DomainError.TerminalLifecycleMutation` (entity `Project`) |
 | workspace lifecycle != Active | `DomainError.TerminalLifecycleMutation` (entity `Workspace`) |
 | no authority | `DomainError.AuthorityDenied` |
 | work outside responsibility scope | `DomainError.AuthorityDenied` (reason) |
 | `workspace.revision != expectedWorkspaceRevision` | `DomainError.RevisionConflict` |
 | same id + different fingerprint | `CommandRejection.IdempotencyConflict` |
+
+P0 `assignWork` returns `RetirePreconditionFailed` when the workspace does not
+accept work; the P1 handler pre-checks workspace lifecycle and returns
+`TerminalLifecycleMutation` instead. The P0 branch is superseded by this
+contract (P0→P1 artifact evolution).
 
 ### Events
 

@@ -99,7 +99,8 @@ See `03-transaction-model.md`.
 | `findResolution(commandId): Effect<Option<CommandReceipt>, CommandStoreError>` | |
 | `insertCommitted(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, resultJson)` | authoritative |
 | `insertTerminalRejected(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, terminalErrorJson)` | authoritative, no event |
-| `recordAttempt(commandId, attemptNo, outcome, failureKind?, startedAt, settledAt?)` | non-authoritative trace; written in a **separate** short transaction after rollback (03 §3.3) |
+| `recordResolvingAttempt(commandId, attemptNo, outcome, startedAt, settledAt)` | resolving attempt (Committed / TerminalRejected); written in the **command transaction** (03 §3.1/§3.2) |
+| `recordRetryableAttempt(commandId, attemptNo, failureKind, startedAt, settledAt)` | non-authoritative trace; written in a **separate** short transaction after rollback (03 §3.3) |
 
 ### DomainEventJournal
 
@@ -107,7 +108,13 @@ See `03-transaction-model.md`.
 |---|---|
 | `append(events)` | append in the semantic transaction; allocates project-local sequence |
 | `readAfter(projectId, sequence, limit)` | consumer catch-up |
-| `lastSequence(projectId)` | allocation support (reads `project_event_sequences`) |
+| `lastSequence(projectId): Effect<number, DomainEventJournalError>` | returns `0` when absent (allocation support) |
+
+### ConsumerDeadLetterStore
+
+| Method | Semantics |
+|---|---|
+| `quarantine(consumerId, projectId, sequence, reason)` | `INSERT OR IGNORE`; same transaction as the offset skip (05 §3) |
 
 ### ConsumerOffsetStore
 
@@ -120,8 +127,16 @@ See `03-transaction-model.md`.
 
 | Method | Semantics |
 |---|---|
-| `current(projectId): Effect<string, EnvironmentRevisionStoreError>` | read **inside** the ownership write tx (no I/O) for the stale re-check |
+| `current(projectId): Effect<Option<string>, EnvironmentRevisionStoreError>` | read **inside** the ownership write tx; `None` = not observed (treated as not stale) |
 | `record(projectId, revision)` | updated by environment change (owner: later phase) |
+
+### Error classification
+
+```text
+EnvironmentError / ResourceResolutionStale are Port/Application operational
+errors, NOT DomainError. ResourceResolutionStale is a retryable operational
+failure (re-resolve + re-evaluate), never an authoritative rejection.
+```
 
 ## 4. Other P1 ports
 
@@ -129,17 +144,19 @@ See `03-transaction-model.md`.
 |---|---|---|
 | `Clock` | `now(): Effect<string, never>` | ISO timestamp; testable |
 | `IdGenerator` | `generate<T>(kind): Effect<T, never>` | used by **callers**, not handlers |
-| `ProjectEnvironmentPort` | `resolve(addresses): Effect<{ regions: ReadonlyArray<CanonicalResourceRegion>; observedEnvironmentRevision: string }, EnvironmentError>` | resolve **outside** write tx (DID §1.5); returns regions + revision together |
+| `ProjectEnvironmentPort` | `resolve(projectId, addresses): Effect<{ regions: ReadonlyArray<CanonicalResourceRegion>; observedEnvironmentRevision: string }, EnvironmentError>` | resolve **outside** write tx (DID §1.5); returns regions + revision together |
 
 ## 5. Transaction participation summary
 
 ```text
 ProjectRepository / WorkspaceRepository / WorkRepository / SessionRepository
 ResourceOwnershipRepository / CommandStore / DomainEventJournal
-ConsumerOffsetStore / EnvironmentRevisionStore     -> require TransactionScope
+ConsumerOffsetStore / EnvironmentRevisionStore / ConsumerDeadLetterStore
+                                                   -> require TransactionScope
 ProjectEnvironmentPort                             -> NO TransactionScope (slow I/O)
 Clock / IdGenerator                                -> NO TransactionScope
-CommandStore.recordAttempt                         -> separate scope (after rollback)
+CommandStore.recordResolvingAttempt                -> command transaction
+CommandStore.recordRetryableAttempt                -> separate scope (after rollback)
 ```
 
 ## 6. Out of scope

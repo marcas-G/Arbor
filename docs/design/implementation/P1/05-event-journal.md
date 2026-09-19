@@ -18,14 +18,18 @@ project_event_sequences (
 ```
 
 Allocation (inside the command transaction, which uses `BEGIN IMMEDIATE`,
-`03-transaction-model.md` §2):
+`03-transaction-model.md` §2) is an **upsert**, so a new project allocates its
+first sequence without a pre-seeded row:
 
 ```sql
-UPDATE project_event_sequences
-   SET last_sequence = last_sequence + 1
- WHERE project_id = ?
+INSERT INTO project_event_sequences(project_id, last_sequence)
+VALUES (?, 1)
+ON CONFLICT(project_id) DO UPDATE SET last_sequence = last_sequence + 1
 RETURNING last_sequence;
 ```
+
+`DomainEventJournal.lastSequence(projectId)` returns `0` when the row is
+absent.
 
 Rules:
 
@@ -56,11 +60,15 @@ DomainEventJournal.append(events)
 
 ```text
 - Each event type starts at eventVersion = 1 (per type, not global).
-- Consumers MUST tolerate a higher version by ignoring unknown fields
-  (forward-compatible).
-- If a consumer cannot process a version, it is a PROJECTION DEFECT:
-    quarantine the event (dead-letter table) + alert + operator decision.
-  It must NOT block the offset forever (no head-of-line stall).
+- Consumers MUST tolerate a higher version by ignoring unknown OPTIONAL
+  fields within a supported range (forward-compatible).
+- If an event is unprocessable (a required field/version ceiling is exceeded,
+  or any deterministic projection defect), it is a POISON EVENT:
+    in the SAME transaction: write consumer_dead_letters(consumer_id,
+    project_id, sequence, reason) AND advance consumer_offsets.last_sequence
+    past that sequence (skip), then alert.
+  The offset MUST advance past a quarantined sequence so the consumer never
+  stalls (no head-of-line block). Operator reviews dead letters.
 - v1 performs NO upcasting.
 ```
 

@@ -80,6 +80,7 @@ transact {
   write canonical state
   write Committed receipt + result_json
   append Domain Events (Committed only)
+  recordResolvingAttempt(Committed)
 }
 COMMIT
 ```
@@ -94,6 +95,7 @@ transact {
   consistent canonical read
   evaluate terminal rejection
   write TerminalRejected receipt + terminal_error_json
+  recordResolvingAttempt(TerminalRejected)
 }
 COMMIT
 ```
@@ -107,7 +109,7 @@ No Domain Event. `terminal_error_json` carries a `CommandRejection`
 transact { ... } ROLLBACK
 → no commands row written / unchanged
 → in a SEPARATE short transaction (outside the failed scope):
-     CommandStore.recordAttempt(commandId, attemptNo, RetryableOperationalFailure, failureKind?)
+     CommandStore.recordRetryableAttempt(commandId, attemptNo, failureKind, startedAt, settledAt)
 → same CommandId may retry with unchanged semantic request
 ```
 
