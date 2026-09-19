@@ -175,6 +175,10 @@ returns `{ regions, observedEnvironmentRevision }`; then `BEGIN IMMEDIATE` →
 `EnvironmentRevisionStore.record(projectId, observedEnvironmentRevision)` →
 COMMIT.
 
+`resource_boundary_revision` and `resolved_at_environment_revision` are CAS
+columns: the ownership write compares the observed environment revision and
+the basis responsibility revision before committing.
+
 #### Resource-region physical encoding (frozen)
 
 ```text

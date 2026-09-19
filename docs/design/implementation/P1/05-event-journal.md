@@ -113,8 +113,9 @@ COMMIT
 
 ```text
 Projection rebuild:
-  refuse if consumer offset < the pruned floor for that project
-  reset consumer_offsets.last_sequence = 0 (or pruned floor)
+  pruned floor = MIN(domain_events.sequence) for the project (0 if none)
+  refuse if consumer offset < pruned floor (events already pruned)
+  reset consumer_offsets.last_sequence to the pruned floor
   replay domain_events in (project_id, sequence) order
 ```
 

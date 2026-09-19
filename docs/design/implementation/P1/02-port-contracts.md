@@ -95,7 +95,8 @@ See `03-transaction-model.md`.
 | `releaseClaim(claimId, releasedAt)` | `UPDATE ... WHERE released_at IS NULL` |
 | `listActiveByWorkspace(workspaceId)` | retire precondition |
 
-P1 `ResourceOwnershipClaim` record (matches the DDL columns):
+P1 `ResourceOwnershipClaim` record (matches the DDL columns;
+`resource_space_id` is derived from `region.resourceSpaceId`):
 
 ```ts
 { claimId, workspaceId, region: CanonicalResourceRegion,
