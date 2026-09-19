@@ -15,6 +15,9 @@ PRAGMA busy_timeout = 5000;
 PRAGMA synchronous = FULL;   -- durability; see 06-recovery-matrix.md
 ```
 
+Requires SQLite ≥ 3.35 (`RETURNING`, `ON CONFLICT ... DO UPDATE`); the
+`@effect/sql-sqlite-node` driver's bundled SQLite satisfies this.
+
 Only the Arbor Runtime writes this DB (DID §9.2).
 
 ## 2. Table ↔ domain mapping (P1-DG-07)
@@ -163,13 +166,14 @@ CREATE TABLE environment_revisions (
 write records the observed revision. `EnvironmentRevisionStore.current`
 returns `None` when absent/NULL, and the stale check treats that as
 "not stale" (nothing observed yet).
-```
 
 Write transaction (DID §9.5): `ProjectEnvironmentPort.resolve` outside the tx
 returns `{ regions, observedEnvironmentRevision }`; then `BEGIN IMMEDIATE` →
 `EnvironmentRevisionStore.current(projectId)` compared to
 `observedEnvironmentRevision` → `ResourceResolutionStale` on drift →
-`loadActiveConflicts` → domain `overlaps()` → insert/release → COMMIT.
+`loadActiveConflicts` → domain `overlaps()` → insert/release →
+`EnvironmentRevisionStore.record(projectId, observedEnvironmentRevision)` →
+COMMIT.
 
 #### Resource-region physical encoding (frozen)
 
@@ -219,6 +223,10 @@ CREATE TABLE command_attempts (
   PRIMARY KEY (command_id, attempt_no)
 );
 ```
+
+`settled_at` is `NOT NULL` — a deliberate deviation from DID §9.9's
+`settled_at?`: since there is no durable `Pending`, every `commands` row is
+written together with its resolution.
 
 Attempt recording:
 

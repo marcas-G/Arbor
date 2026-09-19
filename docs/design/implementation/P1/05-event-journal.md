@@ -88,6 +88,12 @@ COMMIT
 ```
 
 - Re-apply idempotency key: `(project_id, sequence)` (equivalently `event_id`).
+- `ConsumerOffsetStore.read` returns `0` when the row is absent; `advance`
+  upserts.
+- Processing a batch: apply each event in order; a poison event is
+  dead-lettered and skipped; the offset advances to the last
+  processed-or-quarantined sequence in the batch (never stuck on a poison
+  event).
 - Projections to an external store are **out of P1 scope**; P1 projections
   are co-located with `consumer_offsets`.
 - Projection failure never rolls back the domain transaction (DID §5.4).

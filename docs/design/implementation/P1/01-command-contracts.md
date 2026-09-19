@@ -2,7 +2,7 @@
 
 **Authority:** DID v1.6 §4.1, §4.1A, §4.2, §0A.1, §6A.15, §12.3, §12.5, §12.6, §12.10, §12.11
 **Status:** P1 phase-scoped closure (revised after 4-way review)
-**Closes:** A1 for the P1 command set; P1-DG-02 receipt/resolution; P1-DG-05 bootstrap; P1-DG-10 sub-items (ID generation, `AssignWork` rejections, child-workspace phase); fingerprint algorithm (P1-DG-03).
+**Implements:** P1 command contracts; P1-DG-02/05 (DID-resolved); P1-DG-10 sub-items (ID generation, `AssignWork` rejections, child-workspace phase); fingerprint algorithm (P1-DG-03).
 
 ## 1. P1 command set
 
@@ -40,7 +40,7 @@ CommandGateway.execute(envelope, submissionContext)
      a. read commands row by command_id
         - exists: same (fingerprint, schemaVersion, algorithmVersion)
               -> return existing Receipt (Committed or TerminalRejected)
-          different -> TerminalRejected(IdempotencyConflict) [durable]
+          different -> TerminalRejected(IdempotencyConflict) (deterministic replay response; existing row unchanged)
         - absent -> continue
      b. if ExecutionOrigin: fence check, then stop check (03 §4)
      c. authority / preconditions
