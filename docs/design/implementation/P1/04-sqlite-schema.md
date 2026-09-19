@@ -1,0 +1,262 @@
+# P1 — 04 SQLite Schema
+
+**Authority:** DID v1.5 §9.1–§9.9, §9.13, §12.11, §3.1–§3.3
+**Status:** P1 phase-scoped closure (draft for review)
+**Closes:** P1-DG-07 (cyclic FKs, mapping, root uniqueness), P1-DG-08
+(`resource_ownership` lifecycle), P1-DG-09 (retention/delete + migration),
+and the P1 DDL blocker (DID §13).
+
+## 1. Storage settings (DID §9.1)
+
+```sql
+PRAGMA journal_mode = WAL;
+PRAGMA foreign_keys = ON;
+PRAGMA busy_timeout = 5000;
+```
+
+Only the Arbor Runtime writes this DB. Workers/Agents/Tools/UI never open it
+(DID §9.2).
+
+## 2. Table ↔ domain mapping (P1-DG-07)
+
+| Table | Domain type |
+|---|---|
+| `projects` | `Project` |
+| `workspaces` | `Workspace` |
+| `sessions` | `Session` |
+| `works` | `Work` |
+| `resource_ownership` | `ResourceOwnershipClaim` |
+| `commands` | `CommandReceipt` (authoritative resolution) |
+| `command_attempts` | `CommandAttempt` (non-authoritative trace) |
+| `domain_events` | `DomainEvent` (durable outbox) |
+| `consumer_offsets` | consumer cursor |
+
+Later-phase tables (`work_waits` ↔ `Dependency`, `work_acceptances` ↔
+`Acceptance`, `executions`, `execution_leases`, `verifications`, …) are owned
+by their phases; the mapping is authoritative here.
+
+## 3. DDL
+
+### 3.1 projects / workspaces / sessions (cyclic FKs, DID §9.13)
+
+Both cycles use `DEFERRABLE INITIALLY DEFERRED` so the `CreateProject`
+bootstrap commits atomically.
+
+```sql
+CREATE TABLE projects (
+  project_id              TEXT PRIMARY KEY,
+  name                    TEXT NOT NULL,
+  root_workspace_id       TEXT NOT NULL UNIQUE
+                            REFERENCES workspaces(workspace_id) DEFERRABLE INITIALLY DEFERRED,
+  project_policy          TEXT NOT NULL,              -- JSON
+  project_policy_revision INTEGER NOT NULL,
+  default_configuration   TEXT NOT NULL,              -- JSON
+  environment_ref         TEXT NOT NULL,
+  lifecycle               TEXT NOT NULL CHECK (lifecycle IN ('Open','Closed')),
+  revision                INTEGER NOT NULL,
+  created_at              TEXT NOT NULL,
+  updated_at              TEXT NOT NULL
+);
+
+CREATE TABLE workspaces (
+  workspace_id                TEXT PRIMARY KEY,
+  project_id                  TEXT NOT NULL REFERENCES projects(project_id),
+  parent_workspace_id         TEXT REFERENCES workspaces(workspace_id),
+  name                        TEXT NOT NULL,
+  responsibility_definition   TEXT NOT NULL,          -- JSON
+  responsibility_revision     INTEGER NOT NULL,
+  resource_boundary           TEXT NOT NULL,          -- JSON
+  resource_boundary_revision  INTEGER NOT NULL,
+  agent_binding               TEXT NOT NULL,          -- JSON (ResponsibilityBoundAgentBinding)
+  primary_session_id          TEXT NOT NULL
+                                REFERENCES sessions(session_id) DEFERRABLE INITIALLY DEFERRED,
+  current_work_id             TEXT
+                                REFERENCES works(work_id) DEFERRABLE INITIALLY DEFERRED,
+  workspace_policy            TEXT NOT NULL,          -- JSON
+  workspace_policy_revision   INTEGER NOT NULL,
+  revision                    INTEGER NOT NULL,
+  lifecycle                   TEXT NOT NULL CHECK (lifecycle IN ('Active','Retired')),
+  created_at                  TEXT NOT NULL,
+  updated_at                  TEXT NOT NULL
+);
+
+CREATE TABLE sessions (
+  session_id     TEXT PRIMARY KEY,
+  binding_kind   TEXT NOT NULL CHECK (binding_kind IN ('WorkspacePrimary','ExecutionScoped')),
+  workspace_id   TEXT REFERENCES workspaces(workspace_id) DEFERRABLE INITIALLY DEFERRED,
+  execution_id   TEXT,                                 -- executions table is P2
+  context_epoch  INTEGER NOT NULL,
+  created_at     TEXT NOT NULL,
+  CHECK ((binding_kind = 'WorkspacePrimary') = (workspace_id IS NOT NULL)),
+  CHECK ((binding_kind = 'ExecutionScoped') = (execution_id IS NOT NULL))
+);
+
+CREATE INDEX idx_workspaces_project ON workspaces(project_id);
+CREATE INDEX idx_workspaces_parent  ON workspaces(parent_workspace_id);
+```
+
+`UNIQUE(projects.root_workspace_id)` enforces "exactly one Root Workspace
+per Project" in code (DID §3.1).
+
+### 3.2 works
+
+```sql
+CREATE TABLE works (
+  work_id                TEXT PRIMARY KEY,
+  project_id             TEXT NOT NULL REFERENCES projects(project_id),
+  workspace_id           TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  objective              TEXT NOT NULL,
+  why                    TEXT NOT NULL,
+  constraints            TEXT NOT NULL,               -- JSON array
+  completion_expectation TEXT NOT NULL,
+  verification_mission   TEXT NOT NULL,               -- JSON
+  provenance             TEXT NOT NULL,               -- JSON
+  lifecycle              TEXT NOT NULL CHECK (lifecycle IN ('Open','Completed','Cancelled')),
+  revision               INTEGER NOT NULL,
+  created_at             TEXT NOT NULL,
+  updated_at             TEXT NOT NULL
+);
+
+CREATE INDEX idx_works_workspace_lifecycle ON works(workspace_id, lifecycle);
+```
+
+### 3.3 resource_ownership (P1-DG-08)
+
+Release model: append-only claim rows with `released_at` (no hard delete);
+`released_at IS NULL` = active. Overlap is evaluated by the domain function,
+never SQL string-prefix (DID §9.5).
+
+```sql
+CREATE TABLE resource_ownership (
+  claim_id                         TEXT PRIMARY KEY,
+  workspace_id                     TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  resource_space_id                TEXT NOT NULL,
+  canonical_region                 TEXT NOT NULL,     -- JSON CanonicalResourceRegion
+  source_address_snapshot          TEXT NOT NULL,     -- JSON ResourceAddress
+  resource_boundary_revision       INTEGER NOT NULL,
+  resolved_at_environment_revision TEXT NOT NULL,
+  created_at                       TEXT NOT NULL,
+  released_at                      TEXT
+);
+
+CREATE INDEX idx_resource_ownership_active
+  ON resource_ownership(resource_space_id)
+  WHERE released_at IS NULL;
+```
+
+Write transaction (DID §9.5): resolve outside the write tx →
+`BEGIN IMMEDIATE` → re-check `resolved_at_environment_revision` →
+`loadActiveConflicts` → domain `overlaps()` → insert/release → COMMIT.
+`ResourceResolutionStale` on drift.
+
+### 3.4 commands / command_attempts (DID §9.9)
+
+```sql
+CREATE TABLE commands (
+  command_id                    TEXT PRIMARY KEY,
+  project_id                    TEXT NOT NULL,
+  semantic_request_fingerprint  TEXT NOT NULL,
+  schema_version                TEXT NOT NULL,
+  fingerprint_algorithm_version INTEGER NOT NULL,
+  resolution                    TEXT NOT NULL CHECK (resolution IN ('Committed','TerminalRejected')),
+  result_json                   TEXT,
+  terminal_error_json           TEXT,
+  created_at                    TEXT NOT NULL,
+  settled_at                    TEXT NOT NULL,
+  CHECK ((resolution = 'Committed') = (result_json IS NOT NULL)),
+  CHECK ((resolution = 'TerminalRejected') = (terminal_error_json IS NOT NULL))
+);
+
+CREATE TABLE command_attempts (
+  command_id    TEXT NOT NULL,                        -- no FK: non-authoritative trace
+  attempt_no    INTEGER NOT NULL,
+  started_at    TEXT NOT NULL,
+  settled_at    TEXT,
+  outcome       TEXT NOT NULL CHECK (outcome IN ('Committed','TerminalRejected','RetryableOperationalFailure')),
+  failure_kind  TEXT,
+  metadata_json TEXT,
+  PRIMARY KEY (command_id, attempt_no)
+);
+```
+
+`result_json` / `terminal_error_json` are JSON keyed by the row's
+`schema_version`; `terminal_error_json` decodes to a `CommandRejection`
+(DID §6A.15).
+
+### 3.5 domain_events / consumer_offsets (DID §5.2, §9.9)
+
+```sql
+CREATE TABLE domain_events (
+  event_id             TEXT PRIMARY KEY,
+  project_id           TEXT NOT NULL,
+  sequence             INTEGER NOT NULL,
+  event_type           TEXT NOT NULL,
+  event_version        INTEGER NOT NULL,
+  occurred_at          TEXT NOT NULL,
+  aggregate_ref        TEXT NOT NULL,
+  actor                TEXT NOT NULL,
+  caused_by_command_id TEXT,
+  caused_by_event_id   TEXT,
+  correlation_ref      TEXT,
+  payload_json         TEXT NOT NULL,
+  UNIQUE (project_id, sequence)
+);
+
+CREATE INDEX idx_domain_events_project_sequence ON domain_events(project_id, sequence);
+
+CREATE TABLE consumer_offsets (
+  consumer_id   TEXT NOT NULL,
+  project_id    TEXT NOT NULL,
+  last_sequence INTEGER NOT NULL,
+  updated_at    TEXT NOT NULL,
+  PRIMARY KEY (consumer_id, project_id)
+);
+```
+
+## 4. Fence predicate (DID §9.7; tables are P2)
+
+```sql
+SELECT 1
+FROM executions e
+JOIN execution_leases l ON l.execution_id = e.execution_id
+WHERE e.execution_id = ?
+  AND l.generation = ?
+  AND e.settled_at IS NULL
+  AND e.stop_requested_at IS NULL;
+```
+
+P1 provides the hook and this predicate; `executions` / `execution_leases`
+DDL lands in P2. In P1 all commands are `External`/`System`, so the hook is
+inert and tested with a stub. `FencingRejected` vs `ExecutionStopping` are
+distinguished by 03/01 (`execution_id`/`generation` invalid vs
+`stop_requested_at IS NOT NULL`).
+
+## 5. Migration (P1-DG-09)
+
+```text
+- PRAGMA user_version stores the schema version.
+- Forward-only ordered migrations: migrations/0001_init.sql, 0002_*.sql, …
+- Startup: if user_version > latest known -> refuse to start.
+- Migration runs in a single transaction; failure leaves user_version unchanged.
+```
+
+## 6. Retention / delete (P1-DG-09)
+
+```text
+domain_events    append-only; no hard DELETE before the retention horizon.
+                 projection rebuild reads the journal.
+commands         authoritative; retained for the idempotency window.
+command_attempts non-authoritative trace; retention/archival allowed.
+consumer_offsets never deleted (reset only via explicit operator action).
+resource_ownership released rows retained (released_at), never hard-deleted.
+```
+
+Retention horizon is a deployment configuration; the rule (append-only for
+events, released-not-deleted for ownership) is frozen here.
+
+## 7. Out of scope
+
+- executions / execution_leases / verifications / dependencies /
+  deliverables / permissions / messages DDL (owning phases).
+- Physical `CanonicalResourceRegion` encoding per resource kind (P1 phase
+  contract for `ProjectEnvironmentPort`; overlap stays in the domain function).
