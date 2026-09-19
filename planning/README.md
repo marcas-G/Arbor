@@ -38,11 +38,11 @@ See `planning/gaps/README.md` for the index and resolution process.
 
 | Phase | Scope (from DID-10) | Status |
 |---|---|---|
-| P0 | Functional Domain Kernel | READY FOR RE-REVIEW — Design Gaps resolved, environment blocker open |
+| P0 | Functional Domain Kernel | IN PROGRESS — P0-001 complete; environment baseline via pinned container |
 | P1 | Persistence + Command Core | blocked on P1 exact contracts/DDL closure |
 | P2–P12 | see DID-10 | not authorized |
 
-Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) are `RESOLVED` by the
-System Design v1.3 / DID v1.4 governance patch. P0 planning defects from
-the first review were fixed; the plan is awaiting re-review. The only open
-entry blocker is the environment baseline (P0-001).
+Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) are `RESOLVED`. P0 planning
+is frozen. The environment baseline (Node 24.21.0 / pnpm 12.4.2) is provided
+via the pinned image `arbor-node24:24.21.0` and the project `env.sh` wrapper.
+P0-001 is complete (`planning/results/P0-001.result.md`).
