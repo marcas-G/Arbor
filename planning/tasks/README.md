@@ -1,9 +1,12 @@
-# P0 Task Contracts
+# Task Contracts
 
 Task contracts are projections of the frozen design into directly
 implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
+
+Phases: **P0** (complete) and **P1** (design closure frozen; contracts below).
+P1 tasks additionally reference `docs/design/implementation/P1/**`.
 
 ## Authority order
 
@@ -53,7 +56,7 @@ behavior, recovery behavior, idempotency behavior, ownership rule, or
 failure semantic: **stop and raise a Design Gap** for manual governance.
 Do not invent an answer. See `planning/gaps/`.
 
-## Dependency graph
+## P0 dependency graph
 
 Authoritative edge list (`X -> Y` means Y depends on X):
 
@@ -79,7 +82,7 @@ Note: `Verification` and `Dependency` bind to `WorkId` / `WorkRevision`
 brands only, so they are prerequisites of the `Work` aggregate rather than
 dependents of it.
 
-## Task index
+## P0 task index
 
 | ID | Title | Depends on |
 |---|---|---|
@@ -102,10 +105,50 @@ dependents of it.
 | P0-017 | Package DAG architecture tests | P0-001 |
 | P0-018 | P0 convergence & result record | P0-016, P0-017 |
 
+## P1 dependency graph
+
+Authoritative edge list (`X -> Y` means Y depends on X):
+
+```text
+P1-001            -> P1-003
+P0-001            -> P1-002
+P1-001, P1-002    -> P1-004
+P1-003, P1-004    -> P1-005, P1-006, P1-007
+P1-006            -> P1-008
+P1-002, P1-004    -> P1-009
+P1-005, P1-006, P1-009 -> P1-010, P1-011, P1-012
+P1-009            -> P1-013
+P1-008, P1-010, P1-011, P1-012 -> P1-014
+P1-001, P1-002    -> P1-015
+P1-013, P1-014, P1-015 -> P1-016
+```
+
+## P1 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P1-001 | SQLite adapter, connection settings, migration mechanism | — |
+| P1-002 | `ports` package: Effect service contracts | P0-001 |
+| P1-003 | P1 DDL migrations | P1-001 |
+| P1-004 | `TransactionScope` / `TransactionPort` implementation | P1-001, P1-002 |
+| P1-005 | Project/Workspace/Work/Session repositories | P1-003, P1-004 |
+| P1-006 | `CommandStore` + `DomainEventJournal` | P1-003, P1-004 |
+| P1-007 | Resource ownership + environment revision + resolver | P1-003, P1-004 |
+| P1-008 | Consumer offset + dead-letter + journal boundary | P1-006 |
+| P1-009 | `CommandGateway` + fingerprint | P1-002, P1-004 |
+| P1-010 | `CreateProject` handler | P1-005, P1-006, P1-009 |
+| P1-011 | `CreateChildWorkspace` handler | P1-005, P1-006, P1-009 |
+| P1-012 | `AssignWork` handler | P1-005, P1-006, P1-009 |
+| P1-013 | Idempotency / replay / concurrent-duplicate tests | P1-009 |
+| P1-014 | Recovery matrix tests | P1-008, P1-010, P1-011, P1-012 |
+| P1-015 | Architecture tests for new packages | P1-001, P1-002 |
+| P1-016 | P1 convergence & result record | P1-013, P1-014, P1-015 |
+
 ## Authority versions
 
-Task contracts project `System Design v1.3` and `DID v1.4` (the governance
-patch that resolved DG-01…DG-06). `Problem & Goals v1.2` / `Scenarios v1.2`
+P0 tasks project `System Design v1.3` / `DID v1.5`. P1 tasks project
+`DID v1.6` plus the frozen phase contracts in
+`docs/design/implementation/P1/**`. `Problem & Goals v1.2` / `Scenarios v1.2`
 are unchanged.
 
 ## Entry blocker
