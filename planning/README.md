@@ -38,11 +38,11 @@ See `planning/gaps/README.md` for the index and resolution process.
 
 | Phase | Scope (from DID-10) | Status |
 |---|---|---|
-| P0 | Functional Domain Kernel | IN PROGRESS — P0-001–P0-005, P0-007, P0-010, P0-011 complete; environment baseline via pinned container |
+| P0 | Functional Domain Kernel | IN PROGRESS — P0-001–P0-005, P0-007, P0-010–P0-012 complete; environment baseline via pinned container |
 | P1 | Persistence + Command Core | blocked on P1 exact contracts/DDL closure |
 | P2–P12 | see DID-10 | not authorized |
 
 Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) are `RESOLVED`. P0 planning
 is frozen. The environment baseline (Node 24.21.0 / pnpm 12.4.2) is provided
 via the pinned image `arbor-node24:24.21.0` and the project `env.sh` wrapper.
-P0-001–P0-005, P0-007, P0-010, and P0-011 are complete (`planning/results/`).
+P0-001–P0-005, P0-007, and P0-010–P0-012 are complete (`planning/results/`).
