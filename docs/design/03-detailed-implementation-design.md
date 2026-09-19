@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.5  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P0 + P1-RELEVANT CLOSURE)  
-**Supersedes:** v1.4  
+**Version:** 1.6  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P1 authority closure)  
+**Supersedes:** v1.5  
 **Date:** 2026-09-20  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
@@ -26,6 +26,15 @@
 - P1-DG-04: authoritative fence validation separated from stop/quiescence admission; `FencingRejected` is only for invalid ownership/fence; stop admission returns Application `ExecutionStopping` (§9.7, §11).
 - P1-DG-05: `CreateProject` single-transaction bootstrap contract; no Session Domain Event (§4.1, §12.11).
 - P1-DG-10: `TransactionPort` / `CommandStore` / `DomainEventJournal` classified as Persistence ports (Appendix B aligned to §7.2).
+
+**Governance changes (v1.5 → v1.6):**
+
+- D1: §0A.1 `AssignWork` signature marked illustrative; the normative `AssignWork` rejection set is frozen in §6A.15.
+- D2: §6A.15 notes the P0 `CommandResolution<R>` artifact is superseded by the parameterized form; P1 owns the evolution.
+- D3: resource-region physical encoding assigned to the P1 phase contract (overlap semantics stay in the domain function).
+- D4: `CreateChildWorkspace` ownership moved to P1 (§11).
+- D5: Appendix C version reconciled to v1.6.
+- D6: P1 phase-contract location `docs/design/implementation/P1/**` added to §13.
 
 `Problem & Goals` and `Scenarios` are unchanged.
 
@@ -180,6 +189,21 @@ AssignWork
       | Clock
   >
 ```
+
+该 block 只是 `Effect<A,E,R>` 形状的**示例**，不是 normative error contract。
+`AssignWork` 的规范 rejection set 由 §6A.15 冻结：
+
+```text
+AssignWork rejection =
+    DomainError.AuthorityDenied
+  | DomainError.RevisionConflict
+  | DomainError.TerminalLifecycleMutation   // Project Closed 或 Workspace Retired
+  | CommandRejection.WorkspaceNotFound      // handler 加载时检测
+```
+
+本示例中的 `ProjectClosed` / `ResponsibilityViolation` 不再是独立 tag：
+`ProjectClosed` → `TerminalLifecycleMutation(entity = Project)`；
+`ResponsibilityViolation` → `AuthorityDenied(reason)`。
 
 ## 0A.2 Domain 中的 Effect
 
@@ -1823,10 +1847,11 @@ ProviderUnavailable、WorkerCrash、ToolRuntimeFailure、ContextUnsatisfiable、
 
 2) CommandRejection (Application-owned)
    = CommandResolution.TerminalRejected 的 payload
-   = DomainError | FencingRejected | ExecutionStopping
+   = DomainError | FencingRejected | ExecutionStopping | WorkspaceNotFound
      - FencingRejected: ownership/fence 无效。
      - ExecutionStopping: fence 仍有效，但 stopRequestedAt != null，
        禁止新的 execution-originated mutation。
+     - WorkspaceNotFound: handler 加载目标 Workspace 时不存在。
        (ExecutionStopRequested 仍是既有 Domain Event / stop-request fact
         名称，不新增 DomainError tag。)
 
@@ -1852,6 +1877,10 @@ Application boundary：CommandResolution<R, CommandRejection>
 FencingRejected 属于 Application CommandRejection，不是 DomainError。
 OperationalFailure 不产生 authoritative resolution，可 retry。
 ```
+
+P0 的 `CommandResolution<R>`（`TerminalRejected(DomainError)`）是 v1.5 前的
+artifact，已被本节的参数化 `CommandResolution<Result, Rejection>` 取代；
+P1 负责演进该 artifact。
 
 ---
 
@@ -3264,7 +3293,7 @@ TransactionPort
 Repositories
 Command logical-request / attempt / receipt persistence
 DomainEventJournal
-CreateProject / Workspace / Work commands
+CreateProject / CreateChildWorkspace / AssignWork commands
 atomic State + Receipt + Event + authoritative fence *validation hook*
 (lease acquisition / lease lifecycle 仍属于 P2)
 ```
@@ -3314,13 +3343,15 @@ read / patch / shell minimal tools
 ## P6 — Responsibility Tree / Multi-Workspace
 
 ```text
-CreateChildWorkspace
 Responsibility Formation Prompt
 Bootstrap / Handoff
 Parent/Child Authority
 Communication Protocol
 Human Steer
 ```
+
+(`CreateChildWorkspace` is owned by P1; P6 builds the multi-workspace
+formation/handoff behavior on top of it.)
 
 ## P7 — Dependency / Deliverable Coordination
 
@@ -3839,13 +3870,22 @@ v1.3 已关闭 P0 前必须通过推理确定的 C1–C10 与 X1–X11 cross-cut
 | C1–C10 cross-cutting semantics | **CLOSED** | P0 |
 | Aggregate/domain ADT + invariant tests | **READY TO IMPLEMENT** | P0 completion |
 | Package DAG architecture tests | **READY TO IMPLEMENT** | P0 completion |
-| Exact per-Command payload/result/error/event TypeScript contracts | **OPEN, phase-scoped** | P1 command implementation |
-| Exact Repository / Port Effect signatures | **OPEN, phase-scoped** | owning package Phase |
-| SQLite exact DDL / migration / indexes | **OPEN, P1 BLOCKER** | P1 |
-| Resource region physical encoding/query optimization | **OPEN, P1 BLOCKER** | P1 ownership persistence |
+| Exact per-Command payload/result/error/event TypeScript contracts | **P1 PHASE CONTRACT** | `docs/design/implementation/P1/**` |
+| Exact Repository / Port Effect signatures | **P1 PHASE CONTRACT** | `docs/design/implementation/P1/**` |
+| SQLite exact DDL / migration / indexes | **P1 PHASE CONTRACT** | `docs/design/implementation/P1/**` |
+| Resource region physical encoding/query optimization | **P1 PHASE CONTRACT** | `docs/design/implementation/P1/**` |
 | Prompt Program actual text / behavioral eval set | **OPEN, phase-scoped** | P3/P6/P8 |
 | Context/compaction numeric defaults | **EMPIRICAL** | tune by eval |
 | SQLite performance ceiling | **EMPIRICAL** | real workload decision |
+
+P1 phase-scoped implementation contracts are owned by:
+
+```text
+docs/design/implementation/P1/**
+```
+
+Authority: this DID → P1 phase contracts. They may not change top-level
+semantics; a conflict resolves in favor of this DID.
 
 授权状态：
 
@@ -4147,7 +4187,7 @@ Composition Root
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
 System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.4      TOP-LEVEL FROZEN
+Detailed Implementation Design v1.6      TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED
