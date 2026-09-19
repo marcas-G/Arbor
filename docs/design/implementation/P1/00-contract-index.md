@@ -34,10 +34,10 @@ in favor of the DID.
 | P1-DG-03 | RESOLVED (DID v1.5) | algorithm frozen in 01 §4 |
 | P1-DG-04 | RESOLVED (DID v1.5) | DID §9.7; implemented by 03/04 |
 | P1-DG-05 | RESOLVED (DID v1.5) | DID §12.11; implemented by 01 |
-| P1-DG-06 | **OPEN** (phase-scoped) | 05 (+ 04 sequence table) — closes on review |
-| P1-DG-07 | **OPEN** (phase-scoped) | 04 — closes on review |
-| P1-DG-08 | **OPEN** (phase-scoped) | 04 (+ 02) — closes on review |
-| P1-DG-09 | **OPEN** (phase-scoped) | 04 (+ 06) — closes on review |
+| P1-DG-06 | **RESOLVED** (phase-scoped) | 05 (+ 04 sequence table) |
+| P1-DG-07 | **RESOLVED** (phase-scoped) | 04 |
+| P1-DG-08 | **RESOLVED** (phase-scoped) | 04 (+ 02) |
+| P1-DG-09 | **RESOLVED** (phase-scoped) | 04 (+ 06) |
 | P1-DG-10 | RESOLVED (DID v1.5, port classification) | sub-items closed by 01 (AssignWork, child-workspace, ID generation) and 02 (port ownership) |
 
 ## P1 command set
@@ -46,7 +46,6 @@ in favor of the DID.
 
 ## Status
 
-REVISED after the first 4-way review (16 blocking findings addressed). Not yet
-frozen: awaiting re-review. `P1-DG-06..09` remain `OPEN` until the re-review
-passes with Blocking = 0. No frozen DID document was modified while producing
-these contracts (DID v1.6 was a separate governance patch).
+FROZEN — 4-way review rounds 1–4 complete, **Blocking = 0**. All P1-DG-01…10
+are RESOLVED. No frozen DID document was modified while producing these
+contracts (DID v1.6 was a separate governance patch).

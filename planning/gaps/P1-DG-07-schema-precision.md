@@ -2,7 +2,17 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+RESOLVED — P1 contract 04-sqlite-schema.md (4-way review round 4, Blocking=0).
+
+## Resolution
+
+Both DID §9.13 cycles use `DEFERRABLE INITIALLY DEFERRED`; table↔domain mapping
+table added; root uniqueness + same-project enforced by the composite
+`(root_workspace_id, project_id)` FK; workspace-tree same-project by the
+composite `(parent_workspace_id, project_id)` FK.
+
+Authority: DID v1.6 §9.1/§9.3/§9.13; `docs/design/implementation/P1/04-sqlite-schema.md`.
+
 
 ## Owning design document
 

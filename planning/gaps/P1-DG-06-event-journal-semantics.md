@@ -2,7 +2,18 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+RESOLVED — P1 contract 05-event-journal.md (4-way review round 4, Blocking=0).
+
+## Resolution
+
+Project-local monotonic sequence with a durable `project_event_sequences`
+counter (upsert, survives retention pruning); `eventVersion` forward-tolerant
+with poison quarantine (`consumer_dead_letters`) + offset skip (no stall);
+offset/projection co-located in one transaction with re-apply key
+`(project_id, sequence)`.
+
+Authority: DID v1.6 §2.3/§5.2/§5.4/§9.9; `docs/design/implementation/P1/05-event-journal.md`, `04-sqlite-schema.md`.
+
 
 ## Owning design document
 

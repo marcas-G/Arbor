@@ -2,7 +2,17 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+RESOLVED — P1 contract 04-sqlite-schema.md + 06-recovery-matrix.md (4-way review round 4, Blocking=0).
+
+## Resolution
+
+`commands` never hard-deleted; `domain_events` append-only before the retention
+horizon with `project_event_sequences` preserving allocation; ownership
+released-not-deleted; migration via `PRAGMA user_version` + forward-only
+ordered files with a table-rebuild exception.
+
+Authority: DID v1.6 §9.1/§12.11/§5.4; `docs/design/implementation/P1/04-sqlite-schema.md`, `06-recovery-matrix.md`.
+
 
 ## Owning design document
 

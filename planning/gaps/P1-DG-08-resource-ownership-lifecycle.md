@@ -2,7 +2,18 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+RESOLVED — P1 contract 04-sqlite-schema.md + 02-port-contracts.md (4-way review round 4, Blocking=0).
+
+## Resolution
+
+Release is a soft update (`released_at`, `WHERE released_at IS NULL`), rows
+never hard-deleted; active predicate `released_at IS NULL`; partial indexes on
+`(resource_space_id)` and `(workspace_id)`; `environment_revisions` anchor +
+`EnvironmentRevisionStore` for the stale re-check; `ResourceOwnershipClaim`
+record matches the DDL.
+
+Authority: DID v1.6 §9.5/§1.4A/§1.5; `docs/design/implementation/P1/04-sqlite-schema.md`, `02-port-contracts.md`.
+
 
 ## Owning design document
 
