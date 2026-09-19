@@ -1,69 +1,99 @@
 # P1 — 01 Command Contracts
 
-**Authority:** DID v1.5 §4.1, §4.1A, §4.2, §12.3, §12.5, §12.6, §12.11, §6A.15, §0A.1
-**Status:** P1 phase-scoped closure (draft for review)
-**Closes:** A1 for the P1 command set; P1-DG-02 receipt/resolution; P1-DG-05 bootstrap; P1-DG-10 sub-items (ID generation, `AssignWork` rejections, child-workspace phase).
+**Authority:** DID v1.6 §4.1, §4.1A, §4.2, §0A.1, §6A.15, §12.3, §12.5, §12.6, §12.10, §12.11
+**Status:** P1 phase-scoped closure (revised after 4-way review)
+**Closes:** A1 for the P1 command set; P1-DG-02 receipt/resolution; P1-DG-05 bootstrap; P1-DG-10 sub-items (ID generation, `AssignWork` rejections, child-workspace phase); fingerprint algorithm (P1-DG-03).
 
 ## 1. P1 command set
 
-Only these are closed in P1 (per DID §11 P1):
+`CreateProject`, `CreateChildWorkspace`, `AssignWork` (DID §11 P1). All other
+commands close in their owning phase.
+
+## 2. Failure vocabulary (DID §6A.15)
 
 ```text
-CreateProject
-CreateChildWorkspace
-AssignWork
+DomainError =
+  IdempotencyConflict | AuthorityDenied | RevisionConflict | WorkNotOpen |
+  TerminalLifecycleMutation | RetirePreconditionFailed | ActiveExecutionConflict |
+  VerificationAcceptanceMismatch | DependencyNotSatisfiable | PermissionRevoked
+
+CommandRejection =
+  DomainError | FencingRejected | ExecutionStopping | WorkspaceNotFound
+
+CommandResolution<Result, Rejection> =
+    Committed(Result)
+  | TerminalRejected(Rejection)
 ```
 
-All other commands (UpdateProjectPolicy, RefineWork, CompleteWork, …) are
-closed in their owning phase.
+- Domain instantiates `CommandResolution<R, DomainError>`.
+- The Application command boundary instantiates
+  `CommandResolution<R, CommandRejection>`.
+- `FencingRejected` / `ExecutionStopping` / `WorkspaceNotFound` are
+  Application-owned; they never appear in `DomainError`.
 
-## 2. Generic command pipeline (applies to every P1 command)
+## 3. Generic command pipeline
 
 ```text
 CommandGateway.execute(envelope, submissionContext)
-  1. compute semanticRequestFingerprint (DID §4.1)
-  2. transact (see 03-transaction-model.md):
+  1. compute semanticRequestFingerprint + schemaVersion + algorithmVersion
+  2. transact (03-transaction-model.md):
      a. read commands row by command_id
-        - Committed / TerminalRejected:
-            same fingerprint   -> return existing Receipt (no re-execution)
-            different fingerprint -> CommandRejection = IdempotencyConflict
+        - exists: same (fingerprint, schemaVersion, algorithmVersion)
+              -> return existing Receipt (Committed or TerminalRejected)
+          different -> TerminalRejected(IdempotencyConflict) [durable]
         - absent -> continue
-     b. if submissionContext is ExecutionOrigin: fence validation
-        (04-sqlite-schema.md predicate)
+     b. if ExecutionOrigin: fence check, then stop check (03 §4)
      c. authority / preconditions
      d. domain transition (P0 pure functions)
-     e. write canonical state
-     f. write Committed receipt + result_json
-     g. append Domain Events
-  3. COMMIT
+        - success: write canonical state + Committed receipt + events
+        - terminal rejection: write TerminalRejected receipt, no event
+     e. COMMIT
 ```
 
 - Declared actor (`envelope.actor`) is validated separately from the
   authenticated principal (`submissionContext`), DID §4.1.
-- ID generation: **all entity IDs are caller-preallocated and carried in the
-  payload**; command handlers do not generate IDs (`IdGenerator` is used by
-  callers/CLI, not inside the transaction). This keeps the fingerprint
-  deterministic.
+- **ID generation:** all entity IDs are caller-preallocated and carried in
+  the payload; handlers never generate IDs. A caller-preallocated ID that
+  collides with an existing entity is a **defect** (invariant violation), not
+  a typed rejection (DID §0A.1).
 - `CommandAttempt` is a non-authoritative trace (DID §9.9).
 
-## 3. CreateProject
+## 4. Fingerprint contract (freezes P1-DG-03)
 
-### Payload (`CreateProjectPayload`)
+```text
+Canonical serialization (v1):
+  - stable JSON: object keys sorted; arrays in order; undefined omitted;
+    numbers/booleans/strings per JSON; tagged unions include _tag.
+Hash algorithm (v1): SHA-256 over the canonical UTF-8 bytes, lowercase hex.
+algorithmVersion = 1  (constant FINGERPRINT_ALGORITHM_VERSION)
+
+Fingerprint input covers:
+  commandType, projectId, declared actor, schemaVersion, semantic payload.
+```
+
+The Application boundary computes it (not the pure domain). P0's 32-bit
+FNV-1a is superseded. Idempotency compares
+`(fingerprint, schema_version, fingerprint_algorithm_version)`.
+
+## 5. CreateProject
+
+### Payload
 
 ```ts
 {
   name: string
-  rootWorkspaceId: WorkspaceId          // caller-preallocated
-  primarySessionId: SessionId           // caller-preallocated
+  revision: Revision                       // Project aggregate revision
   projectPolicy: ProjectPolicy
   projectPolicyRevision: Revision
   defaultConfiguration: Readonly<Record<string, unknown>>
   environmentRef: string
+  rootWorkspaceId: WorkspaceId             // caller-preallocated
+  primarySession: { sessionId: SessionId; contextEpoch: ContextEpochNumber }
   rootWorkspace: {
     name: string
     responsibilityDefinition: ResponsibilityDefinition
     responsibilityRevision: ResponsibilityRevision
-    resourceBoundary: ResourceBoundary
+    resourceBoundary: ResourceBoundary       // basisResponsibilityRevision == responsibilityRevision
     resourceBoundaryRevision: ResourceBoundaryRevision
     agentBinding: ResponsibilityBoundAgentBinding
     workspacePolicy: WorkspacePolicy
@@ -73,7 +103,7 @@ CommandGateway.execute(envelope, submissionContext)
 }
 ```
 
-`envelope.projectId` **is** the new Project id (caller-preallocated).
+`envelope.projectId` is the new Project id.
 
 ### Result
 
@@ -85,36 +115,29 @@ CommandGateway.execute(envelope, submissionContext)
 
 | Condition | Rejection |
 |---|---|
-| bootstrap principal lacks authority | `DomainError.AuthorityDenied` |
-| duplicate `projectId` with different fingerprint | `CommandRejection.IdempotencyConflict` |
+| no authority | `DomainError.AuthorityDenied` |
+| `resourceBoundary.basisResponsibilityRevision != responsibilityRevision` | `DomainError.AuthorityDenied` (reason) |
+| same id + different fingerprint | `CommandRejection.IdempotencyConflict` |
 
-### Emitted events (same transaction, ordered)
+### Events (same transaction, ordered)
 
 ```text
-ProjectCreated
-WorkspaceCreated
+ProjectCreated → WorkspaceCreated
 ```
 
-`primarySessionId` Session is created atomically; **no Session Domain Event**
-(DID §5.3 catalog has none).
+No Session Domain Event (DID §5.3). Session created atomically.
 
-### Atomicity
+## 6. CreateChildWorkspace
 
-Single transaction creates `projects` + `workspaces` (root) + `sessions`
-(WorkspacePrimary) using deferred FKs (DID §9.13; DDL in
-`04-sqlite-schema.md`).
+P1 owns this command (DID v1.6 §11; removed from P6).
 
-## 4. CreateChildWorkspace
-
-P1 owns this command (resolves P1-DG-10 child-workspace phase item).
-
-### Payload (`CreateChildWorkspacePayload`)
+### Payload
 
 ```ts
 {
   parentWorkspaceId: WorkspaceId
-  workspaceId: WorkspaceId              // caller-preallocated
-  primarySessionId: SessionId           // caller-preallocated
+  workspaceId: WorkspaceId                 // caller-preallocated
+  primarySession: { sessionId: SessionId; contextEpoch: ContextEpochNumber }
   name: string
   responsibilityDefinition: ResponsibilityDefinition
   responsibilityRevision: ResponsibilityRevision
@@ -137,28 +160,30 @@ P1 owns this command (resolves P1-DG-10 child-workspace phase item).
 
 | Condition | Rejection |
 |---|---|
-| parent workspace not in `envelope.projectId` | `DomainError.AuthorityDenied` |
+| parent not found | `CommandRejection.WorkspaceNotFound` |
+| parent not in `envelope.projectId` | `DomainError.AuthorityDenied` |
 | parent lifecycle != Active | `DomainError.TerminalLifecycleMutation` |
-| expected parent revision mismatch (if supplied) | `DomainError.RevisionConflict` |
 | no authority | `DomainError.AuthorityDenied` |
-| duplicate id + different fingerprint | `CommandRejection.IdempotencyConflict` |
+| `resourceBoundary.basisResponsibilityRevision != responsibilityRevision` | `DomainError.AuthorityDenied` (reason) |
+| same id + different fingerprint | `CommandRejection.IdempotencyConflict` |
 
-### Emitted events
+### Events
 
 ```text
 WorkspaceCreated
 ```
 
-Child `WorkspacePrimary` Session is created atomically; no Session event.
+No Session Domain Event. Child `WorkspacePrimary` Session created atomically.
 
-## 5. AssignWork
+## 7. AssignWork
 
-### Payload (`AssignWorkPayload`)
+### Payload
 
 ```ts
 {
-  workId: WorkId                        // caller-preallocated
+  workId: WorkId                           // caller-preallocated
   workspaceId: WorkspaceId
+  expectedWorkspaceRevision: Revision      // optimistic precondition
   objective: string
   why: string
   constraints: ReadonlyArray<string>
@@ -175,44 +200,36 @@ Child `WorkspacePrimary` Session is created atomically; no Session event.
 { workId: WorkId; workspaceId: WorkspaceId; lifecycle: "Open"; revision: WorkRevision }
 ```
 
-### Preconditions / rejections
+### Preconditions / rejections (DID v1.6 §0A.1 / §6A.15)
 
 | Condition | Rejection |
 |---|---|
-| workspace not found | `DomainError.WorkspaceNotFound` ⚠ |
-| project lifecycle != Open | `DomainError.ProjectClosed` ⚠ |
+| workspace not found | `CommandRejection.WorkspaceNotFound` |
+| project lifecycle != Open | `DomainError.TerminalLifecycleMutation` (entity `Project`) |
+| workspace lifecycle != Active | `DomainError.TerminalLifecycleMutation` (entity `Workspace`) |
 | no authority | `DomainError.AuthorityDenied` |
-| work outside responsibility scope | `DomainError.ResponsibilityViolation` ⚠ |
-| workspace retired / not accepting work | `DomainError.RetirePreconditionFailed` |
-| duplicate id + different fingerprint | `CommandRejection.IdempotencyConflict` |
+| work outside responsibility scope | `DomainError.AuthorityDenied` (reason) |
+| `workspace.revision != expectedWorkspaceRevision` | `DomainError.RevisionConflict` |
+| same id + different fingerprint | `CommandRejection.IdempotencyConflict` |
 
-⚠ `WorkspaceNotFound`, `ProjectClosed`, `ResponsibilityViolation` are required
-by DID §0A.1 but are **not yet in the frozen `DomainError`**. They require a
-DID governance patch (to be batched with the P1 authority index, DID v1.6).
-Until then this contract lists them as pending and P1 code must not invent
-them.
-
-### Emitted events
+### Events
 
 ```text
 WorkAssigned
 ```
 
-## 6. Per-command idempotency
-
-For every P1 command:
+## 8. Idempotency summary
 
 ```text
-same commandId + same fingerprint  -> existing Receipt (Committed or TerminalRejected)
-same commandId + different fingerprint -> CommandRejection.IdempotencyConflict
-absent -> execute
+same commandId + same (fingerprint, schema, algorithm)  -> existing Receipt
+same commandId + different fingerprint                  -> IdempotencyConflict
+absent                                                  -> execute
 ```
 
-`terminal_error_json` / `result_json` codec: JSON keyed by stored
-`schema_version` (frozen in `04-sqlite-schema.md`).
+`result_json` / `terminal_error_json` are JSON keyed by the stored
+`schema_version` (see `04-sqlite-schema.md`).
 
-## 7. Out of scope
+## 9. Out of scope
 
 - Exact payloads for non-P1 commands.
 - `GovernanceMutationPlan` (DID §4.1A) beyond P1 commands.
-- Message/Decision/Permission commands.

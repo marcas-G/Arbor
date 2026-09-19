@@ -1,10 +1,10 @@
 # P1 — 04 SQLite Schema
 
-**Authority:** DID v1.5 §9.1–§9.9, §9.13, §12.11, §3.1–§3.3
-**Status:** P1 phase-scoped closure (draft for review)
+**Authority:** DID v1.6 §9.1–§9.9, §9.13, §12.11, §3.1–§3.3
+**Status:** P1 phase-scoped closure (revised after 4-way review)
 **Closes:** P1-DG-07 (cyclic FKs, mapping, root uniqueness), P1-DG-08
 (`resource_ownership` lifecycle), P1-DG-09 (retention/delete + migration),
-and the P1 DDL blocker (DID §13).
+resource-region physical encoding, and the P1 DDL blocker (DID §13).
 
 ## 1. Storage settings (DID §9.1)
 
@@ -12,10 +12,10 @@ and the P1 DDL blocker (DID §13).
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
+PRAGMA synchronous = FULL;   -- durability; see 06-recovery-matrix.md
 ```
 
-Only the Arbor Runtime writes this DB. Workers/Agents/Tools/UI never open it
-(DID §9.2).
+Only the Arbor Runtime writes this DB (DID §9.2).
 
 ## 2. Table ↔ domain mapping (P1-DG-07)
 
@@ -26,21 +26,24 @@ Only the Arbor Runtime writes this DB. Workers/Agents/Tools/UI never open it
 | `sessions` | `Session` |
 | `works` | `Work` |
 | `resource_ownership` | `ResourceOwnershipClaim` |
+| `environment_revisions` | environment revision anchor |
 | `commands` | `CommandReceipt` (authoritative resolution) |
 | `command_attempts` | `CommandAttempt` (non-authoritative trace) |
 | `domain_events` | `DomainEvent` (durable outbox) |
+| `project_event_sequences` | project-local sequence counter |
 | `consumer_offsets` | consumer cursor |
+| `consumer_dead_letters` | poison event quarantine |
 
 Later-phase tables (`work_waits` ↔ `Dependency`, `work_acceptances` ↔
 `Acceptance`, `executions`, `execution_leases`, `verifications`, …) are owned
-by their phases; the mapping is authoritative here.
+by their phases; their mapping is authoritative in the owning phase.
 
 ## 3. DDL
 
-### 3.1 projects / workspaces / sessions (cyclic FKs, DID §9.13)
+### 3.1 projects / workspaces / sessions
 
-Both cycles use `DEFERRABLE INITIALLY DEFERRED` so the `CreateProject`
-bootstrap commits atomically.
+Both DID §9.13 cycles use `DEFERRABLE INITIALLY DEFERRED`. The
+`current_work_id ↔ works` reference is also deferred.
 
 ```sql
 CREATE TABLE projects (
@@ -61,13 +64,13 @@ CREATE TABLE projects (
 CREATE TABLE workspaces (
   workspace_id                TEXT PRIMARY KEY,
   project_id                  TEXT NOT NULL REFERENCES projects(project_id),
-  parent_workspace_id         TEXT REFERENCES workspaces(workspace_id),
+  parent_workspace_id         TEXT,
   name                        TEXT NOT NULL,
   responsibility_definition   TEXT NOT NULL,          -- JSON
   responsibility_revision     INTEGER NOT NULL,
   resource_boundary           TEXT NOT NULL,          -- JSON
   resource_boundary_revision  INTEGER NOT NULL,
-  agent_binding               TEXT NOT NULL,          -- JSON (ResponsibilityBoundAgentBinding)
+  agent_binding               TEXT NOT NULL,          -- JSON
   primary_session_id          TEXT NOT NULL
                                 REFERENCES sessions(session_id) DEFERRABLE INITIALLY DEFERRED,
   current_work_id             TEXT
@@ -77,7 +80,10 @@ CREATE TABLE workspaces (
   revision                    INTEGER NOT NULL,
   lifecycle                   TEXT NOT NULL CHECK (lifecycle IN ('Active','Retired')),
   created_at                  TEXT NOT NULL,
-  updated_at                  TEXT NOT NULL
+  updated_at                  TEXT NOT NULL,
+  UNIQUE (workspace_id, project_id),
+  FOREIGN KEY (parent_workspace_id, project_id)
+    REFERENCES workspaces(workspace_id, project_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE sessions (
@@ -92,11 +98,11 @@ CREATE TABLE sessions (
 );
 
 CREATE INDEX idx_workspaces_project ON workspaces(project_id);
-CREATE INDEX idx_workspaces_parent  ON workspaces(parent_workspace_id);
 ```
 
-`UNIQUE(projects.root_workspace_id)` enforces "exactly one Root Workspace
-per Project" in code (DID §3.1).
+`UNIQUE(projects.root_workspace_id)` enforces exactly one Root Workspace.
+The composite `(parent_workspace_id, project_id)` FK enforces
+workspace-tree-same-project at L3 (DID §6.2).
 
 ### 3.2 works
 
@@ -120,11 +126,9 @@ CREATE TABLE works (
 CREATE INDEX idx_works_workspace_lifecycle ON works(workspace_id, lifecycle);
 ```
 
-### 3.3 resource_ownership (P1-DG-08)
+### 3.3 resource_ownership + environment_revisions (P1-DG-08)
 
-Release model: append-only claim rows with `released_at` (no hard delete);
-`released_at IS NULL` = active. Overlap is evaluated by the domain function,
-never SQL string-prefix (DID §9.5).
+Claim release is a soft update (`released_at`); rows are never hard-deleted.
 
 ```sql
 CREATE TABLE resource_ownership (
@@ -136,25 +140,53 @@ CREATE TABLE resource_ownership (
   resource_boundary_revision       INTEGER NOT NULL,
   resolved_at_environment_revision TEXT NOT NULL,
   created_at                       TEXT NOT NULL,
-  released_at                      TEXT
+  released_at                      TEXT,
+  CHECK (released_at IS NULL OR released_at >= created_at)
 );
 
 CREATE INDEX idx_resource_ownership_active
-  ON resource_ownership(resource_space_id)
-  WHERE released_at IS NULL;
+  ON resource_ownership(resource_space_id) WHERE released_at IS NULL;
+CREATE INDEX idx_resource_ownership_ws_active
+  ON resource_ownership(workspace_id) WHERE released_at IS NULL;
+
+CREATE TABLE environment_revisions (
+  project_id  TEXT PRIMARY KEY REFERENCES projects(project_id),
+  revision    TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
 ```
 
-Write transaction (DID §9.5): resolve outside the write tx →
-`BEGIN IMMEDIATE` → re-check `resolved_at_environment_revision` →
+Write transaction (DID §9.5): `ProjectEnvironmentPort.resolve` outside the tx
+returns `{ regions, observedEnvironmentRevision }`; then `BEGIN IMMEDIATE` →
+`EnvironmentRevisionStore.current(projectId)` compared to
+`observedEnvironmentRevision` → `ResourceResolutionStale` on drift →
 `loadActiveConflicts` → domain `overlaps()` → insert/release → COMMIT.
-`ResourceResolutionStale` on drift.
+
+#### Resource-region physical encoding (frozen)
+
+```text
+canonical_region = JSON { resourceSpaceId, normalizedRegion }
+normalizedRegion (per kind):
+  FileTree          { kind, path }            // absolute, normalized
+  GitWorktree       { kind, path }            // resolved worktree root
+  DatabaseNamespace { kind, namespace }       // segment-normalized
+  ExternalResource  { kind, address }         // resolver-canonical address
+
+contains/overlaps are pure domain functions on normalizedRegion within the
+same resourceSpaceId:
+  FileTree / GitWorktree / DatabaseNamespace: segment-prefix containment
+    contains(a,b) = a.path == b.path || b.path startsWith a.path + "/"
+    overlaps(a,b) = contains(a,b) || contains(b,a)
+  ExternalResource: exact equality
+SQL MUST NOT approximate overlap by string prefix.
+```
 
 ### 3.4 commands / command_attempts (DID §9.9)
 
 ```sql
 CREATE TABLE commands (
   command_id                    TEXT PRIMARY KEY,
-  project_id                    TEXT NOT NULL,
+  project_id                    TEXT NOT NULL,          -- no FK: TerminalRejected may reference an unknown project
   semantic_request_fingerprint  TEXT NOT NULL,
   schema_version                TEXT NOT NULL,
   fingerprint_algorithm_version INTEGER NOT NULL,
@@ -162,14 +194,14 @@ CREATE TABLE commands (
   result_json                   TEXT,
   terminal_error_json           TEXT,
   created_at                    TEXT NOT NULL,
-  settled_at                    TEXT NOT NULL,
+  settled_at                    TEXT NOT NULL,          -- always written with a resolution
   CHECK ((resolution = 'Committed') = (result_json IS NOT NULL)),
   CHECK ((resolution = 'TerminalRejected') = (terminal_error_json IS NOT NULL))
 );
 
 CREATE TABLE command_attempts (
-  command_id    TEXT NOT NULL,                        -- no FK: non-authoritative trace
-  attempt_no    INTEGER NOT NULL,
+  command_id    TEXT NOT NULL,                          -- no FK: non-authoritative trace
+  attempt_no    INTEGER NOT NULL,                       -- 0-based (DID §9.9)
   started_at    TEXT NOT NULL,
   settled_at    TEXT,
   outcome       TEXT NOT NULL CHECK (outcome IN ('Committed','TerminalRejected','RetryableOperationalFailure')),
@@ -179,11 +211,19 @@ CREATE TABLE command_attempts (
 );
 ```
 
-`result_json` / `terminal_error_json` are JSON keyed by the row's
-`schema_version`; `terminal_error_json` decodes to a `CommandRejection`
-(DID §6A.15).
+Attempt recording:
 
-### 3.5 domain_events / consumer_offsets (DID §5.2, §9.9)
+```text
+- resolving attempt (Committed / TerminalRejected): recorded in the SAME
+  command transaction.
+- retryable operational failure: recorded in a SEPARATE short transaction
+  after ROLLBACK (03 §3.3); may be lost on crash (non-authoritative).
+```
+
+`result_json` / `terminal_error_json` are JSON keyed by the row's
+`schema_version`; `terminal_error_json` decodes to a `CommandRejection`.
+
+### 3.5 domain_events / sequence / offsets / dead letters (DID §5.2, §9.9)
 
 ```sql
 CREATE TABLE domain_events (
@@ -202,7 +242,10 @@ CREATE TABLE domain_events (
   UNIQUE (project_id, sequence)
 );
 
-CREATE INDEX idx_domain_events_project_sequence ON domain_events(project_id, sequence);
+CREATE TABLE project_event_sequences (
+  project_id     TEXT PRIMARY KEY,
+  last_sequence  INTEGER NOT NULL
+);
 
 CREATE TABLE consumer_offsets (
   consumer_id   TEXT NOT NULL,
@@ -211,25 +254,44 @@ CREATE TABLE consumer_offsets (
   updated_at    TEXT NOT NULL,
   PRIMARY KEY (consumer_id, project_id)
 );
+
+CREATE TABLE consumer_dead_letters (
+  consumer_id  TEXT NOT NULL,
+  project_id   TEXT NOT NULL,
+  sequence     INTEGER NOT NULL,
+  reason       TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  PRIMARY KEY (consumer_id, project_id, sequence)
+);
 ```
 
-## 4. Fence predicate (DID §9.7; tables are P2)
+(`UNIQUE(project_id, sequence)` already provides the project/sequence index.)
+
+## 4. Fence and stop predicates (DID §9.7; tables are P2)
+
+Two separate queries so `FencingRejected` and `ExecutionStopping` are
+distinguishable:
 
 ```sql
+-- 1) fence validity (ownership/generation)
 SELECT 1
 FROM executions e
 JOIN execution_leases l ON l.execution_id = e.execution_id
 WHERE e.execution_id = ?
   AND l.generation = ?
-  AND e.settled_at IS NULL
-  AND e.stop_requested_at IS NULL;
+  AND e.settled_at IS NULL;
+-- no row -> CommandRejection.FencingRejected
+
+-- 2) stop / quiescence admission (only if fence valid)
+SELECT stop_requested_at IS NOT NULL
+FROM executions
+WHERE execution_id = ?;
+-- true -> CommandRejection.ExecutionStopping (NOT FencingRejected)
 ```
 
-P1 provides the hook and this predicate; `executions` / `execution_leases`
+P1 provides the hook and these predicates; `executions` / `execution_leases`
 DDL lands in P2. In P1 all commands are `External`/`System`, so the hook is
-inert and tested with a stub. `FencingRejected` vs `ExecutionStopping` are
-distinguished by 03/01 (`execution_id`/`generation` invalid vs
-`stop_requested_at IS NOT NULL`).
+inert and tested with a stub.
 
 ## 5. Migration (P1-DG-09)
 
@@ -237,26 +299,27 @@ distinguished by 03/01 (`execution_id`/`generation` invalid vs
 - PRAGMA user_version stores the schema version.
 - Forward-only ordered migrations: migrations/0001_init.sql, 0002_*.sql, …
 - Startup: if user_version > latest known -> refuse to start.
-- Migration runs in a single transaction; failure leaves user_version unchanged.
+- Additive migrations run in a single transaction; table-rebuild migrations
+  require PRAGMA foreign_keys=OFF outside the transaction (documented exception).
 ```
 
 ## 6. Retention / delete (P1-DG-09)
 
 ```text
-domain_events    append-only; no hard DELETE before the retention horizon.
-                 projection rebuild reads the journal.
-commands         authoritative; retained for the idempotency window.
+commands         NEVER hard-deleted (stable idempotency guarantee).
 command_attempts non-authoritative trace; retention/archival allowed.
-consumer_offsets never deleted (reset only via explicit operator action).
+domain_events    append-only; no hard DELETE before the retention horizon;
+                 project_event_sequences persists the counter so pruning
+                 cannot reset allocation.
+consumer_offsets never deleted.
+consumer_dead_letters retained (poison quarantine).
 resource_ownership released rows retained (released_at), never hard-deleted.
 ```
 
-Retention horizon is a deployment configuration; the rule (append-only for
-events, released-not-deleted for ownership) is frozen here.
+Retention horizon is deployment configuration; the rules above are frozen.
 
 ## 7. Out of scope
 
 - executions / execution_leases / verifications / dependencies /
   deliverables / permissions / messages DDL (owning phases).
-- Physical `CanonicalResourceRegion` encoding per resource kind (P1 phase
-  contract for `ProjectEnvironmentPort`; overlap stays in the domain function).
+- Query optimization / index tuning beyond the indexes above.
