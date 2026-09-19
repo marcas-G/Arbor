@@ -1,0 +1,25 @@
+{
+  "name": "arbor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.4.2",
+  "engines": {
+    "node": "24.21.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "architecture": "vitest run tests/architecture",
+    "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "effect": "4.0.0-rc.115",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  }
+}
