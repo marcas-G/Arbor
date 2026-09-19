@@ -49,8 +49,7 @@ Both DID §9.13 cycles use `DEFERRABLE INITIALLY DEFERRED`. The
 CREATE TABLE projects (
   project_id              TEXT PRIMARY KEY,
   name                    TEXT NOT NULL,
-  root_workspace_id       TEXT NOT NULL UNIQUE
-                            REFERENCES workspaces(workspace_id) DEFERRABLE INITIALLY DEFERRED,
+  root_workspace_id       TEXT NOT NULL,
   project_policy          TEXT NOT NULL,              -- JSON
   project_policy_revision INTEGER NOT NULL,
   default_configuration   TEXT NOT NULL,              -- JSON
@@ -58,7 +57,9 @@ CREATE TABLE projects (
   lifecycle               TEXT NOT NULL CHECK (lifecycle IN ('Open','Closed')),
   revision                INTEGER NOT NULL,
   created_at              TEXT NOT NULL,
-  updated_at              TEXT NOT NULL
+  updated_at              TEXT NOT NULL,
+  FOREIGN KEY (root_workspace_id, project_id)
+    REFERENCES workspaces(workspace_id, project_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE workspaces (
@@ -100,9 +101,11 @@ CREATE TABLE sessions (
 CREATE INDEX idx_workspaces_project ON workspaces(project_id);
 ```
 
-`UNIQUE(projects.root_workspace_id)` enforces exactly one Root Workspace.
-The composite `(parent_workspace_id, project_id)` FK enforces
-workspace-tree-same-project at L3 (DID §6.2).
+`UNIQUE(projects.root_workspace_id)` is replaced by the composite
+`(root_workspace_id, project_id)` FK, which enforces both exactly-one-root
+(the column is singular per project) and workspace-tree-same-project at L3.
+The composite `(parent_workspace_id, project_id)` FK enforces the same for the
+parent edge (DID §6.2).
 
 ### 3.2 works
 
@@ -151,9 +154,15 @@ CREATE INDEX idx_resource_ownership_ws_active
 
 CREATE TABLE environment_revisions (
   project_id  TEXT PRIMARY KEY REFERENCES projects(project_id),
-  revision    TEXT NOT NULL,
+  revision    TEXT,          -- NULL = not yet observed
   updated_at  TEXT NOT NULL
 );
+```
+
+`environment_revisions` is initialized lazily: the first successful ownership
+write records the observed revision. `EnvironmentRevisionStore.current`
+returns `None` when absent/NULL, and the stale check treats that as
+"not stale" (nothing observed yet).
 ```
 
 Write transaction (DID §9.5): `ProjectEnvironmentPort.resolve` outside the tx
@@ -264,6 +273,9 @@ CREATE TABLE consumer_dead_letters (
   PRIMARY KEY (consumer_id, project_id, sequence)
 );
 ```
+
+Re-quarantine of the same `(consumer_id, project_id, sequence)` is
+`INSERT OR IGNORE`.
 
 (`UNIQUE(project_id, sequence)` already provides the project/sequence index.)
 

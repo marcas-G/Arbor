@@ -60,8 +60,8 @@ attempt_no allocation: caller/CommandStore assigns the next free
 |---|---|---|---|
 | P1 | after projection writes, before COMMIT | nothing (offset+projection same tx) | re-deliver batch, re-apply |
 | P2 | after COMMIT, before next batch | offset advanced | continue from offset |
-| P3 | projection apply throws | offset not advanced | retry / catch-up (DID §5.4) |
-| P4 | unsupported `eventVersion` | offset not advanced | quarantine to `consumer_dead_letters` + alert; do NOT stall (05 §3) |
+| P3 | transient projection error | offset not advanced | retry / catch-up (DID §5.4) |
+| P4 | deterministic unprocessable event (poison: unsupported version / bad payload) | dead-letter row + offset advanced past that sequence, same tx | alert; operator reviews; consumer continues (no stall) |
 
 Projection failure never rolls back the domain transaction (DID §5.4).
 Consumers must be idempotent (re-apply key `(project_id, sequence)`).

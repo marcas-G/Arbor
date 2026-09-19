@@ -29,7 +29,7 @@
 
 **Governance changes (v1.5 → v1.6):**
 
-- D1: §0A.1 `AssignWork` signature marked illustrative; the normative `AssignWork` rejection set is frozen in §6A.15.
+- D1: §0A.1 `AssignWork` signature marked illustrative; `CommandRejection` gains `WorkspaceNotFound`; the normative `AssignWork` rejection set is frozen in §6A.15.
 - D2: §6A.15 notes the P0 `CommandResolution<R>` artifact is superseded by the parameterized form; P1 owns the evolution.
 - D3: resource-region physical encoding assigned to the P1 phase contract (overlap semantics stay in the domain function).
 - D4: `CreateChildWorkspace` ownership moved to P1 (§11).
