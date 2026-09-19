@@ -1,6 +1,6 @@
-# P1 Governance Patch (DRAFT v2 — not applied)
+# P1 Governance Patch (APPLIED — DID v1.5)
 
-Status: **DRAFT / AWAITING REVIEW**. Nothing in `docs/design/**` modified.
+Status: **APPLIED** — DID v1.4 → v1.5. `P1-DG-01/02/03/04/05/10` RESOLVED.
 Version plan: **DID v1.4 → v1.5**. System Design v1.3 **unchanged**.
 
 Revision basis (user rulings): DG-01 parameterized `CommandResolution` +
@@ -61,13 +61,16 @@ Governance changes (v1.4 → v1.5):
      IdempotencyConflict | AuthorityDenied | RevisionConflict | WorkNotOpen |
      TerminalLifecycleMutation | RetirePreconditionFailed |
      ActiveExecutionConflict | VerificationAcceptanceMismatch |
-     DependencyNotSatisfiable | PermissionRevoked | ExecutionStopRequested
+     DependencyNotSatisfiable | PermissionRevoked
 
 2) CommandRejection (Application-owned) — CommandResolution.TerminalRejected
    的 payload。
-     CommandRejection ⊇ DomainError
-     CommandRejection 额外包含 persistence/ownership terminal rejection：
-       FencingRejected
+     CommandRejection = DomainError | FencingRejected | ExecutionStopping
+     - FencingRejected: ownership/fence 无效。
+     - ExecutionStopping: fence 仍有效，但 stopRequestedAt != null，
+       禁止新的 execution-originated mutation。
+       (ExecutionStopRequested 仍是既有 Domain Event / stop-request fact
+        名称，不新增 DomainError tag。)
 
 3) OperationalFailure — 非 authoritative、非 terminal；不进入
    CommandResolution；不冻结为顶层单一 closed union，由 owning layer
@@ -163,8 +166,9 @@ CommandResolution 是参数化 ADT：
 - FencingRejected 只表示 ownership/fence 无效（generation 不匹配 /
   非当前 owner）。一个仍然合法（generation 有效）的 Worker，仅因
   stop_requested_at 被拒绝时，**不得**返回 FencingRejected。
-- stop/quiescence admission 是 domain admission precondition，返回
-  DomainError.ExecutionStopRequested（见 §6A.15）。
+- stop/quiescence admission 返回 Application-layer ExecutionStopping
+  （见 §6A.15）；ExecutionStopRequested 保持为既有 Domain Event /
+  stop-request fact 名称，不新增 DomainError tag。
 - P1 冻结 persistence hook 与 transaction integration（fence validation +
   canonical read/write + receipt + event 同一事务）。
 - P2 负责 lease acquisition/renewal/loss lifecycle。
@@ -220,7 +224,7 @@ CreateProject bootstrap contract:
 |---|---|
 | `command.ts CommandResolution<R>` | becomes `CommandResolution<Result, Rejection>`; Domain instantiates `DomainError`, Application `CommandRejection` |
 | `command.ts CommandReceipt<R>` | Application-side rejection widens to `CommandRejection`; view fields frozen in P1 contract |
-| `errors.ts DomainError` | add `ExecutionStopRequested` (new admission rejection); `FencingRejected` stays **out** of DomainError |
+| `errors.ts DomainError` | **unchanged** (no new tag); Application adds `CommandRejection = DomainError \| FencingRejected \| ExecutionStopping` |
 | `command.ts CommandAttempt` | becomes non-authoritative trace; add outcome/attempt_no semantics at P1 |
 | `semanticRequestFingerprint` | P0 FNV-1a marked interim; P1 freezes durable algorithm + version |
 
