@@ -39,7 +39,7 @@ See `planning/gaps/README.md` for the index and resolution process.
 | Phase | Scope (from DID-10) | Status |
 |---|---|---|
 | P0 | Functional Domain Kernel | COMPLETE — P0-001 … P0-018 done; see planning/results/P0.result.md |
-| P1 | Persistence + Command Core | DESIGN CLOSURE IN PROGRESS — 6 gaps resolved (DID v1.5); 4 phase-scoped closures remain; not authorized |
+| P1 | Persistence + Command Core | DESIGN CLOSURE FROZEN — all 10 P1 gaps resolved; contracts frozen (4-way Blocking=0); planning projection next |
 | P2–P12 | see DID-10 | not authorized |
 
 Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) are `RESOLVED`. P0 planning
