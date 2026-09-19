@@ -35,7 +35,7 @@ Every task file states:
 
 - A task's Verification must name the specific test suite or filter that
   proves its acceptance; `pnpm check` alone is not sufficient evidence.
-- Use `pnpm test -- <suite>` (a filename substring, e.g. `ids`,
+- Use `pnpm test <suite>` (a filename substring, e.g. `ids`,
   `workspace`). Do not prefix with `packages/domain`, which OR-matches every
   domain test and makes the filter meaningless.
 - Type-level assertions (branded-ID interchange, illegal ADT construction)
