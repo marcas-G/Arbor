@@ -1,0 +1,48 @@
+# Planning
+
+Execution tracking for the Arbor implementation phases defined in
+`docs/design/03-detailed-implementation-design.md` §11 (DID-10).
+
+## Layout
+
+```text
+planning/
+├── phases/    # one file per phase: P0 — P12
+├── tasks/     # task breakdown per phase, derived from the phase file
+├── gaps/      # Design Gaps: questions the frozen design does not answer
+└── results/   # completion evidence per phase: verification output, test runs, review notes
+```
+
+## Conventions
+
+- A phase file states: scope, entry authorization, exit criteria (from DID), and out-of-scope items.
+- A task file references the phase, the design sections it implements, and its verification command(s).
+- A result file is only written after `pnpm check` is green for that phase and records the actual evidence (command + output summary).
+- Never mark a phase done from intent; only from executed verification.
+- `docs/design/**` is manually governed: planning artifacts MUST NOT modify it. A discovered design gap stops work and is raised as a Design Gap for manual governance.
+
+## Design Gaps
+
+A Design Gap is recorded in `planning/gaps/` when the frozen design does not
+answer a question that implementation needs (domain semantics, state
+transition, authority, transaction/concurrency, recovery, idempotency,
+ownership, or failure semantics).
+
+- Planning and implementation MUST NOT invent an answer.
+- Only manual governance edits the owning design document.
+- Affected tasks are marked blocked until the gap is `RESOLVED`.
+
+See `planning/gaps/README.md` for the index and resolution process.
+
+## Current status
+
+| Phase | Scope (from DID-10) | Status |
+|---|---|---|
+| P0 | Functional Domain Kernel | READY FOR RE-REVIEW — Design Gaps resolved, environment blocker open |
+| P1 | Persistence + Command Core | blocked on P1 exact contracts/DDL closure |
+| P2–P12 | see DID-10 | not authorized |
+
+Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) are `RESOLVED` by the
+System Design v1.3 / DID v1.4 governance patch. P0 planning defects from
+the first review were fixed; the plan is awaiting re-review. The only open
+entry blocker is the environment baseline (P0-001).
