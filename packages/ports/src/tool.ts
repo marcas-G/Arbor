@@ -60,6 +60,7 @@ export interface ToolIntent {
   readonly toolVersion: string;
   readonly argumentsJson: string;
   readonly invocationId: ToolInvocationId;
+  readonly approvalId: string | null;
 }
 
 export interface ToolExecutionContext {

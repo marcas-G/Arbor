@@ -55,6 +55,7 @@ interface ToolIntent {
   readonly toolVersion: string;
   readonly argumentsJson: string;
   readonly invocationId: ToolInvocationId;   // caller-preallocated
+  readonly approvalId: string | null;        // Exact-Intent Approval, if required
 }
 
 interface ToolExecutionContext {

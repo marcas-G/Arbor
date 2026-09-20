@@ -61,6 +61,7 @@ const intent: ToolIntent = {
   toolVersion: "1",
   argumentsJson: '{"command":"ls"}',
   invocationId,
+  approvalId: null,
 };
 const context = {
   executionId,

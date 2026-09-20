@@ -61,6 +61,7 @@ const intent: ToolIntent = {
   invocationId: parse(ToolInvocationId)(
     "tin_018f2b3c-4d5e-7abc-8def-0123456789a1",
   ),
+  approvalId: null,
 };
 
 const context: ToolExecutionContext = {
