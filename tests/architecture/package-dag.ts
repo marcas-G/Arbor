@@ -14,6 +14,7 @@ export const ALLOWED_EDGES: Record<string, ReadonlyArray<string>> = {
   "persistence-sqlite": ["domain", "ports"],
   "environment-local": ["domain", "ports"],
   "worker-local": ["domain", "ports"],
+  "provider-fake": ["domain", "ports"],
 };
 
 export interface PackageManifest {

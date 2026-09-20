@@ -9,16 +9,7 @@
   "include": ["src"],
   "references": [
     {
-      "path": "../domain"
-    },
-    {
       "path": "../ports"
-    },
-    {
-      "path": "../application"
-    },
-    {
-      "path": "../model-context"
     }
   ]
 }

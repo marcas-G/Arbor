@@ -9,16 +9,10 @@
   "include": ["src"],
   "references": [
     {
-      "path": "../domain"
+      "path": "../../packages/domain"
     },
     {
-      "path": "../ports"
-    },
-    {
-      "path": "../application"
-    },
-    {
-      "path": "../model-context"
+      "path": "../../packages/ports"
     }
   ]
 }

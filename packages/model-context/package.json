@@ -1,5 +1,5 @@
 {
-  "name": "@arbor/agent-runtime",
+  "name": "@arbor/model-context",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,9 +14,7 @@
   ],
   "dependencies": {
     "@arbor/domain": "workspace:*",
-    "@arbor/ports": "workspace:*",
-    "@arbor/application": "workspace:*",
-    "@arbor/model-context": "workspace:*"
+    "@arbor/ports": "workspace:*"
   },
   "scripts": {
     "build": "tsc -b"

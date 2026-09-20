@@ -13,12 +13,6 @@
     },
     {
       "path": "../ports"
-    },
-    {
-      "path": "../application"
-    },
-    {
-      "path": "../model-context"
     }
   ]
 }

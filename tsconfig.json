@@ -11,10 +11,16 @@
       "path": "./packages/application"
     },
     {
+      "path": "./packages/model-context"
+    },
+    {
       "path": "./packages/agent-runtime"
     },
     {
       "path": "./packages/execution-runtime"
+    },
+    {
+      "path": "./packages/provider-runtime"
     },
     {
       "path": "./packages/testkit"
@@ -27,6 +33,9 @@
     },
     {
       "path": "./adapters/worker-local"
+    },
+    {
+      "path": "./adapters/provider-fake"
     }
   ]
 }
