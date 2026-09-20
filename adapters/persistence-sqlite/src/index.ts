@@ -1,5 +1,6 @@
 export * from "./client.js";
 export * from "./command-store.js";
+export * from "./consumer.js";
 export * from "./errors.js";
 export * from "./journal.js";
 export * from "./migrate.js";
