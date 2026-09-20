@@ -10,7 +10,6 @@ import {
   concludeVerification,
   createAcceptance,
   createWorkspace,
-  DeliverableId,
   DeliverableKind,
   DependencyId,
   DependencyRevision,
@@ -26,8 +25,8 @@ import {
   resolveIdempotency,
   responsibilityBound,
   retireWorkspace,
+  SemanticRequestFingerprint,
   SessionId,
-  semanticRequestFingerprint,
   startVerification,
   VerificationId,
   WorkId,
@@ -216,18 +215,11 @@ describe("cross-aggregate invariants", () => {
     const commandId = parse(CommandId)(
       "cmd_018f2b3c-4d5e-7abc-8def-0123456789ab",
     );
-    const fp = (payload: unknown) =>
-      semanticRequestFingerprint({
-        commandType: "CreateProject",
-        projectId,
-        actor,
-        schemaVersion: "1",
-        payload,
-      });
-    const existing = { commandId, fingerprint: fp({ a: 1 }) };
+    const fp = (value: string) => parse(SemanticRequestFingerprint)(value);
+    const existing = { commandId, fingerprint: fp("a1") };
     const conflict = resolveIdempotency(existing, {
       commandId,
-      fingerprint: fp({ a: 2 }),
+      fingerprint: fp("a2"),
     });
     expect(conflict.ok).toBe(false);
     if (!conflict.ok) {

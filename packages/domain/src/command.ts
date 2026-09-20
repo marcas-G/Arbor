@@ -1,6 +1,5 @@
 import { Schema } from "effect";
 import type { Actor, Principal } from "./actor.js";
-import type { DomainError } from "./errors.js";
 import type { CommandId, ExecutionId, ProjectId } from "./ids.js";
 import type { LeaseGeneration } from "./ordinals.js";
 import type { DomainResult } from "./result.js";
@@ -54,75 +53,20 @@ export const nextCommandAttempt = (
   attemptNo: attempt.attemptNo + 1,
 });
 
-export type CommandResolution<R> =
-  | { readonly _tag: "Committed"; readonly result: R }
-  | { readonly _tag: "TerminalRejected"; readonly error: DomainError };
+export type CommandResolution<Result, Rejection> =
+  | { readonly _tag: "Committed"; readonly result: Result }
+  | { readonly _tag: "TerminalRejected"; readonly error: Rejection };
 
-export interface CommandReceipt<R> {
+export interface CommandReceipt<Result, Rejection> {
   readonly commandId: CommandId;
-  readonly fingerprint: SemanticRequestFingerprint;
-  readonly resolution: CommandResolution<R>;
-}
-
-export const canonicalize = (value: unknown): string => {
-  if (value === null || value === undefined) {
-    return "null";
-  }
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? String(value) : "null";
-  }
-  if (typeof value === "boolean") {
-    return value ? "true" : "false";
-  }
-  if (typeof value === "string") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalize).join(",")}]`;
-  }
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter(([, entryValue]) => entryValue !== undefined)
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return `{${entries
-      .map(
-        ([key, entryValue]) =>
-          `${JSON.stringify(key)}:${canonicalize(entryValue)}`,
-      )
-      .join(",")}}`;
-  }
-  return JSON.stringify(String(value));
-};
-
-const fnv1a = (input: string): string => {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= input.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0");
-};
-
-export interface FingerprintInput<C> {
-  readonly commandType: string;
   readonly projectId: ProjectId;
-  readonly actor: Actor;
+  readonly semanticRequestFingerprint: SemanticRequestFingerprint;
   readonly schemaVersion: string;
-  readonly payload: C;
+  readonly fingerprintAlgorithmVersion: number;
+  readonly resolution: CommandResolution<Result, Rejection>;
+  readonly createdAt: string;
+  readonly settledAt: string;
 }
-
-export const semanticRequestFingerprint = <C>(
-  input: FingerprintInput<C>,
-): SemanticRequestFingerprint =>
-  fnv1a(
-    canonicalize({
-      commandType: input.commandType,
-      projectId: input.projectId,
-      actor: input.actor,
-      schemaVersion: input.schemaVersion,
-      payload: input.payload,
-    }),
-  ) as SemanticRequestFingerprint;
 
 export interface IdempotencyKey {
   readonly commandId: CommandId;

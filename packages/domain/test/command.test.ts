@@ -3,6 +3,7 @@ import type {
   CommandEnvelope,
   CommandResolution,
   CommandSubmissionContext,
+  DomainError,
 } from "../src/index.js";
 import {
   Actor,
@@ -15,7 +16,7 @@ import {
   ProjectId,
   parse,
   resolveIdempotency,
-  semanticRequestFingerprint,
+  SemanticRequestFingerprint,
 } from "../src/index.js";
 
 const commandId = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789ab");
@@ -26,14 +27,7 @@ const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
 const actor = parse(Actor)("user:gaolei");
 const principal = parse(Principal)("principal:runtime");
 
-const fingerprint = (payload: unknown, commandType = "CreateProject") =>
-  semanticRequestFingerprint({
-    commandType,
-    projectId,
-    actor,
-    schemaVersion: "1",
-    payload,
-  });
+const fingerprint = (value: string) => parse(SemanticRequestFingerprint)(value);
 
 const describeContext = (context: CommandSubmissionContext): string => {
   switch (context._tag) {
@@ -51,28 +45,20 @@ const describeContext = (context: CommandSubmissionContext): string => {
 };
 
 describe("command vocabulary", () => {
-  it("fingerprints deterministically under key reordering", () => {
-    expect(fingerprint({ a: 1, b: 2 })).toBe(fingerprint({ b: 2, a: 1 }));
-    expect(fingerprint({ a: 1 })).not.toBe(fingerprint({ a: 2 }));
-    expect(fingerprint({ a: 1 })).not.toBe(
-      fingerprint({ a: 1 }, "CloseProject"),
-    );
-  });
-
   it("resolves idempotency: new, same, and conflict", () => {
-    const key = { commandId, fingerprint: fingerprint({ a: 1 }) };
+    const key = { commandId, fingerprint: fingerprint("fp-a") };
     const fresh = resolveIdempotency(null, key);
     expect(fresh.ok && fresh.value).toBe("New");
 
     const same = resolveIdempotency(key, {
       commandId,
-      fingerprint: fingerprint({ a: 1 }),
+      fingerprint: fingerprint("fp-a"),
     });
     expect(same.ok && same.value).toBe("SameLogicalRequest");
 
     const conflict = resolveIdempotency(key, {
       commandId,
-      fingerprint: fingerprint({ a: 2 }),
+      fingerprint: fingerprint("fp-b"),
     });
     expect(conflict.ok).toBe(false);
     if (!conflict.ok) {
@@ -81,7 +67,7 @@ describe("command vocabulary", () => {
 
     const unrelated = resolveIdempotency(key, {
       commandId: otherCommandId,
-      fingerprint: fingerprint({ a: 2 }),
+      fingerprint: fingerprint("fp-b"),
     });
     expect(unrelated.ok && unrelated.value).toBe("New");
   });
@@ -125,12 +111,12 @@ describe("command vocabulary", () => {
     expect(nextCommandAttempt(first)).toEqual({ commandId, attemptNo: 1 });
   });
 
-  it("resolution is an exhaustive Committed | TerminalRejected union", () => {
-    const committed: CommandResolution<number> = {
+  it("resolution is a parameterized Committed | TerminalRejected union", () => {
+    const committed: CommandResolution<number, DomainError> = {
       _tag: "Committed",
       result: 1,
     };
-    const rejected: CommandResolution<number> = {
+    const rejected: CommandResolution<number, DomainError> = {
       _tag: "TerminalRejected",
       error: { _tag: "AuthorityDenied", reason: "nope" },
     };
