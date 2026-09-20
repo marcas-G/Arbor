@@ -77,7 +77,7 @@ const toExecution = (row: ExecutionRow): Execution => {
     binding,
     sessionId: row.session_id as SessionId,
     admittedAt: row.admitted_at,
-    stopRequested: row.stop_requested_at !== null,
+    stopRequestedAt: row.stop_requested_at,
     state,
   };
 };
@@ -107,7 +107,7 @@ const insertParams = (execution: Execution): ReadonlyArray<unknown> => {
     isWorkspace ? null : binding.mission,
     execution.sessionId,
     execution.admittedAt,
-    execution.stopRequested ? execution.admittedAt : null,
+    execution.stopRequestedAt,
     null,
     null,
     null,

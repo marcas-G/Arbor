@@ -10,6 +10,7 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { makeAdmitExecutionHandler } from "./admit-execution.js";
+import { makeStopExecutionHandler } from "./stop-execution.js";
 
 export const P2CommandHandlerRegistryLive: Layer.Layer<
   CommandHandlerRegistry,
@@ -30,6 +31,9 @@ export const P2CommandHandlerRegistryLive: Layer.Layer<
         projects,
         workspaces,
         sessions,
+        executions,
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeStopExecutionHandler({
         executions,
       }) as unknown as CommandHandler<unknown, unknown>,
     ];

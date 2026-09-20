@@ -107,10 +107,10 @@ describe("execution binding & settlement", () => {
   });
 
   it("records a stop request without settling", () => {
-    const stopped = stopExecution(admit());
+    const stopped = stopExecution(admit(), "2026-09-20T00:00:00.000Z");
     expect(stopped.ok).toBe(true);
     if (stopped.ok) {
-      expect(stopped.value.stopRequested).toBe(true);
+      expect(stopped.value.stopRequestedAt).toBe("2026-09-20T00:00:00.000Z");
       expect(isExecutionActive(stopped.value)).toBe(true);
     }
   });
@@ -158,7 +158,7 @@ describe("execution binding & settlement", () => {
     if (!settled.ok) {
       throw new Error("expected settle");
     }
-    const stopped = stopExecution(settled.value);
+    const stopped = stopExecution(settled.value, "2026-09-20T00:00:00.000Z");
     expect(stopped.ok).toBe(false);
   });
 
