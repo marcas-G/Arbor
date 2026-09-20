@@ -14,9 +14,13 @@
   ],
   "dependencies": {
     "@arbor/domain": "workspace:*",
-    "@arbor/ports": "workspace:*"
+    "@arbor/ports": "workspace:*",
+    "@effect/sql-sqlite-node": "4.0.0-rc.115"
   },
   "scripts": {
     "build": "tsc -b"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.5"
   }
 }
