@@ -199,6 +199,13 @@ importers:
       '@arbor/ports':
         specifier: workspace:*
         version: link:../../packages/ports
+      '@effect/sql-sqlite-node':
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115(effect@4.0.0-rc.115)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.13.5
+        version: 24.13.5
 
   packages/application:
     dependencies:
@@ -275,6 +282,11 @@ packages:
     engines: {node: '>=14.21.3'}
     cpu: [x64]
     os: [win32]
+
+  '@effect/sql-sqlite-node@4.0.0-rc.115':
+    resolution: {integrity: sha512-53n3Kbwush7K/8/G1CDz638ClEoMvnUOT5BltCxMZ8TqcxeNoMv+nty08ZdrJ7P6m1q1RIeWlqdy5J9ZDICpbw==}
+    peerDependencies:
+      effect: ^4.0.0-rc.115
 
   '@jridgewell/resolve-uri@3.1.2':
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
@@ -833,6 +845,10 @@ snapshots:
 
   '@biomejs/cli-win32-x64@2.5.14':
     optional: true
+
+  '@effect/sql-sqlite-node@4.0.0-rc.115(effect@4.0.0-rc.115)':
+    dependencies:
+      effect: 4.0.0-rc.115
 
   '@jridgewell/resolve-uri@3.1.2': {}
 
