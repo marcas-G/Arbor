@@ -17,12 +17,14 @@ import {
   IdGenerator,
   type PendingDomainEvent,
   type ProjectRepositoryError,
+  type SchedulerTimerStoreError,
   type SessionRepositoryError,
   type TransactionOperationalFailure,
   TransactionPort,
   type TransactionScope,
   type WorkRepositoryError,
   type WorkspaceRepositoryError,
+  type WorkWaitStoreError,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
 import {
@@ -60,6 +62,8 @@ export type CommandHandlerError =
   | WorkRepositoryError
   | SessionRepositoryError
   | ExecutionRepositoryError
+  | WorkWaitStoreError
+  | SchedulerTimerStoreError
   | CommandStoreError
   | DomainEventJournalError;
 

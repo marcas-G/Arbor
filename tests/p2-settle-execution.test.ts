@@ -7,6 +7,7 @@ import {
   DomainEventJournalLive,
   ExecutionRepositoryLive,
   IdGeneratorLive,
+  LeaseServiceLive,
   layer,
   P2_MIGRATIONS,
   ProjectRepositoryLive,
@@ -19,7 +20,6 @@ import {
 import {
   CommandGateway,
   CommandGatewayLive,
-  FenceStopCheckInertLive,
   type GatewayEnvelope,
   semanticRequestFingerprint,
   type VerifiedRuntimeCommandAuthority,
@@ -37,9 +37,11 @@ import {
 } from "../packages/domain/dist/index.js";
 import {
   type AdmitExecutionPayload,
+  FenceStopCheckLive,
   P2CommandHandlerRegistryLive,
-  type StopExecutionPayload,
+  type SettleExecutionPayload,
 } from "../packages/execution-runtime/src/index.js";
+import { LeaseService, TransactionPort } from "../packages/ports/src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -48,11 +50,6 @@ const workspaceId = parse(WorkspaceId)(
 const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const actor = parse(Actor)("user:test");
 const principal = parse(Principal)("runtime:system");
-const systemContext: CommandSubmissionContext = {
-  _tag: "System",
-  principal,
-  causationRef: "c",
-};
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 ) as ExecutionId;
@@ -60,6 +57,8 @@ const executionId = parse(ExecutionId)(
 const makeApp = () => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const repo = Layer.provide(ExecutionRepositoryLive, infra);
+  const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
@@ -67,13 +66,14 @@ const makeApp = () => {
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
-    Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
+    repo,
+    Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
   );
   const all = Layer.mergeAll(
     infra,
     repos,
-    FenceStopCheckInertLive,
+    fence,
     Layer.provide(P2CommandHandlerRegistryLive, repos),
   );
   return Layer.mergeAll(all, Layer.provide(CommandGatewayLive, all));
@@ -134,22 +134,20 @@ const admitPayload: AdmitExecutionPayload = {
   focus: { _tag: "Coordination" },
 };
 const admitEnvelope = (
-  commandId: CommandId,
+  id: CommandId,
 ): GatewayEnvelope<AdmitExecutionPayload> => ({
   commandType: "AdmitExecution",
-  commandId,
+  commandId: id,
   projectId,
   actor,
   issuedAt: "t",
   payload: admitPayload,
 });
-const admitAuthority = (
-  commandId: CommandId,
-): VerifiedRuntimeCommandAuthority => ({
+const admitAuthority = (id: CommandId): VerifiedRuntimeCommandAuthority => ({
   _tag: "AdmitExecutionAuthority",
   submissionOrigin: "System",
   principal,
-  commandId,
+  commandId: id,
   semanticRequestFingerprint: semanticRequestFingerprint({
     commandType: "AdmitExecution",
     projectId,
@@ -163,168 +161,192 @@ const admitAuthority = (
   bindingKind: "WorkspaceMain",
 });
 
-const stopPayload: StopExecutionPayload = { executionId };
-const stopEnvelope = (
-  commandId: CommandId,
-): GatewayEnvelope<StopExecutionPayload> => ({
-  commandType: "StopExecution",
-  commandId,
+const settlePayload = (
+  settlement: SettleExecutionPayload["settlement"],
+): SettleExecutionPayload => ({
+  executionId,
+  settlement,
+  expectedFencingGeneration: 0 as never,
+});
+const settleEnvelope = (
+  id: CommandId,
+  payload: SettleExecutionPayload,
+): GatewayEnvelope<SettleExecutionPayload> => ({
+  commandType: "SettleExecution",
+  commandId: id,
   projectId,
   actor,
-  issuedAt: "t1",
-  payload: stopPayload,
+  issuedAt: "t2",
+  payload,
 });
-const stopAuthority = (
-  commandId: CommandId,
+const settleAuthority = (
+  id: CommandId,
+  payload: SettleExecutionPayload,
+  origin: "ExecutionOrigin" | "RecoveryController",
 ): VerifiedRuntimeCommandAuthority => ({
-  _tag: "StopExecutionAuthority",
-  submissionOrigin: "System",
+  _tag: "SettleExecutionAuthority",
+  submissionOrigin: origin,
   principal,
-  commandId,
+  commandId: id,
   semanticRequestFingerprint: semanticRequestFingerprint({
-    commandType: "StopExecution",
+    commandType: "SettleExecution",
     projectId,
     actor,
     schemaVersion: "1",
-    payload: stopPayload,
+    payload,
   }),
   projectId,
-  commandKind: "StopExecution",
+  commandKind: "SettleExecution",
   executionId,
+  fencingGeneration: 0 as never,
 });
 
-const admit = (commandId: CommandId) =>
+const executionOrigin: CommandSubmissionContext = {
+  _tag: "ExecutionOrigin",
+  principal,
+  executionId,
+  fencingGeneration: 0 as never,
+};
+const recoveryOrigin: CommandSubmissionContext = {
+  _tag: "RecoveryController",
+  principal,
+  causationRef: "recovery",
+};
+
+const bootstrap = (admitId: CommandId) =>
   Effect.gen(function* () {
     const gw = yield* CommandGateway;
     yield* gw.execute(
-      admitEnvelope(commandId),
-      systemContext,
-      admitAuthority(commandId),
+      admitEnvelope(admitId),
+      { _tag: "System", principal, causationRef: "c" },
+      admitAuthority(admitId),
     );
+    const tx = yield* TransactionPort;
+    const leases = yield* LeaseService;
+    yield* tx.transact(leases.acquire(executionId, "worker:a"));
   });
 
-describe("P2-010 StopExecution", () => {
-  it("sets the stop fact and emits ExecutionStopRequested", async () => {
+const completed: SettleExecutionPayload["settlement"] = {
+  _tag: "Completed",
+  result: { _tag: "CoordinationCompleted" },
+};
+
+describe("P2-011 SettleExecution", () => {
+  it("settles on the ExecutionOrigin path and emits ExecutionSettled", async () => {
     const app = makeApp();
     const admitId = parse(CommandId)(
       "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
     );
-    const stopId = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a2");
+    const settleId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a2",
+    );
+    const payload = settlePayload(completed);
     const program = Effect.gen(function* () {
       yield* runMigrations(P2_MIGRATIONS);
       yield* seed;
-      yield* admit(admitId);
+      yield* bootstrap(admitId);
       const gw = yield* CommandGateway;
       const receipt = yield* gw.execute(
-        stopEnvelope(stopId),
-        systemContext,
-        stopAuthority(stopId),
+        settleEnvelope(settleId, payload),
+        executionOrigin,
+        settleAuthority(settleId, payload, "ExecutionOrigin"),
       );
       const sql = yield* SqlClient;
-      const events = yield* sql.unsafe<{ event_type: string }>(
-        "SELECT event_type FROM domain_events WHERE event_type = 'ExecutionStopRequested'",
-      );
-      const rows = yield* sql.unsafe<{ stop_requested_at: string | null }>(
-        "SELECT stop_requested_at FROM executions WHERE execution_id = ?",
+      const rows = yield* sql.unsafe<{ settlement_kind: string | null }>(
+        "SELECT settlement_kind FROM executions WHERE execution_id = ?",
         [executionId],
       );
-      return {
-        receipt,
-        events: events.length,
-        stop: rows[0]?.stop_requested_at,
-      };
+      return { receipt, kind: rows[0]?.settlement_kind };
     });
-    const r = await Effect.runPromise(Effect.provide(program, app));
-    const receipt = (r as { receipt: { resolution: { _tag: string } } })
-      .receipt;
-    expect(receipt.resolution._tag).toBe("Committed");
-    expect((r as { events: number }).events).toBe(1);
-    expect((r as { stop: string | null }).stop).toBe("t1");
+    const r = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
+    expect(
+      (r as { receipt: { resolution: { _tag: string } } }).receipt.resolution
+        ._tag,
+    ).toBe("Committed");
+    expect((r as { kind: string | null }).kind).toBe("Completed");
   });
 
-  it("is idempotent on a second stop and rejects a missing execution", async () => {
+  it("rejects a stale generation and admits a RecoveryController settle", async () => {
     const app = makeApp();
     const admitId = parse(CommandId)(
       "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
     );
-    const stop1 = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a2");
-    const stop2 = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a3");
+    const staleId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a3",
+    );
+    const recoveryId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a4",
+    );
+    const payload = settlePayload(completed);
     const program = Effect.gen(function* () {
       yield* runMigrations(P2_MIGRATIONS);
       yield* seed;
-      yield* admit(admitId);
+      yield* bootstrap(admitId);
       const gw = yield* CommandGateway;
-      const first = yield* gw.execute(
-        stopEnvelope(stop1),
-        systemContext,
-        stopAuthority(stop1),
-      );
-      const second = yield* gw.execute(
-        stopEnvelope(stop2),
-        systemContext,
-        stopAuthority(stop2),
-      );
-      const sql = yield* SqlClient;
-      const events = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'ExecutionStopRequested'",
-      );
-      const missingPayload: StopExecutionPayload = {
-        executionId: parse(ExecutionId)(
-          "exe_018f2b3c-4d5e-7abc-8def-0123456789ff",
-        ) as ExecutionId,
-      };
-      const missingId = parse(CommandId)(
-        "cmd_018f2b3c-4d5e-7abc-8def-0123456789a4",
-      );
-      const missing = yield* gw.execute(
+      const stale = yield* gw.execute(
+        settleEnvelope(staleId, payload),
         {
-          commandType: "StopExecution",
-          commandId: missingId,
-          projectId,
-          actor,
-          issuedAt: "t",
-          payload: missingPayload,
-        },
-        systemContext,
-        {
-          _tag: "StopExecutionAuthority",
-          submissionOrigin: "System",
+          _tag: "ExecutionOrigin",
           principal,
-          commandId: missingId,
-          semanticRequestFingerprint: semanticRequestFingerprint({
-            commandType: "StopExecution",
-            projectId,
-            actor,
-            schemaVersion: "1",
-            payload: missingPayload,
-          }),
-          projectId,
-          commandKind: "StopExecution",
-          executionId: missingPayload.executionId,
-        } as VerifiedRuntimeCommandAuthority,
+          executionId,
+          fencingGeneration: 9 as never,
+        },
+        settleAuthority(staleId, payload, "ExecutionOrigin"),
       );
-      return { first, second, events: Number(events[0]?.count ?? 0), missing };
+      const recovery = yield* gw.execute(
+        settleEnvelope(recoveryId, payload),
+        recoveryOrigin,
+        settleAuthority(recoveryId, payload, "RecoveryController"),
+      );
+      return { stale, recovery };
     });
-    const r = await Effect.runPromise(Effect.provide(program, app));
-    const first = (r as { first: { resolution: { _tag: string } } }).first
-      .resolution;
-    const second = (
-      r as {
-        second: {
-          resolution: { _tag: string; result?: { stopRequestedAt: string } };
-        };
-      }
-    ).second.resolution;
-    expect(first._tag).toBe("Committed");
-    expect(second._tag).toBe("Committed");
-    expect(second.result?.stopRequestedAt).toBe("t1");
-    expect((r as { events: number }).events).toBe(1);
-    const missing = (
-      r as {
-        missing: { resolution: { _tag: string; error?: { _tag: string } } };
-      }
-    ).missing.resolution;
-    expect(missing._tag).toBe("TerminalRejected");
-    expect(missing.error?._tag).toBe("ExecutionNotFound");
+    const r = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
+    const stale = (
+      r as { stale: { resolution: { _tag: string; error?: { _tag: string } } } }
+    ).stale.resolution;
+    expect(stale._tag).toBe("TerminalRejected");
+    expect(stale.error?._tag).toBe("FencingRejected");
+    const recovery = (r as { recovery: { resolution: { _tag: string } } })
+      .recovery.resolution;
+    expect(recovery._tag).toBe("Committed");
+  });
+
+  it("rejects malformed settlements as defects", async () => {
+    const app = makeApp();
+    const admitId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
+    );
+    const settleId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a5",
+    );
+    const payload = settlePayload({
+      _tag: "Completed",
+      result: {
+        _tag: "Yielded",
+        reason: "r",
+        waitSpec: { mode: "Any", conditions: [] },
+      },
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P2_MIGRATIONS);
+      yield* seed;
+      yield* bootstrap(admitId);
+      const gw = yield* CommandGateway;
+      return yield* gw
+        .execute(
+          settleEnvelope(settleId, payload),
+          executionOrigin,
+          settleAuthority(settleId, payload, "ExecutionOrigin"),
+        )
+        .pipe(Effect.exit);
+    });
+    const exit = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
+    expect((exit as { _tag: string })._tag).toBe("Failure");
   });
 });
