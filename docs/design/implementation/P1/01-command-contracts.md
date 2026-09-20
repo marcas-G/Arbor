@@ -299,6 +299,11 @@ accept work; the P1 handler pre-checks workspace lifecycle and returns
 `TerminalLifecycleMutation` instead. The P0 branch is superseded by this
 contract (P0→P1 artifact evolution).
 
+"work outside responsibility scope" is expressed by the trusted authority fact
+(§2A): P1 does not evaluate the workspace `responsibilityDefinition` (that is
+Authority Resolver semantics, deferred). The handler enforces only the
+deterministic preconditions above.
+
 ### Events
 
 ```text

@@ -12,6 +12,7 @@ import {
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
+  WorkRepositoryLive,
   WorkspaceRepositoryLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -124,6 +125,7 @@ const makeApp = () => {
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
+    Layer.provide(WorkRepositoryLive, infra),
   );
   const all = Layer.mergeAll(
     infra,
