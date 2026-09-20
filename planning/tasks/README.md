@@ -5,7 +5,7 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0–P3** (complete); **P4** (planning; contracts frozen at
+Phases: **P0–P4** (complete); **P5** (planning; contracts frozen at
 Blocking=0). Task contracts reference `docs/design/implementation/<phase>/**`.
 
 ## Authority order
@@ -168,9 +168,9 @@ P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
 pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
 project `env.sh` wrapper; `pnpm check` is green. **P0 and P1 are COMPLETE**;
 all `DG-*` / `P1-DG-*` are RESOLVED. P2 design closure is complete
-(`docs/design/implementation/P2/**`, Blocking=0) and P2 is COMPLETE. P3 is COMPLETE. P4 design
-closure is complete (`docs/design/implementation/P4/**`, review Blocking=0);
-P4 planning is frozen pending implementation authorization. See
+(`docs/design/implementation/P2/**`, Blocking=0) and P2 is COMPLETE. P3 is COMPLETE. P4 is COMPLETE. P5 design
+closure is complete (`docs/design/implementation/P5/**`, review Blocking=0);
+P5 planning is frozen pending implementation authorization. See
 `planning/gaps/`.
 
 ## P2 dependency graph
@@ -304,3 +304,34 @@ P4-017                            -> P4-018
 | P4-016 | P2 `ReconciliationSource` + Stop/quiescence | P4-011 |
 | P4-017 | P4 integration + architecture tests | P4-012..P4-016 |
 | P4-018 | P4 convergence & result record | P4-017 |
+
+## P5 dependency graph
+
+Authoritative edge list (`X -> Y` means Y depends on X):
+
+```text
+P4-018                       -> P5-001
+P5-001                       -> P5-002, P5-003, P5-004, P5-010
+P5-002, P5-003, P5-004       -> P5-005
+P5-005                       -> P5-006
+P5-006                       -> P5-007
+P5-007                       -> P5-008
+P5-008                       -> P5-009
+P5-009, P5-010               -> P5-011
+```
+
+## P5 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P5-001 | `apps/single-workspace` composition root | P4-018 |
+| P5-002 | Provisional `RunnableWorkSource` implementation | P5-001 |
+| P5-003 | `DirectiveUnsupported` + slice directive dispatch | P5-001 |
+| P5-004 | Slice command handler registry wiring | P5-001 |
+| P5-005 | Multi-turn Session continuity | P5-002, P5-003, P5-004 |
+| P5-006 | Yield → WorkWait → wake → continuation | P5-005 |
+| P5-007 | CompletionClaim → Execution settlement (Work Open) | P5-006 |
+| P5-008 | Restart continuity (dispose/reconstruct) | P5-007 |
+| P5-009 | Full vertical-slice acceptance story | P5-008 |
+| P5-010 | Architecture tests for `apps/*` | P5-001 |
+| P5-011 | P5 convergence & result record | P5-009, P5-010 |
