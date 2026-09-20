@@ -5,14 +5,16 @@ import {
   parse,
   SessionId,
 } from "@arbor/domain";
-import { Clock, ProviderTurnStore, TransactionPort } from "@arbor/ports";
+import {
+  Clock,
+  ProviderRuntime,
+  ProviderTurnStore,
+  TransactionPort,
+} from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import {
-  ProviderRuntime,
-  ProviderRuntimeLive,
-} from "../../../packages/provider-runtime/src/index.js";
+import { ProviderRuntimeLive } from "../../../packages/provider-runtime/src/index.js";
 import { FakeProviderLive } from "../../provider-fake/src/index.js";
 import {
   ClockLive,
@@ -168,7 +170,9 @@ describe("P3 ProviderRuntime + fake provider", () => {
       );
       return { result, turns, attempts };
     });
-    const r = await Effect.runPromise(Effect.provide(program, app));
+    const r = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
     expect((r as { result: ReadonlyArray<unknown> }).result).toHaveLength(4);
     expect(
       (r as { turns: ReadonlyArray<{ finish_reason: string | null }> }).turns[0]
@@ -193,7 +197,9 @@ describe("P3 ProviderRuntime + fake provider", () => {
       );
       return attempts.map((a) => a.outcome);
     });
-    const attempts = await Effect.runPromise(Effect.provide(program, app));
+    const attempts = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
     expect(attempts).toEqual(["RetryableFailure", "Success"]);
     void Clock;
     void ProviderTurnStore;

@@ -8,6 +8,8 @@ import { Effect, Layer, Stream } from "effect";
 
 export interface FakeProviderScript {
   readonly events?: ReadonlyArray<CanonicalProviderEvent>;
+  /** Per-run scripts (run N uses turns[N]); falls back to `events`. */
+  readonly turns?: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>;
   /** Fail the first N attempts with these kinds, then succeed. */
   readonly failures?: ReadonlyArray<ProviderFailureKind>;
 }
@@ -33,7 +35,9 @@ export const FakeProviderLive = (
           if (kind !== undefined) {
             return Stream.fail(failure(kind));
           }
-          return Stream.fromIterable(script.events ?? []);
+          return Stream.fromIterable(
+            script.turns?.[attempt] ?? script.events ?? [],
+          );
         },
       });
     }),

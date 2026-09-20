@@ -15,7 +15,10 @@ import type {
   ProviderFailure,
   SkillRegistryError,
 } from "./errors.js";
-import type { TransactionScope } from "./session.js";
+import type {
+  TransactionOperationalFailure,
+  TransactionScope,
+} from "./session.js";
 
 export interface PortableInstruction {
   readonly slotId: string;
@@ -110,6 +113,34 @@ export class ProviderPort extends Context.Service<
   ProviderPort,
   ProviderPortService
 >()("arbor/ProviderPort") {}
+
+export interface ProviderRunInput {
+  readonly providerTurnId: ProviderTurnId;
+  readonly executionId: ExecutionId;
+  readonly sessionId: SessionId;
+  readonly contextEpoch: ContextEpochNumber;
+  readonly modelRef: string;
+  readonly outputContractRef: string;
+  readonly manifestId: string;
+  readonly request: PortableModelRequest;
+  readonly secretRef: string;
+  readonly timeoutMs: number;
+  readonly cancellationRef: string;
+}
+
+export interface ProviderRuntimeService {
+  readonly runTurn: (
+    input: ProviderRunInput,
+  ) => Effect.Effect<
+    ReadonlyArray<CanonicalProviderEvent>,
+    ProviderFailure | TransactionOperationalFailure
+  >;
+}
+
+export class ProviderRuntime extends Context.Service<
+  ProviderRuntime,
+  ProviderRuntimeService
+>()("arbor/ProviderRuntime") {}
 
 export interface ProviderTurnRecord {
   readonly providerTurnId: ProviderTurnId;

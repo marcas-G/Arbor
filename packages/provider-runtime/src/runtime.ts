@@ -1,47 +1,16 @@
 import {
   type CanonicalProviderEvent,
   Clock,
-  type ContextEpochNumber,
-  type ExecutionId,
-  type PortableModelRequest,
   type ProviderFailure,
   type ProviderFailureKind,
   ProviderPort,
-  type ProviderTurnId,
+  type ProviderRunInput,
+  ProviderRuntime,
+  type ProviderRuntimeService,
   ProviderTurnStore,
-  type SessionId,
-  type TransactionOperationalFailure,
   TransactionPort,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Stream } from "effect";
-
-export interface ProviderRunInput {
-  readonly providerTurnId: ProviderTurnId;
-  readonly executionId: ExecutionId;
-  readonly sessionId: SessionId;
-  readonly contextEpoch: ContextEpochNumber;
-  readonly modelRef: string;
-  readonly outputContractRef: string;
-  readonly manifestId: string;
-  readonly request: PortableModelRequest;
-  readonly secretRef: string;
-  readonly timeoutMs: number;
-  readonly cancellationRef: string;
-}
-
-export interface ProviderRuntimeService {
-  readonly runTurn: (
-    input: ProviderRunInput,
-  ) => Effect.Effect<
-    ReadonlyArray<CanonicalProviderEvent>,
-    ProviderFailure | TransactionOperationalFailure
-  >;
-}
-
-export class ProviderRuntime extends Context.Service<
-  ProviderRuntime,
-  ProviderRuntimeService
->()("arbor/ProviderRuntime") {}
 
 const RETRYABLE: ReadonlyArray<ProviderFailureKind> = [
   "RateLimited",
@@ -67,12 +36,9 @@ export const ProviderRuntimeLive = (
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
 
-      const runTurn = (
+      const runTurn: ProviderRuntimeService["runTurn"] = (
         input: ProviderRunInput,
-      ): Effect.Effect<
-        ReadonlyArray<CanonicalProviderEvent>,
-        ProviderFailure | TransactionOperationalFailure
-      > =>
+      ) =>
         Effect.gen(function* () {
           const startedAt = yield* clock.now();
           yield* tx.transact(

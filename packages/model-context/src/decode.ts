@@ -47,6 +47,11 @@ export type DirectiveKind = AgentDirective["_tag"];
 export const AGENT_DIRECTIVE_CONTRACT = "agent-directive-v1";
 export const COMPLETION_CLAIM_CONTRACT = "completion-claim-v1";
 
+/** Reserved tool-call name for structured organizational directives. Provider
+ * events still never carry an `AgentDirective` directly; the runtime decodes
+ * this proposal against the Output Contract. */
+export const ARBOR_DIRECTIVE_TOOL = "arbor_directive";
+
 export const OUTPUT_CONTRACTS: Readonly<
   Record<string, ReadonlyArray<DirectiveKind>>
 > = {
@@ -115,6 +120,27 @@ export const decodeTurn = (
         text += event.text;
         break;
       case "ToolCallProposed": {
+        if (event.toolName === ARBOR_DIRECTIVE_TOOL) {
+          let parsed: { _tag?: string };
+          try {
+            parsed = JSON.parse(event.argumentsJson) as { _tag?: string };
+          } catch {
+            return violation("arbor_directive arguments are not valid JSON");
+          }
+          if (
+            parsed._tag === undefined ||
+            !allowed.includes(parsed._tag as DirectiveKind)
+          ) {
+            return violation(
+              `directive ${parsed._tag ?? "<none>"} not admitted by ${outputContractRef}`,
+            );
+          }
+          directives.push({
+            directive: parsed as unknown as AgentDirective,
+            decisionBasisManifestId,
+          });
+          break;
+        }
         if (!allowed.includes("InvokeTool")) {
           return violation(
             `output contract ${outputContractRef} does not admit InvokeTool`,
