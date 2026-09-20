@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.8  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P4 tool-runtime closure)  
-**Supersedes:** v1.7  
+**Version:** 1.9  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P5 vertical-slice closure)  
+**Supersedes:** v1.8  
 **Date:** 2026-09-20  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
@@ -81,6 +81,36 @@
 - G6: exact tool parameter/result schemas and the shell policy enforcement
   mechanism are **phase-scoped contract** (P4), not implementation choice; only
   backend/limits/numeric thresholds are implementation/empirical (§13).
+
+**Governance changes (v1.8 → v1.9):**
+
+- G1: the **P5 deliverable** is a minimal runnable `apps/*` composition root plus
+  a deterministic end-to-end acceptance suite; it is not test-harness-only, but
+  a full production daemon/CLI is not required (§11 P5).
+- G2: **P5 provides a provisional single-workspace implementation of the existing
+  P2 `RunnableWorkSource` port** (current / open Work only); it does not define
+  global Work runnability. **P7** later supersedes it with a dependency-aware
+  implementation (§11 P5/P7).
+- G3: `ProposeChildWorkspace` / `SpawnSpecialist` / `DeclareDependency` are **not**
+  minimally implemented in P5; they return a non-fatal, model-visible
+  **`DirectiveUnsupported` directive execution result** — part of the directive
+  execution result / model-visible observation vocabulary, **not** an
+  `AgentDirective`, `DomainError`, `CommandRejection`, or Execution failure. The
+  owning phases implement them (§8.15, §11 P5).
+- G4: `CompletionClaim` only durably settles the Execution as
+  `Completed(CompletionClaimed)`; the Work remains `Open`. No Verification stub
+  and no `CompleteWork` in P5; **P8** owns the Verification → Acceptance →
+  CompleteWork chain (§6A.6, §11 P5).
+- G5: P5 owns only the **representative restart-continuity acceptance proof**
+  (dispose and reconstruct the runtime against the same durable state and
+  continue the same Work/Session); **P2 owns the recovery mechanism** and
+  **P9 owns systematic recovery hardening** (§11 P5/P9).
+- G6: a **deterministic Fake Provider** is sufficient for the P5 phase gate;
+  real-provider dogfooding is optional and must not gate CI or P5 completion
+  (§11 P5).
+- G7: P5 includes **one full vertical-slice acceptance story** spanning
+  admission → driver → tool → observation → yield → wake → continuation →
+  CompletionClaim → restart, while the Work remains `Open` (§11 P5).
 
 `Problem & Goals` and `Scenarios` are unchanged.
 
@@ -2748,6 +2778,14 @@ CompletionClaim
 Yield
 ```
 
+A directive whose owning phase is not implemented in the running slice returns
+a **non-fatal, model-visible `DirectiveUnsupported` directive execution result**
+(with the directive kind and reason). It is part of the directive execution
+result / model-visible observation vocabulary — **not** an `AgentDirective`,
+`DomainError`, `CommandRejection`, or Execution failure — and does not fail the
+Execution. P5 uses this for `ProposeChildWorkspace` / `SpawnSpecialist` /
+`DeclareDependency` (DID v1.9 G3).
+
 Agent 的核心认知变量是 `OutcomeGap`：
 
 ```text
@@ -3566,6 +3604,24 @@ P4 只消费 P3 的 `ToolCatalogPort` contract 与 `InvokeTool` directive；不�
 
 一个长期 Workspace Agent 可以跨多个 Execution、Session continuation、Tool effect、restart 完成 Work 并发出 CompletionClaim。
 
+P5 是 **integration phase**（DID v1.9 G1–G7）：只 wiring P1–P4，不重设计任何子系统。
+
+```text
+minimal runnable apps/* composition root + deterministic end-to-end acceptance suite
+provisional single-workspace RunnableWorkSource (P2 port impl; current/open Work) -> P7 supersedes
+AssignWork -> ExecutionScheduler -> AdmitExecution -> lease -> real ExecutionDriverPort
+multi-turn Session continuity across Executions (fixed execution.sessionId)
+InvokeTool -> P4 pipeline -> Observation -> next turn
+Yield -> durable WorkWait -> wake -> continuation
+CompletionClaim -> ExecutionSettled(CompletionClaimed); Work stays Open
+representative restart-continuity acceptance proof (P2 owns the mechanism)
+DirectiveUnsupported directive execution result for P6/P7 directives not implemented in P5
+```
+
+P5 does **not** implement Verification / Acceptance / CompleteWork (P8),
+dependency coordination (P7), multi-workspace formation / delegation (P6), or
+systematic recovery hardening (P9).
+
 ## P6 — Responsibility Tree / Multi-Workspace
 
 ```text
@@ -3578,6 +3634,10 @@ Human Steer
 
 P6 owns delegation spawn semantics (child / specialist delegation on top of P2's generic
 `ExecutionBound` admission).
+
+P6 implements `ProposeChildWorkspace` and specialist spawn; in P5 those
+directives return a non-fatal `DirectiveUnsupported` directive execution result
+(DID v1.9 G3).
 
 (`CreateChildWorkspace` is owned by P1; P6 builds the multi-workspace
 formation/handoff behavior on top of it.)
@@ -3593,6 +3653,11 @@ Deadlock Attention
 automatic runnable reevaluation
 ```
 
+P7 implements `DeclareDependency` and supersedes the provisional P5
+`RunnableWorkSource` implementation with the full dependency-aware one; in P5
+those directives return a non-fatal `DirectiveUnsupported` directive execution
+result (DID v1.9 G2/G3).
+
 ## P8 — Agentic Verification
 
 ```text
@@ -3606,6 +3671,10 @@ Query Agent
 
 P8 owns Execution-bound Verifier spawn semantics (on top of P2's generic `ExecutionBound`
 admission).
+
+P8 owns the `CompletionClaimed` → `StartVerification` → Acceptance →
+`CompleteWork` chain; P5 only durably settles the Execution and leaves the Work
+`Open` (DID v1.9 G4).
 
 ## P9 — Recovery Hardening
 
@@ -3622,6 +3691,10 @@ dispatch failure
 consumer crash
 projection rebuild
 ```
+
+Systematic fault injection and hardening belong to P9; **P2 owns the recovery
+mechanism** and P5 owns only the representative restart-continuity acceptance
+proof against the same durable state (DID v1.9 G5).
 
 ## P10 — Projection / UI
 
@@ -4123,6 +4196,7 @@ v1.3 已关闭 P0 前必须通过推理确定的 C1–C10 与 X1–X11 cross-cut
 | Prompt Program actual text / behavioral eval set | **PHASE CONTRACT** (P3/P6/P8) | per-phase contracts |
 | P3 exact provider/model-context contracts (ports, DDL, driver, eval harness) | **P3 PHASE CONTRACT** | `docs/design/implementation/P3/**` |
 | P4 exact tool contracts (parameter/result schemas, authority/approval, sandbox, shell policy enforcement) | **P4 PHASE CONTRACT** | `docs/design/implementation/P4/**` |
+| P5 exact vertical-slice contracts (composition root, provisional runnable source, directive handling, slice acceptance) | **P5 PHASE CONTRACT** | `docs/design/implementation/P5/**` |
 | Context/compaction numeric defaults | **EMPIRICAL** | tune by eval |
 | SQLite performance ceiling | **EMPIRICAL** | real workload decision |
 
@@ -4449,7 +4523,7 @@ Composition Root
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
 System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.8      TOP-LEVEL FROZEN
+Detailed Implementation Design v1.9      TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED
@@ -4462,6 +4536,8 @@ P2 coding authorization                   AFTER P2 exact contracts closure
 P2 completion                             COMPLETE
 P3 completion                             COMPLETE
 P4 coding authorization                   AFTER P4 exact contracts closure
+P4 completion                             COMPLETE
+P5 coding authorization                   AFTER P5 exact contracts closure
 ```
 
 任何后续架构修改必须先落到拥有该语义的文档，并说明：
