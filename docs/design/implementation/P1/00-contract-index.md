@@ -39,6 +39,7 @@ in favor of the DID.
 | P1-DG-08 | **RESOLVED** (phase-scoped) | 04 (+ 02) |
 | P1-DG-09 | **RESOLVED** (phase-scoped) | 04 (+ 06) |
 | P1-DG-10 | RESOLVED (DID v1.5, port classification) | sub-items closed by 01 (AssignWork, child-workspace, ID generation) and 02 (port ownership) |
+| P1-DG-11 | **RESOLVED** (phase-scoped, authority-as-input-fact) | 01 §2A (VerifiedCommandAuthority + exact-match), 03 §3.1 (replay before authority), 02 §4A (boundary input) |
 
 ## P1 command set
 
@@ -47,7 +48,9 @@ in favor of the DID.
 ## Status
 
 FROZEN (contracts) — 4-way review rounds 1–4 complete, **Blocking = 0**.
-All P1-DG-01…10 are RESOLVED. Note: **P1-DG-11 (authority predicate) is OPEN**
-and blocks the authority preconditions of P1-010/011/012; it is a governance
-gap, not a contract defect. No frozen DID document was modified while producing these
-contracts (DID v1.6 was a separate governance patch).
+All P1-DG-01…11 are RESOLVED. **P1-DG-11** was resolved by manual governance as
+"authority as a trusted Application input fact" (`01` §2A): P1 defines only the
+`VerifiedCommandAuthority` shape and a deterministic exact-match rule; it does
+not implement a Permission/RBAC/Authority Resolver and has no default-allow.
+No frozen DID document was modified while producing these contracts (DID v1.6
+was a separate governance patch).

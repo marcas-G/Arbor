@@ -2,7 +2,42 @@
 
 ## Status
 
-OPEN — awaiting manual governance.
+**RESOLVED** — manual governance, "authority as a trusted Application input
+fact". Resolved by updating the P1 phase contracts only; DID v1.6 / System
+Design are unchanged.
+
+## Resolution
+
+P1 does not resolve authority (no `PermissionGrant` lookup, RBAC/ABAC/ACL,
+principal hierarchy, admin/root flag, no default-allow, no
+`AuthorityRepository`, no Authority Resolver). The Application boundary
+receives a pre-verified fact and performs deterministic exact-match validation:
+
+- `docs/design/implementation/P1/01-command-contracts.md` §2A — defines
+  Application-owned `VerifiedCommandAuthority` (tagged union binding
+  `principal`, `commandId`, `semanticRequestFingerprint`, `projectId`, and the
+  governance target) and the exact-match rule for `CreateProject`,
+  `CreateChildWorkspace`, `AssignWork`; states that authority is not part of
+  `semanticRequestFingerprint` and that a durable terminal `AuthorityDenied`
+  requires a new `commandId`.
+- `docs/design/implementation/P1/01-command-contracts.md` §3 — pipeline is
+  `execute(envelope, submissionContext, verifiedCommandAuthority)` with
+  authority exact-match after the idempotency replay check.
+- `docs/design/implementation/P1/01-command-contracts.md` §9 — Must Not Decide
+  list for authority.
+- `docs/design/implementation/P1/02-port-contracts.md` §4A — the fact is an
+  Application boundary input, not a port/repository.
+- `docs/design/implementation/P1/03-transaction-model.md` §3.1 — existing
+  authoritative resolution replays **before** any authority validation.
+- `docs/design/implementation/P1/00-contract-index.md` — DG-11 marked RESOLVED.
+
+A later phase owns the Authority Resolver
+(`Canonical facts + PermissionGrant + Parent/User governance + authenticated
+Principal → Authority Resolver → VerifiedCommandAuthority`); P1 handlers need
+no change when it arrives.
+
+Implementation: `packages/application` (`authority.ts`, `gateway.ts`) patched
+under P1-009; unblocks P1-010/011/012 → P1-014 → P1-016.
 
 ## Owning design document
 

@@ -21,6 +21,8 @@ import {
   CommandHandlerRegistryLive,
   FenceStopCheckInertLive,
   type GatewayEnvelope,
+  semanticRequestFingerprint,
+  type VerifiedCommandAuthority,
 } from "../packages/application/src/index.js";
 import {
   Actor,
@@ -57,6 +59,20 @@ const envelope = (payload: unknown): GatewayEnvelope<unknown> => ({
   payload,
 });
 
+const authorityFor = (payload: unknown): VerifiedCommandAuthority => ({
+  _tag: "CreateProjectAuthority",
+  principal: parse(Principal)("user:test"),
+  commandId,
+  semanticRequestFingerprint: semanticRequestFingerprint({
+    commandType: "TestCommand",
+    projectId,
+    actor,
+    schemaVersion: "1",
+    payload,
+  }),
+  projectId,
+});
+
 const buildApp = (
   behaviour: (payload: unknown) => DomainResult<{
     result: unknown;
@@ -69,6 +85,7 @@ const buildApp = (
   const handler: CommandHandler<unknown, unknown> = {
     commandType: "TestCommand",
     schemaVersion: "1",
+    authority: { tag: "CreateProjectAuthority", targetMatches: () => true },
     execute: (env) =>
       Effect.sync(() => {
         onExecute();
@@ -171,8 +188,16 @@ describe("P1 idempotency / replay / concurrency", () => {
     const program = Effect.gen(function* () {
       yield* setup;
       const gw = yield* CommandGateway;
-      const first = yield* gw.execute(envelope({ x: 1 }), context);
-      const second = yield* gw.execute(envelope({ x: 1 }), context);
+      const first = yield* gw.execute(
+        envelope({ x: 1 }),
+        context,
+        authorityFor({ x: 1 }),
+      );
+      const second = yield* gw.execute(
+        envelope({ x: 1 }),
+        context,
+        authorityFor({ x: 1 }),
+      );
       const count = yield* commandCount;
       return { first, second, count };
     });
@@ -198,8 +223,16 @@ describe("P1 idempotency / replay / concurrency", () => {
     const program = Effect.gen(function* () {
       yield* setup;
       const gw = yield* CommandGateway;
-      const first = yield* gw.execute(envelope({ x: 1 }), context);
-      const second = yield* gw.execute(envelope({ x: 1 }), context);
+      const first = yield* gw.execute(
+        envelope({ x: 1 }),
+        context,
+        authorityFor({ x: 1 }),
+      );
+      const second = yield* gw.execute(
+        envelope({ x: 1 }),
+        context,
+        authorityFor({ x: 1 }),
+      );
       return { first, second };
     });
     const { first, second } = await runGateway(program, app);
@@ -220,8 +253,12 @@ describe("P1 idempotency / replay / concurrency", () => {
     const program = Effect.gen(function* () {
       yield* setup;
       const gw = yield* CommandGateway;
-      yield* gw.execute(envelope({ x: 1 }), context);
-      const conflict = yield* gw.execute(envelope({ x: 2 }), context);
+      yield* gw.execute(envelope({ x: 1 }), context, authorityFor({ x: 1 }));
+      const conflict = yield* gw.execute(
+        envelope({ x: 2 }),
+        context,
+        authorityFor({ x: 2 }),
+      );
       const sql = yield* SqlClient;
       const rows = yield* sql.unsafe<{ result_json: string | null }>(
         "SELECT result_json FROM commands WHERE command_id = ?",
@@ -251,8 +288,8 @@ describe("P1 idempotency / replay / concurrency", () => {
       const gw = yield* CommandGateway;
       const receipts = yield* Effect.all(
         [
-          gw.execute(envelope({ x: 1 }), context),
-          gw.execute(envelope({ x: 1 }), context),
+          gw.execute(envelope({ x: 1 }), context, authorityFor({ x: 1 })),
+          gw.execute(envelope({ x: 1 }), context, authorityFor({ x: 1 })),
         ],
         { concurrency: 2 },
       );
@@ -279,10 +316,14 @@ describe("P1 idempotency / replay / concurrency", () => {
       yield* setup;
       const gw = yield* CommandGateway;
       const failure = yield* gw
-        .execute(envelope({ x: 1 }), context)
+        .execute(envelope({ x: 1 }), context, authorityFor({ x: 1 }))
         .pipe(Effect.flip);
       const afterFailure = yield* commandCount;
-      const retry = yield* gw.execute(envelope({ x: 1 }), context);
+      const retry = yield* gw.execute(
+        envelope({ x: 1 }),
+        context,
+        authorityFor({ x: 1 }),
+      );
       const sql = yield* SqlClient;
       const attempts = yield* sql.unsafe<{
         attempt_no: number;

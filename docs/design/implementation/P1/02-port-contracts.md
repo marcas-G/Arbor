@@ -177,6 +177,15 @@ failure (re-resolve + re-evaluate), never an authoritative rejection.
 | `IdGenerator` | `generate<T>(kind): Effect<T, never>` | used by **callers** and the journal (EventId), not command handlers |
 | `ProjectEnvironmentPort` | `resolve(projectId, addresses): Effect<{ regions: ReadonlyArray<CanonicalResourceRegion>; observedEnvironmentRevision: string }, EnvironmentError>` | resolve **outside** write tx (DID §1.5); returns regions + revision together |
 
+## 4A. Application boundary input: `VerifiedCommandAuthority`
+
+`VerifiedCommandAuthority` (`01-command-contracts.md` §2A, P1-DG-11) is **not**
+a port service and has **no** repository or adapter in P1. It is a trusted
+**Application-boundary input fact** passed to
+`CommandGateway.execute(envelope, submissionContext, authority)`; the `ports`
+package neither defines, stores, nor resolves it. P1 performs deterministic
+exact-match validation only (no Permission/RBAC/Authority Resolver).
+
 ## 5. Transaction participation summary
 
 ```text
