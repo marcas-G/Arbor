@@ -297,12 +297,13 @@ Two separate queries so `FencingRejected` and `ExecutionStopping` are
 distinguishable:
 
 ```sql
--- 1) fence validity (ownership/generation)
+-- 1) fence validity (ownership/generation + lease expiry)
 SELECT 1
 FROM executions e
 JOIN execution_leases l ON l.execution_id = e.execution_id
 WHERE e.execution_id = ?
   AND l.generation = ?
+  AND l.expires_at > ?
   AND e.settled_at IS NULL;
 -- no row -> CommandRejection.FencingRejected
 
@@ -316,6 +317,15 @@ WHERE execution_id = ?;
 P1 provides the hook and these predicates; `executions` / `execution_leases`
 DDL lands in P2. In P1 all commands are `External`/`System`, so the hook is
 inert and tested with a stub.
+
+> **Inherited fence-contract correction (R8).** The frozen P1 hook predicate
+> checked ownership/generation only. System Design v1.3 §10.5 requires that an
+> expired Worker cannot commit ("过期 Worker 即使恢复，也不能继续提交状态"),
+> so the authoritative implementation additionally requires `expires_at > now`.
+> SD v1.3 is the higher-authority owner of this invariant; this corrects the
+> P1 contract text **without reopening the P1 phase** (P1 remains COMPLETE).
+> P2 freezes the real predicate in
+> `docs/design/implementation/P2/03-lease-fencing-model.md` §3 and `04` §4.
 
 ## 5. Migration (P1-DG-09)
 

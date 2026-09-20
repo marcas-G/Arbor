@@ -232,6 +232,8 @@ handlers never generate IDs.
   its `ExecutionScoped` Session in the same transaction; no one-active-main
   constraint and no new specialist concurrency limit.
 - `execution.sessionId` is immutable after admission.
+- The durable `Execution` record carries `workspaceId` for **both** binding
+  kinds (`04` §3.1); it is the owning Workspace, not the parent Execution (R6).
 
 ### Preconditions / rejections
 
@@ -275,7 +277,9 @@ ExecutionAdmitted
 | authority mismatch | `DomainError.AuthorityDenied` |
 
 Stop on an already-stop-requested Active execution is **idempotent**: the
-existing `stopRequestedAt` is returned and no new event is emitted.
+existing `stopRequestedAt` is returned and no new event is emitted. The domain
+`Execution` carries `stopRequestedAt: string | null`, matching
+`executions.stop_requested_at` (R9).
 
 ### Events
 

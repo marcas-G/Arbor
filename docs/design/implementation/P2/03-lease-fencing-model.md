@@ -68,11 +68,12 @@ WHERE e.execution_id = ?
   AND e.settled_at IS NULL;
 ```
 
-> **P2 correction (SD v1.3 §10.5):** the frozen P1 hook predicate
-> (`P1 04` §4) checks ownership/generation only. The real P2 implementation
-> additionally requires `expires_at > now`, otherwise a resurrected worker
-> whose lease expired (but was not yet invalidated) could still commit —
-> violating "过期 Worker 即使恢复，也不能继续提交状态".
+> **Inherited P1 fence-contract correction (R8).** The frozen P1 hook
+> predicate (`P1 04` §4) checked ownership/generation only. System Design v1.3
+> §10.5 requires that an expired Worker cannot commit, so the authoritative
+> implementation additionally requires `expires_at > now`; P1 `04` §4 has been
+> corrected to match **without reopening the P1 phase**. This is the predicate
+> P2 implements.
 
 - No row → authoritative rejection (`FencingRejected` for canonical commands;
   `LeaseFencingRejected` for runtime operational writes).
