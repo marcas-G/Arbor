@@ -76,7 +76,7 @@ const intent = (argumentsJson: string) => ({
 const okExecutor: ToolExecutor = {
   name: "read",
   write: false,
-  requiresApproval: false,
+  requiresApproval: () => false,
   execute: () =>
     Effect.succeed({
       settlement: { _tag: "Success" },
@@ -187,7 +187,7 @@ describe("P4 tool runtime pipeline", () => {
     const approvalExecutor: ToolExecutor = {
       name: "read",
       write: false,
-      requiresApproval: true,
+      requiresApproval: () => true,
       execute: okExecutor.execute,
     };
     const result = await run(
