@@ -62,8 +62,12 @@ CommandGateway.execute(envelope, submissionContext)
 
 ```text
 Canonical serialization (v1):
-  - stable JSON: object keys sorted; arrays in order; undefined omitted;
-    numbers/booleans/strings per JSON; tagged unions include _tag.
+  - stable JSON: object keys sorted (code-unit order); arrays in order;
+    undefined omitted; null kept; tagged unions include _tag.
+  - numbers: JSON number, no trailing zeros; NaN/Infinity rejected at build.
+  - strings: JSON escaping; branded strings serialize as their underlying value.
+  - fingerprint input is exactly
+    { commandType, projectId, actor, schemaVersion, payload }.
 Hash algorithm (v1): SHA-256 over the canonical UTF-8 bytes, lowercase hex.
 algorithmVersion = 1  (constant FINGERPRINT_ALGORITHM_VERSION)
 
@@ -72,7 +76,7 @@ Fingerprint input covers:
 ```
 
 The Application boundary computes it (not the pure domain). P0's 32-bit
-FNV-1a is superseded. Idempotency compares
+FNV-1a is superseded (see `03-transaction-model.md` §7). Idempotency compares
 `(fingerprint, schema_version, fingerprint_algorithm_version)`.
 
 ## 5. CreateProject

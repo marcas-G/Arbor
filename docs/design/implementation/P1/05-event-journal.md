@@ -47,9 +47,14 @@ Rules:
 ## 2. Append contract
 
 ```text
-DomainEventJournal.append(events)
+DomainEventJournal.append(drafts)
+  input: ReadonlyArray<PendingDomainEvent> = {
+    eventType, eventVersion, occurredAt, aggregateRef, actor,
+    causedByCommandId?, causedByEventId?, correlationRef?, payload }
   - requires TransactionScope
-  - appended in emitted order; each receives the next project-local sequence
+  - the journal allocates `eventId` (via IdGenerator) and the next
+    project-local `sequence`
+  - appended in emitted order
   - payload stored as JSON in domain_events.payload_json
   - atomic with canonical state + Committed receipt (DID §12.6)
 ```
@@ -60,6 +65,10 @@ DomainEventJournal.append(events)
 
 ```text
 - Each event type starts at eventVersion = 1 (per type, not global).
+- v1 writer supports eventVersion = 1 only; a draft with another version is a
+  writer defect (not a runtime poison).
+- v1 reader supports eventVersion <= 1; a stored eventVersion > 1 is poison
+  (quarantine + skip).
 - Consumers MUST tolerate a higher version by ignoring unknown OPTIONAL
   fields within a supported range (forward-compatible).
 - If an event is unprocessable (a required field/version ceiling is exceeded,
@@ -94,8 +103,9 @@ COMMIT
   dead-lettered and skipped; the offset advances to the last
   processed-or-quarantined sequence in the batch (never stuck on a poison
   event).
-- Projections to an external store are **out of P1 scope**; P1 projections
-  are co-located with `consumer_offsets`.
+- Projection target: a `ProjectionStore` port (`apply(batch)`, `reset()`)
+  writing to the same SQLite DB as `consumer_offsets`. P1 provides an in-DB
+  test projection; external stores are out of P1 scope.
 - Projection failure never rolls back the domain transaction (DID §5.4).
 - `consumer_offsets` keyed `(consumer_id, project_id)`, never deleted.
 - Single-flight per `(consumer_id, project_id)`; concurrent dispatchers rely

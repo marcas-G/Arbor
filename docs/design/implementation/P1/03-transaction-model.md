@@ -49,7 +49,10 @@ Rules:
   one `TransactionScope` to `body`.
 - Every P1 Repository method **requires `TransactionScope`** in `R` and never
   opens its own connection. Repository methods take no raw `sessionId`.
-- Nested `transact` is forbidden; the adapter rejects re-entry.
+- The adapter issues `BEGIN IMMEDIATE` explicitly (not the driver's default
+  deferred transaction) to guarantee write serialization.
+- Nested `transact` is forbidden; the adapter detects re-entry by the presence
+  of a `TransactionScope` in the environment and rejects it.
 - **Every write scope uses `BEGIN IMMEDIATE`** (SQLite), including command
   scopes that append events / allocate the project sequence. This serializes
   writers and makes sequence allocation safe (see `05-event-journal.md`).
@@ -187,7 +190,18 @@ Repository method
 - Concurrent duplicate-attempt protocol.
 - Fence/stop two-check split (with `04`).
 
-## 7. Out of scope
+## 7. P0 artifact evolution (P1 owns)
+
+P1 evolves these P0 artifacts (P0→P1 contract evolution, not a P0 reopen):
+
+```text
+CommandResolution<R>          -> CommandResolution<Result, Rejection>
+                                 (Domain instantiates DomainError; Application CommandRejection)
+semanticRequestFingerprint    -> SHA-256 canonical v1 (P0 32-bit FNV-1a superseded)
+work.assignWork branch        -> RetirePreconditionFailed superseded by TerminalLifecycleMutation
+```
+
+## 8. Out of scope
 
 - Lease lifecycle (P2).
 - Exact SQL text for fence/CAS (04).

@@ -39,7 +39,7 @@ See `planning/gaps/README.md` for the index and resolution process.
 | Phase | Scope (from DID-10) | Status |
 |---|---|---|
 | P0 | Functional Domain Kernel | COMPLETE — P0-001 … P0-018 done; see planning/results/P0.result.md |
-| P1 | Persistence + Command Core | PLANNING UNDER REVIEW — 16 tasks projected; 4-way planning review next |
+| P1 | Persistence + Command Core | PLANNING UNDER REVIEW — 17 tasks; blocked by P1-DG-11 (authority predicate); re-review pending |
 | P2–P12 | see DID-10 | not authorized |
 
 Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) are `RESOLVED`. P0 planning
