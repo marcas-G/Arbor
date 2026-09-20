@@ -68,7 +68,8 @@ during P2 implementation (no new governance round).
 | `CommandGateway.execute` authority parameter (P1 `01` §3) | generalize to `CommandAuthorityFact = VerifiedCommandAuthority \| VerifiedRuntimeCommandAuthority` | `01` §2.3 |
 | `FenceStopCheck.check` (P1 `03` §4) | add `stopAdmission` argument; stop gate returns `Pass` for `QuiescenceControl` | `02` §4 |
 | `CommandHandler` (P1 `09` application) | add declared `stopAdmission` | `01` §3 |
-| `Execution` (P0 `domain`) | add `workspaceId` (stored `executions.workspace_id` for all binding kinds) | `04` §3.1, `01` §5 |
+| `Execution` (P0 `domain`) | add `workspaceId` (R6) and `stopRequestedAt` (R9) | `04` §3.1, `01` §5–§6 |
+| P1 `04` §4 fence predicate | add `expires_at > now` (R8; SD v1.3 §10.5 is the higher-authority owner) | `03` §3, `04` §4 |
 
 ## Review findings (round 1)
 
@@ -81,6 +82,8 @@ during P2 implementation (no new governance round).
 | R5 | `ExecutionRepositoryError` / `LeaseFencingRejected` exact tags | implementation choice | follow P1 `RepositoryFailure<T>` naming; `LeaseFencingRejected` is a P2 port error |
 | R6 | P2 DDL stores `workspace_id NOT NULL` for all binding kinds, but P0 `Execution` carried the workspace only inside `WorkspaceExecution` | phase-scoped domain evolution | add `Execution.workspaceId`; `admitExecution` input gains `workspaceId` (`04` §3.1, `01` §5) |
 | R7 | lease `releaseLease` as DELETE + `MAX(generation)+1` resets the generation, letting a stale worker's fence re-validate | phase-scoped contract correction | release is **soft** (expire in place, never DELETE); `02` §6, `04` §4 |
+| R8 | frozen P1 hook fence predicate omitted lease expiry, contradicting SD v1.3 §10.5 | inherited P1 fence-contract correction | predicate adds `expires_at > now`; P1 `04` §4 updated, P1 not reopened; P2 `03` §3, `04` §4 |
+| R9 | `StopExecution` must return the existing `stopRequestedAt` on idempotent stop | phase-scoped domain evolution | `Execution.stopRequestedAt`; `01` §6, `04` §3.1 |
 
 No open Blocking item after R1/R2. R3–R5 are non-blocking closures.
 

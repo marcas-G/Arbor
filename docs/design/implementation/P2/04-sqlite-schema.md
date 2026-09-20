@@ -65,6 +65,9 @@ CREATE INDEX idx_executions_unsettled ON executions(settled_at) WHERE settled_at
   `parent_execution_id` / `mission` present.
 - The partial unique index enforces at most one active **main** Execution;
   `ExecutionBound` rows are unconstrained (no specialist concurrency limit).
+- Domain mapping (R6/R9): the `Execution` record carries `workspaceId` (owning
+  Workspace, both binding kinds) and `stopRequestedAt`, matching `workspace_id`
+  and `stop_requested_at`.
 
 ### 3.2 execution_leases
 
