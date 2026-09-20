@@ -72,6 +72,7 @@ export type ExecutionState =
 export interface Execution {
   readonly executionId: ExecutionId;
   readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
   readonly binding: ExecutionBinding;
   readonly sessionId: SessionId;
   readonly admittedAt: string;
@@ -82,6 +83,7 @@ export interface Execution {
 export interface AdmitExecutionInput {
   readonly executionId: ExecutionId;
   readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
   readonly binding: ExecutionBinding;
   readonly sessionId: SessionId;
   readonly admittedAt: string;
@@ -100,6 +102,7 @@ export const admitExecution = (
   return ok({
     executionId: input.executionId,
     projectId: input.projectId,
+    workspaceId: input.workspaceId,
     binding: input.binding,
     sessionId: input.sessionId,
     admittedAt: input.admittedAt,

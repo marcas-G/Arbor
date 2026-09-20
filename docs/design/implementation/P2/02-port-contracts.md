@@ -204,7 +204,9 @@ interface LeaseService {
 ```
 
 - `generation` increments monotonically per successful acquisition
-  (`MAX(generation)+1`, `0` when absent).
+  (`MAX(generation)+1`, `0` when absent). Release is a **soft** release
+  (expire in place, never DELETE) so the generation never resets and a stale
+  worker's fence can never re-validate.
 - `LeaseLost` (worker-local knowledge) ≠ `FencingRejected` (authoritative
   persistence rejection) (DID §6A.5).
 - Worker crash / lease expiry alone never settles an Execution.
