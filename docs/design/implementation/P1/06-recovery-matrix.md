@@ -54,7 +54,7 @@ Attempt recording (frozen):
 ```text
 resolving attempt (Committed / TerminalRejected): recorded in the command tx
 retryable failure: recorded after ROLLBACK in its own scope
-attempt_no allocation: caller/CommandStore assigns the next free
+attempt_no allocation: CommandStore assigns the next free
   (command_id, attempt_no) for the same CommandId; concurrent retries
   serialize via BEGIN IMMEDIATE on command_attempts
 ```

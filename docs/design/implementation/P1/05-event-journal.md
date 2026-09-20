@@ -49,7 +49,7 @@ Rules:
 ```text
 DomainEventJournal.append(drafts)
   input: ReadonlyArray<PendingDomainEvent> = {
-    eventType, eventVersion, occurredAt, aggregateRef, actor,
+    projectId, eventType, eventVersion, occurredAt, aggregateRef, actor,
     causedByCommandId?, causedByEventId?, correlationRef?, payload }
   - requires TransactionScope
   - the journal allocates `eventId` (via IdGenerator) and the next

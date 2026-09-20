@@ -112,7 +112,7 @@ No Domain Event. `terminal_error_json` carries a `CommandRejection`
 transact { ... } ROLLBACK
 → no commands row written / unchanged
 → in a SEPARATE short transaction (outside the failed scope):
-     CommandStore.recordRetryableAttempt(commandId, attemptNo, failureKind, startedAt, settledAt)
+     CommandStore.recordRetryableAttempt(commandId, failureKind, startedAt, settledAt)
 → same CommandId may retry with unchanged semantic request
 ```
 

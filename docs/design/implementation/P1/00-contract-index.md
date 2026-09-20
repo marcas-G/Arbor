@@ -46,6 +46,8 @@ in favor of the DID.
 
 ## Status
 
-FROZEN — 4-way review rounds 1–4 complete, **Blocking = 0**. All P1-DG-01…10
-are RESOLVED. No frozen DID document was modified while producing these
+FROZEN (contracts) — 4-way review rounds 1–4 complete, **Blocking = 0**.
+All P1-DG-01…10 are RESOLVED. Note: **P1-DG-11 (authority predicate) is OPEN**
+and blocks the authority preconditions of P1-010/011/012; it is a governance
+gap, not a contract defect. No frozen DID document was modified while producing these
 contracts (DID v1.6 was a separate governance patch).

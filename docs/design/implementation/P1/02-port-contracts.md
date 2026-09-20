@@ -138,6 +138,15 @@ P1 `ResourceOwnershipClaim` record (matches the DDL columns;
 | `apply(batch)` | projection writes in the same SQLite DB/tx as the offset advance (05 §4) |
 | `reset()` | clear the projection for rebuild (05 §6) |
 
+### OwnershipWriteService
+
+| Method | Semantics |
+|---|---|
+| `resolveAndWrite(projectId, addresses, claims)` | implements the 04 §3.3 ownership write sequence; returns `{ regions, claims }` |
+
+`ProjectionStore` requires `TransactionScope`; `OwnershipWriteService` opens
+its own transaction (it resolves outside, then transacts).
+
 ### ConsumerOffsetStore
 
 | Method | Semantics |
@@ -189,12 +198,12 @@ CommandStore.recordRetryableAttempt                -> separate scope (after roll
   `startedAt` / `settledAt` from the caller (Clock-backed).
 - **`AdapterSession`.** Repositories obtain the live driver connection from
   `TransactionScope.session`; the adapter Layer owns the concrete cast.
-- **Ownership write orchestration.** The 04 §3.3 sequence is implemented as an
-  application function
-  `resolveAndWriteOwnership(projectId, addresses, claims)` returning
-  `{ regions, claims }` or `EnvironmentError | RepositoryError | ResourceResolutionStale`.
-  P1 has no ownership command; this function is implemented in P1-007 and
-  exercised by tests.
+- **Ownership write orchestration.** The 04 §3.3 sequence is a ports-level
+  service `OwnershipWriteService.resolveAndWrite(projectId, addresses, claims)`
+  returning `{ regions, claims }` or
+  `EnvironmentError | ResourceOwnershipRepositoryError | ResourceResolutionStale`.
+  Implemented by the SQLite adapter in P1-007 and exercised by tests; P1 has
+  no ownership command.
 
 ## 7. Out of scope
 
