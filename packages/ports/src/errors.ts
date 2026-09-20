@@ -65,3 +65,32 @@ export interface ReconciliationSourceError {
   readonly _tag: "ReconciliationSourceError";
   readonly cause: unknown;
 }
+
+// --- P3 ---
+
+export interface ProviderFailure {
+  readonly _tag: "ProviderFailure";
+  readonly kind:
+    | "RateLimited"
+    | "ProviderUnavailable"
+    | "AuthenticationFailed"
+    | "RequestRejected"
+    | "StreamInterrupted"
+    | "ProtocolViolation";
+  readonly cause?: unknown;
+}
+
+export interface ModelCapabilityError {
+  readonly _tag: "ModelCapabilityError";
+  readonly cause: unknown;
+}
+
+export interface SkillRegistryError {
+  readonly _tag: "SkillRegistryError";
+  readonly cause: unknown;
+}
+
+export interface ModelContextError {
+  readonly _tag: "ModelContextError";
+  readonly cause: unknown;
+}
