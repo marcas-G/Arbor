@@ -9,6 +9,7 @@ import { ProjectEnvironmentPortLive } from "@arbor/environment-local";
 import {
   ExecutionSchedulerLive,
   FenceStopCheckLive,
+  ReconciliationSourceStubLive,
   RuntimeSafetyGateLive,
 } from "@arbor/execution-runtime";
 import { ModelContextLive } from "@arbor/model-context";
@@ -41,6 +42,7 @@ import {
   type ExecutionDriverPort,
   type ExecutionScheduler,
   ModelCapabilityPort,
+  type ReconciliationSource,
   type RunnableWorkSource,
   SkillRegistry,
 } from "@arbor/ports";
@@ -70,7 +72,8 @@ export type SliceServices =
   | ExecutionScheduler
   | RunnableWorkSource
   | ExecutionDriverPort
-  | CommandHandlerRegistry;
+  | CommandHandlerRegistry
+  | ReconciliationSource;
 
 /** The single-workspace composition root: wires P1–P4 into one runtime. */
 export const buildSliceLayer = (
@@ -177,6 +180,7 @@ export const buildSliceLayer = (
     admission,
     runnableSource,
     WorkerDispatchPortLive,
+    ReconciliationSourceStubLive,
     RuntimeSafetyGateLive(),
     capability,
     Layer.provide(SliceCommandHandlerRegistryLive, repos),
