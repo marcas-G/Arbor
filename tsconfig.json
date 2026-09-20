@@ -45,6 +45,9 @@
     },
     {
       "path": "./adapters/blob-local"
+    },
+    {
+      "path": "./apps/single-workspace"
     }
   ]
 }
