@@ -115,8 +115,8 @@ dependents of it.
 Authoritative edge list (`X -> Y` means Y depends on X):
 
 ```text
-P0-001            -> P1-017
-P1-017            -> P1-002
+P0-001            -> P1-017, P1-018
+P1-017, P1-018    -> P1-002
 P1-002            -> P1-001
 P1-001            -> P1-003
 P1-001, P1-002    -> P1-004
@@ -135,7 +135,7 @@ P1-013, P1-014, P1-015 -> P1-016
 | ID | Title | Depends on |
 |---|---|---|
 | P1-001 | SQLite adapter, connection settings, migration mechanism | P1-017, P1-002 |
-| P1-002 | `ports` package: Effect service contracts | P0-001, P1-017 |
+| P1-002 | `ports` package: Effect service contracts | P0-001, P1-017, P1-018 |
 | P1-003 | P1 DDL migrations | P1-001 |
 | P1-004 | `TransactionScope` / `TransactionPort` implementation | P1-001, P1-002 |
 | P1-005 | Project/Workspace/Work/Session repositories | P1-003, P1-004 |
@@ -151,6 +151,7 @@ P1-013, P1-014, P1-015 -> P1-016
 | P1-015 | Architecture tests for new packages | P1-001, P1-002, P1-007, P1-009 |
 | P1-016 | P1 convergence & result record | P1-013, P1-014, P1-015 |
 | P1-017 | Package skeletons + build/test harness wiring | P0-001 |
+| P1-018 | Domain artifact evolution (CommandResolution/CommandReceipt/fingerprint) | P0-001 |
 
 ## Authority versions
 
