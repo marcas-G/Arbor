@@ -54,9 +54,11 @@ describe("P2 package DAG", () => {
       "domain",
       "ports",
     ]);
+    // agent-runtime gains the model-context edge in P3.
     expect([...depsOf("agent-runtime")].sort()).toEqual([
       "application",
       "domain",
+      "model-context",
       "ports",
     ]);
   });

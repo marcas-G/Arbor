@@ -15,7 +15,8 @@
   "dependencies": {
     "@arbor/domain": "workspace:*",
     "@arbor/ports": "workspace:*",
-    "@arbor/application": "workspace:*"
+    "@arbor/application": "workspace:*",
+    "@arbor/model-context": "workspace:*"
   },
   "scripts": {
     "build": "tsc -b"

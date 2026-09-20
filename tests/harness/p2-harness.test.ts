@@ -36,11 +36,12 @@ describe("p2 harness wiring", () => {
     }
   });
 
-  it("does not couple the P2 agent-runtime skeleton to model-context", () => {
+  it("keeps the P2 agent-runtime skeleton minimal until P3 adds model-context", () => {
+    // P3-001 adds the model-context edge; the P2 skeleton must not have needed it.
     const manifest = JSON.parse(
       read("packages/agent-runtime/package.json"),
     ) as { dependencies?: Record<string, string> };
-    expect(manifest.dependencies?.["@arbor/model-context"]).toBeUndefined();
+    expect(manifest.dependencies?.["@arbor/model-context"]).toBe("workspace:*");
   });
 
   it("declares the P2 adapter and testkit edges in the architecture matrix", () => {

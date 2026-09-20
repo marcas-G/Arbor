@@ -207,6 +207,15 @@ importers:
         specifier: ^24.13.5
         version: 24.13.5
 
+  adapters/provider-fake:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
   adapters/worker-local:
     dependencies:
       '@arbor/domain':
@@ -224,6 +233,9 @@ importers:
       '@arbor/domain':
         specifier: workspace:*
         version: link:../domain
+      '@arbor/model-context':
+        specifier: workspace:*
+        version: link:../model-context
       '@arbor/ports':
         specifier: workspace:*
         version: link:../ports
@@ -254,11 +266,26 @@ importers:
         specifier: workspace:*
         version: link:../ports
 
+  packages/model-context:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../ports
+
   packages/ports:
     dependencies:
       '@arbor/domain':
         specifier: workspace:*
         version: link:../domain
+
+  packages/provider-runtime:
+    dependencies:
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../ports
 
   packages/testkit:
     dependencies:
