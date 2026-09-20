@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, Exit, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   ClockLive,
@@ -37,17 +37,28 @@ import {
   type SessionId,
   type WorkspaceId,
 } from "../../packages/domain/dist/index.js";
+import {
+  type TransactionOperationalFailure,
+  TransactionPort,
+  type TransactionPortService,
+  TransactionScope,
+} from "../../packages/ports/src/index.js";
 
 export const testActor = parse(Actor)("user:test");
 export const testPrincipal = parse(Principal)("user:test");
 
 export const makeP1App = (
   filename = ":memory:",
+  transaction?: Layer.Layer<TransactionPort, never, SqlClient>,
 ): Layer.Layer<CommandGateway | SqlClient> => {
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const transactionLayer =
+    transaction === undefined
+      ? Layer.provide(TransactionPortLive, infra)
+      : Layer.provide(transaction, infra);
   const deps = Layer.mergeAll(
-    Layer.provide(TransactionPortLive, infra),
+    transactionLayer,
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),
@@ -159,3 +170,65 @@ export const seedProject = (args: {
       authority,
     );
   });
+
+/**
+ * Fault-injecting `TransactionPort` for recovery-matrix tests.
+ *
+ * - `fail-on-begin`: the first `transact` fails before any write (C2/C9).
+ * - `rollback-after-body`: the first `transact` runs the body (canonical writes
+ *   happen), then ROLLBACKs and fails (C3/C4/C8).
+ *
+ * Later `transact` calls behave normally so the retryable-attempt trace can be
+ * recorded in its own scope.
+ */
+export const faultingTransaction = (
+  mode: "fail-on-begin" | "rollback-after-body",
+  injectOn = 1,
+): Layer.Layer<TransactionPort, never, SqlClient> =>
+  Layer.effect(
+    TransactionPort,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      const run = (statement: string) =>
+        sql.unsafe(statement).pipe(
+          Effect.mapError(
+            (cause): TransactionOperationalFailure => ({
+              _tag: "TransactionOperationalFailure",
+              cause,
+            }),
+          ),
+        );
+      const operational: TransactionOperationalFailure = {
+        _tag: "TransactionOperationalFailure",
+        cause: "injected",
+      };
+      let calls = 0;
+      const transact: TransactionPortService["transact"] = <A, E, R>(
+        body: Effect.Effect<A, E, R | TransactionScope>,
+      ) =>
+        Effect.gen(function* () {
+          calls += 1;
+          const injected = calls === injectOn;
+          if (injected && mode === "fail-on-begin") {
+            return yield* Effect.fail(operational);
+          }
+          yield* run("BEGIN IMMEDIATE");
+          const exit = yield* Effect.exit(
+            Effect.provideService(body, TransactionScope, {
+              session: { id: "sqlite" },
+            }),
+          );
+          if (Exit.isSuccess(exit)) {
+            if (injected) {
+              yield* run("ROLLBACK");
+              return yield* Effect.fail(operational);
+            }
+            yield* run("COMMIT");
+            return exit.value;
+          }
+          yield* run("ROLLBACK");
+          return yield* Effect.failCause(exit.cause);
+        });
+      return TransactionPort.of({ transact });
+    }),
+  );
