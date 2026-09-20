@@ -23,8 +23,10 @@ import type {
 } from "@arbor/domain";
 import {
   Clock,
+  type LeaseFencingRejected,
   ProjectRepository,
   type ProjectRepositoryError,
+  type SessionEntryKind,
   SessionRepository,
   type SessionRepositoryError,
   TransactionScope,
@@ -633,6 +635,39 @@ export const SessionRepositoryLive: Layer.Layer<
               ],
             ),
           );
+        }),
+      appendEntry: (sessionId, entry, fence) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          if (fence !== undefined) {
+            const fenceRows = yield* run(
+              sql.unsafe<{ ok: number }>(
+                "SELECT 1 AS ok FROM executions e JOIN execution_leases l ON l.execution_id = e.execution_id WHERE e.execution_id = ? AND l.generation = ? AND e.settled_at IS NULL",
+                [fence.executionId, fence.fencingGeneration],
+              ),
+            );
+            if (fenceRows.length === 0) {
+              return yield* Effect.fail<LeaseFencingRejected>({
+                _tag: "LeaseFencingRejected",
+                executionId: fence.executionId,
+                generation: fence.fencingGeneration,
+              });
+            }
+          }
+          const now = yield* clock.now();
+          const rows = yield* run(
+            sql.unsafe<{ sequence: number }>(
+              "INSERT INTO session_entries (session_id, sequence, entry_kind, payload_json, created_at) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, ?) RETURNING sequence",
+              [
+                sessionId,
+                sessionId,
+                entry.entryKind satisfies SessionEntryKind,
+                JSON.stringify(entry.payload),
+                now,
+              ],
+            ),
+          );
+          return { sequence: Number(rows[0]?.sequence ?? 0) };
         }),
     });
   }),

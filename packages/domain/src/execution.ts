@@ -9,6 +9,7 @@ import type {
 import type { WorkRevision } from "./ordinals.js";
 import type { DomainResult } from "./result.js";
 import { err, ok } from "./result.js";
+import type { WaitSpec, WakeReason } from "./scheduler.js";
 
 export type ExecutionFocus =
   | { readonly _tag: "Work"; readonly workId: WorkId }
@@ -31,7 +32,7 @@ export type CompletedResult =
   | {
       readonly _tag: "Yielded";
       readonly reason: string;
-      readonly waitSpec: unknown;
+      readonly waitSpec: WaitSpec;
     }
   | {
       readonly _tag: "CompletionClaimed";
@@ -139,3 +140,16 @@ export const isExecutionActive = (execution: Execution): boolean =>
 
 export const isExecutionSettled = (execution: Execution): boolean =>
   execution.state.status === "Settled";
+
+/** DID v1.7 §3.7 — current episode control state. */
+export interface AgentExecutionState {
+  readonly executionId: ExecutionId;
+  readonly focus: ExecutionFocus;
+  readonly wakeReason: WakeReason;
+  readonly currentMode: string | null;
+  readonly activeSkillRefs: ReadonlyArray<string>;
+  readonly turnNo: number;
+  readonly recentDirectiveRefs: ReadonlyArray<string>;
+  readonly recentActionFingerprints: ReadonlyArray<string>;
+  readonly updatedAt: string;
+}
