@@ -40,7 +40,8 @@ See `planning/gaps/README.md` for the index and resolution process.
 |---|---|---|
 | P0 | Functional Domain Kernel | COMPLETE — P0-001 … P0-018 done; see planning/results/P0.result.md |
 | P1 | Persistence + Command Core | COMPLETE — P1-001 … P1-018 done; see planning/results/P1.result.md |
-| P2–P12 | see DID-10 | not authorized |
+| P2 | Execution / Session Kernel | COMPLETE — P2-001 … P2-018 done; see planning/results/P2.result.md |
+| P3–P12 | see DID-10 | not authorized |
 
 Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) and `P1-DG-01` … `P1-DG-11`
 are `RESOLVED`. P0 and P1 planning are frozen. The environment baseline
@@ -48,3 +49,4 @@ are `RESOLVED`. P0 and P1 planning are frozen. The environment baseline
 `arbor-node24:24.21.0` and the project `env.sh` wrapper.
 P0 is COMPLETE (`planning/results/P0.result.md`).
 P1 is COMPLETE (`planning/results/P1.result.md`).
+P2 is COMPLETE (`planning/results/P2.result.md`).
