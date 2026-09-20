@@ -31,6 +31,18 @@ CommandResolution<Result, Rejection> =
 - `FencingRejected` / `ExecutionStopping` / `WorkspaceNotFound` are
   Application-owned; they never appear in `DomainError`.
 
+P1 `CommandReceipt<Result>` view of the `commands` row (frozen):
+
+```ts
+{ commandId, projectId, semanticRequestFingerprint, schemaVersion,
+  fingerprintAlgorithmVersion,
+  resolution: CommandResolution<Result, CommandRejection>,
+  createdAt, settledAt }
+```
+
+P0's `CommandReceipt<R>` (`{ commandId, fingerprint, resolution: DomainError }`)
+is superseded by this P1 view (P0→P1 evolution; see `03-transaction-model.md` §7).
+
 ## 3. Generic command pipeline
 
 ```text

@@ -15,6 +15,20 @@ Round 4 (after revision): pending.
 
 The round-1 findings below are retained for provenance.
 
+## Planning review history (after contracts frozen)
+
+```text
+Planning round 1: REJECT — deps (P1-007 orphan, P1-013 path), harness not
+  projected (vitest/tsconfig/architecture), P0 result-record conflict,
+  authority predicate undefined, fence stub unassigned.
+Planning round 2: those fixed; found RepositoryError in 02 §6, attempt_no
+  contradiction, ProjectionStore unowned, P1-017 ordering, P1-DG-11 unmarked.
+Planning round 3: those fixed; found P1-009/P1-014 three-way graph mismatch,
+  P1-017 sequencing, CommandReceipt view unfrozen.
+Planning round 4: pending.
+```
+
+
 
 Reviewers: Command/Port, Transaction/DDL, Event/Recovery, Cross-document
 Consistency.
