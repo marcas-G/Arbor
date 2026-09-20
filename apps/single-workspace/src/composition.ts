@@ -1,11 +1,14 @@
 import { AgentDriverLive } from "@arbor/agent-runtime";
-import { type CommandGateway, CommandGatewayLive } from "@arbor/application";
+import {
+  type CommandGateway,
+  CommandGatewayLive,
+  type CommandHandlerRegistry,
+} from "@arbor/application";
 import { BlobStorePortLive } from "@arbor/blob-local";
 import { ProjectEnvironmentPortLive } from "@arbor/environment-local";
 import {
   ExecutionSchedulerLive,
   FenceStopCheckLive,
-  P2CommandHandlerRegistryLive,
   RuntimeSafetyGateLive,
 } from "@arbor/execution-runtime";
 import { ModelContextLive } from "@arbor/model-context";
@@ -53,6 +56,7 @@ import {
 } from "@arbor/tool-runtime";
 import { WorkerDispatchPortLive } from "@arbor/worker-local";
 import { Effect, Layer } from "effect";
+import { SliceCommandHandlerRegistryLive } from "./registry.js";
 import { ProvisionalRunnableWorkSourceLive } from "./runnable-source.js";
 
 export interface SliceConfig {
@@ -65,7 +69,8 @@ export type SliceServices =
   | CommandGateway
   | ExecutionScheduler
   | RunnableWorkSource
-  | ExecutionDriverPort;
+  | ExecutionDriverPort
+  | CommandHandlerRegistry;
 
 /** The single-workspace composition root: wires P1–P4 into one runtime. */
 export const buildSliceLayer = (
@@ -174,7 +179,7 @@ export const buildSliceLayer = (
     WorkerDispatchPortLive,
     RuntimeSafetyGateLive(),
     capability,
-    Layer.provide(P2CommandHandlerRegistryLive, repos),
+    Layer.provide(SliceCommandHandlerRegistryLive, repos),
   );
   return Layer.mergeAll(
     all,
