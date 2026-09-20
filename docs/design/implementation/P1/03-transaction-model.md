@@ -168,6 +168,11 @@ hook; P2 provides lease acquisition/renewal/loss and the generation source. In
 P1 all commands are `External`/`System`, so the hook is inert and tested with
 a stub.
 
+> **P2 evolution (DID v1.7 G1):** `FenceStopCheck.check(context, stopAdmission)`
+> receives an explicit `StopAdmission` ADT; `QuiescenceControlMutation` is
+> admitted after `stopRequestedAt != null` while still being fence-checked. See
+> `docs/design/implementation/P2/01-command-contracts.md` §3 and `02` §4.
+
 ## 5. Effect channels
 
 ```text

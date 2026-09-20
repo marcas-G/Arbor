@@ -69,6 +69,7 @@ export const makeCreateProjectHandler = (
   commandType: "CreateProject",
   schemaVersion: "1",
   authority: { tag: "CreateProjectAuthority", targetMatches: () => true },
+  stopAdmission: { _tag: "Unclassified" },
   execute: (envelope) =>
     Effect.gen(function* () {
       const payload = envelope.payload;

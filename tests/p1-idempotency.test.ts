@@ -86,6 +86,7 @@ const buildApp = (
     commandType: "TestCommand",
     schemaVersion: "1",
     authority: { tag: "CreateProjectAuthority", targetMatches: () => true },
+    stopAdmission: { _tag: "Unclassified" },
     execute: (env) =>
       Effect.sync(() => {
         onExecute();

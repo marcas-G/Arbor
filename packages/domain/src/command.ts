@@ -34,6 +34,11 @@ export type CommandSubmissionContext =
       readonly _tag: "System";
       readonly principal: Principal;
       readonly causationRef: string;
+    }
+  | {
+      readonly _tag: "RecoveryController";
+      readonly principal: Principal;
+      readonly causationRef: string;
     };
 
 export interface CommandAttempt {

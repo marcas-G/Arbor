@@ -57,6 +57,7 @@ export const makeAssignWorkHandler = (
       authority._tag === "AssignWorkAuthority" &&
       authority.targetWorkspaceId === payload.workspaceId,
   },
+  stopAdmission: { _tag: "Unclassified" },
   execute: (envelope) =>
     Effect.gen(function* () {
       const payload = envelope.payload;

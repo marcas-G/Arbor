@@ -25,8 +25,9 @@ import {
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
 import {
+  type CommandAuthorityFact,
   type CommandAuthorityRule,
-  type VerifiedCommandAuthority,
+  type StopAdmission,
   validateCommandAuthority,
 } from "./authority.js";
 import type { CommandResult } from "./command-result.js";
@@ -64,6 +65,7 @@ export interface CommandHandler<C, R> {
   readonly commandType: string;
   readonly schemaVersion: string;
   readonly authority: CommandAuthorityRule<C>;
+  readonly stopAdmission: StopAdmission;
   readonly execute: (
     envelope: GatewayEnvelope<C>,
     context: CommandSubmissionContext,
@@ -102,6 +104,7 @@ export type FenceStopOutcome = "Pass" | "FencingRejected" | "ExecutionStopping";
 export interface FenceStopCheckService {
   readonly check: (
     context: CommandSubmissionContext,
+    stopAdmission: StopAdmission,
   ) => Effect.Effect<FenceStopOutcome>;
 }
 
@@ -123,7 +126,7 @@ export interface CommandGatewayService {
   readonly execute: <C, R>(
     envelope: GatewayEnvelope<C>,
     context: CommandSubmissionContext,
-    authority: VerifiedCommandAuthority,
+    authority: CommandAuthorityFact,
   ) => Effect.Effect<CommandReceipt<R, CommandRejection>, CommandGatewayError>;
 }
 
@@ -188,7 +191,7 @@ export const CommandGatewayLive: Layer.Layer<
     const execute = <C, R>(
       envelope: GatewayEnvelope<C>,
       context: CommandSubmissionContext,
-      authority: VerifiedCommandAuthority,
+      authority: CommandAuthorityFact,
     ): Effect.Effect<
       CommandReceipt<R, CommandRejection>,
       CommandGatewayError
@@ -237,7 +240,7 @@ export const CommandGatewayLive: Layer.Layer<
           }
 
           if (context._tag === "ExecutionOrigin") {
-            const outcome = yield* fence.check(context);
+            const outcome = yield* fence.check(context, handler.stopAdmission);
             if (outcome !== "Pass") {
               const rejection: CommandRejection = { _tag: outcome };
               const settledAt = yield* clock.now();
@@ -275,6 +278,7 @@ export const CommandGatewayLive: Layer.Layer<
               commandId: envelope.commandId,
               projectId: envelope.projectId,
               semanticRequestFingerprint: fingerprint,
+              submissionOrigin: context._tag,
               payload: envelope.payload,
             },
           );
