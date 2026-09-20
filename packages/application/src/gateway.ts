@@ -59,6 +59,7 @@ export type CommandHandlerError =
   | WorkspaceRepositoryError
   | WorkRepositoryError
   | SessionRepositoryError
+  | ExecutionRepositoryError
   | CommandStoreError
   | DomainEventJournalError;
 
