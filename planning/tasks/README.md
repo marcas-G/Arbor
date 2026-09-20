@@ -5,9 +5,9 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0** (complete), **P1** (complete), **P2** (planning; contracts
-frozen at Blocking=0). P1 tasks reference `docs/design/implementation/P1/**`;
-P2 tasks reference `docs/design/implementation/P2/**`.
+Phases: **P0**, **P1**, **P2** (complete); **P3** (planning; contracts frozen
+at Blocking=0). P1 tasks reference `docs/design/implementation/P1/**`; P2 tasks
+`docs/design/implementation/P2/**`; P3 tasks `docs/design/implementation/P3/**`.
 
 ## Authority order
 
@@ -159,7 +159,8 @@ P1-013, P1-014, P1-015 -> P1-016
 P0 tasks project `System Design v1.3` / `DID v1.5`. P1 tasks project
 `DID v1.6` plus the frozen phase contracts in
 `docs/design/implementation/P1/**`. P2 tasks project `DID v1.7` plus the P2
-phase contracts in `docs/design/implementation/P2/**`. `Problem & Goals v1.2` /
+phase contracts in `docs/design/implementation/P2/**`. P3 tasks project
+`DID v1.7` plus the P3 phase contracts in `docs/design/implementation/P3/**`. `Problem & Goals v1.2` /
 `Scenarios v1.2` / `System Design v1.3` are unchanged.
 
 ## Entry blocker
@@ -168,8 +169,10 @@ P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
 pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
 project `env.sh` wrapper; `pnpm check` is green. **P0 and P1 are COMPLETE**;
 all `DG-*` / `P1-DG-*` are RESOLVED. P2 design closure is complete
-(`docs/design/implementation/P2/**`, Blocking=0); P2 coding starts only after
-the planning review. See `planning/gaps/`.
+(`docs/design/implementation/P2/**`, Blocking=0) and P2 is COMPLETE. P3 design
+closure is complete (`docs/design/implementation/P3/**`, review Blocking=0);
+P3 planning is frozen pending implementation authorization. See
+`planning/gaps/`.
 
 ## P2 dependency graph
 
@@ -215,3 +218,48 @@ P2-016, P2-017                  -> P2-018
 | P2-016 | Lease / stop / settle / recovery tests | P2-005..P2-015 |
 | P2-017 | Architecture tests for P2 packages | P2-001, P2-003 |
 | P2-018 | P2 convergence & result record | P2-016, P2-017 |
+
+## P3 dependency graph
+
+Authoritative edge list (`X -> Y` means Y depends on X):
+
+```text
+P2-018                                   -> P3-001
+P3-001                                   -> P3-002
+P3-002                                   -> P3-003, P3-004
+P3-004                                   -> P3-005
+P3-005                                   -> P3-006, P3-007
+P3-006                                   -> P3-008, P3-009
+P3-005, P3-006, P3-007, P3-008, P3-009    -> P3-010
+P3-003                                   -> P3-011
+P3-009, P3-011                           -> P3-012
+P3-010, P3-011, P3-012                   -> P3-013
+P3-013                                   -> P3-014
+P3-012, P3-013                           -> P3-015
+P3-004, P3-010, P3-011                   -> P3-016
+P3-013, P3-014, P3-015, P3-016           -> P3-017
+P3-017                                   -> P3-018
+```
+
+## P3 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P3-001 | P3 package skeletons + harness wiring | P2-018 |
+| P3-002 | `ports` P3 contracts | P3-001 |
+| P3-003 | P3 DDL migrations | P3-002 |
+| P3-004 | Prompt Program contract artifacts + instruction model | P3-002 |
+| P3-005 | Instruction resolver + trust metadata | P3-004 |
+| P3-006 | Context layers / retention / budget | P3-005 |
+| P3-007 | Skills surface + progressive disclosure | P3-005 |
+| P3-008 | Compaction ProviderTurn protocol | P3-006 |
+| P3-009 | Model-family compiler + `ModelContextManifest` | P3-006 |
+| P3-010 | `prepareTurn` assembly | P3-005..P3-009 |
+| P3-011 | ProviderRuntime + fake provider + failure model | P3-003 |
+| P3-012 | `decodeTurn` + `AgentDirective` + Output Contract | P3-009, P3-011 |
+| P3-013 | Real `ExecutionDriverPort` + control loop + safety gating | P3-010..P3-012 |
+| P3-014 | Bounded `ModelOutputContractViolation` repair | P3-013 |
+| P3-015 | `DecisionStale` / freshness | P3-012, P3-013 |
+| P3-016 | Behavioral-eval harness + P3 program eval cases | P3-004, P3-010, P3-011 |
+| P3-017 | P3 integration + architecture tests | P3-013..P3-016 |
+| P3-018 | P3 convergence & result record | P3-017 |
