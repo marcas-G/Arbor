@@ -303,3 +303,58 @@ export const P3_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 2, name: "execution_session_kernel", sql: P2_DDL },
   { id: 3, name: "provider_model_context", sql: P3_DDL },
 ];
+
+const P4_DDL = `
+CREATE TABLE tool_invocations (
+  invocation_id          TEXT PRIMARY KEY,
+  execution_id           TEXT NOT NULL REFERENCES executions(execution_id),
+  workspace_id           TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  tool_name              TEXT NOT NULL,
+  tool_version           TEXT NOT NULL,
+  side_effect_semantics  TEXT NOT NULL CHECK (side_effect_semantics IN
+                           ('ReadOnly','Idempotent','Reconcilable','NonIdempotent')),
+  arguments_json         TEXT NOT NULL,
+  resolved_regions_json  TEXT NOT NULL,
+  approval_id            TEXT,
+  intent_at              TEXT NOT NULL,
+  settled_at             TEXT,
+  settlement_kind        TEXT CHECK (settlement_kind IN
+                           ('Success','ExpectedFailure','Interrupted','OutcomeUnknown','RuntimeFailure')),
+  settlement_json        TEXT,
+  result_ref             TEXT,
+  CHECK ((settled_at IS NULL) = (settlement_kind IS NULL))
+);
+
+CREATE INDEX idx_tool_invocations_execution ON tool_invocations(execution_id);
+CREATE INDEX idx_tool_invocations_unsettled
+  ON tool_invocations(settled_at) WHERE settled_at IS NULL;
+
+CREATE TABLE artifacts (
+  artifact_id   TEXT PRIMARY KEY,
+  kind          TEXT NOT NULL,
+  blob_ref      TEXT NOT NULL,
+  byte_size     INTEGER NOT NULL,
+  content_hash  TEXT NOT NULL,
+  invocation_id TEXT,
+  execution_id  TEXT,
+  created_at    TEXT NOT NULL
+);
+
+CREATE TABLE invocation_approvals (
+  approval_id                  TEXT PRIMARY KEY,
+  tool_name                    TEXT NOT NULL,
+  tool_version                 TEXT NOT NULL,
+  action_digest                TEXT NOT NULL,
+  target_resource_space_ids_json TEXT NOT NULL,
+  control_basis_digest         TEXT NOT NULL,
+  expires_at                   TEXT NOT NULL,
+  consumed_by                  TEXT
+);
+`;
+
+export const P4_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  { id: 1, name: "init", sql: DDL },
+  { id: 2, name: "execution_session_kernel", sql: P2_DDL },
+  { id: 3, name: "provider_model_context", sql: P3_DDL },
+  { id: 4, name: "tool_runtime", sql: P4_DDL },
+];
