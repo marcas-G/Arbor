@@ -1,0 +1,88 @@
+# P2 — Contract Index
+
+**Authority:** DID v1.7 (phase-scoped closure). These documents are **not** a
+fifth design layer; they are the P2-owned implementation contracts authorized
+by DID §13.
+
+```text
+Detailed Implementation Design v1.7 (frozen)
+        ↓ delegates phase-scoped closure
+docs/design/implementation/P2/**   (these contracts)
+```
+
+DID §13 points at `docs/design/implementation/P2/**`; a conflict resolves in
+favor of the DID.
+
+## Documents
+
+| Doc | Owns |
+|---|---|
+| `01-command-contracts.md` | P2 command set, runtime authority facts, mutation classes, payload/result/rejection/events |
+| `02-port-contracts.md` | P2 ports (ExecutionRepository, Session append, WorkerDispatch, ExecutionDriver, RuntimeSafetyGate, ExecutionScheduler, WorkWaitStore, timers), Effect A/E/R |
+| `03-lease-fencing-model.md` | lease lifecycle, generation, fence/stop predicates, quiescence-control admission, recovery authority |
+| `04-sqlite-schema.md` | P2 DDL (`executions`, `execution_leases`, `agent_execution_state`, `session_entries`, `work_waits`, `scheduler_timers`), indexes, CAS SQL |
+| `05-scheduler-wait.md` | ExecutionScheduler, deterministic re-evaluation trigger, durable WorkWait, wake/timer, lost-wake-up protection |
+| `06-recovery-skeleton.md` | recovery order, expired-lease invalidation, unsettled detection, RecoveryController settlement, DurabilityEnvelope |
+| `00-contract-index.md` | this index |
+
+## P2 command set
+
+`AdmitExecution`, `StopExecution`, `SettleExecution` (DID §4.3).
+
+`RecordEnvironmentChange` is **P11** (DID v1.7 G2); P2 consumes environment
+facts only.
+
+## DID v1.7 governance inputs
+
+| Ruling | Closed by |
+|---|---|
+| G1 command-specific runtime authority + Normal/Quiescence split | `01` §2–§4, `03` §3–§5 |
+| G2 `RecordEnvironmentChange` → P11 | `01` §1 |
+| G3 P2 scheduler/WorkWait/wake vs P7 runnability | `02` §6–§8, `05` |
+| G4 ExecutionDriverPort + Fake Driver + P2 Runtime Safety gate | `02` §5, `05` §7 |
+| G5 WorkspaceMain/ExecutionBound admission + atomic session + IDs | `01` §5, `02` §2, `04` §3.1 |
+
+## Phase-scoped closures owned here
+
+| Item | Closed by |
+|---|---|
+| `RecoveryController` submission origin + `CommandSubmissionContext` evolution | `01` §2, `06` §4 |
+| `FenceStopCheck` mutation-class extension | `02` §4, `03` §5 |
+| P2/P7 runnable boundary port | `02` §7, `05` §4 |
+| durable timer storage | `04` §3.6, `05` §6 |
+| `WorkerDispatchPort` semantics + local adapter | `02` §5 |
+| `Fake Driver` contract | `02` §5, `05` §7 |
+| tool/provider reconciliation boundary (skeleton only) | `06` §5 |
+| `AgentExecutionState` persistence | `04` §3.3 |
+
+## Inherited-artifact evolutions (authorized by DID v1.7 G1)
+
+P2 evolves the following P0/P1 artifacts. These are phase-scoped evolutions,
+not new design semantics; each requires the P1/P0 source to gain a pointer note
+during P2 implementation (no new governance round).
+
+| Artifact | Evolution | Owner |
+|---|---|---|
+| `CommandSubmissionContext` (P0 `domain`) | add `RecoveryController { principal, causationRef }` | `01` §2.2 |
+| `CommandRejection` (P1 `01` §2) | add Application-owned `ExecutionNotFound { executionId }` | `01` §2.1 |
+| `CommandGateway.execute` authority parameter (P1 `01` §3) | generalize to `CommandAuthorityFact = VerifiedCommandAuthority \| VerifiedRuntimeCommandAuthority` | `01` §2.3 |
+| `FenceStopCheck.check` (P1 `03` §4) | add `stopAdmission` argument; stop gate returns `Pass` for `QuiescenceControl` | `02` §4 |
+| `CommandHandler` (P1 `09` application) | add declared `stopAdmission` | `01` §3 |
+
+## Review findings (round 1)
+
+| # | Finding | Classification | Resolution |
+|---|---|---|---|
+| R1 | P2 runtime facts initially admitted `External` origins for Admit/Stop | upstream-consistent correction | restricted to `System` / `ExecutionOrigin` / `RecoveryController`; External human path deferred to the Authority Resolver phase (`01` §2) |
+| R2 | `SelectCurrentWork` execution ownership ambiguous (Work-governance, not P2) | P2 phase-scoped closure | P2 computes the §8.18A decision only; execution owned by P6/P7 (`05` §4) |
+| R3 | `RuntimeSafetyGate.admitActivity` durability of counters | implementation choice | counters may be in-memory + durable `agent_execution_state` snapshots; Port shape may add `TransactionScope` at implementation |
+| R4 | `ExecutionDriverPort.drive` performs short durable writes | P2 phase-scoped closure | driver uses `TransactionPort` for short scoped writes; `drive` itself holds no transaction (`02` §5) |
+| R5 | `ExecutionRepositoryError` / `LeaseFencingRejected` exact tags | implementation choice | follow P1 `RepositoryFailure<T>` naming; `LeaseFencingRejected` is a P2 port error |
+
+No open Blocking item after R1/R2. R3–R5 are non-blocking closures.
+
+## Status
+
+DRAFT — first draft for independent gap review. Blocking count is tracked in
+`planning/gaps/` once review starts. No P2 planning is generated until
+Blocking = 0.
