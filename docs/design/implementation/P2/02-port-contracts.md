@@ -116,9 +116,10 @@ interface FenceStopCheckService {
 - Fence validity: `executions JOIN execution_leases` with matching
   `execution_id + generation` and `settled_at IS NULL` (P1 `04` §4 predicate,
   tables now exist).
-- Stop admission: for `Normal` (or `Unclassified` treated as Normal) and
-  `stop_requested_at != null` → `ExecutionStopping`; for `QuiescenceControl`
-  → `Pass` (fence still enforced).
+- Stop admission follows the `StopAdmission` ADT (`01` §3):
+  `NormalExecutionMutation` + `stop_requested_at != null` →
+  `ExecutionStopping`; `QuiescenceControlMutation` and `StopControl` → `Pass`
+  (fence still enforced); `Unclassified` on `ExecutionOrigin` is a defect.
 - The P1 inert default (`Pass`) remains valid for `External`/`System`.
 
 ## 5. Worker dispatch, driver, safety gate

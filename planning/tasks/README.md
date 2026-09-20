@@ -5,8 +5,9 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0** (complete) and **P1** (design closure frozen; contracts below).
-P1 tasks additionally reference `docs/design/implementation/P1/**`.
+Phases: **P0** (complete), **P1** (complete), **P2** (planning; contracts
+frozen at Blocking=0). P1 tasks reference `docs/design/implementation/P1/**`;
+P2 tasks reference `docs/design/implementation/P2/**`.
 
 ## Authority order
 
@@ -157,12 +158,60 @@ P1-013, P1-014, P1-015 -> P1-016
 
 P0 tasks project `System Design v1.3` / `DID v1.5`. P1 tasks project
 `DID v1.6` plus the frozen phase contracts in
-`docs/design/implementation/P1/**`. `Problem & Goals v1.2` / `Scenarios v1.2`
-are unchanged.
+`docs/design/implementation/P1/**`. P2 tasks project `DID v1.7` plus the P2
+phase contracts in `docs/design/implementation/P2/**`. `Problem & Goals v1.2` /
+`Scenarios v1.2` / `System Design v1.3` are unchanged.
 
 ## Entry blocker
 
-P0-001 owned the frozen technical baseline (§14.1). It is now satisfied via
-the pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
-project `env.sh` wrapper; `pnpm check` is green. P1-DG-01…10 are RESOLVED; **P1-DG-11 (authority predicate) is OPEN** and blocks
-P1-010/011/012 (and transitively P1-014/016). See `planning/gaps/`.
+P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
+pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
+project `env.sh` wrapper; `pnpm check` is green. **P0 and P1 are COMPLETE**;
+all `DG-*` / `P1-DG-*` are RESOLVED. P2 design closure is complete
+(`docs/design/implementation/P2/**`, Blocking=0); P2 coding starts only after
+the planning review. See `planning/gaps/`.
+
+## P2 dependency graph
+
+Authoritative edge list (`X -> Y` means Y depends on X):
+
+```text
+P1-016                          -> P2-001
+P2-001                          -> P2-002, P2-017
+P2-002                          -> P2-003, P2-014
+P2-003                          -> P2-004
+P2-004                          -> P2-005, P2-008, P2-012
+P2-005                          -> P2-006
+P2-006                          -> P2-007
+P2-005, P2-006, P2-008          -> P2-009
+P2-005, P2-007                  -> P2-010
+P2-005, P2-007, P2-008          -> P2-011
+P2-009, P2-012                  -> P2-013
+P2-002, P2-009                  -> P2-014
+P2-009, P2-010, P2-011, P2-014  -> P2-015
+P2-005..P2-015                  -> P2-016
+P2-016, P2-017                  -> P2-018
+```
+
+## P2 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P2-001 | P2 package skeletons + harness wiring | P1-016 |
+| P2-002 | P1/P0 artifact evolution + pointer notes | P2-001 |
+| P2-003 | `ports` P2 contracts | P2-002 |
+| P2-004 | P2 DDL migrations | P2-003 |
+| P2-005 | `ExecutionRepository` (SQLite) | P2-004 |
+| P2-006 | `LeaseService` + fence/stop predicates | P2-005 |
+| P2-007 | `FenceStopCheck` real implementation | P2-006 |
+| P2-008 | `SessionRepository.appendEntry` + `AgentExecutionState` store | P2-004 |
+| P2-009 | `AdmitExecution` handler | P2-005, P2-006, P2-008 |
+| P2-010 | `StopExecution` handler | P2-005, P2-007 |
+| P2-011 | `SettleExecution` handler | P2-005, P2-007, P2-008 |
+| P2-012 | `WorkWaitStore` + `SchedulerTimerStore` | P2-004 |
+| P2-013 | `ExecutionScheduler` + `RunnableWorkSource` stub | P2-009, P2-012 |
+| P2-014 | `WorkerDispatchPort` + `ExecutionDriverPort` + `FakeDriver` + `RuntimeSafetyGate` | P2-002, P2-009 |
+| P2-015 | Recovery skeleton + `RecoveryController` | P2-009, P2-010, P2-011, P2-014 |
+| P2-016 | Lease / stop / settle / recovery tests | P2-005..P2-015 |
+| P2-017 | Architecture tests for P2 packages | P2-001, P2-003 |
+| P2-018 | P2 convergence & result record | P2-016, P2-017 |
