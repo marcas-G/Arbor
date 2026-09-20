@@ -114,10 +114,6 @@ const makeApp = () => {
     ModelContextLive,
     Layer.mergeAll(capability, skills, tools),
   );
-  const driver = Layer.provide(
-    AgentDriverLive,
-    Layer.mergeAll(modelContext, providerRuntime, capability),
-  );
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
@@ -130,6 +126,10 @@ const makeApp = () => {
     Layer.provide(ProviderTurnStoreLive, infra),
     repo,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
+  );
+  const driver = Layer.provide(
+    AgentDriverLive(),
+    Layer.mergeAll(modelContext, providerRuntime, capability, repos, infra),
   );
   const all = Layer.mergeAll(
     infra,
