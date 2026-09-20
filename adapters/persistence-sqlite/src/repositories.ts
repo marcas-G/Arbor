@@ -640,10 +640,11 @@ export const SessionRepositoryLive: Layer.Layer<
         Effect.gen(function* () {
           yield* TransactionScope;
           if (fence !== undefined) {
+            const fenceNow = yield* clock.now();
             const fenceRows = yield* run(
               sql.unsafe<{ ok: number }>(
-                "SELECT 1 AS ok FROM executions e JOIN execution_leases l ON l.execution_id = e.execution_id WHERE e.execution_id = ? AND l.generation = ? AND e.settled_at IS NULL",
-                [fence.executionId, fence.fencingGeneration],
+                "SELECT 1 AS ok FROM executions e JOIN execution_leases l ON l.execution_id = e.execution_id WHERE e.execution_id = ? AND l.generation = ? AND l.expires_at > ? AND e.settled_at IS NULL",
+                [fence.executionId, fence.fencingGeneration, fenceNow],
               ),
             );
             if (fenceRows.length === 0) {
