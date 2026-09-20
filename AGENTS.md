@@ -11,7 +11,7 @@ Arbor is a multi-agent work system organized around long-lived Responsibilities,
 | `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 60 system invariants | FROZEN |
 | `docs/design/03-detailed-implementation-design.md` | Executable contracts: ADT/Command/Event/Ports/SQL/Package DAG/phases | TOP-LEVEL FROZEN |
 
-These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.6).
+These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.7).
 
 ## Design governance (docs/design/**)
 
@@ -31,7 +31,7 @@ If a code implementation discovers a design gap: **stop implementation and raise
 - `planning/tasks/` — task breakdown per phase
 - `planning/results/` — completion evidence, verification output per phase
 
-Current authorization state: **P0 coding AUTHORIZED**. P1 coding only after P1 exact contracts/DDL closure.
+Current authorization state: **P0 and P1 COMPLETE**. P2 is in **design closure** (DID v1.7 governance patch applied); P2 coding is authorized only after `docs/design/implementation/P2/**` exact contracts reach Blocking = 0.
 
 ## Technical baseline (versioned, from DID §14)
 
