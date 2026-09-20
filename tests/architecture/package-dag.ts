@@ -11,6 +11,8 @@ export const ALLOWED_EDGES: Record<string, ReadonlyArray<string>> = {
   "projection-runtime": ["domain", "ports"],
   "api-contracts": ["domain"],
   testkit: [],
+  "persistence-sqlite": ["domain", "ports"],
+  "environment-local": ["domain", "ports"],
 };
 
 export interface PackageManifest {
@@ -54,6 +56,32 @@ export const checkDomainImports = (
       const specifier = match[1] ?? "";
       if (!ALLOWED_DOMAIN_SPECIFIERS.test(specifier)) {
         violations.push(`${file.path}: forbidden import "${specifier}"`);
+      }
+    }
+  }
+  return violations;
+};
+
+const FORBIDDEN_PATTERNS: ReadonlyArray<{
+  readonly pattern: RegExp;
+  readonly label: string;
+}> = [
+  { pattern: /\bEffect\.catchAll\s*\(/, label: "catch-all error handling" },
+  {
+    pattern: /\bEffect\.catchAllCause\s*\(/,
+    label: "catch-all cause handling",
+  },
+  { pattern: /\bContext\.unsafeGet\b/, label: "service locator" },
+];
+
+export const checkForbiddenPatterns = (
+  files: ReadonlyArray<{ readonly path: string; readonly source: string }>,
+): ReadonlyArray<string> => {
+  const violations: string[] = [];
+  for (const file of files) {
+    for (const { pattern, label } of FORBIDDEN_PATTERNS) {
+      if (pattern.test(file.source)) {
+        violations.push(`${file.path}: forbidden ${label}`);
       }
     }
   }
