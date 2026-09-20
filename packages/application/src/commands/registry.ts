@@ -1,19 +1,30 @@
 import {
   ProjectRepository,
+  type ProjectRepositoryService,
   SessionRepository,
+  type SessionRepositoryService,
   WorkspaceRepository,
+  type WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { type CommandHandler, CommandHandlerRegistry } from "../gateway.js";
-import {
-  type CreateProjectDependencies,
-  makeCreateProjectHandler,
-} from "./create-project.js";
+import { makeCreateChildWorkspaceHandler } from "./create-child-workspace.js";
+import { makeCreateProjectHandler } from "./create-project.js";
+
+export interface P1CommandDependencies {
+  readonly projects: ProjectRepositoryService;
+  readonly workspaces: WorkspaceRepositoryService;
+  readonly sessions: SessionRepositoryService;
+}
 
 export const makeP1CommandHandlers = (
-  dependencies: CreateProjectDependencies,
+  dependencies: P1CommandDependencies,
 ): ReadonlyArray<CommandHandler<unknown, unknown>> => [
   makeCreateProjectHandler(dependencies) as unknown as CommandHandler<
+    unknown,
+    unknown
+  >,
+  makeCreateChildWorkspaceHandler(dependencies) as unknown as CommandHandler<
     unknown,
     unknown
   >,

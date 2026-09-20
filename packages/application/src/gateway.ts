@@ -4,7 +4,6 @@ import type {
   CommandReceipt,
   CommandResolution,
   CommandSubmissionContext,
-  DomainResult,
   ProjectId,
   SemanticRequestFingerprint,
 } from "@arbor/domain";
@@ -30,6 +29,7 @@ import {
   type VerifiedCommandAuthority,
   validateCommandAuthority,
 } from "./authority.js";
+import type { CommandResult } from "./command-result.js";
 import {
   FINGERPRINT_ALGORITHM_VERSION,
   semanticRequestFingerprint,
@@ -68,7 +68,7 @@ export interface CommandHandler<C, R> {
     envelope: GatewayEnvelope<C>,
     context: CommandSubmissionContext,
   ) => Effect.Effect<
-    DomainResult<CommandOutcome<R>>,
+    CommandResult<CommandOutcome<R>>,
     CommandHandlerError,
     TransactionScope
   >;
