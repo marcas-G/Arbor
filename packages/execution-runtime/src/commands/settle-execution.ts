@@ -53,7 +53,13 @@ const validateSettlement = (
   }
 };
 
-const yieldedWorkId = (settlement: ExecutionSettlement): WorkId | null => null;
+const yieldedWorkId = (execution: {
+  readonly binding: import("@arbor/domain").ExecutionBinding;
+}): WorkId | null =>
+  execution.binding._tag === "WorkspaceExecution" &&
+  execution.binding.focus._tag === "Work"
+    ? execution.binding.focus.workId
+    : null;
 
 export const makeSettleExecutionHandler = (
   dependencies: SettleExecutionDependencies,
@@ -99,7 +105,7 @@ export const makeSettleExecutionHandler = (
         payload.settlement._tag === "Completed" &&
         payload.settlement.result._tag === "Yielded"
       ) {
-        const workId = yieldedWorkId(payload.settlement);
+        const workId = yieldedWorkId(current);
         if (workId !== null) {
           const wait: WorkWait = {
             workId,

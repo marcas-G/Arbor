@@ -3,6 +3,7 @@ import {
   RunnableWorkSource,
   type RunnableWorkSourceError,
   TransactionPort,
+  TransactionScope,
   WorkRepository,
   WorkspaceRepository,
 } from "@arbor/ports";
@@ -34,33 +35,40 @@ export const ProvisionalRunnableWorkSourceLive: Layer.Layer<
       },
       RunnableWorkSourceError
     > =>
-      tx
-        .transact(
-          Effect.gen(function* () {
-            const workspace = yield* workspaces.findById(workspaceId);
-            const open = yield* works.listByWorkspace(workspaceId, "Open");
-            const openIds = open.map((work) => work.workId);
-            const pointed = Option.isSome(workspace)
-              ? workspace.value.currentWorkId
-              : null;
-            const current: Option.Option<WorkId> =
-              pointed !== null && openIds.includes(pointed)
-                ? Option.some(pointed)
-                : Option.none();
-            const runnable = openIds
-              .filter((id) => !Option.isSome(current) || id !== current.value)
-              .sort();
-            return { current, runnable };
+      Effect.gen(function* () {
+        const body = Effect.gen(function* () {
+          const workspace = yield* workspaces.findById(workspaceId);
+          const open = yield* works.listByWorkspace(workspaceId, "Open");
+          const openIds = open.map((work) => work.workId);
+          const pointed = Option.isSome(workspace)
+            ? workspace.value.currentWorkId
+            : null;
+          const current: Option.Option<WorkId> =
+            pointed !== null && openIds.includes(pointed)
+              ? Option.some(pointed)
+              : Option.none();
+          const runnable = openIds
+            .filter((id) => !Option.isSome(current) || id !== current.value)
+            .sort();
+          return { current, runnable };
+        });
+        const ambient = yield* Effect.serviceOption(TransactionScope);
+        if (Option.isSome(ambient)) {
+          return yield* Effect.provideService(
+            body,
+            TransactionScope,
+            ambient.value,
+          );
+        }
+        return yield* tx.transact(body);
+      }).pipe(
+        Effect.mapError(
+          (cause): RunnableWorkSourceError => ({
+            _tag: "RunnableWorkSourceError",
+            cause,
           }),
-        )
-        .pipe(
-          Effect.mapError(
-            (cause): RunnableWorkSourceError => ({
-              _tag: "RunnableWorkSourceError",
-              cause,
-            }),
-          ),
-        );
+        ),
+      );
 
     return RunnableWorkSource.of({ classify });
   }),
