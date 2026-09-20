@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.7  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P2 execution/session closure)  
-**Supersedes:** v1.6  
+**Version:** 1.8  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P4 tool-runtime closure)  
+**Supersedes:** v1.7  
 **Date:** 2026-09-20  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
@@ -61,6 +61,26 @@
   generic `ExecutionBound` admission; higher-level feature phases own spawn semantics (e.g. P6
   delegation, P8 Execution-bound Verifier). P2 adds no specialist concurrency limit
   (§3.4, §1.7, §9.6, §11).
+
+**Governance changes (v1.7 → v1.8):**
+
+- G1: tool-invocation authority is **not** resolved by P4. The Authority Resolver
+  (PermissionGrant / Parent / User governance) stays deferred; P4 receives a
+  trusted `InvocationAuthority` fact and performs deterministic exact-match plus
+  capability-ceiling checks only (§7.6, §6A.7, §11).
+- G2: **Exact-Intent Approval** is a P4-owned record/port with atomic
+  single-consumption semantics; producing an approval remains the deferred
+  resolver's job (§7.6, §11).
+- G3: **P4** owns `SandboxPort` + a minimal local executor; **P11** owns
+  worktree/resource isolation and advanced sandboxing (§11).
+- G4: tool **Resource Admission is validate-only** (`ResourceOwnership ⊆
+  ResourceBoundary`); ownership changes remain governance Commands
+  (application-owned `UpdateResourceBoundary`) (§7.6, §1.5, §11).
+- G5: the minimal `read` / `patch` / `shell` tools are **versioned P4 contract
+  artifacts** with eval; P11 owns environment/git-specific behavior (§11).
+- G6: exact tool parameter/result schemas and the shell policy enforcement
+  mechanism are **phase-scoped contract** (P4), not implementation choice; only
+  backend/limits/numeric thresholds are implementation/empirical (§13).
 
 `Problem & Goals` and `Scenarios` are unchanged.
 
@@ -1836,6 +1856,11 @@ NonIdempotent → ambiguity 时禁止自动 replay
 
 Authority/Permission denial 在 ToolRuntime 内是 rejection，但应投影成模型可理解的 `ToolInvocationDenied` Observation，而不是崩溃 Execution。
 
+> **P4（DID v1.8 G1/G4）：** tool authority 是 trusted `InvocationAuthority`
+> fact，不由 ToolRuntime 解析 PermissionGrant / Parent / User；Resource
+> Admission 只做 validate-only（`ResourceOwnership ⊆ ResourceBoundary`），
+> 不获取/释放 ownership。见 §7.6 与 §11 P4。
+
 ## 6A.8 Provider failure model
 
 至少区分：
@@ -2221,6 +2246,19 @@ Catalogued Tool
 ```
 
 组织性 Command 不伪装成任意 Tool side effect；需要改变 Canonical Domain truth 的 AgentDirective 继续通过 CommandGateway/Application。
+
+P4 tool-invocation boundaries（DID v1.8 G1–G5）：
+
+- ToolRuntime **不**解析 PermissionGrant / Parent / User authority；它接收 trusted
+  `InvocationAuthority` fact，只做 deterministic exact-match + capability-ceiling 校验。
+- Exact-Intent Approval 是 P4-owned record，被恰好一个匹配的 invocation 原子消费；
+  approval 的生产仍属 deferred resolver。
+- Resource Admission 只做 validate-only（`ResourceOwnership ⊆ ResourceBoundary`）；
+  ownership 变更属于 governance Command，不是 tool side effect。
+- P4 owns `SandboxPort` + minimal local executor；P11 owns worktree/resource isolation
+  与 advanced sandbox。
+- minimal `read` / `patch` / `shell` tools 是 versioned P4 contract artifacts；
+  精确 parameter/result schema 与 shell policy enforcement 机制是 phase-scoped contract。
 
 
 ## 7.7 Effect Service / Layer Contract
@@ -3500,6 +3538,30 @@ Blob/Artifact service
 read / patch / shell minimal tools
 ```
 
+```text
+ToolCatalogPort / Tool definitions
+Authority / Permission
+ResourceBoundary / ResourceAddress resolution
+Sandbox
+ToolInvocation persistence
+Blob/Artifact service
+read / patch / shell minimal tools
+```
+
+P4 冻结边界（DID v1.8 G1–G5）：
+
+```text
+InvocationAuthority  = trusted Application-boundary fact; P4 exact-match only
+InvocationApproval   = P4-owned record; atomic single consumption
+Resource Admission   = validate-only; ownership changes are governance Commands
+Sandbox              = P4 SandboxPort + minimal local executor; P11 advanced
+Minimal tools        = read/patch/shell as versioned P4 contract artifacts
+Tool schemas         = exact parameter/result schema + shell policy enforcement
+                       mechanism are P4 phase-scoped contract (not implementation choice)
+```
+
+P4 只消费 P3 的 `ToolCatalogPort` contract 与 `InvokeTool` directive；不重定义 Model Context。
+
 ## P5 — Single-Workspace Vertical Slice
 
 一个长期 Workspace Agent 可以跨多个 Execution、Session continuation、Tool effect、restart 完成 Work 并发出 CompletionClaim。
@@ -3587,6 +3649,9 @@ version invalidation
 
 P11 owns `RecordEnvironmentChange` / `EnvironmentChanged`；P2 只消费 environment
 revision/change facts。
+
+P11 also owns worktree/resource isolation and advanced sandboxing; P4 owns the
+minimal `SandboxPort` contract and a local executor (DID v1.8 G3).
 
 ## P12 — Production / Extensibility
 
@@ -4055,7 +4120,9 @@ v1.3 已关闭 P0 前必须通过推理确定的 C1–C10 与 X1–X11 cross-cut
 | SQLite exact DDL / migration / indexes | **P1 PHASE CONTRACT** | `docs/design/implementation/P1/**` |
 | Resource region physical encoding/query optimization | **P1 PHASE CONTRACT** | `docs/design/implementation/P1/**` |
 | P2 exact execution/session contracts (commands, ports, DDL, lease/fencing, scheduler/wait, driver, recovery skeleton) | **P2 PHASE CONTRACT** | `docs/design/implementation/P2/**` |
-| Prompt Program actual text / behavioral eval set | **OPEN, phase-scoped** | P3/P6/P8 |
+| Prompt Program actual text / behavioral eval set | **PHASE CONTRACT** (P3/P6/P8) | per-phase contracts |
+| P3 exact provider/model-context contracts (ports, DDL, driver, eval harness) | **P3 PHASE CONTRACT** | `docs/design/implementation/P3/**` |
+| P4 exact tool contracts (parameter/result schemas, authority/approval, sandbox, shell policy enforcement) | **P4 PHASE CONTRACT** | `docs/design/implementation/P4/**` |
 | Context/compaction numeric defaults | **EMPIRICAL** | tune by eval |
 | SQLite performance ceiling | **EMPIRICAL** | real workload decision |
 
@@ -4069,6 +4136,13 @@ P2 phase-scoped implementation contracts will be owned by:
 
 ```text
 docs/design/implementation/P2/**
+```
+
+P3 and P4 phase-scoped implementation contracts are owned by:
+
+```text
+docs/design/implementation/P3/**
+docs/design/implementation/P4/**
 ```
 
 Authority: this DID → P1 phase contracts. They may not change top-level
@@ -4375,7 +4449,7 @@ Composition Root
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
 System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.7      TOP-LEVEL FROZEN
+Detailed Implementation Design v1.8      TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED
@@ -4385,6 +4459,9 @@ P0 coding authorization                   AUTHORIZED
 P1 coding authorization                   AFTER P1 exact contracts / DDL closure
 P1 completion                             COMPLETE
 P2 coding authorization                   AFTER P2 exact contracts closure
+P2 completion                             COMPLETE
+P3 completion                             COMPLETE
+P4 coding authorization                   AFTER P4 exact contracts closure
 ```
 
 任何后续架构修改必须先落到拥有该语义的文档，并说明：
