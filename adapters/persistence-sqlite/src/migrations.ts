@@ -254,3 +254,52 @@ export const P2_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 1, name: "init", sql: DDL },
   { id: 2, name: "execution_session_kernel", sql: P2_DDL },
 ];
+
+const P3_DDL = `
+CREATE TABLE provider_turns (
+  provider_turn_id    TEXT PRIMARY KEY,
+  execution_id        TEXT NOT NULL REFERENCES executions(execution_id),
+  session_id          TEXT NOT NULL REFERENCES sessions(session_id),
+  context_epoch       INTEGER NOT NULL,
+  model_ref           TEXT NOT NULL,
+  output_contract_ref TEXT NOT NULL,
+  manifest_id         TEXT NOT NULL,
+  started_at          TEXT NOT NULL,
+  settled_at          TEXT,
+  finish_reason       TEXT,
+  usage_json          TEXT,
+  created_at          TEXT NOT NULL,
+  CHECK ((settled_at IS NULL) = (finish_reason IS NULL))
+);
+
+CREATE INDEX idx_provider_turns_execution ON provider_turns(execution_id);
+
+CREATE TABLE provider_attempts (
+  provider_turn_id        TEXT NOT NULL REFERENCES provider_turns(provider_turn_id),
+  attempt_no              INTEGER NOT NULL,
+  started_at              TEXT NOT NULL,
+  settled_at              TEXT,
+  outcome                 TEXT NOT NULL CHECK (outcome IN ('Success','RetryableFailure','TerminalFailure')),
+  provider_error_kind     TEXT,
+  transport_metadata_json TEXT,
+  PRIMARY KEY (provider_turn_id, attempt_no)
+);
+
+CREATE TABLE model_context_manifests (
+  manifest_id           TEXT PRIMARY KEY,
+  provider_turn_id      TEXT NOT NULL REFERENCES provider_turns(provider_turn_id),
+  execution_id          TEXT NOT NULL,
+  session_id            TEXT NOT NULL,
+  context_epoch         INTEGER NOT NULL,
+  model_ref             TEXT NOT NULL,
+  compiled_request_hash TEXT NOT NULL,
+  manifest_json         TEXT NOT NULL,
+  created_at            TEXT NOT NULL
+);
+`;
+
+export const P3_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  { id: 1, name: "init", sql: DDL },
+  { id: 2, name: "execution_session_kernel", sql: P2_DDL },
+  { id: 3, name: "provider_model_context", sql: P3_DDL },
+];
