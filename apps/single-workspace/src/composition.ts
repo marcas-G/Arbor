@@ -35,6 +35,7 @@ import {
 } from "@arbor/persistence-sqlite";
 import {
   type CanonicalProviderEvent,
+  type ExecutionDriverPort,
   type ExecutionScheduler,
   ModelCapabilityPort,
   type RunnableWorkSource,
@@ -63,7 +64,8 @@ export interface SliceConfig {
 export type SliceServices =
   | CommandGateway
   | ExecutionScheduler
-  | RunnableWorkSource;
+  | RunnableWorkSource
+  | ExecutionDriverPort;
 
 /** The single-workspace composition root: wires P1–P4 into one runtime. */
 export const buildSliceLayer = (
@@ -102,10 +104,6 @@ export const buildSliceLayer = (
     ModelContextLive,
     Layer.mergeAll(capability, ToolCatalogPortLive, skills),
   );
-  const driver = Layer.provide(
-    AgentDriverLive,
-    Layer.mergeAll(modelContext, providerRuntime, capability),
-  );
 
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
@@ -132,6 +130,11 @@ export const buildSliceLayer = (
     BlobStorePortLive,
   );
   const admission = Layer.provide(ResourceAdmissionLive, repos);
+  const driver = Layer.provide(
+    AgentDriverLive(),
+    Layer.mergeAll(modelContext, providerRuntime, capability, repos, infra),
+  );
+
   const toolRuntime = Layer.provide(
     ToolRuntimeLive(BUILTIN_EXECUTORS),
     Layer.mergeAll(

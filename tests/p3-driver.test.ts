@@ -8,6 +8,7 @@ import {
   P3_MIGRATIONS,
   ProviderTurnStoreLive,
   runMigrations,
+  SessionRepositoryLive,
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
@@ -115,8 +116,14 @@ const makeApp = (
     Layer.mergeAll(capability, skills, tools),
   );
   const driver = Layer.provide(
-    AgentDriverLive,
-    Layer.mergeAll(modelContext, providerRuntime, capability),
+    AgentDriverLive(),
+    Layer.mergeAll(
+      modelContext,
+      providerRuntime,
+      capability,
+      Layer.provide(SessionRepositoryLive, infra),
+      Layer.provide(TransactionPortLive, infra),
+    ),
   );
   return Layer.mergeAll(
     infra,
