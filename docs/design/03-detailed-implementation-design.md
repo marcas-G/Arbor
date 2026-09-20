@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.6  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P1 authority closure)  
-**Supersedes:** v1.5  
+**Version:** 1.7  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P2 execution/session closure)  
+**Supersedes:** v1.6  
 **Date:** 2026-09-20  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
@@ -35,6 +35,32 @@
 - D4: `CreateChildWorkspace` ownership moved to P1 (§11).
 - D5: Appendix C version reconciled to v1.6.
 - D6: P1 phase-contract location `docs/design/implementation/P1/**` added to §13.
+
+**Governance changes (v1.6 → v1.7):**
+
+- G1: internal runtime commands are **not** exempt from authority; P2 introduces Application-level
+  trusted, **command-specific** `VerifiedRuntimeCommandAuthority` variants for `AdmitExecution` /
+  `StopExecution` / `SettleExecution`, exact-binding `commandId`, `semanticRequestFingerprint`,
+  `projectId`, command kind, target and submission origin. `ExecutionOrigin` settlement must pass
+  authoritative fencing; `RecoveryController` settlement uses recovery authority. Execution-originated
+  mutations are split into `NormalExecutionMutation` vs `QuiescenceControlMutation` (`SettleExecution`
+  on the `ExecutionOrigin` path is a quiescence-control mutation, admissible after `stopRequestedAt != null`)
+  (§4.1, §3.4, §9.7, §12.3, §12.10).
+- G2: `RecordEnvironmentChange` ownership moves to **P11**; P2 only consumes environment
+  revision/change facts (§4.3, §11, §12.10).
+- G3: **P2** owns `ExecutionScheduler`, durable `WorkWait` registration/clear, timer/wake mechanics and
+  lost-wake-up protection; **P7** owns full Work runnability/dependency reevaluation. Source phases
+  (Dependency / Inbox / Verification / Environment / …) own wake-signal production; P2 owns the durable
+  wait and generic wake/timer machinery (§8.16, §8.18A, §11).
+- G4: **P2** freezes a minimal `ExecutionDriverPort` + `Fake Driver` and owns execution-wide Runtime
+  Safety / control gating; **P3** provides the real Agent loop and must report activity to the P2-owned
+  gate at each new ProviderTurn / ToolInvocation / Specialist action boundary and obtain a
+  continue/stop decision (exact Port shape is a P2 contract) (§7.2, §8.16A, §10.6, §11, Appendix B).
+- G5: `AdmitExecution` supports `WorkspaceMain` and `ExecutionBound`; `ExecutionBound` admission
+  atomically creates Execution + `ExecutionScoped` Session; all IDs are caller-preallocated. P2 owns
+  generic `ExecutionBound` admission; higher-level feature phases own spawn semantics (e.g. P6
+  delegation, P8 Execution-bound Verifier). P2 adds no specialist concurrency limit
+  (§3.4, §1.7, §9.6, §11).
 
 `Problem & Goals` and `Scenarios` are unchanged.
 
@@ -954,6 +980,21 @@ settlement?: ExecutionSettlement
 - `execution.sessionId` admission 后 immutable；
 - Primary Session replacement 不改变任何已 admission Execution。
 
+Admission 支持两类 binding（P2）：
+
+```text
+WorkspaceMain   : binding = WorkspaceExecution
+                  snapshot workspace.primarySessionId
+ExecutionBound  : binding = ExecutionBoundAgentBinding
+                  admission 在同一事务内原子创建 Execution + ExecutionScoped Session
+```
+
+- 所有 ID（`executionId`、`sessionId` 等）由 caller preallocate；handler 不生成 ID。
+- 只有 `WorkspaceMain` 受 one-active-main 约束；P2 不新增 specialist concurrency limit。
+- P2 owns **generic** `ExecutionBound` admission（durable Execution + `ExecutionScoped` Session）；
+  spawn / delegation 语义由 higher-level feature phases 拥有（P6 delegation、P8 Execution-bound
+  Verifier 等）。
+
 ### ExecutionSettlement 是 sum type
 
 Execution settlement 必须同时表达 technical outcome 与与之匹配的 semantic terminal result，但实现上使用 discriminated union，禁止任意 `outcome × result` 笛卡尔积：
@@ -993,6 +1034,28 @@ execute
 ### Stop / Quiescence
 
 `StopExecution` 提交后立即关闭该 Execution 的新 ProviderTurn、ToolInvocation、Execution-originated canonical Command 与 Specialist spawn admission。已经 in-flight 的 ToolInvocation 按 SideEffectSemantics cancel/reconcile；只要仍存在 unresolved side-effectful ToolInvocation，Execution 就不得 settle 为普通 Completed/Interrupted/Failed，只能继续 reconcile 或 `OutcomeUnknown(ReconciliationRequired(invocationRefs))`。`CancelWork` 与 Stop 分离：Work 可先成为 Cancelled，相关 Execution 随后完成 quiescence。
+
+Execution-originated canonical mutation 按 stop admission 分为两类（P2 冻结）：
+
+```text
+NormalExecutionMutation
+  = 新的 ProviderTurn / ToolInvocation / Execution-originated canonical Command /
+    Specialist spawn 的 admission
+  = stopRequestedAt != null 后禁止 → CommandRejection.ExecutionStopping
+
+QuiescenceControlMutation
+  = 推进 quiescence 所必需的控制 mutation，至少包括 ExecutionOrigin 路径的 SettleExecution
+    与 stop 后的 reconciliation
+  = stopRequestedAt != null 后仍允许
+```
+
+- 该二分**只分类 Execution-originated mutation**；`AdmitExecution`、`StopExecution` 与
+  `RecoveryController` 的 settlement 不强行归入该二分。
+- `QuiescenceControlMutation` 仍必须通过 authoritative fencing；旧 Worker 不得 settlement。
+- 一个 generation 仍有效的合法 Worker 仅因 stop 被拒绝时返回 `ExecutionStopping`，不得返回
+  `FencingRejected`（与 §9.7 一致）。
+- execution-wide Runtime Safety Envelope 由 P2 enforcement（§8.16A）；P3 只提供 turn/tool
+  activity observations。
 
 
 
@@ -1161,6 +1224,38 @@ CommandSubmissionContext
 
 Declared Actor 与 authenticated principal 分开验证。Execution-originated mutation 的 fencing token 来自 Runtime context，不来自模型输出。
 
+### Runtime authority facts (P2)
+
+Internal runtime commands **不豁免** authority。`CommandGateway` 对每个 command 要求一个
+Application-level trusted authority fact；P1 `01` §2A 的 `VerifiedCommandAuthority` 是其第一个
+实例。P2 使用 **command-specific** 变体，而不是泛化的 System / Execution 类别：
+
+```text
+VerifiedRuntimeCommandAuthority
+├── AdmitExecutionAuthority {
+│     submissionOrigin: System | External
+│     principal, commandId, semanticRequestFingerprint, projectId,
+│     commandKind, workspaceId, bindingKind }
+├── StopExecutionAuthority {
+│     submissionOrigin: External | System | ExecutionOrigin
+│     principal, commandId, semanticRequestFingerprint, projectId,
+│     commandKind, executionId }
+└── SettleExecutionAuthority {
+│     submissionOrigin: ExecutionOrigin | RecoveryController
+│     principal, commandId, semanticRequestFingerprint, projectId,
+│     commandKind, executionId, fencingGeneration? }
+```
+
+- exact-bind 至少覆盖 `commandId`、`semanticRequestFingerprint`、`projectId`、command kind、
+  target 与 submission origin；mismatch → `DomainError.AuthorityDenied`。
+- `ExecutionOrigin` 的 settlement **必须**通过 authoritative fencing；`RecoveryController` 的
+  settlement 使用 recovery authority（不携带 worker fencing generation）。
+- 这些 fact 由 Runtime 产生，是 trusted input，不得由模型输出或 CommandEnvelope payload 构造。
+- Authority **不进入** `semanticRequestFingerprint`。
+- PermissionGrant / Parent / User governance 的 Authority Resolver 仍是后续 phase；runtime fact
+  只做 deterministic exact-match。
+- `CommandRejection` 仍为 `DomainError | FencingRejected | ExecutionStopping | WorkspaceNotFound`。
+
 ### CommandAttempt
 
 同一 logical Command 可以存在多个 operational attempt：
@@ -1284,10 +1379,12 @@ RecordDecision
 AdmitExecution
 SettleExecution
 StopExecution
-RecordEnvironmentChange
 ```
 
 这些 mutation 会改变未来系统行为或产生 Domain Event，因此不应作为裸 Repository update。
+
+`RecordEnvironmentChange` 由 **P11** 拥有（Environment 语义）；P2 只消费 environment
+revision / change facts，不实现该 command。
 
 ## 4.4 Domain Semantic Mutation 与 Runtime Operational Mutation
 
@@ -1926,6 +2023,7 @@ ToolRuntimePort
 ProjectEnvironmentPort
 SandboxPort
 WorkerDispatchPort
+ExecutionDriverPort
 BlobStorePort
 KnowledgeQueryPort
 KnowledgeStorePort
@@ -2670,6 +2768,27 @@ Verification PASS
 
 Work 才 Completed。
 
+Ownership（P2 冻结）：
+
+```text
+P2 owns:
+  ExecutionScheduler
+  durable WorkWait registration / clear
+  timer / wake mechanics
+  lost-wake-up protection
+
+Source phases own:
+  wake-signal production for DependencyChanged / InboxAdvanced /
+  VerificationChanged / EnvironmentChanged / DecisionChanged / …
+
+P7 owns:
+  full Work runnability / dependency reevaluation
+  Wait-for graph / deadlock attention
+```
+
+`SettleExecution(Yielded)` 在同一事务内注册/替换 `WorkWait` 并重新读取 observed facts；P2 负责
+该事务与 lost-wake-up 防护。P2 不实现跨 Work 的 runnable/dependency 图重算。
+
 `DeclareDependency` 后不一定 Yield；只要还有独立可推进路径，Execution 可以继续。Dependency satisfaction 必须使用 §1.8 冻结的 structural matcher（`producerBinding` + `expectedDeliverable` 对 `DeliverableMatchView`）；Consumer 对“结果虽匹配但仍不足以支撑上层 Work”的判断通过新 Work/Dependency/Steer 表达，不把 deterministic satisfaction 改回语义猜测。
 
 ## 8.16A Runtime Safety Envelope
@@ -2694,6 +2813,13 @@ Attention emitted
 ```
 
 禁止 Safety Envelope 自动把 Work 改为 Cancelled。
+
+Ownership（P2 冻结）：execution-wide Runtime Safety / control gating 属于 **P2**，在
+`ExecutionDriverPort` 边界统一执行（覆盖 max retries / repeated action fingerprints /
+recursion depth / consecutive no-progress turns / concurrency ceilings）。**P3** 的真实 Driver 在
+每个新的 ProviderTurn / ToolInvocation / Specialist action boundary 必须向 P2-owned
+Runtime Safety / control gate 报告 activity 并获得 continue/stop 决定；具体 Port 形状下放 P2
+phase contract。P3 不拥有 Safety 判定。
 
 ## 8.17 Long-lived Agent != Long-running Process
 
@@ -2756,6 +2882,10 @@ else:
 | currentWorkId=None，runnable>1 | Admit Coordination Execution |
 
 Coordination Execution 的语义职责仅是处理多个候选 Work/coordination input，并可以提交 `SelectCurrentWork`。`Yielded` 不携带 suggestedNextWorkId，避免引入第二套隐式 Work-selection 语义。
+
+Ownership（P2 冻结）：P2 提供 ExecutionScheduler 与 durable wake/timer 机制，使该 re-evaluation
+可在无 Active Main Execution 时被确定性触发；**P7** 拥有完整的 runnable/dependency reevaluation
+与 Wait-for graph。P2 不新增 runnable 语义。
 
 ## 8.19 ModelContext Manifest
 
@@ -2928,6 +3058,9 @@ WHERE binding_kind = 'workspace'
 Workspace → at most one active main Execution
 ```
 
+`executions.binding_kind ∈ { workspace, execution_bound }`；partial unique index 仅约束
+`binding_kind = 'workspace'`。`ExecutionBound`（specialist）不受该唯一约束，P2 不新增其并发上限。
+
 `executions` 必须 durable 保存 admission-time `session_id`，settle 后保存完整 `ExecutionSettlement` discriminator + semantic result payload/ref。不得只保存 `outcome = Completed` 而丢失 `CompletionClaimed/Yielded/...`。
 
 ## 9.7 Lease / Fencing
@@ -2964,6 +3097,12 @@ stop / quiescence admission
 P1 冻结 persistence hook 与 transaction integration（fence validation +
 canonical read/write + receipt + event 同一事务）；P2 负责 lease
 acquisition/renewal/loss lifecycle。精确 SQL predicate 在 P1 phase contract 冻结。
+
+P2 冻结：`SettleExecution` 的 `ExecutionOrigin` 路径是 `QuiescenceControlMutation`，在
+`stopRequestedAt != null` 后仍 admissible，但仍必须通过 authoritative fencing；
+`NormalExecutionMutation`（§3.4）在 stop 后返回 `ExecutionStopping`。该二分只适用于
+Execution-originated mutation；`AdmitExecution` / `StopExecution` / `RecoveryController`
+settlement 不归入该二分。两类 mutation 都不得用事务外 pre-check 替代 authoritative fence。
 
 ## 9.8 Session / Epoch / Entries
 
@@ -3259,6 +3398,11 @@ Observation
 continue or settle
 ```
 
+P2 只冻结 `ExecutionDriverPort`（turn/step 边界、`AgentDirective` 分发、settle 触发）与
+`Fake Driver`；P3 通过该 port 提供真实 Agent loop。P2 在 driver 边界执行 execution-wide
+Runtime Safety / control gating；P3 在每个新的 ProviderTurn / ToolInvocation / Specialist action
+boundary 向 P2-owned gate 报告 activity 并获得 continue/stop 决定（Port 形状见 P2 contract）。
+
 Prompt composition、Context selection、Tool exposure、Model-family semantic adaptation 不在 AgentRuntime 内实现。
 
 ---
@@ -3310,6 +3454,23 @@ Recovery skeleton
 Fake Agent
 ```
 
+```text
+Execution admission        (WorkspaceMain + ExecutionBound; caller-preallocated IDs)
+Lease / Fencing            (generation source; acquisition/renewal/loss lifecycle)
+AgentExecutionState
+Session / Epoch / Checkpoint  (+ SessionRepository.appendEntry)
+Worker dispatch abstraction (WorkerDispatchPort)
+ExecutionScheduler + durable WorkWait + timer/wake + lost-wake-up protection
+ExecutionDriverPort + Fake Driver
+execution-wide Runtime Safety / control gating
+Application-level command-specific VerifiedRuntimeCommandAuthority
+Recovery skeleton
+```
+
+P2 owns **generic** `ExecutionBound` admission (durable Execution + `ExecutionScoped` Session);
+higher-level feature phases own spawn semantics (P6 delegation, P8 Execution-bound Verifier, …).
+P2 只消费 environment revision/change facts；`RecordEnvironmentChange` 由 P11 拥有。
+
 ## P3 — Provider + Model Context + Minimal Agent Loop
 
 ```text
@@ -3323,6 +3484,9 @@ Output Contract
 Prompt provenance
 real model multi-turn continuity
 ```
+
+P3 通过 P2 的 `ExecutionDriverPort` 提供真实 Agent loop，并只上报 turn/tool activity
+observations；execution-wide Runtime Safety / control gating 由 P2 执行。
 
 ## P4 — Tool Runtime
 
@@ -3350,6 +3514,9 @@ Communication Protocol
 Human Steer
 ```
 
+P6 owns delegation spawn semantics (child / specialist delegation on top of P2's generic
+`ExecutionBound` admission).
+
 (`CreateChildWorkspace` is owned by P1; P6 builds the multi-workspace
 formation/handoff behavior on top of it.)
 
@@ -3374,6 +3541,9 @@ PASS / FAIL / UNKNOWN
 Parent Acceptance
 Query Agent
 ```
+
+P8 owns Execution-bound Verifier spawn semantics (on top of P2's generic `ExecutionBound`
+admission).
 
 ## P9 — Recovery Hardening
 
@@ -3414,6 +3584,9 @@ impact analysis
 environment snapshots
 version invalidation
 ```
+
+P11 owns `RecordEnvironmentChange` / `EnvironmentChanged`；P2 只消费 environment
+revision/change facts。
 
 ## P12 — Production / Extensibility
 
@@ -3495,6 +3668,13 @@ fence validation
 ```
 
 必须共享同一 authoritative semantic transaction。事务外 pre-check 不构成最终授权。
+
+P2 扩展：internal runtime commands 不豁免 authority；其 trusted fact 为 command-specific
+`VerifiedRuntimeCommandAuthority`（`AdmitExecutionAuthority` / `StopExecutionAuthority` /
+`SettleExecutionAuthority`），exact-bind commandId、fingerprint、projectId、command kind、
+target 与 submission origin。`SettleExecution` 的 `ExecutionOrigin` 路径是
+`QuiescenceControlMutation`，stop 后仍 admissible，但 worker-originated settlement 仍必须通过
+authoritative fencing；`RecoveryController` settlement 使用 recovery authority。
 
 ## 12.4 C3 — `prepareTurn()` A/E
 
@@ -3673,10 +3853,10 @@ normalizedRegion
 | Acceptance | AcceptWorkOutcome | WorkOutcomeAccepted | AcceptanceRepository | application | target revision + Verification fixed |
 | Permission | Grant / Revoke | PermissionChanged | PermissionGrantRepository | application | cannot exceed policy/ownership ceiling |
 | Decision | RecordDecision | DecisionRecorded | DecisionRepository | application | supersede, no in-place history rewrite |
-| Execution admission | AdmitExecution | ExecutionAdmitted | ExecutionRepository | application / execution-runtime | ≤1 active main; session fixed |
-| Stop request | StopExecution | ExecutionStopRequested | ExecutionRepository | application / execution-runtime | stop ≠ Work cancel |
-| Execution settlement | SettleExecution | ExecutionSettled | ExecutionRepository | application / execution-runtime | valid Settlement ADT; settle once |
-| Environment fact | RecordEnvironmentChange | EnvironmentChanged | environment/control metadata | application | future behavior invalidation is durable |
+| Execution admission | AdmitExecution | ExecutionAdmitted | ExecutionRepository | application / execution-runtime | ≤1 active **main**; WorkspaceMain/ExecutionBound; session fixed; IDs caller-preallocated; command-specific runtime authority fact |
+| Stop request | StopExecution | ExecutionStopRequested | ExecutionRepository | application / execution-runtime | stop ≠ Work cancel; command-specific runtime authority fact |
+| Execution settlement | SettleExecution | ExecutionSettled | ExecutionRepository | application / execution-runtime | valid Settlement ADT; settle once; ExecutionOrigin path is QuiescenceControlMutation (admissible after stop, still fenced); RecoveryController uses recovery authority |
+| Environment fact | RecordEnvironmentChange | EnvironmentChanged | environment/control metadata | application (**P11**) | future behavior invalidation is durable; P2 consumes facts only |
 
 另外：
 
@@ -3874,6 +4054,7 @@ v1.3 已关闭 P0 前必须通过推理确定的 C1–C10 与 X1–X11 cross-cut
 | Exact Repository / Port Effect signatures | **P1 PHASE CONTRACT** | `docs/design/implementation/P1/**` |
 | SQLite exact DDL / migration / indexes | **P1 PHASE CONTRACT** | `docs/design/implementation/P1/**` |
 | Resource region physical encoding/query optimization | **P1 PHASE CONTRACT** | `docs/design/implementation/P1/**` |
+| P2 exact execution/session contracts (commands, ports, DDL, lease/fencing, scheduler/wait, driver, recovery skeleton) | **P2 PHASE CONTRACT** | `docs/design/implementation/P2/**` |
 | Prompt Program actual text / behavioral eval set | **OPEN, phase-scoped** | P3/P6/P8 |
 | Context/compaction numeric defaults | **EMPIRICAL** | tune by eval |
 | SQLite performance ceiling | **EMPIRICAL** | real workload decision |
@@ -3882,6 +4063,12 @@ P1 phase-scoped implementation contracts are owned by:
 
 ```text
 docs/design/implementation/P1/**
+```
+
+P2 phase-scoped implementation contracts will be owned by:
+
+```text
+docs/design/implementation/P2/**
 ```
 
 Authority: this DID → P1 phase contracts. They may not change top-level
@@ -4145,6 +4332,7 @@ Persistence ports (§7.2)
 ExecutionRuntime
 ├── ExecutionRepository
 ├── WorkerDispatchPort
+├── ExecutionDriverPort
 ├── Lease/Fencing services
 └── Clock
 
@@ -4187,7 +4375,7 @@ Composition Root
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
 System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.6      TOP-LEVEL FROZEN
+Detailed Implementation Design v1.7      TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED
@@ -4195,6 +4383,8 @@ C1–C10 + X1–X11 Closure                  CLOSED
 P0 Technical Baseline                     FROZEN (versioned baseline)
 P0 coding authorization                   AUTHORIZED
 P1 coding authorization                   AFTER P1 exact contracts / DDL closure
+P1 completion                             COMPLETE
+P2 coding authorization                   AFTER P2 exact contracts closure
 ```
 
 任何后续架构修改必须先落到拥有该语义的文档，并说明：
