@@ -67,8 +67,16 @@ docs/design/implementation/P4/**   (these contracts)
 
 **Blocking = 0.** No open P4 Design Gap.
 
+## Implementation reconciliation (post-acceptance)
+
+| Deviation | Owning contract |
+|---|---|
+| `InvocationAuthority.allowedCapabilities` | `03` §2 |
+| `ToolExecutionContext.authenticatedPrincipal` | `01` §3 |
+| `ToolIntent.approvalId` | `01` §3 |
+| per-intent approval predicate (`shell` destructive) | `02` §2, `08` §4 |
+
 ## Status
 
-FROZEN (contracts) — independent review round 1 complete, **Blocking = 0**.
-No P4 planning is generated until the phase plan + tasks are derived from these
-contracts.
+FROZEN (contracts) — independent review round 1 complete, **Blocking = 0**;
+implementation reconciliation applied. **FORMALLY CLOSED.**
