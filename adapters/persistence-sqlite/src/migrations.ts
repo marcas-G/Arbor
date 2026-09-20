@@ -165,3 +165,92 @@ CREATE TABLE consumer_dead_letters (
 export const P1_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 1, name: "init", sql: DDL },
 ];
+
+const P2_DDL = `
+CREATE TABLE executions (
+  execution_id        TEXT PRIMARY KEY,
+  project_id          TEXT NOT NULL REFERENCES projects(project_id),
+  binding_kind        TEXT NOT NULL CHECK (binding_kind IN ('workspace','execution_bound')),
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  focus_kind          TEXT CHECK (focus_kind IN ('work','coordination')),
+  focus_work_id       TEXT REFERENCES works(work_id),
+  parent_execution_id TEXT REFERENCES executions(execution_id),
+  mission             TEXT,
+  session_id          TEXT NOT NULL REFERENCES sessions(session_id),
+  admitted_at         TEXT NOT NULL,
+  stop_requested_at   TEXT,
+  settlement_kind     TEXT CHECK (settlement_kind IN
+                        ('Completed','Interrupted','Failed','OutcomeUnknown')),
+  settlement_json     TEXT,
+  settled_at          TEXT,
+  CHECK ((binding_kind = 'workspace') = (focus_kind IS NOT NULL)),
+  CHECK ((focus_kind = 'work') = (focus_work_id IS NOT NULL)),
+  CHECK (binding_kind = 'execution_bound' OR parent_execution_id IS NULL),
+  CHECK (binding_kind = 'execution_bound' OR mission IS NULL),
+  CHECK ((settlement_kind IS NULL) = (settled_at IS NULL)),
+  CHECK ((settlement_kind IS NULL) = (settlement_json IS NULL))
+);
+
+CREATE UNIQUE INDEX idx_executions_active_main
+  ON executions(workspace_id)
+  WHERE binding_kind = 'workspace' AND settled_at IS NULL;
+
+CREATE INDEX idx_executions_project ON executions(project_id);
+CREATE INDEX idx_executions_unsettled ON executions(settled_at) WHERE settled_at IS NULL;
+
+CREATE TABLE execution_leases (
+  execution_id TEXT PRIMARY KEY REFERENCES executions(execution_id),
+  worker_id    TEXT NOT NULL,
+  generation   INTEGER NOT NULL,
+  expires_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+
+CREATE INDEX idx_execution_leases_expiry ON execution_leases(expires_at);
+
+CREATE TABLE agent_execution_state (
+  execution_id                    TEXT PRIMARY KEY REFERENCES executions(execution_id),
+  focus_json                      TEXT NOT NULL,
+  wake_reason                     TEXT NOT NULL,
+  current_mode                    TEXT,
+  active_skill_refs_json          TEXT NOT NULL,
+  turn_no                         INTEGER NOT NULL,
+  recent_directive_refs_json      TEXT NOT NULL,
+  recent_action_fingerprints_json TEXT NOT NULL,
+  updated_at                      TEXT NOT NULL
+);
+
+CREATE TABLE session_entries (
+  session_id   TEXT NOT NULL REFERENCES sessions(session_id),
+  sequence     INTEGER NOT NULL,
+  entry_kind   TEXT NOT NULL CHECK (entry_kind IN
+                 ('Input','ModelOutput','Observation','CheckpointReference','ContextUpdate')),
+  payload_json TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  PRIMARY KEY (session_id, sequence)
+);
+
+CREATE TABLE work_waits (
+  work_id         TEXT PRIMARY KEY REFERENCES works(work_id),
+  wait_mode       TEXT NOT NULL CHECK (wait_mode = 'Any'),
+  conditions_json TEXT NOT NULL,
+  registered_at   TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE scheduler_timers (
+  timer_id     TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  work_id      TEXT REFERENCES works(work_id),
+  kind         TEXT NOT NULL CHECK (kind = 'TimeReached'),
+  fire_at      TEXT NOT NULL,
+  created_at   TEXT NOT NULL
+);
+
+CREATE INDEX idx_scheduler_timers_due ON scheduler_timers(fire_at);
+`;
+
+export const P2_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  { id: 1, name: "init", sql: DDL },
+  { id: 2, name: "execution_session_kernel", sql: P2_DDL },
+];
