@@ -37,6 +37,8 @@ const describeContext = (context: CommandSubmissionContext): string => {
       return `execution:${context.executionId}:${context.fencingGeneration}`;
     case "System":
       return `system:${context.causationRef}`;
+    case "RecoveryController":
+      return `recovery:${context.causationRef}`;
     default: {
       const unreachable: never = context;
       return unreachable;

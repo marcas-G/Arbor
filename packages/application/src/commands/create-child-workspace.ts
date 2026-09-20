@@ -63,6 +63,7 @@ export const makeCreateChildWorkspaceHandler = (
       authority._tag === "CreateChildWorkspaceAuthority" &&
       authority.parentWorkspaceId === payload.parentWorkspaceId,
   },
+  stopAdmission: { _tag: "Unclassified" },
   execute: (envelope) =>
     Effect.gen(function* () {
       const payload = envelope.payload;

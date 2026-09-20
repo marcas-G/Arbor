@@ -230,6 +230,7 @@ const handler = (
   commandType: "TestCommand",
   schemaVersion: "1",
   authority,
+  stopAdmission: { _tag: "Unclassified" },
   execute: (env) =>
     Effect.sync(() => {
       onExecute?.();

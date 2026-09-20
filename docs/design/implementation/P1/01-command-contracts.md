@@ -31,6 +31,12 @@ CommandResolution<Result, Rejection> =
 - `FencingRejected` / `ExecutionStopping` / `WorkspaceNotFound` are
   Application-owned; they never appear in `DomainError`.
 
+> **P2 evolution (DID v1.7 G1):** P2 adds Application-owned
+> `ExecutionNotFound { executionId }` and generalizes the authority fact to
+> `CommandAuthorityFact = VerifiedCommandAuthority | VerifiedRuntimeCommandAuthority`
+> (command-specific runtime facts). See
+> `docs/design/implementation/P2/01-command-contracts.md` §2.
+
 `CommandResolution<Result, Rejection>` and `CommandReceipt<Result, Rejection>`
 are **domain-owned generic** types (parameterized; no concrete rejection).
 `CommandRejection` is Application-owned. `ports.CommandStore.findResolution`
@@ -126,6 +132,11 @@ CommandGateway.execute(envelope, submissionContext, verifiedCommandAuthority)
 
 Step a **precedes** step c: an already-authoritative resolution is replayed
 without re-running the authority predicate.
+
+> **P2 evolution:** the `authority` parameter is generalized to
+> `CommandAuthorityFact`; `CommandHandler` declares an explicit `stopAdmission`
+> ADT, and `FenceStopCheck.check` receives it. See
+> `docs/design/implementation/P2/01-command-contracts.md` §2.3/§3 and `02` §4.
 
 - Declared actor (`envelope.actor`) is validated separately from the
   authenticated principal (`submissionContext`), DID §4.1.

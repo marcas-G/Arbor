@@ -1,4 +1,4 @@
-import type { DomainError, WorkspaceId } from "@arbor/domain";
+import type { DomainError, ExecutionId, WorkspaceId } from "@arbor/domain";
 
 export type CommandRejection =
   | DomainError
@@ -7,4 +7,8 @@ export type CommandRejection =
   | {
       readonly _tag: "WorkspaceNotFound";
       readonly workspaceId: WorkspaceId;
+    }
+  | {
+      readonly _tag: "ExecutionNotFound";
+      readonly executionId: ExecutionId;
     };

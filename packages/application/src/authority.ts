@@ -1,5 +1,7 @@
 import type {
   CommandId,
+  ExecutionId,
+  LeaseGeneration,
   Principal,
   ProjectId,
   SemanticRequestFingerprint,
@@ -32,10 +34,62 @@ export type VerifiedCommandAuthority =
       readonly targetWorkspaceId: WorkspaceId;
     };
 
+/**
+ * P2 command-specific runtime authority facts (P2 `01` §2). Runtime origins
+ * only; External human admit/stop is deferred to the Authority Resolver phase.
+ */
+export type VerifiedRuntimeCommandAuthority =
+  | {
+      readonly _tag: "AdmitExecutionAuthority";
+      readonly submissionOrigin: "System";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly commandKind: "AdmitExecution";
+      readonly workspaceId: WorkspaceId;
+      readonly bindingKind: "WorkspaceMain" | "ExecutionBound";
+    }
+  | {
+      readonly _tag: "StopExecutionAuthority";
+      readonly submissionOrigin: "System" | "ExecutionOrigin";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly commandKind: "StopExecution";
+      readonly executionId: ExecutionId;
+    }
+  | {
+      readonly _tag: "SettleExecutionAuthority";
+      readonly submissionOrigin: "ExecutionOrigin" | "RecoveryController";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly commandKind: "SettleExecution";
+      readonly executionId: ExecutionId;
+      readonly fencingGeneration?: LeaseGeneration;
+    };
+
+export type CommandAuthorityFact =
+  | VerifiedCommandAuthority
+  | VerifiedRuntimeCommandAuthority;
+
+/**
+ * Stop-admission policy (P2 `01` §3). An explicit ADT, never a boolean.
+ * `Unclassified` is valid only for System / RecoveryController origins.
+ */
+export type StopAdmission =
+  | { readonly _tag: "NormalExecutionMutation" }
+  | { readonly _tag: "QuiescenceControlMutation" }
+  | { readonly _tag: "StopControl" }
+  | { readonly _tag: "Unclassified" };
+
 export interface CommandAuthorityRule<C> {
-  readonly tag: VerifiedCommandAuthority["_tag"];
+  readonly tag: CommandAuthorityFact["_tag"];
   readonly targetMatches: (
-    authority: VerifiedCommandAuthority,
+    authority: CommandAuthorityFact,
     payload: C,
   ) => boolean;
 }
@@ -45,15 +99,19 @@ export interface CommandAuthorityFacts<C> {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+  readonly submissionOrigin: string;
   readonly payload: C;
 }
 
+const submissionOriginOf = (authority: CommandAuthorityFact): string | null =>
+  "submissionOrigin" in authority ? authority.submissionOrigin : null;
+
 /**
- * Deterministic exact-match validation (`01-command-contracts.md` §2A).
+ * Deterministic exact-match validation (`01` §2A / P2 `01` §4).
  * `None` = authorized; `Some(reason)` = `AuthorityDenied`.
  */
 export const validateCommandAuthority = <C>(
-  authority: VerifiedCommandAuthority,
+  authority: CommandAuthorityFact,
   rule: CommandAuthorityRule<C>,
   facts: CommandAuthorityFacts<C>,
 ): Option.Option<string> => {
@@ -73,6 +131,10 @@ export const validateCommandAuthority = <C>(
   }
   if (authority.projectId !== facts.projectId) {
     return Option.some("authority projectId mismatch");
+  }
+  const origin = submissionOriginOf(authority);
+  if (origin !== null && origin !== facts.submissionOrigin) {
+    return Option.some("authority submission origin mismatch");
   }
   if (!rule.targetMatches(authority, facts.payload)) {
     return Option.some("authority target mismatch");
