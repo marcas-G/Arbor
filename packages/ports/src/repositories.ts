@@ -1,5 +1,7 @@
 import type {
   CanonicalResourceRegion,
+  ExecutionId,
+  LeaseGeneration,
   Project,
   ProjectId,
   ProjectPolicy,
@@ -16,6 +18,7 @@ import type {
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
 import type {
+  LeaseFencingRejected,
   ProjectRepositoryError,
   ResourceOwnershipRepositoryError,
   SessionRepositoryError,
@@ -170,7 +173,26 @@ export interface SessionRepositoryService {
   readonly create: (
     session: Session,
   ) => Effect.Effect<void, SessionRepositoryError, TransactionScope>;
+  readonly appendEntry: (
+    sessionId: SessionId,
+    entry: { readonly entryKind: SessionEntryKind; readonly payload: unknown },
+    fence?: {
+      readonly executionId: ExecutionId;
+      readonly fencingGeneration: LeaseGeneration;
+    },
+  ) => Effect.Effect<
+    { readonly sequence: number },
+    SessionRepositoryError | LeaseFencingRejected,
+    TransactionScope
+  >;
 }
+
+export type SessionEntryKind =
+  | "Input"
+  | "ModelOutput"
+  | "Observation"
+  | "CheckpointReference"
+  | "ContextUpdate";
 
 export class SessionRepository extends Context.Service<
   SessionRepository,

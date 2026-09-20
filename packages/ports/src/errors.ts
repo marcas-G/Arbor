@@ -1,3 +1,5 @@
+import type { ExecutionId, LeaseGeneration } from "@arbor/domain";
+
 export type RepositoryFailure<Tag extends string> =
   | { readonly _tag: `${Tag}RevisionConflict` }
   | { readonly _tag: `${Tag}Failure`; readonly cause: unknown };
@@ -25,4 +27,41 @@ export interface ResourceResolutionStale {
   readonly _tag: "ResourceResolutionStale";
   readonly observed: string;
   readonly current: string;
+}
+
+// --- P2 ---
+
+export type ExecutionRepositoryError = RepositoryFailure<"ExecutionRepository">;
+export type WorkWaitStoreError = RepositoryFailure<"WorkWaitStore">;
+export type SchedulerTimerStoreError = RepositoryFailure<"SchedulerTimerStore">;
+
+export interface LeaseFencingRejected {
+  readonly _tag: "LeaseFencingRejected";
+  readonly executionId: ExecutionId;
+  readonly generation: LeaseGeneration;
+}
+
+export interface WorkerDispatchError {
+  readonly _tag: "WorkerDispatchError";
+  readonly cause: unknown;
+}
+
+export interface ExecutionDriverError {
+  readonly _tag: "ExecutionDriverError";
+  readonly cause: unknown;
+}
+
+export interface ExecutionSchedulerError {
+  readonly _tag: "ExecutionSchedulerError";
+  readonly cause: unknown;
+}
+
+export interface RunnableWorkSourceError {
+  readonly _tag: "RunnableWorkSourceError";
+  readonly cause: unknown;
+}
+
+export interface ReconciliationSourceError {
+  readonly _tag: "ReconciliationSourceError";
+  readonly cause: unknown;
 }
