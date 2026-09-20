@@ -48,6 +48,7 @@ export interface InvocationAuthority {
   readonly toolName: string;
   readonly toolVersion: string;
   readonly resourceSpaceIds: ReadonlyArray<string>;
+  readonly allowedCapabilities: ReadonlyArray<string>;
   readonly controlBasisDigest: string;
   readonly expiresAt: string;
   readonly delegationDepth: number;
@@ -67,6 +68,7 @@ export interface ToolExecutionContext {
   readonly sessionId: SessionId;
   readonly projectId: ProjectId;
   readonly actor: Actor;
+  readonly authenticatedPrincipal: Principal;
   readonly authority: InvocationAuthority;
   readonly controlBasisDigest: string;
   readonly requestedAt: string;
