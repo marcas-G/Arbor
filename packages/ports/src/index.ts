@@ -9,3 +9,4 @@ export * from "./repositories.js";
 export * from "./resources.js";
 export * from "./runtime.js";
 export * from "./session.js";
+export * from "./tool.js";
