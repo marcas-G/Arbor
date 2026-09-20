@@ -77,8 +77,11 @@ transact {
   if ExecutionOrigin:
       fence check   (see §4)
       stop check    (see §4)
+  authority exact-match (01 §2A: VerifiedCommandAuthority vs
+                         envelope / submissionContext / fingerprint / payload)
+      mismatch -> TerminalRejected(AuthorityDenied)   // §3.2 path, no event
   load canonical state (required aggregates)
-  authority / preconditions / invariants
+  preconditions / invariants
   apply domain transition
   write canonical state
   write Committed receipt + result_json
@@ -87,6 +90,10 @@ transact {
 }
 COMMIT
 ```
+
+The existing-receipt branch precedes the authority check: an authoritative
+resolution is replayed **without** re-running the authority predicate
+(P1-DG-11). Authority is not part of `semanticRequestFingerprint`.
 
 Atomic: canonical state + Committed receipt + events.
 

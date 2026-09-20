@@ -50,24 +50,82 @@ P1 `CommandReceipt<Result, Rejection>` view of the `commands` row (frozen):
 P0's `CommandReceipt<R>` (`{ commandId, fingerprint, resolution: DomainError }`)
 is superseded by this P1 view (P0→P1 evolution; see `03-transaction-model.md` §7).
 
+## 2A. Authority as a trusted Application input fact (freezes P1-DG-11)
+
+P1 does **not** resolve authority: there is no `PermissionGrant` lookup, no
+parent/user role resolution, no RBAC/ABAC/ACL, no principal hierarchy, no
+admin/root flag, and **no default-allow**. The Application boundary receives a
+pre-verified fact and performs **deterministic exact-match validation** only.
+
+```ts
+// Application-owned (packages/application). Domain never imports this type.
+type VerifiedCommandAuthority =
+  | { readonly _tag: "CreateProjectAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId }
+  | { readonly _tag: "CreateChildWorkspaceAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly parentWorkspaceId: WorkspaceId }
+  | { readonly _tag: "AssignWorkAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId };
+```
+
+Exact-match rule (all conjuncts required; any mismatch → `AuthorityDenied`
+with a reason):
+
+```text
+common(authority, envelope, context, fingerprint):
+    authority._tag                       == <command authority tag>
+  ∧ authority.principal                  == context.principal
+  ∧ authority.commandId                  == envelope.commandId
+  ∧ authority.semanticRequestFingerprint == fingerprint
+  ∧ authority.projectId                  == envelope.projectId
+CreateChildWorkspace additionally: authority.parentWorkspaceId == payload.parentWorkspaceId
+AssignWork           additionally: authority.targetWorkspaceId == payload.workspaceId
+```
+
+- The fact is a **trusted input** produced outside the command pipeline. P1
+  defines only its shape and the exact-match rule; it is not persisted and not
+  re-derived. P1 does not decide **why** a principal holds the governance
+  authority (a later phase's Authority Resolver does).
+- Authority is **not** an input to `semanticRequestFingerprint` (§4): a change
+  in authorization state must not change the logical identity of a request.
+- An existing authoritative resolution is replayed **before** any authority
+  validation (§3 step a, `03-transaction-model.md` §3.1): a previously
+  `Committed` command is never re-judged as `AuthorityDenied`.
+- A terminal `AuthorityDenied` receipt is durable. Re-attempting the same
+  logical request requires a **new** `commandId` (a new logical intent).
+
 ## 3. Generic command pipeline
 
 ```text
-CommandGateway.execute(envelope, submissionContext)
+CommandGateway.execute(envelope, submissionContext, verifiedCommandAuthority)
   1. compute semanticRequestFingerprint + schemaVersion + algorithmVersion
   2. transact (03-transaction-model.md):
      a. read commands row by command_id
-        - exists: same (fingerprint, schemaVersion, algorithmVersion)
-              -> return existing Receipt (Committed or TerminalRejected)
-          different -> TerminalRejected(IdempotencyConflict) (deterministic replay response; existing row unchanged)
-        - absent -> continue
+         - exists: same (fingerprint, schemaVersion, algorithmVersion)
+               -> return existing Receipt (Committed or TerminalRejected)
+           different -> TerminalRejected(IdempotencyConflict) (deterministic replay response; existing row unchanged)
+         - absent -> continue
      b. if ExecutionOrigin: fence check, then stop check (03 §4)
-     c. authority / preconditions
+     c. authority exact-match (§2A); mismatch -> TerminalRejected(AuthorityDenied)
      d. domain transition (P0 pure functions)
-        - success: write canonical state + Committed receipt + events
-        - terminal rejection: write TerminalRejected receipt, no event
+         - success: write canonical state + Committed receipt + events
+         - terminal rejection: write TerminalRejected receipt, no event
      e. COMMIT
 ```
+
+Step a **precedes** step c: an already-authoritative resolution is replayed
+without re-running the authority predicate.
 
 - Declared actor (`envelope.actor`) is validated separately from the
   authenticated principal (`submissionContext`), DID §4.1.
@@ -258,7 +316,19 @@ absent                                                  -> execute
 `result_json` / `terminal_error_json` are JSON keyed by the stored
 `schema_version` (see `04-sqlite-schema.md`).
 
-## 9. Out of scope
+## 9. Out of scope / Must Not Decide
 
 - Exact payloads for non-P1 commands.
 - `GovernanceMutationPlan` (DID §4.1A) beyond P1 commands.
+
+Authority (P1-DG-11) — P1 MUST NOT implement or introduce:
+
+```text
+PermissionGrant lookup; parent/user role resolution; RBAC; ABAC; ACL;
+principal hierarchy; admin flags (isRootUser() / allowAll());
+AuthorityRepository; an Authority Resolver.
+```
+
+A later phase owns `Canonical facts + PermissionGrant + Parent/User governance
++ authenticated Principal → Authority Resolver → VerifiedCommandAuthority`.
+When it arrives, P1 handlers need no change — that is the value of this seam.

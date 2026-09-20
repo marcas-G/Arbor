@@ -22,6 +22,11 @@ import {
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
 import {
+  type CommandAuthorityRule,
+  type VerifiedCommandAuthority,
+  validateCommandAuthority,
+} from "./authority.js";
+import {
   FINGERPRINT_ALGORITHM_VERSION,
   semanticRequestFingerprint,
 } from "./fingerprint.js";
@@ -46,6 +51,7 @@ export interface CommandOutcome<R> {
 export interface CommandHandler<C, R> {
   readonly commandType: string;
   readonly schemaVersion: string;
+  readonly authority: CommandAuthorityRule<C>;
   readonly execute: (
     envelope: GatewayEnvelope<C>,
     context: CommandSubmissionContext,
@@ -106,6 +112,7 @@ export interface CommandGatewayService {
   readonly execute: <C, R>(
     envelope: GatewayEnvelope<C>,
     context: CommandSubmissionContext,
+    authority: VerifiedCommandAuthority,
   ) => Effect.Effect<CommandReceipt<R, CommandRejection>, CommandGatewayError>;
 }
 
@@ -170,6 +177,7 @@ export const CommandGatewayLive: Layer.Layer<
     const execute = <C, R>(
       envelope: GatewayEnvelope<C>,
       context: CommandSubmissionContext,
+      authority: VerifiedCommandAuthority,
     ): Effect.Effect<
       CommandReceipt<R, CommandRejection>,
       CommandGatewayError
@@ -246,6 +254,48 @@ export const CommandGatewayLive: Layer.Layer<
                 settledAt,
               );
             }
+          }
+
+          const authorityMismatch = validateCommandAuthority(
+            authority,
+            handler.authority,
+            {
+              principal: context.principal,
+              commandId: envelope.commandId,
+              projectId: envelope.projectId,
+              semanticRequestFingerprint: fingerprint,
+              payload: envelope.payload,
+            },
+          );
+          if (Option.isSome(authorityMismatch)) {
+            const rejection: CommandRejection = {
+              _tag: "AuthorityDenied",
+              reason: authorityMismatch.value,
+            };
+            const settledAt = yield* clock.now();
+            yield* store.insertTerminalRejected(
+              envelope.commandId,
+              envelope.projectId,
+              fingerprint,
+              schemaVersion,
+              FINGERPRINT_ALGORITHM_VERSION,
+              JSON.stringify(rejection),
+            );
+            yield* store.recordResolvingAttempt(
+              envelope.commandId,
+              "TerminalRejected",
+              startedAt,
+              settledAt,
+            );
+            return makeReceipt<R>(
+              envelope.commandId,
+              envelope.projectId,
+              fingerprint,
+              schemaVersion,
+              { _tag: "TerminalRejected", error: rejection },
+              startedAt,
+              settledAt,
+            );
           }
 
           const outcome = yield* handler.execute(envelope, context);
