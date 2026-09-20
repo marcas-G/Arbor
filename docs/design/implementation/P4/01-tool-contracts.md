@@ -63,6 +63,7 @@ interface ToolExecutionContext {
   readonly sessionId: SessionId;
   readonly projectId: ProjectId;
   readonly actor: Actor;
+  readonly authenticatedPrincipal: Principal;
   readonly authority: InvocationAuthority;   // 03 §2
   readonly controlBasisDigest: string;       // digest of the P3 manifest ControlBasis
   readonly requestedAt: string;

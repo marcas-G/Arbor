@@ -19,6 +19,7 @@ interface InvocationAuthority {
   readonly toolName: string;
   readonly toolVersion: string;
   readonly resourceSpaceIds: ReadonlyArray<string>;   // resolved regions
+  readonly allowedCapabilities: ReadonlyArray<string>;
   readonly controlBasisDigest: string;
   readonly expiresAt: string;
   readonly delegationDepth: number;
@@ -34,7 +35,8 @@ authority.executionId          == context.executionId
 authority.toolName             == intent.toolName
 authority.toolVersion          == intent.toolVersion
 authority.resourceSpaceIds     ⊇ resolved regions of this intent
-authority.controlBasisDigest   == digest(context.controlBasis)
+authority.allowedCapabilities  ⊇ definition.capabilityMetadata
+authority.controlBasisDigest   == context.controlBasisDigest
 authority.expiresAt            >  now
 authority.delegationDepth      <= configured ceiling
 ```
