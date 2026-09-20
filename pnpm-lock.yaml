@@ -207,6 +207,27 @@ importers:
         specifier: ^24.13.5
         version: 24.13.5
 
+  adapters/worker-local:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
+  packages/agent-runtime:
+    dependencies:
+      '@arbor/application':
+        specifier: workspace:*
+        version: link:../application
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../ports
+
   packages/application:
     dependencies:
       '@arbor/domain':
@@ -218,11 +239,38 @@ importers:
 
   packages/domain: {}
 
+  packages/execution-runtime:
+    dependencies:
+      '@arbor/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
+      '@arbor/application':
+        specifier: workspace:*
+        version: link:../application
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../ports
+
   packages/ports:
     dependencies:
       '@arbor/domain':
         specifier: workspace:*
         version: link:../domain
+
+  packages/testkit:
+    dependencies:
+      '@arbor/application':
+        specifier: workspace:*
+        version: link:../application
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../ports
 
 packages:
 

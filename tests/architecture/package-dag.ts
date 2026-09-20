@@ -10,9 +10,10 @@ export const ALLOWED_EDGES: Record<string, ReadonlyArray<string>> = {
   "tool-runtime": ["domain", "ports"],
   "projection-runtime": ["domain", "ports"],
   "api-contracts": ["domain"],
-  testkit: [],
+  testkit: ["domain", "ports", "application"],
   "persistence-sqlite": ["domain", "ports"],
   "environment-local": ["domain", "ports"],
+  "worker-local": ["domain", "ports"],
 };
 
 export interface PackageManifest {

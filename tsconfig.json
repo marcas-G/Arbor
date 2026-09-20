@@ -1,10 +1,32 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/domain" },
-    { "path": "./packages/ports" },
-    { "path": "./packages/application" },
-    { "path": "./adapters/persistence-sqlite" },
-    { "path": "./adapters/environment-local" }
+    {
+      "path": "./packages/domain"
+    },
+    {
+      "path": "./packages/ports"
+    },
+    {
+      "path": "./packages/application"
+    },
+    {
+      "path": "./packages/agent-runtime"
+    },
+    {
+      "path": "./packages/execution-runtime"
+    },
+    {
+      "path": "./packages/testkit"
+    },
+    {
+      "path": "./adapters/persistence-sqlite"
+    },
+    {
+      "path": "./adapters/environment-local"
+    },
+    {
+      "path": "./adapters/worker-local"
+    }
   ]
 }
