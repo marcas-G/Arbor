@@ -1,4 +1,5 @@
 export * from "./agent-state.js";
+export * from "./artifacts.js";
 export * from "./client.js";
 export * from "./command-store.js";
 export * from "./consumer.js";
