@@ -27,13 +27,14 @@ describe("P0 result record", () => {
     const gaps = read("planning/gaps/README.md");
     const openRows = gaps
       .split("\n")
-      .filter((line) => /^\|\s*DG-\d+.*\|\s*OPEN\s*\|/.test(line));
+      .filter((line) => /^\|\s*(?:P1-)?DG-\d+.*\|\s*OPEN\s*\|/.test(line));
     expect(openRows).toEqual([]);
   });
 
-  it("reflects P0 completion and P1 blocked status", () => {
+  it("reflects P0 completion and P1 progress", () => {
     const readme = read("planning/README.md");
     expect(readme).toMatch(/\|\s*P0\s*\|[^|]*\|[^|]*complete/i);
-    expect(readme).toMatch(/\|\s*P1\s*\|[^|]*\|[^|]*blocked/i);
+    expect(readme).toMatch(/\|\s*P1\s*\|[^|]*\|[^|]*(executing|complete)/i);
+    expect(readme).not.toMatch(/\|\s*P1\s*\|[^|]*\|[^|]*blocked/i);
   });
 });
