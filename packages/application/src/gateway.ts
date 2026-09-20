@@ -16,9 +16,13 @@ import {
   type DomainEventJournalError,
   IdGenerator,
   type PendingDomainEvent,
+  type ProjectRepositoryError,
+  type SessionRepositoryError,
   type TransactionOperationalFailure,
   TransactionPort,
   type TransactionScope,
+  type WorkRepositoryError,
+  type WorkspaceRepositoryError,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
 import {
@@ -48,6 +52,14 @@ export interface CommandOutcome<R> {
   readonly events: ReadonlyArray<PendingDomainEvent>;
 }
 
+export type CommandHandlerError =
+  | ProjectRepositoryError
+  | WorkspaceRepositoryError
+  | WorkRepositoryError
+  | SessionRepositoryError
+  | CommandStoreError
+  | DomainEventJournalError;
+
 export interface CommandHandler<C, R> {
   readonly commandType: string;
   readonly schemaVersion: string;
@@ -57,7 +69,7 @@ export interface CommandHandler<C, R> {
     context: CommandSubmissionContext,
   ) => Effect.Effect<
     DomainResult<CommandOutcome<R>>,
-    CommandStoreError | DomainEventJournalError,
+    CommandHandlerError,
     TransactionScope
   >;
 }
@@ -104,8 +116,7 @@ export const FenceStopCheckInertLive: Layer.Layer<FenceStopCheck> =
   });
 
 export type CommandGatewayError =
-  | CommandStoreError
-  | DomainEventJournalError
+  | CommandHandlerError
   | TransactionOperationalFailure;
 
 export interface CommandGatewayService {
