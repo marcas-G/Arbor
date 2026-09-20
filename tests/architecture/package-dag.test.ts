@@ -4,21 +4,22 @@ import { describe, expect, it } from "vitest";
 import {
   checkDomainImports,
   checkEdges,
+  checkForbiddenPatterns,
   type PackageManifest,
 } from "./package-dag.js";
 
 const repoRoot = join(import.meta.dirname, "..", "..");
 
-const readPackages = (): ReadonlyArray<PackageManifest> => {
-  const packagesDir = join(repoRoot, "packages");
-  if (!existsSync(packagesDir)) {
+const readManifests = (dirName: string): ReadonlyArray<PackageManifest> => {
+  const dir = join(repoRoot, dirName);
+  if (!existsSync(dir)) {
     return [];
   }
-  return readdirSync(packagesDir)
-    .filter((dir) => existsSync(join(packagesDir, dir, "package.json")))
-    .map((dir) => {
+  return readdirSync(dir)
+    .filter((entry) => existsSync(join(dir, entry, "package.json")))
+    .map((entry) => {
       const manifest = JSON.parse(
-        readFileSync(join(packagesDir, dir, "package.json"), "utf8"),
+        readFileSync(join(dir, entry, "package.json"), "utf8"),
       ) as {
         name: string;
         dependencies?: Record<string, string>;
@@ -37,6 +38,40 @@ const readPackages = (): ReadonlyArray<PackageManifest> => {
     });
 };
 
+const readPackages = (): ReadonlyArray<PackageManifest> => [
+  ...readManifests("packages"),
+  ...readManifests("adapters"),
+];
+
+const readSources = (
+  dirName: string,
+): ReadonlyArray<{ readonly path: string; readonly source: string }> => {
+  const dir = join(repoRoot, dirName);
+  if (!existsSync(dir)) {
+    return [];
+  }
+  const files: Array<{ readonly path: string; readonly source: string }> = [];
+  for (const entry of readdirSync(dir)) {
+    const srcDir = join(dir, entry, "src");
+    if (!existsSync(srcDir)) {
+      continue;
+    }
+    for (const file of readdirSync(srcDir, {
+      recursive: true,
+      encoding: "utf8",
+    })) {
+      if (!file.endsWith(".ts")) {
+        continue;
+      }
+      files.push({
+        path: `${dirName}/${entry}/src/${file}`,
+        source: readFileSync(join(srcDir, file), "utf8"),
+      });
+    }
+  }
+  return files;
+};
+
 const readDomainSources = (): ReadonlyArray<{
   readonly path: string;
   readonly source: string;
@@ -50,9 +85,45 @@ const readDomainSources = (): ReadonlyArray<{
     }));
 };
 
+const dependenciesOf = (name: string): ReadonlyArray<string> =>
+  readPackages().find((pkg) => pkg.name === name)?.internalDependencies ?? [];
+
 describe("package DAG architecture", () => {
-  it("P0 packages declare only allowed internal edges", () => {
+  it("all packages declare only allowed internal edges", () => {
     expect(checkEdges(readPackages())).toEqual([]);
+  });
+
+  it("ports depends on domain only", () => {
+    expect([...dependenciesOf("ports")].sort()).toEqual(["domain"]);
+  });
+
+  it("application depends on domain and ports only", () => {
+    expect([...dependenciesOf("application")].sort()).toEqual([
+      "domain",
+      "ports",
+    ]);
+  });
+
+  it("adapters depend on domain and ports only", () => {
+    for (const adapter of ["persistence-sqlite", "environment-local"]) {
+      expect([...dependenciesOf(adapter)].sort()).toEqual(["domain", "ports"]);
+    }
+  });
+
+  it("no catch-all error handling or service locator outside domain", () => {
+    const sources = [
+      ...readSources("packages"),
+      ...readSources("adapters"),
+    ].filter((file) => !file.path.startsWith("packages/domain/"));
+    expect(checkForbiddenPatterns(sources)).toEqual([]);
+  });
+
+  it("checker fails on a synthetic forbidden pattern", () => {
+    expect(
+      checkForbiddenPatterns([
+        { path: "x.ts", source: "Effect.catchAll(foo)" },
+      ]),
+    ).toEqual(["x.ts: forbidden catch-all error handling"]);
   });
 
   it("domain declares no internal dependency", () => {
