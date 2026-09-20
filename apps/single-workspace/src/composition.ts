@@ -6,7 +6,6 @@ import {
   ExecutionSchedulerLive,
   FenceStopCheckLive,
   P2CommandHandlerRegistryLive,
-  RunnableWorkSourceStubLive,
   RuntimeSafetyGateLive,
 } from "@arbor/execution-runtime";
 import { ModelContextLive } from "@arbor/model-context";
@@ -53,6 +52,7 @@ import {
 } from "@arbor/tool-runtime";
 import { WorkerDispatchPortLive } from "@arbor/worker-local";
 import { Effect, Layer } from "effect";
+import { ProvisionalRunnableWorkSourceLive } from "./runnable-source.js";
 
 export interface SliceConfig {
   readonly databaseFile: string;
@@ -142,11 +142,15 @@ export const buildSliceLayer = (
       infra,
     ),
   );
+  const runnableSource = Layer.provide(
+    ProvisionalRunnableWorkSourceLive,
+    Layer.mergeAll(repos, infra, Layer.provide(TransactionPortLive, infra)),
+  );
   const scheduler = Layer.provide(
     ExecutionSchedulerLive,
     Layer.mergeAll(
       repos,
-      RunnableWorkSourceStubLive,
+      runnableSource,
       infra,
       Layer.provide(TransactionPortLive, infra),
     ),
@@ -163,7 +167,7 @@ export const buildSliceLayer = (
     toolRuntime,
     scheduler,
     admission,
-    RunnableWorkSourceStubLive,
+    runnableSource,
     WorkerDispatchPortLive,
     RuntimeSafetyGateLive(),
     capability,
