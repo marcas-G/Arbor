@@ -150,6 +150,24 @@ export class LeaseService extends Context.Service<
   LeaseServiceService
 >()("arbor/LeaseService") {}
 
+export interface AgentExecutionStateStoreService {
+  readonly find: (
+    executionId: ExecutionId,
+  ) => Effect.Effect<
+    Option.Option<AgentExecutionState>,
+    ExecutionRepositoryError,
+    TransactionScope
+  >;
+  readonly upsert: (
+    state: AgentExecutionState,
+  ) => Effect.Effect<void, ExecutionRepositoryError, TransactionScope>;
+}
+
+export class AgentExecutionStateStore extends Context.Service<
+  AgentExecutionStateStore,
+  AgentExecutionStateStoreService
+>()("arbor/AgentExecutionStateStore") {}
+
 export interface DispatchTicket {
   readonly dispatchId: string;
   readonly acceptedAt: string;
