@@ -50,7 +50,7 @@ const mainExecution = (id: string): Execution => ({
   },
   sessionId,
   admittedAt: "t",
-  stopRequested: false,
+  stopRequestedAt: null,
   state: { status: "Active", settlement: null },
 });
 
@@ -65,7 +65,7 @@ const boundExecution = (id: string): Execution => ({
   },
   sessionId,
   admittedAt: "t",
-  stopRequested: false,
+  stopRequestedAt: null,
   state: { status: "Active", settlement: null },
 });
 

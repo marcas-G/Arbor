@@ -59,7 +59,7 @@ const execution: Execution = {
   },
   sessionId,
   admittedAt: "t",
-  stopRequested: false,
+  stopRequestedAt: null,
   state: { status: "Active", settlement: null },
 };
 

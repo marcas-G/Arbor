@@ -44,7 +44,7 @@ export const FenceStopCheckLive: Layer.Layer<
         if (lease.value.expiresAt <= now) {
           return "FencingRejected" as const;
         }
-        if (execution.value.stopRequested) {
+        if (execution.value.stopRequestedAt !== null) {
           return stopAdmission._tag === "NormalExecutionMutation"
             ? ("ExecutionStopping" as const)
             : ("Pass" as const);

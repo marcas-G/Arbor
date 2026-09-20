@@ -76,7 +76,7 @@ export interface Execution {
   readonly binding: ExecutionBinding;
   readonly sessionId: SessionId;
   readonly admittedAt: string;
-  readonly stopRequested: boolean;
+  readonly stopRequestedAt: string | null;
   readonly state: ExecutionState;
 }
 
@@ -106,13 +106,14 @@ export const admitExecution = (
     binding: input.binding,
     sessionId: input.sessionId,
     admittedAt: input.admittedAt,
-    stopRequested: false,
+    stopRequestedAt: null,
     state: { status: "Active", settlement: null },
   });
 };
 
 export const stopExecution = (
   execution: Execution,
+  stopRequestedAt: string,
 ): DomainResult<Execution> => {
   if (execution.state.status !== "Active") {
     return err({
@@ -121,7 +122,7 @@ export const stopExecution = (
       lifecycle: "Settled",
     });
   }
-  return ok({ ...execution, stopRequested: true });
+  return ok({ ...execution, stopRequestedAt });
 };
 
 export const settleExecution = (
