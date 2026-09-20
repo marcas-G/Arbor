@@ -5,6 +5,7 @@ export default defineConfig({
     include: [
       "packages/*/test/**/*.test.ts",
       "adapters/*/test/**/*.test.ts",
+      "apps/*/test/**/*.test.ts",
       "tests/**/*.test.ts",
     ],
   },

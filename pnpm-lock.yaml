@@ -243,6 +243,51 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ports
 
+  apps/single-workspace:
+    dependencies:
+      '@arbor/agent-runtime':
+        specifier: workspace:*
+        version: link:../../packages/agent-runtime
+      '@arbor/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@arbor/blob-local':
+        specifier: workspace:*
+        version: link:../../adapters/blob-local
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/environment-local':
+        specifier: workspace:*
+        version: link:../../adapters/environment-local
+      '@arbor/execution-runtime':
+        specifier: workspace:*
+        version: link:../../packages/execution-runtime
+      '@arbor/model-context':
+        specifier: workspace:*
+        version: link:../../packages/model-context
+      '@arbor/persistence-sqlite':
+        specifier: workspace:*
+        version: link:../../adapters/persistence-sqlite
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+      '@arbor/provider-fake':
+        specifier: workspace:*
+        version: link:../../adapters/provider-fake
+      '@arbor/provider-runtime':
+        specifier: workspace:*
+        version: link:../../packages/provider-runtime
+      '@arbor/sandbox-local':
+        specifier: workspace:*
+        version: link:../../adapters/sandbox-local
+      '@arbor/tool-runtime':
+        specifier: workspace:*
+        version: link:../../packages/tool-runtime
+      '@arbor/worker-local':
+        specifier: workspace:*
+        version: link:../../adapters/worker-local
+
   packages/agent-runtime:
     dependencies:
       '@arbor/application':

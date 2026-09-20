@@ -1,0 +1,55 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "references": [
+    {
+      "path": "../../packages/domain"
+    },
+    {
+      "path": "../../packages/ports"
+    },
+    {
+      "path": "../../packages/application"
+    },
+    {
+      "path": "../../packages/model-context"
+    },
+    {
+      "path": "../../packages/agent-runtime"
+    },
+    {
+      "path": "../../packages/execution-runtime"
+    },
+    {
+      "path": "../../packages/provider-runtime"
+    },
+    {
+      "path": "../../packages/tool-runtime"
+    },
+    {
+      "path": "../../adapters/persistence-sqlite"
+    },
+    {
+      "path": "../../adapters/environment-local"
+    },
+    {
+      "path": "../../adapters/worker-local"
+    },
+    {
+      "path": "../../adapters/provider-fake"
+    },
+    {
+      "path": "../../adapters/sandbox-local"
+    },
+    {
+      "path": "../../adapters/blob-local"
+    }
+  ]
+}
