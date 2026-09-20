@@ -31,10 +31,10 @@ describe("P0 result record", () => {
     expect(openRows).toEqual([]);
   });
 
-  it("reflects P0 completion and P1 progress", () => {
+  it("reflects P0 and P1 completion", () => {
     const readme = read("planning/README.md");
     expect(readme).toMatch(/\|\s*P0\s*\|[^|]*\|[^|]*complete/i);
-    expect(readme).toMatch(/\|\s*P1\s*\|[^|]*\|[^|]*(executing|complete)/i);
+    expect(readme).toMatch(/\|\s*P1\s*\|[^|]*\|[^|]*complete/i);
     expect(readme).not.toMatch(/\|\s*P1\s*\|[^|]*\|[^|]*blocked/i);
   });
 });
