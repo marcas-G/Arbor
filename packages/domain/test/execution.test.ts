@@ -44,6 +44,7 @@ const admit = (
   const result = admitExecution({
     executionId,
     projectId,
+    workspaceId,
     binding,
     sessionId,
     admittedAt: "2026-09-20T00:00:00.000Z",
@@ -84,6 +85,7 @@ describe("execution binding & settlement", () => {
     const result = admitExecution({
       executionId,
       projectId,
+      workspaceId,
       binding: workBinding,
       sessionId,
       admittedAt: "2026-09-20T00:00:00.000Z",

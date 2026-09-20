@@ -189,6 +189,12 @@ WHERE execution_id = ? AND worker_id = ? AND generation = ?
 RETURNING generation;
 -- no row -> LeaseLost (stale generation)
 
+-- lease release is SOFT (never DELETE): generation must stay monotonic so a
+-- stale worker's fence can never re-validate after release/re-acquire.
+UPDATE execution_leases
+SET expires_at = ?, updated_at = ?
+WHERE execution_id = ? AND worker_id = ? AND generation = ?;
+
 -- admission main pre-check inside BEGIN IMMEDIATE
 SELECT 1 FROM executions
 WHERE workspace_id = ? AND binding_kind = 'workspace' AND settled_at IS NULL;
