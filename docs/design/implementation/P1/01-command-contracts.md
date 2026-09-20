@@ -31,12 +31,19 @@ CommandResolution<Result, Rejection> =
 - `FencingRejected` / `ExecutionStopping` / `WorkspaceNotFound` are
   Application-owned; they never appear in `DomainError`.
 
-P1 `CommandReceipt<Result>` view of the `commands` row (frozen):
+`CommandResolution<Result, Rejection>` and `CommandReceipt<Result, Rejection>`
+are **domain-owned generic** types (parameterized; no concrete rejection).
+`CommandRejection` is Application-owned. `ports.CommandStore.findResolution`
+returns `CommandReceipt<unknown, unknown>` (opaque stored resolution); the
+Application layer decodes it into `CommandReceipt<R, CommandRejection>`
+(avoids a forbidden `ports → application` edge).
+
+P1 `CommandReceipt<Result, Rejection>` view of the `commands` row (frozen):
 
 ```ts
 { commandId, projectId, semanticRequestFingerprint, schemaVersion,
   fingerprintAlgorithmVersion,
-  resolution: CommandResolution<Result, CommandRejection>,
+  resolution: CommandResolution<Result, Rejection>,
   createdAt, settledAt }
 ```
 

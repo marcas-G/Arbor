@@ -14,8 +14,9 @@ P1 tasks additionally reference `docs/design/implementation/P1/**`.
 2. `docs/design/02-system-design.md`
 3. `docs/design/01-scenarios.md`
 4. `docs/design/00-problem-goals.md`
-5. `planning/phases/*`
-6. `planning/tasks/*`
+5. `docs/design/implementation/P1/**` (P1 phase contracts)
+6. `planning/phases/*`
+7. `planning/tasks/*`
 
 Higher-level artifacts define system semantics. If a task conflicts with
 the design, the design wins.
@@ -115,7 +116,8 @@ Authoritative edge list (`X -> Y` means Y depends on X):
 
 ```text
 P0-001            -> P1-017
-P1-017            -> P1-001, P1-002
+P1-017            -> P1-002
+P1-002            -> P1-001
 P1-001            -> P1-003
 P1-001, P1-002    -> P1-004
 P1-003, P1-004    -> P1-005, P1-006, P1-007
@@ -132,7 +134,7 @@ P1-013, P1-014, P1-015 -> P1-016
 
 | ID | Title | Depends on |
 |---|---|---|
-| P1-001 | SQLite adapter, connection settings, migration mechanism | P1-017 |
+| P1-001 | SQLite adapter, connection settings, migration mechanism | P1-017, P1-002 |
 | P1-002 | `ports` package: Effect service contracts | P0-001, P1-017 |
 | P1-003 | P1 DDL migrations | P1-001 |
 | P1-004 | `TransactionScope` / `TransactionPort` implementation | P1-001, P1-002 |
@@ -161,6 +163,5 @@ are unchanged.
 
 P0-001 owned the frozen technical baseline (§14.1). It is now satisfied via
 the pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
-project `env.sh` wrapper; `pnpm check` is green. The six Design Gaps are
-`RESOLVED`, so no task remains design-blocked. See
-`planning/results/P0-001.result.md`.
+project `env.sh` wrapper; `pnpm check` is green. P1-DG-01…10 are RESOLVED; **P1-DG-11 (authority predicate) is OPEN** and blocks
+P1-010/011/012 (and transitively P1-014/016). See `planning/gaps/`.
