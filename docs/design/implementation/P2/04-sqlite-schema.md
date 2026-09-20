@@ -152,11 +152,11 @@ CREATE INDEX idx_scheduler_timers_due ON scheduler_timers(fire_at);
 ## 4. Fence / stop / CAS queries
 
 ```sql
--- fence validity (authoritative; same tx as the mutation)
+-- fence validity (authoritative; same tx as the mutation; expires_at enforced)
 SELECT 1
 FROM executions e
 JOIN execution_leases l ON l.execution_id = e.execution_id
-WHERE e.execution_id = ? AND l.generation = ? AND e.settled_at IS NULL;
+WHERE e.execution_id = ? AND l.generation = ? AND l.expires_at > ? AND e.settled_at IS NULL;
 
 -- stop admission
 SELECT stop_requested_at IS NOT NULL
