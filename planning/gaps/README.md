@@ -54,6 +54,7 @@ P1 phase-scoped contracts.
 | P1-DG-08 | `resource_ownership` persistence lifecycle | DID §9.5, §1.4A, §1.5 | RESOLVED |
 | P1-DG-09 | Retention / delete policy and migration mechanism | DID §9.1, §12.11, §5.4 | RESOLVED |
 | P1-DG-10 | Port ownership, ID generation, `AssignWork` errors, child-workspace phase | DID §7.2, Appendix B, §0A.1, §11 | RESOLVED |
+| P1-DG-11 | Authority predicate undefined for P1 commands | DID §8, §6.2, §12.10, §4.1; P1 01/02 | OPEN |
 
 `P1-DG-01/02/03/04/05/10` were resolved by the **DID v1.4 → v1.5** governance
 patch (`planning/p1-governance-patch.md`). `P1-DG-06/07/08/09` were P1 phase-scoped and are now closed by

@@ -32,6 +32,11 @@ Notes:
 - C7: no blind retry after an authoritative conflict (03 §3.4).
 - C10/C11 depend on `synchronous = FULL`; deployments may relax it only by
   declaring a weaker `DurabilityEnvelope` (DID §9.1).
+- C5 (crash during COMMIT), C10 (OS/power loss), C11 (WAL checkpoint) are not
+  reproducible in-process. P1 asserts them via adapter fault injection
+  (commit-failure injection + a `synchronous = FULL` durability check) or
+  records them as "durability-asserted, not crash-injected" with the exact
+  mechanism. They are P1 claims, not deferred to P2.
 
 ## 2. Operational failure handling
 

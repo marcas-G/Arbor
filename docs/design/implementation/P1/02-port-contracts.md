@@ -111,8 +111,11 @@ P1 `ResourceOwnershipClaim` record (matches the DDL columns;
 | `findResolution(commandId): Effect<Option<CommandReceipt>, CommandStoreError>` | |
 | `insertCommitted(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, resultJson)` | authoritative |
 | `insertTerminalRejected(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, terminalErrorJson)` | authoritative, no event |
-| `recordResolvingAttempt(commandId, attemptNo, outcome, startedAt, settledAt)` | resolving attempt (Committed / TerminalRejected); written in the **command transaction** (03 §3.1/§3.2) |
-| `recordRetryableAttempt(commandId, attemptNo, failureKind, startedAt, settledAt)` | non-authoritative trace; written in a **separate** short transaction after rollback (03 §3.3) |
+| `recordResolvingAttempt(commandId, outcome, startedAt, settledAt)` | resolving attempt (Committed / TerminalRejected); written in the **command transaction** (03 §3.1/§3.2) |
+| `recordRetryableAttempt(commandId, failureKind, startedAt, settledAt)` | non-authoritative trace; written in a **separate** short transaction after rollback (03 §3.3) |
+
+`CommandStore` allocates the next free `attempt_no` for a `command_id`
+(serialized by `BEGIN IMMEDIATE`); callers do not supply it.
 
 ### DomainEventJournal
 
@@ -127,6 +130,13 @@ P1 `ResourceOwnershipClaim` record (matches the DDL columns;
 | Method | Semantics |
 |---|---|
 | `quarantine(consumerId, projectId, sequence, reason)` | `INSERT OR IGNORE`; same transaction as the offset skip (05 §3) |
+
+### ProjectionStore
+
+| Method | Semantics |
+|---|---|
+| `apply(batch)` | projection writes in the same SQLite DB/tx as the offset advance (05 §4) |
+| `reset()` | clear the projection for rebuild (05 §6) |
 
 ### ConsumerOffsetStore
 
@@ -154,8 +164,8 @@ failure (re-resolve + re-evaluate), never an authoritative rejection.
 
 | Port | Method | Notes |
 |---|---|---|
-| `Clock` | `now(): Effect<string, never>` | ISO timestamp; testable |
-| `IdGenerator` | `generate<T>(kind): Effect<T, never>` | used by **callers**, not handlers |
+| `Clock` | `now(): Effect<string, never>` | ISO timestamp; testable; provided by the adapter Layer |
+| `IdGenerator` | `generate<T>(kind): Effect<T, never>` | used by **callers** and the journal (EventId), not command handlers |
 | `ProjectEnvironmentPort` | `resolve(projectId, addresses): Effect<{ regions: ReadonlyArray<CanonicalResourceRegion>; observedEnvironmentRevision: string }, EnvironmentError>` | resolve **outside** write tx (DID §1.5); returns regions + revision together |
 
 ## 5. Transaction participation summary
@@ -171,7 +181,22 @@ CommandStore.recordResolvingAttempt                -> command transaction
 CommandStore.recordRetryableAttempt                -> separate scope (after rollback)
 ```
 
-## 6. Out of scope
+## 6. Frozen execution details
+
+- **Time source.** Repositories/adapters obtain `created_at` / `updated_at` /
+  `settled_at` from `Clock` (provided by the adapter Layer); the domain never
+  reads time. `recordResolvingAttempt` / `recordRetryableAttempt` receive
+  `startedAt` / `settledAt` from the caller (Clock-backed).
+- **`AdapterSession`.** Repositories obtain the live driver connection from
+  `TransactionScope.session`; the adapter Layer owns the concrete cast.
+- **Ownership write orchestration.** The 04 §3.3 sequence is implemented as an
+  application function
+  `resolveAndWriteOwnership(projectId, addresses, claims)` returning
+  `{ regions, claims }` or `EnvironmentError | RepositoryError | ResourceResolutionStale`.
+  P1 has no ownership command; this function is implemented in P1-007 and
+  exercised by tests.
+
+## 7. Out of scope
 
 - Execution/lease ports (P2), including `SessionRepository.appendEntry`.
 - Provider/Tool/Blob/Projection ports (P3+).

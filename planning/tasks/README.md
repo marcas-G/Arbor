@@ -41,6 +41,10 @@ Every task file states:
 - Use `pnpm test <suite>` (a filename substring, e.g. `ids`,
   `workspace`). Do not prefix with `packages/domain`, which OR-matches every
   domain test and makes the filter meaningless.
+- P1 suites live under `<package>/test/<suite>.test.ts` (or
+  `tests/<area>/<suite>.test.ts`); the harness (P1-017) includes
+  `packages/*/test`, `adapters/*/test`, and `tests/**`, so the suite name
+  matches a real file.
 - Type-level assertions (branded-ID interchange, illegal ADT construction)
   only count if the test files are compiled by `pnpm typecheck` (P0-001
   requires this).
@@ -110,16 +114,17 @@ dependents of it.
 Authoritative edge list (`X -> Y` means Y depends on X):
 
 ```text
+P0-001            -> P1-017
+P1-017            -> P1-001, P1-002
 P1-001            -> P1-003
-P0-001            -> P1-002
 P1-001, P1-002    -> P1-004
 P1-003, P1-004    -> P1-005, P1-006, P1-007
 P1-006            -> P1-008
 P1-002, P1-004    -> P1-009
 P1-005, P1-006, P1-009 -> P1-010, P1-011, P1-012
-P1-009            -> P1-013
-P1-008, P1-010, P1-011, P1-012 -> P1-014
-P1-001, P1-002    -> P1-015
+P1-003, P1-006, P1-009 -> P1-013
+P1-007, P1-008, P1-010, P1-011, P1-012 -> P1-014
+P1-001, P1-002, P1-007, P1-009 -> P1-015
 P1-013, P1-014, P1-015 -> P1-016
 ```
 
@@ -127,8 +132,8 @@ P1-013, P1-014, P1-015 -> P1-016
 
 | ID | Title | Depends on |
 |---|---|---|
-| P1-001 | SQLite adapter, connection settings, migration mechanism | — |
-| P1-002 | `ports` package: Effect service contracts | P0-001 |
+| P1-001 | SQLite adapter, connection settings, migration mechanism | P1-017 |
+| P1-002 | `ports` package: Effect service contracts | P0-001, P1-017 |
 | P1-003 | P1 DDL migrations | P1-001 |
 | P1-004 | `TransactionScope` / `TransactionPort` implementation | P1-001, P1-002 |
 | P1-005 | Project/Workspace/Work/Session repositories | P1-003, P1-004 |
@@ -139,9 +144,9 @@ P1-013, P1-014, P1-015 -> P1-016
 | P1-010 | `CreateProject` handler | P1-005, P1-006, P1-009 |
 | P1-011 | `CreateChildWorkspace` handler | P1-005, P1-006, P1-009 |
 | P1-012 | `AssignWork` handler | P1-005, P1-006, P1-009 |
-| P1-013 | Idempotency / replay / concurrent-duplicate tests | P1-009 |
-| P1-014 | Recovery matrix tests | P1-008, P1-010, P1-011, P1-012 |
-| P1-015 | Architecture tests for new packages | P1-001, P1-002 |
+| P1-013 | Idempotency / replay / concurrent-duplicate tests | P1-003, P1-006, P1-009 |
+| P1-014 | Recovery matrix tests | P1-007, P1-008, P1-010, P1-011, P1-012 |
+| P1-015 | Architecture tests for new packages | P1-001, P1-002, P1-007, P1-009 |
 | P1-016 | P1 convergence & result record | P1-013, P1-014, P1-015 |
 
 ## Authority versions
