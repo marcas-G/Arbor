@@ -5,9 +5,8 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0**, **P1**, **P2** (complete); **P3** (planning; contracts frozen
-at Blocking=0). P1 tasks reference `docs/design/implementation/P1/**`; P2 tasks
-`docs/design/implementation/P2/**`; P3 tasks `docs/design/implementation/P3/**`.
+Phases: **P0–P3** (complete); **P4** (planning; contracts frozen at
+Blocking=0). Task contracts reference `docs/design/implementation/<phase>/**`.
 
 ## Authority order
 
@@ -169,9 +168,9 @@ P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
 pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
 project `env.sh` wrapper; `pnpm check` is green. **P0 and P1 are COMPLETE**;
 all `DG-*` / `P1-DG-*` are RESOLVED. P2 design closure is complete
-(`docs/design/implementation/P2/**`, Blocking=0) and P2 is COMPLETE. P3 design
-closure is complete (`docs/design/implementation/P3/**`, review Blocking=0);
-P3 planning is frozen pending implementation authorization. See
+(`docs/design/implementation/P2/**`, Blocking=0) and P2 is COMPLETE. P3 is COMPLETE. P4 design
+closure is complete (`docs/design/implementation/P4/**`, review Blocking=0);
+P4 planning is frozen pending implementation authorization. See
 `planning/gaps/`.
 
 ## P2 dependency graph
@@ -263,3 +262,45 @@ P3-017                                   -> P3-018
 | P3-016 | Behavioral-eval harness + P3 program eval cases | P3-004, P3-010, P3-011 |
 | P3-017 | P3 integration + architecture tests | P3-013..P3-016 |
 | P3-018 | P3 convergence & result record | P3-017 |
+
+## P4 dependency graph
+
+Authoritative edge list (`X -> Y` means Y depends on X):
+
+```text
+P3-018                            -> P4-001
+P4-001                            -> P4-002
+P4-002                            -> P4-003, P4-004, P4-005, P4-009, P4-010
+P4-003                            -> P4-007, P4-010, P4-011
+P4-004, P4-005                    -> P4-006
+P4-006                            -> P4-007
+P4-005                            -> P4-008
+P4-004..P4-011                    -> P4-012
+P4-012                            -> P4-013, P4-014, P4-015
+P4-011                            -> P4-016
+P4-012, P4-013, P4-014, P4-015, P4-016 -> P4-017
+P4-017                            -> P4-018
+```
+
+## P4 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P4-001 | P4 package skeletons + harness wiring | P3-018 |
+| P4-002 | `ports` P4 contracts | P4-001 |
+| P4-003 | P4 DDL migrations | P4-002 |
+| P4-004 | Tool catalog + definitions (read/patch/shell schemas) | P4-002 |
+| P4-005 | Canonical resource resolution wiring | P4-002 |
+| P4-006 | Trusted `InvocationAuthority` + capability ceiling | P4-004, P4-005 |
+| P4-007 | `InvocationApproval` + atomic consumption | P4-003, P4-006 |
+| P4-008 | Validate-only resource admission | P4-005 |
+| P4-009 | `SandboxPort` + local adapter | P4-002 |
+| P4-010 | Blob/Artifact service + adapter | P4-002, P4-003 |
+| P4-011 | `ToolInvocationStore` + intent-before-effect | P4-003 |
+| P4-012 | `ToolRuntimePort` pipeline | P4-004..P4-011 |
+| P4-013 | `read` tool | P4-012 |
+| P4-014 | `patch` tool | P4-012 |
+| P4-015 | `shell` tool + policy enforcement | P4-012 |
+| P4-016 | P2 `ReconciliationSource` + Stop/quiescence | P4-011 |
+| P4-017 | P4 integration + architecture tests | P4-012..P4-016 |
+| P4-018 | P4 convergence & result record | P4-017 |
