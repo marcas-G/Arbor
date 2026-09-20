@@ -65,6 +65,12 @@ exact per-command contracts; exact repository/port signatures; resource-region
 physical encoding) are **phase-closure**, not gaps; they are closed by the P1
 phase-scoped contracts (`docs/design/implementation/P1/**`).
 
+## P5 Design Gaps (pre-implementation closure)
+
+| ID | Title | Owning design doc | Status |
+|---|---|---|---|
+| P5-DG-01 | Acceptance story cannot reach `Admit Work(current)` (`SelectCurrentWork` ownership) | P5 `05` §1, P5 `02` §2; DID §8.18A; P2 `05` §4 | OPEN |
+
 ## Resolution process
 
 ```text

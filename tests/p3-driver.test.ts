@@ -190,6 +190,10 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* sql.unsafe(
+        "INSERT INTO execution_leases (execution_id, worker_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?)",
+        [executionId, "worker", 0, "9999-12-31T00:00:00.000Z", "t"],
+      );
     }),
   );
 });
