@@ -2,7 +2,6 @@ import type {
   CanonicalResourceRegion,
   ProjectId,
   ResourceAddress,
-  ResourceOwnershipClaim,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
 import type {
@@ -11,7 +10,11 @@ import type {
   ResourceOwnershipRepositoryError,
   ResourceResolutionStale,
 } from "./errors.js";
-import type { TransactionScope } from "./session.js";
+import type { ResourceOwnershipClaimRecord } from "./repositories.js";
+import type {
+  TransactionOperationalFailure,
+  TransactionScope,
+} from "./session.js";
 
 export interface EnvironmentRevisionStoreService {
   readonly current: (
@@ -51,19 +54,21 @@ export class ProjectEnvironmentPort extends Context.Service<
 
 export interface OwnershipWriteResult {
   readonly regions: ReadonlyArray<CanonicalResourceRegion>;
-  readonly claims: ReadonlyArray<ResourceOwnershipClaim>;
+  readonly claims: ReadonlyArray<ResourceOwnershipClaimRecord>;
 }
 
 export interface OwnershipWriteServiceService {
   readonly resolveAndWrite: (
     projectId: ProjectId,
     addresses: ReadonlyArray<ResourceAddress>,
-    claims: ReadonlyArray<ResourceOwnershipClaim>,
+    claims: ReadonlyArray<ResourceOwnershipClaimRecord>,
   ) => Effect.Effect<
     OwnershipWriteResult,
     | EnvironmentError
     | ResourceOwnershipRepositoryError
     | ResourceResolutionStale
+    | TransactionOperationalFailure
+    | EnvironmentRevisionStoreError
   >;
 }
 

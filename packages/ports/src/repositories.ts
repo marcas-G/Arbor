@@ -1,9 +1,10 @@
 import type {
+  CanonicalResourceRegion,
   Project,
   ProjectId,
   ProjectPolicy,
   ResourceAddress,
-  ResourceOwnershipClaim,
+  ResourceBoundaryRevision,
   Revision,
   Session,
   SessionId,
@@ -176,16 +177,27 @@ export class SessionRepository extends Context.Service<
   SessionRepositoryService
 >()("arbor/SessionRepository") {}
 
+export interface ResourceOwnershipClaimRecord {
+  readonly claimId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly region: CanonicalResourceRegion;
+  readonly sourceAddressSnapshot: ResourceAddress;
+  readonly resourceBoundaryRevision: ResourceBoundaryRevision;
+  readonly resolvedAtEnvironmentRevision: string;
+  readonly createdAt: string;
+  readonly releasedAt: string | null;
+}
+
 export interface ResourceOwnershipRepositoryService {
   readonly loadActiveConflicts: (
     resourceSpaceId: string,
   ) => Effect.Effect<
-    ReadonlyArray<ResourceOwnershipClaim>,
+    ReadonlyArray<ResourceOwnershipClaimRecord>,
     ResourceOwnershipRepositoryError,
     TransactionScope
   >;
   readonly insertClaim: (
-    claim: ResourceOwnershipClaim,
+    claim: ResourceOwnershipClaimRecord,
   ) => Effect.Effect<void, ResourceOwnershipRepositoryError, TransactionScope>;
   readonly releaseClaim: (
     claimId: string,
@@ -194,7 +206,7 @@ export interface ResourceOwnershipRepositoryService {
   readonly listActiveByWorkspace: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<
-    ReadonlyArray<ResourceOwnershipClaim>,
+    ReadonlyArray<ResourceOwnershipClaimRecord>,
     ResourceOwnershipRepositoryError,
     TransactionScope
   >;
