@@ -224,6 +224,30 @@ export const AgentDriverLive = (
               };
             }
 
+            yield* tx
+              .transact(
+                sessions.appendEntry(
+                  input.execution.sessionId,
+                  {
+                    entryKind: "ModelOutput",
+                    payload: {
+                      providerTurnId: preparation.turn.manifest.providerTurnId,
+                      outputContractRef: AGENT_DIRECTIVE_CONTRACT,
+                      directiveKinds: decoded.output.directives.map(
+                        (entry) => entry.directive._tag,
+                      ),
+                    },
+                  },
+                  input.context._tag === "ExecutionOrigin"
+                    ? {
+                        executionId: input.execution.executionId,
+                        fencingGeneration: input.context.fencingGeneration,
+                      }
+                    : undefined,
+                ),
+              )
+              .pipe(Effect.mapError(failure));
+
             const observations: Array<
               | {
                   readonly source: "Runtime" | "Tool";

@@ -58,6 +58,10 @@ import {
 } from "@arbor/tool-runtime";
 import { WorkerDispatchPortLive } from "@arbor/worker-local";
 import { Effect, Layer } from "effect";
+import {
+  SliceDirectiveHandlers,
+  SliceDirectiveHandlersLive,
+} from "./directives.js";
 import { SliceCommandHandlerRegistryLive } from "./registry.js";
 import { ProvisionalRunnableWorkSourceLive } from "./runnable-source.js";
 
@@ -138,11 +142,6 @@ export const buildSliceLayer = (
     BlobStorePortLive,
   );
   const admission = Layer.provide(ResourceAdmissionLive, repos);
-  const driver = Layer.provide(
-    AgentDriverLive(),
-    Layer.mergeAll(modelContext, providerRuntime, capability, repos, infra),
-  );
-
   const toolRuntime = Layer.provide(
     ToolRuntimeLive(BUILTIN_EXECUTORS),
     Layer.mergeAll(
@@ -152,6 +151,28 @@ export const buildSliceLayer = (
       SandboxPortLive,
       infra,
     ),
+  );
+  const directiveHandlers = Layer.provide(
+    SliceDirectiveHandlersLive,
+    Layer.mergeAll(toolRuntime, skills, repos, infra),
+  );
+  const driver = Layer.provide(
+    Layer.unwrap(
+      Effect.gen(function* () {
+        const handlers = yield* SliceDirectiveHandlers;
+        return Layer.provide(
+          AgentDriverLive(handlers),
+          Layer.mergeAll(
+            modelContext,
+            providerRuntime,
+            capability,
+            repos,
+            infra,
+          ),
+        );
+      }),
+    ),
+    directiveHandlers,
   );
   const runnableSource = Layer.provide(
     ProvisionalRunnableWorkSourceLive,
