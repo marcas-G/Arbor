@@ -14,6 +14,7 @@ import {
   SessionRepositoryLive,
   TransactionPortLive,
   WorkspaceRepositoryLive,
+  WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
   CommandGateway,
@@ -67,6 +68,7 @@ const makeApp = () => {
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
+    Layer.provide(WorkWaitStoreLive, infra),
   );
   const all = Layer.mergeAll(
     infra,
