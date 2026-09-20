@@ -31,7 +31,7 @@ If a code implementation discovers a design gap: **stop implementation and raise
 - `planning/tasks/` — task breakdown per phase
 - `planning/results/` — completion evidence, verification output per phase
 
-Current authorization state: **P0–P3 COMPLETE**. P4 is in design closure (DID v1.8 governance patch applied); P4 coding is authorized only after `docs/design/implementation/P4/**` exact contracts reach Blocking = 0.
+Current authorization state: **P0–P4 COMPLETE**. P5 is not authorized; it requires P5 design closure (`docs/design/implementation/P5/**` exact contracts to Blocking = 0).
 
 ## Technical baseline (versioned, from DID §14)
 

@@ -31,12 +31,13 @@ describe("P0 result record", () => {
     expect(openRows).toEqual([]);
   });
 
-  it("reflects P0, P1, P2, and P3 completion", () => {
+  it("reflects P0–P4 completion", () => {
     const readme = read("planning/README.md");
-    expect(readme).toMatch(/\|\s*P0\s*\|[^|]*\|[^|]*complete/i);
-    expect(readme).toMatch(/\|\s*P1\s*\|[^|]*\|[^|]*complete/i);
-    expect(readme).toMatch(/\|\s*P2\s*\|[^|]*\|[^|]*complete/i);
-    expect(readme).toMatch(/\|\s*P3\s*\|[^|]*\|[^|]*complete/i);
+    for (const phase of ["P0", "P1", "P2", "P3", "P4"]) {
+      expect(readme).toMatch(
+        new RegExp(`\\|\\s*${phase}\\s*\\|[^|]*\\|[^|]*complete`, "i"),
+      );
+    }
     expect(readme).not.toMatch(/\|\s*P1\s*\|[^|]*\|[^|]*blocked/i);
   });
 });
