@@ -36,6 +36,15 @@
     },
     {
       "path": "./adapters/provider-fake"
+    },
+    {
+      "path": "./packages/tool-runtime"
+    },
+    {
+      "path": "./adapters/sandbox-local"
+    },
+    {
+      "path": "./adapters/blob-local"
     }
   ]
 }

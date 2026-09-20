@@ -15,6 +15,8 @@ export const ALLOWED_EDGES: Record<string, ReadonlyArray<string>> = {
   "environment-local": ["domain", "ports"],
   "worker-local": ["domain", "ports"],
   "provider-fake": ["domain", "ports"],
+  "sandbox-local": ["domain", "ports"],
+  "blob-local": ["domain", "ports"],
 };
 
 export interface PackageManifest {
