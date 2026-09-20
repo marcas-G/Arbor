@@ -1,16 +1,21 @@
 import type {
   AgentBinding,
   ContextEpochNumber,
+  ExecutionId,
   ProviderTurnId,
   SessionId,
   WorkspaceId,
 } from "@arbor/domain";
+
+export type { ContextEpochNumber, ExecutionId, ProviderTurnId, SessionId };
+
 import { Context, type Effect, type Stream } from "effect";
 import type {
   ModelCapabilityError,
   ProviderFailure,
   SkillRegistryError,
 } from "./errors.js";
+import type { TransactionScope } from "./session.js";
 
 export interface PortableInstruction {
   readonly slotId: string;
@@ -105,6 +110,46 @@ export class ProviderPort extends Context.Service<
   ProviderPort,
   ProviderPortService
 >()("arbor/ProviderPort") {}
+
+export interface ProviderTurnRecord {
+  readonly providerTurnId: ProviderTurnId;
+  readonly executionId: ExecutionId;
+  readonly sessionId: SessionId;
+  readonly contextEpoch: ContextEpochNumber;
+  readonly modelRef: string;
+  readonly outputContractRef: string;
+  readonly manifestId: string;
+}
+
+export interface ProviderAttemptOutcome {
+  readonly _tag: "Success" | "RetryableFailure" | "TerminalFailure";
+  readonly providerErrorKind?: string;
+}
+
+export interface ProviderTurnStoreService {
+  readonly startTurn: (
+    record: ProviderTurnRecord,
+    startedAt: string,
+  ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
+  readonly recordAttempt: (
+    providerTurnId: ProviderTurnId,
+    attemptNo: number,
+    outcome: ProviderAttemptOutcome,
+    startedAt: string,
+    settledAt: string,
+  ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
+  readonly settleTurn: (
+    providerTurnId: ProviderTurnId,
+    finishReason: string,
+    usageJson: string,
+    settledAt: string,
+  ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
+}
+
+export class ProviderTurnStore extends Context.Service<
+  ProviderTurnStore,
+  ProviderTurnStoreService
+>()("arbor/ProviderTurnStore") {}
 
 export interface ModelCapability {
   readonly modelRef: string;
