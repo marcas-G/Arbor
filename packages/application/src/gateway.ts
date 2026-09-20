@@ -13,6 +13,7 @@ import {
   type CommandStoreError,
   DomainEventJournal,
   type DomainEventJournalError,
+  type ExecutionRepositoryError,
   IdGenerator,
   type PendingDomainEvent,
   type ProjectRepositoryError,
@@ -105,7 +106,11 @@ export interface FenceStopCheckService {
   readonly check: (
     context: CommandSubmissionContext,
     stopAdmission: StopAdmission,
-  ) => Effect.Effect<FenceStopOutcome>;
+  ) => Effect.Effect<
+    FenceStopOutcome,
+    ExecutionRepositoryError,
+    TransactionScope
+  >;
 }
 
 export class FenceStopCheck extends Context.Service<
@@ -120,6 +125,7 @@ export const FenceStopCheckInertLive: Layer.Layer<FenceStopCheck> =
 
 export type CommandGatewayError =
   | CommandHandlerError
+  | ExecutionRepositoryError
   | TransactionOperationalFailure;
 
 export interface CommandGatewayService {
