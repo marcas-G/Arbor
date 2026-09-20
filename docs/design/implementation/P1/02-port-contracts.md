@@ -108,7 +108,7 @@ P1 `ResourceOwnershipClaim` record (matches the DDL columns;
 
 | Method | Semantics |
 |---|---|
-| `findResolution(commandId): Effect<Option<CommandReceipt>, CommandStoreError>` | |
+| `findResolution(commandId): Effect<Option<CommandReceipt<unknown, unknown>>, CommandStoreError>` | opaque stored resolution; Application decodes to `CommandRejection` |
 | `insertCommitted(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, resultJson)` | authoritative |
 | `insertTerminalRejected(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, terminalErrorJson)` | authoritative, no event |
 | `recordResolvingAttempt(commandId, outcome, startedAt, settledAt)` | resolving attempt (Committed / TerminalRejected); written in the **command transaction** (03 §3.1/§3.2) |
