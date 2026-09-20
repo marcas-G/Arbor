@@ -148,17 +148,33 @@ QuiescenceControlMutation
 - Both classes still require authoritative fencing; neither may use a
   transaction-external pre-check as final authority.
 
-`CommandHandler` gains a declared `stopAdmission`:
+`CommandHandler` gains a declared `stopAdmission` as an explicit ADT (never a
+boolean):
 
 ```ts
 type StopAdmission =
-  | "Normal"             // NormalExecutionMutation
-  | "QuiescenceControl"  // QuiescenceControlMutation
-  | "Unclassified";      // Admit/Stop/Recovery; not in the dichotomy
+  | { readonly _tag: "NormalExecutionMutation" }
+  | { readonly _tag: "QuiescenceControlMutation" }
+  | { readonly _tag: "StopControl" }     // StopExecution itself
+  | { readonly _tag: "Unclassified" };   // System / RecoveryController only
 ```
 
+Stop-admission policy (fail-closed; the hook is evaluated only for
+`ExecutionOrigin`):
+
+```text
+NormalExecutionMutation  -> ExecutionStopping if stop_requested_at != null
+QuiescenceControlMutation-> Pass (fence still authoritative)
+StopControl              -> Pass (the stop request itself)
+Unclassified             -> defect for ExecutionOrigin;
+                            valid only for System / RecoveryController
+```
+
+Any future Execution-originated command MUST declare
+`NormalExecutionMutation` or `QuiescenceControlMutation`; `Unclassified` is
+reserved for the P2 commands whose origin is System / RecoveryController.
 The gateway passes `handler.stopAdmission` to the `FenceStopCheck` hook
-(`02` §4); the hook is only evaluated for `ExecutionOrigin`.
+(`02` §4).
 
 ## 4. Authority exact-match (P2)
 
