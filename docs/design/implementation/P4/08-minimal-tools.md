@@ -67,6 +67,9 @@ policy evaluation (deterministic, before sandbox execution):
 
 - The policy mechanism is frozen here; concrete allow/deny lists and limits are
   empirical/configurable.
+- The approval requirement is evaluated **per intent** (a policy predicate),
+  not a static per-tool flag: `shell` requires an `InvocationApproval` only for
+  destructive commands.
 - Raw stdout/stderr above the bounded size become Artifacts (`07` §5).
 
 ## 5. Organizational actions are excluded

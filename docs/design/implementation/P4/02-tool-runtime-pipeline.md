@@ -41,7 +41,9 @@ Steps:
 3. **Responsibility authority** — deterministic exact-match against the trusted
    `InvocationAuthority` (`03` §2).
 4. **Permission / Approval** — capability-ceiling check + `InvocationApproval`
-   match/consume (`03` §3–§4).
+   match/consume (`03` §3–§4). Whether an approval is required is evaluated
+   **per intent** by the tool's policy predicate (e.g. `shell` destructive
+   classification), not by a static per-tool flag.
 5. **Resource admission** — validate-only ownership check (`05` §3).
 6. **Sandbox** — obtain an isolated execution context (`04`).
 7. **Execute** — perform the effect.
