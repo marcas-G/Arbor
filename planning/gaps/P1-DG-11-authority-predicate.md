@@ -22,7 +22,8 @@ no permission store in P1 (`02-port-contracts.md` §4 has no
 pre-computed boolean (`work.ts`, `workspace.ts`) or omit it (`project.ts`).
 
 P1-010/011/012 acceptance ("missing authority rejected") is therefore
-unactionable, while `planning/phases/P1.md` claims `Design Gaps: 0`.
+unactionable. `planning/phases/P1.md` now records this gap (`Design Gaps:
+1 OPEN`).
 
 ## Evidence
 
