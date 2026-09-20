@@ -4,5 +4,6 @@ export * from "./environment.js";
 export * from "./errors.js";
 export * from "./journal.js";
 export * from "./repositories.js";
+export * from "./resources.js";
 export * from "./runtime.js";
 export * from "./session.js";
