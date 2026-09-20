@@ -32,7 +32,7 @@ export interface ToolExecutionResult {
 export interface ToolExecutor {
   readonly name: string;
   readonly write: boolean;
-  readonly requiresApproval: boolean;
+  readonly requiresApproval: (intent: ToolIntent) => boolean;
   readonly execute: (input: {
     readonly intent: ToolIntent;
     readonly definition: ToolDefinition;
@@ -146,7 +146,8 @@ export const ToolRuntimeLive = (
             return denied(authority.reason);
           }
 
-          if (executor.requiresApproval) {
+          const needsApproval = executor.requiresApproval(intent);
+          if (needsApproval) {
             if (intent.approvalId === null) {
               return denied("approval required");
             }
@@ -194,7 +195,7 @@ export const ToolRuntimeLive = (
               intentAt: now,
             }),
           );
-          if (executor.requiresApproval && intent.approvalId !== null) {
+          if (needsApproval && intent.approvalId !== null) {
             const consumed = yield* tx.transact(
               store.consumeApproval(intent.approvalId, intent.invocationId),
             );
