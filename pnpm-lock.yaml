@@ -182,7 +182,40 @@ importers:
         specifier: 5.0.1
         version: 5.0.1(@types/node@24.13.5)(vite@8.3.0(@types/node@24.13.5))
 
+  adapters/environment-local:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
+  adapters/persistence-sqlite:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
+  packages/application:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../ports
+
   packages/domain: {}
+
+  packages/ports:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../domain
 
 packages:
 

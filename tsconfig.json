@@ -1,4 +1,10 @@
 {
   "files": [],
-  "references": [{ "path": "./packages/domain" }]
+  "references": [
+    { "path": "./packages/domain" },
+    { "path": "./packages/ports" },
+    { "path": "./packages/application" },
+    { "path": "./adapters/persistence-sqlite" },
+    { "path": "./adapters/environment-local" }
+  ]
 }
