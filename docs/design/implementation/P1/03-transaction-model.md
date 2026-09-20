@@ -53,7 +53,7 @@ Rules:
   deferred transaction) to guarantee write serialization.
 - Nested `transact` is forbidden; the adapter detects re-entry by the presence
   of a `TransactionScope` in the environment and rejects it.
-- **Every write scope uses `BEGIN IMMEDIATE`** (SQLite), including command
+- **Every `transact` scope uses `BEGIN IMMEDIATE`** (SQLite), including command
   scopes that append events / allocate the project sequence. This serializes
   writers and makes sequence allocation safe (see `05-event-journal.md`).
   `foreign_keys = ON`, WAL, `busy_timeout` (DID §9.1).
