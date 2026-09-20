@@ -41,7 +41,8 @@ See `planning/gaps/README.md` for the index and resolution process.
 | P0 | Functional Domain Kernel | COMPLETE — P0-001 … P0-018 done; see planning/results/P0.result.md |
 | P1 | Persistence + Command Core | COMPLETE — P1-001 … P1-018 done; see planning/results/P1.result.md |
 | P2 | Execution / Session Kernel | COMPLETE — P2-001 … P2-018 done; see planning/results/P2.result.md |
-| P3–P12 | see DID-10 | not authorized |
+| P3 | Provider + Model Context + Minimal Agent Loop | COMPLETE — P3-001 … P3-018 done; see planning/results/P3.result.md |
+| P4–P12 | see DID-10 | not authorized |
 
 Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) and `P1-DG-01` … `P1-DG-11`
 are `RESOLVED`. P0 and P1 planning are frozen. The environment baseline
@@ -50,3 +51,4 @@ are `RESOLVED`. P0 and P1 planning are frozen. The environment baseline
 P0 is COMPLETE (`planning/results/P0.result.md`).
 P1 is COMPLETE (`planning/results/P1.result.md`).
 P2 is COMPLETE (`planning/results/P2.result.md`).
+P3 is COMPLETE (`planning/results/P3.result.md`).
