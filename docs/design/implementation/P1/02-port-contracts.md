@@ -183,7 +183,8 @@ failure (re-resolve + re-evaluate), never an authoritative rejection.
 ProjectRepository / WorkspaceRepository / WorkRepository / SessionRepository
 ResourceOwnershipRepository / CommandStore / DomainEventJournal
 ConsumerOffsetStore / EnvironmentRevisionStore / ConsumerDeadLetterStore
-                                                   -> require TransactionScope
+ProjectionStore                                    -> require TransactionScope
+OwnershipWriteService                               -> opens its own transaction
 ProjectEnvironmentPort                             -> NO TransactionScope (slow I/O)
 Clock / IdGenerator                                -> NO TransactionScope
 CommandStore.recordResolvingAttempt                -> command transaction

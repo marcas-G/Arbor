@@ -120,10 +120,10 @@ P1-001            -> P1-003
 P1-001, P1-002    -> P1-004
 P1-003, P1-004    -> P1-005, P1-006, P1-007
 P1-006            -> P1-008
-P1-002, P1-004    -> P1-009
+P1-002, P1-004, P1-006 -> P1-009
 P1-005, P1-006, P1-009 -> P1-010, P1-011, P1-012
 P1-003, P1-006, P1-009 -> P1-013
-P1-007, P1-008, P1-010, P1-011, P1-012 -> P1-014
+P1-001, P1-003, P1-007, P1-008, P1-010, P1-011, P1-012 -> P1-014
 P1-001, P1-002, P1-007, P1-009 -> P1-015
 P1-013, P1-014, P1-015 -> P1-016
 ```
@@ -140,15 +140,15 @@ P1-013, P1-014, P1-015 -> P1-016
 | P1-006 | `CommandStore` + `DomainEventJournal` | P1-003, P1-004 |
 | P1-007 | Resource ownership + environment revision + resolver | P1-003, P1-004 |
 | P1-008 | Consumer offset + dead-letter + journal boundary | P1-006 |
-| P1-009 | `CommandGateway` + fingerprint | P1-002, P1-004 |
+| P1-009 | `CommandGateway` + fingerprint | P1-002, P1-004, P1-006 |
 | P1-010 | `CreateProject` handler | P1-005, P1-006, P1-009 |
 | P1-011 | `CreateChildWorkspace` handler | P1-005, P1-006, P1-009 |
 | P1-012 | `AssignWork` handler | P1-005, P1-006, P1-009 |
 | P1-013 | Idempotency / replay / concurrent-duplicate tests | P1-003, P1-006, P1-009 |
-| P1-014 | Recovery matrix tests | P1-007, P1-008, P1-010, P1-011, P1-012 |
+| P1-014 | Recovery matrix tests | P1-001, P1-003, P1-007, P1-008, P1-010, P1-011, P1-012 |
 | P1-015 | Architecture tests for new packages | P1-001, P1-002, P1-007, P1-009 |
 | P1-016 | P1 convergence & result record | P1-013, P1-014, P1-015 |
-| P1-017 | Build/test harness wiring | P0-001 |
+| P1-017 | Package skeletons + build/test harness wiring | P0-001 |
 
 ## Authority versions
 
