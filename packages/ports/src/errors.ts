@@ -94,3 +94,34 @@ export interface ModelContextError {
   readonly _tag: "ModelContextError";
   readonly cause: unknown;
 }
+
+// --- P4 ---
+
+export interface ToolRuntimeError {
+  readonly _tag: "ToolRuntimeError";
+  readonly cause: unknown;
+}
+export interface SandboxError {
+  readonly _tag: "SandboxError";
+  readonly cause: unknown;
+}
+export interface ResourceAdmissionError {
+  readonly _tag: "ResourceAdmissionError";
+  readonly cause: unknown;
+}
+export interface ToolInvocationStoreError {
+  readonly _tag: "ToolInvocationStoreError";
+  readonly cause: unknown;
+}
+export interface ArtifactError {
+  readonly _tag: "ArtifactError";
+  readonly cause: unknown;
+}
+export interface BlobStoreError {
+  readonly _tag: "BlobStoreError";
+  readonly cause: unknown;
+}
+export interface ArtifactMetadataError {
+  readonly _tag: "ArtifactMetadataError";
+  readonly cause: unknown;
+}
