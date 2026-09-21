@@ -5,7 +5,7 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0–P6** (complete). Task contracts reference
+Phases: **P0–P6** (complete); **P7** (planning). Task contracts reference
 `docs/design/implementation/<phase>/**`.
 
 ## Authority order
@@ -162,7 +162,10 @@ phase contracts in `docs/design/implementation/P2/**`. P3 tasks project
 `DID v1.7` plus the P3 phase contracts in `docs/design/implementation/P3/**`. P5 tasks project `DID v1.9`
 plus `docs/design/implementation/P5/**`. P6 tasks project `DID v1.9` plus
 the frozen P6 phase contracts in `docs/design/implementation/P6/**`
-(manual governance adoption of D1–D4 with binding constraints).
+(manual governance adoption of D1–D4 with binding constraints). P7 tasks
+project `DID v1.10` plus the frozen P7 phase contracts in
+`docs/design/implementation/P7/**` (contract review Blocking=0; governed by
+the GQ1–GQ7 / v1.10 G1–G6 decisions).
 `Problem & Goals v1.2` / `Scenarios v1.2` / `System Design v1.3` are unchanged.
 
 ## Entry blocker
@@ -171,7 +174,10 @@ P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
 pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
 project `env.sh` wrapper; `pnpm check` is green. **P0–P6 are COMPLETE**;
 all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6 Design Gap
-(see `planning/results/P6.result.md`). See `planning/gaps/`.
+(see `planning/results/P6.result.md`). **P7**: design closure complete
+(DID v1.10 governance diff from GQ1–GQ7; contracts frozen at Blocking=0),
+planning frozen — pending implementation authorization. See
+`planning/gaps/`.
 
 ## P2 dependency graph
 
@@ -373,3 +379,37 @@ P6-014                                  -> P6-015
 | P6-013 | Prompt Programs v1 + dual versioning + eval gate (D4) | P6-004, P6-006, P6-008, P6-010, P6-012 |
 | P6-014 | Acceptance stories A–F + architecture + P5 guard | P6-013 |
 | P6-015 | P6 convergence & result record | P6-014 |
+
+## P7 dependency graph
+
+Authoritative edge list (`X -> Y` means Y depends on X):
+
+```text
+P6-015                          -> P7-001
+P7-001                          -> P7-002
+P7-002                          -> P7-003, P7-004, P7-005, P7-006, P7-007, P7-008
+P7-003                          -> P7-005
+P7-004                          -> P7-007
+P7-005                          -> P7-009, P7-011
+P7-008                          -> P7-010
+P7-003..P7-011                  -> P7-012
+P7-012                          -> P7-013
+```
+
+## P7 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P7-001 | Domain evolution (kinds, specs, event payloads) | P6-015 |
+| P7-002 | P7 DDL + Dependency/Deliverable repositories | P7-001 |
+| P7-003 | DeclareDependency handler + directive | P7-002 |
+| P7-004 | ProduceDeliverable handler + directive | P7-002 |
+| P7-005 | SatisfyDependency handler (exact-bound authority, matcher, wake production) | P7-002, P7-003 |
+| P7-006 | Withdraw / MarkUnfulfillable / Revise handlers | P7-002 |
+| P7-007 | Deliver primitive (SendMessage kind, ChildDelivered wake, directive) | P7-002, P7-004 |
+| P7-008 | Classification single authority (supersedes P5 source; blocking rule; inherited evolution) | P7-002 |
+| P7-009 | Event-driven coordinator (lookup, single command face) | P7-005 |
+| P7-010 | Wait-for graph + DeadlockAttentionRequested | P7-008 |
+| P7-011 | Wake consumption pipeline + composition P7_MIGRATIONS | P7-005 |
+| P7-012 | Acceptance stories A–F + architecture + guards | P7-003..P7-011 |
+| P7-013 | P7 convergence & result record | P7-012 |

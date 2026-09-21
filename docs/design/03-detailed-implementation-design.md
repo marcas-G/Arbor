@@ -1,9 +1,9 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.9  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P5 vertical-slice closure)  
-**Supersedes:** v1.8  
-**Date:** 2026-09-20  
+**Version:** 1.10  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P7 dependency-coordination closure)  
+**Supersedes:** v1.9  
+**Date:** 2026-09-21  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
@@ -81,6 +81,41 @@
 - G6: exact tool parameter/result schemas and the shell policy enforcement
   mechanism are **phase-scoped contract** (P4), not implementation choice; only
   backend/limits/numeric thresholds are implementation/empirical (§13).
+
+**Governance changes (v1.9 → v1.10):**（P7 design-closure 治理裁决 GQ1–GQ7）
+
+- G1 (GQ1): §4.2 Coordination 组正式化 `WithdrawDependency` /
+  `MarkDependencyUnfulfillable` / `ReviseDependencyContract`（§12.11 状态机操作
+  的命令化）；§12.10 补三行（store 均为 DependencyRepository，pipeline 均为
+  application）；§5.3 新增 `DependencyContractRevised` 事件（§4.2、§5.3、§12.10、§12.11）。
+- G2 (GQ2): **`Deliver` 是独立 communication/orchestration primitive，不是新的
+  canonical Deliverable command。** 分工冻结：`ProduceDeliverable` 创建 Deliverable
+  （结果事实）；`Deliver` 投递既有 Deliverable（child→parent 方向的正式交付行为）；
+  `SatisfyDependency` 变更 Dependency 状态。Message kind 集合扩展 `Deliver`
+  （P7 起五 kind；`Report ≠ Deliverable` 维持）；AgentDirective 词表扩展 `Deliver`
+  （§8.15）；成功 Inbox delivery 触发 `ChildDelivered` wake（§8.18）。正交性显式化
+  （并入的原 GQ5）：satisfaction 是 structural 匹配，与 Verification/质量判定正交
+  （质量门在 P8 的 Verification→Acceptance 链；SD §3.7）。
+- G3 (GQ3): **runnability classification 是权威**（single authority）。
+  `RunnableWorkSource` 的 classify 是 Work 是否 runnable 的唯一判定；
+  `active WorkWait` 与 `unresolved blocking Dependency` 均不得被 classify 为
+  Runnable。blocking Dependency := Unsatisfied Dependency 且 consumer Work 存在
+  引用 `DependencyChanged(该依赖)` 的 active WorkWait（等待仍是认知决定）。
+  scheduler `decide()` 不再承担隐藏 blocking 判定（§8.18A 的 runnable 输入
+  语义由 classify 保证）；P5/P6 既有实现作为 inherited evolution 对齐本裁决。
+- G4 (GQ4): §5.3 新增 `DeadlockAttentionRequested` 事件（承载 SD 不变量 42/A3 的
+  Attention 事实）；deadlock 检测是确定性领域逻辑（§7.1），**不产生任何自动
+  lifecycle mutation**（解除依赖/改合同仍是治理命令）。
+- G5 (GQ6): AnyProducer 自动满足采用 **event-driven P7 coordinator**：
+  `DeliverableProduced` 事件驱动 + project-scoped candidate lookup +
+  deterministic structural matcher + 提交 `SatisfyDependency` Command。
+  candidate lookup 的实现形态（扫描/索引）是 implementation choice，
+  **不得把 Project full scan 冻结为合同**。
+- G6 (GQ7): §8.15 AgentDirective 词表扩展 `ProduceDeliverable` /
+  `SatisfyDependency`。定义 exact-bound `SatisfyDependencyAuthority`：来源为
+  `ConsumerExecution`（consumer Work 所在 Workspace 的执行）或 `P7 coordinator`；
+  Agent/Coordinator 只能**请求** satisfaction，最终 matcher 始终 authoritative；
+  自动路径与 agent 路径必须共用同一个 `SatisfyDependency` Command（单一命令面）。
 
 **Governance changes (v1.8 → v1.9):**
 
@@ -827,6 +862,20 @@ P0 不引入 metadata query DSL、regex predicate、semantic similarity、LLM ma
 
 `Message` 只用于需要认知处理的 Query / Reply / Report / DecisionRequest / HumanInput 等通信，不作为 universal system envelope。`Inbox` 是未消费输入的 projection。
 
+**Deliver primitive（v1.10 G2）**：`Deliver` 是独立 communication/orchestration
+primitive，不是新的 canonical Deliverable command。分工冻结：
+
+```text
+ProduceDeliverable  创建 Deliverable（结果事实，绑定 source Work revision）
+Deliver             投递既有 Deliverable（child → parent 方向的正式交付行为）
+SatisfyDependency   变更 Dependency 状态（structural matcher 始终 authoritative）
+```
+
+- Message kind 集合自 P7 起扩展 `Deliver`（`Report ≠ Deliverable` 维持）；
+  Deliver 消息引用既有 deliverableId，成功 Inbox delivery 触发 `ChildDelivered` wake。
+- satisfaction 是 structural 匹配，与 Verification/质量判定正交（质量门在 P8 的
+  Verification → Acceptance 链）。
+
 ---
 
 # 2. DID-2 — Identity Model
@@ -1401,6 +1450,9 @@ SteerWork
 DeclareDependency
 SatisfyDependency
 ProduceDeliverable
+WithdrawDependency
+MarkDependencyUnfulfillable
+ReviseDependencyContract
 SendMessage
 ```
 
@@ -1542,8 +1594,10 @@ DependencyDeclared
 DependencySatisfied
 DependencyWithdrawn
 DependencyMarkedUnfulfillable
+DependencyContractRevised
 DeliverableProduced
 MessageSent
+DeadlockAttentionRequested
 
 VerificationStarted
 VerificationConcluded
@@ -2772,6 +2826,9 @@ DeclareDependency
 RequestGovernance
 SpawnSpecialist
 ProposeChildWorkspace
+ProduceDeliverable
+Deliver
+SatisfyDependency
 LoadSkill
 ChangeMode
 CompletionClaim
@@ -2934,6 +2991,8 @@ Recovery
 
 Continuation Program 和 Context selection 根据 WakeReason 定制，而不是每次加载最后 N 条消息。
 
+`ChildDelivered` 由成功的 Deliver Inbox delivery 触发（v1.10 G2；P7 接线）。
+
 ## 8.18A Deterministic Workspace Re-evaluation
 
 Scheduler 每次 reevaluate Workspace：
@@ -2958,6 +3017,12 @@ else:
 | currentWorkId=None，runnable>1 | Admit Coordination Execution |
 
 Coordination Execution 的语义职责仅是处理多个候选 Work/coordination input，并可以提交 `SelectCurrentWork`。`Yielded` 不携带 suggestedNextWorkId，避免引入第二套隐式 Work-selection 语义。
+
+**Runnability single authority（v1.10 G3）**：`RunnableWorkSource` 的 classify 是 Work
+是否 runnable 的唯一权威判定——`active WorkWait` 与 `unresolved blocking Dependency`
+均不得被 classify 为 Runnable（blocking Dependency := Unsatisfied Dependency 且 consumer
+Work 存在引用 `DependencyChanged(该依赖)` 的 active WorkWait）。上表的 "active WorkWait"
+列因此是 classify 已保证事实的呈现输入，`decide()` 不承担隐藏 blocking 判定。
 
 Ownership（P2 冻结）：P2 提供 ExecutionScheduler 与 durable wake/timer 机制，使该 re-evaluation
 可在无 Active Main Execution 时被确定性触发；**P7** 拥有完整的 runnable/dependency reevaluation
@@ -3645,18 +3710,21 @@ formation/handoff behavior on top of it.)
 ## P7 — Dependency / Deliverable Coordination
 
 ```text
-DeclareDependency
+DeclareDependency / WithdrawDependency / MarkDependencyUnfulfillable / ReviseDependencyContract
 ProduceDeliverable
-SatisfyDependency
+Deliver (communication/orchestration primitive, v1.10 G2)
+SatisfyDependency (single command face; exact-bound authority, v1.10 G6)
 Wait-for Graph
-Deadlock Attention
-automatic runnable reevaluation
+Deadlock Attention (DeadlockAttentionRequested, v1.10 G4)
+automatic runnable reevaluation (classification is the single authority, v1.10 G3)
+event-driven P7 coordinator (AnyProducer auto-satisfaction, v1.10 G5)
 ```
 
-P7 implements `DeclareDependency` and supersedes the provisional P5
-`RunnableWorkSource` implementation with the full dependency-aware one; in P5
-those directives return a non-fatal `DirectiveUnsupported` directive execution
-result (DID v1.9 G2/G3).
+P7 implements `DeclareDependency` / `ProduceDeliverable` / `SatisfyDependency`
+directives and supersedes the provisional P5 `RunnableWorkSource`
+implementation with the full dependency-aware one; in P5/P6 those directives
+return a non-fatal `DirectiveUnsupported` directive execution result
+(DID v1.9 G2/G3).
 
 ## P8 — Agentic Verification
 
@@ -3985,6 +4053,9 @@ normalizedRegion
 | Work completion | CompleteWork | WorkCompleted | Work + Acceptance + Verification repositories | application | PASS + Acceptance bind current Work revision |
 | Work cancellation | CancelWork | WorkCancelled | WorkRepository | application | only Open → Cancelled |
 | Dependency | DeclareDependency / SatisfyDependency | DependencyDeclared / DependencySatisfied | DependencyRepository | application | satisfaction binds current dependency revision |
+| Dependency (terminal transitions) | WithdrawDependency / MarkDependencyUnfulfillable | DependencyWithdrawn / DependencyMarkedUnfulfillable | DependencyRepository | application | v1.10 G1; Unsatisfied-only, revision-bound; Unfulfillable emits Attention |
+| Dependency (contract revision) | ReviseDependencyContract | DependencyContractRevised | DependencyRepository | application | v1.10 G1; revision++, never reinterprets prior satisfaction |
+| Deadlock attention | — (derived fact) | DeadlockAttentionRequested | — (projection-consumed) | coordination consumer | v1.10 G4; deterministic detection; no automatic lifecycle mutation |
 | Deliverable | ProduceDeliverable | DeliverableProduced | DeliverableRepository | application | source Work revision fixed |
 | Message | SendMessage | MessageSent | MessageStore | application / communication | durable communication ≠ canonical mutation envelope |
 | Verification | Start / RecordEvidence / Conclude | VerificationStarted / VerificationConcluded | VerificationRepository | verification + application | verdict immutable; version-bound |
