@@ -412,3 +412,79 @@ export const P6_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 4, name: "tool_runtime", sql: P4_DDL },
   { id: 5, name: "p6_formation_communication", sql: P6_DDL },
 ];
+
+/** P7 `01` §10: dependencies (state+revision CAS), deliverables and
+ * deliverable_artifacts (immutable — no update path, No.49 binding). */
+const P7_DDL = `
+CREATE TABLE dependencies (
+  dependency_id                TEXT PRIMARY KEY,
+  project_id                   TEXT NOT NULL REFERENCES projects(project_id),
+  consumer_work_id             TEXT NOT NULL REFERENCES works(work_id),
+  producer_binding             TEXT NOT NULL,
+  expected_deliverable         TEXT NOT NULL,
+  revision                     INTEGER NOT NULL CHECK (revision >= 0),
+  state                        TEXT NOT NULL CHECK (state IN ('Unsatisfied','Satisfied','Withdrawn','Unfulfillable')),
+  satisfied_by_deliverable_id  TEXT,
+  satisfied_at_dependency_revision INTEGER,
+  created_at                   TEXT NOT NULL,
+  updated_at                   TEXT NOT NULL
+);
+
+CREATE INDEX idx_dependencies_consumer ON dependencies(consumer_work_id, state);
+CREATE INDEX idx_dependencies_state ON dependencies(project_id, state);
+
+CREATE TABLE deliverables (
+  deliverable_id       TEXT PRIMARY KEY,
+  project_id           TEXT NOT NULL REFERENCES projects(project_id),
+  source_work_id       TEXT NOT NULL REFERENCES works(work_id),
+  source_work_revision INTEGER NOT NULL,
+  kind                 TEXT NOT NULL,
+  created_at           TEXT NOT NULL
+);
+
+CREATE INDEX idx_deliverables_source_work ON deliverables(source_work_id);
+
+CREATE TABLE deliverable_artifacts (
+  deliverable_id  TEXT NOT NULL REFERENCES deliverables(deliverable_id),
+  role            TEXT NOT NULL,
+  artifact_id     TEXT NOT NULL,
+  PRIMARY KEY (deliverable_id, role, artifact_id)
+);
+`;
+
+/** TASK DEVIATION (P7-007, governance-approved): migration id 7 rebuilds the
+ * messages table to widen the kind CHECK to the five frozen P7 kinds
+ * (Query|Reply|Report|DecisionRequest|Deliver). Inherited persistence
+ * evolution from the frozen P7 vocabulary (v1.10 G2) — not a Design Gap.
+ * Everything else (columns, constraints, index, data) is preserved. */
+const P7_MESSAGES_V7_DDL = `
+CREATE TABLE messages_v7 (
+  message_id             TEXT PRIMARY KEY,
+  sender_workspace_id    TEXT NOT NULL,
+  recipient_workspace_id TEXT NOT NULL,
+  kind                   TEXT NOT NULL CHECK (kind IN ('Query','Reply','Report','DecisionRequest','Deliver')),
+  body_ref               TEXT NOT NULL,
+  correlation_id         TEXT,
+  causation_id           TEXT,
+  sent_at                TEXT NOT NULL
+);
+
+INSERT INTO messages_v7 (message_id, sender_workspace_id, recipient_workspace_id, kind, body_ref, correlation_id, causation_id, sent_at)
+  SELECT message_id, sender_workspace_id, recipient_workspace_id, kind, body_ref, correlation_id, causation_id, sent_at FROM messages;
+
+DROP TABLE messages;
+
+ALTER TABLE messages_v7 RENAME TO messages;
+
+CREATE INDEX idx_messages_correlation ON messages(correlation_id);
+`;
+
+export const P7_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  { id: 1, name: "init", sql: DDL },
+  { id: 2, name: "execution_session_kernel", sql: P2_DDL },
+  { id: 3, name: "provider_model_context", sql: P3_DDL },
+  { id: 4, name: "tool_runtime", sql: P4_DDL },
+  { id: 5, name: "p6_formation_communication", sql: P6_DDL },
+  { id: 6, name: "p7_dependency_deliverable", sql: P7_DDL },
+  { id: 7, name: "p7_messages_deliver_kind", sql: P7_MESSAGES_V7_DDL },
+];

@@ -27,7 +27,7 @@ import {
   LeaseServiceLive,
   layer,
   MessageStoreLive,
-  P4_MIGRATIONS,
+  P7_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   ResourceOwnershipRepositoryLive,
@@ -224,4 +224,4 @@ export const buildSliceLayer = (
   ) as Layer.Layer<SliceServices>;
 };
 
-export { P4_MIGRATIONS, runMigrations };
+export { P7_MIGRATIONS, runMigrations };

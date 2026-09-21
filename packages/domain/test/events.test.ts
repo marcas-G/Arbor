@@ -31,6 +31,8 @@ const EXPECTED_EVENTS = [
   "DependencySatisfied",
   "DependencyWithdrawn",
   "DependencyMarkedUnfulfillable",
+  "DependencyContractRevised",
+  "DeadlockAttentionRequested",
   "DeliverableProduced",
   "MessageSent",
   "VerificationStarted",
@@ -55,9 +57,12 @@ const AGGREGATE_SNAPSHOT_FIELDS = [
   "verdict",
   "artifacts",
   "state",
-  "revision",
   "projectPolicy",
   "workspacePolicy",
+  // "revision" is NOT an aggregate-snapshot field: DID §2.3 / P7 `01` freeze
+  // revision *binding* as event-level change facts (targetDependencyRevision,
+  // sourceWorkRevision, fromRevision/toRevision). What the ban targets is
+  // whole-aggregate snapshots, not ordinal bindings.
 ];
 
 describe("domain event catalog", () => {
@@ -77,11 +82,13 @@ describe("domain event catalog", () => {
   });
 
   it("payloads carry change facts, not aggregate snapshots", () => {
+    // P7 (P7 `01` events): the coordination events carry contract payload
+    // fields (change facts), not aggregate snapshots.
+    const payload = EVENT_CATALOG as Record<string, { fields?: object }>;
     for (const name of Object.keys(EVENT_CATALOG)) {
-      const payload: Record<string, unknown> = { _tag: name };
-      expect(Object.keys(payload)).toEqual(["_tag"]);
+      const fields = Object.keys(payload[name]?.fields ?? { _tag: name });
       for (const forbidden of AGGREGATE_SNAPSHOT_FIELDS) {
-        expect(forbidden in payload).toBe(false);
+        expect(fields).not.toContain(forbidden);
       }
     }
   });
