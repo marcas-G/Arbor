@@ -14,7 +14,7 @@ const parseCriteria = (result: string) => {
   });
 };
 
-describe("P0 result record", () => {
+describe("phase result records", () => {
   it("has exactly one entry per §14.5 criterion 1-15", () => {
     const criteria = parseCriteria(read("planning/results/P0.result.md"));
     expect(
@@ -31,9 +31,17 @@ describe("P0 result record", () => {
     expect(openRows).toEqual([]);
   });
 
-  it("reflects P0–P4 completion", () => {
+  it("has exactly one PASS entry per P5 exit criterion 1-11", () => {
+    const criteria = parseCriteria(read("planning/results/P5.result.md"));
+    expect(
+      criteria.map((criterion) => criterion.number).sort((a, b) => a - b),
+    ).toEqual(Array.from({ length: 11 }, (_, index) => index + 1));
+    expect(criteria.every((criterion) => criterion.status)).toBe(true);
+  });
+
+  it("reflects P0–P5 completion", () => {
     const readme = read("planning/README.md");
-    for (const phase of ["P0", "P1", "P2", "P3", "P4"]) {
+    for (const phase of ["P0", "P1", "P2", "P3", "P4", "P5"]) {
       expect(readme).toMatch(
         new RegExp(`\\|\\s*${phase}\\s*\\|[^|]*\\|[^|]*complete`, "i"),
       );
