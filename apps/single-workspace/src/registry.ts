@@ -2,6 +2,7 @@ import {
   type CommandHandler,
   CommandHandlerRegistry,
   makeP1CommandHandlers,
+  makeSelectCurrentWorkHandler,
 } from "@arbor/application";
 import { makeP2CommandHandlers } from "@arbor/execution-runtime";
 import {
@@ -39,6 +40,11 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
     const workWaits = yield* WorkWaitStore;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
       ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
+      makeSelectCurrentWorkHandler({
+        workspaces,
+        works,
+        executions,
+      }) as unknown as CommandHandler<unknown, unknown>,
       ...makeP2CommandHandlers({
         projects,
         workspaces,

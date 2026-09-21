@@ -54,6 +54,37 @@ interface SliceRuntime {
 - Restart = `stop` + construct a new `SliceRuntime` against the same DB file
   (P2 owns the recovery mechanism; P5 proves continuity — G5).
 
+### 3.1 Scheduler decision handling (P5-DG-01 resolution)
+
+The slice loop consumes the frozen `ExecutionScheduler` decision table
+(DID §8.18A) and never re-decides it. Ownership is split:
+
+- **Selection decision** — which Work should become current / be admitted — is
+  owned by the scheduler evaluator (P2; later P7 runnability). The slice only
+  reads the returned `SchedulerDecision`.
+- **Canonical mutation execution** — applying `SelectCurrentWork` /
+  `AdmitExecution` — is owned by the Application command handlers and is
+  performed **only** through `CommandGateway`.
+
+```text
+decision = scheduler.reevaluate(workspaceId, wakeReason)
+if decision is SelectCurrentWork(workId):        # exact evaluator output
+    gateway.execute(SelectCurrentWork { workspaceId, workId, expectedRevision })
+    decision = scheduler.reevaluate(workspaceId, wakeReason)
+if decision is Admit(focus):
+    gateway.execute(AdmitExecution { executionId (caller-preallocated), focus })
+```
+
+- P5 never chooses the Work itself and never mutates a repository directly.
+- `SelectCurrentWork`'s canonical mutation is an **Application** command handler
+  (same shape as the P1 commands); P5 provides its first implementation and
+  integration. P1's frozen command set is unchanged (no new
+  `setCurrentWorkId` command).
+- The mutation runs only after the evaluator returns an exact
+  `SelectCurrentWork(workId)`; the loop forwards that `workId` verbatim.
+- P6/P7 own the broader governance around current-Work selection and reuse the
+  same Application handler.
+
 ## 4. Provider (G6)
 
 - The composition root wires the deterministic `provider-fake`; CI and P5

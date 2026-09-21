@@ -10,23 +10,29 @@ and the deterministic Fake Provider (G6):
 
 ```text
 1.  CreateProject + AssignWork (P1 commands)          -> Open Work, session
-2.  Scheduler.reevaluate (02 provisional source)      -> Admit Work(current)
-3.  AdmitExecution (P2)                                -> durable Execution, lease
-4.  real ExecutionDriverPort (P3) drive
-5.  prepareTurn (P3)                                   -> Ready, Manifest
-6.  ProviderRuntime + Fake Provider                    -> CanonicalProviderEvents
-7.  decodeTurn -> InvokeTool (P3)                      -> AgentDirective
-8.  ToolRuntimePort.invoke (P4)                        -> CanonicalToolObservation
-9.  Observation appended to the fixed Session          -> session entry
-10. next turn: prepareTurn sees the Observation        -> multi-turn continuity
-11. Yield(reason, waitSpec)                            -> Completed(Yielded)
-12. WorkWait registered (P2, same tx)                  -> Work stays Open
-13. wake (durable) -> Scheduler.reevaluate             -> new Execution
-14. continuation on the SAME primarySessionId
-15. CompletionClaim                                    -> Completed(CompletionClaimed)
-16. Execution settled; Work remains Open (P8 owns the Verification/Acceptance chain)
-17. restart: stop runtime, reconstruct on same DB      -> same Work/Session, loop resumes
+2.  Scheduler.reevaluate (02 provisional source)      -> SelectCurrentWork(theOne)
+3.  SelectCurrentWork command (Application; `01` §3.1) -> workspace.currentWorkId
+4.  Scheduler.reevaluate                              -> Admit Work(current)
+5.  AdmitExecution (P2)                                -> durable Execution, lease
+6.  real ExecutionDriverPort (P3) drive
+7.  prepareTurn (P3)                                   -> Ready, Manifest
+8.  ProviderRuntime + Fake Provider                    -> CanonicalProviderEvents
+9.  decodeTurn -> InvokeTool (P3)                      -> AgentDirective
+10. ToolRuntimePort.invoke (P4)                        -> CanonicalToolObservation
+11. Observation appended to the fixed Session          -> session entry
+12. next turn: prepareTurn sees the Observation        -> multi-turn continuity
+13. Yield(reason, waitSpec)                            -> Completed(Yielded)
+14. WorkWait registered (P2, same tx)                  -> Work stays Open
+15. wake (durable) -> Scheduler.reevaluate             -> new Execution
+16. continuation on the SAME primarySessionId
+17. CompletionClaim                                    -> Completed(CompletionClaimed)
+18. Execution settled; Work remains Open (P8 owns the Verification/Acceptance chain)
+19. restart: stop runtime, reconstruct on same DB      -> same Work/Session, loop resumes
 ```
+
+Step 2–4 exercise the scheduler-decision / command-execution split (`01` §3.1):
+the loop forwards the evaluator's exact `SelectCurrentWork(workId)` to the
+Application command and never selects a Work itself.
 
 - Work is **`Open`** at the end (no `CompleteWork`); the `ExecutionSettled`
   event is the P8 hand-off.

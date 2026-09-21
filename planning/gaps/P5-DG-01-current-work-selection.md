@@ -2,7 +2,33 @@
 
 ## Status
 
-**OPEN** — awaiting manual governance. P5-009 is blocked.
+**RESOLVED** — manual governance chose option 2: distinguish the **selection
+decision** (P2/P7 scheduling/runnability ownership) from the **canonical
+mutation execution** (Application ownership). P5 implements and integrates the
+`SelectCurrentWork` Application command handler and executes it **only** through
+`CommandGateway` after the frozen evaluator returns an exact
+`SelectCurrentWork(workId)` decision — never selecting a Work itself and never
+mutating a repository directly. No new P1 `setCurrentWorkId` command was added.
+
+Resolved by governance wording in:
+
+- `docs/design/implementation/P5/01-composition-root.md` §3.1 (new — the
+  decision/execution split and the loop algorithm).
+- `docs/design/implementation/P5/05-slice-acceptance.md` §1 (steps renumbered;
+  step 3 is now the `SelectCurrentWork` command).
+- `docs/design/implementation/P2/05-scheduler-wait.md` §4 (ownership note: P2
+  decides, the Application executes, P5 first integrates, P6/P7 reuse).
+
+Implementation:
+
+- `packages/application/src/authority.ts` — `SelectCurrentWorkAuthority`.
+- `packages/application/src/commands/select-current-work.ts` — the canonical
+  mutation handler (reuses the frozen `selectCurrentWork` domain transition).
+- `apps/single-workspace/src/registry.ts` — registers the handler.
+- `apps/single-workspace/src/loop.ts` — `evaluateAndSelect` (forwards the
+  evaluator's exact `workId`) + `admitExecution`.
+- `apps/single-workspace/test/p5-slice-acceptance.test.ts` — story restored:
+  `AssignWork → reevaluate → SelectCurrentWork command → reevaluate → Admit`.
 
 ## Owning design documents
 
