@@ -14,7 +14,10 @@ import {
   DomainEventJournal,
   type DomainEventJournalError,
   type ExecutionRepositoryError,
+  type FormationProposalStoreError,
   IdGenerator,
+  type InboxProjectionStoreError,
+  type MessageStoreError,
   type PendingDomainEvent,
   type ProjectRepositoryError,
   type SchedulerTimerStoreError,
@@ -65,7 +68,10 @@ export type CommandHandlerError =
   | WorkWaitStoreError
   | SchedulerTimerStoreError
   | CommandStoreError
-  | DomainEventJournalError;
+  | DomainEventJournalError
+  | FormationProposalStoreError
+  | MessageStoreError
+  | InboxProjectionStoreError;
 
 export interface CommandHandler<C, R> {
   readonly commandType: string;

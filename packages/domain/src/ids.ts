@@ -36,6 +36,7 @@ export const ID_PREFIXES = {
   ProviderTurnId: "ptn_",
   ToolInvocationId: "tin_",
   WorkerId: "wkr_",
+  FormationProposalId: "fpr_",
 } as const;
 
 export type IdTypeName = keyof typeof ID_PREFIXES;
@@ -81,6 +82,10 @@ export const ToolInvocationId = makeIdSchema(
   "ToolInvocationId",
 );
 export const WorkerId = makeIdSchema(ID_PREFIXES.WorkerId, "WorkerId");
+export const FormationProposalId = makeIdSchema(
+  ID_PREFIXES.FormationProposalId,
+  "FormationProposalId",
+);
 
 export const ID_SCHEMAS = {
   ProjectId,
@@ -103,6 +108,7 @@ export const ID_SCHEMAS = {
   ProviderTurnId,
   ToolInvocationId,
   WorkerId,
+  FormationProposalId,
 } as const satisfies Record<IdTypeName, unknown>;
 
 export type ProjectId = Schema.Schema.Type<typeof ProjectId>;
@@ -125,6 +131,9 @@ export type EventId = Schema.Schema.Type<typeof EventId>;
 export type ProviderTurnId = Schema.Schema.Type<typeof ProviderTurnId>;
 export type ToolInvocationId = Schema.Schema.Type<typeof ToolInvocationId>;
 export type WorkerId = Schema.Schema.Type<typeof WorkerId>;
+export type FormationProposalId = Schema.Schema.Type<
+  typeof FormationProposalId
+>;
 
 export const PREFIX_TO_ID: Record<string, IdTypeName> = Object.fromEntries(
   Object.entries(ID_PREFIXES).map(([name, prefix]) => [

@@ -21,9 +21,12 @@ import {
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
   ExecutionRepositoryLive,
+  FormationProposalStoreLive,
   IdGeneratorLive,
+  InboxProjectionStoreLive,
   LeaseServiceLive,
   layer,
+  MessageStoreLive,
   P4_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
@@ -133,6 +136,9 @@ export const buildSliceLayer = (
     Layer.provide(SchedulerTimerStoreLive, infra),
     Layer.provide(ResourceOwnershipRepositoryLive, infra),
     Layer.provide(EnvironmentRevisionStoreLive, infra),
+    Layer.provide(FormationProposalStoreLive, infra),
+    Layer.provide(MessageStoreLive, infra),
+    Layer.provide(InboxProjectionStoreLive, infra),
     repo,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
     ProjectEnvironmentPortLive,
@@ -152,9 +158,14 @@ export const buildSliceLayer = (
       infra,
     ),
   );
+  const registry = Layer.provide(SliceCommandHandlerRegistryLive, repos);
+  const gateway = Layer.provide(
+    CommandGatewayLive,
+    Layer.mergeAll(infra, registry, repos, fence),
+  );
   const directiveHandlers = Layer.provide(
     SliceDirectiveHandlersLive,
-    Layer.mergeAll(toolRuntime, skills, repos, infra),
+    Layer.mergeAll(toolRuntime, skills, repos, infra, registry, gateway),
   );
   const driver = Layer.provide(
     Layer.unwrap(
@@ -204,7 +215,8 @@ export const buildSliceLayer = (
     ReconciliationSourceStubLive,
     RuntimeSafetyGateLive(),
     capability,
-    Layer.provide(SliceCommandHandlerRegistryLive, repos),
+    registry,
+    gateway,
   );
   return Layer.mergeAll(
     all,

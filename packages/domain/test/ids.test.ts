@@ -35,6 +35,8 @@ const EXPECTED_IDS = [
   "ProviderTurnId",
   "ToolInvocationId",
   "WorkerId",
+  // P6 `01` §4.1 (D1): governance-entity id, phase-contract evolution
+  "FormationProposalId",
 ].sort();
 
 describe("typed ids", () => {

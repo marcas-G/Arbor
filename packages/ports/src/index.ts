@@ -3,6 +3,7 @@ export * from "./consumer.js";
 export * from "./environment.js";
 export * from "./errors.js";
 export * from "./execution.js";
+export * from "./formation.js";
 export * from "./journal.js";
 export * from "./provider.js";
 export * from "./repositories.js";
