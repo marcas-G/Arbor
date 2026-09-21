@@ -45,7 +45,7 @@ import {
   admitExecution,
   buildSliceLayer,
   evaluateAndSelect,
-  P4_MIGRATIONS,
+  P7_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
 
@@ -200,7 +200,7 @@ describe("P5 vertical-slice acceptance", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P4_MIGRATIONS);
+          yield* runMigrations(P7_MIGRATIONS);
           const gateway = yield* CommandGateway;
           const scheduler = yield* ExecutionScheduler;
           const sql = yield* SqlClient;

@@ -289,3 +289,29 @@ export const markUnfulfillableOnProducerLoss = (
     );
     return affected ? { ...dependency, state: "Unfulfillable" } : dependency;
   });
+
+// --- P7 directive specs (P7 `01` §9, `02` §8; DID v1.10 §8.15) ---
+
+/** DeclareDependency directive payload (consumer side). */
+export interface DeclareDependencySpec {
+  readonly consumerWorkId: WorkId;
+  readonly producerBinding: ProducerBinding;
+  readonly expectedDeliverable: ExpectedDeliverable;
+}
+
+/** ProduceDeliverable directive payload (producer side). */
+export interface ProduceDeliverableSpec {
+  readonly sourceWorkId: WorkId;
+  readonly kind: DeliverableKind;
+  readonly artifacts: ReadonlyArray<{
+    readonly role: ArtifactRole;
+    readonly artifactId: ArtifactId;
+  }>;
+}
+
+/** SatisfyDependency directive payload (consumer side; the matcher stays
+ * authoritative — request ≠ satisfaction, v1.10 G6). */
+export interface SatisfyDependencySpec {
+  readonly dependencyId: DependencyId;
+  readonly deliverableId: DeliverableId;
+}

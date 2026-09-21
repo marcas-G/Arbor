@@ -41,22 +41,54 @@ export const WorkRefined = Schema.TaggedStruct("WorkRefined", {});
 export const WorkCompleted = Schema.TaggedStruct("WorkCompleted", {});
 export const WorkCancelled = Schema.TaggedStruct("WorkCancelled", {});
 export const WorkSteered = Schema.TaggedStruct("WorkSteered", {});
-export const DependencyDeclared = Schema.TaggedStruct("DependencyDeclared", {});
-export const DependencySatisfied = Schema.TaggedStruct(
-  "DependencySatisfied",
-  {},
-);
-export const DependencyWithdrawn = Schema.TaggedStruct(
-  "DependencyWithdrawn",
-  {},
+export const DependencyDeclared = Schema.TaggedStruct("DependencyDeclared", {
+  dependencyId: Schema.String,
+  consumerWorkId: Schema.String,
+  producerBinding: Schema.Unknown,
+  expectedDeliverable: Schema.Unknown,
+  revision: Schema.Number,
+});
+export const DependencySatisfied = Schema.TaggedStruct("DependencySatisfied", {
+  dependencyId: Schema.String,
+  targetDependencyRevision: Schema.Number,
+  deliverableId: Schema.String,
+  satisfiedAtDependencyRevision: Schema.Number,
+});
+export const DependencyWithdrawn = Schema.TaggedStruct("DependencyWithdrawn", {
+  dependencyId: Schema.String,
+  dependencyRevision: Schema.Number,
+  reason: Schema.String,
+});
+export const DependencyContractRevised = Schema.TaggedStruct(
+  "DependencyContractRevised",
+  {
+    dependencyId: Schema.String,
+    fromRevision: Schema.Number,
+    toRevision: Schema.Number,
+  },
 );
 export const DependencyMarkedUnfulfillable = Schema.TaggedStruct(
   "DependencyMarkedUnfulfillable",
-  {},
+  {
+    dependencyId: Schema.String,
+    dependencyRevision: Schema.Number,
+    justification: Schema.String,
+  },
 );
-export const DeliverableProduced = Schema.TaggedStruct(
-  "DeliverableProduced",
-  {},
+export const DeliverableProduced = Schema.TaggedStruct("DeliverableProduced", {
+  deliverableId: Schema.String,
+  sourceWorkId: Schema.String,
+  sourceWorkRevision: Schema.Number,
+  kind: Schema.String,
+  artifactRoles: Schema.Array(Schema.String),
+});
+export const DeadlockAttentionRequested = Schema.TaggedStruct(
+  "DeadlockAttentionRequested",
+  {
+    cycleWorkIds: Schema.Array(Schema.String),
+    dependencyIds: Schema.Array(Schema.String),
+    detectedAt: Schema.String,
+  },
 );
 export const MessageSent = Schema.TaggedStruct("MessageSent", {});
 export const VerificationStarted = Schema.TaggedStruct(
@@ -105,6 +137,8 @@ export const DomainEventPayload = Schema.Union([
   WorkSteered,
   DependencyDeclared,
   DependencySatisfied,
+  DependencyContractRevised,
+  DeadlockAttentionRequested,
   DependencyWithdrawn,
   DependencyMarkedUnfulfillable,
   DeliverableProduced,
@@ -143,8 +177,10 @@ export const EVENT_CATALOG = {
   WorkSteered,
   DependencyDeclared,
   DependencySatisfied,
+  DependencyContractRevised,
   DependencyWithdrawn,
   DependencyMarkedUnfulfillable,
+  DeadlockAttentionRequested,
   DeliverableProduced,
   MessageSent,
   VerificationStarted,

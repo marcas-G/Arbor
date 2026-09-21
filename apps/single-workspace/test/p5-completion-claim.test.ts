@@ -25,7 +25,7 @@ import {
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { buildSliceLayer, P4_MIGRATIONS, runMigrations } from "../src/index.js";
+import { buildSliceLayer, P7_MIGRATIONS, runMigrations } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -174,7 +174,7 @@ describe("P5 CompletionClaim", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P4_MIGRATIONS);
+          yield* runMigrations(P7_MIGRATIONS);
           yield* seed;
           yield* admit(
             parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),

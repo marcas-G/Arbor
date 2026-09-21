@@ -1,7 +1,7 @@
-# P7-GAP-01 — Vacant-workspace dependency has no attention channel (OPEN)
+# P7-GAP-01 — Vacant-workspace dependency attention channel (DEFERRED to P10)
 
 **Raised:** 2026-09-21, P7 contract targeted review (round 2, B-2 zero-candidate branch).
-**Status:** OPEN — requires manual governance; P7 proceeds with the honest limitation recorded.
+**Disposition:** 2026-09-21, at P7 formal closure — **DEFERRED to P10 (Projection/Attention owner)**, option 3 realized as an L6 derived view rather than a new runtime event. See rationale below.
 
 ## Fact pattern
 
@@ -22,16 +22,42 @@ Net effect: permanent silent waiting, which invariant No.55 exists to prevent.
 workspace or a **Cancelled** target work as ProducerBinding (only "not found");
 `01` §2 — the dependency would be declared against a dead producer.
 
-## Options for governance (do not implement without a ruling)
+## Governance disposition (2026-09-21)
 
-1. `DeclareDependency` rejects structurally-dead producer targets (retired ws /
-   Cancelled work) — closes the adjacent hole at admission time.
-2. Vacant-target declaration requires either an existing producer or an explicit
-   `Manual` escalation marker (attention at declare time).
-3. A deterministic derived attention ("WaitingOnVacantProducer") alongside
-   DeadlockAttentionRequested — smallest semantic addition, mirrors No.55.
+**DEFERRED to P10 — non-blocking.** Rationale:
 
-## P7 contract stance
+- Unlike deadlock (which needs cross-Work cycle detection, hence the P7-owned
+  `DeadlockAttentionRequested` fact event), the vacant condition is a **simple
+  projection join**: `dependencies(state=Unsatisfied ∧ binding=WorkspaceBound(ws))
+  × works(ws has no Open Work)` over canonical state. L6 can derive it without
+  any new runtime event or P7-layer algorithm.
+- Attention presentation/routing is P10's frozen scope (DID §11 P10: Attention;
+  §6.2 L6 = "Deadlock、Attention… 可推导事实"). Realizing option 3 as a **P10
+  derived Attention view** ("WaitingOnVacantProducer") keeps the semantic
+  addition minimal and lands it in the phase that owns presentation.
+- Invariant No.55 is satisfied through the same path as No.42: the derived view
+  surfaces the silent wait to human/parent cognition; disposition remains a
+  governance command (Withdraw/MarkUnfulfillable, S3 step 12), never automatic.
+
+**Non-blocking declaration:** this deferral blocks nothing — P7 is FORMALLY
+CLOSED with the limitation recorded in its wait-graph contract (`05` §1
+zero-candidate branch cites this gap); P8/P9 are unaffected (no verification or
+recovery semantics involved); P10 must implement the derived view and may not
+descope it silently.
+
+**P10 acceptance hook (advisory):** the P10 phase contract should include an
+Attention view item for `WorkspaceBound` dependencies whose target workspace is
+vacant-and-active, citing this gap as its requirement source.
+
+The adjacent admission-time hole (declaring against a retired workspace or a
+cancelled work as `ProducerBinding` target) remains covered by the P7
+`DeclareDependency` rejection set's "target not found / cross-project" rows for
+not-found targets; a structurally-dead-but-existing target (retired ws) is
+rejected via the Workspace-lifecycle precondition already enforced in the
+handler (TerminalLifecycleMutation). No residual action required.
+
+## P7 contract stance (historical)
 
 `05` §1 zero-candidate branch documents the limitation and cites this gap; no
-runtime behavior invented. Implementations must not add channel 1–3 on their own.
+runtime behavior invented during P7. Channel realization is deferred to P10 as
+above.

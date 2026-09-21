@@ -1,5 +1,7 @@
 import type {
   CommandId,
+  DeliverableId,
+  DependencyId,
   ExecutionId,
   FormationProposalId,
   LeaseGeneration,
@@ -75,6 +77,75 @@ export type VerifiedCommandAuthority =
       readonly projectId: ProjectId;
       readonly targetWorkspaceId: WorkspaceId;
       readonly workId: WorkId;
+    }
+  | {
+      /** P7 `01` §2. */
+      readonly _tag: "DeclareDependencyAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly consumerWorkId: WorkId;
+    }
+  | {
+      /** P7 `01` §3. */
+      readonly _tag: "ProduceDeliverableAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly sourceWorkspaceId: WorkspaceId;
+      readonly sourceWorkId: WorkId;
+    }
+  | {
+      /** P7 `01` §4 — exact-bound (v1.10 G6): source is exactly two-valued;
+       * request ≠ satisfaction, the matcher stays authoritative. */
+      readonly _tag: "SatisfyDependencyAuthority";
+      readonly source:
+        | {
+            readonly _tag: "ConsumerExecution";
+            readonly workspaceId: WorkspaceId;
+            readonly executionId: ExecutionId;
+          }
+        | { readonly _tag: "P7Coordinator" };
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly dependencyId: DependencyId;
+      readonly deliverableId: DeliverableId;
+    }
+  | {
+      /** P7 `01` §5. */
+      readonly _tag: "WithdrawDependencyAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly dependencyId: DependencyId;
+    }
+  | {
+      /** P7 `01` §6. */
+      readonly _tag: "MarkDependencyUnfulfillableAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly dependencyId: DependencyId;
+    }
+  | {
+      /** P7 `01` §7. */
+      readonly _tag: "ReviseDependencyContractAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly dependencyId: DependencyId;
     };
 
 /**
@@ -117,6 +188,15 @@ export type VerifiedRuntimeCommandAuthority =
       readonly executionId: ExecutionId;
       readonly fencingGeneration?: LeaseGeneration;
     };
+
+/** P7 `01` §4 (G6): the exactly-two-valued satisfaction authority sources. */
+export const SATISFY_AUTHORITY_SOURCES = [
+  { _tag: "ConsumerExecution" },
+  { _tag: "P7Coordinator" },
+] as const;
+
+export type SatisfyAuthoritySource =
+  (typeof SATISFY_AUTHORITY_SOURCES)[number]["_tag"];
 
 export type CommandAuthorityFact =
   | VerifiedCommandAuthority

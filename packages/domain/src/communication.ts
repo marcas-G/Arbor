@@ -8,6 +8,9 @@ export const MESSAGE_KINDS = [
   "Reply",
   "Report",
   "DecisionRequest",
+  /** P7 `02` §2 (v1.10 G2): Deliver hands over an existing Deliverable
+   * (child → parent); it is never itself a satisfaction. */
+  "Deliver",
 ] as const;
 
 export type MessageKind = (typeof MESSAGE_KINDS)[number];
@@ -70,6 +73,16 @@ export const promoteInboxArrival = (arrival: InboxArrival): PromotionEffect => {
     case "Report":
     case "HumanInput":
     case "SpecialistSettled":
+    case "Deliver": // P7 `02` §5: Deliver's promotion is empty — delivery is not satisfaction
       return { closesCorrelation: null, triggersReevaluation: false };
   }
 };
+
+/** P7 `02` §8: Deliver directive payload. Recipient is derived (the direct
+ * parent of the executing Workspace), never model-chosen. */
+export interface DeliverDirectiveSpec {
+  readonly deliverableId: import("./ids.js").DeliverableId;
+  readonly bodyRef: string;
+  readonly correlationId?: string | undefined;
+  readonly causationId?: string | undefined;
+}

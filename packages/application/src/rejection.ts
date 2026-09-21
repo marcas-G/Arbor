@@ -1,4 +1,6 @@
 import type {
+  DeliverableId,
+  DependencyId,
   DomainError,
   ExecutionId,
   FormationProposalId,
@@ -32,4 +34,14 @@ export type CommandRejection =
       /** P6 `02` §3: P6-frozen enum (bodyRef upload quota exceeded). */
       readonly _tag: "ResourceExhausted";
       readonly reason: string;
+    }
+  | {
+      /** P7 `01` §4: P7-frozen enum. */
+      readonly _tag: "DependencyNotFound";
+      readonly dependencyId: DependencyId;
+    }
+  | {
+      /** P7 `01` §4: P7-frozen enum. */
+      readonly _tag: "DeliverableNotFound";
+      readonly deliverableId: DeliverableId;
     };

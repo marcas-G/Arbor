@@ -148,16 +148,17 @@ describe("P6-001 communication payloads", () => {
 });
 
 describe("P6-001 type-level payload constraints", () => {
-  it("message kinds are a closed set of exactly four (D2)", async () => {
+  it("message kinds: the P6 four plus Deliver (v1.10 G2)", async () => {
     const { MESSAGE_KINDS } = await import("../packages/domain/src/index.js");
     expect([...MESSAGE_KINDS]).toEqual([
       "Query",
       "Reply",
       "Report",
       "DecisionRequest",
+      "Deliver",
     ]);
-    // @ts-expect-error - Deliver is not a P6 message kind (P7)
+    // v1.10 G2 / P7: Deliver is now the fifth message kind
     const kind: (typeof MESSAGE_KINDS)[number] = "Deliver";
-    expect(MESSAGE_KINDS).not.toContain(kind);
+    expect(MESSAGE_KINDS).toContain(kind);
   });
 });
