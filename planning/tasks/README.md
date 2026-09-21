@@ -5,7 +5,7 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0–P6** (complete); **P7** (planning). Task contracts reference
+Phases: **P0–P7** (complete); **P8** (planning). Task contracts reference
 `docs/design/implementation/<phase>/**`.
 
 ## Authority order
@@ -165,19 +165,22 @@ the frozen P6 phase contracts in `docs/design/implementation/P6/**`
 (manual governance adoption of D1–D4 with binding constraints). P7 tasks
 project `DID v1.10` plus the frozen P7 phase contracts in
 `docs/design/implementation/P7/**` (contract review Blocking=0; governed by
-the GQ1–GQ7 / v1.10 G1–G6 decisions).
+the GQ1–GQ7 / v1.10 G1–G6 decisions). P8 tasks project `DID v1.11` plus the
+frozen P8 phase contracts in `docs/design/implementation/P8/**` (contract
+review Blocking=0 after two independent rounds; governed by the GQ1–GQ8 /
+v1.11 G1–G6 decisions).
 `Problem & Goals v1.2` / `Scenarios v1.2` / `System Design v1.3` are unchanged.
 
 ## Entry blocker
 
 P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
 pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
-project `env.sh` wrapper; `pnpm check` is green. **P0–P6 are COMPLETE**;
-all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6 Design Gap
-(see `planning/results/P6.result.md`). **P7**: design closure complete
-(DID v1.10 governance diff from GQ1–GQ7; contracts frozen at Blocking=0),
-planning frozen — pending implementation authorization. See
-`planning/gaps/`.
+project `env.sh` wrapper; `pnpm check` is green. **P0–P7 are COMPLETE**;
+all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6/P7 Design Gap
+(see `planning/results/P6.result.md`, `planning/results/P7.result.md`).
+**P8**: design closure complete (DID v1.11 governance diff from GQ1–GQ8;
+contracts frozen at Blocking=0), planning frozen — pending implementation
+authorization. See `planning/gaps/`.
 
 ## P2 dependency graph
 
@@ -413,3 +416,35 @@ P7-012                          -> P7-013
 | P7-011 | Wake consumption pipeline + composition P7_MIGRATIONS | P7-005 |
 | P7-012 | Acceptance stories A–F + architecture + guards | P7-003..P7-011 |
 | P7-013 | P7 convergence & result record | P7-012 |
+
+## P8 dependency graph
+
+Authoritative edge list (`X -> Y` means Y depends on X):
+
+```text
+P7-013                          -> P8-001
+P8-001                          -> P8-002
+P8-002                          -> P8-003, P8-004, P8-005
+P8-003                          -> P8-006, P8-008
+P8-004                          -> P8-009
+P8-005                          -> P8-007
+P8-006, P8-007, P8-008, P8-009, P8-010 -> P8-011
+P8-011                          -> P8-012
+```
+
+## P8 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P8-001 | Domain evolution (M-1 wake shape, M-2 mission schema, Orphaned conclusion, enums, event payloads) | P7-013 |
+| P8-002 | P8 DDL (four tables) + repositories + M-4 settlement workId | P8-001 |
+| P8-003 | StartVerification handler (one-Open, owner snapshot, preallocated verifier id) | P8-002 |
+| P8-004 | Record / Conclude handlers (verifier-only, aggregation, Orphaned path) | P8-002 |
+| P8-005 | AcceptWorkOutcome + CompleteWork handlers (double uniqueness, seven-fold precondition) | P8-002 |
+| P8-006 | Consumer A: CompletionClaimed → StartVerification (M-4 enrichment) | P8-003 |
+| P8-007 | Consumer B: WorkOutcomeAccepted → CompleteWork (re-validation) | P8-005 |
+| P8-008 | Verifier spawn & drive (M-3 optional parent, WorkerDispatch Verifier, Yield, Attention) | P8-003 |
+| P8-009 | Dual-channel wake wiring (channel-1 release + VerificationReturned routing) | P8-004 |
+| P8-010 | P9 + P14 Program v1 + dual versioning + eval gates + M-2 placeholder migration | P8-008 |
+| P8-011 | Acceptance stories A–G + architecture + guards | P8-006..P8-010 |
+| P8-012 | P8 convergence & result record | P8-011 |
