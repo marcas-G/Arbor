@@ -31,7 +31,9 @@ If a code implementation discovers a design gap: **stop implementation and raise
 - `planning/tasks/` — task breakdown per phase
 - `planning/results/` — completion evidence, verification output per phase
 
-Current authorization state: **P0–P4 COMPLETE**. P5 is in design closure (DID v1.9 governance patch applied); P5 coding is authorized only after `docs/design/implementation/P5/**` exact contracts reach Blocking = 0.
+Current authorization state: **P0–P5 COMPLETE**. P6–P12 are not authorized.
+
+P5 result: `planning/results/P5.result.md` (11/11 exit criteria PASS; no open Design Gap). P5-DG-01 was resolved by the decision/execution split: the scheduler evaluator owns the selection decision, the Application owns the `SelectCurrentWork` canonical mutation (P5 `01` §3.1).
 
 ## Technical baseline (versioned, from DID §14)
 
