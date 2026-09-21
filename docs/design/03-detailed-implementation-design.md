@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.10  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P7 dependency-coordination closure)  
-**Supersedes:** v1.9  
+**Version:** 1.11  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P8 agentic-verification closure)  
+**Supersedes:** v1.10  
 **Date:** 2026-09-21  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
@@ -81,6 +81,34 @@
 - G6: exact tool parameter/result schemas and the shell policy enforcement
   mechanism are **phase-scoped contract** (P4), not implementation choice; only
   backend/limits/numeric thresholds are implementation/empirical (§13).
+
+**Governance changes (v1.10 → v1.11):**（P8 design-closure 治理裁决 GQ1–GQ8）
+
+- G1 (GQ2): **`VerificationMission.criteria` 结构化**为
+  `{ criterionId, requirement, required: boolean }[]`（替代裸 `string[]`），修复 P0
+  冻结类型无法表达 SD §9.6 required/optional 语义的上游缺陷。聚合语义随本条冻结：
+  任一 required FAIL → FAIL；无 required FAIL 但存在 required 未决 → UNKNOWN；
+  全部 required PASS → PASS；optional 单独不阻塞 PASS（透明展示）。P0 Schema、
+  P1 `AssignWork` 载荷、P6 placeholder mission 按 inherited evolution 同步演化
+  （必要时正式 migration；v1.10 migration-7 先例）。
+- G2 (GQ5/GQ6): **WakeCondition `VerificationChanged` 改为 work-level 形状**
+  `{ workId, targetWorkRevision }`（不再绑定 VerificationId；与 DependencyChanged
+  同构）。任意 verdict 的结论都触发 `VerificationChanged`（含 PASS——质量等待的
+  唯一表达通道）；FAIL/UNKNOWN 额外触发 `VerificationReturned`（WakeReason 路由）。
+  **同一 `(workId, targetWorkRevision)` 至多一个 Open Verification**；历史
+  concluded Verification 不受此限。
+- G3 (GQ4): **`WorkOutcomeAccepted` 之后由 deterministic consumer 经
+  `CommandGateway` 执行 `CompleteWork`**——Acceptance 是 Parent/User 的语义决定，
+  CompleteWork 是机械 canonical mutation；consumer 提交时必须重新验证 exact
+  WorkRevision / Verification / Acceptance 绑定（不因事件已发生而豁免 precondition）。
+- G4 (GQ7): **Verifier owning workspace = StartVerification 时目标 Work 的 owning
+  Workspace snapshot**。此后 Workspace retirement/move 不自动 abort 或 retarget：
+  允许自然结论；无法继续时可 Unknown/Attention 结论。新 Verification 使用当前 owner。
+- G5 (GQ8): **孤儿 Open Verification 的再驱动**：允许显式 re-Start，但必须先将旧
+  Open Verification 以 `Unknown`（conclusionReason `Orphaned`）结论，再以新
+  VerificationId 启动；禁止 silent automatic restart 与 identity reuse。
+- G6 (GQ1): **P14 Query/Inspection Program 归 P8**：read-only program contract +
+  version/hash/eval 一并冻结；P10/P12 只消费，不重新定义。
 
 **Governance changes (v1.9 → v1.10):**（P7 design-closure 治理裁决 GQ1–GQ7）
 
@@ -443,7 +471,7 @@ raw HttpError
 | `ResourceBoundary` | Value Object | Responsibility 在现实资源上的可执行投影 |
 | `ResourceAddress` | Value Object / ADT | Environment-facing 资源地址，不直接用于最终 overlap 判定 |
 | `CanonicalResourceRegion` | Value Object | resolver 后的 backing resource space + normalized region；ownership overlap 的比较对象 |
-| `VerificationMission` | Value Object | Verification 的目标、criteria 与风险要求 |
+| `VerificationMission` | Value Object | Verification 的目标、criteria 与风险要求；criteria 结构化 `{criterionId, requirement, required}[]`（v1.11 G1） |
 | `ResponsibilityBoundAgentBinding` | Value Object | Workspace 的长期执行配置 |
 | `ExecutionBoundAgentBinding` | Value Object | Execution-scoped 临时角色配置 |
 | `AgentBinding` | Umbrella Vocabulary | 上述两类的联合术语，不是 Workspace 字段类型 |
@@ -2497,7 +2525,7 @@ P10 Workspace Bootstrap / Handoff Program
 P11 Continuation / Resume Program
 P12 Compaction Program
 P13 Human Interaction / Steer Program
-P14 Query / Inspection Program
+P14 Query / Inspection Program   # v1.11 G6: owned by P8 (read-only contract; P10/P12 consume only)
 ```
 
 此外还有 6 类动态 Model Context Surface：
@@ -2873,7 +2901,7 @@ WaitSpec = { mode: Any, conditions: NonEmptyArray<WakeCondition> }
 ```text
 DependencyChanged(id, observedRevision)
 DecisionChanged(id, observedRevision)
-VerificationChanged(id, observedRevision)
+VerificationChanged(workId, targetWorkRevision)  # v1.11 G2: work-level
 InboxAdvanced(workspaceId, observedSequence)
 EnvironmentChanged(environmentRef, observedRevision)
 TimeReached(instant)
@@ -4182,10 +4210,11 @@ ContextEpoch = monotonic local ordinal
 
 | Current | Operation | Preconditions | Next |
 |---|---|---|---|
-| absent | StartVerification | Work/revision target valid | Open |
+| absent | StartVerification | Work/revision target valid; **no other Open Verification on the same (workId, targetWorkRevision)** (v1.11 G2) | Open |
 | Open | RecordVerificationEvidence | verifier authority | Open |
-| Open | ConcludeVerification(Pass/Fail/Unknown) | mission/evidence record valid | Concluded(verdict) |
+| Open | ConcludeVerification(Pass/Fail/Unknown[; conclusionReason `Orphaned` allowed on Unknown — v1.11 G5]) | mission/evidence record valid | Concluded(verdict) |
 | Concluded | mutate verdict | — | **illegal** |
+| Concluded | StartVerification (re-verify) | new VerificationId; prior Open sibling on the same revision must first conclude Unknown(`Orphaned`) (v1.11 G5) | Open (new identity) |
 
 重新验证创建新的 Verification identity。
 
