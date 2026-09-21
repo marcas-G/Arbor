@@ -33,7 +33,10 @@ If a code implementation discovers a design gap: **stop implementation and raise
 
 Current authorization state: **P0–P6 COMPLETE**. P6 result:
 `planning/results/P6.result.md` (11/11 exit criteria PASS; no open Design Gap).
-P7–P12 are not authorized.
+P7 design closure is complete (DID v1.10 from GQ1–GQ7 decisions;
+`docs/design/implementation/P7/**` contracts at Blocking=0) and P7 planning
+is frozen (`planning/phases/P7.md`, 13 tasks) pending implementation
+authorization. P8–P12 are not authorized.
 
 P5 result: `planning/results/P5.result.md` (11/11 exit criteria PASS; no open Design Gap). P5-DG-01 was resolved by the decision/execution split: the scheduler evaluator owns the selection decision, the Application owns the `SelectCurrentWork` canonical mutation (P5 `01` §3.1).
 
