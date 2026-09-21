@@ -31,19 +31,23 @@ import {
   WorkRevision,
   WorkspaceId,
 } from "@arbor/domain";
-import {
-  type AdmitExecutionPayload,
-  runExecution,
-} from "@arbor/execution-runtime";
+import { runExecution } from "@arbor/execution-runtime";
 import {
   ExecutionScheduler,
+  ResourceOwnershipRepository,
   TransactionPort,
   WorkWaitStore,
 } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { buildSliceLayer, P4_MIGRATIONS, runMigrations } from "../src/index.js";
+import {
+  admitExecution,
+  buildSliceLayer,
+  evaluateAndSelect,
+  P4_MIGRATIONS,
+  runMigrations,
+} from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
 const workspaceId = parse(WorkspaceId)(
@@ -88,7 +92,7 @@ const projectPayload: CreateProjectPayload = {
     responsibilityRevision: parse(ResponsibilityRevision)(0),
     resourceBoundary: {
       basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-      addresses: [],
+      addresses: [{ _tag: "FileTree", path: "." }],
     },
     resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
     agentBinding: responsibilityBound(workspaceId),
@@ -166,7 +170,10 @@ const turns = [
       _tag: "ToolCallProposed" as const,
       callRef: "c1",
       toolName: "shell",
-      argumentsJson: JSON.stringify({ command: "echo hello" }),
+      argumentsJson: JSON.stringify({
+        command: "echo hello",
+        cwd: { _tag: "FileTree", path: "." },
+      }),
     },
     { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
   ],
@@ -182,48 +189,8 @@ const turns = [
   }),
 ];
 
-const admit = (
-  executionId: ExecutionId,
-  focus: ExecutionFocus,
-  id: CommandId,
-) =>
-  Effect.gen(function* () {
-    const gateway = yield* CommandGateway;
-    const payload: AdmitExecutionPayload = {
-      _tag: "WorkspaceMain",
-      executionId,
-      workspaceId,
-      focus,
-    };
-    const authority: VerifiedRuntimeCommandAuthority = {
-      _tag: "AdmitExecutionAuthority",
-      submissionOrigin: "System",
-      principal,
-      commandId: id,
-      semanticRequestFingerprint: semanticRequestFingerprint({
-        commandType: "AdmitExecution",
-        projectId,
-        actor,
-        schemaVersion: "1",
-        payload,
-      }),
-      projectId,
-      commandKind: "AdmitExecution",
-      workspaceId,
-      bindingKind: "WorkspaceMain",
-    };
-    return yield* gateway.execute(
-      envelope("AdmitExecution", payload, id),
-      context,
-      authority,
-    );
-  });
-
-// BLOCKED by P5-DG-01 (planning/gaps/P5-DG-01-current-work-selection.md):
-// after CreateProject + AssignWork the frozen DID §8.18A table returns
-// `SelectCurrentWork`, not `Admit Work(current)`; P5 may not execute it.
 describe("P5 vertical-slice acceptance", () => {
-  it.skip("runs the whole story: work, tool, yield, wake, unsupported, claim", async () => {
+  it("runs the whole story: work, tool, yield, wake, unsupported, claim", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-accept-"));
     const app = buildSliceLayer({
       databaseFile: join(dir, "slice.db"),
@@ -253,19 +220,43 @@ describe("P5 vertical-slice acceptance", () => {
             p1Authority("AssignWorkAuthority", workPayload, commandId("2")),
           );
 
-          const decision = yield* scheduler.reevaluate(workspaceId, {
+          // Story precondition (out of P1–P4 slice scope): the Workspace already
+          // holds the resource-ownership claim for its boundary region. No
+          // P1–P4 command establishes ownership; it is a governance fact.
+          const ownership = yield* ResourceOwnershipRepository;
+          const tx0 = yield* TransactionPort;
+          yield* tx0.transact(
+            ownership.insertClaim({
+              claimId: "roc_018f2b3c-4d5e-7abc-8def-0123456789a1",
+              workspaceId,
+              region: {
+                resourceSpaceId: "filesystem",
+                normalizedRegion: { kind: "FileTree", path: "." },
+              },
+              sourceAddressSnapshot: { _tag: "FileTree", path: "." },
+              resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+              resolvedAtEnvironmentRevision: "local",
+              createdAt: "t",
+              releasedAt: null,
+            }),
+          );
+
+          const step = yield* evaluateAndSelect(workspaceId, principal, {
             _tag: "WorkSelected",
           });
+          const decision = step.decision;
 
-          const firstAdmit = yield* admit(
+          const firstAdmit = yield* admitExecution(
+            workspaceId,
             exe1,
             { _tag: "Work", workId },
-            commandId("3"),
+            principal,
           );
-          const conflict = yield* admit(
+          const conflict = yield* admitExecution(
+            workspaceId,
             exe2,
             { _tag: "Work", workId },
-            commandId("4"),
+            principal,
           );
 
           const firstSettlement = yield* runExecution(
@@ -274,6 +265,15 @@ describe("P5 vertical-slice acceptance", () => {
             principal,
           );
 
+          console.log("FIRST SETTLEMENT", firstSettlement);
+          const exeRows1 = yield* sql.unsafe<{
+            execution_id: string;
+            settlement_kind: string | null;
+            settled_at: string | null;
+          }>(
+            "SELECT execution_id, settlement_kind, settled_at FROM executions",
+          );
+          console.log("EXE ROWS after runExecution", exeRows1);
           const waitsAfterYield = yield* sql.unsafe<{ count: number }>(
             "SELECT COUNT(*) AS count FROM work_waits",
           );
@@ -287,7 +287,20 @@ describe("P5 vertical-slice acceptance", () => {
             "SELECT COUNT(*) AS count FROM work_waits",
           );
 
-          yield* admit(exe2, { _tag: "Work", workId }, commandId("5"));
+          const unsettled = yield* sql.unsafe<{
+            execution_id: string;
+            settled_at: string | null;
+          }>(
+            "SELECT execution_id, settled_at FROM executions WHERE workspace_id = ? AND binding_kind = 'workspace' AND settled_at IS NULL",
+            [workspaceId],
+          );
+          console.log("UNSETTLED before 2nd admit", unsettled);
+          yield* admitExecution(
+            workspaceId,
+            exe2,
+            { _tag: "Work", workId },
+            principal,
+          );
           const secondSettlement = yield* runExecution(
             exe2,
             { _tag: "WorkSelected" },
@@ -320,11 +333,21 @@ describe("P5 vertical-slice acceptance", () => {
             created: created.resolution._tag,
             assigned: assigned.resolution._tag,
             decision: decision._tag,
-            firstAdmit: firstAdmit.resolution._tag,
-            conflict:
-              conflict.resolution._tag === "TerminalRejected"
-                ? conflict.resolution.error._tag
-                : conflict.resolution._tag,
+            selections: step.selections,
+            focus:
+              decision._tag === "Admit" ? decision.focus._tag : decision._tag,
+            firstAdmit: (firstAdmit as { resolution: { _tag: string } })
+              .resolution._tag,
+            conflict: (() => {
+              const resolution = (
+                conflict as {
+                  resolution: { _tag: string; error?: { _tag: string } };
+                }
+              ).resolution;
+              return resolution._tag === "TerminalRejected"
+                ? (resolution.error?._tag ?? "TerminalRejected")
+                : resolution._tag;
+            })(),
             firstSettlement,
             secondSettlement,
             waitsAfterYield: Number(waitsAfterYield[0]?.count ?? 0),
@@ -341,6 +364,8 @@ describe("P5 vertical-slice acceptance", () => {
         {
           created: string;
           assigned: string;
+          selections: ReadonlyArray<string>;
+          focus: string;
           decision: string;
           firstAdmit: string;
           conflict: string;
@@ -365,7 +390,9 @@ describe("P5 vertical-slice acceptance", () => {
 
     expect(result.created).toBe("Committed");
     expect(result.assigned).toBe("Committed");
+    expect(result.selections).toEqual([workId]);
     expect(result.decision).toBe("Admit");
+    expect(result.focus).toBe("Work");
     expect(result.firstAdmit).toBe("Committed");
     expect(result.conflict).toBe("ActiveExecutionConflict");
 

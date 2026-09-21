@@ -116,7 +116,7 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
               toolName: directive.intent.toolName,
               toolVersion,
               resourceSpaceIds: ["filesystem"],
-              allowedCapabilities: ["fs:read", "fs:write", "process:exec"],
+              allowedCapabilities: ["fs:read", "fs:write", "shell:exec"],
               controlBasisDigest: "slice",
               expiresAt: "2999-01-01T00:00:00.000Z",
               delegationDepth: 0,

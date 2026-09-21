@@ -96,8 +96,11 @@ reevaluate(workspaceId, wakeReason):
   state directly — it issues `AdmitExecution` / `SelectCurrentWork` commands.
 - `SelectCurrentWork` is a Work/Governance command (`workspace.currentWorkId`
   + `CurrentWorkChanged`); its authority is governance, not a runtime fact. P2
-  computes the deterministic decision but does **not** execute it — execution
-  belongs to the Work-governance phase (P6/P7). P2 adds no governance command.
+  computes the deterministic decision but does **not** execute it and adds no
+  governance command. Execution is an **Application** command handler invoked
+  through `CommandGateway`; the phase that first runs the slice implements and
+  integrates it (P5 `01` §3.1), and P6/P7 own the broader governance around
+  current-Work selection and reuse the same handler.
 
 ## 5. Durable WorkWait registration / lost-wake-up protection
 
