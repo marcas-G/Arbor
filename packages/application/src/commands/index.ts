@@ -3,3 +3,5 @@ export * from "./create-child-workspace.js";
 export * from "./create-project.js";
 export * from "./registry.js";
 export * from "./select-current-work.js";
+export * from "./send-message.js";
+export * from "./steer-work.js";

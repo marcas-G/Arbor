@@ -5,8 +5,8 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0–P4** (complete); **P5** (planning; contracts frozen at
-Blocking=0). Task contracts reference `docs/design/implementation/<phase>/**`.
+Phases: **P0–P6** (complete). Task contracts reference
+`docs/design/implementation/<phase>/**`.
 
 ## Authority order
 
@@ -159,19 +159,19 @@ P0 tasks project `System Design v1.3` / `DID v1.5`. P1 tasks project
 `DID v1.6` plus the frozen phase contracts in
 `docs/design/implementation/P1/**`. P2 tasks project `DID v1.7` plus the P2
 phase contracts in `docs/design/implementation/P2/**`. P3 tasks project
-`DID v1.7` plus the P3 phase contracts in `docs/design/implementation/P3/**`. `Problem & Goals v1.2` /
-`Scenarios v1.2` / `System Design v1.3` are unchanged.
+`DID v1.7` plus the P3 phase contracts in `docs/design/implementation/P3/**`. P5 tasks project `DID v1.9`
+plus `docs/design/implementation/P5/**`. P6 tasks project `DID v1.9` plus
+the frozen P6 phase contracts in `docs/design/implementation/P6/**`
+(manual governance adoption of D1–D4 with binding constraints).
+`Problem & Goals v1.2` / `Scenarios v1.2` / `System Design v1.3` are unchanged.
 
 ## Entry blocker
 
 P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
 pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
-project `env.sh` wrapper; `pnpm check` is green. **P0 and P1 are COMPLETE**;
-all `DG-*` / `P1-DG-*` are RESOLVED. P2 design closure is complete
-(`docs/design/implementation/P2/**`, Blocking=0) and P2 is COMPLETE. P3 is COMPLETE. P4 is COMPLETE. P5 design
-closure is complete (`docs/design/implementation/P5/**`, review Blocking=0);
-P5 planning is frozen pending implementation authorization. See
-`planning/gaps/`.
+project `env.sh` wrapper; `pnpm check` is green. **P0–P6 are COMPLETE**;
+all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6 Design Gap
+(see `planning/results/P6.result.md`). See `planning/gaps/`.
 
 ## P2 dependency graph
 
@@ -335,3 +335,41 @@ P5-009, P5-010               -> P5-011
 | P5-009 | Full vertical-slice acceptance story | P5-008 |
 | P5-010 | Architecture tests for `apps/*` | P5-001 |
 | P5-011 | P5 convergence & result record | P5-009, P5-010 |
+
+## P6 dependency graph
+
+Authoritative edge list (`X -> Y` means Y depends on X):
+
+```text
+P5-011                                  -> P6-001
+P6-001                                  -> P6-002, P6-005, P6-007, P6-009, P6-011
+P6-002                                  -> P6-003
+P6-003                                  -> P6-004
+P6-005                                  -> P6-006
+P6-002, P6-007                          -> P6-008
+P6-009                                  -> P6-010
+P6-011                                  -> P6-012
+P6-004, P6-006, P6-008, P6-010, P6-012  -> P6-013
+P6-013                                  -> P6-014
+P6-014                                  -> P6-015
+```
+
+## P6 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P6-001 | P6 payload ADTs + ports | P5-011 |
+| P6-002 | P6 DDL migrations | P6-001 |
+| P6-003 | FormationProposal governance + revision-bound RecordDecision (D1) | P6-002 |
+| P6-004 | Approve consumer → CreateChildWorkspace/AssignWork (D1) | P6-003 |
+| P6-005 | Deep-layer formation + authority fact projection | P6-001 |
+| P6-006 | Capability-ceiling validate-only checks | P6-005 |
+| P6-007 | SpawnSpecialist → ExecutionBound admission | P6-001 |
+| P6-008 | SpecialistSettled → Inbox dedup, no Parent Session writes (D3) | P6-002, P6-007 |
+| P6-009 | SendMessage + Communicate + MessageStore | P6-002 |
+| P6-010 | Inbox promotion/consumption + correlation + wake + governance routing (D2) | P6-009 |
+| P6-011 | SteerWork handler | P6-001 |
+| P6-012 | Critical Steer quiescence wiring | P6-011 |
+| P6-013 | Prompt Programs v1 + dual versioning + eval gate (D4) | P6-004, P6-006, P6-008, P6-010, P6-012 |
+| P6-014 | Acceptance stories A–F + architecture + P5 guard | P6-013 |
+| P6-015 | P6 convergence & result record | P6-014 |

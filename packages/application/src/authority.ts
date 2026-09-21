@@ -1,10 +1,12 @@
 import type {
   CommandId,
   ExecutionId,
+  FormationProposalId,
   LeaseGeneration,
   Principal,
   ProjectId,
   SemanticRequestFingerprint,
+  WorkId,
   WorkspaceId,
 } from "@arbor/domain";
 import { Option } from "effect";
@@ -42,6 +44,37 @@ export type VerifiedCommandAuthority =
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
       readonly projectId: ProjectId;
       readonly targetWorkspaceId: WorkspaceId;
+    }
+  | {
+      /** P6 `01` §4.2 / `03` §3 (D1): human-only formation decisions; the
+       * principal must be an authenticated human (`user:` prefix by P1
+       * convention). Agents cannot decide formation proposals. */
+      readonly _tag: "RecordDecisionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly proposalId: FormationProposalId;
+    }
+  | {
+      /** P6 `02` §3: sender identity is bound by the authority fact, never
+       * free-typed by the model. */
+      readonly _tag: "SendMessageAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly senderWorkspaceId: WorkspaceId;
+    }
+  | {
+      /** P6 `04` §2: steer authority (human or structurally-entitled parent). */
+      readonly _tag: "SteerWorkAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly workId: WorkId;
     };
 
 /**
@@ -50,8 +83,11 @@ export type VerifiedCommandAuthority =
  */
 export type VerifiedRuntimeCommandAuthority =
   | {
+      /** P6 `01` §3: specialist spawn admits from an execution origin (the
+       * directive handler forwards the owning execution); P2 worker dispatch
+       * keeps the System origin. */
       readonly _tag: "AdmitExecutionAuthority";
-      readonly submissionOrigin: "System";
+      readonly submissionOrigin: "System" | "ExecutionOrigin";
       readonly principal: Principal;
       readonly commandId: CommandId;
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;

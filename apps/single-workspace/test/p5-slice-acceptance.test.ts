@@ -182,7 +182,7 @@ const turns = [
     reason: "waiting",
     waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
   }),
-  directive({ _tag: "ProposeChildWorkspace", spec: {} }),
+  directive({ _tag: "DeclareDependency", spec: {} }), // P7 owns it; ProposeChildWorkspace is P6-live now
   directive({
     _tag: "CompletionClaim",
     claim: { claimRef: "claim-1", workRevision: 0 },

@@ -43,7 +43,7 @@ const directive = (tag: string, extra: Record<string, unknown> = {}) => ({
 
 const turns = [
   [
-    directive("ProposeChildWorkspace", { spec: {} }),
+    directive("DeclareDependency", { spec: {} }), // P7 owns it; ProposeChildWorkspace is P6-live now
     { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
   ],
   [

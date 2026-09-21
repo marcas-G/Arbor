@@ -358,3 +358,57 @@ export const P4_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 3, name: "provider_model_context", sql: P3_DDL },
   { id: 4, name: "tool_runtime", sql: P4_DDL },
 ];
+
+/** P6 `01` §4.1 (D1), `02` §3/§4 (D2), `01` §3 (D3). The composite primary
+ * key on inbox_entries enforces upsert-by-entryKey admission (replay-safe
+ * dedup); formation_proposals enforces revision/state monotonicity at L3. */
+const P6_DDL = `
+CREATE TABLE formation_proposals (
+  proposal_id          TEXT PRIMARY KEY,
+  parent_workspace_id  TEXT NOT NULL,
+  proposal_json        TEXT NOT NULL,
+  revision             INTEGER NOT NULL CHECK (revision > 0),
+  state                TEXT NOT NULL CHECK (state IN ('Pending','Approved','Rejected')),
+  created_at           TEXT NOT NULL,
+  updated_at           TEXT NOT NULL
+);
+
+CREATE TABLE messages (
+  message_id             TEXT PRIMARY KEY,
+  sender_workspace_id    TEXT NOT NULL,
+  recipient_workspace_id TEXT NOT NULL,
+  kind                   TEXT NOT NULL CHECK (kind IN ('Query','Reply','Report','DecisionRequest')),
+  body_ref               TEXT NOT NULL,
+  correlation_id         TEXT,
+  causation_id           TEXT,
+  sent_at                TEXT NOT NULL
+);
+
+CREATE INDEX idx_messages_correlation ON messages(correlation_id);
+
+CREATE TABLE message_correlations (
+  correlation_id  TEXT PRIMARY KEY,
+  closed_at       TEXT
+);
+
+CREATE TABLE inbox_entries (
+  workspace_id    TEXT NOT NULL,
+  entry_key       TEXT NOT NULL,
+  kind            TEXT NOT NULL,
+  summary         TEXT NOT NULL,
+  correlation_id  TEXT,
+  admitted_at     TEXT NOT NULL,
+  consumed_at     TEXT,
+  PRIMARY KEY (workspace_id, entry_key)
+);
+
+CREATE INDEX idx_inbox_unconsumed ON inbox_entries(workspace_id) WHERE consumed_at IS NULL;
+`;
+
+export const P6_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  { id: 1, name: "init", sql: DDL },
+  { id: 2, name: "execution_session_kernel", sql: P2_DDL },
+  { id: 3, name: "provider_model_context", sql: P3_DDL },
+  { id: 4, name: "tool_runtime", sql: P4_DDL },
+  { id: 5, name: "p6_formation_communication", sql: P6_DDL },
+];
