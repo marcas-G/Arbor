@@ -314,9 +314,6 @@ importers:
       '@arbor/domain':
         specifier: workspace:*
         version: link:../../packages/domain
-      '@arbor/environment-local':
-        specifier: workspace:*
-        version: link:../../adapters/environment-local
       '@arbor/environment-resolver-local':
         specifier: workspace:*
         version: link:../../adapters/environment-resolver-local

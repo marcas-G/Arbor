@@ -24,7 +24,6 @@
     "@arbor/tool-runtime": "workspace:*",
     "@arbor/projection-runtime": "workspace:*",
     "@arbor/persistence-sqlite": "workspace:*",
-    "@arbor/environment-local": "workspace:*",
     "@arbor/environment-resolver-local": "workspace:*",
     "@arbor/worker-local": "workspace:*",
     "@arbor/provider-fake": "workspace:*",

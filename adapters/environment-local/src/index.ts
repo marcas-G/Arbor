@@ -1,3 +1,11 @@
+/**
+ * TEST-ONLY fake. P12 `09` §5 (RG-12): production wires the REAL
+ * `EnvironmentResolverLocalLive` projection
+ * (`@arbor/environment-resolver-local`); this object-encoded
+ * `ProjectEnvironmentPortLive` is retained solely as a deterministic test
+ * fixture. It is imported only from `tests/**` and is not a dependency of
+ * `apps/single-workspace` (removed from that manifest, B-10).
+ */
 import type { CanonicalResourceRegion, ResourceAddress } from "@arbor/domain";
 import { ProjectEnvironmentPort, type ResolvedEnvironment } from "@arbor/ports";
 import { Effect, Layer } from "effect";

@@ -43,9 +43,6 @@
       "path": "../../adapters/persistence-sqlite"
     },
     {
-      "path": "../../adapters/environment-local"
-    },
-    {
       "path": "../../adapters/environment-resolver-local"
     },
     {

@@ -9,7 +9,6 @@ import {
   canonicalRegionString,
   type SnapshotProbe,
   type SnapshotRegionEntry,
-  snapshotBlobContent,
 } from "@arbor/domain";
 import {
   type EnvironmentError,
@@ -264,10 +263,7 @@ export const EnvironmentResolverLocalLive: Layer.Layer<
           // only the ref VALUE (`blob:<digest>`) — persistence to the blob
           // store is REC's consumer side, not here.
           const snapshotBlobRef = yield* Effect.try({
-            try: () => {
-              void snapshotBlobContent(projectId, entries);
-              return `blob:${fingerprint.digest}`;
-            },
+            try: () => `blob:${fingerprint.digest}`,
             catch: (cause): EnvironmentResolverError => ({
               _tag: "BlobFailure",
               cause,
