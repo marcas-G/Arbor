@@ -10,6 +10,7 @@ import {
   ExecutionSchedulerLive,
   FenceStopCheckLive,
   RuntimeSafetyGateLive,
+  type RuntimeSafetyPolicy,
 } from "@arbor/execution-runtime";
 import { ModelContextLive } from "@arbor/model-context";
 import {
@@ -86,6 +87,9 @@ export interface SliceConfig {
   readonly secretRef?: SecretRef;
   /** Which real secret adapter backs `SecretStorePort` (default `Env`). */
   readonly secretStore?: SecretStoreConfig;
+  /** P12 `08` §6 (E-03): the Runtime Safety Envelope thresholds supplied at
+   * composition. Absent falls back to a finite default policy. */
+  readonly runtimeSafetyPolicy?: RuntimeSafetyPolicy;
 }
 
 export type SliceServices =
@@ -239,7 +243,7 @@ export const buildSliceLayer = (
     admission,
     runnableSource,
     WorkerDispatchPortLive,
-    RuntimeSafetyGateLive(),
+    RuntimeSafetyGateLive(config.runtimeSafetyPolicy),
     capability,
     registry,
     gateway,
