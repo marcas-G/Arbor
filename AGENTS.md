@@ -35,9 +35,9 @@ Current authorization state: **P0–P7 COMPLETE; P7 FORMALLY CLOSED**
 (P7-GAP-01 dispositioned: DEFERRED to P10, non-blocking). P6 result:
 `planning/results/P6.result.md`; P7 result: `planning/results/P7.result.md`
 (11/11 exit criteria PASS; no open implementation Design Gap).
-P8 is COMPLETE: `planning/results/P8.result.md` (11/11 exit criteria
-PASS; no open Design Gap; migrations M-1..M-4 landed as frozen
-contracts). P9–P12 are not authorized.
+P8 is COMPLETE and FORMALLY CLOSED: `planning/results/P8.result.md`
+(11/11 exit criteria PASS; no open Design Gap; migrations M-1..M-4
+landed as frozen contracts). P9–P12 are not authorized.
 
 P5 result: `planning/results/P5.result.md` (11/11 exit criteria PASS; no open Design Gap). P5-DG-01 was resolved by the decision/execution split: the scheduler evaluator owns the selection decision, the Application owns the `SelectCurrentWork` canonical mutation (P5 `01` §3.1).
 
