@@ -4006,8 +4006,19 @@ security hardening
 performance
 ```
 
-P12 completion blockers：region-encoding correctness、ToolCatalog inherited defect、
-RuntimeSafety completeness（v1.14 G1–G8）。
+P12 completion blockers（v1.14 G1–G8；与文件头 P12 completion blockers 列表一致）：
+
+```text
+1. region-encoding correctness fix
+2. ToolCatalogPort inherited contract correction
+3. full §8.16A Runtime Safety closure
+4. Authority Resolver production plane
+5. SecretStorePort / SecretRef + real adapter
+6. observability / health / usage plane
+7. StorageScaleAssessment + DurabilityEnvelope
+8. Remote Worker transport / identity boundary
+9. Plugin SDK / compatibility / trust model
+```
 
 ---
 
