@@ -1,7 +1,7 @@
 # P7 — 00 Contract Index
 
 **Authority:** DID v1.10 §1.8, §4.2, §5.3, §5.4, §7.1, §8.15, §8.16, §8.18, §8.18A, §11 P7, §12.8, §12.10, §12.11; 治理裁决 v1.7 G3 / v1.9 G2 / v1.10 G1–G6; SD v1.3 §3.7/§3.8, §5.2, §7.2/§7.5/§7.6, §14 No.20/42/49/53/55; S1 步骤 10–11, S3 步骤 3/4/12/14; P2 `02`/`05`, P5 `02`/`03`, P6 `00`–`06`; `planning/results/P6.result.md`.
-**Status:** DRAFT (first draft for contract review) — governs against DID v1.10 (2026-09-21, GQ1–GQ7 decisions).
+**Status:** FROZEN (first draft for contract review) — governs against DID v1.10 (2026-09-21, GQ1–GQ7 decisions).
 
 ## Documents
 

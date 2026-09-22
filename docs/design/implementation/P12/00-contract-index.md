@@ -174,5 +174,4 @@ CI-7  region encoding at every producer matches the frozen object encoding; narr
 
 **FROZEN.** Four independent four-way review rounds complete; **Blocking = 0**.
 P12 planning is COMPLETE (`planning/phases/P12.md` + 13 task contracts; planning
-review Blocking = 0). P12 implementation remains **NOT AUTHORIZED** until
-explicitly granted.
+review Blocking = 0). P12 implementation COMPLETE; P12 FORMALLY CLOSED.

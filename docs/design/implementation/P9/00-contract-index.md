@@ -1,7 +1,7 @@
 # P9 — 00 Contract Index
 
 **Authority:** DID v1.11 §11 P9, v1.9 G5, v1.7 G1/G3/G5; SD v1.3 §6.5/§7.3/§10/§14 (No.15/16/34/35/36/37/39/46/47/48/53/54/60); S4, S3 步骤 10; P1 `06`, P2 `03`/`06`, P3 `06`, P4 `01`/`02`/`06`, P5 `04`/`05`, P8 `00`/`02`/`03`; `planning/results/P8.result.md`; GQ1–GQ5 裁决（2026-09-21，本轮会话）.
-**Status:** DRAFT (first draft for contract review).
+**Status:** FROZEN (first draft for contract review).
 
 ## Governance decisions recorded (GQ1–GQ5; no DID catalog changes)
 

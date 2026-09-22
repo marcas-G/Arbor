@@ -5,7 +5,7 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0–P11** (complete); **P12** (planning). Task contracts reference
+Phases: **P0–P12** (complete). Task contracts reference
 `docs/design/implementation/<phase>/**`.
 
 ## Authority order
@@ -186,10 +186,10 @@ project `env.sh` wrapper; `pnpm check` is green. **P0–P11 are COMPLETE**;
 all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6/P7/P8/P9 Design
 Gap (see `planning/results/P6.result.md`, `planning/results/P7.result.md`,
 `planning/results/P8.result.md`, `planning/results/P9.result.md`).
-**P10**: design closure complete (contracts at Blocking=0; GQ1–GQ7 + GAP-01
-adjudicated 2026-09-22 under DID v1.13 G1–G8), planning frozen — pending
-implementation authorization. P7-GAP-01 closure is owed by P10 (P10-004 /
-P10-013). See `planning/gaps/`.
+**P10–P12 are COMPLETE**. P7-GAP-01 was CLOSED at P10 (WaitingOnVacantProducer
+derived view). P12 is COMPLETE and FORMALLY CLOSED (14/14 exit criteria;
+nine completion blockers evidenced). See `planning/results/` and
+`planning/gaps/`.
 
 ## P2 dependency graph
 
