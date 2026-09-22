@@ -21,9 +21,9 @@ performance
 ## Phase state (explicit)
 
 ```text
-P12 design closure in progress
-P12 planning NOT AUTHORIZED
-P12 implementation NOT AUTHORIZED
+P12 design closure COMPLETE (contracts FROZEN; four-way review Blocking=0)
+P12 planning COMPLETE (phase plan + task contracts; planning review Blocking=0)
+P12 implementation NOT AUTHORIZED (explicit authorization required)
 ```
 
 ## P12 completion blockers (must remain explicit throughout closure)
@@ -118,6 +118,7 @@ Revisions P12 explicitly owns against frozen P0–P11 contracts or the frozen DI
 | TR-8 | `VerifiedRuntimeCommandAuthority` external-origin widening (`AdmitExecutionAuthority` / `StopExecutionAuthority` add `"External"`) | P2 `01` §2 / P2 `00` R1 / DID §4.1 | `02` |
 | TR-9 | lease-triple port evolution: `LeaseRecord` + `ExecutionRepository.{tryAcquireLease,renewLease,releaseLease}` + `LeaseService` + `SessionRepository.appendEntry` fence + `FenceStopCheck` gain `worker_incarnation_id` | P2 `02` §3/§6, `03` §2, `04` §3.2 | `06` |
 | TR-10 | optional `RuntimeSafetyObservation` channel widening the frozen P2 `RuntimeSafetyGate.admitActivity` (additive third argument) | P2 `02` §5 | `08` |
+| TR-11 | `ToolCatalogPortService.definitions()` → `visibleRefs()` + `resolveForModel()` (model-facing resolution; P12 completion blocker #2) | P3 `01` §1/§2; P4 `01` §1 | `07` |
 
 ## Recorded clarifications (review dispositions)
 

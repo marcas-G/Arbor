@@ -49,9 +49,9 @@ three P12 convergence items recorded). P12 design closure is in progress (DID
 v1.14 governance rulings GQ1–GQ8 landed).
 
 ```text
-P12 design closure in progress
-P12 planning NOT AUTHORIZED
-P12 implementation NOT AUTHORIZED
+P12 design closure COMPLETE (contracts FROZEN; four-way review Blocking=0)
+P12 planning COMPLETE (phase plan + task contracts; planning review Blocking=0)
+P12 implementation NOT AUTHORIZED (explicit authorization required)
 ```
 
 P12 completion blockers (must remain explicit throughout closure):
