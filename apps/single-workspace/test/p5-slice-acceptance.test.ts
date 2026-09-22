@@ -268,7 +268,6 @@ describe("P5 vertical-slice acceptance", () => {
             principal,
           );
 
-          console.log("FIRST SETTLEMENT", firstSettlement);
           const exeRows1 = yield* sql.unsafe<{
             execution_id: string;
             settlement_kind: string | null;
@@ -276,7 +275,6 @@ describe("P5 vertical-slice acceptance", () => {
           }>(
             "SELECT execution_id, settlement_kind, settled_at FROM executions",
           );
-          console.log("EXE ROWS after runExecution", exeRows1);
           const waitsAfterYield = yield* sql.unsafe<{ count: number }>(
             "SELECT COUNT(*) AS count FROM work_waits",
           );
@@ -297,7 +295,6 @@ describe("P5 vertical-slice acceptance", () => {
             "SELECT execution_id, settled_at FROM executions WHERE workspace_id = ? AND binding_kind = 'workspace' AND settled_at IS NULL",
             [workspaceId],
           );
-          console.log("UNSETTLED before 2nd admit", unsettled);
           yield* admitExecution(
             workspaceId,
             exe2,

@@ -49,3 +49,51 @@ describe("phase result records", () => {
     expect(readme).not.toMatch(/\|\s*P1\s*\|[^|]*\|[^|]*blocked/i);
   });
 });
+
+const tableCriteria = (result: string) => {
+  const start = result.indexOf("## Exit criteria matrix");
+  const body = start === -1 ? result : result.slice(start);
+  const end = body.indexOf("\n## ", 1);
+  const section = end === -1 ? body : body.slice(0, end);
+  return section
+    .split("\n")
+    .map((line) => /^\|\s*(?:EC-)?(\d+)\s*\|/.exec(line))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => Number.parseInt(m[1] ?? "0", 10));
+};
+
+describe("P6–P12 result records", () => {
+  const expected: ReadonlyArray<[string, number]> = [
+    ["P6", 11],
+    ["P7", 11],
+    ["P8", 11],
+    ["P9", 11],
+    ["P10", 11],
+    ["P11", 11],
+    ["P12", 14],
+  ];
+  for (const [phase, count] of expected) {
+    it(`${phase} result record is COMPLETE with ${count} criteria`, () => {
+      const result = read(`planning/results/${phase}.result.md`);
+      expect(result).toMatch(/COMPLETE/);
+      const criteria = tableCriteria(result);
+      expect([...criteria].sort((a, b) => a - b)).toEqual(
+        Array.from({ length: count }, (_, index) => index + 1),
+      );
+    });
+  }
+
+  it("reflects P6–P12 completion in the planning index", () => {
+    const readme = read("planning/README.md");
+    for (const phase of ["P6", "P7", "P8", "P9", "P10", "P11", "P12"]) {
+      expect(readme).toMatch(
+        new RegExp(`\\|\\s*${phase}\\s*\\|[^|]*\\|[^|]*complete`, "i"),
+      );
+    }
+  });
+
+  it("no gap file is OPEN", () => {
+    const gaps = read("planning/gaps/README.md");
+    expect(gaps).not.toMatch(/\|\s*OPEN\s*\|/);
+  });
+});

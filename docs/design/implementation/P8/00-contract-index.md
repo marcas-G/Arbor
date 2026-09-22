@@ -4,7 +4,7 @@
 > `docs/design/implementation/P8/**` 冻结；此前不构成 Authority 来源。
 
 **Authority:** DID v1.11 §3.5/§3.6/§3.7/§4.2/§5.3/§5.4/§6A.6/§6A.11/§8.16/§8.18/§8.4/§8.4A/§11 P8/§12.8/§12.10/§12.11/§10.4.1; v1.9 G4; v1.7 G5; SD v1.3 §9 全章/§11.4/§13.10/§14 No.22-27/44/46/49; S1 步骤 9–11, S2, S3 步骤 11–12; P2 `01`/`02`, P3 `02`/`03`/`05`/`07`, P5 `04`/`05`, P6 `00`/`01`/`04`/`05`, P7 `00`/`01`/`03`/`06`; `planning/results/P7.result.md`.
-**Status:** DRAFT (first draft for contract review) — governed by DID v1.11 (GQ1–GQ8 decisions, 2026-09-21).
+**Status:** FROZEN (first draft for contract review) — governed by DID v1.11 (GQ1–GQ8 decisions, 2026-09-21).
 
 ## Documents
 

@@ -1,7 +1,7 @@
 # P11 — 00 Contract Index
 
 **Authority:** DID v1.13 §11 P11, §1.5 (C8), §4.3/§4.4, §5.3, §7.6, §8.16/§8.18/§8.19, §9.5, §12.9, §12.10; v1.7 G2/G3, v1.8 G3/G4/G5; SD v1.3 §4.5, §6.2, §6.5, §7.6, §11 全章, §13.6, §14 No.26/43/50/52/56; P1 `02`/`04`/`06`, P2 `00`/`01`, P4 `01`/`02`/`04`/`05`/`08`, P5–P10 boundaries; GQ1–GQ5 裁决（2026-09-22，本会话——含 scope fence 与五项 closure invariants）.
-**Status:** DRAFT (first draft for contract review).
+**Status:** FROZEN (first draft for contract review).
 
 ## Governance decisions (recorded; zero DID catalog changes required — all contract-level)
 

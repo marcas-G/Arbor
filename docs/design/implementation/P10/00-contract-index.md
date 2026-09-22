@@ -1,7 +1,7 @@
 # P10 — 00 Contract Index
 
 **Authority:** DID v1.13 §11 P10 (G1–G8), §5.4, §6.1/§6.2 (L6), §10.4/§10.4.1 (projection-runtime; api-contracts), §7.2 (ProjectionQueryPort); SD v1.3 §7.4/§7.5, §10.1 D, §12 全章, §13.9/§13.10, §14 No.37/38/40/45/56; S1/S2/S4; P1 `05`/`06`, P2 `01`/`06`, P3 `04`, P4 `07`, P6 `00`/`04`/`05`, P7 `00`/`05`, P8 `00`/`05`, P9 `00`/`05`; `planning/gaps/P7-GAP-01.md`; GQ1–GQ7 裁决（2026-09-22，本轮会话）.
-**Status:** DRAFT (first draft for contract review).
+**Status:** FROZEN (first draft for contract review).
 
 ## Governance decisions (DID v1.13)
 

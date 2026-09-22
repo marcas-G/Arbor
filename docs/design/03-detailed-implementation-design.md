@@ -143,9 +143,9 @@
 **P12 phase state（v1.14）**：
 
 ```text
-P12 design closure in progress
-P12 planning NOT AUTHORIZED
-P12 implementation NOT AUTHORIZED
+P12 design closure COMPLETE
+P12 planning COMPLETE
+P12 implementation COMPLETE; P12 FORMALLY CLOSED
 ```
 
 **Governance changes (v1.12 → v1.13):**（P10 design-closure 治理裁决 GQ1–GQ7）
@@ -3556,9 +3556,7 @@ Workspace.primarySessionId ↔ Session.workspaceId
 ```text
 arbor/
 ├── apps/
-│   ├── daemon/
-│   ├── cli/
-│   └── web/
+│   └── single-workspace/        # Composition Root + transport shells (P12)
 ├── packages/
 │   ├── domain/
 │   ├── ports/
@@ -3575,9 +3573,15 @@ arbor/
 │   ├── persistence-sqlite/
 │   ├── blob-local/
 │   ├── environment-local/
+│   ├── environment-resolver-local/
 │   ├── sandbox-local/
-│   ├── providers/
-│   └── tools/
+│   ├── sandbox-worktree/
+│   ├── secret-env/
+│   ├── secret-file/
+│   ├── provider-fake/
+│   ├── provider-openai/
+│   ├── worker-local/
+│   └── worker-transport/
 └── tests/
     └── architecture/
 ```
@@ -4835,7 +4839,8 @@ P4 completion                             COMPLETE
 P5 coding authorization                   AFTER P5 exact contracts closure
 P5 completion                             COMPLETE
 P6–P11 completion                         COMPLETE
-P12 coding authorization                  AFTER P12 exact contracts closure (Blocking=0)
+P12 coding authorization                  AUTHORIZED (P12 contracts frozen, Blocking=0)
+P12 completion                            COMPLETE — FORMALLY CLOSED
 ```
 
 任何后续架构修改必须先落到拥有该语义的文档，并说明：

@@ -20,6 +20,7 @@ on the affected work and the gap is raised for **manual governance**.
 ```text
 OPEN     — awaiting manual governance
 RESOLVED — owning design doc updated; see resolution
+CLOSED   — disposed by a later phase / governance ruling (see file)
 ```
 
 ## Index
@@ -32,6 +33,8 @@ RESOLVED — owning design doc updated; see resolution
 | DG-04 | `PermissionGrantId` missing from Appendix A prefix table | DID §2.1 vs Appendix A | P0-002 | RESOLVED |
 | DG-05 | `Workspace.agentBinding` typing vs `AgentBinding` union | DID §1.6, §3.2 | P0-006, P0-015 | RESOLVED |
 | DG-06 | Architecture test placement conflict | DID §10.1 vs `AGENTS.md` rule 5 | P0-001, P0-017 | RESOLVED |
+| P5-DG-01 | Acceptance story cannot reach `Admit Work(current)` | P5 `05` §1, P5 `02` §2; DID §8.18A; P2 `05` §4 | P5-009, P5-011 | RESOLVED |
+| P7-GAP-01 | Vacant-workspace silent wait | P7 / P10 | P10-004, P10-013 | CLOSED (P10 WaitingOnVacantProducer view) |
 
 All six gaps were resolved by the System Design v1.3 / DID v1.4 governance
 patch. Resolution authority is recorded in each gap file.

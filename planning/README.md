@@ -44,7 +44,12 @@ See `planning/gaps/README.md` for the index and resolution process.
 | P3 | Provider + Model Context + Minimal Agent Loop | COMPLETE — P3-001 … P3-018 done; see planning/results/P3.result.md |
 | P4 | Tool Runtime | COMPLETE — P4-001 … P4-018 done; see planning/results/P4.result.md |
 | P5 | Single-Workspace Vertical Slice | COMPLETE — P5-001 … P5-011 done; see planning/results/P5.result.md |
-| P6–P11 | see DID-10 | COMPLETE |
+| P6 | Responsibility Tree / Multi-Workspace | COMPLETE — see planning/results/P6.result.md |
+| P7 | Dependency / Deliverable Coordination | COMPLETE — see planning/results/P7.result.md |
+| P8 | Agentic Verification | COMPLETE — see planning/results/P8.result.md |
+| P9 | Recovery Hardening | COMPLETE — see planning/results/P9.result.md |
+| P10 | Projection / UI | COMPLETE — see planning/results/P10.result.md |
+| P11 | Environment / Git / Advanced Sandbox | COMPLETE — see planning/results/P11.result.md |
 | P12 | Production / Extensibility | COMPLETE — FORMALLY CLOSED. P12-001 … P12-013 done; 14/14 exit criteria PASS; nine blockers evidenced; see planning/results/P12.result.md |
 
 Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) and `P1-DG-01` … `P1-DG-11`
@@ -57,4 +62,10 @@ P2 is COMPLETE (`planning/results/P2.result.md`).
 P3 is COMPLETE (`planning/results/P3.result.md`).
 P4 is COMPLETE (`planning/results/P4.result.md`).
 P5 is COMPLETE (`planning/results/P5.result.md`).
+P6 is COMPLETE (`planning/results/P6.result.md`).
+P7 is COMPLETE (`planning/results/P7.result.md`).
+P8 is COMPLETE (`planning/results/P8.result.md`).
+P9 is COMPLETE (`planning/results/P9.result.md`).
+P10 is COMPLETE (`planning/results/P10.result.md`).
+P11 is COMPLETE (`planning/results/P11.result.md`).
 P12 is COMPLETE and FORMALLY CLOSED (`planning/results/P12.result.md`).
