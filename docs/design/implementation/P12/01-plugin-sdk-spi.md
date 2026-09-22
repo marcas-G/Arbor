@@ -126,8 +126,25 @@ interface ProjectToolRegistryService {
     pluginVersion: PluginVersion
     contentHash: string
   }): Effect.Effect<Option.Option<ToolDefinition>, ProjectToolRegistryError>
+  // P12 cross-contract completeness correction (`01` §5.2 / `07` §2):
+  // committed-read enumeration seam for the catalog union.
+  listRegisteredToolDefinitions(
+    projectId: ProjectId,
+  ): Effect.Effect<ReadonlyArray<ToolDefinition>, ProjectToolRegistryError>
 }
 ```
+
+- **`listRegisteredToolDefinitions` (cross-contract completeness correction).** Returns the
+  `ToolDefinition`s contributed by **committed** registered Project plugins for the project:
+  - only committed registrations are returned (pre-commit/unregistered entries are absent
+    per the frozen registration lifecycle);
+  - one plugin registration may contribute **multiple** `ToolDefinition`s;
+  - returned definitions retain their own `ToolDefinitionRef(name, version, hash)`
+    identities — the registry identity key `(pluginId, pluginVersion, contentHash)` and the
+    tool definition identity `ToolDefinitionRef` are **intentionally distinct** and are not
+    unified;
+  - it **MUST NOT** require `TransactionScope` (committed-read; normal catalog reads must
+    not force Model Context / `prepareTurn` into a persistence transaction).
 
 - **CI-1 (NEW-13):** `register` is a **durable canonical write**. It is invocable **only**
   by the `RegisterProjectTool` handler, inside the `CommandGateway` transaction; no other
