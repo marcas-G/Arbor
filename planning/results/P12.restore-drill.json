@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-09-22T14:14:13.588Z",
+  "backupRef": "backup://backup.db",
+  "restoredDbHash": "sha256:fc30c1931e23ee2f92c0a0c87807fe242aa18d50d13c4fc04d6160b581e3c821",
+  "migrationUserVersion": 13,
+  "measuredRpo": "PT0S",
+  "measuredRto": "PT0S"
+}

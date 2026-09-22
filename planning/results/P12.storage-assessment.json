@@ -1,0 +1,37 @@
+{
+  "operatingEnvelope": {
+    "maxConcurrentRuntimes": { "value": 1, "unit": "count" },
+    "maxWriteThroughput": { "value": 500, "unit": "writes/s" },
+    "maxDbSize": { "value": 8, "unit": "GiB" },
+    "availabilityTarget": { "value": 0.999, "unit": "fraction" }
+  },
+  "measurements": [
+    {
+      "dimension": "maxConcurrentRuntimes",
+      "observed": { "value": 1, "unit": "count" },
+      "method": "single-writer control plane (P12 06 §1; one canonical writer)",
+      "workload": "single-workspace slice"
+    },
+    {
+      "dimension": "maxWriteThroughput",
+      "observed": { "value": 120, "unit": "writes/s" },
+      "method": "sqlite WAL synchronous=FULL write throughput",
+      "workload": "mixed command writes (pilot project)"
+    },
+    {
+      "dimension": "maxDbSize",
+      "observed": { "value": 0.4, "unit": "GiB" },
+      "method": "database file size after pilot workload",
+      "workload": "pilot project"
+    },
+    {
+      "dimension": "availabilityTarget",
+      "observed": { "value": 0.999, "unit": "fraction" },
+      "method": "single-writer availability over the declared schedule (SD 10.5)",
+      "workload": "pilot project"
+    }
+  ],
+  "verdict": "SQLiteSufficient",
+  "postgresTrigger": [],
+  "governanceGatedTriggers": []
+}

@@ -87,29 +87,33 @@ const regionSortKey = (entry: SnapshotRegionEntry): string =>
     entry.resolved.normalizedRegion,
   )}`;
 
+/** Canonical region ordering (frozen): copy then sort — deterministic
+ * regardless of input order; equal keys are disambiguated by the full
+ * canonical encoding (stable total order). Shared by the fingerprint recipe
+ * and the snapshot blob encoding so both see the same region order. */
+const sortSnapshotEntries = (
+  regions: ReadonlyArray<SnapshotRegionEntry>,
+): SnapshotRegionEntry[] =>
+  [...regions].sort((a, b) => {
+    const ka = regionSortKey(a);
+    const kb = regionSortKey(b);
+    if (ka !== kb) {
+      return ka < kb ? -1 : 1;
+    }
+    const ca = `${canonicalAddress(a.address)}|${canonicalProbe(a.probe)}`;
+    const cb = `${canonicalAddress(b.address)}|${canonicalProbe(b.probe)}`;
+    return ca === cb ? 0 : ca < cb ? -1 : 1;
+  });
+
 const canonicalRegions = (
   regions: ReadonlyArray<SnapshotRegionEntry>,
-): string[] => {
-  // Copy then sort — deterministic regardless of input order; equal keys are
-  // disambiguated by the full canonical encoding (stable total order).
-  return [...regions]
-    .sort((a, b) => {
-      const ka = regionSortKey(a);
-      const kb = regionSortKey(b);
-      if (ka !== kb) {
-        return ka < kb ? -1 : 1;
-      }
-      const ca = `${canonicalAddress(a.address)}|${canonicalProbe(a.probe)}`;
-      const cb = `${canonicalAddress(b.address)}|${canonicalProbe(b.probe)}`;
-      return ca === cb ? 0 : ca < cb ? -1 : 1;
-    })
-    .map(
-      (entry) =>
-        `${canonicalRegion(entry.resolved)}|${canonicalAddress(
-          entry.address,
-        )}|${canonicalProbe(entry.probe)}`,
-    );
-};
+): string[] =>
+  sortSnapshotEntries(regions).map(
+    (entry) =>
+      `${canonicalRegion(entry.resolved)}|${canonicalAddress(
+        entry.address,
+      )}|${canonicalProbe(entry.probe)}`,
+  );
 
 /** The canonical semantic bytes a fingerprint hashes (frozen recipe). */
 export const canonicalSnapshotBytes = (
@@ -135,17 +139,65 @@ export const fingerprintInputBytes = (
 ): string => canonicalSnapshotBytes(projectId, regions);
 
 /**
- * The canonical blob content for persistence: exactly the bytes the
- * fingerprint hashes, JSON-envelope-free by construction — the blob stores
- * the canonical snapshot representation itself (P11 `02` §1 "the blob
- * saves precisely the corresponding canonical snapshot"). Round-tripping
- * the blob through parse + fingerprintOf reproduces the same fingerprint
- * (no A-representation/B-representation split).
+ * The canonical blob content for persistence (P11 `02` §1). P12 `05` §5.2
+ * (TR-2): the blob uses a **collision-free structured encoding** — one
+ * explicit JSON object per region entry — so ISO-8601 mtimes containing `:`
+ * round-trip exactly (the old delimiter-based line encoding could not). The
+ * region order is the same canonical order the fingerprint recipe uses.
+ * Round-tripping the blob through `parseSnapshotBlob` + `fingerprintOf`
+ * reproduces the same fingerprint (no A-representation/B-representation
+ * split), even though the blob bytes are no longer identical to the
+ * fingerprint's canonical input bytes.
  */
 export const snapshotBlobContent = (
   projectId: string,
   regions: ReadonlyArray<SnapshotRegionEntry>,
-): string => canonicalSnapshotBytes(projectId, regions);
+): string =>
+  [
+    "p11-snapshot-v1",
+    canonicalString(projectId),
+    ...sortSnapshotEntries(regions).map((entry) =>
+      JSON.stringify({
+        resolved: entry.resolved,
+        address: entry.address,
+        probe: entry.probe,
+      }),
+    ),
+  ].join("\n");
+
+interface EncodedSnapshotEntry {
+  readonly resolved: CanonicalResourceRegion;
+  readonly address: ResourceAddress;
+  readonly probe: SnapshotProbe;
+}
+
+const decodeSnapshotEntry = (
+  line: string,
+  blob: string,
+): SnapshotRegionEntry => {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    throw new SnapshotBlobFormatError(blob);
+  }
+  if (typeof raw !== "object" || raw === null) {
+    throw new SnapshotBlobFormatError(blob);
+  }
+  const entry = raw as Partial<EncodedSnapshotEntry>;
+  if (
+    entry.resolved === undefined ||
+    entry.address === undefined ||
+    entry.probe === undefined
+  ) {
+    throw new SnapshotBlobFormatError(blob);
+  }
+  return {
+    resolved: entry.resolved,
+    address: entry.address,
+    probe: entry.probe,
+  };
+};
 
 export const parseSnapshotBlob = (
   blob: string,
@@ -154,97 +206,18 @@ export const parseSnapshotBlob = (
   if (lines.length < 3 || lines[0] !== "p11-snapshot-v1") {
     throw new SnapshotBlobFormatError(blob);
   }
-  let projectId: string;
+  let projectId: unknown;
   try {
-    projectId = JSON.parse(lines[1] as string) as string;
+    projectId = JSON.parse(lines[1] as string);
   } catch {
     throw new SnapshotBlobFormatError(blob);
   }
-  const regions: SnapshotRegionEntry[] = [];
-  for (const line of lines.slice(2)) {
-    const [region, address, probe] = (line as string).split("|");
-    if (region === undefined || address === undefined || probe === undefined) {
-      throw new SnapshotBlobFormatError(blob);
-    }
-    const [spaceRaw, normRaw] = (region as string).split(":");
-    const addrParts = (address as string).split(":");
-    const probeParts = (probe as string).split(":");
-    if (
-      !spaceRaw ||
-      !normRaw ||
-      addrParts.length < 2 ||
-      probeParts.length < 2
-    ) {
-      throw new SnapshotBlobFormatError(blob);
-    }
-    const unq = (raw: string): string => {
-      try {
-        return JSON.parse(raw) as string;
-      } catch {
-        throw new SnapshotBlobFormatError(blob);
-      }
-    };
-    const kind = unq(addrParts[0] as string);
-    let addr: ResourceAddress;
-    switch (kind) {
-      case "FileTree":
-        addr = { _tag: "FileTree", path: unq(addrParts[1] as string) };
-        break;
-      case "GitWorktree":
-        addr = { _tag: "GitWorktree", path: unq(addrParts[1] as string) };
-        break;
-      case "DatabaseNamespace":
-        addr = {
-          _tag: "DatabaseNamespace",
-          namespace: unq(addrParts[1] as string),
-        };
-        break;
-      case "ExternalResource":
-        addr = {
-          _tag: "ExternalResource",
-          address: unq(addrParts[1] as string),
-        };
-        break;
-      default:
-        throw new SnapshotBlobFormatError(blob);
-    }
-    const probeKind = unq(probeParts[0] as string);
-    const exists = unq(probeParts[1] as string) === "true";
-    const parsedProbe: SnapshotProbe =
-      probeKind === "FileTree"
-        ? {
-            kind: "FileTree",
-            exists,
-            mtime:
-              probeParts.length > 2 && (probeParts[2] as string) !== '""'
-                ? unq(probeParts[2] as string)
-                : undefined,
-          }
-        : {
-            kind: "GitWorktree",
-            exists,
-            head:
-              probeParts.length > 2 && (probeParts[2] as string) !== '""'
-                ? unq(probeParts[2] as string)
-                : undefined,
-            dirty:
-              probeParts.length > 3
-                ? unq(probeParts[3] as string) === "true"
-                : false,
-          };
-    regions.push({
-      address: addr,
-      resolved: {
-        resourceSpaceId: unq(
-          spaceRaw,
-        ) as CanonicalResourceRegion["resourceSpaceId"],
-        normalizedRegion: unq(
-          normRaw,
-        ) as CanonicalResourceRegion["normalizedRegion"],
-      },
-      probe: parsedProbe,
-    });
+  if (typeof projectId !== "string") {
+    throw new SnapshotBlobFormatError(blob);
   }
+  const regions = lines
+    .slice(2)
+    .map((line) => decodeSnapshotEntry(line as string, blob));
   return { projectId, regions };
 };
 

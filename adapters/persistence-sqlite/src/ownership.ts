@@ -180,38 +180,12 @@ export const EnvironmentRevisionStoreLive: Layer.Layer<
             ),
           );
         }),
-      // P11 `01` (CI-1): strict-successor CAS. Only RecordEnvironmentChange
-      // (P11-002) calls this; the successor is derived internally — callers
-      // cannot request an arbitrary value.
-      advanceAnchor: (projectId, expected) =>
-        Effect.gen(function* () {
-          yield* TransactionScope;
-          const rows = yield* run(
-            sql.unsafe<{ revision: string | null }>(
-              "SELECT revision FROM environment_revisions WHERE project_id = ?",
-              [projectId],
-            ),
-          );
-          const current = rows[0]?.revision ?? null;
-          if (current === null) {
-            return { _tag: "AnchorMissing" as const };
-          }
-          if (current !== expected) {
-            return {
-              _tag: "RevisionConflict" as const,
-              current,
-            };
-          }
-          const to = String(Number(current) + 1);
-          const now = yield* clock.now();
-          yield* run(
-            sql.unsafe(
-              "UPDATE environment_revisions SET revision = ?, updated_at = ? WHERE project_id = ? AND revision = ?",
-              [to, now, projectId, expected],
-            ),
-          );
-          return { _tag: "Advanced" as const, to };
-        }),
+      // P12 `05` §5.1 (TR-1): `advanceAnchor` is no longer on the public
+      // `EnvironmentRevisionStore` port. CAS successor advancement is the
+      // internal, non-exported `EnvironmentRevisionAdvancement` capability
+      // (see `environment-advancement.ts`); the governed
+      // `RecordEnvironmentChange` command path is the sole production
+      // advancement authority (CI-1).
     });
   }),
 );

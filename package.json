@@ -14,6 +14,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "architecture": "vitest run tests/architecture",
+    "drill:restore": "pnpm build && node apps/single-workspace/dist/restore-drill.js",
     "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test"
   },
   "devDependencies": {

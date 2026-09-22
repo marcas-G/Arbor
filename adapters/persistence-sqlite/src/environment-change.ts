@@ -53,10 +53,12 @@ const toRecord = (row: ChangeRow): EnvironmentChangeRecord => ({
 /**
  * P11 `03` — the ONLY environment revision advancement authority (CI-1).
  *
- * Mutation path: strict CAS via the store's advanceAnchor (successor derived
- * internally; callers never specify the next revision), the change record +
- * EnvironmentChanged event + wake targets all persisted inside the SAME
- * TransactionScope as the advancement — no crash-visible partial commit.
+ * Mutation path: strict CAS on the environment_revisions counter (successor
+ * derived internally; callers never specify the next revision), the change
+ * record + EnvironmentChanged event + wake targets all persisted inside the
+ * SAME TransactionScope as the advancement — no crash-visible partial commit.
+ * P12 `05` §5.1 (TR-1): the public store port carries no advancement face; this
+ * governed command path is the sole production advancement authority (CI-1).
  *
  * Control flow (B4): first RevisionConflict -> exactly ONE full re-probe
  * through the EnvironmentReProbePort seam (the entire observation —

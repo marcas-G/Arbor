@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import { checkEdges, type PackageManifest } from "./package-dag.js";
 
 // P11-012 architecture closure: source-level summaries of the five closure
-// invariants (P11 `00` §Five closure invariants), the documented
-// advanceAnchor residual exposure (TODO P12), and the dependency-key freeze
+// invariants (P11 `00` §Five closure invariants), the P12 `05` §5.1 (TR-1)
+// narrowing of the advanceAnchor residual exposure (the P11 result record
+// `planning/results/P11.result.md:55` is the provenance; P12 narrows the
+// public surface — not a silent deletion), and the dependency-key freeze
 // (no new edges beyond the two declared P11 whitelist adapters).
 
 const repoRoot = join(import.meta.dirname, "..", "..");
@@ -135,18 +137,18 @@ describe("p11-closure", () => {
     }
   });
 
-  it("advanceAnchor residual exposure is RECORDED, not removed: the ports public face still exposes it (documented residual — narrowing is TODO P12; sole legal caller comment must stay)", () => {
-    // TODO(P12): collapse the store's write faces so advanceAnchor is not
-    // reachable through the generic port surface. Until then this test
-    // documents the residual exposure instead of denying it.
+  it("TR-1 (P12 05 §5.1): advanceAnchor is ABSENT from the ports public surface — advancement is the internal, non-exported capability (P11 result record :55 provenance)", () => {
+    // P12 narrows the P11 residual exposure: the public store port no longer
+    // declares advanceAnchor (this is the recorded P12 reconciliation, not a
+    // silent deletion).
     const environmentPort = sourceOf("packages/ports/src/environment.ts");
-    expect(environmentPort.includes("advanceAnchor")).toBe(true);
-    // The authority annotation must stay attached to the exposure.
-    expect(environmentPort.includes("RecordEnvironmentChange")).toBe(true);
-    expect(environmentPort.includes("ONLY")).toBe(true);
-    // And it is visible on the public face (re-exported).
+    expect(environmentPort.includes("advanceAnchor")).toBe(false);
+    // The two legal lazy/ownership write faces remain on the public port.
+    expect(environmentPort.includes("lazyInitAnchor")).toBe(true);
+    expect(environmentPort.includes("readonly record")).toBe(true);
+    // The ports public barrel exposes no advancement token.
     const portsIndex = sourceOf("packages/ports/src/index.ts");
-    expect(portsIndex.includes('export * from "./environment.js";')).toBe(true);
+    expect(portsIndex.includes("advanceAnchor")).toBe(false);
   });
 
   it("dependency keys — no new edges beyond the declared whitelist (P12 `01` §7 reconciled sandbox-worktree / environment-resolver-local to domain+ports only)", () => {

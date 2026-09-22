@@ -1,6 +1,12 @@
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+// P12 `05` §5.1 (TR-1): advancement is reachable only through the internal,
+// non-exported capability (not the public `ports` surface).
+import {
+  EnvironmentRevisionAdvancement,
+  EnvironmentRevisionAdvancementLive,
+} from "../adapters/persistence-sqlite/src/environment-advancement.js";
 import {
   ClockLive,
   EnvironmentRevisionStoreLive,
@@ -28,21 +34,32 @@ const storeLayer = () => {
     EnvironmentRevisionStoreLive,
     Layer.merge(base, ClockLive),
   );
+  const advancement = Layer.provide(
+    EnvironmentRevisionAdvancementLive,
+    Layer.merge(base, ClockLive),
+  );
   const tx = Layer.provide(TransactionPortLive, base);
-  return Layer.provideMerge(Layer.mergeAll(store, tx, base), base);
+  return Layer.provideMerge(Layer.mergeAll(store, advancement, tx, base), base);
 };
 
 const run = <A, E>(
   program: Effect.Effect<
     A,
     E,
-    SqlClient | EnvironmentRevisionStore | TransactionPort
+    | SqlClient
+    | EnvironmentRevisionStore
+    | EnvironmentRevisionAdvancement
+    | TransactionPort
   >,
 ): Promise<A> =>
   Effect.runPromise(
     Effect.scoped(
       Effect.provide(
-        program as Effect.Effect<A, E, SqlClient | EnvironmentRevisionStore>,
+        program as Effect.Effect<
+          A,
+          E,
+          SqlClient | EnvironmentRevisionStore | EnvironmentRevisionAdvancement
+        >,
         storeLayer(),
       ),
     ),
@@ -52,6 +69,7 @@ const withStore = Effect.gen(function* () {
   yield* runMigrations(P8_MIGRATIONS);
   const sql = yield* SqlClient;
   const store = yield* EnvironmentRevisionStore;
+  const advancement = yield* EnvironmentRevisionAdvancement;
   const tx = yield* TransactionPort;
   // minimal project rows (FK order: sessions(deferred) -> projects -> workspaces)
   yield* tx.transact(
@@ -82,7 +100,7 @@ const withStore = Effect.gen(function* () {
       );
     }),
   );
-  return { store, tx };
+  return { store, advancement, tx };
 });
 
 void (async () => {
@@ -210,13 +228,19 @@ describe("P11-001 store (typed advancement authority)", () => {
   it("advanceAnchor is a strict-successor CAS: 1 -> 2 -> 3, stale expected conflicts", async () => {
     await run(
       Effect.gen(function* () {
-        const { store, tx } = yield* withStore;
+        const { store, advancement, tx } = yield* withStore;
         yield* tx.transact(store.lazyInitAnchor(PROJECT));
-        const first = yield* tx.transact(store.advanceAnchor(PROJECT, "1"));
+        const first = yield* tx.transact(
+          advancement.advanceAnchor(PROJECT, "1"),
+        );
         expect(first).toEqual({ _tag: "Advanced", to: "2" });
-        const stale = yield* tx.transact(store.advanceAnchor(PROJECT, "1"));
+        const stale = yield* tx.transact(
+          advancement.advanceAnchor(PROJECT, "1"),
+        );
         expect(stale).toEqual({ _tag: "RevisionConflict", current: "2" });
-        const second = yield* tx.transact(store.advanceAnchor(PROJECT, "2"));
+        const second = yield* tx.transact(
+          advancement.advanceAnchor(PROJECT, "2"),
+        );
         expect(second).toEqual({ _tag: "Advanced", to: "3" });
         const current = yield* tx.transact(store.current(PROJECT));
         expect(Option.isSome(current) && current.value).toBe("3");
@@ -227,8 +251,10 @@ describe("P11-001 store (typed advancement authority)", () => {
   it("advanceAnchor on a missing anchor is typed, not a blind init", async () => {
     await run(
       Effect.gen(function* () {
-        const { store, tx } = yield* withStore;
-        const result = yield* tx.transact(store.advanceAnchor(PROJECT_B, "1"));
+        const { store, advancement, tx } = yield* withStore;
+        const result = yield* tx.transact(
+          advancement.advanceAnchor(PROJECT_B, "1"),
+        );
         expect(result._tag).toBe("AnchorMissing");
       }),
     );
@@ -237,10 +263,10 @@ describe("P11-001 store (typed advancement authority)", () => {
   it("counters are project-scoped (independent anchors)", async () => {
     await run(
       Effect.gen(function* () {
-        const { store, tx } = yield* withStore;
+        const { store, advancement, tx } = yield* withStore;
         yield* tx.transact(store.lazyInitAnchor(PROJECT));
         yield* tx.transact(store.lazyInitAnchor(PROJECT_B));
-        yield* tx.transact(store.advanceAnchor(PROJECT, "1"));
+        yield* tx.transact(advancement.advanceAnchor(PROJECT, "1"));
         const a = yield* tx.transact(store.current(PROJECT));
         const b = yield* tx.transact(store.current(PROJECT_B));
         expect(Option.isSome(a) && a.value).toBe("2");
@@ -252,9 +278,9 @@ describe("P11-001 store (typed advancement authority)", () => {
   it("persistence boundary: raw record stays the transport; parse round-trips stored counters", async () => {
     await run(
       Effect.gen(function* () {
-        const { store, tx } = yield* withStore;
+        const { store, advancement, tx } = yield* withStore;
         yield* tx.transact(store.lazyInitAnchor(PROJECT));
-        yield* tx.transact(store.advanceAnchor(PROJECT, "1"));
+        yield* tx.transact(advancement.advanceAnchor(PROJECT, "1"));
         const raw = yield* tx.transact(store.current(PROJECT));
         const parsed = EnvironmentRevision.parse(Option.getOrThrow(raw));
         expect(parsed?.value).toBe("2");
