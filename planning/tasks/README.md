@@ -5,7 +5,7 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0–P8** (complete); **P9** (planning). Task contracts reference
+Phases: **P0–P9** (complete); **P10** (planning). Task contracts reference
 `docs/design/implementation/<phase>/**`.
 
 ## Authority order
@@ -171,7 +171,11 @@ review Blocking=0 after two independent rounds; governed by the GQ1–GQ8 /
 v1.11 G1–G6 decisions). P9 tasks project `DID v1.11` plus the frozen P9
 phase contracts in `docs/design/implementation/P9/**` (contract review
 Blocking=0; governed by the GQ1–GQ5 decisions recorded in
-`P9/00-contract-index.md` — no DID catalog changes).
+`P9/00-contract-index.md` — no DID catalog changes). P10 tasks project
+`DID v1.13` plus the frozen P10 phase contracts in
+`docs/design/implementation/P10/**` (contract review Blocking=0; governed
+by the GQ1–GQ7 + GAP-01 decisions recorded in `P10/00-contract-index.md`
+under DID v1.13 G1–G8).
 `Problem & Goals v1.2` / `Scenarios v1.2` / `System Design v1.3` are unchanged.
 
 ## Entry blocker
@@ -179,12 +183,13 @@ Blocking=0; governed by the GQ1–GQ5 decisions recorded in
 P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
 pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
 project `env.sh` wrapper; `pnpm check` is green. **P0–P9 are COMPLETE**;
-all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6/P7/P8 Design Gap
-(see `planning/results/P6.result.md`, `planning/results/P7.result.md`,
-`planning/results/P8.result.md`).
-**P9**: design closure complete (contracts at Blocking=0; GQ1–GQ5 adjudicated
-2026-09-21 with no DID catalog changes), planning frozen — pending
-implementation authorization. See `planning/gaps/`.
+all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6/P7/P8/P9 Design
+Gap (see `planning/results/P6.result.md`, `planning/results/P7.result.md`,
+`planning/results/P8.result.md`, `planning/results/P9.result.md`).
+**P10**: design closure complete (contracts at Blocking=0; GQ1–GQ7 + GAP-01
+adjudicated 2026-09-22 under DID v1.13 G1–G8), planning frozen — pending
+implementation authorization. P7-GAP-01 closure is owed by P10 (P10-004 /
+P10-013). See `planning/gaps/`.
 
 ## P2 dependency graph
 
@@ -486,3 +491,36 @@ P9-013                     -> P9-014
 | P9-012 | P7/P8 workflow interruption replay + dispatch failure (WF/DF + D5) | P9-001, P9-003, P9-010 |
 | P9-013 | Acceptance stories A–G + architecture + P5–P8 regression guards | P9-002..P9-012 |
 | P9-014 | P9 convergence & result record | P9-013 |
+
+## P10 dependency graph
+
+Authoritative edge list (`X -> Y` means Y depends on X):
+
+```text
+P9-014                    -> P10-001
+P10-001                   -> P10-002, P10-010
+P10-002                   -> P10-003
+P10-003                   -> P10-004, P10-005, P10-006, P10-007, P10-008
+P10-003, P10-004, P10-005, P10-007, P10-008 -> P10-009
+P10-002, P10-006, P10-010 -> P10-011
+P10-002 .. P10-011        -> P10-012
+P10-012                   -> P10-013
+```
+
+## P10 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P10-001 | Domain & event-face evolution (HumanInterventionApplied, WorkSteered back-fill, ViewId/status vocabulary) | P9-014 |
+| P10-002 | api-contracts package + ProjectionQueryPort signature + freshness types | P10-001 |
+| P10-003 | projection-runtime skeleton + Tree/status views (exhaustive label map incl. retired) | P10-002 |
+| P10-004 | Attention read-model: six sources / dedup / bubbling + GAP-01 derived view | P10-003 |
+| P10-005 | EffectiveFacts materialization + freshness barrier (GQ2/GQ5; no implicit RYW) | P10-003 |
+| P10-006 | Workspace Detail / Verification / Dependency / CurrentWork views | P10-003 |
+| P10-007 | Transcript production read path + Usage aggregation | P10-003 |
+| P10-008 | Inbox view + state-reconciliation audit face | P10-003 |
+| P10-009 | Rebuild at-scale orchestration + checkpoints + projection-side retention | P10-003, P10-004, P10-005, P10-007, P10-008 |
+| P10-010 | HumanInterventionApplied emission wiring (steer back-fill, governance four, dormant Stop) | P10-001 |
+| P10-011 | Message-mediated Query surface + Steer/Stop/Governance action surfaces | P10-002, P10-006, P10-010 |
+| P10-012 | Acceptance Stories A–G + architecture + P5–P9 regression guards | P10-002..P10-011 |
+| P10-013 | P10 convergence, result record & GAP-01 closure | P10-012 |

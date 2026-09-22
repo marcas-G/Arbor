@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.12  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P9 recovery-hardening closure)  
-**Supersedes:** v1.11  
+**Version:** 1.13  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P10 projection/UI closure)  
+**Supersedes:** v1.12  
 **Date:** 2026-09-22  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
@@ -81,6 +81,43 @@
 - G6: exact tool parameter/result schemas and the shell policy enforcement
   mechanism are **phase-scoped contract** (P4), not implementation choice; only
   backend/limits/numeric thresholds are implementation/empirical (§13).
+
+**Governance changes (v1.12 → v1.13):**（P10 design-closure 治理裁决 GQ1–GQ7）
+
+- G1 (GQ1): **视图清单权威归 System Design §12/§13.9 全量 inventory**；本设计 §11 P10
+  九词仅为不完整摘要。Search / Workspace Summary / Project Overview / Inbox 视图
+  均归 P10；`WorkspaceStatus` 标签映射表按 SD 原有 labels 冻结（P10 契约落地），
+  不发明新标签。
+- G2 (GQ2): **`EffectiveFacts` 是唯一的 shared canonical-state-derived
+  projection**：P10 owns definition / materialization / freshness / query；
+  P3（Context cognition）只消费，不再另行派生。
+- G3 (GQ3): **Attention read-model 契约归 P10**：source→severity→target→
+  parent/human bubbling→dedup→read-model。上游各 phase 只产事实（事件/派生条件）；
+  Attention 永不自动执行 canonical mutation。
+- G4 (GQ4): **External Human/Parent Stop 的 authority resolver 归 P12**。P10 只
+  暴露 stop request / control surface；P2 consumes/validates trusted Stop
+  authority（运行时语义不变）。P2 `01` §"lands with the governance phase
+  (P6/P10)" 的 ownership 表述按本条作 inherited clarification——resolver 语义
+  自 P6/P10 收敛为 P12，P6/P10 不实现 resolver。
+- G5 (GQ5): **Projection freshness 契约**：monotonic watermark（sequence 水位）
+  + observable lag（读取时携带投影水位与 canonical lastSequence 之差）+
+  explicit `FreshnessRequirement` / minimum-watermark barrier；**不提供隐式
+  Read-Your-Writes guarantee**。stale 恢复沿 §5.4 retry/catch-up/rebuild。
+- G6 (GQ6): **P10/P12 交付边界**：P10 owns programmatic projection/query +
+  UI-facing view semantics；P12 owns HTTP/WebSocket/CLI/web shell/auth/
+  deployment transport。P12 不重新解释 view semantics（transport 只呈现）。
+- G7 (GQ7): **`HumanInterventionApplied` 成为 durable audit/governance 事实**：
+  payload 冻结 `{ actor, targetWorkspaceId, summaryRef, occurredAt, kind }`；
+  由 human-originated canonical command 在成功 mutation 的**同一 semantic
+  transaction** 中发射（SteerWork / StopExecution / Critical-Steer 路径；
+  P6 `WorkSteered` 路径作为 inherited evolution 补发，不 reopen P6）。P10 只消费。
+  同时补录 P6 遗留偏差：`WorkSteered` 事件载荷按 P6 `04` §2 冻结形状
+  `{ workId, fromRevision, toRevision, severity }` 落地（events.ts 空壳为
+  实现偏差，随本条修复）。
+- G8 (P7-GAP-01): P10 将 vacant-workspace silent-wait 实现为
+  **canonical-state-derived Attention view**（`WaitingOnVacantProducer`：
+  `dependencies(Unsatisfied ∧ WorkspaceBound) × works(无 Open Work ∧ ¬Retired)`），
+  零 runtime mutation——处置事实仍是治理命令（S3 步骤 12）。
 
 **Governance changes (v1.11 → v1.12):**（P9 收敛对账，小型治理变更）
 
@@ -1651,7 +1688,7 @@ PermissionChanged
 DecisionRecorded
 ReconciliationEscalated
 EnvironmentChanged
-HumanInterventionApplied
+HumanInterventionApplied        # v1.13 G7: {actor, targetWorkspaceId, summaryRef, occurredAt, kind}
 ```
 
 高频 Provider Turn、Tool Invocation、Lease Renew、stream delta 不进入 Project Domain Event Journal，而进入 Execution Trace / Runtime Records。
@@ -3818,6 +3855,21 @@ Transcript
 Query / Steer / Stop
 Usage
 ```
+
+v1.13 (G1–G8): the authoritative view inventory is SD §12/§13.9 (this list
+is an incomplete summary — Search / Workspace Summary / Project Overview /
+Inbox views also land here). EffectiveFacts is the single shared
+canonical-state-derived projection (P10 owns; P3 consumes). The Attention
+read-model contract (source→severity→target→bubbling→dedup) is owned here;
+upstream phases only produce facts. External Stop authority resolution is
+P12 (inherited clarification of P2 `01`); P10 exposes the control surface
+only. Freshness = monotonic watermark + observable lag + explicit
+FreshnessRequirement barrier; no implicit read-your-writes. P12 owns
+transport shells and must not reinterpret view semantics.
+`HumanInterventionApplied` becomes a durable audit/governance fact
+(v1.13 G7) emitted by human-originated canonical commands in the same
+semantic transaction; the vacant-workspace silent-wait lands as the
+`WaitingOnVacantProducer` derived Attention view (P7-GAP-01 closed here).
 
 ## P11 — Environment / Git / Advanced Sandbox
 
