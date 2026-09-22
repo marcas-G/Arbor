@@ -332,6 +332,9 @@ importers:
       '@arbor/ports':
         specifier: workspace:*
         version: link:../../packages/ports
+      '@arbor/projection-runtime':
+        specifier: workspace:*
+        version: link:../../packages/projection-runtime
       '@arbor/provider-fake':
         specifier: workspace:*
         version: link:../../adapters/provider-fake

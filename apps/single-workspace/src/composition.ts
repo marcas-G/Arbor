@@ -1,11 +1,16 @@
 import { AgentDriverLive } from "@arbor/agent-runtime";
 import {
+  type AuthorityResolverPort,
+  AuthorityResolverPortLive,
   type CommandGateway,
   CommandGatewayLive,
   type CommandHandlerRegistry,
+  type ParentUserGovernanceFacts,
+  type RemoteWorkerMediationPort,
+  RemoteWorkerMediationPortLive,
 } from "@arbor/application";
 import { BlobStorePortLive } from "@arbor/blob-local";
-import type { ProjectId } from "@arbor/domain";
+import { Principal, type ProjectId, parse } from "@arbor/domain";
 import {
   EnvironmentResolverLocalLive,
   ProjectEnvironmentPortFromResolverLive,
@@ -24,12 +29,17 @@ import {
   resolveModelCatalogEntry,
 } from "@arbor/model-context";
 import {
+  AcceptanceRepositoryLive,
   AgentExecutionStateStoreLive,
   ArtifactMetadataRepositoryLive,
   ClockLive,
   CommandStoreLive,
+  ConsumerDeadLetterStoreLive,
+  ConsumerOffsetStoreLive,
+  DependencyRepositoryLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
+  EvidenceRepositoryLive,
   ExecutionRepositoryLive,
   FormationProposalStoreLive,
   IdGeneratorLive,
@@ -38,15 +48,19 @@ import {
   layer,
   MessageStoreLive,
   P12_MIGRATIONS,
+  PermissionGrantRepositoryLive,
+  ProjectionStoreLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
   ProviderTurnStoreLive,
+  RecordEnvironmentChangeLive,
   ResourceOwnershipRepositoryLive,
   runMigrations,
   SchedulerTimerStoreLive,
   SessionRepositoryLive,
   ToolInvocationStoreLive,
   TransactionPortLive,
+  VerificationRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
@@ -55,13 +69,19 @@ import {
   type CanonicalProviderEvent,
   type ExecutionDriverPort,
   type ExecutionScheduler,
+  type HealthPort,
+  type PersistenceHealthProbe,
+  type ProjectionQueryPort,
   type ProviderFailureKind,
   type ProviderPort,
   type ReconciliationSource,
   type RunnableWorkSource,
   type SecretRef,
   SkillRegistry,
+  type ToolCatalogPort,
+  type WorkWaitStore,
 } from "@arbor/ports";
+import { type UsageService, UsageServiceLive } from "@arbor/projection-runtime";
 import { FakeProviderLive } from "@arbor/provider-fake";
 import {
   OpenAIProviderLive,
@@ -85,8 +105,28 @@ import {
   SliceDirectiveHandlers,
   SliceDirectiveHandlersLive,
 } from "./directives.js";
+import {
+  PersistenceHealthProbeSqliteLive,
+  ProductionHealthPortLive,
+  T1RecoveryState,
+  T1RecoveryStateLive,
+} from "./health.js";
+import {
+  type ProductionDaemonService,
+  ProductionDaemonServiceLive,
+  type ProductionDaemonServices,
+  type SnapshotRetention,
+  SnapshotRetentionLive,
+  type TransportBoundary,
+  TransportBoundaryLive,
+} from "./production.js";
+import { ProjectionQueryPortLive } from "./projection-query.js";
 import { SliceCommandHandlerRegistryLive } from "./registry.js";
-import { ProvisionalRunnableWorkSourceLive } from "./runnable-source.js";
+import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
+import {
+  type AuthenticatorService,
+  makeStaticAuthenticator,
+} from "./transport/auth.js";
 
 /** P12 `03` §3: secret adapter selection is Composition-Root config. */
 export type SecretStoreConfig =
@@ -144,15 +184,42 @@ export interface SliceConfig {
   /** P12 `08` §6 (E-03): the Runtime Safety Envelope thresholds supplied at
    * composition. Absent falls back to a finite default policy. */
   readonly runtimeSafetyPolicy?: RuntimeSafetyPolicy;
+  /** B-7: the parent/user governance facts the Authority Resolver consumes
+   * (`02` §2). Absent means no external governance override is configured. */
+  readonly governance?: ParentUserGovernanceFacts;
+  /** B-7: the transport-boundary authenticator. Absent means no external
+   * token is accepted (the daemon still runs; external submissions fail
+   * closed with `unauthenticated`). */
+  readonly authenticator?: AuthenticatorService;
+  /** B-7: the system principal the production daemon submits recovery /
+   * consumer commands as (default `runtime:system`). */
+  readonly principalRef?: string;
+  /** B-7: the per-consumer batch size for the offset-driven loops. */
+  readonly consumerBatchSize?: number;
+  /** B-7: the content-addressed blob root used by the snapshot-retention ops
+   * action (defaults to the local blob adapter root). */
+  readonly blobRoot?: string;
 }
 
 export type SliceServices =
   | CommandGateway
   | ExecutionScheduler
   | RunnableWorkSource
+  | WorkWaitStore
   | ExecutionDriverPort
   | CommandHandlerRegistry
-  | ReconciliationSource;
+  | ReconciliationSource
+  | AuthorityResolverPort
+  | RemoteWorkerMediationPort
+  | ProjectionQueryPort
+  | ToolCatalogPort
+  | HealthPort
+  | PersistenceHealthProbe
+  | UsageService
+  | TransportBoundary
+  | ProductionDaemonService
+  | ProductionDaemonServices
+  | SnapshotRetention;
 
 /** The single-workspace composition root: wires P1–P4 into one runtime. */
 export const buildSliceLayer = (
@@ -250,6 +317,14 @@ export const buildSliceLayer = (
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
+    Layer.provide(DependencyRepositoryLive, infra),
+    Layer.provide(VerificationRepositoryLive, infra),
+    Layer.provide(EvidenceRepositoryLive, infra),
+    Layer.provide(AcceptanceRepositoryLive, infra),
+    Layer.provide(PermissionGrantRepositoryLive, infra),
+    Layer.provide(ConsumerOffsetStoreLive, infra),
+    Layer.provide(ConsumerDeadLetterStoreLive, infra),
+    Layer.provide(ProjectionStoreLive, infra),
     repo,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
     projectEnvironment,
@@ -304,7 +379,7 @@ export const buildSliceLayer = (
     directiveHandlers,
   );
   const runnableSource = Layer.provide(
-    ProvisionalRunnableWorkSourceLive,
+    DependencyAwareRunnableWorkSourceLive,
     Layer.mergeAll(repos, infra, Layer.provide(TransactionPortLive, infra)),
   );
   const reconciliation = Layer.provide(ReconciliationSourceLive, repos);
@@ -318,7 +393,7 @@ export const buildSliceLayer = (
     ),
   );
 
-  const all = Layer.mergeAll(
+  const coreAll = Layer.mergeAll(
     infra,
     repos,
     fence,
@@ -337,6 +412,70 @@ export const buildSliceLayer = (
     registry,
     gateway,
     reconciliation,
+  );
+
+  // --- B-7 production deployment surfaces (composition-root wiring) ---------
+  //
+  // The authority resolver is the pure fact producer; the remote-worker
+  // mediation is the control-plane fenced submission entry point; the
+  // projection query port binds the P10 read faces; the transport boundary
+  // assembles the P12 shells over the composition-root submission face; the
+  // production daemon drives migrate -> T1 recovery -> offset consumer loops;
+  // health/usage are the operational plane (B-8).
+  const authorityResolver = AuthorityResolverPortLive;
+  const recordEnvironmentChange = Layer.provide(
+    RecordEnvironmentChangeLive,
+    Layer.mergeAll(infra, repos),
+  );
+  const t1Recovery = T1RecoveryStateLive;
+  const mediation = Layer.provide(RemoteWorkerMediationPortLive, coreAll);
+  const persistenceHealthProbe = Layer.provide(
+    PersistenceHealthProbeSqliteLive,
+    Layer.mergeAll(coreAll, t1Recovery),
+  );
+  const health = Layer.provide(
+    ProductionHealthPortLive,
+    persistenceHealthProbe,
+  );
+  const projectionQuery = Layer.provide(ProjectionQueryPortLive, coreAll);
+  const transportBoundary = Layer.provide(
+    TransportBoundaryLive(
+      config.authenticator ?? makeStaticAuthenticator({}),
+      config.governance ?? { authenticatedHumans: [], directParentOf: [] },
+    ),
+    Layer.mergeAll(coreAll, authorityResolver, projectionQuery),
+  );
+  const productionDaemon = Layer.provide(
+    ProductionDaemonServiceLive({
+      ...(config.projectId !== undefined
+        ? { projectId: config.projectId }
+        : {}),
+      principal: parse(Principal)(config.principalRef ?? "runtime:system"),
+      ...(config.consumerBatchSize !== undefined
+        ? { batchSize: config.consumerBatchSize }
+        : {}),
+    }),
+    Layer.mergeAll(coreAll, t1Recovery, recordEnvironmentChange),
+  );
+  const snapshotRetention = Layer.provide(
+    SnapshotRetentionLive(config.blobRoot),
+    coreAll,
+  );
+  const usage = UsageServiceLive;
+
+  const all = Layer.mergeAll(
+    coreAll,
+    authorityResolver,
+    mediation,
+    t1Recovery,
+    persistenceHealthProbe,
+    health,
+    projectionQuery,
+    transportBoundary,
+    productionDaemon,
+    recordEnvironmentChange,
+    snapshotRetention,
+    usage,
   );
   return Layer.mergeAll(
     all,
