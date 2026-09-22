@@ -20,7 +20,7 @@ import {
   ExecutionRepositoryLive,
   LeaseServiceLive,
   layer,
-  P2_MIGRATIONS,
+  P12_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
 } from "../src/index.js";
@@ -115,7 +115,7 @@ describe("P2 LeaseService", () => {
   it("acquires, softly releases, and keeps the generation monotonic", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
@@ -123,18 +123,20 @@ describe("P2 LeaseService", () => {
       const clock = yield* Clock;
       yield* tx.transact(repo.tryAdmitMainExecution(execution));
 
-      const first = yield* tx.transact(leases.acquire(executionId, "worker-a"));
+      const first = yield* tx.transact(
+        leases.acquire(executionId, "worker-a", "inc-a"),
+      );
       const blocked = yield* tx
-        .transact(leases.acquire(executionId, "worker-b"))
+        .transact(leases.acquire(executionId, "worker-b", "inc-b"))
         .pipe(Effect.flip);
       const staleRenew = yield* tx
-        .transact(leases.renew(executionId, "worker-a", 99 as never))
+        .transact(leases.renew(executionId, "worker-a", "inc-a", 99 as never))
         .pipe(Effect.flip);
       yield* tx.transact(
-        leases.release(executionId, "worker-a", first.generation),
+        leases.release(executionId, "worker-a", "inc-a", first.generation),
       );
       const reacquired = yield* tx.transact(
-        leases.acquire(executionId, "worker-c"),
+        leases.acquire(executionId, "worker-c", "inc-c"),
       );
       const now = yield* clock.now();
       const invalidated = yield* tx.transact(leases.invalidateExpired(now));
@@ -155,7 +157,7 @@ describe("P2 LeaseService", () => {
   it("counts expired active executions", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
@@ -165,6 +167,7 @@ describe("P2 LeaseService", () => {
         repo.tryAcquireLease(
           executionId,
           "worker-a",
+          "inc-a",
           "2000-01-01T00:00:00.000Z",
         ),
       );

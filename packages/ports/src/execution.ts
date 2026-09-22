@@ -28,6 +28,10 @@ import type { TransactionScope } from "./session.js";
 export interface LeaseRecord {
   readonly executionId: ExecutionId;
   readonly workerId: string;
+  /** P12 `06` §3 (TR-9): the process/instance incarnation of `workerId`.
+   * The lease holder / fence identity is the triple
+   * `(workerId, workerIncarnationId, generation)`. */
+  readonly workerIncarnationId: string;
   readonly generation: LeaseGeneration;
   readonly expiresAt: string;
   readonly updatedAt: string;
@@ -77,6 +81,7 @@ export interface ExecutionRepositoryService {
   readonly tryAcquireLease: (
     executionId: ExecutionId,
     workerId: string,
+    workerIncarnationId: string,
     expiresAt: string,
   ) => Effect.Effect<
     Option.Option<LeaseRecord>,
@@ -86,6 +91,7 @@ export interface ExecutionRepositoryService {
   readonly renewLease: (
     executionId: ExecutionId,
     workerId: string,
+    workerIncarnationId: string,
     generation: LeaseGeneration,
     expiresAt: string,
   ) => Effect.Effect<
@@ -96,6 +102,7 @@ export interface ExecutionRepositoryService {
   readonly releaseLease: (
     executionId: ExecutionId,
     workerId: string,
+    workerIncarnationId: string,
     generation: LeaseGeneration,
   ) => Effect.Effect<void, ExecutionRepositoryError, TransactionScope>;
   readonly findExpiredActiveExecutions: (
@@ -121,6 +128,7 @@ export interface LeaseServiceService {
   readonly acquire: (
     executionId: ExecutionId,
     workerId: string,
+    workerIncarnationId: string,
   ) => Effect.Effect<
     LeaseRecord,
     LeaseFencingRejected | ExecutionRepositoryError,
@@ -129,6 +137,7 @@ export interface LeaseServiceService {
   readonly renew: (
     executionId: ExecutionId,
     workerId: string,
+    workerIncarnationId: string,
     generation: LeaseGeneration,
   ) => Effect.Effect<
     LeaseRecord,
@@ -138,6 +147,7 @@ export interface LeaseServiceService {
   readonly release: (
     executionId: ExecutionId,
     workerId: string,
+    workerIncarnationId: string,
     generation: LeaseGeneration,
   ) => Effect.Effect<void, ExecutionRepositoryError, TransactionScope>;
   readonly invalidateExpired: (

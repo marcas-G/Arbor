@@ -9,7 +9,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P2_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
@@ -223,7 +223,7 @@ const bootstrap = (admitId: CommandId) =>
     );
     const tx = yield* TransactionPort;
     const leases = yield* LeaseService;
-    yield* tx.transact(leases.acquire(executionId, "worker:a"));
+    yield* tx.transact(leases.acquire(executionId, "worker:a", "inc-a"));
   });
 
 const completed: SettleExecutionPayload["settlement"] = {
@@ -242,7 +242,7 @@ describe("P2-011 SettleExecution", () => {
     );
     const payload = settlePayload(completed);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* bootstrap(admitId);
       const gw = yield* CommandGateway;
@@ -281,7 +281,7 @@ describe("P2-011 SettleExecution", () => {
     );
     const payload = settlePayload(completed);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* bootstrap(admitId);
       const gw = yield* CommandGateway;
@@ -332,7 +332,7 @@ describe("P2-011 SettleExecution", () => {
       },
     });
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* bootstrap(admitId);
       const gw = yield* CommandGateway;

@@ -36,6 +36,7 @@ export const ID_PREFIXES = {
   ProviderTurnId: "ptn_",
   ToolInvocationId: "tin_",
   WorkerId: "wkr_",
+  WorkerIncarnationId: "wic_",
   FormationProposalId: "fpr_",
   PluginId: "plg_",
 } as const;
@@ -83,6 +84,10 @@ export const ToolInvocationId = makeIdSchema(
   "ToolInvocationId",
 );
 export const WorkerId = makeIdSchema(ID_PREFIXES.WorkerId, "WorkerId");
+export const WorkerIncarnationId = makeIdSchema(
+  ID_PREFIXES.WorkerIncarnationId,
+  "WorkerIncarnationId",
+);
 export const FormationProposalId = makeIdSchema(
   ID_PREFIXES.FormationProposalId,
   "FormationProposalId",
@@ -110,6 +115,7 @@ export const ID_SCHEMAS = {
   ProviderTurnId,
   ToolInvocationId,
   WorkerId,
+  WorkerIncarnationId,
   FormationProposalId,
   PluginId,
 } as const satisfies Record<IdTypeName, unknown>;
@@ -134,6 +140,9 @@ export type EventId = Schema.Schema.Type<typeof EventId>;
 export type ProviderTurnId = Schema.Schema.Type<typeof ProviderTurnId>;
 export type ToolInvocationId = Schema.Schema.Type<typeof ToolInvocationId>;
 export type WorkerId = Schema.Schema.Type<typeof WorkerId>;
+export type WorkerIncarnationId = Schema.Schema.Type<
+  typeof WorkerIncarnationId
+>;
 export type FormationProposalId = Schema.Schema.Type<
   typeof FormationProposalId
 >;

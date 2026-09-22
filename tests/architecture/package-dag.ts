@@ -14,6 +14,7 @@ export const ALLOWED_EDGES: Record<string, ReadonlyArray<string>> = {
   "environment-local": ["domain", "ports"],
   "environment-resolver-local": ["domain", "ports"],
   "worker-local": ["domain", "ports"],
+  "worker-transport": ["domain", "ports"],
   "provider-fake": ["domain", "ports"],
   "sandbox-local": ["domain", "ports"],
   "sandbox-worktree": ["domain", "ports"],

@@ -10,7 +10,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P8_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
@@ -148,7 +148,7 @@ const stealingDriver = (
               [executionId],
             );
             const takeover = yield* tx.transact(
-              leases.acquire(executionId, "worker:other"),
+              leases.acquire(executionId, "worker:other", "inc-other"),
             );
             yield* Effect.sleep(ms);
             void takeover;
@@ -344,7 +344,7 @@ describe("P9-004 lease renewal loop (L2/L3) + soft release", () => {
     const trace = { v: null as DriveTrace | null };
     const app = makeApp(slowDriver(25, trace));
     const program = Effect.gen(function* () {
-      yield* runMigrations(P8_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* admit;
       const tx = yield* TransactionPort;
@@ -387,18 +387,19 @@ describe("P9-004 lease renewal loop (L2/L3) + soft release", () => {
   it("L2 (direct): renewLeaseOnce extends expiry, keeps generation, and a stale worker/owner fails with LeaseLost", async () => {
     const app = makeApp(slowDriver(1, { v: null }));
     const program = Effect.gen(function* () {
-      yield* runMigrations(P8_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* admit;
       const tx = yield* TransactionPort;
       const leases = yield* LeaseService;
       const acquired = yield* tx.transact(
-        leases.acquire(executionId, "worker:a"),
+        leases.acquire(executionId, "worker:a", "inc-a"),
       );
       yield* Effect.sleep(5);
       const renewed = yield* renewLeaseOnce(
         executionId,
         "worker:a",
+        "inc-a",
         acquired.generation,
       );
       expect(renewed.generation).toBe(acquired.generation);
@@ -406,7 +407,12 @@ describe("P9-004 lease renewal loop (L2/L3) + soft release", () => {
         Date.parse(acquired.expiresAt),
       );
       const stale = yield* Effect.flip(
-        renewLeaseOnce(executionId, "worker:zzz", acquired.generation),
+        renewLeaseOnce(
+          executionId,
+          "worker:zzz",
+          "inc-zzz",
+          acquired.generation,
+        ),
       );
       expect(stale._tag).toBe("LeaseLost");
     });
@@ -416,7 +422,7 @@ describe("P9-004 lease renewal loop (L2/L3) + soft release", () => {
   it("L3: renewal failure after takeover → LeaseLost, durable mutation stops (no settle command), no ordinary retry; stale fence write is FencingRejected", async () => {
     const app = makeApp(stealingDriver(60));
     const program = Effect.gen(function* () {
-      yield* runMigrations(P8_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* admit;
       const tx = yield* TransactionPort;

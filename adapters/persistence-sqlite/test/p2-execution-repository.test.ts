@@ -15,7 +15,7 @@ import {
   ClockLive,
   ExecutionRepositoryLive,
   layer,
-  P2_MIGRATIONS,
+  P12_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
 } from "../src/index.js";
@@ -121,7 +121,7 @@ describe("P2 ExecutionRepository", () => {
   it("admits one active main; allows ExecutionBound concurrently", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
@@ -161,7 +161,7 @@ describe("P2 ExecutionRepository", () => {
       result: { _tag: "CoordinationCompleted" },
     };
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
@@ -190,7 +190,7 @@ describe("P2 ExecutionRepository", () => {
   it("runs the lease CAS lifecycle with monotonic generations", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
@@ -198,26 +198,51 @@ describe("P2 ExecutionRepository", () => {
       const id = exeId("exe_018f2b3c-4d5e-7abc-8def-0123456789a1");
       yield* tx.transact(repo.tryAdmitMainExecution(mainExecution(id)));
       const first = yield* tx.transact(
-        repo.tryAcquireLease(id, "worker-a", "2999-01-01T00:00:00.000Z"),
+        repo.tryAcquireLease(
+          id,
+          "worker-a",
+          "inc-a",
+          "2999-01-01T00:00:00.000Z",
+        ),
       );
       const live = yield* tx.transact(
-        repo.tryAcquireLease(id, "worker-b", "2999-01-01T00:00:00.000Z"),
+        repo.tryAcquireLease(
+          id,
+          "worker-b",
+          "inc-b",
+          "2999-01-01T00:00:00.000Z",
+        ),
       );
       const staleRenew = yield* tx.transact(
         repo.renewLease(
           id,
           "worker-a",
+          "inc-a",
           99 as never,
           "2999-01-01T00:00:00.000Z",
         ),
       );
-      yield* tx.transact(repo.releaseLease(id, "worker-a", 0 as never));
-      const reacquired = yield* tx.transact(
-        repo.tryAcquireLease(id, "worker-c", "2999-01-01T00:00:00.000Z"),
+      yield* tx.transact(
+        repo.releaseLease(id, "worker-a", "inc-a", 0 as never),
       );
-      yield* tx.transact(repo.releaseLease(id, "worker-c", 1 as never));
+      const reacquired = yield* tx.transact(
+        repo.tryAcquireLease(
+          id,
+          "worker-c",
+          "inc-c",
+          "2999-01-01T00:00:00.000Z",
+        ),
+      );
+      yield* tx.transact(
+        repo.releaseLease(id, "worker-c", "inc-c", 1 as never),
+      );
       const expired = yield* tx.transact(
-        repo.tryAcquireLease(id, "worker-d", "2000-01-01T00:00:00.000Z"),
+        repo.tryAcquireLease(
+          id,
+          "worker-d",
+          "inc-d",
+          "2000-01-01T00:00:00.000Z",
+        ),
       );
       const now = yield* clock.now();
       const expiredActive = yield* tx.transact(

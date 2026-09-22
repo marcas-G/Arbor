@@ -659,15 +659,29 @@ CREATE TABLE permission_grants (
 CREATE INDEX permission_grants_active ON permission_grants (project_id, state);
 `;
 
-/** P12 ordered migration baseline (TR-7). This task owns only
- * `0013_project_tool_registry`; the frozen P12 list also reserves
- * `0011_lease_worker_incarnation` (P12-006) and `0012_permission_grants`
- * (P12-002). The forward-only runner keys on `PRAGMA user_version` and
- * applies every migration with `id > current`, so it does not require a
- * contiguous list: the owning tasks add their entries (sorted by id) and
- * `user_version` settles at `max(applied id)` = 13. */
+/** P12 `06` §3 (TR-9): the inherited P2 lease evolution — incarnation
+ * fencing. The frozen `execution_leases` table (`P2 04` §3.2) had no
+ * incarnation column; this forward-only migration adds it so the lease holder
+ * / fence identity becomes `(worker_id, worker_incarnation_id, generation)`.
+ * The `NOT NULL DEFAULT ''` backfill keeps pre-P12 rows valid; a fresh
+ * acquisition records the acquiring incarnation. */
+const P12_LEASE_WORKER_INCARNATION_DDL = `
+ALTER TABLE execution_leases ADD COLUMN worker_incarnation_id TEXT NOT NULL DEFAULT '';
+`;
+
+/** P12 ordered migration baseline (TR-7). The three P12 migrations are
+ * `0011_lease_worker_incarnation` (this task, `06`), `0012_permission_grants`
+ * (`02`), and `0013_project_tool_registry` (`01`). The forward-only runner
+ * keys on `PRAGMA user_version` and applies every migration with
+ * `id > current` in ascending id order, so `user_version` settles at
+ * `max(applied id)` = 13. */
 export const P12_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   ...P11B_MIGRATIONS,
+  {
+    id: 11,
+    name: "lease_worker_incarnation",
+    sql: P12_LEASE_WORKER_INCARNATION_DDL,
+  },
   { id: 12, name: "permission_grants", sql: P12_PERMISSION_GRANTS_DDL },
   { id: 13, name: "project_tool_registry", sql: P12_PROJECT_TOOL_REGISTRY_DDL },
 ];

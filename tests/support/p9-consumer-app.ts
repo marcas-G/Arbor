@@ -14,7 +14,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P8_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectionStoreLive,
   ProjectRepositoryLive,
   runMigrations,
@@ -107,7 +107,7 @@ export type P9ConsumerAppServices =
   | IdGenerator
   | Clock;
 
-export const P9_CONSUMER_MIGRATIONS = P8_MIGRATIONS;
+export const P9_CONSUMER_MIGRATIONS = P12_MIGRATIONS;
 
 /** Commit-injection gate (CC-1/RB-2): while armed, the NEXT successful
  * transaction body fails its COMMIT and rolls back (fail-once). Arming

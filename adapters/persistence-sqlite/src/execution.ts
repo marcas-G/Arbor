@@ -40,6 +40,7 @@ interface ExecutionRow {
 interface LeaseRow {
   readonly execution_id: string;
   readonly worker_id: string;
+  readonly worker_incarnation_id: string;
   readonly generation: number;
   readonly expires_at: string;
   readonly updated_at: string;
@@ -85,6 +86,7 @@ const toExecution = (row: ExecutionRow): Execution => {
 const toLease = (row: LeaseRow): LeaseRecord => ({
   executionId: row.execution_id as ExecutionId,
   workerId: row.worker_id,
+  workerIncarnationId: row.worker_incarnation_id,
   generation: Number(row.generation) as LeaseRecord["generation"],
   expiresAt: row.expires_at,
   updatedAt: row.updated_at,
@@ -219,14 +221,27 @@ export const ExecutionRepositoryLive: Layer.Layer<
           const row = rows[0];
           return row === undefined ? Option.none() : Option.some(toLease(row));
         }),
-      tryAcquireLease: (executionId, workerId, expiresAt) =>
+      tryAcquireLease: (
+        executionId,
+        workerId,
+        workerIncarnationId,
+        expiresAt,
+      ) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           const now = yield* clock.now();
           const rows = yield* run(
             sql.unsafe<{ generation: number }>(
-              "INSERT INTO execution_leases (execution_id, worker_id, generation, expires_at, updated_at) VALUES (?, ?, COALESCE((SELECT MAX(generation) + 1 FROM execution_leases WHERE execution_id = ?), 0), ?, ?) ON CONFLICT(execution_id) DO UPDATE SET worker_id = excluded.worker_id, generation = excluded.generation, expires_at = excluded.expires_at, updated_at = excluded.updated_at WHERE execution_leases.expires_at <= ? RETURNING generation",
-              [executionId, workerId, executionId, expiresAt, now, now],
+              "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?, ?, ?, COALESCE((SELECT MAX(generation) + 1 FROM execution_leases WHERE execution_id = ?), 0), ?, ?) ON CONFLICT(execution_id) DO UPDATE SET worker_id = excluded.worker_id, worker_incarnation_id = excluded.worker_incarnation_id, generation = excluded.generation, expires_at = excluded.expires_at, updated_at = excluded.updated_at WHERE execution_leases.expires_at <= ? RETURNING generation",
+              [
+                executionId,
+                workerId,
+                workerIncarnationId,
+                executionId,
+                expiresAt,
+                now,
+                now,
+              ],
             ),
           );
           const row = rows[0];
@@ -235,19 +250,33 @@ export const ExecutionRepositoryLive: Layer.Layer<
             : Option.some({
                 executionId,
                 workerId,
+                workerIncarnationId,
                 generation: Number(row.generation) as LeaseRecord["generation"],
                 expiresAt,
                 updatedAt: now,
               });
         }),
-      renewLease: (executionId, workerId, generation, expiresAt) =>
+      renewLease: (
+        executionId,
+        workerId,
+        workerIncarnationId,
+        generation,
+        expiresAt,
+      ) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           const now = yield* clock.now();
           const rows = yield* run(
             sql.unsafe<{ generation: number }>(
-              "UPDATE execution_leases SET expires_at = ?, updated_at = ? WHERE execution_id = ? AND worker_id = ? AND generation = ? RETURNING generation",
-              [expiresAt, now, executionId, workerId, generation],
+              "UPDATE execution_leases SET expires_at = ?, updated_at = ? WHERE execution_id = ? AND worker_id = ? AND worker_incarnation_id = ? AND generation = ? RETURNING generation",
+              [
+                expiresAt,
+                now,
+                executionId,
+                workerId,
+                workerIncarnationId,
+                generation,
+              ],
             ),
           );
           const row = rows[0];
@@ -256,19 +285,27 @@ export const ExecutionRepositoryLive: Layer.Layer<
             : Option.some({
                 executionId,
                 workerId,
+                workerIncarnationId,
                 generation: Number(row.generation) as LeaseRecord["generation"],
                 expiresAt,
                 updatedAt: now,
               });
         }),
-      releaseLease: (executionId, workerId, generation) =>
+      releaseLease: (executionId, workerId, workerIncarnationId, generation) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           const now = yield* clock.now();
           yield* run(
             sql.unsafe(
-              "UPDATE execution_leases SET expires_at = ?, updated_at = ? WHERE execution_id = ? AND worker_id = ? AND generation = ?",
-              [now, now, executionId, workerId, generation],
+              "UPDATE execution_leases SET expires_at = ?, updated_at = ? WHERE execution_id = ? AND worker_id = ? AND worker_incarnation_id = ? AND generation = ?",
+              [
+                now,
+                now,
+                executionId,
+                workerId,
+                workerIncarnationId,
+                generation,
+              ],
             ),
           );
         }),

@@ -8,7 +8,7 @@ import {
   admitExecution,
   buildSliceLayer,
   evaluateAndSelect,
-  P7_MIGRATIONS,
+  P12_MIGRATIONS,
   runMigrations,
 } from "../apps/single-workspace/src/index.js";
 import {
@@ -555,7 +555,7 @@ const runScenario = async (
   return Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P7_MIGRATIONS);
+        yield* runMigrations(P12_MIGRATIONS);
         const gateway = yield* CommandGateway;
         yield* gateway.execute(
           envelope("CreateProject", projectPayload, commandId("1")),

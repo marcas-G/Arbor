@@ -35,6 +35,8 @@ const EXPECTED_IDS = [
   "ProviderTurnId",
   "ToolInvocationId",
   "WorkerId",
+  // P12 `06` §2 (G6): worker process/instance incarnation, phase-contract evolution
+  "WorkerIncarnationId",
   // P6 `01` §4.1 (D1): governance-entity id, phase-contract evolution
   "FormationProposalId",
   // P12 `01` §2 (G1): plugin identity, phase-contract evolution

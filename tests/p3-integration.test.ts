@@ -11,7 +11,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P3_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   runMigrations,
@@ -227,7 +227,7 @@ describe("P3 integration — end-to-end driver + P2 settle pipeline", () => {
   it("admits, leases, drives, and settles a CompletionClaim through the pipeline", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P3_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const gateway = yield* CommandGateway;
       const admitId = parse(CommandId)(

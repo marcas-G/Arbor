@@ -29,6 +29,13 @@ export type CommandSubmissionContext =
       readonly principal: Principal;
       readonly executionId: ExecutionId;
       readonly fencingGeneration: LeaseGeneration;
+      /** P12 `06` §3 (TR-9): the lease-holder identity bound to the fence.
+       * Present on the fenced worker path (local or remote); absent only on
+       * legacy in-process paths that pre-date incarnation fencing. When
+       * present, the authoritative fence validates the full
+       * `(workerId, workerIncarnationId, generation)` triple. */
+      readonly workerId?: string;
+      readonly workerIncarnationId?: string;
     }
   | {
       readonly _tag: "System";

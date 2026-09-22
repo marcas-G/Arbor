@@ -12,6 +12,7 @@ import {
   IdGeneratorLive,
   layer,
   P8_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectionStoreLive,
   rebuildProjection,
   runConsumerBatch,
@@ -548,8 +549,10 @@ describe("p9-durability (GQ5 evidence protocol, 02 §12)", () => {
     expect(evidence.journalMode.toLowerCase()).toBe("wal");
     // Step 2: reopen succeeded; integrity ok.
     expect(evidence.integrity).toBe("ok");
-    // Step 3: user_version == frozen migration baseline (P1 `06` §5).
-    const baseline = P8_MIGRATIONS.reduce(
+    // Step 3: user_version == frozen migration baseline (P1 `06` §5). The
+    // fixture is booted through `p9Boot` (`P9_CONSUMER_MIGRATIONS`), which at
+    // P12 is the full ordered baseline (max applied id 13).
+    const baseline = P12_MIGRATIONS.reduce(
       (max, migration) => Math.max(max, migration.id),
       0,
     );

@@ -22,7 +22,11 @@ import { SessionRepository, TransactionPort } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { buildSliceLayer, P7_MIGRATIONS, runMigrations } from "../src/index.js";
+import {
+  buildSliceLayer,
+  P12_MIGRATIONS,
+  runMigrations,
+} from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -138,7 +142,7 @@ describe("P5 multi-turn session continuity", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P7_MIGRATIONS);
+          yield* runMigrations(P12_MIGRATIONS);
           yield* seed;
           const first = yield* admit(
             execution1,

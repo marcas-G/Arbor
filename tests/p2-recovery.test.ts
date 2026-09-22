@@ -10,7 +10,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P2_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
@@ -177,7 +177,7 @@ const bootstrap = Effect.gen(function* () {
     { _tag: "System", principal, causationRef: "c" },
     authority,
   );
-  yield* tx.transact(leases.acquire(executionId, "worker:a"));
+  yield* tx.transact(leases.acquire(executionId, "worker:a", "inc-a"));
   yield* tx.transact(repo.requestStop(executionId, "t1"));
 });
 
@@ -193,7 +193,7 @@ describe("P2-015 recovery skeleton", () => {
   it("invalidates expired leases and settles deterministic stop outcomes", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* bootstrap;
       const result = yield* runRecovery(principal);

@@ -19,7 +19,7 @@ import {
   DependencyRepositoryLive,
   IdGeneratorLive,
   layer,
-  P7_MIGRATIONS,
+  P12_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
   WorkRepositoryLive,
@@ -172,7 +172,7 @@ const classify = (
   return Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P7_MIGRATIONS);
+        yield* runMigrations(P12_MIGRATIONS);
         yield* seed(current, waitRows);
         if (withDependencyOn !== null) {
           const tx = yield* TransactionPort;
