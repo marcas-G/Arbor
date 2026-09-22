@@ -54,7 +54,6 @@ const AGGREGATE_SNAPSHOT_FIELDS = [
   "currentWorkId",
   "primarySessionId",
   "entries",
-  "verdict",
   "artifacts",
   "state",
   "projectPolicy",
@@ -63,6 +62,9 @@ const AGGREGATE_SNAPSHOT_FIELDS = [
   // revision *binding* as event-level change facts (targetDependencyRevision,
   // sourceWorkRevision, fromRevision/toRevision). What the ban targets is
   // whole-aggregate snapshots, not ordinal bindings.
+  // "verdict" likewise (P8 / v1.11 §5.3): the concluded verdict IS the change
+  // fact of VerificationConcluded — a single discriminator, not an aggregate
+  // snapshot — so it is NOT banned.
 ];
 
 describe("domain event catalog", () => {

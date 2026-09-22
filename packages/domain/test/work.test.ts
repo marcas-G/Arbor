@@ -113,6 +113,7 @@ describe("work aggregate", () => {
       throw new Error("expected conclude");
     }
     const acceptance = createAcceptance({
+      acceptanceId: "acc_00000000-0000-7000-8000-000000000001" as never,
       workId,
       targetWorkRevision: parse(WorkRevision)(3),
       verificationId,
@@ -130,6 +131,7 @@ describe("work aggregate", () => {
       work,
       concluded.value,
       createAcceptance({
+        acceptanceId: "acc_00000000-0000-7000-8000-000000000002" as never,
         workId,
         targetWorkRevision: parse(WorkRevision)(2),
         verificationId,
@@ -159,6 +161,7 @@ describe("work aggregate", () => {
       work,
       concluded.value,
       createAcceptance({
+        acceptanceId: "acc_00000000-0000-7000-8000-000000000002" as never,
         workId,
         targetWorkRevision: parse(WorkRevision)(1),
         verificationId,

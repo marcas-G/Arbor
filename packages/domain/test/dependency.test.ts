@@ -211,6 +211,7 @@ describe("dependency lifecycle", () => {
 describe("acceptance and cross-aggregate consequences", () => {
   it("creates an immutable acceptance bound to work revision + verification", () => {
     const acceptance = createAcceptance({
+      acceptanceId: "acc_00000000-0000-7000-8000-000000000001" as never,
       workId,
       targetWorkRevision: parse(WorkRevision)(7),
       verificationId: parse(VerificationId)(

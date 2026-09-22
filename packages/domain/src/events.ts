@@ -91,24 +91,42 @@ export const DeadlockAttentionRequested = Schema.TaggedStruct(
   },
 );
 export const MessageSent = Schema.TaggedStruct("MessageSent", {});
-export const VerificationStarted = Schema.TaggedStruct(
-  "VerificationStarted",
-  {},
-);
+export const VerificationStarted = Schema.TaggedStruct("VerificationStarted", {
+  verificationId: Schema.String,
+  workId: Schema.String,
+  targetWorkRevision: Schema.Number,
+  missionDigest: Schema.String,
+});
 export const VerificationConcluded = Schema.TaggedStruct(
   "VerificationConcluded",
-  {},
+  {
+    verificationId: Schema.String,
+    workId: Schema.String,
+    targetWorkRevision: Schema.Number,
+    verdict: Schema.String,
+    conclusionReason: Schema.String,
+    evidenceRefs: Schema.Array(Schema.String),
+  },
 );
-export const WorkOutcomeAccepted = Schema.TaggedStruct(
-  "WorkOutcomeAccepted",
-  {},
-);
+export const WorkOutcomeAccepted = Schema.TaggedStruct("WorkOutcomeAccepted", {
+  acceptanceId: Schema.String,
+  workId: Schema.String,
+  targetWorkRevision: Schema.Number,
+  verificationId: Schema.String,
+  actor: Schema.String,
+});
 export const ExecutionAdmitted = Schema.TaggedStruct("ExecutionAdmitted", {});
 export const ExecutionStopRequested = Schema.TaggedStruct(
   "ExecutionStopRequested",
   {},
 );
-export const ExecutionSettled = Schema.TaggedStruct("ExecutionSettled", {});
+export const ExecutionSettled = Schema.TaggedStruct("ExecutionSettled", {
+  executionId: Schema.String,
+  /** v1.11 M-4: work-level resolution for the P8 consumer chain. */
+  workId: Schema.String,
+  workRevision: Schema.Number,
+  claimRef: Schema.String,
+});
 export const PermissionChanged = Schema.TaggedStruct("PermissionChanged", {});
 export const DecisionRecorded = Schema.TaggedStruct("DecisionRecorded", {});
 export const EnvironmentChanged = Schema.TaggedStruct("EnvironmentChanged", {});

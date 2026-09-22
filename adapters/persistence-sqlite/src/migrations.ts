@@ -488,3 +488,75 @@ export const P7_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 6, name: "p7_dependency_deliverable", sql: P7_DDL },
   { id: 7, name: "p7_messages_deliver_kind", sql: P7_MESSAGES_V7_DDL },
 ];
+
+/** P8 `01`/`00` M-1..M-4: four verification tables (DID §9.3 names).
+ * verifications: one-Open per (work_id, target_work_revision) via partial
+ * unique index (v1.11 G2); owner_workspace_id snapshot (v1.11 G4);
+ * work_acceptances: double uniqueness (acceptanceId PK + per-revision UNIQUE);
+ * evidence: append-only. */
+const P8_DDL = `
+CREATE TABLE verifications (
+  verification_id           TEXT PRIMARY KEY,
+  project_id                TEXT NOT NULL REFERENCES projects(project_id),
+  work_id                   TEXT NOT NULL REFERENCES works(work_id),
+  target_work_revision      INTEGER NOT NULL,
+  owner_workspace_id        TEXT NOT NULL,
+  mission_snapshot          TEXT NOT NULL,
+  target_deliverables       TEXT NOT NULL,
+  target_artifact_versions  TEXT NOT NULL,
+  target_environment_revision TEXT,
+  environment_snapshot_ref  TEXT,
+  verification_execution_ids TEXT NOT NULL,
+  state                     TEXT NOT NULL CHECK (state IN ('Open','Concluded')),
+  verdict                   TEXT CHECK (verdict IS NULL OR verdict IN ('Pass','Fail','Unknown')),
+  conclusion_reason         TEXT CHECK (conclusion_reason IS NULL OR conclusion_reason = 'Orphaned'),
+  created_at                TEXT NOT NULL,
+  updated_at                TEXT NOT NULL,
+  CHECK ((state = 'Open') = (verdict IS NULL))
+);
+
+CREATE UNIQUE INDEX idx_verifications_one_open
+  ON verifications(work_id, target_work_revision) WHERE state = 'Open';
+
+CREATE TABLE verification_executions (
+  verification_id  TEXT NOT NULL REFERENCES verifications(verification_id),
+  execution_id     TEXT NOT NULL REFERENCES executions(execution_id),
+  bound_at         TEXT NOT NULL,
+  PRIMARY KEY (verification_id, execution_id)
+);
+
+CREATE TABLE verification_evidence (
+  evidence_id          TEXT PRIMARY KEY,
+  verification_id      TEXT NOT NULL REFERENCES verifications(verification_id),
+  criterion_id         TEXT NOT NULL,
+  kind                 TEXT NOT NULL,
+  artifact_ref         TEXT,
+  observed_environment_revision TEXT,
+  recorded_by_execution_id TEXT NOT NULL,
+  recorded_at          TEXT NOT NULL
+);
+
+CREATE INDEX idx_evidence_verification ON verification_evidence(verification_id);
+
+CREATE TABLE work_acceptances (
+  acceptance_id         TEXT PRIMARY KEY,
+  project_id            TEXT NOT NULL REFERENCES projects(project_id),
+  work_id               TEXT NOT NULL REFERENCES works(work_id),
+  target_work_revision  INTEGER NOT NULL,
+  verification_id       TEXT NOT NULL,
+  actor                 TEXT NOT NULL,
+  accepted_at           TEXT NOT NULL,
+  UNIQUE (work_id, target_work_revision)
+);
+`;
+
+export const P8_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  { id: 1, name: "init", sql: DDL },
+  { id: 2, name: "execution_session_kernel", sql: P2_DDL },
+  { id: 3, name: "provider_model_context", sql: P3_DDL },
+  { id: 4, name: "tool_runtime", sql: P4_DDL },
+  { id: 5, name: "p6_formation_communication", sql: P6_DDL },
+  { id: 6, name: "p7_dependency_deliverable", sql: P7_DDL },
+  { id: 7, name: "p7_messages_deliver_kind", sql: P7_MESSAGES_V7_DDL },
+  { id: 8, name: "p8_verification", sql: P8_DDL },
+];

@@ -23,7 +23,13 @@ const expectFailureTag = async (
 ): Promise<ProgramError> => await Effect.runPromise(Effect.flip(effect));
 
 describe("p6-prompt-programs", () => {
-  for (const entry of PROGRAM_REGISTRY) {
+  // P8-010: the shared registry also hosts the P8 program families; this
+  // suite stays scoped to the four P6 families.
+  const p6Registry = PROGRAM_REGISTRY.filter((entry) =>
+    entry.familyId.startsWith("p6-"),
+  );
+
+  for (const entry of p6Registry) {
     describe(entry.familyId, () => {
       it("carries a complete dual version header", async () => {
         const program = await Effect.runPromise(loadProgram(entry.familyId));
@@ -134,6 +140,8 @@ describe("p6-prompt-programs", () => {
   it("passes the program gate across all four families", async () => {
     const report = await Effect.runPromise(assertProgramGate());
     expect(report.passed).toBe(true);
-    expect(report.results).toHaveLength(4);
+    expect(
+      report.results.filter((result) => result.familyId.startsWith("p6-")),
+    ).toHaveLength(4);
   });
 });

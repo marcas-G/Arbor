@@ -211,6 +211,8 @@ export const markDependencyUnfulfillable = (
 };
 
 export interface Acceptance {
+  /** P8 `01` §4 (M-2 family evolution): caller-preallocated identity. */
+  readonly acceptanceId: import("./ids.js").AcceptanceId;
   readonly workId: WorkId;
   readonly targetWorkRevision: WorkRevision;
   readonly verificationId: VerificationId;

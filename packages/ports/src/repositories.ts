@@ -95,6 +95,14 @@ export interface WorkspaceRepositoryService {
     workId: WorkId,
     newRevision: Revision,
   ) => Effect.Effect<void, WorkspaceRepositoryError, TransactionScope>;
+  /** P8 `01` §5: atomic currentWorkId clearing inside the CompleteWork
+   * transaction (DID §12.11 Work row). CAS on the Workspace revision; the
+   * clear bumps the revision like every Workspace mutation. */
+  readonly clearCurrentWorkIfRevision: (
+    workspaceId: WorkspaceId,
+    expectedRevision: Revision,
+    newRevision: Revision,
+  ) => Effect.Effect<void, WorkspaceRepositoryError, TransactionScope>;
   readonly replacePrimarySessionIfRevision: (
     workspaceId: WorkspaceId,
     expectedRevision: Revision,

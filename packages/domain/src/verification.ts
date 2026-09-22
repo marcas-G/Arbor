@@ -12,11 +12,22 @@ import type { WorkRevision } from "./ordinals.js";
 import type { DomainResult } from "./result.js";
 import { err, ok } from "./result.js";
 
+/** v1.11 G1 (M-2): structured criteria — required/optional distinction. */
+export const VerificationCriterion = Schema.Struct({
+  criterionId: Schema.String,
+  requirement: Schema.String,
+  required: Schema.Boolean,
+});
+
 export const VerificationMission = Schema.Struct({
   goal: Schema.String,
-  criteria: Schema.Array(Schema.String),
+  criteria: Schema.Array(VerificationCriterion),
   riskRequirements: Schema.Array(Schema.String),
 });
+
+export type VerificationCriterionType = Schema.Schema.Type<
+  typeof VerificationCriterion
+>;
 
 export type VerificationMission = Schema.Schema.Type<
   typeof VerificationMission
@@ -28,9 +39,34 @@ export type VerificationVerdict = Schema.Schema.Type<
   typeof VerificationVerdict
 >;
 
+export type ConclusionReason = "Orphaned";
+
+/** v1.11 G1: required-qualified deterministic aggregation (SD §9.6). */
+export const aggregateVerdict = (
+  results: ReadonlyArray<{
+    readonly required: boolean;
+    readonly verdict: VerificationVerdict;
+  }>,
+): VerificationVerdict => {
+  if (results.some((result) => result.required && result.verdict === "Fail")) {
+    return "Fail";
+  }
+  if (
+    results.some((result) => result.required && result.verdict === "Unknown")
+  ) {
+    return "Unknown";
+  }
+  return "Pass";
+};
+
 export type VerificationState =
   | { readonly status: "Open" }
-  | { readonly status: "Concluded"; readonly verdict: VerificationVerdict };
+  | {
+      readonly status: "Concluded";
+      readonly verdict: VerificationVerdict;
+      /** v1.11 G5: only ever "Orphaned", and only with verdict Unknown. */
+      readonly conclusionReason?: ConclusionReason;
+    };
 
 export interface Verification {
   readonly verificationId: VerificationId;
@@ -96,13 +132,24 @@ export const recordVerificationEvidence = (
 export const concludeVerification = (
   verification: Verification,
   verdict: VerificationVerdict,
+  conclusionReason?: ConclusionReason,
 ): DomainResult<Verification> => {
   if (verification.state.status !== "Open") {
     return err(concludedError());
   }
+  if (conclusionReason === "Orphaned" && verdict !== "Unknown") {
+    return err({
+      _tag: "AuthorityDenied",
+      reason:
+        "conclusionReason Orphaned pairs only with verdict Unknown (v1.11 G5)",
+    });
+  }
   return ok({
     ...verification,
-    state: { status: "Concluded", verdict },
+    state:
+      conclusionReason === undefined
+        ? { status: "Concluded", verdict }
+        : { status: "Concluded", verdict, conclusionReason },
   });
 };
 

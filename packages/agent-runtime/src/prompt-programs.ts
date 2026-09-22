@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect } from "effect";
 
-/** P6 `05` §1 (D4). The four Prompt Program families P6 owns. Unlike the
- * P3 slot-contract programs (model-context `prompt.ts`), these are versioned
- * text artifacts with a dual version header: contractRevision pins the
- * `05` §2 mandatory-clause contract; textVersion + textHash pin the text. */
+/** P6 `05` §1 (D4). The four Prompt Program families P6 owns, plus the two
+ * P8 families (P9 Verification `02` §4, P14 Query/Inspection `05` §2).
+ * Unlike the P3 slot-contract programs (model-context `prompt.ts`), these
+ * are versioned text artifacts with a dual version header: contractRevision
+ * pins the mandatory-clause contract; textVersion + textHash pin the text. */
 
 export type P6ProgramFamilyId =
   | "p6-formation"
@@ -15,8 +16,14 @@ export type P6ProgramFamilyId =
   | "p6-bootstrap"
   | "p6-human-steer";
 
+/** P8-010: the two Program families P8 owns (P8 `02` §4 / `05` §2). */
+export type P8ProgramFamilyId = "p8-verification" | "p8-query-inspection";
+
+/** Every family id served by the shared program infrastructure. */
+export type ProgramFamilyId = P6ProgramFamilyId | P8ProgramFamilyId;
+
 export interface ProgramRegistryEntry {
-  readonly familyId: P6ProgramFamilyId;
+  readonly familyId: ProgramFamilyId;
   readonly contractRevision: string;
   readonly textVersion: number;
   readonly textFile: string;
@@ -44,17 +51,17 @@ export type ProgramError =
     }
   | {
       readonly _tag: "ProgramFileNotFound";
-      readonly familyId: P6ProgramFamilyId;
+      readonly familyId: ProgramFamilyId;
       readonly path: string;
     }
   | {
       readonly _tag: "ProgramHeaderInvalid";
-      readonly familyId: P6ProgramFamilyId;
+      readonly familyId: ProgramFamilyId;
       readonly reason: string;
     }
   | {
       readonly _tag: "ProgramHashMismatch";
-      readonly familyId: P6ProgramFamilyId;
+      readonly familyId: ProgramFamilyId;
       readonly expected: string;
       readonly actual: string;
     };
@@ -146,6 +153,46 @@ export const PROGRAM_REGISTRY: ReadonlyArray<ProgramRegistryEntry> = [
     ],
     forbiddenPhrases: [],
   },
+  {
+    // P8 `02` §4 (P9 family): the six mandatory clause lines plus the
+    // evidence-binding duty; forbidden phrases are the auto-PASS family
+    // ("no problem found" must never be worded as an automatic pass).
+    familyId: "p8-verification",
+    contractRevision: "P8-02@1",
+    textVersion: 1,
+    textFile: "verification/v1.md",
+    mandatoryClauses: [
+      "draft an investigation plan",
+      "Direct tool observation outranks any document",
+      "a document outranks a hypothesis",
+      "exactly one verdict of Pass, Fail, or Unknown",
+      "Finding no problem is not Pass",
+      "at least one boundary case or counterexample",
+      "insufficient evidence",
+      "no self-instruction that modifies Producer results",
+      "The Verifier judges; the Producer fixes; the Parent accepts",
+      "evidence reference",
+    ],
+    forbiddenPhrases: ["auto-pass", "silently pass"],
+  },
+  {
+    // P8 `05` §2 (P14 family): read-only discipline, scope declaration,
+    // source citation, results as Messages/observations — never canonical
+    // mutations. Forbidden phrases are write-instruction verbs.
+    familyId: "p8-query-inspection",
+    contractRevision: "P8-05@1",
+    textVersion: 1,
+    textFile: "query-inspection/v1.md",
+    mandatoryClauses: [
+      "This execution is read-only",
+      "no instruction that changes canonical state",
+      "declaring scope",
+      "cites its source",
+      "delivered as a Message (Report or Reply) or as an observation",
+      "never as a change to canonical state",
+    ],
+    forbiddenPhrases: ["mutate", "insert", "upsert", "delete"],
+  },
 ];
 
 const PROGRAMS_DIR = fileURLToPath(
@@ -214,14 +261,14 @@ export const parseProgramDocument = (
 };
 
 const registryEntry = (
-  familyId: P6ProgramFamilyId,
+  familyId: ProgramFamilyId,
 ): ProgramRegistryEntry | undefined =>
   PROGRAM_REGISTRY.find((entry) => entry.familyId === familyId);
 
 /** Loads and verifies a program from in-memory content: header must be
  * complete, name the right family, and carry the sha256 of its body. */
 export const loadProgramContent = (
-  familyId: P6ProgramFamilyId,
+  familyId: ProgramFamilyId,
   content: string,
 ): Effect.Effect<LoadedProgram, ProgramError> =>
   Effect.suspend(() => {
@@ -265,7 +312,7 @@ export const loadProgramContent = (
 /** P6 `05` §4 rule 5. Runtime load path: read the versioned file and verify
  * its textHash before use. */
 export const loadProgram = (
-  familyId: P6ProgramFamilyId,
+  familyId: ProgramFamilyId,
 ): Effect.Effect<LoadedProgram, ProgramError> =>
   Effect.suspend(() => {
     const entry = registryEntry(familyId);
@@ -288,7 +335,7 @@ export const loadProgram = (
   });
 
 export interface FamilyEvalResult {
-  readonly familyId: P6ProgramFamilyId;
+  readonly familyId: ProgramFamilyId;
   readonly headerComplete: boolean;
   readonly versionGate: boolean;
   readonly hashMatches: boolean;
@@ -306,7 +353,7 @@ const forbiddenPresent = (body: string, phrase: string): boolean =>
   body.includes(phrase);
 
 const failedEval = (
-  familyId: P6ProgramFamilyId,
+  familyId: ProgramFamilyId,
   reason: string,
 ): FamilyEvalResult => ({
   familyId,
@@ -385,7 +432,7 @@ export const evalAllPrograms = (): Effect.Effect<
  * header textVersion, and the expected version must agree before the text
  * is considered eval-passed. */
 export const verifyEvalGate = (
-  familyId: P6ProgramFamilyId,
+  familyId: ProgramFamilyId,
   textVersion: number,
 ): Effect.Effect<boolean, ProgramError> =>
   Effect.suspend(() => {

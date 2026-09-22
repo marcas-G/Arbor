@@ -2,6 +2,7 @@ import type {
   DecisionId,
   DependencyId,
   VerificationId,
+  WorkId,
   WorkspaceId,
 } from "./ids.js";
 import type { Revision } from "./ordinals.js";
@@ -30,9 +31,10 @@ export type WakeCondition =
       readonly observedRevision: Revision;
     }
   | {
+      /** v1.11 G2 (M-1): work-level wait — no verificationId key. */
       readonly _tag: "VerificationChanged";
-      readonly verificationId: VerificationId;
-      readonly observedRevision: Revision;
+      readonly workId: WorkId;
+      readonly targetWorkRevision: Revision;
     }
   | {
       readonly _tag: "InboxAdvanced";

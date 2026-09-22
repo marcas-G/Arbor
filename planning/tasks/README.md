@@ -175,7 +175,7 @@ v1.11 G1–G6 decisions).
 
 P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
 pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
-project `env.sh` wrapper; `pnpm check` is green. **P0–P7 are COMPLETE**;
+project `env.sh` wrapper; `pnpm check` is green. **P0–P8 are COMPLETE**;
 all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6/P7 Design Gap
 (see `planning/results/P6.result.md`, `planning/results/P7.result.md`).
 **P8**: design closure complete (DID v1.11 governance diff from GQ1–GQ8;
