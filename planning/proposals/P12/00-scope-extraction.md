@@ -109,6 +109,43 @@ PostgreSQL 触发（若 GQ5 判 `if justified`）；lease TTL / sweep 间隔 / c
 
 - **GQ8（UD-16，低）** `verification-runtime` 包对账：更新 DID §10.1/§10.4.1 反映 P8 的 phase-scoped 边界决定（verification 在 domain/application），还是补建该包？（citation/completeness 级）
 
+## 3A. P12 completion blockers（治理裁决后追加，关闭前必须保持显式）
+
+未闭合任一项不得宣告 **P12 COMPLETE**：
+
+1. **region-encoding correctness fix**：resolver 产出 `resourceSpaceId:"fs"` + raw path，与冻结
+   object 编码（`filesystem` + `{kind,...}`）不一致 → `resourceRegionComparator` 恒 false，
+   窄化失效。修 resolver/编码并恢复窄化路径（Story A 不得靠重包裹掩盖）。
+2. **ToolCatalogPort inherited contract correction**：`ToolCatalogPort` 必须 resolve
+   model-facing `ToolDefinition`（真实 description/schema/version）；修复 P3/P4 refs-only +
+   compiler 占位符（`schemaJson:"{}"` / `description:name`）。
+3. **full §8.16A Runtime Safety closure**：六维全部 mechanically evidenced
+   （observation source / state semantics / reset semantics / evaluation rule /
+   configurable threshold-policy / violation action / restart-durability behavior / tests）。
+4. **Authority Resolver production plane**（pure/deterministic；只产 trusted facts；不 invoke
+   CommandGateway / 不 mutate / 不 consume InvocationApproval / 不 execute tools）。
+5. **SecretStorePort / SecretRef + real adapter**（opaque `SecretRef`/`SecretMaterial`、typed
+   failures；secret 禁入 prompt/session/event/log/artifact）。
+6. **observability / health / usage plane**（derived operational state，非 canonical 权威替代；
+   unknown cost 保持 Unknown/None；pricing versioned）。
+7. **StorageScaleAssessment + DurabilityEnvelope**（SQLite 默认；backup/restore/RPO-RTO/drill）。
+8. **Remote Worker transport / identity boundary**（single-writer control plane；
+   `WorkerId`+`WorkerIncarnationId`；worker-originated durable write 由 control plane 提交）。
+9. **Plugin SDK / compatibility / trust model**（`PluginId`/`PluginVersion`/`PluginSdkApiVersion`
+   + compatibility policy；Project tool explicit registration，project-local 不自动可信）。
+
+**Phase state**：`P12 design closure in progress` / `P12 planning NOT AUTHORIZED` /
+`P12 implementation NOT AUTHORIZED`。
+
+## 3B. 治理裁决落点（v1.14）
+
+GQ1–GQ8 已裁决并落入 DID v1.14（`docs/design/03-detailed-implementation-design.md`
+"Governance changes (v1.13 → v1.14)" G1–G8）：Plugin SDK/SPI + compatibility、Authority
+Resolver production plane + SecretStore 修正、ToolCatalog 权威化、Observability/Health/Usage、
+SQLite 默认 + StorageScaleAssessment + DurabilityEnvelope 归 P12、remote Worker
+single-writer + WorkerId/WorkerIncarnationId、Runtime Safety 六维 cross-phase closure、
+移除空壳 `verification-runtime`。System Design 未改。
+
 ## 4. Review record (independent gap review, round 1)
 
 - 6 个只读研究分支并行产出；所有 load-bearing 论断在仓库内复核：`compiler.ts:106-110`（占位 schema）、`environment-resolver-local:148`（`resourceSpaceId:"fs"`）、`runtime-safety.ts:9-40`（1/6）、`ports/provider.ts:354-361`（无 error channel / raw string）、`packages/` 无 `verification-runtime`、round-1 工件位置。

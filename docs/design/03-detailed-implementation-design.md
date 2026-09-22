@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.13  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P10 projection/UI closure)  
-**Supersedes:** v1.12  
+**Version:** 1.14  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P12 design-closure rulings GQ1–GQ8)  
+**Supersedes:** v1.13  
 **Date:** 2026-09-22  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
@@ -81,6 +81,72 @@
 - G6: exact tool parameter/result schemas and the shell policy enforcement
   mechanism are **phase-scoped contract** (P4), not implementation choice; only
   backend/limits/numeric thresholds are implementation/empirical (§13).
+
+**Governance changes (v1.13 → v1.14):**（P12 design-closure 治理裁决 GQ1–GQ8）
+
+- G1 (GQ1): **Plugin SDK / SPI 归 P12**。P12 owns `PluginId` / `PluginVersion` /
+  `PluginSdkApiVersion` 与对外 compatibility policy（versioned SPI、deprecation、
+  breaking-change 规则）。Project / 第三方 tool 采用 **explicit registration** +
+  content/version-bound trust；**project-local 不自动可信**（注册是治理事实，
+  capability ceiling / sandbox / ResourceBoundary 语义不变）。
+- G2 (GQ2): **Authority Resolver production plane 归 P12**。Authority Resolver 是
+  **pure / deterministic authority-decision 边界**，只**产出**既有 exact-bound trusted
+  authority facts（`VerifiedCommandAuthority` / `VerifiedRuntimeCommandAuthority` /
+  `InvocationAuthority`）。它 **MUST NOT**：invoke `CommandGateway`、mutate canonical
+  state、consume `InvocationApproval`、或 execute tools；canonical mutation 仍只经
+  `CommandGateway`。同步修 `SecretStorePort`：opaque `SecretRef` / `SecretMaterial`、
+  typed failures、P12 adapter；明文 secret 禁止进入 prompt / session / event / log /
+  artifact。
+- G3 (GQ3): **§7.6 为权威**。`ToolCatalogPort` 必须能 resolve **model-facing
+  `ToolDefinition`**（真实 description / schema / version）；P3/P4 的 refs-only 收窄与
+  model-context compiler 占位符是 inherited defect，随 P12 修复；同时保持
+  model-context 不依赖 tool-runtime implementation。
+- G4 (GQ4): **operational Observability / Health / Usage plane 归 P12**。Metrics / logs /
+  traces / health projections 是 **derived operational state**，**MUST NOT** 成为
+  canonical Execution / ProviderTurn / ToolInvocation / Command / DomainEventJournal 事实的
+  权威替代。Usage 必须从真实事实（ProviderAttempt / ToolInvocation / Execution）派生；
+  **unknown cost 必须保持 Unknown / None，永不表示为 `0`**；pricing 必须 versioned。
+- G5 (GQ5): **SQLite 保持默认**。P12 必须产出 `StorageScaleAssessment`；只有无法满足
+  declared operating envelope 才实现 PostgreSQL。P12 owns `DurabilityEnvelope` /
+  backup-restore / RPO-RTO / restore drill；P9 仍 owns runtime fault hardening。
+- G6 (GQ6): **Remote Worker 受支持，但 canonical control plane 保持 single-writer**。
+  remote worker 禁止直连/直写 canonical DB，只经 authenticated versioned transport 调
+  control plane。新增 `WorkerId` + `WorkerIncarnationId`；**不引入 distributed
+  consensus / multi-writer control plane**。语义澄清：**"Worker-originated durable
+  write"** 指由 **authenticated worker 请求**、由 **control plane 通过权威
+  Application/Runtime ports 提交**的 mutation；**不**意味着 worker 进程拥有或直接使用
+  canonical DB connection。Remote Worker **MUST NOT** 直接写 canonical SQLite /
+  PostgreSQL state。
+- G7 (GQ7): **P12 必须补齐 §8.16A 已冻结的全部六维 Runtime Safety**；数值阈值可配置。
+  P2 不 reopen，P12 做 cross-phase closure。**P12 不得关闭，直到每个 §8.16A 维度都
+  mechanically evidenced**：`observation source` / `state semantics` / `reset semantics` /
+  `evaluation rule` / `configurable threshold / policy` / `violation action` /
+  `restart / durability behavior` / `tests`。
+- G8 (GQ8): **不创建空壳 `verification-runtime`**；修正 §10.1 / §10.4.1 physical
+  package catalog。Verification 继续由 `domain` / `application` + generic
+  `ExecutionBound` runtime 实现。
+
+**P12 completion blockers（v1.14，关闭前必须保持显式）**：
+
+```text
+1. region-encoding correctness fix
+2. ToolCatalogPort inherited contract correction
+3. full §8.16A Runtime Safety closure
+4. Authority Resolver production plane
+5. SecretStorePort / SecretRef + real adapter
+6. observability / health / usage plane
+7. StorageScaleAssessment + DurabilityEnvelope
+8. Remote Worker transport / identity boundary
+9. Plugin SDK / compatibility / trust model
+```
+
+**P12 phase state（v1.14）**：
+
+```text
+P12 design closure in progress
+P12 planning NOT AUTHORIZED
+P12 implementation NOT AUTHORIZED
+```
 
 **Governance changes (v1.12 → v1.13):**（P10 design-closure 治理裁决 GQ1–GQ7）
 
@@ -982,6 +1048,8 @@ EventId
 ProviderTurnId
 ToolInvocationId
 WorkerId
+WorkerIncarnationId
+PluginId
 ```
 
 明确不存在：
@@ -993,6 +1061,8 @@ PrimarySessionId
 ```
 
 Root/Primary 是关系角色，不是新实体类型。
+
+`PluginVersion` / `PluginSdkApiVersion` 是 branded version 值，不是 entity ID。
 
 ## 2.2 ID 规则
 
@@ -2377,6 +2447,12 @@ version/hash
 
 因此通过 `ToolCatalogPort` 查询，不依赖 `tool-runtime` implementation。
 
+v1.14 (G3): `ToolCatalogPort` 必须能 resolve **model-facing `ToolDefinition`**（真实
+`description` / `schema` / `version`），而不是仅返回 `ToolDefinitionRef`。P3/P4 的
+refs-only 收窄与 model-context compiler 占位符（`schemaJson:"{}"` / `description:name`）
+是 inherited defect，随 P12 修复（P12 completion blocker）。model-context 仍不得依赖
+`tool-runtime` implementation；schema/description 经 `ports` 契约解析。
+
 ### ToolRuntimePort
 
 AgentRuntime 只看：
@@ -2471,6 +2547,11 @@ stream
 Project Policy、ResponsibilityBoundAgentBinding / ExecutionBoundAgentBinding、EnvironmentRef 中只保存 `SecretRef`，不保存明文 credential。
 
 Provider/Tool Runtime 在执行边界通过 `SecretStorePort` 解析 credential；Agent 默认不看到 raw secret。
+
+v1.14 (G2): `SecretStorePort` 以 opaque `SecretRef`（引用）与 `SecretMaterial`（解析结果）
+为类型；`resolve` 必须携带 typed failure（缺失 / 不可访问 / 过期不得静默）。adapter 归 P12。
+明文 secret **禁止**进入 prompt / session entry / domain event / log / artifact（任何 durable
+或可观测面）；违规视为 invariant 破坏。
 
 ---
 
@@ -3032,6 +3113,12 @@ recursion depth / consecutive no-progress turns / concurrency ceilings）。**P3
 Runtime Safety / control gate 报告 activity 并获得 continue/stop 决定；具体 Port 形状下放 P2
 phase contract。P3 不拥有 Safety 判定。
 
+v1.14 (G7) cross-phase closure：P2 不 reopen。六个维度的 **mechanism / state / reset /
+violation / tests 不得缺失**，数值阈值可配置。P2 契约已认领全部六维但实现仅覆盖
+repeated-fingerprint，属 inherited partial delivery；P12 补齐其余五维（max transient
+retries / recursion depth / no-progress turns / concurrency ceilings / rate-runaway），
+列为 P12 completion blocker。
+
 ## 8.17 Long-lived Agent != Long-running Process
 
 Workspace 可以存在数月，但 Worker/Execution 只在有 runnable action 时存在：
@@ -3160,9 +3247,14 @@ busy_timeout
 optimistic revision / CAS
 ```
 
-当真正出现多 Runtime 并发写、数据库 HA 或 SQLite write contention 时再迁 PostgreSQL。
+v1.14 (G5)：**SQLite 保持默认**。P12 必须产出 `StorageScaleAssessment`（声明 operating
+envelope + 度量 SQLite 是否满足）；只有无法满足 declared operating envelope 才实现
+PostgreSQL adapter——多 Runtime 并发写 / DB HA / write contention 是触发候选，不是自动义务。
 
 SQLite 是 v1 adapter，不是 durability contract。部署必须声明 `DurabilityEnvelope` 与备份/恢复策略：process/worker/runtime/compute-host failure 在 canonical storage 完整时必须可恢复；storage-media/region loss 的能力由配置的 backup/replication 与 RPO/RTO 决定，并通过恢复演练验证。
+
+v1.14 (G5)：`DurabilityEnvelope` / backup-restore / RPO-RTO / restore drill 的交付归 **P12**
+（P9 仍拥有 runtime fault hardening）；声明与演练是 P12 的 phase deliverable。
 
 ## 9.2 Control Plane vs Data Plane
 
@@ -3295,6 +3387,12 @@ updated_at
 ```
 
 Worker durable mutation 必须检查 current fencing generation；对 canonical command，该 generation check 与 canonical read/write、Command resolution、Domain Event append 共享同一 transaction/session。事务外 pre-check 不具权威性。
+
+v1.14 (G6)：lease holder identity = `WorkerId`（可替换的执行者身份）+ `WorkerIncarnationId`
+（同一 `WorkerId` 的进程/实例化身，用于区分重启后的旧持有者）。canonical control plane 保持
+**single-writer**；remote Worker **禁止直连/直写 canonical DB**，只能经 authenticated
+versioned transport 调用 control plane，由 control plane 在同一事务内执行 fence check +
+mutation。不引入 distributed consensus / multi-writer control plane。
 
 Authoritative fence validation 与 stop/quiescence mutation admission 是**两个独立检查**：
 
@@ -3468,7 +3566,6 @@ arbor/
 │   ├── model-context/
 │   ├── agent-runtime/
 │   ├── execution-runtime/
-│   ├── verification-runtime/
 │   ├── provider-runtime/
 │   ├── tool-runtime/
 │   ├── projection-runtime/
@@ -3487,6 +3584,9 @@ arbor/
 
 Package 只对应真实依赖/替换边界，不采用“一对象一 package”。
 
+v1.14 (G8): `verification-runtime` **不是**独立物理包——Verification 由 `domain` /
+`application` + generic `ExecutionBound` runtime 实现（P8 phase-scoped 边界决定），上表已移除。
+
 ## 10.2 Package Responsibility
 
 | Package | 核心职责 |
@@ -3497,7 +3597,7 @@ Package 只对应真实依赖/替换边界，不采用“一对象一 package”
 | `model-context` | 模型在当前 Turn 如何理解世界 |
 | `agent-runtime` | 执行 Model→Action→Observation loop |
 | `execution-runtime` | 谁何时运行、Lease/Fencing/Recovery |
-| `verification-runtime` | 组织独立 Agentic Verification |
+| Verification (无独立包; v1.14 G8) | 组织独立 Agentic Verification（由 `domain` / `application` + generic `ExecutionBound` runtime 实现） |
 | `provider-runtime` | 可靠调用模型与协议适配 |
 | `tool-runtime` | 实现 Tool invocation authorization/sandbox/settlement；Tool catalog contract 位于 `ports` |
 | `projection-runtime` | 将事实转为 Tree/Attention/UI read model |
@@ -3546,7 +3646,6 @@ Projection never participates in authority decisions.
 | `model-context` | `domain`, `ports` |
 | `agent-runtime` | `domain`, `ports`, `application`, `model-context` |
 | `execution-runtime` | `domain`, `ports`, `application`, `agent-runtime` |
-| `verification-runtime` | `domain`, `ports`, `application` |
 | `provider-runtime` | `ports` |
 | `tool-runtime` | `domain`, `ports` |
 | `projection-runtime` | `domain`, `ports` |
@@ -3554,6 +3653,9 @@ Projection never participates in authority decisions.
 | `adapters/*` | `domain`, `ports` |
 | `apps/*` | Composition Root；可依赖所需 packages/adapters |
 | `testkit` | test-only；可为 scenario/harness 依赖多 package，但 production package 不反向依赖它 |
+
+> v1.14 (G8): `verification-runtime` 不作为独立包（Verification 由 `domain` /
+> `application` + generic `ExecutionBound` runtime 实现），故不在此矩阵中。
 
 额外硬规则：
 
@@ -3890,14 +3992,22 @@ minimal `SandboxPort` contract and a local executor (DID v1.8 G3).
 ## P12 — Production / Extensibility
 
 ```text
-Plugin SDK
+Plugin SDK / SPI（PluginId / PluginVersion / PluginSdkApiVersion + compatibility policy）
+Project tool explicit registration（content/version-bound trust；project-local 不自动可信）
+Authority Resolver production plane（只产 trusted authority facts，不执行 mutation）
 more providers/tools
-remote Worker
-PostgreSQL migration if justified
-observability
+remote Worker（single-writer control plane；WorkerId + WorkerIncarnationId；
+              authenticated versioned transport；禁止 direct canonical DB 写）
+StorageScaleAssessment + DurabilityEnvelope / backup-restore / RPO-RTO / restore drill
+              （SQLite 默认；PostgreSQL 仅当 declared operating envelope 无法满足）
+observability / health / usage（真实事实派生；unknown cost ≠ 0；pricing versioned）
+Runtime Safety Envelope 六维补全（§8.16A cross-phase closure）
 security hardening
 performance
 ```
+
+P12 completion blockers：region-encoding correctness、ToolCatalog inherited defect、
+RuntimeSafety completeness（v1.14 G1–G8）。
 
 ---
 
@@ -4159,6 +4269,10 @@ normalizedRegion
 | Stop request | StopExecution | ExecutionStopRequested | ExecutionRepository | application / execution-runtime | stop ≠ Work cancel; command-specific runtime authority fact |
 | Execution settlement | SettleExecution | ExecutionSettled | ExecutionRepository | application / execution-runtime | valid Settlement ADT; settle once; ExecutionOrigin path is QuiescenceControlMutation (admissible after stop, still fenced); RecoveryController uses recovery authority |
 | Environment fact | RecordEnvironmentChange | EnvironmentChanged | environment/control metadata | application (**P11**) | future behavior invalidation is durable; P2 consumes facts only |
+| Plugin SDK / SPI | plugin + Project-tool registration (P12 contract) | — | plugin/tool registration store (P12 contract) | **P12** | PluginId/PluginVersion/PluginSdkApiVersion compatibility; project-local not auto-trusted |
+| Authority resolution | resolver production only (no mutation) | — | PermissionGrant / Parent / User governance | **P12** | produces exact-bound trusted authority facts; canonical mutation stays in CommandGateway |
+| Operational observability | read-only derivation | — | observability/health/usage read models | **P12** | derived from real facts; unknown cost ≠ 0; pricing versioned |
+| Worker identity | lease identity (P12 contract) | — | execution_leases | **P12** | WorkerId + WorkerIncarnationId; single-writer control plane; remote worker no direct DB |
 
 另外：
 
@@ -4363,7 +4477,10 @@ v1.3 已关闭 P0 前必须通过推理确定的 C1–C10 与 X1–X11 cross-cut
 | P4 exact tool contracts (parameter/result schemas, authority/approval, sandbox, shell policy enforcement) | **P4 PHASE CONTRACT** | `docs/design/implementation/P4/**` |
 | P5 exact vertical-slice contracts (composition root, provisional runnable source, directive handling, slice acceptance) | **P5 PHASE CONTRACT** | `docs/design/implementation/P5/**` |
 | Context/compaction numeric defaults | **EMPIRICAL** | tune by eval |
-| SQLite performance ceiling | **EMPIRICAL** | real workload decision |
+| SQLite performance ceiling | **EMPIRICAL** | `StorageScaleAssessment` (P12) |
+| P12 exact contracts (Plugin SDK/SPI + compatibility; Authority Resolver production plane; Project tool registration/trust; observability/health/usage; remote Worker transport + identity; secret store; transport shells) | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
+| StorageScaleAssessment + DurabilityEnvelope / backup-restore / RPO-RTO / restore drill | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
+| Runtime Safety Envelope 六维补全（§8.16A cross-phase closure） | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
 
 P1 phase-scoped implementation contracts are owned by:
 
@@ -4627,6 +4744,8 @@ Long-lived Agent != long-running process.
 | Provider Turn | `ptn_` |
 | Tool Invocation | `tin_` |
 | Worker | `wkr_` |
+| Worker Incarnation | `wic_` |
+| Plugin | `plg_` |
 
 ---
 
@@ -4688,7 +4807,7 @@ Composition Root
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
 System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.9      TOP-LEVEL FROZEN
+Detailed Implementation Design v1.14     TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED
@@ -4703,6 +4822,9 @@ P3 completion                             COMPLETE
 P4 coding authorization                   AFTER P4 exact contracts closure
 P4 completion                             COMPLETE
 P5 coding authorization                   AFTER P5 exact contracts closure
+P5 completion                             COMPLETE
+P6–P11 completion                         COMPLETE
+P12 coding authorization                  AFTER P12 exact contracts closure (Blocking=0)
 ```
 
 任何后续架构修改必须先落到拥有该语义的文档，并说明：

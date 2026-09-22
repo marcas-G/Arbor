@@ -11,7 +11,7 @@ Arbor is a multi-agent work system organized around long-lived Responsibilities,
 | `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 60 system invariants | FROZEN |
 | `docs/design/03-detailed-implementation-design.md` | Executable contracts: ADT/Command/Event/Ports/SQL/Package DAG/phases | TOP-LEVEL FROZEN |
 
-These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.9).
+These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.14).
 
 ## Design governance (docs/design/**)
 
@@ -31,7 +31,7 @@ If a code implementation discovers a design gap: **stop implementation and raise
 - `planning/tasks/` — task breakdown per phase
 - `planning/results/` — completion evidence, verification output per phase
 
-Current authorization state: **P0–P7 COMPLETE; P7 FORMALLY CLOSED**
+Current authorization state: **P0–P11 COMPLETE; P11 FORMALLY CLOSED**
 (P7-GAP-01 dispositioned: DEFERRED to P10, non-blocking). P6 result:
 `planning/results/P6.result.md`; P7 result: `planning/results/P7.result.md`
 (11/11 exit criteria PASS; no open implementation Design Gap).
@@ -45,7 +45,21 @@ P10 is COMPLETE and FORMALLY CLOSED: `planning/results/P10.result.md`
 WaitingOnVacantProducer derived view; DID v1.13 G1–G8 fidelity
 held). P11 is COMPLETE: `planning/results/P11.result.md` (11/11 exit
 criteria PASS; CI-1..CI-5 mechanically proven; no open Design Gap;
-three P12 convergence items recorded). P12 is not authorized.
+three P12 convergence items recorded). P12 design closure is in progress (DID
+v1.14 governance rulings GQ1–GQ8 landed).
+
+```text
+P12 design closure in progress
+P12 planning NOT AUTHORIZED
+P12 implementation NOT AUTHORIZED
+```
+
+P12 completion blockers (must remain explicit throughout closure):
+region-encoding correctness fix; ToolCatalogPort inherited contract correction;
+full §8.16A Runtime Safety closure; Authority Resolver production plane;
+SecretStorePort / SecretRef + real adapter; observability / health / usage plane;
+StorageScaleAssessment + DurabilityEnvelope; Remote Worker transport / identity
+boundary; Plugin SDK / compatibility / trust model.
 
 P5 result: `planning/results/P5.result.md` (11/11 exit criteria PASS; no open Design Gap). P5-DG-01 was resolved by the decision/execution split: the scheduler evaluator owns the selection decision, the Application owns the `SelectCurrentWork` canonical mutation (P5 `01` §3.1).
 
