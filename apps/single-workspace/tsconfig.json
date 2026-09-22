@@ -37,10 +37,16 @@
       "path": "../../packages/tool-runtime"
     },
     {
+      "path": "../../packages/projection-runtime"
+    },
+    {
       "path": "../../adapters/persistence-sqlite"
     },
     {
       "path": "../../adapters/environment-local"
+    },
+    {
+      "path": "../../adapters/environment-resolver-local"
     },
     {
       "path": "../../adapters/worker-local"
