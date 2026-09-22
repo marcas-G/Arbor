@@ -174,7 +174,9 @@ describe("P3 ProviderRuntime + fake provider", () => {
     const r = await Effect.runPromise(
       Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
     );
-    expect((r as { result: ReadonlyArray<unknown> }).result).toHaveLength(4);
+    expect(
+      (r as { result: { events: ReadonlyArray<unknown> } }).result.events,
+    ).toHaveLength(4);
     expect(
       (r as { turns: ReadonlyArray<{ finish_reason: string | null }> }).turns[0]
         ?.finish_reason,

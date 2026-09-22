@@ -2232,7 +2232,9 @@ describe("p9-acceptance", () => {
         const runtime = yield* ProviderRuntime;
         // Connect-phase inject → ProviderUnavailable; retried under the
         // SAME Turn with turnNo unchanged.
-        const eventsA = yield* runtime.runTurn(dRunTurnInput(D_TURN_A));
+        const { events: eventsA } = yield* runtime.runTurn(
+          dRunTurnInput(D_TURN_A),
+        );
         expect(eventsA.some((event) => event._tag === "TurnCompleted")).toBe(
           true,
         );

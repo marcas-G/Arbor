@@ -172,11 +172,21 @@ export interface ProviderRunInput {
   readonly cancellationRef: string;
 }
 
+/** P12 `08` §7 D1 (B-4): the successful result of one logical `ProviderTurn`.
+ * `attemptNo` is the Turn-local ordinal of the transport attempt that produced
+ * `events` (0 = first attempt). Provider retry never creates a new
+ * `ProviderTurn` (DID §6A.9), so this ordinal is the only channel through
+ * which the caller observes real provider retries. */
+export interface ProviderRunResult {
+  readonly events: ReadonlyArray<CanonicalProviderEvent>;
+  readonly attemptNo: number;
+}
+
 export interface ProviderRuntimeService {
   readonly runTurn: (
     input: ProviderRunInput,
   ) => Effect.Effect<
-    ReadonlyArray<CanonicalProviderEvent>,
+    ProviderRunResult,
     ProviderFailure | TransactionOperationalFailure | SecretStoreError
   >;
 }

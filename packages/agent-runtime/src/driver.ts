@@ -290,7 +290,7 @@ export const AgentDriverLive = (
               timeoutMs: 30_000,
               cancellationRef: "cancel",
             };
-            const events = yield* providerRuntime.runTurn(turnInput).pipe(
+            const providerRun = yield* providerRuntime.runTurn(turnInput).pipe(
               Effect.mapError(
                 (cause): ExecutionDriverError => ({
                   _tag: "ExecutionDriverError",
@@ -298,11 +298,17 @@ export const AgentDriverLive = (
                 }),
               ),
             );
-            // D5: end-bracket the provider call (call completion).
-            if (leaseGeneration !== undefined) {
+            const events = providerRun.events;
+            // D5: end-bracket the provider call (call completion). D1 (B-4):
+            // report the real ProviderAttempt ordinal observed by
+            // ProviderRuntime, so the gate sees actual transient retries
+            // (retry never creates a new ProviderTurn — DID §6A.9). The end
+            // bracket is not a D4 turn boundary.
+            if (leaseGeneration !== undefined || providerRun.attemptNo > 0) {
               const endDecision = yield* admit(activity, {
+                retryCount: providerRun.attemptNo,
                 inFlight: "end",
-                leaseGeneration,
+                ...(leaseGeneration !== undefined ? { leaseGeneration } : {}),
                 observedAt: yield* now(),
               });
               if (endDecision === "Stop") {

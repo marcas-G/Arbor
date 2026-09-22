@@ -365,7 +365,7 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
       Effect.gen(function* () {
         yield* boot;
         const runtime = yield* ProviderRuntime;
-        const events = yield* runtime.runTurn(runTurnInput(providerTurnId));
+        const { events } = yield* runtime.runTurn(runTurnInput(providerTurnId));
         const attempts = yield* attemptRows(providerTurnId);
         const turns = yield* turnRows;
         const entries = yield* sessionEntryCount;
