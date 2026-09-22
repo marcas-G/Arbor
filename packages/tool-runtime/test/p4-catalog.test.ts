@@ -24,7 +24,7 @@ const app = Layer.mergeAll(
 );
 
 describe("P4 tool catalog", () => {
-  it("exposes the three builtin definitions with exact schemas", async () => {
+  it("exposes the builtin definitions with exact schemas", async () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -35,6 +35,7 @@ describe("P4 tool catalog", () => {
       ),
     );
     expect(result.map((tool) => tool.name).sort()).toEqual([
+      "list",
       "patch",
       "read",
       "shell",
@@ -54,6 +55,7 @@ describe("P4 tool catalog", () => {
       read: "ReadOnly",
       patch: "Idempotent",
       shell: "Reconcilable",
+      list: "ReadOnly",
     });
   });
 
@@ -73,6 +75,7 @@ describe("P4 tool catalog", () => {
     );
     expect(Option.isNone(result.missing)).toBe(true);
     expect(result.refs.map((ref) => ref.name).sort()).toEqual([
+      "list",
       "patch",
       "read",
       "shell",

@@ -1,5 +1,5 @@
 import { Effect, Layer, Option } from "effect";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   layer,
@@ -194,6 +194,7 @@ describe("P12-007 ToolCatalogPort model-facing resolution", () => {
       }),
     );
     expect(refs.map((ref) => ref.name).sort()).toEqual([
+      "list",
       "patch",
       "read",
       "shell",
@@ -247,7 +248,12 @@ describe("P12-007 compiler emits real tool metadata (CI-6)", () => {
     const byName = Object.fromEntries(
       prepared.turn.request.toolDefinitions.map((tool) => [tool.name, tool]),
     );
-    expect(Object.keys(byName).sort()).toEqual(["patch", "read", "shell"]);
+    expect(Object.keys(byName).sort()).toEqual([
+      "list",
+      "patch",
+      "read",
+      "shell",
+    ]);
     for (const builtin of BUILTIN_TOOLS) {
       const compiled = byName[builtin.name];
       expect(compiled).toBeDefined();
@@ -342,6 +348,7 @@ describe("P12-007 catalog union (builtins ∪ committed registered project tools
 
         const before = yield* catalog.visibleRefs();
         expect(before.map((ref) => ref.name).sort()).toEqual([
+          "list",
           "patch",
           "read",
           "shell",
@@ -359,6 +366,7 @@ describe("P12-007 catalog union (builtins ∪ committed registered project tools
 
         const after = yield* catalog.visibleRefs();
         expect(after.map((ref) => ref.name).sort()).toEqual([
+          "list",
           "patch",
           "project-echo",
           "project-ping",
@@ -435,6 +443,7 @@ describe("P12-007 catalog union (builtins ∪ committed registered project tools
 
         const refs = yield* catalog.visibleRefs();
         expect(refs.map((ref) => ref.name).sort()).toEqual([
+          "list",
           "patch",
           "read",
           "shell",

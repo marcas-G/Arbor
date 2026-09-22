@@ -234,6 +234,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ports
 
+  adapters/provider-openai:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
   adapters/sandbox-local:
     dependencies:
       '@arbor/domain':
@@ -323,6 +332,9 @@ importers:
       '@arbor/provider-fake':
         specifier: workspace:*
         version: link:../../adapters/provider-fake
+      '@arbor/provider-openai':
+        specifier: workspace:*
+        version: link:../../adapters/provider-openai
       '@arbor/provider-runtime':
         specifier: workspace:*
         version: link:../../packages/provider-runtime

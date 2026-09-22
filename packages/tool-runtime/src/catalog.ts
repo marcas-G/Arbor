@@ -83,6 +83,40 @@ const SHELL_RESULT_SCHEMA = JSON.stringify({
   },
 });
 
+const LIST_INPUT_SCHEMA = JSON.stringify({
+  type: "object",
+  required: ["path"],
+  properties: {
+    path: {
+      oneOf: [
+        {
+          type: "object",
+          required: ["_tag", "path"],
+          properties: { _tag: { const: "FileTree" }, path: { type: "string" } },
+        },
+        {
+          type: "object",
+          required: ["_tag", "path"],
+          properties: {
+            _tag: { const: "GitWorktree" },
+            path: { type: "string" },
+          },
+        },
+      ],
+    },
+    depth: { type: "integer", minimum: 0 },
+  },
+});
+
+const LIST_RESULT_SCHEMA = JSON.stringify({
+  type: "object",
+  required: ["entries", "truncated"],
+  properties: {
+    entries: { type: "array", items: { type: "string" } },
+    truncated: { type: "boolean" },
+  },
+});
+
 export const READ_DEFINITION: ToolDefinition = {
   name: "read",
   version: "1",
@@ -121,10 +155,26 @@ export const SHELL_DEFINITION: ToolDefinition = {
   source: "Builtin",
 };
 
+/** P12 `12` §6: a non-`read`/`patch`/`shell` builtin, added through the
+ * generic `ToolDefinition` + `ToolExecutor` seam (P4 pipeline unchanged). */
+export const LIST_DEFINITION: ToolDefinition = {
+  name: "list",
+  version: "1",
+  hash: "list-v1",
+  description:
+    "List files and directories inside an admitted resource region, bounded by depth.",
+  inputSchemaJson: LIST_INPUT_SCHEMA,
+  resultSchemaJson: LIST_RESULT_SCHEMA,
+  capabilityMetadata: ["fs:read"],
+  sideEffectSemantics: "ReadOnly",
+  source: "Builtin",
+};
+
 export const BUILTIN_TOOLS: ReadonlyArray<ToolDefinition> = [
   READ_DEFINITION,
   PATCH_DEFINITION,
   SHELL_DEFINITION,
+  LIST_DEFINITION,
 ];
 
 export const ToolDefinitionStoreLive: Layer.Layer<ToolDefinitionStore> =
