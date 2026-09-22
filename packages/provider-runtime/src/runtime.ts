@@ -2,25 +2,21 @@ import {
   type CanonicalProviderEvent,
   Clock,
   type ProviderFailure,
-  type ProviderFailureKind,
   ProviderPort,
   type ProviderRunInput,
   ProviderRuntime,
   type ProviderRuntimeService,
   ProviderTurnStore,
+  providerFailureDisposition,
   SecretStorePort,
   TransactionPort,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Stream } from "effect";
 
-const RETRYABLE: ReadonlyArray<ProviderFailureKind> = [
-  "RateLimited",
-  "ProviderUnavailable",
-  "StreamInterrupted",
-];
-
+/** P3 `06` §2 / P12 `12` §5 (TR-4): the single frozen retry disposition for
+ * the closed `ProviderFailureKind` union. */
 export const isRetryable = (failure: ProviderFailure): boolean =>
-  RETRYABLE.includes(failure.kind);
+  providerFailureDisposition(failure.kind) === "retryable";
 
 export const ProviderRuntimeLive = (
   maxAttempts = 3,

@@ -85,6 +85,38 @@ export type ProviderFailureKind =
   | "StreamInterrupted"
   | "ProtocolViolation";
 
+/** TR-4 (P12 `12` §5): `ProviderFailureKind` is a CLOSED union. It is
+ * exhaustively consumed (retry-disposition mapping, P3 `06` §2), so
+ * add/remove/rename is a MAJOR SPI change (`PluginSdkApiVersion`). An adapter
+ * that observes a provider-specific class with no frozen tag normalizes it to
+ * `ProtocolViolation` (terminal) at the adapter boundary. */
+export const PROVIDER_FAILURE_KINDS = [
+  "RateLimited",
+  "ProviderUnavailable",
+  "AuthenticationFailed",
+  "RequestRejected",
+  "StreamInterrupted",
+  "ProtocolViolation",
+] as const;
+
+/** Exhaustive by construction: a new `ProviderFailureKind` member fails
+ * compilation until its disposition is declared (closed-union enforcement). */
+const PROVIDER_FAILURE_DISPOSITION: Record<
+  ProviderFailureKind,
+  "retryable" | "terminal"
+> = {
+  RateLimited: "retryable",
+  ProviderUnavailable: "retryable",
+  AuthenticationFailed: "terminal",
+  RequestRejected: "terminal",
+  StreamInterrupted: "retryable",
+  ProtocolViolation: "terminal",
+};
+
+export const providerFailureDisposition = (
+  kind: ProviderFailureKind,
+): "retryable" | "terminal" => PROVIDER_FAILURE_DISPOSITION[kind];
+
 export type CanonicalProviderEvent =
   | {
       readonly _tag: "TurnStarted";
@@ -249,6 +281,11 @@ export interface ModelCapability {
   readonly contextWindow: number;
   readonly outputCeiling: number;
   readonly toolProtocol: string;
+  /** P12 `12` §5 (TR-4, additive/MINOR): optional capability tags used by the
+   * deterministic model-catalog selection. Absent = no declared tags. */
+  readonly capabilities?: ReadonlyArray<string>;
+  /** P12 `12` §3/§5: usage cost provenance only, never authority. */
+  readonly priceSheetVersion?: string;
 }
 
 export interface ModelCapabilityPortService {

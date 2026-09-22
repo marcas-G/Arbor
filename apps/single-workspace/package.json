@@ -26,6 +26,7 @@
     "@arbor/environment-resolver-local": "workspace:*",
     "@arbor/worker-local": "workspace:*",
     "@arbor/provider-fake": "workspace:*",
+    "@arbor/provider-openai": "workspace:*",
     "@arbor/sandbox-local": "workspace:*",
     "@arbor/secret-env": "workspace:*",
     "@arbor/secret-file": "workspace:*",

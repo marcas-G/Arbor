@@ -16,7 +16,13 @@ import {
   RuntimeSafetyGateLive,
   type RuntimeSafetyPolicy,
 } from "@arbor/execution-runtime";
-import { ModelContextLive } from "@arbor/model-context";
+import {
+  DEFAULT_MODEL_CATALOG,
+  ModelCapabilityPortLive,
+  type ModelCatalog,
+  ModelContextLive,
+  resolveModelCatalogEntry,
+} from "@arbor/model-context";
 import {
   AgentExecutionStateStoreLive,
   ArtifactMetadataRepositoryLive,
@@ -49,13 +55,17 @@ import {
   type CanonicalProviderEvent,
   type ExecutionDriverPort,
   type ExecutionScheduler,
-  ModelCapabilityPort,
+  type ProviderPort,
   type ReconciliationSource,
   type RunnableWorkSource,
   type SecretRef,
   SkillRegistry,
 } from "@arbor/ports";
 import { FakeProviderLive } from "@arbor/provider-fake";
+import {
+  OpenAIProviderLive,
+  type OpenAISdkClient,
+} from "@arbor/provider-openai";
 import { ProviderRuntimeLive } from "@arbor/provider-runtime";
 import { SandboxPortLive } from "@arbor/sandbox-local";
 import { SecretEnvLive } from "@arbor/secret-env";
@@ -82,6 +92,25 @@ export type SecretStoreConfig =
   | { readonly _tag: "Env" }
   | { readonly _tag: "File"; readonly root: string };
 
+/** P12 `12` §2: provider adapter selection is Composition-Root config. The
+ * `adapterId` is the model catalog entry's `adapterId` (`12` §3); a real
+ * adapter is never auto-discovered and never chosen by a runtime/LLM decision. */
+export type ProviderAdapterConfig =
+  | {
+      readonly adapterId: "provider-fake";
+      readonly turns?: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>;
+    }
+  | { readonly adapterId: "provider-openai"; readonly client: OpenAISdkClient };
+
+/** The single Composition-Root mapping from catalog `adapterId` -> adapter
+ * `Layer`. No production package may construct a provider adapter elsewhere. */
+export const selectProviderLayer = (
+  config: ProviderAdapterConfig,
+): Layer.Layer<ProviderPort> =>
+  config.adapterId === "provider-openai"
+    ? OpenAIProviderLive(config.client)
+    : FakeProviderLive({ turns: config.turns ?? [] });
+
 export interface SliceConfig {
   readonly databaseFile: string;
   /** P12 cross-contract completeness correction: the runtime project whose
@@ -90,6 +119,12 @@ export interface SliceConfig {
   readonly projectId?: ProjectId;
   readonly providerTurns?: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>;
   readonly modelRef?: string;
+  /** P12 `12` §3/§4: the declarative catalog used for model -> adapter and
+   * model capability resolution (defaults to `DEFAULT_MODEL_CATALOG`). */
+  readonly modelCatalog?: ModelCatalog;
+  /** P12 `12` §2: the provider adapter selected at the Composition Root. When
+   * absent the deterministic `provider-fake` is used (CI never needs network). */
+  readonly provider?: ProviderAdapterConfig;
   /** The credential reference bound to ProviderTurns. The raw credential is
    * resolved by ProviderRuntime at the execution boundary; absent means the
    * provider needs no credential (e.g. the deterministic fake). */
@@ -131,7 +166,29 @@ export const buildSliceLayer = (
       ? SecretFileLive({ root: config.secretStore.root })
       : SecretEnvLive();
 
-  const provider = FakeProviderLive({ turns: config.providerTurns ?? [] });
+  // P12 `12` §3: modelRef -> adapter + capability is deterministic Runtime,
+  // resolved here (the Composition Root), never an LLM decision.
+  const catalog = config.modelCatalog ?? DEFAULT_MODEL_CATALOG;
+  const modelRef = config.modelRef ?? catalog.defaultModelRef;
+  const modelEntry = resolveModelCatalogEntry(catalog, modelRef);
+  if (modelEntry === undefined) {
+    throw new Error(`model catalog: unknown modelRef "${modelRef}"`);
+  }
+  if (
+    config.provider !== undefined &&
+    config.provider.adapterId !== modelEntry.adapterId
+  ) {
+    throw new Error(
+      `provider adapter "${config.provider.adapterId}" does not serve modelRef "${modelRef}" (catalog adapter: "${modelEntry.adapterId}")`,
+    );
+  }
+  const provider =
+    config.provider !== undefined
+      ? selectProviderLayer(config.provider)
+      : selectProviderLayer({
+          adapterId: "provider-fake",
+          turns: config.providerTurns ?? [],
+        });
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive(3),
     Layer.mergeAll(
@@ -142,16 +199,9 @@ export const buildSliceLayer = (
       infra,
     ),
   );
-  const capability = Layer.succeed(ModelCapabilityPort, {
-    resolve: () =>
-      Effect.succeed({
-        modelRef: config.modelRef ?? "model-a",
-        family: "fake",
-        contextWindow: 8000,
-        outputCeiling: 512,
-        toolProtocol: "json",
-      }),
-  });
+  // P12 `12` §4: the real `ModelCapabilityPort` backed by the catalog replaces
+  // the test-only static layer at the Composition Root.
+  const capability = ModelCapabilityPortLive(catalog);
   const skills = Layer.succeed(SkillRegistry, {
     available: () => Effect.succeed([]),
     load: () => Effect.die("no skills"),

@@ -46,6 +46,9 @@
       "path": "../../adapters/provider-fake"
     },
     {
+      "path": "../../adapters/provider-openai"
+    },
+    {
       "path": "../../adapters/sandbox-local"
     },
     {

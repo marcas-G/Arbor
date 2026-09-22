@@ -3,6 +3,7 @@ export * from "./compiler.js";
 export * from "./context.js";
 export * from "./decode.js";
 export * from "./eval.js";
+export * from "./model-catalog.js";
 export * from "./prepare-turn.js";
 export * from "./prompt.js";
 export * from "./resolver.js";
