@@ -71,11 +71,17 @@ during P2 implementation (no new governance round).
 | `Execution` (P0 `domain`) | add `workspaceId` (R6) and `stopRequestedAt` (R9) | `04` §3.1, `01` §5–§6 |
 | P1 `04` §4 fence predicate | add `expires_at > now` (R8; SD v1.3 §10.5 is the higher-authority owner) | `03` §3, `04` §4 |
 
+## P12 TR propagation (documentation reconciliation; no P2 semantics change)
+
+- **TR-8** — `AdmitExecutionAuthority` / `StopExecutionAuthority` `submissionOrigin` widened to include `"External"` (resolver is P12) (`01` §2; R1 above; `P12 02` §4; DID v1.14 G2 / v1.13 G4).
+- **TR-9** — `execution_leases.worker_incarnation_id` + `(worker_id, worker_incarnation_id, generation)` fence/CAS; `LeaseRecord` / `ExecutionRepository` / `LeaseService` / `SessionRepository.appendEntry` fence / `FenceStopCheck` carry the triple (`02` §2–§4/§6, `03` §2–§4, `04` §3.2/§4; `P12 06` §3).
+- **TR-10** — optional `RuntimeSafetyObservation` third argument on `RuntimeSafetyGate.admitActivity` (additive; two-arg call unchanged) (`02` §5; `P12 08` §7/§7A).
+
 ## Review findings (round 1)
 
 | # | Finding | Classification | Resolution |
 |---|---|---|---|
-| R1 | P2 runtime facts initially admitted `External` origins for Admit/Stop | upstream-consistent correction | restricted to `System` / `ExecutionOrigin` / `RecoveryController`; External human path deferred to the Authority Resolver phase (`01` §2) |
+| R1 | P2 runtime facts initially admitted `External` origins for Admit/Stop | upstream-consistent correction | restricted to `System` / `ExecutionOrigin` / `RecoveryController`; External human path deferred to the Authority Resolver phase (`01` §2). **P12 TR-8 propagation:** the deferred resolver is P12 (`P12 02` §4; DID v1.14 G2 / v1.13 G4); `AdmitExecutionAuthority` / `StopExecutionAuthority` `submissionOrigin` re-widen to include `"External"` (`01` §2), matching DID §4.1 |
 | R2 | `SelectCurrentWork` execution ownership ambiguous (Work-governance, not P2) | P2 phase-scoped closure | P2 computes the §8.18A decision only; execution owned by P6/P7 (`05` §4) |
 | R3 | `RuntimeSafetyGate.admitActivity` durability of counters | implementation choice | counters may be in-memory + durable `agent_execution_state` snapshots; Port shape may add `TransactionScope` at implementation |
 | R4 | `ExecutionDriverPort.drive` performs short durable writes | P2 phase-scoped closure | driver uses `TransactionPort` for short scoped writes; `drive` itself holds no transaction (`02` §5) |

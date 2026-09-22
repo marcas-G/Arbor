@@ -16,6 +16,8 @@
 | GQ7 | HumanInterventionApplied durable audit fact {actor, targetWorkspaceId, summaryRef, occurredAt, kind}, emitted in the same semantic transaction by human-originated canonical commands; P6 WorkSteered path back-filled as inherited evolution | `06` |
 | GAP-01 | WaitingOnVacantProducer canonical-state-derived Attention view; zero runtime mutation | `02` |
 
+**P12 TR propagation (documentation reconciliation; no P10 semantics change):** TR-5 — `UsageReq.cost` is the P12 `UsageCost` ADT (unknown ≠ 0) (`05` §1; `P12 04` §3.2); TR-8 — external Stop/Admit authority is produced by the P12 Authority Resolver (`05` §2; `P12 02` §4).
+
 ## Documents
 
 | Doc | Owns |

@@ -27,9 +27,10 @@ Worker identity    = replaceable
 ```text
 execution_leases
 ────────────────────────────
-execution_id    PK
+execution_id         PK
 worker_id
-generation      INTEGER NOT NULL
+worker_incarnation_id
+generation           INTEGER NOT NULL
 expires_at
 updated_at
 ```
@@ -38,11 +39,17 @@ updated_at
   `generation = COALESCE(MAX(generation), -1) + 1` (first acquisition = 0).
 - Acquisition is a CAS: it succeeds only when no live lease exists or the
   previous lease is expired (`expires_at <= now`).
-- Renewal is a CAS on `(worker_id, generation)`; a stale `generation` fails.
-- Release is a CAS on `(worker_id, generation)`.
+- Renewal is a CAS on `(worker_id, worker_incarnation_id, generation)`; a stale
+  `generation` fails.
+- Release is a CAS on `(worker_id, worker_incarnation_id, generation)`.
 - Lease duration / renewal cadence are implementation parameters, not contract.
 
-`LeaseRecord = { executionId, workerId, generation, expiresAt, updatedAt }`.
+`LeaseRecord = { executionId, workerId, workerIncarnationId, generation, expiresAt, updatedAt }`.
+
+> **P12 TR-9 propagation (P12 `06` §3).** The lease holder identity is the
+> triple `(worker_id, worker_incarnation_id, generation)` so an old process
+> incarnation of the same `WorkerId` cannot re-validate. `generation` remains
+> monotonic; all other lease semantics are unchanged.
 
 ## 3. Fence validation
 
@@ -63,10 +70,17 @@ SELECT 1
 FROM executions e
 JOIN execution_leases l ON l.execution_id = e.execution_id
 WHERE e.execution_id = ?
+  AND l.worker_id = ?
+  AND l.worker_incarnation_id = ?
   AND l.generation = ?
   AND l.expires_at > ?
   AND e.settled_at IS NULL;
 ```
+
+> **P12 TR-9 propagation (P12 `06` §3).** The authoritative predicate extends to
+> the lease-holder triple `(worker_id, worker_incarnation_id, generation)`;
+> matching on generation alone is insufficient. The same-transaction
+> authoritative-fence semantics are unchanged.
 
 > **Inherited P1 fence-contract correction (R8).** The frozen P1 hook
 > predicate (`P1 04` §4) checked ownership/generation only. System Design v1.3
@@ -88,7 +102,8 @@ WHERE e.execution_id = ?
 Two **independent** checks (DID §9.7):
 
 ```text
-1) fence validation (ownership/generation)
+1) fence validation (ownership/generation; P12 TR-9 triple
+     (worker_id, worker_incarnation_id, generation))
      invalid -> CommandRejection.FencingRejected
 2) stop / quiescence admission
      fence valid but stop_requested_at != null

@@ -21,11 +21,17 @@ import {
 } from "../packages/application/src/snapshot-retention.js";
 import {
   assessStorage,
+  deriveEnvelopeMeasurements,
   ENVELOPE_DIMENSIONS,
   type EnvelopeDimension,
   type Measurement,
   type OperatingEnvelope,
   type PostgresTrigger,
+  STORAGE_MEASUREMENT_METRICS,
+  STORAGE_OPERATING_ENVELOPE,
+  type StorageAssessmentArtifact,
+  validateStorageAssessmentArtifact,
+  validateStorageMeasurementReport,
   validateStorageScaleAssessment,
 } from "../packages/application/src/storage-assessment.js";
 import {
@@ -217,6 +223,102 @@ describe("P12-005 §2 StorageScaleAssessment", () => {
     expect(assessStorage(ENVELOPE, okMeasurements)).toEqual(
       assessStorage(ENVELOPE, okMeasurements),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-5: executable, evidence-producing StorageScaleAssessment
+// ---------------------------------------------------------------------------
+
+describe("P12-005 B-5 executable storage-assessment evidence", () => {
+  const artifact = JSON.parse(
+    readRepoFile("planning/results/P12.storage-assessment.json"),
+  ) as StorageAssessmentArtifact;
+
+  it("checked-in artifact validates against the full artifact schema (core + harness report)", () => {
+    expect(validateStorageScaleAssessment(artifact)).toEqual([]);
+    expect(validateStorageMeasurementReport(artifact.harness)).toEqual([]);
+    expect(validateStorageAssessmentArtifact(artifact)).toEqual([]);
+  });
+
+  it("measured artifact covers every declared envelope dimension with unit-matched, finite measurements", () => {
+    const covered = new Set(artifact.measurements.map((m) => m.dimension));
+    for (const dimension of ENVELOPE_DIMENSIONS) {
+      expect(covered.has(dimension), dimension).toBe(true);
+      const measured = artifact.measurements.find(
+        (m) => m.dimension === dimension,
+      );
+      expect(measured, dimension).toBeDefined();
+      expect(measured?.observed.unit, dimension).toBe(
+        STORAGE_OPERATING_ENVELOPE[dimension].unit,
+      );
+      expect(
+        Number.isFinite(measured?.observed.value),
+        `${dimension} finite`,
+      ).toBe(true);
+      expect(measured?.method.length, dimension).toBeGreaterThan(0);
+      expect(measured?.workload.length, dimension).toBeGreaterThan(0);
+    }
+  });
+
+  it("the assessed measurements are derived from the harness report (not hand-written)", () => {
+    expect(artifact.measurements).toEqual(
+      deriveEnvelopeMeasurements(artifact.harness),
+    );
+  });
+
+  it("the artifact verdict is reproduced by assessStorage over the checked-in measurements", () => {
+    const assessed = assessStorage(
+      artifact.operatingEnvelope,
+      artifact.measurements,
+    );
+    expect(assessed.verdict).toBe(artifact.verdict);
+    expect(assessed.postgresTrigger).toEqual(artifact.postgresTrigger);
+    expect(assessed.governanceGatedTriggers).toEqual(
+      artifact.governanceGatedTriggers,
+    );
+    expect(artifact.verdict).toBe("SQLiteSufficient");
+    expect(artifact.operatingEnvelope).toEqual(STORAGE_OPERATING_ENVELOPE);
+  });
+
+  it("harness report carries every required measured metric with real samples", () => {
+    for (const metric of STORAGE_MEASUREMENT_METRICS) {
+      expect(metric in artifact.harness, metric).toBe(true);
+    }
+    expect(Number.isNaN(Date.parse(artifact.harness.generatedAt))).toBe(false);
+    expect(artifact.harness.host.length).toBeGreaterThan(0);
+    expect(artifact.harness.commandLatency.samples).toBeGreaterThan(0);
+    expect(artifact.harness.commandLatency.meanMs).toBeGreaterThan(0);
+    expect(
+      artifact.harness.writeTransactionContention.achievedWritesPerSecond,
+    ).toBeGreaterThan(0);
+    expect(artifact.harness.eventDbSize.value).toBeGreaterThan(0);
+    expect(artifact.harness.schedulerConsumerThroughput.value).toBeGreaterThan(
+      0,
+    );
+    expect(artifact.harness.projectionRebuildDuration.value).toBeGreaterThan(0);
+    expect(artifact.harness.backupDuration.value).toBeGreaterThan(0);
+    expect(artifact.harness.restoreDuration.value).toBeGreaterThan(0);
+    expect(
+      artifact.harness.representativeConcurrentLoad.totalOperations,
+    ).toBeGreaterThan(0);
+    expect(
+      artifact.harness.representativeConcurrentLoad.availability,
+    ).toBeGreaterThanOrEqual(0.999);
+  });
+
+  it("deriveEnvelopeMeasurements is pure and maps every dimension onto the declared unit", () => {
+    const first = deriveEnvelopeMeasurements(artifact.harness);
+    const second = deriveEnvelopeMeasurements(artifact.harness);
+    expect(first).toEqual(second);
+    expect(first.map((m) => m.dimension).sort()).toEqual(
+      [...ENVELOPE_DIMENSIONS].sort(),
+    );
+    for (const measurement of first) {
+      expect(measurement.observed.unit).toBe(
+        STORAGE_OPERATING_ENVELOPE[measurement.dimension].unit,
+      );
+    }
   });
 });
 

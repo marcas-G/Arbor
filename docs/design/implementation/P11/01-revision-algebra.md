@@ -37,4 +37,13 @@ frozen trigger).
 
 - No region-scoped revisions (GQ5); no fingerprint ordering; no caller-side advance; no second counter.
 
+## P12 TR-1 propagation (P12 `05` §5.1)
+
+`EnvironmentRevisionStore.advanceAnchor` is **removed from the public `ports`
+surface**; advancement remains reachable **only** through the
+`RecordEnvironmentChange` command path via an internal, non-exported capability,
+so no observation-side code can import or invoke it. The CI-1 anchor rule above
+is unchanged; this is the P12 narrowing of the recorded P11 residual
+(`planning/results/P11.result.md:55`).
+
 ## (mapping: CI-1)

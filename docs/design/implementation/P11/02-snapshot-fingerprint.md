@@ -27,4 +27,11 @@ Existence + mtime for FileTree; existence + HEAD + dirty flag for GitWorktree. H
 
 - No content hashing of trees in v1; no snapshot retention policy beyond "all change-bound snapshots retained" (pruning is P12/ops); no snapshot as truth source (canonical state remains truth; snapshot is evidence).
 
+## P12 TR-2 propagation (P12 `05` §5.2)
+
+`parseSnapshotBlob` uses a **collision-free structured encoding** (length-prefixed
+fields or explicit JSON fields) so ISO-8601 mtimes containing `:` round-trip
+exactly; `RegionDiff` no longer degrades to the conservative full-set mode. The
+`EnvironmentSnapshot` shape and fingerprint derivation above are unchanged.
+
 ## (mapping: CI-1, CI-4)

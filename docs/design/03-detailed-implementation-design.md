@@ -2289,9 +2289,17 @@ ModelCapabilityPort
 AgentContextSourcePort
 ToolCatalogPort
 SecretStorePort
+HealthPort
 Clock
 IdGenerator
 ```
+
+> **P12 TR-6 propagation (P12 `04` §2.1; DID v1.14 G4).** `HealthPort` is an
+> explicit P12 catalog addition (declared in `packages/ports`; implemented by the
+> `observability` module). It is a catalog addition only: it changes no existing
+> port's semantics and adds no physical package or dependency edge (DID §10.4.1
+> unchanged). Recorded here as the owning frozen catalog surface; see `P12 00`
+> TR-6.
 
 ## 7.3 Repository API follows Invariants, not CRUD
 

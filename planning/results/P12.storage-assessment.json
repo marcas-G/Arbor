@@ -1,37 +1,119 @@
 {
   "operatingEnvelope": {
-    "maxConcurrentRuntimes": { "value": 1, "unit": "count" },
-    "maxWriteThroughput": { "value": 500, "unit": "writes/s" },
-    "maxDbSize": { "value": 8, "unit": "GiB" },
-    "availabilityTarget": { "value": 0.999, "unit": "fraction" }
+    "maxConcurrentRuntimes": {
+      "value": 1,
+      "unit": "count"
+    },
+    "maxWriteThroughput": {
+      "value": 500,
+      "unit": "writes/s"
+    },
+    "maxDbSize": {
+      "value": 8,
+      "unit": "GiB"
+    },
+    "availabilityTarget": {
+      "value": 0.999,
+      "unit": "fraction"
+    }
   },
   "measurements": [
     {
       "dimension": "maxConcurrentRuntimes",
-      "observed": { "value": 1, "unit": "count" },
-      "method": "single-writer control plane (P12 06 §1; one canonical writer)",
-      "workload": "single-workspace slice"
+      "observed": {
+        "value": 1,
+        "unit": "count"
+      },
+      "method": "paced representative load; concurrent work items serialized through one canonical writer",
+      "workload": "target 300 writes/s for 1500ms"
     },
     {
       "dimension": "maxWriteThroughput",
-      "observed": { "value": 120, "unit": "writes/s" },
-      "method": "sqlite WAL synchronous=FULL write throughput",
-      "workload": "mixed command writes (pilot project)"
+      "observed": {
+        "value": 349.21065981906685,
+        "unit": "writes/s"
+      },
+      "method": "paced representative load; concurrent work items serialized through one canonical writer",
+      "workload": "target 300 writes/s for 1500ms"
     },
     {
       "dimension": "maxDbSize",
-      "observed": { "value": 0.4, "unit": "GiB" },
-      "method": "database file size after pilot workload",
-      "workload": "pilot project"
+      "observed": {
+        "value": 0.00936126708984375,
+        "unit": "GiB"
+      },
+      "method": "sum of the database file and its WAL/SHM sidecars after wal_checkpoint(TRUNCATE)",
+      "workload": "20000 representative domain events"
     },
     {
       "dimension": "availabilityTarget",
-      "observed": { "value": 0.999, "unit": "fraction" },
-      "method": "single-writer availability over the declared schedule (SD 10.5)",
-      "workload": "pilot project"
+      "observed": {
+        "value": 1,
+        "unit": "fraction"
+      },
+      "method": "paced representative load; concurrent work items serialized through one canonical writer",
+      "workload": "target 300 writes/s for 1500ms"
     }
   ],
   "verdict": "SQLiteSufficient",
   "postgresTrigger": [],
-  "governanceGatedTriggers": []
+  "governanceGatedTriggers": [],
+  "harness": {
+    "generatedAt": "2026-09-22T18:20:14.317Z",
+    "host": "cf0fc38aa3f2",
+    "commandLatency": {
+      "meanMs": 0.5403080100000023,
+      "p95Ms": 0.919247999999925,
+      "samples": 200,
+      "method": "one committed transaction per command; wall-clock per command (performance.now)",
+      "workload": "sequential representative command writes"
+    },
+    "writeTransactionContention": {
+      "achievedWritesPerSecond": 3449.1376469504244,
+      "writers": 1,
+      "serializationFactor": 6.417883049139615,
+      "method": "single canonical writer: autocommit writes/s vs batched-transaction writes/s (serialization factor = batched / autocommit)",
+      "workload": "500 autocommit + 5000 batched command writes"
+    },
+    "eventDbSize": {
+      "value": 0.00936126708984375,
+      "unit": "GiB",
+      "method": "sum of the database file and its WAL/SHM sidecars after wal_checkpoint(TRUNCATE)",
+      "workload": "20000 representative domain events"
+    },
+    "schedulerConsumerThroughput": {
+      "value": 96218.960502581,
+      "unit": "events/s",
+      "method": "consumer catch-up: batched SELECT over domain_events with a durable consumer_offsets advance per batch",
+      "workload": "20000 domain events (batch 250)"
+    },
+    "projectionRebuildDuration": {
+      "value": 34.15359200000012,
+      "unit": "ms",
+      "method": "full rebuild: clear and re-materialize a projection table from the event log in one transaction",
+      "workload": "20000 domain events"
+    },
+    "backupDuration": {
+      "value": 46.16423399999985,
+      "unit": "ms",
+      "method": "SQLite online backup via VACUUM INTO",
+      "workload": "20000 events + representative command writes"
+    },
+    "restoreDuration": {
+      "value": 25.905154999999922,
+      "unit": "ms",
+      "method": "restore the backup into an isolated path (copyFileSync; never the canonical writer)",
+      "workload": "isolated drill restore"
+    },
+    "representativeConcurrentLoad": {
+      "maxConcurrentWriters": 1,
+      "achievedWritesPerSecond": 349.21065981906685,
+      "availability": 1,
+      "meanLatencyMs": 0.6305528435114455,
+      "p95LatencyMs": 0.9254569999998239,
+      "totalOperations": 524,
+      "method": "paced representative load; concurrent work items serialized through one canonical writer",
+      "workload": "target 300 writes/s for 1500ms"
+    }
+  }
 }

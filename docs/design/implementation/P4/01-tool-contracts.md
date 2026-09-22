@@ -21,11 +21,20 @@ interface ToolDefinition {
 
 - `inputSchemaJson` / `resultSchemaJson` are the **frozen exact schemas** for the
   tool version (G6) — not implementation choice.
-- `ToolCatalogPort` (P3-002) returns `ToolDefinitionRef { name, version, hash }`
-  for the model-visible tool surface. P4 owns the full `ToolDefinition` record
-  and a `ToolDefinitionStore`; the ref and the full record share the same
+- `ToolCatalogPort` (P3-002) resolves the **model-facing `ToolDefinition`**
+  (`visibleRefs()` + `resolveForModel(ref)`), not refs-only. P4 owns the full
+  `ToolDefinition` record and a `ToolDefinitionStore`; the ref
+  `ToolDefinitionRef { name, version, hash }` and the full record share the same
   `(name, version, hash)` identity. `ModelContext` decides visibility;
   `ToolRuntime` decides authorization (DID §7.6).
+- **P12 TR-11 propagation (P12 `07` §1/§2; DID v1.14 G3).** DID §7.6 is
+  authoritative: Model Context obtains the model-facing projection (real
+  `description` / schema / version / hash / `capabilityMetadata` /
+  `sideEffectSemantics`) via `ToolCatalogPort`; the inherited refs-only
+  narrowing and model-context placeholders are the P12-corrected inherited
+  defect. `resolveForModel(unregistered)` fails with a typed `ToolNotRegistered`
+  and never fabricates a placeholder. `ToolRuntimePort` remains the invocation
+  contract (unchanged).
 
 ## 2. SideEffectSemantics
 
