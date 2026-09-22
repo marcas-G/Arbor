@@ -67,8 +67,8 @@ describe("p11-resolver real environment resolver (observation-only)", () => {
           mtime: fixed.toISOString(),
         });
         expect(present.entries[0]?.resolved).toEqual({
-          resourceSpaceId: "fs",
-          normalizedRegion: dir,
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { kind: "FileTree", path: dir },
         });
 
         const absent = yield* resolver.observe(PROJECT_A, [
@@ -101,8 +101,8 @@ describe("p11-resolver real environment resolver (observation-only)", () => {
           dirty: false, // conservative (empirical)
         });
         expect(observed.entries[0]?.resolved).toEqual({
-          resourceSpaceId: "fs", // C8: worktree -> filesystem subtree, same backing space
-          normalizedRegion: wt,
+          resourceSpaceId: "filesystem", // C8: worktree -> filesystem subtree, same backing space
+          normalizedRegion: { kind: "GitWorktree", path: wt },
         });
 
         const absent = yield* resolver.observe(PROJECT_A, [

@@ -37,8 +37,8 @@ const ADDRESSES: ReadonlyArray<ResourceAddress> = [
 const ftEntry = (path: string, mtime: string): SnapshotRegionEntry => ({
   address: { _tag: "FileTree", path },
   resolved: {
-    resourceSpaceId: "fs",
-    normalizedRegion: path,
+    resourceSpaceId: "filesystem",
+    normalizedRegion: { kind: "FileTree", path },
   } as SnapshotRegionEntry["resolved"],
   probe: { kind: "FileTree", exists: true, mtime },
 });

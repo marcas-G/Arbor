@@ -6,7 +6,10 @@ import {
 } from "@arbor/application";
 import { BlobStorePortLive } from "@arbor/blob-local";
 import type { ProjectId } from "@arbor/domain";
-import { ProjectEnvironmentPortLive } from "@arbor/environment-local";
+import {
+  EnvironmentResolverLocalLive,
+  ProjectEnvironmentPortFromResolverLive,
+} from "@arbor/environment-resolver-local";
 import {
   ExecutionSchedulerLive,
   FenceStopCheckLive,
@@ -112,6 +115,14 @@ export const buildSliceLayer = (
 ): Layer.Layer<SliceServices> => {
   const base = layer({ filename: config.databaseFile });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  // P12 `09` §5: production wires the REAL resolver (not the fake
+  // `environment-local` adapter). `ProjectEnvironmentPort` — consumed by
+  // ownership writes and tool admission — is the resolver projection.
+  const environmentResolver = Layer.provide(EnvironmentResolverLocalLive, base);
+  const projectEnvironment = Layer.provide(
+    ProjectEnvironmentPortFromResolverLive,
+    environmentResolver,
+  );
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
 
@@ -178,7 +189,8 @@ export const buildSliceLayer = (
     Layer.provide(InboxProjectionStoreLive, infra),
     repo,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
-    ProjectEnvironmentPortLive,
+    projectEnvironment,
+    environmentResolver,
     projectToolRegistry,
     toolCatalog,
     ToolDefinitionStoreLive,

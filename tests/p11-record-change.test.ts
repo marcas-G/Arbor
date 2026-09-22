@@ -35,8 +35,8 @@ const regions = (...norms: string[]) =>
   norms.map(
     (norm) =>
       ({
-        resourceSpaceId: "s1",
-        normalizedRegion: norm,
+        resourceSpaceId: "filesystem",
+        normalizedRegion: { kind: "FileTree", path: norm },
       }) as CanonicalResourceRegion,
   );
 

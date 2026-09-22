@@ -58,6 +58,52 @@ export type CanonicalResourceRegion = Schema.Schema.Type<
   typeof CanonicalResourceRegion
 >;
 
+/**
+ * P12 `09` §4 (E-07): the ONE canonical stringifier for
+ * `CanonicalResourceRegion`, with a fixed key order. FileTree and
+ * GitWorktree collapse to the same `kind: "FileTree"` key (kind is
+ * descriptive, not identity), so filesystem aliases dedup. Every keyed site
+ * (drift region keys, snapshot region ordering, resolver dedup) MUST use this
+ * rather than `String(normalizedRegion)` (which collapses objects to
+ * `"[object Object]"`).
+ */
+export const canonicalRegionString = (
+  region: CanonicalResourceRegion,
+): string => {
+  const normalized = region.normalizedRegion as
+    | {
+        readonly kind?: unknown;
+        readonly path?: unknown;
+        readonly namespace?: unknown;
+        readonly address?: unknown;
+      }
+    | null
+    | undefined;
+  const kind =
+    normalized !== null && typeof normalized === "object"
+      ? normalized.kind
+      : undefined;
+  if (kind === "FileTree" || kind === "GitWorktree") {
+    return JSON.stringify({
+      resourceSpaceId: region.resourceSpaceId,
+      kind: "FileTree",
+      path: normalized?.path,
+    });
+  }
+  if (kind === "DatabaseNamespace") {
+    return JSON.stringify({
+      resourceSpaceId: region.resourceSpaceId,
+      kind: "DatabaseNamespace",
+      namespace: normalized?.namespace,
+    });
+  }
+  return JSON.stringify({
+    resourceSpaceId: region.resourceSpaceId,
+    kind: "ExternalResource",
+    address: normalized?.address,
+  });
+};
+
 export interface SpatialRegion<R> {
   readonly resourceSpaceId: string;
   readonly normalizedRegion: R;

@@ -4,6 +4,7 @@ import type {
   ResourceAddress,
 } from "@arbor/domain";
 import {
+  canonicalRegionString,
   EnvironmentFingerprint,
   parseSnapshotBlob,
   type SnapshotProbe,
@@ -109,7 +110,7 @@ export interface EnvironmentDriftDeps {
 }
 
 const regionKey = (region: CanonicalResourceRegion): string =>
-  `${region.resourceSpaceId}\u0000${String(region.normalizedRegion)}`;
+  canonicalRegionString(region);
 
 /** Probe equality exactly as the fingerprint's canonical recipe sees it
  * (P11 `02`: mtime "" == undefined, dirty defaults to false). */

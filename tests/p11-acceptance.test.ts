@@ -1383,16 +1383,29 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
         }
 
         // freshness: the SAME stored verdict renders STALE over the change.
-        // The fact carries the real observed region (the resolver's fs
-        // path), encoded per the frozen comparator contract; the mission
-        // bound a subpath inside it (narrow overlap).
-        const changedPath = String(report.changedRegions[0]?.normalizedRegion);
+        // P12 `09` §3: narrow invalidation is asserted against the RESOLVER
+        // OUTPUT (`report.changedRegions`, object-encoded) — no test-side
+        // re-wrap of a raw path. The mission bound a subpath inside it
+        // (narrow overlap).
+        const changed = report.changedRegions[0];
+        if (changed === undefined) {
+          throw new Error("expected a changed region");
+        }
+        const changedPath = (changed.normalizedRegion as { path: string }).path;
         const freshness = verificationFreshness(
           {
             targetEnvironmentRevision: verification.targetEnvironmentRevision,
-            boundRegions: [regionFixture(join(changedPath, "module-1"))],
+            boundRegions: [
+              {
+                resourceSpaceId: changed.resourceSpaceId,
+                normalizedRegion: {
+                  kind: "FileTree",
+                  path: join(changedPath, "module-1"),
+                },
+              },
+            ],
           },
-          [{ toRevision: "2", changedRegions: [regionFixture(changedPath)] }],
+          [{ toRevision: "2", changedRegions: report.changedRegions }],
         );
         expect(freshness).toBe("STALE");
         expect(verification).toEqual(verificationBefore); // zero mutation
