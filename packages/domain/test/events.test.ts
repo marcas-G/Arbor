@@ -34,6 +34,8 @@ const EXPECTED_EVENTS = [
   "DependencyContractRevised",
   "DeadlockAttentionRequested",
   "ReconciliationEscalated",
+  "WorktreeCreated",
+  "WorktreeRetired",
   "DeliverableProduced",
   "MessageSent",
   "VerificationStarted",

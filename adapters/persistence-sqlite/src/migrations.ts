@@ -593,3 +593,34 @@ export const P11_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 8, name: "p8_verification", sql: P8_DDL },
   { id: 9, name: "p11_environment_changes", sql: P11_DDL },
 ];
+
+/** P11 `09`: worktree lifecycle state. §1.4A enforcement lives in the
+ * RetireWorktree precondition (active-claims check), not here. */
+const P11_WORKTREES_DDL = `
+CREATE TABLE worktrees (
+  worktree_id     TEXT PRIMARY KEY,
+  project_id      TEXT NOT NULL REFERENCES projects(project_id),
+  workspace_id    TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  path            TEXT NOT NULL,
+  repository_ref  TEXT,
+  branch          TEXT,
+  state           TEXT NOT NULL CHECK (state IN ('Active','Retired')),
+  created_at      TEXT NOT NULL,
+  retired_at      TEXT,
+  CHECK ((state = 'Active') = (retired_at IS NULL))
+);
+CREATE INDEX idx_worktrees_workspace ON worktrees(workspace_id);
+`;
+
+export const P11B_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  { id: 1, name: "init", sql: DDL },
+  { id: 2, name: "execution_session_kernel", sql: P2_DDL },
+  { id: 3, name: "provider_model_context", sql: P3_DDL },
+  { id: 4, name: "tool_runtime", sql: P4_DDL },
+  { id: 5, name: "p6_formation_communication", sql: P6_DDL },
+  { id: 6, name: "p7_dependency_deliverable", sql: P7_DDL },
+  { id: 7, name: "p7_messages_deliver_kind", sql: P7_MESSAGES_V7_DDL },
+  { id: 8, name: "p8_verification", sql: P8_DDL },
+  { id: 9, name: "p11_environment_changes", sql: P11_DDL },
+  { id: 10, name: "p11_worktrees", sql: P11_WORKTREES_DDL },
+];

@@ -15,6 +15,7 @@ import {
 } from "@arbor/model-context";
 import {
   type BoundedObservation,
+  EnvironmentRevisionStore,
   type ExecutionActivity,
   type ExecutionDriverError,
   ExecutionDriverPort,
@@ -81,6 +82,7 @@ export const AgentDriverLive = (
   | ModelCapabilityPort
   | SessionRepository
   | TransactionPort
+  | EnvironmentRevisionStore
 > =>
   Layer.effect(
     ExecutionDriverPort,
@@ -90,6 +92,7 @@ export const AgentDriverLive = (
       const capabilityPort = yield* ModelCapabilityPort;
       const sessions = yield* SessionRepository;
       const tx = yield* TransactionPort;
+      const environmentRevisions = yield* EnvironmentRevisionStore;
       const failure = (cause: unknown): ExecutionDriverError => ({
         _tag: "ExecutionDriverError",
         cause,
@@ -124,13 +127,24 @@ export const AgentDriverLive = (
                 }),
               ),
             );
+          // P11 GQ4b: service-internal read of the project's environment
+          // revision counter (CI-2 — callers never pass a revision). None
+          // means the anchor is not yet initialized; observing "0" keeps the
+          // P11-003 resolver semantics. DecisionStale still fires per DID
+          // §8.19 when the counter moves after this capture.
+          const environmentRevision = yield* tx
+            .transact(environmentRevisions.current(input.execution.projectId))
+            .pipe(
+              Effect.mapError(failure),
+              Effect.map(Option.getOrElse(() => "0")),
+            );
           const controlBasis: ControlBasis = {
             projectPolicyRevision: 0,
             workspacePolicyRevision: 0,
             responsibilityRevision: 0,
             resourceBoundaryRevision: 0,
             authorizationDigest: "digest",
-            environmentRevision: "env",
+            environmentRevision,
           };
 
           for (let turn = 0; turn < MAX_TURNS; turn += 1) {

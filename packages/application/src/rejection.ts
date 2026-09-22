@@ -69,4 +69,36 @@ export type CommandRejection =
        * concurrency backstop). */
       readonly _tag: "AcceptanceAlreadyExists";
       readonly workId: WorkId;
+    }
+  | {
+      /** P11 `09` §1: P11-frozen enum (worktree lookup rejection). */
+      readonly _tag: "WorktreeNotFound";
+      readonly worktreeId: string;
+    }
+  | {
+      /** P11 `09` §1: P11-frozen enum (CreateWorktree duplicate id — the
+       * same-commandId replay is gateway receipt dedup; a NEW commandId on
+       * an existing worktreeId lands here). */
+      readonly _tag: "WorktreeAlreadyExists";
+      readonly worktreeId: string;
+    }
+  | {
+      /** P11 `09` §1: P11-frozen enum (owning workspace not Active). */
+      readonly _tag: "WorkspaceNotActive";
+      readonly workspaceId: WorkspaceId;
+      readonly lifecycle: "Retired";
+    }
+  | {
+      /** P11 `09` §1: P11-frozen enum (RetireWorktree on a non-Active
+       * worktree — `Retired` is terminal). */
+      readonly _tag: "WorktreeAlreadyRetired";
+      readonly worktreeId: string;
+    }
+  | {
+      /** P11 `09` §3 (CI-3): P11-frozen enum — release-first. Retirement is
+       * refused while active ownership claims overlap the worktree's
+       * regions; the operator releases via the `10` paths first. */
+      readonly _tag: "ActiveClaimsExist";
+      readonly worktreeId: string;
+      readonly claimIds: ReadonlyArray<string>;
     };

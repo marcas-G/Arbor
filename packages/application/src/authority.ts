@@ -208,6 +208,28 @@ export type VerifiedCommandAuthority =
       readonly projectId: ProjectId;
       readonly verificationId: VerificationId;
       readonly executionId: ExecutionId;
+    }
+  | {
+      /** P11 `09` §1: governance-bound worktree materialization for the
+       * target Workspace (SD §11.3 modes are configuration). */
+      readonly _tag: "CreateWorktreeAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly worktreeId: string;
+    }
+  | {
+      /** P11 `09` §1/§3: worktree retirement (terminal; §1.4A release-first
+       * vocabulary — cleanup after retirement is a governance suggestion,
+       * files are never auto-deleted). */
+      readonly _tag: "RetireWorktreeAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly worktreeId: string;
     };
 
 /**
