@@ -16,6 +16,7 @@
     "@arbor/domain": "workspace:*",
     "@arbor/ports": "workspace:*",
     "@arbor/application": "workspace:*",
+    "@arbor/api-contracts": "workspace:*",
     "@arbor/model-context": "workspace:*",
     "@arbor/agent-runtime": "workspace:*",
     "@arbor/execution-runtime": "workspace:*",
