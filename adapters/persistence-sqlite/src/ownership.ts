@@ -175,7 +175,7 @@ export const EnvironmentRevisionStoreLive: Layer.Layer<
           const now = yield* clock.now();
           yield* run(
             sql.unsafe(
-              "INSERT INTO environment_revisions (project_id, revision, updated_at) VALUES (?, '1', ?) ON CONFLICT(project_id) DO UPDATE SET revision = revision",
+              "INSERT INTO environment_revisions (project_id, revision, updated_at) VALUES (?, '1', ?) ON CONFLICT(project_id) DO NOTHING",
               [projectId, now],
             ),
           );
