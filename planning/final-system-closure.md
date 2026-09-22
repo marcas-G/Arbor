@@ -49,7 +49,7 @@ Tracks 2,8,9        FAIL (findings/blockers)
 | B-7 | MED (must-fix) | Composition root does not assemble the Authority Resolver / transport / daemons / observability for production; no runnable daemon/server entrypoint | `composition.ts:148-331`, `main.ts:11-34`; assembled only inside `tests/p12-acceptance.test.ts` |
 | B-8 | MED (must-fix) | `HealthPort` has no production adapter and `projection-runtime` is not a composition dependency ⇒ readiness unimplementable in production | `ports/src/health.ts:34`; `composition.ts` |
 | B-9 | MED (must-fix) | P3 repair/freshness (`decideRepair`, `checkFreshness`, `DecisionStale`) are test-only; the driver returns `Failed` and never gates `DecisionStale` | `agent-runtime/src/{repair,freshness}.ts`; `driver.ts:174,317-322` |
-| B-10 | LOW (must-fix) | Dead/obsolete: `deliver-directive.ts` scaffolding, `AgentContextSourcePort`/`KnowledgeQueryPort`/`digestOfBytes` unused, `SkillRegistry` production stub `Effect.die`, obsolete `environment-local` fake still declared by the app | `deliver-directive.ts:132`; `ports/provider.ts:361,376`; `snapshot-fingerprint.ts:28`; `composition.ts:205-208`; `adapters/environment-local:45` |
+| B-10 | LOW (must-fix) — **RESOLVED** (see B-10 remediation below) | Dead/obsolete: `deliver-directive.ts` scaffolding, `AgentContextSourcePort`/`KnowledgeQueryPort`/`digestOfBytes` unused, `SkillRegistry` production stub `Effect.die`, obsolete `environment-local` fake still declared by the app | `deliver-directive.ts:132`; `ports/provider.ts:361,376`; `snapshot-fingerprint.ts:28`; `composition.ts:205-208`; `adapters/environment-local:45` |
 | B-11 | LOW (must-fix) | No persisted test for the P11(10)→P12(13) upgrade path (verified ad hoc only); `P12_MIGRATION_BASELINE` literal decoupled from `P12_MIGRATIONS` | Track 1+7 findings |
 
 **Release blockers: 9 open** (B-2, B-4, B-5, B-6, B-7, B-8, B-9, B-10, B-11). B-1 and B-3 were fixed in this pass.
@@ -101,3 +101,73 @@ Clean at P12 formal closure (`498b484`); this audit pass adds uncommitted docume
 FINAL CLOSURE PASS is **withheld** pending resolution of the 9 open release blockers.
 No blocker requires changing frozen system semantics; B-2/B-4/B-5/B-11 are documentation/measurement/wiring, B-6/B-7/B-8/B-9 are implementation-completeness wiring of already-frozen scope, B-10 is dead-code removal.
 Request governance decision: (a) authorize a bounded remediation pass for B-2/B-4..B-11, or (b) accept a subset as release debt and re-issue the audit.
+
+---
+
+## B-10 remediation — dead/obsolete architecture removal
+
+**Scope:** remove/retire dead architecture without changing frozen behavior; no frozen
+semantics edited. **Baseline commit:** `b1c9a80` (B-6/B-7/B-8). B-2/B-4/B-5/B-9/B-11 were
+closed by commits `cbb6176`, `368e920`, `a45261c`; the audit body above remains the
+audit-time snapshot (its "9 open" count is not rewritten).
+
+### Removed
+
+- `apps/single-workspace/src/deliver-directive.ts` (182 lines). Confirmed dead: the
+  `makeDeliverDirectiveHandler` / `isDeliverDirectiveSpec` exports had zero importers
+  (`SliceDirectiveHandlersLive` in `directives.ts` registers `InvokeTool`, `Communicate`,
+  `LoadSkill`, `ChangeMode`, `RequestGovernance`, `ProposeChildWorkspace`, `SpawnSpecialist`
+  — no `Deliver`). The P7 `Deliver` primitive itself is the application command
+  `submitDeliver` (`packages/application/src/commands/deliver-command.ts`), exercised by
+  `tests/p7-deliver-primitive.test.ts` (4 tests); the removed file was an unwired
+  composition-root wrapper. Behavior unchanged. The frozen domain `DeliverDirectiveSpec`
+  (`communication.ts`) is retained.
+- `digestOfBytes` (`packages/ports/src/snapshot-fingerprint.ts`) — unused export; the
+  frozen `fingerprintOf` is the only consumer surface.
+- `void snapshotBlobContent(projectId, entries);` + its import
+  (`adapters/environment-resolver-local/src/index.ts`) — a discarded pure computation
+  (`snapshotBlobContent` is a pure domain string builder; the resolver intentionally emits
+  only `blob:<digest>`).
+- `void communicate;` (`apps/single-workspace/src/directives.ts`) — redundant no-op;
+  `communicate` is returned in the handler array.
+- `@arbor/environment-local` declaration from `apps/single-workspace` (`package.json`,
+  `tsconfig.json`, `pnpm-lock.yaml`) — the app never imported it.
+
+### Changed (no `Effect.die`)
+
+- `apps/single-workspace/src/composition.ts` `SkillRegistry` production Layer: the
+  `load: () => Effect.die("no skills")` placeholder is replaced by an empty-but-valid
+  registry that fails through the typed `SkillRegistryError` channel (P3 `02` §7);
+  `LoadSkill` maps it to the "skill unavailable" observation. No defect path remains.
+
+### Retained with rationale
+
+- `AgentContextSourcePort` / `KnowledgeQueryPort` (`packages/ports/src/provider.ts`):
+  **retained** — explicit frozen DID §7.7 port-catalog entries (ModelContext package tree,
+  §10.4.1) and named by the frozen P3 `02` §1 contract; asserted by
+  `tests/p3-ports.test.ts:20-21`. They have no production consumer yet, so deleting them
+  would be a design change (Design Gap) outside B-10's dead-code scope. Documented in
+  place.
+- `adapters/environment-local` (`ProjectEnvironmentPortLive`): **retained as test-only**
+  (used by `tests/p11-worktree.test.ts`, `tests/p11-ownership-wiring.test.ts`,
+  `tests/p11-acceptance.test.ts`, `tests/p12-region-encoding.test.ts`); production wires
+  the real `EnvironmentResolverLocalLive` projection. Documented in place; no longer
+  declared by the app.
+
+### Verification (exact, `source ./env.sh && arbor …`)
+
+```text
+arbor pnpm test p12      → Test Files 17 passed (17); Tests 168 passed (168); EXIT=0
+arbor pnpm test p7       → Test Files 14 passed (14); Tests  96 passed  (96); EXIT=0
+arbor pnpm architecture  → Test Files 14 passed (14); Tests  87 passed  (87); EXIT=0
+arbor pnpm typecheck     → tsc -b && tsc -p tsconfig.test.json; EXIT=0
+arbor pnpm check         → lint (0 errors, 302 pre-existing warnings) + typecheck +
+                           architecture (14/87) + test (202 files / 1141 tests); EXIT=0
+```
+
+Architecture test updated: `tests/architecture/p7-architecture.test.ts` `P7_APPS_MODULES`
+no longer lists the removed `deliver-directive.ts`.
+
+**STOP condition:** none. No design gap raised; no frozen semantics changed. The
+`P12.restore-drill.json` timestamp is regenerated by the suite and was reverted to keep the
+change set minimal.

@@ -24,6 +24,3 @@ export const fingerprintOf = (
       .update(fingerprintInputBytes(projectId, regions))
       .digest("hex"),
   );
-
-export const digestOfBytes = (bytes: string): string =>
-  createHash("sha256").update(bytes).digest("hex");

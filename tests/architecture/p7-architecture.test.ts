@@ -53,7 +53,6 @@ const P7_ADAPTER_MODULES: ReadonlyArray<string> = [
 
 const P7_APPS_MODULES: ReadonlyArray<string> = [
   "apps/single-workspace/src/runnable-source-p7.ts",
-  "apps/single-workspace/src/deliver-directive.ts",
   "apps/single-workspace/src/governance-directive.ts",
 ];
 

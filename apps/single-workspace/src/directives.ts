@@ -433,8 +433,6 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
 
     // P6 `02` §6: FormationApproval / DecisionRequest are minimally routed;
     // every other governance kind keeps the P5 observation-only behavior.
-    void communicate;
-
     return [
       invokeTool,
       communicate,

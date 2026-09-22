@@ -361,6 +361,10 @@ export class SkillRegistry extends Context.Service<
   SkillRegistryService
 >()("arbor/SkillRegistry") {}
 
+/** DID §7.7 port catalog (ModelContext package, §10.4.1): the declared
+ * session-entry source surface. Frozen catalog surface — reserved for the
+ * ModelContext context-assembly boundary; no production Layer provisions it
+ * yet, so it is retained as a declared (not silently deleted) port. */
 export interface AgentContextSourcePortService {
   readonly sessionEntryRefs: (
     sessionId: SessionId,
@@ -373,6 +377,10 @@ export class AgentContextSourcePort extends Context.Service<
   AgentContextSourcePortService
 >()("arbor/AgentContextSourcePort") {}
 
+/** DID §7.7 port catalog (ModelContext package, §10.4.1): the declared
+ * knowledge-retrieval surface. Frozen catalog surface — reserved for the
+ * ModelContext context-assembly boundary; no production Layer provisions it
+ * yet, so it is retained as a declared (not silently deleted) port. */
 export interface KnowledgeQueryPortService {
   readonly retrieve: (input: {
     readonly query: string;
