@@ -560,3 +560,36 @@ export const P8_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 7, name: "p7_messages_deliver_kind", sql: P7_MESSAGES_V7_DDL },
   { id: 8, name: "p8_verification", sql: P8_DDL },
 ];
+
+/** P11 `01` §3 / `03`: environment change records — the authoritative
+ * mutation trail. Counter lives in environment_revisions (unchanged);
+ * fingerprints + snapshotBlobRef live HERE (declared additive surface).
+ * The latest-change pointer per project = MAX(to_revision). */
+const P11_DDL = `
+CREATE TABLE environment_changes (
+  change_id             TEXT PRIMARY KEY,
+  project_id            TEXT NOT NULL REFERENCES projects(project_id),
+  from_revision         TEXT NOT NULL,
+  to_revision           TEXT NOT NULL,
+  previous_fingerprint  TEXT NOT NULL,
+  next_fingerprint      TEXT NOT NULL,
+  snapshot_blob_ref     TEXT NOT NULL,
+  changed_regions_json  TEXT NOT NULL,
+  cause                 TEXT NOT NULL CHECK (cause IN ('ExternalDrift','Governance','WorktreeLifecycle')),
+  recorded_at           TEXT NOT NULL,
+  UNIQUE (project_id, to_revision)
+);
+CREATE INDEX idx_env_changes_project ON environment_changes(project_id, to_revision);
+`;
+
+export const P11_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  { id: 1, name: "init", sql: DDL },
+  { id: 2, name: "execution_session_kernel", sql: P2_DDL },
+  { id: 3, name: "provider_model_context", sql: P3_DDL },
+  { id: 4, name: "tool_runtime", sql: P4_DDL },
+  { id: 5, name: "p6_formation_communication", sql: P6_DDL },
+  { id: 6, name: "p7_dependency_deliverable", sql: P7_DDL },
+  { id: 7, name: "p7_messages_deliver_kind", sql: P7_MESSAGES_V7_DDL },
+  { id: 8, name: "p8_verification", sql: P8_DDL },
+  { id: 9, name: "p11_environment_changes", sql: P11_DDL },
+];
