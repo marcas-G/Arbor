@@ -1,6 +1,7 @@
 import {
   ProjectRepository,
   type ProjectRepositoryService,
+  type ProjectToolRegistryService,
   SessionRepository,
   type SessionRepositoryService,
   WorkRepository,
@@ -13,6 +14,7 @@ import { type CommandHandler, CommandHandlerRegistry } from "../gateway.js";
 import { makeAssignWorkHandler } from "./assign-work.js";
 import { makeCreateChildWorkspaceHandler } from "./create-child-workspace.js";
 import { makeCreateProjectHandler } from "./create-project.js";
+import { makeRegisterProjectToolHandler } from "./register-project-tool.js";
 
 export interface P1CommandDependencies {
   readonly projects: ProjectRepositoryService;
@@ -65,3 +67,18 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
     });
   }),
 );
+
+/** P12 `01` §5: the Project-tool registration governance command. Kept as a
+ * separate factory so the frozen P1 registry dependency set is unchanged
+ * (registration is wired where the P12 plane composes). */
+export interface P12CommandDependencies {
+  readonly projectToolRegistry: ProjectToolRegistryService;
+}
+
+export const makeP12CommandHandlers = (
+  dependencies: P12CommandDependencies,
+): ReadonlyArray<CommandHandler<unknown, unknown>> => [
+  makeRegisterProjectToolHandler({
+    registry: dependencies.projectToolRegistry,
+  }) as unknown as CommandHandler<unknown, unknown>,
+];

@@ -10,6 +10,10 @@ import {
  * (which bytes) is owned by the domain (`fingerprintInputBytes`); this is
  * the pure sha256 over those bytes. Same input bytes -> same fingerprint,
  * always.
+ *
+ * P12 `01` §7 (G8/DF-16): relocated verbatim from `@arbor/application` to
+ * `ports` so adapters no longer need an `application` edge. The recipe and
+ * the resulting digest are byte-for-byte unchanged (no governance item).
  */
 export const fingerprintOf = (
   projectId: string,

@@ -9,7 +9,6 @@ import {
   type DriftSubmissionFace,
   startupDriftProbe,
 } from "../packages/application/src/environment-drift-startup.js";
-import { fingerprintOf } from "../packages/application/src/snapshot-fingerprint.js";
 import {
   type EnvironmentFingerprint,
   type ProjectId,
@@ -25,6 +24,7 @@ import type {
   RecordEnvironmentChangeOutcome,
   ResolverObservation,
 } from "../packages/ports/src/index.js";
+import { fingerprintOf } from "../packages/ports/src/snapshot-fingerprint.js";
 
 const PROJECT =
   "prj_018f2b3c-4d5e-7abc-8def-0123456789dd" as never as ProjectId;

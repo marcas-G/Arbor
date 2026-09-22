@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { fingerprintOf } from "../packages/application/src/snapshot-fingerprint.js";
 import {
   buildSnapshotWitness,
   type canonicalSnapshotBytes,
@@ -11,6 +10,7 @@ import {
   type SnapshotRegionEntry,
   snapshotBlobContent,
 } from "../packages/domain/src/index.js";
+import { fingerprintOf } from "../packages/ports/src/snapshot-fingerprint.js";
 
 const WS = "space-1" as never;
 const region = (

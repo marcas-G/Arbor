@@ -9,6 +9,5 @@ export * from "./gateway.js";
 export * from "./human-intervention.js";
 export * from "./provider-turn-recovery.js";
 export * from "./rejection.js";
-export * from "./snapshot-fingerprint.js";
 export * from "./verifier-spawn.js";
 export * from "./wake-sink.js";

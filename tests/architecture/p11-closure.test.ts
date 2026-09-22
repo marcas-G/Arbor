@@ -149,16 +149,15 @@ describe("p11-closure", () => {
     expect(portsIndex.includes('export * from "./environment.js";')).toBe(true);
   });
 
-  it("dependency keys — no new edges beyond the declared whitelist (sandbox-worktree / environment-resolver-local carry the only application edges among adapters)", () => {
+  it("dependency keys — no new edges beyond the declared whitelist (P12 `01` §7 reconciled sandbox-worktree / environment-resolver-local to domain+ports only)", () => {
     // The full DAG stays legal (this re-runs the package-dag checker over
     // the live manifests — any undeclared new key fails here).
     expect(checkEdges(readPackages())).toEqual([]);
 
-    // The two declared P11 whitelist adapters carry exactly the declared
-    // edge set (domain + ports + application).
+    // G8/DF-16: the two P11 whitelist adapters were reconciled to the DID
+    // §10.4.1 edge set (domain + ports only; no `application` edge).
     for (const adapter of ["sandbox-worktree", "environment-resolver-local"]) {
       expect([...internalDependencyKeysOf(adapter)].sort()).toEqual([
-        "application",
         "domain",
         "ports",
       ]);

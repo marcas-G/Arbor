@@ -21,6 +21,7 @@ import {
   type MessageStoreError,
   type PendingDomainEvent,
   type ProjectRepositoryError,
+  type ProjectToolRegistryError,
   type ResourceOwnershipRepositoryError,
   type SchedulerTimerStoreError,
   type SessionRepositoryError,
@@ -77,7 +78,8 @@ export type CommandHandlerError =
   | InboxProjectionStoreError
   | EnvironmentError
   | WorktreeStoreError
-  | ResourceOwnershipRepositoryError;
+  | ResourceOwnershipRepositoryError
+  | ProjectToolRegistryError;
 
 export interface CommandHandler<C, R> {
   readonly commandType: string;
