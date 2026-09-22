@@ -160,7 +160,10 @@ const P7_TOUCHED_MANIFESTS: ReadonlyArray<string> = [
   "packages/ports/package.json",
   "packages/application/package.json",
   "adapters/persistence-sqlite/package.json",
-  "apps/single-workspace/package.json",
+  // `apps/single-workspace/package.json` is intentionally absent: it is no
+  // longer solely P7-touched — later phases (P12-003 secret adapters) extend
+  // the Composition Root's dependency set. Package-DAG rules still constrain
+  // every edge (tests/architecture/package-dag.ts).
 ];
 
 describe("p7-architecture", () => {

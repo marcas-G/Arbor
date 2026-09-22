@@ -46,11 +46,14 @@ import {
   ModelCapabilityPort,
   type ReconciliationSource,
   type RunnableWorkSource,
+  type SecretRef,
   SkillRegistry,
 } from "@arbor/ports";
 import { FakeProviderLive } from "@arbor/provider-fake";
 import { ProviderRuntimeLive } from "@arbor/provider-runtime";
 import { SandboxPortLive } from "@arbor/sandbox-local";
+import { SecretEnvLive } from "@arbor/secret-env";
+import { SecretFileLive } from "@arbor/secret-file";
 import {
   BUILTIN_EXECUTORS,
   ReconciliationSourceLive,
@@ -68,10 +71,21 @@ import {
 import { SliceCommandHandlerRegistryLive } from "./registry.js";
 import { ProvisionalRunnableWorkSourceLive } from "./runnable-source.js";
 
+/** P12 `03` §3: secret adapter selection is Composition-Root config. */
+export type SecretStoreConfig =
+  | { readonly _tag: "Env" }
+  | { readonly _tag: "File"; readonly root: string };
+
 export interface SliceConfig {
   readonly databaseFile: string;
   readonly providerTurns?: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>;
   readonly modelRef?: string;
+  /** The credential reference bound to ProviderTurns. The raw credential is
+   * resolved by ProviderRuntime at the execution boundary; absent means the
+   * provider needs no credential (e.g. the deterministic fake). */
+  readonly secretRef?: SecretRef;
+  /** Which real secret adapter backs `SecretStorePort` (default `Env`). */
+  readonly secretStore?: SecretStoreConfig;
 }
 
 export type SliceServices =
@@ -91,6 +105,11 @@ export const buildSliceLayer = (
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
 
+  const secretStore =
+    config.secretStore?._tag === "File"
+      ? SecretFileLive({ root: config.secretStore.root })
+      : SecretEnvLive();
+
   const provider = FakeProviderLive({ turns: config.providerTurns ?? [] });
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive(3),
@@ -98,6 +117,7 @@ export const buildSliceLayer = (
       provider,
       Layer.provide(ProviderTurnStoreLive, infra),
       Layer.provide(TransactionPortLive, infra),
+      secretStore,
       infra,
     ),
   );
@@ -172,7 +192,12 @@ export const buildSliceLayer = (
       Effect.gen(function* () {
         const handlers = yield* SliceDirectiveHandlers;
         return Layer.provide(
-          AgentDriverLive(handlers),
+          AgentDriverLive(
+            handlers,
+            config.secretRef !== undefined
+              ? { secretRef: config.secretRef }
+              : {},
+          ),
           Layer.mergeAll(
             modelContext,
             providerRuntime,
@@ -206,6 +231,7 @@ export const buildSliceLayer = (
     fence,
     provider,
     providerRuntime,
+    secretStore,
     modelContext,
     driver,
     toolRuntime,

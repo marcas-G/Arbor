@@ -30,6 +30,7 @@ import {
   TransactionPort,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
+import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
 import { labeled } from "./support/p9-harness-api.js";
 
 /**
@@ -157,6 +158,7 @@ const makeApp = (
       DisconnectProviderLive(script, probe),
       Layer.provide(ProviderTurnStoreLive, infra),
       Layer.provide(TransactionPortLive, infra),
+      FixedSecretStoreLive(),
       infra,
     ),
   );
@@ -226,7 +228,6 @@ const runTurnInput = (turnId: ProviderTurnId) => ({
     budget: { maxOutputTokens: 128 },
     cacheHints: [],
   },
-  secretRef: "secret",
   timeoutMs: 30_000,
   cancellationRef: "cancel",
 });

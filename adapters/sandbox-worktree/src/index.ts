@@ -16,6 +16,15 @@ import {
 } from "@arbor/ports";
 import { Context, Effect, Layer } from "effect";
 
+/** P12 `03` §3 / `13` §3 (NEW-14): every sandbox adapter projects any spawned
+ * process environment onto the shared minimal allow-list, so `secret-env`
+ * material (resolved from the process environment) can never leak into a
+ * sandboxed command. Re-exported from `@arbor/ports` (single mechanism). */
+export {
+  SANDBOX_ENV_ALLOWLIST,
+  sandboxEnvironment,
+} from "@arbor/ports";
+
 /**
  * P11 `12` (P4 `04` frozen SandboxPort + guarantees): the worktree-backed
  * sandbox adapter. `SandboxPort`/`SandboxHandle` signatures are UNCHANGED —

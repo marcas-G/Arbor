@@ -49,6 +49,12 @@
       "path": "../../adapters/sandbox-local"
     },
     {
+      "path": "../../adapters/secret-env"
+    },
+    {
+      "path": "../../adapters/secret-file"
+    },
+    {
       "path": "../../adapters/blob-local"
     }
   ]

@@ -8,6 +8,7 @@ import {
   ProviderRuntime,
   type ProviderRuntimeService,
   ProviderTurnStore,
+  SecretStorePort,
   TransactionPort,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Stream } from "effect";
@@ -26,7 +27,7 @@ export const ProviderRuntimeLive = (
 ): Layer.Layer<
   ProviderRuntime,
   never,
-  ProviderPort | ProviderTurnStore | TransactionPort | Clock
+  ProviderPort | ProviderTurnStore | TransactionPort | Clock | SecretStorePort
 > =>
   Layer.effect(
     ProviderRuntime,
@@ -35,11 +36,20 @@ export const ProviderRuntimeLive = (
       const store = yield* ProviderTurnStore;
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
+      const secretStore = yield* SecretStorePort;
 
       const runTurn: ProviderRuntimeService["runTurn"] = (
         input: ProviderRunInput,
       ) =>
         Effect.gen(function* () {
+          // P12 `03` §2/§3: resolve the referenced credential at the execution
+          // boundary. A missing / inaccessible / expired secret is a typed
+          // failure — never silently substituted. The resolved material stays
+          // inside the transport boundary (the Agent never sees it).
+          const secretMaterial =
+            input.secretRef === undefined
+              ? undefined
+              : yield* secretStore.resolve(input.secretRef);
           const startedAt = yield* clock.now();
           yield* tx.transact(
             store.startTurn(
@@ -69,7 +79,10 @@ export const ProviderRuntimeLive = (
                   context: {
                     providerTurnId: input.providerTurnId,
                     attemptNo,
-                    secretRef: input.secretRef,
+                    ...(input.secretRef !== undefined
+                      ? { secretRef: input.secretRef }
+                      : {}),
+                    ...(secretMaterial !== undefined ? { secretMaterial } : {}),
                     timeoutMs: input.timeoutMs,
                     cancellationRef: input.cancellationRef,
                   },

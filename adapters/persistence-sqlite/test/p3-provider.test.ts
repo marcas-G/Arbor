@@ -15,6 +15,7 @@ import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import { ProviderRuntimeLive } from "../../../packages/provider-runtime/src/index.js";
+import { FixedSecretStoreLive } from "../../../packages/testkit/src/index.js";
 import { FakeProviderLive } from "../../provider-fake/src/index.js";
 import {
   ClockLive,
@@ -45,6 +46,7 @@ const makeApp = (script: Parameters<typeof FakeProviderLive>[0]) => {
         Layer.provide(TransactionPortLive, infra),
         Layer.provide(ProviderTurnStoreLive, infra),
         FakeProviderLive(script),
+        FixedSecretStoreLive(),
         infra,
       ),
     ),
@@ -134,7 +136,6 @@ const runTurn = (providerTurnId: string) =>
       outputContractRef: "agent-directive-v1",
       manifestId: "man-1",
       request,
-      secretRef: "secret-1",
       timeoutMs: 1000,
       cancellationRef: "cancel-1",
     });

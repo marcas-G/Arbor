@@ -17,6 +17,8 @@ export const ALLOWED_EDGES: Record<string, ReadonlyArray<string>> = {
   "provider-fake": ["domain", "ports"],
   "sandbox-local": ["domain", "ports"],
   "sandbox-worktree": ["domain", "ports"],
+  "secret-env": ["domain", "ports"],
+  "secret-file": ["domain", "ports"],
   "blob-local": ["domain", "ports"],
 };
 

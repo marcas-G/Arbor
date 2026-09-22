@@ -120,6 +120,7 @@ import {
   type WorktreeStoreService,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
+import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
 
 // P11-012 acceptance: one story per closure invariant CI-1..CI-5 (P11 `00`
 // §Five closure invariants) + the end-to-end environment story + the
@@ -465,6 +466,7 @@ const cbMakeApp = () => {
       provider,
       Layer.provide(ProviderTurnStoreLive, infra),
       Layer.provide(TransactionPortLive, infra),
+      FixedSecretStoreLive(),
       infra,
     ),
   );

@@ -53,6 +53,7 @@ import {
   ToolCatalogPort,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
+import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -108,6 +109,7 @@ const makeApp = () => {
       provider,
       Layer.provide(ProviderTurnStoreLive, infra),
       Layer.provide(TransactionPortLive, infra),
+      FixedSecretStoreLive(),
       infra,
     ),
   );

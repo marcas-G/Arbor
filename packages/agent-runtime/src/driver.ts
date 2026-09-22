@@ -23,6 +23,7 @@ import {
   type ProviderRunInput,
   ProviderRuntime,
   type RuntimeSafetyGateService,
+  type SecretRef,
   SessionRepository,
   TransactionPort,
 } from "@arbor/ports";
@@ -72,8 +73,17 @@ const runtimeSafetyFragment: InstructionFragment = {
   contentRef: "runtime safety",
 };
 
+export interface AgentDriverOptions {
+  /** P12 `03` §3: the credential reference the driver binds to a ProviderTurn.
+   * Comes from Composition-Root config; the driver never hardcodes a raw ref.
+   * The raw credential is resolved by ProviderRuntime at the execution
+   * boundary and never reaches the Agent. */
+  readonly secretRef?: SecretRef;
+}
+
 export const AgentDriverLive = (
   handlers: ReadonlyArray<DirectiveHandler> = [],
+  options: AgentDriverOptions = {},
 ): Layer.Layer<
   ExecutionDriverPort,
   never,
@@ -214,7 +224,9 @@ export const AgentDriverLive = (
               outputContractRef: AGENT_DIRECTIVE_CONTRACT,
               manifestId: preparation.turn.manifest.compiledRequestHash,
               request: preparation.turn.request,
-              secretRef: "secret",
+              ...(options.secretRef !== undefined
+                ? { secretRef: options.secretRef }
+                : {}),
               timeoutMs: 30_000,
               cancellationRef: "cancel",
             };
