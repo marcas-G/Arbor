@@ -19,6 +19,9 @@
       "path": "../../packages/application"
     },
     {
+      "path": "../../packages/api-contracts"
+    },
+    {
       "path": "../../packages/model-context"
     },
     {

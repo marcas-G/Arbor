@@ -97,7 +97,11 @@ describe("p10-boundaries", () => {
     }
   });
 
-  it("P12 boundary negative: no HTTP/WS/CLI transport anywhere in repo source trees (packages/apps/adapters src + tests) and apps/web stays unbuilt", () => {
+  it("P12 boundary: transport lives only under apps/*/src/transport; packages/adapters/tests stay transport-free; apps/web stays unbuilt", () => {
+    // P10 guard amended at P12-010 (`00` cross-phase table; `10` §1): P12 now
+    // OWNS the HTTP/WS/CLI/web shell plane, but only as composition-root
+    // `apps/*` wiring. Transport-named files and transport imports therefore
+    // remain forbidden everywhere EXCEPT `apps/<app>/src/transport/`.
     const TRANSPORT_IMPORT =
       /^(node:http|node:https|node:http2|node:ws|node:net|node:readline|node:repl|ws|express|fastify|socket\.io|@fastify\/.*|commander|yargs|clipanion)$/;
     const TRANSPORT_NAME_SEGMENTS = new Set([
@@ -108,14 +112,19 @@ describe("p10-boundaries", () => {
       "websocket",
       "cli",
     ]);
+    const isP12TransportOwned = (file: string): boolean =>
+      /\/apps\/[^/]+\/src\/transport\//.test(file);
     for (const root of ["packages", "apps", "adapters", "tests"]) {
       for (const file of walkSourceFiles(join(repoRoot, root))) {
+        if (isP12TransportOwned(file)) {
+          continue;
+        }
         for (const specifier of importSpecifiersOf(
           readFileSync(file, "utf8"),
         )) {
           expect(
             TRANSPORT_IMPORT.test(specifier),
-            `${file}: transport import "${specifier}" is P12 territory`,
+            `${file}: transport import "${specifier}" is P12 apps/* territory`,
           ).toBe(false);
         }
         const base = file.split("/").pop() ?? "";
@@ -123,7 +132,7 @@ describe("p10-boundaries", () => {
         const segments = stem.split(/[-.]/);
         expect(
           segments.filter((segment) => TRANSPORT_NAME_SEGMENTS.has(segment)),
-          `${file}: transport-named source file is P12 territory`,
+          `${file}: transport-named source file is P12 apps/* territory`,
         ).toEqual([]);
       }
     }

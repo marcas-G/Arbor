@@ -302,6 +302,9 @@ importers:
       '@arbor/agent-runtime':
         specifier: workspace:*
         version: link:../../packages/agent-runtime
+      '@arbor/api-contracts':
+        specifier: workspace:*
+        version: link:../../packages/api-contracts
       '@arbor/application':
         specifier: workspace:*
         version: link:../../packages/application
