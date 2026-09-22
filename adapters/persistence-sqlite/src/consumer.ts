@@ -251,7 +251,12 @@ export const rebuildProjection = (
     yield* tx.transact(
       Effect.gen(function* () {
         yield* projection.reset();
-        yield* offsets.advance(consumerId, projectId, floor);
+        // P1 `05` §6: replay ALL retained domain_events — the batch read
+        // is exclusive of the stored offset, so the rewind target is the
+        // sequence before the floor (clamped: absent row reads 0), which
+        // makes the rebuild deliver the floor event exactly like the
+        // PR1 offset-loss batch replay does.
+        yield* offsets.advance(consumerId, projectId, Math.max(floor - 1, 0));
       }),
     );
     let replayed = 0;

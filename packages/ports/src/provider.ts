@@ -2,12 +2,19 @@ import type {
   AgentBinding,
   ContextEpochNumber,
   ExecutionId,
+  ProjectId,
   ProviderTurnId,
   SessionId,
   WorkspaceId,
 } from "@arbor/domain";
 
-export type { ContextEpochNumber, ExecutionId, ProviderTurnId, SessionId };
+export type {
+  ContextEpochNumber,
+  ExecutionId,
+  ProjectId,
+  ProviderTurnId,
+  SessionId,
+};
 
 import { Context, type Effect, type Stream } from "effect";
 import type {
@@ -157,6 +164,20 @@ export interface ProviderAttemptOutcome {
   readonly providerErrorKind?: string;
 }
 
+/** P9 `04` §2.2 read face: a dangling ProviderTurn (`settled_at IS NULL`)
+ * plus its append-only attempt history, for the unsettled-Turn recovery
+ * decision table. */
+export interface ProviderAttemptSummary {
+  readonly attemptNo: number;
+  readonly outcome: "Success" | "RetryableFailure" | "TerminalFailure";
+  readonly providerErrorKind: string | null;
+}
+
+export interface UnsettledProviderTurn {
+  readonly turn: ProviderTurnRecord;
+  readonly attempts: ReadonlyArray<ProviderAttemptSummary>;
+}
+
 export interface ProviderTurnStoreService {
   readonly startTurn: (
     record: ProviderTurnRecord,
@@ -173,6 +194,23 @@ export interface ProviderTurnStoreService {
     providerTurnId: ProviderTurnId,
     finishReason: string,
     usageJson: string,
+    settledAt: string,
+  ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
+  /** P9 `04` §2.2: enumerate dangling turns of a project (Turn intent +
+   * Manifest persisted before the request, so every dangling Turn is
+   * visible) together with their recorded attempts. */
+  readonly findUnsettledByProject: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<UnsettledProviderTurn>,
+    ProviderFailure,
+    TransactionScope
+  >;
+  /** P9 `04` §2.2 case 2: mark a dangling Turn settled failed (driver
+   * Turn-failure semantics, P3 `06` §2) when the retry bound is exhausted
+   * or the failure class is terminal. No-op if already settled. */
+  readonly failTurn: (
+    providerTurnId: ProviderTurnId,
     settledAt: string,
   ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
 }

@@ -181,3 +181,10 @@ observable surface injection assertions derive from Execution state
 - No provider/tool external reconciliation logic beyond ref enumeration
   (the owning tool decides, P4 `06` §6).
 - No recovery trigger-timing semantics (GQ3 — separate contract).
+
+## Closure reconciliation (2026-09-22, v1.12 G2b)
+
+The recovery-facing `ProviderTurnStore` extension —
+`findUnsettledByProject(projectId)` and `failTurn(turnId, settledAt)` — is
+recorded here (owning P9 contract; cross-ref P3 `06`, whose transport-failure
+semantics are unchanged — these are recovery read/mark paths only).

@@ -312,16 +312,17 @@ export const AcceptanceRepositoryLive: Layer.Layer<
               [workId, targetWorkRevision],
             ),
           );
-          return rows.length > 0
-            ? Option.some({
-                acceptanceId: rows[0]!.acceptance_id as never,
-                workId: rows[0]!.work_id as WorkId,
-                targetWorkRevision: rows[0]!.target_work_revision as never,
-                verificationId: rows[0]!.verification_id as VerificationId,
-                actor: rows[0]!.actor as never,
-                acceptedAt: rows[0]!.accepted_at,
-              } satisfies Acceptance)
-            : Option.none();
+          const row = rows[0];
+          return row === undefined
+            ? Option.none()
+            : Option.some({
+                acceptanceId: row.acceptance_id as never,
+                workId: row.work_id as WorkId,
+                targetWorkRevision: row.target_work_revision as never,
+                verificationId: row.verification_id as VerificationId,
+                actor: row.actor as never,
+                acceptedAt: row.accepted_at,
+              } satisfies Acceptance);
         }),
     });
   }),

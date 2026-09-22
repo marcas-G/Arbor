@@ -82,6 +82,14 @@ export const DeliverableProduced = Schema.TaggedStruct("DeliverableProduced", {
   kind: Schema.String,
   artifactRoles: Schema.Array(Schema.String),
 });
+export const ReconciliationEscalated = Schema.TaggedStruct(
+  "ReconciliationEscalated",
+  {
+    executionId: Schema.String,
+    invocationRefsFingerprint: Schema.String,
+    refs: Schema.Array(Schema.Unknown),
+  },
+);
 export const DeadlockAttentionRequested = Schema.TaggedStruct(
   "DeadlockAttentionRequested",
   {
@@ -157,6 +165,7 @@ export const DomainEventPayload = Schema.Union([
   DependencySatisfied,
   DependencyContractRevised,
   DeadlockAttentionRequested,
+  ReconciliationEscalated,
   DependencyWithdrawn,
   DependencyMarkedUnfulfillable,
   DeliverableProduced,
@@ -199,6 +208,7 @@ export const EVENT_CATALOG = {
   DependencyWithdrawn,
   DependencyMarkedUnfulfillable,
   DeadlockAttentionRequested,
+  ReconciliationEscalated,
   DeliverableProduced,
   MessageSent,
   VerificationStarted,

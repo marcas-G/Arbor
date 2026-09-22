@@ -102,3 +102,13 @@ durability-asserted (evidence)   WAL / power-loss / checkpoint class is NOT
   apply; DID §5.4).
 - No external projection stores (P1 `05` §7).
 - No fault-injecting SQLite adapter (GQ5 option (b) declined).
+
+## Closure reconciliation (2026-09-22, v1.12 G2a)
+
+The `rebuildProjection` exclusive-floor defect (reset to `floor` while
+`readAfter` is exclusive — the floor event was never replayed, losing one
+projection row per rebuild) is recorded as an **inherited P1 implementation
+correction**: the rewind target is `floor-1` (clamped to 0), restoring P1
+`05` §6 full-replay semantics. Regression coverage: RB-4 (rebuild reaches
+the same projection state) + the aligned P1-008 expectation. No P1
+frozen-semantics change.

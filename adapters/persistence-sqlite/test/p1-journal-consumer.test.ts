@@ -170,8 +170,13 @@ describe("journal consumer", () => {
       Effect.provide(program, makeApp()),
     );
     expect(refused._tag).toBe("ConsumerRebuildRefused");
-    expect(rebuilt).toEqual({ replayed: 1, floor: 2 });
+    // P9-011 realignment: the rebuild replays ALL retained domain_events
+    // (P1 `05` §6 "replay domain_events"; P9-011 RB-4 same-state
+    // guarantee; PR1 batch-path parity) — the offset rewind target is
+    // floor-1 (clamped 0) so the exclusive batch read delivers the
+    // floor event too.
+    expect(rebuilt).toEqual({ replayed: 2, floor: 2 });
     expect(offset).toBe(3);
-    expect(rows.map((row) => row.sequence)).toEqual([3]);
+    expect(rows.map((row) => row.sequence)).toEqual([2, 3]);
   });
 });

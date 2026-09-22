@@ -12,12 +12,15 @@ import {
   FormationProposalStoreLive,
   IdGeneratorLive,
   InboxProjectionStoreLive,
+  LeaseServiceLive,
   layer,
   MessageStoreLive,
   P7_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
+  SchedulerTimerStoreLive,
   SessionRepositoryLive,
+  ToolInvocationStoreLive,
   TransactionPortLive,
   VerificationRepositoryLive,
   WorkRepositoryLive,
@@ -54,7 +57,10 @@ import {
   SessionId,
   WorkspaceId,
 } from "../../packages/domain/dist/index.js";
-import { makeP2CommandHandlers } from "../../packages/execution-runtime/src/index.js";
+import {
+  makeP2CommandHandlers,
+  runRecovery,
+} from "../../packages/execution-runtime/src/index.js";
 import {
   type AcceptanceRepository,
   type DeliverableRepository,
@@ -65,6 +71,7 @@ import {
   InboxProjectionStore,
   MessageStore,
   ProjectRepository,
+  type SchedulerTimerStore,
   SessionRepository,
   type TransactionPort,
   type VerificationRepository,
@@ -72,6 +79,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
+import { ReconciliationSourceLive } from "../../packages/tool-runtime/src/index.js";
 
 export const p7TestActor = parse(Actor)("user:gov");
 export const p7TestPrincipal = parse(Principal)("user:gov");
@@ -166,7 +174,8 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
 );
 
 /** sqlite infra; tests run `runMigrations(P8_MIGRATIONS)` first (P1 pattern).
- * Exposes the P6 stores + TransactionPort so test bodies can seed directly. */
+ * Exposes the P6 stores + TransactionPort + the P9 recovery-drive stores
+ * (scheduler timers) so test bodies can seed directly. */
 export const makeP7App = (
   filename = ":memory:",
 ): Layer.Layer<
@@ -183,6 +192,7 @@ export const makeP7App = (
   | VerificationRepository
   | EvidenceRepository
   | AcceptanceRepository
+  | SchedulerTimerStore
 > => {
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
@@ -196,6 +206,7 @@ export const makeP7App = (
       Layer.provide(SessionRepositoryLive, infra),
       Layer.provide(ExecutionRepositoryLive, infra),
       Layer.provide(WorkWaitStoreLive, infra),
+      Layer.provide(SchedulerTimerStoreLive, infra),
       Layer.provide(FormationProposalStoreLive, infra),
       Layer.provide(MessageStoreLive, infra),
       Layer.provide(InboxProjectionStoreLive, infra),
@@ -222,6 +233,20 @@ export const makeP7App = (
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(EvidenceRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
+    Layer.provide(ExecutionRepositoryLive, infra),
+    Layer.provide(SchedulerTimerStoreLive, infra),
+    Layer.provide(
+      LeaseServiceLive,
+      Layer.merge(infra, Layer.provide(ExecutionRepositoryLive, infra)),
+    ),
+    Layer.provide(ToolInvocationStoreLive, infra),
+    Layer.provide(
+      ReconciliationSourceLive,
+      Layer.mergeAll(
+        Layer.provide(ToolInvocationStoreLive, infra),
+        Layer.provide(TransactionPortLive, infra),
+      ),
+    ),
     FenceStopCheckInertLive,
   );
   return Layer.mergeAll(
@@ -241,6 +266,7 @@ export const makeP7App = (
     | VerificationRepository
     | EvidenceRepository
     | AcceptanceRepository
+    | SchedulerTimerStore
   >;
 };
 
@@ -329,6 +355,8 @@ export const p7EventTypes = Effect.gen(function* () {
 });
 
 void MessageStore;
+
+export { runRecovery };
 
 /** Seeds one Open Work on the root workspace via the real AssignWork command. */
 export const p7SeedWork = (

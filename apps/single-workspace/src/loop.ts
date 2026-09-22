@@ -13,9 +13,13 @@ import type {
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
-import type { AdmitExecutionPayload } from "@arbor/execution-runtime";
+import {
+  type AdmitExecutionPayload,
+  preDispatchCheck,
+} from "@arbor/execution-runtime";
 import {
   Clock,
+  type ExecutionRepository,
   ExecutionScheduler,
   IdGenerator,
   type SchedulerDecision,
@@ -112,6 +116,30 @@ export const evaluateAndSelect = (
       decision = yield* scheduler.reevaluate(workspaceId, wakeReason);
     }
     return { selections, decision };
+  });
+
+export type DispatchRound<A> =
+  | { readonly dispatched: false }
+  | { readonly dispatched: true; readonly outcome: A };
+
+/** T4 hook (P9 `03` §2, GQ3): before the dispatch loop hands an execution
+ * to a drive, run the targeted pre-dispatch check — the lease-fence
+ * predicate ONLY. A live, unexpired lease skips the round; never the
+ * nine-step recovery. */
+export const dispatchRound = <A, E, R>(
+  executionId: ExecutionId,
+  drive: Effect.Effect<A, E, R>,
+): Effect.Effect<
+  DispatchRound<A>,
+  unknown,
+  R | ExecutionRepository | TransactionPort | Clock
+> =>
+  Effect.gen(function* () {
+    const dispatchable = yield* preDispatchCheck(executionId);
+    if (!dispatchable) {
+      return { dispatched: false };
+    }
+    return { dispatched: true, outcome: yield* drive };
   });
 
 export const admitExecution = (

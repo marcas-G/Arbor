@@ -9,7 +9,6 @@ import { ProjectEnvironmentPortLive } from "@arbor/environment-local";
 import {
   ExecutionSchedulerLive,
   FenceStopCheckLive,
-  ReconciliationSourceStubLive,
   RuntimeSafetyGateLive,
 } from "@arbor/execution-runtime";
 import { ModelContextLive } from "@arbor/model-context";
@@ -54,6 +53,7 @@ import { ProviderRuntimeLive } from "@arbor/provider-runtime";
 import { SandboxPortLive } from "@arbor/sandbox-local";
 import {
   BUILTIN_EXECUTORS,
+  ReconciliationSourceLive,
   ResourceAdmissionLive,
   ToolCatalogPortLive,
   ToolDefinitionStoreLive,
@@ -189,6 +189,7 @@ export const buildSliceLayer = (
     ProvisionalRunnableWorkSourceLive,
     Layer.mergeAll(repos, infra, Layer.provide(TransactionPortLive, infra)),
   );
+  const reconciliation = Layer.provide(ReconciliationSourceLive, repos);
   const scheduler = Layer.provide(
     ExecutionSchedulerLive,
     Layer.mergeAll(
@@ -212,11 +213,11 @@ export const buildSliceLayer = (
     admission,
     runnableSource,
     WorkerDispatchPortLive,
-    ReconciliationSourceStubLive,
     RuntimeSafetyGateLive(),
     capability,
     registry,
     gateway,
+    reconciliation,
   );
   return Layer.mergeAll(
     all,
