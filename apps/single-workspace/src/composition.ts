@@ -5,6 +5,7 @@ import {
   type CommandHandlerRegistry,
 } from "@arbor/application";
 import { BlobStorePortLive } from "@arbor/blob-local";
+import type { ProjectId } from "@arbor/domain";
 import { ProjectEnvironmentPortLive } from "@arbor/environment-local";
 import {
   ExecutionSchedulerLive,
@@ -29,6 +30,7 @@ import {
   MessageStoreLive,
   P7_MIGRATIONS,
   ProjectRepositoryLive,
+  ProjectToolRegistryLive,
   ProviderTurnStoreLive,
   ResourceOwnershipRepositoryLive,
   runMigrations,
@@ -79,6 +81,10 @@ export type SecretStoreConfig =
 
 export interface SliceConfig {
   readonly databaseFile: string;
+  /** P12 cross-contract completeness correction: the runtime project whose
+   * committed Project-tool registrations are unioned into the model-facing
+   * catalog. Absent => the catalogued set is the builtins only. */
+  readonly projectId?: ProjectId;
   readonly providerTurns?: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>;
   readonly modelRef?: string;
   /** The credential reference bound to ProviderTurns. The raw credential is
@@ -139,9 +145,16 @@ export const buildSliceLayer = (
     available: () => Effect.succeed([]),
     load: () => Effect.die("no skills"),
   });
+  const projectToolRegistry = Layer.provide(ProjectToolRegistryLive, infra);
+  const toolCatalog = Layer.provide(
+    ToolCatalogPortLive(
+      config.projectId !== undefined ? { projectId: config.projectId } : {},
+    ),
+    projectToolRegistry,
+  );
   const modelContext = Layer.provide(
     ModelContextLive,
-    Layer.mergeAll(capability, ToolCatalogPortLive, skills),
+    Layer.mergeAll(capability, toolCatalog, skills),
   );
 
   const repos = Layer.mergeAll(
@@ -166,7 +179,8 @@ export const buildSliceLayer = (
     repo,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
     ProjectEnvironmentPortLive,
-    ToolCatalogPortLive,
+    projectToolRegistry,
+    toolCatalog,
     ToolDefinitionStoreLive,
     SandboxPortLive,
     BlobStorePortLive,

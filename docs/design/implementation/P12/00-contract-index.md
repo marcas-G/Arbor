@@ -124,7 +124,7 @@ Revisions P12 explicitly owns against frozen P0–P11 contracts or the frozen DI
 
 | # | Clarification |
 |---|---|
-| P12 cross-contract completeness correction | `01` §5.2 / `07` §2: add the committed-read enumeration seam `ProjectToolRegistry.listRegisteredToolDefinitions(projectId)` (no `TransactionScope`) and freeze `CataloguedTools = Builtins ∪ CommittedRegisteredProjectToolDefinitions` for `visibleRefs`/`resolveForModel`. Registry identity `(pluginId, pluginVersion, contentHash)` and `ToolDefinitionRef(name, version, hash)` remain intentionally distinct. Governance-approved targeted correction; no DID change, no closure reopen. |
+| P12 cross-contract completeness correction | `01` §5.2 / `07` §2: add the committed-read enumeration seam `ProjectToolRegistry.listRegisteredToolDefinitions(projectId)` (no `TransactionScope`) and freeze `CataloguedTools = Builtins ∪ CommittedRegisteredProjectToolDefinitions` for `visibleRefs`/`resolveForModel`. `project_tool_registry` becomes project-scoped (`project_id` from the envelope) and one registration may contribute `definitions: ReadonlyArray<ToolDefinition>`. Registry identity `(pluginId, pluginVersion, contentHash)` and `ToolDefinitionRef(name, version, hash)` remain intentionally distinct. Governance-approved targeted correction; no DID change, no closure reopen. |
 
 
 | # | Clarification |

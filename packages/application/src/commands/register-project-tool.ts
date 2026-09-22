@@ -22,7 +22,7 @@ import type { CommandHandler } from "../gateway.js";
 export interface RegisterProjectToolPayload {
   readonly pluginId: PluginId;
   readonly pluginVersion: PluginVersion;
-  readonly definition: ToolDefinition;
+  readonly definitions: ReadonlyArray<ToolDefinition>;
   readonly contentHash: string;
 }
 
@@ -54,10 +54,11 @@ export const makeRegisterProjectToolHandler = (
     Effect.gen(function* () {
       const payload = envelope.payload;
       yield* dependencies.registry.register({
+        projectId: envelope.projectId,
         pluginId: payload.pluginId,
         pluginVersion: payload.pluginVersion,
         contentHash: payload.contentHash,
-        definition: payload.definition,
+        definitions: payload.definitions,
       });
       return commandOk({
         result: {

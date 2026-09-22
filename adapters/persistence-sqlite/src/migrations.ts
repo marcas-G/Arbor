@@ -625,18 +625,23 @@ export const P11B_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 10, name: "p11_worktrees", sql: P11_WORKTREES_DDL },
 ];
 
-/** P12 `01` §5.2 (TR-7): the durable Project-tool registration store. The
- * registration key is `(plugin_id, plugin_version, content_hash)`; the row
- * binds that key to the exact `ToolDefinition` content. */
+/** P12 `01` §5.2 (TR-7): the durable Project-tool registration store. A
+ * registration is project-scoped (`project_id`) and its identity is
+ * `(plugin_id, plugin_version, content_hash)`; the row binds that key to the
+ * exact `ToolDefinition` definitions the registration contributes (one
+ * registration may contribute multiple definitions). */
 const P12_PROJECT_TOOL_REGISTRY_DDL = `
 CREATE TABLE project_tool_registry (
-  plugin_id       TEXT NOT NULL,
-  plugin_version  TEXT NOT NULL,
-  content_hash    TEXT NOT NULL,
-  definition_json TEXT NOT NULL,
-  registered_at   TEXT NOT NULL,
-  PRIMARY KEY (plugin_id, plugin_version, content_hash)
+  project_id       TEXT NOT NULL,
+  plugin_id        TEXT NOT NULL,
+  plugin_version   TEXT NOT NULL,
+  content_hash     TEXT NOT NULL,
+  definitions_json TEXT NOT NULL,
+  registered_at    TEXT NOT NULL,
+  PRIMARY KEY (project_id, plugin_id, plugin_version, content_hash)
 );
+CREATE INDEX idx_project_tool_registry_project
+  ON project_tool_registry(project_id);
 `;
 
 /** P12 `02` §5.1 (TR-7): the durable `permission_grants` store. The frozen P0
