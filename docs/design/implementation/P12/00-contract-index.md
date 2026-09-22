@@ -23,7 +23,7 @@ performance
 ```text
 P12 design closure COMPLETE (contracts FROZEN; four-way review Blocking=0)
 P12 planning COMPLETE (phase plan + task contracts; planning review Blocking=0)
-P12 implementation NOT AUTHORIZED (explicit authorization required)
+P12 implementation COMPLETE; P12 FORMALLY CLOSED
 ```
 
 ## P12 completion blockers (must remain explicit throughout closure)

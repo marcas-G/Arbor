@@ -47,12 +47,14 @@ held). P11 is COMPLETE: `planning/results/P11.result.md` (11/11 exit
 criteria PASS; CI-1..CI-5 mechanically proven; no open Design Gap;
 three P12 convergence items recorded). P12 design closure COMPLETE (DID v1.14
 governance rulings GQ1–GQ8 landed; P12 contracts FROZEN, Blocking=0) and P12
-planning COMPLETE (planning review Blocking=0).
+planning COMPLETE (planning review Blocking=0). P12 implementation COMPLETE and
+FORMALLY CLOSED: `planning/results/P12.result.md` (14/14 exit criteria PASS; all
+nine completion blockers mechanically evidenced; no open P12 Design Gap).
 
 ```text
 P12 design closure COMPLETE (contracts FROZEN; four-way review Blocking=0)
 P12 planning COMPLETE (phase plan + task contracts; planning review Blocking=0)
-P12 implementation NOT AUTHORIZED (explicit authorization required)
+P12 implementation COMPLETE; P12 FORMALLY CLOSED
 ```
 
 P12 completion blockers (must remain explicit throughout closure):
