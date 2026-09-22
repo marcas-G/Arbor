@@ -94,7 +94,8 @@ const skills = Layer.succeed(SkillRegistry, {
   load: () => Effect.die("x"),
 });
 const tools = Layer.succeed(ToolCatalogPort, {
-  definitions: () => Effect.succeed([]),
+  visibleRefs: () => Effect.succeed([]),
+  resolveForModel: () => Effect.die("no tools in test"),
 });
 
 const makeApp = () => {
