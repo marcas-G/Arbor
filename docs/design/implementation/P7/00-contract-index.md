@@ -76,6 +76,6 @@ states the honest sub-cases and files the vacant-workspace attention hole as
 ## Status
 
 ```text
-DRAFT — for contract review. After review reaches Blocking=0 and governance
+FROZEN — P7 phase-scoped contracts; review Blocking = 0 (P7 FORMALLY CLOSED).
 confirmation, this directory freezes and planning/phases/P7.md may be authored.
 ```

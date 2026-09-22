@@ -67,6 +67,6 @@ Review round 1 (independent): 6 Blocking (1 HIGH / 1 MED-HIGH / 2 MED / 2 LOW) �
 ## Status
 
 ```text
-DRAFT — review Blocking=0. After governance confirmation this directory
+FROZEN — P9 phase-scoped contracts; review Blocking = 0 (P9 FORMALLY CLOSED).
 freezes; then planning/phases/P9.md, then implementation authorization.
 ```

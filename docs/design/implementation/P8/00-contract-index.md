@@ -1,4 +1,4 @@
-# P8 — Design Closure Proposal (PROPOSAL, not frozen)
+# P8 — 00 Contract Index (FROZEN)
 
 > Planning Agent 起草的设计收敛提案。人工治理确认 GQ1–GQ6 后正文落位
 > `docs/design/implementation/P8/**` 冻结；此前不构成 Authority 来源。
@@ -109,7 +109,7 @@ R1 wake dual-channel (any verdict → VerificationChanged release; FAIL/UNKNOWN 
 ## Status
 
 ```text
-DRAFT — governed by DID v1.11 decisions; review Blocking=0.
+FROZEN — P8 phase-scoped contracts; review Blocking = 0 (P8 FORMALLY CLOSED).
 After governance confirmation this directory freezes and
 planning/phases/P8.md may be authored. No implementation yet.
 ```

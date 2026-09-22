@@ -95,6 +95,6 @@ No open Blocking item after R1/R2. R3–R5 are non-blocking closures.
 
 ## Status
 
-DRAFT — first draft for independent gap review. Blocking count is tracked in
+FROZEN — P2 phase-scoped contracts; review Blocking = 0 (P2 FORMALLY CLOSED).
 `planning/gaps/` once review starts. No P2 planning is generated until
 Blocking = 0.
