@@ -10,6 +10,7 @@ import {
   type ModelCapabilityError,
   ModelCapabilityPort,
   type ModelContextError,
+  type ModelFacingToolDefinition,
   type SkillRef,
   SkillRegistry,
   type SkillRegistryError,
@@ -123,7 +124,11 @@ export const ModelContextLive: Layer.Layer<
           cognitiveMode: input.cognitiveMode,
           requiredCapabilities: [],
         });
-        const tools = yield* toolCatalog.definitions();
+        const toolRefs = yield* toolCatalog.visibleRefs();
+        const tools: ModelFacingToolDefinition[] = [];
+        for (const ref of toolRefs) {
+          tools.push(yield* toolCatalog.resolveForModel(ref));
+        }
         const skillRefs: SkillRef[] = [];
         for (const skillId of input.bodySkillIds) {
           const loaded = yield* skills.load(skillId, "Body");

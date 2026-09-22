@@ -26,6 +26,7 @@ import type {
   TransactionOperationalFailure,
   TransactionScope,
 } from "./session.js";
+import type { SideEffectSemantics } from "./tool.js";
 
 export interface PortableInstruction {
   readonly slotId: string;
@@ -346,8 +347,39 @@ export interface ToolDefinitionRef {
   readonly hash: string;
 }
 
+/** P12 `07` §2 (DID v1.14 G3, §7.6): the model-facing projection of a
+ * `ToolDefinition` resolved by Model Context through `ToolCatalogPort`.
+ * `schemaJson := ToolDefinition.inputSchemaJson`; `capabilityMetadata` and
+ * `sideEffectSemantics` are model-facing metadata (DID §7.6) and are
+ * projected. Only `resultSchemaJson` and `source` are not model-facing. */
+export interface ModelFacingToolDefinition {
+  readonly name: string;
+  readonly description: string;
+  readonly schemaJson: string;
+  readonly version: string;
+  readonly hash: string;
+  readonly capabilityMetadata: ReadonlyArray<string>;
+  readonly sideEffectSemantics: SideEffectSemantics;
+}
+
+/** P12 `07` §2: `resolveForModel` never fabricates a placeholder; an
+ * unregistered ref fails with this typed error and is absent from
+ * `visibleRefs`. */
+export type ToolCatalogError = {
+  readonly _tag: "ToolNotRegistered";
+  readonly ref: ToolDefinitionRef;
+};
+
 export interface ToolCatalogPortService {
-  readonly definitions: () => Effect.Effect<ReadonlyArray<ToolDefinitionRef>>;
+  /** Refs eligible for model-facing exposure (catalogued, not turn-filtered).
+   * Renamed inherited `definitions()` surface; retains the inherited `Effect`
+   * channel (P12 `07` §2, TR-11). */
+  readonly visibleRefs: () => Effect.Effect<ReadonlyArray<ToolDefinitionRef>>;
+  /** Model-facing projection for exactly one visible ref; an unregistered ref
+   * fails with typed `ToolNotRegistered` (never a placeholder). */
+  readonly resolveForModel: (
+    ref: ToolDefinitionRef,
+  ) => Effect.Effect<ModelFacingToolDefinition, ToolCatalogError>;
 }
 
 export class ToolCatalogPort extends Context.Service<

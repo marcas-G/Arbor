@@ -6,9 +6,9 @@ import type {
 } from "@arbor/domain";
 import type {
   ModelCapability,
+  ModelFacingToolDefinition,
   PortableModelRequest,
   SkillRef,
-  ToolDefinitionRef,
 } from "@arbor/ports";
 import type { ContextFragment } from "./context.js";
 import type { InstructionFragment } from "./prompt.js";
@@ -30,7 +30,7 @@ export interface ControlBasis {
 export interface ModelContextPlan {
   readonly instructions: ResolvedInstructionSet;
   readonly context: ReadonlyArray<ContextFragment>;
-  readonly tools: ReadonlyArray<ToolDefinitionRef>;
+  readonly tools: ReadonlyArray<ModelFacingToolDefinition>;
   readonly skills: ReadonlyArray<SkillRef>;
   readonly outputContract: string;
   readonly continuation: string;
@@ -105,8 +105,8 @@ export const compileTurn = (input: {
     messages: [],
     toolDefinitions: input.plan.tools.map((tool) => ({
       name: tool.name,
-      description: tool.name,
-      schemaJson: "{}",
+      description: tool.description,
+      schemaJson: tool.schemaJson,
     })),
     outputContractRef: input.plan.outputContract,
     budget: { maxOutputTokens: input.maxOutputTokens },

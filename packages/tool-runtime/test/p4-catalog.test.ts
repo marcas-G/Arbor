@@ -51,7 +51,7 @@ describe("P4 tool catalog", () => {
           const catalog = yield* ToolCatalogPort;
           return {
             missing: yield* store.definition("nope", "1"),
-            refs: yield* catalog.definitions(),
+            refs: yield* catalog.visibleRefs(),
           };
         }),
         app,

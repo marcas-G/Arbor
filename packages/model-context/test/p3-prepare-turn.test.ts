@@ -36,7 +36,8 @@ const skills = Layer.succeed(SkillRegistry, {
   load: () => Effect.die("no skills in test"),
 });
 const tools = Layer.succeed(ToolCatalogPort, {
-  definitions: () => Effect.succeed([]),
+  visibleRefs: () => Effect.succeed([]),
+  resolveForModel: () => Effect.die("no tools in test"),
 });
 const app = Layer.mergeAll(
   capability,

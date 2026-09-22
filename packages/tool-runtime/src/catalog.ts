@@ -141,7 +141,7 @@ export const ToolDefinitionStoreLive: Layer.Layer<ToolDefinitionStore> =
 export const ToolCatalogPortLive: Layer.Layer<ToolCatalogPort> = Layer.succeed(
   ToolCatalogPort,
   {
-    definitions: () =>
+    visibleRefs: () =>
       Effect.succeed(
         BUILTIN_TOOLS.map(
           (tool): ToolDefinitionRef => ({
@@ -151,5 +151,25 @@ export const ToolCatalogPortLive: Layer.Layer<ToolCatalogPort> = Layer.succeed(
           }),
         ),
       ),
+    resolveForModel: (ref) => {
+      const found = BUILTIN_TOOLS.find(
+        (tool) =>
+          tool.name === ref.name &&
+          tool.version === ref.version &&
+          tool.hash === ref.hash,
+      );
+      if (found === undefined) {
+        return Effect.fail({ _tag: "ToolNotRegistered" as const, ref });
+      }
+      return Effect.succeed({
+        name: found.name,
+        description: found.description,
+        schemaJson: found.inputSchemaJson,
+        version: found.version,
+        hash: found.hash,
+        capabilityMetadata: found.capabilityMetadata,
+        sideEffectSemantics: found.sideEffectSemantics,
+      });
+    },
   },
 );
