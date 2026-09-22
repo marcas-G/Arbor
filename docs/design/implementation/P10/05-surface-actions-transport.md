@@ -31,6 +31,12 @@ InboxViewReq       = { workspaceId }                           → { unconsumed[
 ```
 
 Every response carries `{ watermark, lag }` (§1 signature). Shapes are the contract; row limits/cursors beyond Transcript's are transport concerns (P12).
+
+> **P12 TR-5 propagation (P12 `04` §3.2/§5; DID v1.14 G4).** The `UsageReq`
+> row `cost` field is the P12 `UsageCost` ADT (`Known` | `Unknown`), not a
+> hardcoded `0`; **unknown cost stays `Unknown`, never `0`**. P10 renders the
+> field (observe-only, invariant 45); cost derivation and versioned pricing are
+> P12-owned and do not change P10 view semantics.
 - projection-runtime package deps stay `domain, ports` (DID §10.4.1); it never participates in authority (§10.4 hard rule).
 
 ## 2. User-action surfaces (SD §12.5 four verbs; UI only issues Commands)

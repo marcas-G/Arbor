@@ -60,6 +60,142 @@ export const ENVELOPE_DIMENSIONS: ReadonlyArray<EnvelopeDimension> = [
   "availabilityTarget",
 ];
 
+/**
+ * B-5: the frozen declared operating envelope (P12 `05` §2). The harness
+ * measures a representative workload against this envelope; the assessed
+ * `measurements` are derived from the harness report (`deriveEnvelopeMeasurements`)
+ * rather than hand-written.
+ */
+export const STORAGE_OPERATING_ENVELOPE: OperatingEnvelope = {
+  maxConcurrentRuntimes: { value: 1, unit: "count" },
+  maxWriteThroughput: { value: 500, unit: "writes/s" },
+  maxDbSize: { value: 8, unit: "GiB" },
+  availabilityTarget: { value: 0.999, unit: "fraction" },
+};
+
+/** A single measured quantity with its measurement method and workload. */
+export interface MeasuredMetric {
+  readonly value: number;
+  readonly unit: string;
+  readonly method: string;
+  readonly workload: string;
+}
+
+/** Per-operation command latency samples (B-5). */
+export interface LatencyMeasurement {
+  readonly meanMs: number;
+  readonly p95Ms: number;
+  readonly samples: number;
+  readonly method: string;
+  readonly workload: string;
+}
+
+/** Write/transaction contention under concurrent writers (B-5). */
+export interface ThroughputMeasurement {
+  readonly achievedWritesPerSecond: number;
+  readonly writers: number;
+  readonly serializationFactor: number;
+  readonly method: string;
+  readonly workload: string;
+}
+
+/** Representative concurrent load result (B-5). */
+export interface ConcurrentLoadMeasurement {
+  readonly maxConcurrentWriters: number;
+  readonly achievedWritesPerSecond: number;
+  readonly availability: number;
+  readonly meanLatencyMs: number;
+  readonly p95LatencyMs: number;
+  readonly totalOperations: number;
+  readonly method: string;
+  readonly workload: string;
+}
+
+/**
+ * B-5: the executable measurement harness report. Every declared envelope
+ * dimension is covered by at least one metric; the durations / throughput
+ * metrics that have no envelope dimension are persisted here as supporting
+ * evidence so the `observed` values are not hand-written literals.
+ */
+export interface StorageMeasurementReport {
+  readonly generatedAt: string;
+  readonly host: string;
+  readonly commandLatency: LatencyMeasurement;
+  readonly writeTransactionContention: ThroughputMeasurement;
+  readonly eventDbSize: MeasuredMetric;
+  readonly schedulerConsumerThroughput: MeasuredMetric;
+  readonly projectionRebuildDuration: MeasuredMetric;
+  readonly backupDuration: MeasuredMetric;
+  readonly restoreDuration: MeasuredMetric;
+  readonly representativeConcurrentLoad: ConcurrentLoadMeasurement;
+}
+
+/** The checked-in artifact: the frozen assessment plus its measurement harness. */
+export interface StorageAssessmentArtifact extends StorageScaleAssessment {
+  readonly harness: StorageMeasurementReport;
+}
+
+/** The eight measured dimensions the harness must report (B-5). */
+export const STORAGE_MEASUREMENT_METRICS: ReadonlyArray<
+  keyof StorageMeasurementReport
+> = [
+  "commandLatency",
+  "writeTransactionContention",
+  "eventDbSize",
+  "schedulerConsumerThroughput",
+  "projectionRebuildDuration",
+  "backupDuration",
+  "restoreDuration",
+  "representativeConcurrentLoad",
+];
+
+/**
+ * B-5: pure mapping from the measured harness report onto the frozen envelope
+ * dimensions. The measured `observed` values are the representative workload's
+ * observed characteristics; the units are the declared envelope units so the
+ * comparator stays total (R-04).
+ */
+export const deriveEnvelopeMeasurements = (
+  report: StorageMeasurementReport,
+): ReadonlyArray<Measurement> => [
+  {
+    dimension: "maxConcurrentRuntimes",
+    observed: {
+      value: report.representativeConcurrentLoad.maxConcurrentWriters,
+      unit: STORAGE_OPERATING_ENVELOPE.maxConcurrentRuntimes.unit,
+    },
+    method: report.representativeConcurrentLoad.method,
+    workload: report.representativeConcurrentLoad.workload,
+  },
+  {
+    dimension: "maxWriteThroughput",
+    observed: {
+      value: report.representativeConcurrentLoad.achievedWritesPerSecond,
+      unit: STORAGE_OPERATING_ENVELOPE.maxWriteThroughput.unit,
+    },
+    method: report.representativeConcurrentLoad.method,
+    workload: report.representativeConcurrentLoad.workload,
+  },
+  {
+    dimension: "maxDbSize",
+    observed: {
+      value: report.eventDbSize.value,
+      unit: STORAGE_OPERATING_ENVELOPE.maxDbSize.unit,
+    },
+    method: report.eventDbSize.method,
+    workload: report.eventDbSize.workload,
+  },
+  {
+    dimension: "availabilityTarget",
+    observed: {
+      value: report.representativeConcurrentLoad.availability,
+      unit: STORAGE_OPERATING_ENVELOPE.availabilityTarget.unit,
+    },
+    method: report.representativeConcurrentLoad.method,
+    workload: report.representativeConcurrentLoad.workload,
+  },
+];
+
 interface DimensionRule {
   readonly direction: "ceiling" | "floor";
   readonly trigger: PostgresTrigger | GovernanceGatedTrigger;
@@ -247,3 +383,172 @@ export const validateStorageScaleAssessment = (
   }
   return errors;
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0;
+
+const validateMeasuredMetric = (
+  label: string,
+  value: unknown,
+  errors: string[],
+): void => {
+  if (!isRecord(value)) {
+    errors.push(`${label} is not an object`);
+    return;
+  }
+  if (!isFiniteNumber(value.value)) {
+    errors.push(`${label}.value is not a finite number`);
+  }
+  if (!isNonEmptyString(value.unit)) {
+    errors.push(`${label}.unit is not a string`);
+  }
+  if (!isNonEmptyString(value.method)) {
+    errors.push(`${label}.method is not a string`);
+  }
+  if (!isNonEmptyString(value.workload)) {
+    errors.push(`${label}.workload is not a string`);
+  }
+};
+
+const validateLatencyMeasurement = (
+  label: string,
+  value: unknown,
+  errors: string[],
+): void => {
+  if (!isRecord(value)) {
+    errors.push(`${label} is not an object`);
+    return;
+  }
+  for (const field of ["meanMs", "p95Ms", "samples"] as const) {
+    if (!isFiniteNumber(value[field])) {
+      errors.push(`${label}.${field} is not a finite number`);
+    }
+  }
+  for (const field of ["method", "workload"] as const) {
+    if (!isNonEmptyString(value[field])) {
+      errors.push(`${label}.${field} is not a string`);
+    }
+  }
+};
+
+const validateThroughputMeasurement = (
+  label: string,
+  value: unknown,
+  errors: string[],
+): void => {
+  if (!isRecord(value)) {
+    errors.push(`${label} is not an object`);
+    return;
+  }
+  for (const field of [
+    "achievedWritesPerSecond",
+    "writers",
+    "serializationFactor",
+  ] as const) {
+    if (!isFiniteNumber(value[field])) {
+      errors.push(`${label}.${field} is not a finite number`);
+    }
+  }
+  for (const field of ["method", "workload"] as const) {
+    if (!isNonEmptyString(value[field])) {
+      errors.push(`${label}.${field} is not a string`);
+    }
+  }
+};
+
+const validateConcurrentLoadMeasurement = (
+  label: string,
+  value: unknown,
+  errors: string[],
+): void => {
+  if (!isRecord(value)) {
+    errors.push(`${label} is not an object`);
+    return;
+  }
+  for (const field of [
+    "maxConcurrentWriters",
+    "achievedWritesPerSecond",
+    "availability",
+    "meanLatencyMs",
+    "p95LatencyMs",
+    "totalOperations",
+  ] as const) {
+    if (!isFiniteNumber(value[field])) {
+      errors.push(`${label}.${field} is not a finite number`);
+    }
+  }
+  for (const field of ["method", "workload"] as const) {
+    if (!isNonEmptyString(value[field])) {
+      errors.push(`${label}.${field} is not a string`);
+    }
+  }
+};
+
+/** B-5: schema validation for the executable measurement harness report. */
+export const validateStorageMeasurementReport = (
+  value: unknown,
+): ReadonlyArray<string> => {
+  const errors: string[] = [];
+  if (!isRecord(value)) {
+    return ["harness report is not an object"];
+  }
+  if (!isNonEmptyString(value.generatedAt)) {
+    errors.push("harness.generatedAt is not a string");
+  }
+  if (!isNonEmptyString(value.host)) {
+    errors.push("harness.host is not a string");
+  }
+  validateLatencyMeasurement(
+    "harness.commandLatency",
+    value.commandLatency,
+    errors,
+  );
+  validateThroughputMeasurement(
+    "harness.writeTransactionContention",
+    value.writeTransactionContention,
+    errors,
+  );
+  validateMeasuredMetric("harness.eventDbSize", value.eventDbSize, errors);
+  validateMeasuredMetric(
+    "harness.schedulerConsumerThroughput",
+    value.schedulerConsumerThroughput,
+    errors,
+  );
+  validateMeasuredMetric(
+    "harness.projectionRebuildDuration",
+    value.projectionRebuildDuration,
+    errors,
+  );
+  validateMeasuredMetric(
+    "harness.backupDuration",
+    value.backupDuration,
+    errors,
+  );
+  validateMeasuredMetric(
+    "harness.restoreDuration",
+    value.restoreDuration,
+    errors,
+  );
+  validateConcurrentLoadMeasurement(
+    "harness.representativeConcurrentLoad",
+    value.representativeConcurrentLoad,
+    errors,
+  );
+  return errors;
+};
+
+/** B-5: schema validation for the checked-in artifact (assessment + harness). */
+export const validateStorageAssessmentArtifact = (
+  value: unknown,
+): ReadonlyArray<string> => [
+  ...validateStorageScaleAssessment(value),
+  ...validateStorageMeasurementReport(
+    isRecord(value) ? value.harness : undefined,
+  ),
+];

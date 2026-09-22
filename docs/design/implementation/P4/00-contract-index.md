@@ -60,7 +60,7 @@ docs/design/implementation/P4/**   (these contracts)
 | # | Finding | Classification | Resolution |
 |---|---|---|---|
 | F1 | `ToolExecutionContext.controlBasis: ControlBasis` would require `tool-runtime -> model-context` (forbidden by DID §10.4.1) | P4 phase-scoped | replaced with `controlBasisDigest: string` (`01` §3); `InvocationAuthority` binds the digest (`03` §2) |
-| F2 | P3 `ToolCatalogPort` returns refs, but P4 needs full `ToolDefinition` | P4 phase-scoped | P4 owns the full `ToolDefinition` + `ToolDefinitionStore`; identity `(name, version, hash)` shared with the P3 ref (`01` §1) |
+| F2 | P3 `ToolCatalogPort` returns refs, but P4 needs full `ToolDefinition` | P4 phase-scoped | P4 owns the full `ToolDefinition` + `ToolDefinitionStore`; identity `(name, version, hash)` shared with the P3 ref (`01` §1). **P12 TR-11 propagation:** DID §7.6 is authoritative — `ToolCatalogPort` resolves the model-facing `ToolDefinition` (`visibleRefs()` / `resolveForModel()`), not refs-only (`01` §1; `P12 07`) |
 | F3 | P4 port errors (`ToolRuntimeError`, `SandboxError`, `ResourceAdmissionError`, `ToolInvocationStoreError`, `ArtifactError`, `BlobStoreError`) | P4 phase-scoped | declared in `ports` (P4-002) |
 | F4 | `ToolInvocationIntent` / `ToolInvocationRecord` shapes | P4 phase-scoped | declared in `ports` (P4-002) |
 | F5 | `shell` policy allow/deny lists and limits | implementation/empirical | mechanism is contract (`08` §4); lists/numbers empirical |

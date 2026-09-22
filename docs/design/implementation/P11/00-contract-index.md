@@ -36,6 +36,11 @@
 
 - P12 watcher/transport; ownership protocol redesign, leases/TTL/preemption, multi-owner, distributed locking, arbitration; region revision algebra; verdict mutation on drift; implicit revision advance in resolver/probe.
 
+## P12 TR propagation (documentation reconciliation; no P11 semantics change)
+
+- **TR-1** — `EnvironmentRevisionStore.advanceAnchor` removed from the public `ports` surface; advancement reachable only via `RecordEnvironmentChange` (internal capability) (`01` §P12 TR-1; `P12 05` §5.1).
+- **TR-2** — `parseSnapshotBlob` collision-free structured encoding (ISO mtimes with `:` round-trip exactly) (`02` §P12 TR-2; `P12 05` §5.2).
+
 ## Five closure invariants (review targets)
 
 ```text

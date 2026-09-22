@@ -73,15 +73,22 @@ CREATE INDEX idx_executions_unsettled ON executions(settled_at) WHERE settled_at
 
 ```sql
 CREATE TABLE execution_leases (
-  execution_id TEXT PRIMARY KEY REFERENCES executions(execution_id),
-  worker_id    TEXT NOT NULL,
-  generation   INTEGER NOT NULL,
-  expires_at   TEXT NOT NULL,
-  updated_at   TEXT NOT NULL
+  execution_id          TEXT PRIMARY KEY REFERENCES executions(execution_id),
+  worker_id             TEXT NOT NULL,
+  worker_incarnation_id TEXT NOT NULL DEFAULT '',   -- P12 TR-9 (migration 0011)
+  generation            INTEGER NOT NULL,
+  expires_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL
 );
 
 CREATE INDEX idx_execution_leases_expiry ON execution_leases(expires_at);
 ```
+
+> **P12 TR-9 propagation (P12 `06` §3).** `worker_incarnation_id` is added by
+> P12 migration `0011_lease_worker_incarnation` (forward-only; P12 final
+> baseline `user_version = 13`); the holder / fence identity is the triple
+> `(worker_id, worker_incarnation_id, generation)`. No other P2 schema semantics
+> change.
 
 ### 3.3 agent_execution_state
 
@@ -155,11 +162,13 @@ CREATE INDEX idx_scheduler_timers_due ON scheduler_timers(fire_at);
 ## 4. Fence / stop / CAS queries
 
 ```sql
--- fence validity (authoritative; same tx as the mutation; expires_at enforced)
+-- fence validity (authoritative; same tx as the mutation; expires_at enforced;
+-- P12 TR-9: lease-holder triple (worker_id, worker_incarnation_id, generation))
 SELECT 1
 FROM executions e
 JOIN execution_leases l ON l.execution_id = e.execution_id
-WHERE e.execution_id = ? AND l.generation = ? AND l.expires_at > ? AND e.settled_at IS NULL;
+WHERE e.execution_id = ? AND l.worker_id = ? AND l.worker_incarnation_id = ?
+  AND l.generation = ? AND l.expires_at > ? AND e.settled_at IS NULL;
 
 -- stop admission
 SELECT stop_requested_at IS NOT NULL
@@ -173,11 +182,12 @@ RETURNING execution_id;
 -- no row -> already settled (idempotent receipt / TerminalLifecycleMutation)
 
 -- lease acquisition (succeeds only when absent or expired)
-INSERT INTO execution_leases (execution_id, worker_id, generation, expires_at, updated_at)
-VALUES (?, ?, COALESCE((SELECT MAX(generation) + 1
+INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at)
+VALUES (?, ?, ?, COALESCE((SELECT MAX(generation) + 1
                         FROM execution_leases WHERE execution_id = ?), 0), ?, ?)
 ON CONFLICT(execution_id) DO UPDATE
   SET worker_id = excluded.worker_id,
+      worker_incarnation_id = excluded.worker_incarnation_id,
       generation = excluded.generation,
       expires_at = excluded.expires_at,
       updated_at = excluded.updated_at
@@ -188,7 +198,7 @@ RETURNING generation;
 -- lease renewal
 UPDATE execution_leases
 SET expires_at = ?, updated_at = ?
-WHERE execution_id = ? AND worker_id = ? AND generation = ?
+WHERE execution_id = ? AND worker_id = ? AND worker_incarnation_id = ? AND generation = ?
 RETURNING generation;
 -- no row -> LeaseLost (stale generation)
 
@@ -196,7 +206,7 @@ RETURNING generation;
 -- stale worker's fence can never re-validate after release/re-acquire.
 UPDATE execution_leases
 SET expires_at = ?, updated_at = ?
-WHERE execution_id = ? AND worker_id = ? AND generation = ?;
+WHERE execution_id = ? AND worker_id = ? AND worker_incarnation_id = ? AND generation = ?;
 
 -- admission main pre-check inside BEGIN IMMEDIATE
 SELECT 1 FROM executions

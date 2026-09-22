@@ -120,6 +120,14 @@ Revisions P12 explicitly owns against frozen P0–P11 contracts or the frozen DI
 | TR-10 | optional `RuntimeSafetyObservation` channel widening the frozen P2 `RuntimeSafetyGate.admitActivity` (additive third argument) | P2 `02` §5 | `08` |
 | TR-11 | `ToolCatalogPortService.definitions()` → `visibleRefs()` + `resolveForModel()` (model-facing resolution; P12 completion blocker #2) | P3 `01` §1/§2; P4 `01` §1 | `07` |
 
+**Propagation status (B-2 reconciliation).** TR-1/2/5/6/8/9/10/11 are propagated
+back to their owning frozen contracts as documentation reconciliation (no
+semantic change): TR-6 → DID §7.2; TR-8 → P2 `01` §2 / P2 `00` R1; TR-9 → P2
+`02` §2–§4/§6, `03` §2–§4, `04` §3.2/§4, `01` §7; TR-10 → P2 `02` §5; TR-11 →
+P4 `01` §1 / P4 `00` F2; TR-5 → P10 `05` §1; TR-1 → P11 `01`; TR-2 → P11 `02`.
+Each site carries a short `P12 TR-n propagation` note. (TR-3/4/7 own other
+surfaces and are out of this B-2 scope.)
+
 ## Recorded clarifications (review dispositions)
 
 | # | Clarification |

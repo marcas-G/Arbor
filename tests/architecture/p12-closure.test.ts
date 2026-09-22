@@ -1,6 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { P12_MIGRATIONS } from "../../adapters/persistence-sqlite/src/index.js";
+import { P12_MIGRATION_BASELINE } from "../../packages/ports/src/index.js";
 import { checkEdges, type PackageManifest } from "./package-dag.js";
 
 // P12-013 architecture closure: the cross-phase closure invariants CI-1..CI-7
@@ -381,5 +383,19 @@ describe("p12-closure", () => {
     expect(
       exists("tests/architecture/p12-observability-boundaries.test.ts"),
     ).toBe(true);
+  });
+
+  it("B-11 — P12_MIGRATION_BASELINE is bound to max(P12_MIGRATIONS id); the persisted upgrade suite is on the include path", () => {
+    // The literal and the ordered migration array cannot silently diverge.
+    expect(P12_MIGRATION_BASELINE).toBe(
+      Math.max(...P12_MIGRATIONS.map((migration) => migration.id)),
+    );
+    expect(P12_MIGRATION_BASELINE).toBe(13);
+    // The persisted P11(10) -> P12(13) upgrade evidence exists and asserts
+    // the same binding in its own right.
+    expect(exists("tests/p12-closure.test.ts")).toBe(true);
+    expect(sourceOf("tests/p12-closure.test.ts")).toContain(
+      "P12_MIGRATION_BASELINE).toBe(P12_BASELINE)",
+    );
   });
 });

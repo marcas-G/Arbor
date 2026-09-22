@@ -30,7 +30,7 @@ P2 adds **command-specific** runtime variants (no generic
 ```ts
 type VerifiedRuntimeCommandAuthority =
   | { readonly _tag: "AdmitExecutionAuthority";
-      readonly submissionOrigin: "System";
+      readonly submissionOrigin: "System" | "External";   // External: P12 TR-8
       readonly principal: Principal;
       readonly commandId: CommandId;
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
@@ -39,7 +39,7 @@ type VerifiedRuntimeCommandAuthority =
       readonly workspaceId: WorkspaceId;
       readonly bindingKind: "WorkspaceMain" | "ExecutionBound" }
   | { readonly _tag: "StopExecutionAuthority";
-      readonly submissionOrigin: "System" | "ExecutionOrigin";
+      readonly submissionOrigin: "System" | "ExecutionOrigin" | "External";   // External: P12 TR-8
       readonly principal: Principal;
       readonly commandId: CommandId;
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
@@ -65,12 +65,20 @@ type VerifiedRuntimeCommandAuthority =
 - `ExecutionOrigin` settlement **must** pass authoritative fencing;
   `RecoveryController` settlement carries no worker `fencingGeneration` and
   uses recovery authority.
-- P2 admits only **runtime** origins (`System`, `ExecutionOrigin`,
-  `RecoveryController`). External (human/parent) `AdmitExecution` /
-  `StopExecution` requires the deferred Authority Resolver
-  (PermissionGrant / Parent / User governance) and is **not** admitted in P2;
-  it lands with the governance phase (P6/P10). This is why the facts are
-  command-specific runtime facts, not a generic system/execution category.
+- P2 admits the runtime origins (`System`, `ExecutionOrigin`,
+  `RecoveryController`) plus the **external** (human/parent) origin for
+  `AdmitExecution` / `StopExecution`. External origin is **produced** by the
+  Authority Resolver (P12 `02` §4), which resolves PermissionGrant / Parent /
+  User governance; P2 only consumes/validates the trusted fact. This is why the
+  facts are command-specific runtime facts, not a generic system/execution
+  category.
+- **P12 TR-8 propagation (P12 `02` §4; DID v1.14 G2 / v1.13 G4).** The
+  `submissionOrigin` unions above are widened to include `"External"` for
+  `AdmitExecutionAuthority` / `StopExecutionAuthority`, matching DID §4.1. This
+  reconciles the P2 `00` R1 restriction (the deferred resolver is P12, not
+  P6/P10); P2 runtime semantics are otherwise unchanged. The authority facts
+  remain trusted Application-boundary inputs, never constructed from model
+  output or `CommandEnvelope.payload`.
 - `CommandRejection` remains `DomainError | FencingRejected | ExecutionStopping
   | WorkspaceNotFound`, extended in P2 with Application-owned
   `ExecutionNotFound { executionId }` (§2.1).
@@ -337,6 +345,13 @@ ExecutionSettled
 
 `SettleExecution` is **not** a lease operation: lease acquisition/renewal/loss
 is Runtime ownership state (`03`), not an Execution lifecycle transition.
+
+> **P12 TR-9 propagation (P12 `06` §3).** The lease holder / fence identity is
+> the triple `(worker_id, worker_incarnation_id, generation)`; `worker_incarnation_id`
+> is added to `execution_leases` (`04` §3.2) and the `ExecutionRepository` /
+> `LeaseService` / `SessionRepository.appendEntry` / `FenceStopCheck` surfaces
+> (`02` §2–§4, §6) carry it. This is not a command payload/authority change:
+> `expectedFencingGeneration` and the authority facts are unchanged.
 
 ## 8. Idempotency (inherited)
 

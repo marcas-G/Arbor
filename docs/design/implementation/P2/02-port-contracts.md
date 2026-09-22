@@ -49,13 +49,13 @@ interface ExecutionRepositoryService {
     // settle-once CAS: UPDATE ... WHERE settled_at IS NULL
   currentLease(executionId):
     Effect<Option<LeaseRecord>, ExecutionRepositoryError, TransactionScope>;
-  tryAcquireLease(executionId, workerId, generation, expiresAt):
+  tryAcquireLease(executionId, workerId, workerIncarnationId, generation, expiresAt):
     Effect<boolean, ExecutionRepositoryError, TransactionScope>;
     // true only when no live lease exists (or previous expired); CAS
-  renewLease(executionId, workerId, generation, expiresAt):
+  renewLease(executionId, workerId, workerIncarnationId, generation, expiresAt):
     Effect<boolean, ExecutionRepositoryError, TransactionScope>;
-    // CAS WHERE worker_id = ? AND generation = ?
-  releaseLease(executionId, workerId, generation):
+    // CAS WHERE worker_id = ? AND worker_incarnation_id = ? AND generation = ?
+  releaseLease(executionId, workerId, workerIncarnationId, generation):
     Effect<void, ExecutionRepositoryError, TransactionScope>;
   findExpiredActiveExecutions(now):
     Effect<ReadonlyArray<Execution>, ExecutionRepositoryError, TransactionScope>;
@@ -64,7 +64,13 @@ interface ExecutionRepositoryService {
 }
 ```
 
-`LeaseRecord = { executionId, workerId, generation, expiresAt, updatedAt }`.
+`LeaseRecord = { executionId, workerId, workerIncarnationId, generation, expiresAt, updatedAt }`.
+
+> **P12 TR-9 propagation (P12 `06` §3).** The lease holder / fence identity is
+> the triple `(workerId, workerIncarnationId, generation)`; `LeaseRecord` and the
+> `tryAcquireLease` / `renewLease` / `releaseLease` CAS carry
+> `workerIncarnationId`. All other lease semantics (monotonic generation, soft
+> release, expiry) are unchanged. Owning model: `03` §2; DDL/CAS: `04` §3.2/§4.
 
 Admission and lease acquisition are separate (DID §3.4 / §7.3):
 `Admit durable Execution → Dispatch Worker → Worker acquires lease`.
@@ -82,6 +88,8 @@ interface SessionRepositoryService {
     sessionId: SessionId,
     entry: { readonly entryKind: SessionEntryKind; readonly payload: unknown },
     fence?: { readonly executionId: ExecutionId;
+              readonly workerId: WorkerId;
+              readonly workerIncarnationId: WorkerIncarnationId;
               readonly fencingGeneration: LeaseGeneration },
   ): Effect<{ readonly sequence: number },
              SessionRepositoryError | LeaseFencingRejected,
@@ -99,6 +107,12 @@ type SessionEntryKind =
 - `LeaseFencingRejected = { _tag: "LeaseFencingRejected"; executionId;
   generation }` — the runtime-local counterpart of `FencingRejected`.
 
+> **P12 TR-9 propagation (P12 `06` §3).** The worker-originated append fence
+> carries the full lease-holder triple `(workerId, workerIncarnationId,
+> fencingGeneration)`, matching the authoritative fence predicate (`03` §3,
+> `04` §4). Incarnation-only matching is insufficient, so `workerId` is carried
+> as well. The same-transaction authoritative fence semantics are unchanged.
+
 ## 4. FenceStopCheck (P2 extension of the P1 hook)
 
 P1 `FenceStopCheck.check(context)` becomes:
@@ -114,8 +128,9 @@ interface FenceStopCheckService {
 
 - Evaluated only for `ExecutionOrigin`.
 - Fence validity: `executions JOIN execution_leases` with matching
-  `execution_id + generation` and `settled_at IS NULL` (P1 `04` §4 predicate,
-  tables now exist).
+  `execution_id + worker_id + worker_incarnation_id + generation` and
+  `settled_at IS NULL` (P1 `04` §4 predicate, tables now exist; P12 TR-9 triple
+  — P12 `06` §3).
 - Stop admission follows the `StopAdmission` ADT (`01` §3):
   `NormalExecutionMutation` + `stop_requested_at != null` →
   `ExecutionStopping`; `QuiescenceControlMutation` and `StopControl` → `Pass`
@@ -172,13 +187,30 @@ type ExecutionActivity =
 
 type SafetyDecision = "Continue" | "Stop";
 
+type RuntimeSafetyObservation = {
+  readonly retryCount?: number;                // D1: 0-based retry ordinal
+  readonly durableProgress?: boolean;          // D4: progress since previous turn boundary
+  readonly chainDepth?: number;                // D3: tool recursion / chaining depth
+  readonly inFlight?: "begin" | "end";         // D5: lease-scoped in-flight gauge
+  readonly leaseGeneration?: LeaseGeneration;  // D5: generation the gauge is scoped to
+  readonly observedAt?: string;                // D6: rate-window timestamp
+};
+
 interface RuntimeSafetyGateService {
   readonly admitActivity: (
     executionId: ExecutionId,
     activity: ExecutionActivity,
+    observation?: RuntimeSafetyObservation,    // P12 TR-10: additive optional
   ) => Effect<SafetyDecision>;
 }
 ```
+
+> **P12 TR-10 propagation (P12 `08` §7/§7A; DID v1.14 G7).** The frozen
+> two-argument `admitActivity(executionId, activity)` remains valid and
+> semantically unchanged; the third `observation` argument is **additive and
+> optional** and carries the D1/D3/D4/D5/D6 signals the frozen
+> `ExecutionActivity` does not. P2 gating ownership is unchanged (P3 reports;
+> P2 decides); numeric thresholds remain configuration.
 
 - P2 owns execution-wide enforcement (max transient retries, repeated action
   fingerprints, recursion depth, consecutive no-progress turns, concurrency
@@ -196,12 +228,16 @@ Lease acquisition/renewal/loss is a Runtime port operation, **not** a Command
 
 ```ts
 interface LeaseService {
-  acquire(executionId, workerId): Effect<LeaseRecord, LeaseFencingRejected | ExecutionRepositoryError, TransactionScope>;
-  renew(executionId, workerId, generation): Effect<LeaseRecord, LeaseFencingRejected | ExecutionRepositoryError, TransactionScope>;
-  release(executionId, workerId, generation): Effect<void, ExecutionRepositoryError, TransactionScope>;
+  acquire(executionId, workerId, workerIncarnationId): Effect<LeaseRecord, LeaseFencingRejected | ExecutionRepositoryError, TransactionScope>;
+  renew(executionId, workerId, workerIncarnationId, generation): Effect<LeaseRecord, LeaseFencingRejected | ExecutionRepositoryError, TransactionScope>;
+  release(executionId, workerId, workerIncarnationId, generation): Effect<void, ExecutionRepositoryError, TransactionScope>;
   invalidateExpired(now): Effect<number, ExecutionRepositoryError, TransactionScope>;
 }
 ```
+
+> **P12 TR-9 propagation (P12 `06` §3).** `LeaseService.acquire` / `renew` /
+> `release` carry the lease-holder triple `(workerId, workerIncarnationId,
+> generation)`; `LeaseLost` / `FencingRejected` semantics are unchanged.
 
 - `generation` increments monotonically per successful acquisition
   (`MAX(generation)+1`, `0` when absent). Release is a **soft** release
