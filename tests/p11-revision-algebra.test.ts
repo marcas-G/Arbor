@@ -165,6 +165,48 @@ describe("P11-001 store (typed advancement authority)", () => {
     );
   });
 
+  it("hardening: repeated lazyInitAnchor is a strict persistence no-op (updated_at unchanged)", async () => {
+    await run(
+      Effect.gen(function* () {
+        const { store, tx } = yield* withStore;
+        yield* tx.transact(store.lazyInitAnchor(PROJECT));
+        const sql = yield* SqlClient;
+        const before = yield* tx.transact(
+          Effect.gen(function* () {
+            return yield* sql.unsafe<{ revision: string; updated_at: string }>(
+              "SELECT revision, updated_at FROM environment_revisions WHERE project_id = ?",
+              [PROJECT],
+            );
+          }),
+        );
+        yield* Effect.promise(
+          () => new Promise((resolve) => setTimeout(resolve, 15)),
+        ); // let wall clock move
+        yield* tx.transact(store.lazyInitAnchor(PROJECT));
+        yield* tx.transact(store.lazyInitAnchor(PROJECT));
+        const after = yield* tx.transact(
+          Effect.gen(function* () {
+            return yield* sql.unsafe<{ revision: string; updated_at: string }>(
+              "SELECT revision, updated_at FROM environment_revisions WHERE project_id = ?",
+              [PROJECT],
+            );
+          }),
+        );
+        expect(after[0]?.revision).toBe(before[0]?.revision);
+        expect(after[0]?.updated_at).toBe(before[0]?.updated_at); // strict no-op: not even updated_at moves
+        const rows = yield* tx.transact(
+          Effect.gen(function* () {
+            return yield* sql.unsafe<{ count: number }>(
+              "SELECT COUNT(*) AS count FROM environment_revisions WHERE project_id = ?",
+              [PROJECT],
+            );
+          }),
+        );
+        expect(Number(rows[0]?.count)).toBe(1);
+      }),
+    );
+  });
+
   it("advanceAnchor is a strict-successor CAS: 1 -> 2 -> 3, stale expected conflicts", async () => {
     await run(
       Effect.gen(function* () {
