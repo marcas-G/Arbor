@@ -249,7 +249,11 @@ describe("P10-003 Tree view (S2.4.1: the tree answers without per-node drill-in)
           workId: W_ROOT,
           objective: "root objective",
         });
-        expect(tree.usageSummary).toEqual({ tokens: 0, cost: 0, turns: 0 });
+        expect(tree.usageSummary).toEqual({
+          tokens: 0,
+          cost: { _tag: "Unknown", reason: "UsageUnavailable" },
+          turns: 0,
+        });
 
         const flatten = (node: TreeViewNode): ReadonlyArray<TreeViewNode> => [
           node,

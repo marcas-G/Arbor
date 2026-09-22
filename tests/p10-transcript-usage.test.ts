@@ -35,6 +35,12 @@ import {
   snapshotDatabase,
 } from "./support/p10-fixture.js";
 
+const UNKNOWN_PRICING = {
+  _tag: "Unknown",
+  reason: "PricingUnavailable",
+} as const;
+const UNKNOWN_USAGE = { _tag: "Unknown", reason: "UsageUnavailable" } as const;
+
 const W_ROOT = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000f1");
 const W_CHILD = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000f2");
 const EXE_ROOT = "exe_00000000-0000-7000-8000-0000000000f1";
@@ -249,7 +255,7 @@ describe("P10-007 Transcript — production read path over session_entries", () 
 });
 
 describe("P10-007 Usage — observe-only aggregation over provider_turns.usage_json (invariant 45)", () => {
-  it("tokens sum every reported token count; unsettled turns are excluded; cost renders 0 (no canonical pricing source)", () => {
+  it("tokens sum every reported token count; unsettled turns are excluded; cost renders Unknown (never 0)", () => {
     expect(
       parseUsageJson(
         JSON.stringify({
@@ -261,15 +267,15 @@ describe("P10-007 Usage — observe-only aggregation over provider_turns.usage_j
         }),
         "t1",
       ),
-    ).toEqual({ tokens: 18, cost: 0, settled: true });
+    ).toEqual({ tokens: 18, cost: UNKNOWN_PRICING, settled: true });
     expect(parseUsageJson(null, null)).toEqual({
       tokens: 0,
-      cost: 0,
+      cost: UNKNOWN_USAGE,
       settled: false,
     });
     expect(parseUsageJson("{broken", "t1")).toEqual({
       tokens: 0,
-      cost: 0,
+      cost: UNKNOWN_PRICING,
       settled: true,
     });
   });
@@ -296,19 +302,19 @@ describe("P10-007 Usage — observe-only aggregation over provider_turns.usage_j
         expect(ws.get(p10Root)).toEqual({
           workspaceId: p10Root,
           tokens: 168,
-          cost: 0,
+          cost: UNKNOWN_PRICING,
           turns: 2,
         });
         expect(ws.get(p10Child)).toEqual({
           workspaceId: p10Child,
           tokens: 10,
-          cost: 0,
+          cost: UNKNOWN_PRICING,
           turns: 1,
         });
         expect(ws.get(p10Leaf)).toEqual({
           workspaceId: p10Leaf,
           tokens: 0,
-          cost: 0,
+          cost: UNKNOWN_USAGE,
           turns: 0,
         });
 
@@ -332,7 +338,12 @@ describe("P10-007 Usage — observe-only aggregation over provider_turns.usage_j
           ),
         };
         expect(byProject.rows).toEqual([
-          { workspaceId: p10Root, tokens: 178, cost: 0, turns: 3 },
+          {
+            workspaceId: p10Root,
+            tokens: 178,
+            cost: UNKNOWN_PRICING,
+            turns: 3,
+          },
         ]);
 
         // Tree usageSummary consistency: the same aggregate source, no
@@ -345,7 +356,7 @@ describe("P10-007 Usage — observe-only aggregation over provider_turns.usage_j
         for (const node of flatten(tree)) {
           const expected = ws.get(node.workspaceId) ?? {
             tokens: 0,
-            cost: 0,
+            cost: UNKNOWN_USAGE,
             turns: 0,
           };
           expect(node.usageSummary).toEqual({
