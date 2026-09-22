@@ -3,6 +3,7 @@ export * from "./authority.js";
 export * from "./command.js";
 export * from "./communication.js";
 export * from "./dependency.js";
+export * from "./environment.js";
 export * from "./errors.js";
 export * from "./events.js";
 export * from "./execution.js";

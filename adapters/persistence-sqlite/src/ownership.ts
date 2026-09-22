@@ -167,6 +167,51 @@ export const EnvironmentRevisionStoreLive: Layer.Layer<
             ),
           );
         }),
+      // P11 `01` §2 (P1-DG-08): first successful ownership write records the
+      // initial anchor "1"; no event, no wake. No-op afterwards.
+      lazyInitAnchor: (projectId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const now = yield* clock.now();
+          yield* run(
+            sql.unsafe(
+              "INSERT INTO environment_revisions (project_id, revision, updated_at) VALUES (?, '1', ?) ON CONFLICT(project_id) DO UPDATE SET revision = revision",
+              [projectId, now],
+            ),
+          );
+        }),
+      // P11 `01` (CI-1): strict-successor CAS. Only RecordEnvironmentChange
+      // (P11-002) calls this; the successor is derived internally — callers
+      // cannot request an arbitrary value.
+      advanceAnchor: (projectId, expected) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{ revision: string | null }>(
+              "SELECT revision FROM environment_revisions WHERE project_id = ?",
+              [projectId],
+            ),
+          );
+          const current = rows[0]?.revision ?? null;
+          if (current === null) {
+            return { _tag: "AnchorMissing" as const };
+          }
+          if (current !== expected) {
+            return {
+              _tag: "RevisionConflict" as const,
+              current,
+            };
+          }
+          const to = String(Number(current) + 1);
+          const now = yield* clock.now();
+          yield* run(
+            sql.unsafe(
+              "UPDATE environment_revisions SET revision = ?, updated_at = ? WHERE project_id = ? AND revision = ?",
+              [to, now, projectId, expected],
+            ),
+          );
+          return { _tag: "Advanced" as const, to };
+        }),
     });
   }),
 );
