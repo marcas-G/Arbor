@@ -62,6 +62,15 @@ export interface VerificationRepositoryService {
     VerificationRepositoryError,
     TransactionScope
   >;
+  /** P10-006 read-only extension: every verification row of a work in
+   * every state (the Verification view selects Open/current-revision). */
+  readonly listByWork: (
+    workId: WorkId,
+  ) => Effect.Effect<
+    ReadonlyArray<Verification>,
+    VerificationRepositoryError,
+    TransactionScope
+  >;
   /** Conclude CAS: only an Open row at this id transitions. */
   readonly concludeIfOpen: (
     verificationId: VerificationId,

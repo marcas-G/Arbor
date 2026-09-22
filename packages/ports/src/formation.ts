@@ -73,6 +73,16 @@ export interface MessageStoreService {
   readonly isCorrelationClosed: (
     correlationId: string,
   ) => Effect.Effect<boolean, MessageStoreError, TransactionScope>;
+  /** P10-008 read-only extension: every canonical message addressed to a
+   * recipient — the state-reconciliation audit face comparing
+   * inbox_entries against canonical message facts. */
+  readonly listByRecipient: (
+    recipientWorkspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<MessageRecord>,
+    MessageStoreError,
+    TransactionScope
+  >;
 }
 
 export class MessageStore extends Context.Service<

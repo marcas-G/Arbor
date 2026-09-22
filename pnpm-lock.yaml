@@ -303,6 +303,12 @@ importers:
         specifier: workspace:*
         version: link:../ports
 
+  packages/api-contracts:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../domain
+
   packages/application:
     dependencies:
       '@arbor/domain':
@@ -343,6 +349,15 @@ importers:
       '@arbor/domain':
         specifier: workspace:*
         version: link:../domain
+
+  packages/projection-runtime:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../ports
 
   packages/provider-runtime:
     dependencies:

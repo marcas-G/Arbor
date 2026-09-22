@@ -6,6 +6,7 @@ export * from "./errors.js";
 export * from "./execution.js";
 export * from "./formation.js";
 export * from "./journal.js";
+export * from "./projection-query.js";
 export * from "./provider.js";
 export * from "./repositories.js";
 export * from "./resources.js";

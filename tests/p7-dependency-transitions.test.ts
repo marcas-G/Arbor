@@ -36,6 +36,7 @@ import {
   DomainEventJournal,
   type PendingDomainEvent,
   TransactionPort,
+  WorkRepository,
 } from "../packages/ports/src/index.js";
 import {
   makeP7App,
@@ -123,10 +124,11 @@ const satisfySeeded = (dependencyId: DependencyId) =>
 
 const makeHandlers = Effect.gen(function* () {
   const dependencies = yield* DependencyRepository;
+  const works = yield* WorkRepository;
   return {
-    withdraw: makeWithdrawDependencyHandler({ dependencies }),
-    mark: makeMarkDependencyUnfulfillableHandler({ dependencies }),
-    revise: makeReviseDependencyContractHandler({ dependencies }),
+    withdraw: makeWithdrawDependencyHandler({ dependencies, works }),
+    mark: makeMarkDependencyUnfulfillableHandler({ dependencies, works }),
+    revise: makeReviseDependencyContractHandler({ dependencies, works }),
   };
 });
 
@@ -215,9 +217,14 @@ describe("p7-dependency-transitions", () => {
             state: "Withdrawn",
             dependencyRevision: 0,
           });
-          expect(outcome.value.events).toHaveLength(1);
+          // P10 `06` §2: a human-originated withdrawal pairs the fact
+          // with HumanInterventionApplied(GovernanceDecision).
+          expect(outcome.value.events).toHaveLength(2);
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("DependencyWithdrawn");
+          expect(outcome.value.events[1]!.eventType).toBe(
+            "HumanInterventionApplied",
+          );
           expect(event.eventVersion).toBe(1);
           expect(event.aggregateRef).toBe(dep);
           expect(event.projectId).toBe(p7Project);
@@ -261,11 +268,14 @@ describe("p7-dependency-transitions", () => {
             state: "Unfulfillable",
             dependencyRevision: 0,
           });
-          // The Attention fact rides the event itself (§6) — no second
-          // event, no other write.
-          expect(outcome.value.events).toHaveLength(1);
+          // The Attention fact rides the event itself (§6); the P10
+          // `06` §2 human-origin pairing adds the governance fact.
+          expect(outcome.value.events).toHaveLength(2);
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("DependencyMarkedUnfulfillable");
+          expect(outcome.value.events[1]!.eventType).toBe(
+            "HumanInterventionApplied",
+          );
           expect(event.aggregateRef).toBe(dep);
           expect(event.payload).toEqual({
             dependencyId: dep,

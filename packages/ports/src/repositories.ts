@@ -193,6 +193,38 @@ export interface SessionRepositoryService {
     SessionRepositoryError | LeaseFencingRejected,
     TransactionScope
   >;
+  /** P10-007 deps 申报: minimal read-only production read path over
+   * session_entries for the Transcript view (on-demand debug projection,
+   * never truth — SD §12.4 note). Deterministic (sequence-ascending)
+   * cursor paging face. */
+  readonly listEntries: (
+    sessionId: SessionId,
+    afterSequence: number,
+    limit: number,
+  ) => Effect.Effect<
+    ReadonlyArray<SessionEntryRecord>,
+    SessionRepositoryError,
+    TransactionScope
+  >;
+  /** P10-007 deps 申报: every session visible for a workspace — the
+   * WorkspacePrimary binding plus ExecutionScoped sessions of the
+   * workspace's executions. Read-only Transcript scoping face. */
+  readonly listSessionsByWorkspace: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<SessionId>,
+    SessionRepositoryError,
+    TransactionScope
+  >;
+}
+
+/** P10-007: one session_entries row, read face (payload parsed). */
+export interface SessionEntryRecord {
+  readonly sessionId: SessionId;
+  readonly sequence: number;
+  readonly entryKind: SessionEntryKind;
+  readonly payload: unknown;
+  readonly createdAt: string;
 }
 
 export type SessionEntryKind =

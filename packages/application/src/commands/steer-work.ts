@@ -1,5 +1,4 @@
 import {
-  type Principal,
   type SteerWorkInput,
   steerWork,
   type WorkId,
@@ -14,6 +13,10 @@ import type {
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
 import type { CommandHandler } from "../gateway.js";
+import {
+  emitHumanIntervention,
+  isHumanOriginatedPrincipal,
+} from "../human-intervention.js";
 
 /** P6 `04` §2. Human steer payload; the guidance ContentRef enters the
  * target Workspace Inbox (bounded view), never a Session write. `severity`
@@ -47,9 +50,6 @@ export interface SteerWorkDependencies {
   readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert">;
 }
 
-const isHumanPrincipal = (principal: Principal): boolean =>
-  principal.startsWith("user:");
-
 export const makeSteerWorkHandler = (
   dependencies: SteerWorkDependencies,
 ): CommandHandler<SteerWorkPayload, SteerWorkResult> => ({
@@ -81,7 +81,7 @@ export const makeSteerWorkHandler = (
           lifecycle: work.lifecycle,
         });
       }
-      if (!isHumanPrincipal(context.principal)) {
+      if (!isHumanOriginatedPrincipal(context.principal)) {
         return commandErr({
           _tag: "AuthorityDenied",
           reason:
@@ -136,6 +136,20 @@ export const makeSteerWorkHandler = (
             severity: payload.steer.severity,
           },
         },
+        // P10 `06` §2 (inherited evolution — P6 not reopened): the same
+        // semantic transaction pairs the WorkSteered event (frozen P6
+        // `04` §2 payload above) with HumanInterventionApplied, kind by
+        // severity. Both ride the single gateway transaction.
+        emitHumanIntervention({
+          projectId: envelope.projectId,
+          commandId: envelope.commandId,
+          actor: envelope.actor,
+          targetWorkspaceId: payload.workspaceId,
+          summaryRef: payload.steer.guidance,
+          occurredAt: envelope.issuedAt,
+          kind:
+            payload.steer.severity === "Critical" ? "CriticalSteer" : "Steer",
+        }),
       ];
 
       // P6 `04` §3: admission goes to the target Workspace Inbox only —

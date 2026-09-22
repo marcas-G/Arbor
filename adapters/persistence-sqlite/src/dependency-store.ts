@@ -112,6 +112,17 @@ export const DependencyRepositoryLive: Layer.Layer<
           );
           return rows.map(toDependency);
         }),
+      listByProject: (projectId: string) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<DependencyRow>(
+              "SELECT dependency_id, project_id, consumer_work_id, producer_binding, expected_deliverable, revision, state, satisfied_by_deliverable_id, satisfied_at_dependency_revision FROM dependencies WHERE project_id = ? ORDER BY dependency_id",
+              [projectId],
+            ),
+          );
+          return rows.map(toDependency);
+        }),
       /** CAS on (dependencyId, expectedRevision, state='Unsatisfied');
        * `None` = the row moved on (stale or already terminal). */
       transitionIfUnsatisfiedRevision: (

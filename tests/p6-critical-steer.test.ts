@@ -436,7 +436,10 @@ describe("p6-critical-steer", () => {
     expect(outcome.steer.result.severity).toBe("Critical");
     expect(outcome.steer.result.fromRevision).toBe(0);
     expect(outcome.steer.result.toRevision).toBe(1);
-    expect(outcome.steer.events).toHaveLength(1);
+    // P10 `06` §2 back-fill: a committed human steer pairs WorkSteered
+    // with HumanInterventionApplied(CriticalSteer) in the same events
+    // array (the P6 primary event stays first).
+    expect(outcome.steer.events).toHaveLength(2);
     expect(outcome.steer.events[0]?.eventType).toBe("WorkSteered");
     expect(outcome.steer.events[0]?.payload).toEqual({
       workId,
@@ -444,6 +447,7 @@ describe("p6-critical-steer", () => {
       toRevision: 1,
       severity: "Critical",
     });
+    expect(outcome.steer.events[1]?.eventType).toBe("HumanInterventionApplied");
     expect(outcome.stop.result.stopRequestedAt).toBe("t");
     expect(outcome.stop.events).toHaveLength(1);
     expect(outcome.stop.events[0]?.eventType).toBe("ExecutionStopRequested");

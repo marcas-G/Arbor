@@ -34,6 +34,15 @@ export interface DependencyRepositoryService {
     DependencyRepositoryError,
     TransactionScope
   >;
+  /** P10-006 read-only extension: every dependency row of a project in
+   * every state (the Dependency view renders Satisfied/satisfiedBy too). */
+  readonly listByProject: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<Dependency>,
+    DependencyRepositoryError,
+    TransactionScope
+  >;
   readonly transitionIfUnsatisfiedRevision: (
     dependencyId: DependencyId,
     expectedRevision: DependencyRevision,

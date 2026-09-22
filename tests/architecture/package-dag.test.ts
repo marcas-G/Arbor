@@ -97,6 +97,10 @@ describe("package DAG architecture", () => {
     expect([...dependenciesOf("ports")].sort()).toEqual(["domain"]);
   });
 
+  it("api-contracts depends on domain only (DID 10.4.1, P10-002)", () => {
+    expect([...dependenciesOf("api-contracts")].sort()).toEqual(["domain"]);
+  });
+
   it("application depends on domain and ports only", () => {
     expect([...dependenciesOf("application")].sort()).toEqual([
       "domain",

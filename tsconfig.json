@@ -26,6 +26,9 @@
       "path": "./packages/testkit"
     },
     {
+      "path": "./packages/api-contracts"
+    },
+    {
       "path": "./adapters/persistence-sqlite"
     },
     {
@@ -39,6 +42,9 @@
     },
     {
       "path": "./packages/tool-runtime"
+    },
+    {
+      "path": "./packages/projection-runtime"
     },
     {
       "path": "./adapters/sandbox-local"

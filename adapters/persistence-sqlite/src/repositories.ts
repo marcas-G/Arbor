@@ -679,6 +679,40 @@ export const SessionRepositoryLive: Layer.Layer<
           );
           return { sequence: Number(rows[0]?.sequence ?? 0) };
         }),
+      listEntries: (sessionId, afterSequence, limit) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{
+              session_id: string;
+              sequence: number;
+              entry_kind: SessionEntryKind;
+              payload_json: string;
+              created_at: string;
+            }>(
+              "SELECT session_id, sequence, entry_kind, payload_json, created_at FROM session_entries WHERE session_id = ? AND sequence > ? ORDER BY sequence LIMIT ?",
+              [sessionId, afterSequence, limit],
+            ),
+          );
+          return rows.map((row) => ({
+            sessionId: row.session_id as SessionId,
+            sequence: Number(row.sequence),
+            entryKind: row.entry_kind,
+            payload: JSON.parse(row.payload_json) as unknown,
+            createdAt: row.created_at,
+          }));
+        }),
+      listSessionsByWorkspace: (workspaceId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{ session_id: string }>(
+              "SELECT session_id FROM sessions WHERE workspace_id = ? UNION SELECT s.session_id FROM sessions s JOIN executions e ON e.session_id = s.session_id WHERE e.workspace_id = ? ORDER BY session_id",
+              [workspaceId, workspaceId],
+            ),
+          );
+          return rows.map((row) => row.session_id as SessionId);
+        }),
     });
   }),
 );

@@ -336,12 +336,15 @@ const StoryRegistryLive: Layer.Layer<
       }) as unknown as CommandHandler<unknown, unknown>,
       makeWithdrawDependencyHandler({
         dependencies,
+        works,
       }) as unknown as CommandHandler<unknown, unknown>,
       makeMarkDependencyUnfulfillableHandler({
         dependencies,
+        works,
       }) as unknown as CommandHandler<unknown, unknown>,
       makeReviseDependencyContractHandler({
         dependencies,
+        works,
       }) as unknown as CommandHandler<unknown, unknown>,
     ];
     return CommandHandlerRegistry.of({

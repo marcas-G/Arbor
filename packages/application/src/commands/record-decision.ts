@@ -15,6 +15,10 @@ import type {
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
 import type { CommandHandler } from "../gateway.js";
+import {
+  emitHumanIntervention,
+  isHumanOriginatedPrincipal,
+} from "../human-intervention.js";
 
 /** P6 `01` §4.2 (D1). RecordDecision binds the exact formation proposal
  * revision; approve/reject produce ONLY the `DecisionRecorded` governance
@@ -54,7 +58,7 @@ export const makeRecordDecisionHandler = (
       authority.proposalId === payload.proposalId,
   },
   stopAdmission: { _tag: "NormalExecutionMutation" },
-  execute: (envelope) =>
+  execute: (envelope, context) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
       const existing = yield* dependencies.proposals.findById(
@@ -105,6 +109,31 @@ export const makeRecordDecisionHandler = (
           },
         },
       ];
+
+      // P10 `06` §2: RecordDecision (formation approval) is one of the
+      // four human-originated mutating governance commands — the fact is
+      // emitted ONLY for a human-originated submitting principal
+      // (provenance AuthenticatedHuman, DID §8.4A); agent submissions
+      // emit nothing. Same semantic transaction as DecisionRecorded.
+      if (isHumanOriginatedPrincipal(context.principal)) {
+        events.push(
+          emitHumanIntervention({
+            projectId: envelope.projectId,
+            commandId: envelope.commandId,
+            actor: envelope.actor,
+            targetWorkspaceId: dependencies.originatingWorkspaceOf(record),
+            summaryRef: `formation proposal ${payload.proposalId} ${
+              fact.decision === "Approve"
+                ? "approved"
+                : fact.decision === "Reject"
+                  ? "rejected"
+                  : "modified"
+            } at revision ${fact.proposalRevision}`,
+            occurredAt: envelope.issuedAt,
+            kind: "GovernanceDecision",
+          }),
+        );
+      }
 
       // The decision outcome returns to the originating Workspace Inbox as a
       // governance observation (P6 `01` §4.2) — Inbox admission only, never a

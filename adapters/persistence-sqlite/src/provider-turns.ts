@@ -163,6 +163,25 @@ export const ProviderTurnStoreLive: Layer.Layer<
             ),
           );
         }),
+      listUsageByProject: (projectId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{
+              workspace_id: string;
+              usage_json: string | null;
+              settled_at: string | null;
+            }>(
+              "SELECT e.workspace_id AS workspace_id, pt.usage_json AS usage_json, pt.settled_at AS settled_at FROM provider_turns pt JOIN executions e ON e.execution_id = pt.execution_id WHERE e.project_id = ? ORDER BY pt.provider_turn_id",
+              [projectId],
+            ),
+          );
+          return rows.map((row) => ({
+            workspaceId: row.workspace_id as never,
+            usageJson: row.usage_json,
+            settledAt: row.settled_at,
+          }));
+        }),
     };
     return ProviderTurnStore.of(store);
   }),
