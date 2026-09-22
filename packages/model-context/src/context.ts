@@ -1,3 +1,4 @@
+import type { InformationTrustMetadata } from "@arbor/ports";
 import type { CacheClass, RetentionClass } from "./prompt.js";
 
 /** DID v1.7 §8.8–§8.10; P3 `02` §5. */
@@ -9,7 +10,54 @@ export interface ContextFragment {
   readonly retention: RetentionClass;
   readonly cacheClass: CacheClass;
   readonly tokens: number;
+  /** P12 `13` §2 (TR-3) / DID §8.4A / SD §8A — Information Trust metadata.
+   * Required: a fragment without provenance is not admissible. */
+  readonly provenance: InformationTrustMetadata;
 }
+
+export interface ContextFragmentInit {
+  readonly ref: string;
+  readonly layer: ContextLayer;
+  readonly retention: RetentionClass;
+  readonly cacheClass: CacheClass;
+  readonly tokens: number;
+  readonly provenance: InformationTrustMetadata;
+}
+
+/**
+ * P12 `13` §2 (TR-3) — enforce the Information Trust Plane in code. Only a
+ * Runtime-compiled canonical fragment (`CanonicalInternal`) may carry
+ * `CanonicalInstruction`; every other provenance is forced to `DataOnly`, so a
+ * data source can never forge instruction authority (DID §8.4A / SD §8A).
+ * `canRaiseAuthority` reads the admitted capability.
+ */
+export const admitContextTrust = (
+  provenance: InformationTrustMetadata,
+): InformationTrustMetadata => ({
+  provenanceKind: provenance.provenanceKind,
+  instructionCapability:
+    provenance.provenanceKind === "CanonicalInternal"
+      ? "CanonicalInstruction"
+      : "DataOnly",
+  epistemicStatus: provenance.epistemicStatus,
+});
+
+/**
+ * P12 `13` §2 (TR-3) — the single context-boundary construction site. Every
+ * `ContextFragment` is built here and receives its (admitted) `provenance`; no
+ * other module constructs a fragment literal. All other code receives
+ * already-tagged fragments (e.g. `PrepareTurnInput.contextFragments`).
+ */
+export const contextFragment = (
+  init: ContextFragmentInit,
+): ContextFragment => ({
+  ref: init.ref,
+  layer: init.layer,
+  retention: init.retention,
+  cacheClass: init.cacheClass,
+  tokens: init.tokens,
+  provenance: admitContextTrust(init.provenance),
+});
 
 export interface ContextBudget {
   readonly modelWindow: number;

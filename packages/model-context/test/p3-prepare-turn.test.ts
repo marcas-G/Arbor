@@ -15,6 +15,7 @@ import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   type ContextFragment,
+  contextFragment,
   type InstructionFragment,
   ModelContext,
   ModelContextLive,
@@ -68,17 +69,23 @@ const fragment = (
   contentRef,
 });
 
-const contextFragment = (
+const makeContextFragment = (
   ref: string,
   retention: ContextFragment["retention"],
   tokens: number,
-): ContextFragment => ({
-  ref,
-  layer: "C3",
-  retention,
-  cacheClass: "Stable",
-  tokens,
-});
+): ContextFragment =>
+  contextFragment({
+    ref,
+    layer: "C3",
+    retention,
+    cacheClass: "Stable",
+    tokens,
+    provenance: {
+      provenanceKind: "ModelDerived",
+      instructionCapability: "DataOnly",
+      epistemicStatus: "Unverified",
+    },
+  });
 
 const input = (overrides: Record<string, unknown> = {}) => ({
   executionId: parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
@@ -134,7 +141,9 @@ describe("P3 prepareTurn", () => {
 
   it("returns NeedsCompaction when optional context must be evicted", async () => {
     const result = (await prepare(
-      input({ contextFragments: [contextFragment("big", "Evictable", 900)] }),
+      input({
+        contextFragments: [makeContextFragment("big", "Evictable", 900)],
+      }),
     )) as { _tag: string; reason?: string };
     expect(result._tag).toBe("NeedsCompaction");
     expect(result.reason).toBe("BudgetPressure");
@@ -160,7 +169,7 @@ describe("P3 prepareTurn", () => {
             const modelContext = yield* ModelContext;
             return yield* modelContext.prepareTurn(
               input({
-                contextFragments: [contextFragment("huge", "Pinned", 900)],
+                contextFragments: [makeContextFragment("huge", "Pinned", 900)],
               }) as never,
             );
           }),
