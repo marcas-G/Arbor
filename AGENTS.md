@@ -31,7 +31,9 @@ If a code implementation discovers a design gap: **stop implementation and raise
 - `planning/tasks/` — task breakdown per phase
 - `planning/results/` — completion evidence, verification output per phase
 
-Current authorization state: **P0–P12 COMPLETE; P12 FORMALLY CLOSED**
+Current authorization state: **P0–P12 COMPLETE; P12 FORMALLY CLOSED**.
+**SYSTEM IMPLEMENTATION COMPLETE** — **FINAL CLOSURE PASS**
+(`planning/final-system-closure.md`; `planning/results/ARBOR_FINAL.result.md`).
 (P7-GAP-01 dispositioned: DEFERRED to P10, non-blocking). P6 result:
 `planning/results/P6.result.md`; P7 result: `planning/results/P7.result.md`
 (11/11 exit criteria PASS; no open implementation Design Gap).
