@@ -6,6 +6,32 @@ import { Effect, Layer } from "effect";
 
 /** P4 `04`; DID v1.8 G3. Minimal local executor: a confined temp root per
  * execution. Advanced isolation (containers/namespaces/worktrees) is P11. */
+
+/** P4 `04` §4 (debt repaid per P11 `12` §2): a sandboxed subprocess execFileSync
+ * runs with an allow-listed projection of the ambient environment — secrets
+ * and other ambient variables never reach it. */
+export const SANDBOX_ENV_ALLOWLIST: ReadonlyArray<string> = [
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "PATH",
+  "TMPDIR",
+  "TZ",
+];
+
+export const sandboxEnvironment = (
+  ambient: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => {
+  const projected: Record<string, string> = {};
+  for (const key of SANDBOX_ENV_ALLOWLIST) {
+    const value = ambient[key];
+    if (value !== undefined) {
+      projected[key] = value;
+    }
+  }
+  return projected;
+};
+
 export const SandboxPortLive: Layer.Layer<SandboxPort> = Layer.effect(
   SandboxPort,
   Effect.sync(() => {

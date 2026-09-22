@@ -246,6 +246,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ports
 
+  adapters/sandbox-worktree:
+    dependencies:
+      '@arbor/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
   adapters/worker-local:
     dependencies:
       '@arbor/domain':
