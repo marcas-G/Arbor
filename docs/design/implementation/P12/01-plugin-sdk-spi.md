@@ -62,14 +62,20 @@ Only wording iteration and numeric defaults are non-contract (DID §0.1 freeze/c
 
 ```text
 RegisterProjectTool (governance Command)
-  payload: { pluginId, pluginVersion, definition: ToolDefinition, contentHash }
+  payload: { pluginId, pluginVersion, definitions: ReadonlyArray<ToolDefinition>, contentHash }
   authority: RegisterProjectToolAuthority (resolver-produced, `02`)
-  durable: a registration record (P12 contract) binding
-           (pluginId, pluginVersion, contentHash) → ToolDefinition
+  durable: a project-scoped registration record (P12 contract), scoped by the
+           envelope `projectId`, binding
+           (pluginId, pluginVersion, contentHash) → ReadonlyArray<ToolDefinition>
 ```
 
-- **content/version-bound trust**: the registration binds the exact `ToolDefinition`
-  content hash + `PluginVersion`; any content/version change requires a new registration.
+- **content/version-bound trust**: the registration binds the exact
+  `ToolDefinition` content hash + `PluginVersion`; any content/version change requires a new registration.
+- **multi-definition registration** (cross-contract completeness correction,
+  `01` §5 / `07` §2): one registration may contribute **multiple**
+  `ToolDefinition`s; the durable value is the definitions array. The command
+  payload carries `definitions: ReadonlyArray<ToolDefinition>` and the handler
+  passes the envelope `projectId` to the registry write.
 - **project-local 不自动可信**: a project-supplied tool is untrusted until an explicit
   registration is committed; it is never auto-discovered/auto-trusted from the filesystem.
 - Registration does **not** change `InvocationAuthority`, capability ceiling, `SandboxPort`,
@@ -116,16 +122,18 @@ type ProjectToolRegistryError =
 
 interface ProjectToolRegistryService {
   register(input: {
+    projectId: ProjectId
     pluginId: PluginId
     pluginVersion: PluginVersion
     contentHash: string
-    definition: ToolDefinition
+    definitions: ReadonlyArray<ToolDefinition>
   }): Effect.Effect<void, ProjectToolRegistryError, TransactionScope>
   lookup(key: {
+    projectId: ProjectId
     pluginId: PluginId
     pluginVersion: PluginVersion
     contentHash: string
-  }): Effect.Effect<Option.Option<ToolDefinition>, ProjectToolRegistryError>
+  }): Effect.Effect<Option.Option<ReadonlyArray<ToolDefinition>>, ProjectToolRegistryError>
   // P12 cross-contract completeness correction (`01` §5.2 / `07` §2):
   // committed-read enumeration seam for the catalog union.
   listRegisteredToolDefinitions(
@@ -153,10 +161,12 @@ interface ProjectToolRegistryService {
   failure (never a silent partial write).
 - **Migration:** the registration store is the durable `project_tool_registry` table,
   added by P12 migration `0013_project_tool_registry` (part of the ordered P12 migration
-  list, `06` §3 / `00` TR-7).
-- Registration key is `(pluginId, pluginVersion, contentHash)`.
+  list, `06` §3 / `00` TR-7). The table is keyed
+  `(project_id, plugin_id, plugin_version, content_hash)`; `project_id` is the relational
+  scope key (from the envelope), not a new domain field.
+- Registration identity is `(pluginId, pluginVersion, contentHash)`, scoped to a project.
 - Idempotency: the **same key** is a replay (no-op, same result); the same
-  `(pluginId, pluginVersion)` with a **different `contentHash`** is an
+  `(projectId, pluginId, pluginVersion)` with a **different `contentHash`** is an
   `IdempotencyConflict` (typed), never a silent overwrite.
 - **registered → catalogued → visible**: a registered Project tool becomes catalogued
   only after the registration transaction commits; an **unregistered** tool is absent

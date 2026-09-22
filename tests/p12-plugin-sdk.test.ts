@@ -68,6 +68,23 @@ const DEFINITION: ToolDefinition = {
   source: "Project",
 };
 
+/** P12 cross-contract completeness correction: one registration may contribute
+ * multiple ToolDefinitions; this is the second tool of the same plugin. */
+const DEFINITION_B: ToolDefinition = {
+  name: "project-ping",
+  version: "2",
+  hash: "hash-v2",
+  description: "second project tool contributed by the same plugin",
+  inputSchemaJson: JSON.stringify({
+    type: "object",
+    properties: { target: { type: "string" } },
+  }),
+  resultSchemaJson: JSON.stringify({ type: "object" }),
+  capabilityMetadata: ["project:ping"],
+  sideEffectSemantics: "ReadOnly",
+  source: "Project",
+};
+
 type AppServices = SqlClient | TransactionPort | ProjectToolRegistry;
 
 const makeApp = (): Layer.Layer<AppServices> => {
@@ -136,24 +153,30 @@ describe("P12-001 project-tool explicit registration", () => {
 
         const before = yield* tx.transact(
           registry.lookup({
+            projectId: PROJECT,
             pluginId: PLUGIN,
             pluginVersion: VERSION,
             contentHash: "hash-v1",
           }),
         );
         expect(Option.isNone(before)).toBe(true);
+        const enumeratedBefore =
+          yield* registry.listRegisteredToolDefinitions(PROJECT);
+        expect(enumeratedBefore).toEqual([]);
 
         yield* tx.transact(
           registry.register({
+            projectId: PROJECT,
             pluginId: PLUGIN,
             pluginVersion: VERSION,
             contentHash: "hash-v1",
-            definition: DEFINITION,
+            definitions: [DEFINITION],
           }),
         );
 
         const after = yield* tx.transact(
           registry.lookup({
+            projectId: PROJECT,
             pluginId: PLUGIN,
             pluginVersion: VERSION,
             contentHash: "hash-v1",
@@ -161,18 +184,79 @@ describe("P12-001 project-tool explicit registration", () => {
         );
         expect(Option.isSome(after)).toBe(true);
         if (Option.isSome(after)) {
-          expect(after.value).toEqual(DEFINITION);
+          expect(after.value).toEqual([DEFINITION]);
         }
+        const enumerated =
+          yield* registry.listRegisteredToolDefinitions(PROJECT);
+        expect(enumerated).toEqual([DEFINITION]);
 
         // a different plugin / version / content hash is still absent
         const unrelated = yield* tx.transact(
           registry.lookup({
+            projectId: PROJECT,
             pluginId: OTHER_PLUGIN,
             pluginVersion: VERSION,
             contentHash: "hash-v1",
           }),
         );
         expect(Option.isNone(unrelated)).toBe(true);
+      }),
+    );
+  });
+
+  it("one registration may contribute multiple ToolDefinitions (project-scoped, committed-read enumeration)", async () => {
+    await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P12_MIGRATIONS);
+        const tx = yield* TransactionPort;
+        const registry = yield* ProjectToolRegistry;
+
+        yield* tx.transact(
+          registry.register({
+            projectId: PROJECT,
+            pluginId: PLUGIN,
+            pluginVersion: VERSION,
+            contentHash: "plugin-content-hash",
+            definitions: [DEFINITION, DEFINITION_B],
+          }),
+        );
+
+        const stored = yield* tx.transact(
+          registry.lookup({
+            projectId: PROJECT,
+            pluginId: PLUGIN,
+            pluginVersion: VERSION,
+            contentHash: "plugin-content-hash",
+          }),
+        );
+        expect(Option.isSome(stored)).toBe(true);
+        if (Option.isSome(stored)) {
+          expect(stored.value).toEqual([DEFINITION, DEFINITION_B]);
+        }
+
+        // committed-read enumeration (no TransactionScope required)
+        const enumerated =
+          yield* registry.listRegisteredToolDefinitions(PROJECT);
+        expect(enumerated).toEqual([DEFINITION, DEFINITION_B]);
+
+        // project-scoped: the same plugin/version in another project is not a
+        // conflict and is enumerated only for its own project
+        yield* tx.transact(
+          registry.register({
+            projectId: OTHER_PROJECT,
+            pluginId: PLUGIN,
+            pluginVersion: VERSION,
+            contentHash: "other-content-hash",
+            definitions: [DEFINITION_B],
+          }),
+        );
+        expect(
+          yield* registry.listRegisteredToolDefinitions(OTHER_PROJECT),
+        ).toEqual([DEFINITION_B]);
+        expect(yield* registry.listRegisteredToolDefinitions(PROJECT)).toEqual([
+          DEFINITION,
+          DEFINITION_B,
+        ]);
       }),
     );
   });
@@ -185,10 +269,11 @@ describe("P12-001 project-tool explicit registration", () => {
         const registry = yield* ProjectToolRegistry;
 
         const input = {
+          projectId: PROJECT,
           pluginId: PLUGIN,
           pluginVersion: VERSION,
           contentHash: "hash-v1",
-          definition: DEFINITION,
+          definitions: [DEFINITION],
         } as const;
 
         yield* tx.transact(registry.register(input));
@@ -197,6 +282,7 @@ describe("P12-001 project-tool explicit registration", () => {
 
         const stored = yield* tx.transact(
           registry.lookup({
+            projectId: PROJECT,
             pluginId: PLUGIN,
             pluginVersion: VERSION,
             contentHash: "hash-v1",
@@ -208,10 +294,11 @@ describe("P12-001 project-tool explicit registration", () => {
         const error = (yield* Effect.flip(
           tx.transact(
             registry.register({
+              projectId: PROJECT,
               pluginId: PLUGIN,
               pluginVersion: VERSION,
               contentHash: "hash-v2",
-              definition: { ...DEFINITION, hash: "hash-v2" },
+              definitions: [{ ...DEFINITION, hash: "hash-v2" }],
             }),
           ),
         )) as ProjectToolRegistryError;
@@ -226,6 +313,7 @@ describe("P12-001 project-tool explicit registration", () => {
         // the original registration survives the rejected write (no overwrite)
         const after = yield* tx.transact(
           registry.lookup({
+            projectId: PROJECT,
             pluginId: PLUGIN,
             pluginVersion: VERSION,
             contentHash: "hash-v1",
@@ -246,7 +334,7 @@ describe("P12-001 project-tool explicit registration", () => {
         const payload = {
           pluginId: PLUGIN,
           pluginVersion: VERSION,
-          definition: DEFINITION,
+          definitions: [DEFINITION],
           contentHash: "hash-v1",
         };
         const facts = {

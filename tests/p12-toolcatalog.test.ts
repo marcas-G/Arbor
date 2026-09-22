@@ -1,8 +1,19 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import {
+  layer,
+  P12_MIGRATIONS,
+  ProjectToolRegistryLive,
+  runMigrations,
+  TransactionPortLive,
+} from "../adapters/persistence-sqlite/src/index.js";
 import {
   ContextEpochNumber,
   ExecutionId,
+  PluginId,
+  PluginVersion,
+  ProjectId,
   ProviderTurnId,
   parse,
   SessionId,
@@ -18,10 +29,13 @@ import {
 import {
   ModelCapabilityPort,
   type ModelFacingToolDefinition,
+  ProjectToolRegistry,
   SkillRegistry,
   type ToolCatalogError,
   ToolCatalogPort,
+  type ToolDefinition,
   type ToolDefinitionRef,
+  TransactionPort,
 } from "../packages/ports/src/index.js";
 import {
   BUILTIN_TOOLS,
@@ -65,13 +79,25 @@ const skills = Layer.succeed(SkillRegistry, {
   load: () => Effect.die("no skills in test"),
 });
 
+/** Builtin-only registry stub: the catalog always requires the
+ * `ProjectToolRegistry` port; when no project is configured (or nothing is
+ * committed) the union degenerates to the builtins. */
+const emptyRegistry = Layer.succeed(ProjectToolRegistry, {
+  register: () =>
+    Effect.die("register is not used by the builtin-only catalog"),
+  lookup: () => Effect.succeed(Option.none()),
+  listRegisteredToolDefinitions: () => Effect.succeed([]),
+});
+
+const builtinCatalog = Layer.provide(ToolCatalogPortLive(), emptyRegistry);
+
 const app = Layer.mergeAll(
   capability,
   skills,
-  ToolCatalogPortLive,
+  builtinCatalog,
   Layer.provide(
     ModelContextLive,
-    Layer.mergeAll(capability, skills, ToolCatalogPortLive),
+    Layer.mergeAll(capability, skills, builtinCatalog),
   ),
 );
 
@@ -134,7 +160,7 @@ const input = () => ({
 const withCatalog = <A>(
   program: Effect.Effect<A, unknown, ToolCatalogPort>,
 ): Promise<A> =>
-  Effect.runPromise(Effect.provide(program, ToolCatalogPortLive) as never);
+  Effect.runPromise(Effect.provide(program, builtinCatalog) as never);
 
 describe("P12-007 ToolCatalogPort model-facing resolution", () => {
   it("projects the full model-facing ToolDefinition for a visible ref", async () => {
@@ -230,5 +256,236 @@ describe("P12-007 compiler emits real tool metadata (CI-6)", () => {
       expect(compiled?.description).not.toBe(builtin.name);
       expect(compiled?.schemaJson).not.toBe("{}");
     }
+  });
+});
+
+/**
+ * P12 cross-contract completeness correction (`01` §5.2 / `07` §2):
+ * `CataloguedTools = Builtins ∪ CommittedRegisteredProjectToolDefinitions`.
+ * `visibleRefs` and `resolveForModel` derive from the same union; the union is
+ * composed inside `ToolCatalogPortLive` from the `ProjectToolRegistry` port.
+ */
+const PROJECT = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
+const OTHER_PROJECT = parse(ProjectId)(
+  "prj_018f2b3c-4d5e-7abc-8def-0123456789c2",
+);
+const PLUGIN = parse(PluginId)("plg_018f2b3c-4d5e-7abc-8def-0123456789a1");
+const VERSION = parse(PluginVersion)("1.0.0");
+
+const ECHO_DEFINITION: ToolDefinition = {
+  name: "project-echo",
+  version: "1",
+  hash: "project-echo-v1",
+  description: "project-supplied echo tool",
+  inputSchemaJson: JSON.stringify({
+    type: "object",
+    required: ["text"],
+    properties: { text: { type: "string" } },
+  }),
+  resultSchemaJson: JSON.stringify({ type: "object" }),
+  capabilityMetadata: ["project:echo"],
+  sideEffectSemantics: "ReadOnly",
+  source: "Project",
+};
+
+const PING_DEFINITION: ToolDefinition = {
+  name: "project-ping",
+  version: "2",
+  hash: "project-ping-v2",
+  description: "second project tool from the same plugin registration",
+  inputSchemaJson: JSON.stringify({
+    type: "object",
+    required: ["target"],
+    properties: { target: { type: "string" } },
+  }),
+  resultSchemaJson: JSON.stringify({ type: "object" }),
+  capabilityMetadata: ["project:ping"],
+  sideEffectSemantics: "ReadOnly",
+  source: "Project",
+};
+
+type UnionServices =
+  | SqlClient
+  | TransactionPort
+  | ProjectToolRegistry
+  | ToolCatalogPort;
+
+const makeUnionApp = (): Layer.Layer<UnionServices> => {
+  const base = layer({ filename: ":memory:" });
+  const registry = Layer.provide(ProjectToolRegistryLive, base);
+  const tx = Layer.provide(TransactionPortLive, base);
+  const catalog = Layer.provide(
+    ToolCatalogPortLive({ projectId: PROJECT }),
+    registry,
+  );
+  return Layer.mergeAll(
+    base,
+    registry,
+    tx,
+    catalog,
+  ) as Layer.Layer<UnionServices>;
+};
+
+const runUnion = <A>(
+  program: Effect.Effect<A, unknown, UnionServices>,
+): Promise<A> =>
+  Effect.runPromise(Effect.scoped(Effect.provide(program, makeUnionApp())));
+
+describe("P12-007 catalog union (builtins ∪ committed registered project tools)", () => {
+  it("builtins remain visible; one registration contributing multiple tools exposes all after commit", async () => {
+    await runUnion(
+      Effect.gen(function* () {
+        yield* runMigrations(P12_MIGRATIONS);
+        const tx = yield* TransactionPort;
+        const registry = yield* ProjectToolRegistry;
+        const catalog = yield* ToolCatalogPort;
+
+        const before = yield* catalog.visibleRefs();
+        expect(before.map((ref) => ref.name).sort()).toEqual([
+          "patch",
+          "read",
+          "shell",
+        ]);
+
+        yield* tx.transact(
+          registry.register({
+            projectId: PROJECT,
+            pluginId: PLUGIN,
+            pluginVersion: VERSION,
+            contentHash: "plugin-content-hash-1",
+            definitions: [ECHO_DEFINITION, PING_DEFINITION],
+          }),
+        );
+
+        const after = yield* catalog.visibleRefs();
+        expect(after.map((ref) => ref.name).sort()).toEqual([
+          "patch",
+          "project-echo",
+          "project-ping",
+          "read",
+          "shell",
+        ]);
+
+        const echoRef: ToolDefinitionRef = {
+          name: ECHO_DEFINITION.name,
+          version: ECHO_DEFINITION.version,
+          hash: ECHO_DEFINITION.hash,
+        };
+        const resolved = yield* catalog.resolveForModel(echoRef);
+        const projection: ModelFacingToolDefinition = resolved;
+        expect(projection).toEqual({
+          name: ECHO_DEFINITION.name,
+          description: ECHO_DEFINITION.description,
+          schemaJson: ECHO_DEFINITION.inputSchemaJson,
+          version: ECHO_DEFINITION.version,
+          hash: ECHO_DEFINITION.hash,
+          capabilityMetadata: ECHO_DEFINITION.capabilityMetadata,
+          sideEffectSemantics: ECHO_DEFINITION.sideEffectSemantics,
+        });
+        expect(projection.schemaJson).not.toBe("{}");
+        expect(projection.description).not.toBe(projection.name);
+      }),
+    );
+  });
+
+  it("an unregistered project tool is absent from visibleRefs and unresolved (typed ToolNotRegistered)", async () => {
+    await runUnion(
+      Effect.gen(function* () {
+        yield* runMigrations(P12_MIGRATIONS);
+        const catalog = yield* ToolCatalogPort;
+
+        const unregistered: ToolDefinitionRef = {
+          name: ECHO_DEFINITION.name,
+          version: ECHO_DEFINITION.version,
+          hash: ECHO_DEFINITION.hash,
+        };
+        const refs = yield* catalog.visibleRefs();
+        expect(refs.some((ref) => ref.name === ECHO_DEFINITION.name)).toBe(
+          false,
+        );
+
+        const error = (yield* Effect.flip(
+          catalog.resolveForModel(unregistered),
+        )) as ToolCatalogError;
+        expect(error._tag).toBe("ToolNotRegistered");
+        if (error._tag === "ToolNotRegistered") {
+          expect(error.ref).toEqual(unregistered);
+        }
+      }),
+    );
+  });
+
+  it("project scoping: another project's committed registrations are not visible", async () => {
+    await runUnion(
+      Effect.gen(function* () {
+        yield* runMigrations(P12_MIGRATIONS);
+        const tx = yield* TransactionPort;
+        const registry = yield* ProjectToolRegistry;
+        const catalog = yield* ToolCatalogPort;
+
+        yield* tx.transact(
+          registry.register({
+            projectId: OTHER_PROJECT,
+            pluginId: PLUGIN,
+            pluginVersion: VERSION,
+            contentHash: "other-project-content-hash",
+            definitions: [ECHO_DEFINITION],
+          }),
+        );
+
+        const refs = yield* catalog.visibleRefs();
+        expect(refs.map((ref) => ref.name).sort()).toEqual([
+          "patch",
+          "read",
+          "shell",
+        ]);
+      }),
+    );
+  });
+
+  it("plugin registration identity and ToolDefinitionRef remain distinct without collision", async () => {
+    await runUnion(
+      Effect.gen(function* () {
+        yield* runMigrations(P12_MIGRATIONS);
+        const tx = yield* TransactionPort;
+        const registry = yield* ProjectToolRegistry;
+        const catalog = yield* ToolCatalogPort;
+
+        const contentHash = "plugin-content-hash-distinct";
+        yield* tx.transact(
+          registry.register({
+            projectId: PROJECT,
+            pluginId: PLUGIN,
+            pluginVersion: VERSION,
+            contentHash,
+            definitions: [ECHO_DEFINITION],
+          }),
+        );
+
+        // plugin registration/trust identity is (pluginId, pluginVersion, contentHash)
+        const stored = yield* tx.transact(
+          registry.lookup({
+            projectId: PROJECT,
+            pluginId: PLUGIN,
+            pluginVersion: VERSION,
+            contentHash,
+          }),
+        );
+        expect(Option.isSome(stored)).toBe(true);
+
+        // the two identities are intentionally distinct and do not collide
+        expect(contentHash).not.toBe(ECHO_DEFINITION.hash);
+        expect(PLUGIN).not.toBe(ECHO_DEFINITION.name);
+
+        // ToolDefinitionRef identity resolves through the catalog union
+        const resolved = yield* catalog.resolveForModel({
+          name: ECHO_DEFINITION.name,
+          version: ECHO_DEFINITION.version,
+          hash: ECHO_DEFINITION.hash,
+        });
+        expect(resolved.name).toBe(ECHO_DEFINITION.name);
+        expect(resolved.hash).toBe(ECHO_DEFINITION.hash);
+      }),
+    );
   });
 });

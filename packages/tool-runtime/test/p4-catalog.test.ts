@@ -1,4 +1,8 @@
-import { ToolCatalogPort, ToolDefinitionStore } from "@arbor/ports";
+import {
+  ProjectToolRegistry,
+  ToolCatalogPort,
+  ToolDefinitionStore,
+} from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
@@ -7,7 +11,17 @@ import {
   ToolDefinitionStoreLive,
 } from "../src/index.js";
 
-const app = Layer.mergeAll(ToolDefinitionStoreLive, ToolCatalogPortLive);
+const emptyRegistry = Layer.succeed(ProjectToolRegistry, {
+  register: () =>
+    Effect.die("register is not used by the builtin-only catalog"),
+  lookup: () => Effect.succeed(Option.none()),
+  listRegisteredToolDefinitions: () => Effect.succeed([]),
+});
+
+const app = Layer.mergeAll(
+  ToolDefinitionStoreLive,
+  Layer.provide(ToolCatalogPortLive(), emptyRegistry),
+);
 
 describe("P4 tool catalog", () => {
   it("exposes the three builtin definitions with exact schemas", async () => {

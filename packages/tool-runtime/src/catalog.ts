@@ -1,4 +1,6 @@
 import {
+  type ProjectId,
+  ProjectToolRegistry,
   ToolCatalogPort,
   type ToolDefinition,
   type ToolDefinitionRef,
@@ -138,38 +140,83 @@ export const ToolDefinitionStoreLive: Layer.Layer<ToolDefinitionStore> =
     all: () => Effect.succeed(BUILTIN_TOOLS),
   });
 
-export const ToolCatalogPortLive: Layer.Layer<ToolCatalogPort> = Layer.succeed(
-  ToolCatalogPort,
-  {
-    visibleRefs: () =>
-      Effect.succeed(
-        BUILTIN_TOOLS.map(
-          (tool): ToolDefinitionRef => ({
-            name: tool.name,
-            version: tool.version,
-            hash: tool.hash,
+/** P12 cross-contract completeness correction (`01` §5.2 / `07` §2):
+ * composition config for the catalog union. `projectId` is supplied by the
+ * Composition Root; absent means the catalogued set is the builtins only. */
+export interface ToolCatalogConfig {
+  readonly projectId?: ProjectId;
+}
+
+const toRef = (tool: ToolDefinition): ToolDefinitionRef => ({
+  name: tool.name,
+  version: tool.version,
+  hash: tool.hash,
+});
+
+const matchesRef = (tool: ToolDefinition, ref: ToolDefinitionRef): boolean =>
+  tool.name === ref.name &&
+  tool.version === ref.version &&
+  tool.hash === ref.hash;
+
+/**
+ * `CataloguedTools = Builtins ∪ CommittedRegisteredProjectToolDefinitions`.
+ *
+ * `visibleRefs()` and `resolveForModel(ref)` derive from the same union. The
+ * union is composed here (the catalog implementation) from the
+ * `ProjectToolRegistry` port; Model Context depends only on `ToolCatalogPort`.
+ * The registry read is committed-read (no `TransactionScope`). A durable-read
+ * failure cannot be represented in the frozen `ToolCatalogPortService` error
+ * channels (`visibleRefs` has `E = never`; `resolveForModel` has
+ * `E = ToolCatalogError`), so it is raised as a defect (`Effect.orDie`), never
+ * a silent placeholder.
+ */
+export const ToolCatalogPortLive = (
+  config: ToolCatalogConfig = {},
+): Layer.Layer<ToolCatalogPort, never, ProjectToolRegistry> =>
+  Layer.effect(
+    ToolCatalogPort,
+    Effect.gen(function* () {
+      const registry = yield* ProjectToolRegistry;
+      const projectId = config.projectId;
+
+      const catalogued = (): Effect.Effect<ReadonlyArray<ToolDefinition>> => {
+        if (projectId === undefined) {
+          return Effect.succeed(BUILTIN_TOOLS);
+        }
+        return registry.listRegisteredToolDefinitions(projectId).pipe(
+          Effect.map(
+            (registered): ReadonlyArray<ToolDefinition> => [
+              ...BUILTIN_TOOLS,
+              ...registered,
+            ],
+          ),
+          Effect.orDie,
+        );
+      };
+
+      return ToolCatalogPort.of({
+        visibleRefs: () =>
+          catalogued().pipe(Effect.map((tools) => tools.map(toRef))),
+        resolveForModel: (ref) =>
+          Effect.gen(function* () {
+            const tools = yield* catalogued();
+            const found = tools.find((tool) => matchesRef(tool, ref));
+            if (found === undefined) {
+              return yield* Effect.fail({
+                _tag: "ToolNotRegistered" as const,
+                ref,
+              });
+            }
+            return {
+              name: found.name,
+              description: found.description,
+              schemaJson: found.inputSchemaJson,
+              version: found.version,
+              hash: found.hash,
+              capabilityMetadata: found.capabilityMetadata,
+              sideEffectSemantics: found.sideEffectSemantics,
+            };
           }),
-        ),
-      ),
-    resolveForModel: (ref) => {
-      const found = BUILTIN_TOOLS.find(
-        (tool) =>
-          tool.name === ref.name &&
-          tool.version === ref.version &&
-          tool.hash === ref.hash,
-      );
-      if (found === undefined) {
-        return Effect.fail({ _tag: "ToolNotRegistered" as const, ref });
-      }
-      return Effect.succeed({
-        name: found.name,
-        description: found.description,
-        schemaJson: found.inputSchemaJson,
-        version: found.version,
-        hash: found.hash,
-        capabilityMetadata: found.capabilityMetadata,
-        sideEffectSemantics: found.sideEffectSemantics,
       });
-    },
-  },
-);
+    }),
+  );
