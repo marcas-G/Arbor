@@ -13,6 +13,7 @@ import type {
   ResourceBoundary,
   ResponsibilityDefinition,
   SessionId,
+  UsageCost,
   VerificationId,
   VerificationVerdict,
   WorkId,
@@ -44,7 +45,8 @@ export interface SubtreeAttention {
 
 export interface UsageSummary {
   readonly tokens: number;
-  readonly cost: number;
+  /** P12 `04` TR-5: the `UsageCost` ADT — `Unknown` is preserved, never `0`. */
+  readonly cost: UsageCost;
   readonly turns: number;
 }
 
@@ -219,7 +221,8 @@ export interface UsageReq {
 export interface UsageRow {
   readonly workspaceId: WorkspaceId;
   readonly tokens: number;
-  readonly cost: number;
+  /** P12 `04` TR-5: the `UsageCost` ADT — `Unknown` is preserved, never `0`. */
+  readonly cost: UsageCost;
   readonly turns: number;
 }
 

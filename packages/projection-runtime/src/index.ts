@@ -6,6 +6,7 @@ export * from "./errors.js";
 export * from "./freshness.js";
 export * from "./inbox-reconcile.js";
 export * from "./inbox-view.js";
+export * from "./observability/index.js";
 export * from "./query-runtime.js";
 export * from "./rebuild.js";
 export * from "./status.js";

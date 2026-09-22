@@ -1,7 +1,14 @@
-import type { ProjectId, WorkspaceId } from "@arbor/domain";
+import type { ProjectId, UsageCost, WorkspaceId } from "@arbor/domain";
 import { Effect } from "effect";
 import type { ProjectionReadError } from "./errors.js";
 import { projectionReadError } from "./errors.js";
+
+/** P12 `04` TR-5: the P10 Usage view has no versioned pricing source, so an
+ * unknown cost is rendered as `Unknown` — never `0`. */
+export const unknownCostForTurns = (turns: number): UsageCost =>
+  turns === 0
+    ? { _tag: "Unknown", reason: "UsageUnavailable" }
+    : { _tag: "Unknown", reason: "PricingUnavailable" };
 
 // --- P10 `01` §1 Usage (SD §12.1, §7.7 invariant 45; P10 `05` §1 cores) --
 //
@@ -15,7 +22,7 @@ import { projectionReadError } from "./errors.js";
 export interface UsageRowView {
   readonly workspaceId: WorkspaceId;
   readonly tokens: number;
-  readonly cost: number;
+  readonly cost: UsageCost;
   readonly turns: number;
 }
 
@@ -51,11 +58,11 @@ export interface UsageDeps {
 /** Parsed UsageReported facts (one settled turn). tokens = the sum of
  * every token count the provider reported (input + output + cache read
  * + cache write); turns = 1 per settled turn. cost: usage events carry
- * no canonical pricing source — the row renders 0 (rendering/pricing is
- * P12 transport detail; invariant 45 forbids any budget coupling). */
+ * no canonical pricing source — the row renders `Unknown` (never `0`;
+ * P12 `04` TR-5; invariant 45 forbids any budget coupling). */
 export interface ParsedUsageTurn {
   readonly tokens: number;
-  readonly cost: number;
+  readonly cost: UsageCost;
   readonly settled: boolean;
 }
 
@@ -67,20 +74,20 @@ export const parseUsageJson = (
   settledAt: string | null,
 ): ParsedUsageTurn => {
   if (usageJson === null || settledAt === null) {
-    return { tokens: 0, cost: 0, settled: false };
+    return { tokens: 0, cost: unknownCostForTurns(0), settled: false };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(usageJson);
   } catch {
-    return { tokens: 0, cost: 0, settled: true };
+    return { tokens: 0, cost: unknownCostForTurns(1), settled: true };
   }
   if (typeof parsed !== "object" || parsed === null) {
-    return { tokens: 0, cost: 0, settled: true };
+    return { tokens: 0, cost: unknownCostForTurns(1), settled: true };
   }
   const record = parsed as Record<string, unknown>;
   if (record._tag !== undefined && record._tag !== "UsageReported") {
-    return { tokens: 0, cost: 0, settled: true };
+    return { tokens: 0, cost: unknownCostForTurns(1), settled: true };
   }
   return {
     tokens:
@@ -88,7 +95,7 @@ export const parseUsageJson = (
       numeric(record.outputTokens) +
       numeric(record.cacheReadTokens) +
       numeric(record.cacheWriteTokens),
-    cost: 0,
+    cost: unknownCostForTurns(1),
     settled: true,
   };
 };
@@ -99,13 +106,13 @@ export const aggregateUsageByWorkspace = (
   turns: ReadonlyArray<UsageTurnFact>,
 ): ReadonlyMap<
   WorkspaceId,
-  { tokens: number; cost: number; turns: number }
+  { tokens: number; cost: UsageCost; turns: number }
 > => {
   const sums = new Map<
     WorkspaceId,
     {
       tokens: number;
-      cost: number;
+      cost: UsageCost;
       turns: number;
     }
   >();
@@ -116,12 +123,12 @@ export const aggregateUsageByWorkspace = (
     }
     const current = sums.get(turn.workspaceId) ?? {
       tokens: 0,
-      cost: 0,
+      cost: unknownCostForTurns(0),
       turns: 0,
     };
     sums.set(turn.workspaceId, {
       tokens: current.tokens + parsed.tokens,
-      cost: current.cost + parsed.cost,
+      cost: unknownCostForTurns(current.turns + 1),
       turns: current.turns + 1,
     });
   }
@@ -131,7 +138,7 @@ export const aggregateUsageByWorkspace = (
 const subtreeSums = (
   own: ReadonlyMap<
     WorkspaceId,
-    { tokens: number; cost: number; turns: number }
+    { tokens: number; cost: UsageCost; turns: number }
   >,
   workspaces: ReadonlyArray<{
     readonly workspaceId: WorkspaceId;
@@ -139,7 +146,7 @@ const subtreeSums = (
   }>,
 ): ReadonlyMap<
   WorkspaceId,
-  { tokens: number; cost: number; turns: number }
+  { tokens: number; cost: UsageCost; turns: number }
 > => {
   const byId = new Map(
     workspaces.map((workspace) => [workspace.workspaceId, workspace]),
@@ -158,12 +165,12 @@ const subtreeSums = (
   }
   const memo = new Map<
     WorkspaceId,
-    { tokens: number; cost: number; turns: number }
+    { tokens: number; cost: UsageCost; turns: number }
   >();
   const walk = (
     workspaceId: WorkspaceId,
     seen: Set<WorkspaceId>,
-  ): { tokens: number; cost: number; turns: number } => {
+  ): { tokens: number; cost: UsageCost; turns: number } => {
     const cached = memo.get(workspaceId);
     if (cached !== undefined) {
       return cached;
@@ -171,16 +178,20 @@ const subtreeSums = (
     if (seen.has(workspaceId)) {
       // Cycles are impossible in canonical data (workspace DAG); this
       // guard is defensive only.
-      return { tokens: 0, cost: 0, turns: 0 };
+      return { tokens: 0, cost: unknownCostForTurns(0), turns: 0 };
     }
     const nextSeen = new Set(seen);
     nextSeen.add(workspaceId);
-    let total = own.get(workspaceId) ?? { tokens: 0, cost: 0, turns: 0 };
+    let total = own.get(workspaceId) ?? {
+      tokens: 0,
+      cost: unknownCostForTurns(0),
+      turns: 0,
+    };
     for (const child of childrenOf.get(workspaceId) ?? []) {
       const childSum = walk(child, nextSeen);
       total = {
         tokens: total.tokens + childSum.tokens,
-        cost: total.cost + childSum.cost,
+        cost: unknownCostForTurns(total.turns + childSum.turns),
         turns: total.turns + childSum.turns,
       };
     }
@@ -214,7 +225,7 @@ export const deriveUsageRows = (
             workspaceId: workspace.workspaceId,
             ...(own.get(workspace.workspaceId) ?? {
               tokens: 0,
-              cost: 0,
+              cost: unknownCostForTurns(0),
               turns: 0,
             }),
           }),
@@ -230,7 +241,7 @@ export const deriveUsageRows = (
             workspaceId: workspace.workspaceId,
             ...(sums.get(workspace.workspaceId) ?? {
               tokens: 0,
-              cost: 0,
+              cost: unknownCostForTurns(0),
               turns: 0,
             }),
           }),
@@ -249,12 +260,17 @@ export const deriveUsageRows = (
       );
     }
     let tokens = 0;
-    let cost = 0;
     let turnCount = 0;
     for (const sum of own.values()) {
       tokens += sum.tokens;
-      cost += sum.cost;
       turnCount += sum.turns;
     }
-    return [{ workspaceId: root.workspaceId, tokens, cost, turns: turnCount }];
+    return [
+      {
+        workspaceId: root.workspaceId,
+        tokens,
+        cost: unknownCostForTurns(turnCount),
+        turns: turnCount,
+      },
+    ];
   });

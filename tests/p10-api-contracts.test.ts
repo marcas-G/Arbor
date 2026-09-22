@@ -455,7 +455,19 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
     const req: UsageReq = { projectId, groupBy: "subtree" };
     expect(keys(req)).toEqual(["groupBy", "projectId"]);
     const res: UsageRes = {
-      rows: [{ workspaceId, tokens: 100, cost: 0.5, turns: 2 }],
+      rows: [
+        {
+          workspaceId,
+          tokens: 100,
+          cost: {
+            _tag: "Known",
+            amount: 0.5,
+            currency: "USD",
+            priceSheetVersion: "ps-1",
+          },
+          turns: 2,
+        },
+      ],
     };
     expect(keys(res.rows[0] ?? {})).toEqual([
       "cost",

@@ -1,6 +1,7 @@
 import type {
   Execution,
   ProjectId,
+  UsageCost,
   Verification,
   Work,
   WorkId,
@@ -18,7 +19,11 @@ import {
 } from "./attention.js";
 import type { ProjectionReadError } from "./errors.js";
 import { deriveWorkspaceStatus } from "./status.js";
-import { aggregateUsageByWorkspace, type UsageTurnFact } from "./usage.js";
+import {
+  aggregateUsageByWorkspace,
+  type UsageTurnFact,
+  unknownCostForTurns,
+} from "./usage.js";
 
 // --- P10 `05` §1 TreeView response core (watermark/lag envelope is the
 // P10-002 QueryResult layer's concern, not this derive) ---
@@ -33,7 +38,8 @@ export interface CurrentWorkView {
  * wiring; no second derivation exists). */
 export interface UsageSummaryView {
   readonly tokens: number;
-  readonly cost: number;
+  /** P12 `04` TR-5: `UsageCost` ADT — `Unknown` is preserved, never `0`. */
+  readonly cost: UsageCost;
   readonly turns: number;
 }
 
@@ -41,7 +47,7 @@ export interface UsageSummaryView {
  * settled provider turns (aggregateUsageByWorkspace default). */
 export const ZERO_USAGE_SUMMARY: UsageSummaryView = {
   tokens: 0,
-  cost: 0,
+  cost: unknownCostForTurns(0),
   turns: 0,
 };
 
@@ -201,7 +207,7 @@ export const buildTreeView = (
         // single aggregation source (usage.ts) — observe-only
         const usage = usageByWorkspace.get(workspace.workspaceId) ?? {
           tokens: 0,
-          cost: 0,
+          cost: unknownCostForTurns(0),
           turns: 0,
         };
 

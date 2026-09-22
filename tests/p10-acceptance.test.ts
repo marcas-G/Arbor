@@ -1178,19 +1178,19 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         expect(usageOf.get(p10Root)).toEqual({
           workspaceId: p10Root,
           tokens: 168,
-          cost: 0,
+          cost: { _tag: "Unknown", reason: "PricingUnavailable" },
           turns: 2,
         });
         expect(usageOf.get(p10Child)).toEqual({
           workspaceId: p10Child,
           tokens: 10,
-          cost: 0,
+          cost: { _tag: "Unknown", reason: "PricingUnavailable" },
           turns: 1,
         });
         expect(usageOf.get(p10Leaf)).toEqual({
           workspaceId: p10Leaf,
           tokens: 0,
-          cost: 0,
+          cost: { _tag: "Unknown", reason: "UsageUnavailable" },
           turns: 0,
         });
         const bySubtree: UsageRes = {
@@ -1209,7 +1209,12 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
           ),
         };
         expect(byProjectUsage.rows).toEqual([
-          { workspaceId: p10Root, tokens: 178, cost: 0, turns: 3 },
+          {
+            workspaceId: p10Root,
+            tokens: 178,
+            cost: { _tag: "Unknown", reason: "PricingUnavailable" },
+            turns: 3,
+          },
         ]);
 
         const inbox: InboxViewRes = yield* deriveInboxView(
