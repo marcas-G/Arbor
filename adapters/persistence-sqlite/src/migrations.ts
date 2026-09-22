@@ -639,6 +639,21 @@ CREATE TABLE project_tool_registry (
 );
 `;
 
+/** P12 `02` §5.1 (TR-7): the durable `permission_grants` store. The frozen P0
+ * `PermissionGrant` type is unchanged; `project_id` is the relational scope
+ * key, not a new domain field. `state` is the only mutable lifecycle. */
+const P12_PERMISSION_GRANTS_DDL = `
+CREATE TABLE permission_grants (
+  permission_grant_id TEXT PRIMARY KEY,
+  project_id          TEXT NOT NULL,
+  scope               TEXT NOT NULL,
+  issuer              TEXT NOT NULL,
+  lifetime            TEXT NOT NULL,
+  state               TEXT NOT NULL CHECK (state IN ('Active','Revoked'))
+);
+CREATE INDEX permission_grants_active ON permission_grants (project_id, state);
+`;
+
 /** P12 ordered migration baseline (TR-7). This task owns only
  * `0013_project_tool_registry`; the frozen P12 list also reserves
  * `0011_lease_worker_incarnation` (P12-006) and `0012_permission_grants`
@@ -648,5 +663,6 @@ CREATE TABLE project_tool_registry (
  * `user_version` settles at `max(applied id)` = 13. */
 export const P12_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   ...P11B_MIGRATIONS,
+  { id: 12, name: "permission_grants", sql: P12_PERMISSION_GRANTS_DDL },
   { id: 13, name: "project_tool_registry", sql: P12_PROJECT_TOOL_REGISTRY_DDL },
 ];
