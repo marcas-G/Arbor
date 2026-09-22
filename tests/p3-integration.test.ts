@@ -6,6 +6,7 @@ import {
   ClockLive,
   CommandStoreLive,
   DomainEventJournalLive,
+  EnvironmentRevisionStoreLive,
   ExecutionRepositoryLive,
   IdGeneratorLive,
   LeaseServiceLive,
@@ -129,7 +130,14 @@ const makeApp = () => {
   );
   const driver = Layer.provide(
     AgentDriverLive(),
-    Layer.mergeAll(modelContext, providerRuntime, capability, repos, infra),
+    Layer.mergeAll(
+      modelContext,
+      providerRuntime,
+      capability,
+      repos,
+      infra,
+      Layer.provide(EnvironmentRevisionStoreLive, infra),
+    ),
   );
   const all = Layer.mergeAll(
     infra,

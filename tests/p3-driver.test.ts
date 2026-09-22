@@ -3,6 +3,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   ClockLive,
+  EnvironmentRevisionStoreLive,
   IdGeneratorLive,
   layer,
   P3_MIGRATIONS,
@@ -123,6 +124,7 @@ const makeApp = (
       capability,
       Layer.provide(SessionRepositoryLive, infra),
       Layer.provide(TransactionPortLive, infra),
+      Layer.provide(EnvironmentRevisionStoreLive, infra),
     ),
   );
   return Layer.mergeAll(

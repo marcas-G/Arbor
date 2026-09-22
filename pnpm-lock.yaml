@@ -200,6 +200,18 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ports
 
+  adapters/environment-resolver-local:
+    dependencies:
+      '@arbor/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
   adapters/persistence-sqlite:
     dependencies:
       '@arbor/domain':

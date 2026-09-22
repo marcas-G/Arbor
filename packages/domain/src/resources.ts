@@ -21,6 +21,8 @@ export const FileTree = Schema.TaggedStruct("FileTree", {
 
 export const GitWorktree = Schema.TaggedStruct("GitWorktree", {
   path: Schema.String,
+  repositoryRef: Schema.optional(Schema.String),
+  branch: Schema.optional(Schema.String),
 });
 
 export const DatabaseNamespace = Schema.TaggedStruct("DatabaseNamespace", {

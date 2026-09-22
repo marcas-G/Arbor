@@ -13,6 +13,7 @@ import {
   type CommandStoreError,
   DomainEventJournal,
   type DomainEventJournalError,
+  type EnvironmentError,
   type ExecutionRepositoryError,
   type FormationProposalStoreError,
   IdGenerator,
@@ -20,6 +21,7 @@ import {
   type MessageStoreError,
   type PendingDomainEvent,
   type ProjectRepositoryError,
+  type ResourceOwnershipRepositoryError,
   type SchedulerTimerStoreError,
   type SessionRepositoryError,
   type TransactionOperationalFailure,
@@ -27,6 +29,7 @@ import {
   type TransactionScope,
   type WorkRepositoryError,
   type WorkspaceRepositoryError,
+  type WorktreeStoreError,
   type WorkWaitStoreError,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
@@ -71,7 +74,10 @@ export type CommandHandlerError =
   | DomainEventJournalError
   | FormationProposalStoreError
   | MessageStoreError
-  | InboxProjectionStoreError;
+  | InboxProjectionStoreError
+  | EnvironmentError
+  | WorktreeStoreError
+  | ResourceOwnershipRepositoryError;
 
 export interface CommandHandler<C, R> {
   readonly commandType: string;

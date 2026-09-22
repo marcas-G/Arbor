@@ -142,6 +142,18 @@ export const ExecutionSettled = Schema.TaggedStruct("ExecutionSettled", {
 });
 export const PermissionChanged = Schema.TaggedStruct("PermissionChanged", {});
 export const DecisionRecorded = Schema.TaggedStruct("DecisionRecorded", {});
+export const WorktreeCreated = Schema.TaggedStruct("WorktreeCreated", {
+  worktreeId: Schema.String,
+  projectId: Schema.String,
+  workspaceId: Schema.String,
+  path: Schema.String,
+  repositoryRef: Schema.String,
+  branch: Schema.String,
+});
+export const WorktreeRetired = Schema.TaggedStruct("WorktreeRetired", {
+  worktreeId: Schema.String,
+  projectId: Schema.String,
+});
 export const EnvironmentChanged = Schema.TaggedStruct("EnvironmentChanged", {
   projectId: Schema.String,
   fromRevision: Schema.String,
@@ -199,6 +211,8 @@ export const DomainEventPayload = Schema.Union([
   PermissionChanged,
   DecisionRecorded,
   EnvironmentChanged,
+  WorktreeCreated,
+  WorktreeRetired,
   HumanInterventionApplied,
 ]);
 
@@ -240,6 +254,8 @@ export const EVENT_CATALOG = {
   PermissionChanged,
   DecisionRecorded,
   EnvironmentChanged,
+  WorktreeCreated,
+  WorktreeRetired,
   HumanInterventionApplied,
 } as const;
 
