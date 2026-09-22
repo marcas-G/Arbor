@@ -40,7 +40,11 @@ P8 is COMPLETE and FORMALLY CLOSED: `planning/results/P8.result.md`
 landed as frozen contracts). P9 is COMPLETE and FORMALLY CLOSED: `planning/results/P9.result.md`
 (11/11 exit criteria PASS; no open Design Gap; GQ1–GQ5 fidelity
 held; three closure deviations reconciled under DID v1.12 G1/G2).
-P10–P12 are not authorized.
+P10 design closure is complete (GQ1–GQ7 + P7-GAP-01 rulings landed as
+DID v1.13 G1–G8; `docs/design/implementation/P10/**` contracts at
+Blocking=0 after independent review) and P10 planning is frozen
+(`planning/phases/P10.md`, 13 tasks) pending implementation
+authorization. P11–P12 are not authorized.
 
 P5 result: `planning/results/P5.result.md` (11/11 exit criteria PASS; no open Design Gap). P5-DG-01 was resolved by the decision/execution split: the scheduler evaluator owns the selection decision, the Application owns the `SelectCurrentWork` canonical mutation (P5 `01` §3.1).
 
