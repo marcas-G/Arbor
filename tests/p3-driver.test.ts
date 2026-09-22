@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,7 +13,10 @@ import {
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
-import { AgentDriverLive } from "../packages/agent-runtime/src/index.js";
+import {
+  AgentDriverLive,
+  type DirectiveHandler,
+} from "../packages/agent-runtime/src/index.js";
 import {
   type AgentExecutionState,
   type CommandSubmissionContext,
@@ -30,6 +33,8 @@ import {
   ModelContextLive,
 } from "../packages/model-context/src/index.js";
 import {
+  type CanonicalProviderEvent,
+  EnvironmentRevisionStore,
   ExecutionDriverPort,
   ModelCapabilityPort,
   type RuntimeSafetyGateService,
@@ -96,11 +101,11 @@ const tools = Layer.succeed(ToolCatalogPort, {
 });
 
 const makeApp = (
-  turns: ReadonlyArray<
-    ReadonlyArray<
-      import("../packages/ports/src/index.js").CanonicalProviderEvent
-    >
-  >,
+  turns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>,
+  options: {
+    readonly environmentRevisions?: Layer.Layer<EnvironmentRevisionStore>;
+    readonly handlers?: ReadonlyArray<DirectiveHandler>;
+  } = {},
 ) => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
@@ -119,15 +124,18 @@ const makeApp = (
     ModelContextLive,
     Layer.mergeAll(capability, skills, tools),
   );
+  const environmentRevisions =
+    options.environmentRevisions ??
+    Layer.provide(EnvironmentRevisionStoreLive, infra);
   const driver = Layer.provide(
-    AgentDriverLive(),
+    AgentDriverLive(options.handlers ?? []),
     Layer.mergeAll(
       modelContext,
       providerRuntime,
       capability,
       Layer.provide(SessionRepositoryLive, infra),
       Layer.provide(TransactionPortLive, infra),
-      Layer.provide(EnvironmentRevisionStoreLive, infra),
+      environmentRevisions,
     ),
   );
   return Layer.mergeAll(
@@ -233,6 +241,52 @@ const drive = (gate: RuntimeSafetyGateService) =>
     });
   });
 
+/** B-9: the drive plus the durable ProviderTurn count, so tests can prove that
+ * bounded repair really re-prepared (a new ProviderTurn) and that a stale
+ * decision re-prepared rather than executed. */
+const driveAndCount = (gate: RuntimeSafetyGateService) =>
+  Effect.gen(function* () {
+    const driver = yield* ExecutionDriverPort;
+    const settlement = yield* driver.drive({
+      execution,
+      agentExecutionState: state,
+      wakeReason: { _tag: "WorkSelected" },
+      context,
+      safetyGate: gate,
+    });
+    const sql = yield* SqlClient;
+    const rows = yield* sql.unsafe<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM provider_turns",
+    );
+    return { settlement, turns: Number(rows[0]?.count ?? 0) };
+  });
+
+/** B-9: a scripted `EnvironmentRevisionStore` whose `current` face advances
+ * through `revisions`, holding the last value afterwards. The driver reads the
+ * environment revision to build the turn's ControlBasis and re-reads it at
+ * effectful-directive admission, so a change between the two is a real
+ * `DecisionStale`. */
+const scriptedEnvironmentRevisions = (
+  revisions: ReadonlyArray<string>,
+): Layer.Layer<EnvironmentRevisionStore> =>
+  Layer.effect(
+    EnvironmentRevisionStore,
+    Effect.sync(() => {
+      let calls = 0;
+      return EnvironmentRevisionStore.of({
+        current: () =>
+          Effect.sync(() => {
+            const value =
+              revisions[Math.min(calls, revisions.length - 1)] ?? "0";
+            calls += 1;
+            return Option.some(value);
+          }),
+        record: () => Effect.void,
+        lazyInitAnchor: () => Effect.void,
+      });
+    }),
+  );
+
 const textTurn = [
   { _tag: "TextDelta" as const, text: "thinking" },
   { _tag: "TurnCompleted" as const, finishReason: "Stop" as const },
@@ -284,5 +338,114 @@ describe("P3-013 agent driver", () => {
     expect(settlement.result?.reason).toBe("RuntimeSafetyStop");
 
     void ModelContext;
+  });
+});
+
+const invalidTurn: ReadonlyArray<CanonicalProviderEvent> = [];
+const communicateTurn: ReadonlyArray<CanonicalProviderEvent> = [
+  {
+    _tag: "ToolCallProposed",
+    callRef: "c1",
+    toolName: "arbor_directive",
+    argumentsJson: JSON.stringify({
+      _tag: "Communicate",
+      message: { text: "working" },
+    }),
+  },
+  { _tag: "TurnCompleted", finishReason: "ToolCall" },
+];
+const invokeToolTurn: ReadonlyArray<CanonicalProviderEvent> = [
+  {
+    _tag: "ToolCallProposed",
+    callRef: "c1",
+    toolName: "arbor_directive",
+    argumentsJson: JSON.stringify({
+      _tag: "InvokeTool",
+      intent: { callRef: "c1", toolName: "noop", argumentsJson: "{}" },
+    }),
+  },
+  { _tag: "TurnCompleted", finishReason: "ToolCall" },
+];
+
+describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
+  it("repairs a ModelOutputContractViolation and continues the loop to completion", async () => {
+    const app = makeApp([invalidTurn, claimTurn]);
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P3_MIGRATIONS);
+      yield* seed;
+      return yield* driveAndCount(allowGate);
+    });
+    const result = (await run(program, app)) as {
+      settlement: { _tag: string; result?: { _tag: string } };
+      turns: number;
+    };
+    expect(result.settlement._tag).toBe("Completed");
+    expect(result.settlement.result?._tag).toBe("CompletionClaimed");
+    expect(result.turns).toBe(2);
+  });
+
+  it("settles Failed after bounded repair attempts are exhausted", async () => {
+    const app = makeApp([invalidTurn, invalidTurn, invalidTurn]);
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P3_MIGRATIONS);
+      yield* seed;
+      return yield* driveAndCount(allowGate);
+    });
+    const result = (await run(program, app)) as {
+      settlement: { _tag: string; failure?: { _tag: string } };
+      turns: number;
+    };
+    expect(result.settlement._tag).toBe("Failed");
+    expect(result.settlement.failure?._tag).toBe("ExecutionFailure");
+    expect(result.turns).toBe(3);
+  });
+
+  it("does not execute a DecisionStale action and re-prepares instead", async () => {
+    let invoked = false;
+    const invokeHandler: DirectiveHandler = {
+      kind: "InvokeTool",
+      handle: () =>
+        Effect.sync(() => {
+          invoked = true;
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: { text: "ran", truncated: false },
+          };
+        }),
+    };
+    const app = makeApp([invokeToolTurn, claimTurn], {
+      environmentRevisions: scriptedEnvironmentRevisions(["0", "1", "1", "1"]),
+      handlers: [invokeHandler],
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P3_MIGRATIONS);
+      yield* seed;
+      return yield* driveAndCount(allowGate);
+    });
+    const result = (await run(program, app)) as {
+      settlement: { _tag: string; result?: { _tag: string } };
+      turns: number;
+    };
+    expect(result.settlement._tag).toBe("Completed");
+    expect(result.settlement.result?._tag).toBe("CompletionClaimed");
+    expect(invoked).toBe(false);
+    expect(result.turns).toBe(2);
+  });
+
+  it("recovers after a repair and continues to a later turn", async () => {
+    const app = makeApp([invalidTurn, communicateTurn, claimTurn]);
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P3_MIGRATIONS);
+      yield* seed;
+      return yield* driveAndCount(allowGate);
+    });
+    const result = (await run(program, app)) as {
+      settlement: { _tag: string; result?: { _tag: string } };
+      turns: number;
+    };
+    expect(result.settlement._tag).toBe("Completed");
+    expect(result.settlement.result?._tag).toBe("CompletionClaimed");
+    expect(result.turns).toBe(3);
   });
 });
