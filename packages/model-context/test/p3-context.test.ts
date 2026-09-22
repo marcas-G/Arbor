@@ -1,19 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { ContextFragment } from "../src/index.js";
-import { contextBudget, planContext } from "../src/index.js";
+import { contextBudget, contextFragment, planContext } from "../src/index.js";
 
 const fragment = (
   ref: string,
   layer: ContextFragment["layer"],
   retention: ContextFragment["retention"],
   tokens: number,
-): ContextFragment => ({
-  ref,
-  layer,
-  retention,
-  cacheClass: "Stable",
-  tokens,
-});
+): ContextFragment =>
+  contextFragment({
+    ref,
+    layer,
+    retention,
+    cacheClass: "Stable",
+    tokens,
+    provenance: {
+      provenanceKind: "ModelDerived",
+      instructionCapability: "DataOnly",
+      epistemicStatus: "Unverified",
+    },
+  });
 
 const budget = {
   modelWindow: 100,
