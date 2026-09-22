@@ -1,9 +1,9 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.11  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P8 agentic-verification closure)  
-**Supersedes:** v1.10  
-**Date:** 2026-09-21  
+**Version:** 1.12  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P9 recovery-hardening closure)  
+**Supersedes:** v1.11  
+**Date:** 2026-09-22  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
@@ -81,6 +81,18 @@
 - G6: exact tool parameter/result schemas and the shell policy enforcement
   mechanism are **phase-scoped contract** (P4), not implementation choice; only
   backend/limits/numeric thresholds are implementation/empirical (§13).
+
+**Governance changes (v1.11 → v1.12):**（P9 收敛对账，小型治理变更）
+
+- G1 (P9 closure reconciliation): §5.3 事件目录新增 `ReconciliationEscalated`
+  {executionId, invocationRefsFingerprint, refs}——P9 恢复升级的 durable Attention
+  事实承载（P9 `01` §1.2 / `04` §1 冻结面的正式目录化；dedup key =
+  executionId + invocationRefs fingerprint）。
+- G2 (recorded corrections, no semantic change): (a) P9-011 修复 generic
+  `rebuildProjection` 的 exclusive-floor 重放缺陷（reset 目标 floor → floor-1），
+  属对 P1 `05` §6 全量重放语义的实现回归修正，回归覆盖 RB-4 + P1-008；
+  (b) `ProviderTurnStore` 恢复面扩展（`findUnsettledByProject` / `failTurn`）
+  记录于 P9 `04`（P3 `06` 语义不变，仅恢复读路径）。
 
 **Governance changes (v1.10 → v1.11):**（P8 design-closure 治理裁决 GQ1–GQ8）
 
@@ -1637,6 +1649,7 @@ ExecutionSettled
 
 PermissionChanged
 DecisionRecorded
+ReconciliationEscalated
 EnvironmentChanged
 HumanInterventionApplied
 ```

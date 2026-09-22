@@ -178,7 +178,7 @@ Blocking=0; governed by the GQ1–GQ5 decisions recorded in
 
 P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
 pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
-project `env.sh` wrapper; `pnpm check` is green. **P0–P8 are COMPLETE**;
+project `env.sh` wrapper; `pnpm check` is green. **P0–P9 are COMPLETE**;
 all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6/P7/P8 Design Gap
 (see `planning/results/P6.result.md`, `planning/results/P7.result.md`,
 `planning/results/P8.result.md`).

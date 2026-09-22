@@ -9,7 +9,7 @@ Two durable gaps close **before** any injection hardening is meaningful:
 
 1.1 **ReconciliationSource wiring**: the composition root currently binds `ReconciliationSourceStubLive` (恒 `[]`) — a stopped Execution carrying unresolved side-effectful ToolInvocations would settle as plain `Interrupted(StopRequested)`, violating invariant 54 / SD §7.3. P9 wires the existing real `ReconciliationSourceLive` (P4 `06` — already implemented, test-covered, merely unbound).
 
-1.2 **Escalation becomes durable**: `runRecovery`'s in-memory `escalated` array is replaced by durable Attention facts (one event per escalated execution, deduplicated by `executionId + invocationRefs fingerprint` (the `04` §1 key — repeated passes never mint new facts); presentation stays P10). Until P10, the fact event is the entire attention surface — assertions read the journal.
+1.2 **Escalation becomes durable**: `runRecovery`'s in-memory `escalated` array is replaced by durable Attention facts (one event per escalated execution, deduplicated by `executionId + invocationRefs fingerprint` (the `04` §1 key — repeated passes never mint new facts); presentation stays P10). The carrying event is `ReconciliationEscalated {executionId, invocationRefsFingerprint, refs}` — catalogued in DID v1.12 G1 (§5.3). Until P10, the fact event is the entire attention surface — assertions read the journal.
 
 Pre/post-fix injection assertion (gates the whole phase): an execution with an unsettled NonIdempotent invocation and `stopRequestedAt != null` must **never** settle `Interrupted`; it escalates or settles `OutcomeUnknown(ReconciliationRequired(...))`.
 

@@ -33,6 +33,7 @@ const EXPECTED_EVENTS = [
   "DependencyMarkedUnfulfillable",
   "DependencyContractRevised",
   "DeadlockAttentionRequested",
+  "ReconciliationEscalated",
   "DeliverableProduced",
   "MessageSent",
   "VerificationStarted",

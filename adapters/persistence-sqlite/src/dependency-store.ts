@@ -202,15 +202,16 @@ export const DeliverableRepositoryLive: Layer.Layer<
               [deliverableId],
             ),
           );
-          return rows.length > 0
-            ? Option.some({
-                deliverableId: rows[0]!.deliverable_id as DeliverableId,
-                sourceWorkId: rows[0]!
-                  .source_work_id as import("@arbor/domain").WorkId,
-                sourceWorkRevision: rows[0]!.source_work_revision,
-                kind: rows[0]!.kind,
-              })
-            : Option.none();
+          const row = rows[0];
+          return row === undefined
+            ? Option.none()
+            : Option.some({
+                deliverableId: row.deliverable_id as DeliverableId,
+                sourceWorkId:
+                  row.source_work_id as import("@arbor/domain").WorkId,
+                sourceWorkRevision: row.source_work_revision,
+                kind: row.kind,
+              });
         }),
       listArtifactRoles: (deliverableId: DeliverableId) =>
         Effect.gen(function* () {

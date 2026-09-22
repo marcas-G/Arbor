@@ -46,7 +46,21 @@ export const TransactionPortLive: Layer.Layer<
           }),
         );
         if (Exit.isSuccess(exit)) {
-          yield* run("COMMIT");
+          const commitExit = yield* Effect.exit(run("COMMIT"));
+          if (Exit.isFailure(commitExit)) {
+            // PB1 (P9 `02` §11): COMMIT failure must roll back explicitly —
+            // WAL all-or-nothing either way, but the connection never stays
+            // inside an open transaction.
+            yield* run("ROLLBACK").pipe(Effect.ignore, Effect.orDie);
+            return yield* Effect.failCause(commitExit.cause).pipe(
+              Effect.mapError(
+                (cause): TransactionOperationalFailure => ({
+                  _tag: "TransactionOperationalFailure",
+                  cause,
+                }),
+              ),
+            );
+          }
           return exit.value;
         }
         yield* run("ROLLBACK");
