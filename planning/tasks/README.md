@@ -5,7 +5,7 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0–P9** (complete); **P10** (planning). Task contracts reference
+Phases: **P0–P11** (complete); **P12** (planning). Task contracts reference
 `docs/design/implementation/<phase>/**`.
 
 ## Authority order
