@@ -208,10 +208,33 @@ export type ExecutionActivity =
 
 export type SafetyDecision = "Continue" | "Stop";
 
+/**
+ * P12 `08` §7A (TR-10) — inherited P2 evolution. Additive, optional
+ * observation channel widening the frozen two-argument `admitActivity`.
+ * An existing two-argument caller compiles and behaves identically. The
+ * frozen `ExecutionActivity` carries no attempt / progress / lease / rate
+ * facts, so D1/D3/D4/D5/D6 each need an explicit signal.
+ */
+export interface RuntimeSafetyObservation {
+  /** D1: 0-based retry ordinal (0 = first attempt). */
+  readonly retryCount?: number;
+  /** D4: durable progress since the previous turn boundary. */
+  readonly durableProgress?: boolean;
+  /** D3: tool recursion / chaining depth. */
+  readonly chainDepth?: number;
+  /** D5: lease-scoped in-flight gauge. */
+  readonly inFlight?: "begin" | "end";
+  /** D5: lease generation the gauge is scoped to. */
+  readonly leaseGeneration?: LeaseGeneration;
+  /** D6: rate-window timestamp (ISO-8601). */
+  readonly observedAt?: string;
+}
+
 export interface RuntimeSafetyGateService {
   readonly admitActivity: (
     executionId: ExecutionId,
     activity: ExecutionActivity,
+    observation?: RuntimeSafetyObservation,
   ) => Effect.Effect<SafetyDecision>;
 }
 

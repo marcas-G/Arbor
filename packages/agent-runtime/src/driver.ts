@@ -23,6 +23,7 @@ import {
   type ProviderRunInput,
   ProviderRuntime,
   type RuntimeSafetyGateService,
+  type RuntimeSafetyObservation,
   type SecretRef,
   SessionRepository,
   TransactionPort,
@@ -157,18 +158,47 @@ export const AgentDriverLive = (
             environmentRevision,
           };
 
+          // P12 `08` §7: the driver reports the D1/D3/D4/D5/D6 observation
+          // signals at the ProviderTurn / ToolInvocation / Specialist
+          // boundaries. The gate never reads durable state (R = never).
+          const now = (): Effect.Effect<string> =>
+            Effect.sync(() => new Date().toISOString());
+          const leaseGeneration =
+            input.context._tag === "ExecutionOrigin"
+              ? input.context.fencingGeneration
+              : undefined;
+          const admit = (
+            activity: ExecutionActivity,
+            observation: RuntimeSafetyObservation,
+          ): Effect.Effect<"Continue" | "Stop"> =>
+            input.safetyGate.admitActivity(
+              input.execution.executionId,
+              activity,
+              observation,
+            );
+          let progressedSinceBoundary = false;
+
           for (let turn = 0; turn < MAX_TURNS; turn += 1) {
             const activity: ExecutionActivity = {
               _tag: "ProviderTurn",
               fingerprint: `turn-${turn}`,
             };
-            const decision = yield* input.safetyGate.admitActivity(
-              input.execution.executionId,
-              activity,
-            );
+            // D4: durable progress since the previous turn boundary. The
+            // driver holds the journal capability and reports the boolean;
+            // the gate only counts it. D5: begin-bracket the provider call.
+            const decision = yield* admit(activity, {
+              retryCount: 0,
+              chainDepth: 0,
+              durableProgress: progressedSinceBoundary,
+              ...(leaseGeneration !== undefined
+                ? { inFlight: "begin" as const, leaseGeneration }
+                : {}),
+              observedAt: yield* now(),
+            });
             if (decision === "Stop") {
               return safetyStop("RuntimeSafetyStop");
             }
+            progressedSinceBoundary = false;
 
             const preparation = yield* modelContext
               .prepareTurn({
@@ -238,6 +268,17 @@ export const AgentDriverLive = (
                 }),
               ),
             );
+            // D5: end-bracket the provider call (call completion).
+            if (leaseGeneration !== undefined) {
+              const endDecision = yield* admit(activity, {
+                inFlight: "end",
+                leaseGeneration,
+                observedAt: yield* now(),
+              });
+              if (endDecision === "Stop") {
+                return safetyStop("RuntimeSafetyStop");
+              }
+            }
             const decoded = decodeTurn(
               events,
               AGENT_DIRECTIVE_CONTRACT,
@@ -302,6 +343,31 @@ export const AgentDriverLive = (
                   },
                 };
               }
+              // D3: report tool recursion / chaining depth at each
+              // ToolInvocation / Specialist action boundary. A top-level
+              // call sits at depth 1 (the ProviderTurn is the root at 0).
+              if (
+                directive._tag === "InvokeTool" ||
+                directive._tag === "SpawnSpecialist"
+              ) {
+                const actionActivity: ExecutionActivity =
+                  directive._tag === "InvokeTool"
+                    ? {
+                        _tag: "ToolInvocation",
+                        fingerprint: `tool:${directive.intent.toolName}:${directive.intent.argumentsJson}`,
+                      }
+                    : {
+                        _tag: "SpecialistAction",
+                        fingerprint: `spawn:${JSON.stringify(directive.spec)}`,
+                      };
+                const actionDecision = yield* admit(actionActivity, {
+                  chainDepth: 1,
+                  observedAt: yield* now(),
+                });
+                if (actionDecision === "Stop") {
+                  return safetyStop("RuntimeSafetyStop");
+                }
+              }
               const handler = handlers.find(
                 (candidate) => candidate.kind === directive._tag,
               );
@@ -333,6 +399,10 @@ export const AgentDriverLive = (
                 source: outcome.source,
                 observation: outcome.observation,
               });
+              // P12 `08` §5: a journal-recorded action settlement since the
+              // previous turn boundary is durable progress; the next turn
+              // boundary reports it. The gate never reads durable state.
+              progressedSinceBoundary = true;
             }
 
             for (const entry of observations) {
