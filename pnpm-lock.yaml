@@ -252,6 +252,24 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ports
 
+  adapters/secret-env:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
+  adapters/secret-file:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
   adapters/worker-local:
     dependencies:
       '@arbor/domain':
@@ -299,6 +317,12 @@ importers:
       '@arbor/sandbox-local':
         specifier: workspace:*
         version: link:../../adapters/sandbox-local
+      '@arbor/secret-env':
+        specifier: workspace:*
+        version: link:../../adapters/secret-env
+      '@arbor/secret-file':
+        specifier: workspace:*
+        version: link:../../adapters/secret-file
       '@arbor/tool-runtime':
         specifier: workspace:*
         version: link:../../packages/tool-runtime

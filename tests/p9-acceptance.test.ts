@@ -129,6 +129,7 @@ import {
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
+import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
 import {
   ReconciliationSourceLive,
   type ToolExecutor,
@@ -878,6 +879,7 @@ const makeStoryDApp = (
       DisconnectProviderLive(scriptByTurn, probe),
       Layer.provide(ProviderTurnStoreLive, infra),
       Layer.provide(TransactionPortLive, infra),
+      FixedSecretStoreLive(),
       infra,
     ),
   );
@@ -942,7 +944,6 @@ const dRunTurnInput = (turnId: ProviderTurnId) => ({
     budget: { maxOutputTokens: 128 },
     cacheHints: [],
   },
-  secretRef: "secret",
   timeoutMs: 30_000,
   cancellationRef: "cancel",
 });

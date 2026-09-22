@@ -26,6 +26,8 @@
     "@arbor/worker-local": "workspace:*",
     "@arbor/provider-fake": "workspace:*",
     "@arbor/sandbox-local": "workspace:*",
+    "@arbor/secret-env": "workspace:*",
+    "@arbor/secret-file": "workspace:*",
     "@arbor/blob-local": "workspace:*"
   },
   "scripts": {

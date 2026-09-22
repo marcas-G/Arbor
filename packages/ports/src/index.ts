@@ -14,6 +14,7 @@ export * from "./provider.js";
 export * from "./repositories.js";
 export * from "./resources.js";
 export * from "./runtime.js";
+export * from "./sandbox-env.js";
 export * from "./session.js";
 export * from "./snapshot-fingerprint.js";
 export * from "./tool.js";
