@@ -7,6 +7,11 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, describe, expect, it } from "vitest";
 import { ProjectEnvironmentPortLive } from "../adapters/environment-local/src/index.js";
 import { EnvironmentResolverLocalLive } from "../adapters/environment-resolver-local/src/index.js";
+// P12 `05` §5.1 (TR-1): advancement only via the internal capability.
+import {
+  EnvironmentRevisionAdvancement,
+  EnvironmentRevisionAdvancementLive,
+} from "../adapters/persistence-sqlite/src/environment-advancement.js";
 import {
   ClockLive,
   ClockTest,
@@ -471,6 +476,7 @@ const cbMakeApp = () => {
     ),
   );
   const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
+  const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
   const driver = Layer.provide(
     AgentDriverLive(),
@@ -490,6 +496,7 @@ const cbMakeApp = () => {
       providerRuntime,
       cbCapability,
       revisions,
+      advancement,
       tx,
     ),
     recorded,
@@ -985,11 +992,12 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
             yield* runMigrations(P8_MIGRATIONS);
             yield* cbSeed;
             const store = yield* EnvironmentRevisionStore;
+            const advancement = yield* EnvironmentRevisionAdvancement;
             const tx = yield* TransactionPort;
             yield* tx.transact(store.record(cbProjectId, "7"));
             const first = yield* cbDrive(0);
             const advanced = yield* tx.transact(
-              store.advanceAnchor(cbProjectId, "7"),
+              advancement.advanceAnchor(cbProjectId, "7"),
             );
             expect(advanced).toEqual({ _tag: "Advanced", to: "8" });
             const second = yield* cbDrive(1);

@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+// P12 `05` §5.1 (TR-1): advancement only via the internal capability.
+import {
+  EnvironmentRevisionAdvancement,
+  EnvironmentRevisionAdvancementLive,
+} from "../adapters/persistence-sqlite/src/environment-advancement.js";
 import {
   ClockLive,
   EnvironmentRevisionStoreLive,
@@ -181,6 +186,7 @@ const makeApp = () => {
     ),
   );
   const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
+  const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
   const driver = Layer.provide(
     AgentDriverLive(),
@@ -200,6 +206,7 @@ const makeApp = () => {
       providerRuntime,
       capability,
       revisions,
+      advancement,
       tx,
     ),
     recorded,
@@ -335,11 +342,12 @@ describe("P11 GQ4b ControlBasis environmentRevision service-internal read", () =
         yield* runMigrations(P8_MIGRATIONS);
         yield* seed;
         const store = yield* EnvironmentRevisionStore;
+        const advancement = yield* EnvironmentRevisionAdvancement;
         const tx = yield* TransactionPort;
         yield* tx.transact(store.record(projectId, "7"));
         const first = yield* drive(0);
         const advanced = yield* tx.transact(
-          store.advanceAnchor(projectId, "7"),
+          advancement.advanceAnchor(projectId, "7"),
         );
         expect(advanced).toEqual({ _tag: "Advanced", to: "8" });
         const second = yield* drive(1);

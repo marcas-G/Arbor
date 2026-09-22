@@ -22,11 +22,13 @@ import type {
  *
  *  - lazyInitAnchor(projectId)  — the FIRST successful ownership write records
  *    the initial anchor "1" (initialization, not an environment change).
- *  - advanceAnchor(projectId, expected) — CAS successor write; ONLY
- *    RecordEnvironmentChange (P11-002) may call it. A stale expected value
- *    is a typed conflict; blind advance is structurally impossible.
+ *  - record(projectId, revision) — the ownership-write face.
  *
- * No other advancement path exists on this port (CI-1).
+ * P12 `05` §5.1 (TR-1): the CAS successor advancement face is **not** on
+ * this public surface. It is an internal, non-exported capability reached
+ * only through the governed `RecordEnvironmentChange` command path (CI-1), so
+ * no observation-side code can import or invoke it. There is no other
+ * advancement path on this port.
  */
 export interface EnvironmentRevisionStoreService {
   readonly current: (
@@ -45,17 +47,6 @@ export interface EnvironmentRevisionStoreService {
   readonly lazyInitAnchor: (
     projectId: ProjectId,
   ) => Effect.Effect<void, EnvironmentRevisionStoreError, TransactionScope>;
-  /** CAS successor advancement (RecordEnvironmentChange only). */
-  readonly advanceAnchor: (
-    projectId: ProjectId,
-    expected: string,
-  ) => Effect.Effect<
-    | { readonly _tag: "Advanced"; readonly to: string }
-    | { readonly _tag: "AnchorMissing" }
-    | { readonly _tag: "RevisionConflict"; readonly current: string },
-    EnvironmentRevisionStoreError,
-    TransactionScope
-  >;
 }
 
 export class EnvironmentRevisionStore extends Context.Service<
