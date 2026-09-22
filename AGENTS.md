@@ -45,8 +45,9 @@ P10 is COMPLETE and FORMALLY CLOSED: `planning/results/P10.result.md`
 WaitingOnVacantProducer derived view; DID v1.13 G1–G8 fidelity
 held). P11 is COMPLETE: `planning/results/P11.result.md` (11/11 exit
 criteria PASS; CI-1..CI-5 mechanically proven; no open Design Gap;
-three P12 convergence items recorded). P12 design closure is in progress (DID
-v1.14 governance rulings GQ1–GQ8 landed).
+three P12 convergence items recorded). P12 design closure COMPLETE (DID v1.14
+governance rulings GQ1–GQ8 landed; P12 contracts FROZEN, Blocking=0) and P12
+planning COMPLETE (planning review Blocking=0).
 
 ```text
 P12 design closure COMPLETE (contracts FROZEN; four-way review Blocking=0)
