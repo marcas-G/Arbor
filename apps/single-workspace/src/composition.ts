@@ -55,6 +55,7 @@ import {
   type CanonicalProviderEvent,
   type ExecutionDriverPort,
   type ExecutionScheduler,
+  type ProviderFailureKind,
   type ProviderPort,
   type ReconciliationSource,
   type RunnableWorkSource,
@@ -99,6 +100,9 @@ export type ProviderAdapterConfig =
   | {
       readonly adapterId: "provider-fake";
       readonly turns?: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>;
+      /** Deterministic transient-failure injection: fail the first N calls
+       * with these kinds, then succeed (P12 `08` D1 / B-4 tests). */
+      readonly failures?: ReadonlyArray<ProviderFailureKind>;
     }
   | { readonly adapterId: "provider-openai"; readonly client: OpenAISdkClient };
 
@@ -109,7 +113,10 @@ export const selectProviderLayer = (
 ): Layer.Layer<ProviderPort> =>
   config.adapterId === "provider-openai"
     ? OpenAIProviderLive(config.client)
-    : FakeProviderLive({ turns: config.turns ?? [] });
+    : FakeProviderLive({
+        turns: config.turns ?? [],
+        ...(config.failures !== undefined ? { failures: config.failures } : {}),
+      });
 
 export interface SliceConfig {
   readonly databaseFile: string;
@@ -118,6 +125,9 @@ export interface SliceConfig {
    * catalog. Absent => the catalogued set is the builtins only. */
   readonly projectId?: ProjectId;
   readonly providerTurns?: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>;
+  /** Deterministic transient-failure injection for the default fake provider
+   * (P12 `08` D1 / B-4 integration tests). */
+  readonly providerFailures?: ReadonlyArray<ProviderFailureKind>;
   readonly modelRef?: string;
   /** P12 `12` §3/§4: the declarative catalog used for model -> adapter and
    * model capability resolution (defaults to `DEFAULT_MODEL_CATALOG`). */
@@ -188,6 +198,9 @@ export const buildSliceLayer = (
       : selectProviderLayer({
           adapterId: "provider-fake",
           turns: config.providerTurns ?? [],
+          ...(config.providerFailures !== undefined
+            ? { failures: config.providerFailures }
+            : {}),
         });
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive(3),

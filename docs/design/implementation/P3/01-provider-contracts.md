@@ -15,6 +15,11 @@ interface ProviderPortService {
 ```
 
 - `runTurn` is the **only** surface `agent-runtime` sees (DID §7.5).
+- **P12 B-4 propagation (implementation port surface, no semantic change):** `runTurn`
+  resolves to a `ProviderRunResult { events; attemptNo }` so the driver can report the real
+  Turn-local provider retry ordinal as `RuntimeSafetyObservation.retryCount` (P12 `08` §7,
+  DID §6A.9: provider retry never creates a new `ProviderTurn`). The event stream and error
+  channel are unchanged.
 - `ProviderRuntime` owns transport, auth, streaming, timeout, safe retry,
   protocol normalization and usage extraction; it never rewrites Arbor
   instruction semantics.

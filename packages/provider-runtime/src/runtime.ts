@@ -113,7 +113,10 @@ export const ProviderRuntimeLive = (
                   settledAt,
                 ),
               );
-              return events;
+              // P12 `08` §7 D1 (B-4): surface the Turn-local attempt ordinal so
+              // the caller can report real provider retries to the Runtime
+              // Safety gate. No new ProviderTurn is created (DID §6A.9).
+              return { events, attemptNo };
             }
 
             lastFailure = result.failure;

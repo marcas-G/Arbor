@@ -48,6 +48,7 @@ import {
 import {
   type CanonicalProviderEvent,
   type ExecutionActivity,
+  type ProviderFailureKind,
   ResourceOwnershipRepository,
   RuntimeSafetyGate,
   type RuntimeSafetyGateService,
@@ -545,11 +546,13 @@ interface ScenarioResult {
 const runScenario = async (
   safetyPolicy: RuntimeSafetyPolicy,
   providerTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>,
+  providerFailures?: ReadonlyArray<ProviderFailureKind>,
 ): Promise<ScenarioResult> => {
   const dir = mkdtempSync(join(tmpdir(), "p12-safety-"));
   const app = buildSliceLayer({
     databaseFile: join(dir, "slice.db"),
     providerTurns,
+    ...(providerFailures !== undefined ? { providerFailures } : {}),
     runtimeSafetyPolicy: safetyPolicy,
   });
   return Effect.runPromise(
@@ -703,5 +706,63 @@ describe("P12-008 end-to-end violation -> Interrupted(RuntimeSafetyStop), Work O
     expect(facts.safetyStopSettlements[0]?.executionId).toBe(
       scenarioExecutionId,
     );
+  });
+});
+
+// --- D1 wired to the real ProviderAttempt lifecycle (B-4) ---------------------
+
+const communicateTurn: ReadonlyArray<CanonicalProviderEvent> = [
+  {
+    _tag: "ToolCallProposed",
+    callRef: "c1",
+    toolName: "arbor_directive",
+    argumentsJson: JSON.stringify({
+      _tag: "Communicate",
+      message: { text: "working" },
+    }),
+  },
+  { _tag: "TurnCompleted", finishReason: "ToolCall" },
+];
+
+describe("P12-008 D1 real ProviderAttempt lifecycle (B-4)", () => {
+  it("a real transient retry at the ProviderAttempt boundary trips {maxRetries:1} -> Interrupted(RuntimeSafetyStop), Work Open", async () => {
+    // The provider's first transport attempt fails retryably and the second
+    // succeeds under the SAME ProviderTurn (DID §6A.9 — no new ProviderTurn).
+    // ProviderRuntimeLive(maxAttempts=3) performs the retry; its attempt
+    // ordinal (1) reaches the gate through the observation channel.
+    const result = await runScenario(
+      policy({ maxRetries: 1 }),
+      [claimTurns[0]!, claimTurns[0]!],
+      ["ProviderUnavailable"],
+    );
+    expect(result.settlementTag).toBe("Interrupted");
+    expect(result.settlementReason).toBe("RuntimeSafetyStop");
+    expect(result.settlementKind).toBe("Interrupted");
+    expect(result.workLifecycle).toBe("Open");
+    expect(result.settledEventPayload).toContain("RuntimeSafetyStop");
+  });
+
+  it("the same real retry continues to Completion when maxRetries admits it (threshold-driven)", async () => {
+    const result = await runScenario(
+      policy({ maxRetries: 3 }),
+      [claimTurns[0]!, claimTurns[0]!],
+      ["ProviderUnavailable"],
+    );
+    expect(result.settlementTag).toBe("Completed");
+    expect(result.settlementReason).toBeNull();
+  });
+
+  it("a retried operation is followed by a clean operation boundary (retryCount 0) that resets the D1 counter and completes", async () => {
+    // Turn 0 needs one real retry (attempt ordinal 1) and yields a
+    // Communicate observation so the drive continues; turn 1's first attempt
+    // reports retryCount 0, resetting the per-operation counter, and claims
+    // completion.
+    const result = await runScenario(
+      policy({ maxRetries: 3 }),
+      [communicateTurn, communicateTurn, claimTurns[0]!],
+      ["ProviderUnavailable"],
+    );
+    expect(result.settlementTag).toBe("Completed");
+    expect(result.settlementReason).toBeNull();
   });
 });
