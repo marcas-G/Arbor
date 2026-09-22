@@ -242,8 +242,8 @@ deferral. All are assigned to `05` by `00-contract-index.md`.
   silent deletion**: `planning/results/P11.result.md:55` remains the provenance, and the
   amended test name/comment records the P12 narrowing.
 - **Additional affected suites (B1):** removing `advanceAnchor` from the public port also
-  breaks `tests/p11-revision-algebra.test.ts:210-257` and `tests/p11-controlbasis.test.ts:340`,
-  which invoke `(yield* EnvironmentRevisionStore).advanceAnchor(...)`. These are re-homed
+  breaks `tests/p11-revision-algebra.test.ts:210-257`, `tests/p11-controlbasis.test.ts:340` and
+  `tests/p11-acceptance.test.ts:990`, which invoke `(yield* EnvironmentRevisionStore).advanceAnchor(...)`. These are re-homed
   onto the internal non-exported capability (or the removal is scoped so they still
   type-check) as part of the same recorded amendment.
 - Assert: the amended `p11-closure` test and `p12-closure` both prove the ports public

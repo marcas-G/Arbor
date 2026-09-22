@@ -44,7 +44,8 @@ See `planning/gaps/README.md` for the index and resolution process.
 | P3 | Provider + Model Context + Minimal Agent Loop | COMPLETE — P3-001 … P3-018 done; see planning/results/P3.result.md |
 | P4 | Tool Runtime | COMPLETE — P4-001 … P4-018 done; see planning/results/P4.result.md |
 | P5 | Single-Workspace Vertical Slice | COMPLETE — P5-001 … P5-011 done; see planning/results/P5.result.md |
-| P6–P12 | see DID-10 | not authorized |
+| P6–P11 | see DID-10 | COMPLETE |
+| P12 | Production / Extensibility | PLANNING COMPLETE — implementation NOT AUTHORIZED |
 
 Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) and `P1-DG-01` … `P1-DG-11`
 are `RESOLVED`. P0 and P1 planning are frozen. The environment baseline
