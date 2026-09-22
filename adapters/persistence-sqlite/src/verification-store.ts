@@ -3,12 +3,10 @@ import type {
   ConclusionReason,
   EvidenceId,
   ExecutionId,
-  ProjectId,
   Verification,
   VerificationId,
   VerificationVerdict,
   WorkId,
-  WorkspaceId,
 } from "@arbor/domain";
 import {
   AcceptanceRepository,
@@ -142,6 +140,17 @@ export const VerificationRepositoryLive: Layer.Layer<
           const rows = yield* run(
             sql.unsafe<VerificationRow>(
               `SELECT ${VERIFICATION_COLUMNS} FROM verifications WHERE state = 'Open'`,
+            ),
+          );
+          return rows.map((row) => toVerification(row as VerificationRow));
+        }),
+      listByWork: (workId: WorkId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<VerificationRow>(
+              `SELECT ${VERIFICATION_COLUMNS} FROM verifications WHERE work_id = ? ORDER BY target_work_revision, verification_id`,
+              [workId],
             ),
           );
           return rows.map((row) => toVerification(row as VerificationRow));

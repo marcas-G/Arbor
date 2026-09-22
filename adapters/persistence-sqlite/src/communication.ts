@@ -121,6 +121,17 @@ export const MessageStoreLive: Layer.Layer<MessageStore, never, SqlClient> =
             );
             return rows.length > 0;
           }),
+        listByRecipient: (recipientWorkspaceId) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const rows = yield* run(
+              sql.unsafe<MessageRow>(
+                "SELECT message_id, sender_workspace_id, recipient_workspace_id, kind, body_ref, correlation_id, causation_id, sent_at FROM messages WHERE recipient_workspace_id = ? ORDER BY message_id",
+                [recipientWorkspaceId],
+              ),
+            );
+            return rows.map(toMessageRecord);
+          }),
       });
     }),
   );

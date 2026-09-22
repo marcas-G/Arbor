@@ -1740,9 +1740,14 @@ describe("p6-acceptance", () => {
       expect(result.criticalOutcome.steer.result.severity).toBe("Critical");
       expect(result.criticalOutcome.steer.result.fromRevision).toBe(1);
       expect(result.criticalOutcome.steer.result.toRevision).toBe(2);
-      expect(result.criticalOutcome.steer.events).toHaveLength(1);
+      // P10 `06` §2 back-fill: the paired HumanInterventionApplied fact
+      // rides the same events array as WorkSteered.
+      expect(result.criticalOutcome.steer.events).toHaveLength(2);
       expect(result.criticalOutcome.steer.events[0]?.eventType).toBe(
         "WorkSteered",
+      );
+      expect(result.criticalOutcome.steer.events[1]?.eventType).toBe(
+        "HumanInterventionApplied",
       );
       expect(result.criticalOutcome.stop.result.stopRequestedAt).toBe("t");
       expect(result.criticalOutcome.stop.events).toHaveLength(1);

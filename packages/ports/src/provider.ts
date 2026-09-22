@@ -213,6 +213,24 @@ export interface ProviderTurnStoreService {
     providerTurnId: ProviderTurnId,
     settledAt: string,
   ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
+  /** P10-007 read-only extension (observe-only, invariant 45): settled
+   * provider turns with their usage_json and executing workspace — the
+   * Usage aggregation source. Never feeds budget or any mutation. */
+  readonly listUsageByProject: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<ProviderTurnUsageRow>,
+    ProviderFailure,
+    TransactionScope
+  >;
+}
+
+/** P10-007: one settled-or-unsettled provider_turns usage fact, workspace
+ * attributed (usage_json raw; parsing belongs to the projection). */
+export interface ProviderTurnUsageRow {
+  readonly workspaceId: import("@arbor/domain").WorkspaceId;
+  readonly usageJson: string | null;
+  readonly settledAt: string | null;
 }
 
 export class ProviderTurnStore extends Context.Service<

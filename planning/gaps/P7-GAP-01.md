@@ -1,7 +1,7 @@
 # P7-GAP-01 — Vacant-workspace dependency attention channel (DEFERRED to P10)
 
 **Raised:** 2026-09-21, P7 contract targeted review (round 2, B-2 zero-candidate branch).
-**Disposition:** 2026-09-21, at P7 formal closure — **DEFERRED to P10 (Projection/Attention owner)**, option 3 realized as an L6 derived view rather than a new runtime event. See rationale below.
+**Disposition:** 2026-09-21, DEFERRED to P10 → **CLOSED 2026-09-22 at P10 completion**: implemented as the `WaitingOnVacantProducer` canonical-state-derived Attention view (`packages/projection-runtime/src/attention.ts`; join with the ¬Retired predicate; positive+negative fixtures in p10-attention-readmodel / p10-acceptance Story B; zero runtime mutation — canonical snapshots asserted). See `planning/results/P10.result.md`.
 
 ## Fact pattern
 

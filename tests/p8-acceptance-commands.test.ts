@@ -225,9 +225,14 @@ describe("p8-acceptance-commands", () => {
         );
         expect(outcome.ok).toBe(true);
         if (outcome.ok) {
-          expect(outcome.value.events).toHaveLength(1);
+          // P10 `06` §2: the human-originated acceptance pairs the fact
+          // with HumanInterventionApplied(GovernanceDecision).
+          expect(outcome.value.events).toHaveLength(2);
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("WorkOutcomeAccepted");
+          expect(outcome.value.events[1]!.eventType).toBe(
+            "HumanInterventionApplied",
+          );
           expect(event.eventVersion).toBe(1);
           expect(event.aggregateRef).toBe(WORK_1);
           expect(event.causedByCommandId).toBe(CMD("0123456789b1"));

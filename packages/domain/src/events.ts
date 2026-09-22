@@ -40,7 +40,12 @@ export const CurrentWorkChanged = Schema.TaggedStruct("CurrentWorkChanged", {});
 export const WorkRefined = Schema.TaggedStruct("WorkRefined", {});
 export const WorkCompleted = Schema.TaggedStruct("WorkCompleted", {});
 export const WorkCancelled = Schema.TaggedStruct("WorkCancelled", {});
-export const WorkSteered = Schema.TaggedStruct("WorkSteered", {});
+export const WorkSteered = Schema.TaggedStruct("WorkSteered", {
+  workId: Schema.String,
+  fromRevision: Schema.Number,
+  toRevision: Schema.Number,
+  severity: Schema.String,
+});
 export const DependencyDeclared = Schema.TaggedStruct("DependencyDeclared", {
   dependencyId: Schema.String,
   consumerWorkId: Schema.String,
@@ -140,7 +145,13 @@ export const DecisionRecorded = Schema.TaggedStruct("DecisionRecorded", {});
 export const EnvironmentChanged = Schema.TaggedStruct("EnvironmentChanged", {});
 export const HumanInterventionApplied = Schema.TaggedStruct(
   "HumanInterventionApplied",
-  {},
+  {
+    actor: Schema.String,
+    targetWorkspaceId: Schema.String,
+    summaryRef: Schema.String,
+    occurredAt: Schema.String,
+    kind: Schema.String,
+  },
 );
 
 export const DomainEventPayload = Schema.Union([

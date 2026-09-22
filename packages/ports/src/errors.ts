@@ -125,3 +125,49 @@ export interface ArtifactMetadataError {
   readonly _tag: "ArtifactMetadataError";
   readonly cause: unknown;
 }
+
+// --- P10 (DID §10.5 Problem DTO vocabulary; P10 `05` §1) ---
+
+/** Stable projection query failure codes — consumers switch on these, never
+ * on message text (DID §10.5). */
+export const PROJECTION_QUERY_ERROR_CODES = [
+  "projection/stale",
+  "projection/unavailable",
+  "projection/invalid-request",
+] as const;
+
+export type ProjectionQueryErrorCode =
+  (typeof PROJECTION_QUERY_ERROR_CODES)[number];
+
+/** Freshness barrier refused — typed staleness marker (P10 `03` §2). */
+export interface ProjectionStale {
+  readonly _tag: "ProjectionStale";
+  readonly code: "projection/stale";
+  readonly category: "stale";
+  readonly correlationId: string | null;
+  readonly retryDisposition: "retryable";
+  readonly safeDetails: Readonly<Record<string, unknown>>;
+}
+
+export interface ProjectionUnavailable {
+  readonly _tag: "ProjectionUnavailable";
+  readonly code: "projection/unavailable";
+  readonly category: "unavailable";
+  readonly correlationId: string | null;
+  readonly retryDisposition: "retryable";
+  readonly safeDetails: Readonly<Record<string, unknown>>;
+}
+
+export interface ProjectionInvalidRequest {
+  readonly _tag: "ProjectionInvalidRequest";
+  readonly code: "projection/invalid-request";
+  readonly category: "invalid-request";
+  readonly correlationId: string | null;
+  readonly retryDisposition: "non-retryable";
+  readonly safeDetails: Readonly<Record<string, unknown>>;
+}
+
+export type ProjectionQueryError =
+  | ProjectionStale
+  | ProjectionUnavailable
+  | ProjectionInvalidRequest;

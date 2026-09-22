@@ -19,6 +19,10 @@ import type {
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
 import type { CommandHandler } from "../gateway.js";
+import {
+  emitHumanIntervention,
+  isHumanOriginatedPrincipal,
+} from "../human-intervention.js";
 
 /**
  * P8 `01` §4/§5: the acceptance and completion command faces.
@@ -73,7 +77,7 @@ export const makeAcceptWorkOutcomeHandler = (
       authority.verificationId === payload.verificationId,
   },
   stopAdmission: { _tag: "NormalExecutionMutation" },
-  execute: (envelope) =>
+  execute: (envelope, context) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
       const existing = yield* dependencies.works.findById(payload.workId);
@@ -160,6 +164,25 @@ export const makeAcceptWorkOutcomeHandler = (
           },
         },
       ];
+
+      // P10 `06` §2: AcceptWorkOutcome is one of the four human-originated
+      // mutating governance commands — the fact is emitted ONLY for a
+      // human-originated submitting principal (provenance
+      // AuthenticatedHuman, DID §8.4A); agent submissions emit nothing.
+      // Same semantic transaction as WorkOutcomeAccepted.
+      if (isHumanOriginatedPrincipal(context.principal)) {
+        events.push(
+          emitHumanIntervention({
+            projectId: envelope.projectId,
+            commandId: envelope.commandId,
+            actor: envelope.actor,
+            targetWorkspaceId: work.workspaceId,
+            summaryRef: `work outcome accepted: ${payload.workId} at revision ${payload.targetWorkRevision}`,
+            occurredAt: envelope.issuedAt,
+            kind: "GovernanceDecision",
+          }),
+        );
+      }
 
       return commandOk({
         result: {

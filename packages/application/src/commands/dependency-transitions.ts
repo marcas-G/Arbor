@@ -7,14 +7,17 @@ import {
   err,
   incrementOrdinal,
   markDependencyUnfulfillable,
+  type Principal,
   type ProducerBinding,
   reviseExpectedContract,
+  type WorkId,
   withdrawDependency,
 } from "@arbor/domain";
 import type {
   DependencyRepositoryService,
   PendingDomainEvent,
   TransactionScope,
+  WorkRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
@@ -23,6 +26,10 @@ import {
   commandOk,
 } from "../command-result.js";
 import type { CommandHandler, GatewayEnvelope } from "../gateway.js";
+import {
+  emitHumanIntervention,
+  isHumanOriginatedPrincipal,
+} from "../human-intervention.js";
 
 /** P7 `01` §5–§7: the three dependency terminal/revision commands.
  * Scope is handler-only — the §8 derived batch transitions
@@ -34,6 +41,9 @@ export interface DependencyTransitionDependencies {
     DependencyRepositoryService,
     "findById" | "transitionIfUnsatisfiedRevision"
   >;
+  /** Consumer-work owner lookup — the HumanInterventionApplied target
+   * (P10 `06` §2) is the Workspace owning the consumer Work. */
+  readonly works: Pick<WorkRepositoryService, "findById">;
 }
 
 interface TransitionApplied {
@@ -124,6 +134,41 @@ const dependencyEvent = (
   payload,
 });
 
+/** P10 `06` §2: WithdrawDependency / MarkDependencyUnfulfillable are two
+ * of the four human-originated mutating governance commands — the fact is
+ * emitted ONLY for a human-originated submitting principal (provenance
+ * AuthenticatedHuman, DID §8.4A); agent submissions emit nothing. Target
+ * = the Workspace owning the consumer Work; same semantic transaction as
+ * the primary event. The store channel is defects-only here (the §5–§7
+ * precedent). */
+const humanGovernanceFact = (
+  dependencies: DependencyTransitionDependencies,
+  envelope: GatewayEnvelope<unknown>,
+  contextPrincipal: Principal,
+  consumerWorkId: WorkId,
+  summaryRef: string,
+): Effect.Effect<PendingDomainEvent | null, never, TransactionScope> =>
+  Effect.gen(function* () {
+    if (!isHumanOriginatedPrincipal(contextPrincipal)) {
+      return null;
+    }
+    const work = yield* dependencies.works
+      .findById(consumerWorkId)
+      .pipe(Effect.orDie);
+    if (Option.isNone(work)) {
+      return null;
+    }
+    return emitHumanIntervention({
+      projectId: envelope.projectId,
+      commandId: envelope.commandId,
+      actor: envelope.actor,
+      targetWorkspaceId: work.value.workspaceId,
+      summaryRef,
+      occurredAt: envelope.issuedAt,
+      kind: "GovernanceDecision",
+    });
+  });
+
 // --- WithdrawDependency (P7 `01` §5, v1.10 G1) ---
 
 export interface WithdrawDependencyPayload {
@@ -159,7 +204,7 @@ export const makeWithdrawDependencyHandler = (
       authority.dependencyId === payload.dependencyId,
   },
   stopAdmission: { _tag: "NormalExecutionMutation" },
-  execute: (envelope) =>
+  execute: (envelope, context) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
       const applied = yield* applyUnsatisfiedTransition(
@@ -178,6 +223,16 @@ export const makeWithdrawDependencyHandler = (
           reason: payload.reason,
         }),
       ];
+      const governanceFact = yield* humanGovernanceFact(
+        dependencies,
+        envelope,
+        context.principal,
+        applied.value.next.consumerWorkId,
+        `dependency ${payload.dependencyId} withdrawn: ${payload.reason}`,
+      );
+      if (governanceFact !== null) {
+        events.push(governanceFact);
+      }
       return commandOk({
         result: {
           dependencyId: payload.dependencyId,
@@ -226,7 +281,7 @@ export const makeMarkDependencyUnfulfillableHandler = (
       authority.dependencyId === payload.dependencyId,
   },
   stopAdmission: { _tag: "NormalExecutionMutation" },
-  execute: (envelope) =>
+  execute: (envelope, context) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
       const applied = yield* applyUnsatisfiedTransition(
@@ -250,6 +305,16 @@ export const makeMarkDependencyUnfulfillableHandler = (
           },
         ),
       ];
+      const governanceFact = yield* humanGovernanceFact(
+        dependencies,
+        envelope,
+        context.principal,
+        applied.value.next.consumerWorkId,
+        `dependency ${payload.dependencyId} marked unfulfillable: ${payload.justification}`,
+      );
+      if (governanceFact !== null) {
+        events.push(governanceFact);
+      }
       return commandOk({
         result: {
           dependencyId: payload.dependencyId,
