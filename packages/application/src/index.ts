@@ -1,4 +1,5 @@
 export * from "./authority.js";
+export * from "./authority-resolver.js";
 export * from "./capability-ceiling.js";
 export * from "./command-result.js";
 export * from "./commands/index.js";

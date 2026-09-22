@@ -5,6 +5,7 @@ import type {
   ExecutionId,
   FormationProposalId,
   LeaseGeneration,
+  PermissionGrantId,
   PluginId,
   PluginVersion,
   Principal,
@@ -247,19 +248,46 @@ export type VerifiedCommandAuthority =
       readonly pluginId: PluginId;
       readonly pluginVersion: PluginVersion;
       readonly contentHash: string;
+    }
+  | {
+      /** P12 `02` §5 (G2): `GrantPermission` governance command. The variant
+       * is the authority surface the resolver produces and the handler
+       * exact-matches; `put` is the only durable writer (CI-1). */
+      readonly _tag: "GrantPermissionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly permissionGrantId: PermissionGrantId;
+    }
+  | {
+      /** P12 `02` §5 (G2): `RevokePermission` governance command. The variant
+       * is the authority surface the resolver produces and the handler
+       * exact-matches; `revoke` is the only durable writer (CI-1). */
+      readonly _tag: "RevokePermissionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly permissionGrantId: PermissionGrantId;
     };
 
 /**
- * P2 command-specific runtime authority facts (P2 `01` §2). Runtime origins
- * only; External human admit/stop is deferred to the Authority Resolver phase.
+ * P2 command-specific runtime authority facts (P2 `01` §2). P12 `02` §4
+ * (TR-8 / P2 `00` R1 + DID §4.1) widens the External human/parent path:
+ * `AdmitExecutionAuthority` / `StopExecutionAuthority` now also carry
+ * `submissionOrigin: "External"`, resolved by the P12 Authority Resolver.
+ * `SettleExecutionAuthority` is unchanged (ExecutionOrigin | RecoveryController)
+ * and is never produced by the resolver.
  */
 export type VerifiedRuntimeCommandAuthority =
   | {
       /** P6 `01` §3: specialist spawn admits from an execution origin (the
        * directive handler forwards the owning execution); P2 worker dispatch
-       * keeps the System origin. */
+       * keeps the System origin; P12 `02` §4 adds the External human/parent
+       * path. */
       readonly _tag: "AdmitExecutionAuthority";
-      readonly submissionOrigin: "System" | "ExecutionOrigin";
+      readonly submissionOrigin: "System" | "ExecutionOrigin" | "External";
       readonly principal: Principal;
       readonly commandId: CommandId;
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
@@ -270,7 +298,7 @@ export type VerifiedRuntimeCommandAuthority =
     }
   | {
       readonly _tag: "StopExecutionAuthority";
-      readonly submissionOrigin: "System" | "ExecutionOrigin";
+      readonly submissionOrigin: "System" | "ExecutionOrigin" | "External";
       readonly principal: Principal;
       readonly commandId: CommandId;
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
