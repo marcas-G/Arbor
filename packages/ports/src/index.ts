@@ -20,4 +20,5 @@ export * from "./session.js";
 export * from "./snapshot-fingerprint.js";
 export * from "./tool.js";
 export * from "./verification-store.js";
+export * from "./worker-transport.js";
 export * from "./worktree-store.js";

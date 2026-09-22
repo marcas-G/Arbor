@@ -9,7 +9,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P8_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   runMigrations,
@@ -290,7 +290,7 @@ const acquireLease = (workerId: string) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const leases = yield* LeaseService;
-    return yield* tx.transact(leases.acquire(executionId, workerId));
+    return yield* tx.transact(leases.acquire(executionId, workerId, "inc-a"));
   });
 
 /** Expire the live lease in place via the production release CAS (sets
@@ -299,7 +299,9 @@ const expireInPlace = (workerId: string, generation: LeaseGeneration) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const repo = yield* ExecutionRepository;
-    yield* tx.transact(repo.releaseLease(executionId, workerId, generation));
+    yield* tx.transact(
+      repo.releaseLease(executionId, workerId, "inc-a", generation),
+    );
   });
 
 const settleViaGateway = (
@@ -510,7 +512,7 @@ const run = <A>(program: Effect.Effect<A, any, any>): Promise<A> =>
   );
 
 const boot = Effect.gen(function* () {
-  yield* runMigrations(P8_MIGRATIONS);
+  yield* runMigrations(P12_MIGRATIONS);
   yield* seed;
 });
 

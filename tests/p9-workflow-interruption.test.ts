@@ -474,7 +474,11 @@ const settleCompleted = (executionId: string) =>
     const tx = yield* TransactionPort;
     const leases = yield* LeaseService;
     const lease = yield* tx.transact(
-      leases.acquire(executionId as never as ExecutionId, "worker:p9df"),
+      leases.acquire(
+        executionId as never as ExecutionId,
+        "worker:p9df",
+        "inc-p9df",
+      ),
     );
     const payload: SettleExecutionPayload = {
       executionId: executionId as never as ExecutionId,

@@ -45,7 +45,7 @@ import {
   admitExecution,
   buildSliceLayer,
   evaluateAndSelect,
-  P7_MIGRATIONS,
+  P12_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
 
@@ -200,7 +200,7 @@ describe("P5 vertical-slice acceptance", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P7_MIGRATIONS);
+          yield* runMigrations(P12_MIGRATIONS);
           const gateway = yield* CommandGateway;
           const scheduler = yield* ExecutionScheduler;
           const sql = yield* SqlClient;
@@ -438,6 +438,12 @@ describe("P5 vertical-slice acceptance", () => {
       true,
     );
 
-    expect(result.verificationTables).toEqual([]);
+    // P12 composition: the slice runs the current full migration baseline
+    // (`P12_MIGRATIONS`), so the P8 verification tables are now installed.
+    expect([...result.verificationTables].sort()).toEqual([
+      "verification_evidence",
+      "verification_executions",
+      "verifications",
+    ]);
   });
 });

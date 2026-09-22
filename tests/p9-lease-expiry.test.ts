@@ -9,7 +9,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P8_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
@@ -191,7 +191,7 @@ const seed = Effect.gen(function* () {
 });
 
 const boot = Effect.gen(function* () {
-  yield* runMigrations(P8_MIGRATIONS);
+  yield* runMigrations(P12_MIGRATIONS);
   yield* seed;
 });
 
@@ -236,21 +236,25 @@ const acquireLease = (workerId: string) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const leases = yield* LeaseService;
-    return yield* tx.transact(leases.acquire(executionId, workerId));
+    return yield* tx.transact(leases.acquire(executionId, workerId, "inc-a"));
   });
 
 const renewLease = (workerId: string, generation: LeaseGeneration) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const leases = yield* LeaseService;
-    return yield* tx.transact(leases.renew(executionId, workerId, generation));
+    return yield* tx.transact(
+      leases.renew(executionId, workerId, "inc-a", generation),
+    );
   });
 
 const expireInPlace = (workerId: string, generation: LeaseGeneration) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const repo = yield* ExecutionRepository;
-    yield* tx.transact(repo.releaseLease(executionId, workerId, generation));
+    yield* tx.transact(
+      repo.releaseLease(executionId, workerId, "inc-a", generation),
+    );
   });
 
 const invalidateExpired = Effect.gen(function* () {

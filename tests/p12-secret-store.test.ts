@@ -15,7 +15,7 @@ import {
   admitExecution,
   buildSliceLayer,
   evaluateAndSelect,
-  P7_MIGRATIONS,
+  P12_MIGRATIONS,
   runMigrations,
 } from "../apps/single-workspace/src/index.js";
 import {
@@ -341,7 +341,7 @@ describe("P12-003 sentinel no-leak", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P7_MIGRATIONS);
+            yield* runMigrations(P12_MIGRATIONS);
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               envelope("CreateProject", projectPayload, commandId("1")),

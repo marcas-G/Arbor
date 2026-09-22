@@ -31,6 +31,9 @@ export const LEASE_TTL_MS = 30_000;
 export const LEASE_RENEW_INTERVAL_MS = LEASE_TTL_MS / 3;
 
 const WORKER_ID = "worker:local";
+/** P12 `06` §2: the in-process worker incarnation. A daemon restart mints a
+ * new incarnation so an old process cannot be mistaken for the current one. */
+const WORKER_INCARNATION_ID = "wic_local_process";
 
 /** P2 `03` §7 / P9 `03` §1: the renewal CAS failed (stale generation / no
  * live lease) — the worker lost ownership, must stop durable mutation and
@@ -47,6 +50,7 @@ export interface LeaseLost {
 export const renewLeaseOnce = (
   executionId: ExecutionId,
   workerId: string,
+  workerIncarnationId: string,
   generation: LeaseGeneration,
 ): Effect.Effect<
   LeaseRecord,
@@ -57,7 +61,9 @@ export const renewLeaseOnce = (
     const tx = yield* TransactionPort;
     const leases = yield* LeaseService;
     return yield* tx
-      .transact(leases.renew(executionId, workerId, generation))
+      .transact(
+        leases.renew(executionId, workerId, workerIncarnationId, generation),
+      )
       .pipe(
         Effect.mapError(
           (
@@ -79,6 +85,7 @@ export const renewLeaseOnce = (
 export const leaseRenewalLoop = (
   executionId: ExecutionId,
   workerId: string,
+  workerIncarnationId: string,
   generation: LeaseGeneration,
   intervalMs: number = LEASE_RENEW_INTERVAL_MS,
 ): Effect.Effect<
@@ -89,7 +96,12 @@ export const leaseRenewalLoop = (
   Effect.forever(
     Effect.gen(function* () {
       yield* Effect.sleep(intervalMs);
-      yield* renewLeaseOnce(executionId, workerId, generation);
+      yield* renewLeaseOnce(
+        executionId,
+        workerId,
+        workerIncarnationId,
+        generation,
+      );
     }),
   );
 
@@ -123,7 +135,9 @@ export const runExecution = (
       workspaceId: execution.value.workspaceId,
       workerKind: "Agent",
     });
-    const lease = yield* tx.transact(leases.acquire(executionId, WORKER_ID));
+    const lease = yield* tx.transact(
+      leases.acquire(executionId, WORKER_ID, WORKER_INCARNATION_ID),
+    );
     const state = yield* tx.transact(states.find(executionId));
     // P9 `03` §1: race the drive against the renewal loop — the first to
     // complete wins; a lost renewal (LeaseLost) interrupts the drive so no
@@ -148,12 +162,15 @@ export const runExecution = (
           principal,
           executionId,
           fencingGeneration: lease.generation,
+          workerId: lease.workerId,
+          workerIncarnationId: lease.workerIncarnationId,
         },
         safetyGate: safety,
       }),
       leaseRenewalLoop(
         executionId,
         lease.workerId,
+        lease.workerIncarnationId,
         lease.generation,
         renewIntervalMs,
       ),
@@ -187,6 +204,8 @@ export const runExecution = (
       principal,
       executionId,
       fencingGeneration: lease.generation,
+      workerId: lease.workerId,
+      workerIncarnationId: lease.workerIncarnationId,
     };
     const receipt = yield* gateway.execute(
       {
@@ -211,7 +230,14 @@ export const runExecution = (
     // lease-expiry authority — a failed release is a lost optimization, not
     // a correctness failure.
     yield* tx
-      .transact(leases.release(executionId, lease.workerId, lease.generation))
+      .transact(
+        leases.release(
+          executionId,
+          lease.workerId,
+          lease.workerIncarnationId,
+          lease.generation,
+        ),
+      )
       .pipe(Effect.ignore);
     return settlement;
   });

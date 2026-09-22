@@ -10,7 +10,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P2_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
@@ -194,7 +194,7 @@ describe("P2-014 driver / dispatch / safety", () => {
       result: { _tag: "CoordinationCompleted" },
     });
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* admit;
       const settlement = yield* runExecution(
@@ -222,7 +222,7 @@ describe("P2-014 driver / dispatch / safety", () => {
       result: { _tag: "CoordinationCompleted" },
     });
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       const gate = yield* RuntimeSafetyGate;
       const decisions: string[] = [];
       for (let index = 0; index < 4; index += 1) {

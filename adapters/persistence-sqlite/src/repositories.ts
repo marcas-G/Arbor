@@ -650,10 +650,26 @@ export const SessionRepositoryLive: Layer.Layer<
           yield* TransactionScope;
           if (fence !== undefined) {
             const fenceNow = yield* clock.now();
+            const identity =
+              fence.workerId !== undefined &&
+              fence.workerIncarnationId !== undefined
+                ? {
+                    clause:
+                      " AND l.worker_id = ? AND l.worker_incarnation_id = ?",
+                    params: [fence.workerId, fence.workerIncarnationId],
+                  }
+                : fence.workerId !== undefined
+                  ? { clause: " AND l.worker_id = ?", params: [fence.workerId] }
+                  : { clause: "", params: [] };
             const fenceRows = yield* run(
               sql.unsafe<{ ok: number }>(
-                "SELECT 1 AS ok FROM executions e JOIN execution_leases l ON l.execution_id = e.execution_id WHERE e.execution_id = ? AND l.generation = ? AND l.expires_at > ? AND e.settled_at IS NULL",
-                [fence.executionId, fence.fencingGeneration, fenceNow],
+                `SELECT 1 AS ok FROM executions e JOIN execution_leases l ON l.execution_id = e.execution_id WHERE e.execution_id = ?${identity.clause} AND l.generation = ? AND l.expires_at > ? AND e.settled_at IS NULL`,
+                [
+                  fence.executionId,
+                  ...identity.params,
+                  fence.fencingGeneration,
+                  fenceNow,
+                ],
               ),
             );
             if (fenceRows.length === 0) {

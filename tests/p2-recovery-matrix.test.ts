@@ -10,7 +10,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P2_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
@@ -180,7 +180,7 @@ const bootstrap = Effect.gen(function* () {
     { _tag: "System", principal, causationRef: "c" },
     authority,
   );
-  yield* tx.transact(leases.acquire(executionId, "worker:a"));
+  yield* tx.transact(leases.acquire(executionId, "worker:a", "inc-a"));
 });
 
 const run = <A>(
@@ -195,7 +195,7 @@ describe("P2-016 lease / stop / settle recovery matrix", () => {
   it("rejects a fenced Session append after the lease expires", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* bootstrap;
       const tx = yield* TransactionPort;
@@ -203,7 +203,7 @@ describe("P2-016 lease / stop / settle recovery matrix", () => {
       const sessions = yield* SessionRepository;
       // Expire the lease in place.
       yield* tx.transact(
-        repo.releaseLease(executionId, "worker:a", 0 as never),
+        repo.releaseLease(executionId, "worker:a", "inc-a", 0 as never),
       );
       const lateWrite = yield* tx
         .transact(
@@ -223,7 +223,7 @@ describe("P2-016 lease / stop / settle recovery matrix", () => {
   it("settles a stopped execution (QuiescenceControl) and recovers the rest", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* bootstrap;
       const tx = yield* TransactionPort;

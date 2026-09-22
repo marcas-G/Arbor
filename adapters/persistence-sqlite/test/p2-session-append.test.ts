@@ -21,7 +21,7 @@ import {
   ClockLive,
   ExecutionRepositoryLive,
   layer,
-  P2_MIGRATIONS,
+  P12_MIGRATIONS,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -115,7 +115,7 @@ describe("P2 Session appendEntry + AgentExecutionState", () => {
   it("allocates contiguous Session-local sequences", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const sessions = yield* SessionRepository;
@@ -146,7 +146,7 @@ describe("P2 Session appendEntry + AgentExecutionState", () => {
   it("rejects a fenced append with a stale generation without writing", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
@@ -156,6 +156,7 @@ describe("P2 Session appendEntry + AgentExecutionState", () => {
         repo.tryAcquireLease(
           executionId,
           "worker:a",
+          "inc-a",
           "2999-01-01T00:00:00.000Z",
         ),
       );
@@ -201,7 +202,7 @@ describe("P2 Session appendEntry + AgentExecutionState", () => {
       updatedAt: "t2",
     };
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;

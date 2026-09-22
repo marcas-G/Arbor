@@ -1,8 +1,11 @@
 import type {
   AgentBinding,
   AgentExecutionState,
+  CommandSubmissionContext,
   Execution,
+  ExecutionId,
   ExecutionSettlement,
+  LeaseGeneration,
   WakeReason,
 } from "@arbor/domain";
 import {
@@ -37,6 +40,33 @@ const safetyStop = (reason: string): ExecutionSettlement => ({
   _tag: "Interrupted",
   result: { _tag: "ControlledInterruption", reason },
 });
+
+/** P12 `06` §3 (TR-9): the session-append fence. The authenticated worker
+ * identity is threaded from the ExecutionOrigin context when present; legacy
+ * in-process contexts omit it (generation-only fence). */
+const sessionFence = (
+  executionId: ExecutionId,
+  context: CommandSubmissionContext,
+):
+  | {
+      readonly executionId: ExecutionId;
+      readonly workerId?: string;
+      readonly workerIncarnationId?: string;
+      readonly fencingGeneration: LeaseGeneration;
+    }
+  | undefined =>
+  context._tag === "ExecutionOrigin"
+    ? {
+        executionId,
+        fencingGeneration: context.fencingGeneration,
+        ...(context.workerId !== undefined
+          ? { workerId: context.workerId }
+          : {}),
+        ...(context.workerIncarnationId !== undefined
+          ? { workerIncarnationId: context.workerIncarnationId }
+          : {}),
+      }
+    : undefined;
 
 const workObjectiveFragment = (execution: Execution): InstructionFragment => ({
   identity: "work-objective",
@@ -306,10 +336,7 @@ export const AgentDriverLive = (
                     },
                   },
                   input.context._tag === "ExecutionOrigin"
-                    ? {
-                        executionId: input.execution.executionId,
-                        fencingGeneration: input.context.fencingGeneration,
-                      }
+                    ? sessionFence(input.execution.executionId, input.context)
                     : undefined,
                 ),
               )
@@ -412,10 +439,7 @@ export const AgentDriverLive = (
                     input.execution.sessionId,
                     { entryKind: "Observation", payload: entry },
                     input.context._tag === "ExecutionOrigin"
-                      ? {
-                          executionId: input.execution.executionId,
-                          fencingGeneration: input.context.fencingGeneration,
-                        }
+                      ? sessionFence(input.execution.executionId, input.context)
                       : undefined,
                   ),
                 )

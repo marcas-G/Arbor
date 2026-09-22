@@ -45,7 +45,11 @@ export const LeaseServiceLive: Layer.Layer<
           : (0 as LeaseGeneration);
       });
 
-    const acquire: LeaseServiceService["acquire"] = (executionId, workerId) =>
+    const acquire: LeaseServiceService["acquire"] = (
+      executionId,
+      workerId,
+      workerIncarnationId,
+    ) =>
       Effect.gen(function* () {
         const now = yield* clock.now();
         const expiresAt = new Date(
@@ -54,6 +58,7 @@ export const LeaseServiceLive: Layer.Layer<
         const lease = yield* repository.tryAcquireLease(
           executionId,
           workerId,
+          workerIncarnationId,
           expiresAt,
         );
         if (Option.isSome(lease)) {
@@ -67,6 +72,7 @@ export const LeaseServiceLive: Layer.Layer<
     const renew: LeaseServiceService["renew"] = (
       executionId,
       workerId,
+      workerIncarnationId,
       generation,
     ) =>
       Effect.gen(function* () {
@@ -77,6 +83,7 @@ export const LeaseServiceLive: Layer.Layer<
         const lease = yield* repository.renewLease(
           executionId,
           workerId,
+          workerIncarnationId,
           generation,
           expiresAt,
         );
@@ -91,8 +98,15 @@ export const LeaseServiceLive: Layer.Layer<
     const release: LeaseServiceService["release"] = (
       executionId,
       workerId,
+      workerIncarnationId,
       generation,
-    ) => repository.releaseLease(executionId, workerId, generation);
+    ) =>
+      repository.releaseLease(
+        executionId,
+        workerId,
+        workerIncarnationId,
+        generation,
+      );
 
     const invalidateExpired: LeaseServiceService["invalidateExpired"] = (now) =>
       Effect.gen(function* () {

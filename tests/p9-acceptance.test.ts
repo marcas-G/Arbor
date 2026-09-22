@@ -12,7 +12,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P8_MIGRATIONS,
+  P12_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   rebuildProjection,
@@ -539,21 +539,25 @@ const cAcquireLease = (workerId: string) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const leases = yield* LeaseService;
-    return yield* tx.transact(leases.acquire(C_EXECUTION, workerId));
+    return yield* tx.transact(leases.acquire(C_EXECUTION, workerId, "inc-a"));
   });
 
 const cExpireInPlace = (workerId: string, generation: LeaseGeneration) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const repo = yield* ExecutionRepository;
-    yield* tx.transact(repo.releaseLease(C_EXECUTION, workerId, generation));
+    yield* tx.transact(
+      repo.releaseLease(C_EXECUTION, workerId, "inc-a", generation),
+    );
   });
 
 const cRenewLease = (workerId: string, generation: LeaseGeneration) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const leases = yield* LeaseService;
-    return yield* tx.transact(leases.renew(C_EXECUTION, workerId, generation));
+    return yield* tx.transact(
+      leases.renew(C_EXECUTION, workerId, "inc-a", generation),
+    );
   });
 
 const cCompleted: SettleExecutionPayload["settlement"] = {
@@ -1731,7 +1735,11 @@ const settleCompletedG = (executionId: string) =>
     const tx = yield* TransactionPort;
     const leases = yield* LeaseService;
     const lease = yield* tx.transact(
-      leases.acquire(executionId as never as ExecutionId, "worker:story-g"),
+      leases.acquire(
+        executionId as never as ExecutionId,
+        "worker:story-g",
+        "inc-story-g",
+      ),
     );
     const payload: SettleExecutionPayload = {
       executionId: executionId as never as ExecutionId,
@@ -1788,7 +1796,7 @@ describe("p9-acceptance", () => {
     ).toBe("crash-injected");
     await runP7(
       Effect.gen(function* () {
-        yield* runMigrations(P8_MIGRATIONS);
+        yield* runMigrations(P12_MIGRATIONS);
         yield* p7SeedProject;
         yield* INSERT_EXECUTION("exe_sa_dirty", "t");
         yield* INSERT_INVOCATION("tin_sa_non", "exe_sa_dirty", "NonIdempotent");
@@ -1834,7 +1842,7 @@ describe("p9-acceptance", () => {
     const { calls, app } = makeStoryBApp(durableFile("b1"));
     await runP7(
       Effect.gen(function* () {
-        yield* runMigrations(P8_MIGRATIONS);
+        yield* runMigrations(P12_MIGRATIONS);
         yield* p7SeedProject;
         yield* INSERT_EXECUTION("exe_sb_clean", "t");
         const fact = yield* INSERT_COMPLETION_FACT("exe_sb_fact");
@@ -1903,7 +1911,7 @@ describe("p9-acceptance", () => {
     const { calls, app } = makeStoryBApp(durableFile("b2"));
     await runP7(
       Effect.gen(function* () {
-        yield* runMigrations(P8_MIGRATIONS);
+        yield* runMigrations(P12_MIGRATIONS);
         yield* p7SeedProject;
         const seeded = yield* p7SeedWork(
           WORK_B3,
@@ -2037,7 +2045,7 @@ describe("p9-acceptance", () => {
     expect(LEASE_RENEW_INTERVAL_MS).toBe(LEASE_TTL_MS / 3);
     await runOn(
       Effect.gen(function* () {
-        yield* runMigrations(P8_MIGRATIONS);
+        yield* runMigrations(P12_MIGRATIONS);
         yield* seedStoryC;
         // Takeover fixture: the old worker (g) resurrects across g+1.
         const old = yield* cAcquireLease("worker:a");
@@ -2219,7 +2227,7 @@ describe("p9-acceptance", () => {
     const probe: DProbe = { calls: [] };
     await runOn(
       Effect.gen(function* () {
-        yield* runMigrations(P8_MIGRATIONS);
+        yield* runMigrations(P12_MIGRATIONS);
         yield* seedStoryD;
         const runtime = yield* ProviderRuntime;
         // Connect-phase inject → ProviderUnavailable; retried under the
@@ -2389,7 +2397,7 @@ describe("p9-acceptance", () => {
     };
     await runOn(
       Effect.gen(function* () {
-        yield* runMigrations(P8_MIGRATIONS);
+        yield* runMigrations(P12_MIGRATIONS);
         yield* seedStoryE;
         // ReadOnly: crash before the effect — nothing happened externally;
         // the crashed invocation settles the actual (no-op) outcome and a
@@ -2584,7 +2592,7 @@ describe("p9-acceptance", () => {
     expect(evidence.journalMode.toLowerCase()).toBe("wal");
     expect(evidence.integrity).toBe("ok");
     expect(evidence.version).toBe(
-      P8_MIGRATIONS.reduce((max, migration) => Math.max(max, migration.id), 0),
+      P12_MIGRATIONS.reduce((max, migration) => Math.max(max, migration.id), 0),
     );
     expect(evidence.counts.works).toBe(expected.works);
     expect(evidence.counts.executions).toBe(expected.executions);

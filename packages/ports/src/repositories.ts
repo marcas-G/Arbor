@@ -186,6 +186,13 @@ export interface SessionRepositoryService {
     entry: { readonly entryKind: SessionEntryKind; readonly payload: unknown },
     fence?: {
       readonly executionId: ExecutionId;
+      /** P12 `06` §3 (TR-9): the full lease-holder triple. The authoritative
+       * predicate includes `worker_id`; incarnation-only matching is
+       * insufficient, so both the worker and its incarnation are carried.
+       * Present on the fenced worker path; absent only on legacy in-process
+       * paths that pre-date incarnation fencing. */
+      readonly workerId?: string;
+      readonly workerIncarnationId?: string;
       readonly fencingGeneration: LeaseGeneration;
     },
   ) => Effect.Effect<

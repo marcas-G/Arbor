@@ -6,7 +6,11 @@ import { ExecutionScheduler, RunnableWorkSource } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { buildSliceLayer, P7_MIGRATIONS, runMigrations } from "../src/index.js";
+import {
+  buildSliceLayer,
+  P12_MIGRATIONS,
+  runMigrations,
+} from "../src/index.js";
 
 const makeApp = () => {
   const dir = mkdtempSync(join(tmpdir(), "p5-comp-"));
@@ -19,7 +23,7 @@ describe("P5 composition root", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P7_MIGRATIONS);
+          yield* runMigrations(P12_MIGRATIONS);
           const sql = yield* SqlClient;
           const version = yield* sql.unsafe<{ user_version: number }>(
             "PRAGMA user_version",
@@ -32,6 +36,6 @@ describe("P5 composition root", () => {
         app,
       ) as Effect.Effect<number, unknown, never>,
     );
-    expect(result).toBe(7);
+    expect(result).toBe(13);
   });
 });

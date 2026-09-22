@@ -5,7 +5,7 @@ import {
   ClockLive,
   ExecutionRepositoryLive,
   layer,
-  P2_MIGRATIONS,
+  P12_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
@@ -134,7 +134,7 @@ describe("P2 FenceStopCheck", () => {
   it("rejects an invalid or missing fence", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
@@ -145,6 +145,7 @@ describe("P2 FenceStopCheck", () => {
         repo.tryAcquireLease(
           executionId,
           "worker:a",
+          "inc-a",
           "2000-01-01T00:00:00.000Z",
         ),
       );
@@ -161,7 +162,7 @@ describe("P2 FenceStopCheck", () => {
   it("distinguishes stop admission by the StopAdmission ADT", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
@@ -172,6 +173,7 @@ describe("P2 FenceStopCheck", () => {
         repo.tryAcquireLease(
           executionId,
           "worker:a",
+          "inc-a",
           new Date(Date.parse(now) + 60_000).toISOString(),
         ),
       );
@@ -192,7 +194,7 @@ describe("P2 FenceStopCheck", () => {
   it("rejects a settled execution and passes non-Execution origins", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
+      yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
@@ -204,6 +206,7 @@ describe("P2 FenceStopCheck", () => {
         repo.tryAcquireLease(
           executionId,
           "worker:a",
+          "inc-a",
           new Date(Date.parse(now) + 60_000).toISOString(),
         ),
       );

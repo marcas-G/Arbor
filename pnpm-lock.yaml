@@ -279,6 +279,15 @@ importers:
         specifier: workspace:*
         version: link:../../packages/ports
 
+  adapters/worker-transport:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+
   apps/single-workspace:
     dependencies:
       '@arbor/agent-runtime':

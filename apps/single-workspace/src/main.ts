@@ -3,7 +3,7 @@ import { startupRecovery } from "@arbor/execution-runtime";
 import { Effect } from "effect";
 import {
   buildSliceLayer,
-  P7_MIGRATIONS,
+  P12_MIGRATIONS,
   runMigrations,
 } from "./composition.js";
 import { evaluateAndSelect } from "./loop.js";
@@ -20,7 +20,7 @@ export const main = () =>
  * daemon start, before any new dispatch or admission. */
 export const runOnce = (workspaceId: string, principalRef = "runtime:system") =>
   Effect.gen(function* () {
-    yield* runMigrations(P7_MIGRATIONS);
+    yield* runMigrations(P12_MIGRATIONS);
     yield* startupRecovery(parse(Principal)(principalRef));
     return yield* evaluateAndSelect(
       parse(WorkspaceId)(workspaceId),

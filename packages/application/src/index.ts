@@ -10,5 +10,6 @@ export * from "./gateway.js";
 export * from "./human-intervention.js";
 export * from "./provider-turn-recovery.js";
 export * from "./rejection.js";
+export * from "./remote-worker-mediation.js";
 export * from "./verifier-spawn.js";
 export * from "./wake-sink.js";

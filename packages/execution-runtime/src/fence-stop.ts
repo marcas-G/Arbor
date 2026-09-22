@@ -41,6 +41,22 @@ export const FenceStopCheckLive: Layer.Layer<
         if (lease.value.generation !== context.fencingGeneration) {
           return "FencingRejected" as const;
         }
+        // P12 `06` §3 (TR-9): the authoritative fence predicate includes
+        // `worker_id` and `worker_incarnation_id`; incarnation-only matching
+        // is insufficient. Validated whenever the authenticated worker
+        // identity is present on the ExecutionOrigin context.
+        if (
+          context.workerId !== undefined &&
+          lease.value.workerId !== context.workerId
+        ) {
+          return "FencingRejected" as const;
+        }
+        if (
+          context.workerIncarnationId !== undefined &&
+          lease.value.workerIncarnationId !== context.workerIncarnationId
+        ) {
+          return "FencingRejected" as const;
+        }
         if (lease.value.expiresAt <= now) {
           return "FencingRejected" as const;
         }
