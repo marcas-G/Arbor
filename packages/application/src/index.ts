@@ -7,4 +7,5 @@ export * from "./formation-consumer.js";
 export * from "./formation-plan.js";
 export * from "./gateway.js";
 export * from "./rejection.js";
+export * from "./verifier-spawn.js";
 export * from "./wake-sink.js";

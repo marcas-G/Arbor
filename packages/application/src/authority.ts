@@ -8,6 +8,7 @@ import type {
   Principal,
   ProjectId,
   SemanticRequestFingerprint,
+  VerificationId,
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
@@ -146,6 +147,67 @@ export type VerifiedCommandAuthority =
       readonly projectId: ProjectId;
       readonly targetWorkspaceId: WorkspaceId;
       readonly dependencyId: DependencyId;
+    }
+  | {
+      /** P8 `01` §1/§6: consumer System or Parent governance chain may
+       * start a verification for the Workspace owning `workId`. */
+      readonly _tag: "StartVerificationAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly workId: WorkId;
+    }
+  | {
+      /** P8 `01` §6: Parent Workspace governance chain accepting an
+       * outcome (Root milestone = explicit human — SD §9.7). */
+      readonly _tag: "AcceptanceAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly workId: WorkId;
+      readonly verificationId: VerificationId;
+    }
+  | {
+      /** P8 `01` §3 Orphaned path: the explicit governance face that concludes
+       * an orphaned Open Verification as Unknown(Orphaned) — distinct from
+       * AcceptanceAuthority (AcceptWorkOutcome) to keep the two semantic
+       * surfaces separate. */
+      readonly _tag: "OrphanConclusionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly verificationId: VerificationId;
+    }
+  | {
+      /** P8 `01` §6: deterministic consumer (System origin, causationRef =
+       * the WorkOutcomeAccepted event) or explicit submitter. */
+      readonly _tag: "CompleteWorkAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly workId: WorkId;
+    }
+  | {
+      /** P8 `01` §2/§3 (B-1): the verifier-only pair —
+       * RecordVerificationEvidence and ConcludeVerification are the
+       * Verifier's entire canonical mutation face. Exact-bound to one
+       * Verification and one of its Verifier Executions; any other
+       * submitter is `AuthorityDenied` (L2). */
+      readonly _tag: "VerifierExecutionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly verificationId: VerificationId;
+      readonly executionId: ExecutionId;
     };
 
 /**
@@ -214,6 +276,11 @@ export type StopAdmission =
 
 export interface CommandAuthorityRule<C> {
   readonly tag: CommandAuthorityFact["_tag"];
+  /** P8 `01` §3 dual-face admission (the Orphaned governance path, G5):
+   * when present, `validateCommandAuthority` admits any tag in
+   * `[tag, ...alsoTags]` and `targetMatches` decides the payload pairing.
+   * Absent = single-face (every pre-P8 rule). */
+  readonly alsoTags?: ReadonlyArray<CommandAuthorityFact["_tag"]>;
   readonly targetMatches: (
     authority: CommandAuthorityFact,
     payload: C,
@@ -241,8 +308,12 @@ export const validateCommandAuthority = <C>(
   rule: CommandAuthorityRule<C>,
   facts: CommandAuthorityFacts<C>,
 ): Option.Option<string> => {
-  if (authority._tag !== rule.tag) {
-    return Option.some(`authority kind mismatch: expected ${rule.tag}`);
+  const allowedTags: ReadonlyArray<CommandAuthorityFact["_tag"]> =
+    rule.alsoTags === undefined ? [rule.tag] : [rule.tag, ...rule.alsoTags];
+  if (!allowedTags.includes(authority._tag)) {
+    return Option.some(
+      `authority kind mismatch: expected ${allowedTags.join(" | ")}`,
+    );
   }
   if (authority.principal !== facts.principal) {
     return Option.some("authority principal mismatch");

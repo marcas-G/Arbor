@@ -322,6 +322,54 @@ describe("P2-009 AdmitExecution", () => {
     expect((r as { sessions: number }).sessions).toBe(1);
   });
 
+  it("admits an ExecutionBound execution without a parent (M-3 inherited evolution)", async () => {
+    const app = makeApp();
+    const commandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a6",
+    );
+    const boundSession = parse(SessionId)(
+      "ses_018f2b3c-4d5e-7abc-8def-0123456789c1",
+    );
+    const payload: AdmitExecutionPayload = {
+      _tag: "ExecutionBound",
+      executionId: parse(ExecutionId)(
+        "exe_018f2b3c-4d5e-7abc-8def-0123456789c1",
+      ) as ExecutionId,
+      workspaceId,
+      parentExecutionId: null,
+      mission: "verify:digest",
+      sessionId: boundSession,
+    };
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P2_MIGRATIONS);
+      yield* seed;
+      const gw = yield* CommandGateway;
+      const receipt = yield* gw.execute(
+        envelope(commandId, payload),
+        systemContext,
+        authority(commandId, payload),
+      );
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<{
+        binding_kind: string;
+        parent_execution_id: string | null;
+      }>(
+        "SELECT binding_kind, parent_execution_id FROM executions WHERE execution_id = ?",
+        [payload._tag === "ExecutionBound" ? payload.executionId : ""],
+      );
+      return { receipt, rows };
+    });
+    const r = await run(Effect.provide(program, app));
+    expect(
+      (r as { receipt: { resolution: { _tag: string } } }).receipt.resolution
+        ._tag,
+    ).toBe("Committed");
+    expect(
+      (r as { rows: ReadonlyArray<{ parent_execution_id: string | null }> })
+        .rows[0]?.parent_execution_id,
+    ).toBeNull();
+  });
+
   it("rejects a missing workspace and a mismatched authority", async () => {
     const app = makeApp();
     const commandId = parse(CommandId)(

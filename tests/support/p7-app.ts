@@ -1,11 +1,13 @@
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
+  AcceptanceRepositoryLive,
   ClockLive,
   CommandStoreLive,
   DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
+  EvidenceRepositoryLive,
   ExecutionRepositoryLive,
   FormationProposalStoreLive,
   IdGeneratorLive,
@@ -17,6 +19,7 @@ import {
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
+  VerificationRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
@@ -53,8 +56,10 @@ import {
 } from "../../packages/domain/dist/index.js";
 import { makeP2CommandHandlers } from "../../packages/execution-runtime/src/index.js";
 import {
+  type AcceptanceRepository,
   type DeliverableRepository,
   type DependencyRepository,
+  type EvidenceRepository,
   ExecutionRepository,
   FormationProposalStore,
   InboxProjectionStore,
@@ -62,6 +67,7 @@ import {
   ProjectRepository,
   SessionRepository,
   type TransactionPort,
+  type VerificationRepository,
   WorkRepository,
   WorkspaceRepository,
   WorkWaitStore,
@@ -159,7 +165,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
   }),
 );
 
-/** sqlite infra; tests run `runMigrations(P7_MIGRATIONS)` first (P1 pattern).
+/** sqlite infra; tests run `runMigrations(P8_MIGRATIONS)` first (P1 pattern).
  * Exposes the P6 stores + TransactionPort so test bodies can seed directly. */
 export const makeP7App = (
   filename = ":memory:",
@@ -174,6 +180,9 @@ export const makeP7App = (
   | WorkRepository
   | DependencyRepository
   | DeliverableRepository
+  | VerificationRepository
+  | EvidenceRepository
+  | AcceptanceRepository
 > => {
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
@@ -192,6 +201,9 @@ export const makeP7App = (
       Layer.provide(InboxProjectionStoreLive, infra),
       Layer.provide(DependencyRepositoryLive, infra),
       Layer.provide(DeliverableRepositoryLive, infra),
+      Layer.provide(VerificationRepositoryLive, infra),
+      Layer.provide(EvidenceRepositoryLive, infra),
+      Layer.provide(AcceptanceRepositoryLive, infra),
     ),
   );
   const gatewayDeps = Layer.mergeAll(
@@ -207,6 +219,9 @@ export const makeP7App = (
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(DependencyRepositoryLive, infra),
     Layer.provide(DeliverableRepositoryLive, infra),
+    Layer.provide(VerificationRepositoryLive, infra),
+    Layer.provide(EvidenceRepositoryLive, infra),
+    Layer.provide(AcceptanceRepositoryLive, infra),
     FenceStopCheckInertLive,
   );
   return Layer.mergeAll(
@@ -223,6 +238,9 @@ export const makeP7App = (
     | WorkRepository
     | DependencyRepository
     | DeliverableRepository
+    | VerificationRepository
+    | EvidenceRepository
+    | AcceptanceRepository
   >;
 };
 

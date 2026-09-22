@@ -18,4 +18,5 @@ export * from "./repositories.js";
 export * from "./runtime.js";
 export * from "./tool-invocations.js";
 export * from "./transaction.js";
+export * from "./verification-store.js";
 export * from "./work-wait.js";

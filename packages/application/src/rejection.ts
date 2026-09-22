@@ -4,6 +4,7 @@ import type {
   DomainError,
   ExecutionId,
   FormationProposalId,
+  VerificationId,
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
@@ -44,4 +45,28 @@ export type CommandRejection =
       /** P7 `01` §4: P7-frozen enum. */
       readonly _tag: "DeliverableNotFound";
       readonly deliverableId: DeliverableId;
+    }
+  | {
+      /** P8 `01` §1: P8-frozen enum (v1.11 G2 one-Open-per-revision). */
+      readonly _tag: "VerificationAlreadyOpen";
+      readonly workId: WorkId;
+    }
+  | {
+      /** P8 `01` §1: P8-frozen enum (structured mission validation, v1.11 G1). */
+      readonly _tag: "InvalidVerificationMission";
+      readonly reason: string;
+    }
+  | {
+      /** P8 `01` §4/§5: P8-frozen enum (verification lookup rejection). */
+      readonly _tag: "VerificationNotFound";
+      readonly verificationId: VerificationId;
+    }
+  | {
+      /** P8 `01` §4: P8-frozen double-uniqueness typed rejection — at most
+       * one acceptance per (workId, targetWorkRevision). Same-acceptanceId
+       * replays above the gateway are receipt dedup; everything reaching
+       * the handler lands here (the repository unique index is the
+       * concurrency backstop). */
+      readonly _tag: "AcceptanceAlreadyExists";
+      readonly workId: WorkId;
     };

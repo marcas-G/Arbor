@@ -162,7 +162,11 @@ export interface FormationAssignPlan {
     readonly completionExpectation: string;
     readonly verificationMission: {
       readonly goal: string;
-      readonly criteria: ReadonlyArray<string>;
+      readonly criteria: ReadonlyArray<{
+        criterionId: string;
+        requirement: string;
+        required: boolean;
+      }>;
       readonly riskRequirements: ReadonlyArray<string>;
     };
     readonly provenance: { predecessorWorkId: null; reason: string };
@@ -171,8 +175,12 @@ export interface FormationAssignPlan {
   readonly authority: VerifiedCommandAuthority;
 }
 
-/** P6 `01` §2: the placeholder mission is the P6-frozen minimal form; P8
- * owns Verification semantics. */
+/** P6 `01` §2 placeholder mission, migrated by P8 M-2 (`04` §5): the
+ * legacy `"p6-placeholder"` string form fails the P8 minimal mission
+ * schema (non-empty goal + at least one required criterion). This
+ * structured minimal placeholder is the tightened-but-still-minimal legal
+ * form; a real mission arrives via RefineWork (Producer/Parent semantic
+ * responsibility — never auto-filled). */
 export const formationAssignPlan = (args: {
   readonly snapshot: FormationProposalRecord;
   readonly ids: FormationIds;
@@ -193,8 +201,14 @@ export const formationAssignPlan = (args: {
     constraints: initialWork.constraints,
     completionExpectation: initialWork.completionExpectation,
     verificationMission: {
-      goal: "p6-placeholder",
-      criteria: [],
+      goal: "formation-assigned work",
+      criteria: [
+        {
+          criterionId: "acceptance",
+          requirement: "parent acceptance",
+          required: true,
+        },
+      ],
       riskRequirements: [],
     },
     provenance: {

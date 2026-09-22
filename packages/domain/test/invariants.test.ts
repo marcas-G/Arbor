@@ -47,7 +47,11 @@ const verificationId = parse(VerificationId)(
 );
 const actor = parse(Actor)("user:gaolei");
 
-const mission = { goal: "g", criteria: [], riskRequirements: [] };
+const mission = {
+  goal: "g",
+  criteria: [{ criterionId: "c1", requirement: "r1", required: true }],
+  riskRequirements: [],
+};
 const responsibilityDefinition = {
   purpose: "p",
   ownedResponsibilities: [],
@@ -113,6 +117,7 @@ describe("cross-aggregate invariants", () => {
       throw new Error("expected conclude");
     }
     const acceptance = createAcceptance({
+      acceptanceId: "acc_00000000-0000-7000-8000-000000000001" as never,
       workId,
       targetWorkRevision: w.revision,
       verificationId,

@@ -24,7 +24,10 @@ const targetWorkRevision = parse(WorkRevision)(7);
 
 const mission = {
   goal: "verify domain kernel",
-  criteria: ["pure", "typed"],
+  criteria: [
+    { criterionId: "pure", requirement: "pure", required: true },
+    { criterionId: "typed", requirement: "typed", required: true },
+  ],
   riskRequirements: ["no infra import"],
 };
 

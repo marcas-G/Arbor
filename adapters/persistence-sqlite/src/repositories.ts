@@ -364,6 +364,15 @@ export const WorkspaceRepositoryLive: Layer.Layer<
           "UPDATE workspaces SET current_work_id = ?, revision = ?, updated_at = ? WHERE workspace_id = ? AND revision = ?",
           (now) => [workId, newRevision, now, workspaceId, expectedRevision],
         ),
+      clearCurrentWorkIfRevision: (
+        workspaceId,
+        expectedRevision,
+        newRevision,
+      ) =>
+        cas(
+          "UPDATE workspaces SET current_work_id = NULL, revision = ?, updated_at = ? WHERE workspace_id = ? AND revision = ?",
+          (now) => [newRevision, now, workspaceId, expectedRevision],
+        ),
       replacePrimarySessionIfRevision: (
         workspaceId,
         expectedRevision,

@@ -1756,7 +1756,11 @@ describe("p6-acceptance", () => {
   });
 
   it("Story F: prompt program version discipline (D4)", async () => {
-    const results = await Effect.runPromise(evalAllPrograms());
+    // P8-010: the shared registry now also hosts the P8 program families;
+    // this story stays scoped to the four P6 families.
+    const results = (await Effect.runPromise(evalAllPrograms())).filter(
+      (result) => result.familyId.startsWith("p6-"),
+    );
     expect(results).toHaveLength(4);
     for (const result of results) {
       expect(result.passed).toBe(true);
@@ -1766,7 +1770,9 @@ describe("p6-acceptance", () => {
       expect(result.hashMatches).toBe(true);
     }
 
-    for (const entry of PROGRAM_REGISTRY) {
+    for (const entry of PROGRAM_REGISTRY.filter((candidate) =>
+      candidate.familyId.startsWith("p6-"),
+    )) {
       const program = await Effect.runPromise(loadProgram(entry.familyId));
       expect(program.meta.familyId).toBe(entry.familyId);
       expect(program.meta.contractRevision).toBe("P6-05@1");
@@ -1780,7 +1786,9 @@ describe("p6-acceptance", () => {
 
     const gate = await Effect.runPromise(assertProgramGate());
     expect(gate.passed).toBe(true);
-    expect(gate.results).toHaveLength(4);
+    expect(
+      gate.results.filter((r) => r.familyId.startsWith("p6-")),
+    ).toHaveLength(4);
 
     const formation = PROGRAM_REGISTRY.find(
       (entry) => entry.familyId === "p6-formation",

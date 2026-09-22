@@ -31,7 +31,10 @@ export type AdmitExecutionPayload =
       readonly _tag: "ExecutionBound";
       readonly executionId: ExecutionId;
       readonly workspaceId: WorkspaceId;
-      readonly parentExecutionId: ExecutionId;
+      /** M-3 (P8 `02` §1, declared P2 inherited evolution): Verifier
+       * executions bind without a causal parent — the domain binding is
+       * already `ExecutionId | null`; specialists keep passing a parent. */
+      readonly parentExecutionId: ExecutionId | null;
       readonly mission: string;
       readonly sessionId: SessionId;
     };
