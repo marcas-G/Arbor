@@ -54,4 +54,4 @@ Generic projection/offset/rebuild infra (P1, P9-hardened) ready; all canonical d
 Review round 1 (independent): 3 Blocking (High) + 8 material findings — all fixed above.
 **Blocking = 0.**
 
-**Status:** DRAFT — for contract review.
+**Status:** FROZEN — P10 phase-scoped contracts; review Blocking = 0 (P10 FORMALLY CLOSED).

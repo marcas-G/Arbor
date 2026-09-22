@@ -97,3 +97,39 @@ describe("P6–P12 result records", () => {
     expect(gaps).not.toMatch(/\|\s*OPEN\s*\|/);
   });
 });
+
+const listCriteria = (result: string) => {
+  const blocks = result.split(/^### Criterion /m).slice(1);
+  return blocks.map((block) => Number.parseInt(block.slice(0, 2), 10));
+};
+
+const numberedCriteria = (result: string) => {
+  const start = result.indexOf("## Exit criteria");
+  const body = start === -1 ? result : result.slice(start);
+  const end = body.indexOf("\n## ", 1);
+  const section = end === -1 ? body : body.slice(0, end);
+  return section
+    .split("\n")
+    .map((line) => /^(\d+)\.\s/.exec(line))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => Number.parseInt(m[1] ?? "0", 10));
+};
+
+describe("P1–P4 result records", () => {
+  const expected: ReadonlyArray<[string, number, (r: string) => number[]]> = [
+    ["P1", 8, listCriteria],
+    ["P2", 9, listCriteria],
+    ["P3", 9, listCriteria],
+    ["P4", 11, numberedCriteria],
+  ];
+  for (const [phase, count, parse] of expected) {
+    it(`${phase} result record is COMPLETE with ${count} criteria`, () => {
+      const result = read(`planning/results/${phase}.result.md`);
+      expect(result).toMatch(/COMPLETE/);
+      const criteria = parse(result);
+      expect([...criteria].sort((a, b) => a - b)).toEqual(
+        Array.from({ length: count }, (_, index) => index + 1),
+      );
+    });
+  }
+});
