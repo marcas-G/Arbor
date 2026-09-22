@@ -524,3 +524,36 @@ P10-012                   -> P10-013
 | P10-011 | Message-mediated Query surface + Steer/Stop/Governance action surfaces | P10-002, P10-006, P10-010 |
 | P10-012 | Acceptance Stories A–G + architecture + P5–P9 regression guards | P10-002..P10-011 |
 | P10-013 | P10 convergence, result record & GAP-01 closure | P10-012 |
+
+## P11 dependency graph
+
+```text
+P10-013                 -> P11-001
+P11-001                 -> P11-002, P11-003, P11-007, P11-008
+P11-002, P11-003        -> P11-004
+P11-002                 -> P11-005
+P11-005                 -> P11-006
+P11-006                 -> P11-011
+P11-003, P11-008        -> P11-009
+P11-008                 -> P11-010
+P11-004..P11-011        -> P11-012
+P11-012                 -> P11-013
+```
+
+## P11 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P11-001 | Revision algebra + snapshot domain/store migration | P10-013 |
+| P11-002 | RecordEnvironmentChange handler + wake | P11-001 |
+| P11-003 | Real environment resolver | P11-001 |
+| P11-004 | Drift detection + startup seam | P11-002, P11-003 |
+| P11-005 | Impact evaluation | P11-002 |
+| P11-006 | Staleness overlay + Attention | P11-005 |
+| P11-007 | ControlBasis service-internal binding | P11-001 |
+| P11-008 | Worktree lifecycle | P11-001 |
+| P11-009 | Ownership wiring (fenced) | P11-003, P11-008 |
+| P11-010 | Sandbox handoff | P11-008 |
+| P11-011 | P8 binding verification | P11-006 |
+| P11-012 | Acceptance + CI proofs + architecture | P11-004..P11-011 |
+| P11-013 | Convergence & result record | P11-012 |

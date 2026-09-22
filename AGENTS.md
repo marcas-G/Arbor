@@ -43,7 +43,10 @@ held; three closure deviations reconciled under DID v1.12 G1/G2).
 P10 is COMPLETE and FORMALLY CLOSED: `planning/results/P10.result.md`
 (11/11 exit criteria PASS; P7-GAP-01 CLOSED as the
 WaitingOnVacantProducer derived view; DID v1.13 G1–G8 fidelity
-held). P11–P12 are not authorized.
+held). P11 design/contract closure is complete (GQ1–GQ5 rulings;
+`docs/design/implementation/P11/**` at Blocking=0 with CI-1..CI-5 all
+PASS) and P11 planning is frozen (`planning/phases/P11.md`, 13 tasks)
+pending implementation authorization. P12 is not authorized.
 
 P5 result: `planning/results/P5.result.md` (11/11 exit criteria PASS; no open Design Gap). P5-DG-01 was resolved by the decision/execution split: the scheduler evaluator owns the selection decision, the Application owns the `SelectCurrentWork` canonical mutation (P5 `01` §3.1).
 
