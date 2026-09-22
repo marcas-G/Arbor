@@ -142,7 +142,16 @@ export const ExecutionSettled = Schema.TaggedStruct("ExecutionSettled", {
 });
 export const PermissionChanged = Schema.TaggedStruct("PermissionChanged", {});
 export const DecisionRecorded = Schema.TaggedStruct("DecisionRecorded", {});
-export const EnvironmentChanged = Schema.TaggedStruct("EnvironmentChanged", {});
+export const EnvironmentChanged = Schema.TaggedStruct("EnvironmentChanged", {
+  projectId: Schema.String,
+  fromRevision: Schema.String,
+  toRevision: Schema.String,
+  previousFingerprint: Schema.String,
+  nextFingerprint: Schema.String,
+  snapshotBlobRef: Schema.String,
+  changedRegions: Schema.Array(Schema.Unknown),
+  cause: Schema.String,
+});
 export const HumanInterventionApplied = Schema.TaggedStruct(
   "HumanInterventionApplied",
   {
