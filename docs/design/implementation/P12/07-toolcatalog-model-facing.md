@@ -59,6 +59,20 @@ interface ToolCatalogPortService {
 - `resolveForModel(unregistered)` fails with the typed `ToolNotRegistered`
   error; it never fabricates a placeholder (`description: name`,
   `schemaJson: "{}"`).
+- **Catalogued union (cross-contract completeness correction, `01` §5.2 / `07` §2):**
+
+```text
+CataloguedTools = Builtins ∪ CommittedRegisteredProjectToolDefinitions
+```
+
+  - `visibleRefs()` is derived from that union; `resolveForModel(ref)` resolves from the
+    **same** union.
+  - unregistered Project tools are neither visible nor resolvable.
+  - registry/catalog merging happens inside the `ToolCatalog` implementation / Composition
+    Root (`ToolCatalogPortLive` composes builtins ∪ `ProjectToolRegistry.listRegisteredToolDefinitions`).
+  - model-context continues to depend **only** on `ToolCatalogPort`, never directly on the
+    Project Tool Registry.
+  - no new Plugin lifecycle semantics and no second catalog authority.
 - An unregistered ref is absent from `visibleRefs`; `visibleRefs` is the
   renamed inherited `definitions()` surface. It **retains the inherited
   `Effect` channel** of `ToolCatalogPortService.definitions()`

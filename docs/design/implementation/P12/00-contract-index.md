@@ -124,6 +124,11 @@ Revisions P12 explicitly owns against frozen P0–P11 contracts or the frozen DI
 
 | # | Clarification |
 |---|---|
+| P12 cross-contract completeness correction | `01` §5.2 / `07` §2: add the committed-read enumeration seam `ProjectToolRegistry.listRegisteredToolDefinitions(projectId)` (no `TransactionScope`) and freeze `CataloguedTools = Builtins ∪ CommittedRegisteredProjectToolDefinitions` for `visibleRefs`/`resolveForModel`. Registry identity `(pluginId, pluginVersion, contentHash)` and `ToolDefinitionRef(name, version, hash)` remain intentionally distinct. Governance-approved targeted correction; no DID change, no closure reopen. |
+
+
+| # | Clarification |
+|---|---|
 | NEW-9 | DID §9.1 `multiRuntimeConcurrentWrite` is **retained as a trigger candidate, non-v1**: it is not in the v1 actionable trigger union (`05` §3 `DbHa` / `SqliteWriteContention` only) and is governance-gated — a future multi-writer deployment is a DID control-plane governance change, not a P12 implementation option. |
 | NEW-11 | The `HealthPort` catalog addition (TR-6) and the migration-baseline advance (TR-7) are explicit P12 contract revisions, not silent implementation choices. |
 | F1 | Search view semantics are **P10-owned and unfrozen** (`P10 01`:19). P12 records Search as an **out-of-v1 deferral** (cross-phase table above) — **not** a Design Gap — and implements no Search surface; supplies the transport binding only if/when P10 freezes a Search view contract. `10` §2 records the same disposition ("not a Design Gap"; see `14` §1 item 11 / EC-11). |
