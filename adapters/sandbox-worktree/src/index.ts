@@ -5,7 +5,6 @@ import {
   relative as relativePath,
   resolve as resolvePath,
 } from "node:path";
-import type { CommandRejection } from "@arbor/application";
 import type { CanonicalResourceRegion, WorkspaceId } from "@arbor/domain";
 import {
   type SandboxError,
@@ -80,10 +79,19 @@ export interface SandboxWorktreeRetirement {
   readonly worktreeId: string;
 }
 
+/** P12 `01` §7 (G8/DF-16): adapter-local opaque command rejection. The
+ * injected command mediation's rejection is only forwarded, never
+ * interpreted here; declaring it locally removes the `application` edge
+ * (DID §10.4.1: `adapters/* -> domain, ports`). Any command rejection with a
+ * `_tag` structurally satisfies it. */
+export interface SandboxWorktreeCommandRejection {
+  readonly _tag: string;
+}
+
 export type SandboxWorktreeDepsError =
   | {
       readonly _tag: "CreateWorktreeFailed";
-      readonly rejection: CommandRejection;
+      readonly rejection: SandboxWorktreeCommandRejection;
     }
   | {
       readonly _tag: "RecordEnvironmentChangeFailed";
@@ -91,7 +99,7 @@ export type SandboxWorktreeDepsError =
     }
   | {
       readonly _tag: "RetireWorktreeFailed";
-      readonly rejection: CommandRejection;
+      readonly rejection: SandboxWorktreeCommandRejection;
     };
 
 export interface SandboxWorktreeDepsService {

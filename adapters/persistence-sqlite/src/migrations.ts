@@ -624,3 +624,29 @@ export const P11B_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 9, name: "p11_environment_changes", sql: P11_DDL },
   { id: 10, name: "p11_worktrees", sql: P11_WORKTREES_DDL },
 ];
+
+/** P12 `01` §5.2 (TR-7): the durable Project-tool registration store. The
+ * registration key is `(plugin_id, plugin_version, content_hash)`; the row
+ * binds that key to the exact `ToolDefinition` content. */
+const P12_PROJECT_TOOL_REGISTRY_DDL = `
+CREATE TABLE project_tool_registry (
+  plugin_id       TEXT NOT NULL,
+  plugin_version  TEXT NOT NULL,
+  content_hash    TEXT NOT NULL,
+  definition_json TEXT NOT NULL,
+  registered_at   TEXT NOT NULL,
+  PRIMARY KEY (plugin_id, plugin_version, content_hash)
+);
+`;
+
+/** P12 ordered migration baseline (TR-7). This task owns only
+ * `0013_project_tool_registry`; the frozen P12 list also reserves
+ * `0011_lease_worker_incarnation` (P12-006) and `0012_permission_grants`
+ * (P12-002). The forward-only runner keys on `PRAGMA user_version` and
+ * applies every migration with `id > current`, so it does not require a
+ * contiguous list: the owning tasks add their entries (sorted by id) and
+ * `user_version` settles at `max(applied id)` = 13. */
+export const P12_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P11B_MIGRATIONS,
+  { id: 13, name: "project_tool_registry", sql: P12_PROJECT_TOOL_REGISTRY_DDL },
+];

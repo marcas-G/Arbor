@@ -1,6 +1,7 @@
 export * from "./assign-work.js";
 export * from "./create-child-workspace.js";
 export * from "./create-project.js";
+export * from "./register-project-tool.js";
 export * from "./registry.js";
 export * from "./select-current-work.js";
 export * from "./send-message.js";

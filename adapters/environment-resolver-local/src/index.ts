@@ -1,6 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import { fingerprintOf } from "@arbor/application";
 import type {
   CanonicalResourceRegion,
   ProjectId,
@@ -14,6 +13,7 @@ import {
 import {
   type EnvironmentResolverError,
   EnvironmentResolverPort,
+  fingerprintOf,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -244,7 +244,7 @@ export const EnvironmentResolverLocalLive: Layer.Layer<
           });
 
           // Fingerprint via the P11-002 construction path (domain owns the
-          // canonical recipe; application owns the digest).
+          // canonical recipe; ports owns the digest — P12 `01` §7).
           const fingerprint = yield* Effect.try({
             try: () => fingerprintOf(projectId, entries),
             catch: (cause): EnvironmentResolverError => ({

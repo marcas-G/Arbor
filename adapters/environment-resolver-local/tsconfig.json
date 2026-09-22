@@ -10,7 +10,6 @@
   "include": ["src"],
   "references": [
     { "path": "../../packages/domain" },
-    { "path": "../../packages/ports" },
-    { "path": "../../packages/application" }
+    { "path": "../../packages/ports" }
   ]
 }

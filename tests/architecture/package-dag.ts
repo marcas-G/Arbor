@@ -5,7 +5,6 @@ export const ALLOWED_EDGES: Record<string, ReadonlyArray<string>> = {
   "model-context": ["domain", "ports"],
   "agent-runtime": ["domain", "ports", "application", "model-context"],
   "execution-runtime": ["domain", "ports", "application", "agent-runtime"],
-  "verification-runtime": ["domain", "ports", "application"],
   "provider-runtime": ["ports"],
   "tool-runtime": ["domain", "ports"],
   "projection-runtime": ["domain", "ports"],
@@ -13,11 +12,11 @@ export const ALLOWED_EDGES: Record<string, ReadonlyArray<string>> = {
   testkit: ["domain", "ports", "application"],
   "persistence-sqlite": ["domain", "ports"],
   "environment-local": ["domain", "ports"],
-  "environment-resolver-local": ["domain", "ports", "application"],
+  "environment-resolver-local": ["domain", "ports"],
   "worker-local": ["domain", "ports"],
   "provider-fake": ["domain", "ports"],
   "sandbox-local": ["domain", "ports"],
-  "sandbox-worktree": ["domain", "ports", "application"],
+  "sandbox-worktree": ["domain", "ports"],
   "blob-local": ["domain", "ports"],
 };
 

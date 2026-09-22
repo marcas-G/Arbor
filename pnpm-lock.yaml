@@ -202,9 +202,6 @@ importers:
 
   adapters/environment-resolver-local:
     dependencies:
-      '@arbor/application':
-        specifier: workspace:*
-        version: link:../../packages/application
       '@arbor/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -248,9 +245,6 @@ importers:
 
   adapters/sandbox-worktree:
     dependencies:
-      '@arbor/application':
-        specifier: workspace:*
-        version: link:../../packages/application
       '@arbor/domain':
         specifier: workspace:*
         version: link:../../packages/domain

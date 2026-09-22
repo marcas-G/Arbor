@@ -5,6 +5,8 @@ import type {
   ExecutionId,
   FormationProposalId,
   LeaseGeneration,
+  PluginId,
+  PluginVersion,
   Principal,
   ProjectId,
   SemanticRequestFingerprint,
@@ -230,6 +232,21 @@ export type VerifiedCommandAuthority =
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
       readonly projectId: ProjectId;
       readonly worktreeId: string;
+    }
+  | {
+      /** P12 `01` §5.1 (RG-09, N-04): Project-tool explicit registration.
+       * Project-scoped: no workspace target. Exact-match binding on the
+       * envelope `projectId` + the plugin identity (`pluginId`/
+       * `pluginVersion`/`contentHash`); production of this variant is owned
+       * by `02` §3 (this declares the shape). */
+      readonly _tag: "RegisterProjectToolAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly pluginId: PluginId;
+      readonly pluginVersion: PluginVersion;
+      readonly contentHash: string;
     };
 
 /**

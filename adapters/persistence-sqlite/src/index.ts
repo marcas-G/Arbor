@@ -14,6 +14,7 @@ export * from "./lease.js";
 export * from "./migrate.js";
 export * from "./migrations.js";
 export * from "./ownership.js";
+export * from "./project-tool-registry.js";
 export * from "./provider-turns.js";
 export * from "./repositories.js";
 export * from "./runtime.js";
