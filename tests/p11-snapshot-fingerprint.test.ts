@@ -12,12 +12,12 @@ import {
 } from "../packages/domain/src/index.js";
 import { fingerprintOf } from "../packages/ports/src/snapshot-fingerprint.js";
 
-const WS = "space-1" as never;
+const WS = "filesystem" as never;
 const region = (
   norm: string,
 ): { resourceSpaceId: never; normalizedRegion: never } => ({
   resourceSpaceId: WS,
-  normalizedRegion: norm as never,
+  normalizedRegion: { kind: "FileTree", path: norm } as never,
 });
 
 const file = (path: string): { _tag: "FileTree"; path: string } => ({

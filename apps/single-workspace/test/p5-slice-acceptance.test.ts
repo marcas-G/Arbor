@@ -1,6 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   type AssignWorkPayload,
   CommandGateway,
@@ -231,7 +231,10 @@ describe("P5 vertical-slice acceptance", () => {
               workspaceId,
               region: {
                 resourceSpaceId: "filesystem",
-                normalizedRegion: { kind: "FileTree", path: "." },
+                // P12 `09`: the production resolver emits the frozen object
+                // encoding with an ABSOLUTE normalized path (P1 `04` §3.3);
+                // the claim fixture must match it.
+                normalizedRegion: { kind: "FileTree", path: resolve(".") },
               },
               sourceAddressSnapshot: { _tag: "FileTree", path: "." },
               resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),

@@ -2,7 +2,11 @@ import {
   EnvironmentFingerprint,
   type EnvironmentSnapshot,
 } from "./environment.js";
-import type { CanonicalResourceRegion, ResourceAddress } from "./resources.js";
+import {
+  type CanonicalResourceRegion,
+  canonicalRegionString,
+  type ResourceAddress,
+} from "./resources.js";
 
 /**
  * P11 `02` §1 (GQ3'): deterministic snapshot identity.
@@ -37,10 +41,7 @@ const canonicalAddress = (address: ResourceAddress): string => {
 };
 
 const canonicalRegion = (region: CanonicalResourceRegion): string =>
-  [
-    canonicalString(region.resourceSpaceId),
-    canonicalString(region.normalizedRegion as string),
-  ].join(":");
+  canonicalRegionString(region);
 
 export type SnapshotProbe =
   | {
@@ -83,9 +84,7 @@ export interface SnapshotRegionEntry {
  * object key order, and DB row retrieval order are all irrelevant.
  */
 const regionSortKey = (entry: SnapshotRegionEntry): string =>
-  `${entry.resolved.resourceSpaceId}\u0000${String(
-    entry.resolved.normalizedRegion,
-  )}`;
+  canonicalRegionString(entry.resolved);
 
 /** Canonical region ordering (frozen): copy then sort — deterministic
  * regardless of input order; equal keys are disambiguated by the full

@@ -6,14 +6,18 @@ import type {
   ResourceAddress,
 } from "@arbor/domain";
 import {
+  canonicalRegionString,
   type SnapshotProbe,
   type SnapshotRegionEntry,
   snapshotBlobContent,
 } from "@arbor/domain";
 import {
+  type EnvironmentError,
   type EnvironmentResolverError,
   EnvironmentResolverPort,
   fingerprintOf,
+  ProjectEnvironmentPort,
+  type ResolvedEnvironment,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -138,15 +142,20 @@ const probeAddress = (
 
 /** C8 (DID §12.9 / P11 `04` §1): a GitWorktree aliases to a filesystem
  * subtree in the SAME backing space — FileTree and GitWorktree both
- * canonicalize to resourceSpaceId "fs" with the normalized absolute path
- * as normalizedRegion, so cross-kind aliases collide on one region. */
+ * canonicalize to resourceSpaceId "filesystem" with an object
+ * `normalizedRegion` (`{ kind, path }`). The canonical stringifier collapses
+ * the two kinds onto one key, so cross-kind aliases dedup to the FileTree
+ * region at the same path (P12 `09` §1/§5). */
 const canonicalRegion = (address: ResourceAddress): CanonicalResourceRegion => {
   switch (address._tag) {
     case "FileTree":
     case "GitWorktree":
       return {
-        resourceSpaceId: "fs",
-        normalizedRegion: resolvePath(address.path),
+        resourceSpaceId: "filesystem",
+        normalizedRegion: {
+          kind: address._tag,
+          path: resolvePath(address.path),
+        },
       };
     default:
       throw new UnsupportedResourceFamily(address._tag);
@@ -154,9 +163,7 @@ const canonicalRegion = (address: ResourceAddress): CanonicalResourceRegion => {
 };
 
 const regionKey = (entry: SnapshotRegionEntry): string =>
-  `${entry.resolved.resourceSpaceId}\u0000${String(
-    entry.resolved.normalizedRegion,
-  )}`;
+  canonicalRegionString(entry.resolved);
 
 /** Deterministic alias collapse, independent of caller order: one entry per
  * canonical region; on collision the smallest (family, primary-field)
@@ -276,6 +283,39 @@ export const EnvironmentResolverLocalLive: Layer.Layer<
             entries,
           };
         }),
+    });
+  }),
+);
+
+/**
+ * P12 `09` §5 (RG-12): the legacy `ProjectEnvironmentPort` projection over the
+ * REAL resolver. Ownership writes / tool admission consume `resolve`; the
+ * resolver observation is the single canonical source, so production no
+ * longer wires the fake `ProjectEnvironmentPortLive`
+ * (`adapters/environment-local`, retained for tests only). The projection is
+ * error-mapped to the frozen `EnvironmentError` shape; the canonical regions
+ * are the resolver's object-encoded regions unchanged.
+ */
+export const ProjectEnvironmentPortFromResolverLive: Layer.Layer<
+  ProjectEnvironmentPort,
+  never,
+  EnvironmentResolverPort
+> = Layer.effect(
+  ProjectEnvironmentPort,
+  Effect.gen(function* () {
+    const resolver = yield* EnvironmentResolverPort;
+    return ProjectEnvironmentPort.of({
+      resolve: (projectId: ProjectId, addresses) =>
+        Effect.map(
+          Effect.mapError(
+            resolver.observe(projectId, addresses),
+            (cause): EnvironmentError => ({ _tag: "EnvironmentError", cause }),
+          ),
+          (observation): ResolvedEnvironment => ({
+            regions: observation.changedRegions,
+            observedEnvironmentRevision: observation.observedRevision,
+          }),
+        ),
     });
   }),
 );

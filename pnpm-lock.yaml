@@ -305,6 +305,9 @@ importers:
       '@arbor/environment-local':
         specifier: workspace:*
         version: link:../../adapters/environment-local
+      '@arbor/environment-resolver-local':
+        specifier: workspace:*
+        version: link:../../adapters/environment-resolver-local
       '@arbor/execution-runtime':
         specifier: workspace:*
         version: link:../../packages/execution-runtime
