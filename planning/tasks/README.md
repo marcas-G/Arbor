@@ -5,7 +5,7 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0–P7** (complete); **P8** (planning). Task contracts reference
+Phases: **P0–P8** (complete); **P9** (planning). Task contracts reference
 `docs/design/implementation/<phase>/**`.
 
 ## Authority order
@@ -168,7 +168,10 @@ project `DID v1.10` plus the frozen P7 phase contracts in
 the GQ1–GQ7 / v1.10 G1–G6 decisions). P8 tasks project `DID v1.11` plus the
 frozen P8 phase contracts in `docs/design/implementation/P8/**` (contract
 review Blocking=0 after two independent rounds; governed by the GQ1–GQ8 /
-v1.11 G1–G6 decisions).
+v1.11 G1–G6 decisions). P9 tasks project `DID v1.11` plus the frozen P9
+phase contracts in `docs/design/implementation/P9/**` (contract review
+Blocking=0; governed by the GQ1–GQ5 decisions recorded in
+`P9/00-contract-index.md` — no DID catalog changes).
 `Problem & Goals v1.2` / `Scenarios v1.2` / `System Design v1.3` are unchanged.
 
 ## Entry blocker
@@ -176,11 +179,12 @@ v1.11 G1–G6 decisions).
 P0-001 owned the frozen technical baseline (§14.1). It is satisfied via the
 pinned image `arbor-node24:24.21.0` (Node 24.21.0 + pnpm 12.4.2) and the
 project `env.sh` wrapper; `pnpm check` is green. **P0–P8 are COMPLETE**;
-all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6/P7 Design Gap
-(see `planning/results/P6.result.md`, `planning/results/P7.result.md`).
-**P8**: design closure complete (DID v1.11 governance diff from GQ1–GQ8;
-contracts frozen at Blocking=0), planning frozen — pending implementation
-authorization. See `planning/gaps/`.
+all `DG-*` / `P1-DG-*` / `P5-DG-*` are RESOLVED; no open P6/P7/P8 Design Gap
+(see `planning/results/P6.result.md`, `planning/results/P7.result.md`,
+`planning/results/P8.result.md`).
+**P9**: design closure complete (contracts at Blocking=0; GQ1–GQ5 adjudicated
+2026-09-21 with no DID catalog changes), planning frozen — pending
+implementation authorization. See `planning/gaps/`.
 
 ## P2 dependency graph
 
@@ -448,3 +452,37 @@ P8-011                          -> P8-012
 | P8-010 | P9 + P14 Program v1 + dual versioning + eval gates + M-2 placeholder migration | P8-008 |
 | P8-011 | Acceptance stories A–G + architecture + guards | P8-006..P8-010 |
 | P8-012 | P8 convergence & result record | P8-011 |
+
+## P9 dependency graph
+
+Authoritative edge list (`X -> Y` means Y depends on X):
+
+```text
+P8-012                     -> P9-001
+P9-001                     -> P9-002, P9-004, P9-009, P9-010
+P9-002                     -> P9-003, P9-009
+P9-003                     -> P9-005, P9-006, P9-007, P9-008, P9-012
+P9-004                     -> P9-007
+P9-010                     -> P9-011, P9-012
+P9-002 .. P9-012           -> P9-013
+P9-013                     -> P9-014
+```
+
+## P9 task index
+
+| ID | Title | Depends on |
+|---|---|---|
+| P9-001 | Fault-injection harness + transaction fault modes + p9 suite skeleton | P8-012 |
+| P9-002 | B-1 recovery visibility: ReconciliationSourceLive wiring + durable escalation + I-1..I-3 gate | P9-001 |
+| P9-003 | B-2 completion-fact settle + recovery drive triggers T1–T4 (GQ3) + D1/D2/D6 | P9-002 |
+| P9-004 | Lease renewal loop (TTL/3) + soft release | P9-001 |
+| P9-005 | Durable timer re-drive (fire + clear one tx) + D4 | P9-003 |
+| P9-006 | Worker crash + resurrection injection matrix (W1–W5 / R1–R6) | P9-001, P9-003 |
+| P9-007 | Lease expiry injection + pre-dispatch T4 proof (L1–L4) | P9-003, P9-004 |
+| P9-008 | Provider disconnect + unsettled Turn recovery (PD1–PD4 / I-4..I-7; GQ4) | P9-001, P9-003 |
+| P9-009 | Tool four-tier injection (No.35/No.54) + D3 | P9-001, P9-002 |
+| P9-010 | Consumer offset wiring + crash/poison matrix (CC-1..CC-6) | P9-001 |
+| P9-011 | Generic rebuild (RB-1..RB-5; GQ2) + durability-asserted evidence protocol (GQ5) | P9-010 |
+| P9-012 | P7/P8 workflow interruption replay + dispatch failure (WF/DF + D5) | P9-001, P9-003, P9-010 |
+| P9-013 | Acceptance stories A–G + architecture + P5–P8 regression guards | P9-002..P9-012 |
+| P9-014 | P9 convergence & result record | P9-013 |
