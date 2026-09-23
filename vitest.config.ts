@@ -13,5 +13,9 @@ export default defineConfig({
       "apps/*/test/**/*.test.ts",
       "tests/**/*.test.ts",
     ],
+    // `apps/web` runs its own jsdom vitest project (`pnpm --filter
+    // @arbor/web test`); its tests must not run under the root node-env
+    // configuration (P13 `05` §5).
+    exclude: ["**/node_modules/**", "apps/web/**"],
   },
 });

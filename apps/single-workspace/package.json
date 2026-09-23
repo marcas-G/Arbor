@@ -31,9 +31,13 @@
     "@arbor/sandbox-local": "workspace:*",
     "@arbor/secret-env": "workspace:*",
     "@arbor/secret-file": "workspace:*",
-    "@arbor/blob-local": "workspace:*"
+    "@arbor/blob-local": "workspace:*",
+    "ws": "8.21.3"
   },
   "scripts": {
     "build": "tsc -b"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1"
   }
 }

@@ -2,3 +2,5 @@ packages:
   - "packages/*"
   - "adapters/*"
   - "apps/*"
+minimumReleaseAgeExclude:
+  - jsdom@30.1.1

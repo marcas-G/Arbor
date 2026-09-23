@@ -2429,7 +2429,8 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         }
       }
     }
-    expect(existsSync(join(repoRoot, "apps/web"))).toBe(false);
+    // P13 (DID v1.15 G1): apps/web exists; superseded assertion removed.
+    expect(existsSync(join(repoRoot, "apps/web", "package.json"))).toBe(true);
     const actions = readFileSync(
       join(repoRoot, "packages/projection-runtime/src/actions.ts"),
       "utf8",
