@@ -27,10 +27,11 @@
 | TR-W1 | P12 `10` §2 WS shell | 新增 server→client invalidation 帧（`{kind:"invalidate", view, watermark}`）：仅携带 staleness 提示，**不携带 DTO payload、不携带 view 语义**；client 收到后 refetch。传输仍不产 view 语义（P12 `10` §1 不变） |
 | TR-W2 | P12 `10` §5 deployment | production daemon 同源托管 `apps/web` static dist（`/` 路径 + assets）；静态资源服务不含任何 API 语义 |
 
-## Phase state（本合同冻结时）
+## Phase state
 
 ```text
-P13 design closure: contracts FROZEN（独立评审两轮，Blocking=0）
-P13 planning: NOT STARTED
-P13 implementation: NOT AUTHORIZED
+P13 design closure COMPLETE (contracts FROZEN; review Blocking=0)
+P13 planning COMPLETE (planning review Blocking=0)
+P13 implementation COMPLETE; P13 FORMALLY CLOSED
+(planning/results/P13.result.md — EC-1..EC-14 PASS)
 ```
