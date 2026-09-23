@@ -18,6 +18,8 @@ import type {
 } from "@arbor/api-contracts";
 
 const id = (value: string): never => value as never;
+/** Fixture values stand in for a server-supplied canonical Work.revision. */
+const workRevision = (value: number): never => value as never;
 
 // --- responsibility-tree ---
 
@@ -25,12 +27,14 @@ export const treeTypical: TreeViewRes = {
   nodes: [
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000001"),
+      parentWorkspaceId: null,
       name: "平台根工作区",
       status: "executing",
       currentWork: {
         workId: id("wrk_018f6a2e-0000-7000-8000-0000000000a1"),
         objective: "维护 P13 视图渲染合同",
         status: "Open",
+        revision: workRevision(0),
         activeExecution: {
           executionId: id("exe_018f6a2e-0000-7000-8000-0000000000e1"),
           admittedAt: "2026-09-23T09:00:00.000Z",
@@ -50,6 +54,7 @@ export const treeTypical: TreeViewRes = {
     },
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000002"),
+      parentWorkspaceId: id("ws_018f6a2e-0000-7000-8000-000000000001"),
       name: "前端渲染",
       status: "idle",
       subtreeAttention: { attention: 0, actionRequired: 0 },
@@ -61,6 +66,7 @@ export const treeTypical: TreeViewRes = {
     },
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000003"),
+      parentWorkspaceId: id("ws_018f6a2e-0000-7000-8000-000000000001"),
       name: "守护进程",
       status: "waiting-blocked",
       subtreeAttention: { attention: 0, actionRequired: 0 },
@@ -72,6 +78,7 @@ export const treeMinimal: TreeViewRes = {
   nodes: [
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000004"),
+      parentWorkspaceId: null,
       name: "仅必要字段",
       status: "idle",
       subtreeAttention: { attention: 0, actionRequired: 0 },
@@ -79,27 +86,26 @@ export const treeMinimal: TreeViewRes = {
   ],
 };
 
-/** The real wire carries EXPLICIT nulls (not missing keys) for absent
- * optionals — the regression shape that once blank-screened the tree. The
- * frozen TS type models absence as `undefined`; JSON serialization emits
- * `null`. `03` §1.3 rules both are "empty slot" — hence the explicit cast. */
-export const treeExplicitNulls = {
+/** Absence is represented by omitted optional fields. In particular, a tree
+ * node without current work must not carry `currentWork: null` or a dummy
+ * current-work object across the frozen wire boundary. */
+export const treeExplicitNulls: TreeViewRes = {
   nodes: [
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000006"),
+      parentWorkspaceId: null,
       name: "显式空值节点",
       status: "idle",
-      currentWork: null,
       subtreeAttention: { attention: 0, actionRequired: 0 },
-      usageSummary: null,
     },
   ],
-} as unknown as TreeViewRes;
+};
 
 export const treeUnknownEnum: TreeViewRes = {
   nodes: [
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000005"),
+      parentWorkspaceId: null,
       name: "未来状态节点",
       status: "weird-state" as never,
       subtreeAttention: { attention: 0, actionRequired: 0 },
@@ -189,6 +195,7 @@ export const detailTypical: WorkspaceDetailRes = {
     workId: id("wrk_018f6a2e-0000-7000-8000-0000000000a1"),
     objective: "交付 P13-004 视图渲染层",
     status: "Open",
+    revision: workRevision(0),
     activeExecution: {
       executionId: id("exe_018f6a2e-0000-7000-8000-0000000000e1"),
       admittedAt: "2026-09-23T09:00:00.000Z",
@@ -242,6 +249,7 @@ export const detailTypical: WorkspaceDetailRes = {
   ],
   verification: {
     verificationId: id("ver_018f6a2e-0000-7000-8000-0000000000v1"),
+    targetWorkRevision: workRevision(0),
     verdict: "Pass",
     criteriaResults: [
       {
@@ -310,6 +318,7 @@ export const detailUnknownEnum: WorkspaceDetailRes = {
   currentWork: {
     objective: "未来状态的工作",
     status: "weird-state" as never,
+    revision: workRevision(0),
   },
   dependencies: [
     {
@@ -334,6 +343,7 @@ export const currentWorkTypical: CurrentWorkRes = {
   workId: id("wrk_018f6a2e-0000-7000-8000-0000000000a1"),
   objective: "交付 P13-004 视图渲染层",
   status: "Open",
+  revision: workRevision(0),
   activeExecution: {
     executionId: id("exe_018f6a2e-0000-7000-8000-0000000000e1"),
     admittedAt: "2026-09-23T09:00:00.000Z",
@@ -343,6 +353,7 @@ export const currentWorkTypical: CurrentWorkRes = {
 export const currentWorkMinimal: CurrentWorkRes = {
   objective: "仅必要字段的当前工作",
   status: "Open",
+  revision: workRevision(0),
 };
 
 export const currentWorkNull: CurrentWorkRes = null;
@@ -350,12 +361,14 @@ export const currentWorkNull: CurrentWorkRes = null;
 export const currentWorkUnknownEnum: CurrentWorkRes = {
   objective: "未来状态",
   status: "weird-state" as never,
+  revision: workRevision(0),
 };
 
 // --- verification ---
 
 export const verificationTypical: VerificationRes = {
   verificationId: id("ver_018f6a2e-0000-7000-8000-0000000000v1"),
+  targetWorkRevision: workRevision(0),
   verdict: "Pass",
   criteriaResults: [
     {

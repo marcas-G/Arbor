@@ -3,6 +3,7 @@ import type {
   ProjectId,
   QueryResult,
   ViewId,
+  Work,
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
@@ -112,13 +113,40 @@ interface ViewPlan {
   ) => Effect.Effect<unknown, ProjectionReadError>;
 }
 
-/** Flatten the derive-side node tree into the wire `nodes` list (the
- * api-contracts TreeViewNode carries no children; the children field is
- * dropped at the wire boundary). */
-const flattenTreeNodes = (node: TreeViewNode): ReadonlyArray<unknown> => [
-  { ...node, children: undefined },
-  ...node.children.flatMap((child) => flattenTreeNodes(child)),
-];
+/** Local structural restatement of api-contracts TreeViewRes. Projection
+ * runtime intentionally depends only on domain + ports, so this boundary
+ * adapter drops derive-only `children` and turns its nullable current-work
+ * representation into the frozen wire optional. */
+interface TreeViewWireNode {
+  readonly workspaceId: WorkspaceId;
+  readonly parentWorkspaceId: WorkspaceId | null;
+  readonly name: string;
+  readonly status: import("@arbor/domain").WorkspaceStatusLabel;
+  readonly currentWork?: {
+    readonly workId: WorkId;
+    readonly objective: string;
+    readonly status: Work["lifecycle"];
+    readonly revision: Work["revision"];
+  };
+  readonly subtreeAttention: TreeViewNode["subtreeAttention"];
+  readonly usageSummary?: TreeViewNode["usageSummary"];
+}
+
+interface TreeViewWireResult {
+  readonly nodes: ReadonlyArray<TreeViewWireNode>;
+}
+
+/** Flatten the derive-side tree into preorder wire nodes. A workspace without
+ * current work omits `currentWork` entirely; no `null` or dummy shape crosses
+ * the API boundary. */
+const flattenTreeNodes = (
+  node: TreeViewNode,
+): ReadonlyArray<TreeViewWireNode> => {
+  const { children, currentWork, ...wireNode } = node;
+  const current =
+    currentWork === null ? wireNode : { ...wireNode, currentWork };
+  return [current, ...children.flatMap((child) => flattenTreeNodes(child))];
+};
 
 /** Derive-input label mapping (derive vocabulary → P10 `05` §1 wire
  * vocabulary; no re-derivation, a rename). */
@@ -156,7 +184,7 @@ const planView = (
             depth !== undefined
               ? buildTreeView({ projectId, depth }, deps.tree)
               : buildTreeView({ projectId }, deps.tree),
-            (node) => ({ nodes: flattenTreeNodes(node) }),
+            (node): TreeViewWireResult => ({ nodes: flattenTreeNodes(node) }),
           ),
       });
     }

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import type {
   CurrentWorkRes,
@@ -6,7 +6,7 @@ import type {
   VerificationRes,
   WorkspaceDetailRes,
 } from "../packages/api-contracts/src/index.js";
-import { parse, WorkId } from "../packages/domain/dist/index.js";
+import { parse, WorkId, WorkRevision } from "../packages/domain/dist/index.js";
 import {
   AUDIT_TIMELINE_EVENT_TYPES,
   deriveAuditTimeline,
@@ -65,7 +65,12 @@ const seedDetail = seedCanonical(
 
     // root: current work + pending work + completed work + active main
     yield* insertWorkRow(
-      { workId: W_ROOT, workspaceId: p10Root, objective: "current objective" },
+      {
+        workId: W_ROOT,
+        workspaceId: p10Root,
+        objective: "current objective",
+        revision: 7,
+      },
       p10Project,
     );
     yield* insertWorkRow(
@@ -139,7 +144,7 @@ const seedDetail = seedCanonical(
     yield* insertVerificationRow({
       verificationId: "ver_d1",
       workId: W_ROOT,
-      targetWorkRevision: 0,
+      targetWorkRevision: 7,
       ownerWorkspaceId: p10Root,
       executionIds: [],
       state: "Open",
@@ -167,7 +172,7 @@ const seedDetail = seedCanonical(
     yield* insertAcceptanceRow({
       acceptanceId: "acc_00000000-0000-7000-8000-0000000000d1",
       workId: W_ROOT,
-      targetWorkRevision: 0,
+      targetWorkRevision: 7,
       verificationId: "ver_d1",
       actor: "user:gov",
       acceptedAt: "t4",
@@ -295,6 +300,7 @@ describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
           workId: W_ROOT,
           objective: "current objective",
           status: "Open",
+          revision: 7,
           activeExecution: { executionId: EXE_ROOT, admittedAt: "t0" },
         });
         expect(detail.executionSummary).toEqual({
@@ -338,6 +344,7 @@ describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
         // ⑤ verification (open) + evidence + acceptance
         expect(detail.verification).toEqual({
           verificationId: "ver_d1",
+          targetWorkRevision: parse(WorkRevision)(7),
           verdict: undefined,
           criteriaResults: [
             {
@@ -438,6 +445,7 @@ describe("P10-006 Current Work (01 §1; SD §12.1)", () => {
           workId: W_ROOT,
           objective: "current objective",
           status: "Open",
+          revision: 7,
           activeExecution: { executionId: EXE_ROOT, admittedAt: "t0" },
         });
 
@@ -461,6 +469,7 @@ describe("P10-006 Verification view (01 §1 ⑤)", () => {
           deps.verificationView,
         );
         expect(open.verificationId).toBe("ver_d1");
+        expect(open.targetWorkRevision).toBe(7);
         expect(open.verdict).toBeUndefined();
         expect(open.criteriaResults.every((c) => c.verdict === "Unknown")).toBe(
           true,
@@ -478,8 +487,45 @@ describe("P10-006 Verification view (01 §1 ⑤)", () => {
           deps.verificationView,
         );
         expect(none.verificationId).toBeUndefined();
+        expect(none.targetWorkRevision).toBeUndefined();
         expect(none.criteriaResults).toEqual([]);
         expect(none.evidenceRefs).toEqual([]);
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("does not attach an acceptance that belongs to another verification at the same work revision", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        const mismatchedAcceptance = {
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000d9" as never,
+          workId: W_ROOT,
+          targetWorkRevision: parse(WorkRevision)(7),
+          verificationId: "ver_00000000-0000-7000-8000-0000000000d9" as never,
+          actor: "user:gov" as never,
+          acceptedAt: "t9",
+        };
+        const verification = yield* deriveVerificationView(W_ROOT, {
+          ...deps.verificationView,
+          findAcceptanceByWorkRevision: () =>
+            Effect.succeed(Option.some(mismatchedAcceptance)),
+        });
+        const detail = yield* deriveWorkspaceDetail(p10Root, {
+          ...deps.workspaceDetail,
+          findAcceptanceByWorkRevision: () =>
+            Effect.succeed(Option.some(mismatchedAcceptance)),
+        });
+
+        expect(verification.verificationId).toBe("ver_d1");
+        expect(verification.targetWorkRevision).toBe(7);
+        expect(verification.acceptance).toBeUndefined();
+        expect(detail.verification?.verificationId).toBe("ver_d1");
+        expect(detail.verification?.targetWorkRevision).toBe(7);
+        expect(detail.verification?.acceptance).toBeUndefined();
       }),
       makeP10App(),
     );
@@ -524,6 +570,7 @@ describe("P10-006 Verification view (01 §1 ⑤)", () => {
         // work revision is 0 — no Concluded row matches it; highest
         // target revision wins (ver_d3)
         expect(concluded.verificationId).toBe("ver_d3");
+        expect(concluded.targetWorkRevision).toBe(5);
         expect(concluded.verdict).toBe("Unknown");
         expect(
           concluded.criteriaResults.every((c) => c.verdict === "Unknown"),

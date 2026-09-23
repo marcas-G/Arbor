@@ -148,6 +148,7 @@ const treeDto: TreeViewRes = {
   nodes: [
     {
       workspaceId: WORKSPACE,
+      parentWorkspaceId: null,
       name: "root",
       status: "executing",
       subtreeAttention: { attention: 1, actionRequired: 0 },

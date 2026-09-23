@@ -31,6 +31,9 @@ import {
 export interface CurrentWorkView {
   readonly workId: WorkId;
   readonly objective: string;
+  readonly status: Work["lifecycle"];
+  /** Canonical revision carried to command affordances; never browser-owned. */
+  readonly revision: Work["revision"];
 }
 
 /** Usage summaries are aggregated from provider_turns.usage_json via the
@@ -53,6 +56,7 @@ export const ZERO_USAGE_SUMMARY: UsageSummaryView = {
 
 export interface TreeViewNode {
   readonly workspaceId: WorkspaceId;
+  readonly parentWorkspaceId: WorkspaceId | null;
   readonly name: string;
   readonly status: import("@arbor/domain").WorkspaceStatusLabel;
   readonly currentWork: CurrentWorkView | null;
@@ -110,6 +114,86 @@ export interface TreeViewDeps {
   ) => Effect.Effect<ReadonlyArray<UsageTurnFact>, ProjectionReadError>;
 }
 
+/** The canonical responsibility hierarchy is a single rooted tree. The
+ * projection verifies that invariant before it derives a wire tree: malformed
+ * persistence must fail visibly rather than be repaired or inferred by a
+ * browser consumer. */
+const validateResponsibilityHierarchy = (
+  workspaces: ReadonlyArray<Workspace>,
+): Effect.Effect<
+  {
+    readonly root: Workspace;
+    readonly byId: ReadonlyMap<WorkspaceId, Workspace>;
+    readonly childrenOf: ReadonlyMap<WorkspaceId, ReadonlyArray<Workspace>>;
+  },
+  ProjectionReadError
+> =>
+  Effect.gen(function* () {
+    if (workspaces.length === 0) {
+      return yield* Effect.fail({
+        _tag: "ProjectionReadFailure" as const,
+        cause: "responsibility hierarchy has zero roots: no workspaces",
+      });
+    }
+
+    const byId = new Map<WorkspaceId, Workspace>();
+    for (const workspace of workspaces) {
+      if (byId.has(workspace.workspaceId)) {
+        return yield* Effect.fail({
+          _tag: "ProjectionReadFailure" as const,
+          cause: `duplicate workspace ${workspace.workspaceId} in responsibility hierarchy`,
+        });
+      }
+      byId.set(workspace.workspaceId, workspace);
+    }
+
+    const roots = workspaces.filter(
+      (workspace) => workspace.parentWorkspaceId === null,
+    );
+    if (roots.length !== 1) {
+      return yield* Effect.fail({
+        _tag: "ProjectionReadFailure" as const,
+        cause: `responsibility hierarchy requires exactly one root; found ${roots.length}`,
+      });
+    }
+
+    const childrenOf = new Map<WorkspaceId, Array<Workspace>>();
+    for (const workspace of workspaces) {
+      if (workspace.parentWorkspaceId === null) {
+        continue;
+      }
+      const parent = byId.get(workspace.parentWorkspaceId);
+      if (parent === undefined) {
+        return yield* Effect.fail({
+          _tag: "ProjectionReadFailure" as const,
+          cause: `dangling responsibility parent ${workspace.parentWorkspaceId} for workspace ${workspace.workspaceId}`,
+        });
+      }
+      const siblings = childrenOf.get(parent.workspaceId) ?? [];
+      siblings.push(workspace);
+      childrenOf.set(parent.workspaceId, siblings);
+    }
+
+    // Follow every parent chain so a disconnected cycle cannot hide behind
+    // the one valid root. Parent existence was already checked above.
+    for (const workspace of workspaces) {
+      const path = new Set<WorkspaceId>();
+      let cursor = workspace;
+      while (cursor.parentWorkspaceId !== null) {
+        if (path.has(cursor.workspaceId)) {
+          return yield* Effect.fail({
+            _tag: "ProjectionReadFailure" as const,
+            cause: `cycle in responsibility hierarchy at workspace ${cursor.workspaceId}`,
+          });
+        }
+        path.add(cursor.workspaceId);
+        cursor = byId.get(cursor.parentWorkspaceId) as Workspace;
+      }
+    }
+
+    return { root: roots[0] as Workspace, byId, childrenOf };
+  });
+
 /** S2.4.1 semantics: the tree answers who is responsible / doing /
  * waiting / blocked / needs attention without per-node drill-in. */
 export const buildTreeView = (
@@ -118,31 +202,8 @@ export const buildTreeView = (
 ): Effect.Effect<TreeViewNode, ProjectionReadError> =>
   Effect.gen(function* () {
     const workspaces = yield* deps.listWorkspacesByProject(request.projectId);
-    if (workspaces.length === 0) {
-      return yield* Effect.fail({
-        _tag: "ProjectionReadFailure" as const,
-        cause: `no workspaces for project ${request.projectId}`,
-      });
-    }
-    const byId = new Map(
-      workspaces.map((workspace) => [workspace.workspaceId, workspace]),
-    );
-    const childrenOf = new Map<WorkspaceId, Array<Workspace>>();
-    const roots: Array<Workspace> = [];
-    for (const workspace of workspaces) {
-      const parent =
-        workspace.parentWorkspaceId !== null
-          ? byId.get(workspace.parentWorkspaceId)
-          : undefined;
-      if (parent === undefined) {
-        roots.push(workspace);
-        continue;
-      }
-      const siblings = childrenOf.get(parent.workspaceId) ?? [];
-      siblings.push(workspace);
-      childrenOf.set(parent.workspaceId, siblings);
-    }
-    roots.sort((a, b) => (a.workspaceId < b.workspaceId ? -1 : 1));
+    const { root, byId, childrenOf } =
+      yield* validateResponsibilityHierarchy(workspaces);
 
     const rows = yield* deps.readAttentionRows(request.projectId);
     const subtreeAttention = subtreeAttentionAggregate(rows, (workspaceId) => {
@@ -218,6 +279,8 @@ export const buildTreeView = (
             currentWork = {
               workId: work.value.workId,
               objective: work.value.objective,
+              status: work.value.lifecycle,
+              revision: work.value.revision,
             };
           }
         }
@@ -226,7 +289,7 @@ export const buildTreeView = (
           request.depth === undefined || level < request.depth;
         const children = withinDepth
           ? yield* Effect.forEach(
-              (childrenOf.get(workspace.workspaceId) ?? []).sort((a, b) =>
+              [...(childrenOf.get(workspace.workspaceId) ?? [])].sort((a, b) =>
                 a.workspaceId < b.workspaceId ? -1 : 1,
               ),
               (child) => buildNode(child, level + 1),
@@ -235,6 +298,7 @@ export const buildTreeView = (
 
         return {
           workspaceId: workspace.workspaceId,
+          parentWorkspaceId: workspace.parentWorkspaceId,
           name: workspace.name,
           status,
           currentWork,
@@ -246,7 +310,7 @@ export const buildTreeView = (
         };
       });
 
-    return yield* buildNode(roots[0] as Workspace, 1);
+    return yield* buildNode(root, 1);
   });
 
 // --- Workspace Summary / Project Overview: aggregated renderings of the

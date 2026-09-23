@@ -10,6 +10,7 @@ import type {
 } from "@arbor/api-contracts";
 
 const id = (value: string): never => value as never;
+const workRevision = (value: number): never => value as never;
 
 export const WS = "ws_1";
 export const WORK_CURRENT = "wrk_cur_1";
@@ -40,6 +41,7 @@ export const detailCurrentWork: WorkspaceDetailRes = {
     workId: id(WORK_CURRENT),
     objective: "当前工作目标",
     status: "Open",
+    revision: workRevision(0),
   },
 };
 
@@ -50,6 +52,7 @@ export const detailPendingOnly: WorkspaceDetailRes = {
 
 export const verificationFull: VerificationRes = {
   verificationId: id("ver_1"),
+  targetWorkRevision: workRevision(0),
   verdict: "Pass",
   criteriaResults: [
     {

@@ -27,6 +27,7 @@ import type {
   PendingWorkRefView,
   VerificationViewView,
 } from "./shared.js";
+import { verificationIdentityView } from "./shared.js";
 
 export type {
   AuditTimelineEntryView,
@@ -213,6 +214,7 @@ export const deriveWorkspaceDetail = (
           workId: work.value.workId,
           objective: work.value.objective,
           status: work.value.lifecycle,
+          revision: work.value.revision,
           activeExecution: executionSummary,
         };
       }
@@ -245,7 +247,7 @@ export const deriveWorkspaceDetail = (
         open.targetWorkRevision,
       );
       verificationView = {
-        verificationId: open.verificationId,
+        ...verificationIdentityView(open),
         verdict: undefined,
         criteriaResults: open.missionSnapshot.criteria.map((criterion) => ({
           criterionId: criterion.criterionId,
@@ -258,13 +260,15 @@ export const deriveWorkspaceDetail = (
           verdict: "Unknown",
         })),
         evidenceRefs: evidence.map((row) => row.evidenceId),
-        acceptance: Option.isSome(acceptance)
-          ? {
-              acceptanceId: acceptance.value.acceptanceId,
-              actor: acceptance.value.actor,
-              acceptedAt: acceptance.value.acceptedAt,
-            }
-          : undefined,
+        acceptance:
+          Option.isSome(acceptance) &&
+          acceptance.value.verificationId === open.verificationId
+            ? {
+                acceptanceId: acceptance.value.acceptanceId,
+                actor: acceptance.value.actor,
+                acceptedAt: acceptance.value.acceptedAt,
+              }
+            : undefined,
       };
       break;
     }
