@@ -1,10 +1,11 @@
 # Arbor Web Product UI — Implementation Specification
 
-**状态：** proposal / 仅规划；本文件不授权实现、修改 `apps/web`、修改 API
-contracts 或修改后端。
+**状态：** FROZEN product implementation baseline；DID v1.17 D-1 已采纳其
+TR-WPU-A–D 的 presentation/read-model closure。D0–D10 Web product implementation
+仍未获授权；本文件本身不授权超出 D-1 的 `apps/web` route/component/visual work。
 **设计输入：** `docs/arbor-ui-designs.zip`（3 张系统参考图、7 张最终页面图）。
 **冻结依据（优先级由高到低）：** 已裁决的 Web Product UI Contract Closure
-`02-contract-closure.md`（待 DID v1.17 adoption）→ P14 `00`–`05`（尤其
+`02-contract-closure.md`（DID v1.17 已采纳）→ P14 `00`–`05`（尤其
 `04-web-surface`）→ P13 `00`–`06` → `packages/api-contracts/src/views.ts` → Web
 v1 product contract `planning/proposals/web-v1/01-ui-ia-design.md`。P14 的 TR-C 覆盖
 Web v1 原先的 chat defer：root workspace 有 conversation tab；child 仍然只读。
@@ -24,7 +25,7 @@ human-actionable 命令和 WS invalidation。以下规则不因视觉稿而改�
 - 只有 `CreateProject`、`RecordDecision`、`SteerWork`、`AcceptWorkOutcome`、
   `StopExecution`、`GrantPermission`、`RevokePermission`、
   `SubmitHumanMessage` 可以成为主动 UI 命令。authority 仍由服务器裁决。
-- `SubmitHumanMessage` 只在 tree `nodes[0].workspaceId` 所指的 root workspace 生效；不建
+- `SubmitHumanMessage` 只在 tree 中唯一 `parentWorkspaceId === null` 所指的 root workspace 生效；不建
   `/chat`，不暴露 `SendMessage` 或 `AdmitExecution`，不流式显示、不自行插入
   chat turn，也不在 chat 中放 steer/stop。
 - Tree 是只读导航；Attention 是只读诊断；Queue 只放具有机械、精确 action
@@ -133,8 +134,8 @@ human-actionable 命令和 WS invalidation。以下规则不因视觉稿而改�
   而全局底栏的首项为“工作台”。每个 pane 独立高度/状态，不能因一个 query 失败将
   另一个置空。
 - **Server-state source:** `responsibility-tree({projectId})` 给出 root、preorder 及
-  server-projected `parentWorkspaceId` graph edges；成功后先取
-  `rootWorkspaceId = tree.nodes[0].workspaceId`，再用
+  server-projected `parentWorkspaceId` graph edges；成功后必须在响应中确认唯一
+  `parentWorkspaceId === null` 的 node 并取其 `workspaceId` 为 `rootWorkspaceId`，再用
   `workspace-detail({workspaceId: rootWorkspaceId})` 供 root header、
   `transcript({workspaceId: rootWorkspaceId, cursor?, limit})` 取对话内容。图形不从
   names、preorder index 或 local selection 推断 parent。
@@ -215,10 +216,11 @@ human-actionable 命令和 WS invalidation。以下规则不因视觉稿而改�
   conversation 优先、tree context 变为 sheet/disclosure，底部保留全局五 tab。设计的
   project context sheet 只可显示当前 route、tree node、已取到 workspace detail、
   session/freshness；不能显示 provider/model/runtime 或“新建工作”。
-- **Server-state source:** `responsibility-tree({projectId})` 决定
-  `rootWorkspaceId = nodes[0].workspaceId` 和 context；`workspace-detail({rootWorkspaceId})` 供 header；
+- **Server-state source:** `responsibility-tree({projectId})` 以唯一
+  `parentWorkspaceId === null` node 决定 `rootWorkspaceId` 和 context；
+  `workspace-detail({rootWorkspaceId})` 供 header；
   `transcript({workspaceId: rootWorkspaceId, cursor?, limit})` 为唯一消息内容。
-  composer 必须等待 tree 成功且 route ID 等于 `nodes[0].workspaceId` 后才可渲染。
+  composer 必须等待 tree 成功且 route ID 等于该唯一 root `workspaceId` 后才可渲染。
 - **Allowed actions:** 发送 bounded 文本的 SubmitHumanMessage；client 预分配
   `msg_<uuid-v7>`，transport retry 复用它和 commandId；Committed 后显示 receipt、
   invalidate/refetch，Human turn 只从返回 DTO 出现。可浏览“更早”与 navigate tree
@@ -255,7 +257,7 @@ human-actionable 命令和 WS invalidation。以下规则不因视觉稿而改�
   view，也不把查不到的 work 归零。
 - **Allowed actions:** 返回 workspace；若当前 work DTO 给出 active execution，可
   在明确上下文中 StopExecution；TR-WPU-C adoption 后，只有当前 work 的
-  server-supplied `CurrentWorkSummary.revision` 可绑定 SteerWork；TR-WPU-C 的 paired
+  server-supplied `CurrentWorkSummary.revision` 可绑定 SteerWork；TR-WPU-D 的 paired
   `verification.targetWorkRevision` 可绑定 AcceptWorkOutcome。任一 carrier 缺失时
   不显示提交动作，绝不以 `0` 或猜测值补齐。
 - **Empty / loading / error:** 父 detail loading 期间先加载 header；查无 work 是
@@ -274,14 +276,14 @@ human-actionable 命令和 WS invalidation。以下规则不因视觉稿而改�
 - **Server-state source:** `responsibility-tree({projectId})` 给出本次范围内的
   workspace identities；对其每个返回 node 查询 `inbox-view({workspaceId})`。排序只能
   用可见的 ActionRequired stable reference 与 inbox watermark/time，不得声称一个被
-  `slice(0, 10)` 截断的集合是完整项目 queue。TR-WPU-C adoption 后，待验收卡从
+  `slice(0, 10)` 截断的集合是完整项目 queue。TR-WPU-D adoption 后，待验收卡从
   selected verification 的 `verificationId + targetWorkRevision` 取得 exact binding；
   没有这对字段就不显示卡。
 - **Allowed actions:** 仅当 Governance entry 的**结构化** key 满足项目已冻结的
   `gov:<proposalId>:<revision>` binding 时打开 RecordDecision，outcome 只有 Approve
   或 Reject。无 target 的条目只可打开其 workspace inbox。没有“稍后处理/defer”、
   bulk action、手填 proposal ID、标记已读或移动 Attention；AcceptWorkOutcome 只使用
-  TR-WPU-C 的 paired server values，不创建人工 revision 输入。
+  TR-WPU-D 的 paired server values，不创建人工 revision 输入。
 - **Empty / loading / error:** tree 为空或全部 inbox 空为“没有等你处理的事项”；
   tree/inbox 的 loading 先显示 skeleton；一个 workspace inbox 失败应显示有来源 ID
   的就地 problem，不把其他成功 queue 项抹去；提交反馈留在 selected card。
@@ -344,7 +346,7 @@ human-actionable 命令和 WS invalidation。以下规则不因视觉稿而改�
 
 | # | 设计意图 | 冻结语义/数据事实 | 决定 |
 |---|---|---|---|
-| C1 | 桌面截图把 tree 与 conversation 作为通用工作台 | conversation 只属于 root workspace tab，root 由 `tree.nodes[0]` 决定；没有 `/workbench`。 | 在 root conversation tab 内做只读 tree context；child click 只导航，composer 不换目标。 |
+| C1 | 桌面截图把 tree 与 conversation 作为通用工作台 | conversation 只属于 root workspace tab，root 由唯一 server-projected `parentWorkspaceId === null` node 决定；没有 `/workbench`。 | 在 root conversation tab 内做只读 tree context；child click 只导航，composer 不换目标。 |
 | C2 | 可视化连接的层级树 | TR-WPU-B 在每个 Tree node 增加由 server projection 生成的 canonical `parentWorkspaceId`。 | 以明确 parent edge 绘图；preorder 仍供 list 使用，browser 不推断/修复 parent。 |
 | C3 | Queue 的 Approve/Reject/稍后处理与丰富 proposal detail | RecordDecision 只允许 exact structured target 和 Approve/Reject；没有 defer command，inbox 也没有丰富 proposal DTO。 | 仅 `gov:` 机械 binding 才显示决策；删除/不实现 defer，非结构化 entry 只读。 |
 | C4 | Attention 详情包含原因、影响、建议并可“转待处理” | Attention DTO 仅含 source/severity/target/dedup/summary/time，且面是 read-only。 | inspection 仅复用这些字段和 target 深链；没有转队列或其他动作。 |
@@ -359,15 +361,15 @@ human-actionable 命令和 WS invalidation。以下规则不因视觉稿而改�
 
 ### 6.1 Frozen interface completeness gates (not frontend workarounds)
 
-TR-WPU-B/C 已作为 v1.17 closure proposal 裁决为最小 server-projected read-model
-evolution；在 DID adoption/rollout 前它们仍不可由浏览器模拟。以下 CLOSED 表示
-**contract blocker closed on v1.17 adoption**，而非本草案已经部署投影。其余项目保持
-deferred，须由 future frozen-contract owner 单独决定：
+TR-WPU-B/C/D 已由 D-1 作为 v1.17 的最小 server-projected read-model evolution
+实现；浏览器后续只能消费这些 server carriers，不能模拟。以下 CLOSED 表示 contract
+blocker 已关闭，不是 D0–D10 Web implementation authorization。其余项目保持 deferred，
+须由 future frozen-contract owner 单独决定：
 
 | Gate | Missing structured source | Consequence now |
 |---|---|---|
 | G1a — SteerWork revision | **CLOSED by TR-WPU-C:** `CurrentWorkSummary.revision` 来自 canonical Work。 | adoption 后用 `expectedWorkRevision = server revision`；非 current work 仍无动作，绝不 fallback `0`。 |
-| G1b — AcceptWorkOutcome revision | **CLOSED by TR-WPU-C:** present `verificationId` 成对携带 canonical `targetWorkRevision`。 | adoption 后用 `targetWorkRevision = verification target`；空 verification 不提供动作。 |
+| G1b — AcceptWorkOutcome revision | **CLOSED by TR-WPU-D:** present `verificationId` 成对携带 canonical `targetWorkRevision`。 | adoption 后用 `targetWorkRevision = verification target`；空 verification 不提供动作。 |
 | G2 — grant inventory | 没有列出现存 permission grant 的 view。 | 不得构造 RevokePermission target；显示 capability-unavailable，不能把空数组解释为“没有授权”。 |
 | G3 — settings/project metadata | 无成员、provider/model、runtime、资源/存储、通知读写 view/command。 | 设计中的对应 panels 不出现可编辑控件。 |
 | G4 — richer usage | 无日期、时间序列、provider/model/task、预算 DTO。 | 不实现 KPI/chart/filter/export，也不由 rows 推导。 |
@@ -398,7 +400,7 @@ contract owner，不能用前端补丁伪造。
 | REBUILD | `pages/attention/*` | 分组/unknown enum/只读跳转正确，但尚未把设计的双栏检查面收束到 DTO 限制。 | 重建 list/inspection responsive layout；不新增解释或 mutation。 |
 | REBUILD | `pages/usage/*`, `UsageView.tsx` | groupBy 与 no-aggregate 语义正确，视觉是原始表。 | 重建 readable table/card view；不采纳设计的图表和日期控制。 |
 | REBUILD | `pages/settings/*` | 已诚实展示 grants list 缺失，但页面组织与设计不符，且需要明确 capability-unavailable 与 factual empty 的区别。 | 重建为权限/项目/会话分区；不增加未冻结 tabs。 |
-| REBUILD | `pages/work/WorkPage.tsx`, `commands/forms/{SteerWorkForm,AcceptWorkOutcomeForm}.tsx` | 当前传入 `expectedWorkRevision=0` / `targetWorkRevision=0`；这不是 view 提供的精确 binding。 | TR-WPU-C rollout 后只用 `CurrentWorkSummary.revision` / `VerificationView.targetWorkRevision`；移除所有 fallback literal。 |
+| REBUILD | `pages/work/WorkPage.tsx`, `commands/forms/{SteerWorkForm,AcceptWorkOutcomeForm}.tsx` | 当前传入 `expectedWorkRevision=0` / `targetWorkRevision=0`；这不是 view 提供的精确 binding。 | TR-WPU-C/D rollout 后只用 `CurrentWorkSummary.revision` / `VerificationView.targetWorkRevision`；移除所有 fallback literal。 |
 | MISSING | G2 / Settings Revoke panel | API 无 permission grant list。 | 不实现 selectable RevokePermission UI。 |
 | MISSING | G3 / screenshot settings panels | API/commands 无 members、provider/model、runtime、storage、notification/security support。 | 不实现相应页面、route 或禁用假控件。 |
 | MISSING | G4 / screenshot usage analytics | API 无 timeline、provider/model/task、budget、export。 | 不实现图表/KPI/filter/导出。 |
@@ -408,10 +410,10 @@ contract owner，不能用前端补丁伪造。
 ## 8. Implementation DAG (for a later, separate implementation authorization)
 
 `D-1 Product UI Contract Closure` 是 DID v1.17 adoption 与最小 API/projection contract
-migration 的前置节点，不是 D0–D10 的 frontend implementation authorization。本文件只
-起草其内容，未执行它。D-1 完成且独立审阅 Blocking=0 后，才可开始 D0；D0–D10 仍须
-单独授权。每个 UI 节点都应先写/迁移对应 UI test，再写组件。G2–G5 仍是外部 contract
-gates，不能在本计划中“顺手补齐”。
+migration 的前置节点，不是 D0–D10 的 frontend implementation authorization。D-1 的
+API/projection/documentation scope 已实现；独立审阅与最终门禁记录在 D-1 result record。
+即使 D-1 COMPLETE，D0–D10 仍须单独授权。每个 UI 节点都应先写/迁移对应 UI test，再写
+组件。G2–G5 仍是外部 contract gates，不能在本计划中“顺手补齐”。
 
 ```mermaid
 flowchart TD

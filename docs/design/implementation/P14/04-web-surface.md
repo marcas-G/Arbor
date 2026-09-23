@@ -2,27 +2,28 @@
 
 **Owns:** 对话面的 UI 落位与输入面
 **Does not own:** 命令/执行/read model（`01`–`03`）
-**Web v1 关系**：架构不变量全部延续；§0/§2.4/路由模型的 chat 解除按 TR-C
-（见 §6），其余零改动
+**Web v1 关系**：架构不变量全部延续；TR-C 解除 chat-first defer，DID v1.17
+TR-WPU-D 把正式项目 landing 校正为 Root Workbench（见 §6）；其余零改动。
 
 ## 1. 落位（frozen，G-F）
 
 ```text
-Root Workspace
-  对话 tab（conversation）           ← 原"对话记录"tab 升级
-  ├── transcript（升级 read model）
-  └── composer（唯一输入面）
+`/p/:projectId` — Root Workbench（正式项目入口）
+  ├── Responsibility Tree context/graph（server-projected parent edges）
+  └── Root Conversation（transcript + composer，唯一输入面）
+
+`/p/:projectId/tree` — Tree Focus/deep-link
+
+`/p/:projectId/workspace/:rootWorkspaceId/conversation`
+  └── Root Conversation 的 deep-link mirror，不是独立 landing
 
 Child Workspace
   对话记录 tab                        ← 保持 read-only，无 composer
-
-Overview
-  "与 Arbor 对话" 快捷入口            ← 仅 deep-link：
-  /p/:projectId/workspace/:rootWorkspaceId/conversation
 ```
 
-- **不建 `/chat` 独立产品域**（路由即 workspace conversation tab）。
-- rootWorkspaceId 来源：tree nodes[0]（Web v1 既有 root 判定）。
+- **不建 `/chat` 或 `/workbench` 独立产品域**。
+- rootWorkspaceId 只从成功 Tree DTO 中 `parentWorkspaceId === null` 的唯一 server-projected
+  root 取得；浏览器不得根据 preorder、name、indentation 或 local state 推断/修复 parent。
 
 ## 2. Composer（frozen）
 
@@ -62,10 +63,18 @@ Overview
 出现 Human turn（非本地插入）；child 负向（无 composer、无 conversation
 路由参数）；web 源码扫描（AdmitExecution/SendMessage/EventSource 零出现）。
 
-## 6. Tracked revision（TR-C，DID v1.16）
+## 6. Tracked revisions（TR-C + TR-WPU-D）
 
 对 Web v1 product contract（`planning/proposals/web-v1/01`）的 recorded
 supersession：§0 chat-first deferral 由 P14 解除；§2.4 Root 的"对话记录"
 tab 升级为 conversation（transcript + composer），child 保持只读；
 `WORKSPACE_TABS`/route model 修订（6 tabs）归 P14 实现；EC-8 证据文本
 收窄为"无 SendMessage 型输入控件"，语义核心不变。
+
+**TR-WPU-D（DID v1.17）**：正式项目入口由独立 Overview/dashboard 调整为
+`/p/:projectId` Root Workbench（Tree + Root Conversation）；`/p/:projectId/tree` 保持
+Tree Focus；`/p/:projectId/workspace/:rootWorkspaceId/conversation` 是 root conversation
+deep-link mirror。只改变 product IA/presentation placement；root-only composer、child
+read-only、SubmitHumanMessage semantics、WS invalidation、server single source of truth、
+route 不新增 `/chat`/`/workbench` 均不变。D-1 只采纳该合同，未授权 Web route/component
+implementation。

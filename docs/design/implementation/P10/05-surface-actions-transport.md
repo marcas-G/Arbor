@@ -1,7 +1,7 @@
 # P10 — 05 Query Surface, User Actions, Transport Boundary (GQ4/GQ6)
 
 **Authority:** DID v1.13 G4/G6, §7.2 (ProjectionQueryPort), §10.4.1 (projection-runtime deps domain+ports; api-contracts deps domain), §10.5 (Problem DTO); SD v1.3 §12.5, §13.10; P8 `05` (P14 consume-only); P6 `04` (Steer), P2 `01` (Stop).
-**Status:** DRAFT.
+**Status:** FROZEN — DID v1.17 D-1 additive read-model successor (TR-WPU-B/C/D).
 
 ## 1. ProjectionQueryPort (signature freeze)
 
@@ -19,11 +19,11 @@ interface ProjectionQueryPort {
 ### Minimal per-view shapes (BLK-3 fix — frozen request/response cores; field-level rendering details are implementation)
 
 ```ts
-TreeViewReq        = { projectId, depth? }                     → nodes[{workspaceId, name, status, currentWork?, subtreeAttention{attention, actionRequired}, usageSummary? }]
+TreeViewReq        = { projectId, depth? }                     → nodes[{workspaceId, parentWorkspaceId|null, name, status, currentWork?, subtreeAttention{attention, actionRequired}, usageSummary? }]
 AttentionReq       = { projectId }                             → rows[{source, severity, targetWorkspaceId, dedupKey, summaryRef, occurredAt }]
 WorkspaceDetailReq = { workspaceId }                           → { responsibility, boundary, currentWork?, pendingWorks[], executionSummary?, dependencies[], inboxUnconsumed[], verification?, auditTimeline[] }
-CurrentWorkReq     = { workspaceId }                           → { workId?, objective, status, activeExecution? } | null
-VerificationReq    = { workId }                                → { verificationId?, verdict?, criteriaResults[], evidenceRefs[], acceptance? }
+CurrentWorkReq     = { workspaceId }                           → { workId?, objective, status, revision, activeExecution? } | null
+VerificationReq    = { workId }                                → { verificationId?, targetWorkRevision?, verdict?, criteriaResults[], evidenceRefs[], acceptance? }
 DependencyReq      = { projectId | workspaceId }               → rows[{dependencyId, consumerWorkId, binding, state, satisfiedBy?}]
 TranscriptReq      = { workspaceId, sessionId?, cursor?, limit } → { entries[{kind, summaryRef, at}], nextCursor? }   // first production read path over session_entries
 UsageReq           = { projectId, groupBy: "workspace"|"subtree"|"project" } → rows[{workspaceId, tokens, cost, turns }]
@@ -31,6 +31,15 @@ InboxViewReq       = { workspaceId }                           → { unconsumed[
 ```
 
 Every response carries `{ watermark, lag }` (§1 signature). Shapes are the contract; row limits/cursors beyond Transcript's are transport concerns (P12).
+
+> **DID v1.17 D-1 (TR-WPU-B/C/D).** `parentWorkspaceId` is the direct server-projected
+> canonical edge: exactly one returned Tree node has `null`; every non-null parent exists in the
+> response; parent pointers are acyclic; row order remains root-first deterministic preorder.
+> Invalid hierarchy input is a typed projection failure, never browser repair. A present
+> `currentWork` has canonical `status` and `revision`; absent Tree work omits `currentWork`.
+> `CurrentWorkSummary.revision` is exactly canonical `Work.revision`. A selected Verification
+> emits `verificationId` and `targetWorkRevision` as an inseparable frozen identity pair; an
+> empty view omits both. Existing ordered/list clients may ignore these additive members.
 
 > **P12 TR-5 propagation (P12 `04` §3.2/§5; DID v1.14 G4).** The `UsageReq`
 > row `cost` field is the P12 `UsageCost` ADT (`Known` | `Unknown`), not a
