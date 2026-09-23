@@ -15,6 +15,7 @@ import {
 import { Button } from "../components/Button.js";
 import { Empty } from "../components/Empty.js";
 import { FreshnessChip } from "../components/FreshnessChip.js";
+import { BootstrapPage } from "../pages/bootstrap/BootstrapPage.js";
 import { useFreshness, usePath } from "../providers/AppProviders.js";
 import { useSession } from "../session/SessionContext.js";
 import styles from "./shell.module.css";
@@ -54,7 +55,11 @@ export function AppShell({
         <Topbar route={route} />
         <main className={styles.content}>
           {!connected ? null : route === null ? (
-            <RouteNotFound path={path} connected={connected} />
+            connected && (path === "/" || path === "") ? (
+              <BootstrapPage />
+            ) : (
+              <RouteNotFound path={path} connected={connected} />
+            )
           ) : session.unauthenticatedProblem !== null ? null : (
             pageFor(route)
           )}
