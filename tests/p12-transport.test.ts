@@ -381,6 +381,7 @@ describe("P12-010 transport shells render api-contracts DTOs (EC-11)", () => {
         expect(body.value).toEqual(treeDto);
         expect(Object.keys(body.value.nodes[0] ?? {})).toEqual([
           "workspaceId",
+          "parentWorkspaceId",
           "name",
           "status",
           "subtreeAttention",
