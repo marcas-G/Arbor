@@ -9,7 +9,7 @@
 
 .title {
   margin: 0;
-  font-family: var(--arbor-font-serif);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-display);
   font-weight: 600;
   color: var(--arbor-ink);
@@ -23,7 +23,7 @@
 
 .sectionTitle {
   margin: 0;
-  font-family: var(--arbor-font-serif);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-body);
   font-weight: 600;
   color: var(--arbor-ink);

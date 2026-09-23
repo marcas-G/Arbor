@@ -1,11 +1,9 @@
 import { type ReactNode, useRef } from "react";
-import styles from "./Dialog.module.css";
+import styles from "./Sheet.module.css";
 import { useModalFocus } from "./useModalFocus.js";
 
-/** W-01 Dialog: surface-tinted overlay; desktop centered card, mobile
- * full-screen sheet (CSS). Keyboard focus stays contained and returns to the
- * opener when the controlled surface closes. */
-export function Dialog({
+/** Controlled side/bottom panel for local product UI context. */
+export function Sheet({
   open,
   title,
   onClose,
@@ -17,11 +15,11 @@ export function Dialog({
   readonly children: ReactNode;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useRef<HTMLElement>(null);
+  const sheetRef = useRef<HTMLElement>(null);
   useModalFocus({
     open,
     onClose,
-    containerRef: dialogRef,
+    containerRef: sheetRef,
     initialFocusRef: closeRef,
   });
 
@@ -34,9 +32,9 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        ref={dialogRef}
+        ref={sheetRef}
         tabIndex={-1}
-        className={styles.dialog}
+        className={styles.sheet}
       >
         <header className={styles.header}>
           <h2 className={styles.title}>{title}</h2>

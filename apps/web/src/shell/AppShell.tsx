@@ -15,6 +15,7 @@ import {
 import { Button } from "../components/Button.js";
 import { Empty } from "../components/Empty.js";
 import { FreshnessChip } from "../components/FreshnessChip.js";
+import { Sheet } from "../components/Sheet.js";
 import { BootstrapPage } from "../pages/bootstrap/BootstrapPage.js";
 import { useFreshness, usePath } from "../providers/AppProviders.js";
 import { useSession } from "../session/SessionContext.js";
@@ -274,8 +275,14 @@ function MobileTabbar({ route }: { readonly route: Route | null }) {
   return (
     <>
       {moreOpen ? (
-        <div className={styles.moreSheetBackdrop} role="presentation">
-          <div className={styles.moreSheet} role="dialog" aria-label="更多">
+        <Sheet
+          open={moreOpen}
+          title="更多"
+          onClose={() => {
+            setMoreOpen(false);
+          }}
+        >
+          <div className={styles.moreItems}>
             <button
               type="button"
               className={styles.moreItem}
@@ -320,17 +327,8 @@ function MobileTabbar({ route }: { readonly route: Route | null }) {
             >
               断开会话
             </button>
-            <button
-              type="button"
-              className={styles.moreItem}
-              onClick={() => {
-                setMoreOpen(false);
-              }}
-            >
-              关闭
-            </button>
           </div>
-        </div>
+        </Sheet>
       ) : null}
       <nav className={styles.tabbar} aria-label="移动导航">
         {tabs.map((item) => (
