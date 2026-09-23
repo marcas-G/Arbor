@@ -167,6 +167,7 @@ export type { SliceServices };
 if (import.meta.url === `file://${process.argv[1]}`) {
   const workspaceId = process.env.ARBOR_WORKSPACE_ID;
   const webPort = process.env.ARBOR_HTTP_PORT;
+  const webHost = process.env.ARBOR_HTTP_HOST;
   const config: ProductionDaemonRunConfig = {
     ...(workspaceId !== undefined
       ? { workspaceId: parse(WorkspaceId)(workspaceId) }
@@ -178,6 +179,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
               ? { staticRoot: process.env.ARBOR_WEB_DIST }
               : {}),
             ...(webPort !== undefined ? { port: Number(webPort) } : {}),
+            ...(webHost !== undefined ? { host: webHost } : {}),
           },
         }
       : {}),
