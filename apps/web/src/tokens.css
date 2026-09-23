@@ -1,32 +1,52 @@
-/* Design tokens land in P13-003 (`04`). Minimal placeholder so the shell
- * renders on paper ground from day one. */
+/* P13 `04` design tokens. The :root block below is mirrored from
+ * src/tokens.ts — the EC-10 test (test/tokens.test.ts) keeps both in
+ * lockstep; edit values only in tokens.ts. */
 :root {
   --arbor-paper: #f4efe6;
+  --arbor-paper-2: #ece5d8;
   --arbor-ink: #26332b;
+  --arbor-ink-soft: #5a6a5f;
+  --arbor-line: #c9c0ae;
+  --arbor-leaf: #2d5a3d;
+  --arbor-leaf-bright: #3f7d54;
+  --arbor-leaf-pale: #dfe9e0;
+  --arbor-branch: #3d5a72;
+  --arbor-attention: #a06a1f;
+  --arbor-danger: #9a4a2f;
+  --arbor-muted: #5a6a5f;
+  --arbor-sky: #3d5a72;
+  --arbor-font-serif:
+    "Palatino Linotype", "Iowan Old Style", Palatino, Georgia, serif;
+  --arbor-font-mono: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+  --arbor-text-display: 28px;
+  --arbor-text-title: 20px;
+  --arbor-text-body: 15px;
+  --arbor-text-small: 13px;
+  --arbor-text-caption: 11px;
+  --arbor-space-1: 4px;
+  --arbor-space-2: 8px;
+  --arbor-space-3: 12px;
+  --arbor-space-4: 16px;
+  --arbor-space-5: 24px;
+  --arbor-space-6: 32px;
+  --arbor-radius: 3px;
+  --arbor-radius-small: 2px;
+  --arbor-shadow: 0 1px 3px rgba(38, 51, 43, 0.12);
 }
+
 html,
 body {
   height: 100%;
   margin: 0;
 }
+
 body {
-  font-family: Georgia, "Palatino Linotype", serif;
+  font-family: var(--arbor-font-serif);
+  font-size: var(--arbor-text-body);
   background: var(--arbor-paper);
   color: var(--arbor-ink);
 }
+
 #root {
   height: 100%;
-}
-.arbor-app {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-.arbor-topbar {
-  padding: var(--arbor-space-2, 8px) var(--arbor-space-3, 12px);
-  border-bottom: 1px solid #c9c0ae;
-}
-.arbor-brand {
-  font-weight: 600;
-  letter-spacing: 0.03em;
 }
