@@ -42,19 +42,11 @@ export interface WebTransportHandle {
   readonly close: () => Promise<void>;
 }
 
-const STATIC_PREFIXES = ["/assets"] as const;
-
-const isStaticCandidate = (method: string, path: string): boolean => {
-  if (method !== "GET" && method !== "HEAD") {
-    return false;
-  }
-  if (path === "/" || path.startsWith("/?")) {
-    return true;
-  }
-  return STATIC_PREFIXES.some(
-    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
-  );
-};
+/** TR-W2 (`05` §2): every GET/HEAD that is NOT an API path goes to the
+ * static face (which serves /assets/* and falls back to index.html for
+ * client routes like /p/:projectId/... — no server route semantics). */
+const isStaticCandidate = (method: string, path: string): boolean =>
+  (method === "GET" || method === "HEAD") && !isApiPath(path);
 
 const isApiPath = (path: string): boolean =>
   path === "/commands" || path.startsWith("/views/") || path === "/views";
@@ -109,8 +101,7 @@ export const startWebTransport = async (
 
       if (
         config.staticRoot !== undefined &&
-        isStaticCandidate(method, path) &&
-        !isApiPath(path)
+        isStaticCandidate(method, path)
       ) {
         const resolution = resolveStatic(config.staticRoot, url);
         if (resolution.kind === "file") {

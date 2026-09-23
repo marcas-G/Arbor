@@ -137,6 +137,13 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
     expect(asset.headers.get("cache-control")).toContain("immutable");
   });
 
+  it("TR-W2 SPA fallback: client-route deep links serve index.html, not an API problem", async () => {
+    const deep = await fetch(`${base()}/p/prj_1/workspace/ws_1/transcript`);
+    expect(deep.status).toBe(200);
+    expect(deep.headers.get("content-type")).toContain("text/html");
+    expect(await deep.text()).toContain("arbor-p13");
+  });
+
   it("story §1: CreateProject via /commands (external human governance) lands Committed", async () => {
     const payload = createProjectPayloadShape("story");
     const response = await fetch(`${base()}/commands`, {
