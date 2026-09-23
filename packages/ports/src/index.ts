@@ -8,6 +8,7 @@ export * from "./errors.js";
 export * from "./execution.js";
 export * from "./formation.js";
 export * from "./health.js";
+export * from "./human-messages.js";
 export * from "./journal.js";
 export * from "./permission-grant-repository.js";
 export * from "./project-tool-registry.js";

@@ -164,6 +164,19 @@ export const EnvironmentChanged = Schema.TaggedStruct("EnvironmentChanged", {
   changedRegions: Schema.Array(Schema.Unknown),
   cause: Schema.String,
 });
+/** P14 `01` §3: the human chat-turn submission event. Independent of
+ * `MessageSent` (whose payload semantics are a workspace sender) — this
+ * event names the human principal explicitly and never fabricates a
+ * senderWorkspaceId. */
+export const HumanMessageSubmitted = Schema.TaggedStruct(
+  "HumanMessageSubmitted",
+  {
+    messageId: Schema.String,
+    rootWorkspaceId: Schema.String,
+    humanPrincipal: Schema.String,
+    bodyRef: Schema.String,
+  },
+);
 export const HumanInterventionApplied = Schema.TaggedStruct(
   "HumanInterventionApplied",
   {
@@ -214,6 +227,7 @@ export const DomainEventPayload = Schema.Union([
   WorktreeCreated,
   WorktreeRetired,
   HumanInterventionApplied,
+  HumanMessageSubmitted,
 ]);
 
 export type DomainEventPayload = Schema.Schema.Type<typeof DomainEventPayload>;
@@ -257,6 +271,7 @@ export const EVENT_CATALOG = {
   WorktreeCreated,
   WorktreeRetired,
   HumanInterventionApplied,
+  HumanMessageSubmitted,
 } as const;
 
 export type EventTypeName = keyof typeof EVENT_CATALOG;

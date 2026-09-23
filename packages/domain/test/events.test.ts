@@ -48,6 +48,10 @@ const EXPECTED_EVENTS = [
   "DecisionRecorded",
   "EnvironmentChanged",
   "HumanInterventionApplied",
+  // P14 `01` §3 (DID v1.16 TR-A/G-A): independent human chat-turn event —
+  // deliberately not reusing MessageSent (whose payload semantics are a
+  // workspace sender).
+  "HumanMessageSubmitted",
 ].sort();
 
 const AGGREGATE_SNAPSHOT_FIELDS = [
