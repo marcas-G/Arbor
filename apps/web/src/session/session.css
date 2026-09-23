@@ -1,0 +1,46 @@
+/* P13-007 session layer: layout only; every color/size value resolves
+ * through a design token (EC-10: literals live only in tokens.css/tokens.ts). */
+
+/* augment components.css shell topbar into a single row */
+.arbor-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--arbor-space-3);
+}
+
+.arbor-topbar-session {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--arbor-space-3);
+  margin-left: auto;
+}
+
+.arbor-topbar-actor {
+  padding-bottom: var(--arbor-space-1);
+  color: var(--arbor-ink-soft);
+  font-family: var(--arbor-font-mono);
+  font-size: var(--arbor-text-small);
+}
+
+.arbor-session-login {
+  width: 100%;
+  max-width: 480px;
+  margin: var(--arbor-space-6) auto 0;
+}
+
+.arbor-command-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--arbor-space-2);
+}
+
+.arbor-unauthorized-gate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--arbor-space-3);
+  max-width: 560px;
+  margin: 0 auto;
+}
