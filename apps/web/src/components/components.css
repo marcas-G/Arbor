@@ -1,0 +1,190 @@
+/* P13-003 component layer. Every color/size value resolves through a
+ * design token (EC-10: literals live only in tokens.css/tokens.ts). */
+
+/* app shell */
+.arbor-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.arbor-topbar {
+  padding: var(--arbor-space-2) var(--arbor-space-3);
+  border-bottom: 1px solid var(--arbor-line);
+}
+
+.arbor-brand {
+  color: var(--arbor-leaf);
+  font-size: var(--arbor-text-title);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.arbor-main {
+  padding: var(--arbor-space-4);
+}
+
+/* card */
+.arbor-card {
+  background: var(--arbor-paper-2);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  box-shadow: var(--arbor-shadow);
+}
+
+.arbor-card-header {
+  padding: var(--arbor-space-3) var(--arbor-space-4);
+  border-bottom: 1px solid var(--arbor-line);
+}
+
+.arbor-card-title {
+  margin: 0;
+  color: var(--arbor-ink);
+  font-size: var(--arbor-text-title);
+  font-weight: 600;
+}
+
+.arbor-card-body {
+  padding: var(--arbor-space-4);
+}
+
+/* badge */
+.arbor-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--arbor-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--arbor-radius-small);
+  font-family: var(--arbor-font-mono);
+  font-size: var(--arbor-text-caption);
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.arbor-badge-leaf {
+  color: var(--arbor-leaf);
+  border-color: var(--arbor-leaf);
+  background: var(--arbor-leaf-pale);
+}
+
+.arbor-badge-attention {
+  color: var(--arbor-attention);
+  border-color: var(--arbor-attention);
+}
+
+.arbor-badge-danger {
+  color: var(--arbor-danger);
+  border-color: var(--arbor-danger);
+}
+
+.arbor-badge-muted {
+  color: var(--arbor-muted);
+  border-color: var(--arbor-line);
+}
+
+.arbor-badge-branch {
+  color: var(--arbor-branch);
+  border-color: var(--arbor-branch);
+}
+
+.arbor-badge-sky {
+  color: var(--arbor-sky);
+  border-color: var(--arbor-sky);
+}
+
+.arbor-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--arbor-space-2);
+}
+
+/* button */
+.arbor-button {
+  padding: var(--arbor-space-1) var(--arbor-space-3);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius-small);
+  font-family: var(--arbor-font-serif);
+  font-size: var(--arbor-text-small);
+  cursor: pointer;
+}
+
+.arbor-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.arbor-button-primary {
+  border-color: var(--arbor-leaf);
+  background: var(--arbor-leaf);
+  color: var(--arbor-paper);
+}
+
+.arbor-button-primary:hover:not(:disabled) {
+  border-color: var(--arbor-leaf-bright);
+  background: var(--arbor-leaf-bright);
+}
+
+.arbor-button-quiet {
+  border-color: var(--arbor-line);
+  background: transparent;
+  color: var(--arbor-leaf);
+}
+
+.arbor-button-quiet:hover:not(:disabled) {
+  border-color: var(--arbor-leaf-bright);
+  color: var(--arbor-leaf-bright);
+}
+
+.arbor-button-danger {
+  border-color: var(--arbor-danger);
+  background: var(--arbor-danger);
+  color: var(--arbor-paper);
+}
+
+/* field */
+.arbor-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-1);
+}
+
+.arbor-field-label {
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+
+.arbor-field-control {
+  padding: var(--arbor-space-1) var(--arbor-space-2);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius-small);
+  background: var(--arbor-paper);
+  color: var(--arbor-ink);
+  font-family: var(--arbor-font-serif);
+  font-size: var(--arbor-text-body);
+}
+
+.arbor-field-control:focus {
+  border-color: var(--arbor-leaf-bright);
+  outline: 1px solid var(--arbor-leaf-bright);
+}
+
+textarea.arbor-field-control {
+  resize: vertical;
+}
+
+/* empty state */
+.arbor-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--arbor-space-3);
+  padding: var(--arbor-space-5);
+  border: 1px dashed var(--arbor-line);
+  border-radius: var(--arbor-radius);
+}
+
+.arbor-empty-text {
+  color: var(--arbor-muted);
+  font-size: var(--arbor-text-small);
+  font-style: italic;
+}
