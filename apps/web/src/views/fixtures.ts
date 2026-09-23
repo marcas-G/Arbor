@@ -9,11 +9,13 @@ import type {
   CurrentWorkRes,
   DependencyRes,
   InboxViewRes,
+  Problem,
   TranscriptRes,
   TreeViewRes,
   UsageReq,
   UsageRes,
   VerificationRes,
+  ViewResponseMap,
   WorkspaceDetailRes,
 } from "@arbor/api-contracts";
 
@@ -539,3 +541,120 @@ export const inboxUnknownEnum: InboxViewRes = {
     },
   ],
 };
+
+type D0ViewFixtureMatrix = {
+  readonly [ViewId in keyof ViewResponseMap]: {
+    readonly typical: ViewResponseMap[ViewId];
+    readonly minimal: ViewResponseMap[ViewId];
+    readonly unknown: ViewResponseMap[ViewId];
+  };
+};
+
+/** D0's exhaustive, typed fixture registry for product UI contract tests. */
+export const D0_VIEW_FIXTURES = {
+  "responsibility-tree": {
+    typical: treeTypical,
+    minimal: treeMinimal,
+    unknown: treeUnknownEnum,
+  },
+  attention: {
+    typical: attentionTypical,
+    minimal: attentionMinimal,
+    unknown: attentionUnknownEnum,
+  },
+  "workspace-detail": {
+    typical: detailTypical,
+    minimal: detailMinimal,
+    unknown: detailUnknownEnum,
+  },
+  "current-work": {
+    typical: currentWorkTypical,
+    minimal: currentWorkMinimal,
+    unknown: currentWorkUnknownEnum,
+  },
+  verification: {
+    typical: verificationTypical,
+    minimal: verificationMinimal,
+    unknown: verificationUnknownEnum,
+  },
+  "dependency-view": {
+    typical: dependencyTypical,
+    minimal: dependencyMinimal,
+    unknown: dependencyUnknownEnum,
+  },
+  transcript: {
+    typical: transcriptTypical,
+    minimal: transcriptMinimal,
+    unknown: transcriptUnknownEnum,
+  },
+  usage: {
+    typical: usageTypical,
+    minimal: usageMinimal,
+    unknown: usageUnknownEnum,
+  },
+  "inbox-view": {
+    typical: inboxTypical,
+    minimal: inboxMinimal,
+    unknown: inboxUnknownEnum,
+  },
+} satisfies D0ViewFixtureMatrix;
+
+type D0ProblemCategory =
+  | "unauthenticated"
+  | "forbidden"
+  | "not-found"
+  | "invalid-request"
+  | "stale"
+  | "unavailable";
+
+/** P13's six frozen Web treatments, each represented by a complete DTO. */
+export const D0_PROBLEM_FIXTURES = {
+  unauthenticated: {
+    code: "auth/unauthenticated",
+    category: "unauthenticated",
+    message: "auth/unauthenticated",
+    correlationId: null,
+    retryDisposition: "non-retryable",
+    safeDetails: {},
+  },
+  forbidden: {
+    code: "authority/denied",
+    category: "forbidden",
+    message: "authority/denied",
+    correlationId: null,
+    retryDisposition: "non-retryable",
+    safeDetails: { reason: "missing authority" },
+  },
+  "not-found": {
+    code: "workspace/not-found",
+    category: "not-found",
+    message: "workspace/not-found",
+    correlationId: null,
+    retryDisposition: "non-retryable",
+    safeDetails: {},
+  },
+  "invalid-request": {
+    code: "transport/invalid-request",
+    category: "invalid-request",
+    message: "transport/invalid-request",
+    correlationId: null,
+    retryDisposition: "non-retryable",
+    safeDetails: {},
+  },
+  stale: {
+    code: "projection/stale",
+    category: "stale",
+    message: "projection/stale",
+    correlationId: null,
+    retryDisposition: "retryable",
+    safeDetails: {},
+  },
+  unavailable: {
+    code: "projection/unavailable",
+    category: "unavailable",
+    message: "projection/unavailable",
+    correlationId: null,
+    retryDisposition: "retryable",
+    safeDetails: {},
+  },
+} satisfies Readonly<Record<D0ProblemCategory, Problem>>;

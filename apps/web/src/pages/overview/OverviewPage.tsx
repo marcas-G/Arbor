@@ -21,7 +21,9 @@ export function OverviewPage({
   const treeQuery = useViewQuery("responsibility-tree", {
     projectId: route.projectId as never,
   });
-  const rootWorkspaceId = treeQuery.data?.nodes[0]?.workspaceId;
+  const rootWorkspaceId = treeQuery.data?.nodes.find(
+    (node) => node.parentWorkspaceId === null,
+  )?.workspaceId;
   return (
     <div className={styles.page}>
       <h1 className={styles.heading}>概览</h1>

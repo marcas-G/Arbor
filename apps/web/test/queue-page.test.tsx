@@ -23,6 +23,7 @@ const treeDto = {
   nodes: [
     {
       workspaceId: "ws_root",
+      parentWorkspaceId: null,
       name: "root",
       status: "idle",
       subtreeAttention: { attention: 0, actionRequired: 0 },

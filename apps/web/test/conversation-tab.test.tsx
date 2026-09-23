@@ -3,8 +3,8 @@
  * SubmitHumanMessage envelope (msg_ preallocation, retry reuses the same
  * messageId), Zod empty-body rejection (no /commands fetch), and the
  * no-optimistic-message invariant: the authoritative turn appears only after
- * the invalidated transcript refetch resolves. Child workspace (wsId ≠
- * tree.nodes[0]) renders the read-only transcript with NO composer (S10).
+ * the invalidated transcript refetch resolves. Child workspace (the Tree node
+ * has a non-null server parent) renders read-only with NO composer (S10).
  */
 import type { TranscriptRes } from "@arbor/api-contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -25,23 +25,25 @@ const id = (value: string): never => value as never;
 
 const node = (
   workspaceId: string,
+  parentWorkspaceId: string | null,
   name: string,
   status: string,
 ): Record<string, unknown> => ({
   workspaceId: id(workspaceId),
+  parentWorkspaceId: parentWorkspaceId === null ? null : id(parentWorkspaceId),
   name,
   status: id(status),
   subtreeAttention: { attention: 0, actionRequired: 0 },
 });
 
 const rootTree = {
-  nodes: [node("ws_1", "根工作区", "idle")],
+  nodes: [node("ws_1", null, "根工作区", "idle")],
 } as never;
 
 const childTree = {
   nodes: [
-    node("ws_root", "平台根工作区", "idle"),
-    node("ws_1", "子工作区", "executing"),
+    node("ws_root", null, "平台根工作区", "idle"),
+    node("ws_1", "ws_root", "子工作区", "executing"),
   ],
 } as never;
 
@@ -167,7 +169,7 @@ afterEach(() => {
 });
 
 describe("P14-005 conversation tab", () => {
-  it("root workspace (nodes[0].workspaceId === wsId) renders the composer", async () => {
+  it("root workspace (parentWorkspaceId === null) renders the composer", async () => {
     installFetch({
       tree: rootTree,
       transcriptResponses: [() => okValue(transcriptTypical)],

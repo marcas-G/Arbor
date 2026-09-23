@@ -10,6 +10,17 @@ import {
   WORKSPACE_TABS,
 } from "../src/api/router.js";
 
+const ROUTE_NAMES = {
+  "project-overview": true,
+  tree: true,
+  queue: true,
+  attention: true,
+  usage: true,
+  settings: true,
+  workspace: true,
+  work: true,
+} as const satisfies Record<Route["name"], true>;
+
 const routes: ReadonlyArray<Route> = [
   { name: "project-overview", projectId: "prj_1" },
   { name: "tree", projectId: "prj_1" },
@@ -27,7 +38,25 @@ const routes: ReadonlyArray<Route> = [
     name: "workspace",
     projectId: "prj_1",
     workspaceId: "ws_1",
+    tab: "dependencies",
+  },
+  {
+    name: "workspace",
+    projectId: "prj_1",
+    workspaceId: "ws_1",
+    tab: "verification",
+  },
+  {
+    name: "workspace",
+    projectId: "prj_1",
+    workspaceId: "ws_1",
     tab: "transcript",
+  },
+  {
+    name: "workspace",
+    projectId: "prj_1",
+    workspaceId: "ws_1",
+    tab: "inbox",
   },
   {
     name: "workspace",
@@ -40,9 +69,13 @@ const routes: ReadonlyArray<Route> = [
 
 describe("W-00 project-scoped typed router", () => {
   it("parse ∘ format is identity for every product route", () => {
+    expect(new Set(routes.map((route) => route.name))).toEqual(
+      new Set(Object.keys(ROUTE_NAMES)),
+    );
     for (const route of routes) {
       const path = formatRoute(route);
       expect(parseRoute(path), path).toEqual(route);
+      expect(parseRoute(path)?.projectId, path).toBe(route.projectId);
     }
   });
 
