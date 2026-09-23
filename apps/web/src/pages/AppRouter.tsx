@@ -4,9 +4,13 @@
 import type { ReactNode } from "react";
 import type { Route } from "../api/router.js";
 import { AppShell } from "../shell/AppShell.js";
+import { AttentionPage } from "./attention/AttentionPage.js";
 import { OverviewPage } from "./overview/OverviewPage.js";
 import { PageStub } from "./PageStub.js";
+import { SettingsPage } from "./settings/SettingsPage.js";
 import { TreePage } from "./tree/TreePage.js";
+import { UsagePage } from "./usage/UsagePage.js";
+import { WorkPage } from "./work/WorkPage.js";
 import { WorkspacePage } from "./workspace/WorkspacePage.js";
 
 export function AppRouter(): ReactNode {
@@ -21,17 +25,15 @@ export function AppRouter(): ReactNode {
           case "workspace":
             return <WorkspacePage route={route} />;
           case "work":
-            return (
-              <PageStub route={route} label={`工作 ${route.workId}（W-06）`} />
-            );
+            return <WorkPage route={route} />;
           case "queue":
             return <PageStub route={route} label="待处理（W-08）" />;
           case "attention":
-            return <PageStub route={route} label="关注事项（W-06，只读）" />;
+            return <AttentionPage route={route} />;
           case "usage":
-            return <PageStub route={route} label="用量（W-07）" />;
+            return <UsagePage route={route} />;
           case "settings":
-            return <PageStub route={route} label="设置（W-07）" />;
+            return <SettingsPage route={route} />;
         }
       }}
     />

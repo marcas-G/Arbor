@@ -1,0 +1,16 @@
+/* W-07 usage page — CSS Modules, tokens only (EC-10: colors and font sizes
+ * come exclusively from var(--arbor-*)). */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-4);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--arbor-font-serif);
+  font-size: var(--arbor-text-display);
+  font-weight: 600;
+  color: var(--arbor-ink);
+}
