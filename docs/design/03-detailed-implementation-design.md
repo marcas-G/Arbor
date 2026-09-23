@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.15  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P13 design-closure rulings GQ1–GQ4)  
-**Supersedes:** v1.14  
+**Version:** 1.16  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P14 design-closure rulings GQ-A–F)  
+**Supersedes:** v1.15  
 **Date:** 2026-09-23  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
@@ -147,6 +147,58 @@ P12 design closure COMPLETE
 P12 planning COMPLETE
 P12 implementation COMPLETE; P12 FORMALLY CLOSED
 ```
+
+**Governance changes (v1.15 → v1.16):**（P14 design-closure 治理裁决 GQ-A–F）
+
+- G-A: **新增 `SubmitHumanMessage` human-facing Application Command**
+  （Authenticated Human → Root Workspace；payload {messageId,
+  targetWorkspaceId, bodyRef}；principal 来自 authenticated External
+  context，payload 不自报 sender；caller-preallocated id；durable/
+  idempotent；不修改 Work；无 Steer 语义）。**不扩展 `SendMessage` origin**
+  ——`SendMessage` 保持 P6 冻结的 Workspace→Workspace 通信（sender 由
+  authority fact 绑定，Query/Reply/Report/DecisionRequest/Deliver 的
+  parent/ancestor/correlation 规则不受污染）。配套新增独立事件
+  **`HumanMessageSubmitted`**（不硬套 `MessageSent`——其 payload 语义是
+  workspace sender，硬套 human 会伪造 senderWorkspaceId）。
+  **Recorded supersession (TR-A)**：P6 冻结的 `InboxEntry`/`InboxArrival`
+  kind 封闭集扩展 `HumanConversation`（P14 拥有；语义 = chat 对话轮，
+  ≠ `HumanInput` steer 专属）；api-contracts `InboxEntryKind` 随扩；
+  P6 其余语义不 reopen。
+  **Recorded supersession (TR-B)**：P13 `02` §2 Human-actionable 集合
+  7 → 8（+`SubmitHumanMessage`）；P13 `06` EC-6 与 Web v1 §9 不变量 2 的
+  "七"随本 TR 更新；EC-8 语义核心（`SendMessage` 永不进 chat 面）重申不变
+  （矩阵演进机制即 P13 `02` U-2）。
+- G-B: **对话轮执行复用既有 `WorkspaceMain + ExecutionFocus=Coordination`
+  语义**（Domain 已冻结 `ExecutionFocus = Work | Coordination` 与
+  `Completed(QueryCompleted)`）：SubmitHumanMessage → durable human
+  message + Root Inbox → deterministic conversation trigger →
+  scheduler/Application admission → `AdmitExecution(WorkspaceMain,
+  focus=Coordination)` → 既有 P2/P3/agent/provider 链 →
+  `SettleExecution(Completed(QueryCompleted))` → transcript projection。
+  **不发明 conversational/synthetic Work**。**浏览器不得为聊天直连
+  external `AdmitExecution`**（P13 `02` U-3 的 UI 面不推翻；P14 关闭的是
+  server-side conversation admission wiring）。one-active-main 下 human
+  message durable pending、不开第二 main、不打断、settle 后串行调度；
+  立即干预仍走冻结的 SteerWork/StopExecution——chat 无 interrupt 语义。
+- G-C: **transcript read model 升级**（呈现 Human turn：messageId/
+  bounded body/occurredAt；Assistant turn：executionId 关联/bounded body/
+  occurredAt）。WS→invalidate、`/views` 权威；v1 无 provider token
+  streaming、无 message 专用流式 transport、浏览器不拼 delta。
+- G-D: **对话权限 root-workspace-only**：Authenticated Human ↔ Root
+  Workspace；child = read-only transcript + SteerWork；不得绕开
+  Responsibility Tree / parent coordination。
+- G-E: **对话轮 = bounded execution**：1 accepted HumanMessage → 1
+  bounded Coordination Execution → 1 user-visible response episode
+  （execution 内可多 ProviderTurn/ToolInvocation）；跨轮连续性 =
+  same Root Workspace + same WorkspacePrimary Session + different
+  executions（Session = cognition continuity；Execution = bounded
+  episode）。phase contract 冻结 pending 消费/claim 顺序、crash/replay
+  exact-once logical response、message↔execution↔response correlation、
+  one-active-main 排队。
+- G-F: **UI 落位**：Root Workspace 对话 tab（transcript + composer）+
+  Overview "与 Arbor 对话" deep-link（
+  `/p/:projectId/workspace/:rootWorkspaceId/conversation`）；child 保持
+  read-only；不建 `/chat` 独立产品域。
 
 **Governance changes (v1.14 → v1.15):**（P13 design-closure 治理裁决 GQ1–GQ4）
 
@@ -4076,6 +4128,21 @@ P12 completion blockers（v1.14 G1–G8；与文件头 P12 completion blockers �
 chat-first 主 Workspace 对话面：defer 到 P14+（不在 P13 范围）
 ```
 
+## P14 — Chat-First 主工作区对话面（post-core product-surface phase）
+
+```text
+SubmitHumanMessage（新 human-facing Command：Authenticated Human → Root
+Workspace；不扩展 SendMessage；新事件 HumanMessageSubmitted）
+对话轮执行 = 既有 WorkspaceMain + ExecutionFocus=Coordination（非
+conversational Work；Completed(QueryCompleted) 收口）
+one-active-main 下 durable pending 串行；chat 无 interrupt 语义
+transcript read model 升级（Human/Assistant turn）；v1 无 streaming
+对话权限 root-workspace-only；child 保持 read-only + SteerWork
+UI：Root Workspace 对话 tab + Overview deep-link；无 /chat 域
+浏览器不得直连 external AdmitExecution（server-side wiring only）
+合同：docs/design/implementation/P14/**
+```
+
 ---
 
 # 12. Pre-implementation Closure v1.2
@@ -4549,6 +4616,7 @@ v1.3 已关闭 P0 前必须通过推理确定的 C1–C10 与 X1–X11 cross-cut
 | StorageScaleAssessment + DurabilityEnvelope / backup-restore / RPO-RTO / restore drill | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
 | Runtime Safety Envelope 六维补全（§8.16A cross-phase closure） | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
 | P13 Product Web Client（client boundary/role；Command → UI exposure policy matrix；view rendering + Problem 呈现；design token system；transport/build binding；acceptance） | **P13 PHASE CONTRACT** | `docs/design/implementation/P13/**` |
+| P14 Chat-First 对话面（SubmitHumanMessage 命令/事件/persistence；conversation trigger + Coordination admission + one-active-main 排队 + exact-once；transcript read model 升级；Web 对话面 root-only；acceptance 十 seams） | **P14 PHASE CONTRACT** | `docs/design/implementation/P14/**` |
 
 P1 phase-scoped implementation contracts are owned by:
 
