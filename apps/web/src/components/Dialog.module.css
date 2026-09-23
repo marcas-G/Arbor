@@ -13,7 +13,7 @@
   width: min(36rem, 100%);
   max-height: 100%;
   overflow: auto;
-  background: var(--arbor-surface);
+  background: var(--arbor-paper-2);
   border: 1px solid var(--arbor-line);
   border-radius: var(--arbor-radius);
   box-shadow: var(--arbor-shadow);

@@ -65,13 +65,43 @@ describe("EC-10 design token single source", () => {
       ) {
         violations.push(`${path}: hex color literal`);
       }
-      if (/rgb\(|hsl\(/i.test(source)) {
-        violations.push(`${path}: rgb()/hsl() color literal`);
+      if (/rgba?\(|hsl\(/i.test(source)) {
+        violations.push(`${path}: rgb()/rgba()/hsl() color literal`);
       }
       if (/font-size\s*:\s*\d+px/i.test(source)) {
         violations.push(`${path}: px font-size literal`);
       }
     }
+    expect(violations).toEqual([]);
+  });
+
+  it("TR-WPU-A makes the product shell sans-first with light neutral surfaces", () => {
+    const tokens = TOKENS as Readonly<Record<string, string>>;
+    const css = readFileSync(join(srcRoot, "tokens.css"), {
+      encoding: "utf8",
+    });
+    expect(tokens["--arbor-font-sans"]).toContain("sans-serif");
+    expect(tokens["--arbor-radius"]).not.toBe("3px");
+    expect(tokens["--arbor-radius-small"]).not.toBe("2px");
+    expect(tokens["--arbor-paper-2"]).toBe("#ffffff");
+    expect(tokens["--arbor-paper"]).not.toBe("#f4efe6");
+    expect(tokens["--arbor-surface"]).not.toBe("#fbf8f0");
+    expect(tokens["--arbor-leaf"]).not.toBe("#2d5a3d");
+    expect(tokens["--arbor-leaf"]).not.toBe(tokens["--arbor-branch"]);
+    expect(tokens["--arbor-row-height"]).not.toBe("34px");
+    expect(css).toMatch(
+      /body\s*\{[\s\S]*?font-family:\s*var\(--arbor-font-sans\)/,
+    );
+  });
+
+  it("uses serif in no UI primitive after the TR-WPU-A supersession", () => {
+    const violations = collectSourceFiles(srcRoot)
+      .filter((path) => !tokenFiles.has(path))
+      .filter((path) =>
+        /font-family\s*:\s*var\(--arbor-font-serif\)/.test(
+          readFileSync(path, { encoding: "utf8" }),
+        ),
+      );
     expect(violations).toEqual([]);
   });
 

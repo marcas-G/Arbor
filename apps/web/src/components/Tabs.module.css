@@ -11,7 +11,7 @@
   margin-bottom: -1px;
   background: transparent;
   color: var(--arbor-ink-soft);
-  font-family: var(--arbor-font-serif);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-small);
   cursor: pointer;
 }

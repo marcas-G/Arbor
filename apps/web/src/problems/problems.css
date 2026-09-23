@@ -1,4 +1,4 @@
-/* P13-004 problem layer. Token-only values (EC-10). */
+/* TR-WPU-A problem layer. Token-only values (EC-10). */
 
 .arbor-problem {
   display: flex;
@@ -8,7 +8,8 @@
   padding: var(--arbor-space-4);
   border: 1px solid var(--arbor-line);
   border-radius: var(--arbor-radius);
-  background: var(--arbor-paper-2);
+  background: var(--arbor-surface);
+  box-shadow: var(--arbor-shadow);
 }
 
 .arbor-problem-title {
@@ -35,7 +36,7 @@
 
 .arbor-problem-details summary {
   cursor: pointer;
-  font-family: var(--arbor-font-mono);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-caption);
 }
 
