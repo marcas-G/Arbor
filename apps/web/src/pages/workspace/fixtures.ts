@@ -19,12 +19,14 @@ export const treeWsFixture: TreeViewRes = {
   nodes: [
     {
       workspaceId: id("ws_root"),
+      parentWorkspaceId: null,
       name: "平台根工作区",
       status: "idle",
       subtreeAttention: { attention: 0, actionRequired: 0 },
     },
     {
       workspaceId: id("ws_1"),
+      parentWorkspaceId: id("ws_root"),
       name: "渲染工作区",
       status: "executing",
       subtreeAttention: { attention: 2, actionRequired: 1 },

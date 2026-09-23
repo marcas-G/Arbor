@@ -8,6 +8,7 @@ import type {
   EvidenceId,
   ExecutionId,
   InboxEntry,
+  Verification,
   VerificationId,
   VerificationVerdict,
   Work,
@@ -30,6 +31,7 @@ export interface CurrentWorkSummaryView {
   readonly workId?: WorkId | undefined;
   readonly objective: string;
   readonly status: Work["lifecycle"];
+  readonly revision: Work["revision"];
   readonly activeExecution?: ExecutionSummaryView | undefined;
 }
 
@@ -73,11 +75,36 @@ export interface AcceptanceViewView {
   readonly acceptedAt: string;
 }
 
-/** Mirrors VerificationView (P10 `05` §1). */
-export interface VerificationViewView {
-  readonly verificationId?: VerificationId | undefined;
+/** A verification identity is emitted as an inseparable server-derived pair.
+ * This keeps optional empty views compatible while preventing a projection
+ * from independently manufacturing either frozen identity component. */
+export type VerificationIdentityView =
+  | {
+      readonly verificationId: VerificationId;
+      readonly targetWorkRevision: Verification["targetWorkRevision"];
+    }
+  | {
+      readonly verificationId?: undefined;
+      readonly targetWorkRevision?: undefined;
+    };
+
+export const verificationIdentityView = (
+  verification:
+    | Pick<Verification, "verificationId" | "targetWorkRevision">
+    | undefined,
+): VerificationIdentityView =>
+  verification === undefined
+    ? {}
+    : {
+        verificationId: verification.verificationId,
+        targetWorkRevision: verification.targetWorkRevision,
+      };
+
+/** Mirrors the public VerificationView (P10 `05` §1), including its
+ * inseparable selected identity pair. */
+export type VerificationViewView = VerificationIdentityView & {
   readonly verdict?: VerificationVerdict | undefined;
   readonly criteriaResults: ReadonlyArray<CriterionResultView>;
   readonly evidenceRefs: ReadonlyArray<EvidenceId>;
   readonly acceptance?: AcceptanceViewView | undefined;
-}
+};

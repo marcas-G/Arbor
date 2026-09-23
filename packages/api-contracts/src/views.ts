@@ -18,6 +18,7 @@ import type {
   VerificationVerdict,
   WorkId,
   WorkLifecycle,
+  WorkRevision,
   WorkspaceId,
   WorkspaceStatusLabel,
 } from "@arbor/domain";
@@ -33,6 +34,8 @@ export interface CurrentWorkSummary {
   readonly workId?: WorkId | undefined;
   readonly objective: string;
   readonly status: WorkLifecycle;
+  /** Canonical Work.revision; required whenever a current work summary exists. */
+  readonly revision: WorkRevision;
   readonly activeExecution?: ExecutionSummary | undefined;
 }
 
@@ -104,13 +107,23 @@ export interface AcceptanceView {
   readonly acceptedAt: string;
 }
 
-export interface VerificationView {
-  readonly verificationId?: VerificationId | undefined;
+/** Frozen Verification identity is never partially present on the wire. */
+export type VerificationIdentity =
+  | {
+      readonly verificationId: VerificationId;
+      readonly targetWorkRevision: WorkRevision;
+    }
+  | {
+      readonly verificationId?: undefined;
+      readonly targetWorkRevision?: undefined;
+    };
+
+export type VerificationView = VerificationIdentity & {
   readonly verdict?: VerificationVerdict | undefined;
   readonly criteriaResults: ReadonlyArray<CriterionResult>;
   readonly evidenceRefs: ReadonlyArray<EvidenceId>;
   readonly acceptance?: AcceptanceView | undefined;
-}
+};
 
 export interface DependencyRow {
   readonly dependencyId: DependencyId;
@@ -129,6 +142,8 @@ export interface TreeViewReq {
 
 export interface TreeViewNode {
   readonly workspaceId: WorkspaceId;
+  /** Server-projected responsibility parent; the browser must not infer it. */
+  readonly parentWorkspaceId: WorkspaceId | null;
   readonly name: string;
   readonly status: WorkspaceStatusLabel;
   readonly currentWork?: CurrentWorkSummary | undefined;
