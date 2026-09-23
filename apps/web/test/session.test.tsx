@@ -177,8 +177,10 @@ describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
     render(<App />);
     await login();
     await switchProject("prj_demo");
+    const treeButtons = screen.getAllByRole("button", { name: "树" });
+    fireEvent.click(treeButtons[0] as HTMLElement);
     await waitFor(() => expect(screen.getByText("未认证")).toBeTruthy());
-    expect(screen.queryByRole("heading", { name: "概览" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "工作台" })).toBeNull();
     const call = fetchMock.mock.calls[0];
     expect(call).toBeDefined();
     const [url, init] = call as unknown as [string, RequestInit];
@@ -210,7 +212,7 @@ describe("Web v1 shell integration smoke (W-02)", () => {
     expect(screen.getByText("human:root")).toBeTruthy();
     await switchProject("prj_demo");
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "概览" })).toBeTruthy(),
+      expect(screen.getByRole("heading", { name: "工作台" })).toBeTruthy(),
     );
     expect(location.pathname).toBe("/p/prj_demo");
     const treeButtons = screen.getAllByRole("button", { name: "树" });

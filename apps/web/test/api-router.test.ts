@@ -11,7 +11,7 @@ import {
 } from "../src/api/router.js";
 
 const ROUTE_NAMES = {
-  "project-overview": true,
+  workbench: true,
   tree: true,
   queue: true,
   attention: true,
@@ -22,7 +22,7 @@ const ROUTE_NAMES = {
 } as const satisfies Record<Route["name"], true>;
 
 const routes: ReadonlyArray<Route> = [
-  { name: "project-overview", projectId: "prj_1" },
+  { name: "workbench", projectId: "prj_1" },
   { name: "tree", projectId: "prj_1" },
   { name: "queue", projectId: "prj_1" },
   { name: "attention", projectId: "prj_1" },

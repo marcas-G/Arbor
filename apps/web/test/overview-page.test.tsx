@@ -111,9 +111,7 @@ const renderOverview = (): void => {
   render(
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={sessionValue as never}>
-        <OverviewPage
-          route={{ name: "project-overview", projectId: "prj_1" }}
-        />
+        <OverviewPage projectId="prj_1" />
       </SessionContext.Provider>
     </QueryClientProvider>,
   );

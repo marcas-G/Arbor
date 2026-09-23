@@ -25,7 +25,7 @@ export const WORKSPACE_TABS: ReadonlyArray<WorkspaceTab> = [
 ];
 
 export type Route =
-  | { readonly name: "project-overview"; readonly projectId: string }
+  | { readonly name: "workbench"; readonly projectId: string }
   | { readonly name: "tree"; readonly projectId: string }
   | { readonly name: "queue"; readonly projectId: string }
   | { readonly name: "attention"; readonly projectId: string }
@@ -63,7 +63,7 @@ export const parseRoute = (path: string): Route | null => {
   }
   const section = segments[2];
   if (section === undefined) {
-    return { name: "project-overview", projectId };
+    return { name: "workbench", projectId };
   }
   switch (section) {
     case "tree":
@@ -102,7 +102,7 @@ export const parseRoute = (path: string): Route | null => {
 
 export const formatRoute = (route: Route): string => {
   switch (route.name) {
-    case "project-overview":
+    case "workbench":
       return `/p/${route.projectId}`;
     case "tree":
     case "queue":

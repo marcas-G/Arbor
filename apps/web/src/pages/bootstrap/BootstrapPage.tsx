@@ -1,9 +1,9 @@
 /**
  * web-v1 bootstrap entry: when connected with no project in the URL/session,
  * `/` has no project-scoped route. This page renders the CreateProject form
- * and, on commit, enters the new project's root-workspace conversation
- * (the chat-first main workspace surface). No new transport/command
- * semantics: it reuses the frozen CreateProjectForm + navigate.
+ * and, on commit, enters the new project's Root Workbench. No new
+ * transport/command semantics: it reuses the frozen CreateProjectForm +
+ * navigate.
  */
 import type { ReactNode } from "react";
 import { navigate } from "../../api/router.js";
@@ -14,7 +14,6 @@ import { useSession } from "../../session/SessionContext.js";
 
 interface CreateProjectResultView {
   readonly projectId?: string;
-  readonly workspaceId?: string;
 }
 
 export function BootstrapPage(): ReactNode {
@@ -29,17 +28,7 @@ export function BootstrapPage(): ReactNode {
       return;
     }
     session.setProjectId(projectId);
-    const workspaceId = result?.workspaceId;
-    if (workspaceId !== undefined) {
-      navigate({
-        name: "workspace",
-        projectId,
-        workspaceId,
-        tab: "conversation",
-      });
-    } else {
-      navigate({ name: "project-overview", projectId });
-    }
+    navigate({ name: "workbench", projectId });
   };
   return (
     <div className="arbor-session-login">
