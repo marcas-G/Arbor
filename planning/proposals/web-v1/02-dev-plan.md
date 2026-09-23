@@ -1,6 +1,8 @@
-# Arbor Web v1 — Development Plan（FROZEN）
+# Arbor Web v1 — Development Plan（FROZEN — EXECUTED & CLOSED）
 
-**状态**: FROZEN（随 01-ui-ia-design.md 8 点修订裁决冻结；implementation 授权另行下发）
+**状态**: FROZEN；W-00..W-09 已执行完毕并 FORMALLY CLOSED
+（planning/results/WEB_V1.result.md — G1 21/21、G2 10/10、G3 11/11，
+§9 十三条不变量全 evidenced）
 **模式**: bounded-parallel（沿用 P11/P13 执行规则；主会话拥有 gates/集成）
 **前置**: W-00 开工条件 = 本计划 + 01 设计方案冻结（已满足，见文末判定）
 
@@ -44,4 +46,4 @@ dependency-pins（新清单）、no-forbidden-controls、daemon e2e——五项�
 - [x] IA 8 点修订落地（本文档 + 01 §2.1A/2.2/2.3/2.4/2.6/2.7/2.10/§5/§7/§9）
 - [x] focused review Blocking=0（FREEZE-CONFIRMED，8/8 CLOSED，2026-09-23）
 - [x] 两份文档 FROZEN（Web v1 product contract）
-- [ ] implementation 授权（另行下发；授权即入 W-00）
+- [x] implementation 授权（2026-09-23 用户下发；W-00..W-09 全部完成）
