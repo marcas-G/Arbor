@@ -22,6 +22,8 @@ import type {
   HumanMessageStoreService,
   InboxProjectionStoreService,
   PendingDomainEvent,
+  ProjectRepositoryError,
+  TransactionScope,
 } from "@arbor/ports";
 import { Effect } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
@@ -47,7 +49,11 @@ export interface SubmitHumanMessageDependencies {
     "insertPending" | "findById"
   >;
   readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert">;
-  readonly rootWorkspaceOf: (projectId: ProjectId) => WorkspaceId;
+  /** Composition-provided project root lookup (defense in depth beside the
+   * resolver's root-only authority rule). */
+  readonly rootWorkspaceOf: (
+    projectId: ProjectId,
+  ) => Effect.Effect<WorkspaceId, ProjectRepositoryError, TransactionScope>;
 }
 
 export const makeSubmitHumanMessageHandler = (
@@ -89,7 +95,18 @@ export const makeSubmitHumanMessageHandler = (
       // Root-only exact binding (P14 `01` §1): the authority layer already
       // guarantees target === root; the handler asserts it again against
       // the declared root source — defense in depth, zero UI trust.
-      const root = dependencies.rootWorkspaceOf(envelope.projectId);
+      // Fail closed: an unresolvable root can never authorize the command.
+      const root = yield* Effect.match(
+        dependencies.rootWorkspaceOf(envelope.projectId),
+        { onFailure: () => null, onSuccess: (workspaceId) => workspaceId },
+      );
+      if (root === null) {
+        return commandErr({
+          _tag: "AuthorityDenied",
+          reason:
+            "SubmitHumanMessage cannot resolve the project root workspace",
+        });
+      }
       if (payload.targetWorkspaceId !== root) {
         return commandErr({
           _tag: "AuthorityDenied",

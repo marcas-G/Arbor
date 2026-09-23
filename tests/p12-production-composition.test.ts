@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  P12_MIGRATIONS,
+  P14_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -136,7 +136,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
     const outcome = await runWith(
       join(dir, "slice.db"),
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P14_MIGRATIONS);
         yield* p7SeedProject;
         // one Open work on the seeded root workspace
         const gateway = yield* CommandGateway;
@@ -219,7 +219,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
         const health = yield* HealthPort;
         const beforeMigration = yield* health.readiness();
 
-        yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P14_MIGRATIONS);
         const afterMigration = yield* health.readiness();
 
         const resolver = yield* AuthorityResolverPort;
@@ -325,7 +325,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
     const outcome = await runWith(
       join(dir, "slice.db"),
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P14_MIGRATIONS);
         yield* p7SeedProject;
         const deployment = yield* ProductionDaemonService;
         // the runnable entrypoint: start (migrations + T1 recovery), scheduler

@@ -13,6 +13,10 @@ import { Context, type Effect } from "effect";
 /** The P12 migration baseline (TR-7): `PRAGMA user_version == max(P12_MIGRATIONS)`. */
 export const P12_MIGRATION_BASELINE = 13;
 
+/** P14 migration baseline: `PRAGMA user_version == max(P14_MIGRATIONS)` = 14
+ * (adds `human_messages`, P14 `01` §4). */
+export const P14_MIGRATION_BASELINE = 14;
+
 export interface ReadinessState {
   /** Canonical DB connection is open (reopen / integrity_check path available). */
   readonly dbOpen: boolean;

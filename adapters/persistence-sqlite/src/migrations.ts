@@ -685,3 +685,32 @@ export const P12_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 12, name: "permission_grants", sql: P12_PERMISSION_GRANTS_DDL },
   { id: 13, name: "project_tool_registry", sql: P12_PROJECT_TOOL_REGISTRY_DDL },
 ];
+
+/** P14 `01` §4: durable human chat-turn messages. `state` is the claim
+ * lifecycle (Pending → Claimed → Answered); `fingerprint` is the semantic
+ * request fingerprint (P1 §8) that makes replays converge; the
+ * `(command_id, fingerprint)` UNIQUE is the physical idempotency anchor. */
+const P14_HUMAN_MESSAGES_DDL = `
+CREATE TABLE human_messages (
+  message_id              TEXT PRIMARY KEY,
+  project_id              TEXT NOT NULL,
+  root_workspace_id       TEXT NOT NULL,
+  human_principal         TEXT NOT NULL,
+  body_ref                TEXT NOT NULL,
+  command_id              TEXT NOT NULL,
+  fingerprint             TEXT NOT NULL,
+  state                   TEXT NOT NULL CHECK (state IN ('Pending','Claimed','Answered')),
+  claimed_by_execution_id TEXT,
+  created_at              TEXT NOT NULL,
+  settled_at              TEXT,
+  UNIQUE (command_id, fingerprint)
+);
+CREATE INDEX human_messages_pending ON human_messages (project_id, state, created_at);
+`;
+
+/** P14 ordered migration baseline. Forward-only runner keys on
+ * `PRAGMA user_version`; this migration settles `user_version` at 14. */
+export const P14_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P12_MIGRATIONS,
+  { id: 14, name: "human_messages", sql: P14_HUMAN_MESSAGES_DDL },
+];

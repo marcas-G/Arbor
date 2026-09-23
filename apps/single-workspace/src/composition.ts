@@ -42,12 +42,13 @@ import {
   EvidenceRepositoryLive,
   ExecutionRepositoryLive,
   FormationProposalStoreLive,
+  HumanMessageStoreLive,
   IdGeneratorLive,
   InboxProjectionStoreLive,
   LeaseServiceLive,
   layer,
   MessageStoreLive,
-  P12_MIGRATIONS,
+  P14_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectionStoreLive,
   ProjectRepositoryLive,
@@ -70,6 +71,7 @@ import {
   type ExecutionDriverPort,
   type ExecutionScheduler,
   type HealthPort,
+  type HumanMessageStore,
   type PersistenceHealthProbe,
   type ProjectionQueryPort,
   type ProviderFailureKind,
@@ -217,6 +219,7 @@ export type SliceServices =
   | PersistenceHealthProbe
   | UsageService
   | TransportBoundary
+  | HumanMessageStore
   | ProductionDaemonService
   | ProductionDaemonServices
   | SnapshotRetention;
@@ -329,6 +332,7 @@ export const buildSliceLayer = (
     Layer.provide(EvidenceRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
+    Layer.provide(HumanMessageStoreLive, infra),
     Layer.provide(ConsumerOffsetStoreLive, infra),
     Layer.provide(ConsumerDeadLetterStoreLive, infra),
     Layer.provide(ProjectionStoreLive, infra),
@@ -490,4 +494,4 @@ export const buildSliceLayer = (
   ) as Layer.Layer<SliceServices>;
 };
 
-export { P12_MIGRATIONS, runMigrations };
+export { P14_MIGRATIONS, P14_MIGRATIONS as P12_MIGRATIONS, runMigrations };

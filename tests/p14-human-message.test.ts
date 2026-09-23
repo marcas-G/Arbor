@@ -108,7 +108,7 @@ const makeHarness = (): Harness => {
   const handler = makeSubmitHumanMessageHandler({
     messages,
     inbox: inboxStore,
-    rootWorkspaceOf: () => ROOT,
+    rootWorkspaceOf: () => Effect.succeed(ROOT),
   });
   return { handler, rows, inbox };
 };

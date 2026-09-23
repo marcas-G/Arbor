@@ -8,7 +8,9 @@ import {
   makeRevokePermissionHandler,
   makeSelectCurrentWorkHandler,
   makeSteerWorkHandler,
+  makeSubmitHumanMessageHandler,
 } from "@arbor/application";
+import type { ProjectId } from "@arbor/domain";
 import { makeP2CommandHandlers } from "@arbor/execution-runtime";
 import {
   AcceptanceRepository,
@@ -16,6 +18,8 @@ import {
   ExecutionRepository,
   FormationProposalStore,
   type FormationProposalStoreService,
+  HumanMessageStore,
+  type HumanMessageStoreService,
   InboxProjectionStore,
   type InboxProjectionStoreService,
   PermissionGrantRepository,
@@ -53,6 +57,7 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
   | VerificationRepository
   | AcceptanceRepository
   | PermissionGrantRepository
+  | HumanMessageStore
 > = Layer.effect(
   CommandHandlerRegistry,
   Effect.gen(function* () {
@@ -67,6 +72,7 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
     const verifications = yield* VerificationRepository;
     const acceptances = yield* AcceptanceRepository;
     const grants = yield* PermissionGrantRepository;
+    const humanMessages = yield* HumanMessageStore;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
       ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
       makeSelectCurrentWorkHandler({
@@ -109,6 +115,23 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
       }) as unknown as CommandHandler<unknown, unknown>,
       makeRevokePermissionHandler({
         grants: grants as PermissionGrantRepositoryService,
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeSubmitHumanMessageHandler({
+        messages: humanMessages as Pick<
+          HumanMessageStoreService,
+          "insertPending" | "findById"
+        >,
+        inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+        rootWorkspaceOf: (projectId: ProjectId) =>
+          projects
+            .findById(projectId)
+            .pipe(
+              Effect.map((found) =>
+                Option.isSome(found)
+                  ? found.value.rootWorkspaceId
+                  : (projectId as unknown as never),
+              ),
+            ),
       }) as unknown as CommandHandler<unknown, unknown>,
     ];
     return CommandHandlerRegistry.of({
