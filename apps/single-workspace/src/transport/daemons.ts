@@ -143,6 +143,10 @@ export interface ProductionDaemon<R = never> {
   /** Migrate the canonical store, then run the T1 startup recovery pass. */
   readonly start: Effect.Effect<void, unknown, R>;
   readonly recoveryTick: Effect.Effect<void, unknown, R>;
+  /** P14 `02`: one deterministic conversation tick — settle sweep (Claimed →
+   * Answered) then admit the FIFO-oldest pending human message when the root
+   * workspace has no active main execution. */
+  readonly conversationTick: Effect.Effect<void, unknown, R>;
   /** Poll every offset-driven consumer loop exactly once. */
   readonly pollConsumers: Effect.Effect<
     ReadonlyArray<ConsumerLoopResult>,
@@ -155,11 +159,14 @@ export const makeProductionDaemon = <R>(deps: {
   readonly migrate: Effect.Effect<unknown, unknown, R>;
   readonly recovery: RecoveryDaemon<R>;
   readonly consumers: ReadonlyArray<ConsumerLoopDaemon<R>>;
+  /** P14 `02`: optional conversation tick (absent = no project configured). */
+  readonly conversationTick?: Effect.Effect<void, unknown, R> | undefined;
 }): ProductionDaemon<R> => ({
   start: Effect.asVoid(
     Effect.flatMap(deps.migrate, () => deps.recovery.startup),
   ),
   recoveryTick: deps.recovery.sweep,
+  conversationTick: deps.conversationTick ?? Effect.void,
   pollConsumers: Effect.forEach(deps.consumers, (consumer) => consumer.poll, {
     concurrency: 1,
   }),

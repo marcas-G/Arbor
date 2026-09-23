@@ -703,6 +703,7 @@ CREATE TABLE human_messages (
   claimed_by_execution_id TEXT,
   created_at              TEXT NOT NULL,
   settled_at              TEXT,
+  response_body           TEXT,
   UNIQUE (command_id, fingerprint)
 );
 CREATE INDEX human_messages_pending ON human_messages (project_id, state, created_at);

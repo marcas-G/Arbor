@@ -154,6 +154,7 @@ export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
           yield* schedulerTick;
           yield* deployment.daemon.pollConsumers;
           yield* deployment.daemon.recoveryTick;
+          yield* deployment.daemon.conversationTick;
           yield* Effect.sleep(Duration.millis(config.tickIntervalMs ?? 1000));
         }),
       );

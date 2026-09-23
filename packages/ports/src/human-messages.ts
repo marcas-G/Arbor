@@ -25,6 +25,9 @@ export interface HumanMessageRecord {
   readonly claimedByExecutionId: string | null;
   readonly createdAt: string;
   readonly settledAt: string | null;
+  /** Bounded assistant response persisted at settle (P14 `02` §4 "response
+   * persisted"); null while unanswered. */
+  readonly responseBody: string | null;
 }
 
 export interface HumanMessageConflict {
@@ -76,12 +79,38 @@ export interface HumanMessageStoreService {
     HumanMessageStoreError,
     import("./session.js").TransactionScope
   >;
-  /** Settled write-back: Claimed → Answered. */
+  /** Settled write-back: Claimed → Answered (+ bounded response body). */
   readonly markAnswered: (
     messageId: string,
     settledAt: string,
+    responseBody: string | null,
   ) => Effect.Effect<
     void,
+    HumanMessageStoreError,
+    import("./session.js").TransactionScope
+  >;
+  /** All messages for a workspace (transcript read model, P14 `03`). */
+  readonly listForWorkspace: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<HumanMessageRecord>,
+    HumanMessageStoreError,
+    import("./session.js").TransactionScope
+  >;
+  /** Claimed messages for a project (settle sweep, FIFO order). */
+  readonly claimedOrderedByCreated: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<HumanMessageRecord>,
+    HumanMessageStoreError,
+    import("./session.js").TransactionScope
+  >;
+  /** Settle-side lookup: the message claimed by a coordination execution
+   * (P14 `02` §4 write-back). */
+  readonly findByClaimedExecution: (
+    executionId: string,
+  ) => Effect.Effect<
+    Option.Option<HumanMessageRecord>,
     HumanMessageStoreError,
     import("./session.js").TransactionScope
   >;

@@ -357,6 +357,51 @@ export const ProjectionQueryPortLive: Layer.Layer<
             return rows.map((row) => row.session_id as never);
           }),
         ),
+      conversationTurns: (workspaceId) =>
+        inTx(
+          Effect.gen(function* () {
+            const rows = yield* sql.unsafe<{
+              message_id: string;
+              body_ref: string;
+              created_at: string;
+              state: string;
+              claimed_by_execution_id: string | null;
+              settled_at: string | null;
+              response_body: string | null;
+            }>(
+              "SELECT message_id, body_ref, created_at, state, claimed_by_execution_id, settled_at, response_body FROM human_messages WHERE root_workspace_id = ? ORDER BY created_at ASC, message_id ASC",
+              [workspaceId],
+            );
+            const turns: Array<{
+              kind: "HumanConversationTurn" | "AssistantConversationTurn";
+              messageId?: string;
+              executionId?: string;
+              body: string;
+              occurredAt: string;
+            }> = [];
+            for (const row of rows) {
+              turns.push({
+                kind: "HumanConversationTurn",
+                messageId: row.message_id,
+                body: row.body_ref,
+                occurredAt: row.created_at,
+              });
+              if (
+                row.state === "Answered" &&
+                row.settled_at !== null &&
+                row.response_body !== null
+              ) {
+                turns.push({
+                  kind: "AssistantConversationTurn",
+                  executionId: row.claimed_by_execution_id ?? "",
+                  body: row.response_body,
+                  occurredAt: row.settled_at,
+                });
+              }
+            }
+            return turns as never;
+          }),
+        ),
       listEntries: (sessionId, afterSequence, limit) =>
         inTx(
           Effect.gen(function* () {

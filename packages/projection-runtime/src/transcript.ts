@@ -15,12 +15,32 @@ import { projectionReadError } from "./errors.js";
 // are immutable and append-only, so replay of the same page request
 // yields the same page.
 
-/** Mirrors the frozen TranscriptEntry core (P10 `05` §1). */
-export interface TranscriptEntryView {
-  readonly kind: string;
-  readonly summaryRef: string;
-  readonly at: string;
-}
+/** P14 `03` §1 — the frozen conversation-turn arms (DID v1.16 G-C). The
+ * third arm keeps the pre-P14 session-entry stream verbatim, so unknown
+ * kinds always pass through (presentation rule: verbatim + muted). */
+export type ConversationTurnView =
+  | {
+      readonly kind: "HumanConversationTurn";
+      readonly messageId: string;
+      readonly body: string;
+      readonly occurredAt: string;
+    }
+  | {
+      readonly kind: "AssistantConversationTurn";
+      readonly executionId: string;
+      readonly body: string;
+      readonly occurredAt: string;
+    };
+
+/** Mirrors the frozen TranscriptEntry core (P10 `05` §1) extended by P14 `03`:
+ * conversation turns + the legacy session-entry arm. */
+export type TranscriptEntryView =
+  | ConversationTurnView
+  | {
+      readonly kind: string;
+      readonly summaryRef: string;
+      readonly at: string;
+    };
 
 /** Mirrors the frozen TranscriptRes core. */
 export interface TranscriptPageView {
@@ -55,6 +75,16 @@ export interface TranscriptDeps {
   readonly journalLastSequence: (
     projectId: ProjectId,
   ) => Effect.Effect<number, ProjectionReadError>;
+  /** P14 `03`: the workspace's conversation turns (Human/Assistant), newest
+   * last. Read from the human-message store; absent = no turn merging. */
+  readonly conversationTurns?:
+    | ((
+        workspaceId: WorkspaceId,
+      ) => Effect.Effect<
+        ReadonlyArray<ConversationTurnView>,
+        ProjectionReadError
+      >)
+    | undefined;
 }
 
 interface CursorPosition {
@@ -124,6 +154,20 @@ export const deriveTranscriptPage = (
     const entries: Array<TranscriptEntryView> = [];
     let lastPosition: CursorPosition | undefined;
     let hasMore = false;
+
+    // P14 `03`: the first page carries the conversation turns (time-ordered)
+    // ahead of the legacy session-entry stream; cursor pages stay
+    // session-entry based (v1 pagination shape).
+    if (cursor === null && deps.conversationTurns !== undefined) {
+      const turns = yield* deps.conversationTurns(request.workspaceId);
+      for (const turn of turns) {
+        if (entries.length >= request.limit) {
+          hasMore = true;
+          break;
+        }
+        entries.push(turn);
+      }
+    }
 
     outer: for (const sessionId of sessions) {
       // Sessions ordered before the cursor session are entirely before

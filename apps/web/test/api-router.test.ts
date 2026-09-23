@@ -29,6 +29,12 @@ const routes: ReadonlyArray<Route> = [
     workspaceId: "ws_1",
     tab: "transcript",
   },
+  {
+    name: "workspace",
+    projectId: "prj_1",
+    workspaceId: "ws_1",
+    tab: "conversation",
+  },
   { name: "work", projectId: "prj_1", workspaceId: "ws_1", workId: "wrk_1" },
 ];
 
@@ -56,14 +62,21 @@ describe("W-00 project-scoped typed router", () => {
     });
   });
 
-  it("exactly the five frozen workspace tabs parse", () => {
+  it("exactly the six frozen workspace tabs parse (P14 TR-C)", () => {
     expect(WORKSPACE_TABS).toEqual([
       "overview",
       "dependencies",
       "verification",
       "transcript",
       "inbox",
+      "conversation",
     ]);
+    expect(parseRoute("/p/prj_1/workspace/ws_1/conversation")).toEqual({
+      name: "workspace",
+      projectId: "prj_1",
+      workspaceId: "ws_1",
+      tab: "conversation",
+    });
   });
 
   it("rejects non-product paths (null, callers render not-found)", () => {

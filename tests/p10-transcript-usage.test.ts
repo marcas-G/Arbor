@@ -150,8 +150,9 @@ describe("P10-007 Transcript — production read path over session_entries", () 
 
         // root sees its primary session (ses:ws..root) + execution session
         // (ses:exe:..f1); total order: ses:exe:... < ses:ws:... (string)
-        const walk: Array<{ kind: string; summaryRef: string; at: string }> =
-          [];
+        // P14 `03` union: legacy arm + conversation-turn arms (this harness
+        // passes no conversationTurns, so only legacy entries occur).
+        const walk: Array<TranscriptRes["entries"][number]> = [];
         const pages: Array<ReadonlyArray<{ kind: string }>> = [];
         let cursor: string | undefined;
         let guard = 0;
