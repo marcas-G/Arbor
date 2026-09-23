@@ -46,6 +46,7 @@ const record = (
   claimedByExecutionId: null,
   createdAt: "2026-09-23T05:00:00.000Z",
   settledAt: null,
+  responseBody: null,
   ...overrides,
 });
 
@@ -104,7 +105,11 @@ describe("P14-002 human_messages migration + store", () => {
               store.claim("msg_1", "exe_2"),
             );
             yield* tx.transact(
-              store.markAnswered("msg_1", "2026-09-23T05:01:00.000Z"),
+              store.markAnswered(
+                "msg_1",
+                "2026-09-23T05:01:00.000Z",
+                "assistant reply",
+              ),
             );
             const after = yield* tx.transact(store.findById("msg_1"));
             return { pending, claim, secondClaim, after };
@@ -120,6 +125,7 @@ describe("P14-002 human_messages migration + store", () => {
     const row = Option.getOrThrow(outcome.after);
     expect(row.state).toBe("Answered");
     expect(row.settledAt).toBe("2026-09-23T05:01:00.000Z");
+    expect(row.responseBody).toBe("assistant reply");
   });
 
   it("S1: insertPending conflict surfaces the existing row (no duplicate)", async () => {

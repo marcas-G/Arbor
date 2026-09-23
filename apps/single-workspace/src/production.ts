@@ -12,6 +12,8 @@ import {
   planSnapshotRetention,
   pruneSnapshots,
   type RetentionPolicy,
+  runConversationSettlementSweep,
+  runConversationTrigger,
   type SnapshotPruningResult,
   type SnapshotRetentionError,
   type SnapshotRetentionPlan,
@@ -23,20 +25,21 @@ import { P14_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   BlobStorePort,
-  type Clock,
+  Clock,
   ConsumerDeadLetterStore,
   ConsumerOffsetStore,
   DomainEventJournal,
   EnvironmentResolverPort,
   EnvironmentRevisionStore,
-  type ExecutionRepository,
+  ExecutionRepository,
   type ExecutionScheduler,
+  HumanMessageStore,
   type IdGenerator,
   type LeaseService,
   type PermissionGrantRepository,
   ProjectionQueryPort,
   ProjectionStore,
-  type ProjectRepository,
+  ProjectRepository,
   type ReconciliationSource,
   RecordEnvironmentChange,
   type SchedulerTimerStore,
@@ -48,6 +51,7 @@ import {
 import { Context, Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { T1RecoveryState } from "./health.js";
+import { makeResponseBodyOf } from "./response-body.js";
 import type { AuthenticatorService } from "./transport/auth.js";
 import {
   type ConsumerLoopDaemon,
@@ -185,7 +189,9 @@ export type ProductionDaemonServices =
   | RecordEnvironmentChange
   | EnvironmentRevisionStore
   | BlobStorePort
-  | T1RecoveryState;
+  | T1RecoveryState
+  | HumanMessageStore
+  | ProjectRepository;
 
 /** The production daemon assembly. `start` = migrations -> T1 startup recovery
  * -> mark readiness; `recoveryTick` = T2/T3 sweep; `pollConsumers` = one
@@ -311,10 +317,48 @@ export const ProductionDaemonServiceLive = (
         sweep: Effect.asVoid(sweepRecovery(config.principal)),
       };
 
+      const conversationTick =
+        config.projectId === undefined
+          ? undefined
+          : Effect.asVoid(
+              Effect.gen(function* () {
+                const messages = yield* HumanMessageStore;
+                const projects = yield* ProjectRepository;
+                const executions = yield* ExecutionRepository;
+                const gateway = yield* CommandGateway;
+                const clock = yield* Clock;
+                const projectId = config.projectId as ProjectId;
+                const sql = yield* SqlClient;
+                const responseBodyOf = makeResponseBodyOf(sql);
+                // Settle sweep first (Claimed → Answered / stale rollback),
+                // then admit the FIFO-oldest pending message when idle.
+                yield* tx.transact(
+                  runConversationSettlementSweep(
+                    { messages, executions, clock, responseBodyOf },
+                    projectId,
+                  ),
+                );
+                yield* tx.transact(
+                  runConversationTrigger(
+                    {
+                      gateway,
+                      messages,
+                      projects,
+                      executions,
+                      clock,
+                      principal: config.principal,
+                    },
+                    projectId,
+                  ),
+                );
+              }),
+            );
+
       const daemon = makeProductionDaemon({
         migrate: runMigrations(P14_MIGRATIONS),
         recovery,
         consumers,
+        ...(conversationTick === undefined ? {} : { conversationTick }),
       });
 
       return ProductionDaemonService.of({

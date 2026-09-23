@@ -71,6 +71,10 @@ export const revokePermissionSchema = z.object({
   permissionGrantId: grantId,
 });
 
+export const submitHumanMessageSchema = z.object({
+  bodyRef: z.string().trim().min(1).max(8192),
+});
+
 /** RHF-compatible resolver built from a Zod schema (no extra dependency).
  * Loosely typed to satisfy RHF's Resolver variance across input/output. */
 export const zodResolver =

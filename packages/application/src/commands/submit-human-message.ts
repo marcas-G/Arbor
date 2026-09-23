@@ -140,6 +140,7 @@ export const makeSubmitHumanMessageHandler = (
         claimedByExecutionId: null,
         createdAt: envelope.issuedAt,
         settledAt: null,
+        responseBody: null,
       };
 
       // insertPending fails with HumanMessageConflict when the messageId

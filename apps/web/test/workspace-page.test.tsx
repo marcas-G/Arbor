@@ -133,7 +133,7 @@ describe("W-05 Workspace page", () => {
     expect(screen.getByText(/FileTree \/srv\/arbor\/web/)).toBeTruthy();
   });
 
-  it("五 tab 导航：点击各 tab → location.pathname 变化；默认路由无 tab → 概要", async () => {
+  it("六 tab 导航：点击各 tab → location.pathname 变化；默认路由无 tab → 概要", async () => {
     installViews();
     renderWorkspace();
     await waitFor(() =>
@@ -148,6 +148,7 @@ describe("W-05 Workspace page", () => {
       ["验证", "/p/prj_1/workspace/ws_1/verification"],
       ["对话记录", "/p/prj_1/workspace/ws_1/transcript"],
       ["收件箱", "/p/prj_1/workspace/ws_1/inbox"],
+      ["对话", "/p/prj_1/workspace/ws_1/conversation"],
     ];
     for (const [label, path] of expectations) {
       fireEvent.click(screen.getByRole("tab", { name: label }));

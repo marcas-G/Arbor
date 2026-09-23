@@ -200,11 +200,26 @@ export interface TranscriptReq {
   readonly limit: number;
 }
 
-export interface TranscriptEntry {
-  readonly kind: string;
-  readonly summaryRef: string;
-  readonly at: string;
-}
+/** P14 `03` §1 (DID v1.16 G-C): conversation turns + the legacy session-entry
+ * arm. Bounded bodies; the browser reads this shape only (no streaming). */
+export type TranscriptEntry =
+  | {
+      readonly kind: "HumanConversationTurn";
+      readonly messageId: string;
+      readonly body: string;
+      readonly occurredAt: string;
+    }
+  | {
+      readonly kind: "AssistantConversationTurn";
+      readonly executionId: string;
+      readonly body: string;
+      readonly occurredAt: string;
+    }
+  | {
+      readonly kind: string;
+      readonly summaryRef: string;
+      readonly at: string;
+    };
 
 export interface TranscriptRes {
   readonly entries: ReadonlyArray<TranscriptEntry>;

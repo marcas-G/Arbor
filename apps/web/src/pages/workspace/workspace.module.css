@@ -80,6 +80,28 @@
   gap: var(--arbor-space-3);
 }
 
+.conversation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+}
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+  padding: var(--arbor-space-3);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  background: var(--arbor-surface);
+}
+
+.composerStatus {
+  margin: 0;
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-caption);
+}
+
 .pendingList {
   display: flex;
   flex-direction: column;

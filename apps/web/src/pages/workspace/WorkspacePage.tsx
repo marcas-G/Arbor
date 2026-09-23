@@ -38,6 +38,7 @@ import { InboxView } from "../../views/InboxView.js";
 import { TimeText } from "../../views/shared.js";
 import { TranscriptView } from "../../views/TranscriptView.js";
 import { VerificationView } from "../../views/VerificationView.js";
+import { ConversationTab } from "./ConversationTab.js";
 import styles from "./workspace.module.css";
 
 type WorkspaceId = ViewRequestMap["workspace-detail"]["workspaceId"];
@@ -54,6 +55,7 @@ const TAB_ITEMS: ReadonlyArray<{
   { key: "verification", label: "验证" },
   { key: "transcript", label: "对话记录" },
   { key: "inbox", label: "收件箱" },
+  { key: "conversation", label: "对话" },
 ];
 
 const isWorkspaceTab = (value: string): value is WorkspaceTab =>
@@ -308,6 +310,8 @@ export function WorkspacePage({
           <VerificationTab workspaceId={workspaceIdTyped} />
         ) : tab === "transcript" ? (
           <TranscriptTab workspaceId={workspaceIdTyped} />
+        ) : tab === "conversation" ? (
+          <ConversationTab projectId={projectId} workspaceId={workspaceId} />
         ) : (
           <InboxTab workspaceId={workspaceIdTyped} />
         )}

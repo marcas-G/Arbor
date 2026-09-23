@@ -12,7 +12,8 @@ export type WorkspaceTab =
   | "dependencies"
   | "verification"
   | "transcript"
-  | "inbox";
+  | "inbox"
+  | "conversation";
 
 export const WORKSPACE_TABS: ReadonlyArray<WorkspaceTab> = [
   "overview",
@@ -20,6 +21,7 @@ export const WORKSPACE_TABS: ReadonlyArray<WorkspaceTab> = [
   "verification",
   "transcript",
   "inbox",
+  "conversation",
 ];
 
 export type Route =

@@ -164,3 +164,8 @@
   display: flex;
   justify-content: center;
 }
+
+.arbor-transcript-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

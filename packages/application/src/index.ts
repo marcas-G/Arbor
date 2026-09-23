@@ -5,6 +5,7 @@ export * from "./command-result.js";
 export * from "./commands/index.js";
 export * from "./completion-consumer.js";
 export * from "./consumer-loop.js";
+export * from "./conversation-trigger.js";
 export * from "./durability.js";
 export * from "./environment-drift.js";
 export * from "./fingerprint.js";

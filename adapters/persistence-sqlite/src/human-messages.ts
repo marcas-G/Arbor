@@ -30,6 +30,7 @@ interface HumanMessageRow {
   readonly claimed_by_execution_id: string | null;
   readonly created_at: string;
   readonly settled_at: string | null;
+  readonly response_body: string | null;
 }
 
 const toRecord = (row: HumanMessageRow): HumanMessageRecord => ({
@@ -44,10 +45,11 @@ const toRecord = (row: HumanMessageRow): HumanMessageRecord => ({
   claimedByExecutionId: row.claimed_by_execution_id,
   createdAt: row.created_at,
   settledAt: row.settled_at,
+  responseBody: row.response_body,
 });
 
 const SELECT_COLUMNS =
-  "message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at";
+  "message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body";
 
 export const HumanMessageStoreLive: Layer.Layer<
   HumanMessageStore,
@@ -75,7 +77,7 @@ export const HumanMessageStoreLive: Layer.Layer<
           }
           yield* sql
             .unsafe(
-              "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at) VALUES (?,?,?,?,?,?,?,'Pending',NULL,?,NULL)",
+              "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body) VALUES (?,?,?,?,?,?,?,'Pending',NULL,?,NULL,NULL)",
               [
                 record.messageId,
                 record.projectId,
@@ -141,15 +143,51 @@ export const HumanMessageStoreLive: Layer.Layer<
             ? { _tag: "Claimed" as const }
             : { _tag: "AlreadyClaimed" as const };
         }),
-      markAnswered: (messageId, settledAt) =>
+      markAnswered: (messageId, settledAt, responseBody) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           yield* sql
             .unsafe(
-              "UPDATE human_messages SET state = 'Answered', settled_at = ? WHERE message_id = ? AND state = 'Claimed'",
-              [settledAt, messageId],
+              "UPDATE human_messages SET state = 'Answered', settled_at = ?, response_body = ? WHERE message_id = ? AND state = 'Claimed'",
+              [settledAt, responseBody, messageId],
             )
             .pipe(Effect.mapError(toOperationalFailure));
+        }),
+      listForWorkspace: (workspaceId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* sql
+            .unsafe<HumanMessageRow>(
+              `SELECT ${SELECT_COLUMNS} FROM human_messages WHERE root_workspace_id = ? ORDER BY created_at ASC, message_id ASC`,
+              [workspaceId],
+            )
+            .pipe(Effect.mapError(toOperationalFailure));
+          return rows.map(toRecord);
+        }),
+      claimedOrderedByCreated: (projectId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* sql
+            .unsafe<HumanMessageRow>(
+              `SELECT ${SELECT_COLUMNS} FROM human_messages WHERE project_id = ? AND state = 'Claimed' ORDER BY created_at ASC, message_id ASC`,
+              [projectId],
+            )
+            .pipe(Effect.mapError(toOperationalFailure));
+          return rows.map(toRecord);
+        }),
+      findByClaimedExecution: (executionId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* sql
+            .unsafe<HumanMessageRow>(
+              `SELECT ${SELECT_COLUMNS} FROM human_messages WHERE claimed_by_execution_id = ? AND state = 'Claimed' LIMIT 1`,
+              [executionId],
+            )
+            .pipe(Effect.mapError(toOperationalFailure));
+          const row = rows[0];
+          return row === undefined
+            ? Option.none<HumanMessageRecord>()
+            : Option.some(toRecord(row));
         }),
       rollbackClaim: (messageId) =>
         Effect.gen(function* () {
