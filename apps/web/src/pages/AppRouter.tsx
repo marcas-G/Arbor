@@ -1,12 +1,13 @@
 /**
- * W-02 — route outlet wiring. Pages are delivered by W-03..W-07; this
- * router mounts the page registry so the shell IA is walkthrough-ready
- * (each stub names its owning task).
+ * W-02 — route outlet wiring (W-03..W-07 own the page modules).
  */
 import type { ReactNode } from "react";
 import type { Route } from "../api/router.js";
 import { AppShell } from "../shell/AppShell.js";
+import { OverviewPage } from "./overview/OverviewPage.js";
 import { PageStub } from "./PageStub.js";
+import { TreePage } from "./tree/TreePage.js";
+import { WorkspacePage } from "./workspace/WorkspacePage.js";
 
 export function AppRouter(): ReactNode {
   return (
@@ -14,9 +15,15 @@ export function AppRouter(): ReactNode {
       pageFor={(route: Route): ReactNode => {
         switch (route.name) {
           case "project-overview":
-            return <PageStub route={route} label="概览（W-03）" />;
+            return <OverviewPage route={route} />;
           case "tree":
-            return <PageStub route={route} label="责任树（W-04，只读导航）" />;
+            return <TreePage route={route} />;
+          case "workspace":
+            return <WorkspacePage route={route} />;
+          case "work":
+            return (
+              <PageStub route={route} label={`工作 ${route.workId}（W-06）`} />
+            );
           case "queue":
             return <PageStub route={route} label="待处理（W-08）" />;
           case "attention":
@@ -25,17 +32,6 @@ export function AppRouter(): ReactNode {
             return <PageStub route={route} label="用量（W-07）" />;
           case "settings":
             return <PageStub route={route} label="设置（W-07）" />;
-          case "workspace":
-            return (
-              <PageStub
-                route={route}
-                label={`工作区 ${route.workspaceId} · ${route.tab}（W-05）`}
-              />
-            );
-          case "work":
-            return (
-              <PageStub route={route} label={`工作 ${route.workId}（W-06）`} />
-            );
         }
       }}
     />
