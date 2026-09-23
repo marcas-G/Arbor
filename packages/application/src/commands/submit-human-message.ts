@@ -141,6 +141,7 @@ export const makeSubmitHumanMessageHandler = (
         createdAt: envelope.issuedAt,
         settledAt: null,
         responseBody: null,
+        attemptNo: 0,
       };
 
       // insertPending fails with HumanMessageConflict when the messageId

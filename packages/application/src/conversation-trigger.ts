@@ -57,14 +57,25 @@ interface AdmitWorkspaceMainPayload {
 }
 
 /** Deterministic derivation (repository convention: `newUuid7(salt, seed)`;
- * verifier-spawn precedent) — a replay of the same message converges on the
- * same execution and the same command, so at-least-once redelivery is
- * absorbed by the stored receipt (S6). */
-const deterministicExecutionId = (messageId: string): ExecutionId =>
-  parse(ExecutionId)(`exe_${newUuid7("p14-conversation", messageId)}`);
+ * verifier-spawn precedent) keyed on `(messageId, attemptNo)` — a replay
+ * within one attempt converges on the same execution and command (receipt
+ * absorbs at-least-once redelivery), while a retry after an unproductive
+ * settle advances the attempt and therefore yields fresh ids (`02` §4.2). */
+const deterministicExecutionId = (
+  messageId: string,
+  attemptNo: number,
+): ExecutionId =>
+  parse(ExecutionId)(
+    `exe_${newUuid7("p14-conversation", `${messageId}:${String(attemptNo)}`)}`,
+  );
 
-const deterministicCommandId = (messageId: string): CommandId =>
-  parse(CommandId)(`cmd_${newUuid7("p14-conversation-admit", messageId)}`);
+const deterministicCommandId = (
+  messageId: string,
+  attemptNo: number,
+): CommandId =>
+  parse(CommandId)(
+    `cmd_${newUuid7("p14-conversation-admit", `${messageId}:${String(attemptNo)}`)}`,
+  );
 
 export interface ConversationTriggerDependencies {
   readonly gateway: CommandGatewayService;
@@ -132,7 +143,10 @@ export const runConversationTrigger = (
     if (message === undefined) {
       return { records };
     }
-    const executionId = deterministicExecutionId(message.messageId);
+    const executionId = deterministicExecutionId(
+      message.messageId,
+      message.attemptNo,
+    );
     // FIFO + CAS: exactly one trigger wins the oldest message.
     const claim = yield* tx.transact(
       dependencies.messages.claim(message.messageId, executionId),
@@ -149,7 +163,10 @@ export const runConversationTrigger = (
       focus: { _tag: "Coordination" },
     };
     const actor = parse(Actor)("system:conversation-trigger");
-    const commandId = deterministicCommandId(message.messageId);
+    const commandId = deterministicCommandId(
+      message.messageId,
+      message.attemptNo,
+    );
     const context: CommandSubmissionContext = {
       _tag: "System",
       principal: dependencies.principal,
@@ -241,7 +258,10 @@ export const runConversationSettlement = (
 export interface ConversationSweepDependencies {
   readonly messages: Pick<
     HumanMessageStoreService,
-    "claimedOrderedByCreated" | "markAnswered" | "rollbackClaim"
+    | "claimedOrderedByCreated"
+    | "markAnswered"
+    | "rollbackClaim"
+    | "rollbackForRetry"
   >;
   readonly executions: Pick<ExecutionRepositoryService, "findById">;
   readonly clock: Pick<ClockService, "now">;
@@ -285,6 +305,28 @@ export const runConversationSettlementSweep = (
         continue;
       }
       if (execution.value.state.status !== "Settled") {
+        continue;
+      }
+      // Settlement branch (`02` §4.2): only a Completed settlement produces a
+      // user-visible response; Failed/OutcomeUnknown retries under a fresh
+      // attempt; an Interrupted execution is consumed with no body (the stop
+      // was intentional — never a retry storm).
+      const settlement = execution.value.state.settlement;
+      if (
+        settlement._tag === "Failed" ||
+        settlement._tag === "OutcomeUnknown"
+      ) {
+        yield* dependencies.messages.rollbackForRetry(message.messageId);
+        records.push(`retry:${message.messageId}`);
+        continue;
+      }
+      if (settlement._tag === "Interrupted") {
+        yield* dependencies.messages.markAnswered(
+          message.messageId,
+          yield* dependencies.clock.now(),
+          null,
+        );
+        records.push(`interrupted:${message.messageId}`);
         continue;
       }
       const responseBody = yield* dependencies.responseBodyOf(

@@ -53,9 +53,9 @@ const SEAMS: ReadonlyArray<SeamEvidence> = [
   },
   {
     seam: "S6",
-    title: "crash/replay exact-once logical response",
-    file: "tests/p14-conversation-trigger.test.ts",
-    marker: "exactly once",
+    title: "crash/replay exact-once logical response (two-step protocol)",
+    file: "tests/p14-settle-writeback-protocol.test.ts",
+    marker: "durable two-step recovery protocol",
   },
   {
     seam: "S7",

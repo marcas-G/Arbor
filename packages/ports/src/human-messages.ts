@@ -28,6 +28,10 @@ export interface HumanMessageRecord {
   /** Bounded assistant response persisted at settle (P14 `02` §4 "response
    * persisted"); null while unanswered. */
   readonly responseBody: string | null;
+  /** retry-until-response attempt counter (`02` §4.2): incremented on each
+   * Failed/OutcomeUnknown rollback; admission ids derive from
+   * `(messageId, attemptNo)`. */
+  readonly attemptNo: number;
 }
 
 export interface HumanMessageConflict {
@@ -114,8 +118,19 @@ export interface HumanMessageStoreService {
     HumanMessageStoreError,
     import("./session.js").TransactionScope
   >;
-  /** Crash recovery: rollback stale claims (no live execution). */
+  /** Crash recovery: rollback stale claims (no live execution) — the SAME
+   * attempt (no progress was made). */
   readonly rollbackClaim: (
+    messageId: string,
+  ) => Effect.Effect<
+    void,
+    HumanMessageStoreError,
+    import("./session.js").TransactionScope
+  >;
+  /** Unproductive settle (Failed/OutcomeUnknown): rollback AND advance the
+   * attempt so the next admission uses fresh derived ids — retry-until-
+   * response (`02` §4.2). */
+  readonly rollbackForRetry: (
     messageId: string,
   ) => Effect.Effect<
     void,

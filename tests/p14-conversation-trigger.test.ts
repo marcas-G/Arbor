@@ -68,6 +68,7 @@ const record = (
   createdAt,
   settledAt: null,
   responseBody: null,
+  attemptNo: 0,
   ...overrides,
 });
 
@@ -119,6 +120,18 @@ const makeHarness = (): Harness => {
         claimedByExecutionId: executionId,
       });
       return Effect.succeed({ _tag: "Claimed" as const });
+    },
+    rollbackForRetry: (messageId: string) => {
+      const row = rows.get(messageId);
+      if (row !== undefined && row.state === "Claimed") {
+        rows.set(messageId, {
+          ...row,
+          state: "Pending",
+          claimedByExecutionId: null,
+          attemptNo: row.attemptNo + 1,
+        });
+      }
+      return Effect.void;
     },
     rollbackClaim: (messageId: string) => {
       const row = rows.get(messageId);
