@@ -338,18 +338,17 @@ export const ProductionDaemonServiceLive = (
                     projectId,
                   ),
                 );
-                yield* tx.transact(
-                  runConversationTrigger(
-                    {
-                      gateway,
-                      messages,
-                      projects,
-                      executions,
-                      clock,
-                      principal: config.principal,
-                    },
-                    projectId,
-                  ),
+                yield* runConversationTrigger(
+                  {
+                    gateway,
+                    messages,
+                    projects,
+                    executions,
+                    clock,
+                    tx,
+                    principal: config.principal,
+                  },
+                  projectId,
                 );
               }),
             );

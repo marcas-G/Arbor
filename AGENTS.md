@@ -31,9 +31,14 @@ If a code implementation discovers a design gap: **stop implementation and raise
 - `planning/tasks/` — task breakdown per phase
 - `planning/results/` — completion evidence, verification output per phase
 
-Current authorization state: **P0–P13 COMPLETE; P13 FORMALLY CLOSED**.
+Current authorization state: **P0–P14 COMPLETE; P14 FORMALLY CLOSED**.
 **SYSTEM IMPLEMENTATION COMPLETE** — **FINAL CLOSURE PASS**
 (`planning/final-system-closure.md`; `planning/results/ARBOR_FINAL.result.md`).
+P14 (Chat-First 主工作区对话面 — DID v1.16 G-A–G-F: SubmitHumanMessage +
+WorkspaceMain/Coordination conversation execution, root-only, no streaming):
+design closure + planning + implementation COMPLETE and FORMALLY CLOSED
+(`planning/results/P14.result.md`; 10/10 seams S1–S10 evidenced; G-gate 8/8;
+recorded mechanism note: settle write-back via P14 tick sweep).
 P13 (Product Web Client — post-core product-surface phase, DID v1.15 G1–G4):
 design closure + planning + implementation COMPLETE and FORMALLY CLOSED
 (`planning/results/P13.result.md`; 14/14 exit criteria PASS; no open Design
