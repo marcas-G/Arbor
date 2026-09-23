@@ -59,6 +59,13 @@ const FORBIDDEN_TRANSCRIPT_MUTATIONS: ReadonlyArray<{
   },
 ];
 
+const FORBIDDEN_SERVER_STATE_CACHE_WRITES: ReadonlyArray<{
+  readonly label: string;
+  readonly pattern: RegExp;
+}> = [
+  { label: "Query cache write", pattern: /\bsetQuer(?:y|ies)Data\s*\(/ },
+];
+
 const INDEXED_ROOT_SELECTION = /\.nodes(?:\s*\[\s*0\s*\]|\s*\.at\(\s*0\s*\))/;
 
 function collectSourceFiles(dir: string, found: string[] = []): string[] {
@@ -151,6 +158,19 @@ describe("no forbidden command controls in src", () => {
         continue;
       }
       for (const forbidden of FORBIDDEN_TRANSCRIPT_MUTATIONS) {
+        if (forbidden.pattern.test(source)) {
+          violations.push(`${path}: ${forbidden.label}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps server view state on the fetch/refetch path, without local Query cache writes", () => {
+    const violations: string[] = [];
+    for (const path of collectSourceFiles(srcRoot)) {
+      const source = readFileSync(path, { encoding: "utf8" });
+      for (const forbidden of FORBIDDEN_SERVER_STATE_CACHE_WRITES) {
         if (forbidden.pattern.test(source)) {
           violations.push(`${path}: ${forbidden.label}`);
         }

@@ -127,12 +127,24 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
     );
     expect(calls).toBe(1);
 
-    // frame carries NO payload — the "B" data exists only in fetch #2
+    // An untrusted extra payload must not become view data: "B" exists only
+    // in fetch #2, not in this frame.
     act(() => {
-      fake.trigger({ kind: "invalidate", view: "attention", watermark: 2 });
+      fake.trigger({
+        kind: "invalidate",
+        view: "attention",
+        watermark: 2,
+        payload: {
+          rows: [{ summary: "frame payload must be ignored" }],
+          entries: [{ kind: "TranscriptEntry" }],
+        },
+      });
     });
     await waitFor(() =>
       expect(screen.getByTestId("state").textContent).toContain("B"),
+    );
+    expect(screen.getByTestId("state").textContent).not.toContain(
+      "frame payload must be ignored",
     );
     expect(calls).toBe(2);
 
