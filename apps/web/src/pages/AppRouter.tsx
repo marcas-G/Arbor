@@ -5,13 +5,12 @@ import type { ReactNode } from "react";
 import type { Route } from "../api/router.js";
 import { AppShell } from "../shell/AppShell.js";
 import { AttentionPage } from "./attention/AttentionPage.js";
-import { OverviewPage } from "./overview/OverviewPage.js";
-import { PageStub } from "./PageStub.js";
 import { QueuePage } from "./queue/QueuePage.js";
 import { SettingsPage } from "./settings/SettingsPage.js";
 import { TreePage } from "./tree/TreePage.js";
 import { UsagePage } from "./usage/UsagePage.js";
 import { WorkPage } from "./work/WorkPage.js";
+import { RootWorkbenchPage } from "./workbench/RootWorkbenchPage.js";
 import { WorkspacePage } from "./workspace/WorkspacePage.js";
 
 export function AppRouter(): ReactNode {
@@ -19,8 +18,8 @@ export function AppRouter(): ReactNode {
     <AppShell
       pageFor={(route: Route): ReactNode => {
         switch (route.name) {
-          case "project-overview":
-            return <OverviewPage route={route} />;
+          case "workbench":
+            return <RootWorkbenchPage route={route} />;
           case "tree":
             return <TreePage route={route} />;
           case "workspace":

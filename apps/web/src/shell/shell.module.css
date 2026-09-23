@@ -126,7 +126,9 @@
 }
 
 .content {
+  display: flex;
   flex: 1;
+  min-height: 0;
   padding: var(--arbor-space-3);
   min-width: 0;
 }
