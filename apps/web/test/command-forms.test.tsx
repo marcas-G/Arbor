@@ -16,6 +16,10 @@ import { RecordDecisionForm } from "../src/commands/forms/RecordDecisionForm.js"
 import { RevokePermissionForm } from "../src/commands/forms/RevokePermissionForm.js";
 import { SteerWorkForm } from "../src/commands/forms/SteerWorkForm.js";
 import { StopExecutionForm } from "../src/commands/forms/StopExecutionForm.js";
+import {
+  currentWorkTypical,
+  verificationTypical,
+} from "../src/views/fixtures.js";
 
 type Envelope = Record<string, unknown>;
 
@@ -263,6 +267,13 @@ describe("RecordDecisionForm", () => {
 });
 
 describe("SteerWorkForm", () => {
+  if (currentWorkTypical === null) {
+    throw new Error("D0 current-work fixture must carry a Work revision");
+  }
+  // This carrier is read from the typed current-work server fixture, never a
+  // form default or browser-maintained counter.
+  const serverSuppliedWorkRevision = currentWorkTypical.revision;
+
   const setup = () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
@@ -272,7 +283,7 @@ describe("SteerWorkForm", () => {
         workId="wrk_9"
         workspaceId="ws_9"
         objective="完成第二章"
-        expectedWorkRevision={0}
+        expectedWorkRevision={serverSuppliedWorkRevision}
         onSubmitted={vi.fn()}
       />,
     );
@@ -292,7 +303,7 @@ describe("SteerWorkForm", () => {
       workId: "wrk_9",
       workspaceId: "ws_9",
       steer: { severity: "Normal", guidance: "先完成大纲再动笔" },
-      expectedWorkRevision: 0,
+      expectedWorkRevision: serverSuppliedWorkRevision,
       provenance: { source: "HumanInput" },
     });
   });
@@ -320,7 +331,7 @@ describe("SteerWorkForm", () => {
       workId: "wrk_9",
       workspaceId: "ws_9",
       steer: { severity: "Critical", guidance: "立即停止扩写，回到主题" },
-      expectedWorkRevision: 0,
+      expectedWorkRevision: serverSuppliedWorkRevision,
       provenance: { source: "HumanInput" },
     });
   });
@@ -348,6 +359,36 @@ describe("AcceptWorkOutcomeForm", () => {
     expect(payload.targetWorkRevision).toBe(3);
     expect(payload.verificationId).toBe("ver_5");
     expect(String(payload.acceptanceId)).toMatch(/^acp_[0-9a-f-]{36}$/);
+  });
+
+  it("keeps a server-supplied target Work revision zero unchanged in the acceptance payload", async () => {
+    const fetchMock = stubFetch(() => Promise.resolve(committed()));
+    if (
+      verificationTypical.verificationId === undefined ||
+      verificationTypical.targetWorkRevision === undefined
+    ) {
+      throw new Error("D0 verification fixture must carry its frozen identity");
+    }
+    // VerificationView.targetWorkRevision is a frozen server identity value.
+    const serverSuppliedTargetWorkRevision =
+      verificationTypical.targetWorkRevision;
+    render(
+      <AcceptWorkOutcomeForm
+        actor="human:root"
+        projectId="prj_1"
+        workId="wrk_5"
+        targetWorkRevision={serverSuppliedTargetWorkRevision}
+        verificationId={verificationTypical.verificationId}
+        onSubmitted={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "记录验收" }));
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
+    expect(payloadOf(readCall(fetchMock).envelope)).toMatchObject({
+      workId: "wrk_5",
+      targetWorkRevision: serverSuppliedTargetWorkRevision,
+      verificationId: verificationTypical.verificationId,
+    });
   });
 });
 
