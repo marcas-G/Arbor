@@ -1,0 +1,32 @@
+/* Design tokens land in P13-003 (`04`). Minimal placeholder so the shell
+ * renders on paper ground from day one. */
+:root {
+  --arbor-paper: #f4efe6;
+  --arbor-ink: #26332b;
+}
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  font-family: Georgia, "Palatino Linotype", serif;
+  background: var(--arbor-paper);
+  color: var(--arbor-ink);
+}
+#root {
+  height: 100%;
+}
+.arbor-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.arbor-topbar {
+  padding: var(--arbor-space-2, 8px) var(--arbor-space-3, 12px);
+  border-bottom: 1px solid #c9c0ae;
+}
+.arbor-brand {
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}

@@ -506,7 +506,7 @@ const walkSourceFiles = (
 };
 
 describe("P10-011 P12 boundary negative (no transport in the P10 tree)", () => {
-  it("projection-runtime and api-contracts source imports no HTTP/WebSocket/CLI transport (GQ6); apps/web stays unbuilt", () => {
+  it("projection-runtime and api-contracts source imports no HTTP/WebSocket/CLI transport (GQ6)", () => {
     const repoRoot = join(import.meta.dirname, "..");
     for (const tree of [
       "packages/projection-runtime/src",
@@ -524,7 +524,8 @@ describe("P10-011 P12 boundary negative (no transport in the P10 tree)", () => {
         }
       }
     }
-    expect(existsSync(join(repoRoot, "apps/web"))).toBe(false);
+    // P13 (DID v1.15 G1): apps/web exists; superseded assertion removed.
+    expect(existsSync(join(repoRoot, "apps/web", "package.json"))).toBe(true);
   });
 
   it("the Query surface never calls AdmitExecution directly (resolver-gated — P12, GQ4)", () => {

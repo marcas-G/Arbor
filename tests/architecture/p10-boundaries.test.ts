@@ -97,11 +97,15 @@ describe("p10-boundaries", () => {
     }
   });
 
-  it("P12 boundary: transport lives only under apps/*/src/transport; packages/adapters/tests stay transport-free; apps/web stays unbuilt", () => {
+  it("P12 boundary: transport lives only under apps/*/src/transport; packages/adapters/tests stay transport-free", () => {
     // P10 guard amended at P12-010 (`00` cross-phase table; `10` §1): P12 now
     // OWNS the HTTP/WS/CLI/web shell plane, but only as composition-root
     // `apps/*` wiring. Transport-named files and transport imports therefore
     // remain forbidden everywhere EXCEPT `apps/<app>/src/transport/`.
+    // Amended at P13 (DID v1.15 G1): `apps/web` now exists (product web
+    // client); the "stays unbuilt" assertion is superseded — the boundary
+    // test below still applies to it (no transport imports outside
+    // apps/*/src/transport).
     const TRANSPORT_IMPORT =
       /^(node:http|node:https|node:http2|node:ws|node:net|node:readline|node:repl|ws|express|fastify|socket\.io|@fastify\/.*|commander|yargs|clipanion)$/;
     const TRANSPORT_NAME_SEGMENTS = new Set([
@@ -136,7 +140,9 @@ describe("p10-boundaries", () => {
         ).toEqual([]);
       }
     }
-    expect(existsSync(join(repoRoot, "apps/web"))).toBe(false);
+    // P13 (DID v1.15 G1): apps/web exists as the product web client. Its own
+    // stricter dependency boundary is enforced by tests/architecture/p13-*.
+    expect(existsSync(join(repoRoot, "apps/web", "package.json"))).toBe(true);
   });
 
   it("HumanInterventionApplied emission is application-package-only (P10 06 §2 — grep-limited); the read side may filter the event type but never emits", () => {
