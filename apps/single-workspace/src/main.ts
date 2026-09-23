@@ -1,6 +1,7 @@
 import { Principal, parse, WorkspaceId } from "@arbor/domain";
 import { startupRecovery } from "@arbor/execution-runtime";
-import { Duration, Effect } from "effect";
+import { Duration, Effect, Scope } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   buildSliceLayer,
   P12_MIGRATIONS,
@@ -9,7 +10,8 @@ import {
   type SliceServices,
 } from "./composition.js";
 import { evaluateAndSelect } from "./loop.js";
-import { ProductionDaemonService } from "./production.js";
+import { ProductionDaemonService, TransportBoundary } from "./production.js";
+import { startWebTransport } from "./transport/server.js";
 
 /** The production composition entry: build the single-workspace slice layer
  * with every frozen production capability assembled (B-7). */
@@ -30,6 +32,13 @@ export interface ProductionDaemonRunConfig extends Partial<SliceConfig> {
   readonly workspaceId?: WorkspaceId;
   readonly principalRef?: string;
   readonly tickIntervalMs?: number;
+  /** P13 TR-W1/W2: when set, the daemon serves the web transport
+   * (static dist + frozen API shells + WS invalidation) same-origin. */
+  readonly webTransport?: {
+    readonly staticRoot?: string | undefined;
+    readonly port?: number | undefined;
+    readonly host?: string | undefined;
+  };
 }
 
 /** P5 `01` §3: migrate, then run one scheduler loop step for a workspace.
@@ -67,55 +76,84 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           })
         : Effect.void;
     yield* deployment.daemon.start;
+    if (config.webTransport !== undefined) {
+      const boundary = yield* TransportBoundary;
+      const sql = yield* SqlClient;
+      const handle = yield* Effect.promise(() =>
+        startWebTransport({
+          http: boundary.http,
+          webSocket: boundary.webSocket,
+          sql,
+          ...(config.webTransport?.staticRoot !== undefined
+            ? { staticRoot: config.webTransport.staticRoot }
+            : {}),
+          ...(config.webTransport?.port !== undefined
+            ? { port: config.webTransport.port }
+            : {}),
+          ...(config.webTransport?.host !== undefined
+            ? { host: config.webTransport.host }
+            : {}),
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.promise(handle.close));
+    }
     return { deployment, schedulerTick };
   });
 
 /** One bounded daemon cycle: start (migrate + T1) -> scheduler/loop ->
  * consumer polls -> recovery sweep. Used by the smoke test and `--once`. */
 export const runDaemonOnce = (config: ProductionDaemonRunConfig = {}) =>
-  Effect.gen(function* () {
-    const { deployment, schedulerTick } = yield* runProductionDaemon(config);
-    yield* schedulerTick;
-    yield* deployment.daemon.pollConsumers;
-    yield* deployment.daemon.recoveryTick;
-  });
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { deployment, schedulerTick } = yield* runProductionDaemon(config);
+      yield* schedulerTick;
+      yield* deployment.daemon.pollConsumers;
+      yield* deployment.daemon.recoveryTick;
+    }),
+  );
 
 /** The long-running production daemon: start, then tick forever until
  * interrupted (the stop signal). */
 export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
-  Effect.gen(function* () {
-    const { deployment, schedulerTick } = yield* runProductionDaemon(config);
-    yield* Effect.forever(
-      Effect.gen(function* () {
-        yield* schedulerTick;
-        yield* deployment.daemon.pollConsumers;
-        yield* deployment.daemon.recoveryTick;
-        yield* Effect.sleep(Duration.millis(config.tickIntervalMs ?? 1000));
-      }),
-    );
-  });
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { deployment, schedulerTick } = yield* runProductionDaemon(config);
+      yield* Effect.forever(
+        Effect.gen(function* () {
+          yield* schedulerTick;
+          yield* deployment.daemon.pollConsumers;
+          yield* deployment.daemon.recoveryTick;
+          yield* Effect.sleep(Duration.millis(config.tickIntervalMs ?? 1000));
+        }),
+      );
+    }),
+  );
 
 export type { SliceServices };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const workspaceId = process.env.ARBOR_WORKSPACE_ID;
+  const webPort = process.env.ARBOR_HTTP_PORT;
   const config: ProductionDaemonRunConfig = {
     ...(workspaceId !== undefined
       ? { workspaceId: parse(WorkspaceId)(workspaceId) }
       : {}),
+    ...(process.env.ARBOR_WEB_DIST !== undefined || webPort !== undefined
+      ? {
+          webTransport: {
+            ...(process.env.ARBOR_WEB_DIST !== undefined
+              ? { staticRoot: process.env.ARBOR_WEB_DIST }
+              : {}),
+            ...(webPort !== undefined ? { port: Number(webPort) } : {}),
+          },
+        }
+      : {}),
   };
-  const program: Effect.Effect<void, unknown, SliceServices> =
-    process.argv.includes("--once")
-      ? runDaemonOnce(config)
-      : (runDaemonForever(config) as Effect.Effect<
-          void,
-          unknown,
-          SliceServices
-        >);
-  Effect.runPromise(Effect.scoped(Effect.provide(program, main(config)))).catch(
-    (error) => {
-      process.stderr.write(`arbor daemon failed: ${String(error)}\n`);
-      process.exitCode = 1;
-    },
-  );
+  const program = process.argv.includes("--once")
+    ? Effect.scoped(runDaemonOnce(config))
+    : Effect.scoped(runDaemonForever(config));
+  Effect.runPromise(Effect.provide(program, main(config))).catch((error) => {
+    process.stderr.write(`arbor daemon failed: ${String(error)}\n`);
+    process.exitCode = 1;
+  });
 }

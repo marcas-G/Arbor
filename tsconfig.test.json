@@ -11,9 +11,9 @@
     "packages/**/test/**/*.ts",
     "adapters/**/src/**/*.ts",
     "adapters/**/test/**/*.ts",
-    "apps/**/src/**/*.ts",
-    "apps/**/test/**/*.ts",
+    "apps/single-workspace/**/*.ts",
     "tests/**/*.ts",
     "vitest.config.ts"
-  ]
+  ],
+  "exclude": ["apps/web/**"]
 }

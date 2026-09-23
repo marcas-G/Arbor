@@ -1,0 +1,41 @@
+/* P13-005 command forms: layout only; every color/size resolves through a
+ * design token (EC-10: literals live only in tokens.css/tokens.ts). */
+
+.arbor-command-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+}
+
+.arbor-command-check {
+  display: flex;
+  align-items: center;
+  gap: var(--arbor-space-2);
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+
+.arbor-command-check-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--arbor-space-3);
+}
+
+.arbor-command-confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--arbor-space-2);
+  padding: var(--arbor-space-3);
+  border: 1px solid var(--arbor-danger);
+  border-radius: var(--arbor-radius);
+}
+
+.arbor-command-confirm-actions {
+  display: flex;
+  gap: var(--arbor-space-2);
+}
+
+.arbor-command-static {
+  color: var(--arbor-muted);
+}
