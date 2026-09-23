@@ -1,9 +1,9 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.14  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P12 design-closure rulings GQ1–GQ8)  
-**Supersedes:** v1.13  
-**Date:** 2026-09-22  
+**Version:** 1.15  
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P13 design-closure rulings GQ1–GQ4)  
+**Supersedes:** v1.14  
+**Date:** 2026-09-23  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
@@ -147,6 +147,36 @@ P12 design closure COMPLETE
 P12 planning COMPLETE
 P12 implementation COMPLETE; P12 FORMALLY CLOSED
 ```
+
+**Governance changes (v1.14 → v1.15):**（P13 design-closure 治理裁决 GQ1–GQ4）
+
+- G1 (GQ1): **新增 P13 — Product Web Client phase**（§11）。P13 是 post-core
+  product-surface phase：P0–P12 的 SYSTEM IMPLEMENTATION COMPLETE 不作废；
+  P13 不改任何已冻结的 domain/runtime/projection/transport 语义，只新增
+  浏览器客户端呈现层。技术基线扩展（§14.1）：`apps/web` 前端应用采用
+  Vite + React（TypeScript/ESM）；Vite/React 及相关前端依赖在 P13 contract/
+  lockfile 中 exact pin，升级走单独变更验收。
+- G2 (GQ2): **P13 v1 = 观测 + 已冻结的 human governance 操作**。9 个 frozen
+  views 全部呈现 + WS invalidation/refetch；命令暴露以 P13 合同冻结的
+  `Command → UI exposure policy` 矩阵为准（Human-actionable / System-internal /
+  Agent-originated / Recovery-only），P13 只主动暴露 Human-actionable。
+  **`SelectCurrentWork` 不得做成人工选择控件**：selection decision 属 scheduler
+  evaluator，UI 只能呈现 current/runnable/selection 状态；human force-select
+  若未来需要，必须单独治理语义闭合。chat-first 主 Workspace 对话面 defer 到
+  P14+；`SendMessage` 在人→Main Agent 端到端语义冻结前不得由 P13 解释实现。
+- G3 (GQ3): **视觉语言继承旧 console 的 paper/leaf/serif 植物学纸面原则**，
+  不复制旧 CSS 架构；P13 冻结一套小型 design token system
+  （paper/ink/leaf/branch/attention/danger/muted、typography、spacing 等），
+  组件一律从 tokens 构建。
+- G4 (GQ4): **`apps/web` 边界冻结**：开发态 Vite dev server + `/views` /
+  `/commands` / WS proxy；生产态 Vite build → static dist，由
+  `apps/single-workspace` production daemon 同源托管 static assets + API + WS。
+  依赖边界：允许 `apps/web → packages/api-contracts` 与 frontend libraries；
+  禁止 `apps/web → domain / application / projection-runtime / adapters/*`。
+  P13 UI 角色冻结为 **Projection Renderer + Command Initiator**，不得成为
+  Domain Interpreter / Authority Resolver / Workflow Engine。WS 只用于
+  invalidation/refetch；浏览器不得据事件自行维护第二套 canonical/projection
+  state。Search 保持 out-of-v1，不因 UI 便利自行实现新查询语义。
 
 **Governance changes (v1.12 → v1.13):**（P10 design-closure 治理裁决 GQ1–GQ7）
 
@@ -4032,6 +4062,20 @@ P12 completion blockers（v1.14 G1–G8；与文件头 P12 completion blockers �
 9. Plugin SDK / compatibility / trust model
 ```
 
+## P13 — Product Web Client（post-core product-surface phase）
+
+```text
+浏览器瘦客户端（apps/web：Vite + React，TypeScript/ESM）
+角色冻结：Projection Renderer + Command Initiator
+  - 渲染 9 个 frozen view DTO（api-contracts），不重解释 view 语义
+  - Human-actionable governance commands 表单化，经 /commands 提交
+  - WS 仅用于 invalidation → refetch；无第二套 canonical/projection state
+  - Problem DTO typed failures 的明确 UI 呈现
+  - design token system（paper/leaf/serif 植物学纸面原则）
+  - 禁止 Search（out-of-v1）；禁止 domain/application/projection/adapters 依赖
+chat-first 主 Workspace 对话面：defer 到 P14+（不在 P13 范围）
+```
+
 ---
 
 # 12. Pre-implementation Closure v1.2
@@ -4504,6 +4548,7 @@ v1.3 已关闭 P0 前必须通过推理确定的 C1–C10 与 X1–X11 cross-cut
 | P12 exact contracts (Plugin SDK/SPI + compatibility; Authority Resolver production plane; Project tool registration/trust; observability/health/usage; remote Worker transport + identity; secret store; transport shells) | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
 | StorageScaleAssessment + DurabilityEnvelope / backup-restore / RPO-RTO / restore drill | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
 | Runtime Safety Envelope 六维补全（§8.16A cross-phase closure） | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
+| P13 Product Web Client（client boundary/role；Command → UI exposure policy matrix；view rendering + Problem 呈现；design token system；transport/build binding；acceptance） | **P13 PHASE CONTRACT** | `docs/design/implementation/P13/**` |
 
 P1 phase-scoped implementation contracts are owned by:
 
@@ -4563,6 +4608,10 @@ Lint        Biome
 Format      Biome
 Architecture custom Vitest package-DAG tests
 DB (P1)     SQLite + Effect SQL sqlite-node adapter
+Frontend (P13, v1.15)  apps/web = Vite + React（TypeScript/ESM）；
+                       Vite/React 及相关前端依赖 exact pin（P13 contract/lockfile）；
+                       生产态 build 产物为 static dist，由 single-workspace
+                       production daemon 同源托管；前端依赖升级一律单独变更验收
 ```
 
 Effect v4 仍作为受控 RC dependency：所有 Effect v4 packages 精确 pin 同一 revision，每次升级作为单独变更并跑完整验收，不允许自动漂移。
