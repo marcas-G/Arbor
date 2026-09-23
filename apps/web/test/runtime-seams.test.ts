@@ -18,7 +18,7 @@ describe("D2 frozen Web runtime seams", () => {
     expect(query).toContain('queryKey: ["view", view, request]');
     expect(query).toContain("fetchView(view, request");
     expect(query).not.toMatch(/\buseState\b|\bsetQuer(?:y|ies)Data\b/);
-    expect(transport).toContain('fetch(`/views/${view}`');
+    expect(transport).toContain(["fetch(`/views/$", "{view}`"].join(""));
     expect(transport).toContain("await response.json()");
     expect(transport).not.toMatch(/\bWebSocket\b|\bReadableStream\b/);
   });
@@ -44,7 +44,9 @@ describe("D2 frozen Web runtime seams", () => {
       /\b(?:localStorage|sessionStorage|document\.cookie)\b/,
     );
     expect(submission).toContain("pendingCommandIdRef");
-    expect(submission).toContain("pendingCommandIdRef.current ?? newCommandId()");
+    expect(submission).toContain(
+      "pendingCommandIdRef.current ?? newCommandId()",
+    );
     expect(submission).toContain("pendingCommandIdRef.current = null");
   });
 });
