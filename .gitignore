@@ -4,3 +4,4 @@ coverage/
 *.tsbuildinfo
 .pnpm-store/
 *.log
+.worktrees/
