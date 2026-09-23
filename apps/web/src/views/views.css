@@ -1,0 +1,153 @@
+/* P13-004 view layer. Every color/size resolves through a design token
+ * (EC-10: literals live only in tokens.css/tokens.ts). */
+
+.arbor-mono {
+  font-family: var(--arbor-font-mono);
+  font-size: var(--arbor-text-small);
+}
+
+.arbor-view-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+}
+
+/* responsibility-tree: ordered node cards (wire nodes are a pre-order flat
+ * list; depth is not carried by the frozen DTO). */
+.arbor-tree {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.arbor-tree-node {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--arbor-space-1);
+  width: 100%;
+  padding: var(--arbor-space-3);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  background: var(--arbor-paper-2);
+  color: var(--arbor-ink);
+  font-family: var(--arbor-font-serif);
+  font-size: var(--arbor-text-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.arbor-tree-node:hover {
+  border-color: var(--arbor-leaf-bright);
+}
+
+.arbor-tree-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--arbor-space-2);
+}
+
+.arbor-tree-name {
+  font-size: var(--arbor-text-title);
+  font-weight: 600;
+}
+
+.arbor-tree-id {
+  color: var(--arbor-ink-soft);
+}
+
+.arbor-tree-objective {
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+
+.arbor-tree-usage {
+  color: var(--arbor-muted);
+  font-size: var(--arbor-text-caption);
+}
+
+/* attention */
+.arbor-attention-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+}
+
+.arbor-attention-group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--arbor-space-2);
+  margin: 0;
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+
+/* generic rows / tables */
+.arbor-row-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.arbor-attention-row,
+.arbor-inbox-row,
+.arbor-transcript-row,
+.arbor-pending-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--arbor-space-3);
+  padding-bottom: var(--arbor-space-2);
+  border-bottom: 1px solid var(--arbor-line);
+}
+
+.arbor-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--arbor-text-small);
+}
+
+.arbor-table th {
+  padding: var(--arbor-space-1) var(--arbor-space-2);
+  border-bottom: 1px solid var(--arbor-line);
+  color: var(--arbor-ink-soft);
+  font-family: var(--arbor-font-mono);
+  font-size: var(--arbor-text-caption);
+  font-weight: 600;
+  text-align: left;
+}
+
+.arbor-table td {
+  padding: var(--arbor-space-2);
+  border-bottom: 1px solid var(--arbor-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+/* label + value block */
+.arbor-kv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-1);
+}
+
+.arbor-kv-label {
+  color: var(--arbor-ink-soft);
+  font-family: var(--arbor-font-mono);
+  font-size: var(--arbor-text-caption);
+}
+
+/* usage groupBy segmented control */
+.arbor-segmented {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--arbor-space-2);
+}

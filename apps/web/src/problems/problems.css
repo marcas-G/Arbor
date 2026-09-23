@@ -1,0 +1,61 @@
+/* P13-004 problem layer. Token-only values (EC-10). */
+
+.arbor-problem {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--arbor-space-2);
+  padding: var(--arbor-space-4);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  background: var(--arbor-paper-2);
+}
+
+.arbor-problem-title {
+  margin: 0;
+  font-size: var(--arbor-text-title);
+  font-weight: 600;
+}
+
+.arbor-problem-danger {
+  border-color: var(--arbor-danger);
+}
+
+.arbor-problem-danger .arbor-problem-title {
+  color: var(--arbor-danger);
+}
+
+.arbor-problem-details {
+  padding: var(--arbor-space-2);
+  border: 1px dashed var(--arbor-line);
+  border-radius: var(--arbor-radius-small);
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+
+.arbor-problem-details summary {
+  cursor: pointer;
+  font-family: var(--arbor-font-mono);
+  font-size: var(--arbor-text-caption);
+}
+
+.arbor-problem-pre {
+  margin: 0;
+  padding: var(--arbor-space-2);
+  overflow-x: auto;
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius-small);
+  background: var(--arbor-paper);
+  white-space: pre-wrap;
+}
+
+.arbor-inline-error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-1);
+  padding: var(--arbor-space-2) var(--arbor-space-3);
+  border: 1px solid var(--arbor-danger);
+  border-radius: var(--arbor-radius-small);
+  color: var(--arbor-danger);
+  font-size: var(--arbor-text-small);
+}
