@@ -79,6 +79,9 @@ CREATE INDEX idx_human_messages_pending ON human_messages(project_id, state, cre
 ```
 
 - 迁移 `0014_human_messages.sql`（P14 拥有；PRAGMA user_version → 14；命名沿既有单下划线风格）。
+- `attempt_no`：retry-until-response 的 attempt 计数（`02` §4.2）；每次
+  Failed/OutcomeUnknown 回滚时 +1，admission id 由 `(messageId, attempt_no)`
+  派生。
 - durable 在命令事务内（与 event append 同事务）。
 
 ## 5. Inbox admission

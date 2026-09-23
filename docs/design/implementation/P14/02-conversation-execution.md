@@ -55,18 +55,65 @@ Root 已有 Active Main Execution：
 1 accepted HumanMessage → 恰好 1 user-visible response episode
 ```
 
-- 幂等锚：`messageId`。execution claim 写入 `claimed_by_execution_id`；
-  `SettleExecution(Completed)` 同事务将 `state → Answered` 并写 transcript
-  projection 的 response 关联（`03`）。
+### 4.1 Durable two-step recovery protocol（reconciliation 2026-09-23）
+
+响应写回**不是**与 settlement 同事务的单步操作，而是 P14 拥有的
+**durable two-step recovery protocol**：
+
+```text
+Step 1（canonical，P2 冻结，P14 不参与）
+  SettleExecution(Completed(...)) 提交：Execution + receipt + event 原子
+  —— 该事务由 P2 拥有且不含 conversation 依赖；P14 不 reopen P2。
+
+Step 2（P14 拥有，settlement durable 之后）
+  conversation tick sweep 观察已 settle 的 execution →
+  幂等 CAS 写回（state → Answered + bounded response body）。
+```
+
+- **显式 crash window（settle → writeback）**：Step 1 提交后、Step 2 完成前，
+  message 处于 `Claimed` 且无 `Answered`/response body。该窗口是**协议
+  的一部分**（可见且安全），不是实现缺陷：
+  - 不产生双重 admission（`Claimed` 门禁止再 claim）；
+  - 不丢消息（sweep 扫描全部 `Claimed`，重启后继续）；
+  - 不产生第二条回复（`markAnswered` CAS `WHERE state='Claimed'`，重复
+    sweep/重放为 no-op）。
+- **sweep 是 correctness mechanism**（非优化）：系统对"恰好一条回复"的保证
+  由 `Claimed` 门 + 确定性扫描 + CAS 共同构成，不依赖 Step 1/2 的原子性。
+- 幂等锚：`messageId`；execution claim 写 `claimed_by_execution_id`。
 - crash/replay 不重复回复：重放同一 commandId → 幂等 receipt（`01` §2）；
   consumer 重扫只认 `Pending`；Claimed-without-execution 回滚（§2）；
-  transcript response 行以 executionId 唯一键投影（upsert，天然重放安全）。
-- 逻辑一次 = 用户可见恰好一条 Assistant turn；物理 at-least-once 由上述
-  锚收敛（`05` seam-6 机械测试：注入 crash 于 claim/settle 两点）。
-- **retry-until-response 语义**：execution 若以 Failed/OutcomeUnknown
-  settle（未产出 user-visible 回复），Claimed 无后续 → 回滚 Pending 重试；
-  每条消息仍恰好一条最终 user-visible turn（中间失败轮不投影 Assistant
-  turn，可投影既有 kind 的失败条目——不违反 1→1 response episode）。
+  transcript response 以 messageId/executionId 关联投影（重放安全）。
+- 逻辑一次 = 用户可见恰好一条 Assistant turn；物理 at-least-once 由上述锚
+  收敛（`05` seam-6 机械测试：claim/settle 两点注入 crash）。
+
+### 4.2 Settlement 分支处理（frozen）
+
+| Settlement | 写回 | 理由 |
+|---|---|---|
+| `Completed(...)`（含 Yielded/CompletionClaimed/CoordinationCompleted/QueryCompleted） | `Answered` + bounded response body | 产出 user-visible response episode |
+| `Failed` / `OutcomeUnknown` | `Pending`（`attempt_no + 1`）→ retry-until-response | 未产出回复；消息不丢、不永久 stuck |
+| `Interrupted`（`StopRequested` / `ControlledInterruption`） | `Answered`（response body = null） | human/system 有意停止该 execution；不制造重试风暴（再发消息是 human 的动作） |
+
+**retry-until-response 的 attempt 语义（frozen）**：每次 admission 使用
+`(messageId, attempt_no)` 派生的确定性 executionId/commandId（同一 attempt
+内重放收敛；跨 attempt 必须新 id，避免与已 settle 的 execution 行冲突）。
+
+### 4.3 Reconciliation record（P14-owns；不 reopen P2）
+
+**问题**：P14 合同初版 §4 写"SettleExecution 同事务将 state → Answered"，
+实现是 tick sweep + 幂等 CAS。机械判定 frozen invariant 要求哪一种：
+
+- **A（必须同事务、不可分离）**：不成立。P2 `SettleExecution` handler 由 P2
+  冻结且依赖集仅 `executions` + `workWaits`（无 conversation 概念）；要求 A
+  必须改 P2 → 违反"P14 不 reopen P2"。transcript 是 P10 派生 read model
+  （明确 "NOT TRUTH"），派生状态不需要与 canonical settlement 原子。
+- **B（settlement durable 后允许 crash-visible 中间窗口，但必须可确定性
+  重发现 / 重启继续 / CAS exactly-once / 重复 sweep 安全 / 已写不重写 /
+  不永久 stuck / one-active-main 与 FIFO 保持）**：成立，且是本架构既有规范
+  （P8 先例：spawn crash-window closed，replay re-spawns idempotently）。
+
+**裁决**：上游只要求 B。本合同按 B 精确修订（§4.1/§4.2）；P2 不 reopen。
+
 
 ## 5. Session 连续性（frozen）
 

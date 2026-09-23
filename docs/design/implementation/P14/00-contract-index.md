@@ -26,6 +26,12 @@
 | TR-B | P13 `02` §2 暴露矩阵 | Human-actionable 7 → 8（+`SubmitHumanMessage`）；P13 `06` EC-6 与 Web v1 §9 不变量 2 的"七"随更；EC-8 语义核心（SendMessage 永不进 chat 面）不变（演进机制 = P13 `02` U-2） |
 | TR-C | Web v1 `01`（product contract） | §0 chat-first deferral 由 P14 解除；§2.4 Root 的"对话记录"tab 升级为 conversation（transcript+composer），child 保持只读；WORKSPACE_TABS/route model 修订归 P14；EC-8 证据文本收窄为"无 SendMessage 型输入控件"，语义核心不变 |
 
+## Reconciliation record
+
+| 日期 | 项 | 结论 |
+|---|---|---|
+| 2026-09-23 | settle response write-back 协议（`02` §4） | 上游只要求 durable two-step（B）；合同由"同事务"精确修订为 §4.1 协议 + §4.2 settlement 分支；sweep 为 correctness mechanism；P2 不 reopen（`02` §4.3） |
+
 ## Phase state
 
 ```text
