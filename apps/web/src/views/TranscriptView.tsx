@@ -33,7 +33,7 @@ export function TranscriptView({
           ))}
         </ul>
       )}
-      {nextCursor === undefined ? null : (
+      {nextCursor == null ? null : (
         <Button variant="quiet" onClick={() => onLoadMore?.(nextCursor)}>
           更早
         </Button>

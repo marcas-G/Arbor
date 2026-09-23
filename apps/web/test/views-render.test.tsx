@@ -29,6 +29,7 @@ import {
   transcriptMinimal,
   transcriptTypical,
   transcriptUnknownEnum,
+  treeExplicitNulls,
   treeMinimal,
   treeTypical,
   treeUnknownEnum,

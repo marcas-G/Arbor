@@ -39,3 +39,17 @@
 .arbor-command-static {
   color: var(--arbor-muted);
 }
+
+.arbor-command-receipt {
+  margin: 0;
+  padding: var(--arbor-space-2) var(--arbor-space-3);
+  border-left: 3px solid var(--arbor-leaf);
+  background: var(--arbor-leaf-pale);
+  color: var(--arbor-ink);
+  font-size: var(--arbor-text-small);
+}
+
+.arbor-command-receipt .arbor-mono {
+  color: var(--arbor-ink-soft);
+  margin-left: var(--arbor-space-1);
+}

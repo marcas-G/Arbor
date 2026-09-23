@@ -14,11 +14,14 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, describe, expect, it } from "vitest";
 import { EnvironmentResolverLocalLive } from "../adapters/environment-resolver-local/src/index.js";
 import {
+  AcceptanceRepositoryLive,
   ClockLive,
   CommandStoreLive,
   DomainEventJournalLive,
   ExecutionRepositoryLive,
+  FormationProposalStoreLive,
   IdGeneratorLive,
+  InboxProjectionStoreLive,
   LeaseServiceLive,
   layer,
   P11_MIGRATIONS,
@@ -29,6 +32,7 @@ import {
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
+  VerificationRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
@@ -2023,6 +2027,12 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
+    // P13: the external registry also wires the Human-actionable governance
+    // handlers (RecordDecision/SteerWork/AcceptWorkOutcome/Grant/Revoke).
+    Layer.provide(FormationProposalStoreLive, infra),
+    Layer.provide(InboxProjectionStoreLive, infra),
+    Layer.provide(VerificationRepositoryLive, infra),
+    Layer.provide(AcceptanceRepositoryLive, infra),
   );
   const all = Layer.mergeAll(
     infra,

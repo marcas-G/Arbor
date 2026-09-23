@@ -171,7 +171,7 @@ describe("RecordDecisionForm", () => {
     summary: "拆分为写作与检索两个子工作区",
   };
 
-  it("binds the exact proposal revision and sends the note", async () => {
+  it("binds the exact pending proposal revision with the frozen outcome ADT", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <RecordDecisionForm
@@ -184,10 +184,7 @@ describe("RecordDecisionForm", () => {
     expect(screen.getByText(proposal.proposalId)).toBeTruthy();
     expect(screen.getByText(/revision 3/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("决策"), {
-      target: { value: "Adjust" },
-    });
-    fireEvent.change(screen.getByLabelText(/备注（可选）/), {
-      target: { value: "先补检索依据" },
+      target: { value: "Reject" },
     });
     fireEvent.click(screen.getByRole("button", { name: "提交决策" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
@@ -197,9 +194,8 @@ describe("RecordDecisionForm", () => {
     expect(envelope.projectId).toBe("prj_1");
     expect(payloadOf(envelope)).toEqual({
       proposalId: proposal.proposalId,
-      proposalRevision: 3,
-      decision: "Adjust",
-      note: "先补检索依据",
+      expectedProposalRevision: 3,
+      outcome: { _tag: "Reject" },
     });
   });
 
@@ -218,10 +214,9 @@ describe("RecordDecisionForm", () => {
     const payload = payloadOf(readCall(fetchMock).envelope);
     expect(payload).toEqual({
       proposalId: proposal.proposalId,
-      proposalRevision: 3,
-      decision: "Approve",
+      expectedProposalRevision: 3,
+      outcome: { _tag: "Approve" },
     });
-    expect("note" in payload).toBe(false);
   });
 
   it("TerminalRejected renders CommandInlineError and resubmits under a new commandId", async () => {
@@ -263,7 +258,9 @@ describe("SteerWorkForm", () => {
         actor="human:root"
         projectId="prj_1"
         workId="work_9"
+        workspaceId="ws_9"
         objective="完成第二章"
+        expectedWorkRevision={0}
         onSubmitted={vi.fn()}
       />,
     );
@@ -281,8 +278,10 @@ describe("SteerWorkForm", () => {
     expect(envelope.commandType).toBe("SteerWork");
     expect(payloadOf(envelope)).toEqual({
       workId: "work_9",
-      message: "先完成大纲再动笔",
-      urgency: "Normal",
+      workspaceId: "ws_9",
+      steer: { severity: "Normal", guidance: "先完成大纲再动笔" },
+      expectedWorkRevision: 0,
+      provenance: { source: "HumanInput" },
     });
   });
 
@@ -305,55 +304,36 @@ describe("SteerWorkForm", () => {
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     expect(payloadOf(readCall(fetchMock).envelope)).toEqual({
       workId: "work_9",
-      message: "立即停止扩写，回到主题",
-      urgency: "Critical",
+      workspaceId: "ws_9",
+      steer: { severity: "Critical", guidance: "立即停止扩写，回到主题" },
+      expectedWorkRevision: 0,
+      provenance: { source: "HumanInput" },
     });
   });
 });
 
 describe("AcceptWorkOutcomeForm", () => {
-  it("defaults to Accept and omits an empty note", async () => {
+  it("submits the frozen acceptance payload with a preallocated acp_ id", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <AcceptWorkOutcomeForm
         actor="human:root"
         projectId="prj_1"
         workId="work_5"
+        targetWorkRevision={3}
+        verificationId="ver_5"
         onSubmitted={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "提交验收" }));
+    fireEvent.click(screen.getByRole("button", { name: "记录验收" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("AcceptWorkOutcome");
-    const payload = payloadOf(envelope);
-    expect(payload).toEqual({ workId: "work_5", decision: "Accept" });
-    expect("note" in payload).toBe(false);
-  });
-
-  it("Reject with note carries both into the payload", async () => {
-    const fetchMock = stubFetch(() => Promise.resolve(committed()));
-    render(
-      <AcceptWorkOutcomeForm
-        actor="human:root"
-        projectId="prj_1"
-        workId="work_5"
-        deliverableRef="deliv://abc"
-        onSubmitted={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("deliv://abc")).toBeTruthy();
-    fireEvent.click(screen.getByLabelText("拒绝（Reject）"));
-    fireEvent.change(screen.getByLabelText(/备注/), {
-      target: { value: "缺少实验数据" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "提交验收" }));
-    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
-    expect(payloadOf(readCall(fetchMock).envelope)).toEqual({
-      workId: "work_5",
-      decision: "Reject",
-      note: "缺少实验数据",
-    });
+    const payload = payloadOf(envelope) as Record<string, unknown>;
+    expect(payload.workId).toBe("work_5");
+    expect(payload.targetWorkRevision).toBe(3);
+    expect(payload.verificationId).toBe("ver_5");
+    expect(String(payload.acceptanceId)).toMatch(/^acp_[0-9a-f-]{36}$/);
   });
 });
 
@@ -413,7 +393,7 @@ describe("StopExecutionForm", () => {
 });
 
 describe("GrantPermissionForm", () => {
-  it("grants a catalog commandType with scope project", async () => {
+  it("grants a catalog capability with the frozen scope format and issuer", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <GrantPermissionForm
@@ -422,25 +402,25 @@ describe("GrantPermissionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByLabelText("principal"), {
-      target: { value: "human:reviewer" },
-    });
-    fireEvent.change(screen.getByLabelText("commandType"), {
+    fireEvent.change(screen.getByLabelText("capability"), {
       target: { value: "RecordDecision" },
+    });
+    fireEvent.change(screen.getByLabelText(/target（可选）/), {
+      target: { value: "ws_9" },
     });
     fireEvent.click(screen.getByRole("button", { name: "授予" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("GrantPermission");
     expect(envelope.actor).toBe("human:admin");
-    expect(payloadOf(envelope)).toEqual({
-      principal: "human:reviewer",
-      commandType: "RecordDecision",
-      scope: "project",
-    });
+    const payload = payloadOf(envelope) as Record<string, unknown>;
+    expect(payload.scope).toBe("RecordDecision@ws_9");
+    expect(payload.issuer).toBe("human:admin");
+    expect(payload.lifetime).toBe("PT1H");
+    expect(String(payload.permissionGrantId)).toMatch(/^pgr_[0-9a-f-]{36}$/);
   });
 
-  it("supports free-text commandType beyond the catalog options", async () => {
+  it("supports free-text capability and optional target omission", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <GrantPermissionForm
@@ -449,10 +429,7 @@ describe("GrantPermissionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByLabelText("principal"), {
-      target: { value: "agent:ops" },
-    });
-    fireEvent.change(screen.getByLabelText("commandType"), {
+    fireEvent.change(screen.getByLabelText("capability"), {
       target: { value: "__custom__" },
     });
     fireEvent.change(screen.getByLabelText(/自由输入/), {
@@ -460,11 +437,11 @@ describe("GrantPermissionForm", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "授予" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
-    expect(payloadOf(readCall(fetchMock).envelope)).toEqual({
-      principal: "agent:ops",
-      commandType: "RegisterProjectTool",
-      scope: "project",
-    });
+    const payload = payloadOf(readCall(fetchMock).envelope) as Record<
+      string,
+      unknown
+    >;
+    expect(payload.scope).toBe("RegisterProjectTool");
   });
 });
 
@@ -482,7 +459,7 @@ describe("RevokePermissionForm", () => {
     },
   ];
 
-  it("revokes the selected grant by grantId only", async () => {
+  it("revokes the selected grant by permissionGrantId only", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <RevokePermissionForm
@@ -499,7 +476,7 @@ describe("RevokePermissionForm", () => {
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("RevokePermission");
-    expect(payloadOf(envelope)).toEqual({ grantId: "grant_2" });
+    expect(payloadOf(envelope)).toEqual({ permissionGrantId: "grant_2" });
   });
 
   it("renders an empty state and no submit control without grants", () => {

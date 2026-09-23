@@ -29,6 +29,9 @@ export interface CommandSubmissionState {
   readonly phase: CommandSubmissionPhase;
   readonly problem: Problem | null;
   readonly rejection: string | null;
+  /** The last server receipt (set once Committed) — presented inline so a
+   * successful submit is never silent (`03` §5 receipt presentation). */
+  readonly receipt: CommandReceiptView | null;
 }
 
 export interface UseCommandSubmissionArgs {
@@ -50,6 +53,7 @@ const IDLE: CommandSubmissionState = {
   phase: "idle",
   problem: null,
   rejection: null,
+  receipt: null,
 };
 
 export function useCommandSubmission({
@@ -82,6 +86,7 @@ export function useCommandSubmission({
           phase: "idle",
           problem: forbiddenCommandProblem(commandType),
           rejection: null,
+          receipt: null,
         });
         return;
       }
@@ -92,6 +97,7 @@ export function useCommandSubmission({
         phase: "submitting",
         problem: null,
         rejection: null,
+        receipt: null,
       });
       const response = await submitCommand(
         buildEnvelope({ commandType, commandId, projectId, actor, payload }),
@@ -103,6 +109,7 @@ export function useCommandSubmission({
           phase: "transport-failed",
           problem: response.problem,
           rejection: null,
+          receipt: null,
         });
         return;
       }
@@ -112,6 +119,7 @@ export function useCommandSubmission({
           phase: "committed",
           problem: null,
           rejection: null,
+          receipt: response.body,
         });
         onSubmitted(response.body);
         return;
@@ -120,6 +128,7 @@ export function useCommandSubmission({
         phase: "terminal-rejected",
         problem: null,
         rejection: response.body.rejection ?? "TerminalRejected",
+        receipt: null,
       });
     },
     [actor, token, onSubmitted],

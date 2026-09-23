@@ -13,12 +13,16 @@ const pkg = JSON.parse(readFileSync("package.json", { encoding: "utf8" })) as {
 
 const PINNED_RUNTIME = {
   "@arbor/api-contracts": "workspace:*",
+  "@tanstack/react-query": "5.103.2",
   react: "19.3.0",
   "react-dom": "19.3.0",
+  "react-hook-form": "7.88.0",
+  zod: "4.6.5",
 } as const;
 
 const PINNED_DEV = {
   "@testing-library/react": "16.3.3",
+  "@testing-library/user-event": "14.6.7",
   "@types/react": "19.3.0",
   "@types/react-dom": "19.3.0",
   "@vitejs/plugin-react": "6.1.1",

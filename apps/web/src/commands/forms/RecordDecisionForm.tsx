@@ -1,8 +1,7 @@
 /**
  * P13 `02` §2 RecordDecision — governance decision form. Binds the EXACT
- * pending proposal revision（P6 D1 human gate）; decision ∈ Approve / Reject /
- * Adjust; note only sent when non-empty (`02` §3 rule 4: never embed fields
- * the server did not ask for).
+ * pending proposal revision（P6 D1 human gate）; frozen payload =
+ * {proposalId, expectedProposalRevision, outcome:{_tag}}.
  */
 
 import type { FormEvent } from "react";
@@ -16,7 +15,10 @@ import { useCommandSubmission } from "../useCommandSubmission.js";
 import { FormFeedback } from "./FormFeedback.js";
 import "./forms.css";
 
-const DECISIONS = ["Approve", "Reject", "Adjust"] as const;
+// The frozen outcome ADT is Approve | Reject | Modify(proposal payload).
+// v1 exposes the two pure decisions; Modify requires a full proposal editor
+// (a UI subset of the frozen semantics — not a semantic change).
+const DECISIONS = ["Approve", "Reject"] as const;
 
 export function RecordDecisionForm({
   actor,
@@ -37,7 +39,6 @@ export function RecordDecisionForm({
 }) {
   const [decision, setDecision] =
     useState<(typeof DECISIONS)[number]>("Approve");
-  const [note, setNote] = useState("");
   const { state, submit } = useCommandSubmission({
     actor,
     token,
@@ -47,9 +48,8 @@ export function RecordDecisionForm({
     event?.preventDefault();
     void submit("RecordDecision", projectId, {
       proposalId: proposal.proposalId,
-      proposalRevision: proposal.revision,
-      decision,
-      ...(note.trim() !== "" ? { note: note.trim() } : {}),
+      expectedProposalRevision: proposal.revision,
+      outcome: { _tag: decision },
     });
   };
   return (
@@ -68,13 +68,6 @@ export function RecordDecisionForm({
           value={decision}
           onChange={(next) => setDecision(next as (typeof DECISIONS)[number])}
           options={DECISIONS.map((value) => ({ value, label: value }))}
-        />
-        <Field
-          control="textarea"
-          label="备注（可选）"
-          rows={2}
-          value={note}
-          onChange={setNote}
         />
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <Button

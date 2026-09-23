@@ -182,11 +182,38 @@ describe("P13-007 unauthenticated gate (EC-4)", () => {
 
 describe("P13-007 App integration smoke", () => {
   it("login → tree view renders → command panel wires → disconnect returns to login", async () => {
-    stubFetch(() =>
-      Promise.resolve(
-        jsonResponse(200, { ok: true, status: 200, body: treeTypical }),
-      ),
-    );
+    stubFetch((input) => {
+      const url = String(input);
+      const body =
+        url === "/views/attention"
+          ? { rows: [] }
+          : url === "/views/usage"
+            ? { rows: [] }
+            : url === "/views/workspace-detail"
+              ? {
+                  responsibility: {
+                    purpose: "demo",
+                    ownedResponsibilities: [],
+                    obligations: [],
+                    includes: [],
+                    excludes: [],
+                    interfaces: [],
+                  },
+                  boundary: { basisResponsibilityRevision: 0, addresses: [] },
+                  pendingWorks: [],
+                  dependencies: [],
+                  inboxUnconsumed: [],
+                  auditTimeline: [],
+                }
+              : treeTypical;
+      return Promise.resolve(
+        jsonResponse(200, {
+          ok: true,
+          status: 200,
+          body: { value: body, watermark: 1 },
+        }),
+      );
+    });
     render(<App />);
     expect(screen.getByText("Arbor")).toBeTruthy();
     await login();
@@ -200,7 +227,7 @@ describe("P13-007 App integration smoke", () => {
     expect(screen.getByText("守护进程")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "创建项目" })).toBeNull();
     fireEvent.click(screen.getByText("前端渲染"));
-    await waitFor(() => expect(screen.getByText(/已选工作区/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/工作区 ws_/)).toBeTruthy());
     fireEvent.click(screen.getByRole("button", { name: "记录决策" }));
     await waitFor(() => expect(screen.getByText("记录治理决策")).toBeTruthy());
     expect(screen.getByText("fml_demo")).toBeTruthy();

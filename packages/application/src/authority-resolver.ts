@@ -2,6 +2,7 @@ import type {
   CommandId,
   CommandSubmissionContext,
   ExecutionId,
+  FormationProposalId,
   PermissionGrant,
   PermissionGrantId,
   PluginId,
@@ -10,6 +11,8 @@ import type {
   ProjectId,
   ProjectPolicy,
   SemanticRequestFingerprint,
+  VerificationId,
+  WorkId,
   WorkspaceId,
   WorkspacePolicy,
 } from "@arbor/domain";
@@ -469,6 +472,81 @@ const governanceCommandFact = (
         semanticRequestFingerprint,
         projectId,
         targetWorkspaceId: workspaceId,
+      });
+    }
+    case "RecordDecision": {
+      // P6 D1 human gate: the fact binds the EXACT proposal being decided;
+      // the handler's targetMatches enforces proposalId equality.
+      const proposalId = payloadString(
+        payload,
+        "proposalId",
+      ) as FormationProposalId | null;
+      const error = guarded("RecordDecision", projectId);
+      if (error !== null || proposalId === null) {
+        return Effect.fail(
+          error ?? denyCommand(input, "RecordDecision", "Denied"),
+        );
+      }
+      return Effect.succeed({
+        _tag: "RecordDecisionAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        proposalId,
+      });
+    }
+    case "SteerWork": {
+      // P6 `04`: human steer — the fact binds the exact workspace + work.
+      const steerWorkspaceId = payloadString(
+        payload,
+        "workspaceId",
+      ) as WorkspaceId | null;
+      const steerWorkId = payloadString(payload, "workId") as WorkId | null;
+      const error = guarded("SteerWork", steerWorkspaceId);
+      if (error !== null || steerWorkspaceId === null || steerWorkId === null) {
+        return Effect.fail(error ?? denyCommand(input, "SteerWork", "Denied"));
+      }
+      return Effect.succeed({
+        _tag: "SteerWorkAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        targetWorkspaceId: steerWorkspaceId,
+        workId: steerWorkId,
+      });
+    }
+    case "AcceptWorkOutcome": {
+      // P8 `01` §4: parent acceptance — exact-bound to workId + verificationId.
+      const acceptWorkId = payloadString(payload, "workId") as WorkId | null;
+      const verificationId = payloadString(
+        payload,
+        "verificationId",
+      ) as VerificationId | null;
+      const acceptParent =
+        input.canonicalFacts.workspace?.workspaceId ??
+        (payloadString(payload, "workspaceId") as WorkspaceId | null);
+      const error = guarded("AcceptWorkOutcome", acceptParent);
+      if (
+        error !== null ||
+        acceptWorkId === null ||
+        verificationId === null ||
+        acceptParent === null
+      ) {
+        return Effect.fail(
+          error ?? denyCommand(input, "AcceptWorkOutcome", "Denied"),
+        );
+      }
+      return Effect.succeed({
+        _tag: "AcceptanceAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        targetWorkspaceId: acceptParent,
+        workId: acceptWorkId,
+        verificationId,
       });
     }
     case "RegisterProjectTool": {

@@ -151,3 +151,16 @@
   align-items: center;
   gap: var(--arbor-space-2);
 }
+
+.arbor-workspace-tabs {
+  display: flex;
+  gap: var(--arbor-space-1);
+  flex-wrap: wrap;
+  margin-bottom: var(--arbor-space-2);
+}
+
+.arbor-error-boundary {
+  padding: var(--arbor-space-4);
+  display: flex;
+  justify-content: center;
+}

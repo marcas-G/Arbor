@@ -53,12 +53,12 @@ export function ResponsibilityTreeView({
             <span className="arbor-tree-id">
               <Mono>{node.workspaceId}</Mono>
             </span>
-            {node.currentWork === undefined ? null : (
+            {node.currentWork == null ? null : (
               <span className="arbor-tree-objective">
                 {node.currentWork.objective}
               </span>
             )}
-            {node.usageSummary === undefined ? null : (
+            {node.usageSummary == null ? null : (
               <span className="arbor-tree-usage">
                 <Mono>{`tokens ${String(node.usageSummary.tokens)} · cost ${formatCost(node.usageSummary.cost)} · turns ${String(node.usageSummary.turns)}`}</Mono>
               </span>

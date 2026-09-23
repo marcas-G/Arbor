@@ -92,17 +92,17 @@ export function WorkspaceDetailView({
           )}
         </div>
       </Card>
-      {res.currentWork === undefined ? null : (
+      {res.currentWork == null ? null : (
         <Card title="当前工作">
           <div className="arbor-view-stack">
             <span>{res.currentWork.objective}</span>
             <div className="arbor-badge-row">
               <EnumBadge label={res.currentWork.status} />
-              {res.currentWork.workId === undefined ? null : (
+              {res.currentWork.workId == null ? null : (
                 <Mono>{res.currentWork.workId}</Mono>
               )}
             </div>
-            {res.currentWork.activeExecution === undefined ? null : (
+            {res.currentWork.activeExecution == null ? null : (
               <div className="arbor-kv">
                 <span className="arbor-kv-label">activeExecution</span>
                 <span>
@@ -114,7 +114,7 @@ export function WorkspaceDetailView({
           </div>
         </Card>
       )}
-      {res.executionSummary === undefined ? null : (
+      {res.executionSummary == null ? null : (
         <Card title="执行摘要">
           <span>
             <Mono>{res.executionSummary.executionId}</Mono>{" "}
@@ -150,7 +150,7 @@ export function WorkspaceDetailView({
           <InboxRows rows={res.inboxUnconsumed} />
         )}
       </Card>
-      {res.verification === undefined ? null : (
+      {res.verification == null ? null : (
         <Card title="Verification">
           <VerificationView view={res.verification} />
         </Card>

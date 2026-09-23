@@ -79,6 +79,23 @@ export const treeMinimal: TreeViewRes = {
   ],
 };
 
+/** The real wire carries EXPLICIT nulls (not missing keys) for absent
+ * optionals — the regression shape that once blank-screened the tree. The
+ * frozen TS type models absence as `undefined`; JSON serialization emits
+ * `null`. `03` §1.3 rules both are "empty slot" — hence the explicit cast. */
+export const treeExplicitNulls = {
+  nodes: [
+    {
+      workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000006"),
+      name: "显式空值节点",
+      status: "idle",
+      currentWork: null,
+      subtreeAttention: { attention: 0, actionRequired: 0 },
+      usageSummary: null,
+    },
+  ],
+} as unknown as TreeViewRes;
+
 export const treeUnknownEnum: TreeViewRes = {
   nodes: [
     {

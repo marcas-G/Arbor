@@ -41,7 +41,7 @@ export function RevokePermissionForm({
   });
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
-    void submit("RevokePermission", projectId, { grantId });
+    void submit("RevokePermission", projectId, { permissionGrantId: grantId });
   };
   return (
     <Card title="撤销权限（RevokePermission）">
