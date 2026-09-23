@@ -64,6 +64,7 @@ export interface CanonicalWorkSnapshot {
 
 export interface CanonicalAuthorityFacts {
   readonly projectId: ProjectId;
+  readonly project?: { readonly rootWorkspaceId: WorkspaceId };
   readonly workspace?: CanonicalWorkspaceSnapshot;
   readonly execution?: CanonicalExecutionSnapshot;
   readonly work?: CanonicalWorkSnapshot;
@@ -456,6 +457,45 @@ const governanceCommandFact = (
         semanticRequestFingerprint,
         projectId,
         targetWorkspaceId: workspaceId,
+      });
+    }
+    case "SubmitHumanMessage": {
+      // P14 `01` §1: root-only exact binding at the authority layer. The
+      // human principal comes from the authenticated External context
+      // (already authenticated by the caller of resolve); the payload never
+      // declares a sender.
+      const targetWorkspaceId = payloadString(
+        payload,
+        "targetWorkspaceId",
+      ) as WorkspaceId | null;
+      const messageId = payloadString(payload, "messageId");
+      const rootWorkspaceId =
+        input.canonicalFacts.project?.rootWorkspaceId ?? null;
+      const error = guarded("SubmitHumanMessage", targetWorkspaceId);
+      if (error !== null) {
+        return Effect.fail(error);
+      }
+      if (targetWorkspaceId === null || messageId === null) {
+        return Effect.fail(denyCommand(input, "SubmitHumanMessage", "Denied"));
+      }
+      // P14 `01` §2: root-only exact binding — a non-root target means the
+      // human governance override does not apply to that target (the
+      // external plane maps every resolver denial to 403 authority/denied).
+      if (rootWorkspaceId === null || targetWorkspaceId !== rootWorkspaceId) {
+        return Effect.fail({
+          _tag: "GovernanceOverrideDenied",
+          principal: input.principal,
+          targetWorkspaceId,
+        });
+      }
+      return Effect.succeed({
+        _tag: "SubmitHumanMessageAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        targetWorkspaceId,
+        messageId,
       });
     }
     case "SelectCurrentWork": {

@@ -148,6 +148,9 @@ export const makeRepositoryInputsLoader = (
 
         const canonicalFacts: CanonicalAuthorityFacts = {
           projectId,
+          ...(Option.isSome(project)
+            ? { project: { rootWorkspaceId: project.value.rootWorkspaceId } }
+            : {}),
           ...(Option.isSome(workspace)
             ? {
                 workspace: {

@@ -36,7 +36,12 @@ export const outboundMessage = (message: OutboundMessage): OutboundMessage =>
 export interface InboxEntry {
   readonly recipientWorkspaceId: WorkspaceId;
   readonly entryKey: string;
-  readonly kind: "Message" | "SpecialistSettled" | "HumanInput" | "Governance";
+  readonly kind:
+    | "Message"
+    | "SpecialistSettled"
+    | "HumanInput"
+    | "Governance"
+    | "HumanConversation";
   readonly summary: string;
   readonly correlationId?: string | undefined;
   readonly admittedAt: string;
@@ -54,7 +59,11 @@ export interface PromotionEffect {
 
 export interface InboxArrival {
   readonly recipientWorkspaceId: WorkspaceId;
-  readonly kind: MessageKind | "HumanInput" | "SpecialistSettled";
+  readonly kind:
+    | MessageKind
+    | "HumanInput"
+    | "SpecialistSettled"
+    | "HumanConversation";
   readonly correlationId?: string | undefined;
 }
 
@@ -73,6 +82,7 @@ export const promoteInboxArrival = (arrival: InboxArrival): PromotionEffect => {
     case "Report":
     case "HumanInput":
     case "SpecialistSettled":
+    case "HumanConversation": // P14 `01` §5: chat turn promotion is empty — the conversation trigger is the P14 consumer, not inbox promotion
     case "Deliver": // P7 `02` §5: Deliver's promotion is empty — delivery is not satisfaction
       return { closesCorrelation: null, triggersReevaluation: false };
   }
