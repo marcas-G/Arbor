@@ -144,15 +144,19 @@ describe("W-06 Work Detail 页", () => {
     expect(screen.getByText("evd_2")).toBeTruthy();
   });
 
-  it("治理动作占位：验收/纠偏均 disabled + W-08 标注；无 /commands fetch", async () => {
+  it("治理动作：验收/纠偏真实接线（verification 存在时验收可用）；未点击无 /commands fetch", async () => {
     const urls = installViews();
     renderWork(WORK_CURRENT);
     await waitFor(() => expect(screen.getByText("当前工作目标")).toBeTruthy());
-    const accept = screen.getByRole("button", { name: "验收工作成果" });
-    const steer = screen.getByRole("button", { name: "纠偏" });
-    expect((accept as HTMLButtonElement).disabled).toBe(true);
-    expect((steer as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/W-08/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("治理动作")).toBeTruthy());
+    const accept = screen.getByRole("button", {
+      name: "验收工作成果",
+    }) as HTMLButtonElement;
+    const steer = screen.getByRole("button", {
+      name: "纠偏",
+    }) as HTMLButtonElement;
+    expect(accept.disabled).toBe(false);
+    expect(steer.disabled).toBe(false);
     expect(urls.every((url) => url.startsWith("/views/"))).toBe(true);
   });
 

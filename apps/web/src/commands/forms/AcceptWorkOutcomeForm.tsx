@@ -1,19 +1,27 @@
 /**
- * P13 `02` §2 AcceptWorkOutcome — record the parent acceptance of a work
- * outcome. Frozen payload = {acceptanceId, workId, targetWorkRevision,
- * verificationId}; `acceptanceId` is caller-preallocated (`acp_<uuid-v7>`)
- * and held across transport retries like the commandId.
+ * W-08 — AcceptWorkOutcome form (RHF + Zod). Frozen payload
+ * {acceptanceId, workId, targetWorkRevision, verificationId};
+ * `acceptanceId` caller-preallocated (`acp_<uuid-v7>`) and held across
+ * transport retries like the commandId.
  */
 import type { FormEvent } from "react";
-import { useRef, useState } from "react";
+import { useRef } from "react";
+import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Mono } from "../../views/shared.js";
+import { acceptWorkOutcomeSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { uuidv7 } from "../uuid7.js";
 import { FormFeedback } from "./FormFeedback.js";
 import "./forms.css";
+
+type AcceptValues = {
+  workId: string;
+  targetWorkRevision: number;
+  verificationId: string;
+};
 
 export function AcceptWorkOutcomeForm({
   actor,
@@ -42,16 +50,22 @@ export function AcceptWorkOutcomeForm({
     token,
     onSubmitted: handleSubmitted,
   });
+  const { handleSubmit } = useForm<AcceptValues>({
+    resolver: zodResolver(acceptWorkOutcomeSchema) as Resolver<AcceptValues>,
+    defaultValues: { workId, targetWorkRevision, verificationId },
+  });
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
-    const acceptanceId = acceptanceIdRef.current ?? `acp_${uuidv7()}`;
-    acceptanceIdRef.current = acceptanceId;
-    void submit("AcceptWorkOutcome", projectId, {
-      acceptanceId,
-      workId,
-      targetWorkRevision,
-      verificationId,
-    });
+    void handleSubmit(() => {
+      const acceptanceId = acceptanceIdRef.current ?? `acp_${uuidv7()}`;
+      acceptanceIdRef.current = acceptanceId;
+      void submit("AcceptWorkOutcome", projectId, {
+        acceptanceId,
+        workId,
+        targetWorkRevision,
+        verificationId,
+      });
+    })();
   };
   return (
     <Card title="验收工作成果">

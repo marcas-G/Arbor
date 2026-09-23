@@ -1,21 +1,23 @@
 /**
- * P13 `02` §2 CreateProject — bootstrap form（项目名 / 根责任定义）。
- * Caller-preallocated ID 约定：CreateProject 是 single-transaction bootstrap
- * （DID §4.1），payload 必须携带 client 预分配的 projectId
- * （`prj_<uuid-v7>`，server 是其接受与否的权威）。预分配 id 与 commandId
- * 一样被表单持有：transport 失败重试复用同一 id；收到 Committed 后释放。
+ * W-08 — CreateProject form (RHF + Zod over the two user inputs). The full
+ * frozen payload is assembled with caller-preallocated prj_/ws_/ses_
+ * uuid-v7 ids (DID §4.1 single-transaction bootstrap; ids held across
+ * retries like the commandId).
  */
-
 import type { FormEvent } from "react";
-import { useRef, useState } from "react";
+import { useRef } from "react";
+import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
+import { createProjectSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { uuidv7 } from "../uuid7.js";
 import { FormFeedback } from "./FormFeedback.js";
 import "./forms.css";
+
+type CreateValues = { name: string; objective: string };
 
 export function CreateProjectForm({
   actor,
@@ -26,8 +28,6 @@ export function CreateProjectForm({
   readonly token?: string | undefined;
   readonly onSubmitted: (receipt: CommandReceiptView) => void;
 }) {
-  const [name, setName] = useState("");
-  const [objective, setObjective] = useState("");
   const idsRef = useRef<{
     readonly projectId: string;
     readonly rootWorkspaceId: string;
@@ -35,8 +35,6 @@ export function CreateProjectForm({
   } | null>(null);
   const handleSubmitted = (receipt: CommandReceiptView): void => {
     idsRef.current = null;
-    setName("");
-    setObjective("");
     onSubmitted(receipt);
   };
   const { state, submit } = useCommandSubmission({
@@ -44,53 +42,60 @@ export function CreateProjectForm({
     token,
     onSubmitted: handleSubmitted,
   });
+  const { handleSubmit, setValue, watch, formState } = useForm<CreateValues>({
+    resolver: zodResolver(createProjectSchema) as Resolver<CreateValues>,
+    defaultValues: { name: "", objective: "" },
+  });
+  const name = watch("name");
+  const objective = watch("objective");
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
-    const ids = idsRef.current ?? {
-      projectId: `prj_${uuidv7()}`,
-      rootWorkspaceId: `ws_${uuidv7()}`,
-      sessionId: `ses_${uuidv7()}`,
-    };
-    idsRef.current = ids;
-    const payload = {
-      projectId: ids.projectId,
-      name,
-      revision: 0,
-      projectPolicy: {},
-      projectPolicyRevision: 0,
-      defaultConfiguration: {},
-      environmentRef: "local",
-      rootWorkspaceId: ids.rootWorkspaceId,
-      primarySession: {
-        sessionId: ids.sessionId,
-        contextEpoch: 0,
-      },
-      rootWorkspace: {
-        name,
-        responsibilityDefinition: {
-          purpose: objective,
-          ownedResponsibilities: [],
-          obligations: [],
-          includes: [],
-          excludes: [],
-          interfaces: [],
-        },
-        responsibilityRevision: 0,
-        resourceBoundary: {
-          basisResponsibilityRevision: 0,
-          addresses: [],
-        },
-        resourceBoundaryRevision: 0,
-        agentBinding: {
-          _tag: "ResponsibilityBoundAgentBinding",
-          workspaceId: ids.rootWorkspaceId,
-        },
-        workspacePolicy: {},
-        workspacePolicyRevision: 0,
+    void handleSubmit((values) => {
+      const ids = idsRef.current ?? {
+        projectId: `prj_${uuidv7()}`,
+        rootWorkspaceId: `ws_${uuidv7()}`,
+        sessionId: `ses_${uuidv7()}`,
+      };
+      idsRef.current = ids;
+      void submit("CreateProject", ids.projectId, {
+        projectId: ids.projectId,
+        name: values.name,
         revision: 0,
-      },
-    };
-    void submit("CreateProject", ids.projectId, payload);
+        projectPolicy: {},
+        projectPolicyRevision: 0,
+        defaultConfiguration: {},
+        environmentRef: "local",
+        rootWorkspaceId: ids.rootWorkspaceId,
+        primarySession: {
+          sessionId: ids.sessionId,
+          contextEpoch: 0,
+        },
+        rootWorkspace: {
+          name: values.name,
+          responsibilityDefinition: {
+            purpose: values.objective,
+            ownedResponsibilities: [],
+            obligations: [],
+            includes: [],
+            excludes: [],
+            interfaces: [],
+          },
+          responsibilityRevision: 0,
+          resourceBoundary: {
+            basisResponsibilityRevision: 0,
+            addresses: [],
+          },
+          resourceBoundaryRevision: 0,
+          agentBinding: {
+            _tag: "ResponsibilityBoundAgentBinding",
+            workspaceId: ids.rootWorkspaceId,
+          },
+          workspacePolicy: {},
+          workspacePolicyRevision: 0,
+          revision: 0,
+        },
+      });
+    })();
   };
   return (
     <Card title="创建项目">
@@ -100,16 +105,28 @@ export function CreateProjectForm({
           label="项目名称"
           placeholder="例如：论文写作平台"
           value={name}
-          onChange={setName}
+          onChange={(next) => {
+            setValue("name", next);
+          }}
         />
+        {formState.errors.name ? (
+          <p className="arbor-command-error">{formState.errors.name.message}</p>
+        ) : null}
         <Field
           control="textarea"
-          label="根责任目标（rootObjective）"
+          label="根责任目标"
           placeholder="根工作区的责任定义"
           rows={3}
           value={objective}
-          onChange={setObjective}
+          onChange={(next) => {
+            setValue("objective", next);
+          }}
         />
+        {formState.errors.objective ? (
+          <p className="arbor-command-error">
+            {formState.errors.objective.message}
+          </p>
+        ) : null}
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <Button
           variant="primary"

@@ -12,7 +12,7 @@ import type { Route } from "../../api/router.js";
 import { CreateProjectForm } from "../../commands/forms/CreateProjectForm.js";
 import { GrantPermissionForm } from "../../commands/forms/GrantPermissionForm.js";
 import {
-  type PermissionGrantOption,
+  type GrantListItem,
   RevokePermissionForm,
 } from "../../commands/forms/RevokePermissionForm.js";
 import { Button } from "../../components/Button.js";
@@ -24,7 +24,7 @@ import { MonoText } from "../../components/MonoText.js";
 import { useSession } from "../../session/SessionContext.js";
 import styles from "./settings.module.css";
 
-const NO_GRANTS: ReadonlyArray<PermissionGrantOption> = [];
+const NO_GRANTS: ReadonlyArray<GrantListItem> = [];
 
 function PermissionsSection({
   actor,

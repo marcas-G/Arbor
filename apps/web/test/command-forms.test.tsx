@@ -99,7 +99,7 @@ describe("CreateProjectForm", () => {
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "论文写作平台" },
     });
-    fireEvent.change(screen.getByLabelText(/rootObjective/), {
+    fireEvent.change(screen.getByLabelText("根责任目标"), {
       target: { value: "完成论文初稿" },
     });
     fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
@@ -145,7 +145,7 @@ describe("CreateProjectForm", () => {
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "p1" },
     });
-    fireEvent.change(screen.getByLabelText(/rootObjective/), {
+    fireEvent.change(screen.getByLabelText("根责任目标"), {
       target: { value: "o1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
@@ -166,7 +166,7 @@ describe("CreateProjectForm", () => {
 
 describe("RecordDecisionForm", () => {
   const proposal = {
-    proposalId: "prp_formation_9",
+    proposalId: "fpr_formation_9",
     revision: 3,
     summary: "拆分为写作与检索两个子工作区",
   };
@@ -177,7 +177,11 @@ describe("RecordDecisionForm", () => {
       <RecordDecisionForm
         actor="human:root"
         projectId="prj_1"
-        proposal={proposal}
+        target={{
+          proposalId: proposal.proposalId,
+          proposalRevision: proposal.revision,
+          summary: proposal.summary,
+        }}
         onSubmitted={vi.fn()}
       />,
     );
@@ -205,7 +209,11 @@ describe("RecordDecisionForm", () => {
       <RecordDecisionForm
         actor="human:root"
         projectId="prj_1"
-        proposal={proposal}
+        target={{
+          proposalId: proposal.proposalId,
+          proposalRevision: proposal.revision,
+          summary: proposal.summary,
+        }}
         onSubmitted={vi.fn()}
       />,
     );
@@ -230,7 +238,11 @@ describe("RecordDecisionForm", () => {
       <RecordDecisionForm
         actor="human:root"
         projectId="prj_1"
-        proposal={proposal}
+        target={{
+          proposalId: proposal.proposalId,
+          proposalRevision: proposal.revision,
+          summary: proposal.summary,
+        }}
         onSubmitted={vi.fn()}
       />,
     );
@@ -257,7 +269,7 @@ describe("SteerWorkForm", () => {
       <SteerWorkForm
         actor="human:root"
         projectId="prj_1"
-        workId="work_9"
+        workId="wrk_9"
         workspaceId="ws_9"
         objective="完成第二章"
         expectedWorkRevision={0}
@@ -277,7 +289,7 @@ describe("SteerWorkForm", () => {
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("SteerWork");
     expect(payloadOf(envelope)).toEqual({
-      workId: "work_9",
+      workId: "wrk_9",
       workspaceId: "ws_9",
       steer: { severity: "Normal", guidance: "先完成大纲再动笔" },
       expectedWorkRevision: 0,
@@ -290,7 +302,9 @@ describe("SteerWorkForm", () => {
     fireEvent.change(screen.getByLabelText("纠偏消息"), {
       target: { value: "立即停止扩写，回到主题" },
     });
-    fireEvent.click(screen.getByLabelText(/Critical/));
+    fireEvent.change(screen.getByLabelText("severity"), {
+      target: { value: "Critical" },
+    });
     const submit = screen.getByRole("button", {
       name: "发送纠偏",
     }) as HTMLButtonElement;
@@ -303,7 +317,7 @@ describe("SteerWorkForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送纠偏" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     expect(payloadOf(readCall(fetchMock).envelope)).toEqual({
-      workId: "work_9",
+      workId: "wrk_9",
       workspaceId: "ws_9",
       steer: { severity: "Critical", guidance: "立即停止扩写，回到主题" },
       expectedWorkRevision: 0,
@@ -319,7 +333,7 @@ describe("AcceptWorkOutcomeForm", () => {
       <AcceptWorkOutcomeForm
         actor="human:root"
         projectId="prj_1"
-        workId="work_5"
+        workId="wrk_5"
         targetWorkRevision={3}
         verificationId="ver_5"
         onSubmitted={vi.fn()}
@@ -330,7 +344,7 @@ describe("AcceptWorkOutcomeForm", () => {
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("AcceptWorkOutcome");
     const payload = payloadOf(envelope) as Record<string, unknown>;
-    expect(payload.workId).toBe("work_5");
+    expect(payload.workId).toBe("wrk_5");
     expect(payload.targetWorkRevision).toBe(3);
     expect(payload.verificationId).toBe("ver_5");
     expect(String(payload.acceptanceId)).toMatch(/^acp_[0-9a-f-]{36}$/);
@@ -344,24 +358,29 @@ describe("StopExecutionForm", () => {
       <StopExecutionForm
         actor="human:root"
         projectId="prj_1"
-        executionId="exec_42"
+        executionId="exe_42"
         workspaceName="检索工作区"
         onSubmitted={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "紧急停止执行" }));
     expect(fetchMock.mock.calls.length).toBe(0);
-    expect(screen.getByText(/确认停止执行/).textContent).toContain("exec_42");
-    expect(screen.getByText("检索工作区")).toBeTruthy();
+    expect(screen.getByText(/确认停止执行/).textContent).toContain("exe_42");
+    expect(screen.getByText(/检索工作区/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(fetchMock.mock.calls.length).toBe(0);
     fireEvent.click(screen.getByRole("button", { name: "紧急停止执行" }));
+    const confirmStop = screen.getByRole("button", {
+      name: "确认停止",
+    }) as HTMLButtonElement;
+    expect(confirmStop.disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("我确认要立即停止该执行"));
     fireEvent.click(screen.getByRole("button", { name: "确认停止" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("StopExecution");
     expect(payloadOf(envelope)).toEqual({
-      executionId: "exec_42",
+      executionId: "exe_42",
       reason: "human-emergency-stop",
     });
   });
@@ -375,11 +394,12 @@ describe("StopExecutionForm", () => {
       <StopExecutionForm
         actor="human:root"
         projectId="prj_1"
-        executionId="exec_42"
+        executionId="exe_42"
         onSubmitted={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "紧急停止执行" }));
+    fireEvent.click(screen.getByLabelText("我确认要立即停止该执行"));
     fireEvent.click(screen.getByRole("button", { name: "确认停止" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     await waitFor(() => expect(screen.getByText("服务不可用")).toBeTruthy());
@@ -388,7 +408,7 @@ describe("StopExecutionForm", () => {
     const first = readCall(fetchMock, 0).envelope;
     const second = readCall(fetchMock, 1).envelope;
     expect(second.commandId).toBe(first.commandId);
-    expect(payloadOf(second).executionId).toBe("exec_42");
+    expect(payloadOf(second).executionId).toBe("exe_42");
   });
 });
 
@@ -448,12 +468,12 @@ describe("GrantPermissionForm", () => {
 describe("RevokePermissionForm", () => {
   const grants = [
     {
-      grantId: "grant_1",
+      grantId: "pgr_1",
       principal: "human:reviewer",
       commandType: "RecordDecision",
     },
     {
-      grantId: "grant_2",
+      grantId: "pgr_2",
       principal: "agent:ops",
       commandType: "RegisterProjectTool",
     },
@@ -470,13 +490,13 @@ describe("RevokePermissionForm", () => {
       />,
     );
     fireEvent.change(screen.getByLabelText("选择 grant"), {
-      target: { value: "grant_2" },
+      target: { value: "pgr_2" },
     });
     fireEvent.click(screen.getByRole("button", { name: "撤销" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("RevokePermission");
-    expect(payloadOf(envelope)).toEqual({ permissionGrantId: "grant_2" });
+    expect(payloadOf(envelope)).toEqual({ permissionGrantId: "pgr_2" });
   });
 
   it("renders an empty state and no submit control without grants", () => {
