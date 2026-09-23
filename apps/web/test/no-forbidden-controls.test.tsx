@@ -62,9 +62,7 @@ const FORBIDDEN_TRANSCRIPT_MUTATIONS: ReadonlyArray<{
 const FORBIDDEN_SERVER_STATE_CACHE_WRITES: ReadonlyArray<{
   readonly label: string;
   readonly pattern: RegExp;
-}> = [
-  { label: "Query cache write", pattern: /\bsetQuer(?:y|ies)Data\s*\(/ },
-];
+}> = [{ label: "Query cache write", pattern: /\bsetQuer(?:y|ies)Data\s*\(/ }];
 
 const INDEXED_ROOT_SELECTION = /\.nodes(?:\s*\[\s*0\s*\]|\s*\.at\(\s*0\s*\))/;
 

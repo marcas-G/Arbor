@@ -20,7 +20,7 @@ function extractRootBlock(css: string): string {
 function extractArborDeclarations(block: string): Record<string, string> {
   const declared: Record<string, string> = {};
   for (const match of block.matchAll(/(--arbor-[a-z0-9-]+)\s*:\s*([^;]+);/g)) {
-    declared[match[1] ?? ""] = (match[2] ?? "").trim();
+    declared[match[1] ?? ""] = (match[2] ?? "").trim().replace(/\s+/g, " ");
   }
   return declared;
 }

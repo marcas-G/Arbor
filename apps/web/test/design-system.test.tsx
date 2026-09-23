@@ -200,11 +200,7 @@ describe("W-01 design system", () => {
           <button type="button" onClick={() => setOpen(true)}>
             打开确认
           </button>
-          <Dialog
-            open={open}
-            title="确认操作"
-            onClose={() => setOpen(false)}
-          >
+          <Dialog open={open} title="确认操作" onClose={() => setOpen(false)}>
             正文
           </Dialog>
         </>
