@@ -7,9 +7,9 @@
  */
 import type { ReactNode } from "react";
 import { navigate } from "../../api/router.js";
-import { Card } from "../../components/Card.js";
 import { CreateProjectForm } from "../../commands/forms/CreateProjectForm.js";
 import type { CommandReceiptView } from "../../commands/submitCommand.js";
+import { Card } from "../../components/Card.js";
 import { useSession } from "../../session/SessionContext.js";
 
 interface CreateProjectResultView {
