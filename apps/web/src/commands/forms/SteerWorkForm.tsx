@@ -18,14 +18,18 @@ export function SteerWorkForm({
   actor,
   projectId,
   workId,
+  workspaceId,
   objective,
+  expectedWorkRevision,
   token,
   onSubmitted,
 }: {
   readonly actor: string;
   readonly projectId: string;
   readonly workId: string;
+  readonly workspaceId: string;
   readonly objective: string;
+  readonly expectedWorkRevision: number;
   readonly token?: string | undefined;
   readonly onSubmitted: (receipt: CommandReceiptView) => void;
 }) {
@@ -41,8 +45,13 @@ export function SteerWorkForm({
     event?.preventDefault();
     void submit("SteerWork", projectId, {
       workId,
-      message,
-      urgency: critical ? "Critical" : "Normal",
+      workspaceId,
+      steer: {
+        severity: critical ? "Critical" : "Normal",
+        guidance: message,
+      },
+      expectedWorkRevision,
+      provenance: { source: "HumanInput" },
     });
   };
   const submitBlocked =

@@ -27,7 +27,7 @@ export interface SessionContextValue {
   readonly reportUnauthenticated: (problem: Problem) => void;
 }
 
-const SessionContext = createContext<SessionContextValue | null>(null);
+export const SessionContext = createContext<SessionContextValue | null>(null);
 
 export function SessionProvider({
   children,

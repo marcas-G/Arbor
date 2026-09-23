@@ -52,9 +52,7 @@ export function DependencyTable({
               <EnumBadge label={row.state} />
             </td>
             <td>
-              {row.satisfiedBy === undefined ? null : (
-                <Mono>{row.satisfiedBy}</Mono>
-              )}
+              {row.satisfiedBy == null ? null : <Mono>{row.satisfiedBy}</Mono>}
             </td>
           </tr>
         ))}

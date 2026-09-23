@@ -11,10 +11,10 @@ export function VerificationView({ view }: { readonly view: VerificationRes }) {
   return (
     <div className="arbor-view-stack">
       <div className="arbor-badge-row">
-        {view.verificationId === undefined ? null : (
+        {view.verificationId == null ? null : (
           <Mono>{view.verificationId}</Mono>
         )}
-        {view.verdict === undefined ? null : <EnumBadge label={view.verdict} />}
+        {view.verdict == null ? null : <EnumBadge label={view.verdict} />}
       </div>
       {view.criteriaResults.length === 0 ? (
         <Empty>无判定结果</Empty>
@@ -62,7 +62,7 @@ export function VerificationView({ view }: { readonly view: VerificationRes }) {
           </ul>
         )}
       </div>
-      {view.acceptance === undefined ? null : (
+      {view.acceptance == null ? null : (
         <div className="arbor-kv">
           <span className="arbor-kv-label">acceptance</span>
           <span>

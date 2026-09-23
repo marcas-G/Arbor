@@ -17,9 +17,9 @@ export function CurrentWorkView({ work }: { readonly work: CurrentWorkRes }) {
         <span>{work.objective}</span>
         <div className="arbor-badge-row">
           <EnumBadge label={work.status} />
-          {work.workId === undefined ? null : <Mono>{work.workId}</Mono>}
+          {work.workId == null ? null : <Mono>{work.workId}</Mono>}
         </div>
-        {work.activeExecution === undefined ? null : (
+        {work.activeExecution == null ? null : (
           <div className="arbor-kv">
             <span className="arbor-kv-label">activeExecution</span>
             <span>

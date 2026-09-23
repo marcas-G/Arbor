@@ -11,20 +11,51 @@ import {
 } from "./composition.js";
 import { evaluateAndSelect } from "./loop.js";
 import { ProductionDaemonService, TransportBoundary } from "./production.js";
+import { makeStaticAuthenticator } from "./transport/auth.js";
 import { startWebTransport } from "./transport/server.js";
 
 /** The production composition entry: build the single-workspace slice layer
  * with every frozen production capability assembled (B-7). */
 export const main = (
   overrides: Partial<SliceConfig> = {},
-): ReturnType<typeof buildSliceLayer> =>
-  buildSliceLayer({
+): ReturnType<typeof buildSliceLayer> => {
+  const authenticator = authenticatorFromEnv();
+  return buildSliceLayer({
     databaseFile: process.env.ARBOR_DB ?? "./arbor-slice.db",
     ...(process.env.ARBOR_PROJECT_ID !== undefined
       ? { projectId: process.env.ARBOR_PROJECT_ID as never }
       : {}),
+    ...(authenticator !== undefined ? { authenticator } : {}),
     ...overrides,
   });
+};
+
+/** P13 local-smoke/ops wiring: `ARBOR_AUTH_TOKENS="token1=user:alice,token2=user:bob"`
+ * populates the static transport authenticator (P12 `10` §3 — the static map
+ * is the boundary proof mechanism; production replaces it with an IdP
+ * adapter without changing the boundary contract). No governance facts are
+ * granted here; the Authority Resolver remains the sole enforcement. */
+const authenticatorFromEnv = () => {
+  const raw = process.env.ARBOR_AUTH_TOKENS;
+  if (raw === undefined || raw.length === 0) {
+    return undefined;
+  }
+  const map: Record<string, Principal> = {};
+  for (const pair of raw.split(",")) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) {
+      continue;
+    }
+    const token = pair.slice(0, eq).trim();
+    const principal = pair.slice(eq + 1).trim();
+    if (token.length > 0 && principal.length > 0) {
+      map[token] = parse(Principal)(principal);
+    }
+  }
+  return Object.keys(map).length === 0
+    ? undefined
+    : makeStaticAuthenticator(map);
+};
 
 export interface ProductionDaemonRunConfig extends Partial<SliceConfig> {
   /** The workspace whose scheduler/loop is evaluated each tick. Absent means

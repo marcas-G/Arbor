@@ -39,8 +39,8 @@ const EC_EVIDENCE: ReadonlyArray<{
   },
   {
     ec: "EC-5",
-    file: "apps/web/test/invalidation-client.test.tsx",
-    marker: "refetch",
+    file: "apps/web/test/ws-invalidation-query.test.tsx",
+    marker: "the second response",
   },
   {
     ec: "EC-6",
@@ -168,13 +168,18 @@ describe("p13-closure", () => {
   });
 
   it("role freeze: the client renders views and initiates commands only (no second state)", () => {
-    const store = sourceOf("apps/web/src/data/viewStore.ts");
-    expect(store.includes("invalidate")).toBe(true);
-    expect(store).not.toMatch(/replay|applyEvent/);
-    const client = sourceOf("apps/web/src/data/client.ts");
+    // Web v1 (W-00) consolidated the fetch layers into api/transport and the
+    // cache into TanStack Query (api/useViewQuery + data/invalidation); the
+    // no-replay/no-second-state evidence lives with the Query integration.
+    const channel = sourceOf("apps/web/src/data/invalidation.ts");
+    expect(channel.includes("invalidate")).toBe(true);
+    expect(channel).not.toMatch(/applyEvent|eventReplay/);
+    const client = sourceOf("apps/web/src/api/transport.ts");
     expect(client.includes("/views/")).toBe(true);
     const submit = sourceOf("apps/web/src/commands/submitCommand.ts");
     expect(submit.includes("/commands")).toBe(true);
+    const query = sourceOf("apps/web/test/ws-invalidation-query.test.tsx");
+    expect(query).toMatch(/second (server )?response/);
   });
 
   it("no-open-gap: the P13 contract set is frozen and the phase result record exists", () => {
