@@ -52,13 +52,13 @@ export function AppShell({
       <SideRail route={route} />
       <div className={styles.main}>
         <Topbar route={route} />
-        <div className={styles.content}>
+        <main className={styles.content}>
           {!connected ? null : route === null ? (
             <RouteNotFound path={path} connected={connected} />
           ) : session.unauthenticatedProblem !== null ? null : (
             pageFor(route)
           )}
-        </div>
+        </main>
       </div>
       <MobileTabbar route={route} />
     </div>
