@@ -1,73 +1,91 @@
 /**
- * P13 `02` §2 RecordDecision — governance decision form. Binds the EXACT
- * pending proposal revision（P6 D1 human gate）; frozen payload =
- * {proposalId, expectedProposalRevision, outcome:{_tag}}.
+ * W-08 — RecordDecision form (RHF + Zod). Frozen payload:
+ * {proposalId, expectedProposalRevision, outcome:{_tag}}; targets come from
+ * structured contexts only (W-00 proof: gov: entryKey binding) — no manual
+ * proposalId entry path in the product surface.
  */
-
 import type { FormEvent } from "react";
-import { useState } from "react";
+import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
 import { Mono } from "../../views/shared.js";
+import { recordDecisionSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { FormFeedback } from "./FormFeedback.js";
 import "./forms.css";
 
-// The frozen outcome ADT is Approve | Reject | Modify(proposal payload).
-// v1 exposes the two pure decisions; Modify requires a full proposal editor
-// (a UI subset of the frozen semantics — not a semantic change).
-const DECISIONS = ["Approve", "Reject"] as const;
+export interface DecisionTarget {
+  readonly proposalId: string;
+  readonly proposalRevision: number;
+  readonly summary: string;
+}
+
+type DecisionValues = {
+  proposalId: string;
+  expectedProposalRevision: number;
+  outcome: "Approve" | "Reject";
+};
 
 export function RecordDecisionForm({
   actor,
   projectId,
-  proposal,
+  target,
   token,
   onSubmitted,
 }: {
   readonly actor: string;
   readonly projectId: string;
-  readonly proposal: {
-    readonly proposalId: string;
-    readonly revision: number;
-    readonly summary: string;
-  };
+  readonly target: DecisionTarget;
   readonly token?: string | undefined;
   readonly onSubmitted: (receipt: CommandReceiptView) => void;
 }) {
-  const [decision, setDecision] =
-    useState<(typeof DECISIONS)[number]>("Approve");
   const { state, submit } = useCommandSubmission({
     actor,
     token,
     onSubmitted,
   });
+  const { handleSubmit, setValue, watch } = useForm<DecisionValues>({
+    resolver: zodResolver(recordDecisionSchema) as Resolver<DecisionValues>,
+    defaultValues: {
+      proposalId: target.proposalId,
+      expectedProposalRevision: target.proposalRevision,
+      outcome: "Approve",
+    },
+  });
+  const outcome = watch("outcome");
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
-    void submit("RecordDecision", projectId, {
-      proposalId: proposal.proposalId,
-      expectedProposalRevision: proposal.revision,
-      outcome: { _tag: decision },
-    });
+    void handleSubmit((values) =>
+      submit("RecordDecision", projectId, {
+        proposalId: values.proposalId,
+        expectedProposalRevision: values.expectedProposalRevision,
+        outcome: { _tag: values.outcome },
+      }),
+    )();
   };
   return (
     <Card title="记录治理决策">
       <form className="arbor-command-form" onSubmit={doSubmit}>
         <p>
-          <Mono>{proposal.proposalId}</Mono>{" "}
+          <Mono>{target.proposalId}</Mono>{" "}
           <span className="arbor-command-static">
-            revision {proposal.revision}
+            revision {target.proposalRevision}
           </span>
         </p>
-        <p>{proposal.summary}</p>
+        <p>{target.summary}</p>
         <Field
           control="select"
           label="决策"
-          value={decision}
-          onChange={(next) => setDecision(next as (typeof DECISIONS)[number])}
-          options={DECISIONS.map((value) => ({ value, label: value }))}
+          value={outcome}
+          onChange={(next) => {
+            setValue("outcome", next as DecisionValues["outcome"]);
+          }}
+          options={[
+            { value: "Approve", label: "Approve（批准）" },
+            { value: "Reject", label: "Reject（驳回）" },
+          ]}
         />
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <Button

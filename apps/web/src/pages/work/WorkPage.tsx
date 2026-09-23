@@ -6,15 +6,21 @@
  * 就地 ProblemCard；本页 0 个 command 发起。
  */
 import type { Problem } from "@arbor/api-contracts";
+import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import type { Route } from "../../api/router.js";
 import { navigate } from "../../api/router.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
+import { AcceptWorkOutcomeForm } from "../../commands/forms/AcceptWorkOutcomeForm.js";
+import { SteerWorkForm } from "../../commands/forms/SteerWorkForm.js";
+import type { CommandReceiptView } from "../../commands/submitCommand.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Empty } from "../../components/Empty.js";
 import { MonoText } from "../../components/MonoText.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
+import { useSession } from "../../session/SessionContext.js";
 import { VerificationView } from "../../views/VerificationView.js";
 import styles from "./work.module.css";
 
@@ -73,17 +79,12 @@ export function WorkPage({
             <p className={styles.objective}>{objective}</p>
           )}
         </div>
-        <div className={styles.governance}>
-          <span className={styles.governanceCaption}>治理动作 · W-08 接线</span>
-          <div className={styles.governanceActions}>
-            <Button variant="primary" disabled>
-              验收工作成果
-            </Button>
-            <Button variant="quiet" disabled>
-              纠偏
-            </Button>
-          </div>
-        </div>
+        <WorkGovernance
+          projectId={route.projectId}
+          workspaceId={route.workspaceId}
+          workId={route.workId}
+          verificationId={verification.data?.verificationId ?? null}
+        />
       </header>
       {detail.isPending ? (
         <Empty>加载中</Empty>
@@ -102,6 +103,75 @@ export function WorkPage({
           )}
         </Card>
       )}
+    </div>
+  );
+}
+
+/** W-08 — Work-context governance (frozen §5): AcceptWorkOutcome when a
+ * verification exists; SteerWork for the exact work. */
+function WorkGovernance({
+  projectId,
+  workspaceId,
+  workId,
+  verificationId,
+}: {
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly workId: string;
+  readonly verificationId: string | null;
+}) {
+  const session = useSession();
+  const queryClient = useQueryClient();
+  const [mode, setMode] = useState<"accept" | "steer" | null>(null);
+  const onSubmitted = (receipt: CommandReceiptView): void => {
+    setMode(null);
+    void queryClient.invalidateQueries({ queryKey: ["view"] });
+  };
+  return (
+    <div className={styles.governance}>
+      <span className={styles.governanceCaption}>治理动作</span>
+      <div className={styles.governanceActions}>
+        <Button
+          variant="primary"
+          disabled={verificationId === null}
+          onClick={() => {
+            setMode("accept");
+          }}
+        >
+          验收工作成果
+        </Button>
+        <Button
+          variant="quiet"
+          onClick={() => {
+            setMode("steer");
+          }}
+        >
+          纠偏
+        </Button>
+      </div>
+      {mode === "accept" && verificationId !== null ? (
+        <AcceptWorkOutcomeForm
+          actor={session.actor ?? ""}
+          projectId={projectId}
+          workId={workId}
+          targetWorkRevision={0}
+          verificationId={verificationId}
+          token={session.token ?? undefined}
+          onSubmitted={onSubmitted}
+        />
+      ) : null}
+      {mode === "steer" ? (
+        <SteerWorkForm
+          actor={session.actor ?? ""}
+          projectId={projectId}
+          workId={workId}
+          workspaceId={workspaceId}
+          objective=""
+          expectedWorkRevision={0}
+          token={session.token ?? undefined}
+          onSubmitted={onSubmitted}
+        />
+      ) : null}
     </div>
   );
 }

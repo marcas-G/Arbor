@@ -209,14 +209,15 @@ describe("W-05 Workspace page", () => {
     expect(screen.getByText("治理决议待确认")).toBeTruthy();
   });
 
-  it("占位动作区：纠偏/紧急停止均存在且 disabled（W-08 接线）", () => {
-    installViews();
+  it("上下文治理动作：纠偏/紧急停止存在（W-08 真实接线），未点击无 /commands fetch", async () => {
+    const calls = installViews();
     renderWorkspace();
-    const steer = screen.getByRole("button", { name: "纠偏" });
-    const stop = screen.getByRole("button", { name: "紧急停止" });
-    expect((steer as HTMLButtonElement).disabled).toBe(true);
-    expect((stop as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText(/W-08/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("上下文治理")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "纠偏" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "紧急停止" })).toBeTruthy();
+    // view names only — the harness intercepts /views/*; any /commands
+    // call would surface as "unknown-view"
+    expect(calls.some((call) => call.view === "unknown-view")).toBe(false);
   });
 
   it("查询 problem → 就地 ProblemCard", async () => {

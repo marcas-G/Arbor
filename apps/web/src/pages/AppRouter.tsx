@@ -7,6 +7,7 @@ import { AppShell } from "../shell/AppShell.js";
 import { AttentionPage } from "./attention/AttentionPage.js";
 import { OverviewPage } from "./overview/OverviewPage.js";
 import { PageStub } from "./PageStub.js";
+import { QueuePage } from "./queue/QueuePage.js";
 import { SettingsPage } from "./settings/SettingsPage.js";
 import { TreePage } from "./tree/TreePage.js";
 import { UsagePage } from "./usage/UsagePage.js";
@@ -27,7 +28,7 @@ export function AppRouter(): ReactNode {
           case "work":
             return <WorkPage route={route} />;
           case "queue":
-            return <PageStub route={route} label="待处理（W-08）" />;
+            return <QueuePage route={route} />;
           case "attention":
             return <AttentionPage route={route} />;
           case "usage":

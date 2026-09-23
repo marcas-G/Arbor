@@ -11,6 +11,7 @@ import type {
   ViewRequestMap,
   WorkspaceDetailRes,
 } from "@arbor/api-contracts";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   navigate,
@@ -19,6 +20,9 @@ import {
   type WorkspaceTab,
 } from "../../api/router.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
+import { SteerWorkForm } from "../../commands/forms/SteerWorkForm.js";
+import { StopExecutionForm } from "../../commands/forms/StopExecutionForm.js";
+import type { CommandReceiptView } from "../../commands/submitCommand.js";
 import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
@@ -27,6 +31,7 @@ import { MonoText } from "../../components/MonoText.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { Tabs } from "../../components/Tabs.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
+import { useSession } from "../../session/SessionContext.js";
 import { CurrentWorkView } from "../../views/CurrentWorkView.js";
 import { DependencyView } from "../../views/DependencyView.js";
 import { InboxView } from "../../views/InboxView.js";
@@ -138,17 +143,11 @@ function WorkspaceHeader({
           </>
         )}
       </div>
-      <div className={styles.governance}>
-        <span className={styles.governanceCaption}>上下文治理 · W-08 接线</span>
-        <div className={styles.governanceActions}>
-          <Button variant="quiet" disabled>
-            纠偏
-          </Button>
-          <Button variant="danger" disabled>
-            紧急停止
-          </Button>
-        </div>
-      </div>
+      <ContextualGovernance
+        projectId={projectId}
+        workspaceId={workspaceId}
+        currentWork={detail.data?.currentWork ?? null}
+      />
     </header>
   );
 }
@@ -313,6 +312,80 @@ export function WorkspacePage({
           <InboxTab workspaceId={workspaceIdTyped} />
         )}
       </div>
+    </div>
+  );
+}
+
+/** W-08 — contextual governance (frozen §5): SteerWork / StopExecution live
+ * ONLY here and in Work/active-Execution contexts (never on the Tree). */
+function ContextualGovernance({
+  projectId,
+  workspaceId,
+  currentWork,
+}: {
+  readonly projectId: string;
+  readonly workspaceId: string;
+  readonly currentWork: {
+    readonly workId?: string | undefined;
+    readonly objective: string;
+    readonly activeExecution?:
+      | { readonly executionId: string; readonly admittedAt: string }
+      | undefined;
+  } | null;
+}) {
+  const session = useSession();
+  const queryClient = useQueryClient();
+  const [mode, setMode] = useState<"steer" | "stop" | null>(null);
+  const onSubmitted = (receipt: CommandReceiptView): void => {
+    setMode(null);
+    void queryClient.invalidateQueries({ queryKey: ["view"] });
+  };
+  const executionId = currentWork?.activeExecution?.executionId ?? null;
+  const workId = currentWork?.workId ?? null;
+  return (
+    <div className={styles.governance}>
+      <span className={styles.governanceCaption}>上下文治理</span>
+      <div className={styles.governanceActions}>
+        <Button
+          variant="quiet"
+          disabled={workId === null}
+          onClick={() => {
+            setMode("steer");
+          }}
+        >
+          纠偏
+        </Button>
+        <Button
+          variant="danger"
+          disabled={executionId === null}
+          onClick={() => {
+            setMode("stop");
+          }}
+        >
+          紧急停止
+        </Button>
+      </div>
+      {mode === "steer" && workId !== null ? (
+        <SteerWorkForm
+          actor={session.actor ?? ""}
+          projectId={projectId}
+          workId={workId}
+          workspaceId={workspaceId}
+          objective={currentWork?.objective ?? ""}
+          expectedWorkRevision={0}
+          token={session.token ?? undefined}
+          onSubmitted={onSubmitted}
+        />
+      ) : null}
+      {mode === "stop" && executionId !== null ? (
+        <StopExecutionForm
+          actor={session.actor ?? ""}
+          projectId={projectId}
+          executionId={executionId}
+          token={session.token ?? undefined}
+          onSubmitted={onSubmitted}
+        />
+      ) : null}
     </div>
   );
 }

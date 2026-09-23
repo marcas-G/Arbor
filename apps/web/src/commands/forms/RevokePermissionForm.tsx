@@ -1,24 +1,28 @@
 /**
- * P13 `02` §2 RevokePermission — admin 表单：从现存 grant 列表中选择一个
- * 撤销（P12 `02` §5；payload 只携带所选 grantId）。
+ * W-08 — RevokePermission form (RHF + Zod). Frozen payload
+ * {permissionGrantId}; grant list comes from a structured source (settings
+ * currently shows the empty state pending transport DTO enhancement).
  */
-
 import type { FormEvent } from "react";
-import { useState } from "react";
+import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Empty } from "../../components/Empty.js";
 import { Field } from "../../components/Field.js";
+import { Mono } from "../../views/shared.js";
+import { revokePermissionSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { FormFeedback } from "./FormFeedback.js";
 import "./forms.css";
 
-export interface PermissionGrantOption {
+export interface GrantListItem {
   readonly grantId: string;
   readonly principal: string;
   readonly commandType: string;
 }
+
+type RevokeValues = { permissionGrantId: string };
 
 export function RevokePermissionForm({
   actor,
@@ -29,50 +33,62 @@ export function RevokePermissionForm({
 }: {
   readonly actor: string;
   readonly projectId: string;
-  readonly grants: ReadonlyArray<PermissionGrantOption>;
+  readonly grants: ReadonlyArray<GrantListItem>;
   readonly token?: string | undefined;
   readonly onSubmitted: (receipt: CommandReceiptView) => void;
 }) {
-  const [grantId, setGrantId] = useState(grants[0]?.grantId ?? "");
   const { state, submit } = useCommandSubmission({
     actor,
     token,
     onSubmitted,
   });
+  const { handleSubmit, setValue, watch } = useForm<RevokeValues>({
+    resolver: zodResolver(revokePermissionSchema) as Resolver<RevokeValues>,
+    defaultValues: { permissionGrantId: grants[0]?.grantId ?? "" },
+  });
+  const permissionGrantId = watch("permissionGrantId");
+  if (grants.length === 0) {
+    return (
+      <Card title="撤销权限（RevokePermission）">
+        <Empty>无待撤销的授权</Empty>
+      </Card>
+    );
+  }
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
-    void submit("RevokePermission", projectId, { permissionGrantId: grantId });
+    void handleSubmit((values) =>
+      submit("RevokePermission", projectId, {
+        permissionGrantId: values.permissionGrantId,
+      }),
+    )();
   };
   return (
     <Card title="撤销权限（RevokePermission）">
-      {grants.length === 0 ? (
-        <Empty>无待撤销的授权</Empty>
-      ) : (
-        <form className="arbor-command-form" onSubmit={doSubmit}>
-          <Field
-            control="select"
-            label="选择 grant"
-            value={grantId}
-            onChange={setGrantId}
-            options={grants.map((grant) => ({
-              value: grant.grantId,
-              label: `${grant.principal} · ${grant.commandType}`,
-            }))}
-          />
-          <FormFeedback state={state} onRetry={() => doSubmit()} />
-          <Button
-            variant="primary"
-            type="submit"
-            disabled={
-              state.phase === "submitting" ||
-              grantId === "" ||
-              !grants.some((grant) => grant.grantId === grantId)
-            }
-          >
-            撤销
-          </Button>
-        </form>
-      )}
+      <form className="arbor-command-form" onSubmit={doSubmit}>
+        <Field
+          control="select"
+          label="选择 grant"
+          value={permissionGrantId}
+          onChange={(next) => {
+            setValue("permissionGrantId", next);
+          }}
+          options={grants.map((grant) => ({
+            value: grant.grantId,
+            label: `${grant.grantId} · ${grant.principal} · ${grant.commandType}`,
+          }))}
+        />
+        <p className="arbor-command-static">
+          <Mono>{permissionGrantId}</Mono>
+        </p>
+        <FormFeedback state={state} onRetry={() => doSubmit()} />
+        <Button
+          variant="primary"
+          type="submit"
+          disabled={state.phase === "submitting"}
+        >
+          撤销
+        </Button>
+      </form>
     </Card>
   );
 }
