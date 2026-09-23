@@ -1,0 +1,15 @@
+/* Formal refinements over the global `.arbor-card*` rules in
+ * components.css (kept for raw consumers like ErrorBoundary). */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--arbor-space-3);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--arbor-space-2);
+}

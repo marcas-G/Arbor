@@ -1,0 +1,5 @@
+.error {
+  margin: 0;
+  color: var(--arbor-danger);
+  font-size: var(--arbor-text-small);
+}

@@ -1,0 +1,15 @@
+/* Formal refinements over the global `.arbor-badge*` rules in
+ * components.css (kept for raw consumers). Token-only values (EC-10). */
+
+.badge {
+  letter-spacing: 0.04em;
+}
+
+.tone-leaf,
+.tone-attention,
+.tone-danger,
+.tone-muted,
+.tone-branch,
+.tone-sky {
+  text-transform: uppercase;
+}

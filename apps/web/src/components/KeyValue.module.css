@@ -1,0 +1,23 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+  margin: 0;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: var(--arbor-space-3);
+  align-items: baseline;
+}
+
+.term {
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+
+.value {
+  margin: 0;
+  font-size: var(--arbor-text-small);
+}

@@ -1,10 +1,15 @@
 import { type ReactNode, useId } from "react";
+import { cx } from "./cx.js";
+import styles from "./Field.module.css";
 
 type FieldBase = {
   readonly label: string;
   readonly value: string;
   readonly onChange: (value: string) => void;
   readonly disabled?: boolean | undefined;
+  /** W-01: inline validation message, rendered in danger tone below the
+   * control and wired via aria-invalid / aria-describedby. */
+  readonly error?: string | undefined;
 };
 
 export type FieldOption = {
@@ -27,12 +32,14 @@ export type FieldProps =
       readonly placeholder?: string | undefined;
     });
 
+/** W-01 formal Field: controlled input | select | textarea with label and
+ * optional inline error. */
 export function Field(props: FieldProps) {
-  const { label, value, onChange, disabled } = props;
+  const { label, value, onChange, disabled, error } = props;
   const controlId = useId();
-  const handleChange = (next: string): void => {
-    onChange(next);
-  };
+  const errorId = `${controlId}-error`;
+  const describedBy = error !== undefined ? errorId : undefined;
+  const invalid = error !== undefined;
   let control: ReactNode;
   switch (props.control) {
     case "input":
@@ -43,7 +50,11 @@ export function Field(props: FieldProps) {
           value={value}
           disabled={disabled}
           placeholder={props.placeholder}
-          onChange={(event) => handleChange(event.target.value)}
+          aria-invalid={invalid}
+          aria-describedby={describedBy}
+          onChange={(event) => {
+            onChange(event.target.value);
+          }}
         />
       );
       break;
@@ -54,7 +65,11 @@ export function Field(props: FieldProps) {
           className="arbor-field-control"
           value={value}
           disabled={disabled}
-          onChange={(event) => handleChange(event.target.value)}
+          aria-invalid={invalid}
+          aria-describedby={describedBy}
+          onChange={(event) => {
+            onChange(event.target.value);
+          }}
         >
           {props.options.map((option) => (
             <option key={option.value} value={option.value}>
@@ -73,7 +88,11 @@ export function Field(props: FieldProps) {
           disabled={disabled}
           rows={props.rows}
           placeholder={props.placeholder}
-          onChange={(event) => handleChange(event.target.value)}
+          aria-invalid={invalid}
+          aria-describedby={describedBy}
+          onChange={(event) => {
+            onChange(event.target.value);
+          }}
         />
       );
       break;
@@ -84,6 +103,11 @@ export function Field(props: FieldProps) {
         {label}
       </label>
       {control}
+      {error === undefined ? null : (
+        <p className={cx(["arbor-field-error", styles.error])} id={errorId}>
+          {error}
+        </p>
+      )}
     </div>
   );
 }

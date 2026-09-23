@@ -1,0 +1,12 @@
+/* Formal refinements over the global `.arbor-button*` rules in
+ * components.css (kept for raw consumers like ErrorBoundary). */
+
+.button:focus-visible {
+  outline: 2px solid var(--arbor-focus);
+  outline-offset: 1px;
+}
+
+.loading::after {
+  content: "…";
+  margin-left: var(--arbor-space-1);
+}
