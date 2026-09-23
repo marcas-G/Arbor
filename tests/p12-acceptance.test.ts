@@ -20,6 +20,7 @@ import {
   DomainEventJournalLive,
   ExecutionRepositoryLive,
   FormationProposalStoreLive,
+  HumanMessageStoreLive,
   IdGeneratorLive,
   InboxProjectionStoreLive,
   LeaseServiceLive,
@@ -2027,6 +2028,8 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
+    // P14: the registry also wires SubmitHumanMessage (human chat-turn).
+    Layer.provide(HumanMessageStoreLive, infra),
     // P13: the external registry also wires the Human-actionable governance
     // handlers (RecordDecision/SteerWork/AcceptWorkOutcome/Grant/Revoke).
     Layer.provide(FormationProposalStoreLive, infra),

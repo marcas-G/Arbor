@@ -16,6 +16,7 @@ import {
   type EnvironmentError,
   type ExecutionRepositoryError,
   type FormationProposalStoreError,
+  type HumanMessageStoreError,
   IdGenerator,
   type InboxProjectionStoreError,
   type MessageStoreError,
@@ -81,7 +82,8 @@ export type CommandHandlerError =
   | WorktreeStoreError
   | ResourceOwnershipRepositoryError
   | ProjectToolRegistryError
-  | PermissionGrantRepositoryError;
+  | PermissionGrantRepositoryError
+  | HumanMessageStoreError;
 
 export interface CommandHandler<C, R> {
   readonly commandType: string;

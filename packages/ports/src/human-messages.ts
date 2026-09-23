@@ -32,6 +32,11 @@ export interface HumanMessageConflict {
   readonly existing: HumanMessageRecord;
 }
 
+export interface HumanMessageStoreError {
+  readonly _tag: "HumanMessageStoreFailure";
+  readonly cause: unknown;
+}
+
 export interface ClaimOutcome {
   readonly _tag: "Claimed" | "AlreadyClaimed" | "NotFound";
 }
@@ -44,14 +49,14 @@ export interface HumanMessageStoreService {
     record: HumanMessageRecord,
   ) => Effect.Effect<
     void,
-    HumanMessageConflict,
+    HumanMessageConflict | HumanMessageStoreError,
     import("./session.js").TransactionScope
   >;
   readonly findById: (
     messageId: string,
   ) => Effect.Effect<
     Option.Option<HumanMessageRecord>,
-    never,
+    HumanMessageStoreError,
     import("./session.js").TransactionScope
   >;
   /** Oldest-first pending for a project (FIFO claim order, `02` §2). */
@@ -59,7 +64,7 @@ export interface HumanMessageStoreService {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<HumanMessageRecord>,
-    never,
+    HumanMessageStoreError,
     import("./session.js").TransactionScope
   >;
   /** CAS claim: Pending → Claimed(claimedByExecutionId). */
@@ -68,18 +73,26 @@ export interface HumanMessageStoreService {
     claimedByExecutionId: string,
   ) => Effect.Effect<
     ClaimOutcome,
-    never,
+    HumanMessageStoreError,
     import("./session.js").TransactionScope
   >;
   /** Settled write-back: Claimed → Answered. */
   readonly markAnswered: (
     messageId: string,
     settledAt: string,
-  ) => Effect.Effect<void, never, import("./session.js").TransactionScope>;
+  ) => Effect.Effect<
+    void,
+    HumanMessageStoreError,
+    import("./session.js").TransactionScope
+  >;
   /** Crash recovery: rollback stale claims (no live execution). */
   readonly rollbackClaim: (
     messageId: string,
-  ) => Effect.Effect<void, never, import("./session.js").TransactionScope>;
+  ) => Effect.Effect<
+    void,
+    HumanMessageStoreError,
+    import("./session.js").TransactionScope
+  >;
 }
 
 export class HumanMessageStore extends Context.Service<

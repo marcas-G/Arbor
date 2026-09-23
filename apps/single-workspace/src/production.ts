@@ -19,7 +19,7 @@ import {
 } from "@arbor/application";
 import type { Principal, ProjectId } from "@arbor/domain";
 import { startupRecovery, sweepRecovery } from "@arbor/execution-runtime";
-import { P12_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
+import { P14_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   BlobStorePort,
@@ -312,7 +312,7 @@ export const ProductionDaemonServiceLive = (
       };
 
       const daemon = makeProductionDaemon({
-        migrate: runMigrations(P12_MIGRATIONS),
+        migrate: runMigrations(P14_MIGRATIONS),
         recovery,
         consumers,
       });

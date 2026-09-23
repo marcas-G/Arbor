@@ -10,3 +10,4 @@ export * from "./revoke-permission.js";
 export * from "./select-current-work.js";
 export * from "./send-message.js";
 export * from "./steer-work.js";
+export * from "./submit-human-message.js";

@@ -7,7 +7,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   buildSliceLayer,
-  P12_MIGRATIONS,
+  P14_MIGRATIONS,
   runMigrations,
 } from "../src/composition.js";
 import {
@@ -53,7 +53,7 @@ beforeAll(async () => {
   const program = Effect.scoped(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P14_MIGRATIONS);
         const boundary = yield* TransportBoundary;
         const sql = yield* SqlClient;
         const deployment = yield* ProductionDaemonService;
