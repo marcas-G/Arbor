@@ -1,0 +1,113 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--arbor-space-3);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--arbor-font-serif);
+  font-size: var(--arbor-text-title);
+  color: var(--arbor-ink);
+}
+
+.caption {
+  font-size: var(--arbor-text-caption);
+  color: var(--arbor-muted);
+}
+
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--arbor-space-2);
+  margin: 0;
+  padding: var(--arbor-space-2);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  background: var(--arbor-surface);
+  min-inline-size: 0;
+}
+
+.filterLegend {
+  padding: 0;
+  font-size: var(--arbor-text-caption);
+  color: var(--arbor-muted);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--arbor-space-1);
+  padding: var(--arbor-space-1) var(--arbor-space-2);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius-small);
+  background: var(--arbor-paper-2);
+  color: var(--arbor-ink);
+  font-family: inherit;
+  font-size: var(--arbor-text-small);
+  cursor: pointer;
+}
+
+.chip[aria-pressed="true"] {
+  border-color: var(--arbor-leaf);
+  background: var(--arbor-leaf-pale);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--arbor-focus);
+  outline-offset: -2px;
+}
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+  padding: var(--arbor-space-3);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  background: var(--arbor-surface);
+}
+
+.groupTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--arbor-space-2);
+  margin: 0;
+  font-family: var(--arbor-font-serif);
+  font-size: var(--arbor-text-body);
+  color: var(--arbor-ink);
+}
+
+.rowList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--arbor-space-3);
+  padding: var(--arbor-space-1) var(--arbor-space-2);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius-small);
+  background: var(--arbor-paper-2);
+}
