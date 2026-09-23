@@ -1,0 +1,115 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--arbor-space-4);
+  padding: var(--arbor-space-4);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  background: var(--arbor-surface);
+}
+
+.headerMain {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+  min-width: 0;
+}
+
+.idLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--arbor-space-2);
+}
+
+.attentionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--arbor-space-1);
+}
+
+.metaLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--arbor-space-2);
+}
+
+.purpose {
+  margin: 0;
+  font-family: var(--arbor-font-serif);
+  font-size: var(--arbor-text-body);
+  color: var(--arbor-ink);
+}
+
+.boundary {
+  margin: 0;
+  font-size: var(--arbor-text-small);
+  color: var(--arbor-ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.governance {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--arbor-space-1);
+}
+
+.governanceCaption {
+  font-size: var(--arbor-text-caption);
+  color: var(--arbor-muted);
+}
+
+.governanceActions {
+  display: flex;
+  gap: var(--arbor-space-2);
+}
+
+.tabPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+}
+
+.pendingList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pendingRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--arbor-space-2);
+  padding: var(--arbor-space-1) var(--arbor-space-2);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius-small);
+  background: var(--arbor-paper-2);
+  color: var(--arbor-ink);
+  font-family: inherit;
+  font-size: var(--arbor-text-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pendingRow:hover {
+  border-color: var(--arbor-leaf-bright);
+}
+
+.pendingRow:focus-visible {
+  outline: 2px solid var(--arbor-focus);
+  outline-offset: -2px;
+}

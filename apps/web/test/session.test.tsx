@@ -178,7 +178,7 @@ describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
     await login();
     await switchProject("prj_demo");
     await waitFor(() => expect(screen.getByText("未认证")).toBeTruthy());
-    expect(screen.queryByText(/概览（W-03）/)).toBeNull();
+    expect(screen.queryByRole("heading", { name: "概览" })).toBeNull();
     const call = fetchMock.mock.calls[0];
     expect(call).toBeDefined();
     const [url, init] = call as unknown as [string, RequestInit];
@@ -210,7 +210,7 @@ describe("Web v1 shell integration smoke (W-02)", () => {
     expect(screen.getByText("human:root")).toBeTruthy();
     await switchProject("prj_demo");
     await waitFor(() =>
-      expect(screen.getAllByText(/概览（W-03）/).length).toBeGreaterThan(0),
+      expect(screen.getByRole("heading", { name: "概览" })).toBeTruthy(),
     );
     expect(location.pathname).toBe("/p/prj_demo");
     const treeButtons = screen.getAllByRole("button", { name: "树" });

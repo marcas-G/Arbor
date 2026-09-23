@@ -1,0 +1,139 @@
+/* W-04 tree page — CSS Modules, tokens only (EC-10: colors and font sizes
+ * come exclusively from var(--arbor-*)). */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-4);
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--arbor-space-3);
+}
+
+.title {
+  margin: 0;
+  font-family: var(--arbor-font-serif);
+  font-size: var(--arbor-text-display);
+  font-weight: 600;
+  color: var(--arbor-ink);
+}
+
+.depthLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--arbor-space-2);
+  font-size: var(--arbor-text-small);
+  color: var(--arbor-ink-soft);
+  white-space: nowrap;
+}
+
+.depthSelect {
+  font-family: var(--arbor-font-mono);
+  font-size: var(--arbor-text-small);
+  color: var(--arbor-ink);
+  background: var(--arbor-surface);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius-small);
+  padding: var(--arbor-space-1) var(--arbor-space-2);
+}
+
+/* Mobile: single column, mini-detail folds below the list. Desktop ≥1280:
+ * persistent detail column on the right. */
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--arbor-space-4);
+  align-items: start;
+}
+
+.detail {
+  min-width: 0;
+}
+
+.detailBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+}
+
+@media (min-width: 1280px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+
+  .detail {
+    position: sticky;
+    top: var(--arbor-space-3);
+  }
+}
+
+.listSection {
+  min-width: 0;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.node {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-1);
+  width: 100%;
+  text-align: left;
+  padding: var(--arbor-space-3);
+  background: var(--arbor-surface);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  box-shadow: var(--arbor-shadow);
+  cursor: pointer;
+}
+
+.node:hover {
+  border-color: var(--arbor-branch);
+}
+
+.node:focus-visible {
+  outline: 2px solid var(--arbor-focus);
+  outline-offset: 1px;
+}
+
+.nodeSelected {
+  border-color: var(--arbor-leaf);
+  background: var(--arbor-leaf-pale);
+}
+
+.nodeHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--arbor-space-2);
+}
+
+.nodeName {
+  font-family: var(--arbor-font-serif);
+  font-size: var(--arbor-text-body);
+  font-weight: 600;
+  color: var(--arbor-ink);
+}
+
+.nodeObjective {
+  font-size: var(--arbor-text-small);
+  color: var(--arbor-ink-soft);
+}
+
+.nodeUsage {
+  font-family: var(--arbor-font-mono);
+  font-size: var(--arbor-text-caption);
+  color: var(--arbor-muted);
+  overflow-wrap: anywhere;
+}

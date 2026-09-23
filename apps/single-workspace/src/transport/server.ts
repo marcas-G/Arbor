@@ -99,10 +99,7 @@ export const startWebTransport = async (
       const path = url.split("?")[0] ?? url;
       const method = (request.method ?? "GET").toUpperCase();
 
-      if (
-        config.staticRoot !== undefined &&
-        isStaticCandidate(method, path)
-      ) {
+      if (config.staticRoot !== undefined && isStaticCandidate(method, path)) {
         const resolution = resolveStatic(config.staticRoot, url);
         if (resolution.kind === "file") {
           sendBytes(
