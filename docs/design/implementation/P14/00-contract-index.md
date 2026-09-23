@@ -30,6 +30,6 @@
 
 ```text
 P14 design closure: contracts FROZEN（两轮 review，Blocking=0）
-P14 planning: this index 待 phase plan
-P14 implementation: NOT AUTHORIZED
+P14 planning COMPLETE (planning/phases/P14.md)
+P14 implementation COMPLETE; P14 FORMALLY CLOSED (planning/results/P14.result.md)
 ```

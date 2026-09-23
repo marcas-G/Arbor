@@ -141,23 +141,15 @@ export const deriveTranscriptPage = (
       );
     }
 
-    const sessions =
-      request.sessionId !== undefined
-        ? [request.sessionId]
-        : [
-            ...(yield* deps.listSessionsByWorkspace(request.workspaceId)),
-          ].sort();
-    if (request.sessionId === undefined && sessions.length === 0) {
-      return { entries: [] };
-    }
-
     const entries: Array<TranscriptEntryView> = [];
     let lastPosition: CursorPosition | undefined;
     let hasMore = false;
 
     // P14 `03`: the first page carries the conversation turns (time-ordered)
     // ahead of the legacy session-entry stream; cursor pages stay
-    // session-entry based (v1 pagination shape).
+    // session-entry based (v1 pagination shape). Turns are merged BEFORE the
+    // session-existence short-circuit so a root workspace with no session
+    // entries still shows its conversation.
     if (cursor === null && deps.conversationTurns !== undefined) {
       const turns = yield* deps.conversationTurns(request.workspaceId);
       for (const turn of turns) {
@@ -167,6 +159,20 @@ export const deriveTranscriptPage = (
         }
         entries.push(turn);
       }
+    }
+
+    const sessions =
+      request.sessionId !== undefined
+        ? [request.sessionId]
+        : [
+            ...(yield* deps.listSessionsByWorkspace(request.workspaceId)),
+          ].sort();
+    if (
+      request.sessionId === undefined &&
+      sessions.length === 0 &&
+      entries.length === 0
+    ) {
+      return { entries: [] };
     }
 
     outer: for (const sessionId of sessions) {

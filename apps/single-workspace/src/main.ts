@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { Principal, parse, WorkspaceId } from "@arbor/domain";
 import { startupRecovery } from "@arbor/execution-runtime";
 import { Duration, Effect, Scope } from "effect";
@@ -185,7 +186,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     ? Effect.scoped(runDaemonOnce(config))
     : Effect.scoped(runDaemonForever(config));
   Effect.runPromise(Effect.provide(program, main(config))).catch((error) => {
-    process.stderr.write(`arbor daemon failed: ${String(error)}\n`);
+    // Structured diagnosis (Cause/Rollback objects do not stringify).
+    process.stderr.write(
+      `arbor daemon failed: ${inspect(error, { depth: 6, breakLength: 120 })}\n`,
+    );
     process.exitCode = 1;
   });
 }

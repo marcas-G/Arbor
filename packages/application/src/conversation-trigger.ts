@@ -38,6 +38,7 @@ import type {
   HumanMessageStoreService,
   ProjectRepositoryError,
   ProjectRepositoryService,
+  TransactionPortService,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -77,6 +78,10 @@ export interface ConversationTriggerDependencies {
     "findActiveMainByWorkspace"
   >;
   readonly clock: Pick<ClockService, "now">;
+  /** Store operations run in their own short transactions; the gateway's
+   * command transaction stays outermost-free (P1 `05` §1 consumer rule:
+   * never nest the gateway's commit boundary). */
+  readonly tx: Pick<TransactionPortService, "transact">;
   /** The System principal for trigger-originated admissions (composition
    * wires `runtime:conversation-trigger`). */
   readonly principal: Principal;
@@ -96,27 +101,28 @@ export interface ConversationTriggerOutcome {
 export const runConversationTrigger = (
   dependencies: ConversationTriggerDependencies,
   projectId: ProjectId,
-): Effect.Effect<
-  ConversationTriggerOutcome,
-  ConversationTriggerError,
-  TransactionScope
-> =>
+): Effect.Effect<ConversationTriggerOutcome, ConversationTriggerError> =>
   Effect.gen(function* () {
     const records: Array<string> = [];
-    const pending =
-      yield* dependencies.messages.pendingOrderedByCreated(projectId);
+    const tx = dependencies.tx;
+    const pending = yield* tx.transact(
+      dependencies.messages.pendingOrderedByCreated(projectId),
+    );
     if (pending.length === 0) {
       return { records };
     }
-    const project = yield* dependencies.projects.findById(projectId);
+    const project = yield* tx.transact(
+      dependencies.projects.findById(projectId),
+    );
     if (Option.isNone(project)) {
       return { records: ["skipped:ProjectNotFound"] };
     }
     const rootWorkspaceId = project.value.rootWorkspaceId;
 
     // one-active-main (S5): no second main, no interruption — stay queued.
-    const active =
-      yield* dependencies.executions.findActiveMainByWorkspace(rootWorkspaceId);
+    const active = yield* tx.transact(
+      dependencies.executions.findActiveMainByWorkspace(rootWorkspaceId),
+    );
     if (Option.isSome(active)) {
       records.push(`queued:${pending[0]?.messageId ?? ""}`);
       return { records };
@@ -128,9 +134,8 @@ export const runConversationTrigger = (
     }
     const executionId = deterministicExecutionId(message.messageId);
     // FIFO + CAS: exactly one trigger wins the oldest message.
-    const claim = yield* dependencies.messages.claim(
-      message.messageId,
-      executionId,
+    const claim = yield* tx.transact(
+      dependencies.messages.claim(message.messageId, executionId),
     );
     if (claim._tag !== "Claimed") {
       records.push(`skipped:${claim._tag}:${message.messageId}`);
@@ -186,7 +191,7 @@ export const runConversationTrigger = (
     }
     // Rejected (e.g. ActiveExecutionConflict from a lost race): roll the
     // claim back so the message is retried once the active main settles.
-    yield* dependencies.messages.rollbackClaim(message.messageId);
+    yield* tx.transact(dependencies.messages.rollbackClaim(message.messageId));
     records.push(
       `skipped:${receipt.resolution.error._tag}:${message.messageId}`,
     );

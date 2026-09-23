@@ -205,6 +205,9 @@ const makeHarness = (): Harness => {
       "findActiveMainByWorkspace"
     >,
     clock: { now: () => Effect.succeed("2026-09-23T05:00:00.000Z") },
+    tx: {
+      transact: (body: unknown) => body,
+    } as unknown as ConversationTriggerDependencies["tx"],
     principal: PRINCIPAL,
   };
 
