@@ -17,89 +17,24 @@ import { StatusBadge } from "../../components/StatusBadge.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { presentResponsibilityTree } from "../tree/treePresentation.js";
 import { ConversationRecord } from "../workspace/ConversationTab.js";
+import {
+  clampWorkbenchTreeBasis,
+  DEFAULT_WORKBENCH_LAYOUT,
+  MAX_TREE_BASIS,
+  MIN_TREE_BASIS,
+  useWorkbenchLayoutPreference,
+} from "./layoutPreference.js";
 import styles from "./workbench.module.css";
 
 type ProjectId = ViewRequestMap["responsibility-tree"]["projectId"];
 
-export type WorkbenchPaneOrder = "tree-first" | "conversation-first";
-
-export type WorkbenchLayoutPreference = {
-  readonly order: WorkbenchPaneOrder;
-  readonly treeBasis: number;
-};
-
-export const WORKBENCH_LAYOUT_KEY = "arbor.workbench-layout.v1";
-export const DEFAULT_WORKBENCH_LAYOUT: WorkbenchLayoutPreference = {
-  order: "tree-first",
-  treeBasis: 42,
-};
-
-const MIN_TREE_BASIS = 30;
-const MAX_TREE_BASIS = 70;
-
-const isPaneOrder = (value: unknown): value is WorkbenchPaneOrder =>
-  value === "tree-first" || value === "conversation-first";
-
-const clampTreeBasis = (value: number): number =>
-  Math.min(MAX_TREE_BASIS, Math.max(MIN_TREE_BASIS, Math.round(value)));
-
-/** Parses only the versioned, presentation-only preference shape. */
-export const parseWorkbenchLayout = (
-  serialized: string | null,
-): WorkbenchLayoutPreference => {
-  if (serialized === null) {
-    return DEFAULT_WORKBENCH_LAYOUT;
-  }
-  try {
-    const parsed: unknown = JSON.parse(serialized);
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
-      return DEFAULT_WORKBENCH_LAYOUT;
-    }
-    const record = parsed as Record<string, unknown>;
-    const keys = Object.keys(record).sort();
-    if (
-      keys.length !== 2 ||
-      keys[0] !== "order" ||
-      keys[1] !== "treeBasis" ||
-      !isPaneOrder(record.order) ||
-      typeof record.treeBasis !== "number" ||
-      !Number.isFinite(record.treeBasis) ||
-      record.treeBasis < MIN_TREE_BASIS ||
-      record.treeBasis > MAX_TREE_BASIS
-    ) {
-      return DEFAULT_WORKBENCH_LAYOUT;
-    }
-    return { order: record.order, treeBasis: Math.round(record.treeBasis) };
-  } catch {
-    return DEFAULT_WORKBENCH_LAYOUT;
-  }
-};
-
-const readWorkbenchLayout = (): WorkbenchLayoutPreference => {
-  try {
-    return parseWorkbenchLayout(localStorage.getItem(WORKBENCH_LAYOUT_KEY));
-  } catch {
-    return DEFAULT_WORKBENCH_LAYOUT;
-  }
-};
-
-function useWorkbenchLayout() {
-  const [layout, setLayout] =
-    useState<WorkbenchLayoutPreference>(readWorkbenchLayout);
-  useEffect(() => {
-    try {
-      localStorage.setItem(WORKBENCH_LAYOUT_KEY, JSON.stringify(layout));
-    } catch {
-      // A disabled storage area merely means the local presentation preference
-      // is transient; it must never affect the Workbench's server facts.
-    }
-  }, [layout]);
-  return [layout, setLayout] as const;
-}
+export {
+  DEFAULT_WORKBENCH_LAYOUT,
+  parseWorkbenchLayout,
+  WORKBENCH_LAYOUT_KEY,
+  type WorkbenchLayoutPreference,
+  type WorkbenchPaneOrder,
+} from "./layoutPreference.js";
 
 function TreePane({
   projectId,
@@ -279,7 +214,7 @@ export function RootWorkbenchPage({
 }: {
   readonly route: Extract<Route, { readonly name: "workbench" }>;
 }) {
-  const [layout, setLayout] = useWorkbenchLayout();
+  const [layout, setLayout] = useWorkbenchLayoutPreference();
   const [mobilePane, setMobilePane] = useState<"tree" | "conversation">(
     "conversation",
   );
@@ -296,7 +231,7 @@ export function RootWorkbenchPage({
   const setTreeBasis = (value: number): void => {
     setLayout((previous) => ({
       ...previous,
-      treeBasis: clampTreeBasis(value),
+      treeBasis: clampWorkbenchTreeBasis(value),
     }));
   };
 
