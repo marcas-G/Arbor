@@ -86,6 +86,13 @@
   gap: var(--arbor-space-3);
 }
 
+.conversationLabel {
+  margin: 0;
+  color: var(--arbor-muted);
+  font-size: var(--arbor-text-caption);
+  font-weight: 650;
+}
+
 .composer {
   display: flex;
   flex-direction: column;

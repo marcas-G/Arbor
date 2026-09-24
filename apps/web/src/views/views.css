@@ -98,7 +98,6 @@
 
 .arbor-attention-row,
 .arbor-inbox-row,
-.arbor-transcript-row,
 .arbor-pending-row {
   display: flex;
   flex-wrap: wrap;
@@ -106,6 +105,58 @@
   gap: var(--arbor-space-3);
   padding-bottom: var(--arbor-space-2);
   border-bottom: 1px solid var(--arbor-line);
+}
+
+/* Conversation is a readable record, not a telemetry table. The small
+ * author/time line is technical context; bounded body text remains primary. */
+.arbor-conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.arbor-conversation-turn {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--arbor-space-2);
+  max-width: 80%;
+  color: var(--arbor-ink);
+}
+
+.arbor-conversation-human {
+  align-self: flex-end;
+}
+
+.arbor-conversation-assistant,
+.arbor-conversation-event {
+  align-self: flex-start;
+}
+
+.arbor-conversation-author {
+  color: var(--arbor-leaf);
+  font-size: var(--arbor-text-caption);
+  font-weight: 700;
+}
+
+.arbor-conversation-body {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  line-height: 1.65;
+}
+
+.arbor-conversation-turn .arbor-time {
+  color: var(--arbor-muted);
+  font-size: var(--arbor-text-caption);
+}
+
+@media (max-width: 47.99rem) {
+  .arbor-conversation-turn {
+    max-width: 100%;
+  }
 }
 
 .arbor-table {

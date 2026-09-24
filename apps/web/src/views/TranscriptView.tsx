@@ -22,7 +22,7 @@ export function TranscriptView({
       {res.entries.length === 0 ? (
         <Empty>无会话记录</Empty>
       ) : (
-        <ul className="arbor-row-list">
+        <ul className="arbor-conversation-list">
           {res.entries.map((entry, index) => {
             // The legacy arm's `kind: string` overlaps the turn literals, so
             // narrow by property presence (the frozen arms are distinguished
@@ -31,10 +31,10 @@ export function TranscriptView({
               return (
                 <li
                   key={`human:${entry.messageId}`}
-                  className="arbor-transcript-row"
+                  className="arbor-conversation-turn arbor-conversation-human"
                 >
-                  <EnumBadge label="Human" />
-                  <span className="arbor-transcript-body">{entry.body}</span>
+                  <span className="arbor-conversation-author">你</span>
+                  <span className="arbor-conversation-body">{entry.body}</span>
                   <TimeText at={entry.occurredAt} />
                 </li>
               );
@@ -43,10 +43,10 @@ export function TranscriptView({
               return (
                 <li
                   key={`assistant:${entry.executionId}:${entry.occurredAt}`}
-                  className="arbor-transcript-row"
+                  className="arbor-conversation-turn arbor-conversation-assistant"
                 >
-                  <EnumBadge label="Assistant" />
-                  <span className="arbor-transcript-body">{entry.body}</span>
+                  <span className="arbor-conversation-author">Arbor</span>
+                  <span className="arbor-conversation-body">{entry.body}</span>
                   <TimeText at={entry.occurredAt} />
                 </li>
               );
@@ -54,7 +54,7 @@ export function TranscriptView({
             return (
               <li
                 key={`${entry.at}:${String(index)}`}
-                className="arbor-transcript-row"
+                className="arbor-conversation-turn arbor-conversation-event"
               >
                 <EnumBadge label={entry.kind} />
                 <span>{entry.summaryRef}</span>

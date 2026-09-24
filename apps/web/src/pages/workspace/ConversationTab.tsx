@@ -16,6 +16,7 @@ import { Empty } from "../../components/Empty.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { useSession } from "../../session/SessionContext.js";
 import { TranscriptView } from "../../views/TranscriptView.js";
+import { presentResponsibilityTree } from "../tree/treePresentation.js";
 import styles from "./workspace.module.css";
 
 type WorkspaceId = ViewRequestMap["transcript"]["workspaceId"];
@@ -30,9 +31,8 @@ const PENDING_TURN_KINDS = {
   assistant: "AssistantConversationTurn",
 } as const;
 
-/** Derived read-only "queued/running" line: a Human turn with no later
- * Assistant turn is durable-pending (`02` one-active-main). `null` when the
- * current DTO cannot decide (no human turns). */
+/** A last Human turn without a later Assistant turn is the only observable
+ * pending fact the view can state; it is not a client execution lifecycle. */
 const deriveQueuedState = (
   entries: ReadonlyArray<{ readonly kind: string }>,
 ): string | null => {
@@ -46,21 +46,22 @@ const deriveQueuedState = (
       lastAssistant = index;
     }
   });
-  return lastHuman !== -1 && lastAssistant < lastHuman ? "排队中/执行中" : null;
+  return lastHuman !== -1 && lastAssistant < lastHuman
+    ? "已入列，等待服务器结果"
+    : null;
 };
 
-export function ConversationTab({
+export function ConversationRecord({
   projectId,
   workspaceId,
+  rootWorkspaceId,
 }: {
   readonly projectId: string;
   readonly workspaceId: string;
+  readonly rootWorkspaceId?: string | undefined;
 }) {
   const session = useSession();
   const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const tree = useViewQuery("responsibility-tree", {
-    projectId: projectId as ProjectId,
-  });
   const request: TranscriptReq =
     cursor === undefined
       ? { workspaceId: workspaceId as WorkspaceId, limit: TRANSCRIPT_PAGE_SIZE }
@@ -70,17 +71,16 @@ export function ConversationTab({
           limit: TRANSCRIPT_PAGE_SIZE,
         };
   const transcript = useViewQuery("transcript", request);
-  const rootWorkspaceId = tree.data?.nodes.find(
-    (node) => node.parentWorkspaceId === null,
-  )?.workspaceId;
-  const isRoot =
-    rootWorkspaceId !== undefined && rootWorkspaceId === workspaceId;
+  const isRoot = rootWorkspaceId === workspaceId;
   const queuedState =
     transcript.data === undefined
       ? null
       : deriveQueuedState(transcript.data.entries);
   return (
     <div className={styles.conversation}>
+      <p className={styles.conversationLabel}>
+        {isRoot ? "根工作区对话" : "对话记录（只读）"}
+      </p>
       {transcript.isPending ? (
         <Empty>加载中</Empty>
       ) : transcript.isError ? (
@@ -107,5 +107,28 @@ export function ConversationTab({
         </div>
       ) : null}
     </div>
+  );
+}
+
+export function ConversationTab({
+  projectId,
+  workspaceId,
+}: {
+  readonly projectId: string;
+  readonly workspaceId: string;
+}) {
+  const tree = useViewQuery("responsibility-tree", {
+    projectId: projectId as ProjectId,
+  });
+  const presented =
+    tree.data === undefined
+      ? undefined
+      : presentResponsibilityTree(tree.data.nodes);
+  return (
+    <ConversationRecord
+      projectId={projectId}
+      workspaceId={workspaceId}
+      rootWorkspaceId={presented?.root.workspaceId}
+    />
   );
 }
