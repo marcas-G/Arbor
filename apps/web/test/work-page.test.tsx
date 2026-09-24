@@ -14,6 +14,7 @@ import {
   detailCurrentWork,
   detailPendingOnly,
   unavailableProblem,
+  verificationEligible,
   verificationFull,
   WORK_CURRENT,
   WORK_PENDING,
@@ -144,7 +145,7 @@ describe("W-06 Work Detail 页", () => {
     expect(screen.getByText("evd_2")).toBeTruthy();
   });
 
-  it("治理动作：验收/纠偏真实接线（verification 存在时验收可用）；未点击无 /commands fetch", async () => {
+  it("已验收 verification 不再重复暴露验收，但 exact current revision 仍可纠偏", async () => {
     const urls = installViews();
     renderWork(WORK_CURRENT);
     await waitFor(() => expect(screen.getByText("当前工作目标")).toBeTruthy());
@@ -155,9 +156,42 @@ describe("W-06 Work Detail 页", () => {
     const steer = screen.getByRole("button", {
       name: "纠偏",
     }) as HTMLButtonElement;
-    expect(accept.disabled).toBe(false);
+    expect(accept.disabled).toBe(true);
     expect(steer.disabled).toBe(false);
     expect(urls.every((url) => url.startsWith("/views/"))).toBe(true);
+  });
+
+  it("仅 PASS、未验收且 exact target revision 一致时暴露冻结验收 identity", async () => {
+    installViews({
+      ...defaultHandlers,
+      verification: () => ({ dto: verificationEligible }),
+    });
+    renderWork(WORK_CURRENT);
+    await waitFor(() => expect(screen.getByText("crit-render")).toBeTruthy());
+    const accept = screen.getByRole("button", {
+      name: "验收工作成果",
+    }) as HTMLButtonElement;
+    expect(accept.disabled).toBe(false);
+    fireEvent.click(accept);
+    expect(screen.getByText(`rev 7 · ${"ver_1"}`)).toBeTruthy();
+  });
+
+  it("target revision 与 canonical current revision 不一致时不暴露验收", async () => {
+    installViews({
+      ...defaultHandlers,
+      verification: () => ({
+        dto: { ...verificationEligible, targetWorkRevision: 8 as never },
+      }),
+    });
+    renderWork(WORK_CURRENT);
+    await waitFor(() => expect(screen.getByText("crit-render")).toBeTruthy());
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "验收工作成果",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
   });
 
   it("查询 problem → 就地 ProblemCard", async () => {

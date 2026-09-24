@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_WORKBENCH_LAYOUT,
@@ -8,8 +9,71 @@ import {
   RootWorkbenchPage,
   WORKBENCH_LAYOUT_KEY,
 } from "../src/pages/workbench/RootWorkbenchPage.js";
+import { SessionContext } from "../src/session/SessionContext.js";
+import { transcriptTypical, treeTypical } from "../src/views/fixtures.js";
 
 const route = { name: "workbench", projectId: "prj_workbench" } as const;
+
+const session = {
+  token: "tok",
+  actor: "human:test",
+  projectId: route.projectId,
+  unauthenticatedProblem: null,
+  setSession: () => undefined,
+  clearSession: () => undefined,
+  setProjectId: () => undefined,
+  reportUnauthenticated: () => undefined,
+};
+
+const renderWorkbench = () => {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <SessionContext.Provider value={session}>
+        <RootWorkbenchPage route={route} />
+      </SessionContext.Provider>
+    </QueryClientProvider>,
+  );
+};
+
+const installTree = () => {
+  const commandCalls: Array<Record<string, unknown>> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: unknown, init?: { readonly body?: unknown }) => {
+      const url = String(input);
+      if (url === "/commands") {
+        commandCalls.push(
+          JSON.parse(String(init?.body)) as Record<string, unknown>,
+        );
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            status: 200,
+            body: { commandId: "cmd_1", resolution: "Committed" },
+          }),
+          { status: 200 },
+        );
+      }
+      const value = url.includes("/transcript")
+        ? transcriptTypical
+        : treeTypical;
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          status: 200,
+          body: { value, watermark: 1 },
+        }),
+        { status: 200 },
+      );
+    }),
+  );
+  return commandCalls;
+};
 
 afterEach(() => {
   localStorage.clear();
@@ -17,18 +81,37 @@ afterEach(() => {
 });
 
 describe("D3 Root Workbench shell", () => {
-  it("is a no-query skeleton with both desktop panes", () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    render(<RootWorkbenchPage route={route} />);
+  it("uses the responsibility-tree view for real read-only Workbench context", async () => {
+    installTree();
+    renderWorkbench();
     expect(screen.getByRole("heading", { name: "工作台" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "责任树" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "对话" })).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await screen.findByText("平台根工作区")).toBeTruthy();
+    fireEvent.click(screen.getByText("前端渲染"));
+    expect(screen.getByText("打开工作区")).toBeTruthy();
+    expect(location.pathname).toBe("/");
+  });
+
+  it("keeps the composer bound to the unique root when tree inspection changes", async () => {
+    const commandCalls = installTree();
+    renderWorkbench();
+    await screen.findByText("turn#12 请求评审");
+    fireEvent.click(screen.getByText("前端渲染"));
+    fireEvent.change(screen.getByLabelText("消息"), {
+      target: { value: "根工作区消息" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("消息"), { key: "Enter" });
+    await waitFor(() => expect(commandCalls).toHaveLength(1));
+    const payload = commandCalls[0]?.payload as Record<string, unknown>;
+    expect(payload.targetWorkspaceId).toBe(
+      "ws_018f6a2e-0000-7000-8000-000000000001",
+    );
   });
 
   it("swaps panes, drags the local divider, and resets it on double click", () => {
-    render(<RootWorkbenchPage route={route} />);
+    installTree();
+    renderWorkbench();
     const shell = screen.getByTestId("workbench-layout");
     const divider = screen.getByRole("separator", {
       name: "调整责任树与对话比例",
@@ -45,6 +128,9 @@ describe("D3 Root Workbench shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "交换树与对话位置" }));
     expect(shell.dataset.order).toBe("conversation-first");
     fireEvent.pointerDown(divider, { pointerId: 1, clientX: 600 });
+    expect(shell.dataset.treeBasis).toBe(
+      String(DEFAULT_WORKBENCH_LAYOUT.treeBasis),
+    );
     fireEvent.pointerMove(document, { pointerId: 1, clientX: 600 });
     expect(shell.dataset.treeBasis).toBe("40");
     fireEvent.pointerCancel(document, { pointerId: 1 });
@@ -82,7 +168,8 @@ describe("D3 Root Workbench shell", () => {
       ),
     ).toEqual(DEFAULT_WORKBENCH_LAYOUT);
 
-    render(<RootWorkbenchPage route={route} />);
+    installTree();
+    renderWorkbench();
     const saved = JSON.parse(
       localStorage.getItem(WORKBENCH_LAYOUT_KEY) ?? "null",
     ) as Record<string, unknown>;
@@ -92,7 +179,8 @@ describe("D3 Root Workbench shell", () => {
   });
 
   it("persists an edited local layout and restores it without project data", () => {
-    const { unmount } = render(<RootWorkbenchPage route={route} />);
+    installTree();
+    const { unmount } = renderWorkbench();
     const shell = screen.getByTestId("workbench-layout");
     const divider = screen.getByRole("separator", {
       name: "调整责任树与对话比例",
@@ -103,6 +191,7 @@ describe("D3 Root Workbench shell", () => {
     } as DOMRect);
     fireEvent.click(screen.getByRole("button", { name: "交换树与对话位置" }));
     fireEvent.pointerDown(divider, { pointerId: 1, clientX: 600 });
+    fireEvent.pointerMove(document, { pointerId: 1, clientX: 600 });
     fireEvent.pointerUp(document, { pointerId: 1 });
     expect(
       JSON.parse(localStorage.getItem(WORKBENCH_LAYOUT_KEY) ?? "null"),
@@ -111,7 +200,8 @@ describe("D3 Root Workbench shell", () => {
       treeBasis: 40,
     });
     unmount();
-    render(<RootWorkbenchPage route={route} />);
+    installTree();
+    renderWorkbench();
     expect(screen.getByTestId("workbench-layout").dataset.order).toBe(
       "conversation-first",
     );
@@ -119,7 +209,8 @@ describe("D3 Root Workbench shell", () => {
   });
 
   it("uses a local mobile pane switch without changing the route", () => {
-    render(<RootWorkbenchPage route={route} />);
+    installTree();
+    renderWorkbench();
     const shell = screen.getByTestId("workbench-layout");
     const tree = screen.getByRole("button", { name: "责任树" });
     const conversation = screen.getByRole("button", { name: "对话" });

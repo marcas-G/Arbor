@@ -5,6 +5,7 @@
  * 同款客户端组合从 responsibility-tree 节点取（找不到 = 空槽）。
  */
 import type {
+  CurrentWorkSummary,
   Problem,
   TranscriptReq,
   VerificationRes,
@@ -329,30 +330,24 @@ function ContextualGovernance({
 }: {
   readonly projectId: string;
   readonly workspaceId: string;
-  readonly currentWork: {
-    readonly workId?: string | undefined;
-    readonly objective: string;
-    readonly activeExecution?:
-      | { readonly executionId: string; readonly admittedAt: string }
-      | undefined;
-  } | null;
+  readonly currentWork: CurrentWorkSummary | null;
 }) {
   const session = useSession();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"steer" | "stop" | null>(null);
-  const onSubmitted = (receipt: CommandReceiptView): void => {
+  const onSubmitted = (_receipt: CommandReceiptView): void => {
     setMode(null);
     void queryClient.invalidateQueries({ queryKey: ["view"] });
   };
   const executionId = currentWork?.activeExecution?.executionId ?? null;
-  const workId = currentWork?.workId ?? null;
+  const canSteer = currentWork?.workId !== undefined;
   return (
     <div className={styles.governance}>
       <span className={styles.governanceCaption}>上下文治理</span>
       <div className={styles.governanceActions}>
         <Button
           variant="quiet"
-          disabled={workId === null}
+          disabled={!canSteer}
           onClick={() => {
             setMode("steer");
           }}
@@ -369,14 +364,14 @@ function ContextualGovernance({
           紧急停止
         </Button>
       </div>
-      {mode === "steer" && workId !== null ? (
+      {mode === "steer" && currentWork?.workId !== undefined ? (
         <SteerWorkForm
           actor={session.actor ?? ""}
           projectId={projectId}
-          workId={workId}
+          workId={currentWork.workId}
           workspaceId={workspaceId}
-          objective={currentWork?.objective ?? ""}
-          expectedWorkRevision={0}
+          objective={currentWork.objective}
+          expectedWorkRevision={currentWork.revision}
           token={session.token ?? undefined}
           onSubmitted={onSubmitted}
         />

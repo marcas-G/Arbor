@@ -1,4 +1,4 @@
-import { type ReactNode, useId } from "react";
+import { type KeyboardEvent, type ReactNode, useId } from "react";
 import { cx } from "./cx.js";
 import styles from "./Field.module.css";
 
@@ -30,6 +30,9 @@ export type FieldProps =
       readonly control: "textarea";
       readonly rows?: number | undefined;
       readonly placeholder?: string | undefined;
+      readonly onKeyDown?:
+        | ((event: KeyboardEvent<HTMLTextAreaElement>) => void)
+        | undefined;
     });
 
 /** W-01 formal Field: controlled input | select | textarea with label and
@@ -93,6 +96,7 @@ export function Field(props: FieldProps) {
           onChange={(event) => {
             onChange(event.target.value);
           }}
+          onKeyDown={props.onKeyDown}
         />
       );
       break;

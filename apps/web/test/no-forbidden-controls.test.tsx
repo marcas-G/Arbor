@@ -25,12 +25,6 @@ const FORBIDDEN_STREAMING_CHANNELS = [
   "getReader",
 ];
 
-const DEFERRED_D7_REVISION_LITERALS = [
-  "pages/work/WorkPage.tsx: targetWorkRevision={0}",
-  "pages/work/WorkPage.tsx: expectedWorkRevision={0}",
-  "pages/workspace/WorkspacePage.tsx: expectedWorkRevision={0}",
-];
-
 const REVISION_LITERAL =
   /\b(expectedWorkRevision|targetWorkRevision)\s*=\s*\{\s*(-?\d+)\s*\}/g;
 const REVISION_OBJECT_LITERAL =
@@ -110,7 +104,7 @@ describe("no forbidden command controls in src", () => {
     expect(violations).toEqual([]);
   });
 
-  it("adds no revision literal or fallback beyond the explicit D7 debt", () => {
+  it("never submits a revision literal or fallback", () => {
     const deferred: string[] = [];
     const violations: string[] = [];
     for (const path of collectSourceFiles(srcRoot)) {
@@ -126,7 +120,7 @@ describe("no forbidden command controls in src", () => {
         violations.push(`${sourcePath}: zero revision fallback`);
       }
     }
-    expect(deferred).toEqual(DEFERRED_D7_REVISION_LITERALS);
+    expect(deferred).toEqual([]);
     expect(violations).toEqual([]);
   });
 
