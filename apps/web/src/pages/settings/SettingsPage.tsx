@@ -1,20 +1,7 @@
-/**
- * W-07 — Settings 页（frozen §2.10）三块：
- * ① 权限管理：GrantPermissionForm（issuer=actor 只读，冻结组件原样使用）
- *   + RevokePermissionForm——Web v1 无 grants 列表视图，grants 传空数组，
- *   区内展示说明 Empty（待 transport DTO enhancement 后接通），不发明数据；
- * ② 项目：CreateProjectForm（session 未记住当前项目时突出显示）+ 项目
- *   切换说明（URL 是当前项目的权威，切换走 shell 的项目切换器）；
- * ③ 会话：actor/token 状态展示 + 断开（clearSession 回登录态）+ 令牌
- *   仅内存的钉死文案。Grant 回执在表单内呈现，提交成功不跳转。
- */
+/** Frozen Settings capabilities: project/session commands and local layout only. */
 import type { Route } from "../../api/router.js";
 import { CreateProjectForm } from "../../commands/forms/CreateProjectForm.js";
 import { GrantPermissionForm } from "../../commands/forms/GrantPermissionForm.js";
-import {
-  type GrantListItem,
-  RevokePermissionForm,
-} from "../../commands/forms/RevokePermissionForm.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { cx } from "../../components/cx.js";
@@ -22,9 +9,11 @@ import { Empty } from "../../components/Empty.js";
 import { KeyValue, type KeyValuePair } from "../../components/KeyValue.js";
 import { MonoText } from "../../components/MonoText.js";
 import { useSession } from "../../session/SessionContext.js";
+import {
+  DEFAULT_WORKBENCH_LAYOUT,
+  useWorkbenchLayoutPreference,
+} from "../workbench/layoutPreference.js";
 import styles from "./settings.module.css";
-
-const NO_GRANTS: ReadonlyArray<GrantListItem> = [];
 
 function PermissionsSection({
   actor,
@@ -48,16 +37,9 @@ function PermissionsSection({
             token={token}
             onSubmitted={() => undefined}
           />
-          <div className={styles.stack}>
-            <Empty>待授权列表视图（transport DTO enhancement 后接通）</Empty>
-            <RevokePermissionForm
-              actor={actor}
-              projectId={projectId}
-              grants={NO_GRANTS}
-              token={token}
-              onSubmitted={() => undefined}
-            />
-          </div>
+          <p className={styles.note}>
+            当前冻结接口未提供授权清单，无法定位可撤销授权。
+          </p>
         </div>
       )}
     </section>
@@ -67,11 +49,12 @@ function PermissionsSection({
 function ProjectSection({
   actor,
   token,
+  projectId,
 }: {
   readonly actor: string | null;
   readonly token: string | null;
+  readonly projectId: string;
 }) {
-  const { projectId } = useSession();
   return (
     <section className={styles.section} aria-label="项目">
       <h2 className={styles.sectionTitle}>项目</h2>
@@ -92,9 +75,90 @@ function ProjectSection({
         )}
       </div>
       <p className={styles.note}>
-        项目切换：使用左侧栏的项目切换器；URL 中的 projectId 是当前项目的权威。
+        当前项目：<MonoText>{projectId}</MonoText>。项目切换使用左侧栏的切换器。
       </p>
     </section>
+  );
+}
+
+function CapabilityUnavailableSections() {
+  const unavailable = [
+    ["成员管理", "当前冻结接口未提供成员清单或管理能力。"],
+    ["供应商与模型", "当前冻结接口未提供供应商或模型配置能力。"],
+    ["运行时、资源与存储", "当前冻结接口未提供运行时、资源或存储配置能力。"],
+    ["通知与安全策略", "当前冻结接口未提供通知或安全策略配置能力。"],
+  ] as const;
+  return (
+    <div className={styles.unavailableGrid}>
+      {unavailable.map(([label, description]) => (
+        <section
+          key={label}
+          className={styles.unavailableSection}
+          aria-label={label}
+        >
+          <h2 className={styles.sectionTitle}>{label}</h2>
+          <p className={styles.note}>{description}</p>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function WorkbenchPreferences() {
+  const [layout, setLayout] = useWorkbenchLayoutPreference();
+  const setOrder = (order: "tree-first" | "conversation-first"): void => {
+    setLayout((previous) => ({ ...previous, order }));
+  };
+  return (
+    <Card title="工作台偏好">
+      <div className={styles.preferences}>
+        <fieldset className={styles.preferenceGroup}>
+          <legend>面板顺序</legend>
+          <label>
+            <input
+              type="radio"
+              name="workbench-order"
+              value="tree-first"
+              checked={layout.order === "tree-first"}
+              onChange={() => setOrder("tree-first")}
+            />
+            树优先
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="workbench-order"
+              value="conversation-first"
+              checked={layout.order === "conversation-first"}
+              onChange={() => setOrder("conversation-first")}
+            />
+            对话优先
+          </label>
+        </fieldset>
+        <label className={styles.rangePreference}>
+          责任树宽度（桌面）
+          <input
+            type="range"
+            min="30"
+            max="70"
+            step="1"
+            value={layout.treeBasis}
+            aria-valuetext={`${layout.treeBasis}%`}
+            onChange={(event) => {
+              const treeBasis = Number(event.target.value);
+              setLayout((previous) => ({ ...previous, treeBasis }));
+            }}
+          />
+          <span>{layout.treeBasis}%</span>
+        </label>
+        <Button
+          variant="quiet"
+          onClick={() => setLayout(DEFAULT_WORKBENCH_LAYOUT)}
+        >
+          恢复默认布局
+        </Button>
+      </div>
+    </Card>
   );
 }
 
@@ -138,8 +202,10 @@ export function SettingsPage({
         projectId={route.projectId}
         token={token}
       />
-      <ProjectSection actor={actor} token={token} />
+      <ProjectSection actor={actor} token={token} projectId={route.projectId} />
       <SessionSection />
+      <WorkbenchPreferences />
+      <CapabilityUnavailableSections />
     </div>
   );
 }

@@ -14,3 +14,47 @@
   font-weight: 600;
   color: var(--arbor-ink);
 }
+
+.mobileRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mobileRow {
+  min-width: 0;
+  padding: var(--arbor-space-3);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  background: var(--arbor-paper-2);
+}
+
+.rowValues {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--arbor-space-2);
+  margin: 0;
+}
+
+.rowValues > div {
+  min-width: 0;
+}
+
+.rowValues dt {
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-caption);
+}
+
+.rowValues dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 24rem) {
+  .rowValues {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
