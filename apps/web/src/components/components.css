@@ -1,6 +1,18 @@
 /* TR-WPU-A component layer. Every color/size value resolves through a
  * design token (EC-10: literals live only in tokens.css/tokens.ts). */
 
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--arbor-focus);
+  outline-offset: 2px;
+}
+
+html,
+body,
+#root {
+  max-width: 100%;
+  min-width: 0;
+}
+
 /* app shell */
 .arbor-app {
   display: flex;

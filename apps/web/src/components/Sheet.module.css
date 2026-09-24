@@ -67,4 +67,11 @@
     border-left: none;
     border-radius: var(--arbor-radius) var(--arbor-radius) 0 0;
   }
+
+  .sheet[data-mobile-fullscreen="true"] {
+    height: 100%;
+    max-height: none;
+    border-top: none;
+    border-radius: 0;
+  }
 }

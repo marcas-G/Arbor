@@ -7,8 +7,15 @@ export function CommandInlineError({
 }: {
   readonly rejection: string;
 }) {
+  const title =
+    rejection === "RevisionConflict"
+      ? "版本冲突"
+      : rejection === "AuthorityDenied"
+        ? "权限拒绝"
+        : "命令被终态拒绝";
   return (
     <div className="arbor-inline-error" role="alert">
+      <h2 className="arbor-inline-error-title">{title}</h2>
       <p>
         <span className="arbor-mono">{rejection}</span>
       </p>

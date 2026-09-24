@@ -6,6 +6,8 @@
 import type { UsageReq, UsageRes } from "@arbor/api-contracts";
 import { Button } from "../components/Button.js";
 import { Empty } from "../components/Empty.js";
+import { useCompactLayout } from "../components/useCompactLayout.js";
+import styles from "../pages/usage/usage.module.css";
 import { formatCost, Mono } from "./shared.js";
 
 const GROUP_BY_OPTIONS: ReadonlyArray<UsageReq["groupBy"]> = [
@@ -24,6 +26,7 @@ export function UsageView({
   readonly onGroupByChange?: ((next: UsageReq["groupBy"]) => void) | undefined;
 }) {
   const knownGroup = GROUP_BY_OPTIONS.includes(groupBy);
+  const compact = useCompactLayout();
   return (
     <div className="arbor-view-stack">
       <fieldset className="arbor-segmented" aria-label="groupBy">
@@ -40,6 +43,35 @@ export function UsageView({
       </fieldset>
       {res.rows.length === 0 ? (
         <Empty>无用量数据</Empty>
+      ) : compact ? (
+        <ul className={styles.mobileRows} aria-label="用量明细">
+          {res.rows.map((row) => (
+            <li className={styles.mobileRow} key={row.workspaceId}>
+              <dl className={styles.rowValues}>
+                <div>
+                  <dt>workspaceId</dt>
+                  <dd>
+                    <Mono>{row.workspaceId}</Mono>
+                  </dd>
+                </div>
+                <div>
+                  <dt>tokens</dt>
+                  <dd>{String(row.tokens)}</dd>
+                </div>
+                <div>
+                  <dt>cost</dt>
+                  <dd>
+                    <Mono>{formatCost(row.cost)}</Mono>
+                  </dd>
+                </div>
+                <div>
+                  <dt>turns</dt>
+                  <dd>{String(row.turns)}</dd>
+                </div>
+              </dl>
+            </li>
+          ))}
+        </ul>
       ) : (
         <table className="arbor-table">
           <thead>
