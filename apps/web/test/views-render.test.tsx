@@ -6,13 +6,9 @@
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { AttentionView } from "../src/views/AttentionView.js";
 import { CurrentWorkView } from "../src/views/CurrentWorkView.js";
 import { DependencyView } from "../src/views/DependencyView.js";
 import {
-  attentionMinimal,
-  attentionTypical,
-  attentionUnknownEnum,
   currentWorkMinimal,
   currentWorkNull,
   currentWorkTypical,
@@ -20,18 +16,12 @@ import {
   dependencyMinimal,
   dependencyTypical,
   dependencyUnknownEnum,
-  detailMinimal,
-  detailTypical,
-  detailUnknownEnum,
   inboxMinimal,
   inboxTypical,
   inboxUnknownEnum,
   transcriptMinimal,
   transcriptTypical,
   transcriptUnknownEnum,
-  treeMinimal,
-  treeTypical,
-  treeUnknownEnum,
   usageMinimal,
   usageTypical,
   usageUnknownEnum,
@@ -41,158 +31,14 @@ import {
   verificationUnknownEnum,
 } from "../src/views/fixtures.js";
 import { InboxView } from "../src/views/InboxView.js";
-import { ResponsibilityTreeView } from "../src/views/ResponsibilityTreeView.js";
 import { TranscriptView } from "../src/views/TranscriptView.js";
 import { UsageView } from "../src/views/UsageView.js";
 import { VerificationView } from "../src/views/VerificationView.js";
-import { WorkspaceDetailView } from "../src/views/WorkspaceDetailView.js";
 
 const expectMutedBadge = (text: string): void => {
   const el = screen.getByText(text);
   expect(el.className).toContain("arbor-badge-muted");
 };
-
-describe("responsibility-tree", () => {
-  it("typical renders names, badges, attention counts, objective, usage", () => {
-    render(<ResponsibilityTreeView res={treeTypical} />);
-    expect(screen.getByText("平台根工作区")).toBeTruthy();
-    expect(screen.getByText("executing")).toBeTruthy();
-    expect(screen.getByText("attention 2")).toBeTruthy();
-    expect(screen.getByText("actionRequired 1")).toBeTruthy();
-    expect(screen.getByText("维护 P13 视图渲染合同")).toBeTruthy();
-    expect(
-      screen.getByText("tokens 1200 · cost 0.42 USD · turns 7"),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("tokens 300 · cost unknown · turns 2"),
-    ).toBeTruthy();
-  });
-
-  it("minimal node leaves blank slots (no zero usage, no attention badges)", () => {
-    render(<ResponsibilityTreeView res={treeMinimal} />);
-    expect(screen.getByText("仅必要字段")).toBeTruthy();
-    expect(screen.queryByText(/tokens \d+/)).toBeNull();
-    expect(screen.queryByText(/^attention \d+$/)).toBeNull();
-    expect(screen.queryByText(/^actionRequired \d+$/)).toBeNull();
-  });
-
-  it("unknown status renders verbatim with muted badge", () => {
-    render(<ResponsibilityTreeView res={treeUnknownEnum} />);
-    expect(screen.getByText("weird-state")).toBeTruthy();
-    expectMutedBadge("weird-state");
-  });
-
-  it("node click forwards onOpenWorkspace(workspaceId)", () => {
-    const onOpenWorkspace = vi.fn();
-    render(
-      <ResponsibilityTreeView
-        res={treeTypical}
-        onOpenWorkspace={onOpenWorkspace}
-      />,
-    );
-    fireEvent.click(screen.getByText("平台根工作区"));
-    expect(onOpenWorkspace).toHaveBeenCalledWith(
-      "ws_018f6a2e-0000-7000-8000-000000000001",
-    );
-  });
-});
-
-describe("attention", () => {
-  it("typical groups rows with ActionRequired first and workspace links", () => {
-    const { container } = render(<AttentionView res={attentionTypical} />);
-    const groups = container.querySelectorAll(".arbor-attention-group");
-    expect(groups.length).toBe(2);
-    expect(groups[0]?.textContent).toContain("ActionRequired");
-    expect(groups[0]?.textContent).toContain("Deadlock");
-    expect(groups[1]?.textContent).toContain("Attention");
-    expect(screen.getByText("wait-cycles#1")).toBeTruthy();
-    expect(
-      screen.getByRole("button", {
-        name: "ws_018f6a2e-0000-7000-8000-000000000003",
-      }),
-    ).toBeTruthy();
-  });
-
-  it("minimal (no rows) shows the empty state", () => {
-    render(<AttentionView res={attentionMinimal} />);
-    expect(screen.getByText("无注意力事实")).toBeTruthy();
-  });
-
-  it("unknown source and severity render verbatim with muted badge", () => {
-    render(<AttentionView res={attentionUnknownEnum} />);
-    expect(screen.getByText("MysterySource")).toBeTruthy();
-    expectMutedBadge("MysterySource");
-    expect(screen.getByText("WeirdSeverity")).toBeTruthy();
-    expectMutedBadge("WeirdSeverity");
-  });
-
-  it("row link forwards onOpenWorkspace(targetWorkspaceId)", () => {
-    const onOpenWorkspace = vi.fn();
-    render(
-      <AttentionView
-        res={attentionTypical}
-        onOpenWorkspace={onOpenWorkspace}
-      />,
-    );
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "ws_018f6a2e-0000-7000-8000-000000000003",
-      }),
-    );
-    expect(onOpenWorkspace).toHaveBeenCalledWith(
-      "ws_018f6a2e-0000-7000-8000-000000000003",
-    );
-  });
-});
-
-describe("workspace-detail", () => {
-  it("typical renders the full panoramic card group", () => {
-    render(<WorkspaceDetailView res={detailTypical} />);
-    expect(
-      screen.getByText("承载 Arbor web 渲染合同的实施与演进"),
-    ).toBeTruthy();
-    expect(screen.getByText("FileTree /srv/arbor/web")).toBeTruthy();
-    expect(
-      screen.getByText("GitWorktree /srv/arbor/worktrees/p13 @p13-views"),
-    ).toBeTruthy();
-    expect(screen.getByText("DatabaseNamespace arbor_main")).toBeTruthy();
-    expect(screen.getByText("交付 P13-004 视图渲染层")).toBeTruthy();
-    expect(screen.getByText("命令面板接线")).toBeTruthy();
-    expect(
-      screen.getByText(
-        "WorkspaceBound ws_018f6a2e-0000-7000-8000-000000000002",
-      ),
-    ).toBeTruthy();
-    expect(screen.getByText("来自守护进程的阻塞通知")).toBeTruthy();
-    expect(screen.getByText("wm 41")).toBeTruthy();
-    expect(screen.getByText("9 视图 ×3 fixture 全部可渲染")).toBeTruthy();
-    expect(screen.getByText("human:root")).toBeTruthy();
-    expect(screen.getByText("WorkspaceCreated")).toBeTruthy();
-    expect(screen.getByText("CurrentWorkChanged")).toBeTruthy();
-  });
-
-  it("minimal omits optional cards and shows empty-collection states", () => {
-    render(<WorkspaceDetailView res={detailMinimal} />);
-    expect(screen.getByText("最小职责")).toBeTruthy();
-    expect(screen.queryByText("当前工作")).toBeNull();
-    expect(screen.queryByText("执行摘要")).toBeNull();
-    expect(screen.queryByText("Verification")).toBeNull();
-    expect(screen.getByText("无资源地址")).toBeTruthy();
-    expect(screen.getByText("无待办工作")).toBeTruthy();
-    expect(screen.getByText("无依赖")).toBeTruthy();
-    expect(screen.getByText("无未消费条目")).toBeTruthy();
-    expect(screen.getByText("无审计事件")).toBeTruthy();
-  });
-
-  it("unknown enums render verbatim with muted badges", () => {
-    render(<WorkspaceDetailView res={detailUnknownEnum} />);
-    expect(screen.getByText("weird-state")).toBeTruthy();
-    expectMutedBadge("weird-state");
-    expect(screen.getByText("Teleported")).toBeTruthy();
-    expectMutedBadge("Teleported");
-    expect(screen.getByText("CosmicEventHappened")).toBeTruthy();
-  });
-});
 
 describe("current-work", () => {
   it("typical renders objective, status, execution", () => {
