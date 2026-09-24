@@ -1,5 +1,6 @@
 .page {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: var(--arbor-space-3);
 }
@@ -71,11 +72,13 @@
 
 .governanceActions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--arbor-space-2);
 }
 
 .tabPanel {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: var(--arbor-space-3);
 }
@@ -141,4 +144,18 @@
 .pendingRow:focus-visible {
   outline: 2px solid var(--arbor-focus);
   outline-offset: -2px;
+}
+
+@media (max-width: 63.99rem) {
+  .header {
+    padding: var(--arbor-space-3);
+  }
+
+  .governance {
+    align-items: stretch;
+  }
+
+  .governanceActions > * {
+    flex: 1;
+  }
 }

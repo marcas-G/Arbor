@@ -460,7 +460,8 @@ describe("W-08 Governance Queue（待处理）", () => {
     const item = await screen.findByRole("button", { name: /mobile decision/ });
     expect(screen.queryByRole("dialog", { name: "待处理详情" })).toBeNull();
     fireEvent.click(item);
-    expect(screen.getByRole("dialog", { name: "待处理详情" })).toBeTruthy();
+    const detailSheet = screen.getByRole("dialog", { name: "待处理详情" });
+    expect(detailSheet.getAttribute("data-mobile-fullscreen")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "关闭" }));
     expect(screen.queryByRole("dialog", { name: "待处理详情" })).toBeNull();
     Object.defineProperty(window, "innerWidth", {

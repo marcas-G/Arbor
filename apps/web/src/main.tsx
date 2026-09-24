@@ -6,6 +6,7 @@ import "./components/components.css";
 import "./views/views.css";
 import "./problems/problems.css";
 import "./session/session.css";
+import "./styles/accessibility.css";
 
 const root = document.getElementById("root");
 if (root === null) {

@@ -374,6 +374,7 @@ export function QueuePage({
           <Sheet
             open={mobileSheetOpen}
             title="待处理详情"
+            mobileFullscreen
             onClose={() => {
               setSelectedId(null);
               setAcceptanceOpenFor(null);

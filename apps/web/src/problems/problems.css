@@ -60,3 +60,8 @@
   color: var(--arbor-danger);
   font-size: var(--arbor-text-small);
 }
+
+.arbor-inline-error-title {
+  margin: 0;
+  font-size: var(--arbor-text-body);
+}
