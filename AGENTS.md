@@ -32,8 +32,10 @@ If a code implementation discovers a design gap: **stop implementation and raise
 - `planning/results/` — completion evidence, verification output per phase
 
 Current authorization state: **P0–P14 COMPLETE; P14 FORMALLY CLOSED; D-1 Product UI
-Contract Closure COMPLETE; D0–D3 Web Product UI Foundation COMPLETE. D4–D10 Web Product UI
-implementation remain explicitly unauthorized.**
+Contract Closure COMPLETE; D0–D3 Web Product UI Foundation COMPLETE; D4–D6 Web Product UI
+Core Workbench COMPLETE / PHASE-BOUNDARY CLOSED**
+(`planning/results/D4-D6-web-product-ui-core-workbench.result.md`).
+**D7–D10 Web Product UI implementation remain explicitly NOT AUTHORIZED.**
 **SYSTEM IMPLEMENTATION COMPLETE** — **FINAL CLOSURE PASS**
 (`planning/final-system-closure.md`; `planning/results/ARBOR_FINAL.result.md`).
 P14 (Chat-First 主工作区对话面 — DID v1.16 G-A–G-F: SubmitHumanMessage +
