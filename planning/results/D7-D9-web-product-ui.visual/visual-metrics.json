@@ -1,0 +1,495 @@
+[
+  {
+    "file": "1920-workbench.png",
+    "viewport": [1920, 900],
+    "documentWidth": 1920,
+    "bodyWidth": 1920,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1920_workbench\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1920_workbe",
+    "expected": "Arbor Workbench"
+  },
+  {
+    "file": "1920-queue.png",
+    "viewport": [1920, 900],
+    "documentWidth": 1920,
+    "bodyWidth": 1920,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1920_queue\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1920_queue / 待处",
+    "expected": "批准平台拆分决议"
+  },
+  {
+    "file": "1920-attention.png",
+    "viewport": [1920, 900],
+    "documentWidth": 1920,
+    "bodyWidth": 1920,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1920_attention\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1920_attent",
+    "expected": "wait-cycles#1"
+  },
+  {
+    "file": "1920-work.png",
+    "viewport": [1920, 900],
+    "documentWidth": 1920,
+    "bodyWidth": 1920,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1920_work\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1920_work / ws_0",
+    "expected": "验证与验收"
+  },
+  {
+    "file": "1920-usage.png",
+    "viewport": [1920, 900],
+    "documentWidth": 1920,
+    "bodyWidth": 1920,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1920_usage\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1920_usage / 用量",
+    "expected": "用量明细"
+  },
+  {
+    "file": "1920-settings.png",
+    "viewport": [1920, 900],
+    "documentWidth": 1920,
+    "bodyWidth": 1920,
+    "scrollHeight": 1634,
+    "active": "Arbor\n项目\nprj_1920_settings\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1920_setting",
+    "expected": "成员管理"
+  },
+  {
+    "file": "1440-workbench.png",
+    "viewport": [1440, 900],
+    "documentWidth": 1440,
+    "bodyWidth": 1440,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1440_workbench\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1440_workbe",
+    "expected": "Arbor Workbench"
+  },
+  {
+    "file": "1440-queue.png",
+    "viewport": [1440, 900],
+    "documentWidth": 1440,
+    "bodyWidth": 1440,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1440_queue\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1440_queue / 待处",
+    "expected": "批准平台拆分决议"
+  },
+  {
+    "file": "1440-attention.png",
+    "viewport": [1440, 900],
+    "documentWidth": 1440,
+    "bodyWidth": 1440,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1440_attention\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1440_attent",
+    "expected": "wait-cycles#1"
+  },
+  {
+    "file": "1440-work.png",
+    "viewport": [1440, 900],
+    "documentWidth": 1440,
+    "bodyWidth": 1440,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1440_work\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1440_work / ws_0",
+    "expected": "验证与验收"
+  },
+  {
+    "file": "1440-usage.png",
+    "viewport": [1440, 900],
+    "documentWidth": 1440,
+    "bodyWidth": 1440,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1440_usage\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1440_usage / 用量",
+    "expected": "用量明细"
+  },
+  {
+    "file": "1440-settings.png",
+    "viewport": [1440, 900],
+    "documentWidth": 1440,
+    "bodyWidth": 1440,
+    "scrollHeight": 1634,
+    "active": "Arbor\n项目\nprj_1440_settings\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1440_setting",
+    "expected": "成员管理"
+  },
+  {
+    "file": "1280-workbench.png",
+    "viewport": [1280, 900],
+    "documentWidth": 1280,
+    "bodyWidth": 1280,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1280_workbench\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1280_workbe",
+    "expected": "Arbor Workbench"
+  },
+  {
+    "file": "1280-queue.png",
+    "viewport": [1280, 900],
+    "documentWidth": 1280,
+    "bodyWidth": 1280,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1280_queue\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1280_queue / 待处",
+    "expected": "批准平台拆分决议"
+  },
+  {
+    "file": "1280-attention.png",
+    "viewport": [1280, 900],
+    "documentWidth": 1280,
+    "bodyWidth": 1280,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1280_attention\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1280_attent",
+    "expected": "wait-cycles#1"
+  },
+  {
+    "file": "1280-work.png",
+    "viewport": [1280, 900],
+    "documentWidth": 1280,
+    "bodyWidth": 1280,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1280_work\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1280_work / ws_0",
+    "expected": "验证与验收"
+  },
+  {
+    "file": "1280-usage.png",
+    "viewport": [1280, 900],
+    "documentWidth": 1280,
+    "bodyWidth": 1280,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1280_usage\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1280_usage / 用量",
+    "expected": "用量明细"
+  },
+  {
+    "file": "1280-settings.png",
+    "viewport": [1280, 900],
+    "documentWidth": 1280,
+    "bodyWidth": 1280,
+    "scrollHeight": 1634,
+    "active": "Arbor\n项目\nprj_1280_settings\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1280_setting",
+    "expected": "成员管理"
+  },
+  {
+    "file": "1024-workbench.png",
+    "viewport": [1024, 900],
+    "documentWidth": 1024,
+    "bodyWidth": 1024,
+    "scrollHeight": 956,
+    "active": "Arbor\n项目\nprj_1024_workbench\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1024_workbe",
+    "expected": "Arbor Workbench"
+  },
+  {
+    "file": "1024-queue.png",
+    "viewport": [1024, 900],
+    "documentWidth": 1024,
+    "bodyWidth": 1024,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1024_queue\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1024_queue / 待处",
+    "expected": "批准平台拆分决议"
+  },
+  {
+    "file": "1024-attention.png",
+    "viewport": [1024, 900],
+    "documentWidth": 1024,
+    "bodyWidth": 1024,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1024_attention\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1024_attent",
+    "expected": "wait-cycles#1"
+  },
+  {
+    "file": "1024-work.png",
+    "viewport": [1024, 900],
+    "documentWidth": 1024,
+    "bodyWidth": 1024,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1024_work\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1024_work / ws_0",
+    "expected": "验证与验收"
+  },
+  {
+    "file": "1024-usage.png",
+    "viewport": [1024, 900],
+    "documentWidth": 1024,
+    "bodyWidth": 1024,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_1024_usage\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1024_usage / 用量",
+    "expected": "用量明细"
+  },
+  {
+    "file": "1024-settings.png",
+    "viewport": [1024, 900],
+    "documentWidth": 1024,
+    "bodyWidth": 1024,
+    "scrollHeight": 1634,
+    "active": "Arbor\n项目\nprj_1024_settings\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_1024_setting",
+    "expected": "成员管理"
+  },
+  {
+    "file": "768-workbench.png",
+    "viewport": [768, 900],
+    "documentWidth": 768,
+    "bodyWidth": 768,
+    "scrollHeight": 1067,
+    "active": "Arbor\n项目\nprj_768_workbench\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_768_workbenc",
+    "expected": "Arbor Workbench"
+  },
+  {
+    "file": "768-queue.png",
+    "viewport": [768, 900],
+    "documentWidth": 768,
+    "bodyWidth": 768,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_768_queue\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_768_queue / 待处理\n",
+    "expected": "批准平台拆分决议"
+  },
+  {
+    "file": "768-attention.png",
+    "viewport": [768, 900],
+    "documentWidth": 768,
+    "bodyWidth": 768,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_768_attention\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_768_attentio",
+    "expected": "wait-cycles#1"
+  },
+  {
+    "file": "768-work.png",
+    "viewport": [768, 900],
+    "documentWidth": 768,
+    "bodyWidth": 768,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_768_work\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_768_work / ws_018",
+    "expected": "验证与验收"
+  },
+  {
+    "file": "768-usage.png",
+    "viewport": [768, 900],
+    "documentWidth": 768,
+    "bodyWidth": 768,
+    "scrollHeight": 900,
+    "active": "Arbor\n项目\nprj_768_usage\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_768_usage / 用量\n实",
+    "expected": "用量明细"
+  },
+  {
+    "file": "768-settings.png",
+    "viewport": [768, 900],
+    "documentWidth": 768,
+    "bodyWidth": 768,
+    "scrollHeight": 1930,
+    "active": "Arbor\n项目\nprj_768_settings\n工作台\n树\n待处理\n关注事项\n用量\n设置\nhuman:visual\n断开\nprj_768_settings ",
+    "expected": "成员管理"
+  },
+  {
+    "file": "390-workbench.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 1029,
+    "active": "prj_390_workbench / 工作台\n实时\n\nARBOR WORKBENCH\n\n工作台\n\n以责任树组织工作，并在对话中保持协作上下文。\n\n项目\nprj",
+    "expected": "Arbor Workbench"
+  },
+  {
+    "file": "390-queue.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "prj_390_queue / 待处理\n实时\n\nACTIONABLE INBOX\n\n待处理\n\n仅显示具有精确结构化目标的决策与验收事项。\n\nACTIONABLE",
+    "expected": "批准平台拆分决议"
+  },
+  {
+    "file": "390-attention.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "prj_390_attention / 关注事项\n实时\n\nREAD-ONLY MONITORING\n\n关注事项\n诊断面 · 只读\n按来源筛选\n全部\nDEPEND",
+    "expected": "wait-cycles#1"
+  },
+  {
+    "file": "390-work.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 900,
+    "active": "prj_390_work / ws_018f6a2e-0000-7000-8000-000000000001 / wrk_018f6a2e-0000-7000-",
+    "expected": "验证与验收"
+  },
+  {
+    "file": "390-usage.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "prj_390_usage / 用量\n实时\n用量\n用量明细\nworkspace\nsubtree\nproject\nworkspaceId\nws_018f6a2e-",
+    "expected": "用量明细"
+  },
+  {
+    "file": "390-settings.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 1989,
+    "active": "prj_390_settings / 设置\n实时\n设置\n权限管理\n授予权限（GrantPermission）\ncapability\ntarget（可选）\nlif",
+    "expected": "成员管理"
+  },
+  {
+    "file": "390-mobile-conversation.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 1029,
+    "active": "prj_mobile_tree / 工作台\n实时\n\nARBOR WORKBENCH\n\n工作台\n\n以责任树组织工作，并在对话中保持协作上下文。\n\n项目\nprj_m",
+    "expected": "对话"
+  },
+  {
+    "file": "390-mobile-tree.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "责任树",
+    "expected": "平台根工作区"
+  },
+  {
+    "file": "390-mobile-queue-detail-sheet.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "关闭",
+    "expected": "待处理详情"
+  },
+  {
+    "file": "390-mobile-attention-detail-sheet.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "关闭",
+    "expected": "Read-only inspection"
+  },
+  {
+    "file": "390-mobile-acceptance-receipt.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "prj_mobile_acceptance / 待处理\n实时\n\nACTIONABLE INBOX\n\n待处理\n\n仅显示具有精确结构化目标的决策与验收事项。\n\nAC",
+    "expected": "已提交"
+  },
+  {
+    "file": "390-keyboard-visible-focus.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "全部",
+    "expected": null,
+    "keyboardFocus": {
+      "element": "Attention source filter button",
+      "focusVisible": true,
+      "outlineStyle": "solid",
+      "outlineWidth": "2px",
+      "outlineOffset": "-2px"
+    }
+  },
+  {
+    "file": "390-settings-bottom.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 1989,
+    "active": "prj_settings_bottom / 设置\n实时\n设置\n权限管理\n授予权限（GrantPermission）\ncapability\ntarget（可选）\n",
+    "expected": "通知与安全策略"
+  },
+  {
+    "file": "390-state-empty.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "prj_state_empty / 关注事项\n实时\n\nREAD-ONLY MONITORING\n\n关注事项\n诊断面 · 只读\n无关注事项\n工作台\n树\n待处理\n关",
+    "expected": "无关注事项"
+  },
+  {
+    "file": "390-state-loading.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "prj_state_loading / 关注事项\n实时\n\nREAD-ONLY MONITORING\n\n关注事项\n诊断面 · 只读\n正在加载关注事项\n工作台\n树\n",
+    "expected": "正在加载关注事项"
+  },
+  {
+    "file": "390-state-refreshing.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "更多",
+    "expected": "正在刷新服务器数据"
+  },
+  {
+    "file": "390-state-stale.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "更多",
+    "expected": "数据滞后"
+  },
+  {
+    "file": "390-state-authority-denied.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "更多",
+    "expected": "权限拒绝"
+  },
+  {
+    "file": "390-state-validation.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "更多",
+    "expected": "请求错误"
+  },
+  {
+    "file": "390-state-unavailable.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "更多",
+    "expected": "服务不可用"
+  },
+  {
+    "file": "390-state-unknown-problem.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "更多",
+    "expected": "未知问题"
+  },
+  {
+    "file": "390-mobile-decision-receipt.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "提交决策",
+    "expected": "已提交"
+  },
+  {
+    "file": "390-state-revision-conflict.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "提交决策",
+    "expected": "版本冲突"
+  },
+  {
+    "file": "390-state-unauthorized.png",
+    "viewport": [390, 844],
+    "documentWidth": 390,
+    "bodyWidth": 390,
+    "scrollHeight": 844,
+    "active": "未认证\nUNAUTHORIZED\n\n请提供访问令牌（token）后重连；内容区已屏蔽。\n\n问题详情\n重新登录",
+    "expected": "未认证"
+  }
+]
