@@ -45,17 +45,6 @@ function stubFetch(impl: FetchImpl): FetchFn {
   return fetchMock as unknown as FetchFn;
 }
 
-function readCall(
-  fetchMock: FetchMock,
-  index = 0,
-): readonly [string, RequestInit] {
-  const call = fetchMock.mock.calls[index];
-  if (call === undefined) {
-    throw new Error(`fetch call ${index} was not made`);
-  }
-  return call;
-}
-
 async function login(actor = "human:root", token = "tok_1"): Promise<void> {
   fireEvent.change(screen.getByLabelText(/token/), {
     target: { value: token },

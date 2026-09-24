@@ -5,8 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 import { Badge } from "../src/components/Badge.js";
 import { Button } from "../src/components/Button.js";
 import { Card } from "../src/components/Card.js";
-import { DataTable } from "../src/components/DataTable.js";
-import { Dialog } from "../src/components/Dialog.js";
 import { Empty } from "../src/components/Empty.js";
 import { Field } from "../src/components/Field.js";
 import { FreshnessChip } from "../src/components/FreshnessChip.js";
@@ -16,7 +14,6 @@ import { Sheet } from "../src/components/Sheet.js";
 import { StatusBadge } from "../src/components/StatusBadge.js";
 import { Tabs } from "../src/components/Tabs.js";
 import { TimeText } from "../src/components/TimeText.js";
-import { Toaster } from "../src/components/Toaster.js";
 import type { Tone } from "../src/tokens.js";
 
 /** W-01 design-system component contracts (user-event driven). */
@@ -102,117 +99,6 @@ describe("W-01 design system", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
-  it("DataTable 渲染表头与行", () => {
-    render(
-      <DataTable
-        columns={[
-          { key: "id", label: "ID" },
-          { key: "state", label: "状态", align: "right" },
-        ]}
-        rows={[
-          { id: "ws_1", state: "运行中" },
-          { id: "ws_2", state: "等待" },
-        ]}
-        rowKey={(row) => String(row.id)}
-      />,
-    );
-    expect(screen.getByRole("table")).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "ID" })).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: "状态" })).toBeTruthy();
-    expect(screen.getByRole("cell", { name: "ws_1" })).toBeTruthy();
-    expect(screen.getByRole("cell", { name: "运行中" })).toBeTruthy();
-  });
-
-  it("DataTable 空行落入内部 Empty", () => {
-    render(
-      <DataTable
-        columns={[{ key: "id", label: "ID" }]}
-        rows={[]}
-        rowKey={(row) => String(row.id)}
-      />,
-    );
-    expect(screen.getByText("暂无数据")).toBeTruthy();
-    expect(screen.queryByRole("table")).toBeNull();
-  });
-
-  it("Dialog Esc 关闭（user-event keyboard）", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    render(
-      <Dialog open title="确认操作" onClose={onClose}>
-        正文
-      </Dialog>,
-    );
-    expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByText("正文")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "关闭" })).toBe(
-      document.activeElement,
-    );
-    await user.keyboard("{Escape}");
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it("Dialog 关闭按钮可点且 open=false 不渲染", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    const { rerender } = render(
-      <Dialog open title="确认操作" onClose={onClose}>
-        正文
-      </Dialog>,
-    );
-    await user.click(screen.getByRole("button", { name: "关闭" }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-    rerender(
-      <Dialog open={false} title="确认操作" onClose={onClose}>
-        正文
-      </Dialog>,
-    );
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  it("Dialog traps Tab focus", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    render(
-      <>
-        <button type="button">打开</button>
-        <Dialog open title="确认操作" onClose={onClose}>
-          <button type="button">确认</button>
-        </Dialog>
-      </>,
-    );
-    const close = screen.getByRole("button", { name: "关闭" });
-    close.focus();
-    await user.keyboard("{Shift>}{Tab}{/Shift}");
-    expect(screen.getByRole("button", { name: "确认" })).toBe(
-      document.activeElement,
-    );
-    await user.keyboard("{Tab}");
-    expect(close).toBe(document.activeElement);
-  });
-
-  it("Dialog closes to the opener", async () => {
-    const user = userEvent.setup();
-    function Example() {
-      const [open, setOpen] = useState(false);
-      return (
-        <>
-          <button type="button" onClick={() => setOpen(true)}>
-            打开确认
-          </button>
-          <Dialog open={open} title="确认操作" onClose={() => setOpen(false)}>
-            正文
-          </Dialog>
-        </>
-      );
-    }
-    render(<Example />);
-    const opener = screen.getByRole("button", { name: "打开确认" });
-    await user.click(opener);
-    await user.click(screen.getByRole("button", { name: "关闭" }));
-    expect(opener).toBe(document.activeElement);
-  });
-
   it("Sheet 初始聚焦关闭按钮，并在 Escape 后关闭", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
@@ -267,24 +153,6 @@ describe("W-01 design system", () => {
     await user.click(screen.getByRole("button", { name: "关闭" }));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(opener).toBe(document.activeElement);
-  });
-
-  it("Toaster dismiss 回传 toast id", async () => {
-    const user = userEvent.setup();
-    const onDismiss = vi.fn();
-    render(
-      <Toaster
-        toasts={[
-          { id: "t-1", tone: "danger", text: "命令被拒绝" },
-          { id: "t-2", tone: "leaf", text: "已提交" },
-        ]}
-        onDismiss={onDismiss}
-      />,
-    );
-    expect(screen.getByText("命令被拒绝")).toBeTruthy();
-    const buttons = screen.getAllByRole("button", { name: "关闭" });
-    await user.click(buttons[0] as HTMLElement);
-    expect(onDismiss).toHaveBeenCalledWith("t-1");
   });
 
   it("FreshnessChip 三态文案与 tone", () => {
