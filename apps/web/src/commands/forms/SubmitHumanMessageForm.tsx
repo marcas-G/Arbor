@@ -78,6 +78,12 @@ export function SubmitHumanMessageForm({
         onChange={(next) => {
           setValue("bodyRef", next);
         }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            doSubmit();
+          }
+        }}
       />
       {formState.errors.bodyRef ? (
         <p className="arbor-command-error">

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_WORKBENCH_LAYOUT,
@@ -10,7 +10,7 @@ import {
   WORKBENCH_LAYOUT_KEY,
 } from "../src/pages/workbench/RootWorkbenchPage.js";
 import { SessionContext } from "../src/session/SessionContext.js";
-import { treeTypical } from "../src/views/fixtures.js";
+import { transcriptTypical, treeTypical } from "../src/views/fixtures.js";
 
 const route = { name: "workbench", projectId: "prj_workbench" } as const;
 
@@ -41,20 +41,38 @@ const renderWorkbench = () => {
 };
 
 const installTree = () => {
+  const commandCalls: Array<Record<string, unknown>> = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(
-      async () =>
-        new Response(
+    vi.fn(async (input: unknown, init?: { readonly body?: unknown }) => {
+      const url = String(input);
+      if (url === "/commands") {
+        commandCalls.push(
+          JSON.parse(String(init?.body)) as Record<string, unknown>,
+        );
+        return new Response(
           JSON.stringify({
             ok: true,
             status: 200,
-            body: { value: treeTypical, watermark: 1 },
+            body: { commandId: "cmd_1", resolution: "Committed" },
           }),
           { status: 200 },
-        ),
-    ),
+        );
+      }
+      const value = url.includes("/transcript")
+        ? transcriptTypical
+        : treeTypical;
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          status: 200,
+          body: { value, watermark: 1 },
+        }),
+        { status: 200 },
+      );
+    }),
   );
+  return commandCalls;
 };
 
 afterEach(() => {
@@ -73,6 +91,22 @@ describe("D3 Root Workbench shell", () => {
     fireEvent.click(screen.getByText("前端渲染"));
     expect(screen.getByText("打开工作区")).toBeTruthy();
     expect(location.pathname).toBe("/");
+  });
+
+  it("keeps the composer bound to the unique root when tree inspection changes", async () => {
+    const commandCalls = installTree();
+    renderWorkbench();
+    await screen.findByText("turn#12 请求评审");
+    fireEvent.click(screen.getByText("前端渲染"));
+    fireEvent.change(screen.getByLabelText("消息"), {
+      target: { value: "根工作区消息" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("消息"), { key: "Enter" });
+    await waitFor(() => expect(commandCalls).toHaveLength(1));
+    const payload = commandCalls[0]?.payload as Record<string, unknown>;
+    expect(payload.targetWorkspaceId).toBe(
+      "ws_018f6a2e-0000-7000-8000-000000000001",
+    );
   });
 
   it("swaps panes, drags the local divider, and resets it on double click", () => {

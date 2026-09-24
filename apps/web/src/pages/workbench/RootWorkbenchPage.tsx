@@ -16,6 +16,7 @@ import { MonoText } from "../../components/MonoText.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { presentResponsibilityTree } from "../tree/treePresentation.js";
+import { ConversationRecord } from "../workspace/ConversationTab.js";
 import styles from "./workbench.module.css";
 
 type ProjectId = ViewRequestMap["responsibility-tree"]["projectId"];
@@ -222,10 +223,19 @@ function TreePane({
 }
 
 function ConversationPane({
+  projectId,
   hiddenOnMobile,
 }: {
+  readonly projectId: string;
   readonly hiddenOnMobile: boolean;
 }) {
+  const tree = useViewQuery("responsibility-tree", {
+    projectId: projectId as ProjectId,
+  });
+  const presented =
+    tree.data === undefined
+      ? undefined
+      : presentResponsibilityTree(tree.data.nodes);
   return (
     <section
       className={`${styles.pane} ${styles.conversationPane} ${hiddenOnMobile ? styles.mobileHidden : ""}`}
@@ -236,16 +246,33 @@ function ConversationPane({
           <p className={styles.eyebrow}>协作上下文</p>
           <h2 id="workbench-conversation-title">对话</h2>
         </div>
-        <span className={styles.paneState}>等待选择</span>
+        <span className={styles.paneState}>根工作区</span>
       </header>
-      <Empty>从责任树选择工作区后，在这里查看对话上下文。</Empty>
+      {tree.isPending ? (
+        <Empty>正在确认根工作区</Empty>
+      ) : tree.isError ? (
+        <ProblemCard
+          problem={tree.error as unknown as Problem}
+          onRetry={() => {
+            void tree.refetch();
+          }}
+        />
+      ) : presented === null || presented === undefined ? (
+        <Empty>责任树结构不可用，无法绑定根对话。</Empty>
+      ) : (
+        <ConversationRecord
+          projectId={projectId}
+          workspaceId={presented.root.workspaceId}
+          rootWorkspaceId={presented.root.workspaceId}
+        />
+      )}
     </section>
   );
 }
 
 /**
- * D4 product landing: tree is a server-read-only context. Conversation is
- * intentionally connected in D6; neither pane owns canonical layout state.
+ * D6 product landing: tree and conversation are server views; layout remains
+ * a local presentation preference only.
  */
 export function RootWorkbenchPage({
   route,
@@ -324,12 +351,14 @@ export function RootWorkbenchPage({
           />,
           <ConversationPane
             key="conversation"
+            projectId={route.projectId}
             hiddenOnMobile={mobilePane !== "conversation"}
           />,
         ]
       : [
           <ConversationPane
             key="conversation"
+            projectId={route.projectId}
             hiddenOnMobile={mobilePane !== "conversation"}
           />,
           <TreePane
