@@ -2,25 +2,53 @@
   display: flex;
   flex-direction: column;
   gap: var(--arbor-space-3);
+  min-width: 0;
 }
 
 .header {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--arbor-space-3);
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--arbor-space-2) var(--arbor-space-3);
 }
 
 .title {
   margin: 0;
   font-family: var(--arbor-font-sans);
-  font-size: var(--arbor-text-title);
+  font-size: var(--arbor-text-display);
   color: var(--arbor-ink);
+}
+
+.eyebrow {
+  margin: 0 0 var(--arbor-space-1);
+  color: var(--arbor-leaf);
+  font-family: var(--arbor-font-mono);
+  font-size: var(--arbor-text-caption);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .caption {
   font-size: var(--arbor-text-caption);
   color: var(--arbor-muted);
+}
+
+.refreshing {
+  margin: 0;
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+
+.staleProblem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+}
+
+.staleProblem > p {
+  margin: 0;
+  color: var(--arbor-ink-soft);
 }
 
 .filterBar {
@@ -54,6 +82,7 @@
   font-family: inherit;
   font-size: var(--arbor-text-small);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .chip[aria-pressed="true"] {
@@ -70,6 +99,15 @@
   display: flex;
   flex-direction: column;
   gap: var(--arbor-space-3);
+  min-width: 0;
+}
+
+.inspectionLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(20rem, 0.9fr);
+  align-items: start;
+  gap: var(--arbor-space-3);
+  min-width: 0;
 }
 
 .group {
@@ -80,6 +118,7 @@
   border: 1px solid var(--arbor-line);
   border-radius: var(--arbor-radius);
   background: var(--arbor-surface);
+  min-width: 0;
 }
 
 .groupTitle {
@@ -101,13 +140,124 @@
   list-style: none;
 }
 
-.row {
+.rowButton {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--arbor-space-3);
-  padding: var(--arbor-space-1) var(--arbor-space-2);
+  justify-content: space-between;
+  width: 100%;
+  min-width: 0;
+  gap: var(--arbor-space-2) var(--arbor-space-3);
+  padding: var(--arbor-space-2);
   border: 1px solid var(--arbor-line);
+  border-left: 3px solid var(--arbor-attention);
   border-radius: var(--arbor-radius-small);
   background: var(--arbor-paper-2);
+  color: var(--arbor-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rowButton:hover,
+.rowButton[aria-pressed="true"] {
+  border-color: var(--arbor-leaf);
+  background: var(--arbor-leaf-pale);
+}
+
+.rowButton:focus-visible {
+  outline: 2px solid var(--arbor-focus);
+  outline-offset: 2px;
+}
+
+.rowMeta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--arbor-space-1);
+}
+
+.targetPreview {
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-caption);
+  overflow-wrap: anywhere;
+}
+
+.inspectionPanel {
+  position: sticky;
+  top: var(--arbor-space-3);
+  min-width: 0;
+  min-height: 20rem;
+  padding: var(--arbor-space-3);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  background: var(--arbor-surface);
+}
+
+.inspection {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--arbor-space-3);
+  min-width: 0;
+}
+
+.inspectionHeading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  width: 100%;
+  gap: var(--arbor-space-2);
+}
+
+.inspectionHeading h2 {
+  margin: 0;
+  color: var(--arbor-ink);
+  font-size: var(--arbor-text-title);
+  overflow-wrap: anywhere;
+}
+
+.inspectionFields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  gap: var(--arbor-space-2);
+  margin: 0;
+}
+
+.inspectionFields > div {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.7fr) minmax(0, 1.3fr);
+  align-items: start;
+  gap: var(--arbor-space-2);
+  padding-bottom: var(--arbor-space-2);
+  border-bottom: 1px solid var(--arbor-line);
+  min-width: 0;
+}
+
+.inspectionFields dt {
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-caption);
+}
+
+.inspectionFields dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.readOnlyNote {
+  margin: 0;
+  color: var(--arbor-muted);
+  font-size: var(--arbor-text-small);
+}
+
+@media (max-width: 63.99rem) {
+  .inspectionLayout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inspectionPanel {
+    display: none;
+  }
 }
