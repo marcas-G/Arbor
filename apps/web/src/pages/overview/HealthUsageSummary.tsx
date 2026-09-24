@@ -2,7 +2,7 @@
  * W-03 区块③ 健康与用量摘要：a) attention 按 severity 计数两枚 Badge；
  * b) usage(projectId, groupBy:"project") 汇总行——合计只在 server DTO
  * rows 存在时呈现，不做浏览器端跨行聚合；c) 钉死文案
- * "Root Workspace 最近活动"——root（tree.nodes[0]）workspace-detail 的
+ * "Root Workspace 最近活动"——the unique null-parent Tree node's detail
  * auditTimeline 尾部 ≤5 条。三个子小节各自独立呈现查询 Problem。
  */
 import type { TreeViewRes } from "@arbor/api-contracts";
@@ -31,7 +31,9 @@ export function HealthUsageSummary({
     projectId: projectId as never,
     groupBy: "project",
   });
-  const rootWorkspaceId = treeQuery.data?.nodes[0]?.workspaceId ?? null;
+  const rootWorkspaceId =
+    treeQuery.data?.nodes.find((node) => node.parentWorkspaceId === null)
+      ?.workspaceId ?? null;
   const detailQuery = useViewQuery(
     "workspace-detail",
     rootWorkspaceId === null ? null : { workspaceId: rootWorkspaceId },

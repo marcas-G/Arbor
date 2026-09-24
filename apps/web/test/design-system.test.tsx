@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { Badge } from "../src/components/Badge.js";
 import { Button } from "../src/components/Button.js";
@@ -11,6 +12,7 @@ import { Field } from "../src/components/Field.js";
 import { FreshnessChip } from "../src/components/FreshnessChip.js";
 import { KeyValue } from "../src/components/KeyValue.js";
 import { MonoText } from "../src/components/MonoText.js";
+import { Sheet } from "../src/components/Sheet.js";
 import { StatusBadge } from "../src/components/StatusBadge.js";
 import { Tabs } from "../src/components/Tabs.js";
 import { TimeText } from "../src/components/TimeText.js";
@@ -56,6 +58,7 @@ describe("W-01 design system", () => {
     );
     const button = screen.getByRole("button", { name: "提交" });
     expect(button.getAttribute("type")).toBe("submit");
+    expect(button.className).toContain("arbor-button-primary");
     await user.click(button);
     expect(onClick).toHaveBeenCalledTimes(1);
   });
@@ -142,6 +145,9 @@ describe("W-01 design system", () => {
     );
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByText("正文")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "关闭" })).toBe(
+      document.activeElement,
+    );
     await user.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -162,6 +168,105 @@ describe("W-01 design system", () => {
       </Dialog>,
     );
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Dialog traps Tab focus", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <>
+        <button type="button">打开</button>
+        <Dialog open title="确认操作" onClose={onClose}>
+          <button type="button">确认</button>
+        </Dialog>
+      </>,
+    );
+    const close = screen.getByRole("button", { name: "关闭" });
+    close.focus();
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+    expect(screen.getByRole("button", { name: "确认" })).toBe(
+      document.activeElement,
+    );
+    await user.keyboard("{Tab}");
+    expect(close).toBe(document.activeElement);
+  });
+
+  it("Dialog closes to the opener", async () => {
+    const user = userEvent.setup();
+    function Example() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            打开确认
+          </button>
+          <Dialog open={open} title="确认操作" onClose={() => setOpen(false)}>
+            正文
+          </Dialog>
+        </>
+      );
+    }
+    render(<Example />);
+    const opener = screen.getByRole("button", { name: "打开确认" });
+    await user.click(opener);
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    expect(opener).toBe(document.activeElement);
+  });
+
+  it("Sheet 初始聚焦关闭按钮，并在 Escape 后关闭", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <Sheet open title="项目切换" onClose={onClose}>
+        内容
+      </Sheet>,
+    );
+    expect(screen.getByRole("dialog", { name: "项目切换" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "关闭" })).toBe(
+      document.activeElement,
+    );
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("Sheet 在 open=false 时不渲染", () => {
+    render(
+      <Sheet open={false} title="项目切换" onClose={() => {}}>
+        内容
+      </Sheet>,
+    );
+    expect(screen.queryByRole("dialog", { name: "项目切换" })).toBeNull();
+  });
+
+  it("Sheet closes to the opener", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    function Example() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            打开项目切换
+          </button>
+          <Sheet
+            open={open}
+            title="项目切换"
+            onClose={() => {
+              onClose();
+              setOpen(false);
+            }}
+          >
+            内容
+          </Sheet>
+        </>
+      );
+    }
+    render(<Example />);
+    const opener = screen.getByRole("button", { name: "打开项目切换" });
+    await user.click(opener);
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(opener).toBe(document.activeElement);
   });
 
   it("Toaster dismiss 回传 toast id", async () => {

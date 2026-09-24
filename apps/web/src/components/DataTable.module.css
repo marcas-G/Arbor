@@ -15,7 +15,7 @@
 .table th {
   border-bottom: 1px solid var(--arbor-line);
   color: var(--arbor-ink-soft);
-  font-family: var(--arbor-font-mono);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-caption);
   font-weight: 600;
   letter-spacing: 0.04em;

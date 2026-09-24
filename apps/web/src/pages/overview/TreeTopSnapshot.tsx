@@ -1,6 +1,6 @@
 /**
- * W-03 区块② 树顶快照：nodes[0]=root（扁平前序列表）；已知限制——DTO
- * 无 depth/parent，v1 取前 N 张节点卡平铺。每卡 name + StatusBadge +
+ * W-03 区块② 树顶快照：DTO 保持扁平前序列表，并用 server-projected
+ * parentWorkspaceId 标识 root；v1 取前 N 张节点卡平铺。每卡 name + StatusBadge +
  * subtreeAttention 计数 Badge（>0 时 attention/danger tone）+
  * currentWork?.objective + usage 摘要（cost Unknown 原样 "unknown"）。
  * 点击卡 navigate workspace 路由。
@@ -46,7 +46,7 @@ export function TreeTopSnapshot({
         <Empty>无工作区</Empty>
       ) : (
         <ul className={styles.treeGrid}>
-          {nodes.map((node, index) => (
+          {nodes.map((node) => (
             <li key={node.workspaceId}>
               <button
                 type="button"
@@ -62,7 +62,9 @@ export function TreeTopSnapshot({
               >
                 <span className={styles.treeCardHead}>
                   <span className={styles.treeCardName}>{node.name}</span>
-                  {index === 0 ? <Badge tone="branch">root</Badge> : null}
+                  {node.parentWorkspaceId === null ? (
+                    <Badge tone="branch">root</Badge>
+                  ) : null}
                   <StatusBadge label={node.status} />
                   {node.subtreeAttention.attention > 0 ? (
                     <Badge tone="attention">{`attention ${String(

@@ -11,7 +11,7 @@ Arbor is a multi-agent work system organized around long-lived Responsibilities,
 | `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 60 system invariants | FROZEN |
 | `docs/design/03-detailed-implementation-design.md` | Executable contracts: ADT/Command/Event/Ports/SQL/Package DAG/phases | TOP-LEVEL FROZEN |
 
-These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.14).
+These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.17).
 
 ## Design governance (docs/design/**)
 
@@ -31,7 +31,9 @@ If a code implementation discovers a design gap: **stop implementation and raise
 - `planning/tasks/` — task breakdown per phase
 - `planning/results/` — completion evidence, verification output per phase
 
-Current authorization state: **P0–P14 COMPLETE; P14 FORMALLY CLOSED**.
+Current authorization state: **P0–P14 COMPLETE; P14 FORMALLY CLOSED; D-1 Product UI
+Contract Closure COMPLETE; D0–D3 Web Product UI Foundation COMPLETE. D4–D10 Web Product UI
+implementation remain explicitly unauthorized.**
 **SYSTEM IMPLEMENTATION COMPLETE** — **FINAL CLOSURE PASS**
 (`planning/final-system-closure.md`; `planning/results/ARBOR_FINAL.result.md`).
 P14 (Chat-First 主工作区对话面 — DID v1.16 G-A–G-F: SubmitHumanMessage +
@@ -39,6 +41,12 @@ WorkspaceMain/Coordination conversation execution, root-only, no streaming):
 design closure + planning + implementation COMPLETE and FORMALLY CLOSED
 (`planning/results/P14.result.md`; 10/10 seams S1–S10 evidenced; G-gate 8/8;
 recorded mechanism note: settle write-back via P14 tick sweep).
+D-1 (Product UI Contract Closure — DID v1.17 TR-WPU-A–D): presentation-only
+supersession adopted; Tree carries server-projected `parentWorkspaceId`; current-work carries
+canonical `Work.revision`; selected Verification carries frozen `targetWorkRevision` paired with
+`verificationId`; `/p/:projectId` is the formal Root Workbench landing. No command/event/DDL/
+authority/transport/System Design change and no Web visual/route implementation. **G1a, G1b and
+G6 CLOSED; G2–G5 remain DEFERRED.**
 P13 (Product Web Client — post-core product-surface phase, DID v1.15 G1–G4):
 design closure + planning + implementation COMPLETE and FORMALLY CLOSED
 (`planning/results/P13.result.md`; 14/14 exit criteria PASS; no open Design

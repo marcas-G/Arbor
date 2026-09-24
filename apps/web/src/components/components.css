@@ -1,4 +1,4 @@
-/* P13-003 component layer. Every color/size value resolves through a
+/* TR-WPU-A component layer. Every color/size value resolves through a
  * design token (EC-10: literals live only in tokens.css/tokens.ts). */
 
 /* app shell */
@@ -11,6 +11,7 @@
 .arbor-topbar {
   padding: var(--arbor-space-2) var(--arbor-space-3);
   border-bottom: 1px solid var(--arbor-line);
+  background: var(--arbor-paper-2);
 }
 
 .arbor-brand {
@@ -26,7 +27,7 @@
 
 /* card */
 .arbor-card {
-  background: var(--arbor-paper-2);
+  background: var(--arbor-surface);
   border: 1px solid var(--arbor-line);
   border-radius: var(--arbor-radius);
   box-shadow: var(--arbor-shadow);
@@ -55,9 +56,10 @@
   padding: 0 var(--arbor-space-2);
   border: 1px solid transparent;
   border-radius: var(--arbor-radius-small);
-  font-family: var(--arbor-font-mono);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-caption);
-  line-height: 1.6;
+  font-weight: 600;
+  line-height: 1.5;
   white-space: nowrap;
 }
 
@@ -100,11 +102,15 @@
 
 /* button */
 .arbor-button {
+  min-height: var(--arbor-row-height);
   padding: var(--arbor-space-1) var(--arbor-space-3);
   border: 1px solid var(--arbor-line);
   border-radius: var(--arbor-radius-small);
-  font-family: var(--arbor-font-serif);
+  background: var(--arbor-paper-2);
+  color: var(--arbor-ink);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-small);
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -116,7 +122,7 @@
 .arbor-button-primary {
   border-color: var(--arbor-leaf);
   background: var(--arbor-leaf);
-  color: var(--arbor-paper);
+  color: var(--arbor-paper-2);
 }
 
 .arbor-button-primary:hover:not(:disabled) {
@@ -138,7 +144,7 @@
 .arbor-button-danger {
   border-color: var(--arbor-danger);
   background: var(--arbor-danger);
-  color: var(--arbor-paper);
+  color: var(--arbor-paper-2);
 }
 
 /* field */
@@ -154,12 +160,13 @@
 }
 
 .arbor-field-control {
+  min-height: var(--arbor-row-height);
   padding: var(--arbor-space-1) var(--arbor-space-2);
   border: 1px solid var(--arbor-line);
   border-radius: var(--arbor-radius-small);
-  background: var(--arbor-paper);
+  background: var(--arbor-surface);
   color: var(--arbor-ink);
-  font-family: var(--arbor-font-serif);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-body);
 }
 
@@ -181,10 +188,11 @@ textarea.arbor-field-control {
   padding: var(--arbor-space-5);
   border: 1px dashed var(--arbor-line);
   border-radius: var(--arbor-radius);
+  background: var(--arbor-surface);
 }
 
 .arbor-empty-text {
   color: var(--arbor-muted);
   font-size: var(--arbor-text-small);
-  font-style: italic;
+  font-style: normal;
 }

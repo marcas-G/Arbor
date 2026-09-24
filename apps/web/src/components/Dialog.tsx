@@ -1,9 +1,10 @@
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useRef } from "react";
 import styles from "./Dialog.module.css";
+import { useModalFocus } from "./useModalFocus.js";
 
 /** W-01 Dialog: surface-tinted overlay; desktop centered card, mobile
- * full-screen sheet (CSS). Esc closes; simplified focus handling moves
- * initial focus to the close button. */
+ * full-screen sheet (CSS). Keyboard focus stays contained and returns to the
+ * opener when the controlled surface closes. */
 export function Dialog({
   open,
   title,
@@ -16,22 +17,13 @@ export function Dialog({
   readonly children: ReactNode;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    closeRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open, onClose]);
+  const dialogRef = useRef<HTMLElement>(null);
+  useModalFocus({
+    open,
+    onClose,
+    containerRef: dialogRef,
+    initialFocusRef: closeRef,
+  });
 
   if (!open) {
     return null;
@@ -42,6 +34,8 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        ref={dialogRef}
+        tabIndex={-1}
         className={styles.dialog}
       >
         <header className={styles.header}>

@@ -17,7 +17,7 @@
 }
 
 .brand {
-  font-family: var(--arbor-font-serif);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-title);
   font-weight: 600;
   color: var(--arbor-leaf);
@@ -70,7 +70,7 @@
   border-radius: var(--arbor-radius-small);
   background: transparent;
   color: var(--arbor-ink);
-  font-family: var(--arbor-font-serif);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-body);
   cursor: pointer;
 }
@@ -126,7 +126,9 @@
 }
 
 .content {
+  display: flex;
   flex: 1;
+  min-height: 0;
   padding: var(--arbor-space-3);
   min-width: 0;
 }
@@ -142,7 +144,7 @@
   padding: var(--arbor-space-2) 0;
   border: none;
   background: transparent;
-  font-family: var(--arbor-font-serif);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-small);
   color: var(--arbor-ink);
   cursor: pointer;
@@ -154,23 +156,9 @@
   box-shadow: inset 0 2px 0 var(--arbor-leaf);
 }
 
-.moreSheetBackdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(38, 51, 43, 0.25);
-  display: flex;
-  align-items: flex-end;
-  z-index: 40;
-}
-
-.moreSheet {
-  width: 100%;
-  background: var(--arbor-surface);
-  border-top: 1px solid var(--arbor-line);
-  border-radius: var(--arbor-radius) var(--arbor-radius) 0 0;
+.moreItems {
   display: flex;
   flex-direction: column;
-  padding: var(--arbor-space-2);
   gap: 2px;
 }
 
@@ -179,7 +167,7 @@
   padding: var(--arbor-space-2);
   border: none;
   background: transparent;
-  font-family: var(--arbor-font-serif);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-body);
   color: var(--arbor-ink);
   cursor: pointer;
@@ -190,9 +178,6 @@
     display: flex;
   }
   .tabbar {
-    display: none;
-  }
-  .moreSheetBackdrop {
     display: none;
   }
 }

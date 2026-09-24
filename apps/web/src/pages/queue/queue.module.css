@@ -5,7 +5,7 @@
 }
 
 .heading {
-  font-family: var(--arbor-font-serif);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-display);
   color: var(--arbor-leaf);
   margin: 0;

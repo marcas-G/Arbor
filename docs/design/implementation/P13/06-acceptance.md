@@ -1,7 +1,7 @@
 # P13 — 06 Acceptance
 
 **Owns:** P13 验收标准与 completion 定义
-**Baseline:** DID v1.15 G1–G4 · contracts `00`–`05`
+**Baseline:** DID v1.15 G1–G4 · DID v1.17 TR-WPU-A visual successor · contracts `00`–`05`
 
 ## 1. End-to-end acceptance story
 

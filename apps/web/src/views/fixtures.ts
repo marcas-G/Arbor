@@ -9,15 +9,19 @@ import type {
   CurrentWorkRes,
   DependencyRes,
   InboxViewRes,
+  Problem,
   TranscriptRes,
   TreeViewRes,
   UsageReq,
   UsageRes,
   VerificationRes,
+  ViewResponseMap,
   WorkspaceDetailRes,
 } from "@arbor/api-contracts";
 
 const id = (value: string): never => value as never;
+/** Fixture values stand in for a server-supplied canonical Work.revision. */
+const workRevision = (value: number): never => value as never;
 
 // --- responsibility-tree ---
 
@@ -25,12 +29,14 @@ export const treeTypical: TreeViewRes = {
   nodes: [
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000001"),
+      parentWorkspaceId: null,
       name: "平台根工作区",
       status: "executing",
       currentWork: {
         workId: id("wrk_018f6a2e-0000-7000-8000-0000000000a1"),
         objective: "维护 P13 视图渲染合同",
         status: "Open",
+        revision: workRevision(0),
         activeExecution: {
           executionId: id("exe_018f6a2e-0000-7000-8000-0000000000e1"),
           admittedAt: "2026-09-23T09:00:00.000Z",
@@ -50,6 +56,7 @@ export const treeTypical: TreeViewRes = {
     },
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000002"),
+      parentWorkspaceId: id("ws_018f6a2e-0000-7000-8000-000000000001"),
       name: "前端渲染",
       status: "idle",
       subtreeAttention: { attention: 0, actionRequired: 0 },
@@ -61,6 +68,7 @@ export const treeTypical: TreeViewRes = {
     },
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000003"),
+      parentWorkspaceId: id("ws_018f6a2e-0000-7000-8000-000000000001"),
       name: "守护进程",
       status: "waiting-blocked",
       subtreeAttention: { attention: 0, actionRequired: 0 },
@@ -72,6 +80,7 @@ export const treeMinimal: TreeViewRes = {
   nodes: [
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000004"),
+      parentWorkspaceId: null,
       name: "仅必要字段",
       status: "idle",
       subtreeAttention: { attention: 0, actionRequired: 0 },
@@ -79,27 +88,26 @@ export const treeMinimal: TreeViewRes = {
   ],
 };
 
-/** The real wire carries EXPLICIT nulls (not missing keys) for absent
- * optionals — the regression shape that once blank-screened the tree. The
- * frozen TS type models absence as `undefined`; JSON serialization emits
- * `null`. `03` §1.3 rules both are "empty slot" — hence the explicit cast. */
-export const treeExplicitNulls = {
+/** Absence is represented by omitted optional fields. In particular, a tree
+ * node without current work must not carry `currentWork: null` or a dummy
+ * current-work object across the frozen wire boundary. */
+export const treeExplicitNulls: TreeViewRes = {
   nodes: [
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000006"),
+      parentWorkspaceId: null,
       name: "显式空值节点",
       status: "idle",
-      currentWork: null,
       subtreeAttention: { attention: 0, actionRequired: 0 },
-      usageSummary: null,
     },
   ],
-} as unknown as TreeViewRes;
+};
 
 export const treeUnknownEnum: TreeViewRes = {
   nodes: [
     {
       workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000005"),
+      parentWorkspaceId: null,
       name: "未来状态节点",
       status: "weird-state" as never,
       subtreeAttention: { attention: 0, actionRequired: 0 },
@@ -189,6 +197,7 @@ export const detailTypical: WorkspaceDetailRes = {
     workId: id("wrk_018f6a2e-0000-7000-8000-0000000000a1"),
     objective: "交付 P13-004 视图渲染层",
     status: "Open",
+    revision: workRevision(0),
     activeExecution: {
       executionId: id("exe_018f6a2e-0000-7000-8000-0000000000e1"),
       admittedAt: "2026-09-23T09:00:00.000Z",
@@ -242,6 +251,7 @@ export const detailTypical: WorkspaceDetailRes = {
   ],
   verification: {
     verificationId: id("ver_018f6a2e-0000-7000-8000-0000000000v1"),
+    targetWorkRevision: workRevision(0),
     verdict: "Pass",
     criteriaResults: [
       {
@@ -310,6 +320,7 @@ export const detailUnknownEnum: WorkspaceDetailRes = {
   currentWork: {
     objective: "未来状态的工作",
     status: "weird-state" as never,
+    revision: workRevision(0),
   },
   dependencies: [
     {
@@ -334,6 +345,7 @@ export const currentWorkTypical: CurrentWorkRes = {
   workId: id("wrk_018f6a2e-0000-7000-8000-0000000000a1"),
   objective: "交付 P13-004 视图渲染层",
   status: "Open",
+  revision: workRevision(0),
   activeExecution: {
     executionId: id("exe_018f6a2e-0000-7000-8000-0000000000e1"),
     admittedAt: "2026-09-23T09:00:00.000Z",
@@ -343,6 +355,7 @@ export const currentWorkTypical: CurrentWorkRes = {
 export const currentWorkMinimal: CurrentWorkRes = {
   objective: "仅必要字段的当前工作",
   status: "Open",
+  revision: workRevision(0),
 };
 
 export const currentWorkNull: CurrentWorkRes = null;
@@ -350,12 +363,14 @@ export const currentWorkNull: CurrentWorkRes = null;
 export const currentWorkUnknownEnum: CurrentWorkRes = {
   objective: "未来状态",
   status: "weird-state" as never,
+  revision: workRevision(0),
 };
 
 // --- verification ---
 
 export const verificationTypical: VerificationRes = {
   verificationId: id("ver_018f6a2e-0000-7000-8000-0000000000v1"),
+  targetWorkRevision: workRevision(0),
   verdict: "Pass",
   criteriaResults: [
     {
@@ -526,3 +541,120 @@ export const inboxUnknownEnum: InboxViewRes = {
     },
   ],
 };
+
+type D0ViewFixtureMatrix = {
+  readonly [ViewId in keyof ViewResponseMap]: {
+    readonly typical: ViewResponseMap[ViewId];
+    readonly minimal: ViewResponseMap[ViewId];
+    readonly unknown: ViewResponseMap[ViewId];
+  };
+};
+
+/** D0's exhaustive, typed fixture registry for product UI contract tests. */
+export const D0_VIEW_FIXTURES = {
+  "responsibility-tree": {
+    typical: treeTypical,
+    minimal: treeMinimal,
+    unknown: treeUnknownEnum,
+  },
+  attention: {
+    typical: attentionTypical,
+    minimal: attentionMinimal,
+    unknown: attentionUnknownEnum,
+  },
+  "workspace-detail": {
+    typical: detailTypical,
+    minimal: detailMinimal,
+    unknown: detailUnknownEnum,
+  },
+  "current-work": {
+    typical: currentWorkTypical,
+    minimal: currentWorkMinimal,
+    unknown: currentWorkUnknownEnum,
+  },
+  verification: {
+    typical: verificationTypical,
+    minimal: verificationMinimal,
+    unknown: verificationUnknownEnum,
+  },
+  "dependency-view": {
+    typical: dependencyTypical,
+    minimal: dependencyMinimal,
+    unknown: dependencyUnknownEnum,
+  },
+  transcript: {
+    typical: transcriptTypical,
+    minimal: transcriptMinimal,
+    unknown: transcriptUnknownEnum,
+  },
+  usage: {
+    typical: usageTypical,
+    minimal: usageMinimal,
+    unknown: usageUnknownEnum,
+  },
+  "inbox-view": {
+    typical: inboxTypical,
+    minimal: inboxMinimal,
+    unknown: inboxUnknownEnum,
+  },
+} satisfies D0ViewFixtureMatrix;
+
+type D0ProblemCategory =
+  | "unauthenticated"
+  | "forbidden"
+  | "not-found"
+  | "invalid-request"
+  | "stale"
+  | "unavailable";
+
+/** P13's six frozen Web treatments, each represented by a complete DTO. */
+export const D0_PROBLEM_FIXTURES = {
+  unauthenticated: {
+    code: "auth/unauthenticated",
+    category: "unauthenticated",
+    message: "auth/unauthenticated",
+    correlationId: null,
+    retryDisposition: "non-retryable",
+    safeDetails: {},
+  },
+  forbidden: {
+    code: "authority/denied",
+    category: "forbidden",
+    message: "authority/denied",
+    correlationId: null,
+    retryDisposition: "non-retryable",
+    safeDetails: { reason: "missing authority" },
+  },
+  "not-found": {
+    code: "workspace/not-found",
+    category: "not-found",
+    message: "workspace/not-found",
+    correlationId: null,
+    retryDisposition: "non-retryable",
+    safeDetails: {},
+  },
+  "invalid-request": {
+    code: "transport/invalid-request",
+    category: "invalid-request",
+    message: "transport/invalid-request",
+    correlationId: null,
+    retryDisposition: "non-retryable",
+    safeDetails: {},
+  },
+  stale: {
+    code: "projection/stale",
+    category: "stale",
+    message: "projection/stale",
+    correlationId: null,
+    retryDisposition: "retryable",
+    safeDetails: {},
+  },
+  unavailable: {
+    code: "projection/unavailable",
+    category: "unavailable",
+    message: "projection/unavailable",
+    correlationId: null,
+    retryDisposition: "retryable",
+    safeDetails: {},
+  },
+} satisfies Readonly<Record<D0ProblemCategory, Problem>>;

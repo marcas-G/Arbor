@@ -1,7 +1,17 @@
 # P10 — 00 Contract Index
 
 **Authority:** DID v1.13 §11 P10 (G1–G8), §5.4, §6.1/§6.2 (L6), §10.4/§10.4.1 (projection-runtime; api-contracts), §7.2 (ProjectionQueryPort); SD v1.3 §7.4/§7.5, §10.1 D, §12 全章, §13.9/§13.10, §14 No.37/38/40/45/56; S1/S2/S4; P1 `05`/`06`, P2 `01`/`06`, P3 `04`, P4 `07`, P6 `00`/`04`/`05`, P7 `00`/`05`, P8 `00`/`05`, P9 `00`/`05`; `planning/gaps/P7-GAP-01.md`; GQ1–GQ7 裁决（2026-09-22，本轮会话）.
-**Status:** FROZEN (first draft for contract review).
+**Status:** FROZEN — DID v1.17 D-1 additive read-model successor adopted (TR-WPU-B/C/D; no P10 phase reopen).
+
+## DID v1.17 successor record — D-1 Product UI Contract Closure
+
+TR-WPU-B/C/D evolve only the public read-model surface in `05`: Tree nodes carry the canonical
+`parentWorkspaceId`; all current-work summaries carry canonical `Work.revision`; a selected
+Verification carries its frozen `targetWorkRevision` paired with `verificationId`. The projection
+rejects malformed hierarchy inputs before deterministic preorder traversal and omits absent Tree
+`currentWork` rather than producing a null/dummy wire value. No view request, ViewId, command,
+event, DDL, authority, transport, canonical semantic, or P10 phase ownership changes. Existing
+ordered/list consumers remain compatible by ignoring additive fields.
 
 ## Governance decisions (DID v1.13)
 
