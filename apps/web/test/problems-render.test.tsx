@@ -181,9 +181,24 @@ describe("ProblemCard treatments", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("unknown category falls back to the unavailable treatment", () => {
+  it("unknown category receives an explicit Unknown Problem treatment", () => {
     render(<ProblemCard problem={problem({ category: "cosmic" })} />);
-    expect(screen.getByText("服务不可用")).toBeTruthy();
+    expect(screen.getByText("未知问题")).toBeTruthy();
+  });
+
+  it("names all frozen global states in text as well as status styling", () => {
+    const categories = [
+      ["unauthenticated", "Unauthorized"],
+      ["forbidden", "AuthorityDenied"],
+      ["invalid-request", "Validation"],
+      ["stale", "Stale"],
+      ["unavailable", "Network / Unavailable"],
+    ] as const;
+    for (const [category, label] of categories) {
+      const rendered = render(<ProblemCard problem={problem({ category })} />);
+      expect(screen.getByText(label)).toBeTruthy();
+      rendered.unmount();
+    }
   });
 });
 
@@ -197,5 +212,14 @@ describe("CommandInlineError (TerminalRejected)", () => {
     ).toBeTruthy();
     expect(screen.getByText(/重新提交/)).toBeTruthy();
     expect(screen.getByText(/新的 commandId/)).toBeTruthy();
+  });
+
+  it("names exact frozen RevisionConflict and AuthorityDenied rejection tags", () => {
+    const { rerender } = render(
+      <CommandInlineError rejection="RevisionConflict" />,
+    );
+    expect(screen.getByText("版本冲突")).toBeTruthy();
+    rerender(<CommandInlineError rejection="AuthorityDenied" />);
+    expect(screen.getByText("权限拒绝")).toBeTruthy();
   });
 });

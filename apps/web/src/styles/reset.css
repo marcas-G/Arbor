@@ -28,6 +28,10 @@ ol {
   padding: 0;
 }
 
+:where(p, li, dd, dt, td, th, pre, code) {
+  overflow-wrap: anywhere;
+}
+
 button,
 input,
 select,

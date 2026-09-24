@@ -110,15 +110,19 @@
 
 .topbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--arbor-space-2);
+  min-width: 0;
   padding: var(--arbor-space-2) var(--arbor-space-3);
   border-bottom: 1px solid var(--arbor-line);
   background: var(--arbor-surface);
 }
 
 .breadcrumb {
+  min-width: 0;
+  flex: 1;
   font-family: var(--arbor-font-mono);
   font-size: var(--arbor-text-small);
   color: var(--arbor-ink-soft);
@@ -131,6 +135,7 @@
   min-height: 0;
   padding: var(--arbor-space-3);
   min-width: 0;
+  overflow-x: clip;
 }
 
 .tabbar {

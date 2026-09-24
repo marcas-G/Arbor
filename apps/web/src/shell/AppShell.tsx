@@ -15,6 +15,7 @@ import {
 import { Button } from "../components/Button.js";
 import { Empty } from "../components/Empty.js";
 import { FreshnessChip } from "../components/FreshnessChip.js";
+import { RefreshingStatus } from "../components/RefreshingStatus.js";
 import { Sheet } from "../components/Sheet.js";
 import { BootstrapPage } from "../pages/bootstrap/BootstrapPage.js";
 import { useFreshness, usePath } from "../providers/AppProviders.js";
@@ -152,6 +153,9 @@ function SideRail({ route }: { readonly route: Route | null }) {
               }
             }}
             disabled={route === null}
+            aria-current={
+              route !== null && item.match(route) ? "page" : undefined
+            }
           >
             {item.label}
           </button>
@@ -207,6 +211,7 @@ function ProjectSwitcher({ route }: { readonly route: Route | null }) {
     <button
       type="button"
       className={styles.projectSwitch}
+      aria-label={`切换项目，当前 ${route?.projectId ?? "未选择"}`}
       onClick={() => {
         setValue(route?.projectId ?? "");
         setEditing(true);
@@ -223,6 +228,7 @@ function Topbar({ route }: { readonly route: Route | null }) {
   return (
     <header className={styles.topbar}>
       <span className={styles.breadcrumb}>{breadcrumbOf(route)}</span>
+      <RefreshingStatus />
       <FreshnessChip state={freshness.state} />
     </header>
   );
@@ -344,6 +350,9 @@ function MobileTabbar({ route }: { readonly route: Route | null }) {
               }
             }}
             disabled={route === null}
+            aria-current={
+              route !== null && item.match(route) ? "page" : undefined
+            }
           >
             {item.label}
           </button>
@@ -351,6 +360,8 @@ function MobileTabbar({ route }: { readonly route: Route | null }) {
         <button
           type="button"
           className={styles.tabItem}
+          aria-expanded={moreOpen}
+          aria-haspopup="dialog"
           onClick={() => {
             setMoreOpen(true);
           }}

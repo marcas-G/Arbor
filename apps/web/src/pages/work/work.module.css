@@ -53,5 +53,22 @@
 
 .governanceActions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--arbor-space-2);
+}
+
+@media (max-width: 63.99rem) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+    padding: var(--arbor-space-3);
+  }
+
+  .governance {
+    align-items: stretch;
+  }
+
+  .governanceActions > * {
+    flex: 1;
+  }
 }
