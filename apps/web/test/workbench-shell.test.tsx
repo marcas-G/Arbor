@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -8,8 +9,53 @@ import {
   RootWorkbenchPage,
   WORKBENCH_LAYOUT_KEY,
 } from "../src/pages/workbench/RootWorkbenchPage.js";
+import { SessionContext } from "../src/session/SessionContext.js";
+import { treeTypical } from "../src/views/fixtures.js";
 
 const route = { name: "workbench", projectId: "prj_workbench" } as const;
+
+const session = {
+  token: "tok",
+  actor: "human:test",
+  projectId: route.projectId,
+  unauthenticatedProblem: null,
+  setSession: () => undefined,
+  clearSession: () => undefined,
+  setProjectId: () => undefined,
+  reportUnauthenticated: () => undefined,
+};
+
+const renderWorkbench = () => {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <SessionContext.Provider value={session}>
+        <RootWorkbenchPage route={route} />
+      </SessionContext.Provider>
+    </QueryClientProvider>,
+  );
+};
+
+const installTree = () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            status: 200,
+            body: { value: treeTypical, watermark: 1 },
+          }),
+          { status: 200 },
+        ),
+    ),
+  );
+};
 
 afterEach(() => {
   localStorage.clear();
@@ -17,18 +63,21 @@ afterEach(() => {
 });
 
 describe("D3 Root Workbench shell", () => {
-  it("is a no-query skeleton with both desktop panes", () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    render(<RootWorkbenchPage route={route} />);
+  it("uses the responsibility-tree view for real read-only Workbench context", async () => {
+    installTree();
+    renderWorkbench();
     expect(screen.getByRole("heading", { name: "工作台" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "责任树" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "对话" })).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await screen.findByText("平台根工作区")).toBeTruthy();
+    fireEvent.click(screen.getByText("前端渲染"));
+    expect(screen.getByText("打开工作区")).toBeTruthy();
+    expect(location.pathname).toBe("/");
   });
 
   it("swaps panes, drags the local divider, and resets it on double click", () => {
-    render(<RootWorkbenchPage route={route} />);
+    installTree();
+    renderWorkbench();
     const shell = screen.getByTestId("workbench-layout");
     const divider = screen.getByRole("separator", {
       name: "调整责任树与对话比例",
@@ -82,7 +131,8 @@ describe("D3 Root Workbench shell", () => {
       ),
     ).toEqual(DEFAULT_WORKBENCH_LAYOUT);
 
-    render(<RootWorkbenchPage route={route} />);
+    installTree();
+    renderWorkbench();
     const saved = JSON.parse(
       localStorage.getItem(WORKBENCH_LAYOUT_KEY) ?? "null",
     ) as Record<string, unknown>;
@@ -92,7 +142,8 @@ describe("D3 Root Workbench shell", () => {
   });
 
   it("persists an edited local layout and restores it without project data", () => {
-    const { unmount } = render(<RootWorkbenchPage route={route} />);
+    installTree();
+    const { unmount } = renderWorkbench();
     const shell = screen.getByTestId("workbench-layout");
     const divider = screen.getByRole("separator", {
       name: "调整责任树与对话比例",
@@ -111,7 +162,8 @@ describe("D3 Root Workbench shell", () => {
       treeBasis: 40,
     });
     unmount();
-    render(<RootWorkbenchPage route={route} />);
+    installTree();
+    renderWorkbench();
     expect(screen.getByTestId("workbench-layout").dataset.order).toBe(
       "conversation-first",
     );
@@ -119,7 +171,8 @@ describe("D3 Root Workbench shell", () => {
   });
 
   it("uses a local mobile pane switch without changing the route", () => {
-    render(<RootWorkbenchPage route={route} />);
+    installTree();
+    renderWorkbench();
     const shell = screen.getByTestId("workbench-layout");
     const tree = screen.getByRole("button", { name: "责任树" });
     const conversation = screen.getByRole("button", { name: "对话" });
