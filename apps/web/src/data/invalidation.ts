@@ -4,8 +4,8 @@
  * frame triggers refetch of currently subscribed, viewId-matching entries; it
  * never carries view data and never updates cache content. No event replay,
  * no local state derivation: unsubscribed or malformed frames are dropped, and
- * the next successful fetch is the only freshness source. Connection failure
- * never throws — it degrades to a silent onClose.
+ * the next successful fetch is the only freshness source. Connection failures
+ * never throw; a closed socket reports onClose and schedules a reconnect.
  */
 
 export interface InvalidationHandlers {
@@ -24,6 +24,8 @@ interface SocketLike {
   onclose: (() => void) | null;
   close(): void;
 }
+
+const RECONNECT_DELAY_MS = 1000;
 
 const isInvalidationFrame = (
   value: unknown,
@@ -50,54 +52,78 @@ export function connectInvalidation(
   url: string,
   handlers: InvalidationHandlers,
 ): InvalidationConnection {
-  const socketFactory = (
-    globalThis as unknown as {
-      WebSocket?: new (url: string) => SocketLike;
-    }
-  ).WebSocket;
   let socket: SocketLike | null = null;
-  if (socketFactory !== undefined) {
-    try {
-      socket = new socketFactory(url);
-    } catch {
-      socket = null;
-    }
-  }
-  if (socket === null) {
-    handlers.onClose?.();
-    return {
-      close() {},
-    };
-  }
-  const ws = socket;
-  ws.onopen = () => {
-    handlers.onOpen?.();
-  };
-  ws.onclose = () => {
-    detach(ws);
-    handlers.onClose?.();
-  };
-  ws.onmessage = (event) => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(String(event.data));
-    } catch {
-      return;
-    }
-    if (!isInvalidationFrame(parsed)) {
-      return;
-    }
-    handlers.onInvalidate(parsed.view, parsed.watermark);
-  };
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
+
+  const openSocket = (): void => {
+    if (closed) {
+      return;
+    }
+    const socketFactory = (
+      globalThis as unknown as {
+        WebSocket?: new (url: string) => SocketLike;
+      }
+    ).WebSocket;
+    if (socketFactory === undefined) {
+      handlers.onClose?.();
+      return;
+    }
+    let nextSocket: SocketLike;
+    try {
+      nextSocket = new socketFactory(url);
+    } catch {
+      handlers.onClose?.();
+      return;
+    }
+
+    socket = nextSocket;
+    nextSocket.onopen = () => {
+      handlers.onOpen?.();
+    };
+    nextSocket.onclose = () => {
+      detach(nextSocket);
+      if (socket === nextSocket) {
+        socket = null;
+      }
+      handlers.onClose?.();
+      if (!closed && reconnectTimer === null) {
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          openSocket();
+        }, RECONNECT_DELAY_MS);
+      }
+    };
+    nextSocket.onmessage = (event) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(String(event.data));
+      } catch {
+        return;
+      }
+      if (!isInvalidationFrame(parsed)) {
+        return;
+      }
+      handlers.onInvalidate(parsed.view, parsed.watermark);
+    };
+  };
+
+  openSocket();
   return {
     close() {
       if (closed) {
         return;
       }
       closed = true;
-      detach(ws);
-      ws.close();
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (socket !== null) {
+        detach(socket);
+        socket.close();
+        socket = null;
+      }
     },
   };
 }

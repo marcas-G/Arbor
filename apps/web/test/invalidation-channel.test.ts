@@ -9,6 +9,7 @@ type FakeSocket = {
   send: (data: string) => void;
   close: () => void;
   open: () => void;
+  disconnect: () => void;
   message: (data: string) => void;
 };
 
@@ -20,6 +21,9 @@ const installFakeWebSocket = () => {
     onclose: (() => void) | null = null;
     send = () => undefined;
     close = () => undefined;
+    disconnect = () => {
+      this.onclose?.();
+    };
     open = () => {
       this.onopen?.();
     };
@@ -82,5 +86,40 @@ describe("connectInvalidation channel", () => {
     expect(() =>
       connectInvalidation("ws://x/ws", { onInvalidate: () => undefined }),
     ).not.toThrow();
+  });
+
+  it("reconnects after a closed socket and resumes invalidation delivery", () => {
+    vi.useFakeTimers();
+    let channel: ReturnType<typeof connectInvalidation> | undefined;
+    try {
+      const sockets = installFakeWebSocket();
+      const seen: unknown[] = [];
+      channel = connectInvalidation("ws://x/ws", {
+        onInvalidate: (frame) => {
+          seen.push(frame);
+        },
+      });
+
+      expect(sockets).toHaveLength(1);
+      sockets[0]?.open();
+      sockets[0]?.disconnect();
+
+      vi.advanceTimersByTime(1000);
+
+      expect(sockets).toHaveLength(2);
+      sockets[1]?.open();
+      sockets[1]?.message(
+        JSON.stringify({ kind: "invalidate", view: "usage", watermark: 2 }),
+      );
+
+      expect(seen).toEqual(["usage"]);
+      sockets[1]?.disconnect();
+      channel.close();
+      vi.advanceTimersByTime(1000);
+      expect(sockets).toHaveLength(2);
+    } finally {
+      channel?.close();
+      vi.useRealTimers();
+    }
   });
 });

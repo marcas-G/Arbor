@@ -63,8 +63,13 @@ function WSInvalidationProvider({
     lastWatermark: null,
   });
   useEffect(() => {
+    let hasOpened = false;
     const channel = connectInvalidation(wsUrl(), {
       onOpen: () => {
+        if (hasOpened) {
+          void client.invalidateQueries({ queryKey: ["view"] });
+        }
+        hasOpened = true;
         setFreshness((previous) => ({ ...previous, state: "fresh" }));
       },
       onClose: () => {

@@ -11,7 +11,7 @@ import type {
 } from "@arbor/api-contracts";
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import { useSession } from "../session/SessionContext.js";
-import { fetchView, viewQueryKey } from "./transport.js";
+import { fetchView } from "./transport.js";
 
 export function useViewQuery<View extends ViewId>(
   view: View,
