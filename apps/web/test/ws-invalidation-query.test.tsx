@@ -1,5 +1,4 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { useViewQuery } from "../src/api/useViewQuery.js";
 import { connectInvalidation } from "../src/data/invalidation.js";
