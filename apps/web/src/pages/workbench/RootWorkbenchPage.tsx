@@ -321,7 +321,6 @@ export function RootWorkbenchPage({
         stopResizeRef.current = null;
       }
     };
-    resize(event.nativeEvent);
     document.addEventListener("pointermove", resize);
     document.addEventListener("pointerup", stop);
     document.addEventListener("pointercancel", stop);

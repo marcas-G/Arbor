@@ -128,6 +128,9 @@ describe("D3 Root Workbench shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "交换树与对话位置" }));
     expect(shell.dataset.order).toBe("conversation-first");
     fireEvent.pointerDown(divider, { pointerId: 1, clientX: 600 });
+    expect(shell.dataset.treeBasis).toBe(
+      String(DEFAULT_WORKBENCH_LAYOUT.treeBasis),
+    );
     fireEvent.pointerMove(document, { pointerId: 1, clientX: 600 });
     expect(shell.dataset.treeBasis).toBe("40");
     fireEvent.pointerCancel(document, { pointerId: 1 });
@@ -188,6 +191,7 @@ describe("D3 Root Workbench shell", () => {
     } as DOMRect);
     fireEvent.click(screen.getByRole("button", { name: "交换树与对话位置" }));
     fireEvent.pointerDown(divider, { pointerId: 1, clientX: 600 });
+    fireEvent.pointerMove(document, { pointerId: 1, clientX: 600 });
     fireEvent.pointerUp(document, { pointerId: 1 });
     expect(
       JSON.parse(localStorage.getItem(WORKBENCH_LAYOUT_KEY) ?? "null"),

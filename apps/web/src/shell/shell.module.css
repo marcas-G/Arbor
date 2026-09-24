@@ -173,6 +173,12 @@
   cursor: pointer;
 }
 
+@media (max-width: 47.99rem) {
+  .shell {
+    flex-direction: column;
+  }
+}
+
 @media (min-width: 768px) {
   .rail {
     display: flex;
