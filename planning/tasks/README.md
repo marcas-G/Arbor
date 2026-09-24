@@ -16,7 +16,11 @@ Phases: **P0–P12** (complete). Task contracts reference
 | D0–D3 Foundation | `D0-D3-web-product-ui-foundation` | COMPLETE | `planning/results/D0-D3-web-product-ui-foundation.result.md` |
 | D4–D6 Core Workbench | `D4-D6-web-product-ui-core-workbench` | COMPLETE / PHASE-BOUNDARY CLOSED at `master@88744c5ac2d856044bb231e8c6abbd684dd0fded` | `planning/results/D4-D6-web-product-ui-core-workbench.result.md` |
 | D7–D9 Governance, Usage, Settings, and Product Hardening | `D7-D9-web-product-ui-surfaces` | COMPLETE / PHASE-BOUNDARY CLOSED at `master@09d0b81a6e27e2b20f2a7b28f1fea89c1400984c` | `planning/results/D7-D9-web-product-ui-surfaces.result.md` |
-| D10 Final Convergence | `D10-web-product-ui-final-convergence` | COMPLETE — **Web Product UI FORMALLY CLOSED** | `planning/results/D10-web-product-ui-final-convergence.result.md` |
+| D10 Final Convergence | `D10-web-product-ui-final-convergence` | COMPLETE — **Web Product UI FORMALLY CLOSED** at `master@7752e0e5bba1cf4ffd7351895c1e405bb7158855` | `planning/results/D10-web-product-ui-final-convergence.result.md` |
+
+Web v1 implementation is closed. Continue with **Dogfooding / Release
+Validation** using real Arbor tasks; do not open another Web v1 implementation
+phase as part of D10 closure.
 
 ## Authority order
 

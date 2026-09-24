@@ -180,6 +180,19 @@ Attention, 390px Conversation and Tree, AuthorityDenied, and Queue
 RevisionConflict screenshots at
 `planning/results/D10-web-product-ui-final-convergence.visual/`.
 
-Master readiness: D10 is **PASS** and the feature branch is ready to be
-reviewed for merge/push to `origin/master` as the single Final Convergence
-baseline. Merge and push have not been performed.
+## 11. Final master verification
+
+- Non-squash merge commit: `7752e0e5bba1cf4ffd7351895c1e405bb7158855`.
+- D10 implementation, formal result, screenshots, and progress indexes are
+  included in the merge; original D10 commits remain reachable.
+- On merged `master`, `pnpm check` passed: root **215 files / 1,230 tests**,
+  architecture **18 files / 109 tests**, Web **31 files / 204 tests**,
+  typechecks passed, and production build passed (248 modules).
+- Separately rerun after merge: architecture **18 / 109**, Web full suite
+  **31 / 204**, Web typecheck, and production build all passed.
+- `git diff --check` passed.
+- Lint: **309 warnings / 0 errors**.
+- G2–G5 remain **DEFERRED**; new Design Gaps **0**; release blockers **0**.
+
+Web Product UI is **FORMALLY CLOSED**. Stop Web v1 implementation and proceed
+to **Dogfooding / Release Validation** with real Arbor tasks.
