@@ -15,6 +15,7 @@ import {
 import { Button } from "../components/Button.js";
 import { Empty } from "../components/Empty.js";
 import { FreshnessChip } from "../components/FreshnessChip.js";
+import { Sheet } from "../components/Sheet.js";
 import { BootstrapPage } from "../pages/bootstrap/BootstrapPage.js";
 import { useFreshness, usePath } from "../providers/AppProviders.js";
 import { useSession } from "../session/SessionContext.js";
@@ -42,7 +43,7 @@ export function AppShell({
       session.projectId.trim() !== ""
     ) {
       navigate(
-        { name: "project-overview", projectId: session.projectId },
+        { name: "workbench", projectId: session.projectId },
         { replace: true },
       );
     }
@@ -96,9 +97,9 @@ const NAV: ReadonlyArray<{
   readonly go: (projectId: string) => void;
 }> = [
   {
-    label: "概览",
-    match: (route) => route.name === "project-overview",
-    go: (projectId) => navigate({ name: "project-overview", projectId }),
+    label: "工作台",
+    match: (route) => route.name === "workbench",
+    go: (projectId) => navigate({ name: "workbench", projectId }),
   },
   {
     label: "树",
@@ -175,7 +176,7 @@ function ProjectSwitcher({ route }: { readonly route: Route | null }) {
     setEditing(false);
     if (next.length > 0) {
       session.setProjectId(next);
-      navigate({ name: "project-overview", projectId: next });
+      navigate({ name: "workbench", projectId: next });
     }
   };
   if (editing) {
@@ -233,8 +234,8 @@ const breadcrumbOf = (route: Route | null): string => {
   }
   const project = route.projectId;
   switch (route.name) {
-    case "project-overview":
-      return project;
+    case "workbench":
+      return `${project} / 工作台`;
     case "tree":
     case "queue":
     case "attention":
@@ -249,17 +250,19 @@ const breadcrumbOf = (route: Route | null): string => {
 };
 
 const labelOf = (name: string): string =>
-  NAV.find((item) => item.label !== "概览" && romanize(item.label) === name)
+  NAV.find((item) => item.label !== "工作台" && romanize(item.label) === name)
     ?.label ?? name;
 
 const romanize = (label: string): string =>
   ({
+    工作台: "workbench",
     树: "tree",
     待处理: "queue",
     关注事项: "attention",
     用量: "usage",
     设置: "settings",
-  })[label as "树" | "待处理" | "关注事项" | "用量" | "设置"] ?? label;
+  })[label as "工作台" | "树" | "待处理" | "关注事项" | "用量" | "设置"] ??
+  label;
 
 function MobileTabbar({ route }: { readonly route: Route | null }) {
   const session = useSession();
@@ -274,8 +277,14 @@ function MobileTabbar({ route }: { readonly route: Route | null }) {
   return (
     <>
       {moreOpen ? (
-        <div className={styles.moreSheetBackdrop} role="presentation">
-          <div className={styles.moreSheet} role="dialog" aria-label="更多">
+        <Sheet
+          open={moreOpen}
+          title="更多"
+          onClose={() => {
+            setMoreOpen(false);
+          }}
+        >
+          <div className={styles.moreItems}>
             <button
               type="button"
               className={styles.moreItem}
@@ -320,17 +329,8 @@ function MobileTabbar({ route }: { readonly route: Route | null }) {
             >
               断开会话
             </button>
-            <button
-              type="button"
-              className={styles.moreItem}
-              onClick={() => {
-                setMoreOpen(false);
-              }}
-            >
-              关闭
-            </button>
           </div>
-        </div>
+        </Sheet>
       ) : null}
       <nav className={styles.tabbar} aria-label="移动导航">
         {tabs.map((item) => (

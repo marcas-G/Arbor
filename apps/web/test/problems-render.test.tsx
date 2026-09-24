@@ -9,6 +9,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { CommandInlineError } from "../src/problems/CommandInlineError.js";
 import { ProblemCard } from "../src/problems/ProblemCard.js";
+import { D0_PROBLEM_FIXTURES } from "../src/views/fixtures.js";
 
 const problem = (overrides: Partial<Problem>): Problem => ({
   code: "test/problem",
@@ -21,6 +22,25 @@ const problem = (overrides: Partial<Problem>): Problem => ({
 });
 
 describe("ProblemCard treatments", () => {
+  it("handles every frozen D0 Problem fixture with its explicit treatment", () => {
+    const headings = {
+      unauthenticated: "未认证",
+      forbidden: "权限拒绝",
+      "not-found": "对象不存在",
+      "invalid-request": "请求错误",
+      stale: "数据滞后",
+      unavailable: "服务不可用",
+    } as const satisfies Record<keyof typeof D0_PROBLEM_FIXTURES, string>;
+
+    for (const [category, fixture] of Object.entries(D0_PROBLEM_FIXTURES)) {
+      const rendered = render(<ProblemCard problem={fixture} />);
+      expect(
+        screen.getByText(headings[category as keyof typeof headings]),
+      ).toBeTruthy();
+      rendered.unmount();
+    }
+  });
+
   it("unauthenticated: global state, token hint, no retry button", () => {
     render(
       <ProblemCard

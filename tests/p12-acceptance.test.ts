@@ -1924,6 +1924,7 @@ const transportTreeDto: TreeViewRes = {
   nodes: [
     {
       workspaceId: transportWorkspace,
+      parentWorkspaceId: null,
       name: "root",
       status: "executing",
       subtreeAttention: { attention: 1, actionRequired: 0 },

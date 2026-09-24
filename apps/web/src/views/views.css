@@ -1,4 +1,4 @@
-/* P13-004 view layer. Every color/size resolves through a design token
+/* TR-WPU-A view layer. Every color/size resolves through a design token
  * (EC-10: literals live only in tokens.css/tokens.ts). */
 
 .arbor-mono {
@@ -34,7 +34,7 @@
   border-radius: var(--arbor-radius);
   background: var(--arbor-paper-2);
   color: var(--arbor-ink);
-  font-family: var(--arbor-font-serif);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-body);
   text-align: left;
   cursor: pointer;
@@ -118,7 +118,7 @@
   padding: var(--arbor-space-1) var(--arbor-space-2);
   border-bottom: 1px solid var(--arbor-line);
   color: var(--arbor-ink-soft);
-  font-family: var(--arbor-font-mono);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-caption);
   font-weight: 600;
   text-align: left;
@@ -140,7 +140,7 @@
 
 .arbor-kv-label {
   color: var(--arbor-ink-soft);
-  font-family: var(--arbor-font-mono);
+  font-family: var(--arbor-font-sans);
   font-size: var(--arbor-text-caption);
 }
 

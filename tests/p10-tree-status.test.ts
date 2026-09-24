@@ -248,6 +248,8 @@ describe("P10-003 Tree view (S2.4.1: the tree answers without per-node drill-in)
         expect(tree.currentWork).toEqual({
           workId: W_ROOT,
           objective: "root objective",
+          status: "Open",
+          revision: 0,
         });
         expect(tree.usageSummary).toEqual({
           tokens: 0,

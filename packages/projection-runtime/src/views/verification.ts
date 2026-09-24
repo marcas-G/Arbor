@@ -8,6 +8,7 @@ import type {
   CriterionResultView,
   VerificationViewView,
 } from "./shared.js";
+import { verificationIdentityView } from "./shared.js";
 
 export type { AcceptanceViewView, CriterionResultView, VerificationViewView };
 
@@ -79,7 +80,7 @@ export const deriveVerificationView = (
 
     if (selected === undefined) {
       return {
-        verificationId: undefined,
+        ...verificationIdentityView(undefined),
         verdict: undefined,
         criteriaResults: [],
         evidenceRefs: [],
@@ -96,7 +97,7 @@ export const deriveVerificationView = (
     );
 
     return {
-      verificationId: selected.verificationId,
+      ...verificationIdentityView(selected),
       verdict:
         selected.state.status === "Concluded"
           ? selected.state.verdict
@@ -108,12 +109,14 @@ export const deriveVerificationView = (
         verdict: "Unknown",
       })),
       evidenceRefs: evidence.map((row) => row.evidenceId),
-      acceptance: Option.isSome(acceptance)
-        ? {
-            acceptanceId: acceptance.value.acceptanceId,
-            actor: acceptance.value.actor,
-            acceptedAt: acceptance.value.acceptedAt,
-          }
-        : undefined,
+      acceptance:
+        Option.isSome(acceptance) &&
+        acceptance.value.verificationId === selected.verificationId
+          ? {
+              acceptanceId: acceptance.value.acceptanceId,
+              actor: acceptance.value.actor,
+              acceptedAt: acceptance.value.acceptedAt,
+            }
+          : undefined,
     };
   });

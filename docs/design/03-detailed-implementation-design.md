@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.16  
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (P14 design-closure rulings GQ-A–F)  
-**Supersedes:** v1.15  
+**Version:** 1.17\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (D-1 Product UI Contract Closure, TR-WPU-A–D)\
+**Supersedes:** v1.16\
 **Date:** 2026-09-23  
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
@@ -199,6 +199,41 @@ P12 implementation COMPLETE; P12 FORMALLY CLOSED
   Overview "与 Arbor 对话" deep-link（
   `/p/:projectId/workspace/:rootWorkspaceId/conversation`）；child 保持
   read-only；不建 `/chat` 独立产品域。
+
+**Governance changes (v1.16 → v1.17):**（D-1 Product UI Contract Closure，TR-WPU-A–D）
+
+- **TR-WPU-A — presentation-only supersession:** P13 的 `paper/leaf/serif` 全局
+  视觉和 3px shape 限制由 Web Product UI design system 取代：modern minimal
+  light、white/warm-neutral surfaces、Arbor Green 主品牌强调、sans UI/body、mono
+  仅 technical metadata、serif 仅限可选品牌/展示、新 spacing/radius/density；参考图的
+  蓝色不构成品牌主色要求。保留 named-token discipline、semantic status colors、无 dark
+  mode/新 icon library 的约束。**不改** API、command/event、auth、WS invalidation、
+  server SSoT、authority 或任何 P13/P14 backend boundary。
+- **TR-WPU-B — responsibility hierarchy read carrier:** `TreeViewNode` additive
+  carries `parentWorkspaceId: WorkspaceId | null` from canonical
+  `Workspace.parentWorkspaceId`; no `depth` field is added. Projection must mechanically
+  reject zero/multiple root, dangling parent, or cycle before traversal; it preserves
+  root-first deterministic preorder. Browser uses only the server edge and must not infer or
+  repair a parent. This does not alter canonical hierarchy semantics or mutations.
+- **TR-WPU-C — Work revision carrier:** `CurrentWorkSummary.revision: WorkRevision`
+  is copied exactly from canonical `Work.revision` in current-work, workspace-detail and Tree
+  current-work projections. A present Tree `currentWork` includes frozen `status` and
+  `revision`; absent work omits `currentWork` at the wire boundary (no null/dummy shape).
+  Future SteerWork affordances bind only `expectedWorkRevision = server supplied revision`;
+  they never fall back to `0` or maintain a UI revision.
+- **TR-WPU-D — Verification frozen-target carrier and Workbench IA:** selected
+  `VerificationView` pairs its `verificationId` with server-projected
+  `targetWorkRevision: WorkRevision`, copied from the frozen canonical Verification identity.
+  Any future AcceptWorkOutcome affordance requires exact equality of selected work ID,
+  verification ID and target revision; no mutation semantics change. The canonical project
+  landing is `/p/:projectId` Root Workbench (Tree + Root Conversation);
+  `/p/:projectId/tree` remains Tree Focus and
+  `/p/:projectId/workspace/:rootWorkspaceId/conversation` remains the root deep-link mirror.
+  No `/chat` or `/workbench` route, and root-only composer/child read-only rules remain.
+
+This is an additive read-model/presentation adoption, **not** a reopened P13/P14 backend phase:
+no command semantics, event semantics, DDL, authority, transport protocol, System Design, or
+G2–G5 product-domain gap is changed.
 
 **Governance changes (v1.14 → v1.15):**（P13 design-closure 治理裁决 GQ1–GQ4）
 
@@ -4123,7 +4158,7 @@ P12 completion blockers（v1.14 G1–G8；与文件头 P12 completion blockers �
   - Human-actionable governance commands 表单化，经 /commands 提交
   - WS 仅用于 invalidation → refetch；无第二套 canonical/projection state
   - Problem DTO typed failures 的明确 UI 呈现
-  - design token system（paper/leaf/serif 植物学纸面原则）
+  - design token system（TR-WPU-A modern minimal light / Arbor Green；named semantic tokens）
   - 禁止 Search（out-of-v1）；禁止 domain/application/projection/adapters 依赖
 chat-first 主 Workspace 对话面：defer 到 P14+（不在 P13 范围）
 ```
@@ -4138,7 +4173,7 @@ conversational Work；Completed(QueryCompleted) 收口）
 one-active-main 下 durable pending 串行；chat 无 interrupt 语义
 transcript read model 升级（Human/Assistant turn）；v1 无 streaming
 对话权限 root-workspace-only；child 保持 read-only + SteerWork
-UI：Root Workspace 对话 tab + Overview deep-link；无 /chat 域
+UI：`/p/:projectId` Root Workbench（Tree + Root Conversation）+ root deep-link mirror；无 /chat 域
 浏览器不得直连 external AdmitExecution（server-side wiring only）
 合同：docs/design/implementation/P14/**
 ```
@@ -4615,8 +4650,8 @@ v1.3 已关闭 P0 前必须通过推理确定的 C1–C10 与 X1–X11 cross-cut
 | P12 exact contracts (Plugin SDK/SPI + compatibility; Authority Resolver production plane; Project tool registration/trust; observability/health/usage; remote Worker transport + identity; secret store; transport shells) | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
 | StorageScaleAssessment + DurabilityEnvelope / backup-restore / RPO-RTO / restore drill | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
 | Runtime Safety Envelope 六维补全（§8.16A cross-phase closure） | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
-| P13 Product Web Client（client boundary/role；Command → UI exposure policy matrix；view rendering + Problem 呈现；design token system；transport/build binding；acceptance） | **P13 PHASE CONTRACT** | `docs/design/implementation/P13/**` |
-| P14 Chat-First 对话面（SubmitHumanMessage 命令/事件/persistence；conversation trigger + Coordination admission + one-active-main 排队 + exact-once；transcript read model 升级；Web 对话面 root-only；acceptance 十 seams） | **P14 PHASE CONTRACT** | `docs/design/implementation/P14/**` |
+| P13 Product Web Client（client boundary/role；Command → UI exposure policy matrix；view rendering + Problem 呈现；TR-WPU-A design token system；transport/build binding；acceptance） | **P13 PHASE CONTRACT** | `docs/design/implementation/P13/**` |
+| P14 Chat-First 对话面（SubmitHumanMessage 命令/事件/persistence；conversation trigger + Coordination admission + one-active-main 排队 + exact-once；transcript read model 升级；TR-WPU-D Root Workbench/root-only web placement；acceptance 十 seams） | **P14 PHASE CONTRACT** | `docs/design/implementation/P14/**` |
 
 P1 phase-scoped implementation contracts are owned by:
 
@@ -4947,7 +4982,7 @@ Composition Root
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
 System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.14     TOP-LEVEL FROZEN
+Detailed Implementation Design v1.17     TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED

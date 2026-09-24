@@ -24,7 +24,7 @@ export interface CurrentWorkDeps {
   ) => Effect.Effect<Option.Option<Execution>, ProjectionReadError>;
 }
 
-/** CurrentWorkRes core: `{workId?, objective, status, activeExecution?} |
+/** CurrentWorkRes core: `{workId?, objective, status, revision, activeExecution?} |
  * null` — null when the workspace has no current work. Read-only. */
 export const deriveCurrentWork = (
   workspaceId: WorkspaceId,
@@ -50,6 +50,7 @@ export const deriveCurrentWork = (
       workId: work.value.workId,
       objective: work.value.objective,
       status: work.value.lifecycle,
+      revision: work.value.revision,
       activeExecution: Option.isSome(activeMain)
         ? {
             executionId: activeMain.value.executionId,

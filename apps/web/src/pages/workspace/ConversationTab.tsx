@@ -1,8 +1,8 @@
 /**
  * P14 `04` §1/§2 — conversation tab. The read-only transcript is shared by
  * root and child workspaces; the composer is the single input face and is
- * rendered ONLY on the Root Workspace (tree nodes[0], the Web v1 root
- * authority). The root decision is data-driven here, not route-driven.
+ * rendered ONLY on the Root Workspace (the Tree node with a null server
+ * parent). The root decision is data-driven here, not route-driven.
  */
 import type {
   Problem,
@@ -70,8 +70,9 @@ export function ConversationTab({
           limit: TRANSCRIPT_PAGE_SIZE,
         };
   const transcript = useViewQuery("transcript", request);
-  const rootWorkspaceId =
-    tree.data === undefined ? undefined : tree.data.nodes[0]?.workspaceId;
+  const rootWorkspaceId = tree.data?.nodes.find(
+    (node) => node.parentWorkspaceId === null,
+  )?.workspaceId;
   const isRoot =
     rootWorkspaceId !== undefined && rootWorkspaceId === workspaceId;
   const queuedState =

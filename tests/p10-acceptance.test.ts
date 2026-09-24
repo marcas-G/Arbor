@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Effect, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -76,6 +76,7 @@ import {
   WORKSPACE_STATUS_LABELS,
   WorkId,
   WorkRevision,
+  type Workspace,
   WorkspaceId,
   type WorkspaceStatusLabel,
 } from "../packages/domain/dist/index.js";
@@ -212,6 +213,56 @@ const runtimeDepsOf = (
   inboxReconcile: deps.inboxReconcile,
 });
 
+const malformedTreeCases: ReadonlyArray<{
+  readonly label: string;
+  readonly arrange: (
+    workspaces: ReadonlyArray<Workspace>,
+  ) => ReadonlyArray<Workspace>;
+}> = [
+  {
+    label: "zero root",
+    arrange: (workspaces) =>
+      workspaces.map((workspace) =>
+        workspace.workspaceId === p10Root
+          ? { ...workspace, parentWorkspaceId: p10Child }
+          : workspace,
+      ),
+  },
+  {
+    label: "multiple roots",
+    arrange: (workspaces) =>
+      workspaces.map((workspace) =>
+        workspace.workspaceId === p10Child
+          ? { ...workspace, parentWorkspaceId: null }
+          : workspace,
+      ),
+  },
+  {
+    label: "dangling parent",
+    arrange: (workspaces) =>
+      workspaces.map((workspace) =>
+        workspace.workspaceId === p10Child
+          ? {
+              ...workspace,
+              parentWorkspaceId:
+                "ws_00000000-0000-7000-8000-0000000000ff" as WorkspaceId,
+            }
+          : workspace,
+      ),
+  },
+  {
+    label: "cycle",
+    arrange: (workspaces) =>
+      workspaces.map((workspace) =>
+        workspace.workspaceId === p10Child
+          ? { ...workspace, parentWorkspaceId: p10Leaf }
+          : workspace.workspaceId === p10Leaf
+            ? { ...workspace, parentWorkspaceId: p10Child }
+            : workspace,
+      ),
+  },
+];
+
 describe("p10-acceptance (P10 07 Stories A–G)", () => {
   it("Story A — Tree & Status: one barrier-gated tree query renders the responsibility chain, frozen per-node labels and subtree attention summaries; zero view writes", async () => {
     const rootWork = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000a1");
@@ -259,6 +310,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
             workId: rootWork,
             workspaceId: p10Root,
             objective: "root objective",
+            revision: 4,
           },
           p10Project,
         );
@@ -315,9 +367,15 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
 
     interface WireNode {
       readonly workspaceId: WorkspaceId;
+      readonly parentWorkspaceId: WorkspaceId | null;
       readonly status: string;
       readonly subtreeAttention: { attention: number; actionRequired: number };
-      readonly currentWork?: { workId: WorkId; objective: string } | null;
+      readonly currentWork?: {
+        readonly workId: WorkId;
+        readonly objective: string;
+        readonly status: string;
+        readonly revision: number;
+      };
     }
 
     await runP10(
@@ -337,6 +395,15 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
 
         const nodes = result.value.nodes as readonly WireNode[];
         expect(nodes).toHaveLength(5);
+        expect(
+          nodes.map((node) => [node.workspaceId, node.parentWorkspaceId]),
+        ).toEqual([
+          [p10Root, null],
+          [p10Child, p10Root],
+          [p10Leaf, p10Child],
+          [p10Retired, p10Root],
+          [p10Flagged, p10Root],
+        ]);
         const byId = new Map(nodes.map((node) => [node.workspaceId, node]));
         expect(byId.get(p10Root)?.status).toBe("executing");
         expect(byId.get(p10Child)?.status).toBe("waiting-blocked");
@@ -346,7 +413,10 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         expect(byId.get(p10Root)?.currentWork).toEqual({
           workId: rootWork,
           objective: "root objective",
+          status: "Open",
+          revision: 4,
         });
+        expect(byId.get(p10Child)?.currentWork).toBeUndefined();
         expect(byId.get(p10Flagged)?.subtreeAttention).toEqual({
           attention: 0,
           actionRequired: 1,
@@ -378,6 +448,62 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
       makeP10App(),
     );
   });
+
+  it.each(malformedTreeCases)(
+    "rejects a malformed responsibility hierarchy: $label",
+    async ({ arrange }) => {
+      await runP10(
+        Effect.gen(function* () {
+          yield* migrate;
+          yield* seedCanonical(
+            Effect.gen(function* () {
+              yield* insertProjectRootRow(p10Root, p10Project);
+              yield* insertWorkspaceRow(
+                { workspaceId: p10Root, parentWorkspaceId: null, name: "root" },
+                p10Project,
+              );
+              yield* insertWorkspaceRow(
+                {
+                  workspaceId: p10Child,
+                  parentWorkspaceId: p10Root,
+                  name: "child",
+                },
+                p10Project,
+              );
+              yield* insertWorkspaceRow(
+                {
+                  workspaceId: p10Leaf,
+                  parentWorkspaceId: p10Child,
+                  name: "leaf",
+                },
+                p10Project,
+              );
+            }),
+          );
+          const deps = yield* makeP10Deps();
+          const canonical =
+            yield* deps.tree.listWorkspacesByProject(p10Project);
+          const attempted = yield* Effect.exit(
+            buildTreeView(
+              { projectId: p10Project },
+              {
+                ...deps.tree,
+                listWorkspacesByProject: () =>
+                  Effect.succeed(arrange(canonical)),
+              },
+            ),
+          );
+          expect(Exit.isFailure(attempted)).toBe(true);
+          if (Exit.isFailure(attempted)) {
+            expect(Cause.squash(attempted.cause)).toMatchObject({
+              _tag: "ProjectionReadFailure",
+            });
+          }
+        }),
+        makeP10App(),
+      );
+    },
+  );
 
   it("Story B — Attention read-model: all six fact sources exact on the wire (GAP-01 positive + retired negative); canonical snapshot untouched", async () => {
     const consumerWs = parse(WorkspaceId)(
@@ -1045,6 +1171,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
           workId: rootWork,
           objective: "current objective",
           status: "Open",
+          revision: 0,
           activeExecution: { executionId: exeRoot, admittedAt: "t0" },
         });
         expect(detail.pendingWorks).toEqual([
@@ -1099,6 +1226,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
           workId: rootWork,
           objective: "current objective",
           status: "Open",
+          revision: 0,
           activeExecution: { executionId: exeRoot, admittedAt: "t0" },
         });
         expect(yield* deriveCurrentWork(p10Child, deps.currentWork)).toBeNull();
@@ -1108,6 +1236,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
           deps.verificationView,
         );
         expect(verificationRes.verificationId).toBe("ver_d1");
+        expect(verificationRes.targetWorkRevision).toBe(0);
         expect(verificationRes.verdict).toBeUndefined();
         expect(
           verificationRes.criteriaResults.every((c) => c.verdict === "Unknown"),

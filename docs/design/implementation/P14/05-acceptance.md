@@ -1,6 +1,6 @@
 # P14 — 05 Acceptance（十 seams + 完成定义）
 
-**Baseline:** DID v1.16 G-A–G-F · contracts `00`–`04`
+**Baseline:** DID v1.16 G-A–G-F · DID v1.17 TR-WPU-D placement/read-model successor · contracts `00`–`04`
 
 ## 1. End-to-end acceptance story
 

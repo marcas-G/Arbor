@@ -1,7 +1,8 @@
-# Web Product UI Contract Closure — Draft
+# Web Product UI Contract Closure
 
-**Status:** DRAFT — contract/read-model proposal only; no frontend, API, projection, domain,
-DDL, event, or frozen-document implementation is authorized by this document.
+**Status:** FROZEN and adopted by DID v1.17 — D-1 implements the API/projection/documentation
+closure for TR-WPU-A–D only. D0–D10 frontend/product implementation remains unauthorized; no
+domain, DDL, event, command, authority, or transport evolution is authorized by this record.
 
 **Decision inputs:** C1–C4 and Product IA correction approved by the product owner on
 2026-09-23.
@@ -23,8 +24,8 @@ freeze-status version marker (including stale appendix markers) to v1.17.
 |---|---|---|---|
 | TR-WPU-A | P13 `04-design-tokens` visual-only rules | New Web Product UI light design system: white/warm-neutral surfaces, Arbor Green brand emphasis, sans UI/body, mono only for technical metadata, optional limited serif brand/display, revised spacing/radius/density. | DTO/command semantics, auth, WS, server-state ownership, status semantics and no-icon-library decision. |
 | TR-WPU-B | P10/P13 responsibility-tree wire shape | Append `parentWorkspaceId` to every returned tree node, sourced by the server projection from canonical `Workspace.parentWorkspaceId`. | Canonical responsibility hierarchy, preorder row order, `depth` request semantics, all tree mutations (there are none). |
-| TR-WPU-C | P10/P13 current-work and verification read-view shapes | Add server-carried canonical Work revision to `CurrentWorkSummary`; add selected Verification's frozen target work revision to `VerificationView`. | Work revision advancement, verification selection/acceptance rules, command payloads and authority. |
-| TR-WPU-D | DID v1.16 G-F / P14 `04-web-surface` §1 placement only | `/p/:projectId` becomes Root Workbench (Tree + Root Conversation); `/p/:projectId/workspace/:rootWorkspaceId/conversation` remains its root-tab deep-link mirror; `/p/:projectId/tree` remains Tree Focus/deep-link. | Root-only composer, child transcript read-only, all nine views, no new `/chat`, `/workbench`, or backend route. |
+| TR-WPU-C | P10/P13 current-work read-view shape | Add server-carried canonical Work revision to `CurrentWorkSummary`. | Work revision advancement, command payloads and authority. |
+| TR-WPU-D | P10/P14 Verification read-view + DID v1.16 G-F / P14 `04-web-surface` §1 placement | Add selected Verification's frozen target work revision to `VerificationView`; `/p/:projectId` becomes Root Workbench (Tree + Root Conversation); `/p/:projectId/workspace/:rootWorkspaceId/conversation` remains its root-tab deep-link mirror; `/p/:projectId/tree` remains Tree Focus/deep-link. | Verification selection/acceptance rules, root-only composer, child transcript read-only, all nine views, no new `/chat`, `/workbench`, or backend route. |
 
 This is a DID bump, not a reopened P13/P14 backend phase: it records a narrow public
 read-model/presentation supersession. The implementation contract should carry the v1.17
@@ -170,25 +171,32 @@ server-supplied form-prop test fixture, never as a page binding default.
 
 ## 5. C4 — Verification target revision carrier
 
-### Conditional API-contract draft
+### Conditional API-contract
 
 An empty Verification view has no Verification record, so an unconditional numeric field would
 fabricate a target revision. The minimum correct wire expression is: **when `verificationId` is
-present, `targetWorkRevision` is present and numeric; when no verification is selected, both are
-absent.** It remains an optional paired field in the existing interface to preserve current
-empty-view consumers, but the projection must create it through one shared pair assertion/constructor
-that rejects a one-sided value before it reaches the query envelope.
+present, `targetWorkRevision` is present and branded as `WorkRevision`; when no verification is
+selected, both are absent.** The public contract expresses that condition as a union, while the
+projection constructs it through one shared pair constructor.
 
 ```ts
 // packages/api-contracts/src/views.ts
-export interface VerificationView {
-  readonly verificationId?: VerificationId | undefined;
-  readonly targetWorkRevision?: number | undefined; // NEW; required iff verificationId exists
+export type VerificationIdentity =
+  | {
+      readonly verificationId: VerificationId;
+      readonly targetWorkRevision: WorkRevision;
+    }
+  | {
+      readonly verificationId?: undefined;
+      readonly targetWorkRevision?: undefined;
+    };
+
+export type VerificationView = VerificationIdentity & {
   readonly verdict?: VerificationVerdict | undefined;
   readonly criteriaResults: ReadonlyArray<CriterionResult>;
   readonly evidenceRefs: ReadonlyArray<EvidenceId>;
   readonly acceptance?: AcceptanceView | undefined;
-}
+};
 ```
 
 Invariant: if `verificationId` is defined then `targetWorkRevision` equals the selected
@@ -237,8 +245,9 @@ The formal landing route is now:
 /p/:projectId/tree -> Tree Focus / deep-link surface
 ```
 
-Workbench resolves the root from `responsibility-tree.nodes[0]`, presents the graph/list context
-from C2, and binds the only composer to that root. It does not create `/workbench` or `/chat`.
+Workbench resolves the root as the one server-projected Tree node whose
+`parentWorkspaceId === null`, presents the graph/list context from C2, and binds the only composer
+to that root. It does not create `/workbench` or `/chat`.
 The former separate Overview dashboard is no longer a required landing surface; its existing
 server views are retained and may be reused only as constrained supporting information in
 existing pages. No server view is removed.

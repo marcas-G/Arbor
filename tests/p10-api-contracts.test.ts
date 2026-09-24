@@ -39,7 +39,10 @@ import type {
   WorkId,
   WorkspaceId,
 } from "../packages/domain/src/ids.js";
-import type { ResponsibilityRevision } from "../packages/domain/src/ordinals.js";
+import type {
+  ResponsibilityRevision,
+  WorkRevision,
+} from "../packages/domain/src/ordinals.js";
 import { VIEW_IDS } from "../packages/domain/src/projection.js";
 import {
   PROJECTION_QUERY_ERROR_CODES,
@@ -59,6 +62,7 @@ const evidenceId = `evd_${UUID}` as EvidenceId;
 const sessionId = `ses_${UUID}` as SessionId;
 const verificationId = `ver_${UUID}` as VerificationId;
 const responsibilityRevision = 1 as ResponsibilityRevision;
+const workRevision = 0 as WorkRevision;
 
 const keys = (value: object): ReadonlyArray<string> =>
   Object.keys(value).sort();
@@ -265,6 +269,7 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
       nodes: [
         {
           workspaceId,
+          parentWorkspaceId: null,
           name: "root",
           status: "executing",
           subtreeAttention: { attention: 1, actionRequired: 0 },
@@ -273,6 +278,7 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
     };
     expect(keys(res.nodes[0] ?? {})).toEqual([
       "name",
+      "parentWorkspaceId",
       "status",
       "subtreeAttention",
       "workspaceId",
@@ -368,8 +374,14 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
       workId,
       objective: "o",
       status: "Open",
+      revision: workRevision,
     };
-    expect(keys(present ?? {})).toEqual(["objective", "status", "workId"]);
+    expect(keys(present ?? {})).toEqual([
+      "objective",
+      "revision",
+      "status",
+      "workId",
+    ]);
   });
 
   it("Verification request/response cores", () => {
@@ -377,6 +389,7 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
     expect(keys(req)).toEqual(["workId"]);
     const res: VerificationRes = {
       verificationId,
+      targetWorkRevision: workRevision,
       verdict: "Pass",
       criteriaResults: [
         {
@@ -391,9 +404,33 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
     expect(keys(res)).toEqual([
       "criteriaResults",
       "evidenceRefs",
+      "targetWorkRevision",
       "verdict",
       "verificationId",
     ]);
+    const empty: VerificationRes = {
+      criteriaResults: [],
+      evidenceRefs: [],
+    };
+    expect(keys(empty)).toEqual(["criteriaResults", "evidenceRefs"]);
+
+    // TR-WPU-D exposes frozen verification identity as an all-or-nothing
+    // pair. These compile-time assertions must fail if either carrier is
+    // weakened to an independently optional public field.
+    // @ts-expect-error verificationId cannot appear without targetWorkRevision
+    const missingTarget: VerificationRes = {
+      verificationId,
+      criteriaResults: [],
+      evidenceRefs: [],
+    };
+    // @ts-expect-error targetWorkRevision cannot appear without verificationId
+    const missingVerificationId: VerificationRes = {
+      targetWorkRevision: workRevision,
+      criteriaResults: [],
+      evidenceRefs: [],
+    };
+    void missingTarget;
+    void missingVerificationId;
   });
 
   it("Dependency request accepts exactly one of projectId|workspaceId", () => {
