@@ -91,6 +91,7 @@
   width: 100%;
   text-align: left;
   padding: var(--arbor-space-3);
+  margin-inline-start: calc(var(--tree-depth, 0) * var(--arbor-space-4));
   background: var(--arbor-surface);
   border: 1px solid var(--arbor-line);
   border-radius: var(--arbor-radius);

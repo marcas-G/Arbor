@@ -1,3 +1,4 @@
+import type { Problem, ViewRequestMap } from "@arbor/api-contracts";
 import {
   type CSSProperties,
   type PointerEvent,
@@ -6,10 +7,19 @@ import {
   useState,
 } from "react";
 import type { Route } from "../../api/router.js";
+import { navigate } from "../../api/router.js";
+import { useViewQuery } from "../../api/useViewQuery.js";
+import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
 import { Empty } from "../../components/Empty.js";
 import { MonoText } from "../../components/MonoText.js";
+import { StatusBadge } from "../../components/StatusBadge.js";
+import { ProblemCard } from "../../problems/ProblemCard.js";
+import { presentResponsibilityTree } from "../tree/treePresentation.js";
+import { ConversationRecord } from "../workspace/ConversationTab.js";
 import styles from "./workbench.module.css";
+
+type ProjectId = ViewRequestMap["responsibility-tree"]["projectId"];
 
 export type WorkbenchPaneOrder = "tree-first" | "conversation-first";
 
@@ -91,7 +101,24 @@ function useWorkbenchLayout() {
   return [layout, setLayout] as const;
 }
 
-function TreePane({ hiddenOnMobile }: { readonly hiddenOnMobile: boolean }) {
+function TreePane({
+  projectId,
+  hiddenOnMobile,
+}: {
+  readonly projectId: string;
+  readonly hiddenOnMobile: boolean;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const tree = useViewQuery("responsibility-tree", {
+    projectId: projectId as ProjectId,
+  });
+  const presented =
+    tree.data === undefined
+      ? undefined
+      : presentResponsibilityTree(tree.data.nodes);
+  const selected = tree.data?.nodes.find(
+    (node) => node.workspaceId === selectedId,
+  );
   return (
     <section
       className={`${styles.pane} ${styles.treePane} ${hiddenOnMobile ? styles.mobileHidden : ""}`}
@@ -102,18 +129,113 @@ function TreePane({ hiddenOnMobile }: { readonly hiddenOnMobile: boolean }) {
           <p className={styles.eyebrow}>组织视图</p>
           <h2 id="workbench-tree-title">责任树</h2>
         </div>
-        <span className={styles.paneState}>准备就绪</span>
+        <Button
+          variant="quiet"
+          onClick={() => {
+            navigate({ name: "tree", projectId });
+          }}
+        >
+          树焦点
+        </Button>
       </header>
-      <Empty>责任树将在连接到项目视图后显示。</Empty>
+      {tree.isPending ? (
+        <Empty>加载责任树</Empty>
+      ) : tree.isError ? (
+        <ProblemCard
+          problem={tree.error as unknown as Problem}
+          onRetry={() => {
+            void tree.refetch();
+          }}
+        />
+      ) : presented === null || presented === undefined ? (
+        <Empty>责任树结构不可用，请刷新后重试</Empty>
+      ) : (
+        <>
+          <ul className={styles.treeList} aria-label="责任树节点">
+            {tree.data.nodes.map((node) => {
+              const depth =
+                presented.depths.get(node.workspaceId as string) ?? 0;
+              return (
+                <li key={node.workspaceId}>
+                  <button
+                    type="button"
+                    className={styles.treeNode}
+                    aria-pressed={node.workspaceId === selectedId}
+                    style={
+                      {
+                        "--workbench-tree-depth": String(depth),
+                      } as CSSProperties
+                    }
+                    onClick={() => {
+                      setSelectedId(node.workspaceId);
+                    }}
+                  >
+                    <span className={styles.treeNodeHead}>
+                      <span>{node.name}</span>
+                      <StatusBadge label={node.status} />
+                    </span>
+                    {node.currentWork === undefined ? null : (
+                      <span className={styles.treeNodeSummary}>
+                        {node.currentWork.objective}
+                      </span>
+                    )}
+                    {node.subtreeAttention.attention === 0 &&
+                    node.subtreeAttention.actionRequired === 0 ? null : (
+                      <span className={styles.treeNodeBadges}>
+                        {node.subtreeAttention.attention === 0 ? null : (
+                          <Badge tone="attention">{`attention ${String(node.subtreeAttention.attention)}`}</Badge>
+                        )}
+                        {node.subtreeAttention.actionRequired === 0 ? null : (
+                          <Badge tone="danger">{`actionRequired ${String(node.subtreeAttention.actionRequired)}`}</Badge>
+                        )}
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {selected === undefined ? (
+            <p className={styles.treeInspection}>选择节点查看责任上下文。</p>
+          ) : (
+            <div className={styles.treeInspection}>
+              <strong>{selected.name}</strong>
+              <span>{selected.currentWork?.objective ?? "无当前工作"}</span>
+              <Button
+                variant="quiet"
+                onClick={() => {
+                  navigate({
+                    name: "workspace",
+                    projectId,
+                    workspaceId: selected.workspaceId,
+                    tab: "overview",
+                  });
+                }}
+              >
+                打开工作区
+              </Button>
+            </div>
+          )}
+        </>
+      )}
     </section>
   );
 }
 
 function ConversationPane({
+  projectId,
   hiddenOnMobile,
 }: {
+  readonly projectId: string;
   readonly hiddenOnMobile: boolean;
 }) {
+  const tree = useViewQuery("responsibility-tree", {
+    projectId: projectId as ProjectId,
+  });
+  const presented =
+    tree.data === undefined
+      ? undefined
+      : presentResponsibilityTree(tree.data.nodes);
   return (
     <section
       className={`${styles.pane} ${styles.conversationPane} ${hiddenOnMobile ? styles.mobileHidden : ""}`}
@@ -124,16 +246,33 @@ function ConversationPane({
           <p className={styles.eyebrow}>协作上下文</p>
           <h2 id="workbench-conversation-title">对话</h2>
         </div>
-        <span className={styles.paneState}>等待选择</span>
+        <span className={styles.paneState}>根工作区</span>
       </header>
-      <Empty>从责任树选择工作区后，在这里查看对话上下文。</Empty>
+      {tree.isPending ? (
+        <Empty>正在确认根工作区</Empty>
+      ) : tree.isError ? (
+        <ProblemCard
+          problem={tree.error as unknown as Problem}
+          onRetry={() => {
+            void tree.refetch();
+          }}
+        />
+      ) : presented === null || presented === undefined ? (
+        <Empty>责任树结构不可用，无法绑定根对话。</Empty>
+      ) : (
+        <ConversationRecord
+          projectId={projectId}
+          workspaceId={presented.root.workspaceId}
+          rootWorkspaceId={presented.root.workspaceId}
+        />
+      )}
     </section>
   );
 }
 
 /**
- * D3 product landing: local shell only. Tree/transcript data and command
- * affordances remain owned by later authorized surfaces, never by this page.
+ * D6 product landing: tree and conversation are server views; layout remains
+ * a local presentation preference only.
  */
 export function RootWorkbenchPage({
   route,
@@ -182,7 +321,6 @@ export function RootWorkbenchPage({
         stopResizeRef.current = null;
       }
     };
-    resize(event.nativeEvent);
     document.addEventListener("pointermove", resize);
     document.addEventListener("pointerup", stop);
     document.addEventListener("pointercancel", stop);
@@ -205,18 +343,28 @@ export function RootWorkbenchPage({
   const panes =
     layout.order === "tree-first"
       ? [
-          <TreePane key="tree" hiddenOnMobile={mobilePane !== "tree"} />,
+          <TreePane
+            key="tree"
+            projectId={route.projectId}
+            hiddenOnMobile={mobilePane !== "tree"}
+          />,
           <ConversationPane
             key="conversation"
+            projectId={route.projectId}
             hiddenOnMobile={mobilePane !== "conversation"}
           />,
         ]
       : [
           <ConversationPane
             key="conversation"
+            projectId={route.projectId}
             hiddenOnMobile={mobilePane !== "conversation"}
           />,
-          <TreePane key="tree" hiddenOnMobile={mobilePane !== "tree"} />,
+          <TreePane
+            key="tree"
+            projectId={route.projectId}
+            hiddenOnMobile={mobilePane !== "tree"}
+          />,
         ];
   const layoutStyle = {
     "--workbench-tree-basis": `${String(layout.treeBasis)}%`,

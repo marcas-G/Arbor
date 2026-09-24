@@ -1,12 +1,12 @@
 /**
  * W-04 — Responsibility Tree 页（只读导航面，frozen §2.3）。
- * 只做三件事：navigate（节点卡点击→工作区概览）、select（本地选中高亮）、
- * inspect（右侧 mini-detail）。已知限制：wire DTO 是扁平前序列表（无
- * depth/parent 字段），v1 平铺有序节点卡（root 在首），不发明层级。
+ * 只做三件事：select（本地选中高亮）、inspect（右侧 mini-detail）、通过
+ * 明确动作 navigate。wire preorder 保持稳定展示顺序；层级只来自 server
+ * `parentWorkspaceId`，绝不从顺序或名称推断。
  * 硬约束：本页 0 个 command 发起——只有 view 查询与本地导航状态。
  */
 import type { Problem, TreeViewNode } from "@arbor/api-contracts";
-import { useState } from "react";
+import { type CSSProperties, useState } from "react";
 import type { Route } from "../../api/router.js";
 import { navigate } from "../../api/router.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
@@ -21,6 +21,7 @@ import { StatusBadge } from "../../components/StatusBadge.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { formatCost } from "../../views/shared.js";
 import styles from "./tree.module.css";
+import { presentResponsibilityTree } from "./treePresentation.js";
 
 const DEPTH_OPTIONS: ReadonlyArray<number> = [1, 2, 3, 4, 5, 6];
 const DEFAULT_DEPTH = 3;
@@ -42,10 +43,12 @@ function attentionText(node: TreeViewNode): string {
 function TreeNodeCard({
   node,
   selected,
+  depth,
   onActivate,
 }: {
   readonly node: TreeViewNode;
   readonly selected: boolean;
+  readonly depth: number;
   readonly onActivate: (node: TreeViewNode) => void;
 }) {
   return (
@@ -53,6 +56,7 @@ function TreeNodeCard({
       <button
         type="button"
         className={cx([styles.node, selected ? styles.nodeSelected : null])}
+        style={{ "--tree-depth": String(depth) } as CSSProperties}
         aria-pressed={selected}
         onClick={() => {
           onActivate(node);
@@ -135,6 +139,8 @@ export function TreePage({
   const nodes = query.data?.nodes ?? [];
   const selected =
     nodes.find((node) => node.workspaceId === selectedId) ?? null;
+  const presented =
+    query.data === undefined ? undefined : presentResponsibilityTree(nodes);
 
   return (
     <div className={styles.page}>
@@ -172,8 +178,8 @@ export function TreePage({
                 void query.refetch();
               }}
             />
-          ) : nodes.length === 0 ? (
-            <Empty>无工作区</Empty>
+          ) : presented === null || presented === undefined ? (
+            <Empty>责任树结构不可用，请刷新后重试</Empty>
           ) : (
             <ul className={styles.list}>
               {nodes.map((node) => (
@@ -181,9 +187,9 @@ export function TreePage({
                   key={node.workspaceId}
                   node={node}
                   selected={node.workspaceId === selectedId}
+                  depth={presented.depths.get(node.workspaceId as string) ?? 0}
                   onActivate={(activated) => {
                     setSelectedId(activated.workspaceId);
-                    openWorkspace(route.projectId, activated.workspaceId);
                   }}
                 />
               ))}

@@ -1,7 +1,7 @@
 /**
  * W-04 page tests — Responsibility Tree 页跑在真实 view-query 栈上（每个用例
  * 独立 QueryClient；global fetch 在传输边界打桩）。冻结 §2.3 只读导航合同：
- * 节点卡渲染（空位不补零、未知枚举原样）、点击→工作区导航、depth 变更→
+ * 节点卡渲染（空位不补零、未知枚举原样）、点击→本地 inspect、depth 变更→
  * 新 query（body 带 depth）、选中→mini-detail + “打开工作区”、Problem 就地。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -130,16 +130,15 @@ describe("W-04 TreePage (read-only navigation)", () => {
     expect(screen.queryByText(/^actionRequired \d+$/)).toBeNull();
   });
 
-  it("node card click navigates to the workspace overview route", async () => {
+  it("node card click only selects it; explicit detail action navigates", async () => {
     vi.stubGlobal("fetch", makeFetch([okBody(treeTypical)]).fn);
     renderTree();
     fireEvent.click(await screen.findByText("平台根工作区"));
+    expect(window.location.pathname).toBe("/");
+    expect(screen.getByText("节点详情")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "打开工作区" }));
     expect(window.location.pathname).toBe(
       "/p/prj_1/workspace/ws_018f6a2e-0000-7000-8000-000000000001",
-    );
-    fireEvent.click(screen.getByText("守护进程"));
-    expect(window.location.pathname).toBe(
-      "/p/prj_1/workspace/ws_018f6a2e-0000-7000-8000-000000000003",
     );
   });
 

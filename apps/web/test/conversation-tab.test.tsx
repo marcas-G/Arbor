@@ -208,6 +208,22 @@ describe("P14-005 conversation tab", () => {
     expect(harness.commandCalls.length).toBe(0);
   });
 
+  it("Enter submits while Shift+Enter remains a text-only newline gesture", async () => {
+    const harness = installFetch({
+      tree: rootTree,
+      transcriptResponses: [() => okValue(transcriptTypical)],
+    });
+    renderConversation();
+    const composer = (await screen.findByLabelText(
+      "消息",
+    )) as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "第一行" } });
+    fireEvent.keyDown(composer, { key: "Enter", shiftKey: true });
+    expect(harness.commandCalls).toHaveLength(0);
+    fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(harness.commandCalls).toHaveLength(1));
+  });
+
   it("submits the frozen envelope shape to /commands", async () => {
     const harness = installFetch({
       tree: rootTree,

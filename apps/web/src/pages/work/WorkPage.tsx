@@ -5,7 +5,11 @@
  * disabled 占位（W-08 接线）。数据组合不发明 work 级新视图；查询失败
  * 就地 ProblemCard；本页 0 个 command 发起。
  */
-import type { Problem } from "@arbor/api-contracts";
+import type {
+  CurrentWorkSummary,
+  Problem,
+  VerificationRes,
+} from "@arbor/api-contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Route } from "../../api/router.js";
@@ -26,6 +30,57 @@ import styles from "./work.module.css";
 
 /** transport 层抛出的就是 frozen Problem（useViewQuery queryFn 约定）。 */
 const asProblem = (error: unknown): Problem => error as Problem;
+
+type SteerBinding = {
+  readonly workId: string;
+  readonly objective: string;
+  readonly revision: number;
+};
+
+type AcceptanceBinding = SteerBinding & {
+  readonly verificationId: string;
+  readonly targetWorkRevision: number;
+};
+
+/**
+ * `verification({workId})` is an exact request-scoped view: the request
+ * supplies the selected work leg, while its response supplies the frozen
+ * verification identity. No work/revision/verification value is guessed.
+ */
+const bindWorkGovernance = (
+  selectedWorkId: string,
+  current: CurrentWorkSummary | undefined,
+  verification: VerificationRes | undefined,
+): {
+  readonly steer: SteerBinding | null;
+  readonly accept: AcceptanceBinding | null;
+} => {
+  if (current?.workId !== selectedWorkId) {
+    return { steer: null, accept: null };
+  }
+  const steer: SteerBinding = {
+    workId: current.workId,
+    objective: current.objective,
+    revision: current.revision,
+  };
+  if (
+    verification?.verificationId === undefined ||
+    verification.targetWorkRevision === undefined ||
+    verification.targetWorkRevision !== current.revision ||
+    verification.verdict !== "Pass" ||
+    verification.acceptance !== undefined
+  ) {
+    return { steer, accept: null };
+  }
+  return {
+    steer,
+    accept: {
+      ...steer,
+      verificationId: verification.verificationId,
+      targetWorkRevision: verification.targetWorkRevision,
+    },
+  };
+};
 
 export function WorkPage({
   route,
@@ -51,6 +106,7 @@ export function WorkPage({
     "verification",
     workFound ? { workId: workId as never } : null,
   );
+  const governance = bindWorkGovernance(workId, current, verification.data);
 
   return (
     <div className={styles.page}>
@@ -82,8 +138,8 @@ export function WorkPage({
         <WorkGovernance
           projectId={route.projectId}
           workspaceId={route.workspaceId}
-          workId={route.workId}
-          verificationId={verification.data?.verificationId ?? null}
+          steer={governance.steer}
+          accept={governance.accept}
         />
       </header>
       {detail.isPending ? (
@@ -107,23 +163,22 @@ export function WorkPage({
   );
 }
 
-/** W-08 — Work-context governance (frozen §5): AcceptWorkOutcome when a
- * verification exists; SteerWork for the exact work. */
+/** W-08 — Work-context governance only receives source-bound targets. */
 function WorkGovernance({
   projectId,
   workspaceId,
-  workId,
-  verificationId,
+  steer,
+  accept,
 }: {
   readonly projectId: string;
   readonly workspaceId: string;
-  readonly workId: string;
-  readonly verificationId: string | null;
+  readonly steer: SteerBinding | null;
+  readonly accept: AcceptanceBinding | null;
 }) {
   const session = useSession();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"accept" | "steer" | null>(null);
-  const onSubmitted = (receipt: CommandReceiptView): void => {
+  const onSubmitted = (_receipt: CommandReceiptView): void => {
     setMode(null);
     void queryClient.invalidateQueries({ queryKey: ["view"] });
   };
@@ -133,7 +188,7 @@ function WorkGovernance({
       <div className={styles.governanceActions}>
         <Button
           variant="primary"
-          disabled={verificationId === null}
+          disabled={accept === null}
           onClick={() => {
             setMode("accept");
           }}
@@ -142,32 +197,31 @@ function WorkGovernance({
         </Button>
         <Button
           variant="quiet"
-          onClick={() => {
-            setMode("steer");
-          }}
+          disabled={steer === null}
+          onClick={() => setMode("steer")}
         >
           纠偏
         </Button>
       </div>
-      {mode === "accept" && verificationId !== null ? (
+      {mode === "accept" && accept !== null ? (
         <AcceptWorkOutcomeForm
           actor={session.actor ?? ""}
           projectId={projectId}
-          workId={workId}
-          targetWorkRevision={0}
-          verificationId={verificationId}
+          workId={accept.workId}
+          targetWorkRevision={accept.targetWorkRevision}
+          verificationId={accept.verificationId}
           token={session.token ?? undefined}
           onSubmitted={onSubmitted}
         />
       ) : null}
-      {mode === "steer" ? (
+      {mode === "steer" && steer !== null ? (
         <SteerWorkForm
           actor={session.actor ?? ""}
           projectId={projectId}
-          workId={workId}
+          workId={steer.workId}
           workspaceId={workspaceId}
-          objective=""
-          expectedWorkRevision={0}
+          objective={steer.objective}
+          expectedWorkRevision={steer.revision}
           token={session.token ?? undefined}
           onSubmitted={onSubmitted}
         />
