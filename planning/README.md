@@ -59,7 +59,7 @@ See `planning/gaps/README.md` for the index and resolution process.
 | D-1 Product UI Contract Closure | COMPLETE | `planning/results/D1-product-ui-contract-closure.result.md` |
 | D0–D3 Foundation | COMPLETE | `planning/results/D0-D3-web-product-ui-foundation.result.md` |
 | D4–D6 Core Workbench | COMPLETE / PHASE-BOUNDARY CLOSED at `master@88744c5ac2d856044bb231e8c6abbd684dd0fded` | `planning/results/D4-D6-web-product-ui-core-workbench.result.md` |
-| D7–D9 Governance, Usage, Settings, and Product Hardening | COMPLETE / PHASE-BOUNDARY CLOSED | `planning/results/D7-D9-web-product-ui-surfaces.result.md` |
+| D7–D9 Governance, Usage, Settings, and Product Hardening | COMPLETE / PHASE-BOUNDARY CLOSED at `master@2420da771cdf8a1db8f2d5043f55b0391c817a80` | `planning/results/D7-D9-web-product-ui-surfaces.result.md` |
 | D10 Final Convergence | NOT AUTHORIZED | No D10 implementation started |
 
 Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) and `P1-DG-01` … `P1-DG-11`
