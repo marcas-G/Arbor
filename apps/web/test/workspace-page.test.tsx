@@ -221,6 +221,25 @@ describe("W-05 Workspace page", () => {
     expect(calls.some((call) => call.view === "unknown-view")).toBe(false);
   });
 
+  it("纠偏表单使用 workspace-detail 提供的 exact current-work revision", async () => {
+    const revisionedDetail = {
+      ...detailTypical,
+      currentWork: { ...detailTypical.currentWork, revision: 9 as never },
+    };
+    installViews({
+      ...defaultHandlers,
+      "workspace-detail": () => ({ dto: revisionedDetail }),
+    });
+    renderWorkspace();
+    await waitFor(() =>
+      expect(
+        screen.getByText(revisionedDetail.responsibility.purpose),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "纠偏" }));
+    expect(screen.getByText("rev 9")).toBeTruthy();
+  });
+
   it("查询 problem → 就地 ProblemCard", async () => {
     installViews({
       ...defaultHandlers,

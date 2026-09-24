@@ -41,7 +41,7 @@ export const detailCurrentWork: WorkspaceDetailRes = {
     workId: id(WORK_CURRENT),
     objective: "当前工作目标",
     status: "Open",
-    revision: workRevision(0),
+    revision: workRevision(7),
   },
 };
 
@@ -52,7 +52,7 @@ export const detailPendingOnly: WorkspaceDetailRes = {
 
 export const verificationFull: VerificationRes = {
   verificationId: id("ver_1"),
-  targetWorkRevision: workRevision(0),
+  targetWorkRevision: workRevision(7),
   verdict: "Pass",
   criteriaResults: [
     {
@@ -74,6 +74,11 @@ export const verificationFull: VerificationRes = {
     actor: id("human:root"),
     acceptedAt: "2026-09-23T09:30:00.000Z",
   },
+};
+
+export const verificationEligible: VerificationRes = {
+  ...verificationFull,
+  acceptance: undefined,
 };
 
 export const unavailableProblem: Problem = {
