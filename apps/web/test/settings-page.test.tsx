@@ -73,6 +73,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
+  localStorage.clear();
 });
 
 afterEach(() => {
@@ -108,17 +109,21 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
     expect(screen.queryByPlaceholderText(/issuer/i)).toBeNull();
   });
 
-  it("Revoke 区空态：无 grants 数据源说明 + 表单内置“无待撤销的授权”", () => {
+  it("grant inventory unavailable is not presented as an empty grant list or actionable Revoke UI", () => {
     renderSettings();
     const permissions = screen.getByLabelText("权限管理");
     expect(
       within(permissions).getByText(
-        "待授权列表视图（transport DTO enhancement 后接通）",
+        "当前冻结接口未提供授权清单，无法定位可撤销授权。",
       ),
     ).toBeTruthy();
-    expect(within(permissions).getByText("无待撤销的授权")).toBeTruthy();
     expect(
       within(permissions).queryByRole("button", { name: "撤销" }),
+    ).toBeNull();
+    expect(
+      within(permissions).queryByRole("heading", {
+        name: /RevokePermission/,
+      }),
     ).toBeNull();
   });
 
@@ -140,5 +145,31 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
         name: "授予权限（GrantPermission）",
       }),
     ).toBeTruthy();
+  });
+
+  it("shows the route project, exact authenticated issuer, and frozen capability-unavailable sections", () => {
+    renderSettings();
+    const project = screen.getByLabelText("项目");
+    expect(within(project).getByText("prj_1")).toBeTruthy();
+    const permissions = screen.getByLabelText("权限管理");
+    expect(within(permissions).getByText("user:test")).toBeTruthy();
+    expect(screen.getByLabelText("成员管理")).toBeTruthy();
+    expect(screen.getByLabelText("供应商与模型")).toBeTruthy();
+    expect(screen.getByLabelText("运行时、资源与存储")).toBeTruthy();
+    expect(screen.getByLabelText("通知与安全策略")).toBeTruthy();
+    expect(
+      screen.queryByRole("textbox", { name: /provider|model|runtime/i }),
+    ).toBeNull();
+  });
+
+  it("saves only the existing local Workbench layout preference", () => {
+    renderSettings();
+    fireEvent.click(screen.getByRole("radio", { name: "树优先" }));
+    expect(
+      JSON.parse(localStorage.getItem("arbor.workbench-layout.v1") ?? "null"),
+    ).toMatchObject({ order: "tree-first" });
+    expect(localStorage.getItem("arbor.workbench-layout.v1")).not.toMatch(
+      /token|actor|projectId|workspace/i,
+    );
   });
 });

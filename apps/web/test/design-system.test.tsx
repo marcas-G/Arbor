@@ -372,6 +372,11 @@ describe("W-01 design system", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it("Empty state is announced to assistive technology", () => {
+    render(<Empty>暂无数据</Empty>);
+    expect(screen.getByRole("status").textContent).toContain("暂无数据");
+  });
+
   it("KeyValue 渲染 term/value 对", () => {
     render(
       <KeyValue

@@ -34,7 +34,11 @@ export function Empty({
   readonly action?: ReactNode | EmptyAction | undefined;
 }) {
   return (
-    <div className={cx(["arbor-empty", styles.empty])}>
+    <div
+      className={cx(["arbor-empty", styles.empty])}
+      role={action === undefined ? "status" : undefined}
+      aria-live={action === undefined ? "polite" : undefined}
+    >
       <span className={cx(["arbor-empty-text", styles.text])}>{children}</span>
       {action === undefined ? null : (
         <div className={cx(["arbor-empty-action", styles.action])}>

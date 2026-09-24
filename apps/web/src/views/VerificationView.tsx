@@ -5,9 +5,11 @@
 import type { VerificationRes } from "@arbor/api-contracts";
 import { Badge } from "../components/Badge.js";
 import { Empty } from "../components/Empty.js";
+import { useCompactLayout } from "../components/useCompactLayout.js";
 import { EnumBadge, Mono, TimeText } from "./shared.js";
 
 export function VerificationView({ view }: { readonly view: VerificationRes }) {
+  const compact = useCompactLayout();
   return (
     <div className="arbor-view-stack">
       <div className="arbor-badge-row">
@@ -18,6 +20,39 @@ export function VerificationView({ view }: { readonly view: VerificationRes }) {
       </div>
       {view.criteriaResults.length === 0 ? (
         <Empty>无判定结果</Empty>
+      ) : compact ? (
+        <ul className="arbor-verification-cards" aria-label="验证条件">
+          {view.criteriaResults.map((result) => (
+            <li key={result.criterionId} className="arbor-verification-card">
+              <dl>
+                <div>
+                  <dt>criterionId</dt>
+                  <dd>
+                    <Mono>{result.criterionId}</Mono>
+                  </dd>
+                </div>
+                <div>
+                  <dt>requirement</dt>
+                  <dd>{result.requirement}</dd>
+                </div>
+                <div>
+                  <dt>required</dt>
+                  <dd>
+                    <Badge tone={result.required ? "branch" : "muted"}>
+                      {result.required ? "required" : "optional"}
+                    </Badge>
+                  </dd>
+                </div>
+                <div>
+                  <dt>verdict</dt>
+                  <dd>
+                    <EnumBadge label={result.verdict} />
+                  </dd>
+                </div>
+              </dl>
+            </li>
+          ))}
+        </ul>
       ) : (
         <table className="arbor-table">
           <thead>

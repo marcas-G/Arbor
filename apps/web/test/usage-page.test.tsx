@@ -86,6 +86,10 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  Object.defineProperty(window, "innerWidth", {
+    configurable: true,
+    value: 1024,
+  });
   expect(seenUrls.every((url) => url.startsWith("/views/"))).toBe(true);
 });
 
@@ -140,6 +144,22 @@ describe("W-07 UsagePage (frozen §2.9)", () => {
     expect(container.querySelector("tfoot")).toBeNull();
     expect(screen.queryByText(/合计/)).toBeNull();
     expect(screen.queryByText(/total/i)).toBeNull();
+  });
+
+  it("mobile renders each server row as a key-value card", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 390,
+    });
+    vi.stubGlobal("fetch", makeFetch([okBody(usageTypical)]).fn);
+    renderUsage();
+
+    expect(await screen.findByText("0.42 USD")).toBeTruthy();
+    expect(screen.getByRole("list", { name: "用量明细" })).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByText("1200")).toBeTruthy();
+    expect(screen.getByText("unknown")).toBeTruthy();
+    expect(screen.queryByText(/合计/)).toBeNull();
   });
 
   it("cost Unknown 原样渲染 unknown，绝不为 0", async () => {

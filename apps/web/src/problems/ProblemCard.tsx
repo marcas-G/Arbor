@@ -34,6 +34,7 @@ function UnauthenticatedTreatment({ problem }: { readonly problem: Problem }) {
   return (
     <div className="arbor-problem" role="alert">
       <h2 className="arbor-problem-title">未认证</h2>
+      <Badge tone="danger">Unauthorized</Badge>
       <p>请提供访问令牌（token）后重连；内容区已屏蔽。</p>
       <ProblemDetail problem={problem} />
     </div>
@@ -45,6 +46,7 @@ function ForbiddenTreatment({ problem }: { readonly problem: Problem }) {
   return (
     <div className="arbor-problem arbor-problem-danger" role="alert">
       <h2 className="arbor-problem-title">权限拒绝</h2>
+      <Badge tone="danger">AuthorityDenied</Badge>
       <p>
         <Mono>{problem.code}</Mono>
       </p>
@@ -83,6 +85,7 @@ function InvalidRequestTreatment({ problem }: { readonly problem: Problem }) {
   return (
     <div className="arbor-problem" role="alert">
       <h2 className="arbor-problem-title">请求错误</h2>
+      <Badge tone="attention">Validation</Badge>
       <p>
         <Mono>{problem.code}</Mono>
       </p>
@@ -101,6 +104,7 @@ function StaleTreatment({
   return (
     <div className="arbor-problem" role="alert">
       <h2 className="arbor-problem-title">数据滞后</h2>
+      <Badge tone="attention">Stale</Badge>
       <p>
         <Badge tone="attention">stale</Badge> 投影尚未追上日志水位。
       </p>
@@ -125,6 +129,9 @@ function UnavailableTreatment({
   return (
     <div className="arbor-problem" role="alert">
       <h2 className="arbor-problem-title">服务不可用</h2>
+      <Badge tone={retryable ? "attention" : "muted"}>
+        Network / Unavailable
+      </Badge>
       <p>
         <Badge tone={retryable ? "attention" : "muted"}>
           {problem.retryDisposition}
@@ -135,6 +142,16 @@ function UnavailableTreatment({
           重试
         </Button>
       ) : null}
+      <ProblemDetail problem={problem} />
+    </div>
+  );
+}
+
+function UnknownTreatment({ problem }: { readonly problem: Problem }) {
+  return (
+    <div className="arbor-problem" role="alert">
+      <h2 className="arbor-problem-title">未知问题</h2>
+      <Badge tone="muted">Unknown Problem</Badge>
       <ProblemDetail problem={problem} />
     </div>
   );
@@ -160,7 +177,9 @@ export function ProblemCard({
       return <InvalidRequestTreatment problem={problem} />;
     case "stale":
       return <StaleTreatment problem={problem} onRetry={onRetry} />;
-    default:
+    case "unavailable":
       return <UnavailableTreatment problem={problem} onRetry={onRetry} />;
+    default:
+      return <UnknownTreatment problem={problem} />;
   }
 }

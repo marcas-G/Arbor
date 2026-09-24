@@ -163,6 +163,14 @@
   width: 100%;
   border-collapse: collapse;
   font-size: var(--arbor-text-small);
+  display: block;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+}
+
+.arbor-table th,
+.arbor-table td {
+  overflow-wrap: anywhere;
 }
 
 .arbor-table th {
@@ -219,4 +227,48 @@
 .arbor-transcript-body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.arbor-verification-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.arbor-verification-card {
+  min-width: 0;
+  padding: var(--arbor-space-3);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  background: var(--arbor-paper-2);
+}
+
+.arbor-verification-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--arbor-space-2);
+  margin: 0;
+}
+
+.arbor-verification-card dl > div {
+  min-width: 0;
+}
+
+.arbor-verification-card dt {
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-caption);
+}
+
+.arbor-verification-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 24rem) {
+  .arbor-verification-card dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

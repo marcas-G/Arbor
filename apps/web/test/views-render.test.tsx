@@ -29,7 +29,6 @@ import {
   transcriptMinimal,
   transcriptTypical,
   transcriptUnknownEnum,
-  treeExplicitNulls,
   treeMinimal,
   treeTypical,
   treeUnknownEnum,
@@ -249,6 +248,21 @@ describe("verification", () => {
     render(<VerificationView view={verificationUnknownEnum} />);
     expect(screen.getByText("Banana")).toBeTruthy();
     expectMutedBadge("Banana");
+  });
+
+  it("mobile presents each server criterion as a readable card", () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 390,
+    });
+    render(<VerificationView view={verificationTypical} />);
+    expect(screen.getByRole("list", { name: "验证条件" })).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByText("9 视图 ×3 fixture 全部可渲染")).toBeTruthy();
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1024,
+    });
   });
 });
 

@@ -7,11 +7,13 @@ export function Sheet({
   open,
   title,
   onClose,
+  mobileFullscreen = false,
   children,
 }: {
   readonly open: boolean;
   readonly title: string;
   readonly onClose: () => void;
+  readonly mobileFullscreen?: boolean | undefined;
   readonly children: ReactNode;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -35,6 +37,7 @@ export function Sheet({
         ref={sheetRef}
         tabIndex={-1}
         className={styles.sheet}
+        data-mobile-fullscreen={mobileFullscreen ? "true" : undefined}
       >
         <header className={styles.header}>
           <h2 className={styles.title}>{title}</h2>
