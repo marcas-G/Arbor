@@ -8,6 +8,15 @@ semantics.
 Phases: **P0–P12** (complete). Task contracts reference
 `docs/design/implementation/<phase>/**`.
 
+## Web Product UI execution plans
+
+| Scope | Plan | Status | Result |
+|---|---|---|---|
+| D-1 Contract Closure | `D1-product-ui-contract-closure` | COMPLETE | `planning/results/D1-product-ui-contract-closure.result.md` |
+| D0–D3 Foundation | `D0-D3-web-product-ui-foundation` | COMPLETE | `planning/results/D0-D3-web-product-ui-foundation.result.md` |
+| D4–D6 Core Workbench | `D4-D6-web-product-ui-core-workbench` | COMPLETE / PHASE-BOUNDARY CLOSED at `master@67112659c3167785b3a4f16b3bc59da4ae6cd4b7` | `planning/results/D4-D6-web-product-ui-core-workbench.result.md` |
+| D7–D10 | — | NOT AUTHORIZED | No D7–D10 work started; no new worktree created |
+
 ## Authority order
 
 1. `docs/design/03-detailed-implementation-design.md`

@@ -6,6 +6,10 @@ out of scope.
 
 **Baseline:** `master@00778fb1d1f8f87eb9ce3312742d2dbc12b025b0`
 
+**Execution status:** COMPLETE / PHASE-BOUNDARY CLOSED at
+`master@67112659c3167785b3a4f16b3bc59da4ae6cd4b7`. See
+`planning/results/D4-D6-web-product-ui-core-workbench.result.md`.
+
 ## Constraints carried into every task
 
 - The nine frozen views remain the sole server-state source through the

@@ -52,6 +52,15 @@ See `planning/gaps/README.md` for the index and resolution process.
 | P11 | Environment / Git / Advanced Sandbox | COMPLETE — see planning/results/P11.result.md |
 | P12 | Production / Extensibility | COMPLETE — FORMALLY CLOSED. P12-001 … P12-013 done; 14/14 exit criteria PASS; nine blockers evidenced; see planning/results/P12.result.md |
 
+### Web Product UI track
+
+| Scope | Status | Evidence |
+|---|---|---|
+| D-1 Product UI Contract Closure | COMPLETE | `planning/results/D1-product-ui-contract-closure.result.md` |
+| D0–D3 Foundation | COMPLETE | `planning/results/D0-D3-web-product-ui-foundation.result.md` |
+| D4–D6 Core Workbench | COMPLETE / PHASE-BOUNDARY CLOSED at `master@67112659c3167785b3a4f16b3bc59da4ae6cd4b7` | `planning/results/D4-D6-web-product-ui-core-workbench.result.md` |
+| D7–D10 | NOT AUTHORIZED | No D7–D10 work started; no new worktree created |
+
 Design Gaps `DG-01` … `DG-06` (`planning/gaps/`) and `P1-DG-01` … `P1-DG-11`
 are `RESOLVED`. P0 and P1 planning are frozen. The environment baseline
 (Node 24.21.0 / pnpm 12.4.2) is provided via the pinned image
