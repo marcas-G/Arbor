@@ -56,7 +56,8 @@ Fresh `pnpm check` on the D10 branch:
 - Root suite — **215 files, 1,230 tests passed**.
 - Architecture — **18 files, 109 tests passed**.
 - Web typecheck — exit 0.
-- Web full suite — **31 files, 202 tests passed**.
+- Web full suite — **31 files, 204 tests passed**, including WebSocket
+  reconnect and reconnect-triggered view refetch regression coverage.
 - Production build — exit 0 (`vite build`, 248 modules).
 - `git diff --check` — clean.
 
@@ -112,19 +113,32 @@ media query, and mobile touch targets. No business semantics were changed.
 
 ## 7. Production smoke
 
-Production `vite` build served by the real single-workspace daemon
-(`ARBOR_DB` + static authenticator + `ARBOR_WEB_DIST`):
+The production Vite build was served by the real single-workspace daemon
+(`ARBOR_DB` + static authenticator + `ARBOR_WEB_DIST`) and exercised in a real
+Chromium browser:
 
-- `/p/:projectId` SPA fallback — 200 `text/html`.
-- deep-link `/p/:projectId/queue` and `/settings` — 200.
-- `/assets/*` hashed bundle — 200; missing asset — 404.
-- `POST /commands` without token — 401 (transport auth boundary).
-- `POST /views/responsibility-tree` with a valid token on an empty DB — 503
-  projection problem ("zero roots"), not a crash.
+- Workbench, Tree, Queue, Attention, Work/Verification, Usage, Settings, root
+  Conversation, and child read-only Conversation routes returned and rendered
+  the SPA shell; static deep links and SPA navigation worked.
+- Hashed static assets returned 200; a missing asset returned 404.
+- Mobile Conversation and Tree rendered at 390px with no horizontal overflow.
+- `POST /commands` without a token returned 401.
+- `GrantPermission` from `agent:outsider` returned 403 `authority/denied`.
+- A `SteerWork` request with a stale expected revision returned
+  `TerminalRejected / RevisionConflict`.
+- Restarting the daemon closed and recreated the browser WebSocket; the active
+  Attention view refetched after reconnect to recover missed invalidations.
 
-The view transport intentionally does not authenticate per the frozen P12
-transport contract (`queryView` takes no credential); command submission is the
-authenticated boundary.
+The smoke fixture's Work was pending, so the Work page correctly disabled its
+current-Work-only Steer control. A follow-up script that tried to capture a new
+Work-page conflict screenshot therefore timed out before submission; it is not
+claimed as UI evidence. The production API stale-revision result above was
+verified independently, and the archived Queue RevisionConflict screenshot
+shows the existing frozen Problem presentation. The AuthorityDenied screenshot
+also comes from the accepted D7–D9 Visual Gate 3 set.
+
+View transport behavior remains as specified by P12; this smoke's authenticated
+boundary checks apply to command submission.
 
 ## 8. Lint warning classification
 
@@ -137,8 +151,8 @@ Distribution (all pre-existing, style/suspicious/correctness only):
 
 - `lint/style/noNonNullAssertion` — 174.
 - `lint/suspicious/noExplicitAny` — 79.
-- `lint/correctness/noUnusedImports` — 40.
-- `lint/correctness/noUnusedVariables` — 17.
+- `lint/correctness/noUnusedImports` — 38.
+- `lint/correctness/noUnusedVariables` — 16.
 - `lint/correctness/noUnusedFunctionParameters` — 2.
 
 By area: `tests/` 273, `packages/` 23, `apps/single-workspace` 8,
@@ -158,10 +172,14 @@ closed. No silent partial implementation exists in `apps/web`.
 - Frozen Web Product UI Specification / DID v1.17 / P13 / P14 contracts —
   unchanged.
 
-Final screenshots/evidence: the D7–D9 Visual Gate 3 set remains authoritative
-at `planning/results/D7-D9-web-product-ui.visual/` (54 Firefox screenshots
-across 1920/1440/1280/1024/768/390). D10 made no layout-affecting change, so
-those screenshots are the final representative visual evidence.
+Final screenshots/evidence: the accepted D7–D9 Visual Gate 3 set remains
+authoritative at `planning/results/D7-D9-web-product-ui.visual/` (54 Firefox
+screenshots across 1920/1440/1280/1024/768/390). D10's changes do not affect
+layout. The D10 result also archives representative desktop Workbench, Queue,
+Attention, 390px Conversation and Tree, AuthorityDenied, and Queue
+RevisionConflict screenshots at
+`planning/results/D10-web-product-ui-final-convergence.visual/`.
 
-Master readiness: the D10 branch is clean and fully verified; it is ready for
-merge/push to `origin/master` as the single Final Convergence baseline.
+Master readiness: D10 is **PASS** and the feature branch is ready to be
+reviewed for merge/push to `origin/master` as the single Final Convergence
+baseline. Merge and push have not been performed.
