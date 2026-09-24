@@ -1,10 +1,20 @@
 # D7–D9 Web Product UI Surfaces — Result
 
 Status: **COMPLETE / PHASE-BOUNDARY CLOSED**  
-Branch: `codex/d7-d9-web-product-ui`  
+Master adoption: merge commit `2420da771cdf8a1db8f2d5043f55b0391c817a80`
+(`88744c5ac2d856044bb231e8c6abbd684dd0fded` + feature
+`a51f8d04cc5c5986a2358c9308422f2dba9afe7d`, non-squash).
 Baseline: `master@88744c5ac2d856044bb231e8c6abbd684dd0fded`  
 Scope: D7 Governance Queue + Attention; D8 Usage + Settings; D9 Mobile,
 Accessibility, and Global States.
+
+## Phase status and authorization
+
+- D7 Queue / Attention — **COMPLETE**.
+- D8 Usage / Settings — **COMPLETE**.
+- D9 Mobile / Accessibility / Global States — **COMPLETE**.
+- G2–G5 remain **DEFERRED**.
+- D10 Final Convergence remains **NOT AUTHORIZED**.
 
 ## Implementation
 
@@ -35,14 +45,16 @@ network/unavailable, revision-conflict, and unknown-problem treatments.
 
 ## Verification
 
-Fresh final gates on this worktree:
+Fresh verification on merged `master`:
 
-- `pnpm check` — exit 0.
+- `source env.sh && arbor pnpm check` — exit 0.
 - Root suite: **215 test files, 1,230 tests passed**.
 - Architecture: **18 files, 109 tests passed**.
-- Web typecheck — exit 0.
-- Web suite: **32 files, 225 tests passed**.
-- Production Web build — exit 0.
+- `source env.sh && arbor pnpm architecture` — exit 0; **18 files, 109 tests passed**.
+- Web typecheck — exit 0 as part of `pnpm check`.
+- `source env.sh && arbor pnpm --filter @arbor/web test` — exit 0;
+  **32 files, 225 tests passed**.
+- `source env.sh && arbor pnpm --filter @arbor/web build` — exit 0.
 - Lint emitted 312 pre-existing warnings and no errors.
 
 Focused D7/D8/D9 Web suites also passed during implementation, including Queue,

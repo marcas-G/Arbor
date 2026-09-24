@@ -1,7 +1,7 @@
 # Web Product UI D7–D9 — Governance, Usage, Settings, and Hardening
 
 **Status:** COMPLETE / PHASE-BOUNDARY CLOSED at
-`codex/d7-d9-web-product-ui@42bc385`.
+`master@2420da771cdf8a1db8f2d5043f55b0391c817a80` (non-squash merge).
 
 **Baseline:** `master@88744c5ac2d856044bb231e8c6abbd684dd0fded`
 
