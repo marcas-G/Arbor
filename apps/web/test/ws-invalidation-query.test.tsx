@@ -14,6 +14,7 @@ type FakeSocket = {
   send: (data: string) => void;
   close: () => void;
   open: () => void;
+  disconnect: () => void;
   message: (data: string) => void;
 };
 
@@ -28,6 +29,9 @@ const installFakeWebSocket = (): {
     onclose: (() => void) | null = null;
     send = () => undefined;
     close = () => undefined;
+    disconnect = () => {
+      this.onclose?.();
+    };
     open = () => {
       this.onopen?.();
     };
@@ -52,11 +56,13 @@ const installFakeWebSocket = (): {
 const Probe = ({
   responses,
   callCount,
+  projectId = "prj_1",
 }: {
   responses: unknown[];
   callCount: { count: number };
+  projectId?: string;
 }) => {
-  const query = useViewQuery("attention", { projectId: "prj_1" as never });
+  const query = useViewQuery("attention", { projectId: projectId as never });
   if (query.isPending) {
     return <p data-testid="state">loading</p>;
   }
@@ -148,6 +154,82 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
     expect(calls).toBe(2);
 
     vi.unstubAllGlobals();
+  });
+
+  it("refetches active views after reconnect to recover missed invalidations", async () => {
+    const fake = installFakeWebSocket();
+    let calls = 0;
+    const bodies = [
+      {
+        ok: true,
+        status: 200,
+        body: { value: { rows: [{ summary: "A" }] }, watermark: 1 },
+      },
+      {
+        ok: true,
+        status: 200,
+        body: { value: { rows: [{ summary: "B" }] }, watermark: 2 },
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        const body = bodies[Math.min(calls, bodies.length - 1)];
+        calls += 1;
+        return new Response(JSON.stringify(body), { status: 200 });
+      }),
+    );
+
+    const sessionValue = {
+      token: "tok",
+      actor: "user:test",
+      projectId: "prj_1",
+      unauthenticatedProblem: null,
+      setSession: () => undefined,
+      clearSession: () => undefined,
+      setProjectId: () => undefined,
+      reportUnauthenticated: () => undefined,
+    };
+    const view = render(
+      <AppProviders>
+        <SessionContext.Provider value={sessionValue as never}>
+          <Probe
+            responses={bodies}
+            callCount={{ count: -1 }}
+            projectId="prj_reconnect"
+          />
+        </SessionContext.Provider>
+      </AppProviders>,
+    );
+
+    try {
+      await waitFor(() => expect(fake.sockets).toHaveLength(1));
+      act(() => {
+        fake.sockets[0]?.open();
+      });
+      await waitFor(() =>
+        expect(screen.getByTestId("state").textContent).toContain("A"),
+      );
+      expect(calls).toBe(1);
+
+      act(() => {
+        fake.sockets[0]?.disconnect();
+      });
+      await waitFor(() => expect(fake.sockets).toHaveLength(2), {
+        timeout: 2500,
+      });
+      act(() => {
+        fake.sockets[1]?.open();
+      });
+
+      await waitFor(() =>
+        expect(screen.getByTestId("state").textContent).toContain("B"),
+      );
+      expect(calls).toBe(2);
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("channel contract: only invalidate frames are delivered; bad frames ignored", () => {
