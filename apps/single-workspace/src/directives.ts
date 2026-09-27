@@ -1,4 +1,8 @@
-import type { DirectiveHandler, DirectiveOutcome } from "@arbor/agent-runtime";
+import type {
+  DirectiveHandler,
+  DirectiveOutcome,
+  ExecutableInvocationHandler,
+} from "@arbor/agent-runtime";
 import {
   CommandGateway,
   deriveFormationIds,
@@ -15,7 +19,6 @@ import {
   admitFormationProposal,
   CommandId,
   ExecutionId,
-  FormationProposalId,
   parse,
   SessionId,
   ToolInvocationId,
@@ -46,6 +49,11 @@ export class SliceDirectiveHandlers extends Context.Service<
   SliceDirectiveHandlers,
   ReadonlyArray<DirectiveHandler>
 >()("arbor/SliceDirectiveHandlers") {}
+
+export class SliceExecutableInvocation extends Context.Service<
+  SliceExecutableInvocation,
+  ExecutableInvocationHandler
+>()("arbor/SliceExecutableInvocation") {}
 
 const MAX_OBSERVATION_CHARS = 2000;
 
@@ -87,6 +95,63 @@ const toOutcome = (result: CanonicalToolObservation): DirectiveOutcome => {
       return observation("Runtime", `tool runtime failure: ${result.cause}`);
   }
 };
+
+export const makeExecutableInvocationHandler = (
+  tools: import("@arbor/ports").ToolRuntimePortService,
+  clock: import("@arbor/ports").ClockService,
+): ExecutableInvocationHandler => ({
+  handle: ({ invocation, execution, context }) =>
+    Effect.gen(function* () {
+      const requestedAt = yield* clock.now();
+      const toolVersion = "1";
+      const intent: ToolIntent = {
+        callRef: invocation.callRef,
+        toolName: invocation.toolName,
+        toolVersion,
+        argumentsJson: invocation.argumentsJson,
+        invocationId: parse(ToolInvocationId)(
+          `tin_018f2b3c-4d5e-7abc-8def-${invocation.callRef.padEnd(12, "0").slice(0, 12)}`,
+        ),
+        approvalId: null,
+      };
+      const toolContext: ToolExecutionContext = {
+        executionId: execution.executionId,
+        workspaceId: execution.workspaceId,
+        sessionId: execution.sessionId,
+        projectId: execution.projectId,
+        actor: context.principal as never,
+        authenticatedPrincipal: context.principal,
+        authority: {
+          principal: context.principal,
+          workspaceId: execution.workspaceId,
+          executionId: execution.executionId,
+          toolName: invocation.toolName,
+          toolVersion,
+          resourceSpaceIds: ["filesystem"],
+          allowedCapabilities: ["fs:read", "fs:write", "shell:exec"],
+          controlBasisDigest: "slice",
+          expiresAt: "2999-01-01T00:00:00.000Z",
+          delegationDepth: 0,
+        },
+        controlBasisDigest: "slice",
+        requestedAt,
+      };
+      const result = yield* tools.invoke(intent, toolContext);
+      const outcome = toOutcome(result);
+      if (outcome._tag !== "Observation") {
+        return yield* Effect.fail({
+          _tag: "AgentActionError" as const,
+          cause: "executable tool route returned a non-observation result",
+        });
+      }
+      return outcome;
+    }).pipe(
+      Effect.mapError((cause) => ({
+        _tag: "AgentActionError" as const,
+        cause,
+      })),
+    ),
+});
 
 export interface ProposeChildWorkspaceDependencies {
   readonly gateway: import("@arbor/application").CommandGatewayService;
@@ -462,5 +527,20 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
         clock,
       }),
     ];
+  }),
+);
+
+export const SliceExecutableInvocationLive: Layer.Layer<
+  SliceExecutableInvocation,
+  never,
+  ToolRuntimePort | Clock
+> = Layer.effect(
+  SliceExecutableInvocation,
+  Effect.gen(function* () {
+    const tools = yield* ToolRuntimePort;
+    const clock = yield* Clock;
+    return SliceExecutableInvocation.of(
+      makeExecutableInvocationHandler(tools, clock),
+    );
   }),
 );

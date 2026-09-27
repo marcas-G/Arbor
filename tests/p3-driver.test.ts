@@ -14,8 +14,10 @@ import {
 } from "../adapters/persistence-sqlite/src/index.js";
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import {
+  type AgentActionHandler,
   AgentDriverLive,
-  type DirectiveHandler,
+  type ExecutableInvocationHandler,
+  makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
 import {
   type AgentExecutionState,
@@ -34,9 +36,11 @@ import {
 } from "../packages/model-context/src/index.js";
 import {
   type CanonicalProviderEvent,
+  ControlToolCatalogPort,
   EnvironmentRevisionStore,
   ExecutionDriverPort,
   ModelCapabilityPort,
+  type ModelFacingToolDefinition,
   type RuntimeSafetyGateService,
   SkillRegistry,
   ToolCatalogPort,
@@ -95,16 +99,13 @@ const skills = Layer.succeed(SkillRegistry, {
   available: () => Effect.succeed([]),
   load: () => Effect.die("x"),
 });
-const tools = Layer.succeed(ToolCatalogPort, {
-  visibleRefs: () => Effect.succeed([]),
-  resolveForModel: () => Effect.die("no tools in test"),
-});
-
 const makeApp = (
   turns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>,
   options: {
     readonly environmentRevisions?: Layer.Layer<EnvironmentRevisionStore>;
-    readonly handlers?: ReadonlyArray<DirectiveHandler>;
+    readonly controlHandlers?: ReadonlyArray<AgentActionHandler>;
+    readonly executableHandler?: ExecutableInvocationHandler;
+    readonly toolDefinitions?: ReadonlyArray<ModelFacingToolDefinition>;
   } = {},
 ) => {
   const base = layer({ filename: ":memory:" });
@@ -120,15 +121,55 @@ const makeApp = (
       infra,
     ),
   );
+  const definitions = options.toolDefinitions ?? [];
+  const tools = Layer.succeed(ToolCatalogPort, {
+    visibleRefs: () =>
+      Effect.succeed(
+        definitions.map(({ name, version, hash }) => ({ name, version, hash })),
+      ),
+    resolveForModel: (ref) => {
+      const tool = definitions.find(
+        (candidate) =>
+          candidate.name === ref.name &&
+          candidate.version === ref.version &&
+          candidate.hash === ref.hash,
+      );
+      return tool === undefined
+        ? Effect.die(`no tool definition for ${ref.name}`)
+        : Effect.succeed(tool);
+    },
+  });
+  const defaultSendHandler: AgentActionHandler = {
+    action: "SendMessage",
+    handle: () =>
+      Effect.succeed({
+        _tag: "Settle",
+        settlement: {
+          _tag: "Completed",
+          result: { _tag: "CoordinationCompleted" },
+        },
+      }),
+  };
+  const controlRegistry = makeControlToolRegistry(
+    options.controlHandlers ?? [defaultSendHandler],
+  );
+  const controlToolCatalog = Layer.succeed(ControlToolCatalogPort, {
+    visibleDefinitions: controlRegistry.visibleDefinitions,
+  });
   const modelContext = Layer.provide(
     ModelContextLive,
-    Layer.mergeAll(capability, skills, tools),
+    Layer.mergeAll(capability, skills, tools, controlToolCatalog),
   );
   const environmentRevisions =
     options.environmentRevisions ??
     Layer.provide(EnvironmentRevisionStoreLive, infra);
   const driver = Layer.provide(
-    AgentDriverLive(options.handlers ?? []),
+    AgentDriverLive([], {
+      controlRegistry,
+      ...(options.executableHandler !== undefined
+        ? { executableInvocationHandler: options.executableHandler }
+        : {}),
+    }),
     Layer.mergeAll(
       modelContext,
       providerRuntime,
@@ -291,22 +332,23 @@ const textTurn = [
   { _tag: "TextDelta" as const, text: "thinking" },
   { _tag: "TurnCompleted" as const, finishReason: "Stop" as const },
 ];
-const claimTurn = [
+const sendMessageTurn = (body: string) => [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_directive",
+    toolName: "arbor_send_message",
     argumentsJson: JSON.stringify({
-      _tag: "CompletionClaim",
-      claim: { claimRef: "claim-1", workRevision: 0 },
+      kind: "Query",
+      body,
+      recipientWorkspaceId: String(workspaceId),
     }),
   },
   { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
 ];
 
 describe("P3-013 agent driver", () => {
-  it("runs multiple turns and settles on a CompletionClaim", async () => {
-    const app = makeApp([textTurn, claimTurn]);
+  it("runs text then routes a registered control invocation to settlement", async () => {
+    const app = makeApp([textTurn, sendMessageTurn("question")]);
     const program = Effect.gen(function* () {
       yield* runMigrations(P3_MIGRATIONS);
       yield* seed;
@@ -314,11 +356,10 @@ describe("P3-013 agent driver", () => {
     });
     const settlement = (await run(program, app)) as {
       _tag: string;
-      result?: { _tag: string; claimRef?: string };
+      result?: { _tag: string };
     };
     expect(settlement._tag).toBe("Completed");
-    expect(settlement.result?._tag).toBe("CompletionClaimed");
-    expect(settlement.result?.claimRef).toBe("claim-1");
+    expect(settlement.result?._tag).toBe("CoordinationCompleted");
   });
 
   it("stops at the P2 safety gate", async () => {
@@ -342,34 +383,19 @@ describe("P3-013 agent driver", () => {
 });
 
 const invalidTurn: ReadonlyArray<CanonicalProviderEvent> = [];
-const communicateTurn: ReadonlyArray<CanonicalProviderEvent> = [
+const readToolTurn: ReadonlyArray<CanonicalProviderEvent> = [
   {
     _tag: "ToolCallProposed",
     callRef: "c1",
-    toolName: "arbor_directive",
-    argumentsJson: JSON.stringify({
-      _tag: "Communicate",
-      message: { text: "working" },
-    }),
-  },
-  { _tag: "TurnCompleted", finishReason: "ToolCall" },
-];
-const invokeToolTurn: ReadonlyArray<CanonicalProviderEvent> = [
-  {
-    _tag: "ToolCallProposed",
-    callRef: "c1",
-    toolName: "arbor_directive",
-    argumentsJson: JSON.stringify({
-      _tag: "InvokeTool",
-      intent: { callRef: "c1", toolName: "noop", argumentsJson: "{}" },
-    }),
+    toolName: "read",
+    argumentsJson: JSON.stringify({ path: "README.md" }),
   },
   { _tag: "TurnCompleted", finishReason: "ToolCall" },
 ];
 
 describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
-  it("repairs a ModelOutputContractViolation and continues the loop to completion", async () => {
-    const app = makeApp([invalidTurn, claimTurn]);
+  it("repairs an empty provider turn and continues to a registered control action", async () => {
+    const app = makeApp([invalidTurn, sendMessageTurn("recovered")]);
     const program = Effect.gen(function* () {
       yield* runMigrations(P3_MIGRATIONS);
       yield* seed;
@@ -380,7 +406,7 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
       turns: number;
     };
     expect(result.settlement._tag).toBe("Completed");
-    expect(result.settlement.result?._tag).toBe("CompletionClaimed");
+    expect(result.settlement.result?._tag).toBe("CoordinationCompleted");
     expect(result.turns).toBe(2);
   });
 
@@ -401,23 +427,32 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
   });
 
   it("does not execute a DecisionStale action and re-prepares instead", async () => {
-    let invoked = false;
-    const invokeHandler: DirectiveHandler = {
-      kind: "InvokeTool",
-      handle: () =>
-        Effect.sync(() => {
-          invoked = true;
-          return {
-            _tag: "Observation" as const,
-            source: "Runtime" as const,
-            observation: { text: "ran", truncated: false },
-          };
-        }),
+    let invoked = 0;
+    const sendHandler: AgentActionHandler = {
+      action: "SendMessage",
+      handle: () => {
+        invoked += 1;
+        return Effect.succeed({
+          _tag: "Settle",
+          settlement: {
+            _tag: "Completed",
+            result: { _tag: "CoordinationCompleted" },
+          },
+        });
+      },
     };
-    const app = makeApp([invokeToolTurn, claimTurn], {
-      environmentRevisions: scriptedEnvironmentRevisions(["0", "1", "1", "1"]),
-      handlers: [invokeHandler],
-    });
+    const app = makeApp(
+      [sendMessageTurn("stale then fresh"), sendMessageTurn("fresh")],
+      {
+        environmentRevisions: scriptedEnvironmentRevisions([
+          "0",
+          "1",
+          "1",
+          "1",
+        ]),
+        controlHandlers: [sendHandler],
+      },
+    );
     const program = Effect.gen(function* () {
       yield* runMigrations(P3_MIGRATIONS);
       yield* seed;
@@ -428,13 +463,36 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
       turns: number;
     };
     expect(result.settlement._tag).toBe("Completed");
-    expect(result.settlement.result?._tag).toBe("CompletionClaimed");
-    expect(invoked).toBe(false);
+    expect(result.settlement.result?._tag).toBe("CoordinationCompleted");
+    expect(invoked).toBe(1);
     expect(result.turns).toBe(2);
   });
 
-  it("recovers after a repair and continues to a later turn", async () => {
-    const app = makeApp([invalidTurn, communicateTurn, claimTurn]);
+  it("routes executable invocations to the executable handler", async () => {
+    let invoked = 0;
+    const app = makeApp([readToolTurn], {
+      toolDefinitions: [
+        {
+          name: "read",
+          description: "Read a file.",
+          schemaJson: JSON.stringify({ type: "object" }),
+          version: "1",
+          hash: "read-v1",
+          capabilityMetadata: [],
+          sideEffectSemantics: "ReadOnly",
+        },
+      ],
+      executableHandler: {
+        handle: () => {
+          invoked += 1;
+          return Effect.succeed({
+            _tag: "Observation",
+            source: "Tool",
+            observation: { text: "read", truncated: false },
+          });
+        },
+      },
+    });
     const program = Effect.gen(function* () {
       yield* runMigrations(P3_MIGRATIONS);
       yield* seed;
@@ -444,8 +502,7 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
       settlement: { _tag: string; result?: { _tag: string } };
       turns: number;
     };
-    expect(result.settlement._tag).toBe("Completed");
-    expect(result.settlement.result?._tag).toBe("CompletionClaimed");
-    expect(result.turns).toBe(3);
+    expect(invoked).toBe(1);
+    expect(result.turns).toBeGreaterThan(0);
   });
 });

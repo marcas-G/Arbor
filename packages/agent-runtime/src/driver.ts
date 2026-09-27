@@ -9,13 +9,13 @@ import type {
   WakeReason,
 } from "@arbor/domain";
 import {
-  AGENT_DIRECTIVE_CONTRACT,
   type ControlBasis,
   decodeTurn,
   type InstructionFragment,
   ModelContext,
   type ModelOutput,
   type PreparedModelTurn,
+  TOOL_INVOCATION_CONTRACT,
   WORK_EXECUTION_PROGRAM,
 } from "@arbor/model-context";
 import {
@@ -34,8 +34,14 @@ import {
   TransactionPort,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-import type { DirectiveHandler, DirectiveUnsupported } from "./directive.js";
-import { checkFreshness, requirementForDirective } from "./freshness.js";
+import {
+  type ControlToolRegistryService,
+  classifyToolRoute,
+  type ExecutableInvocationHandler,
+  makeControlToolRegistry,
+} from "./control.js";
+import type { DirectiveHandler } from "./directive.js";
+import { checkFreshness, requirementForAction } from "./freshness.js";
 import { decideRepair, type RepairPolicy } from "./repair.js";
 
 const MAX_TURNS = 8;
@@ -130,10 +136,14 @@ export interface AgentDriverOptions {
    * The raw credential is resolved by ProviderRuntime at the execution
    * boundary and never reaches the Agent. */
   readonly secretRef?: SecretRef;
+  /** The typed control-tool registry. Composition supplies the live registry;
+   * the default keeps Wait available for focused runtime tests. */
+  readonly controlRegistry?: ControlToolRegistryService;
+  readonly executableInvocationHandler?: ExecutableInvocationHandler;
 }
 
 export const AgentDriverLive = (
-  handlers: ReadonlyArray<DirectiveHandler> = [],
+  _legacyHandlers: ReadonlyArray<DirectiveHandler> = [],
   options: AgentDriverOptions = {},
 ): Layer.Layer<
   ExecutionDriverPort,
@@ -154,6 +164,8 @@ export const AgentDriverLive = (
       const sessions = yield* SessionRepository;
       const tx = yield* TransactionPort;
       const environmentRevisions = yield* EnvironmentRevisionStore;
+      const controlRegistry =
+        options.controlRegistry ?? makeControlToolRegistry();
       const failure = (cause: unknown): ExecutionDriverError => ({
         _tag: "ExecutionDriverError",
         cause,
@@ -282,6 +294,7 @@ export const AgentDriverLive = (
                     controlBasis,
                     maxOutputTokens: capability.outputCeiling,
                     bodySkillIds: [],
+                    outputContractRef: TOOL_INVOCATION_CONTRACT,
                   })
                   .pipe(
                     Effect.mapError(
@@ -313,7 +326,8 @@ export const AgentDriverLive = (
                   sessionId: input.execution.sessionId,
                   contextEpoch: 0 as never,
                   modelRef: capability.modelRef,
-                  outputContractRef: AGENT_DIRECTIVE_CONTRACT,
+                  outputContractRef:
+                    preparation.turn.manifest.outputContractRef,
                   manifestId: preparation.turn.manifest.compiledRequestHash,
                   request: preparation.turn.request,
                   ...(options.secretRef !== undefined
@@ -357,11 +371,7 @@ export const AgentDriverLive = (
                     };
                   }
                 }
-                const decoded = decodeTurn(
-                  events,
-                  AGENT_DIRECTIVE_CONTRACT,
-                  preparation.turn.manifest.compiledRequestHash,
-                );
+                const decoded = decodeTurn(events);
                 if (decoded.ok) {
                   return {
                     _tag: "Ready",
@@ -372,7 +382,7 @@ export const AgentDriverLive = (
                 const repair = decideRepair(
                   REPAIR_POLICY,
                   repairAttempt,
-                  AGENT_DIRECTIVE_CONTRACT,
+                  preparation.turn.manifest.outputContractRef,
                   decoded.reason,
                 );
                 if (repair._tag === "Exhausted") {
@@ -420,10 +430,11 @@ export const AgentDriverLive = (
                     entryKind: "ModelOutput",
                     payload: {
                       providerTurnId: preparedTurn.manifest.providerTurnId,
-                      outputContractRef: AGENT_DIRECTIVE_CONTRACT,
-                      directiveKinds: decodedOutput.directives.map(
-                        (entry) => entry.directive._tag,
-                      ),
+                      outputContractRef:
+                        preparedTurn.manifest.outputContractRef,
+                      text: decodedOutput.text,
+                      finishReason: decodedOutput.finishReason,
+                      toolInvocations: decodedOutput.toolInvocations,
                     },
                   },
                   input.context._tag === "ExecutionOrigin"
@@ -433,107 +444,109 @@ export const AgentDriverLive = (
               )
               .pipe(Effect.mapError(failure));
 
-            const observations: Array<
-              | {
-                  readonly source: "Runtime" | "Tool";
-                  readonly observation: BoundedObservation;
-                }
-              | DirectiveUnsupported
-            > = [];
+            const observations: Array<{
+              readonly source: "Runtime" | "Tool";
+              readonly observation: BoundedObservation;
+            }> = [];
             let stale = false;
-            for (const { directive } of decodedOutput.directives) {
-              // DID §8.19 / P3 `06` §4: an effectful directive must validate
-              // its relevant ControlBasis against the Manifest it was decided
-              // under. A changed revision means the action is NOT executed and
-              // the runtime must re-prepareTurn.
-              const requirement = requirementForDirective(directive);
-              if (requirement !== "None") {
-                const current = yield* currentControlBasis();
-                const freshness = checkFreshness(
-                  preparedTurn.manifest.controlBasis,
-                  current,
-                  requirement,
-                );
-                if (freshness !== null) {
-                  stale = true;
-                  break;
-                }
+            for (const invocation of decodedOutput.toolInvocations) {
+              const route = classifyToolRoute(
+                preparedTurn.toolRoutes,
+                controlRegistry,
+                invocation.toolName,
+              );
+              if (route._tag === "Invalid") {
+                return safetyStop(route.reason);
               }
-              if (directive._tag === "CompletionClaim") {
-                return {
-                  _tag: "Completed",
-                  result: {
-                    _tag: "CompletionClaimed",
-                    workRevision: directive.claim.workRevision as never,
-                    claimRef: directive.claim.claimRef,
-                  },
-                };
-              }
-              if (directive._tag === "Yield") {
-                return {
-                  _tag: "Completed",
-                  result: {
-                    _tag: "Yielded",
-                    reason: directive.reason,
-                    waitSpec: directive.waitSpec,
-                  },
-                };
-              }
-              // D3: report tool recursion / chaining depth at each
-              // ToolInvocation / Specialist action boundary. A top-level
-              // call sits at depth 1 (the ProviderTurn is the root at 0).
-              if (
-                directive._tag === "InvokeTool" ||
-                directive._tag === "SpawnSpecialist"
-              ) {
-                const actionActivity: ExecutionActivity =
-                  directive._tag === "InvokeTool"
-                    ? {
-                        _tag: "ToolInvocation",
-                        fingerprint: `tool:${directive.intent.toolName}:${directive.intent.argumentsJson}`,
-                      }
-                    : {
-                        _tag: "SpecialistAction",
-                        fingerprint: `spawn:${JSON.stringify(directive.spec)}`,
-                      };
-                const actionDecision = yield* admit(actionActivity, {
+              const activityDecision = yield* admit(
+                {
+                  _tag: "ToolInvocation",
+                  fingerprint: `tool:${invocation.toolName}:${invocation.callRef}`,
+                },
+                {
                   chainDepth: 1,
                   observedAt: yield* now(),
-                });
-                if (actionDecision === "Stop") {
-                  return safetyStop("RuntimeSafetyStop");
-                }
-              }
-              const handler = handlers.find(
-                (candidate) => candidate.kind === directive._tag,
+                },
               );
-              if (handler === undefined) {
+              if (activityDecision === "Stop") {
+                return safetyStop("RuntimeSafetyStop");
+              }
+
+              if (route._tag === "Executable") {
+                const executableHandler = options.executableInvocationHandler;
+                if (executableHandler === undefined) {
+                  return safetyStop("ExecutableToolHandlerUnavailable");
+                }
+                const executed = yield* Effect.match(
+                  executableHandler.handle({
+                    invocation,
+                    execution: input.execution,
+                    context: input.context,
+                  }),
+                  {
+                    onFailure: (cause) => ({ ok: false as const, cause }),
+                    onSuccess: (outcome) => ({ ok: true as const, outcome }),
+                  },
+                );
+                if (!executed.ok) {
+                  return safetyStop("ExecutableToolInvocationRejected");
+                }
+                if (executed.outcome._tag === "Settle") {
+                  return executed.outcome.settlement;
+                }
                 observations.push({
-                  _tag: "DirectiveUnsupported",
-                  directiveKind: directive._tag,
-                  reason: "not implemented in this slice",
+                  source: executed.outcome.source,
+                  observation: executed.outcome.observation,
                 });
+                progressedSinceBoundary = true;
                 continue;
               }
-              const outcome = yield* handler.handle({
-                directive,
-                execution: input.execution,
-                context: input.context,
-              });
-              if (outcome._tag === "Settle") {
-                return outcome.settlement;
+
+              const decodedAction = yield* Effect.match(
+                controlRegistry.decode(invocation),
+                {
+                  onFailure: (cause) => ({ ok: false as const, cause }),
+                  onSuccess: (value) => ({ ok: true as const, value }),
+                },
+              );
+              if (!decodedAction.ok) {
+                return safetyStop(
+                  `ControlToolDecodeFailed:${decodedAction.cause._tag}`,
+                );
               }
-              if (outcome._tag === "Unsupported") {
-                observations.push({
-                  _tag: "DirectiveUnsupported",
-                  directiveKind: directive._tag,
-                  reason: outcome.reason,
-                });
-                continue;
+
+              const current = yield* currentControlBasis();
+              const freshness = checkFreshness(
+                preparedTurn.manifest.controlBasis,
+                current,
+                requirementForAction(decodedAction.value.action),
+              );
+              if (freshness !== null) {
+                stale = true;
+                break;
+              }
+
+              const handled = yield* Effect.match(
+                controlRegistry.handle({
+                  action: decodedAction.value.action,
+                  invocation,
+                  execution: input.execution,
+                  context: input.context,
+                }),
+                {
+                  onFailure: (cause) => ({ ok: false as const, cause }),
+                  onSuccess: (outcome) => ({ ok: true as const, outcome }),
+                },
+              );
+              if (!handled.ok) {
+                return safetyStop("ControlActionHandlerRejected");
+              }
+              if (handled.outcome._tag === "Settle") {
+                return handled.outcome.settlement;
               }
               observations.push({
-                source: outcome.source,
-                observation: outcome.observation,
+                source: handled.outcome.source,
+                observation: handled.outcome.observation,
               });
               // P12 `08` §5: a journal-recorded action settlement since the
               // previous turn boundary is durable progress; the next turn

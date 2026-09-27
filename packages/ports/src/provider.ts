@@ -417,6 +417,30 @@ export interface ModelFacingToolDefinition {
   readonly sideEffectSemantics: SideEffectSemantics;
 }
 
+/** Data-only, model-facing schema projected from Agent Runtime's control
+ * registry. Model Context may compile it but never interprets the action. */
+export interface ModelFacingControlToolDefinition {
+  readonly name: string;
+  readonly description: string;
+  readonly schemaJson: string;
+  readonly version: string;
+  readonly hash: string;
+  readonly requiredCapability: string;
+}
+
+/** Data-only control-tool catalog projected into Model Context by the app
+ * composition root. Its definitions are model-facing data, not handlers. */
+export interface ControlToolCatalogPortService {
+  readonly visibleDefinitions: () => Effect.Effect<
+    ReadonlyArray<ModelFacingControlToolDefinition>
+  >;
+}
+
+export class ControlToolCatalogPort extends Context.Service<
+  ControlToolCatalogPort,
+  ControlToolCatalogPortService
+>()("arbor/ControlToolCatalogPort") {}
+
 /** P12 `07` §2: `resolveForModel` never fabricates a placeholder; an
  * unregistered ref fails with this typed error and is absent from
  * `visibleRefs`. */
