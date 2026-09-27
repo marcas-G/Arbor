@@ -6,6 +6,7 @@ import type {
 } from "@arbor/domain";
 import type {
   ModelCapability,
+  ModelFacingControlToolDefinition,
   ModelFacingToolDefinition,
   PortableModelRequest,
   SkillRef,
@@ -31,6 +32,7 @@ export interface ModelContextPlan {
   readonly instructions: ResolvedInstructionSet;
   readonly context: ReadonlyArray<ContextFragment>;
   readonly tools: ReadonlyArray<ModelFacingToolDefinition>;
+  readonly controlTools?: ReadonlyArray<ModelFacingControlToolDefinition>;
   readonly skills: ReadonlyArray<SkillRef>;
   readonly outputContract: string;
   readonly continuation: string;
@@ -56,6 +58,10 @@ export interface ModelContextManifest {
     readonly revision: number;
   }>;
   readonly toolRefs: ReadonlyArray<string>;
+  readonly toolRoutes: ReadonlyArray<{
+    readonly name: string;
+    readonly route: "Executable" | "Control";
+  }>;
   readonly outputContractRef: string;
   readonly budgetDecision: { readonly maxOutputTokens: number };
   readonly compiledRequestHash: string;
@@ -65,6 +71,10 @@ export interface ModelContextManifest {
 export interface PreparedModelTurn {
   readonly request: PortableModelRequest;
   readonly manifest: ModelContextManifest;
+  readonly toolRoutes: ReadonlyArray<{
+    readonly name: string;
+    readonly route: "Executable" | "Control";
+  }>;
 }
 
 const fnv = (input: string): string => {
@@ -99,15 +109,40 @@ export const compileTurn = (input: {
   readonly contextEpoch: ContextEpochNumber;
   readonly maxOutputTokens: number;
 }): PreparedModelTurn => {
+  const controlTools = input.plan.controlTools ?? [];
+  const names = [
+    ...input.plan.tools.map((tool) => tool.name),
+    ...controlTools.map((tool) => tool.name),
+  ];
+  if (new Set(names).size !== names.length) {
+    throw new Error("tool identity collision across executable/control routes");
+  }
+  const toolRoutes = [
+    ...input.plan.tools.map((tool) => ({
+      name: tool.name,
+      route: "Executable" as const,
+    })),
+    ...controlTools.map((tool) => ({
+      name: tool.name,
+      route: "Control" as const,
+    })),
+  ];
   const request: PortableModelRequest = {
     modelRef: input.capability.modelRef,
     instructions: compile(input.plan.instructions.effective),
     messages: [],
-    toolDefinitions: input.plan.tools.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      schemaJson: tool.schemaJson,
-    })),
+    toolDefinitions: [
+      ...input.plan.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        schemaJson: tool.schemaJson,
+      })),
+      ...controlTools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        schemaJson: tool.schemaJson,
+      })),
+    ],
     outputContractRef: input.plan.outputContract,
     budget: { maxOutputTokens: input.maxOutputTokens },
     cacheHints: input.plan.context.map((fragment) => ({
@@ -133,12 +168,20 @@ export const compileTurn = (input: {
       skillId: skill.skillId,
       revision: skill.revision,
     })),
-    toolRefs: input.plan.tools.map((tool) => `${tool.name}@${tool.version}`),
+    toolRefs: [
+      ...input.plan.tools.map(
+        (tool) => `Executable:${tool.name}@${tool.version}#${tool.hash}`,
+      ),
+      ...controlTools.map(
+        (tool) => `Control:${tool.name}@${tool.version}#${tool.hash}`,
+      ),
+    ],
+    toolRoutes,
     outputContractRef: input.plan.outputContract,
     budgetDecision: { maxOutputTokens: input.maxOutputTokens },
-    compiledRequestHash: fnv(JSON.stringify(request)),
+    compiledRequestHash: fnv(JSON.stringify({ request, toolRoutes })),
     controlBasis: input.plan.controlBasis,
   };
 
-  return { request, manifest };
+  return { request, manifest, toolRoutes };
 };

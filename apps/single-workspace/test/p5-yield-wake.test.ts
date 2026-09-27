@@ -53,13 +53,12 @@ const context: CommandSubmissionContext = {
   causationRef: "c",
 };
 
-const yieldTurn = [
+const waitTurn = [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_directive",
+    toolName: "arbor_wait",
     argumentsJson: JSON.stringify({
-      _tag: "Yield",
       reason: "waiting",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
     }),
@@ -174,12 +173,12 @@ const admit = (commandId: CommandId) =>
     );
   });
 
-describe("P5 Yield -> WorkWait -> wake", () => {
-  it("registers a durable WorkWait on Yield and blocks re-admission until cleared", async () => {
+describe("I0 Wait control route -> P2 WorkWait -> wake", () => {
+  it("routes a typed Wait action into durable WorkWait settlement", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-yw-"));
     const app = buildSliceLayer({
       databaseFile: join(dir, "slice.db"),
-      providerTurns: [yieldTurn],
+      providerTurns: [waitTurn],
     });
     const result = await Effect.runPromise(
       Effect.provide(
@@ -227,7 +226,9 @@ describe("P5 Yield -> WorkWait -> wake", () => {
         never
       >,
     );
-    expect(result.settlement._tag).toBe("Completed");
+    expect(result.settlement._tag, JSON.stringify(result.settlement)).toBe(
+      "Completed",
+    );
     if (result.settlement._tag === "Completed") {
       expect(result.settlement.result?._tag).toBe("Yielded");
     }

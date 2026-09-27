@@ -1,4 +1,5 @@
 import type { AgentDirective, ControlBasis } from "@arbor/model-context";
+import type { AgentAction } from "./control.js";
 
 /** DID v1.7 §8.19; P3 `06` §4. Every effectful directive carries
  * `decisionBasisManifestId`; admission checks its relevant control basis. */
@@ -23,6 +24,12 @@ export const requirementForDirective = (
   directive: AgentDirective,
 ): FreshnessRequirement =>
   STRONG_DIRECTIVES.includes(directive._tag) ? "Strong" : "Weak";
+
+/** DID v1.18 shared control policy: every I0 control action is effectful and
+ * therefore requires a strong trusted-basis comparison before dispatch. */
+export const requirementForAction = (
+  _action: AgentAction,
+): FreshnessRequirement => "Strong";
 
 const STRONG_FIELDS: ReadonlyArray<keyof ControlBasis> = [
   "projectPolicyRevision",

@@ -1,3 +1,4 @@
+export * from "./control.js";
 export * from "./directive.js";
 export * from "./driver.js";
 export * from "./freshness.js";
