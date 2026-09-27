@@ -20,7 +20,7 @@ import type {
   TransactionPortService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
-import { Effect, Stream } from "effect";
+import { Effect, Option, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 import { makeSliceControlActionHandlers } from "../src/control-actions.js";
 
@@ -63,7 +63,7 @@ describe("I0 SendMessage control action", () => {
     const submitted: Array<GatewayEnvelope<SendMessagePayload>> = [];
     let storedBody = new Uint8Array();
     const gateway: CommandGatewayService = {
-      execute: <C, R>(envelope: GatewayEnvelope<C>) => {
+      execute: <C, _R>(envelope: GatewayEnvelope<C>) => {
         const sendEnvelope = envelope as GatewayEnvelope<SendMessagePayload>;
         submitted.push(sendEnvelope);
         return Effect.succeed({
@@ -143,5 +143,77 @@ describe("I0 SendMessage control action", () => {
       urgency: "Normal",
     });
     expect(submitted[0]?.payload.message.correlationId).toMatch(/^cor_/);
+  });
+
+  it("fails closed for Report from a root workspace before body persistence or command submission", async () => {
+    let blobWrites = 0;
+    let gatewayCalls = 0;
+    const rootExecution: Execution = {
+      ...execution,
+      workspaceId: recipientWorkspaceId,
+      binding: {
+        _tag: "WorkspaceExecution",
+        workspaceId: recipientWorkspaceId,
+        focus: { _tag: "Coordination" },
+      },
+    };
+    const handler = makeSliceControlActionHandlers({
+      gateway: {
+        execute: () => {
+          gatewayCalls += 1;
+          return Effect.die("Gateway must not receive an invalid root Report");
+        },
+      } as unknown as CommandGatewayService,
+      blobs: {
+        put: () => {
+          blobWrites += 1;
+          return Effect.succeed("unexpected-blob-ref");
+        },
+        get: () => Effect.succeed(new Uint8Array()),
+        stream: () => Stream.empty,
+      },
+      clock: { now: () => Effect.succeed("2026-09-27T00:00:01.000Z") },
+      messages: {} as MessageStoreService,
+      tx: {
+        transact: () =>
+          Effect.succeed(Option.some({ parentWorkspaceId: null })) as never,
+      } as unknown as TransactionPortService,
+      workspaces: {
+        findById: () =>
+          Effect.succeed(Option.some({ parentWorkspaceId: null })) as never,
+      } as unknown as WorkspaceRepositoryService,
+    })[0];
+    if (handler === undefined) {
+      throw new Error("SendMessage handler was not registered");
+    }
+    const exit = await Effect.runPromise(
+      Effect.exit(
+        handler.handle({
+          action: {
+            _tag: "SendMessage",
+            kind: "Report",
+            body: "A root cannot Report to a parent.",
+          },
+          invocation: {
+            providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+            outputPosition: 0,
+            callRef: "report-call",
+            toolName: "arbor_send_message",
+            argumentsJson: "{}",
+          },
+          execution: rootExecution,
+          context: {
+            _tag: "ExecutionOrigin",
+            principal,
+            executionId,
+            fencingGeneration: 0 as never,
+          },
+        }),
+      ),
+    );
+
+    expect(exit._tag).toBe("Failure");
+    expect(blobWrites).toBe(0);
+    expect(gatewayCalls).toBe(0);
   });
 });
