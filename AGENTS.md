@@ -11,7 +11,7 @@ Arbor is a multi-agent work system organized around long-lived Responsibilities,
 | `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 60 system invariants | FROZEN |
 | `docs/design/03-detailed-implementation-design.md` | Executable contracts: ADT/Command/Event/Ports/SQL/Package DAG/phases | TOP-LEVEL FROZEN |
 
-These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.17).
+These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.18).
 
 ## Design governance (docs/design/**)
 
@@ -24,6 +24,15 @@ docs/design/** = manually governed source of truth
 Only manual governance changes design documents, and only in the document that owns the semantics. Never silently rewrite upstream semantics from implementation code or planning artifacts.
 
 If a code implementation discovers a design gap: **stop implementation and raise a Design Gap** (with failure evidence: failing test, concurrency counterexample, or recovery failure) for manual governance — do not edit the design directly.
+
+DID v1.18 governance adoption (`REDUCE_TO_INTERNAL_AGENT_ACTION_ADT`):
+model-facing tools decode to provider-neutral typed invocations; executable
+tools route through P4 `ToolRuntime`; control tools route through Agent
+Runtime `ControlToolRegistry` → process-local `AgentAction` → shared Agent
+Runtime policy → owning Application/settlement boundary. `AgentAction` is
+neither a wire/output contract nor persisted. `decodeTurn` does not construct a
+universal `AgentDirective`. This architecture adoption does not authorize
+ControlToolRegistry implementation, S01 qualification, or Wave 2.
 
 ## Planning
 
