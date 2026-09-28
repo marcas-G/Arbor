@@ -261,9 +261,14 @@ describe("P12-007 compiler emits real tool metadata (CI-6)", () => {
       "read",
       "shell",
     ]);
-    expect(
-      JSON.parse(byName.arbor_directive?.schemaJson ?? "{}"),
-    ).toHaveProperty("oneOf");
+    const directiveSchema = JSON.parse(
+      byName.arbor_directive?.schemaJson ?? "{}",
+    );
+    // OpenAI-compatible tool schemas need a top-level type:"object" (the
+    // directive union is a discriminated _tag enum — DeepSeek rejects a
+    // bare oneOf; tool-surface-review finding).
+    expect(directiveSchema.type).toBe("object");
+    expect(directiveSchema.properties._tag.enum).toContain("Yield");
     for (const builtin of BUILTIN_TOOLS) {
       const compiled = byName[builtin.name];
       expect(compiled).toBeDefined();

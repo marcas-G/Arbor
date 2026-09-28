@@ -53,33 +53,29 @@ export const TOOL_INVOCATION_CONTRACT = "tool-invocation-v1";
  * whether that is admissible — never a silent fallback). */
 const OUTPUT_CONTRACT_SCHEMAS: Readonly<Record<string, string>> = {
   [AGENT_DIRECTIVE_CONTRACT]: JSON.stringify({
-    oneOf: [
-      { properties: { _tag: { const: "Communicate" } }, required: ["_tag"] },
-      {
-        properties: { _tag: { const: "RequestGovernance" } },
-        required: ["_tag"],
+    // OpenAI-compatible tool schemas require a top-level type:"object"
+    // (DeepSeek rejects a bare oneOf — tool-surface-review finding). The
+    // directive union is expressed as a discriminated _tag enum.
+    type: "object",
+    required: ["_tag"],
+    properties: {
+      _tag: {
+        type: "string",
+        enum: [
+          "Communicate",
+          "RequestGovernance",
+          "ProposeChildWorkspace",
+          "SpawnSpecialist",
+          "CompletionClaim",
+          "Yield",
+          "Wait",
+          "LoadSkill",
+          "DeclareDependency",
+          "ToolInvocation",
+        ],
       },
-      {
-        properties: { _tag: { const: "ProposeChildWorkspace" } },
-        required: ["_tag"],
-      },
-      {
-        properties: { _tag: { const: "SpawnSpecialist" } },
-        required: ["_tag"],
-      },
-      {
-        properties: { _tag: { const: "CompletionClaim" } },
-        required: ["_tag"],
-      },
-      { properties: { _tag: { const: "Yield" } }, required: ["_tag"] },
-      { properties: { _tag: { const: "Wait" } }, required: ["_tag"] },
-      { properties: { _tag: { const: "LoadSkill" } }, required: ["_tag"] },
-      {
-        properties: { _tag: { const: "DeclareDependency" } },
-        required: ["_tag"],
-      },
-      { properties: { _tag: { const: "ToolInvocation" } }, required: ["_tag"] },
-    ],
+    },
+    additionalProperties: true,
   }),
   [COMPLETION_CLAIM_CONTRACT]: JSON.stringify({
     type: "object",
