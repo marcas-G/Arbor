@@ -1,14 +1,22 @@
 # P4 — Contract Index
 
-**Authority:** DID v1.8 (phase-scoped closure). These documents are **not** a
-fifth design layer; they are the P4-owned implementation contracts authorized
-by DID §13.
+**Authority:** DID v1.18, with P4 phase contracts frozen under DID v1.8 except
+where this index records the v1.18 source-of-truth supersession. These
+documents are **not** a fifth design layer; they are the P4-owned
+implementation contracts authorized by DID §13.
 
 ```text
-Detailed Implementation Design v1.8 (frozen)
+Detailed Implementation Design v1.18 (frozen)
         ↓ delegates phase-scoped closure
 docs/design/implementation/P4/**   (these contracts)
 ```
+
+**DID v1.18 ACR supersession:** P4's executable-tool authorization,
+ResourceAdmission, sandbox, invocation persistence/reconciliation, and
+observation contracts remain unchanged. The P3→P4 model-call bridge through
+`AgentDirective.InvokeTool` is historical; the current architecture boundary
+is a provider-neutral typed executable `ToolInvocation` routed to the
+existing P4 `ToolIntent` / `ToolRuntimePort` path.
 
 ## Documents
 
@@ -44,7 +52,8 @@ docs/design/implementation/P4/**   (these contracts)
 
 ## Seams (inherited)
 
-- **P3 → P4**: `AgentDirective.InvokeTool { callRef, toolName, argumentsJson }` →
+- **P3 → P4**: provider-neutral typed executable `ToolInvocation` →
+  existing P4 `ToolIntent` + trusted `ToolExecutionContext` →
   `ToolRuntimePort.invoke` → `CanonicalToolObservation` → P3 Session `Observation`.
 - **P2 safety gate**: the P3 driver calls `RuntimeSafetyGate.admitActivity` before
   any admission; a safety `Stop` prevents P4 admission.

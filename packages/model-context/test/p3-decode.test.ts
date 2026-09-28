@@ -1,10 +1,6 @@
 import type { CanonicalProviderEvent } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
-import {
-  AGENT_DIRECTIVE_CONTRACT,
-  COMPLETION_CLAIM_CONTRACT,
-  decodeTurn,
-} from "../src/index.js";
+import { decodeTurn } from "../src/index.js";
 
 const events = (
   extra: ReadonlyArray<CanonicalProviderEvent>,
@@ -20,66 +16,84 @@ const events = (
 ];
 
 describe("P3 decodeTurn", () => {
-  it("decodes text into a ModelOutput", () => {
-    const result = decodeTurn(
-      events([{ _tag: "TextDelta", text: "hi" }]),
-      AGENT_DIRECTIVE_CONTRACT,
-      "man-1",
-    );
+  it("decodes text into ModelOutput without constructing an AgentAction", () => {
+    const result = decodeTurn(events([{ _tag: "TextDelta", text: "hi" }]));
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.output.text).toBe("hi");
-      expect(result.output.directives).toHaveLength(0);
+      expect(result.output.toolInvocations).toEqual([]);
     }
   });
 
-  it("decodes a ToolCallProposed into an InvokeTool directive, not the raw event", () => {
+  it("preserves a provider-neutral typed ToolInvocation", () => {
     const result = decodeTurn(
       events([
         {
           _tag: "ToolCallProposed",
           callRef: "c1",
           toolName: "read",
-          argumentsJson: "{}",
+          argumentsJson: '{"path":"README.md"}',
         },
       ]),
-      AGENT_DIRECTIVE_CONTRACT,
-      "man-1",
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.output.directives[0]?.directive._tag).toBe("InvokeTool");
-      expect(result.output.directives[0]?.decisionBasisManifestId).toBe(
-        "man-1",
-      );
+      expect(result.output.toolInvocations).toEqual([
+        {
+          providerTurnId: "ptn_x",
+          outputPosition: 0,
+          callRef: "c1",
+          toolName: "read",
+          argumentsJson: '{"path":"README.md"}',
+        },
+      ]);
     }
   });
 
-  it("rejects a directive not admitted by the Output Contract", () => {
-    const result = decodeTurn(
-      events([
+  it("rejects tool calls without turn identity, arguments, or unique call identity", () => {
+    expect(
+      decodeTurn([
         {
           _tag: "ToolCallProposed",
           callRef: "c1",
           toolName: "read",
           argumentsJson: "{}",
         },
-      ]),
-      COMPLETION_CLAIM_CONTRACT,
-      "man-1",
-    );
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.violation).toBe("ModelOutputContractViolation");
-    }
+      ]).ok,
+    ).toBe(false);
+    expect(
+      decodeTurn(
+        events([
+          {
+            _tag: "ToolCallProposed",
+            callRef: "",
+            toolName: "read",
+            argumentsJson: "{}",
+          },
+        ]),
+      ).ok,
+    ).toBe(false);
+    expect(
+      decodeTurn(
+        events([
+          {
+            _tag: "ToolCallProposed",
+            callRef: "same",
+            toolName: "read",
+            argumentsJson: "{}",
+          },
+          {
+            _tag: "ToolCallProposed",
+            callRef: "same",
+            toolName: "list",
+            argumentsJson: "{}",
+          },
+        ]),
+      ).ok,
+    ).toBe(false);
   });
 
-  it("rejects an empty turn and an unknown contract", () => {
-    expect(decodeTurn(events([]), AGENT_DIRECTIVE_CONTRACT, "m").ok).toBe(
-      false,
-    );
-    expect(
-      decodeTurn(events([{ _tag: "TextDelta", text: "x" }]), "nope", "m").ok,
-    ).toBe(false);
+  it("rejects an empty turn", () => {
+    expect(decodeTurn(events([])).ok).toBe(false);
   });
 });

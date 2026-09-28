@@ -38,7 +38,7 @@ const executionId = parse(ExecutionId)(
 const principal = parse(Principal)("worker:a");
 const actor = parse(Actor)("worker:a");
 
-const directive = (tag: string, extra: Record<string, unknown> = {}) => ({
+const legacyDirective = (tag: string, extra: Record<string, unknown> = {}) => ({
   _tag: "ToolCallProposed" as const,
   callRef: `c-${tag}`,
   toolName: "arbor_directive",
@@ -47,14 +47,7 @@ const directive = (tag: string, extra: Record<string, unknown> = {}) => ({
 
 const turns = [
   [
-    directive("DeclareDependency", { spec: {} }), // P7 owns it; ProposeChildWorkspace is P6-live now
-    { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
-  ],
-  [
-    directive("Yield", {
-      reason: "done",
-      waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
-    }),
+    legacyDirective("DeclareDependency", { spec: {} }),
     { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
   ],
 ];
@@ -140,8 +133,8 @@ const context: CommandSubmissionContext = {
   fencingGeneration: 0 as never,
 };
 
-describe("P5 DirectiveUnsupported", () => {
-  it("returns a non-fatal DirectiveUnsupported observation and continues the loop", async () => {
+describe("OBSOLETE_CONTRACT_TEST — DirectiveUnsupported universal envelope", () => {
+  it("fails closed on an unregistered legacy control envelope", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-du-"));
     const app = buildSliceLayer({
       databaseFile: join(dir, "slice.db"),
@@ -191,13 +184,16 @@ describe("P5 DirectiveUnsupported", () => {
         never
       >,
     );
-    expect(result.settlement._tag).toBe("Completed");
-    if (result.settlement._tag === "Completed") {
-      expect(result.settlement.result?._tag).toBe("Yielded");
-    }
+    expect(result.settlement).toMatchObject({
+      _tag: "Interrupted",
+      result: {
+        _tag: "ControlledInterruption",
+        reason: "UnknownTool",
+      },
+    });
     expect(
       result.entries.some((entry) => entry.includes("DirectiveUnsupported")),
-    ).toBe(true);
+    ).toBe(false);
     void actor;
   });
 });

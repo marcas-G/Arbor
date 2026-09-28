@@ -25,6 +25,7 @@ import {
   InboxProjectionStoreLive,
   LeaseServiceLive,
   layer,
+  MessageStoreLive,
   P11_MIGRATIONS,
   P12_MIGRATIONS,
   PermissionGrantRepositoryLive,
@@ -199,6 +200,7 @@ import {
   type IdGenerator,
   type InformationTrustMetadata,
   LeaseService,
+  type MessageStore,
   ModelCapabilityPort,
   type ModelFacingToolDefinition,
   P12_MIGRATION_BASELINE,
@@ -721,10 +723,10 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
           {
             _tag: "ToolCallProposed",
             callRef: "c1",
-            toolName: "arbor_directive",
+            toolName: "arbor_wait",
             argumentsJson: JSON.stringify({
-              _tag: "CompletionClaim",
-              claim: { claimRef: "claim-1", workRevision: 0 },
+              reason: "secret-store sentinel completion",
+              waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
             }),
           },
           { _tag: "TurnCompleted", finishReason: "ToolCall" },
@@ -1583,10 +1585,10 @@ const claimTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>> = [
     {
       _tag: "ToolCallProposed",
       callRef: "c1",
-      toolName: "arbor_directive",
+      toolName: "arbor_wait",
       argumentsJson: JSON.stringify({
-        _tag: "CompletionClaim",
-        claim: { claimRef: "claim-1", workRevision: 0 },
+        reason: "secret-store sentinel completion",
+        waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
       }),
     },
     { _tag: "TurnCompleted", finishReason: "ToolCall" },
@@ -2007,6 +2009,7 @@ type TransportDbServices =
   | WorkspaceRepository
   | ExecutionRepository
   | WorkRepository
+  | MessageStore
   | PermissionGrantRepository
   | CommandStore
   | DomainEventJournal
@@ -2028,6 +2031,7 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
+    Layer.provide(MessageStoreLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
     // P14: the registry also wires SubmitHumanMessage (human chat-turn).
     Layer.provide(HumanMessageStoreLive, infra),

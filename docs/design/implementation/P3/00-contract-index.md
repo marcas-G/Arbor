@@ -1,15 +1,26 @@
 # P3 — Contract Index
 
-**Authority:** DID v1.7 (phase-scoped closure). These documents are **not** a
-fifth design layer; they are the P3-owned implementation contracts authorized
-by DID §13. No DID bump: the decisions below assign phase ownership under
-existing DID semantics.
+**Authority:** DID v1.18, with P3 phase contracts frozen under the prior DID
+versions except where this index records the v1.18 source-of-truth supersession.
+These documents are **not** a fifth design layer; they are P3-owned
+implementation contracts authorized by DID §13.
 
 ```text
-Detailed Implementation Design v1.7 (frozen)
+Detailed Implementation Design v1.18 (frozen)
         ↓ delegates phase-scoped closure
 docs/design/implementation/P3/**   (these contracts)
 ```
+
+**DID v1.18 ACR supersession:** P3 `01-provider-contracts.md` §3,
+`02-model-context-contracts.md` §6, `03-agent-loop-driver.md` §§2–4, and
+`06-provider-failure-repair.md` §4 are retained as historical AgentDirective
+contract records. Their statements that `decodeTurn` produces/validates a
+universal `AgentDirective`, that the union is the model-facing Output Contract,
+or that `decisionBasisManifestId` is a model/action payload field are
+superseded by DID v1.18 ACR-1–ACR-5. Provider-neutral event semantics, the P3
+loop, P2 safety gate, Application boundary, settlement, freshness rules, and
+bounded-repair semantics remain authoritative where they do not depend on that
+superseded representation.
 
 ## Documents
 
@@ -17,7 +28,7 @@ docs/design/implementation/P3/**   (these contracts)
 |---|---|
 | `01-provider-contracts.md` | `ProviderPort`/`ProviderRuntime`, `CanonicalProviderEvent` ADT, `ModelCapabilityPort`, provider failure model, `provider_turns`/`provider_attempts` semantics |
 | `02-model-context-contracts.md` | `prepareTurn`, six surfaces, `InstructionFragment` + resolver, C0–C6 layers, retention/budget, Skills surface, Compaction ProviderTurn protocol, `ModelContextManifest` |
-| `03-agent-loop-driver.md` | real `ExecutionDriverPort`, control loop, `AgentDirective` decode/validation, Output Contract, safety gating |
+| `03-agent-loop-driver.md` | historical universal AgentDirective decode/output bridge; retained P3 control-loop, safety, repair, and settlement requirements as limited by DID v1.18 |
 | `04-sqlite-schema.md` | `provider_turns`, `provider_attempts`, `model_context_manifests`, Session entry content types |
 | `05-prompt-context-contracts.md` | versioned Prompt Program artifacts, provenance, model-family compiler |
 | `06-provider-failure-repair.md` | failure translation, bounded repair, `ContextUnsatisfiable`, `DecisionStale`, `GovernanceBlocked` |
@@ -37,7 +48,7 @@ Output Contract, Prompt provenance, real model multi-turn continuity.
 | C1 | **P3** owns the Skill surface / loading / provenance / progressive-disclosure contract; concrete Skill content and behavior belong to their feature phase (P6/P8/…). |
 | C2 | **P3** owns the explicit Compaction ProviderTurn semantic protocol (request/result/output validation); **P2** keeps the Session/Epoch/Checkpoint durable persistence seam; numeric thresholds are empirical. |
 | C3 | **P3** establishes the shared Prompt/Context behavioral-eval harness; each phase owns its own Prompt Program text, eval cases and acceptance criteria. |
-| C4 | `CanonicalProviderEvent` is **not** elevated to the DID; P3 freezes its exact ADT. Provider events are normalized transport/runtime vocabulary and **must not** directly express an `AgentDirective`. |
+| C4 | `CanonicalProviderEvent` remains provider-neutral transport/runtime vocabulary. It does not directly express an authorized `AgentAction`; `decodeTurn` extracts `ModelOutput` and generic typed `ToolInvocation` values, while ControlToolRegistry owns control semantics (DID v1.18 ACR-4). |
 | C5 | Prompt Program **actual text** is **not** implementation choice. The Programs P3 uses (Base Agent Protocol, Responsibility-bound Protocol, Work Execution Program, Compaction, …) are versioned phase-scoped **contract artifacts** with regression eval. Only wording iteration that does not change the contract, and numeric defaults, are empirical. |
 
 ## Inherited from P2

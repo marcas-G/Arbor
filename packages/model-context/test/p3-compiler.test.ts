@@ -82,4 +82,98 @@ describe("P3 model-family compiler", () => {
     expect(first.request.instructions[0]?.authorityRole).toBe("A0");
     expect(first.manifest.controlBasis.environmentRevision).toBe("env-1");
   });
+
+  it("compiles executable and control definitions with explicit route provenance", () => {
+    const result = compileTurn({
+      plan: {
+        ...plan,
+        tools: [
+          {
+            name: "read",
+            description: "Read a workspace file.",
+            schemaJson: '{"type":"object"}',
+            version: "1",
+            hash: "exec-hash",
+            capabilityMetadata: [],
+            sideEffectSemantics: "ReadOnly",
+          },
+        ],
+        controlTools: [
+          {
+            name: "arbor_wait",
+            description: "Register a durable wait.",
+            schemaJson: '{"type":"object"}',
+            version: "1",
+            hash: "control-hash",
+            requiredCapability: "agent:wait",
+          },
+        ],
+      },
+      capability,
+      providerTurnId: parse(ProviderTurnId)(
+        "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      ),
+      executionId: parse(ExecutionId)(
+        "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      ),
+      sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+      contextEpoch: parse(ContextEpochNumber)(0),
+      maxOutputTokens: 128,
+    });
+
+    expect(result.request.toolDefinitions.map((tool) => tool.name)).toEqual([
+      "read",
+      "arbor_wait",
+    ]);
+    expect(result.toolRoutes).toEqual([
+      { name: "read", route: "Executable" },
+      { name: "arbor_wait", route: "Control" },
+    ]);
+    expect(result.manifest.toolRoutes).toEqual(result.toolRoutes);
+    expect(result.manifest.toolRefs).toEqual([
+      "Executable:read@1#exec-hash",
+      "Control:arbor_wait@1#control-hash",
+    ]);
+  });
+
+  it("rejects an identity collision across executable and control categories", () => {
+    expect(() =>
+      compileTurn({
+        plan: {
+          ...plan,
+          tools: [
+            {
+              name: "arbor_wait",
+              description: "Executable collision",
+              schemaJson: "{}",
+              version: "1",
+              hash: "x",
+              capabilityMetadata: [],
+              sideEffectSemantics: "ReadOnly",
+            },
+          ],
+          controlTools: [
+            {
+              name: "arbor_wait",
+              description: "Control collision",
+              schemaJson: "{}",
+              version: "1",
+              hash: "y",
+              requiredCapability: "agent:wait",
+            },
+          ],
+        },
+        capability,
+        providerTurnId: parse(ProviderTurnId)(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+        ),
+        executionId: parse(ExecutionId)(
+          "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+        ),
+        sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+        contextEpoch: parse(ContextEpochNumber)(0),
+        maxOutputTokens: 128,
+      }),
+    ).toThrow("tool identity collision");
+  });
 });
