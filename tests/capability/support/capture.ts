@@ -6,6 +6,10 @@ import type {
   HttpProviderCallEvidence,
   HttpProviderRuntime,
 } from "../real-provider/http-sdk-client.js";
+import {
+  providerConfigReady,
+  resolveProviderConfig,
+} from "./provider-config.js";
 
 export interface RealProviderConfig {
   readonly baseUrl: string;
@@ -17,42 +21,34 @@ export interface RealProviderConfig {
 }
 
 export const realProviderConfig = (): RealProviderConfig => {
-  const baseUrl = process.env.ARBOR_CAPABILITY_PROVIDER_URL?.trim();
-  const model = process.env.ARBOR_CAPABILITY_MODEL?.trim();
-  const serverBuildId = process.env.ARBOR_CAPABILITY_SERVER_BUILD_ID?.trim();
-  const authMode = process.env.ARBOR_CAPABILITY_AUTH;
-  const modelRevision = process.env.ARBOR_CAPABILITY_MODEL_REVISION?.trim();
-  const apiKey = process.env.ARBOR_CAPABILITY_API_KEY;
-  if (!baseUrl || !model || !serverBuildId) {
+  const resolved = resolveProviderConfig();
+  const readiness = providerConfigReady(resolved);
+  if (!readiness.ready) {
     throw new Error(
-      "ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, and ARBOR_CAPABILITY_SERVER_BUILD_ID are required",
-    );
-  }
-  if (authMode !== "none" && authMode !== "env") {
-    throw new Error(
-      "ARBOR_CAPABILITY_AUTH must be explicitly set to none or env",
-    );
-  }
-  if (authMode === "env" && !apiKey) {
-    throw new Error(
-      "ARBOR_CAPABILITY_API_KEY is required when ARBOR_CAPABILITY_AUTH=env",
+      `real provider configuration is incomplete (capability.config.json / ARBOR_CAPABILITY_* env): missing ${readiness.missing.join(
+        ", ",
+      )}`,
     );
   }
   return {
-    baseUrl,
-    model,
-    serverBuildId,
-    authMode,
-    ...(modelRevision === undefined ? {} : { modelRevision }),
-    ...(apiKey === undefined ? {} : { apiKey }),
+    baseUrl: resolved.baseUrl,
+    model: resolved.model,
+    serverBuildId: resolved.serverBuildId,
+    authMode: resolved.authMode,
+    ...(resolved.modelRevision === undefined
+      ? {}
+      : { modelRevision: resolved.modelRevision }),
+    ...(resolved.apiKey === undefined ? {} : { apiKey: resolved.apiKey }),
   };
 };
 
-export const evidenceDirectory = (): string =>
-  resolve(
-    process.env.ARBOR_CAPABILITY_EVIDENCE_DIR ??
+export const evidenceDirectory = (): string => {
+  const resolved = resolveProviderConfig();
+  return resolve(
+    resolved.evidenceDir ??
       "planning/testing/core-capability/evidence/real-provider",
   );
+};
 
 export const captureEvidence = (input: {
   readonly caseId: string;

@@ -40,6 +40,7 @@ describe("B14 L3 — web/product projection with real generated replies", () => 
           let latest: PublicTranscriptPage | undefined;
           let older: PublicTranscriptPage | undefined;
           let oldest: PublicTranscriptPage | undefined;
+          const submittedMessageIds: Array<string> = [];
           await withPublicConversationApp(
             {
               databaseFile: join(directory, "slice.db"),
@@ -75,6 +76,8 @@ describe("B14 L3 — web/product projection with real generated replies", () => 
                 );
               }
               for (let turn = 0; turn < TURN_COUNT; turn += 1) {
+                const messageId = newCapabilityId("msg");
+                submittedMessageIds.push(messageId);
                 const submitted = await handle.postCommand({
                   commandType: "SubmitHumanMessage",
                   commandId: newCapabilityId("cmd"),
@@ -82,7 +85,7 @@ describe("B14 L3 — web/product projection with real generated replies", () => 
                   actor: "user:capability-test",
                   issuedAt: new Date().toISOString(),
                   payload: {
-                    messageId: newCapabilityId("msg"),
+                    messageId,
                     targetWorkspaceId: project.rootWorkspaceId,
                     bodyRef:
                       turn === TURN_COUNT - 1
@@ -132,7 +135,14 @@ describe("B14 L3 — web/product projection with real generated replies", () => 
               }
             },
           );
-          return { marker, latest, older, oldest, providerCalls: calls };
+          return {
+            marker,
+            submittedMessageIds,
+            latest,
+            older,
+            oldest,
+            providerCalls: calls,
+          };
         },
         verify: (result) => {
           const pages = [result.latest, result.older, result.oldest].filter(
@@ -165,30 +175,55 @@ describe("B14 L3 — web/product projection with real generated replies", () => 
               `expected ${TURN_COUNT} Human/Assistant pairs across pages, found human=${humans.length} assistant=${assistants.length}`,
             );
           }
-          // Chronological order holds within and across pages (older pages
-          // prepend, they never replace the current interval).
-          const bodies = entries.map((entry) => entry.body);
-          const firstMessages = bodies.filter((body) =>
-            body.includes("第 1 条消息"),
+          // Each submitted message appears exactly once across all pages,
+          // attributed by messageId (body text alone is not a stable key).
+          const seenIds = humans
+            .map((entry) => entry.messageId)
+            .filter((id): id is string => id !== undefined);
+          const missing = result.submittedMessageIds.filter(
+            (id) => !seenIds.includes(id),
           );
-          const markerReplies = bodies.filter((body) =>
-            body.includes(result.marker),
+          const duplicated = seenIds.filter(
+            (id, index) => seenIds.indexOf(id) !== index,
           );
-          if (firstMessages.length !== 1) {
+          if (seenIds.length !== TURN_COUNT || missing.length > 0) {
             throw new Error(
-              "the oldest page did not carry exactly the first human turn",
+              `pagination lost human turns (missing ${JSON.stringify(missing)})`,
             );
           }
+          if (duplicated.length > 0) {
+            throw new Error(
+              `pagination duplicated human turns ${JSON.stringify(duplicated)}`,
+            );
+          }
+          // Chronological order: pages walk strictly backwards (latest page
+          // holds the newest turns, each older page strictly earlier ones).
+          const orderOf = (id: string | undefined) =>
+            result.submittedMessageIds.indexOf(id ?? "");
+          const pageOrders = pages.map((page) =>
+            page.entries
+              .filter((entry) => entry.kind === "HumanConversationTurn")
+              .map((entry) => orderOf(entry.messageId)),
+          );
+          const allOrders = pageOrders.flat();
+          if (allOrders.some((order) => order === -1)) {
+            throw new Error("unknown messageId surfaced in pagination");
+          }
+          for (let index = 1; index < pageOrders.length; index += 1) {
+            const previousMax = Math.max(...(pageOrders[index - 1] ?? [0]));
+            const currentMax = Math.max(...(pageOrders[index] ?? [0]));
+            if (currentMax >= previousMax) {
+              throw new Error(
+                "pagination broke chronological order (older page not strictly earlier)",
+              );
+            }
+          }
+          const markerReplies = assistants.filter((entry) =>
+            entry.body.includes(result.marker),
+          );
           if (markerReplies.length !== 1) {
             throw new Error(
               "the latest page did not carry exactly the marker reply",
-            );
-          }
-          const indexOfFirst = bodies.indexOf(firstMessages[0] ?? "");
-          const indexOfMarkerReply = bodies.indexOf(markerReplies[0] ?? "");
-          if (indexOfFirst >= indexOfMarkerReply) {
-            throw new Error(
-              "pagination broke chronological order (older range after newer range)",
             );
           }
         },
