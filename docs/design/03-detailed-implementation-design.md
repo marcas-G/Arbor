@@ -1,9 +1,9 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.18\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance adoption (`REDUCE_TO_INTERNAL_AGENT_ACTION_ADT`)\
-**Supersedes:** v1.17\
-**Date:** 2026-09-27\
+**Version:** 1.19\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance authorization (`AGENT_CONTROL_IMPLEMENTATION_AUTHORIZED`)\
+**Supersedes:** v1.18\
+**Date:** 2026-09-28\
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
@@ -234,6 +234,51 @@ P12 implementation COMPLETE; P12 FORMALLY CLOSED
 This is an additive read-model/presentation adoption, **not** a reopened P13/P14 backend phase:
 no command semantics, event semantics, DDL, authority, transport protocol, System Design, or
 G2–G5 product-domain gap is changed.
+
+**Governance changes (v1.18 → v1.19):** (Agent Control Implementation
+Authorization — D9 of the `52-migration-and-implementation-dag.md` sequencing)
+
+- **ACR-6 — flip the three v1.18 implementation holds to AUTHORIZED.**
+  Appendix C `Agent control implementation authorization`, `S01 qualification
+  authorization`, and `Wave 2 implementation authorization` become
+  AUTHORIZED. Architecture rulings ACR-1…ACR-5 are unchanged: `AgentAction`
+  remains an internal transient ADT (never a wire/output contract, never
+  persisted), `decodeTurn` stays narrow, and `ControlToolRegistry` remains
+  the agent-runtime-owned control identity/codec/route boundary.
+- **Authorization evidence (D1–D8 readiness).** D1 internal action contract
+  and D3 registry boundary contracts exist (`49-internal-agent-action-contract.md`,
+  `50-control-tool-runtime-boundary.md`, `51-agent-control-module-map.md`);
+  D4/D5 route integration is proven live by the I0 skeleton (Wait and
+  SendMessage control routes through the adopted boundary) and by the L3
+  real-provider capability baselines of 2026-09-28 (DeepSeek deepseek-flash:
+  executable tool route selects, executes, and settles durably; control
+  route reaches a durable Wait; basic conversation and multi-root memory
+  pass the three-run stability oracle). D8 (S01 qualification design) is
+  adopted as the redefined Control/Executable Route Qualification below.
+- **ACR-7 — S01 is Control/Executable Route Qualification.** S01 is no
+  longer "make a model emit a valid canonical AgentDirective." The
+  qualification face is the five-element definition in
+  `52-migration-and-implementation-dag.md` §S01 redefinition (executable
+  route, control route, failure route, audit route, no-directive
+  compatibility), carried mechanically by the L3 capability suites
+  (`tests/capability/real-provider/**` + `scripts/testing/run-capability.mjs`
+  three-run stability oracle). Qualification must never use the legacy
+  universal `arbor_directive` representation as a pass condition.
+- **ACR-8 — field-source gaps gate only the actions that need them.**
+  The four downstream gaps (AssignWork.Provenance; ToolObservation source
+  identity G-V2-2; ConcludeVerification.summaryRef G-V2-3;
+  initialWork/VerificationMission lifecycle G-V2-4) remain OPEN and keep
+  gating only the action/command paths that consume those fields
+  (`52-migration-and-implementation-dag.md` §Four former field-source gaps).
+  Actions with complete, frozen mappings — e.g. Wait, SendMessage,
+  ProposeChildWorkspace (formation semantics closed in P6), SpawnSpecialist
+  (execution-bound admission closed in P2), ClaimCompletion (P8 chain) —
+  may be implemented and qualified independently under this authorization.
+  B10's `BLOCKED_BY_DESIGN_GAP` status is unchanged until those gaps close.
+- **Wave 2 scope.** Wave 2 is the module map of
+  `51-agent-control-module-map.md` sequenced by the dependency DAG of
+  `52-migration-and-implementation-dag.md`; it adds no new package or
+  dependency edge (v1.18 §10.4.1 unchanged).
 
 **Governance changes (v1.17 → v1.18):** (Agent Control Representation Adoption)
 
@@ -5138,15 +5183,15 @@ Composition Root
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
 System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.18     TOP-LEVEL FROZEN
+Detailed Implementation Design v1.19     TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED
 C1–C10 + X1–X11 Closure                  CLOSED
 Agent control representation              FROZEN — internal AgentAction boundary
-Agent control implementation authorization NOT AUTHORIZED
-S01 qualification authorization             NOT AUTHORIZED
-Wave 2 implementation authorization         NOT AUTHORIZED
+Agent control implementation authorization AUTHORIZED (v1.19 ACR-6; field-source gaps gate only their consumers per ACR-8)
+S01 qualification authorization            AUTHORIZED (v1.19 ACR-7 — Control/Executable Route Qualification)
+Wave 2 implementation authorization         AUTHORIZED (v1.19 ACR-6; scope = 51 module map, 52 DAG order)
 P0 Technical Baseline                     FROZEN (versioned baseline)
 P0 coding authorization                   AUTHORIZED
 P1 coding authorization                   AFTER P1 exact contracts / DDL closure

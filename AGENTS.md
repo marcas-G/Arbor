@@ -11,7 +11,7 @@ Arbor is a multi-agent work system organized around long-lived Responsibilities,
 | `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 60 system invariants | FROZEN |
 | `docs/design/03-detailed-implementation-design.md` | Executable contracts: ADT/Command/Event/Ports/SQL/Package DAG/phases | TOP-LEVEL FROZEN |
 
-These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.18).
+These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.19).
 
 ## Design governance (docs/design/**)
 
@@ -31,8 +31,15 @@ tools route through P4 `ToolRuntime`; control tools route through Agent
 Runtime `ControlToolRegistry` → process-local `AgentAction` → shared Agent
 Runtime policy → owning Application/settlement boundary. `AgentAction` is
 neither a wire/output contract nor persisted. `decodeTurn` does not construct a
-universal `AgentDirective`. This architecture adoption does not authorize
-ControlToolRegistry implementation, S01 qualification, or Wave 2.
+universal `AgentDirective`.
+
+DID v1.19 governance authorization (`AGENT_CONTROL_IMPLEMENTATION_AUTHORIZED`,
+ACR-6…ACR-8): agent control implementation, S01 qualification (redefined as
+Control/Executable Route Qualification, carried by the L3 capability suites),
+and Wave 2 (scope = `planning/tool-surface-review/51` module map sequenced by
+`52` DAG) are AUTHORIZED. The four field-source gaps (AssignWork.Provenance,
+G-V2-2/3/4) remain OPEN and gate only the actions that consume them; B10 stays
+`BLOCKED_BY_DESIGN_GAP` until they close.
 
 ## Planning
 
