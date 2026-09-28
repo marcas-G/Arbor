@@ -556,7 +556,10 @@ describe("P14 production conversation model context", () => {
         function: expect.objectContaining({
           name: "arbor_directive",
           parameters: expect.objectContaining({
-            oneOf: expect.any(Array),
+            type: "object",
+            properties: expect.objectContaining({
+              _tag: expect.objectContaining({ enum: expect.any(Array) }),
+            }),
           }),
         }),
       }),

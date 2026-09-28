@@ -202,14 +202,49 @@ export const makePublicProject = (key: string): PublicProject => {
   };
 };
 
-export const runPublicConversation = async (input: {
-  readonly databaseFile: string;
-  readonly project: PublicProject;
-  readonly modelRef: string;
-  readonly provider: OpenAISdkClient;
-  readonly secretRef?: SecretRef;
-  readonly turns: ReadonlyArray<PublicConversationTurn>;
-}): Promise<PublicConversationResult> => {
+export interface PublicTranscriptEntry {
+  readonly kind: string;
+  readonly body: string;
+  readonly messageId?: string;
+  readonly executionId?: string;
+}
+
+export interface PublicTranscriptPage {
+  readonly entries: ReadonlyArray<PublicTranscriptEntry>;
+  readonly nextCursor?: string;
+}
+
+/** Handle over the assembled production slice: the public HTTP face plus an
+ * in-process escape hatch that runs Effects against the same Layer (used only
+ * for seams the public surface does not expose, e.g. the P2/P3 execution
+ * runner drive for Work executions). */
+export interface PublicAppHandle {
+  readonly base: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly postCommand: (
+    envelope: Record<string, unknown>,
+  ) => Promise<{ status: number; payload: { ok: boolean; body?: unknown } }>;
+  readonly tick: () => Promise<void>;
+  readonly readTranscript: (params: {
+    readonly workspaceId: string;
+    readonly limit: number;
+    readonly cursor?: string;
+    readonly conversationOnly?: boolean;
+  }) => Promise<PublicTranscriptPage>;
+  readonly run: <A>(effect: Effect.Effect<A, unknown, any>) => Promise<A>;
+  readonly close: () => Promise<void>;
+}
+
+export const withPublicConversationApp = async (
+  input: {
+    readonly databaseFile: string;
+    readonly project: PublicProject;
+    readonly modelRef: string;
+    readonly provider: OpenAISdkClient;
+    readonly secretRef?: SecretRef;
+  },
+  body: (handle: PublicAppHandle) => Promise<void>,
+): Promise<void> => {
   const projectId = parse(ProjectId)(input.project.projectId);
   const authenticator = makeStaticAuthenticator({
     [capabilityToken]: capabilityHuman,
@@ -228,7 +263,7 @@ export const runPublicConversation = async (input: {
     },
   });
 
-  return Effect.runPromise(
+  await Effect.runPromise(
     Effect.scoped(
       Effect.provide(
         Effect.gen(function* () {
@@ -249,123 +284,69 @@ export const runPublicConversation = async (input: {
             "content-type": "application/json",
             authorization: `Bearer ${capabilityToken}`,
           };
-          const postCommand = (envelope: Record<string, unknown>) =>
-            Effect.promise(async () => {
-              const response = await fetch(`${base}/commands`, {
+          const handle: PublicAppHandle = {
+            base,
+            headers,
+            postCommand: (envelope) =>
+              Effect.runPromise(
+                Effect.promise(async () => {
+                  const response = await fetch(`${base}/commands`, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(envelope),
+                  });
+                  return {
+                    status: response.status,
+                    payload: (await response.json()) as {
+                      ok: boolean;
+                      body?: unknown;
+                    },
+                  };
+                }),
+              ),
+            tick: () =>
+              Effect.runPromise(
+                Effect.provide(
+                  daemon.daemon.conversationTick as Effect.Effect<
+                    void,
+                    unknown,
+                    never
+                  >,
+                  app,
+                ),
+              ),
+            readTranscript: async (params) => {
+              const response = await fetch(`${base}/views/transcript`, {
                 method: "POST",
                 headers,
-                body: JSON.stringify(envelope),
+                body: JSON.stringify(params),
               });
-              return {
-                status: response.status,
-                payload: (await response.json()) as {
-                  ok: boolean;
-                  body?: { resolution?: string };
-                },
-              };
-            });
-
-          try {
-            const createProject = yield* postCommand(
-              commandEnvelope(
-                input.project.projectId,
-                "CreateProject",
-                input.project,
-              ),
-            );
-            if (
-              createProject.status !== 200 ||
-              createProject.payload.body?.resolution !== "Committed"
-            ) {
-              throw new Error(
-                `public CreateProject failed: ${createProject.status} ${JSON.stringify(createProject.payload)}`,
-              );
-            }
-
-            const transcripts: Array<{
-              entries: ReadonlyArray<{
-                kind: string;
-                body: string;
-                messageId?: string;
-                executionId?: string;
-              }>;
-            }> = [];
-            for (const turn of input.turns) {
-              const messageId = prefixedId("msg");
-              const envelope = commandEnvelope(
-                input.project.projectId,
-                "SubmitHumanMessage",
-                {
-                  messageId,
-                  targetWorkspaceId: input.project.rootWorkspaceId,
-                  bodyRef: turn.body,
-                },
-              );
-              const submitted = yield* postCommand(envelope);
-              if (
-                submitted.status !== 200 ||
-                submitted.payload.body?.resolution !== "Committed"
-              ) {
-                throw new Error(
-                  `public SubmitHumanMessage failed: ${submitted.status} ${JSON.stringify(submitted.payload)}`,
-                );
-              }
-              if (turn.duplicateSubmission === true) {
-                const duplicate = yield* postCommand(envelope);
-                if (
-                  duplicate.status !== 200 ||
-                  duplicate.payload.body?.resolution !== "Committed"
-                ) {
-                  throw new Error(
-                    `duplicate SubmitHumanMessage failed: ${duplicate.status} ${JSON.stringify(duplicate.payload)}`,
-                  );
-                }
-              }
-
-              // One tick admits and runs the coordination execution; the
-              // following tick performs the durable response-body writeback.
-              yield* daemon.daemon.conversationTick;
-              yield* daemon.daemon.conversationTick;
-
-              const response = yield* Effect.promise(() =>
-                fetch(`${base}/views/transcript`, {
-                  method: "POST",
-                  headers,
-                  body: JSON.stringify({
-                    workspaceId: input.project.rootWorkspaceId,
-                    limit: 20,
-                  }),
-                }),
-              );
               if (response.status !== 200) {
                 throw new Error(
                   `public transcript read failed: ${response.status}`,
                 );
               }
-              const transcript = (yield* Effect.promise(() =>
-                response.json(),
-              )) as {
+              const payload = (await response.json()) as {
                 readonly ok: boolean;
-                readonly body: {
-                  readonly value: {
-                    readonly entries: ReadonlyArray<{
-                      readonly kind: string;
-                      readonly body: string;
-                      readonly messageId?: string;
-                      readonly executionId?: string;
-                    }>;
-                  };
-                };
+                readonly body: { readonly value: PublicTranscriptPage };
               };
-              if (!transcript.ok) {
+              if (!payload.ok) {
                 throw new Error("public transcript returned a problem");
               }
-              transcripts.push(transcript.body.value);
-            }
-            return {
-              projectId: input.project.projectId,
-              transcripts,
-            };
+              return payload.body.value;
+            },
+            run: <A2>(effect: Effect.Effect<A2, unknown, any>) =>
+              Effect.runPromise(
+                Effect.provide(
+                  effect as unknown as Effect.Effect<A2, unknown, never>,
+                  app,
+                ),
+              ),
+            close: () =>
+              Effect.runPromise(Effect.promise(() => server.close())),
+          };
+          try {
+            yield* Effect.promise(() => body(handle));
           } finally {
             yield* Effect.promise(() => server.close());
           }
@@ -374,6 +355,89 @@ export const runPublicConversation = async (input: {
       ),
     ),
   );
+};
+
+export const runPublicConversation = async (input: {
+  readonly databaseFile: string;
+  readonly project: PublicProject;
+  readonly modelRef: string;
+  readonly provider: OpenAISdkClient;
+  readonly secretRef?: SecretRef;
+  readonly turns: ReadonlyArray<PublicConversationTurn>;
+}): Promise<PublicConversationResult> => {
+  const transcripts: Array<{
+    entries: ReadonlyArray<{
+      kind: string;
+      body: string;
+      messageId?: string;
+      executionId?: string;
+    }>;
+  }> = [];
+  await withPublicConversationApp(input, async (handle) => {
+    const createProject = await handle.postCommand(
+      commandEnvelope(input.project.projectId, "CreateProject", input.project),
+    );
+    if (
+      createProject.status !== 200 ||
+      (createProject.payload.body as { resolution?: string } | undefined)
+        ?.resolution !== "Committed"
+    ) {
+      throw new Error(
+        `public CreateProject failed: ${createProject.status} ${JSON.stringify(createProject.payload)}`,
+      );
+    }
+
+    for (const turn of input.turns) {
+      const messageId = prefixedId("msg");
+      const envelope = commandEnvelope(
+        input.project.projectId,
+        "SubmitHumanMessage",
+        {
+          messageId,
+          targetWorkspaceId: input.project.rootWorkspaceId,
+          bodyRef: turn.body,
+        },
+      );
+      const submitted = await handle.postCommand(envelope);
+      if (
+        submitted.status !== 200 ||
+        (submitted.payload.body as { resolution?: string } | undefined)
+          ?.resolution !== "Committed"
+      ) {
+        throw new Error(
+          `public SubmitHumanMessage failed: ${submitted.status} ${JSON.stringify(submitted.payload)}`,
+        );
+      }
+      if (turn.duplicateSubmission === true) {
+        const duplicate = await handle.postCommand(envelope);
+        if (
+          duplicate.status !== 200 ||
+          (duplicate.payload.body as { resolution?: string } | undefined)
+            ?.resolution !== "Committed"
+        ) {
+          throw new Error(
+            `duplicate SubmitHumanMessage failed: ${duplicate.status} ${JSON.stringify(duplicate.payload)}`,
+          );
+        }
+      }
+
+      // One tick admits and runs the coordination execution; the
+      // following tick performs the durable response-body writeback.
+      await handle.tick();
+      await handle.tick();
+
+      transcripts.push(
+        await handle.readTranscript({
+          workspaceId: input.project.rootWorkspaceId,
+          limit: 20,
+        }),
+      );
+    }
+  });
+  return {
+    projectId: input.project.projectId,
+    transcripts,
+  };
 };
 
 export const responseBodyFrom = (

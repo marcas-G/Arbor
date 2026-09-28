@@ -6,7 +6,6 @@ import type {
 import type {
   PortableMessage,
   PortableModelRequest,
-  ProviderExecutionContext,
 } from "../../../packages/ports/src/provider.js";
 
 export interface HttpProviderCallEvidence {
@@ -107,26 +106,37 @@ export const runtimeForProvider = async (input: {
   readonly modelRevision?: string;
 }): Promise<HttpProviderRuntime> => {
   const base = input.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
-  const response = await fetch(`${base}/props`);
-  if (!response.ok) {
-    throw new Error(`provider /props returned HTTP ${response.status}`);
+  // The /props probe is llama.cpp-specific diagnostics. Any other
+  // OpenAI-compatible endpoint (vLLM, Ollama, DeepSeek, OpenAI, ...) may not
+  // serve it; absence degrades to defaults instead of blocking the run.
+  let serverProps: unknown = {};
+  let temperature = 1;
+  try {
+    const response = await fetch(`${base}/props`);
+    if (response.ok) {
+      serverProps = (await response.json()) as unknown;
+      const props =
+        typeof serverProps === "object" && serverProps !== null
+          ? (serverProps as Record<string, unknown>)
+          : {};
+      const generation =
+        typeof props.default_generation_settings === "object" &&
+        props.default_generation_settings !== null
+          ? (props.default_generation_settings as Record<string, unknown>)
+              .params
+          : undefined;
+      const params =
+        typeof generation === "object" && generation !== null
+          ? (generation as Record<string, unknown>)
+          : {};
+      if (typeof params.temperature === "number") {
+        temperature = params.temperature;
+      }
+    }
+  } catch {
+    // endpoint not reachable for the probe; the first real call reports
+    // connectivity problems with full evidence
   }
-  const serverProps = (await response.json()) as unknown;
-  const props =
-    typeof serverProps === "object" && serverProps !== null
-      ? (serverProps as Record<string, unknown>)
-      : {};
-  const generation =
-    typeof props.default_generation_settings === "object" &&
-    props.default_generation_settings !== null
-      ? (props.default_generation_settings as Record<string, unknown>).params
-      : undefined;
-  const params =
-    typeof generation === "object" && generation !== null
-      ? (generation as Record<string, unknown>)
-      : {};
-  const temperature =
-    typeof params.temperature === "number" ? params.temperature : 1;
   return {
     endpoint: input.baseUrl,
     model: input.model,
@@ -138,7 +148,7 @@ export const runtimeForProvider = async (input: {
     serverProps,
     temperature,
     reasoningSettings:
-      "Not set per request; llama-server launched with --reasoning-format deepseek -rea on",
+      "Not set per request; endpoint defaults apply unless the server overrides them",
   };
 };
 

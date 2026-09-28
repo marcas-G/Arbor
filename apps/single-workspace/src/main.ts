@@ -1,11 +1,14 @@
 import { inspect } from "node:util";
 import { Principal, parse, WorkspaceId } from "@arbor/domain";
 import { startupRecovery } from "@arbor/execution-runtime";
+import { type SecretRef, secretRef } from "@arbor/ports";
+import { OpenAICompatibleFetchClient } from "@arbor/provider-openai";
 import { Duration, Effect, Scope } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   buildSliceLayer,
   P12_MIGRATIONS,
+  type ProviderAdapterConfig,
   runMigrations,
   type SliceConfig,
   type SliceServices,
@@ -21,14 +24,64 @@ export const main = (
   overrides: Partial<SliceConfig> = {},
 ): ReturnType<typeof buildSliceLayer> => {
   const authenticator = authenticatorFromEnv();
+  const provider = providerFromEnv();
   return buildSliceLayer({
     databaseFile: process.env.ARBOR_DB ?? "./arbor-slice.db",
     ...(process.env.ARBOR_PROJECT_ID !== undefined
       ? { projectId: process.env.ARBOR_PROJECT_ID as never }
       : {}),
     ...(authenticator !== undefined ? { authenticator } : {}),
+    ...(provider !== undefined
+      ? {
+          provider: provider.provider,
+          modelRef: provider.modelRef,
+          secretRef: provider.secretRef,
+        }
+      : {}),
     ...overrides,
   });
+};
+
+/** Real-provider wiring (P12 `12` §2 composition-root selection; no new
+ * semantics — rides the frozen `ProviderAdapterConfig` channel):
+ *
+ *   ARBOR_MODEL_BASE_URL  https://api.deepseek.com/v1
+ *   ARBOR_MODEL_NAME      deepseek-chat      (wire model name)
+ *   ARBOR_MODEL_API_KEY_VAR  DEEPSEEK_API_KEY (env var NAME holding the key —
+ *                          the SecretRef, resolved by the P12 secret store;
+ *                          never the raw key itself)
+ *
+ * Absent vars = the deterministic fake provider (CI never needs network).
+ * `ARBOR_MODEL_API_KEY_VAR` defaults to `ARBOR_MODEL_API_KEY` when set. */
+const providerFromEnv = ():
+  | {
+      readonly provider: ProviderAdapterConfig;
+      readonly modelRef: string;
+      readonly secretRef: SecretRef;
+    }
+  | undefined => {
+  const baseUrl = process.env.ARBOR_MODEL_BASE_URL;
+  const modelName = process.env.ARBOR_MODEL_NAME;
+  if (baseUrl === undefined || baseUrl.length === 0) {
+    return undefined;
+  }
+  const keyVar = process.env.ARBOR_MODEL_API_KEY_VAR ?? "ARBOR_MODEL_API_KEY";
+  if (!(keyVar in process.env) || (process.env[keyVar] ?? "").length === 0) {
+    return undefined;
+  }
+  return {
+    provider: {
+      adapterId: "provider-openai",
+      client: OpenAICompatibleFetchClient({
+        baseUrl,
+        ...(modelName !== undefined && modelName.length > 0
+          ? { model: modelName }
+          : {}),
+      }),
+    },
+    modelRef: "model-openai",
+    secretRef: secretRef(keyVar),
+  };
 };
 
 /** P13 local-smoke/ops wiring: `ARBOR_AUTH_TOKENS="token1=user:alice,token2=user:bob"`

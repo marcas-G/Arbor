@@ -97,9 +97,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "NOT_RUN",
-        "testFile": null,
-        "blockingReason": "No real-provider steer-cognition sentinel is implemented; durable command evidence remains L2."
+        "expectedStatus": "FAIL",
+        "testFile": "tests/capability/real-provider/b05-human-steer.test.ts",
+        "blockingReason": "Sentinel executable against the public HTTP face. Known implementation gap it keeps visible: durable SteerWork state is complete, but steer-to-cognition promotion (guidance into the next provider request) is not implemented, so the full B05 oracle is expected to FAIL until that seam exists."
       }
     },
     {
@@ -236,9 +236,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": true,
-        "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
-        "testFile": null,
-        "blockingReason": "Existing recovery coverage rebuilds a layer in-process; a process-level daemon restart and real cognition continuation sentinel is not implemented."
+        "expectedStatus": "PASS",
+        "testFile": "tests/capability/real-provider/b12-restart-continuation.test.ts",
+        "blockingReason": "Process-restart harness implemented (spawn dist/main.js behind a recording proxy; SIGKILL between a completed and a pending turn). Status reflects the executed sentinel outcome."
       }
     },
     {
@@ -257,9 +257,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": true,
-        "expectedStatus": "NOT_RUN",
-        "testFile": null,
-        "blockingReason": "P9 scripted fault cases provide L2 evidence; a real-provider, user-visible recovery sentinel is not implemented."
+        "expectedStatus": "PASS",
+        "testFile": "tests/capability/real-provider/b13-failure-recovery.test.ts",
+        "blockingReason": "Executable sentinel: one deterministic retryable provider fault injected through the harness provider wrapper (B13 allowed setup); real provider drives the behavior."
       }
     },
     {
@@ -279,9 +279,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "NOT_RUN",
-        "testFile": null,
-        "blockingReason": "The external submit-to-Assistant-to-browser pagination scenario is not implemented; existing HTTP and UI suites cover separate seams."
+        "expectedStatus": "PASS",
+        "testFile": "tests/capability/real-provider/b14-web-projection.test.ts",
+        "blockingReason": "Executable sentinel over the public HTTP transcript with cursor pagination and real generated replies."
       }
     }
   ]
