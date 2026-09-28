@@ -8,14 +8,12 @@ import {
   type GatewayEnvelope,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
-  type VerifiedRuntimeCommandAuthority,
 } from "@arbor/application";
 import {
   Actor,
   CommandId,
   type CommandSubmissionContext,
   ContextEpochNumber,
-  type ExecutionFocus,
   ExecutionId,
   makeProjectPolicy,
   makeWorkspacePolicy,
@@ -154,12 +152,15 @@ const envelope = <P>(
   payload,
 });
 
-const directive = (payload: unknown) => [
+const wait = (reason: string) => [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c",
-    toolName: "arbor_directive",
-    argumentsJson: JSON.stringify(payload),
+    toolName: "arbor_wait",
+    argumentsJson: JSON.stringify({
+      reason,
+      waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+    }),
   },
   { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
 ];
@@ -177,20 +178,12 @@ const turns = [
     },
     { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
   ],
-  directive({
-    _tag: "Yield",
-    reason: "waiting",
-    waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
-  }),
-  directive({ _tag: "DeclareDependency", spec: {} }), // P7 owns it; ProposeChildWorkspace is P6-live now
-  directive({
-    _tag: "CompletionClaim",
-    claim: { claimRef: "claim-1", workRevision: 0 },
-  }),
+  wait("wait for the first wake"),
+  wait("wait for the second wake"),
 ];
 
-describe("P5 vertical-slice acceptance", () => {
-  it("runs the whole story: work, tool, yield, wake, unsupported, claim", async () => {
+describe("I0 executable/control vertical slice", () => {
+  it("routes shell through ToolRuntime and Wait through ControlToolRegistry", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-accept-"));
     const app = buildSliceLayer({
       databaseFile: join(dir, "slice.db"),
@@ -268,13 +261,6 @@ describe("P5 vertical-slice acceptance", () => {
             principal,
           );
 
-          const exeRows1 = yield* sql.unsafe<{
-            execution_id: string;
-            settlement_kind: string | null;
-            settled_at: string | null;
-          }>(
-            "SELECT execution_id, settlement_kind, settled_at FROM executions",
-          );
           const waitsAfterYield = yield* sql.unsafe<{ count: number }>(
             "SELECT COUNT(*) AS count FROM work_waits",
           );
@@ -288,13 +274,6 @@ describe("P5 vertical-slice acceptance", () => {
             "SELECT COUNT(*) AS count FROM work_waits",
           );
 
-          const unsettled = yield* sql.unsafe<{
-            execution_id: string;
-            settled_at: string | null;
-          }>(
-            "SELECT execution_id, settled_at FROM executions WHERE workspace_id = ? AND binding_kind = 'workspace' AND settled_at IS NULL",
-            [workspaceId],
-          );
           yield* admitExecution(
             workspaceId,
             exe2,
@@ -328,6 +307,14 @@ describe("P5 vertical-slice acceptance", () => {
           const verificationTables = yield* sql.unsafe<{ name: string }>(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%verification%'",
           );
+          const invocations = yield* sql.unsafe<{
+            tool_name: string;
+            arguments_json: string;
+            resolved_regions_json: string;
+            settlement_kind: string | null;
+          }>(
+            "SELECT tool_name, arguments_json, resolved_regions_json, settlement_kind FROM tool_invocations ORDER BY invocation_id",
+          );
 
           return {
             created: created.resolution._tag,
@@ -351,6 +338,7 @@ describe("P5 vertical-slice acceptance", () => {
             firstSettlement,
             secondSettlement,
             waitsAfterYield: Number(waitsAfterYield[0]?.count ?? 0),
+            invocations,
             woken: woken._tag,
             waitsAfterWake: Number(waitsAfterWake[0]?.count ?? 0),
             works,
@@ -371,6 +359,12 @@ describe("P5 vertical-slice acceptance", () => {
           conflict: string;
           firstSettlement: { _tag: string; result?: { _tag: string } };
           secondSettlement: { _tag: string; result?: { _tag: string } };
+          invocations: ReadonlyArray<{
+            tool_name: string;
+            arguments_json: string;
+            resolved_regions_json: string;
+            settlement_kind: string | null;
+          }>;
           waitsAfterYield: number;
           woken: string;
           waitsAfterWake: number;
@@ -402,12 +396,23 @@ describe("P5 vertical-slice acceptance", () => {
       expect(result.firstSettlement.result?._tag).toBe("Yielded");
     }
     if (result.secondSettlement._tag === "Completed") {
-      expect(result.secondSettlement.result?._tag).toBe("CompletionClaimed");
+      expect(result.secondSettlement.result?._tag).toBe("Yielded");
     }
 
     expect(result.waitsAfterYield).toBe(1);
     expect(result.woken).toBe("Admit");
     expect(result.waitsAfterWake).toBe(0);
+    expect(result.invocations).toHaveLength(1);
+    expect(result.invocations[0]?.tool_name).toBe("shell");
+    expect(
+      JSON.parse(result.invocations[0]?.arguments_json ?? "{}"),
+    ).toMatchObject({
+      command: "echo hello",
+    });
+    expect(result.invocations[0]?.settlement_kind).toBe("Success");
+    expect(
+      JSON.parse(result.invocations[0]?.resolved_regions_json ?? "[]"),
+    ).not.toHaveLength(0);
 
     expect(result.works.map((w) => w.lifecycle)).toEqual(["Open"]);
     expect(new Set(result.executions.map((e) => e.session_id))).toEqual(
@@ -424,18 +429,23 @@ describe("P5 vertical-slice acceptance", () => {
     const observations = result.entries
       .filter((e) => e.entry_kind === "Observation")
       .map(
-        (e) => JSON.parse(e.payload_json) as { _tag?: string; source?: string },
+        (e) =>
+          JSON.parse(e.payload_json) as {
+            _tag?: string;
+            source?: string;
+            observation?: { text?: string };
+          },
       );
-    expect(
-      observations.some(
-        (o) =>
-          o._tag === undefined &&
-          o.source === "Tool" &&
-          JSON.stringify(o).includes("exitCode"),
-      ),
-    ).toBe(true);
+    const shellObservation = observations.find(
+      (o) =>
+        o._tag === undefined &&
+        o.source === "Tool" &&
+        JSON.stringify(o).includes("exitCode"),
+    );
+    expect(shellObservation).toBeDefined();
+    expect(shellObservation?.observation?.text).toContain('"exitCode":0');
     expect(observations.some((o) => o._tag === "DirectiveUnsupported")).toBe(
-      true,
+      false,
     );
 
     // P12 composition: the slice runs the current full migration baseline

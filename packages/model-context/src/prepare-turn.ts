@@ -7,6 +7,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import {
+  ControlToolCatalogPort,
   type ModelCapabilityError,
   ModelCapabilityPort,
   type ModelContextError,
@@ -31,7 +32,6 @@ import {
 } from "./context.js";
 import type { InstructionFragment, PromptProgram } from "./prompt.js";
 import { type GovernanceIssue, resolveInstructions } from "./resolver.js";
-import { progressiveLoad } from "./skills.js";
 
 /** DID v1.7 §6A.10/§8.2; P3 `02` §1. */
 export type TurnPreparation =
@@ -57,6 +57,9 @@ export interface PrepareTurnInput {
   readonly controlBasis: ControlBasis;
   readonly maxOutputTokens: number;
   readonly bodySkillIds: ReadonlyArray<string>;
+  /** Independent bounded output protocol; control tools use the generic
+   * invocation protocol and do not select a universal AgentDirective union. */
+  readonly outputContractRef?: string;
 }
 
 export interface ModelContextService {
@@ -85,6 +88,9 @@ export const ModelContextLive: Layer.Layer<
     const capabilityPort = yield* ModelCapabilityPort;
     const skills = yield* SkillRegistry;
     const toolCatalog = yield* ToolCatalogPort;
+    const controlToolCatalog = yield* Effect.serviceOption(
+      ControlToolCatalogPort,
+    );
 
     const prepareTurn = (input: PrepareTurnInput) =>
       Effect.gen(function* () {
@@ -129,6 +135,9 @@ export const ModelContextLive: Layer.Layer<
         for (const ref of toolRefs) {
           tools.push(yield* toolCatalog.resolveForModel(ref));
         }
+        const controlTools = Option.isSome(controlToolCatalog)
+          ? yield* controlToolCatalog.value.visibleDefinitions()
+          : [];
         const skillRefs: SkillRef[] = [];
         for (const skillId of input.bodySkillIds) {
           const loaded = yield* skills.load(skillId, "Body");
@@ -140,9 +149,12 @@ export const ModelContextLive: Layer.Layer<
             instructions: resolved,
             context: planned.selected,
             tools,
+            controlTools,
             skills: skillRefs,
             outputContract:
-              input.program.outputContractRefs[0] ?? "agent-directive-v1",
+              input.outputContractRef ??
+              input.program.outputContractRefs[0] ??
+              "tool-invocation-v1",
             continuation: "recent-frontier",
             controlBasis: input.controlBasis,
           },

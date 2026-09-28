@@ -22,7 +22,10 @@ import {
 } from "../adapters/persistence-sqlite/src/index.js";
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import { WorkerDispatchPortLive } from "../adapters/worker-local/src/index.js";
-import { AgentDriverLive } from "../packages/agent-runtime/src/index.js";
+import {
+  AgentDriverLive,
+  makeControlToolRegistry,
+} from "../packages/agent-runtime/src/index.js";
 import {
   CommandGateway,
   CommandGatewayLive,
@@ -37,6 +40,7 @@ import {
   ProjectId,
   parse,
   SessionId,
+  WorkId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
@@ -48,6 +52,7 @@ import {
 } from "../packages/execution-runtime/src/index.js";
 import { ModelContextLive } from "../packages/model-context/src/index.js";
 import {
+  ControlToolCatalogPort,
   ModelCapabilityPort,
   SkillRegistry,
   ToolCatalogPort,
@@ -63,17 +68,18 @@ const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 ) as ExecutionId;
+const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const actor = parse(Actor)("user:test");
 const principal = parse(Principal)("worker:a");
 
-const claimTurn = [
+const waitTurn = [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_directive",
+    toolName: "arbor_wait",
     argumentsJson: JSON.stringify({
-      _tag: "CompletionClaim",
-      claim: { claimRef: "claim-1", workRevision: 0 },
+      reason: "wait for a manual wake",
+      waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
     }),
   },
   { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
@@ -103,7 +109,7 @@ const makeApp = () => {
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
-  const provider = FakeProviderLive({ turns: [claimTurn] });
+  const provider = FakeProviderLive({ turns: [waitTurn] });
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive(3),
     Layer.mergeAll(
@@ -114,9 +120,13 @@ const makeApp = () => {
       infra,
     ),
   );
+  const controlRegistry = makeControlToolRegistry();
+  const controlToolCatalog = Layer.succeed(ControlToolCatalogPort, {
+    visibleDefinitions: controlRegistry.visibleDefinitions,
+  });
   const modelContext = Layer.provide(
     ModelContextLive,
-    Layer.mergeAll(capability, skills, tools),
+    Layer.mergeAll(capability, skills, tools, controlToolCatalog),
   );
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
@@ -132,7 +142,7 @@ const makeApp = () => {
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
   );
   const driver = Layer.provide(
-    AgentDriverLive(),
+    AgentDriverLive([], { controlRegistry }),
     Layer.mergeAll(
       modelContext,
       providerRuntime,
@@ -185,7 +195,7 @@ const seed = Effect.gen(function* () {
         [sessionId, "WorkspacePrimary", workspaceId, 0, "t"],
       );
       yield* sql.unsafe(
-        "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
+        "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           workspaceId,
           projectId,
@@ -196,10 +206,29 @@ const seed = Effect.gen(function* () {
           0,
           "{}",
           sessionId,
+          workId,
           "{}",
           0,
           0,
           "Active",
+          "t",
+          "t",
+        ],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO works (work_id, project_id, workspace_id, objective, why, constraints, completion_expectation, verification_mission, provenance, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+          workId,
+          projectId,
+          workspaceId,
+          "I0 integration work",
+          "exercise Wait route",
+          "[]",
+          "wait route settled",
+          "{}",
+          "{}",
+          "Open",
+          0,
           "t",
           "t",
         ],
@@ -212,7 +241,7 @@ const admitPayload: AdmitExecutionPayload = {
   _tag: "WorkspaceMain",
   executionId,
   workspaceId,
-  focus: { _tag: "Coordination" },
+  focus: { _tag: "Work", workId },
 };
 
 const run = <A>(
@@ -223,8 +252,8 @@ const run = <A>(
     Effect.provide(program, app) as Effect.Effect<A, any, never>,
   );
 
-describe("P3 integration — end-to-end driver + P2 settle pipeline", () => {
-  it("admits, leases, drives, and settles a CompletionClaim through the pipeline", async () => {
+describe("I0 integration — Wait control route + P2 settle pipeline", () => {
+  it("admits, leases, routes Wait, and durably registers WorkWait", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
       yield* runMigrations(P12_MIGRATIONS);
@@ -281,9 +310,14 @@ describe("P3 integration — end-to-end driver + P2 settle pipeline", () => {
       const events = yield* sql.unsafe<{ event_type: string }>(
         "SELECT event_type FROM domain_events WHERE event_type = 'ExecutionSettled'",
       );
+      const waits = yield* sql.unsafe<{ conditions_json: string }>(
+        "SELECT conditions_json FROM work_waits WHERE work_id = ?",
+        [workId],
+      );
       return {
         settlement,
         rows,
+        waits,
         turns: Number(providerTurns[0]?.count ?? 0),
         settledEvents: events.length,
       };
@@ -301,7 +335,14 @@ describe("P3 integration — end-to-end driver + P2 settle pipeline", () => {
       }
     ).rows;
     expect(rows[0]?.settlement_kind).toBe("Completed");
-    expect(rows[0]?.settlement_json).toContain("CompletionClaimed");
+    expect(rows[0]?.settlement_json).toContain("Yielded");
+    expect(
+      (r as { waits: ReadonlyArray<{ conditions_json: string }> }).waits,
+    ).toHaveLength(1);
+    expect(
+      (r as { waits: ReadonlyArray<{ conditions_json: string }> }).waits[0]
+        ?.conditions_json,
+    ).toContain("Manual");
     expect((r as { turns: number }).turns).toBeGreaterThanOrEqual(1);
     expect((r as { settledEvents: number }).settledEvents).toBe(1);
   });

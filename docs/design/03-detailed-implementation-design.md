@@ -1,9 +1,9 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.17\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance patch (D-1 Product UI Contract Closure, TR-WPU-A–D)\
-**Supersedes:** v1.16\
-**Date:** 2026-09-23  
+**Version:** 1.18\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance adoption (`REDUCE_TO_INTERNAL_AGENT_ACTION_ADT`)\
+**Supersedes:** v1.17\
+**Date:** 2026-09-27\
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
@@ -234,6 +234,60 @@ P12 implementation COMPLETE; P12 FORMALLY CLOSED
 This is an additive read-model/presentation adoption, **not** a reopened P13/P14 backend phase:
 no command semantics, event semantics, DDL, authority, transport protocol, System Design, or
 G2–G5 product-domain gap is changed.
+
+**Governance changes (v1.17 → v1.18):** (Agent Control Representation Adoption)
+
+- **ACR-1 — supersede the universal AgentDirective wire/output contract.**
+  The requirement that every model turn decode into the versioned canonical
+  `AgentDirective` union is superseded. `agent-directive-v1` and the proposed
+  `agent-directive-v2` are not the universal model-facing control contract.
+  Per-tool model-facing schemas remain distinct from Arbor's internal control
+  semantics.
+- **ACR-2 — freeze the two invocation routes.**
+  Model-facing tool calls decode to provider-neutral typed invocations.
+  Executable invocations route to the existing P4 `ToolRuntime`.
+  Control-tool invocations route through the Agent Runtime
+  `ControlToolRegistry`, which validates the registered model-facing control
+  representation and constructs an internal `AgentAction`; shared
+  Agent Runtime policy then routes the action to its owning Application
+  command/settlement boundary.
+- **ACR-3 — bound `AgentAction`.**
+  `AgentAction` is an in-process typed ADT for control routing only. It is not a
+  provider/model schema, Output Contract, canonical wire value, Domain Event,
+  Application Command DTO, or persisted record. Trusted identity, authority,
+  execution bindings, revisions, and other Runtime facts are supplied by the
+  trusted invocation context and owning Application boundary, never by the
+  model-authored action payload.
+- **ACR-4 — narrow `decodeTurn`.**
+  `decodeTurn` translates normalized provider events into ModelOutput content
+  and provider-neutral typed invocations, preserving provider-call correlation
+  and rejecting malformed/incomplete event assembly. It does not classify a
+  call as an Arbor control action, decode control semantics, construct
+  `AgentAction`, or produce a universal `AgentDirective`.
+- **ACR-5 — retain historical records; do not authorize implementation.**
+  The existing `agent-directive-v1`/v2 proposals and review documents remain
+  unchanged as evolution records. Old persisted output-contract references and
+  action-kind summaries remain historical metadata; this ruling requires no
+  payload migration. This governance adoption does **not** authorize Control
+  Tool schemas/registry implementation, S01 qualification, or Wave 2 work.
+
+**Supersession register:**
+
+| Former source | v1.18 disposition |
+|---|---|
+| v1.17 §7.6: `AgentDirective` is the control-command bridge and `InvokeTool` is the P3→P4 representation | Superseded only as the model/runtime representation. Application commands, P4 `ToolRuntime`, authority, admission, persistence, and effect semantics remain. |
+| v1.17 §8.15: one universal `AgentDirective` union lists every model control action | Superseded. Tool Surface carries per-tool definitions; independent bounded Output Contracts remain. Phase action meanings are unchanged. |
+| v1.17 §8.3: Output Contract is a Model Context surface | The surface remains. Its scope is clarified: independent bounded structured output protocols only; per-tool control schemas belong to Tool Surface. |
+| v1.17 §8.19: every effectful `AgentDirective` payload carries `decisionBasisManifestId` | Superseded. Manifest/ControlBasis association is trusted Runtime context; it is not model-authored payload or a field on `AgentAction`. |
+| v1.17 §§10.6/11/15 and Appendix B: AgentRuntime decodes and dispatches `AgentDirective` | Superseded only for the decode/dispatch bridge. Generic `ToolInvocation` routing, P2 control ownership, P3 loop behavior, safety/freshness, and existing Application/settlement semantics remain under ACR-2–ACR-4. |
+| P3 `01` §3, `02` §6, `03` §§2–4, `06` §4: universal directive decoding and `decisionBasisManifestId` payload binding | Superseded as identified in the P3 index. Provider, Model Context, loop, safety, repair, freshness, and settlement contracts remain otherwise in force. |
+| P4 `00-contract-index.md`: `AgentDirective.InvokeTool` is the executable-tool bridge | Superseded as identified in the P4 index. The P4 executable ToolRuntime contract is unchanged. |
+
+The v1.9/v1.10 governance-history entries that expanded the semantic action
+vocabulary remain historical phase-owned behavior names. They do not establish
+or restore a model-facing universal wire union. The
+`planning/tool-surface-review/` v1/v2 analyses remain unmodified historical
+records and are not a second frozen design source.
 
 **Governance changes (v1.14 → v1.15):**（P13 design-closure 治理裁决 GQ1–GQ4）
 
@@ -2608,7 +2662,34 @@ Catalogued Tool
 != Authorized Tool Invocation
 ```
 
-组织性 Command 不伪装成任意 Tool side effect；需要改变 Canonical Domain truth 的 AgentDirective 继续通过 CommandGateway/Application。
+Model-facing Tool invocation 分为两个互斥的语义路由：
+
+```text
+Executable Tool
+  → executable definition / ToolIntent
+  → ToolRuntimePort
+
+Control Tool
+  → Agent Runtime ControlToolRegistry codec
+  → in-process AgentAction
+  → shared Agent Runtime policy
+  → owning Application command / execution-settlement boundary
+```
+
+`ToolCatalogPort` remains the source for executable P4 tool definitions.
+`ControlToolRegistry` 是 `agent-runtime` 的 control-tool identity/codec/
+AgentAction-construction 边界；它向 Model Context 提供 data-only definition
+projection。Composition Root 将两类 definition projection 一并接入 Model
+Context，`model-context` 不依赖 `agent-runtime`、`tool-runtime` 或其 handlers。
+一个 request 中的 model-facing tool identity 必须唯一对应一条语义路由；
+歧义注册不得暴露给模型，未知调用不得降级成另一条路由。
+
+Executable Tool 继续使用 P4 `ToolRuntime` 的 authority、resource admission、
+sandbox、invocation persistence/reconciliation 与 observation 语义。Control
+Tool 不经 executable `ToolRuntime`；其可见性不产生 authority，canonical
+mutation 仍只由 Application/Domain 与现有 execution-settlement owner 决定。
+这条路由 supersedes universal `AgentDirective` output bridge，而不改变
+P1/P4/P6/P7/P8 已冻结的 command、authority、lifecycle 与 verification 语义。
 
 P4 tool-invocation boundaries（DID v1.8 G1–G5）：
 
@@ -2756,12 +2837,17 @@ Ready(PreparedModelTurn)
 |---|---|
 | Instruction | 模型应该怎样行为 |
 | Context | 模型当前应该知道什么事实 |
-| Tool Surface | 当前可见的 action vocabulary |
+| Tool Surface | 当前可见的、各自有定义与 schema 的 executable/control tools |
 | Skill | 按需加载的专业工作流 |
-| Output Contract | 当前 Turn 可产生哪些结构化结果 |
+| Output Contract | 当前 Turn 适用的独立 bounded structured-output 协议；不再枚举 universal Agent control-action union |
 | Continuation | 如何维持跨 Turn 认知连续性 |
 
 Prompt/Instruction guides；Runtime/Sandbox enforces。
+
+Control actions 的模型-facing representation 属于 per-tool Tool Surface。
+`agent-directive-v1` / proposed `agent-directive-v2` 不再是 universal
+Output Contract。Compaction 等已有独立 Output Contract 不受此 supersession
+影响。
 
 ## 8.4 Prompt Program Families
 
@@ -3101,31 +3187,34 @@ Deterministic Execution Control Loop
 Agentic Goal Pursuit Protocol
 ```
 
-Agent 每 Turn 产生结构化 `AgentDirective`：
+每个 Model Turn 的 provider-neutral decode 产出 `ModelOutput` 与零个或多个
+typed `ToolInvocation`。`ToolInvocation` 表示一次 model-facing tool call，
+不表示该调用已获授权，也不携带可信的 Principal、Execution、Workspace、
+revision 或 authority facts。
 
-```text
-InvokeTool
-Communicate
-DeclareDependency
-RequestGovernance
-SpawnSpecialist
-ProposeChildWorkspace
-ProduceDeliverable
-Deliver
-SatisfyDependency
-LoadSkill
-ChangeMode
-CompletionClaim
-Yield
-```
+Executable invocation 路由到 P4 `ToolRuntime`。Control invocation 由
+`ControlToolRegistry` 的注册 codec 校验并构造内部 `AgentAction`，再交给
+shared Agent Runtime policy 进行 trusted-context binding、activity/safety
+admission、freshness、policy dispatch 与结果归一化，最后进入对应的
+Application command 或已有 Execution settlement boundary。
 
-A directive whose owning phase is not implemented in the running slice returns
-a **non-fatal, model-visible `DirectiveUnsupported` directive execution result**
-(with the directive kind and reason). It is part of the directive execution
-result / model-visible observation vocabulary — **not** an `AgentDirective`,
-`DomainError`, `CommandRejection`, or Execution failure — and does not fail the
-Execution. P5 uses this for `ProposeChildWorkspace` / `SpawnSpecialist` /
-`DeclareDependency` (DID v1.9 G3).
+`AgentAction` 是 `agent-runtime` 所有的 process-local typed ADT，只供单进程、
+单次控制路由消费。它不是 Model-facing schema、Provider output contract、
+canonical wire value、Domain Event、Application Command DTO，也不得整体
+持久化。Action variants/payload 与各 control tool codec 的逐项定义属于后续
+phase-scoped contract；本裁决不冻结工具清单或暴露集合。
+
+`decodeTurn` 只负责 `CanonicalProviderEvent` → `ModelOutput` / typed
+`ToolInvocation`，包括 provider-neutral tool-call reconstruction、correlation
+保留及 malformed/incomplete framing rejection。它不解释 control semantics、
+不判断 executable/control authority、不构造 `AgentAction`，也不生成 universal
+`AgentDirective`。ControlToolRegistry 与 executable ToolRuntime 分别负责
+其路由后续的 typed validation。
+
+已冻结 phase contract 中的 action 语义和结果仍由其原 owning phase 保有。
+例如 `DirectiveUnsupported` 所表达的 P5 non-fatal result/observation 语义，
+若仍适用，由对应的 internal control route 与 phase owner 保持；它不再要求
+一个 model-facing `AgentDirective`/`DirectiveUnsupported` wire vocabulary。
 
 Agent 的核心认知变量是 `OutcomeGap`：
 
@@ -3347,7 +3436,16 @@ ControlBasis {
 
 Prompt/Context change 是行为代码 change，必须可追踪和可回归。
 
-每个 effectful `AgentDirective` 携带 `decisionBasisManifestId`。Tool/Command admission 根据动作类型声明所需 `FreshnessRequirement`；若相关 Work/Responsibility/Boundary/Policy/Authorization/Environment revision 已变化，则返回 `DecisionStale`，不得执行旧动作，AgentRuntime 必须重新 prepareTurn。Read-only action 可以使用更弱 freshness；写入/破坏性 action 必须校验其相关控制基准。
+旧要求“每个 effectful `AgentDirective` 在 model payload 内携带
+`decisionBasisManifestId`”由本版 supersede。`ProviderTurn` 已绑定的
+`ModelContextManifest` 与可信 invocation context 是 freshness 的依据；
+Runtime 将一个 `ToolInvocation` 关联到该 turn/manifest，并在 control
+`AgentAction` policy 或 executable ToolRuntime admission 时检查对应
+`FreshnessRequirement`。`AgentAction` 不接收模型提供的 manifest、revision、
+authority 或 identity claim。若相关 Work/Responsibility/Boundary/Policy/
+Authorization/Environment revision 已变化，沿用 `DecisionStale` 既有语义；
+read-only 与写入/破坏性动作的 freshness 强度仍由 owning action contract
+决定。
 
 ---
 
@@ -3724,7 +3822,7 @@ v1.14 (G8): `verification-runtime` **不是**独立物理包——Verification �
 | `ports` | 系统需要哪些外部能力 |
 | `application` | 哪个 Command 如何提交 |
 | `model-context` | 模型在当前 Turn 如何理解世界 |
-| `agent-runtime` | 执行 Model→Action→Observation loop |
+| `agent-runtime` | 执行 Model→Action→Observation loop；拥有 ControlToolRegistry、internal AgentAction 与 shared control policy |
 | `execution-runtime` | 谁何时运行、Lease/Fencing/Recovery |
 | Verification (无独立包; v1.14 G8) | 组织独立 Agentic Verification（由 `domain` / `application` + generic `ExecutionBound` runtime 实现） |
 | `provider-runtime` | 可靠调用模型与协议适配 |
@@ -3786,6 +3884,13 @@ Projection never participates in authority decisions.
 > v1.14 (G8): `verification-runtime` 不作为独立包（Verification 由 `domain` /
 > `application` + generic `ExecutionBound` runtime 实现），故不在此矩阵中。
 
+DID v1.18 does not add a package or dependency edge. `ControlToolRegistry`
+and the internal `AgentAction` remain inside the existing `agent-runtime`
+package. The app Composition Root joins the registry's data-only control-tool
+definition projection with executable definitions and supplies both to Model
+Context. Thus `model-context !-> agent-runtime` and
+`model-context !-> tool-runtime` remain hard boundaries.
+
 额外硬规则：
 
 ```text
@@ -3830,30 +3935,43 @@ UI/CLI 依赖稳定 `code`，不解析 message 文本。`Problem` 只是外部�
 
 ## 10.6 AgentRuntime 瘦身
 
-最终 AgentRuntime 只做：
+AgentRuntime owns the shared control-action path but does not own executable
+tool execution. Its turn routing is:
 
 ```text
 load Execution + AgentExecutionState
 ↓
 ModelContext.prepareTurn()
 ↓
-ProviderPort
+ProviderRuntime / ProviderPort
 ↓
 ModelContext.decodeTurn()
 ↓
-execute AgentDirective
+typed ToolInvocation classification
+├── executable → P4 ToolRuntimePort
+└── control → ControlToolRegistry codec
+              → in-process AgentAction
+              → shared Agent Runtime policy
+              → owning Application command / settlement boundary
 ↓
 Observation
 ↓
 continue or settle
 ```
 
-P2 只冻结 `ExecutionDriverPort`（turn/step 边界、`AgentDirective` 分发、settle 触发）与
-`Fake Driver`；P3 通过该 port 提供真实 Agent loop。P2 在 driver 边界执行 execution-wide
-Runtime Safety / control gating；P3 在每个新的 ProviderTurn / ToolInvocation / Specialist action
-boundary 向 P2-owned gate 报告 activity 并获得 continue/stop 决定（Port 形状见 P2 contract）。
+P2 freezes the `ExecutionDriverPort` turn/step boundary and settlement trigger;
+it does not freeze a universal AgentDirective vocabulary or output contract.
+P3 supplies the real Agent loop through that port. P2 still owns
+execution-wide Runtime Safety / control gating; AgentRuntime reports activity
+at each new ProviderTurn, executable ToolInvocation, or control AgentAction
+boundary and receives the existing continue/stop decision.
 
-Prompt composition、Context selection、Tool exposure、Model-family semantic adaptation 不在 AgentRuntime 内实现。
+Prompt composition, context planning, and provider/model-family representation
+remain outside AgentRuntime. AgentRuntime owns the control-tool registry, its
+semantic codecs, and shared control policy. Model Context selects and compiles
+the definition data supplied by the executable catalog and control registry;
+composition joins these sources without moving their semantics into Model
+Context or the composition root.
 
 ---
 
@@ -3862,6 +3980,13 @@ Prompt composition、Context selection、Tool exposure、Model-family semantic a
 实现不以“Arbor 必须自举开发 Arbor”为硬约束。Self-hosting 只可作为后期 dogfooding / validation 场景。
 
 采用 dependency-driven、risk-first、vertical-slice 方式推进。
+
+DID v1.18 phase interpretation: action names in P5–P8 phase summaries and
+their historical contracts denote semantic behaviors owned by those phases;
+they do not define a provider/model wire union. The model-facing route is the
+ToolInvocation → executable/control classification frozen in §§7.6, 8.15, and
+10.6. Existing non-fatal result, command, settlement, and lifecycle semantics
+remain with their phase owners.
 
 ## P0 — Functional Domain Kernel
 
@@ -3937,6 +4062,8 @@ real model multi-turn continuity
 
 P3 通过 P2 的 `ExecutionDriverPort` 提供真实 Agent loop，并只上报 turn/tool activity
 observations；execution-wide Runtime Safety / control gating 由 P2 执行。
+P3 Output Contract remains available for independent bounded structured-output
+protocols; it no longer defines a universal control-action output union.
 
 ## P4 — Tool Runtime
 
@@ -3972,7 +4099,12 @@ Tool schemas         = exact parameter/result schema + shell policy enforcement
                        mechanism are P4 phase-scoped contract (not implementation choice)
 ```
 
-P4 只消费 P3 的 `ToolCatalogPort` contract 与 `InvokeTool` directive；不重定义 Model Context。
+P4 的 `ToolRuntimePort` remains the sole execution route for executable tool
+invocations. Its model-facing input is mapped from a provider-neutral typed
+invocation to the existing P4 `ToolIntent`; the old
+`AgentDirective.InvokeTool` serialization bridge is superseded. P4
+authorization, resource admission, sandbox, side-effect persistence, and
+recovery semantics are unchanged.
 
 ## P5 — Single-Workspace Vertical Slice
 
@@ -4841,12 +4973,27 @@ PreparedModelTurn + Manifest
         ↓
 ProviderRuntime
         ↓
-AgentDirective
-    ┌────┼─────────────┬────────────┐
-    ↓    ↓             ↓            ↓
-  Tool  Message      Command   Cognitive State
-    ↓
- Reality / Observation
+CanonicalProviderEvent
+        ↓
+ModelContext.decodeTurn
+        ↓
+ModelOutput + provider-neutral ToolInvocation
+        ↓
+AgentRuntime exact route classification
+    ┌───┴───────────────────────┐
+    ↓                           ↓
+Executable Tool             Control Tool
+    ↓                           ↓
+ToolRuntimePort       ControlToolRegistry
+    ↓                           ↓
+bounded observation       in-process AgentAction
+    ↓                           ↓
+    │                  shared Agent Runtime policy
+    │                           ↓
+    │                  Application / settlement boundary
+    └──────────────┬────────────┘
+                   ↓
+          Observation / settlement
     ↓
 next Turn / ExecutionSettlement
         ↓
@@ -4871,6 +5018,7 @@ AgentRuntime       = execute the cognitive loop
 ProviderRuntime    = reliably call models
 ToolCatalog        = tool definition/capability discovery
 ToolRuntime        = safely invoke and settle actions on reality
+ControlToolRegistry= decode model-facing control invocations into internal AgentAction
 VerificationRuntime= independently judge formal outcomes
 Session            = preserve cognition
 Projection         = make truth observable
@@ -4953,9 +5101,16 @@ ModelContext
 AgentRuntime
 ├── ModelContext
 ├── ProviderPort
-├── ToolRuntimePort
+├── ControlToolRegistry
+├── ToolRuntimePort (executable route only)
 ├── SessionRepository
 └── CommandGateway
+
+ControlToolRegistry
+├── control-tool identity / schema projection
+├── registered control invocation codecs
+├── in-process AgentAction construction
+└── shared control-policy metadata and handler routing
 
 ToolRuntime
 ├── ToolCatalogPort (definition source is separate from invocation)
@@ -4971,6 +5126,7 @@ ProjectionRuntime
 └── ProjectionQueryPort
 
 Composition Root
+├── joins executable and control definition projections for Model Context
 └── Layer graph resolves all live adapters/services
 ```
 
@@ -4982,11 +5138,15 @@ Composition Root
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
 System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.17     TOP-LEVEL FROZEN
+Detailed Implementation Design v1.18     TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED
 C1–C10 + X1–X11 Closure                  CLOSED
+Agent control representation              FROZEN — internal AgentAction boundary
+Agent control implementation authorization NOT AUTHORIZED
+S01 qualification authorization             NOT AUTHORIZED
+Wave 2 implementation authorization         NOT AUTHORIZED
 P0 Technical Baseline                     FROZEN (versioned baseline)
 P0 coding authorization                   AUTHORIZED
 P1 coding authorization                   AFTER P1 exact contracts / DDL closure

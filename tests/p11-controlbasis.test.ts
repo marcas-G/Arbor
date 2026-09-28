@@ -20,8 +20,10 @@ import {
 } from "../adapters/persistence-sqlite/src/index.js";
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import {
+  type AgentActionHandler,
   AgentDriverLive,
   checkFreshness,
+  makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
 import {
   type AgentExecutionState,
@@ -35,7 +37,6 @@ import {
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
-  AGENT_DIRECTIVE_CONTRACT,
   type ControlBasis,
   ModelContext,
   type PrepareTurnInput,
@@ -116,14 +117,28 @@ const capability = Layer.succeed(ModelCapabilityPort, {
     }),
 });
 
-const claimTurn = (claimRef: string) => [
+const sendHandler: AgentActionHandler = {
+  action: "SendMessage",
+  handle: () =>
+    Effect.succeed({
+      _tag: "Settle",
+      settlement: {
+        _tag: "Completed",
+        result: { _tag: "CoordinationCompleted" },
+      },
+    }),
+};
+const controlRegistry = makeControlToolRegistry([sendHandler]);
+
+const sendMessageTurn = (body: string) => [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_directive",
+    toolName: "arbor_send_message",
     argumentsJson: JSON.stringify({
-      _tag: "CompletionClaim",
-      claim: { claimRef, workRevision: 0 },
+      kind: "Query",
+      body,
+      recipientWorkspaceId: String(workspaceIds[1]),
     }),
   },
   { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
@@ -144,10 +159,13 @@ const recordingModelContext = (recorded: Array<ControlBasis>) =>
               instructions: [],
               messages: [],
               toolDefinitions: [],
-              outputContractRef: AGENT_DIRECTIVE_CONTRACT,
+              outputContractRef: "tool-invocation-v1",
               budget: { maxOutputTokens: input.maxOutputTokens },
               cacheHints: [],
             },
+            toolRoutes: [
+              { name: "arbor_send_message", route: "Control" as const },
+            ],
             manifest: {
               providerTurnId: input.providerTurnId,
               executionId: input.executionId,
@@ -157,8 +175,11 @@ const recordingModelContext = (recorded: Array<ControlBasis>) =>
               instructionFragments: [],
               contextRefs: [],
               skillRefs: [],
-              toolRefs: [],
-              outputContractRef: AGENT_DIRECTIVE_CONTRACT,
+              toolRefs: ["Control:arbor_send_message@1"],
+              toolRoutes: [
+                { name: "arbor_send_message", route: "Control" as const },
+              ],
+              outputContractRef: "tool-invocation-v1",
               budgetDecision: { maxOutputTokens: input.maxOutputTokens },
               compiledRequestHash: "hash-p11-controlbasis",
               controlBasis: input.controlBasis,
@@ -173,7 +194,7 @@ const makeApp = () => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const provider = FakeProviderLive({
-    turns: [claimTurn("claim-1"), claimTurn("claim-2")],
+    turns: [sendMessageTurn("first"), sendMessageTurn("second")],
   });
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive(3),
@@ -189,7 +210,7 @@ const makeApp = () => {
   const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
   const driver = Layer.provide(
-    AgentDriverLive(),
+    AgentDriverLive([], { controlRegistry }),
     Layer.mergeAll(
       recordingModelContext(recorded),
       providerRuntime,
