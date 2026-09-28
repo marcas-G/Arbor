@@ -5,6 +5,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   AcceptanceRepositoryLive,
+  DependencyRepositoryLive,
   ClockLive,
   CommandStoreLive,
   DomainEventJournalLive,
@@ -302,6 +303,7 @@ const makeApp = (): Layer.Layer<DbServices> => {
     Layer.provide(InboxProjectionStoreLive, infra),
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
+    Layer.provide(DependencyRepositoryLive, infra),
   );
   const all = Layer.mergeAll(
     infra,
