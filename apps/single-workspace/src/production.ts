@@ -334,76 +334,81 @@ export const ProductionDaemonServiceLive = (
         sweep: Effect.asVoid(sweepRecovery(config.principal)),
       };
 
-      const conversationTick =
-        config.projectId === undefined
-          ? undefined
-          : Effect.asVoid(
-              Effect.gen(function* () {
-                const messages = yield* HumanMessageStore;
-                const projects = yield* ProjectRepository;
-                const executions = yield* ExecutionRepository;
-                const gateway = yield* CommandGateway;
-                const clock = yield* Clock;
-                const projectId = config.projectId as ProjectId;
-                const sql = yield* SqlClient;
-                const responseBodyOf = makeResponseBodyOf(sql);
-                // Settle sweep first (Claimed → Answered / stale rollback),
-                // then admit the FIFO-oldest pending message when idle.
-                yield* tx.transact(
-                  runConversationSettlementSweep(
-                    { messages, executions, clock, responseBodyOf },
-                    projectId,
-                  ),
-                );
-                yield* runConversationTrigger(
-                  {
-                    gateway,
-                    messages,
-                    projects,
-                    executions,
-                    clock,
-                    tx,
-                    principal: config.principal,
-                  },
-                  projectId,
-                );
-                // The P14 trigger admits a durable Coordination execution;
-                // the local production composition must also hand that
-                // execution to the existing fenced P2/P3 runner. Claims are
-                // the exact correlation between a human turn and its main
-                // execution, so ordinary Work mains are never selected here.
-                const claimed = yield* tx.transact(
-                  messages.claimedOrderedByCreated(projectId),
-                );
-                for (const message of claimed) {
-                  const claimedExecutionId = message.claimedByExecutionId;
-                  if (claimedExecutionId === null) {
-                    continue;
-                  }
-                  const execution = yield* tx.transact(
-                    executions.findById(parse(ExecutionId)(claimedExecutionId)),
-                  );
-                  if (
-                    Option.isSome(execution) &&
-                    execution.value.state.status === "Active" &&
-                    execution.value.binding._tag === "WorkspaceExecution" &&
-                    execution.value.binding.focus._tag === "Coordination"
-                  ) {
-                    yield* runExecution(
-                      parse(ExecutionId)(claimedExecutionId),
-                      { _tag: "Recovery" },
-                      config.principal,
-                    );
-                  }
-                }
-              }),
+      const conversationTick = Effect.asVoid(
+        Effect.gen(function* () {
+          const messages = yield* HumanMessageStore;
+          const projects = yield* ProjectRepository;
+          const executions = yield* ExecutionRepository;
+          const gateway = yield* CommandGateway;
+          const clock = yield* Clock;
+          const sql = yield* SqlClient;
+          const responseBodyOf = makeResponseBodyOf(sql);
+          // Product shape: the daemon drives EVERY project with conversation
+          // work (any project a human submits to must be answered — a
+          // single-project filter would silently orphan the rest). Per
+          // project, the frozen P14 `02` step is unchanged: settle sweep
+          // (Claimed → Answered / stale rollback) first, then admit the
+          // FIFO-oldest pending message when idle.
+          const activeProjects = yield* tx.transact(
+            messages.projectsWithConversationWork(),
+          );
+          for (const projectId of activeProjects) {
+            yield* tx.transact(
+              runConversationSettlementSweep(
+                { messages, executions, clock, responseBodyOf },
+                projectId,
+              ),
             );
+            yield* runConversationTrigger(
+              {
+                gateway,
+                messages,
+                projects,
+                executions,
+                clock,
+                tx,
+                principal: config.principal,
+              },
+              projectId,
+            );
+            // The P14 trigger admits a durable Coordination execution;
+            // the local production composition must also hand that
+            // execution to the existing fenced P2/P3 runner. Claims are
+            // the exact correlation between a human turn and its main
+            // execution, so ordinary Work mains are never selected here.
+            const claimed = yield* tx.transact(
+              messages.claimedOrderedByCreated(projectId),
+            );
+            for (const message of claimed) {
+              const claimedExecutionId = message.claimedByExecutionId;
+              if (claimedExecutionId === null) {
+                continue;
+              }
+              const execution = yield* tx.transact(
+                executions.findById(parse(ExecutionId)(claimedExecutionId)),
+              );
+              if (
+                Option.isSome(execution) &&
+                execution.value.state.status === "Active" &&
+                execution.value.binding._tag === "WorkspaceExecution" &&
+                execution.value.binding.focus._tag === "Coordination"
+              ) {
+                yield* runExecution(
+                  parse(ExecutionId)(claimedExecutionId),
+                  { _tag: "Recovery" },
+                  config.principal,
+                );
+              }
+            }
+          }
+        }),
+      );
 
       const daemon = makeProductionDaemon({
         migrate: runMigrations(P14_MIGRATIONS),
         recovery,
         consumers,
-        ...(conversationTick === undefined ? {} : { conversationTick }),
+        conversationTick,
       });
 
       return ProductionDaemonService.of({

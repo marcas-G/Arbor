@@ -101,6 +101,15 @@ export interface HumanMessageStoreService {
     HumanMessageStoreError,
     import("./session.js").TransactionScope
   >;
+  /** Projects with active conversation messages (Pending or Claimed) —
+   * the daemon tick drives EVERY such project (product shape: any project
+   * a human submits to must be answered; single-project config would
+   * silently orphan the rest). */
+  readonly projectsWithConversationWork: () => Effect.Effect<
+    ReadonlyArray<ProjectId>,
+    HumanMessageStoreError,
+    import("./session.js").TransactionScope
+  >;
   /** Claimed messages for a project (settle sweep, FIFO order). */
   readonly claimedOrderedByCreated: (
     projectId: ProjectId,

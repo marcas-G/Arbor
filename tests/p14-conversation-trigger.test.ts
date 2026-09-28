@@ -373,3 +373,87 @@ describe("P14-003 conversation trigger", () => {
     expect(harness.rows.get(MSG.f)?.state).toBe("Answered");
   });
 });
+
+describe("P14 multi-project daemon coverage (production shape)", () => {
+  it("projectsWithConversationWork lists every project with Pending/Claimed messages (no orphaning)", async () => {
+    // Mechanical evidence for the product-shape fix: the daemon tick derives
+    // its project set from the store (every project a human submits to is
+    // driven), never from a single-project config filter.
+    const { DatabaseSync } = await import("node:sqlite");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "p14-multiproj-"));
+    const dbFile = join(dir, "s.db");
+    const adapter = await import("../adapters/persistence-sqlite/src/index.js");
+    const port = await import("../packages/ports/src/index.js");
+    const { Effect, Layer } = await import("effect");
+    const app = () => {
+      const base = adapter.layer({ filename: dbFile });
+      const infra = Layer.mergeAll(
+        base,
+        adapter.ClockLive,
+        adapter.IdGeneratorLive,
+      );
+      return Layer.mergeAll(
+        Layer.provide(adapter.HumanMessageStoreLive, base),
+        Layer.provide(adapter.TransactionPortLive, infra),
+        infra,
+      );
+    };
+    const program = Effect.gen(function* () {
+      yield* adapter.runMigrations(adapter.P14_MIGRATIONS);
+      const store = yield* port.HumanMessageStore;
+      const tx = yield* port.TransactionPort;
+      const mk = (
+        messageId: string,
+        projectId: string,
+        state: "Pending" | "Claimed" | "Answered",
+      ) => ({
+        messageId,
+        projectId: projectId as never,
+        rootWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ab" as never,
+        humanPrincipal: "user:t" as never,
+        bodyRef: "b",
+        commandId: `cmd_${messageId}` as never,
+        fingerprint: `fp_${messageId}`,
+        state,
+        claimedByExecutionId: state === "Claimed" ? "exe_c1" : null,
+        createdAt: "2026-09-28T06:00:00.000Z",
+        settledAt: null,
+        responseBody: null,
+        attemptNo: 0,
+      });
+      yield* tx.transact(
+        store.insertPending(
+          mk("m1", "prj_a1111111-0000-7000-8000-000000000001", "Pending"),
+        ),
+      );
+      yield* tx.transact(
+        store.insertPending(
+          mk("m2", "prj_b2222222-0000-7000-8000-000000000002", "Pending"),
+        ),
+      );
+      yield* tx.transact(store.claim("m2", "exe_c2"));
+      yield* tx.transact(
+        store.markAnswered("m2", "2026-09-28T06:00:01.000Z", null),
+      );
+      // m2 answered → prj_b drops out; m3 claimed keeps prj_c listed
+      yield* tx.transact(
+        store.insertPending(
+          mk("m3", "prj_c3333333-0000-7000-8000-000000000003", "Pending"),
+        ),
+      );
+      yield* tx.transact(store.claim("m3", "exe_c1"));
+      return yield* tx.transact(store.projectsWithConversationWork());
+    });
+    const outcome = (await Effect.runPromise(
+      Effect.provide(program as never, app() as never) as never,
+    )) as ReadonlyArray<string>;
+    expect([...(outcome as ReadonlyArray<string>)].sort()).toEqual([
+      "prj_a1111111-0000-7000-8000-000000000001",
+      "prj_c3333333-0000-7000-8000-000000000003",
+    ]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
