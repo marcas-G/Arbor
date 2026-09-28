@@ -2,10 +2,7 @@
   "schemaVersion": "arbor-capability-report-v1",
   "runId": "2026-09-28T01-09-06.411Z-3ebde7f2-4702-47b8-82d2-17ef0f4b41c4",
   "mode": "real-provider",
-  "selectedCapabilities": [
-    "B01",
-    "B04"
-  ],
+  "selectedCapabilities": ["B01", "B04"],
   "startedAt": "2026-09-28T01:09:06.411Z",
   "completedAt": "2026-09-28T01:11:08.752Z",
   "runtime": {
@@ -115,11 +112,7 @@
       "l1Status": "PASS",
       "l2Status": "FAIL",
       "l3Status": "FAIL",
-      "providerModes": [
-        "NONE",
-        "RECORDING",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "RECORDING", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/session.test.ts",
         "tests/capability/gray-box/b01-public-conversation.test.ts",
@@ -144,9 +137,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/session.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/session.test.ts"],
           "failures": []
         },
         {
@@ -227,10 +218,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B02-L1: Not selected in this qualification batch.",
@@ -286,10 +274,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B03-L1: Not selected in this qualification batch.",
@@ -345,11 +330,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "FAIL",
-      "providerModes": [
-        "NONE",
-        "RECORDING",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "RECORDING", "REAL"],
       "evidenceFiles": [
         "packages/model-context/test/p3-context.test.ts",
         "apps/single-workspace/test/p5-session-continuity.test.ts",
@@ -373,9 +354,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/model-context/test/p3-context.test.ts"
-          ],
+          "sourceSuites": ["packages/model-context/test/p3-context.test.ts"],
           "failures": []
         },
         {
@@ -450,10 +429,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B05-L1: Not selected in this qualification batch.",
@@ -509,10 +485,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B06-L1: Not selected in this qualification batch.",
@@ -568,10 +541,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B07-L1: Not selected in this qualification batch.",
@@ -627,10 +597,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B08-L1: Not selected in this qualification batch.",
@@ -686,10 +653,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B09-L1: Not selected in this qualification batch.",
@@ -745,10 +709,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B10-L1: Not selected in this qualification batch.",
@@ -804,10 +765,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B11-L1: Not selected in this qualification batch.",
@@ -863,10 +821,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B12-L1: Not selected in this qualification batch.",
@@ -922,10 +877,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B13-L1: Not selected in this qualification batch.",
@@ -981,10 +933,7 @@
       "l1Status": "NOT_RUN",
       "l2Status": "NOT_RUN",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [],
       "blockingReasons": [
         "B14-L1: Not selected in this qualification batch.",

@@ -1,6 +1,11 @@
 import type { SkillRegistryService } from "@arbor/ports";
 import { Effect } from "effect";
-import type { AuthorityRole, InstructionFragment } from "./prompt.js";
+import {
+  type AuthorityRole,
+  hashInstructionContent,
+  type InstructionFragment,
+} from "./prompt.js";
+import { dataOnlyTrust } from "./resolver.js";
 
 /** DID v1.7 §8.11/§8.14; P3 `02` §7 (C1). */
 export const SKILL_AUTHORITY_ROLE: AuthorityRole = "A5";
@@ -40,9 +45,9 @@ export const skillFragment = (
 ): InstructionFragment => ({
   identity,
   revision: 1,
-  hash: "skill",
+  hash: hashInstructionContent(contentRef),
   semanticKind: "SkillGuidance",
-  source: "Canonical",
+  source: "DynamicSurface",
   scope: "skill",
   authorityRole: SKILL_AUTHORITY_ROLE,
   strength: "Soft",
@@ -53,4 +58,5 @@ export const skillFragment = (
   budgetClass: "skill",
   modelCompatibility: [],
   contentRef,
+  provenance: dataOnlyTrust("ModelDerived"),
 });

@@ -27,6 +27,8 @@ import {
 } from "@arbor/ports";
 import type {
   AttentionReadDeps,
+  ConversationHistoryCursor,
+  ConversationHistoryPage,
   CurrentWorkDeps,
   DependencyViewDeps,
   EffectiveFactsDeps,
@@ -400,6 +402,107 @@ export const ProjectionQueryPortLive: Layer.Layer<
               }
             }
             return turns as never;
+          }),
+        ),
+      conversationHistoryPage: (workspaceId, before, limit) =>
+        inTx(
+          Effect.gen(function* () {
+            const beforeClause =
+              before === null
+                ? ""
+                : `WHERE occurred_at < ?
+                    OR (occurred_at = ? AND (
+                      message_id < ?
+                      OR (message_id = ? AND turn_order < ?)
+                    ))`;
+            const beforeParams =
+              before === null
+                ? []
+                : [
+                    before.occurredAt,
+                    before.occurredAt,
+                    before.messageId,
+                    before.messageId,
+                    before.turnOrder,
+                  ];
+            const rows = yield* sql.unsafe<{
+              message_id: string;
+              execution_id: string | null;
+              turn_kind: "human" | "assistant";
+              turn_order: 0 | 1;
+              body: string;
+              occurred_at: string;
+            }>(
+              `WITH turns AS (
+                 SELECT
+                   message_id,
+                   NULL AS execution_id,
+                   'human' AS turn_kind,
+                   0 AS turn_order,
+                   body_ref AS body,
+                   created_at AS occurred_at
+                 FROM human_messages
+                 WHERE root_workspace_id = ?
+                 UNION ALL
+                 SELECT
+                   message_id,
+                   claimed_by_execution_id AS execution_id,
+                   'assistant' AS turn_kind,
+                   1 AS turn_order,
+                   response_body AS body,
+                   settled_at AS occurred_at
+                 FROM human_messages
+                 WHERE root_workspace_id = ?
+                   AND state = 'Answered'
+                   AND claimed_by_execution_id IS NOT NULL
+                   AND settled_at IS NOT NULL
+                   AND response_body IS NOT NULL
+               )
+               SELECT
+                 message_id,
+                 execution_id,
+                 turn_kind,
+                 turn_order,
+                 body,
+                 occurred_at
+               FROM turns
+               ${beforeClause}
+               ORDER BY occurred_at DESC, message_id DESC, turn_order DESC
+               LIMIT ?`,
+              [workspaceId, workspaceId, ...beforeParams, limit + 1],
+            );
+            const hasMore = rows.length > limit;
+            const pageRows = rows.slice(0, limit);
+            const oldest = pageRows[pageRows.length - 1];
+            const turns = pageRows.reverse().map((row) =>
+              row.turn_kind === "human"
+                ? {
+                    kind: "HumanConversationTurn" as const,
+                    messageId: row.message_id,
+                    body: row.body,
+                    occurredAt: row.occurred_at,
+                  }
+                : {
+                    kind: "AssistantConversationTurn" as const,
+                    executionId: row.execution_id ?? "",
+                    body: row.body,
+                    occurredAt: row.occurred_at,
+                  },
+            );
+            const oldestCursor: ConversationHistoryCursor | undefined =
+              hasMore && oldest !== undefined
+                ? {
+                    occurredAt: oldest.occurred_at,
+                    messageId: oldest.message_id,
+                    turnOrder: oldest.turn_order,
+                  }
+                : undefined;
+            const page: ConversationHistoryPage = {
+              turns,
+              hasMore,
+              ...(oldestCursor !== undefined ? { oldestCursor } : {}),
+            };
+            return page;
           }),
         ),
       listEntries: (sessionId, afterSequence, limit) =>

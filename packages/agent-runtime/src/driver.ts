@@ -24,6 +24,8 @@ import {
   type ExecutionActivity,
   type ExecutionDriverError,
   ExecutionDriverPort,
+  type HumanMessageRecord,
+  HumanMessageStore,
   ModelCapabilityPort,
   type ProviderRunInput,
   ProviderRuntime,
@@ -42,6 +44,7 @@ import {
 } from "./control.js";
 import type { DirectiveHandler } from "./directive.js";
 import { checkFreshness, requirementForAction } from "./freshness.js";
+import { CANONICAL_TRUST } from "./prompt-assets.js";
 import { decideRepair, type RepairPolicy } from "./repair.js";
 
 const MAX_TURNS = 8;
@@ -59,6 +62,9 @@ type DecisionTurn =
       readonly _tag: "Ready";
       readonly turn: PreparedModelTurn;
       readonly output: ModelOutput;
+      /** P14: this turn carried conversation context (a claimed human
+       * message) — the first text answer settles the episode. */
+      readonly conversation?: boolean;
     }
   | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
 
@@ -94,6 +100,10 @@ const sessionFence = (
       }
     : undefined;
 
+const isConversationExecution = (execution: Execution): boolean =>
+  execution.binding._tag === "WorkspaceExecution" &&
+  execution.binding.focus._tag === "Coordination";
+
 const workObjectiveFragment = (execution: Execution): InstructionFragment => ({
   identity: "work-objective",
   revision: 1,
@@ -110,6 +120,7 @@ const workObjectiveFragment = (execution: Execution): InstructionFragment => ({
   budgetClass: "b",
   modelCompatibility: [],
   contentRef: `work:${execution.executionId}`,
+  provenance: CANONICAL_TRUST,
 });
 
 const runtimeSafetyFragment: InstructionFragment = {
@@ -128,6 +139,7 @@ const runtimeSafetyFragment: InstructionFragment = {
   budgetClass: "b",
   modelCompatibility: [],
   contentRef: "runtime safety",
+  provenance: CANONICAL_TRUST,
 };
 
 export interface AgentDriverOptions {
@@ -140,8 +152,9 @@ export interface AgentDriverOptions {
    * the default keeps Wait available for focused runtime tests. */
   readonly controlRegistry?: ControlToolRegistryService;
   readonly executableInvocationHandler?: ExecutableInvocationHandler;
+  /** Adapter identity recorded on manifests (P14 conversation audit). */
+  readonly providerRef?: string;
 }
-
 export const AgentDriverLive = (
   _legacyHandlers: ReadonlyArray<DirectiveHandler> = [],
   options: AgentDriverOptions = {},
@@ -154,6 +167,7 @@ export const AgentDriverLive = (
   | SessionRepository
   | TransactionPort
   | EnvironmentRevisionStore
+  | HumanMessageStore
 > =>
   Layer.effect(
     ExecutionDriverPort,
@@ -162,6 +176,7 @@ export const AgentDriverLive = (
       const providerRuntime = yield* ProviderRuntime;
       const capabilityPort = yield* ModelCapabilityPort;
       const sessions = yield* SessionRepository;
+      const humanMessages = yield* HumanMessageStore;
       const tx = yield* TransactionPort;
       const environmentRevisions = yield* EnvironmentRevisionStore;
       const controlRegistry =
@@ -268,6 +283,59 @@ export const AgentDriverLive = (
                     ? `ptn_${input.execution.executionId}_${turn}`
                     : `ptn_${input.execution.executionId}_${turn}_r${repairAttempt}`
                 ) as never;
+                // P14 `02` (WAVE1 S02/S04): for a Coordination execution the
+                // current claimed human message is the user turn; recent
+                // answered turns carry conversation continuity.
+                const conversationMessages: Array<{
+                  readonly role: "user" | "assistant";
+                  readonly text: string;
+                }> = [];
+                const conversationContextRefs: Array<string> = [];
+                if (isConversationExecution(input.execution)) {
+                  const history = yield* tx
+                    .transact(
+                      humanMessages.listForWorkspace(
+                        input.execution.workspaceId,
+                      ),
+                    )
+                    .pipe(
+                      Effect.mapError(
+                        (cause): ExecutionDriverError => ({
+                          _tag: "ExecutionDriverError",
+                          cause,
+                        }),
+                      ),
+                    );
+                  const claimed = history.find(
+                    (message) =>
+                      message.claimedByExecutionId ===
+                      String(input.execution.executionId),
+                  );
+                  for (const message of history) {
+                    if (
+                      message.state === "Answered" &&
+                      message.responseBody !== null
+                    ) {
+                      conversationMessages.push({
+                        role: "user",
+                        text: message.bodyRef,
+                      });
+                      conversationMessages.push({
+                        role: "assistant",
+                        text: message.responseBody,
+                      });
+                    }
+                  }
+                  if (claimed !== undefined) {
+                    conversationMessages.push({
+                      role: "user",
+                      text: claimed.bodyRef,
+                    });
+                    conversationContextRefs.push(
+                      `human-input:${claimed.messageId}`,
+                    );
+                  }
+                }
                 const preparation = yield* modelContext
                   .prepareTurn({
                     executionId: input.execution.executionId,
@@ -294,7 +362,22 @@ export const AgentDriverLive = (
                     controlBasis,
                     maxOutputTokens: capability.outputCeiling,
                     bodySkillIds: [],
-                    outputContractRef: TOOL_INVOCATION_CONTRACT,
+                    ...(isConversationExecution(input.execution) &&
+                    conversationMessages.length > 0
+                      ? {
+                          outputContractRef: "agent-directive-v1",
+                          includeTools: false,
+                        }
+                      : { outputContractRef: TOOL_INVOCATION_CONTRACT }),
+                    ...(conversationMessages.length > 0
+                      ? { conversationMessages }
+                      : {}),
+                    ...(conversationContextRefs.length > 0
+                      ? { conversationContextRefs: conversationContextRefs }
+                      : {}),
+                    ...(options.providerRef !== undefined
+                      ? { providerRef: options.providerRef }
+                      : {}),
                   })
                   .pipe(
                     Effect.mapError(
@@ -329,6 +412,17 @@ export const AgentDriverLive = (
                   outputContractRef:
                     preparation.turn.manifest.outputContractRef,
                   manifestId: preparation.turn.manifest.compiledRequestHash,
+                  manifest: {
+                    manifestId: preparation.turn.manifest.compiledRequestHash,
+                    providerTurnId: preparation.turn.manifest.providerTurnId,
+                    executionId: preparation.turn.manifest.executionId,
+                    sessionId: preparation.turn.manifest.sessionId,
+                    contextEpoch: preparation.turn.manifest.contextEpoch,
+                    modelRef: preparation.turn.manifest.modelRef,
+                    compiledRequestHash:
+                      preparation.turn.manifest.compiledRequestHash,
+                    manifestJson: JSON.stringify(preparation.turn.manifest),
+                  },
                   request: preparation.turn.request,
                   ...(options.secretRef !== undefined
                     ? { secretRef: options.secretRef }
@@ -377,6 +471,9 @@ export const AgentDriverLive = (
                     _tag: "Ready",
                     turn: preparation.turn,
                     output: decoded.output,
+                    ...(conversationMessages.length > 0
+                      ? { conversation: true }
+                      : {}),
                   };
                 }
                 const repair = decideRepair(
@@ -393,6 +490,8 @@ export const AgentDriverLive = (
               }
             });
 
+          let sawToolInvocation = false;
+          let producedText = false;
           for (let turn = 0; turn < MAX_TURNS; turn += 1) {
             const activity: ExecutionActivity = {
               _tag: "ProviderTurn",
@@ -573,6 +672,39 @@ export const AgentDriverLive = (
                 )
                 .pipe(Effect.mapError(failure));
             }
+
+            // P14 `02` (G-B): a Coordination execution that runs out of turns
+            // WITHOUT ever issuing a tool invocation is a pure-conversation
+            // episode — its text turns ARE the user-visible response. Settle
+            // Completed(QueryCompleted) rather than Failed. A turn that did
+            // issue tool invocations settles through the control/executable
+            // handler path (e.g. CoordinationCompleted) instead.
+            sawToolInvocation =
+              sawToolInvocation || decodedOutput.toolInvocations.length > 0;
+            producedText = producedText || decodedOutput.text.trim().length > 0;
+            // A true conversation turn (claimed human message driving the
+            // execution) settles on its FIRST text answer — one provider
+            // call per response episode (WAVE1 S04).
+            if (
+              decisionTurn.conversation === true &&
+              decodedOutput.toolInvocations.length === 0 &&
+              decodedOutput.text.trim().length > 0
+            ) {
+              return {
+                _tag: "Completed",
+                result: { _tag: "QueryCompleted" },
+              };
+            }
+          }
+          if (
+            isConversationExecution(input.execution) &&
+            !sawToolInvocation &&
+            producedText
+          ) {
+            return {
+              _tag: "Completed",
+              result: { _tag: "QueryCompleted" },
+            };
           }
           return {
             _tag: "Failed",

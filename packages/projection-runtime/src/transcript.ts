@@ -61,6 +61,19 @@ export interface TranscriptRequest {
   readonly sessionId?: SessionId | undefined;
   readonly cursor?: string | undefined;
   readonly limit: number;
+  readonly conversationOnly?: boolean | undefined;
+}
+
+export interface ConversationHistoryCursor {
+  readonly occurredAt: string;
+  readonly messageId: string;
+  readonly turnOrder: 0 | 1;
+}
+
+export interface ConversationHistoryPage {
+  readonly turns: ReadonlyArray<ConversationTurnView>;
+  readonly hasMore: boolean;
+  readonly oldestCursor?: ConversationHistoryCursor | undefined;
 }
 
 export interface TranscriptDeps {
@@ -84,6 +97,15 @@ export interface TranscriptDeps {
         ReadonlyArray<ConversationTurnView>,
         ProjectionReadError
       >)
+    | undefined;
+  /** Newest-first page retrieval for the chat surface. Returned turns are
+   * ordered oldest-to-newest and cursor against one stable event timeline. */
+  readonly conversationHistoryPage?:
+    | ((
+        workspaceId: WorkspaceId,
+        before: ConversationHistoryCursor | null,
+        limit: number,
+      ) => Effect.Effect<ConversationHistoryPage, ProjectionReadError>)
     | undefined;
 }
 
@@ -112,6 +134,47 @@ const decodeCursor = (cursor: string): CursorPosition | null => {
   }
 };
 
+const encodeConversationCursor = (cursor: ConversationHistoryCursor): string =>
+  encodeURIComponent(
+    JSON.stringify({
+      v: 1,
+      kind: "conversation",
+      at: cursor.occurredAt,
+      messageId: cursor.messageId,
+      turnOrder: cursor.turnOrder,
+    }),
+  );
+
+const decodeConversationCursor = (
+  cursor: string,
+): ConversationHistoryCursor | null => {
+  try {
+    const parsed = JSON.parse(decodeURIComponent(cursor)) as {
+      v?: unknown;
+      kind?: unknown;
+      at?: unknown;
+      messageId?: unknown;
+      turnOrder?: unknown;
+    };
+    if (
+      parsed.v !== 1 ||
+      parsed.kind !== "conversation" ||
+      typeof parsed.at !== "string" ||
+      typeof parsed.messageId !== "string" ||
+      (parsed.turnOrder !== 0 && parsed.turnOrder !== 1)
+    ) {
+      return null;
+    }
+    return {
+      occurredAt: parsed.at,
+      messageId: parsed.messageId,
+      turnOrder: parsed.turnOrder,
+    };
+  } catch {
+    return null;
+  }
+};
+
 const payloadRef = (payload: unknown): string | null => {
   if (typeof payload !== "object" || payload === null) {
     return null;
@@ -132,6 +195,33 @@ export const deriveTranscriptPage = (
       return yield* Effect.fail(
         projectionReadError("transcript limit must be positive"),
       );
+    }
+    if (request.conversationOnly === true) {
+      if (deps.conversationHistoryPage === undefined) {
+        return yield* Effect.fail(
+          projectionReadError("conversation history paging is unavailable"),
+        );
+      }
+      const before =
+        request.cursor === undefined
+          ? null
+          : decodeConversationCursor(request.cursor);
+      if (request.cursor !== undefined && before === null) {
+        return yield* Effect.fail(
+          projectionReadError("malformed conversation history cursor"),
+        );
+      }
+      const page = yield* deps.conversationHistoryPage(
+        request.workspaceId,
+        before,
+        request.limit,
+      );
+      return {
+        entries: page.turns,
+        ...(page.hasMore && page.oldestCursor !== undefined
+          ? { nextCursor: encodeConversationCursor(page.oldestCursor) }
+          : {}),
+      };
     }
     const cursor =
       request.cursor === undefined ? null : decodeCursor(request.cursor);

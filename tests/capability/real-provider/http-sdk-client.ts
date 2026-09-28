@@ -182,7 +182,9 @@ export const makeHttpProviderClient = (input: {
         throw new Error(`provider returned HTTP ${response.status}: ${body}`);
       }
       if (response.body === null) {
-        throw new Error("provider returned a successful response without a body");
+        throw new Error(
+          "provider returned a successful response without a body",
+        );
       }
 
       const [streamBody, evidenceBody] = response.body.tee();
@@ -222,10 +224,7 @@ export const makeHttpProviderClient = (input: {
         }
         if (typeof parsed !== "object" || parsed === null) return;
         const record = parsed as Record<string, unknown>;
-        if (
-          typeof record.usage === "object" &&
-          record.usage !== null
-        ) {
+        if (typeof record.usage === "object" && record.usage !== null) {
           const providerUsage = record.usage as Record<string, unknown>;
           usage = {
             type: "usage",
@@ -247,8 +246,7 @@ export const makeHttpProviderClient = (input: {
           completedReason = finishReason(choiceRecord.finish_reason);
         }
         const delta =
-          typeof choiceRecord.delta === "object" &&
-          choiceRecord.delta !== null
+          typeof choiceRecord.delta === "object" && choiceRecord.delta !== null
             ? (choiceRecord.delta as Record<string, unknown>)
             : {};
         if (typeof delta.content === "string" && delta.content.length > 0) {
@@ -274,8 +272,7 @@ export const makeHttpProviderClient = (input: {
           const call = calls.get(index) ?? { id: "", name: "", arguments: "" };
           if (typeof toolCall.id === "string") call.id += toolCall.id;
           const fn =
-            typeof toolCall.function === "object" &&
-            toolCall.function !== null
+            typeof toolCall.function === "object" && toolCall.function !== null
               ? (toolCall.function as Record<string, unknown>)
               : {};
           if (typeof fn.name === "string") call.name += fn.name;

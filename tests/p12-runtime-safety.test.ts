@@ -325,6 +325,61 @@ describe("P12-008 D5 concurrency ceiling", () => {
   });
 });
 
+describe("P12-008 provider lease bracket accounting", () => {
+  it("does not count lease completion as another repeated action", async () => {
+    const decisions = await runGate(
+      policy({ maxRepeatedFingerprints: 1 }),
+      function* (gate) {
+        return [
+          yield* gate.admitActivity(exe, turn("t0"), {
+            inFlight: "begin",
+            leaseGeneration: g1,
+          }),
+          yield* gate.admitActivity(exe, turn("t0"), {
+            inFlight: "end",
+            leaseGeneration: g1,
+          }),
+          yield* gate.admitActivity(exe, turn("t0"), {
+            inFlight: "end",
+            leaseGeneration: g1,
+          }),
+          yield* gate.admitActivity(exe, turn("t0"), {
+            inFlight: "begin",
+            leaseGeneration: g1,
+          }),
+        ];
+      },
+    );
+    expect(decisions).toEqual(["Continue", "Continue", "Continue", "Stop"]);
+  });
+
+  it("counts provider requests at begin but not again at lease completion", async () => {
+    const decisions = await runGate(
+      policy({ maxRepeatedFingerprints: 10, rateLimit: 2 }),
+      function* (gate) {
+        return [
+          yield* gate.admitActivity(exe, turn("t0"), {
+            inFlight: "begin",
+            leaseGeneration: g1,
+            observedAt: "2026-01-01T00:00:00.000Z",
+          }),
+          yield* gate.admitActivity(exe, turn("t0"), {
+            inFlight: "end",
+            leaseGeneration: g1,
+            observedAt: "2026-01-01T00:00:00.000Z",
+          }),
+          yield* gate.admitActivity(exe, turn("t1"), {
+            inFlight: "begin",
+            leaseGeneration: g1,
+            observedAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ];
+      },
+    );
+    expect(decisions).toEqual(["Continue", "Continue", "Continue"]);
+  });
+});
+
 // --- D6: rate / runaway protection -------------------------------------------
 
 describe("P12-008 D6 rate window", () => {

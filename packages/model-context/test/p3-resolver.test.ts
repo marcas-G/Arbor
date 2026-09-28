@@ -27,6 +27,7 @@ const fragment = (
   budgetClass: "b",
   modelCompatibility: [],
   contentRef: identity,
+  provenance: canonicalInstructionTrust,
   ...options,
 });
 

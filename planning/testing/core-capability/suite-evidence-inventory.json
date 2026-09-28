@@ -238,9 +238,7 @@
       {
         "suiteFile": "adapters/persistence-sqlite/test/repositories.test.ts",
         "testCases": 1,
-        "testNames": [
-          "repositories > round-trips aggregates and enforces CAS"
-        ],
+        "testNames": ["repositories > round-trips aggregates and enforces CAS"],
         "evidenceLevel": "L2",
         "classification": "INTEGRATION",
         "rationale": "The suite composes multiple modules, an adapter, persistence, or a transport seam, but does not meet the externally observable capability criteria for L3."
@@ -733,9 +731,7 @@
       {
         "suiteFile": "packages/domain/test/placeholder.test.ts",
         "testCases": 1,
-        "testNames": [
-          "domain scaffold > is wired"
-        ],
+        "testNames": ["domain scaffold > is wired"],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
         "rationale": "The suite exercises one component/package contract or a direct UI/helper unit without an end-to-end production composition."
@@ -3628,9 +3624,7 @@
       {
         "suiteFile": "apps/web/test/smoke.test.tsx",
         "testCases": 1,
-        "testNames": [
-          "apps/web skeleton > renders the login shell"
-        ],
+        "testNames": ["apps/web skeleton > renders the login shell"],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
         "rationale": "The suite exercises one component/package contract or a direct UI/helper unit without an end-to-end production composition."
@@ -4063,9 +4057,7 @@
       {
         "suiteFile": "adapters/persistence-sqlite/test/repositories.test.ts",
         "testCases": 1,
-        "testNames": [
-          "repositories > round-trips aggregates and enforces CAS"
-        ],
+        "testNames": ["repositories > round-trips aggregates and enforces CAS"],
         "evidenceLevel": "L2",
         "classification": "INTEGRATION",
         "rationale": "The suite composes multiple modules, an adapter, persistence, or a transport seam, but does not meet the externally observable capability criteria for L3."
@@ -4625,9 +4617,7 @@
       {
         "suiteFile": "apps/web/test/smoke.test.tsx",
         "testCases": 1,
-        "testNames": [
-          "apps/web skeleton > renders the login shell"
-        ],
+        "testNames": ["apps/web skeleton > renders the login shell"],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
         "rationale": "The suite exercises one component/package contract or a direct UI/helper unit without an end-to-end production composition."
@@ -5045,9 +5035,7 @@
       {
         "suiteFile": "packages/domain/test/placeholder.test.ts",
         "testCases": 1,
-        "testNames": [
-          "domain scaffold > is wired"
-        ],
+        "testNames": ["domain scaffold > is wired"],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
         "rationale": "The suite exercises one component/package contract or a direct UI/helper unit without an end-to-end production composition."

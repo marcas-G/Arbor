@@ -28,12 +28,14 @@ export function SubmitHumanMessageForm({
   projectId,
   targetWorkspaceId,
   onSubmitted,
+  onMessageSubmitted,
 }: {
   readonly actor: string;
   readonly token?: string | undefined;
   readonly projectId: string;
   readonly targetWorkspaceId: string;
   readonly onSubmitted?: ((receipt: CommandReceiptView) => void) | undefined;
+  readonly onMessageSubmitted?: ((messageId: string) => void) | undefined;
 }) {
   const queryClient = useQueryClient();
   const idsRef = useRef<{ readonly messageId: string } | null>(null);
@@ -49,6 +51,10 @@ export function SubmitHumanMessageForm({
     actor,
     token,
     onSubmitted: (receipt) => {
+      const submittedMessageId = idsRef.current?.messageId;
+      if (submittedMessageId !== undefined) {
+        onMessageSubmitted?.(submittedMessageId);
+      }
       idsRef.current = null;
       reset({ bodyRef: "" });
       void queryClient.invalidateQueries({ queryKey: ["view"] });

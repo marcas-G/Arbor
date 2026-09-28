@@ -12,6 +12,7 @@ import type {
   SkillRef,
 } from "@arbor/ports";
 import type { ContextFragment } from "./context.js";
+import { outputContractSchemaJson } from "./decode.js";
 import type { InstructionFragment } from "./prompt.js";
 import type { ResolvedInstructionSet } from "./resolver.js";
 
@@ -35,11 +36,28 @@ export interface ModelContextPlan {
   readonly controlTools?: ReadonlyArray<ModelFacingControlToolDefinition>;
   readonly skills: ReadonlyArray<SkillRef>;
   readonly outputContract: string;
+  /** P14 conversation context (user/assistant turns); absent on Work. */
+  readonly conversationMessages?: ReadonlyArray<{
+    readonly role: "user" | "assistant";
+    readonly text: string;
+  }>;
+  /** P14 conversation refs (human-input:<messageId>) — carried into the
+   * manifest contextRefs so the claimed turn is auditable per turn. */
+  readonly conversationContextRefs?: ReadonlyArray<string>;
+  readonly providerRef?: string;
+  /** Optional content table: contentRef -> instruction body text. When
+   * present, compiled instructions carry the resolved text instead of the
+   * bare reference (P3 `05` compile semantics). */
+  readonly instructionContents?: ReadonlyMap<string, string>;
+  /** Optional explicit output-contract schema json (overrides the frozen
+   * table for exotic deployments). */
+  readonly outputContractSchemaJson?: string;
   readonly continuation: string;
   readonly controlBasis: ControlBasis;
 }
 
 export interface ModelContextManifest {
+  readonly providerRef?: string;
   readonly providerTurnId: ProviderTurnId;
   readonly executionId: ExecutionId;
   readonly sessionId: SessionId;
@@ -88,11 +106,15 @@ const fnv = (input: string): string => {
 
 const compile = (
   instructions: ReadonlyArray<InstructionFragment>,
+  contents?: ReadonlyMap<string, string>,
 ): ReadonlyArray<PortableModelRequest["instructions"][number]> =>
   instructions.map((fragment) => ({
     slotId: fragment.scope,
     authorityRole: fragment.authorityRole,
-    text: fragment.contentRef,
+    text:
+      contents?.get(fragment.contentRef) !== undefined
+        ? (contents.get(fragment.contentRef) as string)
+        : fragment.contentRef,
   }));
 
 /**
@@ -109,7 +131,29 @@ export const compileTurn = (input: {
   readonly contextEpoch: ContextEpochNumber;
   readonly maxOutputTokens: number;
 }): PreparedModelTurn => {
-  const controlTools = input.plan.controlTools ?? [];
+  const controlTools = [...(input.plan.controlTools ?? [])];
+  // F-TS-08 (`05`): the directive tool stays model-facing — `compileTurn`
+  // appends `arbor_directive` for the agent-directive output contract when
+  // no control definition of that name is already supplied.
+  const explicitControlTools =
+    input.plan.controlTools !== undefined && input.plan.controlTools.length > 0;
+  if (
+    input.plan.outputContract === "agent-directive-v1" &&
+    !explicitControlTools &&
+    !controlTools.some((tool) => tool.name === "arbor_directive")
+  ) {
+    const schemaJson = outputContractSchemaJson("agent-directive-v1");
+    if (schemaJson !== null) {
+      controlTools.push({
+        name: "arbor_directive",
+        description: "Emit structured Arbor directives.",
+        schemaJson,
+        version: "1",
+        hash: "arbor-directive-v1",
+        requiredCapability: "agent:directives",
+      });
+    }
+  }
   const names = [
     ...input.plan.tools.map((tool) => tool.name),
     ...controlTools.map((tool) => tool.name),
@@ -129,8 +173,14 @@ export const compileTurn = (input: {
   ];
   const request: PortableModelRequest = {
     modelRef: input.capability.modelRef,
-    instructions: compile(input.plan.instructions.effective),
-    messages: [],
+    instructions: compile(
+      input.plan.instructions.effective,
+      input.plan.instructionContents,
+    ),
+    messages: (input.plan.conversationMessages ?? []).map((message) => ({
+      role: message.role,
+      text: message.text,
+    })),
     toolDefinitions: [
       ...input.plan.tools.map((tool) => ({
         name: tool.name,
@@ -151,6 +201,9 @@ export const compileTurn = (input: {
   };
 
   const manifest: ModelContextManifest = {
+    ...(input.plan.providerRef !== undefined
+      ? { providerRef: input.plan.providerRef }
+      : {}),
     providerTurnId: input.providerTurnId,
     executionId: input.executionId,
     sessionId: input.sessionId,
@@ -163,7 +216,10 @@ export const compileTurn = (input: {
       source: fragment.source,
       scope: fragment.scope,
     })),
-    contextRefs: input.plan.context.map((fragment) => fragment.ref),
+    contextRefs: [
+      ...input.plan.context.map((fragment) => fragment.ref),
+      ...(input.plan.conversationContextRefs ?? []),
+    ],
     skillRefs: input.plan.skills.map((skill) => ({
       skillId: skill.skillId,
       revision: skill.revision,

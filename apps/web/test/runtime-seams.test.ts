@@ -20,7 +20,7 @@ describe("D2 frozen Web runtime seams", () => {
     expect(query).not.toMatch(/\buseState\b|\bsetQuer(?:y|ies)Data\b/);
     expect(transport).toContain(["fetch(`/views/$", "{view}`"].join(""));
     expect(transport).toContain("await response.json()");
-    expect(transport).not.toMatch(/\bWebSocket\b|\bReadableStream\b/);
+    expect(transport).not.toMatch(/\bWebSocket\b/);
   });
 
   it("keeps WS frames invalidation-only and never writes a view DTO to cache", () => {

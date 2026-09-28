@@ -18,10 +18,11 @@ import {
   CommandStoreLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
+  HumanMessageStoreLive,
   IdGeneratorLive,
   layer,
   P8_MIGRATIONS,
-  P11_MIGRATIONS,
+  P14_MIGRATIONS,
   ProviderTurnStoreLive,
   RecordEnvironmentChangeLive,
   ResourceOwnershipRepositoryLive,
@@ -506,6 +507,7 @@ const cbMakeApp = () => {
       providerRuntime,
       cbCapability,
       Layer.provide(SessionRepositoryLive, infra),
+      Layer.provide(HumanMessageStoreLive, infra),
       tx,
       revisions,
     ),
@@ -611,7 +613,7 @@ const cbDrive = (index: 0 | 1) =>
 // ---------------------------------------------------------------------------
 
 const WORKTREES_TEST_DDL = `
-CREATE TABLE worktrees (
+CREATE TABLE IF NOT EXISTS worktrees (
   worktree_id     TEXT PRIMARY KEY,
   project_id      TEXT NOT NULL REFERENCES projects(project_id),
   workspace_id    TEXT NOT NULL REFERENCES workspaces(workspace_id),
@@ -957,7 +959,7 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
 
     await runDriftApp(
       Effect.gen(function* () {
-        yield* runMigrations(P11_MIGRATIONS);
+        yield* runMigrations(P14_MIGRATIONS);
         const sql = yield* SqlClient;
         const resolver = yield* EnvironmentResolverPort;
         const rec = yield* RecordEnvironmentChange;
@@ -1010,7 +1012,7 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
       Effect.scoped(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P8_MIGRATIONS);
+            yield* runMigrations(P14_MIGRATIONS);
             yield* cbSeed;
             const store = yield* EnvironmentRevisionStore;
             const advancement = yield* EnvironmentRevisionAdvancement;
@@ -1048,7 +1050,7 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
     // -- gateway half (release-first, then terminal closure) --
     await wtRun(
       Effect.gen(function* () {
-        yield* runMigrations(P11_MIGRATIONS);
+        yield* runMigrations(P14_MIGRATIONS);
         const sql = yield* SqlClient;
         const gw = yield* CommandGateway;
         yield* sql.unsafe(WORKTREES_TEST_DDL, []);
@@ -1168,7 +1170,7 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
 
     await runDriftApp(
       Effect.gen(function* () {
-        yield* runMigrations(P11_MIGRATIONS);
+        yield* runMigrations(P14_MIGRATIONS);
         const sql = yield* SqlClient;
         const resolver = yield* EnvironmentResolverPort;
         const rec = yield* RecordEnvironmentChange;
@@ -1322,7 +1324,7 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
 
     await runDriftApp(
       Effect.gen(function* () {
-        yield* runMigrations(P11_MIGRATIONS);
+        yield* runMigrations(P14_MIGRATIONS);
         const sql = yield* SqlClient;
         const resolver = yield* EnvironmentResolverPort;
         const rec = yield* RecordEnvironmentChange;

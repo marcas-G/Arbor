@@ -11,7 +11,7 @@ import {
   SecretStorePort,
   TransactionPort,
 } from "@arbor/ports";
-import { Context, Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Stream } from "effect";
 
 /** P3 `06` §2 / P12 `12` §5 (TR-4): the single frozen retry disposition for
  * the closed `ProviderFailureKind` union. */
@@ -33,6 +33,18 @@ export const ProviderRuntimeLive = (
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
       const secretStore = yield* SecretStorePort;
+
+      const notifyProgress = (
+        input: ProviderRunInput,
+        event: Parameters<NonNullable<ProviderRunInput["onProgress"]>>[0],
+      ): void => {
+        try {
+          input.onProgress?.(event);
+        } catch {
+          // A transient UI observer must never change model or execution
+          // semantics.
+        }
+      };
 
       const runTurn: ProviderRuntimeService["runTurn"] = (
         input: ProviderRunInput,
@@ -58,6 +70,7 @@ export const ProviderRuntimeLive = (
                 outputContractRef: input.outputContractRef,
                 manifestId: input.manifestId,
               },
+              input.manifest,
               startedAt,
             ),
           );
@@ -68,8 +81,14 @@ export const ProviderRuntimeLive = (
           };
           for (let attemptNo = 0; attemptNo < maxAttempts; attemptNo += 1) {
             const attemptStartedAt = yield* clock.now();
+            notifyProgress(input, {
+              _tag: "AttemptStarted",
+              providerTurnId: input.providerTurnId,
+              attemptNo,
+            });
+            const attemptEvents: CanonicalProviderEvent[] = [];
             const result = yield* Effect.result(
-              Stream.runCollect(
+              Stream.runForEach(
                 provider.runTurn({
                   request: input.request,
                   context: {
@@ -83,11 +102,21 @@ export const ProviderRuntimeLive = (
                     cancellationRef: input.cancellationRef,
                   },
                 }),
+                (event) =>
+                  Effect.sync(() => {
+                    attemptEvents.push(event);
+                    notifyProgress(input, {
+                      _tag: "ProviderEvent",
+                      providerTurnId: input.providerTurnId,
+                      attemptNo,
+                      event,
+                    });
+                  }),
               ),
             );
             const settledAt = yield* clock.now();
             if (result._tag === "Success") {
-              const events = Array.from(result.success);
+              const events = attemptEvents;
               yield* tx.transact(
                 store.recordAttempt(
                   input.providerTurnId,
@@ -121,6 +150,13 @@ export const ProviderRuntimeLive = (
 
             lastFailure = result.failure;
             const retryable = isRetryable(lastFailure);
+            notifyProgress(input, {
+              _tag: "AttemptFailed",
+              providerTurnId: input.providerTurnId,
+              attemptNo,
+              failureKind: lastFailure.kind,
+              retrying: retryable && attemptNo + 1 < maxAttempts,
+            });
             yield* tx.transact(
               store.recordAttempt(
                 input.providerTurnId,

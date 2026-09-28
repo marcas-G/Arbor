@@ -97,16 +97,19 @@ const evaluate = (
 ): SafetyDecision => {
   let stop = false;
 
-  // D2 — repeated identical action fingerprints. Durable progress clears
-  // the per-fingerprint counts (P12 `08` §3).
-  if (observation?.durableProgress === true) {
-    state.fingerprints.clear();
-  }
-  const fingerprintKey = `${activity._tag}:${activity.fingerprint}`;
-  const fingerprintCount = (state.fingerprints.get(fingerprintKey) ?? 0) + 1;
-  state.fingerprints.set(fingerprintKey, fingerprintCount);
-  if (fingerprintCount > policy.maxRepeatedFingerprints) {
-    stop = true;
+  // D2 — repeated identical action fingerprints. The end half of a provider
+  // lease bracket completes an already-admitted action; it is not another
+  // action boundary and must not consume a repeat slot.
+  if (observation?.inFlight !== "end") {
+    if (observation?.durableProgress === true) {
+      state.fingerprints.clear();
+    }
+    const fingerprintKey = `${activity._tag}:${activity.fingerprint}`;
+    const fingerprintCount = (state.fingerprints.get(fingerprintKey) ?? 0) + 1;
+    state.fingerprints.set(fingerprintKey, fingerprintCount);
+    if (fingerprintCount > policy.maxRepeatedFingerprints) {
+      stop = true;
+    }
   }
 
   // D1 — transient retries per operation. `retryCount` 0 starts a new
@@ -166,7 +169,10 @@ const evaluate = (
   }
 
   // D6 — sliding rate window over `observedAt`; expiry resets the window.
-  if (observation?.observedAt !== undefined) {
+  if (
+    observation?.inFlight !== "end" &&
+    observation?.observedAt !== undefined
+  ) {
     const now = Date.parse(observation.observedAt);
     if (!Number.isNaN(now)) {
       state.rate = state.rate.filter((t) => now - t < policy.rateWindowMs);

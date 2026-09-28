@@ -6,16 +6,16 @@ import { afterEach, describe, expect } from "vitest";
 import { secretRef } from "../../../packages/ports/dist/provider.js";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
 import {
-  makeHttpProviderClient,
-  runtimeForProvider,
-  type HttpProviderCallEvidence,
-  type HttpProviderRuntime,
-} from "./http-sdk-client.js";
-import {
   makePublicProject,
   responseBodyFrom,
   runPublicConversation,
 } from "../support/public-chat.js";
+import {
+  type HttpProviderCallEvidence,
+  type HttpProviderRuntime,
+  makeHttpProviderClient,
+  runtimeForProvider,
+} from "./http-sdk-client.js";
 
 const memoryCode = "BLUE-WHALE-17";
 const memoryQuestion = "我刚才让你记住的代码是什么？";

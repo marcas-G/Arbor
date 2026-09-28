@@ -47,6 +47,23 @@ const childTree = {
   ],
 } as never;
 
+const conversationTypical: TranscriptRes = {
+  entries: [
+    {
+      kind: "HumanConversationTurn",
+      messageId: "msg_latest_1",
+      body: "turn#12 请求评审",
+      occurredAt: "2026-09-23T09:20:00.000Z",
+    },
+    {
+      kind: "AssistantConversationTurn",
+      executionId: "exe_latest_1",
+      body: "Arbor 已收到评审请求",
+      occurredAt: "2026-09-23T09:21:00.000Z",
+    },
+  ],
+};
+
 type Responder = () => Response | Promise<Response>;
 
 const okValue = (dto: unknown): Response =>
@@ -74,54 +91,92 @@ type Envelope = Record<string, unknown>;
 interface Harness {
   readonly commandCalls: ReadonlyArray<Envelope>;
   readonly transcriptCallCount: () => number;
+  readonly transcriptRequests: ReadonlyArray<Record<string, unknown>>;
 }
 
 const installFetch = (config: {
   readonly tree: unknown;
   readonly transcriptResponses: ReadonlyArray<Responder>;
   readonly commandResponses?: ReadonlyArray<Responder>;
+  readonly progressChunks?: ReadonlyArray<string>;
 }): Harness => {
   const commandCalls: Envelope[] = [];
+  const transcriptRequests: Record<string, unknown>[] = [];
   let transcriptCalls = 0;
   let commandCallsMade = 0;
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: unknown, init?: { readonly body?: unknown }) => {
-      const url = String(input);
-      if (url === "/commands") {
-        const envelope = JSON.parse(String(init?.body)) as Envelope;
-        commandCalls.push(envelope);
-        const responder =
-          config.commandResponses?.[commandCallsMade] ?? committed;
-        commandCallsMade += 1;
-        return responder();
-      }
-      const view = url.split("/views/")[1] ?? "";
-      if (view.startsWith("responsibility-tree")) {
-        return okValue(config.tree);
-      }
-      if (view.startsWith("workspace-detail")) {
-        return okValue(detailTypical);
-      }
-      if (view.startsWith("current-work")) {
-        return okValue(currentWorkTypical);
-      }
-      if (view.startsWith("transcript")) {
-        const responder =
-          config.transcriptResponses[
-            Math.min(transcriptCalls, config.transcriptResponses.length - 1)
-          ];
-        transcriptCalls += 1;
-        return responder === undefined
-          ? okValue(transcriptTypical)
-          : responder();
-      }
-      return okValue(null);
-    }),
+    vi.fn(
+      async (
+        input: unknown,
+        init?: {
+          readonly body?: unknown;
+          readonly headers?: HeadersInit;
+        },
+      ) => {
+        const url = String(input);
+        if (url === "/commands") {
+          const envelope = JSON.parse(String(init?.body)) as Envelope;
+          commandCalls.push(envelope);
+          const responder =
+            config.commandResponses?.[commandCallsMade] ?? committed;
+          commandCallsMade += 1;
+          return responder();
+        }
+        if (url.startsWith("/conversation-progress/")) {
+          const chunks = config.progressChunks ?? [];
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (const chunk of chunks) {
+                  controller.enqueue(new TextEncoder().encode(chunk));
+                }
+                controller.close();
+              },
+            }),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          );
+        }
+        const view = url.split("/views/")[1] ?? "";
+        if (view.startsWith("responsibility-tree")) {
+          return okValue(config.tree);
+        }
+        if (view.startsWith("workspace-detail")) {
+          return okValue(detailTypical);
+        }
+        if (view.startsWith("current-work")) {
+          return okValue(currentWorkTypical);
+        }
+        if (view.startsWith("transcript")) {
+          const body = JSON.parse(String(init?.body)) as Record<
+            string,
+            unknown
+          >;
+          transcriptRequests.push(body);
+          const responder =
+            config.transcriptResponses[
+              Math.min(transcriptCalls, config.transcriptResponses.length - 1)
+            ];
+          transcriptCalls += 1;
+          return responder === undefined
+            ? okValue(
+                body.conversationOnly === true
+                  ? conversationTypical
+                  : transcriptTypical,
+              )
+            : responder();
+        }
+        return okValue(null);
+      },
+    ),
   );
   return {
     commandCalls,
     transcriptCallCount: () => transcriptCalls,
+    transcriptRequests,
   };
 };
 
@@ -172,7 +227,7 @@ describe("P14-005 conversation tab", () => {
   it("root workspace (parentWorkspaceId === null) renders the composer", async () => {
     installFetch({
       tree: rootTree,
-      transcriptResponses: [() => okValue(transcriptTypical)],
+      transcriptResponses: [() => okValue(conversationTypical)],
     });
     renderConversation();
     await waitFor(() => expect(screen.getByLabelText("消息")).toBeTruthy());
@@ -182,7 +237,7 @@ describe("P14-005 conversation tab", () => {
   it("child workspace renders read-only transcript with NO composer (S10)", async () => {
     installFetch({
       tree: childTree,
-      transcriptResponses: [() => okValue(transcriptTypical)],
+      transcriptResponses: [() => okValue(conversationTypical)],
     });
     const rendered = renderConversation();
     await waitFor(() =>
@@ -194,10 +249,101 @@ describe("P14-005 conversation tab", () => {
     expect(rendered.container.querySelectorAll("input")).toHaveLength(0);
   });
 
+  it("loads older chat turns on upward scroll and prepends them without replacing current turns", async () => {
+    const latestPage: TranscriptRes = {
+      ...conversationTypical,
+      nextCursor: "conversation-cursor-older",
+    };
+    const olderPage: TranscriptRes = {
+      entries: [
+        {
+          kind: "HumanConversationTurn",
+          messageId: "msg_older_1",
+          body: "较早的用户消息",
+          occurredAt: "2026-09-23T09:10:00.000Z",
+        },
+        {
+          kind: "AssistantConversationTurn",
+          executionId: "exe_older_1",
+          body: "较早的助手回复",
+          occurredAt: "2026-09-23T09:11:00.000Z",
+        },
+      ],
+    };
+    const harness = installFetch({
+      tree: rootTree,
+      transcriptResponses: [
+        () => okValue(latestPage),
+        () => okValue(olderPage),
+      ],
+    });
+    renderConversation();
+    await waitFor(() =>
+      expect(screen.getByText("Arbor 已收到评审请求")).toBeTruthy(),
+    );
+    const scroller = screen.getByRole("log", { name: "对话消息" });
+    const anchorTurn = screen
+      .getByText("turn#12 请求评审")
+      .closest<HTMLElement>("[data-conversation-turn-key]");
+    expect(anchorTurn).not.toBeNull();
+    anchorTurn!.getBoundingClientRect = () => {
+      const olderPageVisible = screen.queryByText("较早的用户消息") !== null;
+      const top = olderPageVisible ? 200 : 140;
+      return {
+        x: 0,
+        y: top,
+        top,
+        bottom: top + 30,
+        left: 0,
+        right: 240,
+        width: 240,
+        height: 30,
+        toJSON: () => ({}),
+      };
+    };
+    scroller.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      top: 0,
+      bottom: 300,
+      left: 0,
+      right: 400,
+      width: 400,
+      height: 300,
+      toJSON: () => ({}),
+    });
+    Object.defineProperty(scroller, "scrollHeight", {
+      configurable: true,
+      value: 600,
+    });
+    Object.defineProperty(scroller, "clientHeight", {
+      configurable: true,
+      value: 300,
+    });
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      writable: true,
+      value: 20,
+    });
+    fireEvent.scroll(scroller);
+
+    await waitFor(() =>
+      expect(screen.getByText("较早的用户消息")).toBeTruthy(),
+    );
+    expect(screen.getByText("较早的助手回复")).toBeTruthy();
+    expect(screen.getByText("turn#12 请求评审")).toBeTruthy();
+    expect(screen.getByText("Arbor 已收到评审请求")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "加载更多记录" })).toBeNull();
+    expect(scroller.scrollTop).toBe(80);
+    expect(harness.transcriptRequests[1]?.cursor).toBe(
+      "conversation-cursor-older",
+    );
+  });
+
   it("Zod rejects an empty body without any /commands fetch", async () => {
     const harness = installFetch({
       tree: rootTree,
-      transcriptResponses: [() => okValue(transcriptTypical)],
+      transcriptResponses: [() => okValue(conversationTypical)],
     });
     renderConversation();
     await waitFor(() => expect(screen.getByLabelText("消息")).toBeTruthy());
@@ -211,7 +357,7 @@ describe("P14-005 conversation tab", () => {
   it("Enter submits while Shift+Enter remains a text-only newline gesture", async () => {
     const harness = installFetch({
       tree: rootTree,
-      transcriptResponses: [() => okValue(transcriptTypical)],
+      transcriptResponses: [() => okValue(conversationTypical)],
     });
     renderConversation();
     const composer = (await screen.findByLabelText(
@@ -227,7 +373,7 @@ describe("P14-005 conversation tab", () => {
   it("submits the frozen envelope shape to /commands", async () => {
     const harness = installFetch({
       tree: rootTree,
-      transcriptResponses: [() => okValue(transcriptTypical)],
+      transcriptResponses: [() => okValue(conversationTypical)],
     });
     renderConversation();
     await waitFor(() => expect(screen.getByLabelText("消息")).toBeTruthy());
@@ -250,10 +396,39 @@ describe("P14-005 conversation tab", () => {
     expect(commandFetch.length).toBe(1);
   });
 
+  it("renders SSE deltas as an ephemeral preview, outside the transcript", async () => {
+    const partialAnswer = "这是实时到达的片段";
+    const payload = JSON.stringify({
+      type: "delta",
+      executionId: "exe_1",
+      providerTurnId: "ptn_1",
+      attemptNo: 0,
+      text: partialAnswer,
+    });
+    const harness = installFetch({
+      tree: rootTree,
+      transcriptResponses: [() => okValue(conversationTypical)],
+      progressChunks: [
+        `id: 1\ndata: ${payload.slice(0, 24)}`,
+        `${payload.slice(24)}\n\n`,
+      ],
+    });
+    renderConversation();
+    await waitFor(() => expect(screen.getByLabelText("消息")).toBeTruthy());
+    typeAndSend("请回答并实时显示");
+    await waitFor(() =>
+      expect(
+        screen.getByText(partialAnswer).closest(".arbor-conversation-stream"),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByText("turn#12 请求评审")).toBeTruthy();
+    expect(harness.transcriptCallCount()).toBeGreaterThan(1);
+  });
+
   it("reuses the same messageId across transport-failure retries", async () => {
     const harness = installFetch({
       tree: rootTree,
-      transcriptResponses: [() => okValue(transcriptTypical)],
+      transcriptResponses: [() => okValue(conversationTypical)],
       commandResponses: [
         () => Promise.reject(new Error("network down")),
         () => Promise.resolve(committed()),
@@ -288,7 +463,7 @@ describe("P14-005 conversation tab", () => {
     const harness = installFetch({
       tree: rootTree,
       transcriptResponses: [
-        () => okValue(transcriptTypical),
+        () => okValue(conversationTypical),
         () => secondTranscript,
       ],
     });

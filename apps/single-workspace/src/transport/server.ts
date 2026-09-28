@@ -1,10 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import type { Duplex } from "node:stream";
+import type { ConversationStreamFrame } from "@arbor/api-contracts";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { type WebSocket, WebSocketServer } from "ws";
+import type { AuthenticatorService } from "./auth.js";
 import type { TransportResponse } from "./contracts.js";
+import {
+  type ConversationProgressHub,
+  defaultConversationProgressHub,
+} from "./conversation-progress.js";
 import type { HttpShell, HttpTransportRequest } from "./http.js";
 import {
   type InvalidationFanout,
@@ -25,6 +31,8 @@ import type { WebSocketFrame, WebSocketShell } from "./websocket.js";
 export interface WebTransportConfig {
   readonly http: HttpShell;
   readonly webSocket: WebSocketShell;
+  readonly authenticator?: AuthenticatorService | undefined;
+  readonly conversationProgress?: ConversationProgressHub | undefined;
   /** Journal-tail watermark source (SqlClient-backed). */
   readonly sql: SqlClient;
   /** Vite build output; absent disables static hosting. */
@@ -49,7 +57,10 @@ const isStaticCandidate = (method: string, path: string): boolean =>
   (method === "GET" || method === "HEAD") && !isApiPath(path);
 
 const isApiPath = (path: string): boolean =>
-  path === "/commands" || path.startsWith("/views/") || path === "/views";
+  path === "/commands" ||
+  path.startsWith("/views/") ||
+  path === "/views" ||
+  path.startsWith("/conversation-progress/");
 
 const sendBytes = (
   response: ServerResponse,
@@ -87,6 +98,117 @@ const readBody = (request: IncomingMessage): Promise<unknown> =>
     request.on("error", () => resolveBody(null));
   });
 
+const sendJson = (
+  response: ServerResponse,
+  status: number,
+  body: unknown,
+): void => {
+  const bytes = Buffer.from(JSON.stringify(body));
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    "content-length": bytes.byteLength,
+  });
+  response.end(bytes);
+};
+
+const bearerToken = (authorization: string | undefined): string | null => {
+  const match = /^Bearer\s+(.+)$/.exec(authorization ?? "");
+  return match?.[1] ?? null;
+};
+
+const streamConversationProgress = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  messageId: string,
+  config: WebTransportConfig,
+): Promise<void> => {
+  const authenticator = config.authenticator;
+  const hub = config.conversationProgress ?? defaultConversationProgressHub;
+  const token = bearerToken(request.headers.authorization);
+  if (authenticator === undefined || token === null) {
+    sendJson(response, 401, {
+      ok: false,
+      problem: { code: "auth/unauthenticated" },
+    });
+    return;
+  }
+  const principal = await Effect.runPromise(
+    authenticator.authenticate({ token }),
+  ).catch(() => null);
+  if (principal === null) {
+    sendJson(response, 401, {
+      ok: false,
+      problem: { code: "auth/unauthenticated" },
+    });
+    return;
+  }
+  const rows = await Effect.runPromise(
+    config.sql.unsafe<{ human_principal: string }>(
+      "SELECT human_principal FROM human_messages WHERE message_id = ?",
+      [messageId],
+    ),
+  );
+  const row = rows[0];
+  if (row === undefined) {
+    sendJson(response, 404, {
+      ok: false,
+      problem: { code: "conversation-progress/not-found" },
+    });
+    return;
+  }
+  if (row.human_principal !== String(principal)) {
+    sendJson(response, 403, {
+      ok: false,
+      problem: { code: "conversation-progress/forbidden" },
+    });
+    return;
+  }
+
+  const after = Number.parseInt(
+    request.headers["last-event-id"]?.toString() ?? "0",
+    10,
+  );
+  response.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  response.flushHeaders();
+  const writeFrame = (frame: ConversationStreamFrame): void => {
+    if (response.writableEnded) {
+      return;
+    }
+    response.write(
+      `id: ${frame.sequence}\ndata: ${JSON.stringify(frame.event)}\n\n`,
+    );
+    if (frame.event.type === "settled" || frame.event.type === "interrupted") {
+      response.end();
+    }
+  };
+  const subscription = hub.subscribe(
+    messageId,
+    Number.isNaN(after) ? 0 : after,
+    writeFrame,
+  );
+  if (subscription.terminal) {
+    response.end();
+    return;
+  }
+  const heartbeat = setInterval(() => {
+    if (!response.writableEnded) {
+      response.write(": keep-alive\n\n");
+    }
+  }, 15_000);
+  const cleanup = (): void => {
+    clearInterval(heartbeat);
+    subscription.unsubscribe();
+  };
+  request.on("aborted", cleanup);
+  response.on("close", cleanup);
+};
+
 export const startWebTransport = async (
   config: WebTransportConfig,
 ): Promise<WebTransportHandle> => {
@@ -98,6 +220,17 @@ export const startWebTransport = async (
       const url = request.url ?? "/";
       const path = url.split("?")[0] ?? url;
       const method = (request.method ?? "GET").toUpperCase();
+
+      const progressMatch = /^\/conversation-progress\/([^/]+)$/.exec(path);
+      if (progressMatch !== null && method === "GET") {
+        await streamConversationProgress(
+          request,
+          response,
+          decodeURIComponent(progressMatch[1] ?? ""),
+          config,
+        );
+        return;
+      }
 
       if (config.staticRoot !== undefined && isStaticCandidate(method, path)) {
         const resolution = resolveStatic(config.staticRoot, url);

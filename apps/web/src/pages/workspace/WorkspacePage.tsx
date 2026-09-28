@@ -54,7 +54,7 @@ const TAB_ITEMS: ReadonlyArray<{
   { key: "overview", label: "概要" },
   { key: "dependencies", label: "依赖" },
   { key: "verification", label: "验证" },
-  { key: "transcript", label: "对话记录" },
+  { key: "transcript", label: "运行记录" },
   { key: "inbox", label: "收件箱" },
   { key: "conversation", label: "对话" },
 ];

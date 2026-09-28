@@ -15,7 +15,9 @@ import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   type ContextFragment,
+  canonicalInstructionTrust,
   contextFragment,
+  hashInstructionContent,
   type InstructionFragment,
   ModelContext,
   ModelContextLive,
@@ -54,7 +56,7 @@ const fragment = (
 ): InstructionFragment => ({
   identity,
   revision: 1,
-  hash: "h",
+  hash: hashInstructionContent(contentRef),
   semanticKind: "K",
   source: "Canonical",
   scope: identity,
@@ -67,6 +69,7 @@ const fragment = (
   budgetClass: "b",
   modelCompatibility: [],
   contentRef,
+  provenance: canonicalInstructionTrust,
 });
 
 const makeContextFragment = (
@@ -102,6 +105,7 @@ const input = (overrides: Record<string, unknown> = {}) => ({
   cognitiveMode: "execute",
   program: WORK_EXECUTION_PROGRAM,
   fragments: [fragment("work-objective", "A3")],
+  instructionContents: new Map([["work-objective", "work-objective"]]),
   contextFragments: [] as ReadonlyArray<ContextFragment>,
   budget: {
     modelWindow: 1000,

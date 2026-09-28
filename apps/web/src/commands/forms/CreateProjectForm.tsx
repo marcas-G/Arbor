@@ -17,7 +17,7 @@ import { uuidv7 } from "../uuid7.js";
 import { FormFeedback } from "./FormFeedback.js";
 import "./forms.css";
 
-type CreateValues = { name: string; objective: string };
+type CreateValues = { name: string };
 
 export function CreateProjectForm({
   actor,
@@ -44,10 +44,9 @@ export function CreateProjectForm({
   });
   const { handleSubmit, setValue, watch, formState } = useForm<CreateValues>({
     resolver: zodResolver(createProjectSchema) as Resolver<CreateValues>,
-    defaultValues: { name: "", objective: "" },
+    defaultValues: { name: "" },
   });
   const name = watch("name");
-  const objective = watch("objective");
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
     void handleSubmit((values) => {
@@ -73,7 +72,7 @@ export function CreateProjectForm({
         rootWorkspace: {
           name: values.name,
           responsibilityDefinition: {
-            purpose: values.objective,
+            purpose: values.name,
             ownedResponsibilities: [],
             obligations: [],
             includes: [],
@@ -111,21 +110,6 @@ export function CreateProjectForm({
         />
         {formState.errors.name ? (
           <p className="arbor-command-error">{formState.errors.name.message}</p>
-        ) : null}
-        <Field
-          control="textarea"
-          label="根责任目标"
-          placeholder="根工作区的责任定义"
-          rows={3}
-          value={objective}
-          onChange={(next) => {
-            setValue("objective", next);
-          }}
-        />
-        {formState.errors.objective ? (
-          <p className="arbor-command-error">
-            {formState.errors.objective.message}
-          </p>
         ) : null}
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <Button

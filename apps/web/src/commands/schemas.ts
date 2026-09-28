@@ -22,7 +22,6 @@ const grantId = z.string().regex(/^pgr_[A-Za-z0-9_-]+$/, "pgr_ 前缀的授权 I
 
 export const createProjectSchema = z.object({
   name: z.string().trim().min(1, "项目名称必填"),
-  objective: z.string().trim().min(1, "根责任目标必填"),
 });
 
 export const recordDecisionSchema = z.object({

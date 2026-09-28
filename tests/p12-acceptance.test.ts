@@ -164,9 +164,11 @@ import {
 } from "../packages/execution-runtime/src/index.js";
 import {
   type ContextFragment,
+  canonicalInstructionTrust,
   canRaiseAuthority,
   contextFragment,
   DEFAULT_MODEL_CATALOG,
+  hashInstructionContent,
   type InstructionFragment,
   ModelContext,
   ModelContextLive,
@@ -1337,7 +1339,7 @@ const story8Input = () => ({
     {
       identity: "work-objective",
       revision: 1,
-      hash: "h",
+      hash: hashInstructionContent("Wave 1 tool catalog objective body"),
       semanticKind: "K",
       source: "Canonical",
       scope: "work-objective",
@@ -1350,8 +1352,12 @@ const story8Input = () => ({
       budgetClass: "b",
       modelCompatibility: [],
       contentRef: "work-objective",
+      provenance: canonicalInstructionTrust,
     } satisfies InstructionFragment,
   ],
+  instructionContents: new Map([
+    ["work-objective", "Wave 1 tool catalog objective body"],
+  ]),
   contextFragments: [] as ReadonlyArray<ContextFragment>,
   budget: {
     modelWindow: 4000,

@@ -21,6 +21,8 @@ import {
 } from "../packages/domain/src/index.js";
 import {
   type ContextFragment,
+  canonicalInstructionTrust,
+  hashInstructionContent,
   type InstructionFragment,
   ModelContext,
   ModelContextLive,
@@ -108,7 +110,7 @@ const fragment = (
 ): InstructionFragment => ({
   identity,
   revision: 1,
-  hash: "h",
+  hash: hashInstructionContent(`Instruction body for ${identity}.`),
   semanticKind: "K",
   source: "Canonical",
   scope: identity,
@@ -121,9 +123,13 @@ const fragment = (
   budgetClass: "b",
   modelCompatibility: [],
   contentRef,
+  provenance: canonicalInstructionTrust,
 });
 
 const input = () => ({
+  instructionContents: new Map([
+    ["work-objective", "Instruction body for work-objective."],
+  ]),
   executionId: parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
   sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
   contextEpoch: parse(ContextEpochNumber)(0),
@@ -249,11 +255,15 @@ describe("P12-007 compiler emits real tool metadata (CI-6)", () => {
       prepared.turn.request.toolDefinitions.map((tool) => [tool.name, tool]),
     );
     expect(Object.keys(byName).sort()).toEqual([
+      "arbor_directive",
       "list",
       "patch",
       "read",
       "shell",
     ]);
+    expect(
+      JSON.parse(byName.arbor_directive?.schemaJson ?? "{}"),
+    ).toHaveProperty("oneOf");
     for (const builtin of BUILTIN_TOOLS) {
       const compiled = byName[builtin.name];
       expect(compiled).toBeDefined();

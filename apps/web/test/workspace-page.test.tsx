@@ -146,7 +146,7 @@ describe("W-05 Workspace page", () => {
       ["概要", "/p/prj_1/workspace/ws_1"],
       ["依赖", "/p/prj_1/workspace/ws_1/dependencies"],
       ["验证", "/p/prj_1/workspace/ws_1/verification"],
-      ["对话记录", "/p/prj_1/workspace/ws_1/transcript"],
+      ["运行记录", "/p/prj_1/workspace/ws_1/transcript"],
       ["收件箱", "/p/prj_1/workspace/ws_1/inbox"],
       ["对话", "/p/prj_1/workspace/ws_1/conversation"],
     ];
@@ -184,7 +184,7 @@ describe("W-05 Workspace page", () => {
     expect(screen.queryByRole("button", { name: /选择/ })).toBeNull();
   });
 
-  it("对话记录：无输入框；“更早”触发带 cursor 的第二次 fetch", async () => {
+  it("运行记录：无输入框；加载更多触发带 cursor 的第二次 fetch", async () => {
     const calls = installViews();
     const { container } = renderWorkspace("transcript");
     await waitFor(() =>
@@ -192,7 +192,7 @@ describe("W-05 Workspace page", () => {
     );
     expect(container.querySelectorAll("textarea")).toHaveLength(0);
     expect(container.querySelectorAll("input")).toHaveLength(0);
-    fireEvent.click(screen.getByRole("button", { name: "更早" }));
+    fireEvent.click(screen.getByRole("button", { name: "加载更多记录" }));
     await waitFor(() =>
       expect(screen.getByText("turn#9 早期记录")).toBeTruthy(),
     );
