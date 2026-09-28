@@ -1,4 +1,8 @@
-import { AgentDriverLive } from "@arbor/agent-runtime";
+import {
+  AgentDriverLive,
+  ControlToolRegistry,
+  ControlToolRegistryLive,
+} from "@arbor/agent-runtime";
 import {
   type AuthorityResolverPort,
   AuthorityResolverPortLive,
@@ -104,8 +108,14 @@ import {
 import { WorkerDispatchPortLive } from "@arbor/worker-local";
 import { Effect, Layer } from "effect";
 import {
+  SliceControlActionHandlers,
+  SliceControlActionHandlersLive,
+} from "./control-actions.js";
+import {
   SliceDirectiveHandlers,
   SliceDirectiveHandlersLive,
+  SliceExecutableInvocation,
+  SliceExecutableInvocationLive,
 } from "./directives.js";
 import {
   PersistenceHealthProbeSqliteLive,
@@ -303,11 +313,6 @@ export const buildSliceLayer = (
     ),
     projectToolRegistry,
   );
-  const modelContext = Layer.provide(
-    ModelContextLive,
-    Layer.mergeAll(capability, toolCatalog, skills),
-  );
-
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
@@ -366,17 +371,41 @@ export const buildSliceLayer = (
     SliceDirectiveHandlersLive,
     Layer.mergeAll(toolRuntime, skills, repos, infra, registry, gateway),
   );
+  const controlActionHandlers = Layer.provide(
+    SliceControlActionHandlersLive,
+    Layer.mergeAll(repos, infra, gateway),
+  );
+  const controlRegistry = Layer.provide(
+    Layer.unwrap(
+      Effect.gen(function* () {
+        const handlers = yield* SliceControlActionHandlers;
+        return ControlToolRegistryLive(handlers);
+      }),
+    ),
+    controlActionHandlers,
+  );
+  const executableInvocation = Layer.provide(
+    SliceExecutableInvocationLive,
+    Layer.mergeAll(toolRuntime, infra),
+  );
+  const modelContext = Layer.provide(
+    ModelContextLive,
+    Layer.mergeAll(capability, toolCatalog, skills, controlRegistry),
+  );
   const driver = Layer.provide(
     Layer.unwrap(
       Effect.gen(function* () {
-        const handlers = yield* SliceDirectiveHandlers;
+        const _legacyHandlers = yield* SliceDirectiveHandlers;
+        const registryService = yield* ControlToolRegistry;
+        const executableHandler = yield* SliceExecutableInvocation;
         return Layer.provide(
-          AgentDriverLive(
-            handlers,
-            config.secretRef !== undefined
+          AgentDriverLive([], {
+            ...(config.secretRef !== undefined
               ? { secretRef: config.secretRef }
-              : {},
-          ),
+              : {}),
+            controlRegistry: registryService,
+            executableInvocationHandler: executableHandler,
+          }),
           Layer.mergeAll(
             modelContext,
             providerRuntime,
@@ -387,7 +416,7 @@ export const buildSliceLayer = (
         );
       }),
     ),
-    directiveHandlers,
+    Layer.mergeAll(directiveHandlers, controlRegistry, executableInvocation),
   );
   const runnableSource = Layer.provide(
     DependencyAwareRunnableWorkSourceLive,

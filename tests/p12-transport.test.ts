@@ -14,6 +14,7 @@ import {
   IdGeneratorLive,
   InboxProjectionStoreLive,
   layer,
+  MessageStoreLive,
   P12_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
@@ -87,6 +88,7 @@ import type {
   DomainEventJournal,
   ExecutionRepository,
   IdGenerator,
+  MessageStore,
   PermissionGrantRepository,
   ProjectRepository,
   SessionRepository,
@@ -268,6 +270,7 @@ type DbServices =
   | WorkspaceRepository
   | ExecutionRepository
   | WorkRepository
+  | MessageStore
   | PermissionGrantRepository
   | CommandStore
   | DomainEventJournal
@@ -289,6 +292,7 @@ const makeApp = (): Layer.Layer<DbServices> => {
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
+    Layer.provide(MessageStoreLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
     // P14: the registry also wires SubmitHumanMessage (human chat-turn).
     Layer.provide(HumanMessageStoreLive, infra),

@@ -28,15 +28,26 @@ export const FakeProviderLive = (
     Effect.sync(() => {
       let calls = 0;
       return ProviderPort.of({
-        runTurn: () => {
+        runTurn: ({ request, context }) => {
           const attempt = calls;
           calls += 1;
           const kind = script.failures?.[attempt];
           if (kind !== undefined) {
             return Stream.fail(failure(kind));
           }
+          const events = script.turns?.[attempt] ?? script.events ?? [];
           return Stream.fromIterable(
-            script.turns?.[attempt] ?? script.events ?? [],
+            events.some((event) => event._tag === "TurnStarted")
+              ? events
+              : [
+                  {
+                    _tag: "TurnStarted" as const,
+                    providerTurnId: context.providerTurnId,
+                    attemptNo: context.attemptNo,
+                    modelRef: request.modelRef,
+                  },
+                  ...events,
+                ],
           );
         },
       });
