@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   DirectiveHandler,
   DirectiveOutcome,
@@ -96,6 +97,19 @@ const toOutcome = (result: CanonicalToolObservation): DirectiveOutcome => {
   }
 };
 
+/** Deterministic 12-hex tail for a ToolInvocationId: model-returned call
+ * refs are arbitrary strings (e.g. OpenAI-style "call_0_..."), so the id is
+ * derived through a stable hash — same callRef converges on the same
+ * invocationId across replays, and the result is always a valid uuid-v7
+ * tail ([0-9a-f]{12}). */
+const toolInvocationIdFor = (callRef: string) =>
+  parse(ToolInvocationId)(
+    `tin_018f2b3c-4d5e-7abc-8def-${createHash("sha256")
+      .update(callRef)
+      .digest("hex")
+      .slice(0, 12)}`,
+  );
+
 export const makeExecutableInvocationHandler = (
   tools: import("@arbor/ports").ToolRuntimePortService,
   clock: import("@arbor/ports").ClockService,
@@ -109,9 +123,7 @@ export const makeExecutableInvocationHandler = (
         toolName: invocation.toolName,
         toolVersion,
         argumentsJson: invocation.argumentsJson,
-        invocationId: parse(ToolInvocationId)(
-          `tin_018f2b3c-4d5e-7abc-8def-${invocation.callRef.padEnd(12, "0").slice(0, 12)}`,
-        ),
+        invocationId: toolInvocationIdFor(invocation.callRef),
         approvalId: null,
       };
       const toolContext: ToolExecutionContext = {
@@ -413,9 +425,7 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
             toolName: directive.intent.toolName,
             toolVersion,
             argumentsJson: directive.intent.argumentsJson,
-            invocationId: parse(ToolInvocationId)(
-              `tin_018f2b3c-4d5e-7abc-8def-${directive.intent.callRef.padEnd(12, "0").slice(0, 12)}`,
-            ),
+            invocationId: toolInvocationIdFor(directive.intent.callRef),
             approvalId: null,
           };
           const toolContext: ToolExecutionContext = {

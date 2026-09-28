@@ -67,31 +67,68 @@ const inventory = existsSync(inventoryPath)
 const normalize = (path) => path.split(sep).join("/");
 const unique = (values) => [...new Set(values)];
 
+const providerConfigFile = () => {
+  const explicit = process.env.ARBOR_CAPABILITY_CONFIG?.trim();
+  const path = explicit
+    ? resolve(explicit)
+    : resolve(repoRoot, "capability.config.json");
+  if (!existsSync(path)) {
+    return explicit ? { path, error: "not found" } : null;
+  }
+  try {
+    return { path, value: JSON.parse(readFileSync(path, "utf8")) };
+  } catch (error) {
+    return { path, error: `invalid JSON: ${String(error)}` };
+  }
+};
+
+const providerFile = providerConfigFile();
+
+/** Resolve provider settings from env first, then capability.config.json.
+ * The resolved values are re-exported as env for the vitest child processes
+ * (and the B12 daemon spawn), so file-based config stays transparent. */
 const configuredProvider = () => {
   const missing = [];
-  for (const key of [
-    "ARBOR_CAPABILITY_PROVIDER_URL",
-    "ARBOR_CAPABILITY_MODEL",
-    "ARBOR_CAPABILITY_SERVER_BUILD_ID",
-    "ARBOR_CAPABILITY_AUTH",
-  ]) {
-    if (!process.env[key]?.trim()) {
-      missing.push(key);
-    }
+  const file = providerFile?.value ?? {};
+  const fromEnv = (key) => {
+    const raw = process.env[key]?.trim();
+    return raw ? raw : undefined;
+  };
+  const url = fromEnv("ARBOR_CAPABILITY_PROVIDER_URL") ?? file.providerUrl;
+  const model = fromEnv("ARBOR_CAPABILITY_MODEL") ?? file.model;
+  const serverBuildId =
+    fromEnv("ARBOR_CAPABILITY_SERVER_BUILD_ID") ?? file.serverBuildId;
+  const auth = fromEnv("ARBOR_CAPABILITY_AUTH") ?? file.auth ?? "none";
+  if (!url) missing.push("providerUrl (ARBOR_CAPABILITY_PROVIDER_URL)");
+  if (!model) missing.push("model (ARBOR_CAPABILITY_MODEL)");
+  if (!serverBuildId) {
+    missing.push("serverBuildId (ARBOR_CAPABILITY_SERVER_BUILD_ID)");
   }
-  if (
-    process.env.ARBOR_CAPABILITY_AUTH === "env" &&
-    !process.env.ARBOR_CAPABILITY_API_KEY
-  ) {
-    missing.push("ARBOR_CAPABILITY_API_KEY");
+  if (auth !== "none" && auth !== "env") {
+    missing.push("auth must be none or env");
   }
-  if (
-    process.env.ARBOR_CAPABILITY_AUTH !== undefined &&
-    !["none", "env"].includes(process.env.ARBOR_CAPABILITY_AUTH)
-  ) {
-    missing.push("ARBOR_CAPABILITY_AUTH must be none or env");
+  const apiKeyVar = file.apiKeyVar?.trim() || undefined;
+  const apiKey =
+    fromEnv("ARBOR_CAPABILITY_API_KEY") ??
+    (apiKeyVar ? process.env[apiKeyVar] : undefined) ??
+    file.apiKey;
+  if (auth === "env" && !apiKey) {
+    missing.push("apiKey (ARBOR_CAPABILITY_API_KEY / apiKeyVar / apiKey)");
   }
-  return { ready: missing.length === 0, missing };
+  return {
+    ready: missing.length === 0,
+    missing,
+    file: providerFile,
+    exportEnv: {
+      ...(url ? { ARBOR_CAPABILITY_PROVIDER_URL: url } : {}),
+      ...(model ? { ARBOR_CAPABILITY_MODEL: model } : {}),
+      ...(serverBuildId
+        ? { ARBOR_CAPABILITY_SERVER_BUILD_ID: serverBuildId }
+        : {}),
+      ARBOR_CAPABILITY_AUTH: auth,
+      ...(auth === "env" && apiKey ? { ARBOR_CAPABILITY_API_KEY: apiKey } : {}),
+    },
+  };
 };
 
 const rootFiles = unique(
@@ -164,7 +201,8 @@ if (webFiles.length > 0) {
 let providerState = configuredProvider();
 const realProviderRuns = new Map();
 const evidenceDirectory = resolve(
-  process.env.ARBOR_CAPABILITY_EVIDENCE_DIR ??
+  process.env.ARBOR_CAPABILITY_EVIDENCE_DIR?.trim() ||
+    providerConfigFile()?.value?.evidenceDir?.trim() ||
     "planning/testing/core-capability/evidence/real-provider",
 );
 const existingEvidence = new Set(
@@ -175,6 +213,12 @@ const existingEvidence = new Set(
 
 if (mode === "real-provider") {
   providerState = configuredProvider();
+  const fileNote = providerState.file
+    ? providerState.file.error !== undefined
+      ? `provider config file ${providerState.file.path} ignored (${providerState.file.error})`
+      : `provider config file in effect: ${providerState.file.path}`
+    : "provider config file: none (env only)";
+  runNotes.push(fileNote);
   if (!providerState.ready) {
     runNotes.push(
       `REAL provider cases were not launched; missing configuration: ${providerState.missing.join(", ")}`,
@@ -201,6 +245,7 @@ if (mode === "real-provider") {
         ],
         env: {
           ...process.env,
+          ...providerState.exportEnv,
           ARBOR_CAPABILITY_RUN_ID: runId,
           ARBOR_CAPABILITY_EVIDENCE_DIR: evidenceDirectory,
         },
@@ -326,7 +371,7 @@ const newEvidenceFiles = existsSync(evidenceDirectory)
         (name) =>
           name.endsWith(".json") &&
           !existingEvidence.has(name) &&
-          (name.startsWith("B01-L3-REAL-") || name.startsWith("B04-L3-REAL-")),
+          /-L3-REAL-/.test(name),
       )
       .map((name) =>
         normalize(relative(repoRoot, join(evidenceDirectory, name))),
@@ -371,35 +416,48 @@ const realCaseStatus = (caseDefinition) => {
         caseDefinition.caseId,
       ),
     );
+    // Vitest's JSON reporter collapses --repeats into a single assertion, so
+    // the stability oracle counts the per-repetition evidence files (each
+    // captured run writes its own PASS/FAIL record).
     const expectedRuns = 3;
-    const passRuns = assertions.filter(
-      (assertion) => assertion.status === "passed",
-    ).length;
-    const failRuns = assertions.filter(
-      (assertion) => assertion.status === "failed",
-    ).length;
-    const status =
-      passRuns === expectedRuns
-        ? "PASS"
-        : failRuns > 0 || (assertions.length > 0 && passRuns < expectedRuns)
-          ? "FAIL"
-          : "NOT_RUN";
     const evidenceFilesForCase = newEvidenceFiles.filter((path) =>
       path.includes(`/${caseDefinition.caseId}-`),
     );
+    const evidenceStatuses = evidenceFilesForCase.map((path) => {
+      try {
+        return JSON.parse(
+          readFileSync(resolve(repoRoot, path), "utf8"),
+        ).status;
+      } catch {
+        return "UNREADABLE";
+      }
+    });
+    const passRuns = evidenceStatuses.filter(
+      (status) => status === "PASS",
+    ).length;
+    const failRuns = evidenceStatuses.filter(
+      (status) => status === "FAIL",
+    ).length;
+    const reported = evidenceStatuses.length;
+    const status =
+      passRuns >= expectedRuns && failRuns === 0
+        ? "PASS"
+        : failRuns > 0 || passRuns > 0
+          ? "FAIL"
+          : "NOT_RUN";
     return {
       status,
       reason:
         status === "PASS"
           ? undefined
           : status === "FAIL"
-            ? `Real-provider stability oracle: ${passRuns}/3 PASS, ${failRuns}/3 FAIL.`
-            : `No complete three-run result for ${caseDefinition.caseId}.`,
+            ? `Real-provider stability oracle: ${passRuns}/${expectedRuns} PASS, ${failRuns}/${expectedRuns} FAIL (evidence-counted).`
+            : `No captured three-run evidence for ${caseDefinition.caseId}.`,
       repetitions: {
         expected: expectedRuns,
         passed: passRuns,
         failed: failRuns,
-        reported: assertions.length,
+        reported,
       },
       evidenceFiles: evidenceFilesForCase,
       assertionFailures: assertions
@@ -463,19 +521,35 @@ const capabilities = catalog.capabilities.map((capability) => {
   const cases =
     selectedCases.length > 0
       ? selectedCases
-      : ["L1", "L2", "L3"].map((evidenceLevel) => ({
-          caseId: `${capability.capabilityId}-${evidenceLevel}`,
-          capabilityId: capability.capabilityId,
-          evidenceLevel,
-          providerMode: evidenceLevel === "L3" ? "REAL" : "NONE",
-          requiresPersistence: evidenceLevel !== "L1",
-          requiresRestart: capability.capabilityId === "B12",
-          expectedStatus: "NOT_RUN",
-          status: "NOT_RUN",
-          sourceSuites: [],
-          reason: "Not selected in this qualification batch.",
-          failures: [],
-        }));
+      : ["L1", "L2", "L3"].map((evidenceLevel) => {
+          if (evidenceLevel === "L3") {
+            const blocked =
+              capability.l3.expectedStatus.startsWith("BLOCKED_BY_");
+            return {
+              ...capability.l3,
+              capabilityId: capability.capabilityId,
+              status: blocked ? capability.l3.expectedStatus : "NOT_RUN",
+              sourceSuites: [],
+              failures: [],
+              reason: blocked
+                ? capability.l3.blockingReason
+                : "Not selected in this qualification batch.",
+            };
+          }
+          return {
+            caseId: `${capability.capabilityId}-${evidenceLevel}`,
+            capabilityId: capability.capabilityId,
+            evidenceLevel,
+            providerMode: evidenceLevel === "L3" ? "REAL" : "NONE",
+            requiresPersistence: evidenceLevel !== "L1",
+            requiresRestart: capability.capabilityId === "B12",
+            expectedStatus: "NOT_RUN",
+            status: "NOT_RUN",
+            sourceSuites: [],
+            reason: "Not selected in this qualification batch.",
+            failures: [],
+          };
+        });
   const statusForLevel = (level) => {
     const statuses = cases
       .filter((item) => item.evidenceLevel === level)

@@ -360,29 +360,36 @@ describe("B12 L3 — daemon process restart continues cognition without replay",
           };
         },
         verify: (result) => {
+          // Requests are attributed by their driving input: a turn-1 request
+          // carries the turn-1 text as its CURRENT input (turn-2 requests
+          // legitimately replay the turn-1 exchange as conversation history).
+          const serializes = (body: Record<string, unknown>) =>
+            JSON.stringify(body);
+          const turn2Question = "我刚才让你记住的代码";
+          const turn1Requests = result.proxyCalls.filter(
+            (body) =>
+              serializes(body).includes("记住代码") &&
+              !serializes(body).includes(turn2Question),
+          );
           // Exactly one completed effect: the turn-1 provider request must
           // never be replayed after the restart.
-          const turn1Requests = result.proxyCalls.filter((body) =>
-            JSON.stringify(body).includes("记住代码"),
-          );
           if (turn1Requests.length !== 1) {
             throw new Error(
-              `the completed turn-1 effect was replayed or lost: ${turn1Requests.length} provider requests carry the turn-1 text`,
+              `the completed turn-1 effect was replayed or lost: ${turn1Requests.length} provider requests are driven by the turn-1 input`,
             );
           }
           // The recovered request continues from the correct frontier: it is
           // driven by the pending turn-2 message and carries the prior
           // conversation as context.
           const turn2Requests = result.proxyCalls.filter((body) =>
-            JSON.stringify(body).includes("我刚才让你记住的代码"),
+            serializes(body).includes(turn2Question),
           );
           if (turn2Requests.length === 0) {
             throw new Error(
               "the restarted daemon never issued the recovered turn-2 provider request",
             );
           }
-          const recoveredRequest = JSON.stringify(turn2Requests[0]);
-          if (!recoveredRequest.includes("记住代码")) {
+          if (!serializes(turn2Requests[0] ?? {}).includes("记住代码")) {
             throw new Error(
               "the recovered request lost the prior conversation context (turn-1 history absent)",
             );

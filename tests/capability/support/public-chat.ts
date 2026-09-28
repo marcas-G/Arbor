@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Effect } from "effect";
+import { Context, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type {
   OpenAISdkChunk,
@@ -188,7 +188,14 @@ export const makePublicProject = (key: string): PublicProject => {
       responsibilityRevision: 0,
       resourceBoundary: {
         basisResponsibilityRevision: 0,
-        addresses: [],
+        // Real boundary fact: the workspace owns the repository working tree.
+        // Without an address, ResourceAdmission denies every tool region
+        // ("region outside ResourceBoundary") and tool-use capabilities
+        // cannot be exercised.
+        addresses: [
+          { _tag: "FileTree", path: process.cwd() },
+          { _tag: "GitWorktree", path: process.cwd() },
+        ],
       },
       resourceBoundaryRevision: 0,
       agentBinding: {
@@ -267,6 +274,24 @@ export const withPublicConversationApp = async (
     Effect.scoped(
       Effect.provide(
         Effect.gen(function* () {
+          // Capture the fiber context once: every later Effect (tick, run)
+          // reuses the same services — one SqlClient connection for the whole
+          // handle lifetime. Rebuilding the layer per call would open a
+          // second SQLite connection and deadlock both writers on the same
+          // database file.
+          const context =
+            yield* Effect.context<never>() as Effect.Effect<
+              Context.Context<never>,
+              never,
+              never
+            >;
+          const provideApp = <A, E>(
+            effect: Effect.Effect<A, E, any>,
+          ): Effect.Effect<A, E, never> =>
+            Effect.provideContext(
+              effect as Effect.Effect<A, E, never>,
+              context,
+            );
           yield* runMigrations(P14_MIGRATIONS);
           const boundary = yield* TransportBoundary;
           const sql = yield* SqlClient;
@@ -305,16 +330,7 @@ export const withPublicConversationApp = async (
                 }),
               ),
             tick: () =>
-              Effect.runPromise(
-                Effect.provide(
-                  daemon.daemon.conversationTick as Effect.Effect<
-                    void,
-                    unknown,
-                    never
-                  >,
-                  app,
-                ),
-              ),
+              Effect.runPromise(provideApp(daemon.daemon.conversationTick)),
             readTranscript: async (params) => {
               const response = await fetch(`${base}/views/transcript`, {
                 method: "POST",
@@ -336,12 +352,7 @@ export const withPublicConversationApp = async (
               return payload.body.value;
             },
             run: <A2>(effect: Effect.Effect<A2, unknown, any>) =>
-              Effect.runPromise(
-                Effect.provide(
-                  effect as unknown as Effect.Effect<A2, unknown, never>,
-                  app,
-                ),
-              ),
+              Effect.runPromise(provideApp(effect)),
             close: () =>
               Effect.runPromise(Effect.promise(() => server.close())),
           };

@@ -148,9 +148,9 @@ describe("real-provider capability sentinels", () => {
             unrelated.transcripts[0] ?? { entries: [] },
           )[0];
           const currentTurnText = JSON.stringify(
-            turn2?.entries.find(
-              (entry) => entry.kind === "HumanConversationTurn",
-            ),
+            [...(turn2?.entries ?? [])]
+              .reverse()
+              .find((entry) => entry.kind === "HumanConversationTurn"),
           );
           const unrelatedRootRequests = calls
             .slice(callsBeforeUnrelatedRoot)

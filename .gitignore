@@ -5,3 +5,7 @@ coverage/
 .pnpm-store/
 *.log
 .worktrees/
+
+# capability real-provider config (may contain a literal apiKey)
+capability.config.json
+.vitest/

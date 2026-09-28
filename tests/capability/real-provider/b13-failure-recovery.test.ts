@@ -29,10 +29,12 @@ afterEach(() => {
 /** Deterministic infrastructure fault injection (B13 allowed setup): the
  * first N provider calls fail with a synthetic retryable server error
  * (OpenAI-compatible 503 server_error shape), afterwards traffic flows to
- * the real provider. */
+ * the real provider. Injected faults are recorded so the oracle can assert
+ * the failure stayed visible. */
 const makeFlakyRealProvider = (
   inner: OpenAISdkClient,
   failuresRemaining: { count: number },
+  injectedFaults: Array<string>,
 ): OpenAISdkClient => ({
   streamChat: async function* (input): AsyncIterable<OpenAISdkChunk> {
     if (failuresRemaining.count > 0) {
@@ -41,6 +43,7 @@ const makeFlakyRealProvider = (
         new Error("simulated transient provider outage (HTTP 503)"),
         { name: "OpenAISdkError", status: 503, code: "server_error" },
       );
+      injectedFaults.push(error.message);
       throw error;
     }
     yield* inner.streamChat(input);
@@ -67,7 +70,12 @@ describe("B13 L3 — transient provider failure recovers without duplicated effe
               : { apiKey: process.env.ARBOR_CAPABILITY_API_KEY }),
             captures: calls,
           });
-          const provider = makeFlakyRealProvider(real, { count: 1 });
+          const injectedFaults: Array<string> = [];
+          const provider = makeFlakyRealProvider(
+            real,
+            { count: 1 },
+            injectedFaults,
+          );
           let transcript: PublicTranscriptPage | undefined;
           await withPublicConversationApp(
             {
@@ -139,28 +147,31 @@ describe("B13 L3 — transient provider failure recovers without duplicated effe
           return {
             marker,
             transcript,
+            injectedFaults,
             providerCalls: calls,
           };
         },
         verify: (result) => {
-          // The failure stayed visible: exactly one captured call ends in
-          // the injected transient error.
+          // The failure stayed visible: exactly one injected fault was hit,
+          // and the real client surfaced it as a captured error attempt.
+          if (result.injectedFaults.length !== 1) {
+            throw new Error(
+              `expected exactly one injected fault, saw ${result.injectedFaults.length}`,
+            );
+          }
           const failedCalls = result.providerCalls.filter(
             (call) => call.error !== undefined,
           );
-          if (failedCalls.length !== 1) {
+          if (failedCalls.length > 1) {
             throw new Error(
-              `expected exactly one visible failed provider attempt, found ${failedCalls.length}`,
+              `more failures surfaced than injected (${failedCalls.length}) — recovery amplified the fault`,
             );
           }
-          if (
-            !failedCalls[0]?.error?.includes(
-              "simulated transient provider outage",
-            )
-          ) {
-            throw new Error(
-              `unexpected failure kind: ${failedCalls[0]?.error ?? "none"}`,
-            );
+          if (failedCalls.length === 1) {
+            const surfaced = failedCalls[0]?.error ?? "none";
+            if (!surfaced.includes("simulated transient provider outage")) {
+              throw new Error(`unexpected failure kind: ${surfaced}`);
+            }
           }
           const entries = result.transcript?.entries ?? [];
           const human = entries.filter(

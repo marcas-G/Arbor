@@ -1,0 +1,9 @@
+{
+  "providerUrl": "http://127.0.0.1:8011/v1",
+  "model": "Qwen3.8-Flash",
+  "serverBuildId": "llama.cpp 0.4.0-dev build 1 f3f1a8f",
+  "auth": "none",
+  "apiKeyVar": "ARBOR_CAPABILITY_API_KEY",
+  "modelRevision": "",
+  "evidenceDir": ""
+}

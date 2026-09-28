@@ -1,0 +1,165 @@
+{
+  "schemaVersion": "arbor-real-provider-evidence-v1",
+  "recordedAt": "2026-09-28T08:27:38.798Z",
+  "caseId": "B12-L3-REAL",
+  "status": "FAIL",
+  "error": "the completed turn-1 effect was replayed or lost: 2 provider requests carry the turn-1 text",
+  "provider": {
+    "provider": "OpenAI-compatible endpoint",
+    "endpoint": "https://api.deepseek.com/v1",
+    "model": "deepseek-flash",
+    "serverBuildId": "deepseek-api",
+    "modelRevision": "not exposed by provider; local model file revision/hash not requested",
+    "authMode": "env",
+    "serverProps": {}
+  },
+  "generation": [],
+  "requestsAndResponses": [],
+  "externallyObservedResult": {
+    "memoryCode": "B12-CODE-24e703fc",
+    "finalEntries": [
+      {
+        "kind": "HumanConversationTurn",
+        "body": "记住代码 B12-CODE-24e703fc。只需简短确认。"
+      },
+      {
+        "kind": "AssistantConversationTurn",
+        "body": "已记住：B12-CODE-24e703fc"
+      },
+      {
+        "kind": "HumanConversationTurn",
+        "body": "我刚才让你记住的代码是什么？"
+      },
+      {
+        "kind": "AssistantConversationTurn",
+        "body": "B12-CODE-24e703fc"
+      },
+      {
+        "kind": "ModelOutput"
+      },
+      {
+        "kind": "ModelOutput"
+      }
+    ],
+    "proxyCalls": [
+      {
+        "model": "deepseek-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "runtime safety"
+          },
+          {
+            "role": "system",
+            "content": "work:exe_47aa732c-94d7-7881-89a0-def183888f16"
+          },
+          {
+            "role": "user",
+            "content": "记住代码 B12-CODE-24e703fc。只需简短确认。"
+          }
+        ],
+        "max_tokens": 512,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "arbor_directive",
+              "description": "Emit structured Arbor directives.",
+              "parameters": {
+                "type": "object",
+                "required": [
+                  "_tag"
+                ],
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Communicate",
+                      "RequestGovernance",
+                      "ProposeChildWorkspace",
+                      "SpawnSpecialist",
+                      "CompletionClaim",
+                      "Yield",
+                      "Wait",
+                      "LoadSkill",
+                      "DeclareDependency",
+                      "ToolInvocation"
+                    ]
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
+        ]
+      },
+      {
+        "model": "deepseek-flash",
+        "messages": [
+          {
+            "role": "system",
+            "content": "runtime safety"
+          },
+          {
+            "role": "system",
+            "content": "work:exe_8a4a3450-6879-7e7d-85e7-d98c9929ec4e"
+          },
+          {
+            "role": "user",
+            "content": "记住代码 B12-CODE-24e703fc。只需简短确认。"
+          },
+          {
+            "role": "assistant",
+            "content": "已记住：B12-CODE-24e703fc"
+          },
+          {
+            "role": "user",
+            "content": "我刚才让你记住的代码是什么？"
+          }
+        ],
+        "max_tokens": 512,
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        },
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "arbor_directive",
+              "description": "Emit structured Arbor directives.",
+              "parameters": {
+                "type": "object",
+                "required": [
+                  "_tag"
+                ],
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Communicate",
+                      "RequestGovernance",
+                      "ProposeChildWorkspace",
+                      "SpawnSpecialist",
+                      "CompletionClaim",
+                      "Yield",
+                      "Wait",
+                      "LoadSkill",
+                      "DeclareDependency",
+                      "ToolInvocation"
+                    ]
+                  }
+                },
+                "additionalProperties": true
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
