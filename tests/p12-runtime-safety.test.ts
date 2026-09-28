@@ -505,15 +505,15 @@ const envelope = <P>(
   payload,
 });
 
-const claimTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>> = [
+const waitTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>> = [
   [
     {
       _tag: "ToolCallProposed",
       callRef: "c1",
-      toolName: "arbor_directive",
+      toolName: "arbor_wait",
       argumentsJson: JSON.stringify({
-        _tag: "CompletionClaim",
-        claim: { claimRef: "claim-1", workRevision: 0 },
+        reason: "wait for a wake",
+        waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
       }),
     },
     { _tag: "TurnCompleted", finishReason: "ToolCall" },
@@ -642,11 +642,11 @@ describe("P12-008 end-to-end violation -> Interrupted(RuntimeSafetyStop), Work O
     readonly safetyPolicy: RuntimeSafetyPolicy;
     readonly turns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>;
   }> = [
-    { dim: "D1", safetyPolicy: policy({ maxRetries: 0 }), turns: claimTurns },
+    { dim: "D1", safetyPolicy: policy({ maxRetries: 0 }), turns: waitTurns },
     {
       dim: "D2",
       safetyPolicy: policy({ maxRepeatedFingerprints: 0 }),
-      turns: claimTurns,
+      turns: waitTurns,
     },
     {
       dim: "D3",
@@ -656,14 +656,14 @@ describe("P12-008 end-to-end violation -> Interrupted(RuntimeSafetyStop), Work O
     {
       dim: "D4",
       safetyPolicy: policy({ maxNoProgressTurns: 0 }),
-      turns: claimTurns,
+      turns: waitTurns,
     },
     {
       dim: "D5",
       safetyPolicy: policy({ concurrencyCeiling: 0 }),
-      turns: claimTurns,
+      turns: waitTurns,
     },
-    { dim: "D6", safetyPolicy: policy({ rateLimit: 0 }), turns: claimTurns },
+    { dim: "D6", safetyPolicy: policy({ rateLimit: 0 }), turns: waitTurns },
   ];
 
   for (const testCase of cases) {
@@ -711,14 +711,14 @@ describe("P12-008 end-to-end violation -> Interrupted(RuntimeSafetyStop), Work O
 
 // --- D1 wired to the real ProviderAttempt lifecycle (B-4) ---------------------
 
-const communicateTurn: ReadonlyArray<CanonicalProviderEvent> = [
+const secondWaitTurn: ReadonlyArray<CanonicalProviderEvent> = [
   {
     _tag: "ToolCallProposed",
     callRef: "c1",
-    toolName: "arbor_directive",
+    toolName: "arbor_wait",
     argumentsJson: JSON.stringify({
-      _tag: "Communicate",
-      message: { text: "working" },
+      reason: "wait for a wake",
+      waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
     }),
   },
   { _tag: "TurnCompleted", finishReason: "ToolCall" },
@@ -732,7 +732,7 @@ describe("P12-008 D1 real ProviderAttempt lifecycle (B-4)", () => {
     // ordinal (1) reaches the gate through the observation channel.
     const result = await runScenario(
       policy({ maxRetries: 1 }),
-      [claimTurns[0]!, claimTurns[0]!],
+      [waitTurns[0]!, waitTurns[0]!],
       ["ProviderUnavailable"],
     );
     expect(result.settlementTag).toBe("Interrupted");
@@ -742,10 +742,10 @@ describe("P12-008 D1 real ProviderAttempt lifecycle (B-4)", () => {
     expect(result.settledEventPayload).toContain("RuntimeSafetyStop");
   });
 
-  it("the same real retry continues to Completion when maxRetries admits it (threshold-driven)", async () => {
+  it("the same real retry continues to Wait when maxRetries admits it (threshold-driven)", async () => {
     const result = await runScenario(
       policy({ maxRetries: 3 }),
-      [claimTurns[0]!, claimTurns[0]!],
+      [waitTurns[0]!, waitTurns[0]!],
       ["ProviderUnavailable"],
     );
     expect(result.settlementTag).toBe("Completed");
@@ -759,7 +759,7 @@ describe("P12-008 D1 real ProviderAttempt lifecycle (B-4)", () => {
     // completion.
     const result = await runScenario(
       policy({ maxRetries: 3 }),
-      [communicateTurn, communicateTurn, claimTurns[0]!],
+      [secondWaitTurn, secondWaitTurn, waitTurns[0]!],
       ["ProviderUnavailable"],
     );
     expect(result.settlementTag).toBe("Completed");

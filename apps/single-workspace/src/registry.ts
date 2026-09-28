@@ -7,6 +7,7 @@ import {
   makeRecordDecisionHandler,
   makeRevokePermissionHandler,
   makeSelectCurrentWorkHandler,
+  makeSendMessageHandler,
   makeSteerWorkHandler,
   makeSubmitHumanMessageHandler,
 } from "@arbor/application";
@@ -22,6 +23,8 @@ import {
   type HumanMessageStoreService,
   InboxProjectionStore,
   type InboxProjectionStoreService,
+  MessageStore,
+  type MessageStoreService,
   PermissionGrantRepository,
   type PermissionGrantRepositoryService,
   ProjectRepository,
@@ -54,6 +57,7 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
   | WorkWaitStore
   | FormationProposalStore
   | InboxProjectionStore
+  | MessageStore
   | VerificationRepository
   | AcceptanceRepository
   | PermissionGrantRepository
@@ -69,6 +73,7 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
     const workWaits = yield* WorkWaitStore;
     const proposals = yield* FormationProposalStore;
     const inbox = yield* InboxProjectionStore;
+    const messages = yield* MessageStore;
     const verifications = yield* VerificationRepository;
     const acceptances = yield* AcceptanceRepository;
     const grants = yield* PermissionGrantRepository;
@@ -87,6 +92,14 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
         executions,
         workWaits,
       }),
+      makeSendMessageHandler({
+        workspaces,
+        messages: messages as Pick<
+          MessageStoreService,
+          "append" | "closeCorrelation" | "isCorrelationClosed"
+        >,
+        inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+      }) as unknown as CommandHandler<unknown, unknown>,
       makeRecordDecisionHandler({
         proposals: proposals as Pick<
           FormationProposalStoreService,

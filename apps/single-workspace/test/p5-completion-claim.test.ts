@@ -48,7 +48,7 @@ const context: CommandSubmissionContext = {
   causationRef: "c",
 };
 
-const claimTurn = [
+const legacyAgentDirectiveTurn = [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
@@ -168,12 +168,12 @@ const admit = (commandId: CommandId) =>
     );
   });
 
-describe("P5 CompletionClaim", () => {
-  it("settles the Execution but leaves the Work Open (P8 owns the chain)", async () => {
+describe("STILL_VALID_INVARIANT — superseded CompletionClaim representation", () => {
+  it("keeps Work Open and fails closed when the old universal envelope is submitted", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-cc-"));
     const app = buildSliceLayer({
       databaseFile: join(dir, "slice.db"),
-      providerTurns: [claimTurn],
+      providerTurns: [legacyAgentDirectiveTurn],
     });
     const result = await Effect.runPromise(
       Effect.provide(
@@ -219,11 +219,14 @@ describe("P5 CompletionClaim", () => {
         never
       >,
     );
-    expect(result.settlement._tag).toBe("Completed");
-    if (result.settlement._tag === "Completed") {
-      expect(result.settlement.result?._tag).toBe("CompletionClaimed");
-    }
-    expect(result.settlementKind).toBe("Completed");
+    expect(result.settlement).toMatchObject({
+      _tag: "Interrupted",
+      result: {
+        _tag: "ControlledInterruption",
+        reason: "UnknownTool",
+      },
+    });
+    expect(result.settlementKind).toBe("Interrupted");
     expect(result.workLifecycle).toBe("Open");
     expect(result.waits).toBe(0);
   });

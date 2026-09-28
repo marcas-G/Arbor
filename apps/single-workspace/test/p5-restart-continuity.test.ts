@@ -60,9 +60,8 @@ const yieldTurn = [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_directive",
+    toolName: "arbor_wait",
     argumentsJson: JSON.stringify({
-      _tag: "Yield",
       reason: "waiting",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
     }),

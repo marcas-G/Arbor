@@ -2,10 +2,11 @@ import type { WaitSpec } from "@arbor/domain";
 import type {
   CanonicalProviderEvent,
   ProviderFinishReason,
+  ProviderTurnId,
 } from "@arbor/ports";
 
-/** DID v1.7 §8.15/§8.3; P3 `03` §3–§4. Provider events are normalized
- * transport vocabulary and never directly become a directive. */
+/** Legacy semantic vocabulary retained for historical callers only. Provider
+ * decoding no longer constructs these values. */
 export type AgentDirective =
   | {
       readonly _tag: "InvokeTool";
@@ -43,41 +44,24 @@ export type AgentDirective =
     };
 
 export type DirectiveKind = AgentDirective["_tag"];
-
 export const AGENT_DIRECTIVE_CONTRACT = "agent-directive-v1";
 export const COMPLETION_CLAIM_CONTRACT = "completion-claim-v1";
+export const TOOL_INVOCATION_CONTRACT = "tool-invocation-v1";
 
-/** Reserved tool-call name for structured organizational directives. Provider
- * events still never carry an `AgentDirective` directly; the runtime decodes
- * this proposal against the Output Contract. */
-export const ARBOR_DIRECTIVE_TOOL = "arbor_directive";
-
-export const OUTPUT_CONTRACTS: Readonly<
-  Record<string, ReadonlyArray<DirectiveKind>>
-> = {
-  [AGENT_DIRECTIVE_CONTRACT]: [
-    "InvokeTool",
-    "Communicate",
-    "DeclareDependency",
-    "RequestGovernance",
-    "SpawnSpecialist",
-    "ProposeChildWorkspace",
-    "LoadSkill",
-    "ChangeMode",
-    "CompletionClaim",
-    "Yield",
-  ],
-  [COMPLETION_CLAIM_CONTRACT]: ["CompletionClaim"],
-};
-
-export interface DecodedDirective {
-  readonly directive: AgentDirective;
-  readonly decisionBasisManifestId: string;
+/** Provider-neutral tool-call proposal. It carries transport identity and
+ * model-authored arguments only; it has no Arbor action or authority meaning. */
+export interface ToolInvocation {
+  readonly providerTurnId: ProviderTurnId;
+  /** Stable order within one provider turn for idempotency correlation. */
+  readonly outputPosition: number;
+  readonly callRef: string;
+  readonly toolName: string;
+  readonly argumentsJson: string;
 }
 
 export interface ModelOutput {
   readonly text: string;
-  readonly directives: ReadonlyArray<DecodedDirective>;
+  readonly toolInvocations: ReadonlyArray<ToolInvocation>;
   readonly finishReason: ProviderFinishReason;
 }
 
@@ -85,90 +69,89 @@ export type DecodeResult =
   | { readonly ok: true; readonly output: ModelOutput }
   | {
       readonly ok: false;
-      readonly violation: "ModelOutputContractViolation";
+      readonly violation: "ProviderEventDecodeViolation";
       readonly reason: string;
     };
 
 const violation = (reason: string): DecodeResult => ({
   ok: false,
-  violation: "ModelOutputContractViolation",
+  violation: "ProviderEventDecodeViolation",
   reason,
 });
 
 /**
- * Decode a provider stream into a `ModelOutput` with validated directives.
- * A `ToolCallProposed` event is a raw proposal: it is only valid if the Output
- * Contract admits `InvokeTool`.
+ * Reconstructs generic model output from normalized provider events. Semantic
+ * tool validation and executable/control classification belong to Agent Runtime
+ * registries, not Model Context.
  */
 export const decodeTurn = (
   events: ReadonlyArray<CanonicalProviderEvent>,
-  outputContractRef: string,
-  decisionBasisManifestId: string,
 ): DecodeResult => {
-  const allowed = OUTPUT_CONTRACTS[outputContractRef];
-  if (allowed === undefined) {
-    return violation(`unknown output contract ${outputContractRef}`);
-  }
-
   let text = "";
   let finishReason: ProviderFinishReason = "Stop";
-  const directives: DecodedDirective[] = [];
+  const toolInvocations: ToolInvocation[] = [];
+  const callRefs = new Set<string>();
+  let providerTurnId: ProviderTurnId | undefined;
 
   for (const event of events) {
     switch (event._tag) {
       case "TextDelta":
         text += event.text;
         break;
-      case "ToolCallProposed": {
-        if (event.toolName === ARBOR_DIRECTIVE_TOOL) {
-          let parsed: { _tag?: string };
-          try {
-            parsed = JSON.parse(event.argumentsJson) as { _tag?: string };
-          } catch {
-            return violation("arbor_directive arguments are not valid JSON");
-          }
-          if (
-            parsed._tag === undefined ||
-            !allowed.includes(parsed._tag as DirectiveKind)
-          ) {
-            return violation(
-              `directive ${parsed._tag ?? "<none>"} not admitted by ${outputContractRef}`,
-            );
-          }
-          directives.push({
-            directive: parsed as unknown as AgentDirective,
-            decisionBasisManifestId,
-          });
-          break;
+      case "ToolCallProposed":
+        if (
+          event.callRef.length === 0 ||
+          event.toolName.length === 0 ||
+          event.argumentsJson.length === 0
+        ) {
+          return violation("tool call is missing identity, name, or arguments");
         }
-        if (!allowed.includes("InvokeTool")) {
+        if (callRefs.has(event.callRef)) {
+          return violation(`duplicate tool call identity ${event.callRef}`);
+        }
+        if (providerTurnId === undefined) {
           return violation(
-            `output contract ${outputContractRef} does not admit InvokeTool`,
+            "tool call appeared before its ProviderTurn identity",
           );
         }
-        directives.push({
-          directive: {
-            _tag: "InvokeTool",
-            intent: {
-              callRef: event.callRef,
-              toolName: event.toolName,
-              argumentsJson: event.argumentsJson,
-            },
-          },
-          decisionBasisManifestId,
+        callRefs.add(event.callRef);
+        toolInvocations.push({
+          providerTurnId,
+          outputPosition: toolInvocations.length,
+          callRef: event.callRef,
+          toolName: event.toolName,
+          argumentsJson: event.argumentsJson,
         });
         break;
-      }
       case "TurnCompleted":
         finishReason = event.finishReason;
         break;
-      default:
+      case "TurnStarted":
+        if (
+          providerTurnId !== undefined &&
+          providerTurnId !== event.providerTurnId
+        ) {
+          return violation(
+            "provider event stream contains multiple ProviderTurn identities",
+          );
+        }
+        providerTurnId = event.providerTurnId;
         break;
+      case "ReasoningDelta":
+      case "UsageReported":
+      case "ContinuationState":
+      case "TurnFailed":
+        break;
+      default: {
+        const exhaustive: never = event;
+        return violation(`unsupported provider event ${String(exhaustive)}`);
+      }
     }
   }
 
-  if (text.length === 0 && directives.length === 0) {
-    return violation("turn produced neither text nor a directive");
+  if (text.length === 0 && toolInvocations.length === 0) {
+    return violation("turn produced neither text nor a tool invocation");
   }
-  return { ok: true, output: { text, directives, finishReason } };
+
+  return { ok: true, output: { text, toolInvocations, finishReason } };
 };
