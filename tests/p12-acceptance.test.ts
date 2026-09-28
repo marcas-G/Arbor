@@ -15,6 +15,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { EnvironmentResolverLocalLive } from "../adapters/environment-resolver-local/src/index.js";
 import {
   AcceptanceRepositoryLive,
+  DependencyRepositoryLive,
   ClockLive,
   CommandStoreLive,
   DomainEventJournalLive,
@@ -2047,6 +2048,7 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
     Layer.provide(InboxProjectionStoreLive, infra),
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
+    Layer.provide(DependencyRepositoryLive, infra),
   );
   const all = Layer.mergeAll(
     infra,

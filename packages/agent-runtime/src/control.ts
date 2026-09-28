@@ -35,6 +35,72 @@ export type AgentAction =
       readonly body: string;
       readonly recipientWorkspaceId?: WorkspaceId;
       readonly queryMessageId?: MessageId;
+    }
+  | {
+      /** ACR-8 (DID v1.19): P8 completion-claim chain is semantically
+       * closed — the producer agent claims its Work is complete; the
+       * workRevision is a trusted Runtime fact bound at the handler, never
+       * model-supplied; the downstream StartVerification is driven by the
+       * existing verification consumer (no command from the agent). */
+      readonly _tag: "ClaimCompletion";
+      readonly claim: string;
+    }
+  | {
+      /** ACR-8 (DID v1.19): P2 execution-bound admission is closed. The
+       * specialist is a temporary ExecutionBound execution bound to the
+       * spawning execution; ids are deterministic Runtime facts derived
+       * from the provider-turn occurrence. No durable Workspace or
+       * responsibility is created. */
+      readonly _tag: "SpawnSpecialist";
+      readonly mission: string;
+      readonly constraints: ReadonlyArray<string>;
+    }
+  | {
+      /** ACR-8 (DID v1.19): P7 dependency lifecycle is frozen. The
+       * dependencyId/consumerWorkId/expectedConsumerWorkRevision are
+       * trusted Runtime facts bound at the handler; the matcher — never
+       * the model — decides satisfaction. */
+      readonly _tag: "DeclareDependency";
+      readonly producerBinding:
+        | { readonly _tag: "AnyProducer" }
+        | { readonly _tag: "WorkspaceBound"; readonly workspaceId: WorkspaceId }
+        | { readonly _tag: "WorkBound"; readonly workId: WorkId };
+      readonly expectedDeliverable: {
+        readonly kind: string;
+        readonly requiredArtifactRoles: ReadonlyArray<string>;
+      };
+    }
+  | {
+      /** ACR-8 (DID v1.19): P6 formation semantics are closed. The model
+       * proposes; a human RecordDecision remains the governance gate. The
+       * model-facing schema deliberately omits
+       * `initialWork.verificationMission` (gated by G-V2-4) — the frozen
+       * minimal mission is produced by the formation consumer. */
+      readonly _tag: "ProposeChildWorkspace";
+      readonly proposal: {
+        readonly name: string;
+        readonly rationale: string;
+        readonly responsibilityDraft: {
+          readonly purpose: string;
+          readonly ownedResponsibilities: ReadonlyArray<string>;
+          readonly obligations: ReadonlyArray<string>;
+          readonly includes: ReadonlyArray<string>;
+          readonly excludes: ReadonlyArray<string>;
+          readonly interfaces: ReadonlyArray<string>;
+        };
+        readonly resourceBoundaryDraft: {
+          readonly addresses: ReadonlyArray<
+            | { readonly _tag: "FileTree"; readonly path: string }
+            | { readonly _tag: "GitWorktree"; readonly path: string }
+          >;
+        };
+        readonly initialWork?: {
+          readonly objective: string;
+          readonly why: string;
+          readonly constraints: ReadonlyArray<string>;
+          readonly completionExpectation: string;
+        };
+      };
     };
 
 export interface ControlToolInvocation {
@@ -257,6 +323,152 @@ const SEND_MESSAGE_SCHEMA = JSON.stringify({
   required: ["kind", "body"],
 });
 
+const CLAIM_COMPLETION_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    claim: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Why the Work is complete: what was produced and how it satisfies the completion expectation.",
+    },
+  },
+  required: ["claim"],
+});
+
+const PROPOSE_CHILD_WORKSPACE_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    name: {
+      type: "string",
+      minLength: 1,
+      description: "Stable short name for the proposed child workspace.",
+    },
+    rationale: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Why this responsibility should be a long-lived child workspace rather than local work.",
+    },
+    responsibilityDraft: {
+      type: "object",
+      additionalProperties: false,
+      required: ["purpose"],
+      properties: {
+        purpose: { type: "string", minLength: 1 },
+        ownedResponsibilities: { type: "array", items: { type: "string" } },
+        obligations: { type: "array", items: { type: "string" } },
+        includes: { type: "array", items: { type: "string" } },
+        excludes: { type: "array", items: { type: "string" } },
+        interfaces: { type: "array", items: { type: "string" } },
+      },
+    },
+    resourceBoundaryDraft: {
+      type: "object",
+      additionalProperties: false,
+      required: ["addresses"],
+      properties: {
+        addresses: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["_tag", "path"],
+            properties: {
+              _tag: { enum: ["FileTree", "GitWorktree"] },
+              path: { type: "string", minLength: 1 },
+            },
+          },
+        },
+      },
+    },
+    initialWork: {
+      type: "object",
+      additionalProperties: false,
+      required: ["objective", "why", "constraints", "completionExpectation"],
+      properties: {
+        objective: { type: "string", minLength: 1 },
+        why: { type: "string", minLength: 1 },
+        constraints: { type: "array", items: { type: "string" } },
+        completionExpectation: { type: "string", minLength: 1 },
+      },
+    },
+  },
+  required: [
+    "name",
+    "rationale",
+    "responsibilityDraft",
+    "resourceBoundaryDraft",
+  ],
+});
+
+const SPAWN_SPECIALIST_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    mission: {
+      type: "string",
+      minLength: 1,
+      description:
+        "The bounded, specialist-only subtask for the temporary execution.",
+    },
+    constraints: {
+      type: "array",
+      items: { type: "string" },
+      description: "Optional constraints the specialist must respect.",
+    },
+  },
+  required: ["mission"],
+});
+
+const DECLARE_DEPENDENCY_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    producerBinding: {
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["_tag"],
+          properties: { _tag: { const: "AnyProducer" } },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["_tag", "workspaceId"],
+          properties: {
+            _tag: { const: "WorkspaceBound" },
+            workspaceId: { type: "string", pattern: "^ws_" },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["_tag", "workId"],
+          properties: {
+            _tag: { const: "WorkBound" },
+            workId: { type: "string", pattern: "^wrk_" },
+          },
+        },
+      ],
+    },
+    expectedDeliverable: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "requiredArtifactRoles"],
+      properties: {
+        kind: { type: "string", minLength: 1 },
+        requiredArtifactRoles: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+  required: ["producerBinding", "expectedDeliverable"],
+});
+
 const definitions = (): ReadonlyArray<ModelFacingControlToolDefinition> => {
   const raw = [
     {
@@ -274,6 +486,38 @@ const definitions = (): ReadonlyArray<ModelFacingControlToolDefinition> => {
       schemaJson: SEND_MESSAGE_SCHEMA,
       version: "1",
       requiredCapability: "agent:communicate",
+    },
+    {
+      name: "arbor_claim_completion",
+      description:
+        "Claim that the current Work is complete. The claim triggers independent verification; the Work itself is not completed by this action.",
+      schemaJson: CLAIM_COMPLETION_SCHEMA,
+      version: "1",
+      requiredCapability: "agent:claim-completion",
+    },
+    {
+      name: "arbor_propose_child_workspace",
+      description:
+        "Propose a durable child workspace for an independent long-lived responsibility. A human governance decision (Approve/Reject/Modify) is required before the child is created.",
+      schemaJson: PROPOSE_CHILD_WORKSPACE_SCHEMA,
+      version: "1",
+      requiredCapability: "agent:formation",
+    },
+    {
+      name: "arbor_spawn_specialist",
+      description:
+        "Spawn a temporary specialist execution for one bounded subtask. It ends with its execution and never creates a durable workspace or responsibility.",
+      schemaJson: SPAWN_SPECIALIST_SCHEMA,
+      version: "1",
+      requiredCapability: "agent:delegate",
+    },
+    {
+      name: "arbor_declare_dependency",
+      description:
+        "Declare that the current Work consumes an expected deliverable. Only the deterministic runtime matcher can later satisfy the dependency — declaring it never asserts satisfaction.",
+      schemaJson: DECLARE_DEPENDENCY_SCHEMA,
+      version: "1",
+      requiredCapability: "agent:dependency",
     },
   ] as const;
   return raw.map((tool) => ({
@@ -510,13 +754,189 @@ const hasOnly = (
   keys: ReadonlyArray<string>,
 ): boolean => Object.keys(object).every((key) => keys.includes(key));
 
+const stringList = (value: unknown): ReadonlyArray<string> | null =>
+  Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? value
+    : null;
+
+const decodeChildWorkspaceProposal = (
+  invocation: ToolInvocation,
+  object: Record<string, unknown>,
+): Effect.Effect<
+  Extract<AgentAction, { readonly _tag: "ProposeChildWorkspace" }>["proposal"],
+  ControlToolDecodeError
+> =>
+  Effect.gen(function* () {
+    if (
+      !hasOnly(object, [
+        "name",
+        "rationale",
+        "responsibilityDraft",
+        "resourceBoundaryDraft",
+        "initialWork",
+      ]) ||
+      typeof object.name !== "string" ||
+      object.name.length === 0 ||
+      typeof object.rationale !== "string" ||
+      object.rationale.length === 0
+    ) {
+      return yield* invalid(
+        invocation.toolName,
+        "invalid ProposeChildWorkspace arguments",
+      );
+    }
+    const draft =
+      typeof object.responsibilityDraft === "object" &&
+      object.responsibilityDraft !== null &&
+      !Array.isArray(object.responsibilityDraft)
+        ? (object.responsibilityDraft as Record<string, unknown>)
+        : null;
+    if (
+      draft === null ||
+      !hasOnly(draft, [
+        "purpose",
+        "ownedResponsibilities",
+        "obligations",
+        "includes",
+        "excludes",
+        "interfaces",
+      ]) ||
+      typeof draft.purpose !== "string" ||
+      draft.purpose.length === 0
+    ) {
+      return yield* invalid(
+        invocation.toolName,
+        "responsibilityDraft must carry a non-empty purpose and closed fields",
+      );
+    }
+    const listOr = (key: string): ReadonlyArray<string> | null =>
+      draft[key] === undefined ? [] : stringList(draft[key]);
+    const owned = listOr("ownedResponsibilities");
+    const obligations = listOr("obligations");
+    const includes = listOr("includes");
+    const excludes = listOr("excludes");
+    const interfaces = listOr("interfaces");
+    if (
+      owned === null ||
+      obligations === null ||
+      includes === null ||
+      excludes === null ||
+      interfaces === null
+    ) {
+      return yield* invalid(
+        invocation.toolName,
+        "responsibilityDraft lists must be string arrays",
+      );
+    }
+    const boundary =
+      typeof object.resourceBoundaryDraft === "object" &&
+      object.resourceBoundaryDraft !== null &&
+      !Array.isArray(object.resourceBoundaryDraft)
+        ? (object.resourceBoundaryDraft as Record<string, unknown>)
+        : null;
+    if (boundary === null || !hasOnly(boundary, ["addresses"])) {
+      return yield* invalid(
+        invocation.toolName,
+        "resourceBoundaryDraft must carry addresses",
+      );
+    }
+    const rawAddresses = boundary.addresses;
+    if (
+      !Array.isArray(rawAddresses) ||
+      rawAddresses.length === 0 ||
+      rawAddresses.some(
+        (item) =>
+          typeof item !== "object" ||
+          item === null ||
+          Array.isArray(item) ||
+          !hasOnly(item as Record<string, unknown>, ["_tag", "path"]) ||
+          ((item as Record<string, unknown>)._tag !== "FileTree" &&
+            (item as Record<string, unknown>)._tag !== "GitWorktree") ||
+          typeof (item as Record<string, unknown>).path !== "string" ||
+          ((item as Record<string, unknown>).path as string).length === 0,
+      )
+    ) {
+      return yield* invalid(
+        invocation.toolName,
+        "resource addresses must be FileTree/GitWorktree with a path",
+      );
+    }
+    const addresses = rawAddresses.map(
+      (item) =>
+        item as {
+          readonly _tag: "FileTree" | "GitWorktree";
+          readonly path: string;
+        },
+    );
+    let initialWork:
+      | Extract<
+          AgentAction,
+          { readonly _tag: "ProposeChildWorkspace" }
+        >["proposal"]["initialWork"]
+      | undefined;
+    if (object.initialWork !== undefined) {
+      const work =
+        typeof object.initialWork === "object" &&
+        object.initialWork !== null &&
+        !Array.isArray(object.initialWork)
+          ? (object.initialWork as Record<string, unknown>)
+          : null;
+      const constraints = work === null ? null : stringList(work.constraints);
+      if (
+        work === null ||
+        !hasOnly(work, [
+          "objective",
+          "why",
+          "constraints",
+          "completionExpectation",
+        ]) ||
+        typeof work.objective !== "string" ||
+        work.objective.length === 0 ||
+        typeof work.why !== "string" ||
+        work.why.length === 0 ||
+        constraints === null ||
+        typeof work.completionExpectation !== "string" ||
+        work.completionExpectation.length === 0
+      ) {
+        return yield* invalid(
+          invocation.toolName,
+          "initialWork must carry objective, why, constraints, completionExpectation (verificationMission is deliberately not model-facing)",
+        );
+      }
+      initialWork = {
+        objective: work.objective,
+        why: work.why,
+        constraints,
+        completionExpectation: work.completionExpectation,
+      };
+    }
+    return {
+      name: object.name,
+      rationale: object.rationale,
+      responsibilityDraft: {
+        purpose: draft.purpose,
+        ownedResponsibilities: owned,
+        obligations,
+        includes,
+        excludes,
+        interfaces,
+      },
+      resourceBoundaryDraft: { addresses },
+      ...(initialWork === undefined ? {} : { initialWork }),
+    };
+  });
+
 const decodeInvocation = (
   invocation: ToolInvocation,
 ): Effect.Effect<ControlToolInvocation, ControlToolDecodeError> =>
   Effect.gen(function* () {
     if (
       invocation.toolName !== "arbor_wait" &&
-      invocation.toolName !== "arbor_send_message"
+      invocation.toolName !== "arbor_send_message" &&
+      invocation.toolName !== "arbor_claim_completion" &&
+      invocation.toolName !== "arbor_propose_child_workspace" &&
+      invocation.toolName !== "arbor_spawn_specialist" &&
+      invocation.toolName !== "arbor_declare_dependency"
     ) {
       return yield* Effect.fail<ControlToolDecodeError>({
         _tag: "UnknownControlTool",
@@ -619,6 +1039,162 @@ const decodeInvocation = (
         },
       };
     }
+    if (invocation.toolName === "arbor_claim_completion") {
+      if (
+        !hasOnly(object, ["claim"]) ||
+        typeof object.claim !== "string" ||
+        object.claim.length === 0
+      ) {
+        return yield* invalid(
+          invocation.toolName,
+          "invalid ClaimCompletion arguments",
+        );
+      }
+      return {
+        invocation,
+        action: {
+          _tag: "ClaimCompletion",
+          claim: object.claim,
+        },
+      };
+    }
+    if (invocation.toolName === "arbor_propose_child_workspace") {
+      const proposal = yield* decodeChildWorkspaceProposal(invocation, object);
+      return {
+        invocation,
+        action: {
+          _tag: "ProposeChildWorkspace",
+          proposal,
+        },
+      };
+    }
+    if (invocation.toolName === "arbor_spawn_specialist") {
+      if (
+        !hasOnly(object, ["mission", "constraints"]) ||
+        typeof object.mission !== "string" ||
+        object.mission.length === 0
+      ) {
+        return yield* invalid(
+          invocation.toolName,
+          "invalid SpawnSpecialist arguments",
+        );
+      }
+      const constraints =
+        object.constraints === undefined ? [] : stringList(object.constraints);
+      if (constraints === null) {
+        return yield* invalid(
+          invocation.toolName,
+          "constraints must be a string array",
+        );
+      }
+      return {
+        invocation,
+        action: {
+          _tag: "SpawnSpecialist",
+          mission: object.mission,
+          constraints,
+        },
+      };
+    }
+    if (invocation.toolName === "arbor_declare_dependency") {
+      if (!hasOnly(object, ["producerBinding", "expectedDeliverable"])) {
+        return yield* invalid(
+          invocation.toolName,
+          "invalid DeclareDependency arguments",
+        );
+      }
+      const rawBinding = object.producerBinding;
+      if (
+        typeof rawBinding !== "object" ||
+        rawBinding === null ||
+        Array.isArray(rawBinding)
+      ) {
+        return yield* invalid(
+          invocation.toolName,
+          "producerBinding must be an object",
+        );
+      }
+      const binding = rawBinding as Record<string, unknown>;
+      let producerBinding:
+        | { readonly _tag: "AnyProducer" }
+        | { readonly _tag: "WorkspaceBound"; readonly workspaceId: WorkspaceId }
+        | { readonly _tag: "WorkBound"; readonly workId: WorkId };
+      if (hasOnly(binding, ["_tag"]) && binding._tag === "AnyProducer") {
+        producerBinding = { _tag: "AnyProducer" };
+      } else if (
+        hasOnly(binding, ["_tag", "workspaceId"]) &&
+        binding._tag === "WorkspaceBound"
+      ) {
+        const workspaceId = parseId(
+          invocation.toolName,
+          parse(WorkspaceId),
+          binding.workspaceId,
+        );
+        if (workspaceId === null) {
+          return yield* invalid(
+            invocation.toolName,
+            "WorkspaceBound requires a valid workspaceId",
+          );
+        }
+        producerBinding = { _tag: "WorkspaceBound", workspaceId };
+      } else if (
+        hasOnly(binding, ["_tag", "workId"]) &&
+        binding._tag === "WorkBound"
+      ) {
+        const workId = parseId(
+          invocation.toolName,
+          parse(WorkId),
+          binding.workId,
+        );
+        if (workId === null) {
+          return yield* invalid(
+            invocation.toolName,
+            "WorkBound requires a valid workId",
+          );
+        }
+        producerBinding = { _tag: "WorkBound", workId };
+      } else {
+        return yield* invalid(
+          invocation.toolName,
+          "producerBinding must be AnyProducer, WorkspaceBound, or WorkBound",
+        );
+      }
+      const rawDeliverable = object.expectedDeliverable;
+      if (
+        typeof rawDeliverable !== "object" ||
+        rawDeliverable === null ||
+        Array.isArray(rawDeliverable)
+      ) {
+        return yield* invalid(
+          invocation.toolName,
+          "expectedDeliverable must be an object",
+        );
+      }
+      const deliverable = rawDeliverable as Record<string, unknown>;
+      const roles = stringList(deliverable.requiredArtifactRoles);
+      if (
+        !hasOnly(deliverable, ["kind", "requiredArtifactRoles"]) ||
+        typeof deliverable.kind !== "string" ||
+        deliverable.kind.length === 0 ||
+        roles === null
+      ) {
+        return yield* invalid(
+          invocation.toolName,
+          "expectedDeliverable requires a kind and string-array roles",
+        );
+      }
+      return {
+        invocation,
+        action: {
+          _tag: "DeclareDependency",
+          producerBinding,
+          expectedDeliverable: {
+            kind: deliverable.kind,
+            requiredArtifactRoles: roles,
+          },
+        },
+      };
+    }
     return yield* invalid(invocation.toolName, "unreachable control tool");
   });
 
@@ -670,6 +1246,10 @@ export const makeControlToolRegistry = (
   > = {
     arbor_wait: "Wait",
     arbor_send_message: "SendMessage",
+    arbor_claim_completion: "ClaimCompletion",
+    arbor_propose_child_workspace: "ProposeChildWorkspace",
+    arbor_spawn_specialist: "SpawnSpecialist",
+    arbor_declare_dependency: "DeclareDependency",
   };
   const registered = allDefinitions.filter((tool) => {
     const action = definitionAction[tool.name];

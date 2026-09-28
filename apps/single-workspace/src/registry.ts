@@ -2,6 +2,7 @@ import {
   type CommandHandler,
   CommandHandlerRegistry,
   makeAcceptWorkOutcomeHandler,
+  makeDeclareDependencyHandler,
   makeGrantPermissionHandler,
   makeP1CommandHandlers,
   makeRecordDecisionHandler,
@@ -16,6 +17,8 @@ import { makeP2CommandHandlers } from "@arbor/execution-runtime";
 import {
   AcceptanceRepository,
   type AcceptanceRepositoryService,
+  DependencyRepository,
+  type DependencyRepositoryService,
   ExecutionRepository,
   FormationProposalStore,
   type FormationProposalStoreService,
@@ -53,6 +56,7 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
   | WorkspaceRepository
   | SessionRepository
   | WorkRepository
+  | DependencyRepository
   | ExecutionRepository
   | WorkWaitStore
   | FormationProposalStore
@@ -78,6 +82,7 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
     const acceptances = yield* AcceptanceRepository;
     const grants = yield* PermissionGrantRepository;
     const humanMessages = yield* HumanMessageStore;
+    const dependencyStore = yield* DependencyRepository;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
       ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
       makeSelectCurrentWorkHandler({
@@ -99,6 +104,14 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
           "append" | "closeCorrelation" | "isCorrelationClosed"
         >,
         inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeDeclareDependencyHandler({
+        works,
+        workspaces,
+        dependencies: dependencyStore as Pick<
+          DependencyRepositoryService,
+          "insert"
+        >,
       }) as unknown as CommandHandler<unknown, unknown>,
       makeRecordDecisionHandler({
         proposals: proposals as Pick<

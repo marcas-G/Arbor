@@ -16,8 +16,10 @@ import {
 import type {
   BlobStorePortService,
   ClockService,
+  FormationProposalStoreService,
   MessageStoreService,
   TransactionPortService,
+  WorkRepositoryService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option, Stream } from "effect";
@@ -100,6 +102,8 @@ describe("I0 SendMessage control action", () => {
       messages: {} as MessageStoreService,
       tx: {} as TransactionPortService,
       workspaces: {} as WorkspaceRepositoryService,
+      works: {} as WorkRepositoryService,
+      proposals: {} as FormationProposalStoreService,
     };
     const [handler] = makeSliceControlActionHandlers(dependencies);
     expect(handler).toBeDefined();
@@ -182,6 +186,8 @@ describe("I0 SendMessage control action", () => {
         findById: () =>
           Effect.succeed(Option.some({ parentWorkspaceId: null })) as never,
       } as unknown as WorkspaceRepositoryService,
+      works: {} as WorkRepositoryService,
+      proposals: {} as FormationProposalStoreService,
     })[0];
     if (handler === undefined) {
       throw new Error("SendMessage handler was not registered");
