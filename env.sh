@@ -19,10 +19,25 @@ ARBOR_PNPM_STORE="${ARBOR_PNPM_STORE:-/data/students/gaolei/tools/pnpm-store}"
 mkdir -p "$ARBOR_PNPM_STORE"
 
 arbor() {
+  local capability_env_args=()
+  local capability_env_key
+  for capability_env_key in \
+    ARBOR_CAPABILITY_PROVIDER_URL \
+    ARBOR_CAPABILITY_MODEL \
+    ARBOR_CAPABILITY_SERVER_BUILD_ID \
+    ARBOR_CAPABILITY_AUTH \
+    ARBOR_CAPABILITY_API_KEY \
+    ARBOR_CAPABILITY_EVIDENCE_DIR; do
+    if [[ -v "$capability_env_key" ]]; then
+      capability_env_args+=(-e "$capability_env_key")
+    fi
+  done
+
   docker run --rm -i \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp \
     -e npm_config_store_dir="$ARBOR_PNPM_STORE" \
+    "${capability_env_args[@]}" \
     -v "$ARBOR_ROOT":"$ARBOR_ROOT" \
     -v "$ARBOR_PNPM_STORE":"$ARBOR_PNPM_STORE" \
     -w "$ARBOR_ROOT" \

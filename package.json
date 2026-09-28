@@ -11,6 +11,8 @@
     "build": "tsc -b",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run",
+    "test:capability": "node scripts/testing/run-capability.mjs gray-box",
+    "test:capability:real": "node scripts/testing/run-capability.mjs real-provider --capabilities=B01,B02,B03,B04",
     "lint": "biome check .",
     "format": "biome format --write .",
     "architecture": "vitest run tests/architecture",

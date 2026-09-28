@@ -1,0 +1,1091 @@
+{
+  "schemaVersion": "arbor-capability-report-v1",
+  "runId": "2026-09-27T20-03-10.924Z-9644ad7e-f35f-4aa5-9f6b-120b139dcf1f",
+  "mode": "real-provider",
+  "startedAt": "2026-09-27T20:03:10.924Z",
+  "completedAt": "2026-09-27T20:03:38.125Z",
+  "runtime": {
+    "node": "v24.21.0",
+    "vitestVersion": "5.0.1",
+    "providerMode": "REAL",
+    "providerConfiguration": {
+      "ready": false,
+      "missing": [
+        "ARBOR_CAPABILITY_PROVIDER_URL",
+        "ARBOR_CAPABILITY_MODEL",
+        "ARBOR_CAPABILITY_SERVER_BUILD_ID",
+        "ARBOR_CAPABILITY_AUTH"
+      ]
+    }
+  },
+  "suiteInventory": {
+    "files": 253,
+    "cases": 1467,
+    "byLevel": {
+      "L1": {
+        "files": 76,
+        "cases": 456
+      },
+      "L2": {
+        "files": 134,
+        "cases": 751
+      },
+      "L3": {
+        "files": 1,
+        "cases": 6
+      },
+      "MIXED": {
+        "files": 10,
+        "cases": 79
+      },
+      "UNKNOWN": {
+        "files": 32,
+        "cases": 175
+      }
+    }
+  },
+  "executedRuns": [
+    {
+      "exitCode": 0,
+      "totalTests": 232,
+      "passedTests": 232,
+      "failedTests": 0,
+      "totalSuites": 93,
+      "passedSuites": 93,
+      "failedSuites": 0,
+      "testFiles": [
+        "tests/p10-humanintervention.test.ts",
+        "tests/p12-providers-tools.test.ts",
+        "tests/p14-transcript.test.ts",
+        "tests/p4-integration.test.ts",
+        "tests/p6-acceptance.test.ts",
+        "tests/p6-critical-steer.test.ts",
+        "tests/p6-formation-consumer.test.ts",
+        "tests/p6-formation-governance.test.ts",
+        "tests/p6-inbox-promotion.test.ts",
+        "tests/p6-send-message.test.ts",
+        "tests/p6-specialist-settlement.test.ts",
+        "tests/p6-specialist-spawn.test.ts",
+        "tests/p6-steer.test.ts",
+        "tests/p7-acceptance.test.ts",
+        "tests/p7-produce-deliverable.test.ts",
+        "tests/p7-satisfy-dependency.test.ts",
+        "tests/p8-acceptance-commands.test.ts",
+        "tests/p8-acceptance.test.ts",
+        "tests/p8-conclude.test.ts",
+        "tests/p8-start-verification.test.ts",
+        "tests/p9-acceptance.test.ts",
+        "tests/p9-provider-disconnect.test.ts",
+        "tests/p9-tool-outcome-unknown.test.ts",
+        "tests/p9-worker-crash.test.ts",
+        "tests/capability/harness.test.ts",
+        "apps/single-workspace/test/p14-conversation-history-pagination.test.ts",
+        "apps/single-workspace/test/p14-real-provider-conversation.test.ts",
+        "apps/single-workspace/test/p5-restart-continuity.test.ts",
+        "apps/single-workspace/test/p5-session-continuity.test.ts",
+        "packages/domain/test/dependency.test.ts",
+        "packages/domain/test/events.test.ts",
+        "packages/domain/test/execution.test.ts",
+        "packages/domain/test/session.test.ts",
+        "packages/domain/test/verification.test.ts",
+        "packages/domain/test/work.test.ts",
+        "packages/domain/test/workspace.test.ts",
+        "packages/model-context/test/p3-context.test.ts",
+        "packages/model-context/test/p3-decode.test.ts",
+        "packages/tool-runtime/test/p4-read.test.ts",
+        "tests/capability/gray-box/b01-public-conversation.test.ts",
+        "tests/capability/gray-box/b06-blob-message-inbox.test.ts"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "totalTests": 31,
+      "passedTests": 31,
+      "failedTests": 0,
+      "totalSuites": 9,
+      "passedSuites": 9,
+      "failedSuites": 0,
+      "testFiles": [
+        "apps/web/test/conversation-tab.test.tsx",
+        "apps/web/test/views-render.test.tsx"
+      ]
+    }
+  ],
+  "assertionFailures": [],
+  "notes": [
+    "REAL provider cases were not launched; missing configuration: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH",
+    "B03 direct/legacy Application suites passed as supporting evidence; the adopted control-route case is BLOCKED_BY_IMPLEMENTATION."
+  ],
+  "capabilities": [
+    {
+      "capabilityId": "B01",
+      "title": "Basic Human Conversation",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "NOT_RUN",
+      "providerModes": [
+        "RECORDING",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/session.test.ts",
+        "tests/capability/gray-box/b01-public-conversation.test.ts",
+        "apps/single-workspace/test/p14-real-provider-conversation.test.ts",
+        "tests/capability/real-provider/b01-b04-conversation.test.ts"
+      ],
+      "blockingReasons": [
+        "B01-L3-REAL: Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH"
+      ],
+      "cases": [
+        {
+          "caseId": "B01-L1",
+          "capabilityId": "B01",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/session.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B01-L2",
+          "capabilityId": "B01",
+          "evidenceLevel": "L2",
+          "providerMode": "RECORDING",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/capability/gray-box/b01-public-conversation.test.ts",
+            "apps/single-workspace/test/p14-real-provider-conversation.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B01-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b01-b04-conversation.test.ts",
+          "blockingReason": "Live provider configuration is absent for this qualification run.",
+          "status": "NOT_RUN",
+          "reason": "Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH",
+          "sourceSuites": [
+            "tests/capability/real-provider/b01-b04-conversation.test.ts"
+          ],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B02",
+      "title": "Executable Tool Use",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "NOT_RUN",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/model-context/test/p3-decode.test.ts",
+        "packages/tool-runtime/test/p4-read.test.ts",
+        "tests/p4-integration.test.ts",
+        "tests/p12-providers-tools.test.ts"
+      ],
+      "blockingReasons": [
+        "B02-L3-REAL: Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH"
+      ],
+      "cases": [
+        {
+          "caseId": "B02-L1",
+          "capabilityId": "B02",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/model-context/test/p3-decode.test.ts",
+            "packages/tool-runtime/test/p4-read.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B02-L2",
+          "capabilityId": "B02",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p4-integration.test.ts",
+            "tests/p12-providers-tools.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B02-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "NOT_RUN",
+          "testFile": null,
+          "blockingReason": "S01 qualification is not authorized by DID v1.18; executable selection/observation loop remains a prerequisite.",
+          "status": "NOT_RUN",
+          "reason": "Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B03",
+      "title": "Control Action",
+      "l1Status": "PASS",
+      "l2Status": "BLOCKED_BY_IMPLEMENTATION",
+      "l3Status": "BLOCKED_BY_IMPLEMENTATION",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/events.test.ts",
+        "tests/p6-send-message.test.ts",
+        "tests/p6-acceptance.test.ts"
+      ],
+      "blockingReasons": [
+        "B03-L2: The legacy/direct SendMessage Application path is not the adopted ControlToolRegistry → AgentAction → Application route; DID v1.18 does not authorize that implementation.",
+        "B03-L3-REAL: DID v1.18 does not authorize ControlToolRegistry implementation or qualification; adopted control route is not implemented.",
+        "B03-L2: The legacy/direct SendMessage Application path is not the adopted ControlToolRegistry → AgentAction → Application route; DID v1.18 does not authorize that implementation."
+      ],
+      "cases": [
+        {
+          "caseId": "B03-L1",
+          "capabilityId": "B03",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/events.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B03-L2",
+          "capabilityId": "B03",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
+          "status": "BLOCKED_BY_IMPLEMENTATION",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p6-send-message.test.ts",
+            "tests/p6-acceptance.test.ts"
+          ],
+          "reason": "The legacy/direct SendMessage Application path is not the adopted ControlToolRegistry → AgentAction → Application route; DID v1.18 does not authorize that implementation.",
+          "failures": []
+        },
+        {
+          "caseId": "B03-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
+          "testFile": null,
+          "blockingReason": "DID v1.18 does not authorize ControlToolRegistry implementation or qualification; adopted control route is not implemented.",
+          "status": "BLOCKED_BY_IMPLEMENTATION",
+          "reason": "DID v1.18 does not authorize ControlToolRegistry implementation or qualification; adopted control route is not implemented.",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B04",
+      "title": "Multi-turn Memory / Cognitive Continuity",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "NOT_RUN",
+      "providerModes": [
+        "RECORDING",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/model-context/test/p3-context.test.ts",
+        "apps/single-workspace/test/p5-session-continuity.test.ts",
+        "apps/single-workspace/test/p14-real-provider-conversation.test.ts",
+        "tests/capability/real-provider/b01-b04-conversation.test.ts"
+      ],
+      "blockingReasons": [
+        "B04-L3-REAL: Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH"
+      ],
+      "cases": [
+        {
+          "caseId": "B04-L1",
+          "capabilityId": "B04",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/model-context/test/p3-context.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B04-L2",
+          "capabilityId": "B04",
+          "evidenceLevel": "L2",
+          "providerMode": "RECORDING",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "apps/single-workspace/test/p5-session-continuity.test.ts",
+            "apps/single-workspace/test/p14-real-provider-conversation.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B04-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b01-b04-conversation.test.ts",
+          "blockingReason": "Live provider configuration is absent for this qualification run.",
+          "status": "NOT_RUN",
+          "reason": "Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH",
+          "sourceSuites": [
+            "tests/capability/real-provider/b01-b04-conversation.test.ts"
+          ],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B05",
+      "title": "Human Steer",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "NOT_RUN",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/work.test.ts",
+        "tests/p6-steer.test.ts",
+        "tests/p6-critical-steer.test.ts",
+        "tests/p10-humanintervention.test.ts"
+      ],
+      "blockingReasons": [
+        "B05-L3-REAL: Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH"
+      ],
+      "cases": [
+        {
+          "caseId": "B05-L1",
+          "capabilityId": "B05",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/work.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B05-L2",
+          "capabilityId": "B05",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p6-steer.test.ts",
+            "tests/p6-critical-steer.test.ts",
+            "tests/p10-humanintervention.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B05-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "NOT_RUN",
+          "testFile": null,
+          "blockingReason": "No real-provider steer-cognition sentinel is implemented; durable command evidence remains L2.",
+          "status": "NOT_RUN",
+          "reason": "Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B06",
+      "title": "Parent / Child Communication",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "BLOCKED_BY_IMPLEMENTATION",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/events.test.ts",
+        "tests/capability/gray-box/b06-blob-message-inbox.test.ts",
+        "tests/p6-send-message.test.ts",
+        "tests/p6-inbox-promotion.test.ts"
+      ],
+      "blockingReasons": [
+        "B06-L3-REAL: The adopted model-facing control route and BlobStore-to-Message body path are not integrated."
+      ],
+      "cases": [
+        {
+          "caseId": "B06-L1",
+          "capabilityId": "B06",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/events.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B06-L2",
+          "capabilityId": "B06",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/capability/gray-box/b06-blob-message-inbox.test.ts",
+            "tests/p6-send-message.test.ts",
+            "tests/p6-inbox-promotion.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B06-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
+          "testFile": null,
+          "blockingReason": "The adopted model-facing control route and BlobStore-to-Message body path are not integrated.",
+          "status": "BLOCKED_BY_IMPLEMENTATION",
+          "reason": "The adopted model-facing control route and BlobStore-to-Message body path are not integrated.",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B07",
+      "title": "Responsibility Delegation",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "BLOCKED_BY_IMPLEMENTATION",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/workspace.test.ts",
+        "tests/p6-acceptance.test.ts",
+        "tests/p6-formation-consumer.test.ts",
+        "tests/p6-formation-governance.test.ts"
+      ],
+      "blockingReasons": [
+        "B07-L3-REAL: Model-driven proposal requires the unimplemented and unauthorized adopted control route; ResponsibilityHandoff remains deferred."
+      ],
+      "cases": [
+        {
+          "caseId": "B07-L1",
+          "capabilityId": "B07",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/workspace.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B07-L2",
+          "capabilityId": "B07",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p6-acceptance.test.ts",
+            "tests/p6-formation-consumer.test.ts",
+            "tests/p6-formation-governance.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B07-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
+          "testFile": null,
+          "blockingReason": "Model-driven proposal requires the unimplemented and unauthorized adopted control route; ResponsibilityHandoff remains deferred.",
+          "status": "BLOCKED_BY_IMPLEMENTATION",
+          "reason": "Model-driven proposal requires the unimplemented and unauthorized adopted control route; ResponsibilityHandoff remains deferred.",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B08",
+      "title": "Specialist Delegation",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "BLOCKED_BY_IMPLEMENTATION",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/execution.test.ts",
+        "tests/p6-specialist-spawn.test.ts",
+        "tests/p6-specialist-settlement.test.ts"
+      ],
+      "blockingReasons": [
+        "B08-L3-REAL: Model-selected specialist action requires the unimplemented and unauthorized adopted control route."
+      ],
+      "cases": [
+        {
+          "caseId": "B08-L1",
+          "capabilityId": "B08",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/execution.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B08-L2",
+          "capabilityId": "B08",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p6-specialist-spawn.test.ts",
+            "tests/p6-specialist-settlement.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B08-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
+          "testFile": null,
+          "blockingReason": "Model-selected specialist action requires the unimplemented and unauthorized adopted control route.",
+          "status": "BLOCKED_BY_IMPLEMENTATION",
+          "reason": "Model-selected specialist action requires the unimplemented and unauthorized adopted control route.",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B09",
+      "title": "Dependency / Deliverable",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "BLOCKED_BY_IMPLEMENTATION",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/dependency.test.ts",
+        "tests/p7-produce-deliverable.test.ts",
+        "tests/p7-satisfy-dependency.test.ts",
+        "tests/p7-acceptance.test.ts"
+      ],
+      "blockingReasons": [
+        "B09-L3-REAL: The current composition has no adopted model-facing dependency/deliverable action route."
+      ],
+      "cases": [
+        {
+          "caseId": "B09-L1",
+          "capabilityId": "B09",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/dependency.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B09-L2",
+          "capabilityId": "B09",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p7-produce-deliverable.test.ts",
+            "tests/p7-satisfy-dependency.test.ts",
+            "tests/p7-acceptance.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B09-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
+          "testFile": null,
+          "blockingReason": "The current composition has no adopted model-facing dependency/deliverable action route.",
+          "status": "BLOCKED_BY_IMPLEMENTATION",
+          "reason": "The current composition has no adopted model-facing dependency/deliverable action route.",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B10",
+      "title": "Verification",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "BLOCKED_BY_DESIGN_GAP",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/verification.test.ts",
+        "tests/p8-start-verification.test.ts",
+        "tests/p8-conclude.test.ts",
+        "tests/p8-acceptance-commands.test.ts"
+      ],
+      "blockingReasons": [
+        "B10-L3-REAL: Existing G-V2-2, G-V2-3, and G-V2-4 verification-reference/lifecycle gaps remain open."
+      ],
+      "cases": [
+        {
+          "caseId": "B10-L1",
+          "capabilityId": "B10",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/verification.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B10-L2",
+          "capabilityId": "B10",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p8-start-verification.test.ts",
+            "tests/p8-conclude.test.ts",
+            "tests/p8-acceptance-commands.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B10-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "BLOCKED_BY_DESIGN_GAP",
+          "testFile": null,
+          "blockingReason": "Existing G-V2-2, G-V2-3, and G-V2-4 verification-reference/lifecycle gaps remain open.",
+          "status": "BLOCKED_BY_DESIGN_GAP",
+          "reason": "Existing G-V2-2, G-V2-3, and G-V2-4 verification-reference/lifecycle gaps remain open.",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B11",
+      "title": "Completion / Acceptance",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "BLOCKED_BY_IMPLEMENTATION",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/work.test.ts",
+        "tests/p8-acceptance.test.ts",
+        "tests/p8-acceptance-commands.test.ts"
+      ],
+      "blockingReasons": [
+        "B11-L3-REAL: Producer judgment through the adopted model-facing action route is not implemented/authorized; deterministic lifecycle gates are L2."
+      ],
+      "cases": [
+        {
+          "caseId": "B11-L1",
+          "capabilityId": "B11",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/work.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B11-L2",
+          "capabilityId": "B11",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p8-acceptance.test.ts",
+            "tests/p8-acceptance-commands.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B11-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
+          "testFile": null,
+          "blockingReason": "Producer judgment through the adopted model-facing action route is not implemented/authorized; deterministic lifecycle gates are L2.",
+          "status": "BLOCKED_BY_IMPLEMENTATION",
+          "reason": "Producer judgment through the adopted model-facing action route is not implemented/authorized; deterministic lifecycle gates are L2.",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B12",
+      "title": "Restart / Continuation",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "BLOCKED_BY_IMPLEMENTATION",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/execution.test.ts",
+        "apps/single-workspace/test/p5-restart-continuity.test.ts",
+        "tests/p9-provider-disconnect.test.ts",
+        "tests/p9-worker-crash.test.ts",
+        "tests/p9-tool-outcome-unknown.test.ts"
+      ],
+      "blockingReasons": [
+        "B12-L3-REAL: Existing recovery coverage rebuilds a layer in-process; a process-level daemon restart and real cognition continuation sentinel is not implemented."
+      ],
+      "cases": [
+        {
+          "caseId": "B12-L1",
+          "capabilityId": "B12",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/execution.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B12-L2",
+          "capabilityId": "B12",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": true,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "apps/single-workspace/test/p5-restart-continuity.test.ts",
+            "tests/p9-provider-disconnect.test.ts",
+            "tests/p9-worker-crash.test.ts",
+            "tests/p9-tool-outcome-unknown.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B12-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": true,
+          "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
+          "testFile": null,
+          "blockingReason": "Existing recovery coverage rebuilds a layer in-process; a process-level daemon restart and real cognition continuation sentinel is not implemented.",
+          "status": "BLOCKED_BY_IMPLEMENTATION",
+          "reason": "Existing recovery coverage rebuilds a layer in-process; a process-level daemon restart and real cognition continuation sentinel is not implemented.",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B13",
+      "title": "Failure Recovery",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "NOT_RUN",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/model-context/test/p3-decode.test.ts",
+        "tests/p9-acceptance.test.ts",
+        "tests/p9-provider-disconnect.test.ts",
+        "tests/p9-tool-outcome-unknown.test.ts",
+        "tests/p9-worker-crash.test.ts"
+      ],
+      "blockingReasons": [
+        "B13-L3-REAL: Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH"
+      ],
+      "cases": [
+        {
+          "caseId": "B13-L1",
+          "capabilityId": "B13",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/model-context/test/p3-decode.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B13-L2",
+          "capabilityId": "B13",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": true,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p9-acceptance.test.ts",
+            "tests/p9-provider-disconnect.test.ts",
+            "tests/p9-tool-outcome-unknown.test.ts",
+            "tests/p9-worker-crash.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B13-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": true,
+          "expectedStatus": "NOT_RUN",
+          "testFile": null,
+          "blockingReason": "P9 scripted fault cases provide L2 evidence; a real-provider, user-visible recovery sentinel is not implemented.",
+          "status": "NOT_RUN",
+          "reason": "Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B14",
+      "title": "Web / Product Projection",
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "NOT_RUN",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "apps/web/test/conversation-tab.test.tsx",
+        "apps/web/test/views-render.test.tsx",
+        "apps/single-workspace/test/p14-conversation-history-pagination.test.ts",
+        "tests/p14-transcript.test.ts"
+      ],
+      "blockingReasons": [
+        "B14-L3-REAL: Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH"
+      ],
+      "cases": [
+        {
+          "caseId": "B14-L1",
+          "capabilityId": "B14",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "apps/web/test/conversation-tab.test.tsx",
+            "apps/web/test/views-render.test.tsx"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B14-L2",
+          "capabilityId": "B14",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "apps/single-workspace/test/p14-conversation-history-pagination.test.ts",
+            "tests/p14-transcript.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B14-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "NOT_RUN",
+          "testFile": null,
+          "blockingReason": "The external submit-to-Assistant-to-browser pagination scenario is not implemented; existing HTTP and UI suites cover separate seams.",
+          "status": "NOT_RUN",
+          "reason": "Real provider configuration missing: ARBOR_CAPABILITY_PROVIDER_URL, ARBOR_CAPABILITY_MODEL, ARBOR_CAPABILITY_SERVER_BUILD_ID, ARBOR_CAPABILITY_AUTH",
+          "sourceSuites": [],
+          "failures": [],
+          "evidenceFiles": []
+        }
+      ]
+    }
+  ],
+  "normalizationNote": "After the first run, case metadata was corrected without rerunning tests: L1 cases use providerMode=NONE and no persistence/restart requirement; B03-L2 remains blocked for the adopted ControlToolRegistry route even though its legacy/direct supporting suites passed."
+}
