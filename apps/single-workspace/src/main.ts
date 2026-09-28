@@ -194,6 +194,7 @@ export const runDaemonOnce = (config: ProductionDaemonRunConfig = {}) =>
       yield* schedulerTick;
       yield* deployment.daemon.pollConsumers;
       yield* deployment.daemon.recoveryTick;
+      yield* deployment.daemon.conversationTick;
     }),
   );
 

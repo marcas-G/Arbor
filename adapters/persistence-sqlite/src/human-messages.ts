@@ -166,6 +166,16 @@ export const HumanMessageStoreLive: Layer.Layer<
             .pipe(Effect.mapError(toOperationalFailure));
           return rows.map(toRecord);
         }),
+      projectsWithConversationWork: () =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* sql
+            .unsafe<{ project_id: string }>(
+              "SELECT DISTINCT project_id FROM human_messages WHERE state IN ('Pending','Claimed')",
+            )
+            .pipe(Effect.mapError(toOperationalFailure));
+          return rows.map((row) => row.project_id as never);
+        }),
       claimedOrderedByCreated: (projectId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
