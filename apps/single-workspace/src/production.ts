@@ -67,6 +67,10 @@ import { T1RecoveryState } from "./health.js";
 import { makeResponseBodyOf } from "./response-body.js";
 import type { AuthenticatorService } from "./transport/auth.js";
 import {
+  publishConversationSettled,
+  registerExecutionMessageLink,
+} from "./transport/conversation-progress-bridge.js";
+import {
   type ConsumerLoopDaemon,
   completionConsumerDaemon,
   type DriftWatcherTrigger,
@@ -112,6 +116,9 @@ export interface TransportBoundaryService {
   readonly webSocket: WebSocketShell;
   readonly cli: CliShell;
   readonly web: WebShell;
+  /** The transport-boundary authenticator (P12 `10` §3) — exposed for
+   * app-level transport surfaces (conversation-progress SSE ownership). */
+  readonly authenticator: AuthenticatorService;
 }
 
 export class TransportBoundary extends Context.Service<
@@ -154,6 +161,7 @@ export const TransportBoundaryLive = (
         http: makeHttpShell(core),
         webSocket: makeWebSocketShell(core),
         cli: makeCliShell(core),
+        authenticator,
         web: makeWebShell(core),
       });
     }),
@@ -393,10 +401,20 @@ export const ProductionDaemonServiceLive = (
                 execution.value.binding._tag === "WorkspaceExecution" &&
                 execution.value.binding.focus._tag === "Coordination"
               ) {
-                yield* runExecution(
+                // Conversation streaming bridge: link execution → message for
+                // the presentation tap, publish terminal at settlement.
+                registerExecutionMessageLink(
+                  claimedExecutionId,
+                  message.messageId,
+                );
+                const settlement = yield* runExecution(
                   parse(ExecutionId)(claimedExecutionId),
                   { _tag: "Recovery" },
                   config.principal,
+                );
+                publishConversationSettled(
+                  claimedExecutionId,
+                  settlement as { readonly _tag: string },
                 );
               }
             }

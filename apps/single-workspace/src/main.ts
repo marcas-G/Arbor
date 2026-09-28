@@ -16,6 +16,7 @@ import {
 import { evaluateAndSelect } from "./loop.js";
 import { ProductionDaemonService, TransportBoundary } from "./production.js";
 import { makeStaticAuthenticator } from "./transport/auth.js";
+import { JOURNAL_WATERMARK_SQL } from "./transport/invalidation.js";
 import { startWebTransport } from "./transport/server.js";
 
 /** The production composition entry: build the single-workspace slice layer
@@ -161,6 +162,9 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           })
         : Effect.void;
     yield* deployment.daemon.start;
+    let webTransportHandle:
+      | Awaited<ReturnType<typeof startWebTransport>>
+      | undefined;
     if (config.webTransport !== undefined) {
       const boundary = yield* TransportBoundary;
       const sql = yield* SqlClient;
@@ -168,6 +172,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
         startWebTransport({
           http: boundary.http,
           webSocket: boundary.webSocket,
+          authenticator: boundary.authenticator,
           sql,
           ...(config.webTransport?.staticRoot !== undefined
             ? { staticRoot: config.webTransport.staticRoot }
@@ -180,9 +185,32 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
             : {}),
         }),
       );
+      webTransportHandle = handle;
       yield* Effect.addFinalizer(() => Effect.promise(handle.close));
     }
-    return { deployment, schedulerTick };
+    // Conversation settle write-back (markAnswered) deliberately emits no
+    // domain event (P14 `02` §4.1 two-step protocol), so the journal-
+    // watermark poller never fires for it. The conversation tick therefore
+    // broadcasts an explicit invalidation after each pass: the sweep has
+    // already committed, so any refetch observes the answered turn.
+    const conversationTickWithRefresh = Effect.gen(function* () {
+      yield* deployment.daemon.conversationTick;
+      if (webTransportHandle !== undefined) {
+        const sql = yield* SqlClient;
+        const rows = yield* sql.unsafe<{ watermark: number }>(
+          JOURNAL_WATERMARK_SQL,
+        );
+        const watermark = Number(rows[0]?.watermark ?? 0);
+        // publishWatermark broadcasts every view unconditionally; the sweep
+        // has already committed, so any refetch observes the answered turn.
+        webTransportHandle.fanout.publishWatermark(watermark);
+      }
+    });
+    return {
+      deployment,
+      schedulerTick,
+      conversationTick: conversationTickWithRefresh,
+    };
   });
 
 /** One bounded daemon cycle: start (migrate + T1) -> scheduler/loop ->
@@ -190,11 +218,12 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
 export const runDaemonOnce = (config: ProductionDaemonRunConfig = {}) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { deployment, schedulerTick } = yield* runProductionDaemon(config);
+      const { deployment, schedulerTick, conversationTick } =
+        yield* runProductionDaemon(config);
       yield* schedulerTick;
       yield* deployment.daemon.pollConsumers;
       yield* deployment.daemon.recoveryTick;
-      yield* deployment.daemon.conversationTick;
+      yield* conversationTick;
     }),
   );
 
@@ -203,13 +232,14 @@ export const runDaemonOnce = (config: ProductionDaemonRunConfig = {}) =>
 export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { deployment, schedulerTick } = yield* runProductionDaemon(config);
+      const { deployment, schedulerTick, conversationTick } =
+        yield* runProductionDaemon(config);
       yield* Effect.forever(
         Effect.gen(function* () {
           yield* schedulerTick;
           yield* deployment.daemon.pollConsumers;
           yield* deployment.daemon.recoveryTick;
-          yield* deployment.daemon.conversationTick;
+          yield* conversationTick;
           yield* Effect.sleep(Duration.millis(config.tickIntervalMs ?? 1000));
         }),
       );
