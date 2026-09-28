@@ -18,5 +18,8 @@
   },
   "scripts": {
     "build": "tsc -b"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.5"
   }
 }

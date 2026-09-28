@@ -55,6 +55,8 @@ const providerTurnIdB = parse(ProviderTurnId)(
   "ptn_018f2b3c-4d5e-7abc-8def-0123456789d2",
 );
 const manifestId = "mf_p9_pd";
+const manifestIdFor = (turnId: ProviderTurnId): string =>
+  turnId === providerTurnId ? manifestId : `${manifestId}:${turnId}`;
 const principal = parse(Principal)("runtime:system");
 
 /** GQ4 frozen mapping (04 §2.1): classify by the observable boundary —
@@ -218,7 +220,17 @@ const runTurnInput = (turnId: ProviderTurnId) => ({
   contextEpoch: 0 as never,
   modelRef: "provider-fake",
   outputContractRef: "oc",
-  manifestId,
+  manifestId: manifestIdFor(turnId),
+  manifest: {
+    manifestId: manifestIdFor(turnId),
+    providerTurnId: turnId,
+    executionId,
+    sessionId,
+    contextEpoch: 0 as never,
+    modelRef: "provider-fake",
+    compiledRequestHash: `${manifestIdFor(turnId)}-request`,
+    manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
+  },
   request: {
     modelRef: "provider-fake",
     instructions: [],
@@ -336,7 +348,17 @@ const openDanglingTurn = (
           contextEpoch: 0 as never,
           modelRef: "provider-fake",
           outputContractRef: "oc",
-          manifestId,
+          manifestId: manifestIdFor(turnId),
+        },
+        {
+          manifestId: manifestIdFor(turnId),
+          providerTurnId: turnId,
+          executionId,
+          sessionId,
+          contextEpoch: 0 as never,
+          modelRef: "provider-fake",
+          compiledRequestHash: `${manifestIdFor(turnId)}-request`,
+          manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
         },
         "t",
       ),
@@ -390,7 +412,7 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     expect(probe.calls.map((call) => call.attemptNo)).toEqual([0, 1, 2]);
     expect(r.turns).toHaveLength(1);
     expect(r.turns[0]!.provider_turn_id).toBe(providerTurnId);
-    expect(r.turns[0]!.manifest_id).toBe(manifestId);
+    expect(r.turns[0]!.manifest_id).toBe(manifestIdFor(providerTurnId));
     // I-4: RetryableFailure + provider_error_kind = ProviderUnavailable on
     // the failed attempts; the final attempt succeeds and settles the Turn.
     expect(r.attempts).toEqual([
@@ -436,7 +458,7 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     // turnNo unchanged across attempts: exactly one Turn row, same manifest.
     expect(r.turns).toHaveLength(1);
     expect(r.turns[0]!.provider_turn_id).toBe(providerTurnId);
-    expect(r.turns[0]!.manifest_id).toBe(manifestId);
+    expect(r.turns[0]!.manifest_id).toBe(manifestIdFor(providerTurnId));
     // Attempt history append-only: the interrupted attempt AND the
     // successful retry both remain recorded.
     expect(r.attempts).toEqual([
@@ -573,7 +595,7 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     const planB = r.report.retryPlan.find(
       (entry) => entry.providerTurnId === providerTurnIdB,
     );
-    expect(planA?.manifestId).toBe(manifestId);
+    expect(planA?.manifestId).toBe(manifestIdFor(providerTurnId));
     expect(planA?.nextAttemptNo).toBe(1);
     expect(planA?.lastProviderErrorKind).toBe("StreamInterrupted");
     expect(planB?.nextAttemptNo).toBe(0);

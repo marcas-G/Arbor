@@ -1,5 +1,6 @@
 import type { ProjectId, ProviderTurnId } from "@arbor/domain";
 import {
+  type ModelContextManifestRecord,
   type ProviderFailure,
   type ProviderTurnRecord,
   ProviderTurnStore,
@@ -53,7 +54,11 @@ export const ProviderTurnStoreLive: Layer.Layer<
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     const store: ProviderTurnStoreService = {
-      startTurn: (record: ProviderTurnRecord, startedAt: string) =>
+      startTurn: (
+        record: ProviderTurnRecord,
+        manifest: ModelContextManifestRecord,
+        startedAt: string,
+      ) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           yield* run(
@@ -68,6 +73,25 @@ export const ProviderTurnStoreLive: Layer.Layer<
                 record.outputContractRef,
                 record.manifestId,
                 startedAt,
+                startedAt,
+              ],
+            ),
+          );
+          yield* run(
+            sql.unsafe(
+              // Upsert: a retried/replayed ProviderTurn with an unchanged
+              // compiled request produces the same manifestId — the row is
+              // idempotently replaced, never a duplicate (P1 §8 replay rule).
+              "INSERT INTO model_context_manifests (manifest_id, provider_turn_id, execution_id, session_id, context_epoch, model_ref, compiled_request_hash, manifest_json, created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(manifest_id) DO UPDATE SET provider_turn_id = excluded.provider_turn_id, execution_id = excluded.execution_id, session_id = excluded.session_id, context_epoch = excluded.context_epoch, model_ref = excluded.model_ref, compiled_request_hash = excluded.compiled_request_hash, manifest_json = excluded.manifest_json, created_at = excluded.created_at",
+              [
+                manifest.manifestId,
+                manifest.providerTurnId,
+                manifest.executionId,
+                manifest.sessionId,
+                manifest.contextEpoch,
+                manifest.modelRef,
+                manifest.compiledRequestHash,
+                manifest.manifestJson,
                 startedAt,
               ],
             ),

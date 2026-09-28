@@ -96,6 +96,33 @@
   font-weight: 650;
 }
 
+.conversationHistory {
+  display: flex;
+  min-height: 15rem;
+  height: min(64vh, 48rem);
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+  overflow-y: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  padding: var(--arbor-space-3);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  background: var(--arbor-paper-2);
+  scrollbar-gutter: stable;
+}
+
+.historyTopSentinel {
+  flex: 0 0 1px;
+}
+
+.historyLoading {
+  align-self: center;
+  margin: 0;
+  color: var(--arbor-muted);
+  font-size: var(--arbor-text-caption);
+}
+
 .composer {
   display: flex;
   flex-direction: column;
@@ -157,5 +184,13 @@
 
   .governanceActions > * {
     flex: 1;
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .conversationHistory {
+    min-height: 12rem;
+    height: min(55dvh, 38rem);
+    padding: var(--arbor-space-2);
   }
 }

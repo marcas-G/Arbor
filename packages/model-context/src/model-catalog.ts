@@ -84,7 +84,10 @@ export const ModelCapabilityPortLive = (
           cause: "no catalogued model satisfies requiredCapabilities",
         });
       }
-      return Effect.succeed(chosen.capability);
+      return Effect.succeed({
+        ...chosen.capability,
+        providerRef: chosen.adapterId,
+      });
     },
   });
 

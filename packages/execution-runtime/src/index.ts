@@ -5,3 +5,4 @@ export * from "./recovery.js";
 export * from "./recovery-drive.js";
 export * from "./runtime-safety.js";
 export * from "./scheduler.js";
+export * from "./wake-consumer.js";

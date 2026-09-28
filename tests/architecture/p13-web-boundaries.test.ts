@@ -90,13 +90,17 @@ describe("p13-web-boundaries", () => {
   });
 
   it("I3: network URLs are exactly the whitelist (/views/:view, /commands, /ws)", () => {
-    const allowed = new Set(["/commands", "/ws"]);
+    const allowed = new Set(["/commands", "/ws", "/conversation-progress/"]);
     const urlLiteral = /["'`](\/[a-z][a-z0-9/_-]*)["'`]/g;
     for (const file of sourceFiles) {
       const source = readFileSync(file, "utf8");
       for (const match of source.matchAll(urlLiteral)) {
         const literal = match[1] ?? "";
-        if (literal.startsWith("/views/") || allowed.has(literal)) {
+        if (
+          literal.startsWith("/views/") ||
+          literal.startsWith("/conversation-progress/") ||
+          allowed.has(literal)
+        ) {
           continue;
         }
         // Non-network path literals (route paths, css class selectors in tsx)

@@ -123,10 +123,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "RECORDING",
-        "REAL"
-      ],
+      "providerModes": ["RECORDING", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/session.test.ts",
         "tests/capability/gray-box/b01-public-conversation.test.ts",
@@ -147,9 +144,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/session.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/session.test.ts"],
           "failures": []
         },
         {
@@ -193,10 +188,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/model-context/test/p3-decode.test.ts",
         "packages/tool-runtime/test/p4-read.test.ts",
@@ -262,10 +254,7 @@
       "l1Status": "PASS",
       "l2Status": "BLOCKED_BY_IMPLEMENTATION",
       "l3Status": "BLOCKED_BY_IMPLEMENTATION",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/events.test.ts",
         "tests/p6-send-message.test.ts",
@@ -287,9 +276,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/events.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/events.test.ts"],
           "failures": []
         },
         {
@@ -332,10 +319,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "RECORDING",
-        "REAL"
-      ],
+      "providerModes": ["RECORDING", "REAL"],
       "evidenceFiles": [
         "packages/model-context/test/p3-context.test.ts",
         "apps/single-workspace/test/p5-session-continuity.test.ts",
@@ -356,9 +340,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/model-context/test/p3-context.test.ts"
-          ],
+          "sourceSuites": ["packages/model-context/test/p3-context.test.ts"],
           "failures": []
         },
         {
@@ -402,10 +384,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/work.test.ts",
         "tests/p6-steer.test.ts",
@@ -426,9 +405,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/work.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/work.test.ts"],
           "failures": []
         },
         {
@@ -471,10 +448,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "BLOCKED_BY_IMPLEMENTATION",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/events.test.ts",
         "tests/capability/gray-box/b06-blob-message-inbox.test.ts",
@@ -495,9 +469,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/events.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/events.test.ts"],
           "failures": []
         },
         {
@@ -540,10 +512,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "BLOCKED_BY_IMPLEMENTATION",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/workspace.test.ts",
         "tests/p6-acceptance.test.ts",
@@ -564,9 +533,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/workspace.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/workspace.test.ts"],
           "failures": []
         },
         {
@@ -609,10 +576,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "BLOCKED_BY_IMPLEMENTATION",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/execution.test.ts",
         "tests/p6-specialist-spawn.test.ts",
@@ -632,9 +596,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/execution.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/execution.test.ts"],
           "failures": []
         },
         {
@@ -676,10 +638,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "BLOCKED_BY_IMPLEMENTATION",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/dependency.test.ts",
         "tests/p7-produce-deliverable.test.ts",
@@ -700,9 +659,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/dependency.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/dependency.test.ts"],
           "failures": []
         },
         {
@@ -745,10 +702,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "BLOCKED_BY_DESIGN_GAP",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/verification.test.ts",
         "tests/p8-start-verification.test.ts",
@@ -769,9 +723,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/verification.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/verification.test.ts"],
           "failures": []
         },
         {
@@ -814,10 +766,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "BLOCKED_BY_IMPLEMENTATION",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/work.test.ts",
         "tests/p8-acceptance.test.ts",
@@ -837,9 +786,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/work.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/work.test.ts"],
           "failures": []
         },
         {
@@ -881,10 +828,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "BLOCKED_BY_IMPLEMENTATION",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/domain/test/execution.test.ts",
         "apps/single-workspace/test/p5-restart-continuity.test.ts",
@@ -906,9 +850,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/domain/test/execution.test.ts"
-          ],
+          "sourceSuites": ["packages/domain/test/execution.test.ts"],
           "failures": []
         },
         {
@@ -952,10 +894,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "packages/model-context/test/p3-decode.test.ts",
         "tests/p9-acceptance.test.ts",
@@ -977,9 +916,7 @@
           "expectedStatus": "PASS",
           "status": "PASS",
           "sourceSuiteStatus": "PASS",
-          "sourceSuites": [
-            "packages/model-context/test/p3-decode.test.ts"
-          ],
+          "sourceSuites": ["packages/model-context/test/p3-decode.test.ts"],
           "failures": []
         },
         {
@@ -1023,10 +960,7 @@
       "l1Status": "PASS",
       "l2Status": "PASS",
       "l3Status": "NOT_RUN",
-      "providerModes": [
-        "NONE",
-        "REAL"
-      ],
+      "providerModes": ["NONE", "REAL"],
       "evidenceFiles": [
         "apps/web/test/conversation-tab.test.tsx",
         "apps/web/test/views-render.test.tsx",

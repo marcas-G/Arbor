@@ -34,7 +34,9 @@ if (selectedIds.size === 0) {
   throw new Error("--capabilities=B01,B02,... is required");
 }
 for (const id of selectedIds) {
-  if (!catalog.capabilities.some((capability) => capability.capabilityId === id)) {
+  if (
+    !catalog.capabilities.some((capability) => capability.capabilityId === id)
+  ) {
     throw new Error(`unknown capability id ${id}`);
   }
 }
@@ -102,9 +104,7 @@ const webFiles = rootFiles
   .filter((path) => path.startsWith("apps/web/test/"))
   .map((path) => path.slice("apps/web/".length));
 const coreFiles = rootFiles.filter((path) => !path.startsWith("apps/web/"));
-const harnessFiles = [
-  "tests/capability/harness.test.ts",
-];
+const harnessFiles = ["tests/capability/harness.test.ts"];
 const runNotes = [];
 
 const invokeVitest = (input) => {
@@ -183,7 +183,10 @@ if (mode === "real-provider") {
     const realConfig = resolve(repoRoot, "vitest.capability-real.config.ts");
     for (const capability of selectedCapabilities) {
       const testFile = capability.l3.testFile;
-      if (testFile === null || !testFile.startsWith("tests/capability/real-provider/")) {
+      if (
+        testFile === null ||
+        !testFile.startsWith("tests/capability/real-provider/")
+      ) {
         continue;
       }
       const result = invokeVitest({
@@ -348,16 +351,20 @@ const realCaseStatus = (caseDefinition) => {
       (capability) => capability.capabilityId === caseDefinition.capabilityId,
     );
     const run =
-      owner === undefined ? undefined : realProviderRuns.get(owner.capabilityId);
+      owner === undefined
+        ? undefined
+        : realProviderRuns.get(owner.capabilityId);
     if (run === undefined) {
       return {
         status: "NOT_RUN",
-        reason: "This case was not selected in the current qualification batch.",
+        reason:
+          "This case was not selected in the current qualification batch.",
       };
     }
     const suiteFile = normalize(caseDefinition.testFile);
     const suite = run.report?.testResults?.find(
-      (candidate) => normalize(relative(repoRoot, candidate.name)) === suiteFile,
+      (candidate) =>
+        normalize(relative(repoRoot, candidate.name)) === suiteFile,
     );
     const assertions = (suite?.assertionResults ?? []).filter((assertion) =>
       (assertion.fullName ?? assertion.title ?? "").includes(
@@ -428,29 +435,29 @@ const capabilities = catalog.capabilities.map((capability) => {
   const selected = selectedIds.has(capability.capabilityId);
   const selectedCases = selected
     ? [
-    ...levelCases.filter(
-      (item) => item.capabilityId === capability.capabilityId,
-    ),
-    {
-      ...capability.l3,
-      ...realCaseStatus({
-        ...capability.l3,
-        capabilityId: capability.capabilityId,
-      }),
-      sourceSuites:
-        capability.l3.testFile === null ? [] : [capability.l3.testFile],
-      failures:
-        capability.l3.testFile === null
-          ? []
-          : assertionFailures.filter(
-              (failure) => failure.suiteFile === capability.l3.testFile,
-            ),
-      evidenceFiles:
-        realCaseStatus({
+        ...levelCases.filter(
+          (item) => item.capabilityId === capability.capabilityId,
+        ),
+        {
           ...capability.l3,
-          capabilityId: capability.capabilityId,
-        }).evidenceFiles ?? [],
-    },
+          ...realCaseStatus({
+            ...capability.l3,
+            capabilityId: capability.capabilityId,
+          }),
+          sourceSuites:
+            capability.l3.testFile === null ? [] : [capability.l3.testFile],
+          failures:
+            capability.l3.testFile === null
+              ? []
+              : assertionFailures.filter(
+                  (failure) => failure.suiteFile === capability.l3.testFile,
+                ),
+          evidenceFiles:
+            realCaseStatus({
+              ...capability.l3,
+              capabilityId: capability.capabilityId,
+            }).evidenceFiles ?? [],
+        },
       ]
     : [];
   const cases =

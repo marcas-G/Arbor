@@ -17,13 +17,16 @@ export function TranscriptView({
   readonly onLoadMore?: ((cursor: string) => void) | undefined;
 }) {
   const nextCursor = res.nextCursor;
+  const visibleEntries = res.entries.filter(
+    (entry) => entry.kind !== "ModelOutput",
+  );
   return (
     <div className="arbor-view-stack">
-      {res.entries.length === 0 ? (
+      {visibleEntries.length === 0 ? (
         <Empty>无会话记录</Empty>
       ) : (
         <ul className="arbor-conversation-list">
-          {res.entries.map((entry, index) => {
+          {visibleEntries.map((entry, index) => {
             // The legacy arm's `kind: string` overlaps the turn literals, so
             // narrow by property presence (the frozen arms are distinguished
             // by their payload fields, not by the tag alone).
@@ -32,6 +35,7 @@ export function TranscriptView({
                 <li
                   key={`human:${entry.messageId}`}
                   className="arbor-conversation-turn arbor-conversation-human"
+                  data-conversation-turn-key={`human:${entry.messageId}`}
                 >
                   <span className="arbor-conversation-author">你</span>
                   <span className="arbor-conversation-body">{entry.body}</span>
@@ -44,6 +48,7 @@ export function TranscriptView({
                 <li
                   key={`assistant:${entry.executionId}:${entry.occurredAt}`}
                   className="arbor-conversation-turn arbor-conversation-assistant"
+                  data-conversation-turn-key={`assistant:${entry.executionId}:${entry.occurredAt}`}
                 >
                   <span className="arbor-conversation-author">Arbor</span>
                   <span className="arbor-conversation-body">{entry.body}</span>
@@ -64,9 +69,9 @@ export function TranscriptView({
           })}
         </ul>
       )}
-      {nextCursor == null ? null : (
+      {nextCursor == null || onLoadMore === undefined ? null : (
         <Button variant="quiet" onClick={() => onLoadMore?.(nextCursor)}>
-          更早
+          加载更多记录
         </Button>
       )}
     </div>

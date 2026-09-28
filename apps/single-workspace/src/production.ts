@@ -19,11 +19,21 @@ import {
   type SnapshotRetentionPlan,
   type VerificationConsumerDependencies,
 } from "@arbor/application";
-import type { Principal, ProjectId } from "@arbor/domain";
-import { startupRecovery, sweepRecovery } from "@arbor/execution-runtime";
+import {
+  ExecutionId,
+  type Principal,
+  type ProjectId,
+  parse,
+} from "@arbor/domain";
+import {
+  runExecution,
+  startupRecovery,
+  sweepRecovery,
+} from "@arbor/execution-runtime";
 import { P14_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
+  type AgentExecutionStateStore,
   BlobStorePort,
   Clock,
   ConsumerDeadLetterStore,
@@ -31,6 +41,7 @@ import {
   DomainEventJournal,
   EnvironmentResolverPort,
   EnvironmentRevisionStore,
+  type ExecutionDriverPort,
   ExecutionRepository,
   type ExecutionScheduler,
   HumanMessageStore,
@@ -42,13 +53,15 @@ import {
   ProjectRepository,
   type ReconciliationSource,
   RecordEnvironmentChange,
+  type RuntimeSafetyGate,
   type SchedulerTimerStore,
   TransactionPort,
   VerificationRepository,
+  type WorkerDispatchPort,
   WorkRepository,
   WorkspaceRepository,
 } from "@arbor/ports";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { T1RecoveryState } from "./health.js";
 import { makeResponseBodyOf } from "./response-body.js";
@@ -177,6 +190,10 @@ export type ProductionDaemonServices =
   | ProjectionStore
   | ExecutionRepository
   | LeaseService
+  | AgentExecutionStateStore
+  | ExecutionDriverPort
+  | WorkerDispatchPort
+  | RuntimeSafetyGate
   | ReconciliationSource
   | ExecutionScheduler
   | SchedulerTimerStore
@@ -350,6 +367,35 @@ export const ProductionDaemonServiceLive = (
                   },
                   projectId,
                 );
+                // The P14 trigger admits a durable Coordination execution;
+                // the local production composition must also hand that
+                // execution to the existing fenced P2/P3 runner. Claims are
+                // the exact correlation between a human turn and its main
+                // execution, so ordinary Work mains are never selected here.
+                const claimed = yield* tx.transact(
+                  messages.claimedOrderedByCreated(projectId),
+                );
+                for (const message of claimed) {
+                  const claimedExecutionId = message.claimedByExecutionId;
+                  if (claimedExecutionId === null) {
+                    continue;
+                  }
+                  const execution = yield* tx.transact(
+                    executions.findById(parse(ExecutionId)(claimedExecutionId)),
+                  );
+                  if (
+                    Option.isSome(execution) &&
+                    execution.value.state.status === "Active" &&
+                    execution.value.binding._tag === "WorkspaceExecution" &&
+                    execution.value.binding.focus._tag === "Coordination"
+                  ) {
+                    yield* runExecution(
+                      parse(ExecutionId)(claimedExecutionId),
+                      { _tag: "Recovery" },
+                      config.principal,
+                    );
+                  }
+                }
               }),
             );
 

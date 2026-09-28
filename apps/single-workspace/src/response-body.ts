@@ -39,20 +39,19 @@ export const makeResponseBodyOf =
       if (rows.length === 0) {
         return null;
       }
-      const parts: Array<string> = [];
-      for (const row of rows) {
-        const text = extractText(row.payload_json);
-        if (text !== null && text.length > 0) {
-          parts.push(text);
+      // The conversation answer is the FINAL ModelOutput of the execution
+      // (each turn re-states the assistant reply; joining all turns would
+      // duplicate it). Scan newest-first and take the last non-empty text.
+      for (let index = rows.length - 1; index >= 0; index -= 1) {
+        const text = extractText(rows[index]?.payload_json ?? "");
+        if (text !== null && text.trim().length > 0) {
+          const normalized = text.replace(/\s+/g, " ").trim();
+          return normalized.length <= RESPONSE_BODY_LIMIT
+            ? normalized
+            : `${normalized.slice(0, RESPONSE_BODY_LIMIT - 1)}…`;
         }
       }
-      if (parts.length === 0) {
-        return null;
-      }
-      const joined = parts.join("\n").replace(/\s+/g, " ").trim();
-      return joined.length <= RESPONSE_BODY_LIMIT
-        ? joined
-        : `${joined.slice(0, RESPONSE_BODY_LIMIT - 1)}…`;
+      return null;
     });
 
 const extractText = (payloadJson: string): string | null => {

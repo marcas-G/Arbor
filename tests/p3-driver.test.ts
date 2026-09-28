@@ -4,13 +4,18 @@ import { describe, expect, it } from "vitest";
 import {
   ClockLive,
   EnvironmentRevisionStoreLive,
+  HumanMessageStoreLive,
   IdGeneratorLive,
   layer,
   P3_MIGRATIONS,
+  P14_MIGRATIONS,
+  ProjectRepositoryLive,
   ProviderTurnStoreLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
+  WorkRepositoryLive,
+  WorkspaceRepositoryLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import {
@@ -175,7 +180,11 @@ const makeApp = (
       providerRuntime,
       capability,
       Layer.provide(SessionRepositoryLive, infra),
+      Layer.provide(ProjectRepositoryLive, infra),
+      Layer.provide(WorkspaceRepositoryLive, infra),
+      Layer.provide(WorkRepositoryLive, infra),
       Layer.provide(TransactionPortLive, infra),
+      Layer.provide(HumanMessageStoreLive, infra),
       environmentRevisions,
     ),
   );
@@ -350,7 +359,7 @@ describe("P3-013 agent driver", () => {
   it("runs text then routes a registered control invocation to settlement", async () => {
     const app = makeApp([textTurn, sendMessageTurn("question")]);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P3_MIGRATIONS);
+      yield* runMigrations(P14_MIGRATIONS);
       yield* seed;
       return yield* drive(allowGate);
     });
@@ -365,7 +374,7 @@ describe("P3-013 agent driver", () => {
   it("stops at the P2 safety gate", async () => {
     const app = makeApp([textTurn]);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P3_MIGRATIONS);
+      yield* runMigrations(P14_MIGRATIONS);
       yield* seed;
       return yield* drive({
         admitActivity: () => Effect.succeed("Stop" as const),
@@ -397,7 +406,7 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
   it("repairs an empty provider turn and continues to a registered control action", async () => {
     const app = makeApp([invalidTurn, sendMessageTurn("recovered")]);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P3_MIGRATIONS);
+      yield* runMigrations(P14_MIGRATIONS);
       yield* seed;
       return yield* driveAndCount(allowGate);
     });
@@ -413,7 +422,7 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
   it("settles Failed after bounded repair attempts are exhausted", async () => {
     const app = makeApp([invalidTurn, invalidTurn, invalidTurn]);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P3_MIGRATIONS);
+      yield* runMigrations(P14_MIGRATIONS);
       yield* seed;
       return yield* driveAndCount(allowGate);
     });
@@ -454,7 +463,7 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
       },
     );
     const program = Effect.gen(function* () {
-      yield* runMigrations(P3_MIGRATIONS);
+      yield* runMigrations(P14_MIGRATIONS);
       yield* seed;
       return yield* driveAndCount(allowGate);
     });
@@ -494,7 +503,7 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
       },
     });
     const program = Effect.gen(function* () {
-      yield* runMigrations(P3_MIGRATIONS);
+      yield* runMigrations(P14_MIGRATIONS);
       yield* seed;
       return yield* driveAndCount(allowGate);
     });

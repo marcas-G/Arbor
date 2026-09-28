@@ -1,5 +1,9 @@
 import type { ExecutionSettlement } from "@arbor/domain";
-import type { InstructionFragment } from "@arbor/model-context";
+import {
+  dataOnlyTrust,
+  hashInstructionContent,
+  type InstructionFragment,
+} from "@arbor/model-context";
 
 /** DID v1.7 §6A.8; P3 `06` §3. `ModelOutputContractViolation` is NOT a provider
  * transport failure; it is repaired under a bounded policy. */
@@ -22,23 +26,27 @@ const isSafetySignal = (reason: string): boolean =>
 export const repairFragment = (
   outputContractRef: string,
   reason: string,
-): InstructionFragment => ({
-  identity: `repair:${outputContractRef}`,
-  revision: 1,
-  hash: "repair",
-  semanticKind: "OutputContractRepair",
-  source: "Canonical",
-  scope: "output-contract-repair",
-  authorityRole: "A4",
-  strength: "Soft",
-  compositionMode: "Extend",
-  activationCondition: "contract-violation",
-  lifetime: "Evictable",
-  cacheClass: "TurnDynamic",
-  budgetClass: "repair",
-  modelCompatibility: [],
-  contentRef: `repair ${outputContractRef}: ${reason}`,
-});
+): InstructionFragment => {
+  const text = `Repair ${outputContractRef}: ${reason}`;
+  return {
+    identity: `repair:${outputContractRef}`,
+    revision: 1,
+    hash: hashInstructionContent(text),
+    semanticKind: "OutputContractRepair",
+    source: "DynamicSurface",
+    scope: "output-contract-repair",
+    authorityRole: "A4",
+    strength: "Soft",
+    compositionMode: "Extend",
+    activationCondition: "contract-violation",
+    lifetime: "Evictable",
+    cacheClass: "TurnDynamic",
+    budgetClass: "repair",
+    modelCompatibility: [],
+    contentRef: text,
+    provenance: dataOnlyTrust("ModelDerived"),
+  };
+};
 
 export const decideRepair = (
   policy: RepairPolicy,

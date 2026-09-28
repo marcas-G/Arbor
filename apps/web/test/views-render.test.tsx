@@ -143,8 +143,13 @@ describe("transcript", () => {
     expect(screen.getByText("turn#12 请求评审")).toBeTruthy();
     expect(screen.getByText("HumanInput")).toBeTruthy();
     expect(screen.getByText("SpecialistSettled")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "更早" }));
+    fireEvent.click(screen.getByRole("button", { name: "加载更多记录" }));
     expect(onLoadMore).toHaveBeenCalledWith("cursor-018f6a2e-older");
+  });
+
+  it("does not show an inert pagination button without a load handler", () => {
+    render(<TranscriptView res={transcriptTypical} />);
+    expect(screen.queryByRole("button", { name: "加载更多记录" })).toBeNull();
   });
 
   it("minimal shows the empty state and no older button", () => {
@@ -157,6 +162,46 @@ describe("transcript", () => {
     render(<TranscriptView res={transcriptUnknownEnum} />);
     expect(screen.getByText("CosmicRay")).toBeTruthy();
     expectMutedBadge("CosmicRay");
+  });
+
+  it("hides internal ModelOutput entries while keeping conversation and other events", () => {
+    render(
+      <TranscriptView
+        res={{
+          entries: [
+            {
+              kind: "HumanConversationTurn",
+              messageId: "msg_1",
+              body: "用户消息",
+              occurredAt: "2026-09-26T06:00:00.000Z",
+            },
+            {
+              kind: "AssistantConversationTurn",
+              executionId: "exe_1",
+              body: "正式助手回复",
+              occurredAt: "2026-09-26T06:01:00.000Z",
+            },
+            {
+              kind: "ModelOutput",
+              summaryRef: "session-entry:ses_1:0",
+              at: "2026-09-26T06:00:30.000Z",
+            },
+            {
+              kind: "HumanInput",
+              summaryRef: "其他会话事件",
+              at: "2026-09-26T05:59:00.000Z",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("用户消息")).toBeTruthy();
+    expect(screen.getByText("正式助手回复")).toBeTruthy();
+    expect(screen.getByText("HumanInput")).toBeTruthy();
+    expect(screen.getByText("其他会话事件")).toBeTruthy();
+    expect(screen.queryByText("ModelOutput")).toBeNull();
+    expect(screen.queryByText("session-entry:ses_1:0")).toBeNull();
   });
 });
 

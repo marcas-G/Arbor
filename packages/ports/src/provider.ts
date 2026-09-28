@@ -166,11 +166,47 @@ export interface ProviderRunInput {
   readonly modelRef: string;
   readonly outputContractRef: string;
   readonly manifestId: string;
+  readonly manifest: ModelContextManifestRecord;
   readonly request: PortableModelRequest;
   readonly secretRef?: SecretRef;
   readonly timeoutMs: number;
   readonly cancellationRef: string;
+  /** Process-local observation of provider events while an attempt is live.
+   * Observers are presentation-only and cannot affect provider success. */
+  readonly onProgress?: ((event: ProviderRuntimeProgress) => void) | undefined;
 }
+
+/** Durable row payload for DID §8.19 / P3 `04` §3.3. */
+export interface ModelContextManifestRecord {
+  readonly manifestId: string;
+  readonly providerTurnId: ProviderTurnId;
+  readonly executionId: ExecutionId;
+  readonly sessionId: SessionId;
+  readonly contextEpoch: ContextEpochNumber;
+  readonly modelRef: string;
+  readonly compiledRequestHash: string;
+  readonly manifestJson: string;
+}
+
+export type ProviderRuntimeProgress =
+  | {
+      readonly _tag: "AttemptStarted";
+      readonly providerTurnId: ProviderTurnId;
+      readonly attemptNo: number;
+    }
+  | {
+      readonly _tag: "ProviderEvent";
+      readonly providerTurnId: ProviderTurnId;
+      readonly attemptNo: number;
+      readonly event: CanonicalProviderEvent;
+    }
+  | {
+      readonly _tag: "AttemptFailed";
+      readonly providerTurnId: ProviderTurnId;
+      readonly attemptNo: number;
+      readonly failureKind: ProviderFailureKind;
+      readonly retrying: boolean;
+    };
 
 /** P12 `08` §7 D1 (B-4): the successful result of one logical `ProviderTurn`.
  * `attemptNo` is the Turn-local ordinal of the transport attempt that produced
@@ -228,6 +264,7 @@ export interface UnsettledProviderTurn {
 export interface ProviderTurnStoreService {
   readonly startTurn: (
     record: ProviderTurnRecord,
+    manifest: ModelContextManifestRecord,
     startedAt: string,
   ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
   readonly recordAttempt: (
@@ -288,6 +325,8 @@ export class ProviderTurnStore extends Context.Service<
 export interface ModelCapability {
   readonly modelRef: string;
   readonly family: string;
+  /** Composition-selected provider adapter identity for audit manifests. */
+  readonly providerRef?: string;
   readonly contextWindow: number;
   readonly outputCeiling: number;
   readonly toolProtocol: string;

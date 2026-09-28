@@ -406,6 +406,19 @@ const C_EXECUTION_T4 = "exe_018f2b3c-4d5e-7abc-8def-0123456789c4";
 const C_TURN = parse(ProviderTurnId)(
   "ptn_018f2b3c-4d5e-7abc-8def-0123456789c3",
 );
+const cManifestRecord = (
+  manifestId: string,
+  providerTurnId: ProviderTurnId,
+) => ({
+  manifestId,
+  providerTurnId,
+  executionId: C_EXECUTION,
+  sessionId: C_SESSION,
+  contextEpoch: 0 as never,
+  modelRef: "provider-fake",
+  compiledRequestHash: `${manifestId}-request`,
+  manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
+});
 const C_INVOCATION = parse(ToolInvocationId)(
   "tin_018f2b3c-4d5e-7abc-8def-0123456789c3",
 );
@@ -701,6 +714,7 @@ const cOpenProviderTurn = Effect.gen(function* () {
         outputContractRef: "oc",
         manifestId: "mf_story_c",
       },
+      cManifestRecord("mf_story_c", C_TURN),
       "t",
     ),
   );
@@ -767,6 +781,8 @@ const D_EXECUTION = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789d3",
 ) as ExecutionId;
 const D_MANIFEST = "mf_story_d";
+const dManifestId = (turnId: ProviderTurnId): string =>
+  `${D_MANIFEST}:${turnId}`;
 const D_PRINCIPAL = parse(Principal)("runtime:system");
 
 const D_TURN_A = parse(ProviderTurnId)(
@@ -938,7 +954,17 @@ const dRunTurnInput = (turnId: ProviderTurnId) => ({
   contextEpoch: 0 as never,
   modelRef: "provider-fake",
   outputContractRef: "oc",
-  manifestId: D_MANIFEST,
+  manifestId: dManifestId(turnId),
+  manifest: {
+    manifestId: dManifestId(turnId),
+    providerTurnId: turnId,
+    executionId: D_EXECUTION,
+    sessionId: D_SESSION,
+    contextEpoch: 0 as never,
+    modelRef: "provider-fake",
+    compiledRequestHash: `${dManifestId(turnId)}-request`,
+    manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
+  },
   request: {
     modelRef: "provider-fake",
     instructions: [],
@@ -1003,7 +1029,17 @@ const dOpenDanglingTurn = (
           contextEpoch: 0 as never,
           modelRef: "provider-fake",
           outputContractRef: "oc",
-          manifestId: D_MANIFEST,
+          manifestId: dManifestId(turnId),
+        },
+        {
+          manifestId: dManifestId(turnId),
+          providerTurnId: turnId,
+          executionId: D_EXECUTION,
+          sessionId: D_SESSION,
+          contextEpoch: 0 as never,
+          modelRef: "provider-fake",
+          compiledRequestHash: `${dManifestId(turnId)}-request`,
+          manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
         },
         "t",
       ),
@@ -2291,9 +2327,12 @@ describe("p9-acceptance", () => {
         // Same Turn identity + same Manifest across every retry and every
         // recovery disposition (turnNo invariant).
         expect(turnsAfter).toHaveLength(4);
-        for (const turn of turnsAfter) {
-          expect(turn.manifest_id).toBe(D_MANIFEST);
-        }
+        expect(turnsAfter.map((turn) => turn.manifest_id)).toEqual([
+          dManifestId(D_TURN_A),
+          dManifestId(D_TURN_B),
+          dManifestId(D_TURN_C),
+          dManifestId(D_TURN_D),
+        ]);
         const settledA = turnsAfter.find(
           (turn) => turn.provider_turn_id === D_TURN_A,
         );
@@ -2318,7 +2357,7 @@ describe("p9-acceptance", () => {
         expect(turnC?.finish_reason).toBe("Failed");
         // Unsettled-turn recovery: same Turn, new Attempt, Manifest intact.
         const planD = report.retryPlan[0]!;
-        expect(planD.manifestId).toBe(D_MANIFEST);
+        expect(planD.manifestId).toBe(dManifestId(D_TURN_D));
         expect(planD.nextAttemptNo).toBe(1);
         expect(planD.lastProviderErrorKind).toBe("StreamInterrupted");
         // Recovery never invents an Execution settlement.

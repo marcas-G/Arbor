@@ -242,6 +242,10 @@ importers:
       '@arbor/ports':
         specifier: workspace:*
         version: link:../../packages/ports
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.5
+        version: 24.13.5
 
   adapters/sandbox-local:
     dependencies:

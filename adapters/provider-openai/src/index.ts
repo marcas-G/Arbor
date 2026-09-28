@@ -8,6 +8,19 @@ import type {
 } from "@arbor/ports";
 import { ProviderPort } from "@arbor/ports";
 import { Layer, Stream } from "effect";
+import {
+  type OpenAISdkChunk,
+  type OpenAISdkClient,
+  OpenAISdkError,
+  type OpenAISdkFinishReason,
+} from "./sdk.js";
+
+export {
+  type OpenAISdkChunk,
+  type OpenAISdkClient,
+  OpenAISdkError,
+  type OpenAISdkFinishReason,
+} from "./sdk.js";
 
 /**
  * P12 `12` §2: the first concrete real provider family.
@@ -21,59 +34,14 @@ import { Layer, Stream } from "effect";
  * `ProviderFailure`; no SDK type ever appears in the stream `E` channel.
  */
 
-/** Raw SDK error class. It must never cross the adapter boundary; the
- * adapter maps it to a `ProviderFailure` and discards the raw value. */
-export class OpenAISdkError extends Error {
-  readonly status: number;
-  readonly code: string;
-
-  constructor(status: number, code: string, message?: string) {
-    super(message ?? `openai sdk error ${status} ${code}`);
-    this.name = "OpenAISdkError";
-    this.status = status;
-    this.code = code;
-  }
-}
-
-export type OpenAISdkFinishReason =
-  | "stop"
-  | "length"
-  | "tool_calls"
-  | "content_filter";
-
-/** Minimal, SDK-neutral chunk vocabulary. A real SDK client adapts its wire
- * format to this; tests inject a deterministic fake. */
-export type OpenAISdkChunk =
-  | { readonly type: "text"; readonly text: string }
-  | { readonly type: "reasoning"; readonly text: string }
-  | {
-      readonly type: "tool_call";
-      readonly callRef: string;
-      readonly toolName: string;
-      readonly argumentsJson: string;
-    }
-  | {
-      readonly type: "usage";
-      readonly inputTokens: number;
-      readonly outputTokens: number;
-      readonly cacheReadTokens?: number;
-      readonly cacheWriteTokens?: number;
-    }
-  | { readonly type: "continuation"; readonly stateRef: string }
-  | {
-      readonly type: "completed";
-      readonly finishReason: OpenAISdkFinishReason;
-    };
-
-/** Injected SDK client seam: transport/auth stay outside the port so tests
- * run with no live network. */
-export interface OpenAISdkClient {
-  readonly streamChat: (input: {
-    readonly modelRef: string;
-    readonly request: PortableModelRequest;
-    readonly context: ProviderExecutionContext;
-  }) => AsyncIterable<OpenAISdkChunk>;
-}
+export {
+  type OpenAICompatibleClientConfig,
+  type OpenAICompatibleFetch,
+  OpenAICompatibleFetchClient,
+  type OpenAICompatibleFetchInit,
+  type OpenAICompatibleFetchResponse,
+  openAICompatibleEndpointOf,
+} from "./client.js";
 
 const KIND_BY_CODE: Record<string, ProviderFailureKind> = {
   rate_limit_exceeded: "RateLimited",

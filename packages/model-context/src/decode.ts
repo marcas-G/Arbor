@@ -48,6 +48,67 @@ export const AGENT_DIRECTIVE_CONTRACT = "agent-directive-v1";
 export const COMPLETION_CLAIM_CONTRACT = "completion-claim-v1";
 export const TOOL_INVOCATION_CONTRACT = "tool-invocation-v1";
 
+/** Frozen output-contract JSON Schemas (P3 `01` §4). A known contract ref
+ * resolves to its schema; unknown refs resolve to null (the caller decides
+ * whether that is admissible — never a silent fallback). */
+const OUTPUT_CONTRACT_SCHEMAS: Readonly<Record<string, string>> = {
+  [AGENT_DIRECTIVE_CONTRACT]: JSON.stringify({
+    oneOf: [
+      { properties: { _tag: { const: "Communicate" } }, required: ["_tag"] },
+      {
+        properties: { _tag: { const: "RequestGovernance" } },
+        required: ["_tag"],
+      },
+      {
+        properties: { _tag: { const: "ProposeChildWorkspace" } },
+        required: ["_tag"],
+      },
+      {
+        properties: { _tag: { const: "SpawnSpecialist" } },
+        required: ["_tag"],
+      },
+      {
+        properties: { _tag: { const: "CompletionClaim" } },
+        required: ["_tag"],
+      },
+      { properties: { _tag: { const: "Yield" } }, required: ["_tag"] },
+      { properties: { _tag: { const: "Wait" } }, required: ["_tag"] },
+      { properties: { _tag: { const: "LoadSkill" } }, required: ["_tag"] },
+      {
+        properties: { _tag: { const: "DeclareDependency" } },
+        required: ["_tag"],
+      },
+      { properties: { _tag: { const: "ToolInvocation" } }, required: ["_tag"] },
+    ],
+  }),
+  [COMPLETION_CLAIM_CONTRACT]: JSON.stringify({
+    type: "object",
+    required: ["claim"],
+    properties: {
+      claim: {
+        type: "object",
+        required: ["claimRef", "workRevision"],
+        properties: {
+          claimRef: { type: "string" },
+          workRevision: { type: "number" },
+        },
+      },
+    },
+  }),
+  [TOOL_INVOCATION_CONTRACT]: JSON.stringify({
+    type: "object",
+    required: ["invocations"],
+    properties: {
+      invocations: { type: "array", items: { type: "object" } },
+    },
+  }),
+};
+
+export const outputContractSchemaJson = (contractRef: string): string | null =>
+  Object.hasOwn(OUTPUT_CONTRACT_SCHEMAS, contractRef)
+    ? (OUTPUT_CONTRACT_SCHEMAS[contractRef] as string)
+    : null;
+
 /** Provider-neutral tool-call proposal. It carries transport identity and
  * model-authored arguments only; it has no Arbor action or authority meaning. */
 export interface ToolInvocation {

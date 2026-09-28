@@ -311,6 +311,9 @@ const planView = (
           ? (req.cursor as TranscriptRequest["cursor"])
           : undefined,
         limit: req.limit,
+        ...(isRecord(request) && req.conversationOnly === true
+          ? { conversationOnly: true }
+          : {}),
       };
       return Effect.succeed({
         projectId: deps.projectIdOfWorkspace(transcriptRequest.workspaceId),

@@ -103,9 +103,7 @@ describe("CreateProjectForm", () => {
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "论文写作平台" },
     });
-    fireEvent.change(screen.getByLabelText("根责任目标"), {
-      target: { value: "完成论文初稿" },
-    });
+    expect(screen.queryByLabelText("根责任目标")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { url, init, envelope } = readCall(fetchMock);
@@ -125,9 +123,10 @@ describe("CreateProjectForm", () => {
     expect(payload.name).toBe("论文写作平台");
     expect(payload.projectId).toBe(envelope.projectId);
     const root = payload.rootWorkspace as Record<string, unknown>;
+    expect(root.name).toBe("论文写作平台");
     expect(
       (root.responsibilityDefinition as Record<string, unknown>).purpose,
-    ).toBe("完成论文初稿");
+    ).toBe("论文写作平台");
     expect(String(payload.rootWorkspaceId)).toMatch(/^ws_/);
     expect(
       String((payload.primarySession as Record<string, unknown>).sessionId),
@@ -148,9 +147,6 @@ describe("CreateProjectForm", () => {
     render(<CreateProjectForm actor="human:root" onSubmitted={onSubmitted} />);
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "p1" },
-    });
-    fireEvent.change(screen.getByLabelText("根责任目标"), {
-      target: { value: "o1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
     await waitFor(() => expect(screen.getByText("服务不可用")).toBeTruthy());

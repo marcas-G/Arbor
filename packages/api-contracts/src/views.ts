@@ -213,6 +213,10 @@ export interface TranscriptReq {
   readonly sessionId?: SessionId | undefined;
   readonly cursor?: string | undefined;
   readonly limit: number;
+  /** Fetch only chronological conversation turns, newest page first. The
+   * cursor then points to the oldest turn in that page for upward history
+   * loading; omitted preserves the legacy session transcript behavior. */
+  readonly conversationOnly?: boolean | undefined;
 }
 
 /** P14 `03` §1 (DID v1.16 G-C): conversation turns + the legacy session-entry

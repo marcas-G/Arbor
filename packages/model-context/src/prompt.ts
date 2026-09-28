@@ -1,3 +1,5 @@
+import type { InformationTrustMetadata } from "@arbor/ports";
+
 /** DID v1.7 §8.4–§8.6; P3 `05` §1–§4. Prompt Programs are versioned
  * phase-scoped contract artifacts (C5); only wording iteration that does not
  * change the contract is empirical. */
@@ -76,7 +78,17 @@ export interface InstructionFragment {
   readonly budgetClass: string;
   readonly modelCompatibility: ReadonlyArray<string>;
   readonly contentRef: string;
+  readonly provenance: InformationTrustMetadata;
 }
+
+export const hashInstructionContent = (content: string): string => {
+  let value = 0x811c9dc5;
+  for (let index = 0; index < content.length; index += 1) {
+    value ^= content.charCodeAt(index);
+    value = Math.imul(value, 0x01000193) >>> 0;
+  }
+  return value.toString(16).padStart(8, "0");
+};
 
 const fnv = (input: string): string => {
   let value = 0x811c9dc5;
@@ -189,5 +201,21 @@ export const P3_PROGRAMS: ReadonlyArray<PromptProgram> = [
   WORK_EXECUTION_PROGRAM,
   COMPACTION_PROGRAM,
 ];
+
+/** Deterministic generic cognition surface: base protocol, responsibility
+ * binding, and Work execution slots are combined without changing their
+ * authority or composition contracts. */
+export const GENERIC_COGNITION_PROGRAM: PromptProgram = program({
+  programId: "generic-cognition",
+  revision: 1,
+  family: "WorkExecutionProgram",
+  slots: [
+    ...BASE_AGENT_PROTOCOL.slots,
+    ...RESPONSIBILITY_BOUND_PROTOCOL.slots,
+    ...WORK_EXECUTION_PROGRAM.slots,
+  ],
+  outputContractRefs: [...new Set(WORK_EXECUTION_PROGRAM.outputContractRefs)],
+  evalSetRef: "eval/generic-cognition",
+});
 
 export const OVERRIDABLE_AUTHORITY_FLOOR: AuthorityRole = "A3";

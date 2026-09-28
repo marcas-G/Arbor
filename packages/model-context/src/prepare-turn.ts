@@ -60,6 +60,19 @@ export interface PrepareTurnInput {
   /** Independent bounded output protocol; control tools use the generic
    * invocation protocol and do not select a universal AgentDirective union. */
   readonly outputContractRef?: string;
+  /** P14 conversation context: the current claimed human message (user) plus
+   * recent answered turns (user/assistant). Absent on Work executions. */
+  readonly conversationMessages?: ReadonlyArray<{
+    readonly role: "user" | "assistant";
+    readonly text: string;
+  }>;
+  /** Manifest refs for the conversation context (human-input:<messageId>). */
+  readonly conversationContextRefs?: ReadonlyArray<string>;
+  /** Adapter identity recorded on the manifest (composition-provided). */
+  readonly providerRef?: string;
+  /** P14 conversation: suppress catalogued executable tools (WAVE1 S05 —
+   * the Human Input request exposes only the directive tool). */
+  readonly includeTools?: boolean;
 }
 
 export interface ModelContextService {
@@ -130,14 +143,19 @@ export const ModelContextLive: Layer.Layer<
           cognitiveMode: input.cognitiveMode,
           requiredCapabilities: [],
         });
-        const toolRefs = yield* toolCatalog.visibleRefs();
         const tools: ModelFacingToolDefinition[] = [];
-        for (const ref of toolRefs) {
-          tools.push(yield* toolCatalog.resolveForModel(ref));
+        if (input.includeTools !== false) {
+          const toolRefs = yield* toolCatalog.visibleRefs();
+          for (const ref of toolRefs) {
+            tools.push(yield* toolCatalog.resolveForModel(ref));
+          }
         }
-        const controlTools = Option.isSome(controlToolCatalog)
-          ? yield* controlToolCatalog.value.visibleDefinitions()
-          : [];
+        const controlTools =
+          input.includeTools === false
+            ? []
+            : Option.isSome(controlToolCatalog)
+              ? yield* controlToolCatalog.value.visibleDefinitions()
+              : [];
         const skillRefs: SkillRef[] = [];
         for (const skillId of input.bodySkillIds) {
           const loaded = yield* skills.load(skillId, "Body");
@@ -157,6 +175,17 @@ export const ModelContextLive: Layer.Layer<
               "tool-invocation-v1",
             continuation: "recent-frontier",
             controlBasis: input.controlBasis,
+            ...(input.conversationMessages !== undefined &&
+            input.conversationMessages.length > 0
+              ? { conversationMessages: input.conversationMessages }
+              : {}),
+            ...(input.conversationContextRefs !== undefined &&
+            input.conversationContextRefs.length > 0
+              ? { conversationContextRefs: input.conversationContextRefs }
+              : {}),
+            ...(input.providerRef !== undefined
+              ? { providerRef: input.providerRef }
+              : {}),
           },
           capability,
           providerTurnId: input.providerTurnId,

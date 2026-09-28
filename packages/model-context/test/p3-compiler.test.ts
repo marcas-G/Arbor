@@ -6,7 +6,16 @@ import {
   SessionId,
 } from "@arbor/domain";
 import { describe, expect, it } from "vitest";
-import { compileTurn, type ModelContextPlan } from "../src/index.js";
+import {
+  AGENT_DIRECTIVE_CONTRACT,
+  canonicalInstructionTrust,
+  compileTurn,
+  hashInstructionContent,
+  type ModelContextPlan,
+  outputContractSchemaJson,
+} from "../src/index.js";
+
+const runtimeSafetyText = "runtime safety body";
 
 const plan: ModelContextPlan = {
   instructions: {
@@ -14,7 +23,7 @@ const plan: ModelContextPlan = {
       {
         identity: "runtime-safety",
         revision: 1,
-        hash: "h1",
+        hash: hashInstructionContent(runtimeSafetyText),
         semanticKind: "RuntimeSafety",
         source: "Canonical",
         scope: "runtime-safety",
@@ -27,16 +36,20 @@ const plan: ModelContextPlan = {
         budgetClass: "b",
         modelCompatibility: [],
         contentRef: "runtime safety text",
+        provenance: canonicalInstructionTrust,
       },
     ],
     suppressed: [],
     conflicts: [],
     governanceIssues: [],
   },
+  instructionContents: new Map([["runtime safety text", runtimeSafetyText]]),
   context: [],
   tools: [],
   skills: [],
   outputContract: "agent-directive-v1",
+  outputContractSchemaJson:
+    outputContractSchemaJson(AGENT_DIRECTIVE_CONTRACT) ?? "{}",
   continuation: "recent-frontier",
   controlBasis: {
     projectPolicyRevision: 0,

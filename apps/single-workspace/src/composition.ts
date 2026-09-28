@@ -405,6 +405,9 @@ export const buildSliceLayer = (
               : {}),
             controlRegistry: registryService,
             executableInvocationHandler: executableHandler,
+            ...(config.provider !== undefined
+              ? { providerRef: config.provider.adapterId }
+              : {}),
           }),
           Layer.mergeAll(
             modelContext,

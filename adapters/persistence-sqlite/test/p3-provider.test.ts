@@ -127,14 +127,25 @@ const request = {
 const runTurn = (providerTurnId: string) =>
   Effect.gen(function* () {
     const runtime = yield* ProviderRuntime;
+    const turnId = parse(ProviderTurnId)(providerTurnId);
     return yield* runtime.runTurn({
-      providerTurnId: parse(ProviderTurnId)(providerTurnId),
+      providerTurnId: turnId,
       executionId,
       sessionId,
       contextEpoch: parse(ContextEpochNumber)(0),
       modelRef: "model-a",
       outputContractRef: "agent-directive-v1",
       manifestId: "man-1",
+      manifest: {
+        manifestId: "man-1",
+        providerTurnId: turnId,
+        executionId,
+        sessionId,
+        contextEpoch: parse(ContextEpochNumber)(0),
+        modelRef: "model-a",
+        compiledRequestHash: "hash-p3-provider",
+        manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
+      },
       request,
       timeoutMs: 1000,
       cancellationRef: "cancel-1",

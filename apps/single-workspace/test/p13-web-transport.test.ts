@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  type ConversationProgressHub,
+  createConversationProgressHub,
+} from "../src/transport/conversation-progress.js";
 import { makeTransportCore } from "../src/transport/core.js";
 import type { HttpShell } from "../src/transport/http.js";
 import { makeHttpShell } from "../src/transport/http.js";
@@ -81,11 +85,15 @@ const http: HttpShell = makeHttpShell(core);
 const webSocket = makeWebSocketShell(core);
 
 const fakeSql = {
-  unsafe: () => Effect.succeed([{ watermark: 0 }]),
+  unsafe: (query: string) =>
+    query.includes("human_messages")
+      ? Effect.succeed([{ human_principal: "user:alice" }])
+      : Effect.succeed([{ watermark: 0 }]),
 } as unknown as SqlClient;
 
 let handle: WebTransportHandle;
 let dist: string;
+let progress: ConversationProgressHub;
 
 beforeAll(async () => {
   dist = mkdtempSync(join(tmpdir(), "arbor-web-e2e-"));
@@ -95,9 +103,12 @@ beforeAll(async () => {
     "<!doctype html><title>arbor-e2e</title>",
   );
   writeFileSync(join(dist, "assets", "index-xyz.js"), "export {}");
+  progress = createConversationProgressHub();
   handle = await startWebTransport({
     http,
     webSocket,
+    authenticator: fakeAuthenticator,
+    conversationProgress: progress,
     sql: fakeSql,
     staticRoot: dist,
     pollIntervalMs: 10_000,
@@ -200,5 +211,51 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
       ]);
     }
     ws.close();
+  });
+
+  it("streams authenticated conversation progress without changing transcript DTOs", async () => {
+    progress.publish("msg_1", {
+      type: "delta",
+      executionId: "exe_1",
+      providerTurnId: "ptn_1",
+      attemptNo: 0,
+      text: "hello",
+    });
+    progress.publish("msg_1", { type: "settled", executionId: "exe_1" });
+    const response = await fetch(`${base()}/conversation-progress/msg_1`, {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.text();
+    expect(body).toContain('"type":"delta"');
+    expect(body).toContain('"text":"hello"');
+    expect(body).toContain('"type":"settled"');
+  });
+
+  it("keeps the SSE listener alive after the GET request has completed", async () => {
+    const response = await fetch(`${base()}/conversation-progress/msg_live`, {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    expect(response.status).toBe(200);
+    if (response.body === null) {
+      throw new Error("expected an SSE response body");
+    }
+
+    const reader = response.body.getReader();
+    const pendingRead = reader.read();
+    progress.publish("msg_live", {
+      type: "delta",
+      executionId: "exe_live",
+      providerTurnId: "ptn_live",
+      attemptNo: 0,
+      text: "live delta",
+    });
+    const liveChunk = await pendingRead;
+    expect(new TextDecoder().decode(liveChunk.value)).toContain(
+      '"text":"live delta"',
+    );
+
+    progress.publish("msg_live", { type: "settled", executionId: "exe_live" });
+    await reader.read();
   });
 });
