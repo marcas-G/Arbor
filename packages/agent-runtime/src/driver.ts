@@ -154,6 +154,16 @@ export interface AgentDriverOptions {
   readonly executableInvocationHandler?: ExecutableInvocationHandler;
   /** Adapter identity recorded on manifests (P14 conversation audit). */
   readonly providerRef?: string;
+  /** Presentation-only progress tap (conversation streaming): receives every
+   * ProviderRuntimeProgress event tagged with the driving executionId. It
+   * must never affect model/execution semantics (the provider runtime
+   * already isolates observer throws). */
+  readonly onProviderProgress?:
+    | ((
+        executionId: string,
+        event: import("@arbor/ports").ProviderRuntimeProgress,
+      ) => void)
+    | undefined;
 }
 export const AgentDriverLive = (
   _legacyHandlers: ReadonlyArray<DirectiveHandler> = [],
@@ -412,6 +422,18 @@ export const AgentDriverLive = (
                   outputContractRef:
                     preparation.turn.manifest.outputContractRef,
                   manifestId: preparation.turn.manifest.compiledRequestHash,
+                  ...(options.onProviderProgress !== undefined
+                    ? {
+                        onProgress: (
+                          event: import("@arbor/ports").ProviderRuntimeProgress,
+                        ) => {
+                          options.onProviderProgress?.(
+                            String(input.execution.executionId),
+                            event,
+                          );
+                        },
+                      }
+                    : {}),
                   manifest: {
                     manifestId: preparation.turn.manifest.compiledRequestHash,
                     providerTurnId: preparation.turn.manifest.providerTurnId,

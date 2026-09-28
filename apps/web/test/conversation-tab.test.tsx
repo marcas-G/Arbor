@@ -286,7 +286,11 @@ describe("P14-005 conversation tab", () => {
       .getByText("turn#12 请求评审")
       .closest<HTMLElement>("[data-conversation-turn-key]");
     expect(anchorTurn).not.toBeNull();
-    anchorTurn!.getBoundingClientRect = () => {
+    const anchor = anchorTurn;
+    if (anchor === null) {
+      throw new Error("anchor turn missing");
+    }
+    anchor.getBoundingClientRect = () => {
       const olderPageVisible = screen.queryByText("较早的用户消息") !== null;
       const top = olderPageVisible ? 200 : 140;
       return {

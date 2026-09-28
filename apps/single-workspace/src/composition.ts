@@ -139,6 +139,7 @@ import {
   type AuthenticatorService,
   makeStaticAuthenticator,
 } from "./transport/auth.js";
+import { publishConversationProgress } from "./transport/conversation-progress-bridge.js";
 
 /** P12 `03` §3: secret adapter selection is Composition-Root config. */
 export type SecretStoreConfig =
@@ -408,6 +409,7 @@ export const buildSliceLayer = (
             ...(config.provider !== undefined
               ? { providerRef: config.provider.adapterId }
               : {}),
+            onProviderProgress: publishConversationProgress,
           }),
           Layer.mergeAll(
             modelContext,
