@@ -34,6 +34,8 @@ import {
   type SecretRef,
   SessionRepository,
   TransactionPort,
+  WorkRepository,
+  type WorkRepositoryError,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import {
@@ -178,6 +180,7 @@ export const AgentDriverLive = (
   | TransactionPort
   | EnvironmentRevisionStore
   | HumanMessageStore
+  | WorkRepository
 > =>
   Layer.effect(
     ExecutionDriverPort,
@@ -189,6 +192,7 @@ export const AgentDriverLive = (
       const humanMessages = yield* HumanMessageStore;
       const tx = yield* TransactionPort;
       const environmentRevisions = yield* EnvironmentRevisionStore;
+      const works = yield* WorkRepository;
       const controlRegistry =
         options.controlRegistry ?? makeControlToolRegistry();
       const failure = (cause: unknown): ExecutionDriverError => ({
@@ -346,6 +350,30 @@ export const AgentDriverLive = (
                     );
                   }
                 }
+                // Work executions carry the objective body through the
+                // content table so the compiled instruction shows the task
+                // text instead of the bare `work:<executionId>` reference.
+                let instructionContents: ReadonlyMap<string, string> | undefined;
+                if (
+                  input.execution.binding._tag === "WorkspaceExecution" &&
+                  input.execution.binding.focus._tag === "Work"
+                ) {
+                  const work = yield* tx.transact(
+                    works.findById(input.execution.binding.focus.workId),
+                  ).pipe(Effect.mapError(failure));
+                  if (Option.isSome(work)) {
+                    instructionContents = new Map([
+                      [
+                        `work:${input.execution.executionId}`,
+                        [
+                          `objective: ${work.value.objective}`,
+                          `why: ${work.value.why}`,
+                          `completion expectation: ${work.value.completionExpectation}`,
+                        ].join("\n"),
+                      ],
+                    ]);
+                  }
+                }
                 const preparation = yield* modelContext
                   .prepareTurn({
                     executionId: input.execution.executionId,
@@ -372,6 +400,9 @@ export const AgentDriverLive = (
                     controlBasis,
                     maxOutputTokens: capability.outputCeiling,
                     bodySkillIds: [],
+                    ...(instructionContents !== undefined
+                      ? { instructionContents }
+                      : {}),
                     ...(isConversationExecution(input.execution) &&
                     conversationMessages.length > 0
                       ? {

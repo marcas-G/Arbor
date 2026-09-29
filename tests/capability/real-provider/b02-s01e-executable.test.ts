@@ -41,7 +41,7 @@ describe("B02 L3 — real-model executable tool use (S01-E)", () => {
           temporaryDirectories.push(directory);
           const objective =
             `立即使用 shell 工具执行命令 echo ${marker}（cwd 用 {"_tag":"FileTree","path":"."}），` +
-            '不要使用 list 或 read。拿到输出后在回复中原样包含命令输出，' +
+            "不要使用 list 或 read。拿到输出后在回复中原样包含命令输出，" +
             '最后调用 arbor_wait 工具（reason: done，waitSpec 为 mode Any 与 conditions [{_tag: "Manual"}]）进入等待。';
           let durable:
             | Awaited<ReturnType<typeof queryDurableEffects>>

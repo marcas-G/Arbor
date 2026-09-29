@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "arbor-real-provider-evidence-v1",
+  "recordedAt": "2026-09-29T01:02:45.585Z",
+  "caseId": "B06-L3-REAL",
+  "status": "FAIL",
+  "error": "public CreateProject failed: 503 {\"ok\":false,\"status\":503,\"problem\":{\"code\":\"command/gateway-failure\",\"category\":\"unavailable\",\"message\":\"command/gateway-failure\",\"correlationId\":null,\"retryDisposition\":\"retryable\",\"safeDetails\":{\"cause\":\"ProjectRepositoryFailure\"}}}",
+  "provider": {
+    "provider": "OpenAI-compatible endpoint",
+    "endpoint": "https://api.deepseek.com/v1",
+    "model": "deepseek-flash",
+    "serverBuildId": "deepseek-api",
+    "modelRevision": "not exposed by provider; local model file revision/hash not requested",
+    "authMode": "env",
+    "serverProps": {}
+  },
+  "generation": [],
+  "requestsAndResponses": []
+}
