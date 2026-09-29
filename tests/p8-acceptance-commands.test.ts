@@ -169,7 +169,7 @@ const storedCurrentWorkId = Effect.gen(function* () {
     "SELECT current_work_id FROM workspaces WHERE workspace_id = ?",
     [p7RootWorkspace],
   );
-  return rows[0]!.current_work_id;
+  return rows[0]?.current_work_id;
 });
 
 const setCurrentWorkBySql = (workId: string) =>
@@ -230,7 +230,7 @@ describe("p8-acceptance-commands", () => {
           expect(outcome.value.events).toHaveLength(2);
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("WorkOutcomeAccepted");
-          expect(outcome.value.events[1]!.eventType).toBe(
+          expect(outcome.value.events[1]?.eventType).toBe(
             "HumanInterventionApplied",
           );
           expect(event.eventVersion).toBe(1);

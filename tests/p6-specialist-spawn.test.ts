@@ -37,7 +37,7 @@ import {
 const admitMainExecution = Effect.gen(function* () {
   const gw = yield* CommandGateway;
   const executionId = parse2(ExeId)("exe_018f2b3c-4d5e-7abc-8def-0123456789e1");
-  const sessionId = parse2(SessionId)(
+  const _sessionId = parse2(SessionId)(
     "ses_018f2b3c-4d5e-7abc-8def-0123456789e1",
   );
   const commandId = parse2(CommandId)(

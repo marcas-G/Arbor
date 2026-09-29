@@ -11,7 +11,6 @@
  *  - no Work mutation, no steer semantics (S3: ≠ WorkSteered/≠HumanInput).
  */
 import type {
-  CommandId,
   CommandSubmissionContext,
   Principal,
   ProjectId,

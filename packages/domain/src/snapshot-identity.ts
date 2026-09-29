@@ -1,7 +1,4 @@
-import {
-  EnvironmentFingerprint,
-  type EnvironmentSnapshot,
-} from "./environment.js";
+import { EnvironmentFingerprint } from "./environment.js";
 import {
   type CanonicalResourceRegion,
   canonicalRegionString,

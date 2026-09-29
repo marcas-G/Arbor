@@ -83,7 +83,7 @@ const SEAMS: ReadonlyArray<SeamEvidence> = [
   },
 ];
 
-const EC_FILES: ReadonlyArray<{ readonly ec: string; readonly file: string }> =
+const _EC_FILES: ReadonlyArray<{ readonly ec: string; readonly file: string }> =
   [
     { ec: "EC-1", file: "planning/results/P14.result.md" },
     { ec: "EC-2", file: "tests/architecture/p14-closure.test.ts" },

@@ -393,7 +393,7 @@ const invocationCount = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM tool_invocations WHERE invocation_id = ?",
     [invocationId],
   );
-  return Number(rows[0]!.count);
+  return Number(rows[0]?.count);
 });
 
 const escalationFacts = Effect.gen(function* () {
@@ -402,7 +402,7 @@ const escalationFacts = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'ReconciliationEscalated' AND aggregate_ref = ?",
     [executionId],
   );
-  return Number(rows[0]!.count);
+  return Number(rows[0]?.count);
 });
 
 const executionRow = Effect.gen(function* () {
@@ -470,7 +470,7 @@ describe("p9-tool-outcome-unknown (T1–T4 four tiers + D3, 02 §5 + 04 §3)", (
     // Shared dangling-detection assertion (P4 06 §2): visible via
     // findUnsettled with the semantics snapshot intact.
     expect(r.dangling).toHaveLength(1);
-    expect(r.dangling[0]!.sideEffectSemantics).toBe("ReadOnly");
+    expect(r.dangling[0]?.sideEffectSemantics).toBe("ReadOnly");
     // ReadOnly dangling never enters reconciliation/escalation.
     expect(r.pending).toEqual([]);
     // Exactly one settlement row, actual outcome recorded.
@@ -526,7 +526,7 @@ describe("p9-tool-outcome-unknown (T1–T4 four tiers + D3, 02 §5 + 04 §3)", (
       "harness-kill:tool-post-effect",
     );
     expect(r.dangling).toHaveLength(1);
-    expect(r.dangling[0]!.sideEffectSemantics).toBe("Idempotent");
+    expect(r.dangling[0]?.sideEffectSemantics).toBe("Idempotent");
     // Idempotent dangling needs no reconciliation gate (safe replay tier).
     expect(r.pending).toEqual([]);
     expect(r.rowOnce?.settlement_kind).toBe("Success");
@@ -588,7 +588,7 @@ describe("p9-tool-outcome-unknown (T1–T4 four tiers + D3, 02 §5 + 04 §3)", (
       "harness-kill:tool-post-effect",
     );
     expect(r.dangling).toHaveLength(1);
-    expect(r.dangling[0]!.sideEffectSemantics).toBe("Reconcilable");
+    expect(r.dangling[0]?.sideEffectSemantics).toBe("Reconcilable");
     // The ref IS enumerated for reconciliation (real source).
     expect(r.pending).toEqual([invocationId]);
     // Ordering assertion: before any reconcile result existed —
@@ -649,7 +649,7 @@ describe("p9-tool-outcome-unknown (T1–T4 four tiers + D3, 02 §5 + 04 §3)", (
       "harness-kill:tool-post-effect",
     );
     expect(r.dangling).toHaveLength(1);
-    expect(r.dangling[0]!.sideEffectSemantics).toBe("NonIdempotent");
+    expect(r.dangling[0]?.sideEffectSemantics).toBe("NonIdempotent");
     expect(r.pending).toEqual([invocationId]);
     // Ambiguity → escalate (OutcomeUnknown / stays Active-reconciling):
     // the Execution is never settled plain Completed/Interrupted/Failed

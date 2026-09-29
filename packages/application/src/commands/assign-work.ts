@@ -1,6 +1,5 @@
 import {
   assignWork,
-  type ProjectId,
   type Revision,
   type VerificationMission,
   type WorkId,

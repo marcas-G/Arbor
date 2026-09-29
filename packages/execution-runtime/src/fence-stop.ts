@@ -1,5 +1,5 @@
 import type { StopAdmission } from "@arbor/application";
-import { FenceStopCheck, type FenceStopOutcome } from "@arbor/application";
+import { FenceStopCheck } from "@arbor/application";
 import type { CommandSubmissionContext } from "@arbor/domain";
 import { Clock, ExecutionRepository } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";

@@ -6,7 +6,6 @@ import {
   SemanticRequestFingerprint,
 } from "@arbor/domain";
 import {
-  Clock,
   CommandStore,
   DomainEventJournal,
   TransactionPort,

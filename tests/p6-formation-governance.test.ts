@@ -166,7 +166,7 @@ describe("P6-003 RecordDecision governance (D1)", () => {
     expect(result.state).toBe("Pending");
     expect(result.revision).toBe(2);
     expect(result.entries).toHaveLength(1);
-    expect(result.entries[0]!.kind).toBe("Governance");
+    expect(result.entries[0]?.kind).toBe("Governance");
   });
 
   it("terminal proposals refuse further decisions; unknown proposals are a typed rejection", async () => {

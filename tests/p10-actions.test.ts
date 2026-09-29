@@ -148,8 +148,8 @@ describe("P10-011 Query surface (message-mediated, BLK-2 fix)", () => {
           (candidate) => candidate.entryKey === `msg:${QUERY_MSG}`,
         );
         expect(entry).toBeDefined();
-        expect(entry!.kind).toBe("Message");
-        expect(entry!.summary).toContain("Query");
+        expect(entry?.kind).toBe("Message");
+        expect(entry?.summary).toContain("Query");
 
         // The workspace-side P14 execution is the cognition side's face
         // (P8 spawn) — the SURFACE never admits an execution: zero
@@ -259,15 +259,15 @@ describe("P10-011 Steer / Stop-request / Governance surfaces (gateway-only)", ()
     );
     expect(receipt.resolution._tag).toBe("Committed");
     expect(submissions).toHaveLength(1);
-    expect(submissions[0]!.commandType).toBe("SteerWork");
-    expect(submissions[0]!.payload).toEqual({
+    expect(submissions[0]?.commandType).toBe("SteerWork");
+    expect(submissions[0]?.payload).toEqual({
       workId: WORK_1,
       workspaceId: p7RootWorkspace,
       steer: { severity: "Critical", guidance: "cnt-p10-actions-steer" },
       expectedWorkRevision: parse(WorkRevision)(0),
       provenance: { source: "HumanInput" },
     });
-    expect(submissions[0]!.principal).toBe(p7TestPrincipal);
+    expect(submissions[0]?.principal).toBe(p7TestPrincipal);
   });
 
   it("steer surface refuses an agent principal before any gateway submission", async () => {
@@ -313,11 +313,11 @@ describe("P10-011 Steer / Stop-request / Governance surfaces (gateway-only)", ()
     );
     expect(receipt.resolution._tag).toBe("Committed");
     expect(submissions).toHaveLength(1);
-    expect(submissions[0]!.commandType).toBe("StopExecution");
-    expect(submissions[0]!.payload).toEqual({
+    expect(submissions[0]?.commandType).toBe("StopExecution");
+    expect(submissions[0]?.payload).toEqual({
       executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789t1",
     });
-    expect(submissions[0]!.principal).toBe(p7TestPrincipal);
+    expect(submissions[0]?.principal).toBe(p7TestPrincipal);
 
     const agentRefusal = await yield_refusal(
       stopRequest(gateway, {
@@ -464,7 +464,7 @@ describe("P10-011 Steer / Stop-request / Governance surfaces (gateway-only)", ()
       "MarkDependencyUnfulfillable",
     ]);
     for (const [index, submission] of submissions.entries()) {
-      expect(submission.payload).toEqual(cases[index]!.payload);
+      expect(submission.payload).toEqual(cases[index]?.payload);
       expect(submission.principal).toBe(p7TestPrincipal);
     }
 

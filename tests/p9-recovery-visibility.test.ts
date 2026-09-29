@@ -62,7 +62,7 @@ const attentionFacts = (executionId: string) =>
       "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'ReconciliationEscalated' AND aggregate_ref = ?",
       [executionId],
     );
-    return Number(rows[0]!.count);
+    return Number(rows[0]?.count);
   });
 
 const executionState = (executionId: string) =>

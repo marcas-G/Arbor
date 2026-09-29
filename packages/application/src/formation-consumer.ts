@@ -5,7 +5,6 @@ import type {
   Principal,
   ProjectId,
 } from "@arbor/domain";
-import type { WorkspaceRepositoryService } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { validateCapabilityCeiling } from "./capability-ceiling.js";
 import {

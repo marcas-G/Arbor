@@ -18,11 +18,7 @@ import {
   WorkRevision,
   WorkspaceId,
 } from "@arbor/domain";
-import type {
-  PendingDomainEvent,
-  WorkspaceRepositoryService,
-} from "@arbor/ports";
-import { Effect, Option } from "effect";
+import type { PendingDomainEvent } from "@arbor/ports";
 import type { VerifiedCommandAuthority } from "./authority.js";
 import { semanticRequestFingerprint } from "./fingerprint.js";
 

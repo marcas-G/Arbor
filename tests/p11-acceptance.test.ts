@@ -21,7 +21,6 @@ import {
   HumanMessageStoreLive,
   IdGeneratorLive,
   layer,
-  P8_MIGRATIONS,
   P14_MIGRATIONS,
   ProviderTurnStoreLive,
   RecordEnvironmentChangeLive,

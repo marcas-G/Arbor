@@ -45,7 +45,6 @@ import type {
   CommandReceiptView,
   ExternalCommandEnvelope,
   ExternalSubmissionPort,
-  TransportResponse,
   ViewQueryFace,
 } from "./contracts.js";
 import {

@@ -1807,7 +1807,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
           (row) => row.source === "DependencyUnfulfillable",
         );
         expect(unfulfillable).toHaveLength(1);
-        expect(unfulfillable[0]!.dedupKey).toBe(`unfulfillable:${dep}:0`);
+        expect(unfulfillable[0]?.dedupKey).toBe(`unfulfillable:${dep}:0`);
       }),
     );
   });
@@ -1926,36 +1926,36 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         const interventions = yield* journalEvents("HumanInterventionApplied");
         expect(steered).toHaveLength(2);
         expect(interventions).toHaveLength(2);
-        expect(steered[0]!.payload).toEqual({
+        expect(steered[0]?.payload).toEqual({
           workId: work,
           fromRevision: 0,
           toRevision: 1,
           severity: "Normal",
         });
-        expect(steered[1]!.payload).toEqual({
+        expect(steered[1]?.payload).toEqual({
           workId: work,
           fromRevision: 1,
           toRevision: 2,
           severity: "Critical",
         });
-        expect(interventions[0]!.payload).toEqual({
+        expect(interventions[0]?.payload).toEqual({
           actor: humanActor,
           targetWorkspaceId: p7RootWorkspace,
           summaryRef: "cnt-acc-steer-Normal",
           occurredAt: "t",
           kind: "Steer",
         });
-        expect(interventions[1]!.payload).toEqual({
+        expect(interventions[1]?.payload).toEqual({
           actor: humanActor,
           targetWorkspaceId: p7RootWorkspace,
           summaryRef: "cnt-acc-steer-Critical",
           occurredAt: "t",
           kind: "CriticalSteer",
         });
-        expect(steered[0]!.causedByCommandId).toBe(normalCmd);
-        expect(interventions[0]!.causedByCommandId).toBe(normalCmd);
-        expect(steered[1]!.causedByCommandId).toBe(criticalCmd);
-        expect(interventions[1]!.causedByCommandId).toBe(criticalCmd);
+        expect(steered[0]?.causedByCommandId).toBe(normalCmd);
+        expect(interventions[0]?.causedByCommandId).toBe(normalCmd);
+        expect(steered[1]?.causedByCommandId).toBe(criticalCmd);
+        expect(interventions[1]?.causedByCommandId).toBe(criticalCmd);
 
         const tx = yield* TransactionPort;
         const sql = yield* SqlClient;
@@ -2339,8 +2339,8 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
           (candidate) => candidate.entryKey === `msg:${queryMsg}`,
         );
         expect(entry).toBeDefined();
-        expect(entry!.kind).toBe("Message");
-        expect(entry!.summary).toContain("Query");
+        expect(entry?.kind).toBe("Message");
+        expect(entry?.summary).toContain("Query");
 
         const sql = yield* SqlClient;
         const executions = yield* sql.unsafe<{ count: number }>(

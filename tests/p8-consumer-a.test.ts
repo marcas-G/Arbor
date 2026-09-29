@@ -134,7 +134,7 @@ const receiptResolution = (commandId: CommandId) =>
       "SELECT resolution FROM commands WHERE command_id = ?",
       [commandId],
     );
-    return rows.length === 1 ? rows[0]!.resolution : null;
+    return rows.length === 1 ? rows[0]?.resolution : null;
   });
 
 const storedFingerprint = (commandId: CommandId) =>
@@ -144,7 +144,7 @@ const storedFingerprint = (commandId: CommandId) =>
       "SELECT semantic_request_fingerprint AS f FROM commands WHERE command_id = ?",
       [commandId],
     );
-    return rows.length === 1 ? rows[0]!.f : null;
+    return rows.length === 1 ? rows[0]?.f : null;
   });
 
 const openVerification = Effect.gen(function* () {

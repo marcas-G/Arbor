@@ -59,7 +59,7 @@ const INSERT_COMPLETION_FACT = (executionId: string) =>
       "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
       [p7Project],
     );
-    const sequence = Number(rows[0]!.last_sequence);
+    const sequence = Number(rows[0]?.last_sequence);
     yield* sql.unsafe(
       "INSERT INTO domain_events (event_id, project_id, sequence, event_type, event_version, occurred_at, aggregate_ref, actor, payload_json) VALUES (?,?,?,?,?,?,?,?,?)",
       [
@@ -111,7 +111,7 @@ const countEvents = (executionId: string, eventType: string) =>
       "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = ? AND aggregate_ref = ?",
       [eventType, executionId],
     );
-    return Number(rows[0]!.count);
+    return Number(rows[0]?.count);
   });
 
 const countCommands = (commandId: string) =>
@@ -121,7 +121,7 @@ const countCommands = (commandId: string) =>
       "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
       [commandId],
     );
-    return Number(rows[0]!.count);
+    return Number(rows[0]?.count);
   });
 
 describe("P9-003 completion-fact settle + recovery drive (B-2, T1, T4)", () => {
@@ -206,9 +206,9 @@ describe("P9-003 completion-fact settle + recovery drive (B-2, T1, T4)", () => {
             "SELECT COUNT(*) AS count FROM executions WHERE settled_at IS NOT NULL",
           );
           return {
-            events: Number(events[0]!.count),
-            commands: Number(commands[0]!.count),
-            settled: Number(settled[0]!.count),
+            events: Number(events[0]?.count),
+            commands: Number(commands[0]?.count),
+            settled: Number(settled[0]?.count),
           };
         });
         const before = yield* snapshot;

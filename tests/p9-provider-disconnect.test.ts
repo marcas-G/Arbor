@@ -309,7 +309,7 @@ const sessionEntryCount = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM session_entries WHERE session_id = ?",
     [sessionId],
   );
-  return Number(rows[0]!.count);
+  return Number(rows[0]?.count);
 });
 
 /** Recovery face under test (deps injected from the same app layers). */
@@ -411,8 +411,8 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     );
     expect(probe.calls.map((call) => call.attemptNo)).toEqual([0, 1, 2]);
     expect(r.turns).toHaveLength(1);
-    expect(r.turns[0]!.provider_turn_id).toBe(providerTurnId);
-    expect(r.turns[0]!.manifest_id).toBe(manifestIdFor(providerTurnId));
+    expect(r.turns[0]?.provider_turn_id).toBe(providerTurnId);
+    expect(r.turns[0]?.manifest_id).toBe(manifestIdFor(providerTurnId));
     // I-4: RetryableFailure + provider_error_kind = ProviderUnavailable on
     // the failed attempts; the final attempt succeeds and settles the Turn.
     expect(r.attempts).toEqual([
@@ -428,8 +428,8 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
       },
       { attemptNo: 2, outcome: "Success", providerErrorKind: null },
     ]);
-    expect(r.turns[0]!.settled_at).not.toBeNull();
-    expect(r.turns[0]!.finish_reason).toBe("Stop");
+    expect(r.turns[0]?.settled_at).not.toBeNull();
+    expect(r.turns[0]?.finish_reason).toBe("Stop");
     expect(r.events.some((event) => event._tag === "TurnCompleted")).toBe(true);
     expect(r.entries).toBe(0);
   });
@@ -457,8 +457,8 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     );
     // turnNo unchanged across attempts: exactly one Turn row, same manifest.
     expect(r.turns).toHaveLength(1);
-    expect(r.turns[0]!.provider_turn_id).toBe(providerTurnId);
-    expect(r.turns[0]!.manifest_id).toBe(manifestIdFor(providerTurnId));
+    expect(r.turns[0]?.provider_turn_id).toBe(providerTurnId);
+    expect(r.turns[0]?.manifest_id).toBe(manifestIdFor(providerTurnId));
     // Attempt history append-only: the interrupted attempt AND the
     // successful retry both remain recorded.
     expect(r.attempts).toEqual([
@@ -469,7 +469,7 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
       },
       { attemptNo: 1, outcome: "Success", providerErrorKind: null },
     ]);
-    expect(r.turns[0]!.settled_at).not.toBeNull();
+    expect(r.turns[0]?.settled_at).not.toBeNull();
     // Streaming deltas never enter Session history (DID §9.8): the crashed
     // mid-stream attempt left no partial durable output — resume is clean
     // by construction.
@@ -524,18 +524,18 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     ]);
     // The Turn dangles (driver decides), and a terminal Turn failure does
     // NOT itself settle the Execution Failed.
-    expect(r.turnsBefore[0]!.settled_at).toBeNull();
+    expect(r.turnsBefore[0]?.settled_at).toBeNull();
     expect(r.execution).toBeNull();
     // Recovery decision table, terminal row: failure mark, no resume.
     expect(r.report.retryPlan).toEqual([]);
     expect(r.report.failedTurns).toHaveLength(1);
-    expect(r.report.failedTurns[0]!.providerTurnId).toBe(providerTurnId);
-    expect(r.report.failedTurns[0]!.providerErrorKind).toBe(
+    expect(r.report.failedTurns[0]?.providerTurnId).toBe(providerTurnId);
+    expect(r.report.failedTurns[0]?.providerErrorKind).toBe(
       "AuthenticationFailed",
     );
-    expect(r.report.failedTurns[0]!.exhausted).toBe(false);
-    expect(r.turnsAfter[0]!.settled_at).not.toBeNull();
-    expect(r.turnsAfter[0]!.finish_reason).toBe("Failed");
+    expect(r.report.failedTurns[0]?.exhausted).toBe(false);
+    expect(r.turnsAfter[0]?.settled_at).not.toBeNull();
+    expect(r.turnsAfter[0]?.finish_reason).toBe("Failed");
     // Recovery never invents an Execution settlement (P2 `06` §4).
     expect(r.executionAfter).toBeNull();
   });
@@ -655,12 +655,12 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     );
     expect(r.report.retryPlan).toEqual([]);
     expect(r.report.failedTurns).toHaveLength(1);
-    expect(r.report.failedTurns[0]!.providerTurnId).toBe(providerTurnId);
-    expect(r.report.failedTurns[0]!.providerErrorKind).toBe("RateLimited");
-    expect(r.report.failedTurns[0]!.exhausted).toBe(true);
-    expect(r.report.failedTurns[0]!.markedBy).toEqual(principal);
-    expect(r.turns[0]!.settled_at).not.toBeNull();
-    expect(r.turns[0]!.finish_reason).toBe("Failed");
+    expect(r.report.failedTurns[0]?.providerTurnId).toBe(providerTurnId);
+    expect(r.report.failedTurns[0]?.providerErrorKind).toBe("RateLimited");
+    expect(r.report.failedTurns[0]?.exhausted).toBe(true);
+    expect(r.report.failedTurns[0]?.markedBy).toEqual(principal);
+    expect(r.turns[0]?.settled_at).not.toBeNull();
+    expect(r.turns[0]?.finish_reason).toBe("Failed");
     // Execution-level disposition follows P2 `06` §4 — recovery never
     // invents a settlement.
     expect(r.execution).toBeNull();

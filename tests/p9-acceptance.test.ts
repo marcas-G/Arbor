@@ -359,7 +359,7 @@ const INSERT_COMPLETION_FACT = (executionId: string) =>
       "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
       [p7Project],
     );
-    const sequence = Number(rows[0]!.last_sequence);
+    const sequence = Number(rows[0]?.last_sequence);
     yield* sql.unsafe(
       "INSERT INTO domain_events (event_id, project_id, sequence, event_type, event_version, occurred_at, aggregate_ref, actor, payload_json) VALUES (?,?,?,?,?,?,?,?,?)",
       [
@@ -760,12 +760,12 @@ const cSideEffectCounters = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM session_entries",
   );
   return {
-    events: Number(events[0]!.count),
-    commands: Number(commands[0]!.count),
-    settled: Number(settled[0]!.count),
-    workWaits: Number(workWaits[0]!.count),
-    timers: Number(timers[0]!.count),
-    sessionEntries: Number(sessionEntries[0]!.count),
+    events: Number(events[0]?.count),
+    commands: Number(commands[0]?.count),
+    settled: Number(settled[0]?.count),
+    workWaits: Number(workWaits[0]?.count),
+    timers: Number(timers[0]?.count),
+    sessionEntries: Number(sessionEntries[0]?.count),
   };
 });
 
@@ -1388,7 +1388,7 @@ const eEscalationFacts = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'ReconciliationEscalated' AND aggregate_ref = ?",
     [E_EXECUTION],
   );
-  return Number(rows[0]!.count);
+  return Number(rows[0]?.count);
 });
 
 const eExecutionRow = Effect.gen(function* () {
@@ -1427,7 +1427,7 @@ const G_ASSIGN_CMD_P = parse(CommandId)(
 );
 const G_DEP = parse(DependencyId)("dep_00000000-0000-7000-8000-0000000000b1");
 const G_DEL = parse(DeliverableId)("del_00000000-0000-7000-8000-0000000000b2");
-const G_ART = parse(ArtifactId)("art_00000000-0000-7000-8000-0000000000b3");
+const _G_ART = parse(ArtifactId)("art_00000000-0000-7000-8000-0000000000b3");
 const G_ACC = parse(AcceptanceId)("acc_00000000-0000-7000-8000-0000000000a5");
 
 const WREV = (n: number) => parse(WorkRevision)(n);
@@ -2348,8 +2348,8 @@ describe("p9-acceptance", () => {
           D_TURN_D,
         ]);
         expect(report.failedTurns).toHaveLength(1);
-        expect(report.failedTurns[0]!.providerTurnId).toBe(D_TURN_C);
-        expect(report.failedTurns[0]!.exhausted).toBe(true);
+        expect(report.failedTurns[0]?.providerTurnId).toBe(D_TURN_C);
+        expect(report.failedTurns[0]?.exhausted).toBe(true);
         const turnC = turnsAfter.find(
           (turn) => turn.provider_turn_id === D_TURN_C,
         );
@@ -2449,7 +2449,7 @@ describe("p9-acceptance", () => {
         );
         const danglingRo = yield* eDangling;
         expect(danglingRo).toHaveLength(1);
-        expect(danglingRo[0]!.sideEffectSemantics).toBe("ReadOnly");
+        expect(danglingRo[0]?.sideEffectSemantics).toBe("ReadOnly");
         yield* settleInvocation(E_RO_CRASH);
         mode.ReadOnly = "none";
         const roRetry = yield* eInvoke("ReadOnly", E_RO_RETRY);
@@ -2521,7 +2521,7 @@ describe("p9-acceptance", () => {
         expect(nonRow?.settlement_kind).toBeNull();
         const danglingFinal = yield* eDangling;
         expect(danglingFinal).toHaveLength(1);
-        expect(danglingFinal[0]!.sideEffectSemantics).toBe("NonIdempotent");
+        expect(danglingFinal[0]?.sideEffectSemantics).toBe("NonIdempotent");
         expect(probe.effects).toHaveLength(4);
       }),
       makeStoryEApp(probe, mode, durableFile("e")),
@@ -2758,7 +2758,7 @@ describe("p9-acceptance", () => {
           handlers: dependencyCoordinatorLoop(
             p7Project,
             p7TestPrincipal,
-            yield* makeCoordinatorDeps((base) => interrupted.gateway),
+            yield* makeCoordinatorDeps((_base) => interrupted.gateway),
           ),
         }).pipe(Effect.flip);
         expect(failure._tag).toBe("TransactionOperationalFailure");

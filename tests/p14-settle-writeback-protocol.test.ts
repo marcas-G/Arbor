@@ -1,7 +1,6 @@
 import { Effect, Layer, Option } from "effect";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  type ConversationSettlementDependencies,
   type ConversationSweepDependencies,
   runConversationSettlementSweep,
   runConversationTrigger,
@@ -18,7 +17,6 @@ import {
 import {
   type ExecutionRepositoryService,
   type HumanMessageRecord,
-  type HumanMessageStoreService,
   type ProjectRepositoryService,
   TransactionScope,
 } from "../packages/ports/src/index.js";

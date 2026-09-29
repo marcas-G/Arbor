@@ -10,7 +10,7 @@ import { deriveTranscriptPage } from "../packages/projection-runtime/src/transcr
  * read-side shape (bounded bodies, no streaming/deltas).
  */
 
-const PROJECT = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
+const _PROJECT = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
 const ROOT = parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789ab");
 
 const depsWith = (turns: ReadonlyArray<never>): TranscriptDeps =>

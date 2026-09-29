@@ -45,7 +45,7 @@ const OTHER_PLUGIN = parse(PluginId)(
   "plg_018f2b3c-4d5e-7abc-8def-0123456789a2",
 );
 const VERSION = parse(PluginVersion)("1.0.0");
-const OTHER_VERSION = parse(PluginVersion)("1.1.0");
+const _OTHER_VERSION = parse(PluginVersion)("1.1.0");
 const PROJECT = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const OTHER_PROJECT = parse(ProjectId)(
   "prj_018f2b3c-4d5e-7abc-8def-0123456789c2",

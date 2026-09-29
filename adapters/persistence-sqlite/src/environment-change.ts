@@ -1,9 +1,4 @@
-import type {
-  CanonicalResourceRegion,
-  EnvironmentFingerprint,
-  Principal,
-  ProjectId,
-} from "@arbor/domain";
+import type { CanonicalResourceRegion, ProjectId } from "@arbor/domain";
 import {
   DomainEventJournal,
   type EnvironmentChangeCause,
@@ -75,8 +70,8 @@ export const RecordEnvironmentChangeLive: Layer.Layer<
   RecordEnvironmentChange,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const journal = yield* DomainEventJournal;
-    const waits = yield* WorkWaitStore;
+    const _journal = yield* DomainEventJournal;
+    const _waits = yield* WorkWaitStore;
     const ids = yield* IdGenerator;
     const reprobePort = yield* Effect.serviceOption(EnvironmentReProbePort);
 

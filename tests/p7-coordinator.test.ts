@@ -170,7 +170,7 @@ const receiptResolution = (commandId: CommandId) =>
       "SELECT resolution FROM commands WHERE command_id = ?",
       [commandId],
     );
-    return rows.length === 1 ? rows[0]!.resolution : null;
+    return rows.length === 1 ? rows[0]?.resolution : null;
   });
 
 /** Trigger events shaped exactly as the producing commands journal them. */

@@ -52,7 +52,7 @@ export const shellExecutor: ToolExecutor = {
         };
       }
       try {
-        const stdout = execFileSync("sh", ["-c", args.command], {
+        const _stdout = execFileSync("sh", ["-c", args.command], {
           cwd: sandbox.rootPath,
           timeout: args.timeoutMs ?? 10_000,
           encoding: "utf8",

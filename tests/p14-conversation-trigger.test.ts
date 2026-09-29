@@ -21,7 +21,6 @@ import {
 import {
   type ExecutionRepositoryService,
   type HumanMessageRecord,
-  type HumanMessageStoreService,
   type ProjectRepositoryService,
   TransactionScope,
 } from "../packages/ports/src/index.js";

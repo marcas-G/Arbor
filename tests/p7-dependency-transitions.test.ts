@@ -222,7 +222,7 @@ describe("p7-dependency-transitions", () => {
           expect(outcome.value.events).toHaveLength(2);
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("DependencyWithdrawn");
-          expect(outcome.value.events[1]!.eventType).toBe(
+          expect(outcome.value.events[1]?.eventType).toBe(
             "HumanInterventionApplied",
           );
           expect(event.eventVersion).toBe(1);
@@ -273,7 +273,7 @@ describe("p7-dependency-transitions", () => {
           expect(outcome.value.events).toHaveLength(2);
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("DependencyMarkedUnfulfillable");
-          expect(outcome.value.events[1]!.eventType).toBe(
+          expect(outcome.value.events[1]?.eventType).toBe(
             "HumanInterventionApplied",
           );
           expect(event.aggregateRef).toBe(dep);

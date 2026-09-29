@@ -8,7 +8,6 @@ import {
   TransactionPort,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import type { RecoveryResult } from "./recovery.js";
 import { runRecovery } from "./recovery.js";
 
 /** P9 `03` §3 (B-9) / P2 `05` §6: fire due timers — clear the timer row in

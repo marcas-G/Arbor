@@ -1,11 +1,7 @@
 import type { ReadableStream } from "node:stream/web";
 import { clearTimeout, setTimeout } from "node:timers";
 import { TextDecoder } from "node:util";
-import type {
-  PortableMessage,
-  PortableModelRequest,
-  ProviderExecutionContext,
-} from "@arbor/ports";
+import type { PortableMessage, PortableModelRequest } from "@arbor/ports";
 import {
   type OpenAISdkChunk,
   type OpenAISdkClient,
