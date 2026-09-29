@@ -14,6 +14,7 @@ export * from "./permission-grant-repository.js";
 export * from "./project-tool-registry.js";
 export * from "./projection-query.js";
 export * from "./provider.js";
+export * from "./provider-extension.js";
 export * from "./provider-policy.js";
 export * from "./repositories.js";
 export * from "./resources.js";

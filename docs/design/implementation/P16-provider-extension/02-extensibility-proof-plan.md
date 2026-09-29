@@ -120,7 +120,7 @@ packages/testkit/**（测试替身）
 
 （注：E4b 的 base 取 C2——ports 的 `provider-extension.ts` 等 Gate B 基础设施在 C1 已落地，属命题外的前置。）
 
-**Proof 主体（Gate B）**: `provider-testecho` —— in-process 确定性回显家族（**非真实 provider**，遵守 Scope guard 1），声明新 `protocolFamily: "testecho-echo-v1"`。**base = C2，head = C3**：
+**Proof 主体（Gate B）**: `provider-testecho` —— in-process 确定性回显家族（**非真实 provider**，遵守 Scope guard 1），声明 in-process 确定性协议族（`protocolFamily: "in-process-deterministic"`；值域开放性已由 ProviderProtocolFamily 类型证明）。**base = C2，head = C3**：
 1. verify 脚本 `--mode protocol --base C2 --head C3 --family provider-testecho` → exit 0
 2. testecho 通过 E3 conformance 全绿（作为新家族的机械"兼容"判据）
 3. E1/E2 在 head 上绿

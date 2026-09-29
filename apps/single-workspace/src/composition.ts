@@ -77,23 +77,23 @@ import {
   type ExecutionScheduler,
   type HealthPort,
   type HumanMessageStore,
+  type ModelDeployment,
+  makeProviderRegistry,
   type PersistenceHealthProbe,
   type ProjectionQueryPort,
   type ProviderFailureKind,
   type ProviderPort,
   type ReconciliationSource,
+  type ResolvedModelBinding,
   type RunnableWorkSource,
+  resolveModelBinding,
   type SecretRef,
   SkillRegistry,
   type ToolCatalogPort,
   type WorkWaitStore,
 } from "@arbor/ports";
 import { type UsageService, UsageServiceLive } from "@arbor/projection-runtime";
-import { FakeProviderLive } from "@arbor/provider-fake";
-import {
-  OpenAIProviderLive,
-  type OpenAISdkClient,
-} from "@arbor/provider-openai";
+import type { OpenAISdkClient } from "@arbor/provider-openai";
 import { ProviderRuntimeLive } from "@arbor/provider-runtime";
 import { SandboxPortLive } from "@arbor/sandbox-local";
 import { SecretEnvLive } from "@arbor/secret-env";
@@ -133,6 +133,7 @@ import {
   TransportBoundaryLive,
 } from "./production.js";
 import { ProjectionQueryPortLive } from "./projection-query.js";
+import { PROVIDER_REGISTRY_TABLE } from "./provider-registry.table.js";
 import { SliceCommandHandlerRegistryLive } from "./registry.js";
 import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
 import {
@@ -146,9 +147,10 @@ export type SecretStoreConfig =
   | { readonly _tag: "Env" }
   | { readonly _tag: "File"; readonly root: string };
 
-/** P12 `12` §2: provider adapter selection is Composition-Root config. The
- * `adapterId` is the model catalog entry's `adapterId` (`12` §3); a real
- * adapter is never auto-discovered and never chosen by a runtime/LLM decision. */
+/** P12 `12` §2 → P16 `01` §6: provider adapter selection is Composition-Root
+ * config resolved through the static ProviderRegistry. The legacy closed
+ * union remains as the test-facing seam; a real adapter is never
+ * auto-discovered and never chosen by a runtime/LLM decision. */
 export type ProviderAdapterConfig =
   | {
       readonly adapterId: "provider-fake";
@@ -159,17 +161,33 @@ export type ProviderAdapterConfig =
     }
   | { readonly adapterId: "provider-openai"; readonly client: OpenAISdkClient };
 
-/** The single Composition-Root mapping from catalog `adapterId` -> adapter
- * `Layer`. No production package may construct a provider adapter elsewhere. */
+/** P16 `01` §6: the Composition-Root registry (single construction site). */
+export const providerRegistry = makeProviderRegistry(PROVIDER_REGISTRY_TABLE);
+
+/** The single Composition-Root mapping from adapterId -> adapter `Layer`,
+ * now routed through the ProviderRegistry (semantic-equivalent refactor of
+ * the P12 `12` §2 selector; no production package may construct a provider
+ * adapter elsewhere). */
 export const selectProviderLayer = (
   config: ProviderAdapterConfig,
-): Layer.Layer<ProviderPort> =>
-  config.adapterId === "provider-openai"
-    ? OpenAIProviderLive(config.client)
-    : FakeProviderLive({
-        turns: config.turns ?? [],
-        ...(config.failures !== undefined ? { failures: config.failures } : {}),
-      });
+): Layer.Layer<ProviderPort> => {
+  const adapter = providerRegistry.find(config.adapterId);
+  if (adapter === undefined) {
+    throw new Error(
+      `provider registry: unknown adapterId "${config.adapterId}"`,
+    );
+  }
+  const transportOverride =
+    config.adapterId === "provider-openai"
+      ? config.client
+      : {
+          ...(config.turns !== undefined ? { turns: config.turns } : {}),
+          ...(config.failures !== undefined
+            ? { failures: config.failures }
+            : {}),
+        };
+  return adapter.layerFor({ transportOverride });
+};
 
 export interface SliceConfig {
   readonly databaseFile: string;
@@ -188,6 +206,10 @@ export interface SliceConfig {
   /** P12 `12` §2: the provider adapter selected at the Composition Root. When
    * absent the deterministic `provider-fake` is used (CI never needs network). */
   readonly provider?: ProviderAdapterConfig;
+  /** P16 `01` §5: an explicit ModelDeployment (env-constructed in main.ts).
+   * Takes precedence over `provider`; resolution failure throws (no silent
+   * fallback — INV-P16-4). */
+  readonly deployment?: ModelDeployment;
   /** The credential reference bound to ProviderTurns. The raw credential is
    * resolved by ProviderRuntime at the execution boundary; absent means the
    * provider needs no credential (e.g. the deterministic fake). */
@@ -273,16 +295,52 @@ export const buildSliceLayer = (
       `provider adapter "${config.provider.adapterId}" does not serve modelRef "${modelRef}" (catalog adapter: "${modelEntry.adapterId}")`,
     );
   }
+  // P16 `01` §5: explicit deployment resolution (no silent fallback). A
+  // deployment mismatch with the effective modelRef is a hard failure.
+  let deploymentBinding: ResolvedModelBinding | undefined;
+  if (config.deployment !== undefined) {
+    const resolved = resolveModelBinding(
+      providerRegistry,
+      catalog,
+      config.deployment,
+    );
+    if ("_tag" in resolved) {
+      throw new Error(
+        `provider deployment resolution failed: ${JSON.stringify(resolved)}`,
+      );
+    }
+    deploymentBinding = resolved;
+    if (deploymentBinding.deployment.modelRef !== modelRef) {
+      throw new Error(
+        `provider deployment "${config.deployment.deploymentId}" serves modelRef "${config.deployment.modelRef}" but the slice selects "${modelRef}"`,
+      );
+    }
+  }
   const provider =
-    config.provider !== undefined
-      ? selectProviderLayer(config.provider)
-      : selectProviderLayer({
-          adapterId: "provider-fake",
-          turns: config.providerTurns ?? [],
-          ...(config.providerFailures !== undefined
-            ? { failures: config.providerFailures }
+    deploymentBinding !== undefined
+      ? deploymentBinding.adapter.layerFor({
+          ...(deploymentBinding.deployment.endpoint !== undefined
+            ? { endpoint: deploymentBinding.deployment.endpoint }
             : {}),
-        });
+          ...(deploymentBinding.deployment.wireModelName !== undefined
+            ? { wireModelName: deploymentBinding.deployment.wireModelName }
+            : {}),
+          ...(deploymentBinding.deployment.secretRef !== undefined
+            ? { secretRef: deploymentBinding.deployment.secretRef }
+            : {}),
+          ...(deploymentBinding.deployment.extraHeaders !== undefined
+            ? { extraHeaders: deploymentBinding.deployment.extraHeaders }
+            : {}),
+        })
+      : config.provider !== undefined
+        ? selectProviderLayer(config.provider)
+        : selectProviderLayer({
+            adapterId: "provider-fake",
+            turns: config.providerTurns ?? [],
+            ...(config.providerFailures !== undefined
+              ? { failures: config.providerFailures }
+              : {}),
+          });
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive(),
     Layer.mergeAll(
@@ -404,10 +462,16 @@ export const buildSliceLayer = (
             ...(config.secretRef !== undefined
               ? { secretRef: config.secretRef }
               : {}),
+            ...(deploymentBinding?.deployment.secretRef !== undefined
+              ? { secretRef: deploymentBinding.deployment.secretRef }
+              : {}),
             controlRegistry: registryService,
             executableInvocationHandler: executableHandler,
             ...(config.provider !== undefined
               ? { providerRef: config.provider.adapterId }
+              : {}),
+            ...(deploymentBinding !== undefined
+              ? { providerRef: deploymentBinding.adapter.adapterId }
               : {}),
             onProviderProgress: publishConversationProgress,
           }),

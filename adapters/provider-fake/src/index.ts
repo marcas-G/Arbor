@@ -1,5 +1,6 @@
 import type {
   CanonicalProviderEvent,
+  ProtocolAdapter,
   ProviderFailure,
   ProviderFailureKind,
   ProviderPortEvent,
@@ -14,6 +15,29 @@ export interface FakeProviderScript {
   /** Fail the first N attempts with these kinds, then succeed. */
   readonly failures?: ReadonlyArray<ProviderFailureKind>;
 }
+
+/**
+ * P16 `01` §2/§6: the fake family's `ProtocolAdapter` registration value.
+ * `transportOverride` carries the deterministic `FakeProviderScript`
+ * (CI/test injection; absent = empty script).
+ */
+export const providerFakeAdapter: ProtocolAdapter = {
+  adapterId: "provider-fake",
+  profile: {
+    protocolFamily: "in-process-deterministic",
+    authMode: { _tag: "None" },
+    capabilityFlags: {
+      reportsCacheTokens: false,
+      supportsContinuation: false,
+      streamsDeltas: true,
+    },
+    failureTaxonomy: "phase1-v2",
+  },
+  layerFor: (binding) =>
+    FakeProviderLive(
+      (binding.transportOverride as FakeProviderScript | undefined) ?? {},
+    ),
+};
 
 const failure = (kind: ProviderFailureKind): ProviderFailure => ({
   _tag: "ProviderFailure",

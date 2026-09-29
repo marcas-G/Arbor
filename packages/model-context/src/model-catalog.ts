@@ -1,4 +1,12 @@
-import type { ModelCapability, ModelCapabilityError } from "@arbor/ports";
+import type {
+  ModelCapability,
+  ModelCapabilityError,
+  ModelCatalog,
+  ModelProfile,
+} from "@arbor/ports";
+
+export type { ModelCatalog };
+
 import { ModelCapabilityPort } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 
@@ -12,21 +20,8 @@ import { Effect, Layer } from "effect";
  * fallback to another model.
  */
 
-export interface ModelCatalogEntry {
-  readonly modelRef: string;
-  /** Which `ProviderPort` adapter family serves this model; the Composition
-   * Root maps it to a concrete adapter `Layer` (never auto-discovered). */
-  readonly adapterId: string;
-  readonly capability: ModelCapability;
-  /** Usage cost only (see `04` §3); never authority. */
-  readonly priceSheetVersion?: string;
-}
-
-export interface ModelCatalog {
-  readonly entries: ReadonlyArray<ModelCatalogEntry>;
-  /** Deterministic tie-break / default when several entries match. */
-  readonly defaultModelRef: string;
-}
+/** P16 `01` §4: the catalog entry IS the frozen `ModelProfile`. */
+export type ModelCatalogEntry = ModelProfile;
 
 /** Deterministic `modelRef` -> entry resolution; `undefined` = unknown. */
 export const resolveModelCatalogEntry = (
@@ -91,36 +86,4 @@ export const ModelCapabilityPortLive = (
     },
   });
 
-/** Declarative default catalog wired at the Composition Root. `model-fake`
- * keeps the deterministic CI provider; `model-openai` selects the real
- * `adapters/provider-openai` adapter when a client is injected. */
-export const DEFAULT_MODEL_CATALOG: ModelCatalog = {
-  defaultModelRef: "model-fake",
-  entries: [
-    {
-      modelRef: "model-fake",
-      adapterId: "provider-fake",
-      capability: {
-        modelRef: "model-fake",
-        family: "fake",
-        contextWindow: 8000,
-        outputCeiling: 512,
-        toolProtocol: "json",
-        capabilities: ["text", "tools"],
-      },
-    },
-    {
-      modelRef: "model-openai",
-      adapterId: "provider-openai",
-      capability: {
-        modelRef: "model-openai",
-        family: "openai",
-        contextWindow: 128000,
-        outputCeiling: 4096,
-        toolProtocol: "json",
-        capabilities: ["text", "tools"],
-      },
-      priceSheetVersion: "openai-2026-01",
-    },
-  ],
-};
+export { DEFAULT_MODEL_CATALOG } from "./model-catalog.data.js";
