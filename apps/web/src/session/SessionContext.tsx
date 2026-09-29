@@ -34,8 +34,11 @@ export function SessionProvider({
 }: {
   readonly children: ReactNode;
 }) {
-  const [token, setToken] = useState<string | null>(null);
-  const [actor, setActor] = useState<string | null>(null);
+  // Local single-user form: a pre-seeded session means the app opens
+  // straight into the workbench — no login. A real 401 from a configured
+  // multi-user deployment still escalates to the login card (EC-4).
+  const [token, setToken] = useState<string | null>("local");
+  const [actor, setActor] = useState<string | null>("user:local");
   const [projectId, setProjectIdState] = useState<string | null>(null);
   const [unauthenticatedProblem, setUnauthenticatedProblem] =
     useState<Problem | null>(null);

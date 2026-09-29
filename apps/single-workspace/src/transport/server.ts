@@ -2,10 +2,12 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
 import type { Duplex } from "node:stream";
 import type { ConversationStreamFrame } from "@arbor/api-contracts";
+import type { Principal } from "@arbor/domain";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { type WebSocket, WebSocketServer } from "ws";
 import type { AuthenticatorService } from "./auth.js";
+import { LOCAL_PRINCIPAL } from "./auth.js";
 import type { TransportResponse } from "./contracts.js";
 import {
   type ConversationProgressHub,
@@ -126,16 +128,17 @@ const streamConversationProgress = async (
   const authenticator = config.authenticator;
   const hub = config.conversationProgress ?? defaultConversationProgressHub;
   const token = bearerToken(request.headers.authorization);
-  if (authenticator === undefined || token === null) {
-    sendJson(response, 401, {
-      ok: false,
-      problem: { code: "auth/unauthenticated" },
-    });
-    return;
-  }
-  const principal = await Effect.runPromise(
-    authenticator.authenticate({ token }),
-  ).catch(() => null);
+  // Local single-user form: no configured authenticator = every request is
+  // the local principal (product decision 2026-09-29). Configured
+  // authenticators keep full 401 semantics.
+  const principal =
+    authenticator === undefined
+      ? (LOCAL_PRINCIPAL as unknown as Principal)
+      : token === null
+        ? null
+        : await Effect.runPromise(authenticator.authenticate({ token })).catch(
+            () => null,
+          );
   if (principal === null) {
     sendJson(response, 401, {
       ok: false,

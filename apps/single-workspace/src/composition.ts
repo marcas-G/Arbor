@@ -140,6 +140,7 @@ import { SliceCommandHandlerRegistryLive } from "./registry.js";
 import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
 import {
   type AuthenticatorService,
+  makeLocalAuthenticator,
   makeStaticAuthenticator,
 } from "./transport/auth.js";
 import { publishConversationProgress } from "./transport/conversation-progress-bridge.js";
@@ -587,7 +588,9 @@ export const buildSliceLayer = (
   const projectionQuery = Layer.provide(ProjectionQueryPortLive, coreAll);
   const transportBoundary = Layer.provide(
     TransportBoundaryLive(
-      config.authenticator ?? makeStaticAuthenticator({}),
+      // Local single-user form: no configured authenticator = localhost
+      // desktop process (every request is the local principal, no login).
+      config.authenticator ?? makeLocalAuthenticator(),
       config.governance ?? { authenticatedHumans: [], directParentOf: [] },
     ),
     Layer.mergeAll(coreAll, authorityResolver, projectionQuery),
