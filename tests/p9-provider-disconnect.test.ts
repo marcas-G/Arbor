@@ -5,7 +5,7 @@ import {
   ClockLive,
   IdGeneratorLive,
   layer,
-  P15_MIGRATIONS,
+  P16_MIGRATIONS,
   ProviderTurnStoreLive,
   runMigrations,
   TransactionPortLive,
@@ -255,7 +255,7 @@ const seed = Effect.gen(function* () {
 });
 
 const boot = Effect.gen(function* () {
-  yield* runMigrations(P15_MIGRATIONS);
+  yield* runMigrations(P16_MIGRATIONS);
   yield* seed;
 });
 
@@ -922,10 +922,14 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     );
     expect(resumed?.settled_at).not.toBeNull();
     expect(resumed?.finish_reason).toBe("Stop");
+    // Gate C C1: usage_json now carries the five-field canonical model
+    // (null semantics — this turn reported input/output only).
     expect(JSON.parse(resumed?.usage_json ?? "{}")).toEqual({
-      _tag: "UsageReported",
       inputTokens: 10,
       outputTokens: 5,
+      reasoningTokens: null,
+      cacheReadTokens: null,
+      cacheWriteTokens: null,
     });
   });
 

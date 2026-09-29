@@ -62,6 +62,7 @@ const record = (
   createdAt: "2026-09-23T05:00:01.000Z",
   settledAt: null,
   responseBody: null,
+  providerReasoning: null,
   attemptNo: 0,
   ...overrides,
 });

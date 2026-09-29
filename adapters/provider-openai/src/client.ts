@@ -200,10 +200,19 @@ const readSse = async function* (
       typeof usage?.prompt_tokens === "number" &&
       typeof usage.completion_tokens === "number"
     ) {
+      // Gate C C1: reasoning tokens (OpenAI o-series completion_tokens_details
+      // / DeepSeek-compatible details) translate to the canonical dimension;
+      // absent = unknown, never 0. Cache dimensions stay untranslated — the
+      // adapter declares reportsCacheTokens=false and native extraction is
+      // not implemented this phase (capability remains NOT_PROVEN).
+      const details = asRecord(usage.completion_tokens_details);
       chunks.push({
         type: "usage",
         inputTokens: usage.prompt_tokens,
         outputTokens: usage.completion_tokens,
+        ...(typeof details?.reasoning_tokens === "number"
+          ? { reasoningTokens: details.reasoning_tokens }
+          : {}),
       });
     }
     if (firstChoice?.finish_reason !== undefined) {

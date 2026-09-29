@@ -71,6 +71,20 @@ export interface ModelContextManifest {
     readonly scope: string;
   }>;
   readonly contextRefs: ReadonlyArray<string>;
+  /**
+   * Gate C C3: reasoning round-trip attachments preserved for this turn —
+   * references only (model/protocol/fingerprint binding + conversation
+   * message id). The opaque payloads stay in the conversation history; the
+   * Model Context records what it preserved/injected/discarded (INV-C2-1:
+   * turn-level opaque reference granularity, never parsed here).
+   */
+  readonly reasoningAttachmentRefs?: ReadonlyArray<{
+    readonly messageId: string;
+    readonly modelRef: string;
+    readonly protocolFamily: string;
+    readonly bindingFingerprint: string;
+    readonly decision: "Preserve" | "Inject" | "DiscardForCompaction";
+  }>;
   readonly skillRefs: ReadonlyArray<{
     readonly skillId: string;
     readonly revision: number;

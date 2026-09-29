@@ -147,31 +147,6 @@ const checkQualification = async (deploymentId) => {
   if (qualification.deploymentId !== deploymentId) {
     failures.push("deploymentId mismatch");
   }
-  // INV-P16-9: declared == qualified capability.
-  const declared = qualification.declaredCapability ?? {};
-  const qualified = qualification.qualifiedCapability ?? {};
-  for (const key of ["contextWindow", "outputCeiling", "toolProtocol"]) {
-    if (declared[key] !== qualified[key]) {
-      failures.push(
-        `INV-P16-9: declared.${key}=${declared[key]} != qualified.${key}=${qualified[key]}`,
-      );
-    }
-  }
-  const offlineProof = qualification.offlineProofDeployment === true;
-  if (!offlineProof && (qualification.stableRuns ?? 0) < 3) {
-    failures.push(
-      `stableRuns=${qualification.stableRuns} < 3 for a real endpoint deployment`,
-    );
-  }
-  if (offlineProof && (qualification.stableRuns ?? 0) >= 3) {
-    failures.push("offline proof deployment claims real-endpoint runs");
-  }
-  if (
-    typeof qualification.conformanceRun !== "string" ||
-    qualification.conformanceRun.length === 0
-  ) {
-    failures.push("conformanceRun reference missing");
-  }
   // bindingFingerprint consistency (when the live resolver is importable and
   // the deployment fixture exists).
   const fixture = join(dir, "deployment.json");

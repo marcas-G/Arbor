@@ -153,8 +153,16 @@ export interface ProviderContinuationCheckpoint {
   readonly cursor: string;
   readonly canonicalEventPrefixJson: string;
   readonly deliveredPosition: number | null;
-  /** True only when the adapter guarantees a cursor-exclusive resume. */
-  readonly resumeGuaranteed: boolean;
+  /**
+   * Gate C `03` §2.1 binding (C2): a continuation cursor is valid ONLY for
+   * the protocol adapter and deployment that produced it. Absent on legacy
+   * rows; resume with an absent or mismatched binding is rejected (stale
+   * continuation — never replayed against a different adapter/binding).
+   */
+  readonly adapterId?: string;
+  readonly bindingFingerprint?: string;
+  /** Provider-side resume guarantee (SafeResume prerequisite, P15 policy). */
+  readonly resumeGuaranteed?: boolean;
 }
 
 export type ProviderRetrySafety = "SafeReplay" | "SafeResume" | "UnsafeReplay";
@@ -230,6 +238,9 @@ export type CanonicalProviderEvent =
       readonly _tag: "UsageReported";
       readonly inputTokens: number;
       readonly outputTokens: number;
+      /** Gate C `03` §1.7 (authorized minimal change): provider-reported
+       * reasoning token count. Absent = not reported (null semantics). */
+      readonly reasoningTokens?: number;
       readonly cacheReadTokens?: number;
       readonly cacheWriteTokens?: number;
     }

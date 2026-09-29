@@ -6,7 +6,7 @@ import {
   HumanMessageStoreLive,
   IdGeneratorLive,
   layer,
-  P14_MIGRATIONS,
+  P16_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
@@ -47,6 +47,7 @@ const record = (
   createdAt: "2026-09-23T05:00:00.000Z",
   settledAt: null,
   responseBody: null,
+  providerReasoning: null,
   attemptNo: 0,
   ...overrides,
 });
@@ -67,7 +68,7 @@ describe("P14-002 human_messages migration + store", () => {
       Effect.scoped(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P14_MIGRATIONS);
+            yield* runMigrations(P16_MIGRATIONS);
             const sql = yield* SqlClient;
             const version = yield* sql.unsafe<{ user_version: number }>(
               "PRAGMA user_version",
@@ -84,7 +85,7 @@ describe("P14-002 human_messages migration + store", () => {
         ),
       ),
     );
-    expect(result.version).toBe(14);
+    expect(result.version).toBe(16);
     expect(result.table).toBe("human_messages");
   });
 
@@ -93,7 +94,7 @@ describe("P14-002 human_messages migration + store", () => {
       Effect.scoped(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P14_MIGRATIONS);
+            yield* runMigrations(P16_MIGRATIONS);
             const store = yield* HumanMessageStore;
             const tx = yield* TransactionPort;
 
@@ -134,7 +135,7 @@ describe("P14-002 human_messages migration + store", () => {
       Effect.scoped(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P14_MIGRATIONS);
+            yield* runMigrations(P16_MIGRATIONS);
             const store = yield* HumanMessageStore;
             const tx = yield* TransactionPort;
             yield* tx.transact(store.insertPending(record("msg_2")));
@@ -159,7 +160,7 @@ describe("P14-002 human_messages migration + store", () => {
       Effect.scoped(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P14_MIGRATIONS);
+            yield* runMigrations(P16_MIGRATIONS);
             const store = yield* HumanMessageStore;
             const tx = yield* TransactionPort;
             yield* tx.transact(
@@ -194,7 +195,7 @@ describe("P14-002 human_messages migration + store", () => {
       Effect.scoped(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P14_MIGRATIONS);
+            yield* runMigrations(P16_MIGRATIONS);
             const store = yield* HumanMessageStore;
             const tx = yield* TransactionPort;
             yield* tx.transact(store.insertPending(record("msg_3")));

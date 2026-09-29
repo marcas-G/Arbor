@@ -52,8 +52,7 @@ import {
   LeaseServiceLive,
   layer,
   MessageStoreLive,
-  P14_MIGRATIONS,
-  P15_MIGRATIONS,
+  P16_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectionStoreLive,
   ProjectRepositoryLive,
@@ -86,6 +85,7 @@ import {
   type ReconciliationSource,
   type ResolvedModelBinding,
   type RunnableWorkSource,
+  resolvedModelBindingFingerprint,
   resolveModelBinding,
   type SecretRef,
   SkillRegistry,
@@ -341,8 +341,26 @@ export const buildSliceLayer = (
               ? { failures: config.providerFailures }
               : {}),
           });
+  // Gate C C1/C2: the adapter's declared usage capabilities and the binding
+  // identity for continuation checkpoints ride the ProviderRuntime config
+  // (single adapter per runtime — single-deployment v1 semantics).
   const providerRuntime = Layer.provide(
-    ProviderRuntimeLive(),
+    ProviderRuntimeLive({
+      ...(deploymentBinding !== undefined
+        ? {
+            adapterUsageConstraints: {
+              reportsCacheTokens:
+                deploymentBinding.adapter.profile.capabilityFlags
+                  .reportsCacheTokens,
+            },
+            continuationBinding: {
+              adapterId: deploymentBinding.adapter.adapterId,
+              bindingFingerprint:
+                resolvedModelBindingFingerprint(deploymentBinding),
+            },
+          }
+        : {}),
+    }),
     Layer.mergeAll(
       provider,
       Layer.provide(ProviderTurnStoreLive, infra),
@@ -592,9 +610,4 @@ export const buildSliceLayer = (
   ) as Layer.Layer<SliceServices>;
 };
 
-export {
-  P14_MIGRATIONS,
-  P15_MIGRATIONS,
-  P15_MIGRATIONS as P12_MIGRATIONS,
-  runMigrations,
-};
+export { P16_MIGRATIONS, P16_MIGRATIONS as P12_MIGRATIONS, runMigrations };

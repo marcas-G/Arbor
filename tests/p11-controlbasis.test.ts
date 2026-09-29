@@ -13,7 +13,7 @@ import {
   HumanMessageStoreLive,
   IdGeneratorLive,
   layer,
-  P15_MIGRATIONS,
+  P16_MIGRATIONS,
   ProviderTurnStoreLive,
   runMigrations,
   SessionRepositoryLive,
@@ -336,7 +336,7 @@ describe("P11 GQ4b ControlBasis environmentRevision service-internal read", () =
     const { app, recorded } = makeApp();
     const settlement = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P15_MIGRATIONS);
+        yield* runMigrations(P16_MIGRATIONS);
         yield* seed;
         const store = yield* EnvironmentRevisionStore;
         const tx = yield* TransactionPort;
@@ -353,7 +353,7 @@ describe("P11 GQ4b ControlBasis environmentRevision service-internal read", () =
     const { app, recorded } = makeApp();
     const settlement = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P15_MIGRATIONS);
+        yield* runMigrations(P16_MIGRATIONS);
         yield* seed;
         return yield* drive(0);
       }),
@@ -367,7 +367,7 @@ describe("P11 GQ4b ControlBasis environmentRevision service-internal read", () =
     const { app, recorded } = makeApp();
     const settlement = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P15_MIGRATIONS);
+        yield* runMigrations(P16_MIGRATIONS);
         yield* seed;
         const store = yield* EnvironmentRevisionStore;
         const advancement = yield* EnvironmentRevisionAdvancement;

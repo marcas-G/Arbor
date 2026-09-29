@@ -140,6 +140,8 @@ export const makeSubmitHumanMessageHandler = (
         createdAt: envelope.issuedAt,
         settledAt: null,
         responseBody: null,
+        // Gate C C3: reasoning attachment arrives at settle, never at insert.
+        providerReasoning: null,
         attemptNo: 0,
       };
 

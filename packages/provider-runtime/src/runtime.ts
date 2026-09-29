@@ -1,6 +1,8 @@
 import {
   type CanonicalProviderEvent,
   Clock,
+  cacheUsageGateViolation,
+  canonicalUsageOfEvent,
   IdGenerator,
   PROVIDER_FAILURE_KINDS,
   type ProviderAttemptObservation,
@@ -21,6 +23,7 @@ import {
   SecretStorePort,
   type TransactionOperationalFailure,
   TransactionPort,
+  UNKNOWN_USAGE,
   type UnsettledProviderTurn,
 } from "@arbor/ports";
 import { Cause, Effect, Layer, Option, Result, Stream } from "effect";
@@ -36,6 +39,25 @@ import {
 export interface ProviderRuntimeConfig {
   readonly systemDefault?: ProviderRuntimeExecutionPolicy;
   readonly providerDefault?: Partial<ProviderRuntimeExecutionPolicy>;
+  /**
+   * Gate C `03` §1.2/§1.3 (INV-C1-2): the adapter's declared usage
+   * capabilities, supplied by the Composition Root from the resolved
+   * binding's ProviderProfile. An adapter that declares
+   * `reportsCacheTokens: false` must never emit cache token values —
+   * violations fail the attempt closed.
+   */
+  readonly adapterUsageConstraints?: {
+    readonly reportsCacheTokens: boolean;
+  };
+  /**
+   * Gate C `03` §2.1 (C2): the binding identity a continuation checkpoint
+   * must carry to be resumable; absent = legacy checkpoints are rejected
+   * (stale continuation, never silently replayed).
+   */
+  readonly continuationBinding?: {
+    readonly adapterId: string;
+    readonly bindingFingerprint: string;
+  };
 }
 
 type AttemptResult =
@@ -150,11 +172,28 @@ const isCanonicalProviderEvent = (
   }
 };
 
-const decodeContinuationPrefix = (
+/** Exported for Gate C L2 qualification tests (continuation binding). */
+export const decodeContinuationPrefix = (
   checkpoint: ProviderContinuationCheckpoint,
   providerTurnId: ProviderExecutionContext["providerTurnId"],
   attemptNo: number,
+  continuationBinding?: ProviderRuntimeConfig["continuationBinding"],
 ): ReadonlyArray<CanonicalProviderEvent> | null => {
+  // Gate C C2: a checkpoint must be bound to the producing adapter and
+  // deployment. Missing or mismatched binding = stale continuation → reject.
+  if (continuationBinding !== undefined) {
+    if (
+      checkpoint.adapterId !== continuationBinding.adapterId ||
+      checkpoint.bindingFingerprint !== continuationBinding.bindingFingerprint
+    ) {
+      return null;
+    }
+  } else if (
+    checkpoint.adapterId !== undefined ||
+    checkpoint.bindingFingerprint !== undefined
+  ) {
+    return null;
+  }
   try {
     const events: unknown = JSON.parse(checkpoint.canonicalEventPrefixJson);
     if (
@@ -278,6 +317,7 @@ const consumeAttempt = (
   callerCancellationSignal: ProviderCancellationSignal | undefined,
   policy: ProviderRuntimeExecutionPolicy,
   deadlineAtMs: number,
+  runtimeConfig: ProviderRuntimeConfig,
   deps: {
     readonly store: import("@arbor/ports").ProviderTurnStoreService;
     readonly tx: import("@arbor/ports").TransactionPortService;
@@ -303,6 +343,7 @@ const consumeAttempt = (
               checkpoint,
               context.providerTurnId,
               context.attemptNo,
+              runtimeConfig.continuationBinding,
             );
       if (prefix === null) {
         return {
@@ -324,7 +365,9 @@ const consumeAttempt = (
         null;
       let finishReason = "Stop";
       let completionSeen = false;
-      let usage: CanonicalProviderEvent | undefined;
+      let usage:
+        | Extract<CanonicalProviderEvent, { readonly _tag: "UsageReported" }>
+        | undefined;
 
       const persist = (nextObservation: ProviderAttemptObservation) =>
         Effect.gen(function* () {
@@ -508,7 +551,19 @@ const consumeAttempt = (
               };
             }
           }
-          if (canonical._tag === "UsageReported") usage = canonical;
+          if (canonical._tag === "UsageReported") {
+            const violation = cacheUsageGateViolation(
+              runtimeConfig.adapterUsageConstraints?.reportsCacheTokens ?? true,
+              canonical,
+            );
+            if (violation !== undefined) {
+              return {
+                _tag: "Failure",
+                failure: unknownFailure("usage-cache-capability-violation"),
+              };
+            }
+            usage = canonical;
+          }
           if (canonical._tag === "TurnCompleted") {
             finishReason = canonical.finishReason;
           }
@@ -548,7 +603,9 @@ const consumeAttempt = (
         _tag: "Success",
         events,
         finishReason,
-        usageJson: JSON.stringify(usage ?? {}),
+        usageJson: JSON.stringify(
+          usage === undefined ? UNKNOWN_USAGE : canonicalUsageOfEvent(usage),
+        ),
       };
     }),
   );
@@ -1015,6 +1072,7 @@ export const ProviderRuntimeLive = (
                   externalSignal,
                   policy,
                   turnDeadlineAtMs,
+                  config,
                   { store, tx, clock },
                   () => controller.abort(),
                   (state) => {

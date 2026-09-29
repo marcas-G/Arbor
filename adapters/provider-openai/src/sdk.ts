@@ -53,6 +53,8 @@ export type OpenAISdkChunk =
       readonly type: "usage";
       readonly inputTokens: number;
       readonly outputTokens: number;
+      /** Provider-reported reasoning tokens (Gate C C1); absent = unknown. */
+      readonly reasoningTokens?: number;
       readonly cacheReadTokens?: number;
       readonly cacheWriteTokens?: number;
     }

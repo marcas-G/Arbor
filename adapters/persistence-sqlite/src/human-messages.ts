@@ -5,6 +5,7 @@ import {
   HumanMessageStore,
   type HumanMessageStoreError,
   type HumanMessageStoreService,
+  type ReasoningAttachment,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -31,6 +32,7 @@ interface HumanMessageRow {
   readonly created_at: string;
   readonly settled_at: string | null;
   readonly response_body: string | null;
+  readonly provider_reasoning_json: string | null;
   readonly attempt_no: number;
 }
 
@@ -47,11 +49,15 @@ const toRecord = (row: HumanMessageRow): HumanMessageRecord => ({
   createdAt: row.created_at,
   settledAt: row.settled_at,
   responseBody: row.response_body,
+  providerReasoning:
+    row.provider_reasoning_json === null
+      ? null
+      : (JSON.parse(row.provider_reasoning_json) as ReasoningAttachment),
   attemptNo: row.attempt_no,
 });
 
 const SELECT_COLUMNS =
-  "message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no";
+  "message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, provider_reasoning_json, attempt_no";
 
 export const HumanMessageStoreLive: Layer.Layer<
   HumanMessageStore,
@@ -79,7 +85,7 @@ export const HumanMessageStoreLive: Layer.Layer<
           }
           yield* sql
             .unsafe(
-              "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Pending',NULL,?,NULL,NULL,0)",
+              "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, provider_reasoning_json, attempt_no) VALUES (?,?,?,?,?,?,?,'Pending',NULL,?,NULL,NULL,NULL,0)",
               [
                 record.messageId,
                 record.projectId,
@@ -145,13 +151,20 @@ export const HumanMessageStoreLive: Layer.Layer<
             ? { _tag: "Claimed" as const }
             : { _tag: "AlreadyClaimed" as const };
         }),
-      markAnswered: (messageId, settledAt, responseBody) =>
+      markAnswered: (messageId, settledAt, responseBody, providerReasoning) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           yield* sql
             .unsafe(
-              "UPDATE human_messages SET state = 'Answered', settled_at = ?, response_body = ? WHERE message_id = ? AND state = 'Claimed'",
-              [settledAt, responseBody, messageId],
+              "UPDATE human_messages SET state = 'Answered', settled_at = ?, response_body = ?, provider_reasoning_json = ? WHERE message_id = ? AND state = 'Claimed'",
+              [
+                settledAt,
+                responseBody,
+                providerReasoning === undefined || providerReasoning === null
+                  ? null
+                  : JSON.stringify(providerReasoning),
+                messageId,
+              ],
             )
             .pipe(Effect.mapError(toOperationalFailure));
         }),

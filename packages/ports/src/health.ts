@@ -18,7 +18,10 @@ export const P12_MIGRATION_BASELINE = 13;
 export const P14_MIGRATION_BASELINE = 14;
 
 /** Provider Runtime Correctness Phase 1 migration baseline. */
-export const P15_MIGRATION_BASELINE = 15;
+export const P16_MIGRATION_BASELINE = 16;
+
+/** @deprecated Legacy alias kept for compiled references; the baseline is P16. */
+export const P15_MIGRATION_BASELINE = P16_MIGRATION_BASELINE;
 
 export interface ReadinessState {
   /** Canonical DB connection is open (reopen / integrity_check path available). */

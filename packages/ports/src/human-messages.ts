@@ -5,6 +5,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
+import type { ReasoningAttachment } from "./provider-extension.js";
 
 /**
  * P14 `01` §4 — the durable human-message store (chat conversation turns).
@@ -28,6 +29,13 @@ export interface HumanMessageRecord {
   /** Bounded assistant response persisted at settle (P14 `02` §4 "response
    * persisted"); null while unanswered. */
   readonly responseBody: string | null;
+  /**
+   * Gate C C3: the provider-native reasoning payload attached to this turn's
+   * answer (ReasoningAttachment JSON, or null when the deployment produced /
+   * preserved none). Conversation-history attachment — the ONLY persistence
+   * home for reasoning round-trip state (never the provider transport rows).
+   */
+  readonly providerReasoning: ReasoningAttachment | null;
   /** retry-until-response attempt counter (`02` §4.2): incremented on each
    * Failed/OutcomeUnknown rollback; admission ids derive from
    * `(messageId, attemptNo)`. */
@@ -88,6 +96,7 @@ export interface HumanMessageStoreService {
     messageId: string,
     settledAt: string,
     responseBody: string | null,
+    providerReasoning?: ReasoningAttachment | null,
   ) => Effect.Effect<
     void,
     HumanMessageStoreError,

@@ -361,14 +361,154 @@ export const sha256Hex = (text: string): string => {
     .join("");
 };
 
-export interface CapabilityQualification {
+// ---------------------------------------------------------------------------
+// Gate C `03` §1 — Canonical usage (Unknown ≠ 0)
+// ---------------------------------------------------------------------------
+
+/**
+ * The single provider-neutral usage vocabulary (P16 Gate C C1, FROZEN).
+ * Every field is `number | null`: null = unknown / not reported. Zero is a
+ * *reported* measurement (INV-C1-1: unknown must never be forged as 0).
+ */
+export interface CanonicalUsage {
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly reasoningTokens: number | null;
+  readonly cacheReadTokens: number | null;
+  readonly cacheWriteTokens: number | null;
+}
+
+export const UNKNOWN_USAGE: CanonicalUsage = {
+  inputTokens: null,
+  outputTokens: null,
+  reasoningTokens: null,
+  cacheReadTokens: null,
+  cacheWriteTokens: null,
+};
+
+/**
+ * Aggregate a UsageReported canonical event into the canonical usage model.
+ * Adapter translates native → event; ONLY this normalization (and the
+ * ProviderRuntime settleTurn aggregation over it) produces persisted usage.
+ */
+export const canonicalUsageOfEvent = (
+  event: Extract<
+    import("./provider.js").CanonicalProviderEvent,
+    { readonly _tag: "UsageReported" }
+  >,
+): CanonicalUsage => ({
+  inputTokens: event.inputTokens,
+  outputTokens: event.outputTokens,
+  reasoningTokens: event.reasoningTokens ?? null,
+  cacheReadTokens: event.cacheReadTokens ?? null,
+  cacheWriteTokens: event.cacheWriteTokens ?? null,
+});
+
+/**
+ * INV-C1-2 gate: an adapter whose profile declares `reportsCacheTokens:
+ * false` must never emit cache token values. Returns the violation
+ * diagnostic (or undefined when the event is admissible).
+ */
+export const cacheUsageGateViolation = (
+  reportsCacheTokens: boolean,
+  event: Extract<
+    import("./provider.js").CanonicalProviderEvent,
+    { readonly _tag: "UsageReported" }
+  >,
+): string | undefined =>
+  reportsCacheTokens ||
+  (event.cacheReadTokens === undefined && event.cacheWriteTokens === undefined)
+    ? undefined
+    : "adapter declared reportsCacheTokens=false but emitted cache token values";
+
+// ---------------------------------------------------------------------------
+// Gate C `03` §2 — ReasoningRoundTripState attachment (opaque, bound)
+// ---------------------------------------------------------------------------
+
+/**
+ * A provider-native reasoning payload attached to a conversation turn
+ * (P16 Gate C C2/C3, FROZEN). The semantic owner is Model Context (preserve
+ * / inject / discard-during-compaction only); the wire owner is the
+ * Protocol Adapter (opaque payload — never parsed, never modified).
+ * Bound to the exact model + protocol + deployment; cross-model or
+ * cross-protocol reuse is a contract violation (INV-C2-1).
+ */
+export interface ReasoningAttachment {
+  readonly attachmentType: "provider-reasoning-v1";
+  readonly modelRef: string;
+  readonly protocolFamily: ProviderProtocolFamily;
+  /** Binding fingerprint of the deployment that produced the payload. */
+  readonly bindingFingerprint: string;
+  /** Opaque provider-native payload (verbatim wire content). */
+  readonly opaquePayload: string;
+  readonly receivedAt: string;
+}
+
+/** Model Context's complete decision set over a reasoning attachment. */
+export type ReasoningAttachmentDecision =
+  | { readonly _tag: "Preserve" }
+  | { readonly _tag: "Inject" }
+  | { readonly _tag: "DiscardForCompaction" };
+
+/**
+ * Binding admissibility: an attachment may only be injected when its
+ * model/protocol/fingerprint match the target binding. Cross-model or
+ * cross-protocol reuse is rejected here (mechanically).
+ */
+export const reasoningAttachmentAdmissible = (
+  attachment: ReasoningAttachment,
+  target: {
+    readonly modelRef: string;
+    readonly protocolFamily: ProviderProtocolFamily;
+    readonly bindingFingerprint: string;
+  },
+): boolean =>
+  attachment.modelRef === target.modelRef &&
+  attachment.protocolFamily === target.protocolFamily &&
+  attachment.bindingFingerprint === target.bindingFingerprint;
+
+// ---------------------------------------------------------------------------
+// Gate C `04` §2 — Capability qualification record (frozen shape)
+// ---------------------------------------------------------------------------
+
+export type QualificationCapability =
+  | "text"
+  | "streaming"
+  | "tool-simple"
+  | "tool-fragmented-args"
+  | "tool-multiple"
+  | "reasoning"
+  | "reasoning-with-tools"
+  | "structured-output"
+  | "cache-usage"
+  | "provider-continuation"
+  | "reasoning-round-trip"
+  | "cancellation";
+
+export type QualificationStatus =
+  | "DECLARED"
+  | "PROVEN"
+  | "UNSUPPORTED"
+  | "FAILED"
+  | "NOT_RUN";
+
+export interface CapabilityQualificationEntry {
+  readonly capability: QualificationCapability;
+  readonly status: QualificationStatus;
+  readonly evidence: ReadonlyArray<{
+    readonly layer: "L1" | "L2" | "L3";
+    readonly artifact: string;
+  }>;
+}
+
+/** Qualification record for one deployment (extends the Gate B record with
+ * the per-capability matrix; INV-P16-10 still holds — evidence never writes
+ * back to ModelProfile declarations). */
+export interface CapabilityQualificationRecord {
   readonly deploymentId: string;
   readonly adapterId: ProtocolAdapterId;
   readonly modelRef: string;
-  /** Gate B acceptance clarification 2: binds the exact ResolvedModelBinding. */
   readonly bindingFingerprint: string;
-  /** Full identity/version record — enough to decide whether evidence still
-   * applies; any change changes the fingerprint and invalidates it. */
   readonly identity: {
     readonly adapterId: ProtocolAdapterId;
     readonly adapterVersion?: string;
@@ -380,13 +520,66 @@ export interface CapabilityQualification {
     readonly protocolFamily: ProviderProtocolFamily;
     readonly failureTaxonomy: string;
   };
-  /** Declared capability snapshot at qualification time (comparison only,
-   * never written back — INV-P16-10). */
-  readonly declaredCapability: ModelCapability;
-  /** Capability actually observed by the evidence. */
-  readonly qualifiedCapability: ModelCapability;
-  readonly evidenceDir: string;
-  readonly stableRuns: number;
-  readonly conformanceRun: string;
+  readonly qualificationRunnerVersion: string;
+  readonly capabilities: ReadonlyArray<CapabilityQualificationEntry>;
   readonly qualifiedAt: string;
 }
+
+/** INV-C3-1/INV-C3-2 mechanical validation of a record's status machine. */
+export const qualificationRecordViolations = (
+  record: CapabilityQualificationRecord,
+  declared: {
+    readonly reportsCacheTokens: boolean;
+    readonly supportsContinuation: boolean;
+    readonly capabilities: ReadonlyArray<string>;
+  },
+): ReadonlyArray<string> => {
+  const violations: string[] = [];
+  const byCapability = new Map(
+    record.capabilities.map((entry) => [entry.capability, entry]),
+  );
+  // declared-but-marked-unsupported / undeclared-but-proven ⇒ FAILED-grade inconsistency
+  const declaredCaps = declared.capabilities ?? [];
+  const toolCapabilities: ReadonlyArray<QualificationCapability> = [
+    "tool-simple",
+    "tool-fragmented-args",
+    "tool-multiple",
+  ];
+  for (const [capability, entry] of byCapability) {
+    const isDeclared =
+      (toolCapabilities.includes(capability) &&
+        declaredCaps.includes("tools")) ||
+      (capability === "cache-usage" && declared.reportsCacheTokens) ||
+      (capability === "provider-continuation" &&
+        declared.supportsContinuation) ||
+      (!toolCapabilities.includes(capability) &&
+        capability !== "cache-usage" &&
+        capability !== "provider-continuation");
+    if (entry.status === "PROVEN" && !isDeclared) {
+      violations.push(`${capability}: PROVEN but not declared (INV-C3-2)`);
+    }
+    if (entry.status === "UNSUPPORTED" && isDeclared) {
+      violations.push(`${capability}: UNSUPPORTED but declared (INV-C3-2)`);
+    }
+    if (entry.status === "PROVEN" && entry.evidence.length === 0) {
+      violations.push(`${capability}: PROVEN without evidence (INV-C3-1)`);
+    }
+  }
+  return violations;
+};
+
+export const QUALIFICATION_CAPABILITIES: ReadonlyArray<QualificationCapability> =
+  [
+    "text",
+    "streaming",
+    "tool-simple",
+    "tool-fragmented-args",
+    "tool-multiple",
+    "reasoning",
+    "reasoning-with-tools",
+    "structured-output",
+    "cache-usage",
+    "provider-continuation",
+    "reasoning-round-trip",
+    "cancellation",
+  ];
