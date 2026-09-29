@@ -242,8 +242,10 @@ const COMPAT_ECHO_TARGET: ConformanceTarget = {
   adapter: providerOpenaiAdapter,
 };
 
+// Network families carry an SSE-shaped transport double; in-process families
+// are deterministic and consume injected scripts instead.
 const isNetwork = (adapter: ProtocolAdapter): boolean =>
-  adapter.profile.protocolFamily !== "in-process-deterministic";
+  adapter.profile.protocolFamily === "openai-chat-completions-sse";
 
 // ---------------------------------------------------------------------------
 // suite
@@ -503,7 +505,11 @@ describe.each([...TARGETS, COMPAT_ECHO_TARGET])(
 
     it("A6 cancellation-propagation: an aborted signal stops production before completion", async () => {
       if (!isNetwork(adapter)) {
-        expect(adapter.profile.protocolFamily).toBe("in-process-deterministic");
+        // In-process families declare a deterministic protocol family and
+        // are exempt from transport-abort propagation (no network to cancel).
+        expect(adapter.profile.protocolFamily).not.toBe(
+          "openai-chat-completions-sse",
+        );
         return;
       }
       const controller = new AbortController();
@@ -881,3 +887,81 @@ describe("P16 E5 — dep-env qualification", () => {
     expect(qualification.stableRuns).toBeGreaterThanOrEqual(3);
   });
 });
+
+// ---------------------------------------------------------------------------
+// G-B2 (Final Closure Audit) — E4b true protocol-family identity proof
+// ---------------------------------------------------------------------------
+
+describe("G-B2 — provider-testecho is a distinct protocol family, not a second adapter in an existing family", () => {
+  it("family identity is independent, the registry resolves by that identity, and the adapter implements its own protocol path", () => {
+    expect(providerTestechoAdapter.profile.protocolFamily).toBe(
+      "testecho-echo-v1",
+    );
+    expect(providerFakeAdapter.profile.protocolFamily).toBe(
+      "in-process-deterministic",
+    );
+    expect(providerTestechoAdapter.profile.protocolFamily).not.toBe(
+      providerFakeAdapter.profile.protocolFamily,
+    );
+    expect(providerTestechoAdapter.adapterId).toBe("provider-testecho");
+    expect(providerTestechoAdapter.layerFor).not.toBe(
+      providerFakeAdapter.layerFor,
+    );
+    const registry = makeRegistryForQualificationWithTestecho();
+    const resolved = registry.find("provider-testecho");
+    expect(resolved?.profile.protocolFamily).toBe("testecho-echo-v1");
+    expect(resolved?.layerFor).toBe(providerTestechoAdapter.layerFor);
+  });
+
+  it("a testecho deployment resolves end-to-end through the unchanged resolver (data-only binding)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolveModelBinding } =
+      qualificationModule as typeof import("../../packages/ports/dist/provider-extension.js");
+    const catalog = await catalogForQualification();
+    const registry = makeRegistryForQualificationWithTestecho();
+    const resolved = resolveModelBinding(registry, catalog, {
+      deploymentId: "dep-testecho-probe",
+      modelRef: "model-testecho",
+      endpoint: "http://testecho.invalid/v1",
+    });
+    if ("_tag" in resolved) {
+      throw new Error(`resolution failed: ${JSON.stringify(resolved)}`);
+    }
+    expect(resolved.adapter.adapterId).toBe("provider-testecho");
+    expect(resolved.adapter.profile.protocolFamily).toBe("testecho-echo-v1");
+    void readFileSync;
+  });
+
+  it("G-B1: the fingerprint equals a reference SHA-256 over the canonical binding JSON", async () => {
+    const { createHash } = await import("node:crypto");
+    const {
+      resolveModelBinding,
+      resolvedModelBindingCanonicalJson,
+      resolvedModelBindingFingerprint,
+    } =
+      qualificationModule as typeof import("../../packages/ports/dist/provider-extension.js");
+    const catalog = await catalogForQualification();
+    const registry = makeRegistryForQualificationWithTestecho();
+    const resolved = resolveModelBinding(registry, catalog, {
+      deploymentId: "dep-testecho-probe",
+      modelRef: "model-testecho",
+      endpoint: "http://testecho.invalid/v1",
+    });
+    if ("_tag" in resolved) {
+      throw new Error("resolution failed");
+    }
+    const canonical = resolvedModelBindingCanonicalJson(resolved);
+    const reference = createHash("sha256").update(canonical).digest("hex");
+    expect(resolvedModelBindingFingerprint(resolved)).toBe(
+      `p16fp_${reference}`,
+    );
+  });
+});
+
+function makeRegistryForQualificationWithTestecho() {
+  return qualificationModule.makeProviderRegistry([
+    providerOpenaiAdapter,
+    providerFakeAdapter,
+    providerTestechoAdapter,
+  ]);
+}

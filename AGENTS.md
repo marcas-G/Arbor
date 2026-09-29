@@ -70,7 +70,16 @@ proofs; **STOP if either E4a or E4b fails — no further provider family
 onboarding**. Scope guards: no real new provider family, zero agent-runtime
 diff, no Model Context semantic compilation change, no cache-usage/native
 continuation implementation, no CanonicalProviderEvent extension.
-**Gate B IMPLEMENTATION COMPLETE (2026-09-29)**: B-1..B-10 evidenced —
+**Final Closure Audit COMPLETE (2026-09-29, baseline 59958f8)**: G-B1 —
+fingerprint contract==implementation restored (pure-TypeScript SHA-256 in
+ports, environment-neutral, no node:crypto; reference-digest asserted by
+spec; both qualification records rebound to SHA-256 fingerprints); G-B2 —
+provider-testecho now carries the DISTINCT protocol-family identity
+`testecho-echo-v1` (registry resolves by that identity; adapter owns an
+independent protocol path; E4b re-proven as a true new-family onboarding).
+E1–E5 re-passed, pnpm check green, git diff --check clean, scope guards
+re-verified. **Gate B = FORMALLY CLOSED.** Gate C NOT entered (no new
+authorization). **Gate B IMPLEMENTATION COMPLETE (2026-09-29)**: B-1..B-10 evidenced —
 registry/binding/env wiring landed; E1/E2 arch gates (tests/architecture/
 p16-architecture.test.ts) green; E3 conformance suite A1–A10 green on
 provider-openai / provider-fake / provider-testecho / provider-openai@

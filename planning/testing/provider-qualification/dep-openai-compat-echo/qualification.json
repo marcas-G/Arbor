@@ -2,7 +2,7 @@
   "deploymentId": "dep-openai-compat-echo",
   "adapterId": "provider-openai",
   "modelRef": "model-openai-compat-echo",
-  "bindingFingerprint": "p16fp_2f09af0f07060114",
+  "bindingFingerprint": "p16fp_4d4a13c35c503d159c4f82357c9500cce01067d924af2054052747d77a85c811",
   "identity": {
     "adapterId": "provider-openai",
     "providerSite": "http://compat-echo.test/v1",
