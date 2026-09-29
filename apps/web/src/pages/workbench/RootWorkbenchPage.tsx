@@ -16,7 +16,7 @@ import { MonoText } from "../../components/MonoText.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { presentResponsibilityTree } from "../tree/treePresentation.js";
-import { ConversationRecord } from "../workspace/ConversationTab.js";
+import { ConversationTab } from "../workspace/ConversationTab.js";
 import {
   clampWorkbenchTreeBasis,
   DEFAULT_WORKBENCH_LAYOUT,
@@ -195,10 +195,9 @@ function ConversationPane({
       ) : presented === null || presented === undefined ? (
         <Empty>责任树结构不可用，无法绑定根对话。</Empty>
       ) : (
-        <ConversationRecord
+        <ConversationTab
           projectId={projectId}
           workspaceId={presented.root.workspaceId}
-          rootWorkspaceId={presented.root.workspaceId}
         />
       )}
     </section>

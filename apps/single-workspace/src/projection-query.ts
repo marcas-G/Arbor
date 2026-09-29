@@ -398,6 +398,7 @@ export const ProjectionQueryPortLive: Layer.Layer<
                   executionId: row.claimed_by_execution_id ?? "",
                   body: row.response_body,
                   occurredAt: row.settled_at,
+                  messageId: row.message_id,
                 });
               }
             }

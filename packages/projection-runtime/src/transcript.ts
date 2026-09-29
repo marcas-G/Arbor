@@ -30,6 +30,7 @@ export type ConversationTurnView =
       readonly executionId: string;
       readonly body: string;
       readonly occurredAt: string;
+      readonly messageId?: string;
     };
 
 /** Mirrors the frozen TranscriptEntry core (P10 `05` §1) extended by P14 `03`:

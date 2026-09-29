@@ -12,6 +12,23 @@ import {
 import { SessionContext } from "../src/session/SessionContext.js";
 import { transcriptTypical, treeTypical } from "../src/views/fixtures.js";
 
+// jsdom has no layout — Virtuoso renders zero items. Flat-render mock.
+vi.mock("react-virtuoso", () => ({
+  Virtuoso: (props: {
+    readonly data: ReadonlyArray<unknown>;
+    readonly computeItemKey: (index: number, item: unknown) => string;
+    readonly itemContent: (index: number, item: unknown) => React.ReactNode;
+  }) => (
+    <div data-testid="virtuoso-flat">
+      {props.data.map((item, index) => (
+        <div key={props.computeItemKey(index, item)}>
+          {props.itemContent(index, item)}
+        </div>
+      ))}
+    </div>
+  ),
+}));
+
 const route = { name: "workbench", projectId: "prj_workbench" } as const;
 
 const session = {
