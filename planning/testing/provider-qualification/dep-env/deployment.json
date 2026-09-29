@@ -1,0 +1,7 @@
+{
+  "deploymentId": "dep-env",
+  "modelRef": "model-openai",
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModelName": "deepseek-chat",
+  "secretRef": "ARBOR_MODEL_API_KEY"
+}

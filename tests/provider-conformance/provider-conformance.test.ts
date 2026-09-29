@@ -834,3 +834,50 @@ function makeRegistryForQualification() {
   const { makeProviderRegistry } = qualificationModule;
   return makeProviderRegistry([providerOpenaiAdapter, providerFakeAdapter]);
 }
+
+// ---------------------------------------------------------------------------
+// P16 E5 — production deployment qualification (dep-env / DeepSeek)
+// ---------------------------------------------------------------------------
+
+describe("P16 E5 — dep-env qualification", () => {
+  it("the production deployment record binds the exact ResolvedModelBinding fingerprint", async () => {
+    const { readFileSync } = await import("node:fs");
+    const {
+      resolveModelBinding,
+      resolvedModelBindingFingerprint,
+      makeProviderRegistry,
+    } =
+      qualificationModule as typeof import("../../packages/ports/dist/provider-extension.js");
+    const deployment = JSON.parse(
+      readFileSync(
+        new URL(
+          "../../planning/testing/provider-qualification/dep-env/deployment.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as import("../../packages/ports/dist/provider-extension.js").ModelDeployment;
+    const catalog = await catalogForQualification();
+    const registry = makeProviderRegistry([
+      providerOpenaiAdapter,
+      providerFakeAdapter,
+    ]);
+    const resolved = resolveModelBinding(registry, catalog, deployment);
+    if ("_tag" in resolved) {
+      throw new Error(`resolution failed: ${JSON.stringify(resolved)}`);
+    }
+    const fingerprint = resolvedModelBindingFingerprint(resolved);
+    const qualification = JSON.parse(
+      readFileSync(
+        new URL(
+          "../../planning/testing/provider-qualification/dep-env/qualification.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as { bindingFingerprint: string; stableRuns: number };
+    expect(qualification.bindingFingerprint).toBe(fingerprint);
+    // Q2: three-run stability evidence exists for the real endpoint.
+    expect(qualification.stableRuns).toBeGreaterThanOrEqual(3);
+  });
+});

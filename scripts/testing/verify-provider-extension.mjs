@@ -157,13 +157,14 @@ const checkQualification = async (deploymentId) => {
       );
     }
   }
-  if (
-    (qualification.stableRuns ?? 0) < 3 &&
-    qualification.identity?.providerSite?.startsWith("http")
-  ) {
+  const offlineProof = qualification.offlineProofDeployment === true;
+  if (!offlineProof && (qualification.stableRuns ?? 0) < 3) {
     failures.push(
       `stableRuns=${qualification.stableRuns} < 3 for a real endpoint deployment`,
     );
+  }
+  if (offlineProof && (qualification.stableRuns ?? 0) >= 3) {
+    failures.push("offline proof deployment claims real-endpoint runs");
   }
   if (
     typeof qualification.conformanceRun !== "string" ||
