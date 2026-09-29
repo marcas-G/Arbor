@@ -79,7 +79,17 @@ provider-testecho now carries the DISTINCT protocol-family identity
 independent protocol path; E4b re-proven as a true new-family onboarding).
 E1–E5 re-passed, pnpm check green, git diff --check clean, scope guards
 re-verified. **Gate B = FORMALLY CLOSED.** Gate C NOT entered (no new
-authorization). **Gate B IMPLEMENTATION COMPLETE (2026-09-29)**: B-1..B-10 evidenced —
+authorization). Subsequent state (evidence in
+`planning/testing/provider-qualification/` and the git log): Gate C
+Infrastructure CLOSED (canonical usage, continuation/reasoning substrate,
+qualification matrix + runner); Gate D1 live qualification of dep-env
+(DeepSeek) COMPLETE — final matrix PROVEN 8 / UNSUPPORTED 4 / FAILED 0 /
+NOT_RUN 0 (fragmented-args root cause graded BEST_SUPPORTED_PROVIDER_SIDE;
+remediated fail-closed), cache extraction landed with declaration aligned.
+The extension protocol is plug-and-play: any reachable OpenAI-compatible
+deployment onboards as pure data (env vars → ModelDeployment → registry
+resolution → qualification runner), as E4a proved — no code change, no
+bespoke procedure per deployment. **Gate B IMPLEMENTATION COMPLETE (2026-09-29)**: B-1..B-10 evidenced —
 registry/binding/env wiring landed; E1/E2 arch gates (tests/architecture/
 p16-architecture.test.ts) green; E3 conformance suite A1–A10 green on
 provider-openai / provider-fake / provider-testecho / provider-openai@
