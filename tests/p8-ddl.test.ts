@@ -49,7 +49,7 @@ const EXE_1 =
   "exe_00000000-0000-7000-8000-000000000001" as never as ExecutionId;
 const ACC_1 = "acc_00000000-0000-7000-8000-000000000001" as never;
 
-const p8Layer = () => {
+const _p8Layer = () => {
   const base = layer({ filename: ":memory:" });
   const tx = Layer.provide(TransactionPortLive, base);
   return Layer.provideMerge(

@@ -277,10 +277,10 @@ describe("p8-conclude", () => {
         }
         const rows = yield* tx.transact(evidence.listByVerification(VER(1)));
         expect(rows).toHaveLength(1);
-        expect(rows[0]!.evidenceId).toBe(EV(1));
-        expect(rows[0]!.criterionId).toBe("c1");
-        expect(rows[0]!.kind).toBe("ToolObservation");
-        expect(rows[0]!.recordedByExecutionId).toBe(EXE_1);
+        expect(rows[0]?.evidenceId).toBe(EV(1));
+        expect(rows[0]?.criterionId).toBe("c1");
+        expect(rows[0]?.kind).toBe("ToolObservation");
+        expect(rows[0]?.recordedByExecutionId).toBe(EXE_1);
 
         // Idempotent replay: same content (recordedAt differs) → no-op.
         const replay: RecordOutcome = yield* tx.transact(

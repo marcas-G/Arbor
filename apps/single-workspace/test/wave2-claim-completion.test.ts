@@ -167,7 +167,7 @@ const admitWorkExecution = Effect.gen(function* () {
   ).toBe(true);
 });
 
-const runTurns = (turns: ReadonlyArray<ReadonlyArray<unknown>>) =>
+const runTurns = (_turns: ReadonlyArray<ReadonlyArray<unknown>>) =>
   Effect.gen(function* () {
     yield* runMigrations(P12_MIGRATIONS);
     yield* seed;

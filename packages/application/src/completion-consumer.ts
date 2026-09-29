@@ -10,10 +10,6 @@ import {
   WorkRevision,
   type WorkspaceId,
 } from "@arbor/domain";
-import type {
-  AcceptanceRepositoryService,
-  VerificationRepositoryService,
-} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { CompleteWorkPayload } from "./commands/accept-complete.js";
 import { semanticRequestFingerprint } from "./fingerprint.js";

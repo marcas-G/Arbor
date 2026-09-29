@@ -1,7 +1,5 @@
 import type {
   CanonicalProviderEvent,
-  PortableModelRequest,
-  ProviderExecutionContext,
   ProviderFailure,
   ProviderFailureKind,
   ProviderFinishReason,

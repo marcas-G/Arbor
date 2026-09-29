@@ -1,5 +1,4 @@
-import { Effect, Layer, Option } from "effect";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   type ConversationProgressHub,
   createConversationProgressHub,
@@ -10,16 +9,6 @@ import {
   publishConversationSettled,
   registerExecutionMessageLink,
 } from "../apps/single-workspace/src/transport/conversation-progress-bridge.js";
-import { runConversationTrigger } from "../packages/application/src/conversation-trigger.js";
-import type { CommandGatewayService } from "../packages/application/src/index.js";
-import type { ExecutionSettlement } from "../packages/domain/src/index.js";
-import {
-  ExecutionId,
-  Principal,
-  ProjectId,
-  parse,
-  WorkspaceId,
-} from "../packages/domain/src/index.js";
 
 /**
  * Conversation streaming bridge (the completed WIP seam): ProviderRuntimeProgress

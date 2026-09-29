@@ -217,7 +217,7 @@ describe("p8-start-verification", () => {
           "SELECT owner_workspace_id FROM verifications WHERE verification_id = ?",
           [verificationId],
         );
-        expect(rows[0]!.owner_workspace_id).toBe(p7RootWorkspace);
+        expect(rows[0]?.owner_workspace_id).toBe(p7RootWorkspace);
       }),
       makeP8App(),
     );

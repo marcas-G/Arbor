@@ -433,7 +433,7 @@ const executionSettlement = (executionId: string) =>
       "SELECT settlement_kind FROM executions WHERE execution_id = ?",
       [executionId],
     );
-    return rows.length === 0 ? "missing" : (rows[0]!.settlement_kind ?? null);
+    return rows.length === 0 ? "missing" : (rows[0]?.settlement_kind ?? null);
   });
 
 const dispatchRound = (
@@ -551,7 +551,7 @@ describe("p9-workflow-interruption (WF1–WF3 / DF1–DF2 / D5)", () => {
           handlers: dependencyCoordinatorLoop(
             p7Project,
             p7TestPrincipal,
-            yield* makeCoordinatorDeps((base) => interrupted.gateway),
+            yield* makeCoordinatorDeps((_base) => interrupted.gateway),
           ),
         }).pipe(Effect.flip);
         expect(failure._tag).toBe("TransactionOperationalFailure");

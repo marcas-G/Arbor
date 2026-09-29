@@ -27,7 +27,6 @@ import {
 import {
   Actor,
   CommandId,
-  type CommandReceipt,
   type CommandSubmissionContext,
   type DomainResult,
   err,

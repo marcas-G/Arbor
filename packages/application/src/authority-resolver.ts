@@ -400,7 +400,7 @@ const governanceCommandFact = (
   const semanticRequestFingerprint = input.semanticRequestFingerprint;
   const projectId = input.envelope.projectId;
   const workspaceId = input.canonicalFacts.workspace?.workspaceId ?? null;
-  const executionId = input.canonicalFacts.execution?.executionId ?? null;
+  const _executionId = input.canonicalFacts.execution?.executionId ?? null;
 
   const guarded = (
     capability: string,

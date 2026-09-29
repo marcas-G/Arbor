@@ -120,7 +120,6 @@ import {
 import {
   PersistenceHealthProbeSqliteLive,
   ProductionHealthPortLive,
-  T1RecoveryState,
   T1RecoveryStateLive,
 } from "./health.js";
 import {

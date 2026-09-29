@@ -621,7 +621,7 @@ describe("P10-009 rebuild orchestration (04 §1)", () => {
           (row) => row.source === "DependencyUnfulfillable",
         );
         expect(unfulfillable).toHaveLength(1);
-        expect(unfulfillable[0]!.dedupKey).toBe(`unfulfillable:${DEP_1}:0`);
+        expect(unfulfillable[0]?.dedupKey).toBe(`unfulfillable:${DEP_1}:0`);
         // Resume never re-read below its checkpoint: every raw-facts
         // catch-up during resume started at 4 or 6.
         const rawFactsFroms = resumed.catchUpSpy
@@ -687,7 +687,7 @@ describe("P10-009 rebuild orchestration (04 §1)", () => {
       [{ dedupKey: "a" }],
     );
     expect(comparison.equal).toBe(false);
-    expect(comparison.mismatches[0]!.path).toBe(".length");
+    expect(comparison.mismatches[0]?.path).toBe(".length");
     expect(comparison.view).toBe("attention");
   });
 });

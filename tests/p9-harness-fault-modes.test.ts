@@ -42,7 +42,7 @@ describe("P9-001 PB1/PB2/PB3 (transaction fault modes)", () => {
             const rows = yield* sql.unsafe<{ count: number }>(
               "SELECT COUNT(*) AS count FROM inbox_entries WHERE entry_key = 'pb1'",
             );
-            expect(Number(rows[0]!.count)).toBe(0);
+            expect(Number(rows[0]?.count)).toBe(0);
             yield* tx.transact(
               Effect.gen(function* () {
                 yield* (yield* SqlClient).unsafe(insertProject);
@@ -51,7 +51,7 @@ describe("P9-001 PB1/PB2/PB3 (transaction fault modes)", () => {
             const after = yield* sql.unsafe<{ count: number }>(
               "SELECT COUNT(*) AS count FROM inbox_entries WHERE entry_key = 'pb1'",
             );
-            expect(Number(after[0]!.count)).toBe(1);
+            expect(Number(after[0]?.count)).toBe(1);
           }) as Effect.Effect<void, unknown, never>,
           txLayer("fail-on-commit", 1),
         ),

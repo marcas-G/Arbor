@@ -24,7 +24,6 @@ import {
   type ExecutionActivity,
   type ExecutionDriverError,
   ExecutionDriverPort,
-  type HumanMessageRecord,
   HumanMessageStore,
   ModelCapabilityPort,
   type ProviderRunInput,
@@ -35,7 +34,6 @@ import {
   SessionRepository,
   TransactionPort,
   WorkRepository,
-  type WorkRepositoryError,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import {

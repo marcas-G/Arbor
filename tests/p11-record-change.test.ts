@@ -3,7 +3,6 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   ClockLive,
-  CommandStoreLive,
   DomainEventJournalLive,
   IdGeneratorLive,
   layer,

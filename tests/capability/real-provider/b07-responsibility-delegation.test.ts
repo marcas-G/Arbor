@@ -10,7 +10,6 @@ import { defineCapabilityTest, metadataFor } from "../harness.js";
 import { runAndCapture } from "../support/capture.js";
 import {
   makePublicProject,
-  newCapabilityId,
   withPublicConversationApp,
 } from "../support/public-chat.js";
 import { driveWorkExecution, submitWork } from "../support/work-execution.js";

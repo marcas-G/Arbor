@@ -21,7 +21,6 @@ import {
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   ClockLive,

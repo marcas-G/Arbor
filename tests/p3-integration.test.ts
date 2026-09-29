@@ -13,7 +13,6 @@ import {
   LeaseServiceLive,
   layer,
   P12_MIGRATIONS,
-  P14_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   runMigrations,

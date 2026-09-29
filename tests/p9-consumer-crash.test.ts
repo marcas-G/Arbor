@@ -529,7 +529,7 @@ describe("p9-consumer-crash (CC-1..CC-6, 02 §7 / 05 §1–§2)", () => {
         expect(yield* offsetOf("cc3")).toBe(head + 3);
         const dead = yield* deadLetterRows("cc3");
         expect(dead.map((row) => row.sequence)).toEqual([head + 2]);
-        expect(dead[0]!.reason).toContain("unsupported eventVersion 2");
+        expect(dead[0]?.reason).toContain("unsupported eventVersion 2");
         // No head-of-line block: the batch after the poison one is empty.
         const next = yield* pollOnce("cc3", p7Project, 10, {
           ...stores,
@@ -568,7 +568,7 @@ describe("p9-consumer-crash (CC-1..CC-6, 02 §7 / 05 §1–§2)", () => {
         expect(yield* offsetOf("cc4a")).toBe(head + 3);
         const dead = yield* deadLetterRows("cc4a");
         expect(dead.map((row) => row.sequence)).toEqual([head + 2]);
-        expect(dead[0]!.reason).toContain("handler defect");
+        expect(dead[0]?.reason).toContain("handler defect");
       }),
       makeP9ConsumerApp(),
     );

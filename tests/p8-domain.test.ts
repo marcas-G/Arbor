@@ -6,16 +6,12 @@ import type {
 } from "../packages/domain/src/index.js";
 import {
   aggregateVerdict,
-  type ConclusionReason,
   concludeVerification,
   parse,
   startVerification,
   type VerificationCriterionType,
-  type VerificationId,
   type VerificationMission,
   type VerificationVerdict,
-  type WorkId,
-  type WorkRevision,
 } from "../packages/domain/src/index.js";
 
 const VER_1 = parse(
@@ -58,8 +54,8 @@ describe("P8-001 M-1: work-level VerificationChanged", () => {
 describe("P8-001 M-2: structured mission criteria", () => {
   it("criteria are {criterionId, requirement, required}", () => {
     const m = mission([criterion("c1"), criterion("c2", false)]);
-    expect(m.criteria[0]!.required).toBe(true);
-    expect(m.criteria[1]!.required).toBe(false);
+    expect(m.criteria[0]?.required).toBe(true);
+    expect(m.criteria[1]?.required).toBe(false);
   });
 });
 

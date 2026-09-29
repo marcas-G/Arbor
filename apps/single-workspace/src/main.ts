@@ -3,7 +3,7 @@ import { Principal, parse, WorkspaceId } from "@arbor/domain";
 import { startupRecovery } from "@arbor/execution-runtime";
 import { type SecretRef, secretRef } from "@arbor/ports";
 import { OpenAICompatibleFetchClient } from "@arbor/provider-openai";
-import { Duration, Effect, Scope } from "effect";
+import { Duration, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   buildSliceLayer,

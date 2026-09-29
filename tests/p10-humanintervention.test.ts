@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Effect, Option } from "effect";
+import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -21,10 +21,7 @@ import {
   makeRecordDecisionHandler,
   type RecordDecisionPayload,
 } from "../packages/application/src/commands/record-decision.js";
-import {
-  makeSteerWorkHandler,
-  type SteerWorkPayload,
-} from "../packages/application/src/commands/steer-work.js";
+import type { SteerWorkPayload } from "../packages/application/src/commands/steer-work.js";
 import {
   HUMAN_STOP_EMISSION_PRECONDITION,
   humanStopInterventionEvent,
@@ -193,13 +190,13 @@ describe("P10-010 steer emission (P6 inherited evolution, 06 §2)", () => {
         const interventions = yield* journalEvents("HumanInterventionApplied");
         expect(steered).toHaveLength(1);
         expect(interventions).toHaveLength(1);
-        expect(steered[0]!.payload).toEqual({
+        expect(steered[0]?.payload).toEqual({
           workId: WORK_1,
           fromRevision: 0,
           toRevision: 1,
           severity: "Normal",
         });
-        expect(interventions[0]!.payload).toEqual({
+        expect(interventions[0]?.payload).toEqual({
           actor: humanActor,
           targetWorkspaceId: p7RootWorkspace,
           summaryRef: "cnt-steer-Normal",
@@ -209,8 +206,8 @@ describe("P10-010 steer emission (P6 inherited evolution, 06 §2)", () => {
         // Same-transaction pairing: both facts bind the same command id
         // (the gateway journals the handler's single events array inside
         // the command transaction).
-        expect(steered[0]!.causedByCommandId).toBe(commandId);
-        expect(interventions[0]!.causedByCommandId).toBe(commandId);
+        expect(steered[0]?.causedByCommandId).toBe(commandId);
+        expect(interventions[0]?.causedByCommandId).toBe(commandId);
       }),
       makeP7App(),
     );
@@ -241,7 +238,7 @@ describe("P10-010 steer emission (P6 inherited evolution, 06 §2)", () => {
         expect(replay.resolution).toEqual(first.resolution);
         const interventions = yield* journalEvents("HumanInterventionApplied");
         expect(interventions).toHaveLength(1);
-        expect(interventions[0]!.payload.kind).toBe("CriticalSteer");
+        expect(interventions[0]?.payload.kind).toBe("CriticalSteer");
         expect(yield* journalCount("WorkSteered")).toBe(1);
       }),
       makeP7App(),
@@ -363,7 +360,7 @@ describe("P10-010 governance emission set (four human-originated commands)", () 
         expect(human.ok).toBe(true);
         if (human.ok) {
           expect(human.value.events).toHaveLength(2);
-          expect(human.value.events[0]!.eventType).toBe("DecisionRecorded");
+          expect(human.value.events[0]?.eventType).toBe("DecisionRecorded");
           const fact = interventionFactsOf(human)[0]!;
           expect(fact.payload).toEqual({
             actor: humanActor,
@@ -374,7 +371,7 @@ describe("P10-010 governance emission set (four human-originated commands)", () 
             kind: "GovernanceDecision",
           });
           expect(fact.causedByCommandId).toBe(CMD("0000000000c1"));
-          expect(human.value.events[0]!.causedByCommandId).toBe(
+          expect(human.value.events[0]?.causedByCommandId).toBe(
             CMD("0000000000c1"),
           );
         }
@@ -449,7 +446,7 @@ describe("P10-010 governance emission set (four human-originated commands)", () 
         expect(human.ok).toBe(true);
         if (human.ok) {
           expect(human.value.events).toHaveLength(2);
-          expect(human.value.events[0]!.eventType).toBe("WorkOutcomeAccepted");
+          expect(human.value.events[0]?.eventType).toBe("WorkOutcomeAccepted");
           const fact = interventionFactsOf(human)[0]!;
           expect(fact.payload).toEqual({
             actor: humanActor,
@@ -514,7 +511,7 @@ describe("P10-010 governance emission set (four human-originated commands)", () 
         expect(agent.ok).toBe(true);
         if (agent.ok) {
           expect(agent.value.events).toHaveLength(1);
-          expect(agent.value.events[0]!.eventType).toBe("WorkOutcomeAccepted");
+          expect(agent.value.events[0]?.eventType).toBe("WorkOutcomeAccepted");
           expect(interventionFactsOf(agent)).toHaveLength(0);
         }
       }),

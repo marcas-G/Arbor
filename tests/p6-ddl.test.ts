@@ -95,7 +95,7 @@ describe("P6-002 DDL + stores", () => {
         expect(yield* inbox.countByKey(WS_CHILD, "spc:exe-1:fp-1")).toBe(1);
         const pending = yield* inbox.listUnconsumed(WS_CHILD);
         expect(pending).toHaveLength(1);
-        expect(pending[0]!.summary).toBe("specialist done");
+        expect(pending[0]?.summary).toBe("specialist done");
       }),
     );
   });

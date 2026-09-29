@@ -20,7 +20,6 @@ import {
   runMigrations,
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { CommandGateway } from "../packages/application/src/index.js";
 import {
   CommandId,
   type EventTypeName,

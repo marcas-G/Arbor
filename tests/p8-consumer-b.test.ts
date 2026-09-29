@@ -154,7 +154,7 @@ const storedCurrentWorkId = Effect.gen(function* () {
     "SELECT current_work_id FROM workspaces WHERE workspace_id = ?",
     [p7RootWorkspace],
   );
-  return rows[0]!.current_work_id;
+  return rows[0]?.current_work_id;
 });
 
 const setCurrentWorkBySql = (workId: string) =>
@@ -217,7 +217,7 @@ const receiptResolution = (commandId: CommandId) =>
       "SELECT resolution FROM commands WHERE command_id = ?",
       [commandId],
     );
-    return rows.length === 1 ? rows[0]!.resolution : null;
+    return rows.length === 1 ? rows[0]?.resolution : null;
   });
 
 /** Trigger event shaped exactly as AcceptWorkOutcome journals it

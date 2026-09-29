@@ -540,7 +540,7 @@ const nonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
 
 const parseId = <A>(
-  name: string,
+  _name: string,
   parser: (value: string) => A,
   value: unknown,
 ): A | null => {

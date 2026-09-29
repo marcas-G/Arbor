@@ -1,6 +1,5 @@
 import type { CanonicalResourceRegion, ResourceAddress } from "@arbor/domain";
 import {
-  type ArtifactServiceService,
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,

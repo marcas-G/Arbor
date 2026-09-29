@@ -331,7 +331,7 @@ const settleCommands = () =>
     const rows = yield* sql.unsafe<{ count: number }>(
       "SELECT COUNT(*) AS count FROM commands WHERE command_id LIKE 'cmd_settle_%'",
     );
-    return Number(rows[0]!.count);
+    return Number(rows[0]?.count);
   });
 
 describe("P9-004 lease renewal loop (L2/L3) + soft release", () => {
@@ -347,7 +347,7 @@ describe("P9-004 lease renewal loop (L2/L3) + soft release", () => {
       yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
       yield* admit;
-      const tx = yield* TransactionPort;
+      const _tx = yield* TransactionPort;
       const clock = yield* Clock;
       const t0 = yield* clock.now();
       // Renewal loop ticks during the drive (interval 5ms, drive 25ms);
@@ -363,7 +363,7 @@ describe("P9-004 lease renewal loop (L2/L3) + soft release", () => {
       expect(mid?.generationMid).toBe(0);
       expect(mid?.expiresMid).not.toBeNull();
       // Renewal extended expiry beyond the initial acquire horizon.
-      expect(Date.parse(mid!.expiresMid!)).toBeGreaterThan(
+      expect(Date.parse(mid?.expiresMid!)).toBeGreaterThan(
         Date.parse(t0) + LEASE_TTL_MS - 1_000,
       );
       // Fenced write committed (L2): the settle landed.

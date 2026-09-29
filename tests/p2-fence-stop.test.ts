@@ -138,7 +138,7 @@ describe("P2 FenceStopCheck", () => {
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
-      const clock = yield* Clock;
+      const _clock = yield* Clock;
       yield* tx.transact(repo.tryAdmitMainExecution(execution()));
       const noLease = yield* check(0, NORMAL);
       yield* tx.transact(

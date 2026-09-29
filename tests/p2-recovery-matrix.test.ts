@@ -146,7 +146,7 @@ const admitPayload: AdmitExecutionPayload = {
 const bootstrap = Effect.gen(function* () {
   const gateway = yield* CommandGateway;
   const tx = yield* TransactionPort;
-  const repo = yield* ExecutionRepository;
+  const _repo = yield* ExecutionRepository;
   const leases = yield* LeaseService;
   const commandId = parse(CommandId)(
     "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",

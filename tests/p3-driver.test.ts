@@ -7,7 +7,6 @@ import {
   HumanMessageStoreLive,
   IdGeneratorLive,
   layer,
-  P3_MIGRATIONS,
   P14_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,

@@ -23,7 +23,7 @@ describe("P7-007 messages kind CHECK: four → five (governance-approved deviati
             const rows = yield* sql.unsafe<{ kind: string }>(
               "SELECT kind FROM messages WHERE message_id = 'm1'",
             );
-            expect(rows[0]!.kind).toBe("Deliver");
+            expect(rows[0]?.kind).toBe("Deliver");
             for (const kind of ["Broadcast", "deliver", ""]) {
               const rejected = yield* sql
                 .unsafe(
@@ -79,12 +79,12 @@ describe("P7-007 messages kind CHECK: four → five (governance-approved deviati
             const count = yield* sql.unsafe<{ count: number }>(
               "SELECT COUNT(*) AS count FROM messages",
             );
-            expect(Number(count[0]!.count)).toBe(3);
+            expect(Number(count[0]?.count)).toBe(3);
             // index rebuilt and functional
             const viaIndex = yield* sql.unsafe<{ message_id: string }>(
               "SELECT message_id FROM messages WHERE correlation_id = 'cor1'",
             );
-            expect(viaIndex[0]!.message_id).toBe("old1");
+            expect(viaIndex[0]?.message_id).toBe("old1");
             // illegal kinds still rejected after upgrade
             const post = yield* sql
               .unsafe(

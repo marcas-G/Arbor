@@ -1,10 +1,4 @@
-import type {
-  DecisionId,
-  DependencyId,
-  VerificationId,
-  WorkId,
-  WorkspaceId,
-} from "./ids.js";
+import type { DecisionId, DependencyId, WorkId, WorkspaceId } from "./ids.js";
 import type { Revision } from "./ordinals.js";
 
 /** DID v1.7 §8.18. */
