@@ -19,7 +19,6 @@ import {
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
   HumanMessageStoreLive,
-  WorkRepositoryLive,
   IdGeneratorLive,
   layer,
   P8_MIGRATIONS,
@@ -30,6 +29,7 @@ import {
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
+  WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";

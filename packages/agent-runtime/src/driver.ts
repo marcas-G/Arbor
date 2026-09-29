@@ -353,14 +353,18 @@ export const AgentDriverLive = (
                 // Work executions carry the objective body through the
                 // content table so the compiled instruction shows the task
                 // text instead of the bare `work:<executionId>` reference.
-                let instructionContents: ReadonlyMap<string, string> | undefined;
+                let instructionContents:
+                  | ReadonlyMap<string, string>
+                  | undefined;
                 if (
                   input.execution.binding._tag === "WorkspaceExecution" &&
                   input.execution.binding.focus._tag === "Work"
                 ) {
-                  const work = yield* tx.transact(
-                    works.findById(input.execution.binding.focus.workId),
-                  ).pipe(Effect.mapError(failure));
+                  const work = yield* tx
+                    .transact(
+                      works.findById(input.execution.binding.focus.workId),
+                    )
+                    .pipe(Effect.mapError(failure));
                   if (Option.isSome(work)) {
                     instructionContents = new Map([
                       [
