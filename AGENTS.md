@@ -58,6 +58,16 @@ Product UI Final Convergence COMPLETE — **Web Product UI FORMALLY CLOSED** at
 `planning/results/D10-web-product-ui-final-convergence.result.md`.
 Next activity: **Dogfooding / Release Validation** — use Arbor for real tasks;
 Web v1 implementation is closed.
+P16 (Provider Extension Architecture — DID-side implementation design under
+`docs/design/implementation/P16-provider-extension/`, governance-authorized
+2026-09-29): **Gate A design contracts FROZEN** (`01-provider-extension-contracts.md`:
+ProtocolAdapter / ProviderProfile / ModelProfile / ModelDeployment /
+ResolvedModelBinding / ProviderRegistry / CapabilityQualification + INV-P16-1..8;
+`02-extensibility-proof-plan.md`: mechanical gates E1–E5). **Gate B (implementation)
+NOT YET AUTHORIZED** — requires design closure review Blocking=0 plus explicit
+governance authorization. Scope guards: no real new provider family, zero
+agent-runtime diff, no cache-usage/continuation implementation (declarative
+capability flags only).
 **SYSTEM IMPLEMENTATION COMPLETE** — **FINAL CLOSURE PASS**
 (`planning/final-system-closure.md`; `planning/results/ARBOR_FINAL.result.md`).
 P14 (Chat-First 主工作区对话面 — DID v1.16 G-A–G-F: SubmitHumanMessage +
