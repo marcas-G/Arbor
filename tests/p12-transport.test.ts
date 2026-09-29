@@ -5,9 +5,9 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   AcceptanceRepositoryLive,
-  DependencyRepositoryLive,
   ClockLive,
   CommandStoreLive,
+  DependencyRepositoryLive,
   DomainEventJournalLive,
   ExecutionRepositoryLive,
   FormationProposalStoreLive,

@@ -425,9 +425,7 @@ const realCaseStatus = (caseDefinition) => {
     );
     const evidenceStatuses = evidenceFilesForCase.map((path) => {
       try {
-        return JSON.parse(
-          readFileSync(resolve(repoRoot, path), "utf8"),
-        ).status;
+        return JSON.parse(readFileSync(resolve(repoRoot, path), "utf8")).status;
       } catch {
         return "UNREADABLE";
       }

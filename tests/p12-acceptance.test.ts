@@ -15,9 +15,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { EnvironmentResolverLocalLive } from "../adapters/environment-resolver-local/src/index.js";
 import {
   AcceptanceRepositoryLive,
-  DependencyRepositoryLive,
   ClockLive,
   CommandStoreLive,
+  DependencyRepositoryLive,
   DomainEventJournalLive,
   ExecutionRepositoryLive,
   FormationProposalStoreLive,

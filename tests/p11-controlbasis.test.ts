@@ -11,7 +11,6 @@ import {
   ClockLive,
   EnvironmentRevisionStoreLive,
   HumanMessageStoreLive,
-  WorkRepositoryLive,
   IdGeneratorLive,
   layer,
   P8_MIGRATIONS,
@@ -20,6 +19,7 @@ import {
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
+  WorkRepositoryLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import {
