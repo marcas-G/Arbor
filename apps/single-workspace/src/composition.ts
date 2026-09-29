@@ -87,7 +87,9 @@ import {
   type RunnableWorkSource,
   resolvedModelBindingFingerprint,
   resolveModelBinding,
+  SecretMaterial,
   type SecretRef,
+  SecretStorePort,
   SkillRegistry,
   type ToolCatalogPort,
   type WorkWaitStore,
@@ -145,7 +147,11 @@ import { publishConversationProgress } from "./transport/conversation-progress-b
 /** P12 `03` §3: secret adapter selection is Composition-Root config. */
 export type SecretStoreConfig =
   | { readonly _tag: "Env" }
-  | { readonly _tag: "File"; readonly root: string };
+  | { readonly _tag: "File"; readonly root: string }
+  /** Inline credential from arbor.config.json — materialized into a
+   * process-local SecretStore (single sentinel ref); the deployment itself
+   * still carries only a SecretRef. */
+  | { readonly _tag: "Inline"; readonly material: string };
 
 /** P12 `12` §2 → P16 `01` §6: provider adapter selection is Composition-Root
  * config resolved through the static ProviderRegistry. The legacy closed
@@ -277,7 +283,18 @@ export const buildSliceLayer = (
   const secretStore =
     config.secretStore?._tag === "File"
       ? SecretFileLive({ root: config.secretStore.root })
-      : SecretEnvLive();
+      : config.secretStore?._tag === "Inline"
+        ? Layer.succeed(SecretStorePort, {
+            resolve: () =>
+              Effect.succeed(
+                SecretMaterial.of(
+                  config.secretStore?._tag === "Inline"
+                    ? config.secretStore.material
+                    : "",
+                ),
+              ),
+          })
+        : SecretEnvLive();
 
   // P12 `12` §3: modelRef -> adapter + capability is deterministic Runtime,
   // resolved here (the Composition Root), never an LLM decision.

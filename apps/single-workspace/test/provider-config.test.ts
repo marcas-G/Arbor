@@ -87,6 +87,25 @@ describe("arbor.config.json — standard provider configuration", () => {
     expect(secretStore).toEqual({ _tag: "File", root: dir });
   });
 
+  it("an inline key builds a sentinel SecretRef + process-local store; the value never enters the deployment", () => {
+    const config = {
+      provider: {
+        deploymentId: "dep-inline",
+        modelRef: "model-openai",
+        endpoint: "https://api.deepseek.com/v1",
+        wireModelName: "deepseek-chat",
+        secret: { kind: "inline", value: "sk-test-inline-123" },
+      },
+    } as unknown as ArborProviderConfigFile;
+    const { deployment, secretStore } = providerDeploymentOfConfig(config);
+    expect(deployment.secretRef).toBe("arbor:inline-secret");
+    expect(JSON.stringify(deployment)).not.toContain("sk-test-inline-123");
+    expect(secretStore).toEqual({
+      _tag: "Inline",
+      material: "sk-test-inline-123",
+    });
+  });
+
   it("missing required fields produce a typed validation error", () => {
     const { path } = withConfig(
       JSON.stringify({ provider: { modelRef: "model-openai" } }),
