@@ -231,6 +231,15 @@ const TARGETS: ReadonlyArray<ConformanceTarget> = [
   { name: "provider-fake", adapter: providerFakeAdapter },
 ];
 
+/** P16 E4a: a compatible provider under an existing protocol family reuses
+ * the unchanged adapter; only profile/deployment/qualification data was
+ * added. This target IS the mechanical evidence that the same adapter
+ * serves the new deployment. */
+const COMPAT_ECHO_TARGET: ConformanceTarget = {
+  name: "provider-openai@dep-openai-compat-echo",
+  adapter: providerOpenaiAdapter,
+};
+
 const isNetwork = (adapter: ProtocolAdapter): boolean =>
   adapter.profile.protocolFamily !== "in-process-deterministic";
 
@@ -238,7 +247,7 @@ const isNetwork = (adapter: ProtocolAdapter): boolean =>
 // suite
 // ---------------------------------------------------------------------------
 
-describe.each(TARGETS)("P16 E3 conformance — $name", ({ adapter }) => {
+describe.each([...TARGETS, COMPAT_ECHO_TARGET])("P16 E3 conformance — $name", ({ adapter }) => {
   it("A1 text-delta-order: deltas arrive in order and aggregate exactly", async () => {
     const expected = "Arbor conformance delta stream.";
     const events = isNetwork(adapter)
@@ -750,3 +759,55 @@ describe("P16 E3 conformance — A9 observation-persistence", () => {
     },
   );
 });
+
+
+// ---------------------------------------------------------------------------
+// P16 E4a + E5 — compatible-provider deployment qualification (offline proof)
+// ---------------------------------------------------------------------------
+
+const qualificationModule = await import("../../packages/ports/dist/provider-extension.js");
+
+describe("P16 E4a/E5 — dep-openai-compat-echo qualification", () => {
+  it("resolves through the unchanged registry/catalog and binds the exact fingerprint", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolveModelBinding, resolvedModelBindingFingerprint } = qualificationModule;
+    const deployment = JSON.parse(
+      readFileSync(
+        new URL("../../planning/testing/provider-qualification/dep-openai-compat-echo/deployment.json", import.meta.url),
+        "utf8",
+      ),
+    ) as import("../../packages/ports/dist/provider-extension.js").ModelDeployment;
+    const registry = makeRegistryForQualification();
+    const catalog = await catalogForQualification();
+    const resolved = resolveModelBinding(registry, catalog, deployment);
+    if ("_tag" in resolved) {
+      throw new Error(`resolution failed: ${JSON.stringify(resolved)}`);
+    }
+    expect(resolved.adapter.adapterId).toBe("provider-openai");
+    expect(resolved.capability.contextWindow).toBe(64000);
+    expect(resolved.executionPolicy.connectTimeoutMs).toBe(10_000);
+    const fingerprint = resolvedModelBindingFingerprint(resolved);
+    const qualification = JSON.parse(
+      readFileSync(
+        new URL("../../planning/testing/provider-qualification/dep-openai-compat-echo/qualification.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { bindingFingerprint: string; identity: Record<string, string> };
+    expect(qualification.bindingFingerprint).toBe(fingerprint);
+    expect(qualification.identity.providerSite).toBe(deployment.endpoint);
+    expect(qualification.identity.wireModelName).toBe(deployment.wireModelName);
+  });
+});
+
+async function catalogForQualification() {
+  const module = await import("../../packages/model-context/src/model-catalog.data.js");
+  return module.DEFAULT_MODEL_CATALOG;
+}
+
+function makeRegistryForQualification() {
+  // Registry assembly mirrors the Composition-Root table (declaration-only);
+  // the adapter values are unchanged production exports. makeProviderRegistry
+  // arrives via the already-imported module namespace below.
+  const { makeProviderRegistry } = qualificationModule;
+  return makeProviderRegistry([providerOpenaiAdapter, providerFakeAdapter]);
+}

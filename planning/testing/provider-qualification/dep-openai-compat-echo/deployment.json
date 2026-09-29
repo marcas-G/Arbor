@@ -1,0 +1,10 @@
+{
+  "deploymentId": "dep-openai-compat-echo",
+  "modelRef": "model-openai-compat-echo",
+  "endpoint": "http://compat-echo.test/v1",
+  "wireModelName": "echo-1",
+  "secretRef": "ARBOR_COMPAT_ECHO_API_KEY",
+  "executionPolicyOverrides": {
+    "connectTimeoutMs": 10000
+  }
+}
