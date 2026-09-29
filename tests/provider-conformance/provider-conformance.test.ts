@@ -12,6 +12,7 @@ import {
 } from "../../adapters/persistence-sqlite/src/index.js";
 import { providerFakeAdapter } from "../../adapters/provider-fake/src/index.js";
 import { providerOpenaiAdapter } from "../../adapters/provider-openai/src/index.js";
+import { providerTestechoAdapter } from "../../adapters/provider-testecho/src/index.js";
 import type {
   AdapterDeploymentBinding,
   ProtocolAdapter,
@@ -214,7 +215,7 @@ const openaiAuthBinding = (fetch: FetchDouble): AdapterDeploymentBinding => ({
 const fakeBinding = (
   events: ReadonlyArray<CanonicalProviderEvent>,
 ): AdapterDeploymentBinding => ({
-  transportOverride: { turns: [events] },
+  transportOverride: { turns: [events], events },
 });
 
 // ---------------------------------------------------------------------------
@@ -229,6 +230,7 @@ interface ConformanceTarget {
 const TARGETS: ReadonlyArray<ConformanceTarget> = [
   { name: "provider-openai", adapter: providerOpenaiAdapter },
   { name: "provider-fake", adapter: providerFakeAdapter },
+  { name: "provider-testecho", adapter: providerTestechoAdapter },
 ];
 
 /** P16 E4a: a compatible provider under an existing protocol family reuses
@@ -247,355 +249,366 @@ const isNetwork = (adapter: ProtocolAdapter): boolean =>
 // suite
 // ---------------------------------------------------------------------------
 
-describe.each([...TARGETS, COMPAT_ECHO_TARGET])("P16 E3 conformance — $name", ({ adapter }) => {
-  it("A1 text-delta-order: deltas arrive in order and aggregate exactly", async () => {
-    const expected = "Arbor conformance delta stream.";
-    const events = isNetwork(adapter)
-      ? canonicalOf(
-          await collect(
-            adapter,
-            openaiBinding(fetchOf(sse(jsonChunks([expected])))),
-          ),
-        )
-      : canonicalOf(
-          await collect(
-            adapter,
-            fakeBinding([
-              ...expected.split("").map<CanonicalProviderEvent>((char) => ({
-                _tag: "TextDelta",
-                text: char,
-              })),
-              { _tag: "TurnCompleted", finishReason: "Stop" },
-            ]),
-          ),
-        );
-    expect(textOf(events)).toBe(expected);
-  });
+describe.each([...TARGETS, COMPAT_ECHO_TARGET])(
+  "P16 E3 conformance — $name",
+  ({ adapter }) => {
+    it("A1 text-delta-order: deltas arrive in order and aggregate exactly", async () => {
+      const expected = "Arbor conformance delta stream.";
+      const events = isNetwork(adapter)
+        ? canonicalOf(
+            await collect(
+              adapter,
+              openaiBinding(fetchOf(sse(jsonChunks([expected])))),
+            ),
+          )
+        : canonicalOf(
+            await collect(
+              adapter,
+              fakeBinding([
+                ...expected.split("").map<CanonicalProviderEvent>((char) => ({
+                  _tag: "TextDelta",
+                  text: char,
+                })),
+                { _tag: "TurnCompleted", finishReason: "Stop" },
+              ]),
+            ),
+          );
+      expect(textOf(events)).toBe(expected);
+    });
 
-  it("A2 tool-call-reassembly: sharded/parallel tool calls reassemble with isolated argument streams", async () => {
-    const events = isNetwork(adapter)
-      ? canonicalOf(
-          await collect(
-            adapter,
-            openaiBinding(
-              fetchOf(
-                sse([
-                  JSON.stringify({
-                    choices: [
-                      {
-                        delta: {
-                          tool_calls: [
-                            {
-                              index: 0,
-                              id: "call-a",
-                              function: { name: "read", arguments: '{"path":' },
-                            },
-                          ],
+    it("A2 tool-call-reassembly: sharded/parallel tool calls reassemble with isolated argument streams", async () => {
+      const events = isNetwork(adapter)
+        ? canonicalOf(
+            await collect(
+              adapter,
+              openaiBinding(
+                fetchOf(
+                  sse([
+                    JSON.stringify({
+                      choices: [
+                        {
+                          delta: {
+                            tool_calls: [
+                              {
+                                index: 0,
+                                id: "call-a",
+                                function: {
+                                  name: "read",
+                                  arguments: '{"path":',
+                                },
+                              },
+                            ],
+                          },
                         },
-                      },
-                    ],
-                  }),
-                  JSON.stringify({
-                    choices: [
-                      {
-                        delta: {
-                          tool_calls: [
-                            {
-                              index: 1,
-                              id: "call-b",
-                              function: { name: "list", arguments: '{"q":"' },
-                            },
-                          ],
+                      ],
+                    }),
+                    JSON.stringify({
+                      choices: [
+                        {
+                          delta: {
+                            tool_calls: [
+                              {
+                                index: 1,
+                                id: "call-b",
+                                function: { name: "list", arguments: '{"q":"' },
+                              },
+                            ],
+                          },
                         },
-                      },
-                    ],
-                  }),
-                  JSON.stringify({
-                    choices: [
-                      {
-                        delta: {
-                          tool_calls: [
-                            { index: 0, function: { arguments: '"x"}' } },
-                          ],
+                      ],
+                    }),
+                    JSON.stringify({
+                      choices: [
+                        {
+                          delta: {
+                            tool_calls: [
+                              { index: 0, function: { arguments: '"x"}' } },
+                            ],
+                          },
                         },
-                      },
-                    ],
-                  }),
-                  JSON.stringify({
-                    choices: [
-                      {
-                        delta: {
-                          tool_calls: [
-                            { index: 1, function: { arguments: 'z"}' } },
-                          ],
+                      ],
+                    }),
+                    JSON.stringify({
+                      choices: [
+                        {
+                          delta: {
+                            tool_calls: [
+                              { index: 1, function: { arguments: 'z"}' } },
+                            ],
+                          },
                         },
-                      },
-                    ],
-                  }),
-                  JSON.stringify({
-                    choices: [{ finish_reason: "tool_calls" }],
-                  }),
-                  JSON.stringify({
-                    usage: { prompt_tokens: 5, completion_tokens: 7 },
-                  }),
-                ]),
+                      ],
+                    }),
+                    JSON.stringify({
+                      choices: [{ finish_reason: "tool_calls" }],
+                    }),
+                    JSON.stringify({
+                      usage: { prompt_tokens: 5, completion_tokens: 7 },
+                    }),
+                  ]),
+                ),
               ),
             ),
-          ),
-        )
-      : canonicalOf(
+          )
+        : canonicalOf(
+            await collect(
+              adapter,
+              fakeBinding([
+                {
+                  _tag: "ToolCallProposed",
+                  callRef: "call-a",
+                  toolName: "read",
+                  argumentsJson: '{"path":"x"}',
+                },
+                {
+                  _tag: "ToolCallProposed",
+                  callRef: "call-b",
+                  toolName: "list",
+                  argumentsJson: '{"q":"z"}',
+                },
+                { _tag: "TurnCompleted", finishReason: "ToolCall" },
+              ]),
+            ),
+          );
+      const calls = events.filter(
+        (
+          event,
+        ): event is Extract<
+          CanonicalProviderEvent,
+          { _tag: "ToolCallProposed" }
+        > => event._tag === "ToolCallProposed",
+      );
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.callRef).toBe("call-a");
+      expect(calls[0]?.argumentsJson).toBe('{"path":"x"}');
+      expect(calls[1]?.callRef).toBe("call-b");
+      expect(calls[1]?.argumentsJson).toBe('{"q":"z"}');
+    });
+
+    it("A3 sse-arbitrary-chunking: byte-level chunking is lossless", async () => {
+      if (!isNetwork(adapter)) {
+        return;
+      }
+      const body = sse(
+        jsonChunks(["chunked stream must survive arbitrary splits"]),
+      );
+      const whole = textOf(
+        canonicalOf(await collect(adapter, openaiBinding(fetchOf(body)))),
+      );
+      const split = textOf(
+        canonicalOf(
           await collect(
             adapter,
-            fakeBinding([
-              {
-                _tag: "ToolCallProposed",
-                callRef: "call-a",
-                toolName: "read",
-                argumentsJson: '{"path":"x"}',
-              },
-              {
-                _tag: "ToolCallProposed",
-                callRef: "call-b",
-                toolName: "list",
-                argumentsJson: '{"q":"z"}',
-              },
-              { _tag: "TurnCompleted", finishReason: "ToolCall" },
-            ]),
+            openaiBinding(fetchOf(body, { chunkSize: 7 })),
           ),
-        );
-    const calls = events.filter(
-      (
-        event,
-      ): event is Extract<
-        CanonicalProviderEvent,
-        { _tag: "ToolCallProposed" }
-      > => event._tag === "ToolCallProposed",
-    );
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.callRef).toBe("call-a");
-    expect(calls[0]?.argumentsJson).toBe('{"path":"x"}');
-    expect(calls[1]?.callRef).toBe("call-b");
-    expect(calls[1]?.argumentsJson).toBe('{"q":"z"}');
-  });
+        ),
+      );
+      expect(split).toBe(whole);
+      expect(whole).toContain("arbitrary splits");
+    });
 
-  it("A3 sse-arbitrary-chunking: byte-level chunking is lossless", async () => {
-    if (!isNetwork(adapter)) {
-      return;
-    }
-    const body = sse(
-      jsonChunks(["chunked stream must survive arbitrary splits"]),
-    );
-    const whole = textOf(
-      canonicalOf(await collect(adapter, openaiBinding(fetchOf(body)))),
-    );
-    const split = textOf(
-      canonicalOf(
-        await collect(adapter, openaiBinding(fetchOf(body, { chunkSize: 7 }))),
-      ),
-    );
-    expect(split).toBe(whole);
-    expect(whole).toContain("arbitrary splits");
-  });
-
-  it("A4 usage-extraction: prompt/completion tokens surface as UsageReported", async () => {
-    const events = isNetwork(adapter)
-      ? canonicalOf(
-          await collect(
-            adapter,
-            openaiBinding(
-              fetchOf(
-                sse([
-                  JSON.stringify({ choices: [{ delta: { content: "hi" } }] }),
-                  JSON.stringify({ choices: [{ finish_reason: "stop" }] }),
-                  JSON.stringify({
-                    usage: { prompt_tokens: 11, completion_tokens: 13 },
-                  }),
-                ]),
+    it("A4 usage-extraction: prompt/completion tokens surface as UsageReported", async () => {
+      const events = isNetwork(adapter)
+        ? canonicalOf(
+            await collect(
+              adapter,
+              openaiBinding(
+                fetchOf(
+                  sse([
+                    JSON.stringify({ choices: [{ delta: { content: "hi" } }] }),
+                    JSON.stringify({ choices: [{ finish_reason: "stop" }] }),
+                    JSON.stringify({
+                      usage: { prompt_tokens: 11, completion_tokens: 13 },
+                    }),
+                  ]),
+                ),
               ),
             ),
-          ),
-        )
-      : canonicalOf(
-          await collect(
-            adapter,
-            fakeBinding([
-              { _tag: "UsageReported", inputTokens: 11, outputTokens: 13 },
-              { _tag: "TurnCompleted", finishReason: "Stop" },
-            ]),
-          ),
-        );
-    const usage = events.find(
-      (
-        event,
-      ): event is Extract<CanonicalProviderEvent, { _tag: "UsageReported" }> =>
-        event._tag === "UsageReported",
-    );
-    expect(usage?.inputTokens).toBe(11);
-    expect(usage?.outputTokens).toBe(13);
-  });
+          )
+        : canonicalOf(
+            await collect(
+              adapter,
+              fakeBinding([
+                { _tag: "UsageReported", inputTokens: 11, outputTokens: 13 },
+                { _tag: "TurnCompleted", finishReason: "Stop" },
+              ]),
+            ),
+          );
+      const usage = events.find(
+        (
+          event,
+        ): event is Extract<
+          CanonicalProviderEvent,
+          { _tag: "UsageReported" }
+        > => event._tag === "UsageReported",
+      );
+      expect(usage?.inputTokens).toBe(11);
+      expect(usage?.outputTokens).toBe(13);
+    });
 
-  it("A5 error-taxonomy-table: failures classify into the closed union; no SDK type leaks", async () => {
-    if (!isNetwork(adapter)) {
-      // In-process family: failures pass through as the injected kinds.
-      for (const kind of ["RateLimited", "ProviderUnavailable"] as const) {
+    it("A5 error-taxonomy-table: failures classify into the closed union; no SDK type leaks", async () => {
+      if (!isNetwork(adapter)) {
+        // In-process family: failures pass through as the injected kinds.
+        for (const kind of ["RateLimited", "ProviderUnavailable"] as const) {
+          const failure = await collectFailure(
+            adapter,
+            fakeBinding([{ _tag: "TextDelta", text: "x" }])
+              .transportOverride === undefined
+              ? fakeBinding([])
+              : {
+                  ...fakeBinding([{ _tag: "TextDelta", text: "x" }]),
+                  transportOverride: {
+                    turns: [{ _tag: "TextDelta", text: "x" }],
+                    failures: [kind],
+                  },
+                },
+          );
+          expect(failure.kind).toBe(kind);
+        }
+        return;
+      }
+      const table: ReadonlyArray<[number, string]> = [
+        [401, "AuthenticationFailed"],
+        [403, "AuthorizationFailed"],
+        [429, "RateLimited"],
+        [400, "RequestRejected"],
+        [500, "ProviderUnavailable"],
+      ];
+      for (const [status, expectedKind] of table) {
         const failure = await collectFailure(
           adapter,
-          fakeBinding([{ _tag: "TextDelta", text: "x" }]).transportOverride ===
-            undefined
-            ? fakeBinding([])
-            : {
-                ...fakeBinding([{ _tag: "TextDelta", text: "x" }]),
-                transportOverride: {
-                  turns: [{ _tag: "TextDelta", text: "x" }],
-                  failures: [kind],
-                },
-              },
+          openaiBinding(fetchOf("", { status })),
         );
-        expect(failure.kind).toBe(kind);
+        expect(failure).toMatchObject({
+          _tag: "ProviderFailure",
+          kind: expectedKind,
+        });
+        for (const key of Object.keys(failure)) {
+          expect(
+            ["_tag", "kind", "safeDiagnostic", "taxonomyVersion"].includes(key),
+            `unexpected failure field "${key}"`,
+          ).toBe(true);
+        }
+        expect(JSON.stringify(failure)).not.toContain("OpenAISdkError");
       }
-      return;
-    }
-    const table: ReadonlyArray<[number, string]> = [
-      [401, "AuthenticationFailed"],
-      [403, "AuthorizationFailed"],
-      [429, "RateLimited"],
-      [400, "RequestRejected"],
-      [500, "ProviderUnavailable"],
-    ];
-    for (const [status, expectedKind] of table) {
+      const transportFailure = await collectFailure(
+        adapter,
+        openaiBinding((_url, request) => {
+          void request;
+          return Promise.reject(new TypeError("fetch reset"));
+        }),
+      );
+      expect(transportFailure.kind).toBe("TransportFailed");
+    });
+
+    it("A6 cancellation-propagation: an aborted signal stops production before completion", async () => {
+      if (!isNetwork(adapter)) {
+        expect(adapter.profile.protocolFamily).toBe("in-process-deterministic");
+        return;
+      }
+      const controller = new AbortController();
+      controller.abort();
+      let completed = false;
+      const outcome = await Effect.runPromiseExit(
+        collectWith(
+          adapter,
+          openaiBinding(fetchOf(sse(jsonChunks(["x"])))),
+          makeContext({ cancellationSignal: controller.signal }),
+        ),
+      );
+      if (outcome._tag === "Success") {
+        completed = outcome.value.some(
+          (event) =>
+            event._tag === "Canonical" && event.event._tag === "TurnCompleted",
+        );
+      }
+      expect(completed).toBe(false);
+    });
+
+    it("A7 auth-fail-closed: BearerSecret without a credential refuses; explicit None is the only exemption", async () => {
+      if (adapter.profile.authMode._tag !== "BearerSecret") {
+        expect(adapter.profile.authMode._tag).toBe("None");
+        return;
+      }
       const failure = await collectFailure(
         adapter,
-        openaiBinding(fetchOf("", { status })),
+        openaiAuthBinding(fetchOf("")),
       );
       expect(failure).toMatchObject({
         _tag: "ProviderFailure",
-        kind: expectedKind,
+        kind: "AuthenticationFailed",
       });
-      for (const key of Object.keys(failure)) {
-        expect(
-          ["_tag", "kind", "safeDiagnostic", "taxonomyVersion"].includes(key),
-          `unexpected failure field "${key}"`,
-        ).toBe(true);
-      }
-      expect(JSON.stringify(failure)).not.toContain("OpenAISdkError");
-    }
-    const transportFailure = await collectFailure(
-      adapter,
-      openaiBinding((_url, request) => {
-        void request;
-        return Promise.reject(new TypeError("fetch reset"));
-      }),
-    );
-    expect(transportFailure.kind).toBe("TransportFailed");
-  });
-
-  it("A6 cancellation-propagation: an aborted signal stops production before completion", async () => {
-    if (!isNetwork(adapter)) {
-      expect(adapter.profile.protocolFamily).toBe("in-process-deterministic");
-      return;
-    }
-    const controller = new AbortController();
-    controller.abort();
-    let completed = false;
-    const outcome = await Effect.runPromiseExit(
-      collectWith(
-        adapter,
-        openaiBinding(fetchOf(sse(jsonChunks(["x"])))),
-        makeContext({ cancellationSignal: controller.signal }),
-      ),
-    );
-    if (outcome._tag === "Success") {
-      completed = outcome.value.some(
-        (event) =>
-          event._tag === "Canonical" && event.event._tag === "TurnCompleted",
-      );
-    }
-    expect(completed).toBe(false);
-  });
-
-  it("A7 auth-fail-closed: BearerSecret without a credential refuses; explicit None is the only exemption", async () => {
-    if (adapter.profile.authMode._tag !== "BearerSecret") {
-      expect(adapter.profile.authMode._tag).toBe("None");
-      return;
-    }
-    const failure = await collectFailure(
-      adapter,
-      openaiAuthBinding(fetchOf("")),
-    );
-    expect(failure).toMatchObject({
-      _tag: "ProviderFailure",
-      kind: "AuthenticationFailed",
     });
-  });
 
-  it("A8 deadline: an expired turnDeadlineAt fails fast instead of streaming", async () => {
-    if (!isNetwork(adapter)) {
-      return;
-    }
-    const failure = await collectFailure(
-      adapter,
-      openaiBinding(fetchOf(sse(jsonChunks(["x"])), { hang: true })),
-      makeContext({ turnDeadlineAt: new Date(Date.now() - 1).toISOString() }),
-    );
-    expect(failure.kind).toBeDefined();
-    expect(failure.kind).not.toBe("RequestRejected");
-  });
-
-  it("A10 contract-noise-drop: only frozen event tags and observation keys cross the port", async () => {
-    const events = isNetwork(adapter)
-      ? await collect(
-          adapter,
-          openaiBinding(
-            fetchOf(
-              sse([
-                JSON.stringify({ choices: [{ delta: { content: "ok" } }] }),
-                JSON.stringify({ choices: [{ finish_reason: "stop" }] }),
-              ]),
-            ),
-          ),
-        )
-      : await collect(
-          adapter,
-          fakeBinding([
-            { _tag: "TextDelta", text: "ok" },
-            { _tag: "TurnCompleted", finishReason: "Stop" },
-          ]),
-        );
-    const canonicalTags = new Set([
-      "TurnStarted",
-      "TextDelta",
-      "ReasoningDelta",
-      "ToolCallProposed",
-      "UsageReported",
-      "ContinuationState",
-      "TurnCompleted",
-      "TurnFailed",
-    ]);
-    expect(events.length).toBeGreaterThan(0);
-    for (const event of events) {
-      expect(event._tag === "Canonical" || event._tag === "Observation").toBe(
-        true,
-      );
-      if (event._tag === "Canonical") {
-        expect(canonicalTags.has(event.event._tag)).toBe(true);
-      } else {
-        expect(
-          Object.keys(event.delta).every((key) =>
-            [
-              "responseStarted",
-              "externalEffectPossible",
-              "firstDataEventSeen",
-              "consumerVisibleOutput",
-              "canonicalEventEmitted",
-              "toolCallProposed",
-              "continuationAvailable",
-            ].includes(key),
-          ),
-        ).toBe(true);
+    it("A8 deadline: an expired turnDeadlineAt fails fast instead of streaming", async () => {
+      if (!isNetwork(adapter)) {
+        return;
       }
-    }
-  });
-});
+      const failure = await collectFailure(
+        adapter,
+        openaiBinding(fetchOf(sse(jsonChunks(["x"])), { hang: true })),
+        makeContext({ turnDeadlineAt: new Date(Date.now() - 1).toISOString() }),
+      );
+      expect(failure.kind).toBeDefined();
+      expect(failure.kind).not.toBe("RequestRejected");
+    });
+
+    it("A10 contract-noise-drop: only frozen event tags and observation keys cross the port", async () => {
+      const events = isNetwork(adapter)
+        ? await collect(
+            adapter,
+            openaiBinding(
+              fetchOf(
+                sse([
+                  JSON.stringify({ choices: [{ delta: { content: "ok" } }] }),
+                  JSON.stringify({ choices: [{ finish_reason: "stop" }] }),
+                ]),
+              ),
+            ),
+          )
+        : await collect(
+            adapter,
+            fakeBinding([
+              { _tag: "TextDelta", text: "ok" },
+              { _tag: "TurnCompleted", finishReason: "Stop" },
+            ]),
+          );
+      const canonicalTags = new Set([
+        "TurnStarted",
+        "TextDelta",
+        "ReasoningDelta",
+        "ToolCallProposed",
+        "UsageReported",
+        "ContinuationState",
+        "TurnCompleted",
+        "TurnFailed",
+      ]);
+      expect(events.length).toBeGreaterThan(0);
+      for (const event of events) {
+        expect(event._tag === "Canonical" || event._tag === "Observation").toBe(
+          true,
+        );
+        if (event._tag === "Canonical") {
+          expect(canonicalTags.has(event.event._tag)).toBe(true);
+        } else {
+          expect(
+            Object.keys(event.delta).every((key) =>
+              [
+                "responseStarted",
+                "externalEffectPossible",
+                "firstDataEventSeen",
+                "consumerVisibleOutput",
+                "canonicalEventEmitted",
+                "toolCallProposed",
+                "continuationAvailable",
+              ].includes(key),
+            ),
+          ).toBe(true);
+        }
+      }
+    });
+  },
+);
 
 const SEED_IDS = {
   projectId: "prj_018f2b3c-4d5e-7abc-8def-0123456789c2",
@@ -760,20 +773,25 @@ describe("P16 E3 conformance — A9 observation-persistence", () => {
   );
 });
 
-
 // ---------------------------------------------------------------------------
 // P16 E4a + E5 — compatible-provider deployment qualification (offline proof)
 // ---------------------------------------------------------------------------
 
-const qualificationModule = await import("../../packages/ports/dist/provider-extension.js");
+const qualificationModule = await import(
+  "../../packages/ports/dist/provider-extension.js"
+);
 
 describe("P16 E4a/E5 — dep-openai-compat-echo qualification", () => {
   it("resolves through the unchanged registry/catalog and binds the exact fingerprint", async () => {
     const { readFileSync } = await import("node:fs");
-    const { resolveModelBinding, resolvedModelBindingFingerprint } = qualificationModule;
+    const { resolveModelBinding, resolvedModelBindingFingerprint } =
+      qualificationModule;
     const deployment = JSON.parse(
       readFileSync(
-        new URL("../../planning/testing/provider-qualification/dep-openai-compat-echo/deployment.json", import.meta.url),
+        new URL(
+          "../../planning/testing/provider-qualification/dep-openai-compat-echo/deployment.json",
+          import.meta.url,
+        ),
         "utf8",
       ),
     ) as import("../../packages/ports/dist/provider-extension.js").ModelDeployment;
@@ -789,7 +807,10 @@ describe("P16 E4a/E5 — dep-openai-compat-echo qualification", () => {
     const fingerprint = resolvedModelBindingFingerprint(resolved);
     const qualification = JSON.parse(
       readFileSync(
-        new URL("../../planning/testing/provider-qualification/dep-openai-compat-echo/qualification.json", import.meta.url),
+        new URL(
+          "../../planning/testing/provider-qualification/dep-openai-compat-echo/qualification.json",
+          import.meta.url,
+        ),
         "utf8",
       ),
     ) as { bindingFingerprint: string; identity: Record<string, string> };
@@ -800,7 +821,9 @@ describe("P16 E4a/E5 — dep-openai-compat-echo qualification", () => {
 });
 
 async function catalogForQualification() {
-  const module = await import("../../packages/model-context/src/model-catalog.data.js");
+  const module = await import(
+    "../../packages/model-context/src/model-catalog.data.js"
+  );
   return module.DEFAULT_MODEL_CATALOG;
 }
 

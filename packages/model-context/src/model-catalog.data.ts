@@ -51,5 +51,20 @@ export const DEFAULT_MODEL_CATALOG: ModelCatalog = {
       },
       knownDeployments: ["dep-openai-compat-echo"],
     },
+    {
+      // P16 E4b proof-of-construction: a NEW protocol family (in-process
+      // deterministic echo) onboarded as catalog data + adapter package +
+      // registry line — no core change (verify --mode protocol proves it).
+      modelRef: "model-testecho",
+      adapterId: "provider-testecho",
+      capability: {
+        modelRef: "model-testecho",
+        family: "testecho",
+        contextWindow: 2000,
+        outputCeiling: 256,
+        toolProtocol: "json",
+        capabilities: ["text"],
+      },
+    },
   ],
 };
