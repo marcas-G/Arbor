@@ -30,7 +30,7 @@ import {
   startupRecovery,
   sweepRecovery,
 } from "@arbor/execution-runtime";
-import { P15_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
+import { P16_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   type AgentExecutionStateStore,
@@ -423,7 +423,7 @@ export const ProductionDaemonServiceLive = (
       );
 
       const daemon = makeProductionDaemon({
-        migrate: runMigrations(P15_MIGRATIONS),
+        migrate: runMigrations(P16_MIGRATIONS),
         recovery,
         consumers,
         conversationTick,

@@ -12,7 +12,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P15_MIGRATIONS,
+  P16_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   runMigrations,
@@ -265,7 +265,7 @@ describe("I0 integration — Wait control route + P2 settle pipeline", () => {
   it("admits, leases, routes Wait, and durably registers WorkWait", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P15_MIGRATIONS);
+      yield* runMigrations(P16_MIGRATIONS);
       yield* seed;
       const gateway = yield* CommandGateway;
       const admitId = parse(CommandId)(

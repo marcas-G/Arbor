@@ -13,7 +13,7 @@ import {
   LeaseServiceLive,
   layer,
   P12_MIGRATIONS,
-  P15_MIGRATIONS,
+  P16_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   rebuildProjection,
@@ -2396,7 +2396,7 @@ describe("p9-acceptance", () => {
     const probe: DProbe = { calls: [] };
     await runOn(
       Effect.gen(function* () {
-        yield* runMigrations(P15_MIGRATIONS);
+        yield* runMigrations(P16_MIGRATIONS);
         yield* seedStoryD;
         const runtime = yield* ProviderRuntime;
         // Pre-response TransportFailed has complete no-effect evidence and

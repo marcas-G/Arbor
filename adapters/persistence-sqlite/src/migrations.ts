@@ -818,3 +818,21 @@ export const P15_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P15_PROVIDER_RUNTIME_CORRECTNESS_DDL,
   },
 ];
+
+/** Gate C C3 (P16 `03` §2.2): the reasoning round-trip attachment lives in
+ * the conversation history (human_messages), NOT in provider transport rows.
+ * The column carries the serialized `ReasoningAttachment` (or null). This is
+ * the unambiguous existing-DDL carrier — no new table needed. */
+const P16_REASONING_ATTACHMENT_DDL = `
+ALTER TABLE human_messages ADD COLUMN provider_reasoning_json TEXT;
+`;
+
+/** P16 ordered migration baseline; settles user_version at 16. */
+export const P16_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P15_MIGRATIONS,
+  {
+    id: 16,
+    name: "p16_reasoning_attachment",
+    sql: P16_REASONING_ATTACHMENT_DDL,
+  },
+];

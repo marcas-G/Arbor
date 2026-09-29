@@ -10,25 +10,36 @@
     "protocolFamily": "openai-chat-completions-sse",
     "failureTaxonomy": "phase1-v2"
   },
-  "declaredCapability": {
-    "modelRef": "model-openai-compat-echo",
-    "family": "openai-compat",
-    "contextWindow": 64000,
-    "outputCeiling": 2048,
-    "toolProtocol": "json",
-    "capabilities": ["text", "tools"]
-  },
-  "qualifiedCapability": {
-    "modelRef": "model-openai-compat-echo",
-    "family": "openai-compat",
-    "contextWindow": 64000,
-    "outputCeiling": 2048,
-    "toolProtocol": "json",
-    "capabilities": ["text", "tools"]
-  },
-  "evidenceDir": "planning/testing/provider-qualification/dep-openai-compat-echo",
-  "stableRuns": 0,
-  "conformanceRun": "conf-e4a-offline",
-  "qualifiedAt": "2026-09-29T03:00:00.000Z",
+  "qualificationRunnerVersion": "qrun-1.0.0",
+  "capabilities": [
+    { "capability": "text", "status": "PROVEN", "evidence": [
+      { "layer": "L2", "artifact": "conformance:A1@provider-openai@dep-openai-compat-echo" }
+    ] },
+    { "capability": "streaming", "status": "PROVEN", "evidence": [
+      { "layer": "L2", "artifact": "conformance:A1@provider-openai@dep-openai-compat-echo" }
+    ] },
+    { "capability": "tool-simple", "status": "PROVEN", "evidence": [
+      { "layer": "L1", "artifact": "conformance:A2@provider-openai@dep-openai-compat-echo" },
+      { "layer": "L2", "artifact": "conformance:A2@provider-openai@dep-openai-compat-echo" }
+    ] },
+    { "capability": "tool-fragmented-args", "status": "PROVEN", "evidence": [
+      { "layer": "L1", "artifact": "conformance:A2/A3@provider-openai@dep-openai-compat-echo" },
+      { "layer": "L2", "artifact": "conformance:A2/A3@provider-openai@dep-openai-compat-echo" }
+    ] },
+    { "capability": "tool-multiple", "status": "PROVEN", "evidence": [
+      { "layer": "L1", "artifact": "conformance:A2 parallel@provider-openai@dep-openai-compat-echo" },
+      { "layer": "L2", "artifact": "conformance:A2 parallel@provider-openai@dep-openai-compat-echo" }
+    ] },
+    { "capability": "reasoning", "status": "NOT_RUN", "evidence": [] },
+    { "capability": "reasoning-with-tools", "status": "NOT_RUN", "evidence": [] },
+    { "capability": "structured-output", "status": "NOT_RUN", "evidence": [] },
+    { "capability": "cache-usage", "status": "NOT_RUN", "evidence": [] },
+    { "capability": "provider-continuation", "status": "UNSUPPORTED", "evidence": [] },
+    { "capability": "reasoning-round-trip", "status": "NOT_RUN", "evidence": [] },
+    { "capability": "cancellation", "status": "PROVEN", "evidence": [
+      { "layer": "L2", "artifact": "conformance:A6@provider-openai@dep-openai-compat-echo" }
+    ] }
+  ],
+  "qualifiedAt": "2026-09-29T04:30:00.000Z",
   "offlineProofDeployment": true
 }

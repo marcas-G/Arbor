@@ -7,7 +7,7 @@ import type {
 } from "../../../adapters/provider-openai/src/index.js";
 import {
   buildSliceLayer,
-  P15_MIGRATIONS,
+  P16_MIGRATIONS,
   runMigrations,
 } from "../../../apps/single-workspace/src/composition.js";
 import {
@@ -294,7 +294,7 @@ export const withPublicConversationApp = async (
               effect as Effect.Effect<A, E, never>,
               context,
             );
-          yield* runMigrations(P15_MIGRATIONS);
+          yield* runMigrations(P16_MIGRATIONS);
           const boundary = yield* TransportBoundary;
           const sql = yield* SqlClient;
           const daemon = yield* ProductionDaemonService;

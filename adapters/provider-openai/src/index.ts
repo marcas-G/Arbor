@@ -198,8 +198,8 @@ const toCanonical = (
         _tag: "UsageReported",
         inputTokens: chunk.inputTokens,
         outputTokens: chunk.outputTokens,
-        ...(chunk.cacheReadTokens !== undefined
-          ? { cacheReadTokens: chunk.cacheReadTokens }
+        ...(chunk.reasoningTokens !== undefined
+          ? { reasoningTokens: chunk.reasoningTokens }
           : {}),
         ...(chunk.cacheWriteTokens !== undefined
           ? { cacheWriteTokens: chunk.cacheWriteTokens }

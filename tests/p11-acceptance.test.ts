@@ -21,7 +21,7 @@ import {
   HumanMessageStoreLive,
   IdGeneratorLive,
   layer,
-  P15_MIGRATIONS,
+  P16_MIGRATIONS,
   ProviderTurnStoreLive,
   RecordEnvironmentChangeLive,
   ResourceOwnershipRepositoryLive,
@@ -960,7 +960,7 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
 
     await runDriftApp(
       Effect.gen(function* () {
-        yield* runMigrations(P15_MIGRATIONS);
+        yield* runMigrations(P16_MIGRATIONS);
         const sql = yield* SqlClient;
         const resolver = yield* EnvironmentResolverPort;
         const rec = yield* RecordEnvironmentChange;
@@ -1013,7 +1013,7 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
       Effect.scoped(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P15_MIGRATIONS);
+            yield* runMigrations(P16_MIGRATIONS);
             yield* cbSeed;
             const store = yield* EnvironmentRevisionStore;
             const advancement = yield* EnvironmentRevisionAdvancement;
@@ -1051,7 +1051,7 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
     // -- gateway half (release-first, then terminal closure) --
     await wtRun(
       Effect.gen(function* () {
-        yield* runMigrations(P15_MIGRATIONS);
+        yield* runMigrations(P16_MIGRATIONS);
         const sql = yield* SqlClient;
         const gw = yield* CommandGateway;
         yield* sql.unsafe(WORKTREES_TEST_DDL, []);
@@ -1171,7 +1171,7 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
 
     await runDriftApp(
       Effect.gen(function* () {
-        yield* runMigrations(P15_MIGRATIONS);
+        yield* runMigrations(P16_MIGRATIONS);
         const sql = yield* SqlClient;
         const resolver = yield* EnvironmentResolverPort;
         const rec = yield* RecordEnvironmentChange;
@@ -1325,7 +1325,7 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
 
     await runDriftApp(
       Effect.gen(function* () {
-        yield* runMigrations(P15_MIGRATIONS);
+        yield* runMigrations(P16_MIGRATIONS);
         const sql = yield* SqlClient;
         const resolver = yield* EnvironmentResolverPort;
         const rec = yield* RecordEnvironmentChange;

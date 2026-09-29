@@ -67,6 +67,7 @@ const record = (
   createdAt,
   settledAt: null,
   responseBody: null,
+  providerReasoning: null,
   attemptNo: 0,
   ...overrides,
 });
@@ -402,7 +403,7 @@ describe("P14 multi-project daemon coverage (production shape)", () => {
       );
     };
     const program = Effect.gen(function* () {
-      yield* adapter.runMigrations(adapter.P14_MIGRATIONS);
+      yield* adapter.runMigrations(adapter.P16_MIGRATIONS);
       const store = yield* port.HumanMessageStore;
       const tx = yield* port.TransactionPort;
       const mk = (
@@ -422,6 +423,7 @@ describe("P14 multi-project daemon coverage (production shape)", () => {
         createdAt: "2026-09-28T06:00:00.000Z",
         settledAt: null,
         responseBody: null,
+        providerReasoning: null,
         attemptNo: 0,
       });
       yield* tx.transact(

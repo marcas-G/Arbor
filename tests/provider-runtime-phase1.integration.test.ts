@@ -9,7 +9,7 @@ import {
   ClockLive,
   IdGeneratorLive,
   layer,
-  P15_MIGRATIONS,
+  P16_MIGRATIONS,
   ProviderTurnStoreLive,
   runMigrations,
   TransactionPortLive,
@@ -212,7 +212,7 @@ const initialize = async (
 ): Promise<void> =>
   harness.run(
     Effect.gen(function* () {
-      yield* runMigrations(P15_MIGRATIONS);
+      yield* runMigrations(P16_MIGRATIONS);
       yield* seed;
     }),
   );
@@ -559,7 +559,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
     try {
       await harness.run(
         Effect.gen(function* () {
-          yield* runMigrations(P15_MIGRATIONS);
+          yield* runMigrations(P16_MIGRATIONS);
           yield* seed;
           const tx = yield* TransactionPort;
           const turns = yield* ProviderTurnStore;

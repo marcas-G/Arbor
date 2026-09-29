@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   ClockLive,
   IdGeneratorLive,
-  P15_MIGRATIONS,
+  P16_MIGRATIONS,
   ProviderTurnStoreLive,
   runMigrations,
   layer as sqliteLayer,
@@ -734,7 +734,7 @@ describe("P16 E3 conformance — A9 observation-persistence", () => {
         Layer.provide(ProviderTurnStoreLive, infra),
       );
       const program = Effect.gen(function* () {
-        yield* runMigrations(P15_MIGRATIONS);
+        yield* runMigrations(P16_MIGRATIONS);
         yield* seedForeignKeys;
         const runtimeService = yield* ProviderRuntime;
         const result = yield* runtimeService.runTurn({
@@ -881,10 +881,10 @@ describe("P16 E5 — dep-env qualification", () => {
         ),
         "utf8",
       ),
-    ) as { bindingFingerprint: string; stableRuns: number };
+    ) as { bindingFingerprint: string; qualificationRunnerVersion: string };
     expect(qualification.bindingFingerprint).toBe(fingerprint);
-    // Q2: three-run stability evidence exists for the real endpoint.
-    expect(qualification.stableRuns).toBeGreaterThanOrEqual(3);
+    // Gate C C4: runner provenance is mandatory on the record.
+    expect(qualification.qualificationRunnerVersion).toMatch(/^qrun-/);
   });
 });
 

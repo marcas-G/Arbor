@@ -25,7 +25,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   buildSliceLayer,
-  P15_MIGRATIONS,
+  P16_MIGRATIONS,
   ProductionDaemonService,
   runMigrations,
 } from "../src/index.js";
@@ -220,7 +220,7 @@ describe("P14 production conversation model context", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P15_MIGRATIONS);
+            yield* runMigrations(P16_MIGRATIONS);
             const sql = yield* SqlClient;
             yield* sql.withTransaction(
               Effect.gen(function* () {
@@ -427,7 +427,7 @@ describe("P14 production conversation model context", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P15_MIGRATIONS);
+          yield* runMigrations(P16_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* sql.withTransaction(
             Effect.gen(function* () {
