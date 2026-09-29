@@ -182,10 +182,13 @@ const bootstrap = Effect.gen(function* () {
 });
 
 const run = <A>(
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   program: Effect.Effect<A, any, any>,
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   app: Layer.Layer<any, any, any>,
 ): Promise<A> =>
   Effect.runPromise(
+    // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
     Effect.provide(program, app) as Effect.Effect<A, any, never>,
   );
 

@@ -516,8 +516,10 @@ const workerRun = (
 const defectOf = <A, E>(exit: Exit.Exit<A, E>): unknown =>
   Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
 
+// biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
 const run = <A>(program: Effect.Effect<A, any, any>): Promise<A> =>
   Effect.runPromise(
+    // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
     Effect.provide(program, makeApp()) as Effect.Effect<A, any, never>,
   );
 

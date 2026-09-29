@@ -480,14 +480,18 @@ describe("p7-deliver-primitive", () => {
           deliver(deps, {
             senderWorkspaceId: CHILD,
             deliverableId: UNKNOWN_DELIVERABLE,
+            // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
             commandId: REJECT_CMDS[0]!,
+            // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
             messageId: REJECT_MSGS[0]!,
           }),
         );
         const notOwner = yield* tx.transact(
           deliver(deps, {
             senderWorkspaceId: p7RootWorkspace,
+            // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
             commandId: REJECT_CMDS[1]!,
+            // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
             messageId: REJECT_MSGS[1]!,
           }),
         );
@@ -495,7 +499,9 @@ describe("p7-deliver-primitive", () => {
           deliver(deps, {
             senderWorkspaceId: p7RootWorkspace,
             deliverableId: DEL_ROOT,
+            // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
             commandId: REJECT_CMDS[2]!,
+            // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
             messageId: REJECT_MSGS[2]!,
           }),
         );

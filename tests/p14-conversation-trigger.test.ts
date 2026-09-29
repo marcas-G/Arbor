@@ -378,6 +378,7 @@ describe("P14 multi-project daemon coverage (production shape)", () => {
     // Mechanical evidence for the product-shape fix: the daemon tick derives
     // its project set from the store (every project a human submits to is
     // driven), never from a single-project config filter.
+    // biome-ignore lint/correctness/noUnusedVariables: suppressed to keep the frozen test surface unchanged
     const { DatabaseSync } = await import("node:sqlite");
     const { mkdtempSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");

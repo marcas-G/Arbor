@@ -134,6 +134,7 @@ const app = (admissionDeny = false, executor: ToolExecutor = okExecutor) => {
   return Layer.mergeAll(deps, Layer.provide(ToolRuntimeLive([executor]), deps));
 };
 
+// biome-ignore lint/suspicious/noExplicitAny: test helper erases the app layer type
 const run = (appLayer: Layer.Layer<any, any, any>, argumentsJson: string) =>
   Effect.runPromise(
     Effect.provide(

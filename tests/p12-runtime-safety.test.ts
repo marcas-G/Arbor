@@ -787,6 +787,7 @@ describe("P12-008 D1 real ProviderAttempt lifecycle (B-4)", () => {
     // ordinal (1) reaches the gate through the observation channel.
     const result = await runScenario(
       policy({ maxRetries: 1 }),
+      // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
       [waitTurns[0]!, waitTurns[0]!],
       ["ProviderUnavailable"],
     );
@@ -800,6 +801,7 @@ describe("P12-008 D1 real ProviderAttempt lifecycle (B-4)", () => {
   it("the same real retry continues to Wait when maxRetries admits it (threshold-driven)", async () => {
     const result = await runScenario(
       policy({ maxRetries: 3 }),
+      // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
       [waitTurns[0]!, waitTurns[0]!],
       ["ProviderUnavailable"],
     );
@@ -814,6 +816,7 @@ describe("P12-008 D1 real ProviderAttempt lifecycle (B-4)", () => {
     // completion.
     const result = await runScenario(
       policy({ maxRetries: 3 }),
+      // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
       [secondWaitTurn, secondWaitTurn, waitTurns[0]!],
       ["ProviderUnavailable"],
     );

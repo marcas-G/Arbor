@@ -345,6 +345,7 @@ const concludePassPayload = (
       requirement: "tests pass",
       required: true,
       verdict: "Pass",
+      // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
       evidenceRefs: [evidenceIds[0]!],
     },
     {
@@ -352,6 +353,7 @@ const concludePassPayload = (
       requirement: "lint clean",
       required: false,
       verdict: "Pass",
+      // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
       evidenceRefs: [evidenceIds[1]!],
     },
   ],
@@ -404,6 +406,7 @@ const concludePassAtCurrentRevision = (
             CMD(`${evidenceCommandBase}${index}`),
             evidencePayload(
               verificationId,
+              // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
               evidenceIds[index]!,
               criterionId,
               bound,
@@ -465,6 +468,7 @@ describe("p11-verdict-consumer (P11-013: P8 binding under the real moving revisi
             verifierExecutionId: EXE_1,
           });
           expect(outcome.value.events).toHaveLength(1);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("VerificationStarted");
           expect(event.aggregateRef).toBe(VER("0001"));

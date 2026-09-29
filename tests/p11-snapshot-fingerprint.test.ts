@@ -101,6 +101,7 @@ describe("P11-002 snapshot identity (canonical semantic state only)", () => {
       entry("/w1", worktree("/wt"), gProbe("h")),
     ];
     const a = fingerprintOf(PROJ, set);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     const b = fingerprintOf(PROJ, [set[1]!, set[0]!]);
     expect(a.equals(b)).toBe(true);
     void mk;

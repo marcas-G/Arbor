@@ -1641,7 +1641,9 @@ describe("p7-acceptance", () => {
             const next = markUnfulfillableOnProducerLoss(facts, unsatisfied);
             const events: PendingDomainEvent[] = [];
             for (let index = 0; index < unsatisfied.length; index += 1) {
+              // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
               const before = unsatisfied[index]!;
+              // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
               const after = next[index]!;
               if (before.state === after.state) {
                 continue;

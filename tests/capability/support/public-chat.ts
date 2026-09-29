@@ -238,6 +238,7 @@ export interface PublicAppHandle {
     readonly cursor?: string;
     readonly conversationOnly?: boolean;
   }) => Promise<PublicTranscriptPage>;
+  // biome-ignore lint/suspicious/noExplicitAny: capability harness erases the service context type
   readonly run: <A>(effect: Effect.Effect<A, unknown, any>) => Promise<A>;
   readonly close: () => Promise<void>;
 }
@@ -285,6 +286,7 @@ export const withPublicConversationApp = async (
             never
           >;
           const provideApp = <A, E>(
+            // biome-ignore lint/suspicious/noExplicitAny: capability harness erases the service context type
             effect: Effect.Effect<A, E, any>,
           ): Effect.Effect<A, E, never> =>
             Effect.provideContext(
@@ -350,6 +352,7 @@ export const withPublicConversationApp = async (
               }
               return payload.body.value;
             },
+            // biome-ignore lint/suspicious/noExplicitAny: capability harness erases the service context type
             run: <A2>(effect: Effect.Effect<A2, unknown, any>) =>
               Effect.runPromise(provideApp(effect)),
             close: () =>

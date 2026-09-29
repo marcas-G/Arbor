@@ -285,6 +285,7 @@ describe("p7-produce-deliverable", () => {
         const notFound = yield* tx.transact(
           handler.execute(
             envelopeOf(
+              // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
               REJECT_CMDS[0]!,
               producePayload({ sourceWorkId: UNKNOWN_WORK }),
             ),
@@ -304,6 +305,7 @@ describe("p7-produce-deliverable", () => {
         );
         const cancelled = yield* tx.transact(
           handler.execute(
+            // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
             envelopeOf(REJECT_CMDS[1]!, producePayload()),
             CONTEXT,
           ),
@@ -335,6 +337,7 @@ describe("p7-produce-deliverable", () => {
         const stale = yield* tx.transact(
           handler.execute(
             envelopeOf(
+              // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
               REJECT_CMDS[2]!,
               producePayload({
                 observedSourceWorkRevision: parse(WorkRevision)(3),
@@ -355,6 +358,7 @@ describe("p7-produce-deliverable", () => {
         const noKind = yield* tx.transact(
           handler.execute(
             envelopeOf(
+              // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
               REJECT_CMDS[3]!,
               producePayload({ kind: "" as never as DeliverableKind }),
             ),

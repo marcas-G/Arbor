@@ -1687,6 +1687,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         expect(drift).toEqual([
           { stage: "attention", watermark: 1, prunedFloor: 3 },
         ]);
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         const attentionStage = report.stages.find(
           (stage) => stage.stage === "attention",
         )!;
@@ -1792,6 +1793,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
           projectId: p10Project,
           trigger: "drift-detected",
         });
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         const rawFactsStage = report.stages.find(
           (stage) => stage.stage === "raw-facts",
         )!;
@@ -2024,6 +2026,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         expect(humanDecision.ok).toBe(true);
         if (humanDecision.ok) {
           expect(humanDecision.value.events).toHaveLength(2);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const fact = humanDecision.value.events.find(
             (event) => event.eventType === "HumanInterventionApplied",
           )!;
@@ -2100,6 +2103,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         );
         expect(humanAccept.ok).toBe(true);
         if (humanAccept.ok) {
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const fact = humanAccept.value.events.find(
             (event) => event.eventType === "HumanInterventionApplied",
           )!;
@@ -2162,6 +2166,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         );
         expect(humanWithdraw.ok).toBe(true);
         if (humanWithdraw.ok) {
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const fact = humanWithdraw.value.events.find(
             (event) => event.eventType === "HumanInterventionApplied",
           )!;
@@ -2191,6 +2196,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         );
         expect(humanMark.ok).toBe(true);
         if (humanMark.ok) {
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const fact = humanMark.value.events.find(
             (event) => event.eventType === "HumanInterventionApplied",
           )!;

@@ -191,6 +191,7 @@ describe("p8-start-verification", () => {
             verifierExecutionId: EXE_1,
           });
           expect(outcome.value.events).toHaveLength(1);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("VerificationStarted");
           expect(event.aggregateRef).toBe(verificationId);

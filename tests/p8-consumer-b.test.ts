@@ -145,6 +145,7 @@ const storedWorkRow = Effect.gen(function* () {
     lifecycle: string;
     revision: number;
   }>("SELECT lifecycle, revision FROM works WHERE work_id = ?", [WORK_1]);
+  // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
   return rows[0]!;
 });
 
@@ -207,6 +208,7 @@ const workCompletedRow = Effect.gen(function* () {
   }>(
     "SELECT aggregate_ref, caused_by_command_id FROM domain_events WHERE event_type = 'WorkCompleted'",
   );
+  // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
   return rows[0]!;
 });
 

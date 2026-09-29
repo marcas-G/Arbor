@@ -187,6 +187,7 @@ const makeApp = () => {
 };
 
 const run = (
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   app: Layer.Layer<any, any, any>,
   toolName: string,
   argumentsJson: string,
@@ -211,6 +212,7 @@ const run = (
   );
 
 describe("P4 integration — tool runtime end to end", () => {
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   const migrate = (app: Layer.Layer<any, any, any>) =>
     Effect.runPromise(
       Effect.provide(runMigrations(P4_MIGRATIONS), app) as Effect.Effect<

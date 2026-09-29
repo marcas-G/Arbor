@@ -413,6 +413,7 @@ describe("p8-conclude", () => {
             channel1Release: { workId: WORK_1, targetWorkRevision: 0 },
           });
           expect(outcome.value.events).toHaveLength(1);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("VerificationConcluded");
           expect(event.eventVersion).toBe(1);
@@ -609,6 +610,7 @@ describe("p8-conclude", () => {
         expect(outcome.ok).toBe(true);
         if (outcome.ok) {
           expect(outcome.value.result.wakeSignals).toHaveLength(1);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const signal = outcome.value.result.wakeSignals[0]!;
           expect(signal.reason).toEqual({ _tag: "VerificationReturned" });
           expect(signal.detail).toEqual({
@@ -648,6 +650,7 @@ describe("p8-conclude", () => {
             workId: WORK_1,
             targetWorkRevision: 0,
           });
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = orphaned.value.events[0]!;
           expect(event.payload).toEqual({
             verificationId: VER(1),

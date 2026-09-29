@@ -220,6 +220,7 @@ describe("p7-declare-dependency", () => {
             revision: 0,
           });
           expect(outcome.value.events).toHaveLength(1);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("DependencyDeclared");
           expect(event.aggregateRef).toBe(dep);

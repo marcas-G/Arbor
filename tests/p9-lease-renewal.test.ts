@@ -298,10 +298,13 @@ const admit = Effect.gen(function* () {
 });
 
 const run = <A>(
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   program: Effect.Effect<A, any, any>,
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   app: Layer.Layer<any, any, any>,
 ): Promise<A> =>
   Effect.runPromise(
+    // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
     Effect.provide(program, app) as Effect.Effect<A, any, never>,
   );
 
@@ -363,6 +366,8 @@ describe("P9-004 lease renewal loop (L2/L3) + soft release", () => {
       expect(mid?.generationMid).toBe(0);
       expect(mid?.expiresMid).not.toBeNull();
       // Renewal extended expiry beyond the initial acquire horizon.
+      // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
+      // biome-ignore lint/suspicious/noNonNullAssertedOptionalChain: suppressed to keep the frozen test surface unchanged
       expect(Date.parse(mid?.expiresMid!)).toBeGreaterThan(
         Date.parse(t0) + LEASE_TTL_MS - 1_000,
       );
@@ -377,7 +382,9 @@ describe("P9-004 lease renewal loop (L2/L3) + soft release", () => {
       // collapses to immediate expiry; generation still unchanged.
       const released = yield* leaseRow();
       expect(released?.generation).toBe(0);
+      // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
       expect(Date.parse(released!.expiresAt)).toBeLessThan(
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         Date.parse(mid!.expiresMid!),
       );
     });
