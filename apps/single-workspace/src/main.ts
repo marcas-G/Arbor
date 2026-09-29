@@ -24,7 +24,10 @@ import {
   findArborConfigFile,
   providerDeploymentOfConfig,
 } from "./provider-config.js";
-import { makeStaticAuthenticator } from "./transport/auth.js";
+import {
+  makeBasicAuthenticator,
+  makeStaticAuthenticator,
+} from "./transport/auth.js";
 import { JOURNAL_WATERMARK_SQL } from "./transport/invalidation.js";
 import { startWebTransport } from "./transport/server.js";
 
@@ -117,12 +120,33 @@ const deploymentFromEnv = (): ModelDeployment | undefined => {
   };
 };
 
-/** P13 local-smoke/ops wiring: `ARBOR_AUTH_TOKENS="token1=user:alice,token2=user:bob"`
- * populates the static transport authenticator (P12 `10` §3 — the static map
- * is the boundary proof mechanism; production replaces it with an IdP
- * adapter without changing the boundary contract). No governance facts are
- * granted here; the Authority Resolver remains the sole enforcement. */
+/** Authenticator selection (OpenCode-style model, product decision
+ * 2026-09-29):
+ *
+ *   ARBOR_SERVER_PASSWORD set (non-empty)  → Basic access gate (remote
+ *     exposure; direct comparison, no JWT/session — an HTTP access gate,
+ *     not an identity system; authorized requests act as the single
+ *     configured principal)
+ *   ARBOR_AUTH_TOKENS set                  → static principal map (P12 `10`
+ *     §3 boundary-proof mechanism, multi-user)
+ *   neither                                → local single-user form: the
+ *     daemon is a loopback desktop process; OS user + loopback isolation is
+ *     the security boundary (same model as `opencode` with no
+ *     OPENCODE_SERVER_PASSWORD).
+ *
+ * No governance facts are granted at the transport; the Authority Resolver
+ * remains the sole enforcement. */
 const authenticatorFromEnv = () => {
+  const serverPassword = process.env.ARBOR_SERVER_PASSWORD;
+  if (serverPassword !== undefined && serverPassword.length > 0) {
+    return makeBasicAuthenticator({
+      username: process.env.ARBOR_SERVER_USERNAME ?? "arbor",
+      password: serverPassword,
+      ...(process.env.ARBOR_SERVER_PRINCIPAL !== undefined
+        ? { principal: parse(Principal)(process.env.ARBOR_SERVER_PRINCIPAL) }
+        : {}),
+    });
+  }
   const raw = process.env.ARBOR_AUTH_TOKENS;
   if (raw === undefined || raw.length === 0) {
     return undefined;

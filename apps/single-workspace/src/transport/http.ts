@@ -39,6 +39,13 @@ export const bearerCredential = (
   if (authorization === undefined) {
     return null;
   }
+  // Bearer tokens pass through verbatim; Basic credentials (the optional
+  // remote access gate) pass the raw scheme+value for the authenticator to
+  // decode — the scheme dispatch belongs to the authenticator, not here.
+  const basic = /^Basic\s+(.+)$/.exec(authorization);
+  if (basic !== null) {
+    return { token: authorization };
+  }
   const match = /^Bearer\s+(.+)$/.exec(authorization);
   return match === null ? null : { token: match[1] ?? "" };
 };

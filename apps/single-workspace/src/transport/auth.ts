@@ -63,3 +63,48 @@ export const LOCAL_PRINCIPAL = "user:local";
 export const makeLocalAuthenticator = (): AuthenticatorService => ({
   authenticate: () => Effect.succeed(LOCAL_PRINCIPAL as Principal),
 });
+
+/** OpenCode-style optional Basic gate (product decision 2026-09-29): a
+ * lightweight HTTP access gate for remote exposure — set
+ * ARBOR_SERVER_PASSWORD (non-empty) to enable. Direct string comparison,
+ * no JWT/session/cookie; NOT an identity system — an authorized request
+ * authenticates as the configured single principal. Loopback + no
+ * password = the local single-user form; the OS user + loopback isolation
+ * is the security boundary there (same model as `opencode`). */
+export const makeBasicAuthenticator = (options: {
+  readonly username: string;
+  readonly password: string;
+  readonly principal?: Principal;
+}): AuthenticatorService => ({
+  authenticate: (credential) => {
+    const token = credential?.token ?? "";
+    const match = /^Basic\s+(.+)$/.exec(token);
+    if (match === null) {
+      return Effect.fail({
+        _tag: "AuthenticationRejected",
+        reason: "missing-token",
+      });
+    }
+    let decoded = "";
+    try {
+      decoded = Buffer.from(match[1] ?? "", "base64").toString("utf8");
+    } catch {
+      return Effect.fail({
+        _tag: "AuthenticationRejected",
+        reason: "unknown-token",
+      });
+    }
+    const separator = decoded.indexOf(":");
+    const username = decoded.slice(0, separator);
+    const password = decoded.slice(separator + 1);
+    if (username === options.username && password === options.password) {
+      return Effect.succeed(
+        options.principal ?? (LOCAL_PRINCIPAL as Principal),
+      );
+    }
+    return Effect.fail({
+      _tag: "AuthenticationRejected",
+      reason: "unknown-token",
+    });
+  },
+});

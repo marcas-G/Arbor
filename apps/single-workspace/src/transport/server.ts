@@ -115,6 +115,10 @@ const sendJson = (
 };
 
 const bearerToken = (authorization: string | undefined): string | null => {
+  const basic = /^Basic\s+(.+)$/.exec(authorization ?? "");
+  if (basic !== null) {
+    return authorization ?? null;
+  }
   const match = /^Bearer\s+(.+)$/.exec(authorization ?? "");
   return match?.[1] ?? null;
 };
