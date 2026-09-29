@@ -482,6 +482,7 @@ describe("p6-send-message", () => {
       yield* seed;
       const gw = yield* CommandGateway;
       const notFound = yield* submitSend(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[0]!,
         payload: payloadOf(msg("f1"), GRANDCHILD, {
           kind: "Report",
@@ -491,6 +492,7 @@ describe("p6-send-message", () => {
         }),
       });
       const crossProject = yield* submitSend(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[1]!,
         payload: payloadOf(msg("f2"), GRANDCHILD, {
           kind: "Report",
@@ -500,6 +502,7 @@ describe("p6-send-message", () => {
         }),
       });
       const queryNonAncestor = yield* submitSend(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[2]!,
         payload: payloadOf(msg("f3"), CHILD, {
           kind: "Query",
@@ -509,6 +512,7 @@ describe("p6-send-message", () => {
         }),
       });
       const reportNonParent = yield* submitSend(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[3]!,
         payload: payloadOf(msg("f4"), GRANDCHILD, {
           kind: "Report",
@@ -518,6 +522,7 @@ describe("p6-send-message", () => {
         }),
       });
       const replyWithoutCorrelation = yield* submitSend(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[4]!,
         payload: payloadOf(msg("f5"), CHILD, {
           kind: "Reply",
@@ -527,6 +532,7 @@ describe("p6-send-message", () => {
         }),
       });
       const quota = yield* submitSend(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[5]!,
         payload: payloadOf(msg("f6"), GRANDCHILD, {
           kind: "Report",

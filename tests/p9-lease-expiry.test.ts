@@ -343,8 +343,10 @@ const dbSnapshot = Effect.gen(function* () {
   return parts.join(";");
 });
 
+// biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
 const run = <A>(program: Effect.Effect<A, any, any>): Promise<A> =>
   Effect.runPromise(
+    // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
     Effect.provide(program, makeApp()) as Effect.Effect<A, any, never>,
   );
 

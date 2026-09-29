@@ -361,6 +361,7 @@ describe("P10-010 governance emission set (four human-originated commands)", () 
         if (human.ok) {
           expect(human.value.events).toHaveLength(2);
           expect(human.value.events[0]?.eventType).toBe("DecisionRecorded");
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const fact = interventionFactsOf(human)[0]!;
           expect(fact.payload).toEqual({
             actor: humanActor,
@@ -447,6 +448,7 @@ describe("P10-010 governance emission set (four human-originated commands)", () 
         if (human.ok) {
           expect(human.value.events).toHaveLength(2);
           expect(human.value.events[0]?.eventType).toBe("WorkOutcomeAccepted");
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const fact = interventionFactsOf(human)[0]!;
           expect(fact.payload).toEqual({
             actor: humanActor,
@@ -581,6 +583,7 @@ describe("P10-010 governance emission set (four human-originated commands)", () 
         expect(humanWithdraw.ok).toBe(true);
         if (humanWithdraw.ok) {
           expect(humanWithdraw.value.events).toHaveLength(2);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const fact = interventionFactsOf(humanWithdraw)[0]!;
           expect(fact.payload).toMatchObject({
             targetWorkspaceId: p7RootWorkspace,
@@ -633,6 +636,7 @@ describe("P10-010 governance emission set (four human-originated commands)", () 
         expect(humanMark.ok).toBe(true);
         if (humanMark.ok) {
           expect(humanMark.value.events).toHaveLength(2);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const fact = interventionFactsOf(humanMark)[0]!;
           expect(fact.payload).toMatchObject({
             targetWorkspaceId: p7RootWorkspace,

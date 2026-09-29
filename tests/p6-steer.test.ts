@@ -351,27 +351,32 @@ describe("p6-steer", () => {
       yield* seedWork;
       const gw = yield* CommandGateway;
       const notFound = yield* submitSteer(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[0]!,
         payload: steerPayload({ workId: unknownWorkId }),
       });
       const wrongWorkspace = yield* submitSteer(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[1]!,
         payload: steerPayload({ workspaceId: otherWorkspace }),
         authorityTargetWorkspaceId: otherWorkspace,
       });
       const staleRevision = yield* submitSteer(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[2]!,
         payload: steerPayload({
           expectedWorkRevision: parse(WorkRevision)(5),
         }),
       });
       const agent = yield* submitSteer(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[3]!,
         payload: steerPayload(),
         principal: agentPrincipal,
         actor: agentActor,
       });
       const nonTarget = yield* submitSteer(gw, {
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         commandId: rejectCommandIds[4]!,
         payload: steerPayload(),
         authorityTargetWorkspaceId: otherWorkspace,

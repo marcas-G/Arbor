@@ -173,10 +173,13 @@ const defectOf = <A, E>(exit: Exit.Exit<A, E>): unknown =>
   Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
 
 const runOn = <A>(
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   program: Effect.Effect<A, any, any>,
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   app: Layer.Layer<any, any, any>,
 ): Promise<A> =>
   Effect.runPromise(
+    // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
     Effect.provide(program, app) as Effect.Effect<A, any, never>,
   );
 
@@ -2356,6 +2359,7 @@ describe("p9-acceptance", () => {
         expect(turnC?.settled_at).not.toBeNull();
         expect(turnC?.finish_reason).toBe("Failed");
         // Unsettled-turn recovery: same Turn, new Attempt, Manifest intact.
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         const planD = report.retryPlan[0]!;
         expect(planD.manifestId).toBe(dManifestId(D_TURN_D));
         expect(planD.nextAttemptNo).toBe(1);

@@ -160,6 +160,7 @@ const storedWorkRow = Effect.gen(function* () {
     lifecycle: string;
     revision: number;
   }>("SELECT lifecycle, revision FROM works WHERE work_id = ?", [WORK_1]);
+  // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
   return rows[0]!;
 });
 
@@ -228,6 +229,7 @@ describe("p8-acceptance-commands", () => {
           // P10 `06` §2: the human-originated acceptance pairs the fact
           // with HumanInterventionApplied(GovernanceDecision).
           expect(outcome.value.events).toHaveLength(2);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("WorkOutcomeAccepted");
           expect(outcome.value.events[1]?.eventType).toBe(
@@ -438,6 +440,7 @@ describe("p8-acceptance-commands", () => {
         expect(outcome.ok).toBe(true);
         if (outcome.ok) {
           expect(outcome.value.events).toHaveLength(1);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("WorkCompleted");
           expect(event.eventVersion).toBe(1);

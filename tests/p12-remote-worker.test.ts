@@ -327,6 +327,7 @@ const toWorkerReceipt = (
 });
 
 const runWithCounter = <A>(
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   body: (counter: { count: number }) => Effect.Effect<A, any, any>,
 ): Promise<A> => {
   const dir = mkdtempSync(join(tmpdir(), "p12-remote-worker-"));

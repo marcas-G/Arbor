@@ -350,6 +350,7 @@ const crashInvoke = (tier: Tier) =>
   });
 
 const run = <A>(
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   program: Effect.Effect<A, any, any>,
   probe: Probe,
   crash: CrashMode,
@@ -357,6 +358,7 @@ const run = <A>(
   Effect.runPromise(
     Effect.provide(program, makeApp(probe, crash)) as Effect.Effect<
       A,
+      // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
       any,
       never
     >,

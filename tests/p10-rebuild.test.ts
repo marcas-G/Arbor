@@ -461,6 +461,7 @@ describe("P10-009 rebuild orchestration (04 §1)", () => {
         expect(drift).toEqual([
           { stage: "attention", watermark: 1, prunedFloor: 3 },
         ]);
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         const attentionStage = report.stages.find(
           (stage) => stage.stage === "attention",
         )!;
@@ -516,6 +517,7 @@ describe("P10-009 rebuild orchestration (04 §1)", () => {
 
         // Inbox reconciliation orchestrated: the seeded canonical message
         // without an inbox row reports as MissingEntry (audit only).
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         const rootReconciliation = report.inboxReconciliation.find(
           (entry) => entry.workspaceId === p10Root,
         )!;
@@ -597,12 +599,14 @@ describe("P10-009 rebuild orchestration (04 §1)", () => {
           projectId: p10Project,
           trigger: "drift-detected",
         });
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         const rawFactsStage = report.stages.find(
           (stage) => stage.stage === "raw-facts",
         )!;
         expect(rawFactsStage.fromWatermark).toBe(4);
         expect(rawFactsStage.replayed).toBe(2);
         expect(rawFactsStage.toWatermark).toBe(6);
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         const effectiveFactsStage = report.stages.find(
           (stage) => stage.stage === "effective-facts",
         )!;

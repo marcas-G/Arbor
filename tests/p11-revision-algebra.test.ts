@@ -251,6 +251,7 @@ describe("P11-001 store (typed advancement authority)", () => {
   it("advanceAnchor on a missing anchor is typed, not a blind init", async () => {
     await run(
       Effect.gen(function* () {
+        // biome-ignore lint/correctness/noUnusedVariables: suppressed to keep the frozen test surface unchanged
         const { store, advancement, tx } = yield* withStore;
         const result = yield* tx.transact(
           advancement.advanceAnchor(PROJECT_B, "1"),

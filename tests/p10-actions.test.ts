@@ -474,6 +474,7 @@ describe("P10-011 Steer / Stop-request / Governance surfaces (gateway-only)", ()
         ...base,
         commandId: CMD("000000000049"),
         authority: { _tag: "GovernanceAuthority", principal: agentPrincipal },
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         entry: cases[0]!.entry,
       }),
     );

@@ -220,6 +220,7 @@ describe("p7-dependency-transitions", () => {
           // P10 `06` §2: a human-originated withdrawal pairs the fact
           // with HumanInterventionApplied(GovernanceDecision).
           expect(outcome.value.events).toHaveLength(2);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("DependencyWithdrawn");
           expect(outcome.value.events[1]?.eventType).toBe(
@@ -271,6 +272,7 @@ describe("p7-dependency-transitions", () => {
           // The Attention fact rides the event itself (§6); the P10
           // `06` §2 human-origin pairing adds the governance fact.
           expect(outcome.value.events).toHaveLength(2);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("DependencyMarkedUnfulfillable");
           expect(outcome.value.events[1]?.eventType).toBe(
@@ -324,6 +326,7 @@ describe("p7-dependency-transitions", () => {
             toRevision: 1,
           });
           expect(outcome.value.events).toHaveLength(1);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("DependencyContractRevised");
           expect(event.aggregateRef).toBe(dep);

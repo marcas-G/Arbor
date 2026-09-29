@@ -226,6 +226,7 @@ describe("p7-satisfy-dependency", () => {
             ],
           });
           expect(outcome.value.events).toHaveLength(1);
+          // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("DependencySatisfied");
           expect(event.eventVersion).toBe(1);

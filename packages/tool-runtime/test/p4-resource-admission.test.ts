@@ -88,6 +88,7 @@ const app = (claims: ReadonlyArray<ResourceOwnershipClaimRecord>) => {
 };
 
 const admit = (
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases the app layer type
   appLayer: Layer.Layer<any, any, any>,
   regions: ReadonlyArray<CanonicalResourceRegion>,
   write: boolean,

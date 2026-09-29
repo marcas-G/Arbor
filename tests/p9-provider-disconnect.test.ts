@@ -245,10 +245,13 @@ const runTurnInput = (turnId: ProviderTurnId) => ({
 });
 
 const run = <A>(
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   program: Effect.Effect<A, any, any>,
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   app: Layer.Layer<any, any, any>,
 ): Promise<A> =>
   Effect.runPromise(
+    // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
     Effect.provide(program, app) as Effect.Effect<A, any, never>,
   );
 
@@ -564,6 +567,7 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
         yield* tx.transact(
           store.recordAttempt(
             providerTurnId,
+            // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
             report.retryPlan[0]!.nextAttemptNo,
             { _tag: "Success" },
             "t2",
