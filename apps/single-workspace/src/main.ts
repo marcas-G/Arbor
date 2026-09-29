@@ -258,6 +258,12 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
     // watermark poller never fires for it. The conversation tick therefore
     // broadcasts an explicit invalidation after each pass: the sweep has
     // already committed, so any refetch observes the answered turn.
+    // Broadcast ONLY on journal-watermark movement: an unconditional
+    // per-tick broadcast (the original streaming workaround) made the client
+    // refetch every view every second — visible as spooky auto-refreshes and
+    // write-lock contention. The sweep has already committed when the
+    // watermark moves, so refetches observe the settled state.
+    let lastBroadcastWatermark: number | undefined;
     const conversationTickWithRefresh = Effect.gen(function* () {
       yield* deployment.daemon.conversationTick;
       if (webTransportHandle !== undefined) {
@@ -266,9 +272,10 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           JOURNAL_WATERMARK_SQL,
         );
         const watermark = Number(rows[0]?.watermark ?? 0);
-        // publishWatermark broadcasts every view unconditionally; the sweep
-        // has already committed, so any refetch observes the answered turn.
-        webTransportHandle.fanout.publishWatermark(watermark);
+        if (watermark !== lastBroadcastWatermark) {
+          lastBroadcastWatermark = watermark;
+          webTransportHandle.fanout.publishWatermark(watermark);
+        }
       }
     });
     return {
