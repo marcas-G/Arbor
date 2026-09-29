@@ -1,0 +1,92 @@
+{
+  "label": "tool-multiple",
+  "run": 1,
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModel": "deepseek-chat",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "同时查询北京和上海两个城市的天气。"
+      }
+    ],
+    "tools": [
+      "get_weather"
+    ]
+  },
+  "wire": [
+    {
+      "type": "text",
+      "text": "I"
+    },
+    {
+      "type": "text",
+      "text": "'ll"
+    },
+    {
+      "type": "text",
+      "text": " check"
+    },
+    {
+      "type": "text",
+      "text": " the"
+    },
+    {
+      "type": "text",
+      "text": " weather"
+    },
+    {
+      "type": "text",
+      "text": " in"
+    },
+    {
+      "type": "text",
+      "text": " both"
+    },
+    {
+      "type": "text",
+      "text": " cities"
+    },
+    {
+      "type": "text",
+      "text": " at"
+    },
+    {
+      "type": "text",
+      "text": " the"
+    },
+    {
+      "type": "text",
+      "text": " same"
+    },
+    {
+      "type": "text",
+      "text": " time"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "usage",
+      "inputTokens": 273,
+      "outputTokens": 79
+    },
+    {
+      "type": "tool_call",
+      "callRef": "call_00_9bOsZQNmQchp8LJo0EjZ2767",
+      "toolName": "get_weather",
+      "argumentsJson": "{\"city\": \"北京\"}"
+    },
+    {
+      "type": "tool_call",
+      "callRef": "call_01_NSfwvoZUWYGFAvNLZNO25264",
+      "toolName": "get_weather",
+      "argumentsJson": "{\"city\": \"上海\"}"
+    },
+    {
+      "type": "completed",
+      "finishReason": "tool_calls"
+    }
+  ]
+}

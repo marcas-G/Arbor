@@ -1,0 +1,602 @@
+{
+  "label": "reasoning-observation",
+  "run": 1,
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModel": "deepseek-chat",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "深思后回答：17 × 23 等于多少？先给出推理，再给结论。"
+      }
+    ],
+    "tools": []
+  },
+  "wire": [
+    {
+      "type": "text",
+      "text": "好的"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "我们先"
+    },
+    {
+      "type": "text",
+      "text": "一步一步"
+    },
+    {
+      "type": "text",
+      "text": "推理"
+    },
+    {
+      "type": "text",
+      "text": "这个"
+    },
+    {
+      "type": "text",
+      "text": "乘法"
+    },
+    {
+      "type": "text",
+      "text": "问题"
+    },
+    {
+      "type": "text",
+      "text": "。"
+    },
+    {
+      "type": "text",
+      "text": "  \n\n"
+    },
+    {
+      "type": "text",
+      "text": "题目"
+    },
+    {
+      "type": "text",
+      "text": "是"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "17"
+    },
+    {
+      "type": "text",
+      "text": " ×"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "23"
+    },
+    {
+      "type": "text",
+      "text": "  \n\n"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "第一步"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "分解"
+    },
+    {
+      "type": "text",
+      "text": "数字"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "  \n"
+    },
+    {
+      "type": "text",
+      "text": "可以把"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "23"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "拆"
+    },
+    {
+      "type": "text",
+      "text": "成"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "20"
+    },
+    {
+      "type": "text",
+      "text": " +"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "3"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "这样"
+    },
+    {
+      "type": "text",
+      "text": "更容易"
+    },
+    {
+      "type": "text",
+      "text": "计算"
+    },
+    {
+      "type": "text",
+      "text": "。"
+    },
+    {
+      "type": "text",
+      "text": "  \n\n"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "第二步"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "分别"
+    },
+    {
+      "type": "text",
+      "text": "相乘"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "  \n"
+    },
+    {
+      "type": "text",
+      "text": "17"
+    },
+    {
+      "type": "text",
+      "text": " ×"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "20"
+    },
+    {
+      "type": "text",
+      "text": " ="
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "340"
+    },
+    {
+      "type": "text",
+      "text": "  \n"
+    },
+    {
+      "type": "text",
+      "text": "17"
+    },
+    {
+      "type": "text",
+      "text": " ×"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "3"
+    },
+    {
+      "type": "text",
+      "text": " ="
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "51"
+    },
+    {
+      "type": "text",
+      "text": "  \n\n"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "第三步"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "相加"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "  \n"
+    },
+    {
+      "type": "text",
+      "text": "340"
+    },
+    {
+      "type": "text",
+      "text": " +"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "51"
+    },
+    {
+      "type": "text",
+      "text": " ="
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "391"
+    },
+    {
+      "type": "text",
+      "text": "  \n\n"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "第四"
+    },
+    {
+      "type": "text",
+      "text": "步"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "检查"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "  \n"
+    },
+    {
+      "type": "text",
+      "text": "我们"
+    },
+    {
+      "type": "text",
+      "text": "也可以用"
+    },
+    {
+      "type": "text",
+      "text": "另一个"
+    },
+    {
+      "type": "text",
+      "text": "方式"
+    },
+    {
+      "type": "text",
+      "text": "验"
+    },
+    {
+      "type": "text",
+      "text": "算"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "17"
+    },
+    {
+      "type": "text",
+      "text": " ×"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "23"
+    },
+    {
+      "type": "text",
+      "text": " ="
+    },
+    {
+      "type": "text",
+      "text": " ("
+    },
+    {
+      "type": "text",
+      "text": "10"
+    },
+    {
+      "type": "text",
+      "text": " +"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "7"
+    },
+    {
+      "type": "text",
+      "text": ")"
+    },
+    {
+      "type": "text",
+      "text": " ×"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "23"
+    },
+    {
+      "type": "text",
+      "text": "  \n"
+    },
+    {
+      "type": "text",
+      "text": "10"
+    },
+    {
+      "type": "text",
+      "text": " ×"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "23"
+    },
+    {
+      "type": "text",
+      "text": " ="
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "230"
+    },
+    {
+      "type": "text",
+      "text": "  \n"
+    },
+    {
+      "type": "text",
+      "text": "7"
+    },
+    {
+      "type": "text",
+      "text": " ×"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "23"
+    },
+    {
+      "type": "text",
+      "text": " ="
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "161"
+    },
+    {
+      "type": "text",
+      "text": "  \n"
+    },
+    {
+      "type": "text",
+      "text": "230"
+    },
+    {
+      "type": "text",
+      "text": " +"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "161"
+    },
+    {
+      "type": "text",
+      "text": " ="
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "391"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "结果"
+    },
+    {
+      "type": "text",
+      "text": "一致"
+    },
+    {
+      "type": "text",
+      "text": "。"
+    },
+    {
+      "type": "text",
+      "text": "  \n\n"
+    },
+    {
+      "type": "text",
+      "text": "所以"
+    },
+    {
+      "type": "text",
+      "text": "最终"
+    },
+    {
+      "type": "text",
+      "text": "答案是"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "  \n\n"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "391"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "usage",
+      "inputTokens": 24,
+      "outputTokens": 144
+    },
+    {
+      "type": "completed",
+      "finishReason": "stop"
+    }
+  ]
+}

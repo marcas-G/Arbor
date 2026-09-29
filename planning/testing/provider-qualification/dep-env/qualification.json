@@ -7,41 +7,163 @@
     "adapterId": "provider-openai",
     "providerSite": "https://api.deepseek.com/v1",
     "wireModelName": "deepseek-chat",
+    "modelRevision": "deepseek-chat (V3.x line, live 2026-09-29)",
+    "serverBuildId": "api.deepseek.com live",
     "protocolFamily": "openai-chat-completions-sse",
     "failureTaxonomy": "phase1-v2"
   },
-  "qualificationRunnerVersion": "qrun-1.0.0",
+  "qualificationRunnerVersion": "qrun-1.1.0",
   "capabilities": [
-    { "capability": "text", "status": "DECLARED", "evidence": [] },
-    { "capability": "streaming", "status": "PROVEN", "evidence": [
-      { "layer": "L2", "artifact": "conformance:A1" },
-      { "layer": "L3", "artifact": "planning/testing/core-capability/evidence/real-provider (three-run B-series)" }
-    ] },
-    { "capability": "tool-simple", "status": "PROVEN", "evidence": [
-      { "layer": "L1", "artifact": "conformance:A2" },
-      { "layer": "L2", "artifact": "conformance:A2" },
-      { "layer": "L3", "artifact": "planning/testing/core-capability/evidence/real-provider (B06-B09)" }
-    ] },
-    { "capability": "tool-fragmented-args", "status": "PROVEN", "evidence": [
-      { "layer": "L1", "artifact": "conformance:A2/A3" },
-      { "layer": "L2", "artifact": "conformance:A2/A3" },
-      { "layer": "L3", "artifact": "planning/testing/core-capability/evidence/real-provider (three-run)" }
-    ] },
-    { "capability": "tool-multiple", "status": "PROVEN", "evidence": [
-      { "layer": "L1", "artifact": "conformance:A2 parallel calls" },
-      { "layer": "L3", "artifact": "planning/testing/core-capability/evidence/real-provider (three-run)" }
-    ] },
-    { "capability": "reasoning", "status": "DECLARED", "evidence": [] },
-    { "capability": "reasoning-with-tools", "status": "DECLARED", "evidence": [] },
-    { "capability": "structured-output", "status": "PROVEN", "evidence": [
-      { "layer": "L3", "artifact": "planning/testing/core-capability/evidence/real-provider (agent-directive-v1 decode, three-run)" }
-    ] },
-    { "capability": "cache-usage", "status": "NOT_RUN", "evidence": [] },
-    { "capability": "provider-continuation", "status": "UNSUPPORTED", "evidence": [] },
-    { "capability": "reasoning-round-trip", "status": "NOT_RUN", "evidence": [] },
-    { "capability": "cancellation", "status": "PROVEN", "evidence": [
-      { "layer": "L2", "artifact": "conformance:A6" }
-    ] }
+    {
+      "capability": "text",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "layer": "L3",
+          "artifact": "planning/testing/provider-qualification/dep-env/l3/text-run{1,2,3}.json"
+        }
+      ]
+    },
+    {
+      "capability": "streaming",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "layer": "L2",
+          "artifact": "conformance:A1"
+        },
+        {
+          "layer": "L3",
+          "artifact": "planning/testing/provider-qualification/dep-env/l3/streaming-run{1,2,3}.json"
+        }
+      ]
+    },
+    {
+      "capability": "tool-simple",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "layer": "L1",
+          "artifact": "conformance:A2"
+        },
+        {
+          "layer": "L2",
+          "artifact": "conformance:A2"
+        },
+        {
+          "layer": "L3",
+          "artifact": "planning/testing/provider-qualification/dep-env/l3/tool-simple-run{1,2,3}.json"
+        }
+      ]
+    },
+    {
+      "capability": "tool-fragmented-args",
+      "status": "FAILED",
+      "evidence": [
+        {
+          "layer": "L1",
+          "artifact": "conformance:A2/A3 (controlled short-argument shards — passed)"
+        },
+        {
+          "layer": "L3",
+          "artifact": "INTERMITTENT FAILURE — first execution run1: provider wire carried a complete valid 702-char arguments JSON (finish_reason=tool_calls, verified via raw SSE capture) while the adapter emitted a truncated ~385-char argumentsJson; a subsequent full re-run passed 10/10. The three-run stability oracle is therefore NOT satisfied (flaky boundary). FIRST FAILING BOUNDARY: OpenAICompatibleFetchClient.readSse tool-call incremental reassembly drops trailing argument deltas under some real stream shapes. NOT fixed in D1 per scope guard — reported only."
+        }
+      ]
+    },
+    {
+      "capability": "tool-multiple",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "layer": "L1",
+          "artifact": "conformance:A2 parallel calls"
+        },
+        {
+          "layer": "L3",
+          "artifact": "planning/testing/provider-qualification/dep-env/l3/tool-multiple-run{1,2,3}.json"
+        }
+      ]
+    },
+    {
+      "capability": "reasoning",
+      "status": "UNSUPPORTED",
+      "evidence": [
+        {
+          "layer": "L3",
+          "artifact": "planning/testing/provider-qualification/dep-env/l3/reasoning-observation-run{1,2,3}.json — wire carries NO reasoning payload for deepseek-chat (0 reasoning chunks across 3 runs); protocol-level absence, not a runner gap"
+        }
+      ]
+    },
+    {
+      "capability": "reasoning-with-tools",
+      "status": "UNSUPPORTED",
+      "evidence": [
+        {
+          "layer": "L3",
+          "artifact": "derives from reasoning: no reasoning payload exists to combine with tools on this binding"
+        }
+      ]
+    },
+    {
+      "capability": "structured-output",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "layer": "L3",
+          "artifact": "planning/testing/provider-qualification/dep-env/l3/structured-output-run{1,2,3}.json"
+        }
+      ]
+    },
+    {
+      "capability": "cache-usage",
+      "status": "UNSUPPORTED",
+      "evidence": [
+        {
+          "layer": "L3",
+          "artifact": "planning/testing/provider-qualification/dep-env/l3/cache-usage-observation-run{1,2,3}.json + raw wire frame: usage exposes prompt_cache_hit_tokens=128 / prompt_cache_miss_tokens=175 / prompt_tokens_details.cached_tokens=128 — the ENDPOINT reports cache tokens, but the adapter declares reportsCacheTokens=false and does not extract them; canonical cache fields stay absent (never zero). UNSUPPORTED at the binding level; wire evidence retained for a future extraction-authorized phase."
+        }
+      ]
+    },
+    {
+      "capability": "provider-continuation",
+      "status": "UNSUPPORTED",
+      "evidence": [
+        {
+          "layer": "L3",
+          "artifact": "planning/testing/provider-qualification/dep-env/l3/continuation-observation-run{1,2,3}.json — chat/completions protocol carries no resumable cursor (0 continuation chunks across 3 runs); no cursor fabricated"
+        }
+      ]
+    },
+    {
+      "capability": "reasoning-round-trip",
+      "status": "UNSUPPORTED",
+      "evidence": [
+        {
+          "layer": "L3",
+          "artifact": "no provider-native reasoning payload exists on this binding to attach/replay (see reasoning observation); the Adapter→ReasoningAttachment→inject→next-request chain therefore cannot be exercised live — substrate correctness is covered at L1/L2"
+        }
+      ]
+    },
+    {
+      "capability": "cancellation",
+      "status": "PROVEN",
+      "evidence": [
+        {
+          "layer": "L2",
+          "artifact": "conformance:A6"
+        },
+        {
+          "layer": "L3",
+          "artifact": "planning/testing/provider-qualification/dep-env/l3/cancellation-run{1,2,3}.json — abort mid-stream stops production with no post-abort deltas"
+        }
+      ]
+    }
   ],
-  "qualifiedAt": "2026-09-29T04:30:00.000Z"
+  "qualifiedAt": "2026-09-29T05:20:00.000Z",
+  "l3LiveRun": {
+    "suite": "tests/capability/real-provider/p16-d1-live-qualification.test.ts",
+    "executedAt": "2026-09-29",
+    "results": "first execution 9/10 (tool-fragmented-args run1 truncated); full re-run 10/10 — the boundary is INTERMITTENT, so stability is not proven; tool-fragmented-args recorded FAILED",
+    "threeRunPolicy": "every oracle executed 3x against the live endpoint"
+  }
 }

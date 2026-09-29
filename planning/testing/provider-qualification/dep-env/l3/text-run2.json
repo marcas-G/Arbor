@@ -1,0 +1,70 @@
+{
+  "label": "text",
+  "run": 2,
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModel": "deepseek-chat",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "请用一句中文确认你收到了这条消息，并说明你的模型名称。"
+      }
+    ],
+    "tools": []
+  },
+  "wire": [
+    {
+      "type": "text",
+      "text": "收到"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "我是"
+    },
+    {
+      "type": "text",
+      "text": " Deep"
+    },
+    {
+      "type": "text",
+      "text": "Se"
+    },
+    {
+      "type": "text",
+      "text": "ek"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "最新"
+    },
+    {
+      "type": "text",
+      "text": "版"
+    },
+    {
+      "type": "text",
+      "text": "模型"
+    },
+    {
+      "type": "text",
+      "text": "。"
+    },
+    {
+      "type": "usage",
+      "inputTokens": 20,
+      "outputTokens": 11
+    },
+    {
+      "type": "completed",
+      "finishReason": "stop"
+    }
+  ]
+}
