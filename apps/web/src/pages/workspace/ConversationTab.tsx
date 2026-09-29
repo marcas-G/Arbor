@@ -128,7 +128,12 @@ export function ConversationTab({
         <Empty>无会话记录</Empty>
       ) : (
         <Virtuoso
-          style={{ height: "100%", overflowX: "hidden" }}
+          ref={virtuosoRef}
+          style={{
+            height: "min(64vh, 48rem)",
+            minHeight: "15rem",
+            overflowX: "hidden",
+          }}
           data={conversation.messages}
           computeItemKey={(_, message) => message.key}
           initialTopMostItemIndex={Math.max(
