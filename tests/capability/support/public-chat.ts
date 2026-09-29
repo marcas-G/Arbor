@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Context, Effect } from "effect";
+import { type Context, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type {
   OpenAISdkChunk,
@@ -279,12 +279,11 @@ export const withPublicConversationApp = async (
           // handle lifetime. Rebuilding the layer per call would open a
           // second SQLite connection and deadlock both writers on the same
           // database file.
-          const context =
-            yield* Effect.context<never>() as Effect.Effect<
-              Context.Context<never>,
-              never,
-              never
-            >;
+          const context = yield* Effect.context<never>() as Effect.Effect<
+            Context.Context<never>,
+            never,
+            never
+          >;
           const provideApp = <A, E>(
             effect: Effect.Effect<A, E, any>,
           ): Effect.Effect<A, E, never> =>

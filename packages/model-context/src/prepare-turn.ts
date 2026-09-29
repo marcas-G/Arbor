@@ -73,6 +73,10 @@ export interface PrepareTurnInput {
   /** P14 conversation: suppress catalogued executable tools (WAVE1 S05 —
    * the Human Input request exposes only the directive tool). */
   readonly includeTools?: boolean;
+  /** Content table (contentRef -> instruction body). When present,
+   * compiled instructions carry the resolved text instead of the bare
+   * reference (P3 `05` compile semantics). */
+  readonly instructionContents?: ReadonlyMap<string, string>;
 }
 
 export interface ModelContextService {
@@ -185,6 +189,10 @@ export const ModelContextLive: Layer.Layer<
               : {}),
             ...(input.providerRef !== undefined
               ? { providerRef: input.providerRef }
+              : {}),
+            ...(input.instructionContents !== undefined &&
+            input.instructionContents.size > 0
+              ? { instructionContents: input.instructionContents }
               : {}),
           },
           capability,

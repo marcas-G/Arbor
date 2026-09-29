@@ -27,28 +27,40 @@ export interface WorkFixture {
   readonly executionId: string;
 }
 
-/** Submit CreateProject + AssignWork through the public HTTP command face. */
+/** Submit CreateProject + AssignWork through the public HTTP command face.
+ * `options.workspaceId` targets a workspace other than the project root
+ * (e.g. a child workspace created through CreateChildWorkspace). */
 export const submitWork = async (
   handle: PublicAppHandle,
   project: PublicProject,
   objective: string,
+  options: {
+    readonly workspaceId?: string;
+    readonly expectedWorkspaceRevision?: number;
+    /** Skip the CreateProject step when the caller already created it
+     * (e.g. a child workspace had to be created in between). */
+    readonly createProject?: boolean;
+  } = {},
 ): Promise<WorkFixture> => {
-  const created = await handle.postCommand({
-    commandType: "CreateProject",
-    commandId: newCapabilityId("cmd"),
-    projectId: project.projectId,
-    actor: "user:capability-test",
-    issuedAt: new Date().toISOString(),
-    payload: project,
-  });
-  if (
-    created.status !== 200 ||
-    (created.payload.body as { resolution?: string } | undefined)
-      ?.resolution !== "Committed"
-  ) {
-    throw new Error(
-      `public CreateProject failed: ${created.status} ${JSON.stringify(created.payload)}`,
-    );
+  const workspaceId = options.workspaceId ?? project.rootWorkspaceId;
+  if (options.createProject !== false) {
+    const created = await handle.postCommand({
+      commandType: "CreateProject",
+      commandId: newCapabilityId("cmd"),
+      projectId: project.projectId,
+      actor: "user:capability-test",
+      issuedAt: new Date().toISOString(),
+      payload: project,
+    });
+    if (
+      created.status !== 200 ||
+      (created.payload.body as { resolution?: string } | undefined)
+        ?.resolution !== "Committed"
+    ) {
+      throw new Error(
+        `public CreateProject failed: ${created.status} ${JSON.stringify(created.payload)}`,
+      );
+    }
   }
   const workId = newCapabilityId("wrk");
   const assigned = await handle.postCommand({
@@ -59,8 +71,8 @@ export const submitWork = async (
     issuedAt: new Date().toISOString(),
     payload: {
       workId,
-      workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
+      workspaceId,
+      expectedWorkspaceRevision: options.expectedWorkspaceRevision ?? 0,
       objective,
       why: "capability L3 sentinel",
       constraints: [],
@@ -125,16 +137,16 @@ export const driveWorkExecution = (
   handle: PublicAppHandle,
   project: PublicProject,
   fixture: WorkFixture,
+  options: { readonly workspaceId?: string } = {},
 ): Promise<WorkDriveOutcome> =>
   handle.run(
     Effect.gen(function* () {
-      yield* evaluateAndSelect(
-        project.rootWorkspaceId as never,
-        capabilityPrincipal,
-        { _tag: "WorkSelected" },
-      );
+      const workspaceId = options.workspaceId ?? project.rootWorkspaceId;
+      yield* evaluateAndSelect(workspaceId as never, capabilityPrincipal, {
+        _tag: "WorkSelected",
+      });
       yield* admitExecution(
-        project.rootWorkspaceId as never,
+        workspaceId as never,
         parse(ExecutionId)(fixture.executionId),
         {
           _tag: "Work",

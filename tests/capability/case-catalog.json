@@ -117,9 +117,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
-        "testFile": null,
-        "blockingReason": "The adopted model-facing control route and BlobStore-to-Message body path are not integrated."
+        "expectedStatus": "PASS",
+        "testFile": "tests/capability/real-provider/b06-parent-child-communication.test.ts",
+        "blockingReason": "Executable sentinel: a real model in a child workspace sends a durable Report to the parent through arbor_send_message (I0 route). Parent-cognition consumption stays spec'd until the inbox-to-prompt promotion seam lands."
       }
     },
     {
@@ -137,9 +137,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
-        "testFile": null,
-        "blockingReason": "Model-driven proposal requires the unimplemented and unauthorized adopted control route; ResponsibilityHandoff remains deferred."
+        "expectedStatus": "PASS",
+        "testFile": "tests/capability/real-provider/b07-responsibility-delegation.test.ts",
+        "blockingReason": "Executable sentinel: a real model proposes a child workspace through arbor_propose_child_workspace (Wave 2); the human RecordDecision gate and the formation consumer stay in charge of creation."
       }
     },
     {
@@ -156,9 +156,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
-        "testFile": null,
-        "blockingReason": "Model-selected specialist action requires the unimplemented and unauthorized adopted control route."
+        "expectedStatus": "PASS",
+        "testFile": "tests/capability/real-provider/b08-specialist-delegation.test.ts",
+        "blockingReason": "Executable sentinel: a real model spawns an ExecutionBound specialist through arbor_spawn_specialist (Wave 2); lifecycle ends with the execution, no durable responsibility."
       }
     },
     {
@@ -176,9 +176,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
-        "testFile": null,
-        "blockingReason": "The current composition has no adopted model-facing dependency/deliverable action route."
+        "expectedStatus": "PASS",
+        "testFile": "tests/capability/real-provider/b09-dependency-deliverable.test.ts",
+        "blockingReason": "Executable sentinel: a real model declares a dependency through arbor_declare_dependency (Wave 2); satisfaction stays with the deterministic matcher (deliver/match coverage remains L2)."
       }
     },
     {
@@ -215,9 +215,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "BLOCKED_BY_IMPLEMENTATION",
-        "testFile": null,
-        "blockingReason": "Producer judgment through the adopted model-facing action route is not implemented/authorized; deterministic lifecycle gates are L2."
+        "expectedStatus": "PASS",
+        "testFile": "tests/capability/real-provider/b11-completion-acceptance.test.ts",
+        "blockingReason": "Executable sentinel: a real model claims completion through arbor_claim_completion (Wave 2); the Work stays Open and the verification/acceptance gates own the lifecycle."
       }
     },
     {
