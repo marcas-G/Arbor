@@ -70,6 +70,21 @@ proofs; **STOP if either E4a or E4b fails — no further provider family
 onboarding**. Scope guards: no real new provider family, zero agent-runtime
 diff, no Model Context semantic compilation change, no cache-usage/native
 continuation implementation, no CanonicalProviderEvent extension.
+**Gate B IMPLEMENTATION COMPLETE (2026-09-29)**: B-1..B-10 evidenced —
+registry/binding/env wiring landed; E1/E2 arch gates (tests/architecture/
+p16-architecture.test.ts) green; E3 conformance suite A1–A10 green on
+provider-openai / provider-fake / provider-testecho / provider-openai@
+dep-openai-compat-echo (41 specs; found & fixed two real adapter taxonomy
+defects: 403 pre-classified as invalid_api_key, transport TypeErrors
+pre-wrapped as 503); E4a compatible-provider proof exit 0 (dep-openai-
+compat-echo: catalog data + deployment fixture + qualification, zero
+core/adapter diff); E4b protocol-family proof exit 0 (provider-testecho
+in-process family; provider-runtime/model-context/agent-runtime/provider.ts
+diff empty); E5 qualification bound to binding fingerprints (p16fp_*) for
+dep-env (DeepSeek, stableRuns=3) and dep-openai-compat-echo (offline
+proof); pnpm check green (arch 19 / core 236 / web 31); capability
+gray-box green; scope guards re-verified (agent-runtime 0-line diff,
+CanonicalProviderEvent 0-line diff, all capability flags false).
 **SYSTEM IMPLEMENTATION COMPLETE** — **FINAL CLOSURE PASS**
 (`planning/final-system-closure.md`; `planning/results/ARBOR_FINAL.result.md`).
 P14 (Chat-First 主工作区对话面 — DID v1.16 G-A–G-F: SubmitHumanMessage +

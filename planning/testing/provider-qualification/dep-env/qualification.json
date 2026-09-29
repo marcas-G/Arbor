@@ -1,0 +1,39 @@
+{
+  "deploymentId": "dep-env",
+  "adapterId": "provider-openai",
+  "modelRef": "model-openai",
+  "bindingFingerprint": "p16fp_849097a97b1edcac",
+  "identity": {
+    "adapterId": "provider-openai",
+    "providerSite": "https://api.deepseek.com/v1",
+    "wireModelName": "deepseek-chat",
+    "protocolFamily": "openai-chat-completions-sse",
+    "failureTaxonomy": "phase1-v2"
+  },
+  "declaredCapability": {
+    "modelRef": "model-openai",
+    "family": "openai",
+    "contextWindow": 128000,
+    "outputCeiling": 4096,
+    "toolProtocol": "json",
+    "capabilities": [
+      "text",
+      "tools"
+    ]
+  },
+  "qualifiedCapability": {
+    "modelRef": "model-openai",
+    "family": "openai",
+    "contextWindow": 128000,
+    "outputCeiling": 4096,
+    "toolProtocol": "json",
+    "capabilities": [
+      "text",
+      "tools"
+    ]
+  },
+  "evidenceDir": "planning/testing/core-capability/evidence/real-provider",
+  "stableRuns": 3,
+  "conformanceRun": "conf-2026-09-29T02:41:38.084Z-cabe6199",
+  "qualifiedAt": "2026-09-29T03:30:00.000Z"
+}
