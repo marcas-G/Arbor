@@ -17,6 +17,10 @@ import {
 } from "./composition.js";
 import { evaluateAndSelect } from "./loop.js";
 import { ProductionDaemonService, TransportBoundary } from "./production.js";
+import {
+  findArborConfigFile,
+  providerDeploymentOfConfig,
+} from "./provider-config.js";
 import { makeStaticAuthenticator } from "./transport/auth.js";
 import { JOURNAL_WATERMARK_SQL } from "./transport/invalidation.js";
 import { startWebTransport } from "./transport/server.js";
@@ -27,7 +31,19 @@ export const main = (
   overrides: Partial<SliceConfig> = {},
 ): ReturnType<typeof buildSliceLayer> => {
   const authenticator = authenticatorFromEnv();
-  const deployment = deploymentFromEnv();
+  // Standard config file (arbor.config.json) is the primary provider source;
+  // legacy env vars remain a compatibility fallback; absent both = fake.
+  const configFile = findArborConfigFile();
+  if (configFile !== undefined && configFile.ok === false) {
+    throw new Error(
+      `invalid provider config ${configFile.error.path}: ${configFile.error.reason}`,
+    );
+  }
+  const fromConfig =
+    configFile !== undefined && configFile.ok === true
+      ? providerDeploymentOfConfig(configFile.config)
+      : undefined;
+  const deployment = fromConfig?.deployment ?? deploymentFromEnv();
   return buildSliceLayer({
     databaseFile: process.env.ARBOR_DB ?? "./arbor-slice.db",
     ...(process.env.ARBOR_PROJECT_ID !== undefined
@@ -39,6 +55,9 @@ export const main = (
           deployment,
           modelRef: deployment.modelRef,
           secretRef: deployment.secretRef,
+          ...(fromConfig?.secretStore !== undefined
+            ? { secretStore: fromConfig.secretStore }
+            : {}),
         }
       : {}),
     ...overrides,
