@@ -1,7 +1,10 @@
 # P16 Extensibility Proof Plan — 机械验收方案 (Gate B 定义)
 
 **前置**: `01-provider-extension-contracts.md` FROZEN 且评审 Blocking=0。
-**本文档定义**: "新增一个兼容 Provider 不改 core"的**机械可判定**验收，以及 Gate B 的 exit criteria。Gate B 启动须治理方显式授权。
+**Gate B 裁决（治理方，2026-09-29）**: Design Closure = ACCEPTED；implementation = AUTHORIZED。两项澄清并入 acceptance contract：
+1. E4 拆分为 **E4a Compatible Provider Extensibility**（同协议族新增 Provider = 纯 profile/model/deployment/qualification 数据与测试，不改 core 或 ProtocolAdapter）与 **E4b Protocol Extensibility**（新增协议族 = 仅新增 ProtocolAdapter implementation + registry 注册，不改 Provider Runtime / Model Context / Agent Runtime / CanonicalProviderEvent）；弃用"纯数据新增 protocol family"表述。
+2. CapabilityQualification 绑定 `ResolvedModelBinding` fingerprint 并记录完整身份/版本（model revision、server build、parser profile 可获得时纳入）；冻结 INV-P16-9（declared ≠ qualified ⇒ FAIL）与 INV-P16-10（evidence 不修改声明面）。
+**Scope guards（重申）**: 不接真实新 Provider；不修改 Agent Runtime；不扩 Model Context semantic compilation；不实现 cache usage / native continuation；不扩大 CanonicalProviderEvent。**E4a/E4b 任一无法成立时 STOP，不进入后续 Provider 扩族。**
 
 ---
 
@@ -75,35 +78,68 @@ packages/testkit/**（测试替身）
 **跑法**: `node scripts/testing/run-provider-conformance.mjs --adapter <moduleId>`——每个 adapter 包导出标准 harness 入口（`conformanceTarget(): ProtocolAdapter + transportDoubles`）。**新家族通过同一 suite 全绿 = 机械意义上的"兼容 Provider"**（INV-P16-5 的 Q1）。
 **判据**: provider-openai 与 provider-fake 双基线全绿；proof 家族（见 E4）全绿。
 
-### E4 不改 core 证明（proof-by-construction，核心验收）
+### E4 扩展性证明（proof-by-construction，核心验收；Gate B acceptance 澄清 1 拆分）
 
-两个组件：
+扩展性有两个**不同**的命题，必须分别证明。~~"纯数据新增一个新 protocol family"~~ 的表述不成立，弃用。
 
-**(a) 脚本**: `scripts/testing/verify-provider-extension.mjs`
+**脚本**: `scripts/testing/verify-provider-extension.mjs`（两命题共用；`--mode compatible|protocol`）
+
 ```
-用法: node scripts/testing/verify-provider-extension.mjs --base <commit> --head <commit> [--family <id>]
-判据: git diff --name-only base..head 的路径集 D：
-      D ⊆ (adapters/provider-<family>/** ∪ WL ∪ tests/** ∪ scripts/** ∪ docs/** ∪ planning/** ∪ *.md ∪ package.json/pnpm-lock 只读边)
-      且 (D ∩ CORE) = ∅            → exit 0
-      否则列出违规路径              → exit 1
+用法: node scripts/testing/verify-provider-extension.mjs --mode <compatible|protocol> --base <commit> --head <commit> [--family <id>]
+判据: D = git diff --name-only base..head 的路径集
+      exit 0 ⇔ D ⊆ 允许域 且 D ∩ 禁止域 = ∅；否则列出违规路径 exit 1
 ```
 
-**(b) Proof 家族**: Gate B 实现一个 `provider-testecho`（in-process 确定性家族，**非真实 provider**，遵守 Scope guard 1）：回显请求摘要的极简 adapter。验收动作：
-1. 以 Gate B 起点 commit 为 base，testecho 完成点为 head，跑 (a) 脚本 → exit 0。
-2. testecho 通过 E3 conformance 全绿。
-3. E1/E2 架构测试在 head 上绿。
-4. `git diff base..head -- packages/agent-runtime` 输出为空（Scope guard 2 的直接证据）。
+#### E4a Compatible Provider Extensibility（同协议族新增 Provider）
 
-三者同时成立 = **命题 P 成立的构造性证明**（存在一个真实完成的新增家族，其 diff 满足全部机械约束）。
+**命题 P-a**：在**已有协议族**下新增一个 Provider（新供应商端点/新模型，复用既有 ProtocolAdapter），所需全部变更为 **profile / model / deployment / qualification 数据与测试**：
 
-**判据**: 脚本 exit 0 + conformance 绿 + arch 绿 + agent-runtime 空 diff。
+```
+允许域:  WL（registry 表 + catalog 数据 + deployment 数据文件）
+         tests/**, scripts/**, docs/**, planning/**, *.md
+禁止域:  CORE 全集（§0）∪ adapters/**（含所复用的 adapter——同族新增必须零 adapter diff）
+```
+
+**Proof 主体（Gate B）**: `dep-openai-compat-echo` —— 一个 openai-chat-completions-sse 族的新 provider：新 `ModelProfile`（model-openai-compat-echo）+ 新 `ModelDeployment`（dep-openai-compat-echo，fake endpoint 数据）+ 离线 qualification 记录 + conformance 测试（走 provider-openai adapter + 注入 transport）。**base = C1（B-1..B-5+脚本完成点），head = C2**：
+1. verify 脚本 `--mode compatible --base C1 --head C2` → exit 0
+2. 该 deployment 的 conformance 用例绿（E3 同套件）
+3. `--check-qualification --deployment-id dep-openai-compat-echo` → exit 0
+
+#### E4b Protocol Extensibility（新增协议族）
+
+**命题 P-b**：新增一个**真正的新协议族**，所需全部变更为**新增 ProtocolAdapter implementation + registry 注册（WL 一行）+ 测试**：
+
+```
+允许域:  adapters/provider-<family>/**
+         WL（registry 表追加一行；catalog 可选数据条目）
+         tests/**, scripts/**, docs/**, planning/**, *.md, workspace 配置（package.json/pnpm-workspace.yaml/pnpm-lock.yaml）
+禁止域:  packages/provider-runtime/**, packages/model-context/**, packages/agent-runtime/**,
+         packages/ports/src/provider.ts（CanonicalProviderEvent 及全部既有 port 合同）,
+         其余 CORE
+```
+
+（注：E4b 的 base 取 C2——ports 的 `provider-extension.ts` 等 Gate B 基础设施在 C1 已落地，属命题外的前置。）
+
+**Proof 主体（Gate B）**: `provider-testecho` —— in-process 确定性回显家族（**非真实 provider**，遵守 Scope guard 1），声明新 `protocolFamily: "testecho-echo-v1"`。**base = C2，head = C3**：
+1. verify 脚本 `--mode protocol --base C2 --head C3 --family provider-testecho` → exit 0
+2. testecho 通过 E3 conformance 全绿（作为新家族的机械"兼容"判据）
+3. E1/E2 在 head 上绿
+4. `git diff C2..C3 -- packages/agent-runtime packages/provider-runtime packages/model-context packages/ports/src/provider.ts` 输出为空（禁止域直接证据）
+
+**两命题任一不成立（脚本 exit 1 或 conformance/arch 不绿）⇒ STOP：Gate B 不得关闭，不进入后续 Provider 扩族。**
 
 ### E5 资格证据（deployment 级）
 
-生产 deployment（当前唯一：DeepSeek 端点）必须有：
+生产 deployment（当前唯一：DeepSeek 端点 dep-env）必须有：
 1. three-run evidence（现有 `planning/testing/core-capability/evidence/real-provider/**`，B 系列已有 ≥3 份/用例）。
-2. `verify-provider-extension.mjs --check-qualification --deployment-id <id>`：机械检查 evidence 目录存在性 + provider-config 与 `ModelDeployment` 字段一致性 + conformance run 引用存在。
-**判据**: 脚本 exit 0。
+2. `verify-provider-extension.mjs --check-qualification --deployment-id <id>`：机械检查——
+   - `planning/testing/provider-qualification/<deploymentId>/qualification.json` 存在；
+   - `identity` 字段与当前 deployment/adapter/profile 一致；
+   - `bindingFingerprint` 与当前 ResolvedModelBinding 重算值一致（不一致 ⇒ 证据过期 FAIL）；
+   - `declaredCapability` = 当前 ModelProfile.capability（不一致 ⇒ FAIL，INV-P16-9 前半）；
+   - `declaredCapability` = `qualifiedCapability`（不一致 ⇒ FAIL，INV-P16-9）；
+   - `conformanceRun` 引用存在；`stableRuns ≥ 3`（真实端点 deployment）。
+**判据**: 脚本 exit 0。离线 proof deployment（dep-openai-compat-echo）Q2 按 `in-process/fake endpoint` 语义豁免 three-run（identity.providerSite 声明非真实端点）。
 
 ---
 
@@ -115,8 +151,10 @@ B-2  ProviderRegistry 于 Composition Root 落地；selectProviderLayer 由 regi
 B-3  providerFromEnv 正式化为 ModelDeployment 构造（env 映射按 01 §5；缺省回落 fake 不变）
 B-4  E1/E2 落地（tests/architecture/p16-architecture.test.ts）且绿
 B-5  E3 落地（tests/provider-conformance/ + run 脚本）；provider-openai、provider-fake 双基线全绿
-B-6  E4 落地（verify-provider-extension.mjs + provider-testecho proof 家族）；base/head 验收 exit 0；agent-runtime diff 为空
-B-7  E5 落地（--check-qualification 对 dep-env/DeepSeek 通过）
+B-6  E4a/E4b 落地（verify-provider-extension.mjs + dep-openai-compat-echo 同族 proof + provider-testecho 新族 proof）；
+     E4a: --mode compatible --base C1 --head C2 exit 0；E4b: --mode protocol --base C2 --head C3 exit 0；
+     conformance/arch 绿；禁止域 diff 为空。E4a/E4b 任一不成立 ⇒ STOP
+B-7  E5 落地（CapabilityQualification + bindingFingerprint + --check-qualification 对 dep-env 与 dep-openai-compat-echo 通过）
 B-8  pnpm check 全绿（lint + typecheck + architecture + 全部 test + web）
 B-9  capability B 系列（B01–B14）无回归
 B-10 Scope guards 复核：无真实新家族接入；无 cache/continuation 实现；agent-runtime diff 为空
