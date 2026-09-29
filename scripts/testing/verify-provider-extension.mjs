@@ -74,12 +74,14 @@ const diffPaths = (base, head) =>
 const modeCompatible = (base, head) => {
   const paths = diffPaths(base, head);
   const familyAdapter = /^adapters\//;
-  const violations = paths.filter(
-    (path) =>
-      inSet(path, CORE) ||
-      (familyAdapter.test(path) && !WL.some((re) => re.test(path))) ||
-      familyAdapter.test(path),
-  );
+  const violations = paths.filter((path) => {
+    // WL declaration-only data files come first (P16 02 §0).
+    if (WL.some((re) => re.test(path))) return false;
+    // No core, no adapter code of any family.
+    if (inSet(path, CORE)) return true;
+    if (familyAdapter.test(path)) return true;
+    return false;
+  });
   return { paths, violations };
 };
 

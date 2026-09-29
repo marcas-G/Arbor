@@ -1,0 +1,34 @@
+{
+  "deploymentId": "dep-openai-compat-echo",
+  "adapterId": "provider-openai",
+  "modelRef": "model-openai-compat-echo",
+  "bindingFingerprint": "p16fp_2f09af0f07060114",
+  "identity": {
+    "adapterId": "provider-openai",
+    "providerSite": "http://compat-echo.test/v1",
+    "wireModelName": "echo-1",
+    "protocolFamily": "openai-chat-completions-sse",
+    "failureTaxonomy": "phase1-v2"
+  },
+  "declaredCapability": {
+    "modelRef": "model-openai-compat-echo",
+    "family": "openai-compat",
+    "contextWindow": 64000,
+    "outputCeiling": 2048,
+    "toolProtocol": "json",
+    "capabilities": ["text", "tools"]
+  },
+  "qualifiedCapability": {
+    "modelRef": "model-openai-compat-echo",
+    "family": "openai-compat",
+    "contextWindow": 64000,
+    "outputCeiling": 2048,
+    "toolProtocol": "json",
+    "capabilities": ["text", "tools"]
+  },
+  "evidenceDir": "planning/testing/provider-qualification/dep-openai-compat-echo",
+  "stableRuns": 0,
+  "conformanceRun": "conf-e4a-offline",
+  "qualifiedAt": "2026-09-29T03:00:00.000Z",
+  "offlineProofDeployment": true
+}

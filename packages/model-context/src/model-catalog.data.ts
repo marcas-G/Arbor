@@ -34,5 +34,22 @@ export const DEFAULT_MODEL_CATALOG: ModelCatalog = {
       },
       priceSheetVersion: "openai-2026-01",
     },
+    {
+      // P16 E4a proof-of-construction: a compatible provider under the
+      // EXISTING openai-chat-completions-sse family is pure catalog data +
+      // a deployment fixture + qualification evidence — zero core/adapter
+      // code (verify-provider-extension.mjs --mode compatible proves it).
+      modelRef: "model-openai-compat-echo",
+      adapterId: "provider-openai",
+      capability: {
+        modelRef: "model-openai-compat-echo",
+        family: "openai-compat",
+        contextWindow: 64000,
+        outputCeiling: 2048,
+        toolProtocol: "json",
+        capabilities: ["text", "tools"],
+      },
+      knownDeployments: ["dep-openai-compat-echo"],
+    },
   ],
 };
