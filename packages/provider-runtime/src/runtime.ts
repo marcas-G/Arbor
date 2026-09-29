@@ -1,29 +1,569 @@
 import {
   type CanonicalProviderEvent,
   Clock,
+  IdGenerator,
+  PROVIDER_FAILURE_KINDS,
+  type ProviderAttemptObservation,
+  type ProviderCancellationSignal,
+  type ProviderContinuationCheckpoint,
+  type ProviderExecutionContext,
+  type ProviderExecutionTimeout,
   type ProviderFailure,
+  type ProviderFailureKind,
   ProviderPort,
   type ProviderRunInput,
+  type ProviderRunResult,
   ProviderRuntime,
+  type ProviderRuntimeExecutionPolicy,
   type ProviderRuntimeService,
   ProviderTurnStore,
-  providerFailureDisposition,
+  providerRetryCauseFromAttempt,
   SecretStorePort,
+  type TransactionOperationalFailure,
   TransactionPort,
+  type UnsettledProviderTurn,
 } from "@arbor/ports";
-import { Effect, Layer, Stream } from "effect";
+import { Cause, Effect, Layer, Option, Result, Stream } from "effect";
+import {
+  DEFAULT_PROVIDER_EXECUTION_POLICY,
+  decideProviderRetry,
+  mergeAttemptObservation,
+  noAttemptObservation,
+  resolveProviderExecutionPolicy,
+  unknownAttemptObservation,
+} from "./policy.js";
 
-/** P3 `06` §2 / P12 `12` §5 (TR-4): the single frozen retry disposition for
- * the closed `ProviderFailureKind` union. */
-export const isRetryable = (failure: ProviderFailure): boolean =>
-  providerFailureDisposition(failure.kind) === "retryable";
+export interface ProviderRuntimeConfig {
+  readonly systemDefault?: ProviderRuntimeExecutionPolicy;
+  readonly providerDefault?: Partial<ProviderRuntimeExecutionPolicy>;
+}
+
+type AttemptResult =
+  | {
+      readonly _tag: "Success";
+      readonly events: ReadonlyArray<CanonicalProviderEvent>;
+      readonly finishReason: string;
+      readonly usageJson: string;
+    }
+  | { readonly _tag: "Failure"; readonly failure: ProviderFailure }
+  | {
+      readonly _tag: "Timeout";
+      readonly phase: ProviderExecutionTimeout["phase"];
+    };
+
+const timeoutFailure = (
+  phase: ProviderExecutionTimeout["phase"],
+): ProviderExecutionTimeout => ({ _tag: "ProviderExecutionTimeout", phase });
+
+const unknownFailure = (safeDiagnostic: string): ProviderFailure => ({
+  _tag: "ProviderFailure",
+  kind: "UnknownProviderFailure",
+  taxonomyVersion: "phase1-v2",
+  safeDiagnostic,
+});
+
+const protocolFailure = (safeDiagnostic: string): ProviderFailure => ({
+  _tag: "ProviderFailure",
+  kind: "ProtocolViolation",
+  taxonomyVersion: "phase1-v2",
+  safeDiagnostic,
+});
+
+const cancelledFailure = (): ProviderFailure => ({
+  _tag: "ProviderFailure",
+  kind: "Cancelled",
+  taxonomyVersion: "phase1-v2",
+  safeDiagnostic: "provider-call-cancelled",
+});
+
+const stoppedRecoveryDecision = (reason: string) =>
+  ({
+    safety: "UnsafeReplay",
+    decision: "Stop",
+    strategy: null,
+    reason,
+  }) as const;
+
+const initialAttemptObservation = (): ProviderAttemptObservation => ({
+  responseStarted: false,
+  canonicalEventEmitted: false,
+  consumerVisibleOutput: false,
+  toolCallProposed: false,
+  continuationAvailable: false,
+  externalEffectPossible: null,
+});
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null;
+
+const isCanonicalProviderEvent = (
+  value: unknown,
+): value is CanonicalProviderEvent => {
+  if (!isRecord(value) || typeof value._tag !== "string") return false;
+  switch (value._tag) {
+    case "TurnStarted":
+      return (
+        typeof value.providerTurnId === "string" &&
+        Number.isInteger(value.attemptNo) &&
+        typeof value.modelRef === "string"
+      );
+    case "TextDelta":
+    case "ReasoningDelta":
+      return typeof value.text === "string";
+    case "ToolCallProposed":
+      return (
+        typeof value.callRef === "string" &&
+        typeof value.toolName === "string" &&
+        typeof value.argumentsJson === "string"
+      );
+    case "UsageReported":
+      return (
+        typeof value.inputTokens === "number" &&
+        Number.isFinite(value.inputTokens) &&
+        typeof value.outputTokens === "number" &&
+        Number.isFinite(value.outputTokens) &&
+        (value.cacheReadTokens === undefined ||
+          (typeof value.cacheReadTokens === "number" &&
+            Number.isFinite(value.cacheReadTokens))) &&
+        (value.cacheWriteTokens === undefined ||
+          (typeof value.cacheWriteTokens === "number" &&
+            Number.isFinite(value.cacheWriteTokens)))
+      );
+    case "ContinuationState":
+      return typeof value.stateRef === "string";
+    case "TurnCompleted":
+      return (
+        value.finishReason === "Stop" ||
+        value.finishReason === "MaxOutputTokens" ||
+        value.finishReason === "ToolCall" ||
+        value.finishReason === "ContentFilter"
+      );
+    case "TurnFailed":
+      return (
+        typeof value.failureKind === "string" &&
+        (PROVIDER_FAILURE_KINDS as ReadonlyArray<string>).includes(
+          value.failureKind,
+        )
+      );
+    default:
+      return false;
+  }
+};
+
+const decodeContinuationPrefix = (
+  checkpoint: ProviderContinuationCheckpoint,
+  providerTurnId: ProviderExecutionContext["providerTurnId"],
+  attemptNo: number,
+): ReadonlyArray<CanonicalProviderEvent> | null => {
+  try {
+    const events: unknown = JSON.parse(checkpoint.canonicalEventPrefixJson);
+    if (
+      !Array.isArray(events) ||
+      events.length === 0 ||
+      !events.every(isCanonicalProviderEvent) ||
+      events[0]?._tag !== "TurnStarted" ||
+      events[0].providerTurnId !== providerTurnId ||
+      events[0].attemptNo >= attemptNo ||
+      events.some(
+        (event) =>
+          event._tag === "TurnCompleted" || event._tag === "TurnFailed",
+      )
+    ) {
+      return null;
+    }
+    return events;
+  } catch {
+    return null;
+  }
+};
+
+const observationForContinuation = (
+  checkpoint: ProviderContinuationCheckpoint,
+): ProviderAttemptObservation => ({
+  // The new Attempt has not received a response or emitted a new canonical
+  // event yet. The durable checkpoint separately carries the prior segment's
+  // cursor/prefix proof, so another interruption can still resume safely.
+  responseStarted: false,
+  canonicalEventEmitted: false,
+  consumerVisibleOutput:
+    checkpoint.deliveredPosition !== null && checkpoint.deliveredPosition > 0,
+  toolCallProposed: false,
+  continuationAvailable: true,
+  externalEffectPossible: false,
+});
+
+const semanticOutputVisible = (
+  events: ReadonlyArray<CanonicalProviderEvent>,
+): boolean =>
+  events.some(
+    (event) =>
+      event._tag === "TextDelta" ||
+      event._tag === "ReasoningDelta" ||
+      event._tag === "ToolCallProposed",
+  );
+
+const parseManifestIdentity = (
+  input: ProviderRunInput,
+): Effect.Effect<
+  {
+    readonly compiledRequestHash: string;
+  },
+  ProviderFailure
+> =>
+  Effect.try({
+    try: () => {
+      const manifest = JSON.parse(input.manifestJson) as Record<
+        string,
+        unknown
+      >;
+      if (
+        manifest.providerTurnId !== input.providerTurnId ||
+        manifest.executionId !== input.executionId ||
+        manifest.sessionId !== input.sessionId ||
+        manifest.contextEpoch !== input.contextEpoch ||
+        manifest.modelRef !== input.modelRef ||
+        manifest.outputContractRef !== input.outputContractRef ||
+        typeof manifest.compiledRequestHash !== "string"
+      ) {
+        throw new Error("manifest identity mismatch");
+      }
+      return { compiledRequestHash: manifest.compiledRequestHash };
+    },
+    catch: () => unknownFailure("model-context-manifest-invalid"),
+  });
+
+const awaitAbort = (
+  signal: ProviderCancellationSignal,
+): Effect.Effect<"Cancelled"> =>
+  Effect.callback<"Cancelled">((resume) => {
+    const onAbort = () => resume(Effect.succeed("Cancelled" as const));
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    return Effect.sync(() => signal.removeEventListener("abort", onAbort));
+  });
+
+const timeoutPhase = (
+  responseStarted: boolean,
+  firstDataEventSeen: boolean,
+): ProviderExecutionTimeout["phase"] =>
+  !responseStarted
+    ? "ConnectTimeout"
+    : firstDataEventSeen
+      ? "StreamIdleTimeout"
+      : "FirstEventTimeout";
+
+const phaseTimeoutMs = (
+  policy: ProviderRuntimeExecutionPolicy,
+  phase: ProviderExecutionTimeout["phase"],
+): number => {
+  switch (phase) {
+    case "ConnectTimeout":
+      return policy.connectTimeoutMs;
+    case "FirstEventTimeout":
+      return policy.firstEventTimeoutMs;
+    case "StreamIdleTimeout":
+      return policy.streamIdleTimeoutMs;
+    case "TurnDeadline":
+      return policy.turnTimeoutMs;
+  }
+};
+
+const consumeAttempt = (
+  provider: import("@arbor/ports").ProviderPortService,
+  input: ProviderRunInput,
+  context: ProviderExecutionContext,
+  callerCancellationSignal: ProviderCancellationSignal | undefined,
+  policy: ProviderRuntimeExecutionPolicy,
+  deadlineAtMs: number,
+  deps: {
+    readonly store: import("@arbor/ports").ProviderTurnStoreService;
+    readonly tx: import("@arbor/ports").TransactionPortService;
+    readonly clock: import("@arbor/ports").ClockService;
+  },
+  abortTransport: () => void,
+  updateState: (input: {
+    readonly observation: ProviderAttemptObservation;
+    readonly events: ReadonlyArray<CanonicalProviderEvent>;
+    readonly checkpoint: ProviderContinuationCheckpoint | null;
+  }) => void,
+): Effect.Effect<
+  AttemptResult,
+  ProviderFailure | TransactionOperationalFailure
+> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let checkpoint = context.continuationCheckpoint ?? null;
+      const prefix =
+        checkpoint === null
+          ? []
+          : decodeContinuationPrefix(
+              checkpoint,
+              context.providerTurnId,
+              context.attemptNo,
+            );
+      if (prefix === null) {
+        return {
+          _tag: "Failure",
+          failure: unknownFailure("provider-continuation-checkpoint-invalid"),
+        } as const;
+      }
+      const source = provider.runTurn({ request: input.request, context });
+      const pull = yield* Stream.toPull(source);
+      const events: Array<CanonicalProviderEvent> = [...prefix];
+      let observation =
+        checkpoint === null
+          ? initialAttemptObservation()
+          : observationForContinuation(checkpoint);
+      const attemptStartedAtMs = Date.now();
+      let responseStartedAtMs: number | null = null;
+      let firstDataAtMs: number | null = null;
+      let timeoutTriggeredPhase: ProviderExecutionTimeout["phase"] | null =
+        null;
+      let finishReason = "Stop";
+      let completionSeen = false;
+      let usage: CanonicalProviderEvent | undefined;
+
+      const persist = (nextObservation: ProviderAttemptObservation) =>
+        Effect.gen(function* () {
+          yield* deps.tx.transact(
+            deps.store.updateAttemptObservation(
+              input.providerTurnId,
+              context.attemptNo,
+              nextObservation,
+              JSON.stringify(events),
+              0,
+              checkpoint,
+              yield* deps.clock.now(),
+            ),
+          );
+          observation = nextObservation;
+          updateState({ observation, events, checkpoint });
+        });
+
+      const callerIsCancelled = () =>
+        callerCancellationSignal?.aborted === true;
+
+      if (checkpoint !== null) {
+        yield* persist(observation);
+      }
+
+      while (true) {
+        if (callerIsCancelled()) {
+          return yield* Effect.interrupt;
+        }
+        const now = Date.now();
+        const remainingTurnMs = deadlineAtMs - now;
+        if (remainingTurnMs <= 0) {
+          return { _tag: "Timeout", phase: "TurnDeadline" };
+        }
+
+        const phase = timeoutPhase(
+          responseStartedAtMs !== null,
+          firstDataAtMs !== null,
+        );
+        const phaseStart =
+          phase === "ConnectTimeout"
+            ? attemptStartedAtMs
+            : phase === "FirstEventTimeout"
+              ? (responseStartedAtMs as number)
+              : (firstDataAtMs as number);
+        const remainingPhaseMs =
+          phaseTimeoutMs(policy, phase) - (now - phaseStart);
+        if (remainingPhaseMs <= 0) {
+          return { _tag: "Timeout", phase };
+        }
+        const timeoutMs = Math.max(
+          1,
+          Math.min(remainingPhaseMs, remainingTurnMs),
+        );
+        const deadlineWins = remainingTurnMs <= remainingPhaseMs;
+        const pullEffect = Effect.map(Effect.result(pull), (result) => ({
+          _tag: "Pulled" as const,
+          result,
+        }));
+        const timeoutEffect = Effect.sleep(timeoutMs).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              timeoutTriggeredPhase = deadlineWins ? "TurnDeadline" : phase;
+              abortTransport();
+            }),
+          ),
+          Effect.as({ _tag: "Timeout" as const }),
+        );
+        const cancelEffect =
+          callerCancellationSignal === undefined
+            ? Effect.never.pipe(Effect.as({ _tag: "Cancelled" as const }))
+            : awaitAbort(callerCancellationSignal).pipe(
+                Effect.as({ _tag: "Cancelled" as const }),
+              );
+        const pulled = yield* Effect.raceFirst(
+          pullEffect,
+          Effect.raceFirst(timeoutEffect, cancelEffect),
+        );
+        if (pulled._tag === "Timeout") {
+          return {
+            _tag: "Timeout",
+            phase: deadlineWins ? "TurnDeadline" : phase,
+          };
+        }
+        if (pulled._tag === "Cancelled") {
+          return yield* Effect.interrupt;
+        }
+        if (Result.isFailure(pulled.result)) {
+          const error = pulled.result.failure;
+          if (Cause.isDone(error)) break;
+          if (timeoutTriggeredPhase !== null) {
+            return { _tag: "Timeout", phase: timeoutTriggeredPhase };
+          }
+          if (callerIsCancelled()) {
+            return { _tag: "Failure", failure: cancelledFailure() };
+          }
+          return { _tag: "Failure", failure: error as ProviderFailure };
+        }
+
+        for (const event of pulled.result.success) {
+          if (event._tag === "Observation") {
+            let nextObservation: ProviderAttemptObservation;
+            try {
+              nextObservation = mergeAttemptObservation(
+                observation,
+                event.delta,
+              );
+            } catch {
+              return {
+                _tag: "Failure",
+                failure: unknownFailure("adapter-observation-invalid"),
+              };
+            }
+            if (event.continuationCheckpoint !== undefined) {
+              checkpoint = {
+                ...event.continuationCheckpoint,
+                canonicalEventPrefixJson: JSON.stringify(events),
+                deliveredPosition: 0,
+              };
+            }
+            yield* persist(nextObservation);
+            if (event.delta.responseStarted === true) {
+              responseStartedAtMs ??= Date.now();
+            }
+            continue;
+          }
+
+          const canonical = event.event;
+          if (canonical._tag === "TurnStarted" && checkpoint !== null) {
+            // TurnStarted is attempt-local transport metadata. The logical
+            // output already contains the original start from the durable
+            // prefix, so do not return a duplicate start for the resumed call.
+            if (canonical.providerTurnId !== context.providerTurnId) {
+              return {
+                _tag: "Failure",
+                failure: protocolFailure(
+                  "resumed-turn-start-identity-mismatch",
+                ),
+              };
+            }
+            continue;
+          }
+          if (canonical._tag === "TurnCompleted") {
+            if (completionSeen) {
+              return {
+                _tag: "Failure",
+                failure: protocolFailure("duplicate-turn-completion"),
+              };
+            }
+            completionSeen = true;
+          }
+          const nextEvents = [...events, canonical];
+          try {
+            // Process-local presentation observer: isolated from provider
+            // success semantics (same guarantee as runTurn-level taps).
+            input.onProgress?.({
+              _tag: "ProviderEvent",
+              providerTurnId: context.providerTurnId,
+              attemptNo: context.attemptNo,
+              event: canonical,
+            });
+          } catch {
+            // A transient UI observer must never change provider semantics.
+          }
+          let nextObservation = observation;
+          if (canonical._tag !== "TurnStarted") {
+            try {
+              nextObservation = mergeAttemptObservation(observation, {
+                canonicalEventEmitted: true,
+                ...(canonical._tag === "ToolCallProposed"
+                  ? { toolCallProposed: true }
+                  : {}),
+                ...(canonical._tag === "ContinuationState"
+                  ? { continuationAvailable: true }
+                  : {}),
+              });
+            } catch {
+              return {
+                _tag: "Failure",
+                failure: unknownFailure("canonical-event-observation-invalid"),
+              };
+            }
+          }
+          if (canonical._tag === "UsageReported") usage = canonical;
+          if (canonical._tag === "TurnCompleted") {
+            finishReason = canonical.finishReason;
+          }
+          if (canonical._tag === "ContinuationState" && checkpoint !== null) {
+            checkpoint = {
+              ...checkpoint,
+              canonicalEventPrefixJson: JSON.stringify(nextEvents),
+            };
+          }
+          // Persist the observation and event prefix before accepting the
+          // event into the successful result visible to the Agent Runtime.
+          const priorEvents = events.splice(0, events.length, ...nextEvents);
+          try {
+            yield* persist(nextObservation);
+          } catch (error) {
+            events.splice(0, events.length, ...priorEvents);
+            return yield* Effect.fail(error as ProviderFailure);
+          }
+          if (canonical._tag !== "TurnStarted") {
+            firstDataAtMs ??= Date.now();
+          }
+        }
+      }
+
+      if (!completionSeen) {
+        return {
+          _tag: "Failure",
+          failure: protocolFailure("provider-stream-missing-turn-completion"),
+        };
+      }
+
+      const visibleObservation = mergeAttemptObservation(observation, {
+        consumerVisibleOutput: semanticOutputVisible(events),
+      });
+      yield* persist(visibleObservation);
+      return {
+        _tag: "Success",
+        events,
+        finishReason,
+        usageJson: JSON.stringify(usage ?? {}),
+      };
+    }),
+  );
 
 export const ProviderRuntimeLive = (
-  maxAttempts = 3,
+  config: ProviderRuntimeConfig = {},
 ): Layer.Layer<
   ProviderRuntime,
   never,
-  ProviderPort | ProviderTurnStore | TransactionPort | Clock | SecretStorePort
+  | ProviderPort
+  | ProviderTurnStore
+  | TransactionPort
+  | Clock
+  | SecretStorePort
+  | IdGenerator
 > =>
   Layer.effect(
     ProviderRuntime,
@@ -32,8 +572,8 @@ export const ProviderRuntimeLive = (
       const store = yield* ProviderTurnStore;
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
+      const ids = yield* IdGenerator;
       const secretStore = yield* SecretStorePort;
-
       const notifyProgress = (
         input: ProviderRunInput,
         event: Parameters<NonNullable<ProviderRunInput["onProgress"]>>[0],
@@ -50,130 +590,689 @@ export const ProviderRuntimeLive = (
         input: ProviderRunInput,
       ) =>
         Effect.gen(function* () {
-          // P12 `03` §2/§3: resolve the referenced credential at the execution
-          // boundary. A missing / inaccessible / expired secret is a typed
-          // failure — never silently substituted. The resolved material stays
-          // inside the transport boundary (the Agent never sees it).
-          const secretMaterial =
-            input.secretRef === undefined
-              ? undefined
-              : yield* secretStore.resolve(input.secretRef);
-          const startedAt = yield* clock.now();
-          yield* tx.transact(
-            store.startTurn(
-              {
+          let policy = resolveProviderExecutionPolicy({
+            systemDefault:
+              config.systemDefault ?? DEFAULT_PROVIDER_EXECUTION_POLICY,
+            ...(config.providerDefault === undefined
+              ? {}
+              : { providerDefault: config.providerDefault }),
+            ...(input.executionPolicyOverrides === undefined
+              ? {}
+              : {
+                  modelDeploymentOverride: input.executionPolicyOverrides,
+                }),
+          });
+          let turnDeadlineAtMs = Date.now() + policy.turnTimeoutMs;
+          let turnDeadlineAt = new Date(turnDeadlineAtMs).toISOString();
+          let firstAttemptNo = 0;
+          let resumeCheckpoint: ProviderContinuationCheckpoint | null =
+            input.recovery?.continuationCheckpoint ?? null;
+          const controller = new (
+            globalThis as unknown as {
+              readonly AbortController: new () => {
+                readonly signal: ProviderCancellationSignal;
+                abort(): void;
+              };
+            }
+          ).AbortController();
+          const externalSignal = input.cancellationSignal;
+          const relayAbort = () => controller.abort();
+          if (externalSignal?.aborted) controller.abort();
+          else
+            externalSignal?.addEventListener("abort", relayAbort, {
+              once: true,
+            });
+          let turnStarted = false;
+          let turnSettled = false;
+          let activeAttemptNo: number | null = null;
+          let activeObservation = unknownAttemptObservation();
+          let activeEvents: ReadonlyArray<CanonicalProviderEvent> = [];
+          let activeCheckpoint: ProviderContinuationCheckpoint | null = null;
+          let lastKnownFailure: ProviderFailure | null = null;
+          const removeExternalAbort = () =>
+            externalSignal?.removeEventListener("abort", relayAbort);
+
+          const persistCancelled = () =>
+            Effect.gen(function* () {
+              controller.abort();
+              const settledAt = yield* clock.now();
+              if (activeAttemptNo !== null) {
+                const decision = decideProviderRetry({
+                  cause: { _tag: "Cancelled" },
+                  observation: activeObservation,
+                  continuationCheckpoint: activeCheckpoint,
+                  attemptNo: activeAttemptNo,
+                  maxAttempts: policy.maxAttempts,
+                  cancelled: true,
+                  deadlineExpired: false,
+                });
+                yield* tx.transact(
+                  store.settleAttempt(
+                    input.providerTurnId,
+                    activeAttemptNo,
+                    {
+                      outcome: "Cancelled",
+                      providerErrorKind: "Cancelled",
+                      taxonomyVersion: "phase1-v2",
+                      observation: activeObservation,
+                      ...(activeCheckpoint === null
+                        ? {}
+                        : { continuationCheckpoint: activeCheckpoint }),
+                      canonicalEventPrefixJson: JSON.stringify(activeEvents),
+                      deliveredPosition: 0,
+                      retryDecision: decision,
+                    },
+                    settledAt,
+                  ),
+                );
+                activeAttemptNo = null;
+              }
+              if (turnStarted && !turnSettled) {
+                yield* tx.transact(
+                  store.settleTurn(
+                    input.providerTurnId,
+                    "Cancelled",
+                    "{}",
+                    settledAt,
+                  ),
+                );
+                turnSettled = true;
+              }
+              removeExternalAbort();
+            });
+
+          const operation = Effect.gen(function* () {
+            const manifestIdentity = yield* parseManifestIdentity(input);
+            let recovery = input.recovery;
+            let recoveryTurn: UnsettledProviderTurn | null = null;
+            if (recovery === undefined) {
+              if (externalSignal?.aborted === true) {
+                return yield* Effect.interrupt;
+              }
+              recoveryTurn = yield* tx.transact(
+                store.findUnsettledByTurn(input.providerTurnId),
+              );
+              if (recoveryTurn !== null) {
+                if (
+                  recoveryTurn.manifestJson !== input.manifestJson ||
+                  recoveryTurn.portableRequestJson !==
+                    JSON.stringify(input.request) ||
+                  recoveryTurn.turn.executionId !== input.executionId ||
+                  recoveryTurn.turn.sessionId !== input.sessionId ||
+                  recoveryTurn.turn.contextEpoch !== input.contextEpoch ||
+                  recoveryTurn.turn.modelRef !== input.modelRef ||
+                  recoveryTurn.turn.outputContractRef !==
+                    input.outputContractRef
+                ) {
+                  return yield* Effect.fail(
+                    unknownFailure("provider-turn-resume-binding-invalid"),
+                  );
+                }
+                const last = recoveryTurn.attempts.at(-1) ?? null;
+                const cause = providerRetryCauseFromAttempt(last);
+                const observation =
+                  last === null
+                    ? noAttemptObservation()
+                    : (last.observation ?? unknownAttemptObservation());
+                const persistedPolicy = recoveryTurn.turn.executionPolicy;
+                const persistedDeadline =
+                  recoveryTurn.turn.turnDeadlineAt ?? null;
+                const deadlineAtMs =
+                  persistedDeadline === null
+                    ? Number.NaN
+                    : Date.parse(persistedDeadline);
+                const retryDecision =
+                  persistedPolicy === undefined ||
+                  !Number.isFinite(deadlineAtMs)
+                    ? stoppedRecoveryDecision(
+                        "persisted attempt evidence or execution limits are incomplete",
+                      )
+                    : decideProviderRetry({
+                        cause,
+                        observation,
+                        continuationCheckpoint:
+                          last?.continuationCheckpoint ?? null,
+                        attemptNo: last?.attemptNo ?? -1,
+                        maxAttempts: persistedPolicy.maxAttempts,
+                        cancelled: last?.outcome === "Cancelled",
+                        deadlineExpired: deadlineAtMs <= Date.now(),
+                      });
+                const decidedAt = yield* clock.now();
+                const recordDecision = () =>
+                  store.recordRecoveryDecision(input.providerTurnId, {
+                    attemptNo: last?.attemptNo ?? -1,
+                    cause,
+                    retryDecision,
+                    decidedAt,
+                  });
+                const settleLostAttempt = (
+                  outcome: "RetryableFailure" | "TerminalFailure",
+                ) =>
+                  last?.outcome !== "InProgress"
+                    ? Effect.void
+                    : store.settleAttempt(
+                        input.providerTurnId,
+                        last.attemptNo,
+                        {
+                          outcome,
+                          taxonomyVersion: "phase1-v2",
+                          observation:
+                            last.observation ?? unknownAttemptObservation(),
+                          canonicalEventPrefixJson:
+                            last.canonicalEventPrefixJson ?? "[]",
+                          deliveredPosition: last.deliveredPosition ?? 0,
+                          ...(last.continuationCheckpoint === null ||
+                          last.continuationCheckpoint === undefined
+                            ? {}
+                            : {
+                                continuationCheckpoint:
+                                  last.continuationCheckpoint,
+                              }),
+                          retryDecision,
+                        },
+                        decidedAt,
+                      );
+
+                if (retryDecision.decision === "Stop") {
+                  yield* tx.transact(
+                    Effect.gen(function* () {
+                      yield* recordDecision();
+                      yield* settleLostAttempt("TerminalFailure");
+                      yield* store.failTurn(input.providerTurnId, decidedAt);
+                    }),
+                  );
+                  const kind = last?.providerErrorKind;
+                  return yield* Effect.fail<ProviderFailure>(
+                    kind === null || kind === undefined
+                      ? unknownFailure("provider-turn-recovery-stopped")
+                      : {
+                          _tag: "ProviderFailure",
+                          kind: kind as ProviderFailureKind,
+                          ...(last?.taxonomyVersion === undefined
+                            ? {}
+                            : { taxonomyVersion: last.taxonomyVersion }),
+                          safeDiagnostic: "provider-turn-recovery-stopped",
+                        },
+                  );
+                }
+
+                yield* tx.transact(
+                  Effect.gen(function* () {
+                    yield* recordDecision();
+                    yield* settleLostAttempt("RetryableFailure");
+                  }),
+                );
+                recovery = {
+                  manifestId: recoveryTurn.turn.manifestId,
+                  nextAttemptNo: last === null ? 0 : last.attemptNo + 1,
+                  retryDecision,
+                  ...(retryDecision.strategy === "Resume" &&
+                  last?.continuationCheckpoint !== null &&
+                  last?.continuationCheckpoint !== undefined
+                    ? { continuationCheckpoint: last.continuationCheckpoint }
+                    : {}),
+                };
+              }
+            }
+            if (recovery !== undefined) {
+              resumeCheckpoint = recovery.continuationCheckpoint ?? null;
+            }
+            let manifestId: string;
+            if (recovery !== undefined) {
+              const existing =
+                recoveryTurn ??
+                (yield* tx.transact(
+                  store.findUnsettledByTurn(input.providerTurnId),
+                ));
+              if (
+                existing === null ||
+                existing.manifestJson !== input.manifestJson ||
+                existing.portableRequestJson !==
+                  JSON.stringify(input.request) ||
+                existing.turn.manifestId !== recovery.manifestId ||
+                existing.turn.executionId !== input.executionId ||
+                existing.turn.sessionId !== input.sessionId ||
+                existing.turn.contextEpoch !== input.contextEpoch ||
+                existing.turn.modelRef !== input.modelRef ||
+                existing.turn.outputContractRef !== input.outputContractRef ||
+                existing.turn.executionPolicy === undefined ||
+                existing.turn.turnDeadlineAt === undefined
+              ) {
+                return yield* Effect.fail(
+                  unknownFailure("provider-turn-recovery-binding-invalid"),
+                );
+              }
+              const last = existing.attempts.at(-1);
+              const expectedNextAttempt =
+                last === undefined ? 0 : last.attemptNo + 1;
+              if (
+                recovery.nextAttemptNo !== expectedNextAttempt ||
+                (last !== undefined &&
+                  last.outcome !== "InProgress" &&
+                  last.outcome !== "RetryableFailure")
+              ) {
+                return yield* Effect.fail(
+                  unknownFailure("provider-turn-recovery-attempt-invalid"),
+                );
+              }
+              policy = existing.turn.executionPolicy;
+              turnDeadlineAt = existing.turn.turnDeadlineAt;
+              turnDeadlineAtMs = Date.parse(turnDeadlineAt);
+              const recoveryObservation =
+                last === undefined
+                  ? noAttemptObservation()
+                  : (last.observation ?? unknownAttemptObservation());
+              const recoveryCause = providerRetryCauseFromAttempt(last);
+              const recheckedDecision = decideProviderRetry({
+                cause: recoveryCause,
+                observation: recoveryObservation,
+                continuationCheckpoint: last?.continuationCheckpoint ?? null,
+                attemptNo: last?.attemptNo ?? -1,
+                maxAttempts: policy.maxAttempts,
+                cancelled: false,
+                deadlineExpired: turnDeadlineAtMs <= Date.now(),
+              });
+              if (
+                recheckedDecision.decision !== "Retry" ||
+                recheckedDecision.decision !==
+                  recovery.retryDecision.decision ||
+                recheckedDecision.safety !== recovery.retryDecision.safety ||
+                recheckedDecision.strategy !==
+                  recovery.retryDecision.strategy ||
+                recheckedDecision.reason !== recovery.retryDecision.reason ||
+                (recovery.retryDecision.strategy === "Resume" &&
+                  JSON.stringify(last?.continuationCheckpoint) !==
+                    JSON.stringify(recovery.continuationCheckpoint))
+              ) {
+                return yield* Effect.fail(
+                  unknownFailure("provider-turn-recovery-decision-stale"),
+                );
+              }
+              manifestId = existing.turn.manifestId;
+              firstAttemptNo = recovery.nextAttemptNo;
+              turnStarted = true;
+            } else {
+              manifestId = `mft_${yield* ids.generate<string>("provider-manifest")}`;
+              const startedAt = yield* clock.now();
+              const turnRecord = {
                 providerTurnId: input.providerTurnId,
                 executionId: input.executionId,
                 sessionId: input.sessionId,
                 contextEpoch: input.contextEpoch,
                 modelRef: input.modelRef,
                 outputContractRef: input.outputContractRef,
-                manifestId: input.manifestId,
-              },
-              input.manifest,
-              startedAt,
-            ),
-          );
-
-          let lastFailure: ProviderFailure = {
-            _tag: "ProviderFailure",
-            kind: "ProviderUnavailable",
-          };
-          for (let attemptNo = 0; attemptNo < maxAttempts; attemptNo += 1) {
-            const attemptStartedAt = yield* clock.now();
-            notifyProgress(input, {
-              _tag: "AttemptStarted",
-              providerTurnId: input.providerTurnId,
-              attemptNo,
-            });
-            const attemptEvents: CanonicalProviderEvent[] = [];
-            const result = yield* Effect.result(
-              Stream.runForEach(
-                provider.runTurn({
-                  request: input.request,
-                  context: {
-                    providerTurnId: input.providerTurnId,
-                    attemptNo,
-                    ...(input.secretRef !== undefined
-                      ? { secretRef: input.secretRef }
-                      : {}),
-                    ...(secretMaterial !== undefined ? { secretMaterial } : {}),
-                    timeoutMs: input.timeoutMs,
-                    cancellationRef: input.cancellationRef,
-                  },
-                }),
-                (event) =>
-                  Effect.sync(() => {
-                    attemptEvents.push(event);
-                    notifyProgress(input, {
-                      _tag: "ProviderEvent",
-                      providerTurnId: input.providerTurnId,
-                      attemptNo,
-                      event,
-                    });
-                  }),
-              ),
-            );
-            const settledAt = yield* clock.now();
-            if (result._tag === "Success") {
-              const events = attemptEvents;
-              yield* tx.transact(
-                store.recordAttempt(
-                  input.providerTurnId,
-                  attemptNo,
-                  { _tag: "Success" },
-                  attemptStartedAt,
-                  settledAt,
+                manifestId,
+                executionPolicy: policy,
+                turnDeadlineAt,
+              };
+              const receipt = yield* tx.transact(
+                store.startTurnWithManifest(
+                  turnRecord,
+                  input.manifestJson,
+                  JSON.stringify(input.request),
+                  startedAt,
                 ),
               );
-              const usage = events.find(
-                (event) => event._tag === "UsageReported",
-              );
-              const finish = events.find(
-                (event) => event._tag === "TurnCompleted",
-              );
+              if (
+                receipt.providerTurnId !== input.providerTurnId ||
+                receipt.manifestId !== manifestId
+              ) {
+                return yield* Effect.fail(
+                  unknownFailure("manifest-receipt-mismatch"),
+                );
+              }
+              turnStarted = true;
+            }
+            void manifestIdentity;
+
+            const authResult = yield* Effect.timeoutOption(
+              Effect.gen(function* () {
+                return input.secretRef === undefined
+                  ? undefined
+                  : yield* secretStore.resolve(input.secretRef);
+              }),
+              Math.max(1, turnDeadlineAtMs - Date.now()),
+            );
+            if (Option.isNone(authResult)) {
+              const settledAt = yield* clock.now();
               yield* tx.transact(
                 store.settleTurn(
                   input.providerTurnId,
-                  finish !== undefined && finish._tag === "TurnCompleted"
-                    ? finish.finishReason
-                    : "Stop",
-                  JSON.stringify(usage ?? {}),
+                  "TurnDeadline",
+                  "{}",
                   settledAt,
                 ),
               );
-              // P12 `08` §7 D1 (B-4): surface the Turn-local attempt ordinal so
-              // the caller can report real provider retries to the Runtime
-              // Safety gate. No new ProviderTurn is created (DID §6A.9).
-              return { events, attemptNo };
+              turnSettled = true;
+              return yield* Effect.fail(timeoutFailure("TurnDeadline"));
+            }
+            const secretMaterial = authResult.value;
+            const retryDecisions =
+              recovery === undefined ? [] : [recovery.retryDecision];
+
+            for (
+              let attemptNo = firstAttemptNo;
+              attemptNo < policy.maxAttempts;
+              attemptNo += 1
+            ) {
+              if (controller.signal.aborted) return yield* Effect.interrupt;
+              if (Date.now() >= turnDeadlineAtMs) {
+                const settledAt = yield* clock.now();
+                yield* tx.transact(
+                  store.settleTurn(
+                    input.providerTurnId,
+                    "TurnDeadline",
+                    "{}",
+                    settledAt,
+                  ),
+                );
+                turnSettled = true;
+                return yield* Effect.fail(timeoutFailure("TurnDeadline"));
+              }
+              const attemptStartedAt = yield* clock.now();
+              const resumeFrom = resumeCheckpoint;
+              resumeCheckpoint = null;
+              activeAttemptNo = attemptNo;
+              activeObservation = initialAttemptObservation();
+              activeEvents = [];
+              activeCheckpoint = null;
+              // Durable InProgress is committed before ProviderPort is invoked.
+              yield* tx.transact(
+                store.startAttempt(
+                  input.providerTurnId,
+                  attemptNo,
+                  activeObservation,
+                  attemptStartedAt,
+                ),
+              );
+              notifyProgress(input, {
+                _tag: "AttemptStarted",
+                providerTurnId: input.providerTurnId,
+                attemptNo,
+              });
+              const context: ProviderExecutionContext = {
+                providerTurnId: input.providerTurnId,
+                attemptNo,
+                ...(input.secretRef === undefined
+                  ? {}
+                  : { secretRef: input.secretRef }),
+                ...(secretMaterial === undefined ? {} : { secretMaterial }),
+                cancellationSignal: controller.signal,
+                connectTimeoutMs: policy.connectTimeoutMs,
+                firstEventTimeoutMs: policy.firstEventTimeoutMs,
+                streamIdleTimeoutMs: policy.streamIdleTimeoutMs,
+                turnDeadlineAt,
+                maxAttempts: policy.maxAttempts,
+                ...(resumeFrom === null
+                  ? {}
+                  : { continuationCheckpoint: resumeFrom }),
+              };
+              const consumed = yield* Effect.result(
+                consumeAttempt(
+                  provider,
+                  input,
+                  context,
+                  externalSignal,
+                  policy,
+                  turnDeadlineAtMs,
+                  { store, tx, clock },
+                  () => controller.abort(),
+                  (state) => {
+                    activeObservation = state.observation;
+                    activeEvents = [...state.events];
+                    activeCheckpoint = state.checkpoint;
+                  },
+                ),
+              );
+              const settledAt = yield* clock.now();
+              if (Result.isFailure(consumed)) {
+                const failure = consumed.failure;
+                yield* tx.transact(
+                  store.settleAttempt(
+                    input.providerTurnId,
+                    attemptNo,
+                    {
+                      outcome: "TerminalFailure",
+                      providerErrorKind:
+                        failure._tag === "ProviderFailure"
+                          ? failure.kind
+                          : "UnknownProviderFailure",
+                      taxonomyVersion: "phase1-v2",
+                      observation: activeObservation,
+                      ...(activeCheckpoint === null
+                        ? {}
+                        : { continuationCheckpoint: activeCheckpoint }),
+                      canonicalEventPrefixJson: JSON.stringify(activeEvents),
+                      deliveredPosition: 0,
+                      retryDecision: {
+                        safety: "UnsafeReplay",
+                        decision: "Stop",
+                        strategy: null,
+                        reason:
+                          "attempt persistence or stream processing failed; fail closed",
+                      },
+                    },
+                    settledAt,
+                  ),
+                );
+                activeAttemptNo = null;
+                return yield* Effect.fail(failure);
+              }
+              const attempt = consumed.success;
+              if (attempt._tag === "Success") {
+                const visible = semanticOutputVisible(attempt.events);
+                const finalObservation = mergeAttemptObservation(
+                  activeObservation,
+                  { consumerVisibleOutput: visible },
+                );
+                activeObservation = finalObservation;
+                activeEvents = [...attempt.events];
+                const finishedAt = yield* clock.now();
+                yield* tx.transact(
+                  store.settleAttempt(
+                    input.providerTurnId,
+                    attemptNo,
+                    {
+                      outcome: "Success",
+                      taxonomyVersion: "phase1-v2",
+                      observation: finalObservation,
+                      ...(activeCheckpoint === null
+                        ? {}
+                        : { continuationCheckpoint: activeCheckpoint }),
+                      canonicalEventPrefixJson: JSON.stringify(attempt.events),
+                      deliveredPosition: attempt.events.length,
+                    },
+                    finishedAt,
+                  ),
+                );
+                activeAttemptNo = null;
+                yield* tx.transact(
+                  store.settleTurn(
+                    input.providerTurnId,
+                    attempt.finishReason,
+                    attempt.usageJson,
+                    finishedAt,
+                  ),
+                );
+                turnSettled = true;
+                removeExternalAbort();
+                return {
+                  events: attempt.events,
+                  attemptNo,
+                  retryDecisions,
+                } satisfies ProviderRunResult;
+              }
+
+              if (attempt._tag === "Timeout") {
+                controller.abort();
+                const decision = decideProviderRetry({
+                  cause: { _tag: "Timeout", phase: attempt.phase },
+                  observation: activeObservation,
+                  continuationCheckpoint: activeCheckpoint,
+                  attemptNo,
+                  maxAttempts: policy.maxAttempts,
+                  cancelled: false,
+                  deadlineExpired: attempt.phase === "TurnDeadline",
+                });
+                retryDecisions.push(decision);
+                yield* tx.transact(
+                  store.settleAttempt(
+                    input.providerTurnId,
+                    attemptNo,
+                    {
+                      outcome: "TimedOut",
+                      taxonomyVersion: "phase1-v2",
+                      observation: activeObservation,
+                      ...(activeCheckpoint === null
+                        ? {}
+                        : { continuationCheckpoint: activeCheckpoint }),
+                      canonicalEventPrefixJson: JSON.stringify(activeEvents),
+                      deliveredPosition: 0,
+                      retryDecision: decision,
+                    },
+                    settledAt,
+                  ),
+                );
+                activeAttemptNo = null;
+                yield* tx.transact(
+                  store.settleTurn(
+                    input.providerTurnId,
+                    attempt.phase,
+                    "{}",
+                    settledAt,
+                  ),
+                );
+                turnSettled = true;
+                removeExternalAbort();
+                return yield* Effect.fail(timeoutFailure(attempt.phase));
+              }
+
+              lastKnownFailure = attempt.failure;
+              const cancelled = attempt.failure.kind === "Cancelled";
+              const decision = decideProviderRetry({
+                cause: {
+                  _tag: "ProviderFailure",
+                  kind: attempt.failure.kind,
+                },
+                observation: activeObservation,
+                continuationCheckpoint: activeCheckpoint,
+                attemptNo,
+                maxAttempts: policy.maxAttempts,
+                cancelled,
+                deadlineExpired: Date.now() >= turnDeadlineAtMs,
+              });
+              retryDecisions.push(decision);
+              const outcome = cancelled
+                ? "Cancelled"
+                : decision.decision === "Retry"
+                  ? "RetryableFailure"
+                  : "TerminalFailure";
+              yield* tx.transact(
+                store.settleAttempt(
+                  input.providerTurnId,
+                  attemptNo,
+                  {
+                    outcome,
+                    providerErrorKind: attempt.failure.kind,
+                    taxonomyVersion: "phase1-v2",
+                    observation: activeObservation,
+                    ...(activeCheckpoint === null
+                      ? {}
+                      : { continuationCheckpoint: activeCheckpoint }),
+                    canonicalEventPrefixJson: JSON.stringify(activeEvents),
+                    deliveredPosition: 0,
+                    retryDecision: decision,
+                  },
+                  settledAt,
+                ),
+              );
+              activeAttemptNo = null;
+              notifyProgress(input, {
+                _tag: "AttemptFailed",
+                providerTurnId: input.providerTurnId,
+                attemptNo,
+                failureKind: attempt.failure.kind,
+                retrying:
+                  decision.decision === "Retry" &&
+                  attemptNo + 1 < policy.maxAttempts,
+              });
+              if (cancelled) {
+                yield* tx.transact(
+                  store.settleTurn(
+                    input.providerTurnId,
+                    "Cancelled",
+                    "{}",
+                    settledAt,
+                  ),
+                );
+                turnSettled = true;
+                removeExternalAbort();
+                return yield* Effect.interrupt;
+              }
+              if (decision.decision === "Stop") {
+                // ProviderAttempt is terminal, but the Driver/recovery owner
+                // still decides the ProviderTurn-level failure disposition.
+                removeExternalAbort();
+                return yield* Effect.fail(attempt.failure);
+              }
+
+              resumeCheckpoint =
+                decision.strategy === "Resume" ? activeCheckpoint : null;
+
+              if (attemptNo + 1 >= policy.maxAttempts) {
+                return yield* Effect.fail(attempt.failure);
+              }
+              const backoffMs = Math.min(
+                policy.retryBackoffMs,
+                Math.max(0, turnDeadlineAtMs - Date.now()),
+              );
+              if (backoffMs > 0) {
+                const waitResult = yield* Effect.timeoutOption(
+                  Effect.sleep(backoffMs),
+                  Math.max(1, turnDeadlineAtMs - Date.now()),
+                );
+                if (Option.isNone(waitResult)) {
+                  const backoffAt = yield* clock.now();
+                  yield* tx.transact(
+                    store.settleTurn(
+                      input.providerTurnId,
+                      "TurnDeadline",
+                      "{}",
+                      backoffAt,
+                    ),
+                  );
+                  turnSettled = true;
+                  removeExternalAbort();
+                  return yield* Effect.fail(timeoutFailure("TurnDeadline"));
+                }
+              }
             }
 
-            lastFailure = result.failure;
-            const retryable = isRetryable(lastFailure);
-            notifyProgress(input, {
-              _tag: "AttemptFailed",
-              providerTurnId: input.providerTurnId,
-              attemptNo,
-              failureKind: lastFailure.kind,
-              retrying: retryable && attemptNo + 1 < maxAttempts,
-            });
-            yield* tx.transact(
-              store.recordAttempt(
-                input.providerTurnId,
-                attemptNo,
-                {
-                  _tag: retryable ? "RetryableFailure" : "TerminalFailure",
-                  providerErrorKind: lastFailure.kind,
-                },
-                attemptStartedAt,
-                settledAt,
-              ),
-            );
-            if (!retryable) {
-              return yield* Effect.fail(lastFailure);
-            }
-          }
-          return yield* Effect.fail(lastFailure);
+            const failure =
+              lastKnownFailure ??
+              unknownFailure("provider-attempt-budget-exhausted");
+            return yield* Effect.fail(failure);
+          });
+
+          const guarded = Effect.onInterrupt(
+            Effect.raceFirst(
+              operation,
+              externalSignal === undefined
+                ? Effect.never
+                : awaitAbort(externalSignal).pipe(
+                    Effect.flatMap(() => Effect.interrupt),
+                  ),
+            ),
+            () => persistCancelled(),
+          );
+          return yield* guarded.pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                controller.abort();
+                removeExternalAbort();
+              }),
+            ),
+          );
         });
 
       return ProviderRuntime.of({ runTurn });

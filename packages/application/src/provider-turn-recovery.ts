@@ -7,65 +7,43 @@ import type {
 import {
   Clock,
   type ClockService,
+  decideProviderRetry,
+  noAttemptObservation,
+  type ProviderContinuationCheckpoint,
   type ProviderFailure,
+  type ProviderRetryDecision,
   ProviderTurnStore,
   type ProviderTurnStoreService,
+  providerRetryCauseFromAttempt,
   type TransactionOperationalFailure,
   TransactionPort,
   type TransactionPortService,
   type UnsettledProviderTurn,
+  unknownAttemptObservation,
 } from "@arbor/ports";
 import { Effect } from "effect";
 
-/** P9 `04` §2.2 / `02` §6 PD4 — unsettled-ProviderTurn crash recovery
- * (P9-owned frozen surface; P3 `06` §7 deferred it here).
- *
- * Decision table (GQ4, zero new failure tags):
- *
- * ```text
- * dangling turn (settled_at IS NULL), last recorded attempt:
- *   no attempt error (crash leftover, or attempt not yet persisted)
- *     | kind ∈ {RateLimited, ProviderUnavailable, StreamInterrupted}
- *     && attempt budget NOT exhausted
- *       → ResumeRetry: same ProviderTurn, new ProviderAttempt
- *         (attempt_no = MAX+1, Turn-local); Agent turnNo unchanged; no new
- *         Manifest (DID §6A.9 — transport retry is not a new model round)
- *   retryable kind && attempt budget exhausted
- *   terminal kind (AuthenticationFailed / RequestRejected / ProtocolViolation)
- *       → TurnFailureMark: the Turn settles failed under the driver
- *         Turn-failure semantics (P3 `06` §2); Execution-level disposition
- *         follows P2 `06` §4 — recovery never invents a settlement
- * ```
- *
- * The recovery pass itself never calls the provider: a ResumeRetry entry is
- * a retry plan for the Scheduler re-dispatch; the driver resumes the
- * dangling Turn under the same `providerTurnId` + `manifestId`.
- * Provider turns carry no external side effect beyond the provider request
- * itself — tool-style `OutcomeUnknown` ambiguity does not arise
- * (P4 `06` vocabulary). */
-
-const RETRYABLE_KINDS: ReadonlySet<string> = new Set([
-  "RateLimited",
-  "ProviderUnavailable",
-  "StreamInterrupted",
-]);
-
+/** Recovery plan produced by the same durable-evidence retry decision used
+ * by live Provider Runtime. Recovery itself never calls a provider. */
 export interface ProviderTurnRetryPlanEntry {
   readonly providerTurnId: ProviderTurnId;
   readonly executionId: ExecutionId;
   readonly manifestId: string;
-  /** `attempt_no = MAX+1`, Turn-local (04 §2.2 case 1). */
+  readonly manifestJson: string;
+  readonly portableRequestJson: string;
   readonly nextAttemptNo: number;
   readonly lastProviderErrorKind: string | null;
+  readonly retryDecision: ProviderRetryDecision;
+  readonly continuationCheckpoint?: ProviderContinuationCheckpoint;
 }
 
 export interface ProviderTurnFailureMark {
   readonly providerTurnId: ProviderTurnId;
   readonly executionId: ExecutionId;
   readonly providerErrorKind: string | null;
-  /** true = retry budget exhausted (I-6); false = terminal failure class. */
   readonly exhausted: boolean;
   readonly markedBy: Principal;
+  readonly retryDecision: ProviderRetryDecision | null;
 }
 
 export interface ProviderTurnRecoveryReport {
@@ -79,8 +57,6 @@ export interface ProviderTurnRecoveryDeps {
   readonly clock: ClockService;
 }
 
-/** Service-resolution helper (runRecovery precedent): pulls the store /
- * transaction / clock services from the environment. */
 export const providerTurnRecoveryDeps: Effect.Effect<
   ProviderTurnRecoveryDeps,
   never,
@@ -96,18 +72,56 @@ const nextAttemptNo = (turn: UnsettledProviderTurn): number =>
   turn.attempts.reduce((max, attempt) => Math.max(max, attempt.attemptNo), -1) +
   1;
 
+const manifestMatchesTurn = (entry: UnsettledProviderTurn): boolean => {
+  if (entry.manifestJson === null || entry.portableRequestJson === null) {
+    return false;
+  }
+  try {
+    const manifest = JSON.parse(entry.manifestJson) as Record<string, unknown>;
+    const request = JSON.parse(entry.portableRequestJson) as Record<
+      string,
+      unknown
+    >;
+    return (
+      manifest.providerTurnId === entry.turn.providerTurnId &&
+      manifest.executionId === entry.turn.executionId &&
+      manifest.sessionId === entry.turn.sessionId &&
+      manifest.contextEpoch === entry.turn.contextEpoch &&
+      manifest.modelRef === entry.turn.modelRef &&
+      manifest.outputContractRef === entry.turn.outputContractRef &&
+      typeof manifest.compiledRequestHash === "string" &&
+      request.modelRef === entry.turn.modelRef &&
+      request.outputContractRef === entry.turn.outputContractRef &&
+      Array.isArray(request.instructions) &&
+      Array.isArray(request.messages) &&
+      Array.isArray(request.toolDefinitions)
+    );
+  } catch {
+    return false;
+  }
+};
+
+const turnDeadlineExpired = (turn: UnsettledProviderTurn): boolean =>
+  turn.turn.turnDeadlineAt !== undefined &&
+  Date.parse(turn.turn.turnDeadlineAt) <= Date.now();
+
+const unresolvedDecision = (reason: string): ProviderRetryDecision => ({
+  safety: "UnsafeReplay",
+  decision: "Stop",
+  strategy: null,
+  reason,
+});
+
 export const recoverUnsettledProviderTurns = (
   deps: ProviderTurnRecoveryDeps,
   projectId: ProjectId,
   principal: Principal,
-  options: { readonly maxAttempts?: number } = {},
 ): Effect.Effect<
   ProviderTurnRecoveryReport,
   ProviderFailure | TransactionOperationalFailure,
   never
-> => {
-  const maxAttempts = options.maxAttempts ?? 3;
-  return Effect.gen(function* () {
+> =>
+  Effect.gen(function* () {
     const dangling = yield* deps.tx.transact(
       deps.turns.findUnsettledByProject(projectId),
     );
@@ -116,36 +130,136 @@ export const recoverUnsettledProviderTurns = (
     for (const entry of dangling) {
       const last = entry.attempts.at(-1) ?? null;
       const kind = last?.providerErrorKind ?? null;
-      // GQ4 decision table: crash leftover (no attempt error) is retryable;
-      // a recorded terminal class is never transport-retried (P3 `06` §2).
-      const retryable =
-        last === null
-          ? true
-          : last.outcome !== "TerminalFailure" &&
-            (kind === null || RETRYABLE_KINDS.has(kind));
-      const exhausted = entry.attempts.length >= maxAttempts;
-      if (retryable && !exhausted) {
+      const policy = entry.turn.executionPolicy;
+      const evidence =
+        last === null ? noAttemptObservation() : (last.observation ?? null);
+      const cause = providerRetryCauseFromAttempt(last);
+      let retryDecision: ProviderRetryDecision;
+      if (!manifestMatchesTurn(entry)) {
+        retryDecision = unresolvedDecision(
+          "durable ProviderTurn → ModelContextManifest binding is missing or mismatched",
+        );
+      } else if (policy === undefined || evidence === null) {
+        retryDecision = unresolvedDecision(
+          "persisted attempt evidence or execution limits are incomplete",
+        );
+      } else {
+        retryDecision = decideProviderRetry({
+          cause,
+          observation: evidence,
+          continuationCheckpoint: last?.continuationCheckpoint ?? null,
+          attemptNo: last?.attemptNo ?? -1,
+          maxAttempts: policy.maxAttempts,
+          cancelled: last?.outcome === "Cancelled",
+          deadlineExpired: turnDeadlineExpired(entry),
+        });
+      }
+
+      const decisionEvidence = {
+        attemptNo: last?.attemptNo ?? -1,
+        cause,
+        retryDecision,
+        decidedAt: yield* deps.clock.now(),
+      } as const;
+      if (retryDecision.decision === "Retry") {
+        if (entry.manifestJson === null || entry.portableRequestJson === null) {
+          // manifestMatchesTurn above rejects this branch, retained as a
+          // defensive guard if the projection changes independently.
+          return yield* Effect.fail<ProviderFailure>({
+            _tag: "ProviderFailure",
+            kind: "UnknownProviderFailure",
+            taxonomyVersion: "phase1-v2",
+            safeDiagnostic: "retry-plan-manifest-missing",
+          });
+        }
+        yield* deps.tx.transact(
+          Effect.gen(function* () {
+            yield* deps.turns.recordRecoveryDecision(
+              entry.turn.providerTurnId,
+              decisionEvidence,
+            );
+            if (last?.outcome === "InProgress") {
+              yield* deps.turns.settleAttempt(
+                entry.turn.providerTurnId,
+                last.attemptNo,
+                {
+                  outcome: "RetryableFailure",
+                  taxonomyVersion: "phase1-v2",
+                  observation: last.observation ?? unknownAttemptObservation(),
+                  canonicalEventPrefixJson:
+                    last.canonicalEventPrefixJson ?? "[]",
+                  deliveredPosition: last.deliveredPosition ?? 0,
+                  ...(last.continuationCheckpoint === null ||
+                  last.continuationCheckpoint === undefined
+                    ? {}
+                    : {
+                        continuationCheckpoint: last.continuationCheckpoint,
+                      }),
+                  retryDecision,
+                },
+                decisionEvidence.decidedAt,
+              );
+            }
+          }),
+        );
         retryPlan.push({
           providerTurnId: entry.turn.providerTurnId,
           executionId: entry.turn.executionId,
           manifestId: entry.turn.manifestId,
+          manifestJson: entry.manifestJson,
+          portableRequestJson: entry.portableRequestJson,
           nextAttemptNo: nextAttemptNo(entry),
           lastProviderErrorKind: kind,
+          retryDecision,
+          ...(retryDecision.strategy === "Resume" &&
+          last?.continuationCheckpoint !== null &&
+          last?.continuationCheckpoint !== undefined
+            ? { continuationCheckpoint: last.continuationCheckpoint }
+            : {}),
         });
         continue;
       }
+
       const settledAt = yield* deps.clock.now();
       yield* deps.tx.transact(
-        deps.turns.failTurn(entry.turn.providerTurnId, settledAt),
+        Effect.gen(function* () {
+          yield* deps.turns.recordRecoveryDecision(
+            entry.turn.providerTurnId,
+            decisionEvidence,
+          );
+          if (last?.outcome === "InProgress") {
+            yield* deps.turns.settleAttempt(
+              entry.turn.providerTurnId,
+              last.attemptNo,
+              {
+                outcome: "TerminalFailure",
+                taxonomyVersion: "phase1-v2",
+                observation: last.observation ?? unknownAttemptObservation(),
+                canonicalEventPrefixJson: last.canonicalEventPrefixJson ?? "[]",
+                deliveredPosition: last.deliveredPosition ?? 0,
+                ...(last.continuationCheckpoint === null ||
+                last.continuationCheckpoint === undefined
+                  ? {}
+                  : {
+                      continuationCheckpoint: last.continuationCheckpoint,
+                    }),
+                retryDecision,
+              },
+              decisionEvidence.decidedAt,
+            );
+          }
+          yield* deps.turns.failTurn(entry.turn.providerTurnId, settledAt);
+        }),
       );
       failedTurns.push({
         providerTurnId: entry.turn.providerTurnId,
         executionId: entry.turn.executionId,
         providerErrorKind: kind,
-        exhausted,
+        exhausted:
+          policy !== undefined && nextAttemptNo(entry) >= policy.maxAttempts,
         markedBy: principal,
+        retryDecision,
       });
     }
     return { retryPlan, failedTurns };
   });
-};

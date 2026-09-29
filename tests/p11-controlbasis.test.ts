@@ -13,7 +13,7 @@ import {
   HumanMessageStoreLive,
   IdGeneratorLive,
   layer,
-  P14_MIGRATIONS,
+  P15_MIGRATIONS,
   ProviderTurnStoreLive,
   runMigrations,
   SessionRepositoryLive,
@@ -199,7 +199,7 @@ const makeApp = () => {
     turns: [sendMessageTurn("first"), sendMessageTurn("second")],
   });
   const providerRuntime = Layer.provide(
-    ProviderRuntimeLive(3),
+    ProviderRuntimeLive(),
     Layer.mergeAll(
       provider,
       Layer.provide(ProviderTurnStoreLive, infra),
@@ -336,7 +336,7 @@ describe("P11 GQ4b ControlBasis environmentRevision service-internal read", () =
     const { app, recorded } = makeApp();
     const settlement = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P14_MIGRATIONS);
+        yield* runMigrations(P15_MIGRATIONS);
         yield* seed;
         const store = yield* EnvironmentRevisionStore;
         const tx = yield* TransactionPort;
@@ -353,7 +353,7 @@ describe("P11 GQ4b ControlBasis environmentRevision service-internal read", () =
     const { app, recorded } = makeApp();
     const settlement = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P14_MIGRATIONS);
+        yield* runMigrations(P15_MIGRATIONS);
         yield* seed;
         return yield* drive(0);
       }),
@@ -367,7 +367,7 @@ describe("P11 GQ4b ControlBasis environmentRevision service-internal read", () =
     const { app, recorded } = makeApp();
     const settlement = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P14_MIGRATIONS);
+        yield* runMigrations(P15_MIGRATIONS);
         yield* seed;
         const store = yield* EnvironmentRevisionStore;
         const advancement = yield* EnvironmentRevisionAdvancement;

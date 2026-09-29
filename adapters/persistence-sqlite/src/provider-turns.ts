@@ -1,7 +1,11 @@
 import type { ProjectId, ProviderTurnId } from "@arbor/domain";
 import {
-  type ModelContextManifestRecord,
+  type ProviderAttemptObservation,
+  type ProviderAttemptSummary,
+  type ProviderContinuationCheckpoint,
   type ProviderFailure,
+  type ProviderFailureTaxonomyVersion,
+  type ProviderRuntimeExecutionPolicy,
   type ProviderTurnRecord,
   ProviderTurnStore,
   type ProviderTurnStoreService,
@@ -19,6 +23,8 @@ interface TurnRow {
   readonly model_ref: string;
   readonly output_contract_ref: string;
   readonly manifest_id: string;
+  readonly execution_policy_json?: string | null;
+  readonly turn_deadline_at?: string | null;
 }
 
 interface AttemptRow {
@@ -26,7 +32,55 @@ interface AttemptRow {
   readonly attempt_no: number;
   readonly outcome: string;
   readonly provider_error_kind: string | null;
+  readonly failure_taxonomy_version: string;
+  readonly observation_json: string;
+  readonly canonical_event_prefix_json: string;
+  readonly delivered_position: number | null;
+  readonly continuation_checkpoint_json: string | null;
+  readonly retry_safety: string | null;
+  readonly retry_decision: string | null;
+  readonly retry_strategy: string | null;
+  readonly retry_reason: string | null;
 }
+
+const UNKNOWN_OBSERVATION: ProviderAttemptObservation = {
+  responseStarted: null,
+  canonicalEventEmitted: null,
+  consumerVisibleOutput: null,
+  toolCallProposed: null,
+  continuationAvailable: null,
+  externalEffectPossible: null,
+};
+const UNKNOWN_OBSERVATION_JSON = JSON.stringify(UNKNOWN_OBSERVATION);
+
+const decodeJson = <A>(value: string, fallback: A): A => {
+  try {
+    return JSON.parse(value) as A;
+  } catch {
+    return fallback;
+  }
+};
+
+const mergeObservation = (
+  current: ProviderAttemptObservation,
+  next: ProviderAttemptObservation,
+): ProviderAttemptObservation => {
+  const merged = { ...current };
+  for (const key of [
+    "responseStarted",
+    "canonicalEventEmitted",
+    "consumerVisibleOutput",
+    "toolCallProposed",
+    "continuationAvailable",
+    "externalEffectPossible",
+  ] as const) {
+    if (current[key] === true && next[key] !== true) {
+      throw new Error(`provider observation ${key} is not monotonic`);
+    }
+    merged[key] = next[key];
+  }
+  return merged;
+};
 
 const toRecord = (row: TurnRow): ProviderTurnRecord => ({
   providerTurnId: row.provider_turn_id as ProviderTurnId,
@@ -36,6 +90,20 @@ const toRecord = (row: TurnRow): ProviderTurnRecord => ({
   modelRef: row.model_ref,
   outputContractRef: row.output_contract_ref,
   manifestId: row.manifest_id,
+  ...(row.execution_policy_json === null ||
+  row.execution_policy_json === undefined
+    ? {}
+    : (() => {
+        const executionPolicy =
+          decodeJson<ProviderRuntimeExecutionPolicy | null>(
+            row.execution_policy_json,
+            null,
+          );
+        return executionPolicy === null ? {} : { executionPolicy };
+      })()),
+  ...(row.turn_deadline_at === null || row.turn_deadline_at === undefined
+    ? {}
+    : { turnDeadlineAt: row.turn_deadline_at }),
 });
 
 export const ProviderTurnStoreLive: Layer.Layer<
@@ -49,16 +117,365 @@ export const ProviderTurnStoreLive: Layer.Layer<
     const failure = (cause: unknown): ProviderFailure => ({
       _tag: "ProviderFailure",
       kind: "ProviderUnavailable",
-      cause,
+      safeDiagnostic:
+        typeof cause === "object" &&
+        cause !== null &&
+        "_tag" in cause &&
+        typeof (cause as { readonly _tag: unknown })._tag === "string"
+          ? `sqlite-${String((cause as { readonly _tag: string })._tag)}`
+          : "sqlite-provider-turn-store",
     });
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     const store: ProviderTurnStoreService = {
-      startTurn: (
-        record: ProviderTurnRecord,
-        manifest: ModelContextManifestRecord,
-        startedAt: string,
+      startTurnWithManifest: (
+        record,
+        manifestJson,
+        portableRequestJson,
+        startedAt,
       ) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const manifest = decodeJson<{
+            readonly providerTurnId?: string;
+            readonly executionId?: string;
+            readonly sessionId?: string;
+            readonly contextEpoch?: number;
+            readonly modelRef?: string;
+            readonly outputContractRef?: string;
+            readonly compiledRequestHash?: string;
+          } | null>(manifestJson, null);
+          if (
+            manifest === null ||
+            manifest.providerTurnId !== record.providerTurnId ||
+            manifest.executionId !== record.executionId ||
+            manifest.sessionId !== record.sessionId ||
+            manifest.contextEpoch !== record.contextEpoch ||
+            manifest.modelRef !== record.modelRef ||
+            manifest.outputContractRef !== record.outputContractRef ||
+            typeof manifest.compiledRequestHash !== "string"
+          ) {
+            return yield* Effect.fail<ProviderFailure>({
+              _tag: "ProviderFailure",
+              kind: "UnknownProviderFailure",
+              safeDiagnostic: "manifest-identity-mismatch",
+            });
+          }
+          yield* run(
+            sql.unsafe(
+              "INSERT INTO provider_turns (provider_turn_id, execution_id, session_id, context_epoch, model_ref, output_contract_ref, manifest_id, started_at, settled_at, finish_reason, usage_json, created_at, execution_policy_json, turn_deadline_at) VALUES (?,?,?,?,?,?,?,?,NULL,NULL,NULL,?,?,?)",
+              [
+                record.providerTurnId,
+                record.executionId,
+                record.sessionId,
+                record.contextEpoch,
+                record.modelRef,
+                record.outputContractRef,
+                record.manifestId,
+                startedAt,
+                startedAt,
+                JSON.stringify(record.executionPolicy ?? null),
+                record.turnDeadlineAt ?? null,
+              ],
+            ),
+          );
+          yield* run(
+            sql.unsafe(
+              "INSERT INTO model_context_manifests (manifest_id, provider_turn_id, execution_id, session_id, context_epoch, model_ref, compiled_request_hash, manifest_json, created_at, portable_request_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
+              [
+                record.manifestId,
+                record.providerTurnId,
+                record.executionId,
+                record.sessionId,
+                record.contextEpoch,
+                record.modelRef,
+                manifest.compiledRequestHash,
+                manifestJson,
+                startedAt,
+                portableRequestJson,
+              ],
+            ),
+          );
+          return {
+            providerTurnId: record.providerTurnId,
+            manifestId: record.manifestId,
+          };
+        }),
+      findManifestByTurn: (providerTurnId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{
+              manifest_id: string;
+              manifest_json: string;
+              portable_request_json: string | null;
+            }>(
+              "SELECT m.manifest_id, m.manifest_json, m.portable_request_json FROM provider_turns t JOIN model_context_manifests m ON m.provider_turn_id = t.provider_turn_id AND m.manifest_id = t.manifest_id WHERE t.provider_turn_id = ?",
+              [providerTurnId],
+            ),
+          );
+          const row = rows[0];
+          return row === undefined || row.portable_request_json === null
+            ? null
+            : {
+                manifestId: row.manifest_id,
+                manifestJson: row.manifest_json,
+                portableRequestJson: row.portable_request_json,
+              };
+        }),
+      findUnsettledByTurn: (providerTurnId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<
+              TurnRow & {
+                readonly execution_policy_json: string | null;
+                readonly turn_deadline_at: string | null;
+                readonly manifest_json: string | null;
+                readonly portable_request_json: string | null;
+              }
+            >(
+              "SELECT t.provider_turn_id, t.execution_id, t.session_id, t.context_epoch, t.model_ref, t.output_contract_ref, t.manifest_id, t.execution_policy_json, t.turn_deadline_at, m.manifest_json, m.portable_request_json FROM provider_turns t LEFT JOIN model_context_manifests m ON m.provider_turn_id = t.provider_turn_id AND m.manifest_id = t.manifest_id WHERE t.provider_turn_id = ? AND t.settled_at IS NULL",
+              [providerTurnId],
+            ),
+          );
+          const row = rows[0];
+          if (row === undefined) return null;
+          const attemptRows = yield* run(
+            sql.unsafe<AttemptRow>(
+              "SELECT provider_turn_id, attempt_no, outcome, provider_error_kind, failure_taxonomy_version, observation_json, canonical_event_prefix_json, delivered_position, continuation_checkpoint_json, retry_safety, retry_decision, retry_strategy, retry_reason FROM provider_attempts WHERE provider_turn_id = ? ORDER BY attempt_no",
+              [providerTurnId],
+            ),
+          );
+          const attempts: Array<ProviderAttemptSummary> = attemptRows.map(
+            (attempt) => ({
+              attemptNo: Number(attempt.attempt_no),
+              outcome: attempt.outcome as ProviderAttemptSummary["outcome"],
+              providerErrorKind: attempt.provider_error_kind,
+              taxonomyVersion:
+                attempt.failure_taxonomy_version as ProviderFailureTaxonomyVersion,
+              observation: decodeJson<ProviderAttemptObservation | null>(
+                attempt.observation_json,
+                null,
+              ),
+              continuationCheckpoint:
+                attempt.continuation_checkpoint_json === null
+                  ? null
+                  : decodeJson<ProviderContinuationCheckpoint | null>(
+                      attempt.continuation_checkpoint_json,
+                      null,
+                    ),
+              retryDecision:
+                attempt.retry_safety === null ||
+                attempt.retry_decision === null ||
+                attempt.retry_reason === null
+                  ? null
+                  : {
+                      safety: attempt.retry_safety as
+                        | "SafeReplay"
+                        | "SafeResume"
+                        | "UnsafeReplay",
+                      decision: attempt.retry_decision as "Retry" | "Stop",
+                      strategy:
+                        attempt.retry_strategy === null
+                          ? null
+                          : (attempt.retry_strategy as "Replay" | "Resume"),
+                      reason: attempt.retry_reason,
+                    },
+              canonicalEventPrefixJson: attempt.canonical_event_prefix_json,
+              deliveredPosition: attempt.delivered_position,
+            }),
+          );
+          return {
+            turn: toRecord(row),
+            attempts,
+            manifestJson: row.manifest_json,
+            portableRequestJson: row.portable_request_json,
+          };
+        }),
+      recordRecoveryDecision: (providerTurnId, evidence) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const causeDetail =
+            evidence.cause._tag === "ProviderFailure"
+              ? evidence.cause.kind
+              : evidence.cause._tag === "Timeout"
+                ? evidence.cause.phase
+                : null;
+          yield* run(
+            sql.unsafe(
+              "INSERT INTO provider_recovery_decisions (provider_turn_id, sequence_no, attempt_no, cause_tag, cause_detail, retry_safety, retry_decision, retry_strategy, retry_reason, decided_at) VALUES (?, (SELECT COALESCE(MAX(sequence_no), -1) + 1 FROM provider_recovery_decisions WHERE provider_turn_id = ?), ?, ?, ?, ?, ?, ?, ?, ?)",
+              [
+                providerTurnId,
+                providerTurnId,
+                evidence.attemptNo,
+                evidence.cause._tag,
+                causeDetail,
+                evidence.retryDecision.safety,
+                evidence.retryDecision.decision,
+                evidence.retryDecision.strategy,
+                evidence.retryDecision.reason,
+                evidence.decidedAt,
+              ],
+            ),
+          );
+        }),
+      startAttempt: (providerTurnId, attemptNo, observation, startedAt) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          yield* run(
+            sql.unsafe(
+              "INSERT INTO provider_attempts (provider_turn_id, attempt_no, started_at, settled_at, outcome, provider_error_kind, failure_taxonomy_version, observation_json, canonical_event_prefix_json, delivered_position, continuation_checkpoint_json, retry_safety, retry_decision, retry_strategy, retry_reason, transport_metadata_json) VALUES (?,?,?,NULL,'InProgress',NULL,'phase1-v2',?,?,0,NULL,NULL,NULL,NULL,NULL,NULL)",
+              [
+                providerTurnId,
+                attemptNo,
+                startedAt,
+                JSON.stringify(observation),
+                "[]",
+              ],
+            ),
+          );
+        }),
+      updateAttemptObservation: (
+        providerTurnId,
+        attemptNo,
+        observation,
+        canonicalEventPrefixJson,
+        deliveredPosition,
+        continuationCheckpoint,
+        updatedAt,
+      ) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{
+              observation_json: string;
+              canonical_event_prefix_json: string;
+              delivered_position: number | null;
+              continuation_checkpoint_json: string | null;
+              outcome: string;
+            }>(
+              "SELECT observation_json, canonical_event_prefix_json, delivered_position, continuation_checkpoint_json, outcome FROM provider_attempts WHERE provider_turn_id = ? AND attempt_no = ?",
+              [providerTurnId, attemptNo],
+            ),
+          );
+          const row = rows[0];
+          if (row === undefined || row.outcome !== "InProgress") {
+            return yield* Effect.fail<ProviderFailure>({
+              _tag: "ProviderFailure",
+              kind: "UnknownProviderFailure",
+              safeDiagnostic: "provider-attempt-not-in-progress",
+            });
+          }
+          let merged: ProviderAttemptObservation;
+          try {
+            merged = mergeObservation(
+              decodeJson(row.observation_json, UNKNOWN_OBSERVATION),
+              observation,
+            );
+          } catch {
+            return yield* Effect.fail<ProviderFailure>({
+              _tag: "ProviderFailure",
+              kind: "UnknownProviderFailure",
+              safeDiagnostic: "provider-observation-not-monotonic",
+            });
+          }
+          const previousPrefix = decodeJson<ReadonlyArray<unknown>>(
+            row.canonical_event_prefix_json,
+            [],
+          );
+          const nextPrefix = decodeJson<ReadonlyArray<unknown>>(
+            canonicalEventPrefixJson,
+            [],
+          );
+          if (
+            nextPrefix.length < previousPrefix.length ||
+            previousPrefix.some(
+              (event, index) =>
+                JSON.stringify(event) !== JSON.stringify(nextPrefix[index]),
+            ) ||
+            deliveredPosition < (row.delivered_position ?? 0)
+          ) {
+            return yield* Effect.fail<ProviderFailure>({
+              _tag: "ProviderFailure",
+              kind: "UnknownProviderFailure",
+              safeDiagnostic: "provider-attempt-evidence-not-monotonic",
+            });
+          }
+          const checkpointJson =
+            continuationCheckpoint === null
+              ? row.continuation_checkpoint_json
+              : JSON.stringify(continuationCheckpoint);
+          yield* run(
+            sql.unsafe(
+              "UPDATE provider_attempts SET observation_json = ?, canonical_event_prefix_json = ?, delivered_position = ?, continuation_checkpoint_json = ?, transport_metadata_json = ? WHERE provider_turn_id = ? AND attempt_no = ? AND outcome = 'InProgress'",
+              [
+                JSON.stringify(merged),
+                canonicalEventPrefixJson,
+                deliveredPosition,
+                checkpointJson,
+                JSON.stringify({ updatedAt }),
+                providerTurnId,
+                attemptNo,
+              ],
+            ),
+          );
+        }),
+      settleAttempt: (providerTurnId, attemptNo, settlement, settledAt) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{ observation_json: string; outcome: string }>(
+              "SELECT observation_json, outcome FROM provider_attempts WHERE provider_turn_id = ? AND attempt_no = ?",
+              [providerTurnId, attemptNo],
+            ),
+          );
+          const row = rows[0];
+          if (row === undefined || row.outcome !== "InProgress") {
+            return yield* Effect.fail<ProviderFailure>({
+              _tag: "ProviderFailure",
+              kind: "UnknownProviderFailure",
+              safeDiagnostic: "provider-attempt-settlement-invalid-state",
+            });
+          }
+          let merged: ProviderAttemptObservation;
+          try {
+            merged = mergeObservation(
+              decodeJson(row.observation_json, UNKNOWN_OBSERVATION),
+              settlement.observation,
+            );
+          } catch {
+            return yield* Effect.fail<ProviderFailure>({
+              _tag: "ProviderFailure",
+              kind: "UnknownProviderFailure",
+              safeDiagnostic: "provider-settlement-observation-not-monotonic",
+            });
+          }
+          yield* run(
+            sql.unsafe(
+              "UPDATE provider_attempts SET settled_at = ?, outcome = ?, provider_error_kind = ?, failure_taxonomy_version = ?, observation_json = ?, canonical_event_prefix_json = ?, delivered_position = ?, continuation_checkpoint_json = ?, retry_safety = ?, retry_decision = ?, retry_strategy = ?, retry_reason = ? WHERE provider_turn_id = ? AND attempt_no = ? AND outcome = 'InProgress'",
+              [
+                settledAt,
+                settlement.outcome,
+                settlement.providerErrorKind ?? null,
+                settlement.taxonomyVersion,
+                JSON.stringify(merged),
+                settlement.canonicalEventPrefixJson,
+                settlement.deliveredPosition,
+                settlement.continuationCheckpoint === undefined
+                  ? null
+                  : JSON.stringify(settlement.continuationCheckpoint),
+                settlement.retryDecision?.safety ?? null,
+                settlement.retryDecision?.decision ?? null,
+                settlement.retryDecision?.strategy ?? null,
+                settlement.retryDecision?.reason ?? null,
+                providerTurnId,
+                attemptNo,
+              ],
+            ),
+          );
+        }),
+      startTurn: (record: ProviderTurnRecord, startedAt: string) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           yield* run(
@@ -77,25 +494,6 @@ export const ProviderTurnStoreLive: Layer.Layer<
               ],
             ),
           );
-          yield* run(
-            sql.unsafe(
-              // Upsert: a retried/replayed ProviderTurn with an unchanged
-              // compiled request produces the same manifestId — the row is
-              // idempotently replaced, never a duplicate (P1 §8 replay rule).
-              "INSERT INTO model_context_manifests (manifest_id, provider_turn_id, execution_id, session_id, context_epoch, model_ref, compiled_request_hash, manifest_json, created_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(manifest_id) DO UPDATE SET provider_turn_id = excluded.provider_turn_id, execution_id = excluded.execution_id, session_id = excluded.session_id, context_epoch = excluded.context_epoch, model_ref = excluded.model_ref, compiled_request_hash = excluded.compiled_request_hash, manifest_json = excluded.manifest_json, created_at = excluded.created_at",
-              [
-                manifest.manifestId,
-                manifest.providerTurnId,
-                manifest.executionId,
-                manifest.sessionId,
-                manifest.contextEpoch,
-                manifest.modelRef,
-                manifest.compiledRequestHash,
-                manifest.manifestJson,
-                startedAt,
-              ],
-            ),
-          );
         }),
       recordAttempt: (
         providerTurnId,
@@ -108,7 +506,7 @@ export const ProviderTurnStoreLive: Layer.Layer<
           yield* TransactionScope;
           yield* run(
             sql.unsafe(
-              "INSERT INTO provider_attempts (provider_turn_id, attempt_no, started_at, settled_at, outcome, provider_error_kind, transport_metadata_json) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(provider_turn_id, attempt_no) DO UPDATE SET settled_at = excluded.settled_at, outcome = excluded.outcome, provider_error_kind = excluded.provider_error_kind",
+              "INSERT INTO provider_attempts (provider_turn_id, attempt_no, started_at, settled_at, outcome, provider_error_kind, failure_taxonomy_version, observation_json, canonical_event_prefix_json, delivered_position, transport_metadata_json) VALUES (?,?,?,?,?,?,'legacy-v1',?,?,NULL,NULL) ON CONFLICT(provider_turn_id, attempt_no) DO UPDATE SET settled_at = excluded.settled_at, outcome = excluded.outcome, provider_error_kind = excluded.provider_error_kind",
               [
                 providerTurnId,
                 attemptNo,
@@ -116,6 +514,8 @@ export const ProviderTurnStoreLive: Layer.Layer<
                 settledAt,
                 outcome._tag,
                 outcome.providerErrorKind ?? null,
+                UNKNOWN_OBSERVATION_JSON,
+                "[]",
               ],
             ),
           );
@@ -134,8 +534,13 @@ export const ProviderTurnStoreLive: Layer.Layer<
         Effect.gen(function* () {
           yield* TransactionScope;
           const turnRows = yield* run(
-            sql.unsafe<TurnRow>(
-              "SELECT pt.provider_turn_id, pt.execution_id, pt.session_id, pt.context_epoch, pt.model_ref, pt.output_contract_ref, pt.manifest_id FROM provider_turns pt JOIN executions e ON e.execution_id = pt.execution_id WHERE e.project_id = ? AND pt.settled_at IS NULL ORDER BY pt.started_at, pt.provider_turn_id",
+            sql.unsafe<
+              TurnRow & {
+                readonly manifest_json: string | null;
+                readonly portable_request_json: string | null;
+              }
+            >(
+              "SELECT pt.provider_turn_id, pt.execution_id, pt.session_id, pt.context_epoch, pt.model_ref, pt.output_contract_ref, pt.manifest_id, pt.execution_policy_json, pt.turn_deadline_at, m.manifest_json, m.portable_request_json FROM provider_turns pt LEFT JOIN model_context_manifests m ON m.provider_turn_id = pt.provider_turn_id AND m.manifest_id = pt.manifest_id JOIN executions e ON e.execution_id = pt.execution_id WHERE e.project_id = ? AND pt.settled_at IS NULL ORDER BY pt.started_at, pt.provider_turn_id",
               [projectId],
             ),
           );
@@ -145,7 +550,7 @@ export const ProviderTurnStoreLive: Layer.Layer<
           const placeholders = turnRows.map(() => "?").join(",");
           const attemptRows = yield* run(
             sql.unsafe<AttemptRow>(
-              `SELECT provider_turn_id, attempt_no, outcome, provider_error_kind FROM provider_attempts WHERE provider_turn_id IN (${placeholders}) ORDER BY attempt_no`,
+              `SELECT provider_turn_id, attempt_no, outcome, provider_error_kind, failure_taxonomy_version, observation_json, canonical_event_prefix_json, delivered_position, continuation_checkpoint_json, retry_safety, retry_decision, retry_strategy, retry_reason FROM provider_attempts WHERE provider_turn_id IN (${placeholders}) ORDER BY attempt_no`,
               turnRows.map((row) => row.provider_turn_id),
             ),
           );
@@ -154,10 +559,24 @@ export const ProviderTurnStoreLive: Layer.Layer<
             Array<{
               readonly attemptNo: number;
               readonly outcome:
+                | "InProgress"
                 | "Success"
                 | "RetryableFailure"
-                | "TerminalFailure";
+                | "TerminalFailure"
+                | "Cancelled"
+                | "TimedOut";
               readonly providerErrorKind: string | null;
+              readonly taxonomyVersion: ProviderFailureTaxonomyVersion;
+              readonly observation: ProviderAttemptObservation | null;
+              readonly continuationCheckpoint: ProviderContinuationCheckpoint | null;
+              readonly retryDecision: {
+                readonly safety: "SafeReplay" | "SafeResume" | "UnsafeReplay";
+                readonly decision: "Retry" | "Stop";
+                readonly strategy: "Replay" | "Resume" | null;
+                readonly reason: string;
+              } | null;
+              readonly canonicalEventPrefixJson: string;
+              readonly deliveredPosition: number | null;
             }>
           >();
           for (const row of attemptRows) {
@@ -165,16 +584,53 @@ export const ProviderTurnStoreLive: Layer.Layer<
             list.push({
               attemptNo: Number(row.attempt_no),
               outcome: row.outcome as
+                | "InProgress"
                 | "Success"
                 | "RetryableFailure"
-                | "TerminalFailure",
+                | "TerminalFailure"
+                | "Cancelled"
+                | "TimedOut",
               providerErrorKind: row.provider_error_kind,
+              taxonomyVersion:
+                row.failure_taxonomy_version as ProviderFailureTaxonomyVersion,
+              observation: decodeJson<ProviderAttemptObservation | null>(
+                row.observation_json,
+                null,
+              ),
+              continuationCheckpoint:
+                row.continuation_checkpoint_json === null
+                  ? null
+                  : decodeJson<ProviderContinuationCheckpoint | null>(
+                      row.continuation_checkpoint_json,
+                      null,
+                    ),
+              retryDecision:
+                row.retry_safety === null ||
+                row.retry_decision === null ||
+                row.retry_reason === null
+                  ? null
+                  : {
+                      safety: row.retry_safety as
+                        | "SafeReplay"
+                        | "SafeResume"
+                        | "UnsafeReplay",
+                      decision: row.retry_decision as "Retry" | "Stop",
+                      strategy:
+                        row.retry_strategy === null
+                          ? null
+                          : (row.retry_strategy as "Replay" | "Resume"),
+                      reason: row.retry_reason,
+                    },
+              canonicalEventPrefixJson: row.canonical_event_prefix_json,
+              deliveredPosition: row.delivered_position,
             });
             attemptsByTurn.set(row.provider_turn_id, list);
           }
           return turnRows.map((row) => ({
             turn: toRecord(row),
             attempts: attemptsByTurn.get(row.provider_turn_id) ?? [],
+            manifestJson: row.manifest_json,
+            portableRequestJson: row.portable_request_json,
           }));
         }),
       failTurn: (providerTurnId, settledAt) =>

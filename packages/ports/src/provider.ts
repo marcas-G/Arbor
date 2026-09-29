@@ -19,7 +19,10 @@ export type {
 import { Context, type Effect, type Stream } from "effect";
 import type {
   ModelCapabilityError,
+  ProviderExecutionTimeout,
   ProviderFailure,
+  ProviderFailureKind,
+  ProviderFailureTaxonomyVersion,
   SkillRegistryError,
 } from "./errors.js";
 import type {
@@ -59,6 +62,19 @@ export interface PortableModelRequest {
   readonly cacheHints: ReadonlyArray<CacheHint>;
 }
 
+/** Structural form of the standard Web AbortSignal contract. Keeping the
+ * provider port independent of DOM/Node types still lets adapters pass the
+ * signal unchanged to fetch and stream readers. */
+export interface ProviderCancellationSignal {
+  readonly aborted: boolean;
+  addEventListener(
+    type: "abort",
+    listener: () => void,
+    options?: { readonly once?: boolean },
+  ): void;
+  removeEventListener(type: "abort", listener: () => void): void;
+}
+
 export interface ProviderExecutionContext {
   readonly providerTurnId: ProviderTurnId;
   readonly attemptNo: number;
@@ -67,8 +83,13 @@ export interface ProviderExecutionContext {
    * execution boundary and consumed by the transport adapter. Never persisted,
    * never logged, redacted by default under serialization. */
   readonly secretMaterial?: SecretMaterial;
-  readonly timeoutMs: number;
-  readonly cancellationRef: string;
+  readonly cancellationSignal: ProviderCancellationSignal;
+  readonly connectTimeoutMs: number;
+  readonly firstEventTimeoutMs: number;
+  readonly streamIdleTimeoutMs: number;
+  readonly turnDeadlineAt: string;
+  readonly maxAttempts: number;
+  readonly continuationCheckpoint?: ProviderContinuationCheckpoint;
 }
 
 export type ProviderFinishReason =
@@ -77,45 +98,118 @@ export type ProviderFinishReason =
   | "ToolCall"
   | "ContentFilter";
 
-export type ProviderFailureKind =
-  | "RateLimited"
-  | "ProviderUnavailable"
-  | "AuthenticationFailed"
-  | "RequestRejected"
-  | "StreamInterrupted"
-  | "ProtocolViolation";
-
-/** TR-4 (P12 `12` §5): `ProviderFailureKind` is a CLOSED union. It is
- * exhaustively consumed (retry-disposition mapping, P3 `06` §2), so
- * add/remove/rename is a MAJOR SPI change (`PluginSdkApiVersion`). An adapter
- * that observes a provider-specific class with no frozen tag normalizes it to
- * `ProtocolViolation` (terminal) at the adapter boundary. */
 export const PROVIDER_FAILURE_KINDS = [
-  "RateLimited",
-  "ProviderUnavailable",
   "AuthenticationFailed",
+  "AuthorizationFailed",
+  "RateLimited",
+  "QuotaExceeded",
+  "ProviderUnavailable",
+  "TransportFailed",
   "RequestRejected",
   "StreamInterrupted",
+  "ContextLimitExceeded",
   "ProtocolViolation",
+  "Cancelled",
+  "UnknownProviderFailure",
 ] as const;
 
-/** Exhaustive by construction: a new `ProviderFailureKind` member fails
- * compilation until its disposition is declared (closed-union enforcement). */
-const PROVIDER_FAILURE_DISPOSITION: Record<
-  ProviderFailureKind,
-  "retryable" | "terminal"
-> = {
-  RateLimited: "retryable",
-  ProviderUnavailable: "retryable",
-  AuthenticationFailed: "terminal",
-  RequestRejected: "terminal",
-  StreamInterrupted: "retryable",
-  ProtocolViolation: "terminal",
-};
+export type { ProviderFailureKind, ProviderFailureTaxonomyVersion };
 
+export const PROVIDER_RETRY_ELIGIBLE_FAILURES = [
+  "RateLimited",
+  "ProviderUnavailable",
+  "TransportFailed",
+  "StreamInterrupted",
+] as const satisfies ReadonlyArray<ProviderFailureKind>;
+
+/** Compatibility classifier only; automatic retry uses durable observation
+ * evidence through the shared RetryDecision policy. */
 export const providerFailureDisposition = (
   kind: ProviderFailureKind,
-): "retryable" | "terminal" => PROVIDER_FAILURE_DISPOSITION[kind];
+): "retryable" | "terminal" =>
+  (
+    PROVIDER_RETRY_ELIGIBLE_FAILURES as ReadonlyArray<ProviderFailureKind>
+  ).includes(kind)
+    ? "retryable"
+    : "terminal";
+
+export type ObservationFact = boolean | null;
+
+/** `null` means unknown and must fail closed during retry classification. */
+export interface ProviderAttemptObservation {
+  readonly responseStarted: ObservationFact;
+  readonly canonicalEventEmitted: ObservationFact;
+  readonly consumerVisibleOutput: ObservationFact;
+  readonly toolCallProposed: ObservationFact;
+  readonly continuationAvailable: ObservationFact;
+  readonly externalEffectPossible: ObservationFact;
+}
+
+export type ProviderObservationDelta = Partial<
+  Readonly<Record<keyof ProviderAttemptObservation, boolean>>
+>;
+
+export interface ProviderContinuationCheckpoint {
+  readonly cursor: string;
+  readonly canonicalEventPrefixJson: string;
+  readonly deliveredPosition: number | null;
+  /** True only when the adapter guarantees a cursor-exclusive resume. */
+  readonly resumeGuaranteed: boolean;
+}
+
+export type ProviderRetrySafety = "SafeReplay" | "SafeResume" | "UnsafeReplay";
+export type ProviderRetryDecisionKind = "Retry" | "Stop";
+export type ProviderRetryStrategy = "Replay" | "Resume" | null;
+
+export interface ProviderRetryDecisionRecord {
+  readonly safety: ProviderRetrySafety;
+  readonly decision: ProviderRetryDecisionKind;
+  readonly strategy: ProviderRetryStrategy;
+  readonly reason: string;
+}
+
+export type ProviderRetryCause =
+  | { readonly _tag: "ProviderFailure"; readonly kind: ProviderFailureKind }
+  | { readonly _tag: "ProcessLost" }
+  | { readonly _tag: "Timeout"; readonly phase: string }
+  | { readonly _tag: "Cancelled" };
+
+/** Durable P9 recovery decision evidence. attemptNo is -1 only when Recovery
+ * found no ProviderAttempt row and evaluated the first replay. */
+export interface ProviderRecoveryDecisionEvidence {
+  readonly attemptNo: number;
+  readonly cause: ProviderRetryCause;
+  readonly retryDecision: ProviderRetryDecisionRecord;
+  readonly decidedAt: string;
+}
+
+export interface ProviderRuntimeExecutionPolicy {
+  readonly connectTimeoutMs: number;
+  readonly firstEventTimeoutMs: number;
+  readonly streamIdleTimeoutMs: number;
+  readonly turnTimeoutMs: number;
+  readonly maxAttempts: number;
+  readonly retryBackoffMs: number;
+}
+
+export type ProviderExecutionPolicyOverrides =
+  Partial<ProviderRuntimeExecutionPolicy>;
+
+export interface ProviderPolicySources {
+  readonly systemDefault: ProviderRuntimeExecutionPolicy;
+  readonly providerDefault?: ProviderExecutionPolicyOverrides;
+  readonly modelDeploymentOverride?: ProviderExecutionPolicyOverrides;
+}
+
+/** Internal adapter/runtime event. Runtime persists observations before it
+ * accepts later events or crosses the corresponding transport boundary. */
+export type ProviderPortEvent =
+  | { readonly _tag: "Canonical"; readonly event: CanonicalProviderEvent }
+  | {
+      readonly _tag: "Observation";
+      readonly delta: ProviderObservationDelta;
+      readonly continuationCheckpoint?: ProviderContinuationCheckpoint;
+    };
 
 export type CanonicalProviderEvent =
   | {
@@ -150,7 +244,7 @@ export interface ProviderPortService {
   readonly runTurn: (input: {
     readonly request: PortableModelRequest;
     readonly context: ProviderExecutionContext;
-  }) => Stream.Stream<CanonicalProviderEvent, ProviderFailure>;
+  }) => Stream.Stream<ProviderPortEvent, ProviderFailure>;
 }
 
 export class ProviderPort extends Context.Service<
@@ -165,15 +259,26 @@ export interface ProviderRunInput {
   readonly contextEpoch: ContextEpochNumber;
   readonly modelRef: string;
   readonly outputContractRef: string;
-  readonly manifestId: string;
-  readonly manifest: ModelContextManifestRecord;
+  /** Full ModelContextManifest JSON; Runtime allocates a separate durable
+   * ManifestId and stores this value verbatim before Provider Attempt 0. */
+  readonly manifestJson: string;
   readonly request: PortableModelRequest;
   readonly secretRef?: SecretRef;
-  readonly timeoutMs: number;
-  readonly cancellationRef: string;
+  readonly cancellationSignal?: ProviderCancellationSignal;
+  readonly executionPolicyOverrides?: ProviderExecutionPolicyOverrides;
+  readonly recovery?: ProviderTurnResumeInput;
   /** Process-local observation of provider events while an attempt is live.
    * Observers are presentation-only and cannot affect provider success. */
   readonly onProgress?: ((event: ProviderRuntimeProgress) => void) | undefined;
+}
+
+/** The application Recovery decision needed to continue an existing logical
+ * ProviderTurn. Provider Runtime revalidates it against persisted evidence. */
+export interface ProviderTurnResumeInput {
+  readonly manifestId: string;
+  readonly nextAttemptNo: number;
+  readonly retryDecision: ProviderRetryDecisionRecord;
+  readonly continuationCheckpoint?: ProviderContinuationCheckpoint;
 }
 
 /** Durable row payload for DID §8.19 / P3 `04` §3.3. */
@@ -216,6 +321,7 @@ export type ProviderRuntimeProgress =
 export interface ProviderRunResult {
   readonly events: ReadonlyArray<CanonicalProviderEvent>;
   readonly attemptNo: number;
+  readonly retryDecisions: ReadonlyArray<ProviderRetryDecisionRecord>;
 }
 
 export interface ProviderRuntimeService {
@@ -223,7 +329,10 @@ export interface ProviderRuntimeService {
     input: ProviderRunInput,
   ) => Effect.Effect<
     ProviderRunResult,
-    ProviderFailure | TransactionOperationalFailure | SecretStoreError
+    | ProviderFailure
+    | ProviderExecutionTimeout
+    | TransactionOperationalFailure
+    | SecretStoreError
   >;
 }
 
@@ -240,11 +349,20 @@ export interface ProviderTurnRecord {
   readonly modelRef: string;
   readonly outputContractRef: string;
   readonly manifestId: string;
+  readonly executionPolicy?: ProviderRuntimeExecutionPolicy;
+  readonly turnDeadlineAt?: string;
 }
 
 export interface ProviderAttemptOutcome {
-  readonly _tag: "Success" | "RetryableFailure" | "TerminalFailure";
-  readonly providerErrorKind?: string;
+  readonly _tag:
+    | "InProgress"
+    | "Success"
+    | "RetryableFailure"
+    | "TerminalFailure"
+    | "Cancelled"
+    | "TimedOut";
+  readonly providerErrorKind?: ProviderFailureKind;
+  readonly taxonomyVersion?: ProviderFailureTaxonomyVersion;
 }
 
 /** P9 `04` §2.2 read face: a dangling ProviderTurn (`settled_at IS NULL`)
@@ -252,19 +370,84 @@ export interface ProviderAttemptOutcome {
  * decision table. */
 export interface ProviderAttemptSummary {
   readonly attemptNo: number;
-  readonly outcome: "Success" | "RetryableFailure" | "TerminalFailure";
+  readonly outcome: ProviderAttemptOutcome["_tag"];
   readonly providerErrorKind: string | null;
+  readonly taxonomyVersion?: ProviderFailureTaxonomyVersion;
+  readonly observation?: ProviderAttemptObservation | null;
+  readonly continuationCheckpoint?: ProviderContinuationCheckpoint | null;
+  readonly retryDecision?: ProviderRetryDecisionRecord | null;
+  readonly canonicalEventPrefixJson?: string;
+  readonly deliveredPosition?: number | null;
+}
+
+export interface ProviderTurnManifestReceipt {
+  readonly providerTurnId: ProviderTurnId;
+  readonly manifestId: string;
+}
+
+export interface ProviderAttemptSettlement {
+  readonly outcome: Exclude<ProviderAttemptOutcome["_tag"], "InProgress">;
+  readonly providerErrorKind?: ProviderFailureKind;
+  readonly taxonomyVersion: ProviderFailureTaxonomyVersion;
+  readonly observation: ProviderAttemptObservation;
+  readonly continuationCheckpoint?: ProviderContinuationCheckpoint;
+  readonly canonicalEventPrefixJson: string;
+  readonly deliveredPosition: number;
+  readonly retryDecision?: ProviderRetryDecisionRecord;
 }
 
 export interface UnsettledProviderTurn {
   readonly turn: ProviderTurnRecord;
   readonly attempts: ReadonlyArray<ProviderAttemptSummary>;
+  readonly manifestJson: string | null;
+  readonly portableRequestJson: string | null;
 }
 
 export interface ProviderTurnStoreService {
+  readonly startTurnWithManifest: (
+    record: ProviderTurnRecord,
+    manifestJson: string,
+    portableRequestJson: string,
+    startedAt: string,
+  ) => Effect.Effect<
+    ProviderTurnManifestReceipt,
+    ProviderFailure,
+    TransactionScope
+  >;
+  readonly findManifestByTurn: (
+    providerTurnId: ProviderTurnId,
+  ) => Effect.Effect<
+    {
+      readonly manifestId: string;
+      readonly manifestJson: string;
+      readonly portableRequestJson: string;
+    } | null,
+    ProviderFailure,
+    TransactionScope
+  >;
+  readonly startAttempt: (
+    providerTurnId: ProviderTurnId,
+    attemptNo: number,
+    observation: ProviderAttemptObservation,
+    startedAt: string,
+  ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
+  readonly updateAttemptObservation: (
+    providerTurnId: ProviderTurnId,
+    attemptNo: number,
+    observation: ProviderAttemptObservation,
+    canonicalEventPrefixJson: string,
+    deliveredPosition: number,
+    continuationCheckpoint: ProviderContinuationCheckpoint | null,
+    updatedAt: string,
+  ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
+  readonly settleAttempt: (
+    providerTurnId: ProviderTurnId,
+    attemptNo: number,
+    settlement: ProviderAttemptSettlement,
+    settledAt: string,
+  ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
   readonly startTurn: (
     record: ProviderTurnRecord,
-    manifest: ModelContextManifestRecord,
     startedAt: string,
   ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
   readonly recordAttempt: (
@@ -290,6 +473,19 @@ export interface ProviderTurnStoreService {
     ProviderFailure,
     TransactionScope
   >;
+  readonly findUnsettledByTurn: (
+    providerTurnId: ProviderTurnId,
+  ) => Effect.Effect<
+    UnsettledProviderTurn | null,
+    ProviderFailure,
+    TransactionScope
+  >;
+  /** Append the shared retry-policy result before Recovery returns a retry
+   * plan or marks the ProviderTurn failed. */
+  readonly recordRecoveryDecision: (
+    providerTurnId: ProviderTurnId,
+    evidence: ProviderRecoveryDecisionEvidence,
+  ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
   /** P9 `04` §2.2 case 2: mark a dangling Turn settled failed (driver
    * Turn-failure semantics, P3 `06` §2) when the retry bound is exhausted
    * or the failure class is terminal. No-op if already settled. */

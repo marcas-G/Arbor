@@ -68,16 +68,40 @@ export interface ReconciliationSourceError {
 
 // --- P3 ---
 
+export type ProviderFailureTaxonomyVersion = "legacy-v1" | "phase1-v2";
+
+export type ProviderFailureKind =
+  | "AuthenticationFailed"
+  | "AuthorizationFailed"
+  | "RateLimited"
+  | "QuotaExceeded"
+  | "ProviderUnavailable"
+  | "TransportFailed"
+  | "StreamInterrupted"
+  | "RequestRejected"
+  | "ContextLimitExceeded"
+  | "ProtocolViolation"
+  | "Cancelled"
+  | "UnknownProviderFailure";
+
 export interface ProviderFailure {
   readonly _tag: "ProviderFailure";
-  readonly kind:
-    | "RateLimited"
-    | "ProviderUnavailable"
-    | "AuthenticationFailed"
-    | "RequestRejected"
-    | "StreamInterrupted"
-    | "ProtocolViolation";
-  readonly cause?: unknown;
+  readonly kind: ProviderFailureKind;
+  /** Taxonomy used when interpreting persisted historical attempt data. */
+  readonly taxonomyVersion?: ProviderFailureTaxonomyVersion;
+  /** Redacted, adapter-approved diagnostic only. Never store native errors. */
+  readonly safeDiagnostic?: string;
+}
+
+export type ProviderTimeoutPhase =
+  | "ConnectTimeout"
+  | "FirstEventTimeout"
+  | "StreamIdleTimeout"
+  | "TurnDeadline";
+
+export interface ProviderExecutionTimeout {
+  readonly _tag: "ProviderExecutionTimeout";
+  readonly phase: ProviderTimeoutPhase;
 }
 
 export interface ModelCapabilityError {

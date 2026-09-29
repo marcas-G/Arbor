@@ -410,16 +410,6 @@ const openProviderTurn = (turnId: ProviderTurnId) =>
           outputContractRef: "oc",
           manifestId: "mf",
         },
-        {
-          manifestId: `mf:${turnId}`,
-          providerTurnId: turnId,
-          executionId,
-          sessionId,
-          contextEpoch: 0 as never,
-          modelRef: "provider-fake",
-          compiledRequestHash: `mf:${turnId}:request`,
-          manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
-        },
         "t",
       ),
     );

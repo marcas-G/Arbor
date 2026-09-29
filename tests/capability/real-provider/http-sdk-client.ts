@@ -3,6 +3,10 @@ import type {
   OpenAISdkClient,
   OpenAISdkFinishReason,
 } from "../../../adapters/provider-openai/src/index.js";
+import {
+  OpenAIProtocolError,
+  OpenAISdkError,
+} from "../../../adapters/provider-openai/src/index.js";
 import type {
   PortableMessage,
   PortableModelRequest,
@@ -82,12 +86,13 @@ const bytesToBase64 = (chunks: ReadonlyArray<Uint8Array>): string => {
 
 const finishReason = (value: unknown): OpenAISdkFinishReason => {
   switch (value) {
+    case "stop":
     case "length":
     case "tool_calls":
     case "content_filter":
       return value;
     default:
-      return "stop";
+      throw new OpenAIProtocolError("unsupported-finish-reason");
   }
 };
 
@@ -96,6 +101,20 @@ const endpointOf = (baseUrl: string): string => {
   return trimmed.endsWith("/chat/completions")
     ? trimmed
     : `${trimmed}/chat/completions`;
+};
+
+const isLoopbackEndpoint = (endpoint: string): boolean => {
+  try {
+    const hostname = new URL(endpoint).hostname.toLowerCase();
+    return (
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      /^127(?:\.\d{1,3}){3}$/u.test(hostname) ||
+      hostname === "[::1]"
+    );
+  } catch {
+    return false;
+  }
 };
 
 export const runtimeForProvider = async (input: {
@@ -157,6 +176,10 @@ export const makeHttpProviderClient = (input: {
   readonly apiKey?: string;
   readonly captures: Array<HttpProviderCallEvidence>;
 }): OpenAISdkClient => ({
+  // The capability client is used with the local llama.cpp server. A loopback
+  // endpoint cannot create provider-side effects outside this machine;
+  // unknown/remote endpoints are treated conservatively before fetch starts.
+  externalEffectPossible: !isLoopbackEndpoint(input.runtime.endpoint),
   streamChat: async function* ({ modelRef, request, context }) {
     const requestBodyJson = messageBody(modelRef, request);
     const capture: HttpProviderCallEvidence = {
@@ -177,6 +200,7 @@ export const makeHttpProviderClient = (input: {
             : {}),
         },
         body: JSON.stringify(requestBodyJson),
+        signal: context.cancellationSignal as AbortSignal,
       });
       capture.responseStatus = response.status;
       capture.responseHeaders = Object.fromEntries(
@@ -186,29 +210,35 @@ export const makeHttpProviderClient = (input: {
           ),
         ),
       );
+      // A status response is still a provider response boundary. Persist it
+      // before translating non-2xx status into a typed provider failure.
+      yield { type: "response_started" };
       if (!response.ok) {
         const body = await response.text();
         capture.responseBodyBase64 = Buffer.from(body).toString("base64");
-        throw new Error(`provider returned HTTP ${response.status}: ${body}`);
+        let errorCode = "provider_http_error";
+        try {
+          const parsed = JSON.parse(body) as {
+            error?: { code?: unknown; type?: unknown };
+          };
+          const candidate = parsed.error?.code ?? parsed.error?.type;
+          if (
+            typeof candidate === "string" &&
+            /^[A-Za-z0-9_-]{1,64}$/u.test(candidate)
+          ) {
+            errorCode = candidate;
+          }
+        } catch {
+          // The HTTP status remains sufficient classification evidence.
+        }
+        throw new OpenAISdkError(response.status, errorCode);
       }
       if (response.body === null) {
-        throw new Error(
-          "provider returned a successful response without a body",
-        );
+        throw new OpenAIProtocolError("successful-response-missing-body");
       }
 
-      const [streamBody, evidenceBody] = response.body.tee();
-      const evidencePromise = (async () => {
-        const reader = evidenceBody.getReader();
-        const chunks: Uint8Array[] = [];
-        while (true) {
-          const next = await reader.read();
-          if (next.done) break;
-          chunks.push(next.value);
-        }
-        capture.responseBodyBase64 = bytesToBase64(chunks);
-      })();
-      const reader = streamBody.getReader();
+      const reader = response.body.getReader();
+      const responseBytes: Uint8Array[] = [];
       const decoder = new TextDecoder();
       const calls = new Map<
         number,
@@ -216,6 +246,8 @@ export const makeHttpProviderClient = (input: {
       >();
       let buffer = "";
       let completedReason: OpenAISdkFinishReason = "stop";
+      let finishReasonSeen = false;
+      let doneFrameSeen = false;
       let usage: OpenAISdkChunk | undefined;
       const consumeFrame = function* (
         frame: string,
@@ -225,12 +257,16 @@ export const makeHttpProviderClient = (input: {
           .filter((line) => line.startsWith("data:"))
           .map((line) => line.slice(5).trimStart())
           .join("\n");
-        if (data.length === 0 || data === "[DONE]") return;
+        if (data.length === 0) return;
+        if (data === "[DONE]") {
+          doneFrameSeen = true;
+          return;
+        }
         let parsed: unknown;
         try {
           parsed = JSON.parse(data) as unknown;
         } catch {
-          throw new Error(`provider emitted invalid SSE JSON: ${data}`);
+          throw new OpenAIProtocolError("invalid-sse-json");
         }
         if (typeof parsed !== "object" || parsed === null) return;
         const record = parsed as Record<string, unknown>;
@@ -252,8 +288,12 @@ export const makeHttpProviderClient = (input: {
         const choice = choices[0];
         if (typeof choice !== "object" || choice === null) return;
         const choiceRecord = choice as Record<string, unknown>;
-        if (choiceRecord.finish_reason !== null) {
+        if (
+          choiceRecord.finish_reason !== null &&
+          choiceRecord.finish_reason !== undefined
+        ) {
           completedReason = finishReason(choiceRecord.finish_reason);
+          finishReasonSeen = true;
         }
         const delta =
           typeof choiceRecord.delta === "object" && choiceRecord.delta !== null
@@ -297,6 +337,7 @@ export const makeHttpProviderClient = (input: {
         while (true) {
           const next = await reader.read();
           if (next.done) break;
+          responseBytes.push(next.value);
           buffer += decoder.decode(next.value, { stream: true });
           let boundary = buffer.search(/\r?\n\r?\n/u);
           while (boundary >= 0) {
@@ -310,9 +351,12 @@ export const makeHttpProviderClient = (input: {
         }
         buffer += decoder.decode();
         if (buffer.trim().length > 0) yield* consumeFrame(buffer);
+        if (!finishReasonSeen || !doneFrameSeen) {
+          throw new OpenAIProtocolError("stream-termination-incomplete");
+        }
         for (const call of [...calls.values()]) {
           if (call.id.length === 0 || call.name.length === 0) {
-            throw new Error("provider returned a tool call without id/name");
+            throw new OpenAIProtocolError("tool-call-missing-identity");
           }
           yield {
             type: "tool_call",
@@ -325,7 +369,7 @@ export const makeHttpProviderClient = (input: {
         yield { type: "completed", finishReason: completedReason };
       } finally {
         await reader.cancel().catch(() => undefined);
-        await evidencePromise;
+        capture.responseBodyBase64 = bytesToBase64(responseBytes);
       }
     } catch (error) {
       capture.error = error instanceof Error ? error.message : String(error);

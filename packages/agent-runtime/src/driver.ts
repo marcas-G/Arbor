@@ -454,7 +454,6 @@ export const AgentDriverLive = (
                   modelRef: capability.modelRef,
                   outputContractRef:
                     preparation.turn.manifest.outputContractRef,
-                  manifestId: preparation.turn.manifest.compiledRequestHash,
                   ...(options.onProviderProgress !== undefined
                     ? {
                         onProgress: (
@@ -467,23 +466,11 @@ export const AgentDriverLive = (
                         },
                       }
                     : {}),
-                  manifest: {
-                    manifestId: preparation.turn.manifest.compiledRequestHash,
-                    providerTurnId: preparation.turn.manifest.providerTurnId,
-                    executionId: preparation.turn.manifest.executionId,
-                    sessionId: preparation.turn.manifest.sessionId,
-                    contextEpoch: preparation.turn.manifest.contextEpoch,
-                    modelRef: preparation.turn.manifest.modelRef,
-                    compiledRequestHash:
-                      preparation.turn.manifest.compiledRequestHash,
-                    manifestJson: JSON.stringify(preparation.turn.manifest),
-                  },
+                  manifestJson: JSON.stringify(preparation.turn.manifest),
                   request: preparation.turn.request,
                   ...(options.secretRef !== undefined
                     ? { secretRef: options.secretRef }
                     : {}),
-                  timeoutMs: 30_000,
-                  cancellationRef: "cancel",
                 };
                 const providerRun = yield* providerRuntime
                   .runTurn(turnInput)

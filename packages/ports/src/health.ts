@@ -17,6 +17,9 @@ export const P12_MIGRATION_BASELINE = 13;
  * (adds `human_messages`, P14 `01` §4). */
 export const P14_MIGRATION_BASELINE = 14;
 
+/** Provider Runtime Correctness Phase 1 migration baseline. */
+export const P15_MIGRATION_BASELINE = 15;
+
 export interface ReadinessState {
   /** Canonical DB connection is open (reopen / integrity_check path available). */
   readonly dbOpen: boolean;

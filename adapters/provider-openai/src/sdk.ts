@@ -3,7 +3,7 @@ import type {
   ProviderExecutionContext,
 } from "@arbor/ports";
 
-/** Raw SDK/transport error, translated before crossing the ProviderPort edge. */
+/** Raw SDK error type. Only status/code are retained in safe diagnostics. */
 export class OpenAISdkError extends Error {
   readonly status: number;
   readonly code: string;
@@ -16,13 +16,24 @@ export class OpenAISdkError extends Error {
   }
 }
 
+/** Explicit adapter marker for malformed protocol data. */
+export class OpenAIProtocolError extends Error {
+  constructor(readonly safeCode: string) {
+    super("provider response violated the declared wire protocol");
+    this.name = "OpenAIProtocolError";
+  }
+}
+
 export type OpenAISdkFinishReason =
   | "stop"
   | "length"
   | "tool_calls"
   | "content_filter";
 
+/** SDK-neutral input to the Provider Adapter. The production/test transport
+ * reports `response_started` as soon as response headers are available. */
 export type OpenAISdkChunk =
+  | { readonly type: "response_started" }
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "reasoning"; readonly text: string }
   | {
@@ -32,20 +43,33 @@ export type OpenAISdkChunk =
       readonly argumentsJson: string;
     }
   | {
+      readonly type: "tool_call_delta";
+      readonly callRef: string;
+      readonly toolName?: string;
+      readonly argumentsDelta: string;
+    }
+  | { readonly type: "tool_call_complete"; readonly callRef: string }
+  | {
       readonly type: "usage";
       readonly inputTokens: number;
       readonly outputTokens: number;
       readonly cacheReadTokens?: number;
       readonly cacheWriteTokens?: number;
     }
-  | { readonly type: "continuation"; readonly stateRef: string }
+  | {
+      readonly type: "continuation";
+      readonly stateRef: string;
+      readonly resumeGuaranteed?: boolean;
+    }
   | {
       readonly type: "completed";
       readonly finishReason: OpenAISdkFinishReason;
     };
 
-/** Injectable seam keeps adapter tests independent of live APIs. */
 export interface OpenAISdkClient {
+  /** Explicit provider-side effect classification. This must be reported and
+   * persisted before the transport client can send request bytes. */
+  readonly externalEffectPossible: boolean;
   readonly streamChat: (input: {
     readonly modelRef: string;
     readonly request: PortableModelRequest;

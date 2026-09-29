@@ -716,3 +716,105 @@ export const P14_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   ...P12_MIGRATIONS,
   { id: 14, name: "human_messages", sql: P14_HUMAN_MESSAGES_DDL },
 ];
+
+/** Provider Runtime Correctness Phase 1. Existing attempt rows retain their
+ * original failure vocabulary (`legacy-v1`) and are deliberately not
+ * reclassified. New attempts persist in-progress state, monotonic observation
+ * evidence, retry decisions, and an explicit current taxonomy version. */
+const P15_PROVIDER_RUNTIME_CORRECTNESS_DDL = `
+ALTER TABLE provider_turns ADD COLUMN execution_policy_json TEXT;
+ALTER TABLE provider_turns ADD COLUMN turn_deadline_at TEXT;
+ALTER TABLE model_context_manifests ADD COLUMN portable_request_json TEXT;
+
+ALTER TABLE provider_attempts RENAME TO provider_attempts_legacy_v1;
+
+CREATE TABLE provider_attempts (
+  provider_turn_id              TEXT NOT NULL REFERENCES provider_turns(provider_turn_id),
+  attempt_no                    INTEGER NOT NULL,
+  started_at                    TEXT NOT NULL,
+  settled_at                    TEXT,
+  outcome                       TEXT NOT NULL CHECK (outcome IN
+                                  ('InProgress','Success','RetryableFailure','TerminalFailure','Cancelled','TimedOut')),
+  provider_error_kind           TEXT,
+  failure_taxonomy_version      TEXT NOT NULL DEFAULT 'legacy-v1' CHECK (failure_taxonomy_version IN ('legacy-v1','phase1-v2')),
+  observation_json              TEXT NOT NULL DEFAULT '{"responseStarted":null,"canonicalEventEmitted":null,"consumerVisibleOutput":null,"toolCallProposed":null,"continuationAvailable":null,"externalEffectPossible":null}',
+  canonical_event_prefix_json   TEXT NOT NULL DEFAULT '[]',
+  delivered_position            INTEGER,
+  continuation_checkpoint_json  TEXT,
+  retry_safety                  TEXT CHECK (retry_safety IS NULL OR retry_safety IN
+                                  ('SafeReplay','SafeResume','UnsafeReplay')),
+  retry_decision                TEXT CHECK (retry_decision IS NULL OR retry_decision IN ('Retry','Stop')),
+  retry_strategy                TEXT CHECK (retry_strategy IS NULL OR retry_strategy IN ('Replay','Resume')),
+  retry_reason                  TEXT,
+  transport_metadata_json       TEXT,
+  PRIMARY KEY (provider_turn_id, attempt_no),
+  CHECK ((outcome = 'InProgress') = (settled_at IS NULL)),
+  CHECK ((retry_decision IS NULL) = (retry_safety IS NULL)),
+  CHECK ((retry_decision IS NULL) = (retry_reason IS NULL))
+);
+
+INSERT INTO provider_attempts (
+  provider_turn_id,
+  attempt_no,
+  started_at,
+  settled_at,
+  outcome,
+  provider_error_kind,
+  failure_taxonomy_version,
+  observation_json,
+  canonical_event_prefix_json,
+  delivered_position,
+  continuation_checkpoint_json,
+  retry_safety,
+  retry_decision,
+  retry_strategy,
+  retry_reason,
+  transport_metadata_json
+)
+SELECT
+  provider_turn_id,
+  attempt_no,
+  started_at,
+  settled_at,
+  outcome,
+  provider_error_kind,
+  'legacy-v1',
+  '{"responseStarted":null,"canonicalEventEmitted":null,"consumerVisibleOutput":null,"toolCallProposed":null,"continuationAvailable":null,"externalEffectPossible":null}',
+  '[]',
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  NULL,
+  transport_metadata_json
+FROM provider_attempts_legacy_v1;
+
+DROP TABLE provider_attempts_legacy_v1;
+
+CREATE TABLE provider_recovery_decisions (
+  provider_turn_id  TEXT NOT NULL REFERENCES provider_turns(provider_turn_id),
+  sequence_no       INTEGER NOT NULL CHECK(sequence_no >= 0),
+  attempt_no        INTEGER NOT NULL CHECK(attempt_no >= -1),
+  cause_tag         TEXT NOT NULL CHECK(cause_tag IN
+                       ('ProviderFailure','ProcessLost','Timeout','Cancelled')),
+  cause_detail      TEXT,
+  retry_safety      TEXT NOT NULL CHECK(retry_safety IN
+                       ('SafeReplay','SafeResume','UnsafeReplay')),
+  retry_decision    TEXT NOT NULL CHECK(retry_decision IN ('Retry','Stop')),
+  retry_strategy    TEXT CHECK(retry_strategy IS NULL OR retry_strategy IN
+                       ('Replay','Resume')),
+  retry_reason      TEXT NOT NULL,
+  decided_at        TEXT NOT NULL,
+  PRIMARY KEY (provider_turn_id, sequence_no)
+);
+`;
+
+export const P15_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P14_MIGRATIONS,
+  {
+    id: 15,
+    name: "provider_runtime_correctness",
+    sql: P15_PROVIDER_RUNTIME_CORRECTNESS_DDL,
+  },
+];

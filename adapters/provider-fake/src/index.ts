@@ -2,6 +2,7 @@ import type {
   CanonicalProviderEvent,
   ProviderFailure,
   ProviderFailureKind,
+  ProviderPortEvent,
 } from "@arbor/ports";
 import { ProviderPort } from "@arbor/ports";
 import { Effect, Layer, Stream } from "effect";
@@ -32,23 +33,41 @@ export const FakeProviderLive = (
           const attempt = calls;
           calls += 1;
           const kind = script.failures?.[attempt];
+          const preflight: ProviderPortEvent = {
+            _tag: "Observation",
+            delta: {
+              responseStarted: false,
+              externalEffectPossible: false,
+            },
+          };
           if (kind !== undefined) {
-            return Stream.fail(failure(kind));
+            return Stream.concat(
+              Stream.fromIterable([preflight]),
+              Stream.fail(failure(kind)),
+            );
           }
           const events = script.turns?.[attempt] ?? script.events ?? [];
-          return Stream.fromIterable(
-            events.some((event) => event._tag === "TurnStarted")
-              ? events
-              : [
-                  {
-                    _tag: "TurnStarted" as const,
-                    providerTurnId: context.providerTurnId,
-                    attemptNo: context.attemptNo,
-                    modelRef: request.modelRef,
-                  },
-                  ...events,
-                ],
-          );
+          const canonicalEvents = events.some(
+            (event) => event._tag === "TurnStarted",
+          )
+            ? events
+            : [
+                {
+                  _tag: "TurnStarted" as const,
+                  providerTurnId: context.providerTurnId,
+                  attemptNo: context.attemptNo,
+                  modelRef: request.modelRef,
+                },
+                ...events,
+              ];
+          return Stream.fromIterable<ProviderPortEvent>([
+            preflight,
+            { _tag: "Observation", delta: { responseStarted: true } },
+            ...canonicalEvents.map((event) => ({
+              _tag: "Canonical" as const,
+              event,
+            })),
+          ]);
         },
       });
     }),

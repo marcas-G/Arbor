@@ -5,6 +5,8 @@ import type { Stream as StreamNS } from "effect";
 import { Effect, Layer, Option, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 import {
+  classifyOpenAISdkFailure,
+  OpenAIProtocolError,
   type OpenAISdkChunk,
   type OpenAISdkClient,
   OpenAISdkError,
@@ -28,7 +30,6 @@ import {
   resolveModelCatalogEntry,
 } from "../packages/model-context/src/index.js";
 import {
-  type CanonicalProviderEvent,
   Clock,
   ModelCapabilityPort,
   type PortableModelRequest,
@@ -37,6 +38,7 @@ import {
   type ProviderExecutionContext,
   type ProviderFailure,
   ProviderPort,
+  type ProviderPortEvent,
   type ProviderPortService,
   providerFailureDisposition,
   ResourceAdmission,
@@ -98,14 +100,19 @@ const providerContext: ProviderExecutionContext = {
     "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
   ),
   attemptNo: 0,
-  timeoutMs: 1000,
-  cancellationRef: "cancel-1",
+  cancellationSignal: new AbortController().signal,
+  connectTimeoutMs: 1000,
+  firstEventTimeoutMs: 1000,
+  streamIdleTimeoutMs: 1000,
+  turnDeadlineAt: new Date(Date.now() + 5_000).toISOString(),
+  maxAttempts: 3,
 };
 
 const sdkClient = (
   chunks: ReadonlyArray<OpenAISdkChunk>,
   error?: OpenAISdkError,
 ): OpenAISdkClient => ({
+  externalEffectPossible: false,
   streamChat: () =>
     (async function* () {
       for (const chunk of chunks) {
@@ -127,7 +134,7 @@ const runProvider = <A, E>(
 
 const collectEvents = (
   layer: Layer.Layer<ProviderPort>,
-): Promise<ReadonlyArray<CanonicalProviderEvent>> =>
+): Promise<ReadonlyArray<ProviderPortEvent>> =>
   runProvider(
     layer,
     Effect.gen(function* () {
@@ -140,6 +147,51 @@ const collectEvents = (
   );
 
 describe("P12-011 provider adapter", () => {
+  it("maps transport, protocol, provider, auth, quota, and unknown failures distinctly", () => {
+    const transport = Object.assign(new Error("local socket detail"), {
+      code: "ECONNRESET",
+    });
+    expect(classifyOpenAISdkFailure(transport).kind).toBe("TransportFailed");
+    expect(classifyOpenAISdkFailure(transport, true).kind).toBe(
+      "StreamInterrupted",
+    );
+    expect(
+      classifyOpenAISdkFailure(new OpenAIProtocolError("malformed-sse")).kind,
+    ).toBe("ProtocolViolation");
+    expect(
+      classifyOpenAISdkFailure(new OpenAISdkError(418, "future-provider-class"))
+        .kind,
+    ).toBe("UnknownProviderFailure");
+    expect(
+      classifyOpenAISdkFailure(new OpenAISdkError(401, "invalid_api_key")).kind,
+    ).toBe("AuthenticationFailed");
+    expect(
+      classifyOpenAISdkFailure(new OpenAISdkError(403, "permission_denied"))
+        .kind,
+    ).toBe("AuthorizationFailed");
+    expect(
+      classifyOpenAISdkFailure(new OpenAISdkError(429, "insufficient_quota"))
+        .kind,
+    ).toBe("QuotaExceeded");
+    expect(
+      classifyOpenAISdkFailure(new Error("future native failure")).kind,
+    ).toBe("UnknownProviderFailure");
+    expect(
+      classifyOpenAISdkFailure(new Error("future native failure"), true).kind,
+    ).toBe("UnknownProviderFailure");
+    expect(
+      classifyOpenAISdkFailure(
+        Object.assign(new Error("unrequested abort"), { name: "AbortError" }),
+      ).kind,
+    ).toBe("UnknownProviderFailure");
+    expect(
+      classifyOpenAISdkFailure({
+        _tag: "ProviderFailure",
+        kind: "FutureFailure",
+      }).kind,
+    ).toBe("UnknownProviderFailure");
+  });
+
   it("is selected at the composition root and emits canonical events", async () => {
     const selected = selectProviderLayer({
       adapterId: "provider-openai",
@@ -150,16 +202,22 @@ describe("P12-011 provider adapter", () => {
       ]),
     });
     const events = await collectEvents(selected);
-    expect(events.map((event) => event._tag)).toEqual([
+    const canonical = events.filter(
+      (event): event is Extract<ProviderPortEvent, { _tag: "Canonical" }> =>
+        event._tag === "Canonical",
+    );
+    expect(canonical.map((event) => event.event._tag)).toEqual([
       "TurnStarted",
       "TextDelta",
       "UsageReported",
       "TurnCompleted",
     ]);
-    const completed = events.find((event) => event._tag === "TurnCompleted");
-    expect(completed?._tag === "TurnCompleted" && completed.finishReason).toBe(
-      "Stop",
+    const completed = canonical.find(
+      (event) => event.event._tag === "TurnCompleted",
     );
+    expect(
+      completed?.event._tag === "TurnCompleted" && completed.event.finishReason,
+    ).toBe("Stop");
   });
 
   it("translates an injected SDK error to ProviderFailure (retryable class)", async () => {
@@ -186,7 +244,7 @@ describe("P12-011 provider adapter", () => {
     expect((failure as { name?: string }).name).not.toBe("OpenAISdkError");
   });
 
-  it("normalizes an unknown provider class to ProtocolViolation (terminal)", async () => {
+  it("preserves an unknown SDK failure as UnknownProviderFailure (terminal)", async () => {
     const selected = selectProviderLayer({
       adapterId: "provider-openai",
       client: sdkClient([], new OpenAISdkError(418, "no_such_provider_class")),
@@ -202,7 +260,7 @@ describe("P12-011 provider adapter", () => {
         );
       }),
     );
-    expect(failure.kind).toBe("ProtocolViolation");
+    expect(failure.kind).toBe("UnknownProviderFailure");
     expect(providerFailureDisposition(failure.kind)).toBe("terminal");
   });
 
@@ -291,19 +349,27 @@ describe("P12-011 model catalog / model capability", () => {
   });
 });
 
-describe("P12-011 ProviderFailureKind closed-union disposition (TR-4)", () => {
-  it("carries exactly the six frozen tags with frozen retry dispositions", () => {
+describe("Provider Runtime Phase 1 failure taxonomy", () => {
+  it("carries the governed closed taxonomy; eligibility is not automatic retry authorization", () => {
     expect([...PROVIDER_FAILURE_KINDS].sort()).toEqual([
       "AuthenticationFailed",
+      "AuthorizationFailed",
+      "Cancelled",
+      "ContextLimitExceeded",
       "ProtocolViolation",
       "ProviderUnavailable",
+      "QuotaExceeded",
       "RateLimited",
       "RequestRejected",
       "StreamInterrupted",
+      "TransportFailed",
+      "UnknownProviderFailure",
     ]);
     expect(providerFailureDisposition("RateLimited")).toBe("retryable");
     expect(providerFailureDisposition("ProviderUnavailable")).toBe("retryable");
     expect(providerFailureDisposition("StreamInterrupted")).toBe("retryable");
+    expect(providerFailureDisposition("TransportFailed")).toBe("retryable");
+    expect(providerFailureDisposition("QuotaExceeded")).toBe("terminal");
     expect(providerFailureDisposition("AuthenticationFailed")).toBe("terminal");
     expect(providerFailureDisposition("RequestRejected")).toBe("terminal");
     expect(providerFailureDisposition("ProtocolViolation")).toBe("terminal");

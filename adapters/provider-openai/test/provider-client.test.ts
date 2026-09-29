@@ -38,18 +38,23 @@ const chunks = async (
   secretMaterial: SecretMaterial | null = SecretMaterial.of("test-only-key"),
 ): Promise<ReadonlyArray<OpenAISdkChunk>> => {
   const result: OpenAISdkChunk[] = [];
+  const context = {
+    providerTurnId: parse(ProviderTurnId)(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+    ),
+    attemptNo: 0,
+    ...(secretMaterial !== null ? { secretMaterial } : {}),
+    cancellationSignal: new AbortController().signal,
+    connectTimeoutMs: 5_000,
+    firstEventTimeoutMs: 5_000,
+    streamIdleTimeoutMs: 5_000,
+    turnDeadlineAt: new Date(Date.now() + 30_000).toISOString(),
+    maxAttempts: 3,
+  };
   for await (const chunk of client.streamChat({
     modelRef: "model-live",
     request,
-    context: {
-      providerTurnId: parse(ProviderTurnId)(
-        "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
-      ),
-      attemptNo: 0,
-      ...(secretMaterial !== null ? { secretMaterial } : {}),
-      timeoutMs: 5_000,
-      cancellationRef: "test",
-    },
+    context,
   })) {
     result.push(chunk);
   }
@@ -262,12 +267,21 @@ describe("OpenAI-compatible fetch provider", () => {
                 "ptn_018f2b3c-4d5e-7abc-8def-0123456789a2",
               ),
               attemptNo: 0,
-              timeoutMs: 5_000,
-              cancellationRef: "test",
+              cancellationSignal: new AbortController().signal,
+              connectTimeoutMs: 5_000,
+              firstEventTimeoutMs: 5_000,
+              streamIdleTimeoutMs: 5_000,
+              turnDeadlineAt: new Date(Date.now() + 30_000).toISOString(),
+              maxAttempts: 3,
             },
           }),
         );
-        return Array.from(collected);
+        return Array.from(collected)
+          .filter(
+            (event): event is Extract<typeof event, { _tag: "Canonical" }> =>
+              event._tag === "Canonical",
+          )
+          .map((event) => event.event);
       }).pipe(Effect.provide(OpenAIProviderLive(client))),
     );
 
