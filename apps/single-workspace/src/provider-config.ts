@@ -128,24 +128,29 @@ export const findArborConfigFile = (): ArborConfigFileResult | undefined => {
       };
     }
     const secret = config.provider.secret;
-    if (
-      secret !== undefined &&
-      ((secret.kind !== "env" && secret.kind !== "file") ||
-        typeof secret.ref !== "string" ||
-        secret.ref.length === 0 ||
+    if (secret !== undefined) {
+      const shapeOk =
+        (secret.kind === "env" &&
+          typeof secret.ref === "string" &&
+          secret.ref.length > 0) ||
         (secret.kind === "file" &&
-          !isAbsolute(secret.ref) &&
-          secret.root === undefined))
-    ) {
-      return {
-        ok: false,
-        error: {
-          _tag: "ProviderConfigInvalid",
-          path,
-          reason:
-            "provider.secret must be { kind: 'env' | 'file', ref, root? }; relative file refs require root",
-        },
-      };
+          typeof secret.ref === "string" &&
+          secret.ref.length > 0 &&
+          (isAbsolute(secret.ref) || secret.root !== undefined)) ||
+        (secret.kind === "inline" &&
+          typeof secret.value === "string" &&
+          secret.value.length > 0);
+      if (!shapeOk) {
+        return {
+          ok: false,
+          error: {
+            _tag: "ProviderConfigInvalid",
+            path,
+            reason:
+              "provider.secret must be { kind: 'env', ref } | { kind: 'file', ref, root? } | { kind: 'inline', value }",
+          },
+        };
+      }
     }
     return { ok: true, path, config };
   }
