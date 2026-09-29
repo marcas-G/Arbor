@@ -46,6 +46,10 @@ function stubFetch(impl: FetchImpl): FetchFn {
 }
 
 async function login(actor = "human:root", token = "tok_1"): Promise<void> {
+  // The app now opens pre-authenticated (local single-user form); the login
+  // card is reached via an explicit disconnect.
+  fireEvent.click(screen.getByRole("button", { name: /断开/ }));
+  await waitFor(() => expect(screen.getByLabelText(/token/)).toBeTruthy());
   fireEvent.change(screen.getByLabelText(/token/), {
     target: { value: token },
   });
@@ -95,14 +99,22 @@ describe("P13-007 LoginCard", () => {
       name: "连接",
     }) as HTMLButtonElement;
     expect(connect.disabled).toBe(true);
+    // Local single-user form: the provider pre-seeds the local session —
+    // the login card is only reached after an explicit disconnect (or a
+    // real 401 from a configured multi-user deployment).
     expect(
       JSON.parse(screen.getByTestId("session-probe").textContent ?? "null"),
     ).toEqual({
-      token: null,
-      actor: null,
+      token: "local",
+      actor: "user:local",
     });
     fireEvent.change(screen.getByLabelText(/token/), {
       target: { value: "tok_1" },
+    });
+    // The actor field pre-fills with the remembered local principal; clear
+    // it to prove the disabled gate, then re-enter.
+    fireEvent.change(screen.getByLabelText(/actor/), {
+      target: { value: "" },
     });
     expect(connect.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText(/actor/), {

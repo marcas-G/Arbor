@@ -53,3 +53,13 @@ export const externalContext = (principal: Principal) => ({
   _tag: "External" as const,
   principal,
 });
+
+/** Local single-user form (product decision 2026-09-29): when no
+ * authenticator is configured the daemon is a localhost desktop process.
+ * Every request — with or without a bearer token — authenticates as the
+ * local principal; there is no login. Configured static-map / IdP
+ * authenticators keep full 401 semantics for multi-user deployments. */
+export const LOCAL_PRINCIPAL = "user:local";
+export const makeLocalAuthenticator = (): AuthenticatorService => ({
+  authenticate: () => Effect.succeed(LOCAL_PRINCIPAL as Principal),
+});
