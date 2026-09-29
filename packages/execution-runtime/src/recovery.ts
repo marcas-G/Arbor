@@ -60,6 +60,15 @@ const completionFact = (
  * `SettleExecution` with `RecoveryController` authority; never blindly
  * replays an uncertain case.
  */
+/** Crash-restart edge: the previous daemon died mid-flight holding the
+ * lease. A fenced settle means the lease is still live — lazy lease expiry
+ * owns the takeover; a fenced execution must never crash the daemon. */
+const fencedTakeover = (error: unknown): boolean =>
+  typeof error === "object" &&
+  error !== null &&
+  ((error as { readonly _tag?: unknown })._tag === "LeaseFencingRejected" ||
+    JSON.stringify(error).includes("LeaseFencingRejected"));
+
 export const runRecovery = (principal: Principal) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
@@ -107,18 +116,30 @@ export const runRecovery = (principal: Principal) =>
           commandKind: "SettleExecution",
           executionId: execution.executionId,
         };
-        yield* gateway.execute(
+        const receipt = yield* Effect.match(
+          gateway.execute(
+            {
+              commandType: "SettleExecution",
+              commandId,
+              projectId: execution.projectId,
+              actor: principal as never,
+              issuedAt: now,
+              payload,
+            },
+            { _tag: "RecoveryController", principal, causationRef: "recovery" },
+            authority,
+          ),
           {
-            commandType: "SettleExecution",
-            commandId,
-            projectId: execution.projectId,
-            actor: principal as never,
-            issuedAt: now,
-            payload,
+            onFailure: (error) => ({ ok: false as const, error }),
+            onSuccess: (value) => ({ ok: true as const, value }),
           },
-          { _tag: "RecoveryController", principal, causationRef: "recovery" },
-          authority,
         );
+        if (!receipt.ok) {
+          if (fencedTakeover(receipt.error)) {
+            continue; // lazy lease expiry owns the takeover; next pass settles
+          }
+          return yield* Effect.fail(receipt.error);
+        }
         settled.push(execution.executionId);
         continue;
       }
@@ -174,6 +195,11 @@ export const runRecovery = (principal: Principal) =>
         result: { _tag: "StopRequested" },
       } as const;
       const payload = { executionId: execution.executionId, settlement };
+      // Crash-restart edge (observed live): the previous daemon died
+      // mid-flight holding the lease. A fenced settle means the lease is
+      // still live (TTL not expired) — lazy lease expiry is the authority
+      // for taking over; the NEXT recovery pass settles this execution. A
+      // fenced execution must never crash the whole daemon at startup.
       const commandId = `cmd_recovery_settle_${execution.executionId}` as never;
       const authority: VerifiedRuntimeCommandAuthority = {
         _tag: "SettleExecutionAuthority",
