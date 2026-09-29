@@ -1,7 +1,11 @@
 import type { ReadableStream } from "node:stream/web";
 import { clearTimeout, setTimeout } from "node:timers";
 import { TextDecoder } from "node:util";
-import type { PortableMessage, PortableModelRequest } from "@arbor/ports";
+import type {
+  PortableMessage,
+  PortableModelRequest,
+  ProviderCancellationSignal,
+} from "@arbor/ports";
 import {
   type OpenAISdkChunk,
   type OpenAISdkClient,
@@ -278,7 +282,7 @@ export const OpenAICompatibleFetchClient = (
     const AbortControllerConstructor = (
       globalThis as unknown as {
         readonly AbortController: new () => {
-          readonly signal: unknown;
+          readonly signal: ProviderCancellationSignal;
           abort: () => void;
         };
       }
@@ -318,19 +322,29 @@ export const OpenAICompatibleFetchClient = (
             signal: controller.signal,
           },
         );
-      } catch {
+      } catch (error) {
+        // Native transport failures (TypeError from fetch, ECONNRESET, abort)
+        // must reach the adapter-edge classifier unclassified so it can
+        // distinguish TransportFailed (pre-response) from StreamInterrupted
+        // (post-response) — pre-classifying here would erase the distinction
+        // (found by P16 conformance A5).
+        if (error instanceof TypeError || controller.signal.aborted) {
+          throw error;
+        }
         throw new OpenAISdkError(503, "server_error");
       }
       if (!response.ok) {
         throw new OpenAISdkError(
           response.status,
-          response.status === 401 || response.status === 403
+          response.status === 401
             ? "invalid_api_key"
-            : response.status === 429
-              ? "rate_limit_exceeded"
-              : response.status >= 500
-                ? "server_error"
-                : "invalid_request_error",
+            : response.status === 403
+              ? "permission_denied"
+              : response.status === 429
+                ? "rate_limit_exceeded"
+                : response.status >= 500
+                  ? "server_error"
+                  : "invalid_request_error",
         );
       }
       yield* readSse(response);

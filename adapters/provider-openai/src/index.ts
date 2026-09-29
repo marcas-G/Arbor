@@ -1,6 +1,7 @@
 import type {
   CanonicalProviderEvent,
   PortableModelRequest,
+  ProtocolAdapter,
   ProviderContinuationCheckpoint,
   ProviderExecutionContext,
   ProviderFailure,
@@ -10,6 +11,8 @@ import type {
 } from "@arbor/ports";
 import { PROVIDER_FAILURE_KINDS, ProviderPort } from "@arbor/ports";
 import { Layer, Stream } from "effect";
+import type { OpenAICompatibleFetch } from "./client.js";
+import { OpenAICompatibleFetchClient } from "./client.js";
 import {
   OpenAIProtocolError,
   type OpenAISdkChunk,
@@ -355,3 +358,60 @@ export const OpenAIProviderLive = (
       },
     }),
   );
+
+/**
+ * P16 `01` §2/§6: the OpenAI-compatible family's `ProtocolAdapter`
+ * registration value. `layerFor` accepts:
+ *  - `transportOverride` = full `OpenAISdkClient` (test injection), or
+ *  - `transportOverride` = `{ fetch?, allowUnauthenticated? }` layered over
+ *    `OpenAICompatibleFetchClient({ baseUrl: endpoint, model: wireModelName })`.
+ */
+export const providerOpenaiAdapter: ProtocolAdapter = {
+  adapterId: "provider-openai",
+  profile: {
+    protocolFamily: "openai-chat-completions-sse",
+    authMode: { _tag: "BearerSecret" },
+    capabilityFlags: {
+      reportsCacheTokens: false,
+      supportsContinuation: false,
+      streamsDeltas: true,
+    },
+    failureTaxonomy: "phase1-v2",
+  },
+  layerFor: (binding) => {
+    const override = binding.transportOverride;
+    if (override !== undefined && isSdkClient(override)) {
+      return OpenAIProviderLive(override);
+    }
+    const overrides = (override ?? {}) as {
+      fetch?: unknown;
+      allowUnauthenticated?: boolean;
+    };
+    return OpenAIProviderLive(
+      OpenAICompatibleFetchClient({
+        baseUrl: binding.endpoint ?? "",
+        ...(binding.wireModelName !== undefined
+          ? { model: binding.wireModelName }
+          : {}),
+        ...(binding.extraHeaders !== undefined
+          ? { extraHeaders: headersOf(binding.extraHeaders) }
+          : {}),
+        ...(overrides.fetch !== undefined
+          ? { fetch: overrides.fetch as OpenAICompatibleFetch }
+          : {}),
+        ...(overrides.allowUnauthenticated === true
+          ? { allowUnauthenticated: true }
+          : {}),
+      }),
+    );
+  },
+};
+
+const isSdkClient = (value: unknown): value is OpenAISdkClient =>
+  typeof value === "object" &&
+  value !== null &&
+  typeof (value as OpenAISdkClient).streamChat === "function";
+
+const headersOf = (
+  extra: ReadonlyArray<Record<string, string>>,
+): Record<string, string> => Object.assign({}, ...extra);

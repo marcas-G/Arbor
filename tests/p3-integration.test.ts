@@ -12,7 +12,6 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P12_MIGRATIONS,
   P15_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,

@@ -1,14 +1,16 @@
 import { inspect } from "node:util";
 import { Principal, parse, WorkspaceId } from "@arbor/domain";
 import { startupRecovery } from "@arbor/execution-runtime";
-import { type SecretRef, secretRef } from "@arbor/ports";
-import { OpenAICompatibleFetchClient } from "@arbor/provider-openai";
+import {
+  type ModelDeployment,
+  type ProviderExecutionPolicyOverrides,
+  secretRef,
+} from "@arbor/ports";
 import { Duration, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   buildSliceLayer,
   P15_MIGRATIONS,
-  type ProviderAdapterConfig,
   runMigrations,
   type SliceConfig,
   type SliceServices,
@@ -25,42 +27,38 @@ export const main = (
   overrides: Partial<SliceConfig> = {},
 ): ReturnType<typeof buildSliceLayer> => {
   const authenticator = authenticatorFromEnv();
-  const provider = providerFromEnv();
+  const deployment = deploymentFromEnv();
   return buildSliceLayer({
     databaseFile: process.env.ARBOR_DB ?? "./arbor-slice.db",
     ...(process.env.ARBOR_PROJECT_ID !== undefined
       ? { projectId: process.env.ARBOR_PROJECT_ID as never }
       : {}),
     ...(authenticator !== undefined ? { authenticator } : {}),
-    ...(provider !== undefined
+    ...(deployment !== undefined
       ? {
-          provider: provider.provider,
-          modelRef: provider.modelRef,
-          secretRef: provider.secretRef,
+          deployment,
+          modelRef: deployment.modelRef,
+          secretRef: deployment.secretRef,
         }
       : {}),
     ...overrides,
   });
 };
 
-/** Real-provider wiring (P12 `12` §2 composition-root selection; no new
- * semantics — rides the frozen `ProviderAdapterConfig` channel):
+/** Real-provider wiring (P16 `01` §5 — formalized as a ModelDeployment;
+ * construction only, resolution happens in the Composition Root):
  *
- *   ARBOR_MODEL_BASE_URL  https://api.deepseek.com/v1
- *   ARBOR_MODEL_NAME      deepseek-chat      (wire model name)
- *   ARBOR_MODEL_API_KEY_VAR  DEEPSEEK_API_KEY (env var NAME holding the key —
- *                          the SecretRef, resolved by the P12 secret store;
- *                          never the raw key itself)
+ *   ARBOR_PROVIDER_DEPLOYMENT_ID  dep-env            (stable deployment id)
+ *   ARBOR_MODEL_BASE_URL          https://api.deepseek.com/v1
+ *   ARBOR_MODEL_NAME              deepseek-chat      (wire model name)
+ *   ARBOR_MODEL_API_KEY_VAR       ARBOR_MODEL_API_KEY (env var NAME holding
+ *                                 the key — the SecretRef, resolved by the
+ *                                 P12 secret store; never the raw key)
+ *   ARBOR_MODEL_POLICY_JSON       optional execution-policy overrides
  *
  * Absent vars = the deterministic fake provider (CI never needs network).
  * `ARBOR_MODEL_API_KEY_VAR` defaults to `ARBOR_MODEL_API_KEY` when set. */
-const providerFromEnv = ():
-  | {
-      readonly provider: ProviderAdapterConfig;
-      readonly modelRef: string;
-      readonly secretRef: SecretRef;
-    }
-  | undefined => {
+const deploymentFromEnv = (): ModelDeployment | undefined => {
   const baseUrl = process.env.ARBOR_MODEL_BASE_URL;
   const modelName = process.env.ARBOR_MODEL_NAME;
   if (baseUrl === undefined || baseUrl.length === 0) {
@@ -70,18 +68,30 @@ const providerFromEnv = ():
   if (!(keyVar in process.env) || (process.env[keyVar] ?? "").length === 0) {
     return undefined;
   }
+  const policyJson = process.env.ARBOR_MODEL_POLICY_JSON;
+  let executionPolicyOverrides: ProviderExecutionPolicyOverrides | undefined;
+  if (policyJson !== undefined && policyJson.length > 0) {
+    const parsed = JSON.parse(policyJson) as ProviderExecutionPolicyOverrides;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      throw new Error("ARBOR_MODEL_POLICY_JSON must be a JSON object");
+    }
+    executionPolicyOverrides = parsed;
+  }
   return {
-    provider: {
-      adapterId: "provider-openai",
-      client: OpenAICompatibleFetchClient({
-        baseUrl,
-        ...(modelName !== undefined && modelName.length > 0
-          ? { model: modelName }
-          : {}),
-      }),
-    },
+    deploymentId: process.env.ARBOR_PROVIDER_DEPLOYMENT_ID ?? "dep-env",
     modelRef: "model-openai",
+    endpoint: baseUrl,
+    ...(modelName !== undefined && modelName.length > 0
+      ? { wireModelName: modelName }
+      : {}),
     secretRef: secretRef(keyVar),
+    ...(executionPolicyOverrides !== undefined
+      ? { executionPolicyOverrides }
+      : {}),
   };
 };
 

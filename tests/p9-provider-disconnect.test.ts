@@ -323,10 +323,13 @@ const recoveryRunTurnInput = (plan: {
 });
 
 const run = <A>(
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   program: Effect.Effect<A, any, any>,
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   app: Layer.Layer<any, any, any>,
 ): Promise<A> =>
   Effect.runPromise(
+    // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
     Effect.provide(program, app) as Effect.Effect<A, any, never>,
   );
 
@@ -406,6 +409,7 @@ const sessionEntryCount = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM session_entries WHERE session_id = ?",
     [sessionId],
   );
+  // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
   return Number(rows[0]!.count);
 });
 
@@ -635,7 +639,9 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     );
     expect(probe.calls.map((call) => call.attemptNo)).toEqual([0, 1, 2]);
     expect(r.turns).toHaveLength(1);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turns[0]!.provider_turn_id).toBe(providerTurnId);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turns[0]!.manifest_id).toMatch(/^mft_/u);
     // Pre-response TransportFailed retries are admitted only with complete
     // negative observations and a persisted SafeReplay decision.
@@ -652,7 +658,9 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
       },
       { attemptNo: 2, outcome: "Success", providerErrorKind: null },
     ]);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turns[0]!.settled_at).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turns[0]!.finish_reason).toBe("Stop");
     expect(r.events.some((event) => event._tag === "TurnCompleted")).toBe(true);
     expect(r.entries).toBe(0);
@@ -683,7 +691,9 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     );
     // turnNo unchanged across attempts: exactly one Turn row, same manifest.
     expect(r.turns).toHaveLength(1);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turns[0]!.provider_turn_id).toBe(providerTurnId);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turns[0]!.manifest_id).toMatch(/^mft_/u);
     expect(r.failure).toMatchObject({
       _tag: "ProviderFailure",
@@ -696,6 +706,7 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
         providerErrorKind: "StreamInterrupted",
       },
     ]);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turns[0]!.settled_at).toBeNull();
     // Streaming deltas never enter Session history (DID §9.8): the crashed
     // mid-stream attempt left no partial durable output — resume is clean
@@ -751,17 +762,23 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     ]);
     // The Turn dangles (driver decides), and a terminal Turn failure does
     // NOT itself settle the Execution Failed.
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turnsBefore[0]!.settled_at).toBeNull();
     expect(r.execution).toBeNull();
     // Recovery decision table, terminal row: failure mark, no resume.
     expect(r.report.retryPlan).toEqual([]);
     expect(r.report.failedTurns).toHaveLength(1);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.report.failedTurns[0]!.providerTurnId).toBe(providerTurnId);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.report.failedTurns[0]!.providerErrorKind).toBe(
       "AuthenticationFailed",
     );
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.report.failedTurns[0]!.exhausted).toBe(false);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turnsAfter[0]!.settled_at).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turnsAfter[0]!.finish_reason).toBe("Failed");
     // Recovery never invents an Execution settlement (P2 `06` §4).
     expect(r.executionAfter).toBeNull();
@@ -917,6 +934,7 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     const r = await run(
       Effect.gen(function* () {
         yield* boot;
+        // biome-ignore lint/correctness/noUnusedVariables: destructured for interface symmetry
         const incompleteFixture = yield* openDanglingTurn(providerTurnIdC, [
           { attemptNo: 0, inProgress: true },
         ]);
@@ -1073,11 +1091,17 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     );
     expect(r.report.retryPlan).toEqual([]);
     expect(r.report.failedTurns).toHaveLength(1);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.report.failedTurns[0]!.providerTurnId).toBe(providerTurnId);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.report.failedTurns[0]!.providerErrorKind).toBe("RateLimited");
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.report.failedTurns[0]!.exhausted).toBe(true);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.report.failedTurns[0]!.markedBy).toEqual(principal);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turns[0]!.settled_at).not.toBeNull();
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     expect(r.turns[0]!.finish_reason).toBe("Failed");
     // Execution-level disposition follows P2 `06` §4 — recovery never
     // invents a settlement.

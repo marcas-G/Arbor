@@ -177,10 +177,13 @@ const defectOf = <A, E>(exit: Exit.Exit<A, E>): unknown =>
   Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
 
 const runOn = <A>(
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   program: Effect.Effect<A, any, any>,
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   app: Layer.Layer<any, any, any>,
 ): Promise<A> =>
   Effect.runPromise(
+    // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
     Effect.provide(program, app) as Effect.Effect<A, any, never>,
   );
 
@@ -363,6 +366,7 @@ const INSERT_COMPLETION_FACT = (executionId: string) =>
       "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
       [p7Project],
     );
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     const sequence = Number(rows[0]!.last_sequence);
     yield* sql.unsafe(
       "INSERT INTO domain_events (event_id, project_id, sequence, event_type, event_version, occurred_at, aggregate_ref, actor, payload_json) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -750,11 +754,17 @@ const cSideEffectCounters = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM session_entries",
   );
   return {
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     events: Number(events[0]!.count),
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     commands: Number(commands[0]!.count),
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     settled: Number(settled[0]!.count),
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     workWaits: Number(workWaits[0]!.count),
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     timers: Number(timers[0]!.count),
+    // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
     sessionEntries: Number(sessionEntries[0]!.count),
   };
 });
@@ -1509,6 +1519,7 @@ const eEscalationFacts = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'ReconciliationEscalated' AND aggregate_ref = ?",
     [E_EXECUTION],
   );
+  // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
   return Number(rows[0]!.count);
 });
 
@@ -1548,6 +1559,7 @@ const G_ASSIGN_CMD_P = parse(CommandId)(
 );
 const G_DEP = parse(DependencyId)("dep_00000000-0000-7000-8000-0000000000b1");
 const G_DEL = parse(DeliverableId)("del_00000000-0000-7000-8000-0000000000b2");
+// biome-ignore lint/correctness/noUnusedVariables: destructured for interface symmetry
 const G_ART = parse(ArtifactId)("art_00000000-0000-7000-8000-0000000000b3");
 const G_ACC = parse(AcceptanceId)("acc_00000000-0000-7000-8000-0000000000a5");
 
@@ -2493,6 +2505,7 @@ describe("p9-acceptance", () => {
         expect(turnC?.settled_at).not.toBeNull();
         expect(turnC?.finish_reason).toBe("Failed");
         // Unsettled-turn recovery: same Turn, new Attempt, Manifest intact.
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         const planD = report.retryPlan[0]!;
         expect(planD.manifestId).toBe(dManifestIdFor(D_TURN_D));
         expect(planD.nextAttemptNo).toBe(1);
@@ -2588,6 +2601,7 @@ describe("p9-acceptance", () => {
         );
         const danglingRo = yield* eDangling;
         expect(danglingRo).toHaveLength(1);
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         expect(danglingRo[0]!.sideEffectSemantics).toBe("ReadOnly");
         yield* settleInvocation(E_RO_CRASH);
         mode.ReadOnly = "none";
@@ -2660,6 +2674,7 @@ describe("p9-acceptance", () => {
         expect(nonRow?.settlement_kind).toBeNull();
         const danglingFinal = yield* eDangling;
         expect(danglingFinal).toHaveLength(1);
+        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         expect(danglingFinal[0]!.sideEffectSemantics).toBe("NonIdempotent");
         expect(probe.effects).toHaveLength(4);
       }),
@@ -2897,7 +2912,7 @@ describe("p9-acceptance", () => {
           handlers: dependencyCoordinatorLoop(
             p7Project,
             p7TestPrincipal,
-            yield* makeCoordinatorDeps((base) => interrupted.gateway),
+            yield* makeCoordinatorDeps((_base) => interrupted.gateway),
           ),
         }).pipe(Effect.flip);
         expect(failure._tag).toBe("TransactionOperationalFailure");
