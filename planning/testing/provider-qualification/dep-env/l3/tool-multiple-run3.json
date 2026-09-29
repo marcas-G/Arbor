@@ -16,51 +16,20 @@
   },
   "wire": [
     {
-      "type": "text",
-      "text": "我来"
-    },
-    {
-      "type": "text",
-      "text": "同时"
-    },
-    {
-      "type": "text",
-      "text": "查询"
-    },
-    {
-      "type": "text",
-      "text": "北京"
-    },
-    {
-      "type": "text",
-      "text": "和"
-    },
-    {
-      "type": "text",
-      "text": "上海的"
-    },
-    {
-      "type": "text",
-      "text": "天气"
-    },
-    {
-      "type": "text",
-      "text": "。"
-    },
-    {
       "type": "usage",
       "inputTokens": 273,
-      "outputTokens": 74
+      "outputTokens": 67,
+      "cacheReadTokens": 128
     },
     {
       "type": "tool_call",
-      "callRef": "call_00_osXNxgF3igM31ABKP75B8887",
+      "callRef": "call_00_1JsvHFh51QNn9byI14YC2610",
       "toolName": "get_weather",
       "argumentsJson": "{\"city\": \"北京\"}"
     },
     {
       "type": "tool_call",
-      "callRef": "call_01_9fOxPTOiDCGZGnyQbJT00694",
+      "callRef": "call_01_RrzaxqbcrJiY9SG4MDOv5909",
       "toolName": "get_weather",
       "argumentsJson": "{\"city\": \"上海\"}"
     },

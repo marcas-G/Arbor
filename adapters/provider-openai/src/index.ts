@@ -45,6 +45,10 @@ export {
 } from "./client.js";
 
 const KIND_BY_CODE: Readonly<Record<string, ProviderFailureKind>> = {
+  // R1 (D1 remediation): a truncated tool-arguments stream under
+  // finish_reason=tool_calls is malformed wire output — ProtocolViolation,
+  // never repaired and never silently accepted.
+  tool_arguments_truncated: "ProtocolViolation",
   rate_limit_exceeded: "RateLimited",
   insufficient_quota: "QuotaExceeded",
   quota_exceeded: "QuotaExceeded",
@@ -200,6 +204,9 @@ const toCanonical = (
         outputTokens: chunk.outputTokens,
         ...(chunk.reasoningTokens !== undefined
           ? { reasoningTokens: chunk.reasoningTokens }
+          : {}),
+        ...(chunk.cacheReadTokens !== undefined
+          ? { cacheReadTokens: chunk.cacheReadTokens }
           : {}),
         ...(chunk.cacheWriteTokens !== undefined
           ? { cacheWriteTokens: chunk.cacheWriteTokens }
@@ -372,7 +379,10 @@ export const providerOpenaiAdapter: ProtocolAdapter = {
     protocolFamily: "openai-chat-completions-sse",
     authMode: { _tag: "BearerSecret" },
     capabilityFlags: {
-      reportsCacheTokens: false,
+      // R2 (D1 remediation): the adapter extracts prompt_cache_hit_tokens
+      // (native read dimension; write stays absent). Declaration now matches
+      // actual extraction.
+      reportsCacheTokens: true,
       supportsContinuation: false,
       streamsDeltas: true,
     },

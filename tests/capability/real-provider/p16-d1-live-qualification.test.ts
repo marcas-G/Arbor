@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -319,7 +319,7 @@ describe("P16 Gate D1 — dep-env live qualification (three-run)", () => {
     }
   });
 
-  it("cache-usage: wire observation — usage frame fields vs canonical extraction", {
+  it("cache-usage: native→canonical extraction is value-identical (R2 requalification)", {
     timeout: 240_000,
   }, async () => {
     for (let run = 1; run <= RUNS; run += 1) {
@@ -329,13 +329,39 @@ describe("P16 Gate D1 — dep-env live qualification (three-run)", () => {
         request([{ role: "user", text: "说明缓存证据观察请求。" }]),
       );
       const usage = chunks.find((chunk) => chunk.type === "usage") as
-        | { type: "usage"; inputTokens: number; outputTokens: number }
+        | {
+            type: "usage";
+            inputTokens: number;
+            outputTokens: number;
+            cacheReadTokens?: number;
+            cacheWriteTokens?: number;
+          }
         | undefined;
       expect(usage).toBeDefined();
       expect(usage?.inputTokens ?? 0).toBeGreaterThan(0);
-      // Canonical cache fields stay absent — the adapter does not extract
-      // them (declared reportsCacheTokens=false; capability NOT proven here).
-      expect("cacheReadTokens" in (usage ?? {})).toBe(false);
+      // R2: the adapter extracts the native read dimension — a real number;
+      // the write dimension stays absent (unknown, never 0).
+      expect(typeof usage?.cacheReadTokens).toBe("number");
+      expect(usage?.cacheReadTokens ?? -1).toBeGreaterThanOrEqual(0);
+      expect(usage?.cacheWriteTokens).toBeUndefined();
+      // Native==canonical value identity against the archived wire frame.
+      const archived = JSON.parse(
+        readFileSync(
+          join(EVIDENCE_DIR, `cache-usage-observation-run${run}.json`),
+          "utf8",
+        ),
+      ) as {
+        wire: ReadonlyArray<{
+          type: string;
+          cacheReadTokens?: number;
+          inputTokens?: number;
+        }>;
+      };
+      const archivedUsage = archived.wire.find(
+        (chunk) => chunk.type === "usage",
+      );
+      expect(archivedUsage?.cacheReadTokens).toBe(usage?.cacheReadTokens);
+      expect(archivedUsage?.inputTokens).toBe(usage?.inputTokens);
     }
   });
 

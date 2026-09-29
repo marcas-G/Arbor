@@ -19,11 +19,31 @@
     },
     {
       "type": "text",
-      "text": "，"
+      "text": "您的"
     },
     {
       "type": "text",
-      "text": "我是"
+      "text": "消息"
+    },
+    {
+      "type": "text",
+      "text": "。"
+    },
+    {
+      "type": "text",
+      "text": "我的"
+    },
+    {
+      "type": "text",
+      "text": "模型"
+    },
+    {
+      "type": "text",
+      "text": "名称"
+    },
+    {
+      "type": "text",
+      "text": "是"
     },
     {
       "type": "text",
@@ -39,28 +59,41 @@
     },
     {
       "type": "text",
-      "text": " "
+      "text": "（"
     },
     {
       "type": "text",
-      "text": "最新"
+      "text": "由"
     },
     {
       "type": "text",
-      "text": "版"
+      "text": "深度"
     },
     {
       "type": "text",
-      "text": "模型"
+      "text": "求"
     },
     {
       "type": "text",
-      "text": "。"
+      "text": "索"
+    },
+    {
+      "type": "text",
+      "text": "公司"
+    },
+    {
+      "type": "text",
+      "text": "开发"
+    },
+    {
+      "type": "text",
+      "text": "）。"
     },
     {
       "type": "usage",
       "inputTokens": 20,
-      "outputTokens": 11
+      "outputTokens": 19,
+      "cacheReadTokens": 0
     },
     {
       "type": "completed",

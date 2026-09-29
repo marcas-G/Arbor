@@ -200,12 +200,22 @@ const readSse = async function* (
       typeof usage?.prompt_tokens === "number" &&
       typeof usage.completion_tokens === "number"
     ) {
-      // Gate C C1: reasoning tokens (OpenAI o-series completion_tokens_details
-      // / DeepSeek-compatible details) translate to the canonical dimension;
-      // absent = unknown, never 0. Cache dimensions stay untranslated — the
-      // adapter declares reportsCacheTokens=false and native extraction is
-      // not implemented this phase (capability remains NOT_PROVEN).
+      // Gate C C1 + R2 (D1 remediation): reasoning tokens translate from
+      // completion_tokens_details.reasoning_tokens. Cache tokens translate
+      // from the DeepSeek-native read semantics ONLY — prompt_cache_hit_tokens
+      // is the canonical read/hit dimension; prompt_tokens_details.cached_tokens
+      // is the SAME quantity in OpenAI-compatible form and must not be
+      // double-counted (native top-level field wins). DeepSeek exposes no
+      // cache-write dimension, so cacheWriteTokens stays absent (unknown,
+      // never 0).
       const details = asRecord(usage.completion_tokens_details);
+      const promptDetails = asRecord(usage.prompt_tokens_details);
+      const cacheRead =
+        typeof usage.prompt_cache_hit_tokens === "number"
+          ? usage.prompt_cache_hit_tokens
+          : typeof promptDetails?.cached_tokens === "number"
+            ? promptDetails.cached_tokens
+            : undefined;
       chunks.push({
         type: "usage",
         inputTokens: usage.prompt_tokens,
@@ -213,6 +223,7 @@ const readSse = async function* (
         ...(typeof details?.reasoning_tokens === "number"
           ? { reasoningTokens: details.reasoning_tokens }
           : {}),
+        ...(cacheRead !== undefined ? { cacheReadTokens: cacheRead } : {}),
       });
     }
     if (firstChoice?.finish_reason !== undefined) {
@@ -263,6 +274,15 @@ const readSse = async function* (
   for (const call of calls.values()) {
     if (call.callRef.length === 0 || call.toolName.length === 0) {
       throw new OpenAISdkError(502, "invalid_response");
+    }
+    // R1 (D1 remediation): the provider wire carries finish_reason=tool_calls
+    // only when the arguments JSON is complete. A truncated stream (observed
+    // intermittently on the live endpoint) must fail closed as a malformed
+    // wire output — never repaired, never passed through as silent bad data.
+    try {
+      JSON.parse(call.argumentsJson);
+    } catch {
+      throw new OpenAISdkError(502, "tool_arguments_truncated");
     }
     yield {
       type: "tool_call",

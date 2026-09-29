@@ -18,11 +18,12 @@
     {
       "type": "usage",
       "inputTokens": 270,
-      "outputTokens": 38
+      "outputTokens": 38,
+      "cacheReadTokens": 128
     },
     {
       "type": "tool_call",
-      "callRef": "call_00_EarCORqxSJFFChFEiBmV7207",
+      "callRef": "call_00_QqWTLYIxRW297zbQbRj61868",
       "toolName": "get_weather",
       "argumentsJson": "{\"city\": \"北京\"}"
     },

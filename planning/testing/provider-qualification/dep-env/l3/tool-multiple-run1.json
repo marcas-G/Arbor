@@ -25,7 +25,7 @@
     },
     {
       "type": "text",
-      "text": " check"
+      "text": " query"
     },
     {
       "type": "text",
@@ -37,7 +37,7 @@
     },
     {
       "type": "text",
-      "text": " in"
+      "text": " for"
     },
     {
       "type": "text",
@@ -70,17 +70,18 @@
     {
       "type": "usage",
       "inputTokens": 273,
-      "outputTokens": 79
+      "outputTokens": 79,
+      "cacheReadTokens": 128
     },
     {
       "type": "tool_call",
-      "callRef": "call_00_9bOsZQNmQchp8LJo0EjZ2767",
+      "callRef": "call_00_i7jPEiileEtOn3mLPoVF5859",
       "toolName": "get_weather",
       "argumentsJson": "{\"city\": \"北京\"}"
     },
     {
       "type": "tool_call",
-      "callRef": "call_01_NSfwvoZUWYGFAvNLZNO25264",
+      "callRef": "call_01_wsMDDtZvOkw10zZsPp435451",
       "toolName": "get_weather",
       "argumentsJson": "{\"city\": \"上海\"}"
     },
