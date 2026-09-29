@@ -388,7 +388,10 @@ export const buildSliceLayer = (
   );
   // P12 `12` §4: the real `ModelCapabilityPort` backed by the catalog replaces
   // the test-only static layer at the Composition Root.
-  const capability = ModelCapabilityPortLive(catalog);
+  const capability = ModelCapabilityPortLive(
+    catalog,
+    deploymentBinding?.deployment.modelRef,
+  );
   // P3 `02` §7: an empty-but-valid registry. No skill is available, so
   // `load` fails through the typed `SkillRegistryError` channel (never a
   // defect); `LoadSkill` maps that to the "skill unavailable" observation.

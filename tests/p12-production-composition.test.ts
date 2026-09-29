@@ -341,7 +341,12 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
     expect(outcome.readiness.dbOpen).toBe(true);
     expect(outcome.readiness.migrationBaseline).toBe(true);
     expect(outcome.readiness.t1RecoveryComplete).toBe(true);
-    expect(outcome.deployment.consumers).toHaveLength(2);
+    // The consumers are now one dynamic aggregator that registers
+    // formation/verification/completion per open project at tick time.
+    expect(outcome.deployment.consumers).toHaveLength(1);
+    expect(outcome.deployment.consumers[0]?.consumerId).toBe(
+      "dynamic-project-consumers",
+    );
   });
 
   it("B-7: production no longer references the P5 provisional runnable source", () => {

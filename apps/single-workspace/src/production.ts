@@ -44,6 +44,7 @@ import {
   type ExecutionDriverPort,
   ExecutionRepository,
   type ExecutionScheduler,
+  FormationProposalStore,
   HumanMessageStore,
   type IdGenerator,
   type LeaseService,
@@ -75,6 +76,7 @@ import {
   completionConsumerDaemon,
   type DriftWatcherTrigger,
   driftWatcherFromDeps,
+  formationConsumerDaemon,
   makeProductionDaemon,
   type ProductionDaemon,
   type RecoveryDaemon,
@@ -210,6 +212,7 @@ export type ProductionDaemonServices =
   | AcceptanceRepository
   | WorkRepository
   | WorkspaceRepository
+  | FormationProposalStore
   | EnvironmentResolverPort
   | RecordEnvironmentChange
   | EnvironmentRevisionStore
@@ -235,6 +238,7 @@ export const ProductionDaemonServiceLive = (
       const verifications = yield* VerificationRepository;
       const acceptances = yield* AcceptanceRepository;
       const works = yield* WorkRepository;
+      const proposals = yield* FormationProposalStore;
       const workspaces = yield* WorkspaceRepository;
       const gateway = yield* CommandGateway;
       const t1 = yield* T1RecoveryState;
@@ -252,55 +256,112 @@ export const ProductionDaemonServiceLive = (
       };
 
       const consumers: Array<ConsumerLoopDaemon<ProductionDaemonServices>> = [];
-      if (config.projectId !== undefined) {
-        const projectId = config.projectId;
-        const verificationDeps: VerificationConsumerDependencies<never> = {
-          gateway,
-          verifications: {
-            findOpenByWorkRevision: (workId, workRevision) =>
-              tx.transact(
-                verifications.findOpenByWorkRevision(workId, workRevision),
-              ),
-            findById: (verificationId) =>
-              tx.transact(verifications.findById(verificationId)),
-          },
-          works: { findById: (workId) => tx.transact(works.findById(workId)) },
-          workspaces: {
-            findById: (workspaceId) =>
-              tx.transact(workspaces.findById(workspaceId)),
-          },
-        };
-        const completionDeps: CompletionConsumerDependencies = {
-          gateway,
-          verifications: {
-            findById: (verificationId) =>
-              tx.transact(verifications.findById(verificationId)),
-          },
-          acceptances: {
-            findByWorkRevision: (workId, workRevision) =>
-              tx.transact(acceptances.findByWorkRevision(workId, workRevision)),
-          },
-          works: { findById: (workId) => tx.transact(works.findById(workId)) },
-        };
-        consumers.push(
-          verificationConsumerDaemon({
-            consumerId: "verification",
-            projectId,
-            batchSize: config.batchSize ?? 50,
-            stores,
-            principal: config.principal,
-            dependencies: verificationDeps,
-          }),
-          completionConsumerDaemon({
-            consumerId: "completion",
-            projectId,
-            batchSize: config.batchSize ?? 50,
-            stores,
-            principal: config.principal,
-            dependencies: completionDeps,
-          }),
+      // Product shape: consumers run for EVERY open project, discovered at
+      // TICK time (after migrations), incrementally registered — projects
+      // created at runtime get consumers without a daemon restart. The
+      // explicit config entry is always included first.
+      const seenConsumerProjects = new Set<string>();
+      const dynamicConsumers: Array<
+        ConsumerLoopDaemon<ProductionDaemonServices>
+      > = [];
+      const verificationDeps: VerificationConsumerDependencies<never> = {
+        gateway,
+        verifications: {
+          findOpenByWorkRevision: (workId, workRevision) =>
+            tx.transact(
+              verifications.findOpenByWorkRevision(workId, workRevision),
+            ),
+          findById: (verificationId) =>
+            tx.transact(verifications.findById(verificationId)),
+        },
+        works: { findById: (workId) => tx.transact(works.findById(workId)) },
+        workspaces: {
+          findById: (workspaceId) =>
+            tx.transact(workspaces.findById(workspaceId)),
+        },
+      };
+      const completionDeps: CompletionConsumerDependencies = {
+        gateway,
+        verifications: {
+          findById: (verificationId) =>
+            tx.transact(verifications.findById(verificationId)),
+        },
+        acceptances: {
+          findByWorkRevision: (workId, workRevision) =>
+            tx.transact(acceptances.findByWorkRevision(workId, workRevision)),
+        },
+        works: { findById: (workId) => tx.transact(works.findById(workId)) },
+      };
+
+      const registerProjectConsumers = Effect.gen(function* () {
+        const consumerSql = yield* SqlClient;
+        const openRows = yield* Effect.orDie(
+          consumerSql.unsafe<{ project_id: string }>(
+            "SELECT project_id FROM projects WHERE lifecycle = 'Open'",
+          ),
         );
-      }
+        if (config.projectId !== undefined) {
+          seenConsumerProjects.add(String(config.projectId));
+        }
+        for (const row of openRows) {
+          seenConsumerProjects.add(row.project_id);
+        }
+        for (const projectIdValue of seenConsumerProjects) {
+          if (
+            dynamicConsumers.some(
+              (consumer) => String(consumer.projectId) === projectIdValue,
+            )
+          ) {
+            continue;
+          }
+          const projectId = projectIdValue as never;
+          dynamicConsumers.push(
+            formationConsumerDaemon({
+              consumerId: "formation",
+              projectId,
+              batchSize: config.batchSize ?? 50,
+              stores,
+              dependencies: {
+                gateway,
+                workspaces: {
+                  findById: (workspaceId) =>
+                    tx.transact(workspaces.findById(workspaceId)),
+                },
+                proposals: {
+                  findById: (proposalId) =>
+                    tx.transact(proposals.findById(proposalId)),
+                },
+              },
+            }),
+            verificationConsumerDaemon({
+              consumerId: "verification",
+              projectId,
+              batchSize: config.batchSize ?? 50,
+              stores,
+              principal: config.principal,
+              dependencies: verificationDeps as never,
+            }),
+            completionConsumerDaemon({
+              consumerId: "completion",
+              projectId,
+              batchSize: config.batchSize ?? 50,
+              stores,
+              principal: config.principal,
+              dependencies: completionDeps,
+            }),
+          );
+        }
+      }).pipe(Effect.asVoid);
+      consumers.push({
+        consumerId: "dynamic-project-consumers",
+        projectId: config.projectId ?? ("" as never),
+        batchSize: config.batchSize ?? 50,
+        poll: Effect.flatMap(registerProjectConsumers, () =>
+          Effect.forEach(dynamicConsumers, (consumer) => consumer.poll, {
+            concurrency: 1,
+          }),
+        ) as never,
+      });
 
       const driftDeps: EnvironmentDriftDeps = {
         resolver,

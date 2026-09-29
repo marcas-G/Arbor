@@ -551,19 +551,23 @@ describe("P14 production conversation model context", () => {
       { role: "assistant", content: priorAssistantAnswer },
       { role: "user", content: humanQuestion },
     ]);
-    expect(observedRequest?.tools).toEqual([
-      expect.objectContaining({
-        type: "function",
-        function: expect.objectContaining({
-          name: "arbor_directive",
-          parameters: expect.objectContaining({
-            type: "object",
-            properties: expect.objectContaining({
-              _tag: expect.objectContaining({ enum: expect.any(Array) }),
-            }),
-          }),
-        }),
-      }),
+    // The conversation face now exposes the REGISTRY's shallow control
+    // tools (arbor_wait / arbor_send_message / arbor_claim_completion /
+    // arbor_propose_child_workspace / arbor_spawn_specialist /
+    // arbor_declare_dependency) instead of the legacy monolithic
+    // arbor_directive whose routes never matched the registry.
+    const toolNames = (
+      observedRequest?.tools as Array<{ function?: { name?: string } }>
+    )
+      ?.map((tool) => tool.function?.name)
+      .sort();
+    expect(toolNames).toEqual([
+      "arbor_claim_completion",
+      "arbor_declare_dependency",
+      "arbor_propose_child_workspace",
+      "arbor_send_message",
+      "arbor_spawn_specialist",
+      "arbor_wait",
     ]);
     expect(result.message).toEqual({
       state: "Answered",

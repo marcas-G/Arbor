@@ -87,17 +87,30 @@ export const runFormationConsumer = (
       }
       const found = yield* dependencies.proposals.findById(decision.proposalId);
       if (Option.isNone(found)) {
+        console.error(
+          "[formation-consumer] approved decision without a proposal:",
+          String(decision.proposalId),
+        );
         continue;
       }
       const snapshot = found.value;
       if (snapshot.state !== "Approved") {
+        console.error(
+          "[formation-consumer] decision for a non-Approved proposal:",
+          String(decision.proposalId),
+          snapshot.state,
+        );
         continue;
       }
       const parent = yield* dependencies.workspaces.findById(
         snapshot.parentWorkspaceId,
       );
       if (Option.isNone(parent)) {
-        continue; // P1 §6 rejects unknown parents; nothing to consume
+        console.error(
+          "[formation-consumer] unknown parent workspace:",
+          String(snapshot.parentWorkspaceId),
+        );
+        continue;
       }
       // The gated path re-checks the ceiling at execution time too: the
       // parent boundary may have moved since admission (P6 `03` §2).
@@ -106,6 +119,10 @@ export const runFormationConsumer = (
         draftBoundary: snapshot.proposal.resourceBoundaryDraft,
       });
       if (ceilingError !== null) {
+        console.error(
+          "[formation-consumer] capability ceiling rejected the draft:",
+          JSON.stringify(ceilingError).slice(0, 220),
+        );
         continue;
       }
       const principal = decision.decidedBy as unknown as Principal;
@@ -135,6 +152,10 @@ export const runFormationConsumer = (
         create.authority,
       );
       if (createReceipt.resolution._tag !== "Committed") {
+        console.error(
+          "[formation-consumer] CreateChildWorkspace rejected:",
+          JSON.stringify(createReceipt.resolution).slice(0, 300),
+        );
         continue;
       }
       executed.push("CreateChildWorkspace");

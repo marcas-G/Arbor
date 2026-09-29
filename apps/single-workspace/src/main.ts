@@ -1,6 +1,9 @@
 import { inspect } from "node:util";
 import { Principal, parse, WorkspaceId } from "@arbor/domain";
-import { startupRecovery } from "@arbor/execution-runtime";
+import {
+  consumeWorkspaceWake,
+  startupRecovery,
+} from "@arbor/execution-runtime";
 import {
   type ModelDeployment,
   type ProviderExecutionPolicyOverrides,
@@ -159,6 +162,11 @@ export interface ProductionDaemonRunConfig extends Partial<SliceConfig> {
 /** P5 `01` §3: migrate, then run one scheduler loop step for a workspace.
  * T1 (P9 `03` §2): the startup full recovery pass runs exactly once per
  * daemon start, before any new dispatch or admission. */
+const isWorkspaceId = (value: string): boolean =>
+  /^ws_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+    value,
+  );
+
 export const runOnce = (workspaceId: string, principalRef = "runtime:system") =>
   Effect.gen(function* () {
     yield* runMigrations(P16_MIGRATIONS);
@@ -184,12 +192,40 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
   Effect.gen(function* () {
     const deployment = yield* ProductionDaemonService;
     const principal = parse(Principal)(config.principalRef ?? "runtime:system");
-    const schedulerTick =
-      config.workspaceId !== undefined
-        ? evaluateAndSelect(config.workspaceId, principal, {
-            _tag: "Recovery",
-          })
-        : Effect.void;
+    // The scheduler tick drives EVERY open project's root workspace (the
+    // same product-shape fix the conversation tick received): a configured
+    // workspace stays as an explicit fast path. Legacy non-v7 workspace ids
+    // are skipped defensively — they predate the id schema and must not
+    // crash the loop.
+    const schedulerTick = Effect.gen(function* () {
+      if (config.workspaceId !== undefined) {
+        yield* evaluateAndSelect(config.workspaceId, principal, {
+          _tag: "Recovery",
+        });
+        return;
+      }
+      const sql = yield* SqlClient;
+      // Drive EVERY workspace with runnable work (roots via their projects,
+      // child workspaces via their own open works) — a work assigned to a
+      // child workspace must not wait for a per-workspace config.
+      const rows = yield* sql.unsafe<{ workspace_id: string }>(
+        `SELECT DISTINCT w.workspace_id AS workspace_id
+           FROM works w JOIN workspaces ws ON ws.workspace_id = w.workspace_id
+          WHERE w.lifecycle = 'Open' AND ws.lifecycle = 'Active'
+          UNION
+         SELECT root_workspace_id AS workspace_id FROM projects WHERE lifecycle = 'Open'`,
+      );
+      for (const row of rows) {
+        if (!isWorkspaceId(row.workspace_id)) {
+          continue;
+        }
+        yield* consumeWorkspaceWake(
+          parse(WorkspaceId)(row.workspace_id),
+          { _tag: "Recovery" },
+          principal,
+        );
+      }
+    });
     yield* deployment.daemon.start;
     let webTransportHandle:
       | Awaited<ReturnType<typeof startWebTransport>>
