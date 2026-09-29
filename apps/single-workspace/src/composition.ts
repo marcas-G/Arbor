@@ -53,6 +53,7 @@ import {
   layer,
   MessageStoreLive,
   P14_MIGRATIONS,
+  P15_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectionStoreLive,
   ProjectRepositoryLive,
@@ -283,7 +284,7 @@ export const buildSliceLayer = (
             : {}),
         });
   const providerRuntime = Layer.provide(
-    ProviderRuntimeLive(3),
+    ProviderRuntimeLive(),
     Layer.mergeAll(
       provider,
       Layer.provide(ProviderTurnStoreLive, infra),
@@ -527,4 +528,9 @@ export const buildSliceLayer = (
   ) as Layer.Layer<SliceServices>;
 };
 
-export { P14_MIGRATIONS, P14_MIGRATIONS as P12_MIGRATIONS, runMigrations };
+export {
+  P14_MIGRATIONS,
+  P15_MIGRATIONS,
+  P15_MIGRATIONS as P12_MIGRATIONS,
+  runMigrations,
+};

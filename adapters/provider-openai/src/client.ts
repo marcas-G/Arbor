@@ -264,6 +264,9 @@ const readSse = async function* (
 export const OpenAICompatibleFetchClient = (
   config: OpenAICompatibleClientConfig,
 ): OpenAISdkClient => ({
+  // A pure model call sends request bytes to the provider endpoint but has no
+  // externally observable side effect beyond that transport.
+  externalEffectPossible: false,
   streamChat: async function* ({ modelRef, request, context }) {
     const credential = context.secretMaterial?.reveal();
     if (
@@ -281,10 +284,16 @@ export const OpenAICompatibleFetchClient = (
       }
     ).AbortController;
     const controller = new AbortControllerConstructor();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      Math.max(1, context.timeoutMs),
+    const deadlineMs = Math.max(
+      1,
+      new Date(context.turnDeadlineAt).getTime() - Date.now(),
     );
+    const timeout = setTimeout(() => controller.abort(), deadlineMs);
+    const relayAbort = () => controller.abort();
+    context.cancellationSignal.addEventListener("abort", relayAbort, {
+      once: true,
+    });
+    if (context.cancellationSignal.aborted) controller.abort();
     try {
       let response: OpenAICompatibleFetchResponse;
       try {
@@ -327,6 +336,7 @@ export const OpenAICompatibleFetchClient = (
       yield* readSse(response);
     } finally {
       clearTimeout(timeout);
+      context.cancellationSignal.removeEventListener("abort", relayAbort);
     }
   },
 });

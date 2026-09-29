@@ -29,6 +29,7 @@ import {
   MessageStoreLive,
   P11_MIGRATIONS,
   P12_MIGRATIONS,
+  P15_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
@@ -759,7 +760,7 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P12_MIGRATIONS);
+            yield* runMigrations(P15_MIGRATIONS);
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               secretEnvelope("CreateProject", secretProjectPayload(), "1"),
@@ -1637,7 +1638,7 @@ const runSafetyScenario = async (
   return Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P15_MIGRATIONS);
         const gateway = yield* CommandGateway;
         const created = yield* gateway.execute(
           safetyEnvelope("CreateProject", safetyProjectPayload, "1"),
@@ -2237,13 +2238,18 @@ const providerContext: ProviderExecutionContext = {
     "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
   ),
   attemptNo: 0,
-  timeoutMs: 1000,
-  cancellationRef: "cancel-1",
+  cancellationSignal: new AbortController().signal,
+  connectTimeoutMs: 1000,
+  firstEventTimeoutMs: 1000,
+  streamIdleTimeoutMs: 1000,
+  turnDeadlineAt: new Date(Date.now() + 5_000).toISOString(),
+  maxAttempts: 3,
 };
 const sdkClient = (
   chunks: ReadonlyArray<OpenAISdkChunk>,
   error?: OpenAISdkError,
 ): OpenAISdkClient => ({
+  externalEffectPossible: false,
   streamChat: () =>
     (async function* () {
       for (const chunk of chunks) {
@@ -2308,7 +2314,12 @@ describe("p12-acceptance story 12 — real provider adapter + non-minimal tool",
         return Array.from(chunk);
       }),
     );
-    expect(events.map((event) => event._tag)).toContain("TurnCompleted");
+    expect(
+      events.some(
+        (event) =>
+          event._tag === "Canonical" && event.event._tag === "TurnCompleted",
+      ),
+    ).toBe(true);
 
     const failing = selectProviderLayer({
       adapterId: "provider-openai",
@@ -2342,11 +2353,17 @@ describe("p12-acceptance story 12 — real provider adapter + non-minimal tool",
     expect(capabilityError._tag).toBe("ModelCapabilityError");
     expect([...PROVIDER_FAILURE_KINDS].sort()).toEqual([
       "AuthenticationFailed",
+      "AuthorizationFailed",
+      "Cancelled",
+      "ContextLimitExceeded",
       "ProtocolViolation",
       "ProviderUnavailable",
+      "QuotaExceeded",
       "RateLimited",
       "RequestRejected",
       "StreamInterrupted",
+      "TransportFailed",
+      "UnknownProviderFailure",
     ]);
 
     const root = mkdtempSync(join(tmpdir(), "p12-acceptance-tool-"));

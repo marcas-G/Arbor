@@ -5,7 +5,7 @@ import {
   ClockLive,
   IdGeneratorLive,
   layer,
-  P8_MIGRATIONS,
+  P15_MIGRATIONS,
   ProviderTurnStoreLive,
   runMigrations,
   TransactionPortLive,
@@ -22,9 +22,15 @@ import {
 import {
   type CanonicalProviderEvent,
   Clock,
+  DEFAULT_PROVIDER_EXECUTION_POLICY,
+  decideProviderRetry,
+  type PortableModelRequest,
+  type ProviderContinuationCheckpoint,
   type ProviderFailure,
   type ProviderFailureKind,
   ProviderPort,
+  type ProviderPortEvent,
+  type ProviderRetryDecisionRecord,
   ProviderRuntime,
   ProviderTurnStore,
   TransactionPort,
@@ -54,15 +60,14 @@ const providerTurnId = parse(ProviderTurnId)(
 const providerTurnIdB = parse(ProviderTurnId)(
   "ptn_018f2b3c-4d5e-7abc-8def-0123456789d2",
 );
-const manifestId = "mf_p9_pd";
-const manifestIdFor = (turnId: ProviderTurnId): string =>
-  turnId === providerTurnId ? manifestId : `${manifestId}:${turnId}`;
+const providerTurnIdC = parse(ProviderTurnId)(
+  "ptn_018f2b3c-4d5e-7abc-8def-0123456789d3",
+);
+const providerTurnIdD = parse(ProviderTurnId)(
+  "ptn_018f2b3c-4d5e-7abc-8def-0123456789d4",
+);
+const manifestIdFor = (turnId: ProviderTurnId) => `mf_${turnId}`;
 const principal = parse(Principal)("runtime:system");
-
-/** GQ4 frozen mapping (04 §2.1): classify by the observable boundary —
- * `TurnStarted` emitted or not — never by transport errno. */
-const classifyDisconnect = (sawTurnStarted: boolean): ProviderFailureKind =>
-  sawTurnStarted ? "StreamInterrupted" : "ProviderUnavailable";
 
 type AttemptScript =
   | { readonly disconnect: "pre-connect" | "mid-stream" }
@@ -73,6 +78,8 @@ interface ProviderProbe {
   readonly calls: Array<{
     readonly providerTurnId: ProviderTurnId;
     readonly attemptNo: number;
+    readonly requestJson: string;
+    readonly continuationCheckpoint: ProviderContinuationCheckpoint | null;
   }>;
 }
 
@@ -91,7 +98,22 @@ const successTurn: ReadonlyArray<CanonicalProviderEvent> = [
 const providerFailure = (kind: ProviderFailureKind): ProviderFailure => ({
   _tag: "ProviderFailure",
   kind,
+  taxonomyVersion: "phase1-v2",
 });
+
+const canonical = (event: CanonicalProviderEvent): ProviderPortEvent => ({
+  _tag: "Canonical",
+  event,
+});
+
+const preflight: ProviderPortEvent = {
+  _tag: "Observation",
+  delta: { responseStarted: false, externalEffectPossible: false },
+};
+const responseStarted: ProviderPortEvent = {
+  _tag: "Observation",
+  delta: { responseStarted: true },
+};
 
 /** Deterministic disconnect-injecting ProviderPort double. The raw transport
  * error (errno-style) never decides the classification — only the
@@ -111,6 +133,9 @@ const DisconnectProviderLive = (
           probe.calls.push({
             providerTurnId: input.context.providerTurnId,
             attemptNo,
+            requestJson: JSON.stringify(input.request),
+            continuationCheckpoint:
+              input.context.continuationCheckpoint ?? null,
           });
           const entry: AttemptScript = script[
             Math.min(call, script.length - 1)
@@ -118,13 +143,13 @@ const DisconnectProviderLive = (
           call += 1;
           if ("disconnect" in entry) {
             if (entry.disconnect === "pre-connect") {
-              // connect refused / DNS / TLS / pre-flight timeout — nothing
-              // observable emitted before the failure.
-              const transportError = new Error("connect ECONNREFUSED");
-              void transportError;
-              return Stream.fail(providerFailure(classifyDisconnect(false)));
+              return Stream.concat(
+                Stream.fromIterable([preflight]),
+                Stream.fail(providerFailure("TransportFailed")),
+              );
             }
-            // mid-stream: the boundary event WAS emitted, then the break.
+            // Mid-stream semantic output makes replay unsafe unless a
+            // verified continuation checkpoint was durably recorded.
             const boundary: CanonicalProviderEvent = {
               _tag: "TurnStarted",
               providerTurnId: input.context.providerTurnId,
@@ -133,16 +158,37 @@ const DisconnectProviderLive = (
             };
             return Stream.concat(
               Stream.fromIterable([
-                boundary,
-                { _tag: "TextDelta" as const, text: "partial-delta" },
+                preflight,
+                responseStarted,
+                canonical(boundary),
+                canonical({
+                  _tag: "TextDelta" as const,
+                  text: "partial-delta",
+                }),
               ]),
-              Stream.fail(providerFailure(classifyDisconnect(true))),
+              Stream.fail(providerFailure("StreamInterrupted")),
             );
           }
           if ("terminal" in entry) {
-            return Stream.fail(providerFailure(entry.terminal));
+            return Stream.concat(
+              Stream.fromIterable([preflight]),
+              Stream.fail(providerFailure(entry.terminal)),
+            );
           }
-          return Stream.fromIterable(entry.events);
+          return Stream.fromIterable([
+            preflight,
+            responseStarted,
+            ...entry.events.map((event) =>
+              event._tag === "TurnStarted"
+                ? canonical({
+                    ...event,
+                    providerTurnId: input.context.providerTurnId,
+                    attemptNo,
+                    modelRef: input.request.modelRef,
+                  })
+                : canonical(event),
+            ),
+          ]);
         },
       });
     }),
@@ -155,7 +201,7 @@ const makeApp = (
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const providerRuntime = Layer.provide(
-    ProviderRuntimeLive(3),
+    ProviderRuntimeLive(),
     Layer.mergeAll(
       DisconnectProviderLive(script, probe),
       Layer.provide(ProviderTurnStoreLive, infra),
@@ -209,7 +255,7 @@ const seed = Effect.gen(function* () {
 });
 
 const boot = Effect.gen(function* () {
-  yield* runMigrations(P8_MIGRATIONS);
+  yield* runMigrations(P15_MIGRATIONS);
   yield* seed;
 });
 
@@ -220,17 +266,29 @@ const runTurnInput = (turnId: ProviderTurnId) => ({
   contextEpoch: 0 as never,
   modelRef: "provider-fake",
   outputContractRef: "oc",
-  manifestId: manifestIdFor(turnId),
-  manifest: {
-    manifestId: manifestIdFor(turnId),
+  manifestJson: JSON.stringify({
     providerTurnId: turnId,
     executionId,
     sessionId,
-    contextEpoch: 0 as never,
+    contextEpoch: 0,
     modelRef: "provider-fake",
-    compiledRequestHash: `${manifestIdFor(turnId)}-request`,
-    manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
-  },
+    instructionFragments: [],
+    contextRefs: [],
+    skillRefs: [],
+    toolRefs: [],
+    toolRoutes: [],
+    outputContractRef: "oc",
+    budgetDecision: { maxOutputTokens: 128 },
+    compiledRequestHash: "p9-provider-failure-fixture",
+    controlBasis: {
+      projectPolicyRevision: 0,
+      workspacePolicyRevision: 0,
+      responsibilityRevision: 0,
+      resourceBoundaryRevision: 0,
+      authorizationDigest: "p9",
+      environmentRevision: "0",
+    },
+  }),
   request: {
     modelRef: "provider-fake",
     instructions: [],
@@ -240,18 +298,35 @@ const runTurnInput = (turnId: ProviderTurnId) => ({
     budget: { maxOutputTokens: 128 },
     cacheHints: [],
   },
-  timeoutMs: 30_000,
-  cancellationRef: "cancel",
+});
+
+const recoveryRunTurnInput = (plan: {
+  readonly providerTurnId: ProviderTurnId;
+  readonly manifestId: string;
+  readonly manifestJson: string;
+  readonly portableRequestJson: string;
+  readonly nextAttemptNo: number;
+  readonly retryDecision: ProviderRetryDecisionRecord;
+  readonly continuationCheckpoint?: ProviderContinuationCheckpoint;
+}) => ({
+  ...runTurnInput(plan.providerTurnId),
+  manifestJson: plan.manifestJson,
+  request: JSON.parse(plan.portableRequestJson) as PortableModelRequest,
+  recovery: {
+    manifestId: plan.manifestId,
+    nextAttemptNo: plan.nextAttemptNo,
+    retryDecision: plan.retryDecision,
+    ...(plan.continuationCheckpoint === undefined
+      ? {}
+      : { continuationCheckpoint: plan.continuationCheckpoint }),
+  },
 });
 
 const run = <A>(
-  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   program: Effect.Effect<A, any, any>,
-  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   app: Layer.Layer<any, any, any>,
 ): Promise<A> =>
   Effect.runPromise(
-    // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
     Effect.provide(program, app) as Effect.Effect<A, any, never>,
   );
 
@@ -278,6 +353,25 @@ const attemptRows = (turnId: ProviderTurnId) =>
         outcome: row.outcome,
         providerErrorKind: row.provider_error_kind,
       }),
+    );
+  });
+
+interface RecoveryDecisionFact {
+  readonly attempt_no: number;
+  readonly cause_tag: string;
+  readonly cause_detail: string | null;
+  readonly retry_safety: string;
+  readonly retry_decision: string;
+  readonly retry_strategy: string | null;
+  readonly retry_reason: string;
+}
+
+const recoveryDecisionRows = (turnId: ProviderTurnId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    return yield* sql.unsafe<RecoveryDecisionFact>(
+      "SELECT attempt_no, cause_tag, cause_detail, retry_safety, retry_decision, retry_strategy, retry_reason FROM provider_recovery_decisions WHERE provider_turn_id = ? ORDER BY sequence_no",
+      [turnId],
     );
   });
 
@@ -312,11 +406,11 @@ const sessionEntryCount = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM session_entries WHERE session_id = ?",
     [sessionId],
   );
-  return Number(rows[0]?.count);
+  return Number(rows[0]!.count);
 });
 
 /** Recovery face under test (deps injected from the same app layers). */
-const recover = (options?: { readonly maxAttempts?: number }) =>
+const recover = () =>
   Effect.gen(function* () {
     const turns = yield* ProviderTurnStore;
     const tx = yield* TransactionPort;
@@ -325,7 +419,6 @@ const recover = (options?: { readonly maxAttempts?: number }) =>
       { turns, tx, clock },
       projectId,
       principal,
-      options,
     );
   });
 
@@ -336,14 +429,48 @@ const openDanglingTurn = (
   turnId: ProviderTurnId,
   crashedAttempts: ReadonlyArray<{
     readonly attemptNo: number;
-    readonly kind: "StreamInterrupted" | "RateLimited" | "ProviderUnavailable";
+    readonly kind?: "StreamInterrupted" | "RateLimited" | "ProviderUnavailable";
+    readonly resumeGuaranteed?: boolean;
+    readonly inProgress?: boolean;
   }> = [],
 ) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const turns = yield* ProviderTurnStore;
+    const manifest = JSON.stringify({
+      providerTurnId: turnId,
+      executionId,
+      sessionId,
+      contextEpoch: 0,
+      modelRef: "provider-fake",
+      instructionFragments: [],
+      contextRefs: [],
+      skillRefs: [],
+      toolRefs: [],
+      toolRoutes: [],
+      outputContractRef: "oc",
+      budgetDecision: { maxOutputTokens: 128 },
+      compiledRequestHash: `compiled-${turnId}`,
+      controlBasis: {
+        projectPolicyRevision: 0,
+        workspacePolicyRevision: 0,
+        responsibilityRevision: 0,
+        resourceBoundaryRevision: 0,
+        authorizationDigest: "p9",
+        environmentRevision: "0",
+      },
+    });
+    const portableRequestJson = JSON.stringify({
+      modelRef: "provider-fake",
+      instructions: [],
+      messages: [{ role: "user", text: "go" }],
+      toolDefinitions: [],
+      outputContractRef: "oc",
+      budget: { maxOutputTokens: 128 },
+      cacheHints: [],
+    });
     yield* tx.transact(
-      turns.startTurn(
+      turns.startTurnWithManifest(
         {
           providerTurnId: turnId,
           executionId,
@@ -352,35 +479,129 @@ const openDanglingTurn = (
           modelRef: "provider-fake",
           outputContractRef: "oc",
           manifestId: manifestIdFor(turnId),
+          executionPolicy: DEFAULT_PROVIDER_EXECUTION_POLICY,
+          turnDeadlineAt: "2999-01-01T00:00:00.000Z",
         },
-        {
-          manifestId: manifestIdFor(turnId),
-          providerTurnId: turnId,
-          executionId,
-          sessionId,
-          contextEpoch: 0 as never,
-          modelRef: "provider-fake",
-          compiledRequestHash: `${manifestIdFor(turnId)}-request`,
-          manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
-        },
+        manifest,
+        portableRequestJson,
         "t",
       ),
     );
     for (const attempt of crashedAttempts) {
+      const observation =
+        attempt.kind === "StreamInterrupted" ||
+        attempt.resumeGuaranteed === true
+          ? {
+              responseStarted: true,
+              canonicalEventEmitted: true,
+              consumerVisibleOutput: false,
+              toolCallProposed: false,
+              continuationAvailable: attempt.resumeGuaranteed === true,
+              externalEffectPossible: false,
+            }
+          : {
+              responseStarted: false,
+              canonicalEventEmitted: false,
+              consumerVisibleOutput: false,
+              toolCallProposed: false,
+              continuationAvailable: false,
+              externalEffectPossible: false,
+            };
+      const checkpoint =
+        attempt.resumeGuaranteed === true
+          ? {
+              cursor: `cursor-${attempt.attemptNo}`,
+              canonicalEventPrefixJson: JSON.stringify([
+                {
+                  _tag: "TurnStarted",
+                  providerTurnId: turnId,
+                  attemptNo: attempt.attemptNo,
+                  modelRef: "provider-fake",
+                },
+                { _tag: "TextDelta", text: "partial" },
+              ]),
+              deliveredPosition: 0,
+              resumeGuaranteed: true,
+            }
+          : null;
       yield* tx.transact(
-        turns.recordAttempt(
+        turns.startAttempt(
           turnId,
           attempt.attemptNo,
-          { _tag: "RetryableFailure", providerErrorKind: attempt.kind },
+          {
+            responseStarted: false,
+            canonicalEventEmitted: false,
+            consumerVisibleOutput: false,
+            toolCallProposed: false,
+            continuationAvailable: false,
+            externalEffectPossible: null,
+          },
           "t0",
+        ),
+      );
+      if (attempt.inProgress === true && attempt.resumeGuaranteed !== true) {
+        // Preserve the initial InProgress observation with an unknown
+        // external-effect boundary. Recovery must classify this as
+        // ProcessLost + UnsafeReplay rather than assuming a clean replay.
+        continue;
+      }
+      yield* tx.transact(
+        turns.updateAttemptObservation(
+          turnId,
+          attempt.attemptNo,
+          observation,
+          checkpoint?.canonicalEventPrefixJson ?? "[]",
+          0,
+          checkpoint,
           "t1",
         ),
       );
+      if (attempt.inProgress === true) {
+        // A process can be lost after all continuation evidence is durable,
+        // but before it settles the Attempt. Leave it InProgress so recovery
+        // must derive ProcessLost from the durable row.
+        continue;
+      }
+      if (attempt.kind === undefined) {
+        throw new Error(
+          "settled crash fixture requires a provider failure kind",
+        );
+      }
+      const retryDecision = decideProviderRetry({
+        cause: { _tag: "ProviderFailure", kind: attempt.kind },
+        observation,
+        continuationCheckpoint: checkpoint,
+        attemptNo: attempt.attemptNo,
+        maxAttempts: DEFAULT_PROVIDER_EXECUTION_POLICY.maxAttempts,
+        cancelled: false,
+        deadlineExpired: false,
+      });
+      yield* tx.transact(
+        turns.settleAttempt(
+          turnId,
+          attempt.attemptNo,
+          {
+            outcome: "RetryableFailure",
+            providerErrorKind: attempt.kind,
+            taxonomyVersion: "phase1-v2",
+            observation,
+            ...(checkpoint === null
+              ? {}
+              : { continuationCheckpoint: checkpoint }),
+            canonicalEventPrefixJson:
+              checkpoint?.canonicalEventPrefixJson ?? "[]",
+            deliveredPosition: 0,
+            retryDecision,
+          },
+          "t2",
+        ),
+      );
     }
+    return { manifestJson: manifest, portableRequestJson };
   });
 
 describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () => {
-  it("PD1/I-4 [crash-injected]: pre-connection disconnect → ProviderUnavailable RetryableFailure, retried under the SAME Turn, no new ProviderTurn, turnNo unchanged", async () => {
+  it("PD1/I-4 [crash-injected]: pre-response TransportFailed → SafeReplay under the SAME ProviderTurn", async () => {
     expect(
       labeled("PD1-pre-connection-ProviderUnavailable", "crash-injected")
         .guarantee,
@@ -414,30 +635,30 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     );
     expect(probe.calls.map((call) => call.attemptNo)).toEqual([0, 1, 2]);
     expect(r.turns).toHaveLength(1);
-    expect(r.turns[0]?.provider_turn_id).toBe(providerTurnId);
-    expect(r.turns[0]?.manifest_id).toBe(manifestIdFor(providerTurnId));
-    // I-4: RetryableFailure + provider_error_kind = ProviderUnavailable on
-    // the failed attempts; the final attempt succeeds and settles the Turn.
+    expect(r.turns[0]!.provider_turn_id).toBe(providerTurnId);
+    expect(r.turns[0]!.manifest_id).toMatch(/^mft_/u);
+    // Pre-response TransportFailed retries are admitted only with complete
+    // negative observations and a persisted SafeReplay decision.
     expect(r.attempts).toEqual([
       {
         attemptNo: 0,
         outcome: "RetryableFailure",
-        providerErrorKind: "ProviderUnavailable",
+        providerErrorKind: "TransportFailed",
       },
       {
         attemptNo: 1,
         outcome: "RetryableFailure",
-        providerErrorKind: "ProviderUnavailable",
+        providerErrorKind: "TransportFailed",
       },
       { attemptNo: 2, outcome: "Success", providerErrorKind: null },
     ]);
-    expect(r.turns[0]?.settled_at).not.toBeNull();
-    expect(r.turns[0]?.finish_reason).toBe("Stop");
+    expect(r.turns[0]!.settled_at).not.toBeNull();
+    expect(r.turns[0]!.finish_reason).toBe("Stop");
     expect(r.events.some((event) => event._tag === "TurnCompleted")).toBe(true);
     expect(r.entries).toBe(0);
   });
 
-  it("PD2/I-5 [crash-injected]: mid-stream disconnect → StreamInterrupted, retried under the SAME Turn, append-only attempt history, no partial Session entry", async () => {
+  it("PD2/I-5 [crash-injected]: mid-stream output without a verified cursor is UnsafeReplay", async () => {
     expect(
       labeled("PD2-mid-stream-StreamInterrupted", "crash-injected").guarantee,
     ).toBe("crash-injected");
@@ -446,33 +667,36 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
       Effect.gen(function* () {
         yield* boot;
         const runtime = yield* ProviderRuntime;
-        yield* runtime.runTurn(runTurnInput(providerTurnId));
+        const failure = yield* Effect.flip(
+          runtime.runTurn(runTurnInput(providerTurnId)),
+        );
         const attempts = yield* attemptRows(providerTurnId);
         const turns = yield* turnRows;
         const entries = yield* sessionEntryCount;
-        return { attempts, turns, entries };
+        return { failure, attempts, turns, entries };
       }),
       makeApp([{ disconnect: "mid-stream" }, { events: successTurn }], probe),
     );
-    expect(probe.calls.map((call) => call.attemptNo)).toEqual([0, 1]);
+    expect(probe.calls.map((call) => call.attemptNo)).toEqual([0]);
     expect(new Set(probe.calls.map((call) => call.providerTurnId))).toEqual(
       new Set([providerTurnId]),
     );
     // turnNo unchanged across attempts: exactly one Turn row, same manifest.
     expect(r.turns).toHaveLength(1);
-    expect(r.turns[0]?.provider_turn_id).toBe(providerTurnId);
-    expect(r.turns[0]?.manifest_id).toBe(manifestIdFor(providerTurnId));
-    // Attempt history append-only: the interrupted attempt AND the
-    // successful retry both remain recorded.
+    expect(r.turns[0]!.provider_turn_id).toBe(providerTurnId);
+    expect(r.turns[0]!.manifest_id).toMatch(/^mft_/u);
+    expect(r.failure).toMatchObject({
+      _tag: "ProviderFailure",
+      kind: "StreamInterrupted",
+    });
     expect(r.attempts).toEqual([
       {
         attemptNo: 0,
-        outcome: "RetryableFailure",
+        outcome: "TerminalFailure",
         providerErrorKind: "StreamInterrupted",
       },
-      { attemptNo: 1, outcome: "Success", providerErrorKind: null },
     ]);
-    expect(r.turns[0]?.settled_at).not.toBeNull();
+    expect(r.turns[0]!.settled_at).toBeNull();
     // Streaming deltas never enter Session history (DID §9.8): the crashed
     // mid-stream attempt left no partial durable output — resume is clean
     // by construction.
@@ -527,18 +751,18 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     ]);
     // The Turn dangles (driver decides), and a terminal Turn failure does
     // NOT itself settle the Execution Failed.
-    expect(r.turnsBefore[0]?.settled_at).toBeNull();
+    expect(r.turnsBefore[0]!.settled_at).toBeNull();
     expect(r.execution).toBeNull();
     // Recovery decision table, terminal row: failure mark, no resume.
     expect(r.report.retryPlan).toEqual([]);
     expect(r.report.failedTurns).toHaveLength(1);
-    expect(r.report.failedTurns[0]?.providerTurnId).toBe(providerTurnId);
-    expect(r.report.failedTurns[0]?.providerErrorKind).toBe(
+    expect(r.report.failedTurns[0]!.providerTurnId).toBe(providerTurnId);
+    expect(r.report.failedTurns[0]!.providerErrorKind).toBe(
       "AuthenticationFailed",
     );
-    expect(r.report.failedTurns[0]?.exhausted).toBe(false);
-    expect(r.turnsAfter[0]?.settled_at).not.toBeNull();
-    expect(r.turnsAfter[0]?.finish_reason).toBe("Failed");
+    expect(r.report.failedTurns[0]!.exhausted).toBe(false);
+    expect(r.turnsAfter[0]!.settled_at).not.toBeNull();
+    expect(r.turnsAfter[0]!.finish_reason).toBe("Failed");
     // Recovery never invents an Execution settlement (P2 `06` §4).
     expect(r.executionAfter).toBeNull();
   });
@@ -554,37 +778,59 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
         // Crash leftovers: turn A died mid-stream after one recorded
         // interrupted attempt; turn B died before any attempt persisted.
         yield* openDanglingTurn(providerTurnId, [
-          { attemptNo: 0, kind: "StreamInterrupted" },
+          {
+            attemptNo: 0,
+            kind: "StreamInterrupted",
+            resumeGuaranteed: true,
+          },
         ]);
         yield* openDanglingTurn(providerTurnIdB);
         const report = yield* recover();
         const turns = yield* turnRows;
         const execution = yield* executionSettlement;
-        // The driver resumes the dangling Turn as a transport retry under
-        // the same providerTurnId + manifestId: new attempt, turn settle.
-        const tx = yield* TransactionPort;
-        const store = yield* ProviderTurnStore;
-        yield* tx.transact(
-          store.recordAttempt(
-            providerTurnId,
-            // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
-            report.retryPlan[0]!.nextAttemptNo,
-            { _tag: "Success" },
-            "t2",
-            "t3",
-          ),
+        expect(probe.calls).toHaveLength(0);
+        const planA = report.retryPlan.find(
+          (entry) => entry.providerTurnId === providerTurnId,
         );
-        yield* tx.transact(
-          store.settleTurn(
-            providerTurnId,
-            "Stop",
-            JSON.stringify({ inputTokens: 10, outputTokens: 5 }),
-            "t3",
-          ),
+        const planB = report.retryPlan.find(
+          (entry) => entry.providerTurnId === providerTurnIdB,
         );
+        if (planA === undefined || planB === undefined) {
+          throw new Error("recovery did not provide both retry plans");
+        }
+        const runtime = yield* ProviderRuntime;
+        yield* runtime.runTurn({
+          ...recoveryRunTurnInput(planA),
+          recovery: {
+            manifestId: planA.manifestId,
+            nextAttemptNo: planA.nextAttemptNo,
+            retryDecision: planA.retryDecision,
+            ...(planA.continuationCheckpoint === undefined
+              ? {}
+              : { continuationCheckpoint: planA.continuationCheckpoint }),
+          },
+        });
+        yield* runtime.runTurn({
+          ...recoveryRunTurnInput(planB),
+          recovery: {
+            manifestId: planB.manifestId,
+            nextAttemptNo: planB.nextAttemptNo,
+            retryDecision: planB.retryDecision,
+          },
+        });
         const attempts = yield* attemptRows(providerTurnId);
+        const attemptsB = yield* attemptRows(providerTurnIdB);
         const settled = yield* turnRows;
-        return { report, turns, execution, attempts, settled };
+        return {
+          report,
+          turns,
+          execution,
+          attempts,
+          attemptsB,
+          settled,
+          recoveryDecisions: yield* recoveryDecisionRows(providerTurnId),
+          recoveryDecisionsB: yield* recoveryDecisionRows(providerTurnIdB),
+        };
       }),
       makeApp([{ events: successTurn }], probe),
     );
@@ -600,13 +846,41 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
       (entry) => entry.providerTurnId === providerTurnIdB,
     );
     expect(planA?.manifestId).toBe(manifestIdFor(providerTurnId));
+    expect(planA?.retryDecision.safety).toBe("SafeResume");
+    expect(planA?.retryDecision.strategy).toBe("Resume");
     expect(planA?.nextAttemptNo).toBe(1);
     expect(planA?.lastProviderErrorKind).toBe("StreamInterrupted");
     expect(planB?.nextAttemptNo).toBe(0);
     expect(planB?.lastProviderErrorKind).toBeNull();
+    expect(r.recoveryDecisions).toEqual([
+      {
+        attempt_no: 0,
+        cause_tag: "ProviderFailure",
+        cause_detail: "StreamInterrupted",
+        retry_safety: "SafeResume",
+        retry_decision: "Retry",
+        retry_strategy: "Resume",
+        retry_reason: expect.stringContaining("StreamInterrupted retry"),
+      },
+    ]);
+    expect(r.recoveryDecisionsB).toEqual([
+      {
+        attempt_no: -1,
+        cause_tag: "ProcessLost",
+        cause_detail: null,
+        retry_safety: "SafeReplay",
+        retry_decision: "Retry",
+        retry_strategy: "Replay",
+        retry_reason: expect.stringContaining("ProcessLost retry"),
+      },
+    ]);
     // The recovery pass itself never called the provider and minted no new
     // Turn rows (transport retry is never an extra model round).
-    expect(probe.calls).toHaveLength(0);
+    expect(probe.calls.map((call) => call.providerTurnId)).toEqual([
+      providerTurnId,
+      providerTurnIdB,
+    ]);
+    expect(probe.calls.map((call) => call.attemptNo)).toEqual([1, 0]);
     expect(r.turns).toHaveLength(2);
     expect(r.turns.map((turn) => turn.provider_turn_id).sort()).toEqual(
       [providerTurnId, providerTurnIdB].sort(),
@@ -623,15 +897,155 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
       },
       { attemptNo: 1, outcome: "Success", providerErrorKind: null },
     ]);
+    expect(r.attemptsB).toEqual([
+      { attemptNo: 0, outcome: "Success", providerErrorKind: null },
+    ]);
     const resumed = r.settled.find(
       (turn) => turn.provider_turn_id === providerTurnId,
     );
     expect(resumed?.settled_at).not.toBeNull();
     expect(resumed?.finish_reason).toBe("Stop");
     expect(JSON.parse(resumed?.usage_json ?? "{}")).toEqual({
+      _tag: "UsageReported",
       inputTokens: 10,
       outputTokens: 5,
     });
+  });
+
+  it("PD4 [crash-injected]: ProcessLost fails closed with incomplete evidence and resumes only from a complete durable checkpoint", async () => {
+    const probe: ProviderProbe = { calls: [] };
+    const r = await run(
+      Effect.gen(function* () {
+        yield* boot;
+        const incompleteFixture = yield* openDanglingTurn(providerTurnIdC, [
+          { attemptNo: 0, inProgress: true },
+        ]);
+        const resumableFixture = yield* openDanglingTurn(providerTurnIdD, [
+          {
+            attemptNo: 0,
+            inProgress: true,
+            resumeGuaranteed: true,
+          },
+        ]);
+        const report = yield* recover();
+        const incompleteFailure = report.failedTurns.find(
+          (entry) => entry.providerTurnId === providerTurnIdC,
+        );
+        const plan = report.retryPlan.find(
+          (entry) => entry.providerTurnId === providerTurnIdD,
+        );
+        if (incompleteFailure === undefined || plan === undefined) {
+          throw new Error("ProcessLost recovery evidence was not classified");
+        }
+        expect(incompleteFailure.providerErrorKind).toBeNull();
+        expect(incompleteFailure.retryDecision).toMatchObject({
+          safety: "UnsafeReplay",
+          decision: "Stop",
+          strategy: null,
+        });
+        expect(report.retryPlan.map((entry) => entry.providerTurnId)).toEqual([
+          providerTurnIdD,
+        ]);
+        expect(plan.manifestId).toBe(manifestIdFor(providerTurnIdD));
+        expect(plan.manifestJson).toBe(resumableFixture.manifestJson);
+        expect(plan.portableRequestJson).toBe(
+          resumableFixture.portableRequestJson,
+        );
+        expect(plan.nextAttemptNo).toBe(1);
+        expect(plan.retryDecision).toMatchObject({
+          safety: "SafeResume",
+          decision: "Retry",
+          strategy: "Resume",
+        });
+        expect(plan.retryDecision.reason).toMatch(/^ProcessLost retry:/u);
+
+        const expectedCheckpoint: ProviderContinuationCheckpoint = {
+          cursor: "cursor-0",
+          canonicalEventPrefixJson: JSON.stringify([
+            {
+              _tag: "TurnStarted",
+              providerTurnId: providerTurnIdD,
+              attemptNo: 0,
+              modelRef: "provider-fake",
+            },
+            { _tag: "TextDelta", text: "partial" },
+          ]),
+          deliveredPosition: 0,
+          resumeGuaranteed: true,
+        };
+        expect(plan.continuationCheckpoint).toEqual(expectedCheckpoint);
+
+        const recoveryInput = recoveryRunTurnInput(plan);
+        expect(recoveryInput.manifestJson).toBe(resumableFixture.manifestJson);
+        expect(JSON.stringify(recoveryInput.request)).toBe(
+          resumableFixture.portableRequestJson,
+        );
+        expect(recoveryInput.recovery).toEqual({
+          manifestId: plan.manifestId,
+          nextAttemptNo: 1,
+          retryDecision: plan.retryDecision,
+          continuationCheckpoint: expectedCheckpoint,
+        });
+
+        const runtime = yield* ProviderRuntime;
+        const result = yield* runtime.runTurn(recoveryInput);
+        return {
+          report,
+          incompleteFailure,
+          plan,
+          result,
+          attempts: yield* attemptRows(providerTurnIdD),
+          incompleteDecisions: yield* recoveryDecisionRows(providerTurnIdC),
+          resumableDecisions: yield* recoveryDecisionRows(providerTurnIdD),
+        };
+      }),
+      makeApp([{ events: successTurn }], probe),
+    );
+
+    expect(r.report.retryPlan).toHaveLength(1);
+    expect(r.report.failedTurns).toHaveLength(1);
+    expect(r.incompleteFailure.providerErrorKind).toBeNull();
+    expect(r.plan.retryDecision.reason).toMatch(/^ProcessLost retry:/u);
+    expect(r.incompleteDecisions).toEqual([
+      {
+        attempt_no: 0,
+        cause_tag: "ProcessLost",
+        cause_detail: null,
+        retry_safety: "UnsafeReplay",
+        retry_decision: "Stop",
+        retry_strategy: null,
+        retry_reason:
+          "durable observation is incomplete or proves replay may duplicate effects",
+      },
+    ]);
+    expect(r.resumableDecisions).toEqual([
+      {
+        attempt_no: 0,
+        cause_tag: "ProcessLost",
+        cause_detail: null,
+        retry_safety: "SafeResume",
+        retry_decision: "Retry",
+        retry_strategy: "Resume",
+        retry_reason: expect.stringContaining("ProcessLost retry"),
+      },
+    ]);
+    expect(r.result.attemptNo).toBe(1);
+    expect(r.attempts).toEqual([
+      {
+        attemptNo: 0,
+        outcome: "RetryableFailure",
+        providerErrorKind: null,
+      },
+      { attemptNo: 1, outcome: "Success", providerErrorKind: null },
+    ]);
+    expect(probe.calls).toEqual([
+      {
+        providerTurnId: providerTurnIdD,
+        attemptNo: 1,
+        requestJson: r.plan.portableRequestJson,
+        continuationCheckpoint: r.plan.continuationCheckpoint,
+      },
+    ]);
   });
 
   it("I-6 [crash-injected]: bounded retries exhausted → the Turn settles failed (driver Turn-failure semantics), the Execution stays unsettled", async () => {
@@ -650,7 +1064,7 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
           { attemptNo: 1, kind: "RateLimited" },
           { attemptNo: 2, kind: "RateLimited" },
         ]);
-        const report = yield* recover({ maxAttempts: 3 });
+        const report = yield* recover();
         const turns = yield* turnRows;
         const execution = yield* executionSettlement;
         return { report, turns, execution };
@@ -659,12 +1073,12 @@ describe("p9-provider-disconnect (PD1–PD4 / I-4..I-7, 02 §6 + 04 §2)", () =>
     );
     expect(r.report.retryPlan).toEqual([]);
     expect(r.report.failedTurns).toHaveLength(1);
-    expect(r.report.failedTurns[0]?.providerTurnId).toBe(providerTurnId);
-    expect(r.report.failedTurns[0]?.providerErrorKind).toBe("RateLimited");
-    expect(r.report.failedTurns[0]?.exhausted).toBe(true);
-    expect(r.report.failedTurns[0]?.markedBy).toEqual(principal);
-    expect(r.turns[0]?.settled_at).not.toBeNull();
-    expect(r.turns[0]?.finish_reason).toBe("Failed");
+    expect(r.report.failedTurns[0]!.providerTurnId).toBe(providerTurnId);
+    expect(r.report.failedTurns[0]!.providerErrorKind).toBe("RateLimited");
+    expect(r.report.failedTurns[0]!.exhausted).toBe(true);
+    expect(r.report.failedTurns[0]!.markedBy).toEqual(principal);
+    expect(r.turns[0]!.settled_at).not.toBeNull();
+    expect(r.turns[0]!.finish_reason).toBe("Failed");
     // Execution-level disposition follows P2 `06` §4 — recovery never
     // invents a settlement.
     expect(r.execution).toBeNull();

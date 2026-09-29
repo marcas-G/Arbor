@@ -7,7 +7,7 @@ import { Duration, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   buildSliceLayer,
-  P12_MIGRATIONS,
+  P15_MIGRATIONS,
   type ProviderAdapterConfig,
   runMigrations,
   type SliceConfig,
@@ -132,7 +132,7 @@ export interface ProductionDaemonRunConfig extends Partial<SliceConfig> {
  * daemon start, before any new dispatch or admission. */
 export const runOnce = (workspaceId: string, principalRef = "runtime:system") =>
   Effect.gen(function* () {
-    yield* runMigrations(P12_MIGRATIONS);
+    yield* runMigrations(P15_MIGRATIONS);
     yield* startupRecovery(parse(Principal)(principalRef));
     return yield* evaluateAndSelect(
       parse(WorkspaceId)(workspaceId),

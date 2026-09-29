@@ -7,7 +7,7 @@ import type {
 } from "../../../adapters/provider-openai/src/index.js";
 import {
   buildSliceLayer,
-  P14_MIGRATIONS,
+  P15_MIGRATIONS,
   runMigrations,
 } from "../../../apps/single-workspace/src/composition.js";
 import {
@@ -126,6 +126,7 @@ export const makeRecordingProvider = (
   responseText: string,
   requests: Array<Readonly<Record<string, unknown>>>,
 ): OpenAISdkClient => ({
+  externalEffectPossible: false,
   streamChat: async function* ({ request }): AsyncIterable<OpenAISdkChunk> {
     requests.push({
       model: request.modelRef,
@@ -293,10 +294,11 @@ export const withPublicConversationApp = async (
               effect as Effect.Effect<A, E, never>,
               context,
             );
-          yield* runMigrations(P14_MIGRATIONS);
+          yield* runMigrations(P15_MIGRATIONS);
           const boundary = yield* TransportBoundary;
           const sql = yield* SqlClient;
           const daemon = yield* ProductionDaemonService;
+          yield* daemon.daemon.start;
           const server = yield* Effect.promise(() =>
             startWebTransport({
               http: boundary.http,

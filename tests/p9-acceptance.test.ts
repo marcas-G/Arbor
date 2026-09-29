@@ -13,6 +13,7 @@ import {
   LeaseServiceLive,
   layer,
   P12_MIGRATIONS,
+  P15_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   rebuildProjection,
@@ -98,9 +99,11 @@ import {
   Clock,
   ConsumerDeadLetterStore,
   ConsumerOffsetStore,
+  DEFAULT_PROVIDER_EXECUTION_POLICY,
   DeliverableRepository,
   DependencyRepository,
   DomainEventJournal,
+  decideProviderRetry,
   ExecutionRepository,
   ExecutionScheduler,
   LeaseService,
@@ -110,6 +113,7 @@ import {
   type ProviderFailure,
   type ProviderFailureKind,
   ProviderPort,
+  type ProviderPortEvent,
   ProviderRuntime,
   ProviderTurnStore,
   ReconciliationSource,
@@ -173,13 +177,10 @@ const defectOf = <A, E>(exit: Exit.Exit<A, E>): unknown =>
   Exit.isFailure(exit) ? Cause.squash(exit.cause) : null;
 
 const runOn = <A>(
-  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   program: Effect.Effect<A, any, any>,
-  // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   app: Layer.Layer<any, any, any>,
 ): Promise<A> =>
   Effect.runPromise(
-    // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
     Effect.provide(program, app) as Effect.Effect<A, any, never>,
   );
 
@@ -362,7 +363,7 @@ const INSERT_COMPLETION_FACT = (executionId: string) =>
       "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
       [p7Project],
     );
-    const sequence = Number(rows[0]?.last_sequence);
+    const sequence = Number(rows[0]!.last_sequence);
     yield* sql.unsafe(
       "INSERT INTO domain_events (event_id, project_id, sequence, event_type, event_version, occurred_at, aggregate_ref, actor, payload_json) VALUES (?,?,?,?,?,?,?,?,?)",
       [
@@ -409,19 +410,6 @@ const C_EXECUTION_T4 = "exe_018f2b3c-4d5e-7abc-8def-0123456789c4";
 const C_TURN = parse(ProviderTurnId)(
   "ptn_018f2b3c-4d5e-7abc-8def-0123456789c3",
 );
-const cManifestRecord = (
-  manifestId: string,
-  providerTurnId: ProviderTurnId,
-) => ({
-  manifestId,
-  providerTurnId,
-  executionId: C_EXECUTION,
-  sessionId: C_SESSION,
-  contextEpoch: 0 as never,
-  modelRef: "provider-fake",
-  compiledRequestHash: `${manifestId}-request`,
-  manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
-});
 const C_INVOCATION = parse(ToolInvocationId)(
   "tin_018f2b3c-4d5e-7abc-8def-0123456789c3",
 );
@@ -717,7 +705,6 @@ const cOpenProviderTurn = Effect.gen(function* () {
         outputContractRef: "oc",
         manifestId: "mf_story_c",
       },
-      cManifestRecord("mf_story_c", C_TURN),
       "t",
     ),
   );
@@ -763,12 +750,12 @@ const cSideEffectCounters = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM session_entries",
   );
   return {
-    events: Number(events[0]?.count),
-    commands: Number(commands[0]?.count),
-    settled: Number(settled[0]?.count),
-    workWaits: Number(workWaits[0]?.count),
-    timers: Number(timers[0]?.count),
-    sessionEntries: Number(sessionEntries[0]?.count),
+    events: Number(events[0]!.count),
+    commands: Number(commands[0]!.count),
+    settled: Number(settled[0]!.count),
+    workWaits: Number(workWaits[0]!.count),
+    timers: Number(timers[0]!.count),
+    sessionEntries: Number(sessionEntries[0]!.count),
   };
 });
 
@@ -783,9 +770,7 @@ const D_SESSION = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789d3");
 const D_EXECUTION = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789d3",
 ) as ExecutionId;
-const D_MANIFEST = "mf_story_d";
-const dManifestId = (turnId: ProviderTurnId): string =>
-  `${D_MANIFEST}:${turnId}`;
+const dManifestIdFor = (turnId: ProviderTurnId) => `mf_story_d_${turnId}`;
 const D_PRINCIPAL = parse(Principal)("runtime:system");
 
 const D_TURN_A = parse(ProviderTurnId)(
@@ -801,13 +786,10 @@ const D_TURN_D = parse(ProviderTurnId)(
   "ptn_018f2b3c-4d5e-7abc-8def-0123456789d6",
 );
 
-/** GQ4 frozen mapping: classify by the observable boundary — TurnStarted
- * emitted or not — never by transport errno (P9 `04` §2.1). */
-const classifyDisconnect = (sawTurnStarted: boolean): ProviderFailureKind =>
-  sawTurnStarted ? "StreamInterrupted" : "ProviderUnavailable";
-
 type DAttemptScript =
-  | { readonly disconnect: "pre-connect" | "mid-stream" }
+  | {
+      readonly disconnect: "pre-connect" | "mid-stream";
+    }
   | { readonly events: ReadonlyArray<CanonicalProviderEvent> };
 
 interface DProbe {
@@ -820,7 +802,22 @@ interface DProbe {
 const dProviderFailure = (kind: ProviderFailureKind): ProviderFailure => ({
   _tag: "ProviderFailure",
   kind,
+  taxonomyVersion: "phase1-v2",
 });
+
+const dCanonical = (event: CanonicalProviderEvent): ProviderPortEvent => ({
+  _tag: "Canonical",
+  event,
+});
+
+const dPreflight: ProviderPortEvent = {
+  _tag: "Observation",
+  delta: { responseStarted: false, externalEffectPossible: false },
+};
+const dResponseStarted: ProviderPortEvent = {
+  _tag: "Observation",
+  delta: { responseStarted: true },
+};
 
 const dSuccessTurn = (
   turnId: ProviderTurnId,
@@ -864,7 +861,10 @@ const DisconnectProviderLive = (
           ] ?? { events: [] };
           if ("disconnect" in step) {
             if (step.disconnect === "pre-connect") {
-              return Stream.fail(dProviderFailure(classifyDisconnect(false)));
+              return Stream.concat(
+                Stream.fromIterable([dPreflight]),
+                Stream.fail(dProviderFailure("TransportFailed")),
+              );
             }
             const boundary: CanonicalProviderEvent = {
               _tag: "TurnStarted",
@@ -874,13 +874,22 @@ const DisconnectProviderLive = (
             };
             return Stream.concat(
               Stream.fromIterable([
-                boundary,
-                { _tag: "TextDelta" as const, text: "partial-delta" },
+                dPreflight,
+                dResponseStarted,
+                dCanonical(boundary),
+                dCanonical({
+                  _tag: "TextDelta" as const,
+                  text: "partial-delta",
+                }),
               ]),
-              Stream.fail(dProviderFailure(classifyDisconnect(true))),
+              Stream.fail(dProviderFailure("StreamInterrupted")),
             );
           }
-          return Stream.fromIterable(step.events);
+          return Stream.fromIterable([
+            dPreflight,
+            dResponseStarted,
+            ...step.events.map(dCanonical),
+          ]);
         },
       });
     }),
@@ -897,7 +906,7 @@ const makeStoryDApp = (
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const providerRuntime = Layer.provide(
-    ProviderRuntimeLive(3),
+    ProviderRuntimeLive(),
     Layer.mergeAll(
       DisconnectProviderLive(scriptByTurn, probe),
       Layer.provide(ProviderTurnStoreLive, infra),
@@ -957,17 +966,29 @@ const dRunTurnInput = (turnId: ProviderTurnId) => ({
   contextEpoch: 0 as never,
   modelRef: "provider-fake",
   outputContractRef: "oc",
-  manifestId: dManifestId(turnId),
-  manifest: {
-    manifestId: dManifestId(turnId),
+  manifestJson: JSON.stringify({
     providerTurnId: turnId,
     executionId: D_EXECUTION,
     sessionId: D_SESSION,
-    contextEpoch: 0 as never,
+    contextEpoch: 0,
     modelRef: "provider-fake",
-    compiledRequestHash: `${dManifestId(turnId)}-request`,
-    manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
-  },
+    instructionFragments: [],
+    contextRefs: [],
+    skillRefs: [],
+    toolRefs: [],
+    toolRoutes: [],
+    outputContractRef: "oc",
+    budgetDecision: { maxOutputTokens: 128 },
+    compiledRequestHash: `compiled-${turnId}`,
+    controlBasis: {
+      projectPolicyRevision: 0,
+      workspacePolicyRevision: 0,
+      responsibilityRevision: 0,
+      resourceBoundaryRevision: 0,
+      authorizationDigest: "p9-story-d",
+      environmentRevision: "0",
+    },
+  }),
   request: {
     modelRef: "provider-fake",
     instructions: [],
@@ -977,8 +998,6 @@ const dRunTurnInput = (turnId: ProviderTurnId) => ({
     budget: { maxOutputTokens: 128 },
     cacheHints: [],
   },
-  timeoutMs: 30_000,
-  cancellationRef: "cancel",
 });
 
 const dAttemptRows = (turnId: ProviderTurnId) =>
@@ -1018,13 +1037,38 @@ const dOpenDanglingTurn = (
   crashedAttempts: ReadonlyArray<{
     readonly attemptNo: number;
     readonly kind: "StreamInterrupted" | "RateLimited" | "ProviderUnavailable";
+    readonly resumeGuaranteed?: boolean;
   }>,
 ) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const turns = yield* ProviderTurnStore;
+    const manifestJson = JSON.stringify({
+      providerTurnId: turnId,
+      executionId: D_EXECUTION,
+      sessionId: D_SESSION,
+      contextEpoch: 0,
+      modelRef: "provider-fake",
+      instructionFragments: [],
+      contextRefs: [],
+      skillRefs: [],
+      toolRefs: [],
+      toolRoutes: [],
+      outputContractRef: "oc",
+      budgetDecision: { maxOutputTokens: 128 },
+      compiledRequestHash: `compiled-${turnId}`,
+      controlBasis: {
+        projectPolicyRevision: 0,
+        workspacePolicyRevision: 0,
+        responsibilityRevision: 0,
+        resourceBoundaryRevision: 0,
+        authorizationDigest: "p9-story-d",
+        environmentRevision: "0",
+      },
+    });
+    const portableRequestJson = JSON.stringify(dRunTurnInput(turnId).request);
     yield* tx.transact(
-      turns.startTurn(
+      turns.startTurnWithManifest(
         {
           providerTurnId: turnId,
           executionId: D_EXECUTION,
@@ -1032,35 +1076,110 @@ const dOpenDanglingTurn = (
           contextEpoch: 0 as never,
           modelRef: "provider-fake",
           outputContractRef: "oc",
-          manifestId: dManifestId(turnId),
+          manifestId: dManifestIdFor(turnId),
+          executionPolicy: DEFAULT_PROVIDER_EXECUTION_POLICY,
+          turnDeadlineAt: "2999-01-01T00:00:00.000Z",
         },
-        {
-          manifestId: dManifestId(turnId),
-          providerTurnId: turnId,
-          executionId: D_EXECUTION,
-          sessionId: D_SESSION,
-          contextEpoch: 0 as never,
-          modelRef: "provider-fake",
-          compiledRequestHash: `${dManifestId(turnId)}-request`,
-          manifestJson: JSON.stringify({ providerRef: "provider-fake" }),
-        },
+        manifestJson,
+        portableRequestJson,
         "t",
       ),
     );
     for (const attempt of crashedAttempts) {
+      const observation =
+        attempt.kind === "StreamInterrupted"
+          ? {
+              responseStarted: true,
+              canonicalEventEmitted: true,
+              consumerVisibleOutput: false,
+              toolCallProposed: false,
+              continuationAvailable: attempt.resumeGuaranteed === true,
+              externalEffectPossible: false,
+            }
+          : {
+              responseStarted: false,
+              canonicalEventEmitted: false,
+              consumerVisibleOutput: false,
+              toolCallProposed: false,
+              continuationAvailable: false,
+              externalEffectPossible: false,
+            };
+      const checkpoint =
+        attempt.resumeGuaranteed === true
+          ? {
+              cursor: `cursor-${attempt.attemptNo}`,
+              canonicalEventPrefixJson: JSON.stringify([
+                {
+                  _tag: "TurnStarted",
+                  providerTurnId: turnId,
+                  attemptNo: attempt.attemptNo,
+                  modelRef: "provider-fake",
+                },
+                { _tag: "TextDelta", text: "partial" },
+              ]),
+              deliveredPosition: 0,
+              resumeGuaranteed: true,
+            }
+          : null;
       yield* tx.transact(
-        turns.recordAttempt(
+        turns.startAttempt(
           turnId,
           attempt.attemptNo,
-          { _tag: "RetryableFailure", providerErrorKind: attempt.kind },
+          {
+            responseStarted: false,
+            canonicalEventEmitted: false,
+            consumerVisibleOutput: false,
+            toolCallProposed: false,
+            continuationAvailable: false,
+            externalEffectPossible: null,
+          },
           "t0",
+        ),
+      );
+      yield* tx.transact(
+        turns.updateAttemptObservation(
+          turnId,
+          attempt.attemptNo,
+          observation,
+          checkpoint?.canonicalEventPrefixJson ?? "[]",
+          0,
+          checkpoint,
           "t1",
+        ),
+      );
+      const retryDecision = decideProviderRetry({
+        cause: { _tag: "ProviderFailure", kind: attempt.kind },
+        observation,
+        continuationCheckpoint: checkpoint,
+        attemptNo: attempt.attemptNo,
+        maxAttempts: DEFAULT_PROVIDER_EXECUTION_POLICY.maxAttempts,
+        cancelled: false,
+        deadlineExpired: false,
+      });
+      yield* tx.transact(
+        turns.settleAttempt(
+          turnId,
+          attempt.attemptNo,
+          {
+            outcome: "RetryableFailure",
+            providerErrorKind: attempt.kind,
+            taxonomyVersion: "phase1-v2",
+            observation,
+            ...(checkpoint === null
+              ? {}
+              : { continuationCheckpoint: checkpoint }),
+            canonicalEventPrefixJson:
+              checkpoint?.canonicalEventPrefixJson ?? "[]",
+            deliveredPosition: 0,
+            retryDecision,
+          },
+          "t2",
         ),
       );
     }
   });
 
-const dRecover = (options?: { readonly maxAttempts?: number }) =>
+const dRecover = () =>
   Effect.gen(function* () {
     const turns = yield* ProviderTurnStore;
     const tx = yield* TransactionPort;
@@ -1069,7 +1188,6 @@ const dRecover = (options?: { readonly maxAttempts?: number }) =>
       { turns, tx, clock },
       D_PROJECT,
       D_PRINCIPAL,
-      options,
     );
   });
 
@@ -1391,7 +1509,7 @@ const eEscalationFacts = Effect.gen(function* () {
     "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'ReconciliationEscalated' AND aggregate_ref = ?",
     [E_EXECUTION],
   );
-  return Number(rows[0]?.count);
+  return Number(rows[0]!.count);
 });
 
 const eExecutionRow = Effect.gen(function* () {
@@ -1430,7 +1548,7 @@ const G_ASSIGN_CMD_P = parse(CommandId)(
 );
 const G_DEP = parse(DependencyId)("dep_00000000-0000-7000-8000-0000000000b1");
 const G_DEL = parse(DeliverableId)("del_00000000-0000-7000-8000-0000000000b2");
-const _G_ART = parse(ArtifactId)("art_00000000-0000-7000-8000-0000000000b3");
+const G_ART = parse(ArtifactId)("art_00000000-0000-7000-8000-0000000000b3");
 const G_ACC = parse(AcceptanceId)("acc_00000000-0000-7000-8000-0000000000a5");
 
 const WREV = (n: number) => parse(WorkRevision)(n);
@@ -2259,26 +2377,32 @@ describe("p9-acceptance", () => {
     );
   });
 
-  it("Story D (06 §D) [crash-injected]: provider disconnect — ProviderUnavailable/StreamInterrupted retried under the same Turn, crash-left turn recovered same Turn/Manifest with a new Attempt, bound exhausted → Turn failed, Execution never settled by recovery", async () => {
+  it("Story D (06 §D) [crash-injected]: safe pre-response replay, unsafe mid-stream replay rejection, and verified cursor recovery share one policy", async () => {
     expect(
       labeled("story-D-provider-disconnect", "crash-injected").guarantee,
     ).toBe("crash-injected");
     const probe: DProbe = { calls: [] };
     await runOn(
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P15_MIGRATIONS);
         yield* seedStoryD;
         const runtime = yield* ProviderRuntime;
-        // Connect-phase inject → ProviderUnavailable; retried under the
-        // SAME Turn with turnNo unchanged.
+        // Pre-response TransportFailed has complete no-effect evidence and
+        // is retried under the same ProviderTurn.
         const { events: eventsA } = yield* runtime.runTurn(
           dRunTurnInput(D_TURN_A),
         );
         expect(eventsA.some((event) => event._tag === "TurnCompleted")).toBe(
           true,
         );
-        // Mid-stream inject → StreamInterrupted; append-only history.
-        yield* runtime.runTurn(dRunTurnInput(D_TURN_B));
+        // Mid-stream output without a verified resume cursor is UnsafeReplay.
+        const midStreamFailure = yield* Effect.flip(
+          runtime.runTurn(dRunTurnInput(D_TURN_B)),
+        );
+        expect(midStreamFailure).toMatchObject({
+          _tag: "ProviderFailure",
+          kind: "StreamInterrupted",
+        });
         // Crash leftovers: turn C exhausted its retry bound, turn D died
         // mid-stream after one recorded attempt.
         yield* dOpenDanglingTurn(D_TURN_C, [
@@ -2287,14 +2411,18 @@ describe("p9-acceptance", () => {
           { attemptNo: 2, kind: "RateLimited" },
         ]);
         yield* dOpenDanglingTurn(D_TURN_D, [
-          { attemptNo: 0, kind: "StreamInterrupted" },
+          {
+            attemptNo: 0,
+            kind: "StreamInterrupted",
+            resumeGuaranteed: true,
+          },
         ]);
-        const report = yield* dRecover({ maxAttempts: 3 });
+        const report = yield* dRecover();
         const turnsAfter = yield* dTurnRows;
         const settlement = yield* dExecutionSettlement;
-        // The recovery pass never called the provider (5 transport calls
-        // total: 3 pre-connect retries + 2 mid-stream).
-        expect(probe.calls).toHaveLength(5);
+        // The recovery pass never called the provider (4 live calls: three
+        // SafeReplay attempts and one unsafe mid-stream attempt).
+        expect(probe.calls).toHaveLength(4);
         expect(
           probe.calls
             .filter((call) => call.providerTurnId === D_TURN_A)
@@ -2304,38 +2432,39 @@ describe("p9-acceptance", () => {
           probe.calls
             .filter((call) => call.providerTurnId === D_TURN_B)
             .map((call) => call.attemptNo),
-        ).toEqual([0, 1]);
-        // PD mapping: classification by the observable boundary.
+        ).toEqual([0]);
+        // PD1 retries only after durable no-response/no-effect observations.
         expect(yield* dAttemptRows(D_TURN_A)).toEqual([
           {
             attemptNo: 0,
             outcome: "RetryableFailure",
-            providerErrorKind: "ProviderUnavailable",
+            providerErrorKind: "TransportFailed",
           },
           {
             attemptNo: 1,
             outcome: "RetryableFailure",
-            providerErrorKind: "ProviderUnavailable",
+            providerErrorKind: "TransportFailed",
           },
           { attemptNo: 2, outcome: "Success", providerErrorKind: null },
         ]);
         expect(yield* dAttemptRows(D_TURN_B)).toEqual([
           {
             attemptNo: 0,
-            outcome: "RetryableFailure",
+            outcome: "TerminalFailure",
             providerErrorKind: "StreamInterrupted",
           },
-          { attemptNo: 1, outcome: "Success", providerErrorKind: null },
         ]);
         // Same Turn identity + same Manifest across every retry and every
         // recovery disposition (turnNo invariant).
         expect(turnsAfter).toHaveLength(4);
-        expect(turnsAfter.map((turn) => turn.manifest_id)).toEqual([
-          dManifestId(D_TURN_A),
-          dManifestId(D_TURN_B),
-          dManifestId(D_TURN_C),
-          dManifestId(D_TURN_D),
-        ]);
+        expect(
+          turnsAfter.find((turn) => turn.provider_turn_id === D_TURN_A)
+            ?.manifest_id,
+        ).toMatch(/^mft_/u);
+        expect(
+          turnsAfter.find((turn) => turn.provider_turn_id === D_TURN_B)
+            ?.manifest_id,
+        ).toMatch(/^mft_/u);
         const settledA = turnsAfter.find(
           (turn) => turn.provider_turn_id === D_TURN_A,
         );
@@ -2345,25 +2474,31 @@ describe("p9-acceptance", () => {
         expect(settledA?.settled_at).not.toBeNull();
         expect(settledA?.finish_reason).toBe("Stop");
         expect(settledB?.settled_at).not.toBeNull();
-        expect(settledB?.finish_reason).toBe("Stop");
-        // Bound exhausted → existing Turn-failure semantics.
+        expect(settledB?.finish_reason).toBe("Failed");
+        // Bound exhausted and unsafe in-flight attempts fail closed.
         expect(report.retryPlan.map((entry) => entry.providerTurnId)).toEqual([
           D_TURN_D,
         ]);
-        expect(report.failedTurns).toHaveLength(1);
-        expect(report.failedTurns[0]?.providerTurnId).toBe(D_TURN_C);
-        expect(report.failedTurns[0]?.exhausted).toBe(true);
+        expect(report.failedTurns).toHaveLength(2);
+        expect(
+          report.failedTurns.map((entry) => entry.providerTurnId).sort(),
+        ).toEqual([D_TURN_B, D_TURN_C].sort());
+        expect(
+          report.failedTurns.find((entry) => entry.providerTurnId === D_TURN_C)
+            ?.exhausted,
+        ).toBe(true);
         const turnC = turnsAfter.find(
           (turn) => turn.provider_turn_id === D_TURN_C,
         );
         expect(turnC?.settled_at).not.toBeNull();
         expect(turnC?.finish_reason).toBe("Failed");
         // Unsettled-turn recovery: same Turn, new Attempt, Manifest intact.
-        // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         const planD = report.retryPlan[0]!;
-        expect(planD.manifestId).toBe(dManifestId(D_TURN_D));
+        expect(planD.manifestId).toBe(dManifestIdFor(D_TURN_D));
         expect(planD.nextAttemptNo).toBe(1);
         expect(planD.lastProviderErrorKind).toBe("StreamInterrupted");
+        expect(planD.retryDecision.safety).toBe("SafeResume");
+        expect(planD.retryDecision.strategy).toBe("Resume");
         // Recovery never invents an Execution settlement.
         expect(settlement).toBeNull();
         // The resumed transport retry lands under the SAME Turn and
@@ -2453,7 +2588,7 @@ describe("p9-acceptance", () => {
         );
         const danglingRo = yield* eDangling;
         expect(danglingRo).toHaveLength(1);
-        expect(danglingRo[0]?.sideEffectSemantics).toBe("ReadOnly");
+        expect(danglingRo[0]!.sideEffectSemantics).toBe("ReadOnly");
         yield* settleInvocation(E_RO_CRASH);
         mode.ReadOnly = "none";
         const roRetry = yield* eInvoke("ReadOnly", E_RO_RETRY);
@@ -2525,7 +2660,7 @@ describe("p9-acceptance", () => {
         expect(nonRow?.settlement_kind).toBeNull();
         const danglingFinal = yield* eDangling;
         expect(danglingFinal).toHaveLength(1);
-        expect(danglingFinal[0]?.sideEffectSemantics).toBe("NonIdempotent");
+        expect(danglingFinal[0]!.sideEffectSemantics).toBe("NonIdempotent");
         expect(probe.effects).toHaveLength(4);
       }),
       makeStoryEApp(probe, mode, durableFile("e")),
@@ -2762,7 +2897,7 @@ describe("p9-acceptance", () => {
           handlers: dependencyCoordinatorLoop(
             p7Project,
             p7TestPrincipal,
-            yield* makeCoordinatorDeps((_base) => interrupted.gateway),
+            yield* makeCoordinatorDeps((base) => interrupted.gateway),
           ),
         }).pipe(Effect.flip);
         expect(failure._tag).toBe("TransactionOperationalFailure");

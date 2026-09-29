@@ -36,6 +36,7 @@ const makeFlakyRealProvider = (
   failuresRemaining: { count: number },
   injectedFaults: Array<string>,
 ): OpenAISdkClient => ({
+  externalEffectPossible: false,
   streamChat: async function* (input): AsyncIterable<OpenAISdkChunk> {
     if (failuresRemaining.count > 0) {
       failuresRemaining.count -= 1;

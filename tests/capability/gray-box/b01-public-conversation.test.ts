@@ -6,7 +6,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect } from "vitest";
 import {
   buildSliceLayer,
-  P14_MIGRATIONS,
+  P15_MIGRATIONS,
   runMigrations,
 } from "../../../apps/single-workspace/src/composition.js";
 import {
@@ -87,10 +87,11 @@ describe("B01 L2 — public Human Input to durable transcript", () => {
         Effect.scoped(
           Effect.provide(
             Effect.gen(function* () {
-              yield* runMigrations(P14_MIGRATIONS);
+              yield* runMigrations(P15_MIGRATIONS);
               const boundary = yield* TransportBoundary;
               const sql = yield* SqlClient;
               const daemon = yield* ProductionDaemonService;
+              yield* daemon.daemon.start;
               const handle = yield* Effect.promise(() =>
                 startWebTransport({
                   http: boundary.http,

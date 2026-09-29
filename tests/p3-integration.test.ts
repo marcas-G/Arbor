@@ -13,6 +13,7 @@ import {
   LeaseServiceLive,
   layer,
   P12_MIGRATIONS,
+  P15_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   runMigrations,
@@ -113,7 +114,7 @@ const makeApp = () => {
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
   const provider = FakeProviderLive({ turns: [waitTurn] });
   const providerRuntime = Layer.provide(
-    ProviderRuntimeLive(3),
+    ProviderRuntimeLive(),
     Layer.mergeAll(
       provider,
       Layer.provide(ProviderTurnStoreLive, infra),
@@ -265,7 +266,7 @@ describe("I0 integration — Wait control route + P2 settle pipeline", () => {
   it("admits, leases, routes Wait, and durably registers WorkWait", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P12_MIGRATIONS);
+      yield* runMigrations(P15_MIGRATIONS);
       yield* seed;
       const gateway = yield* CommandGateway;
       const admitId = parse(CommandId)(
