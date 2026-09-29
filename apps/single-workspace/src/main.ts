@@ -282,22 +282,33 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
     // watermark poller never fires for it. The conversation tick therefore
     // broadcasts an explicit invalidation after each pass: the sweep has
     // already committed, so any refetch observes the answered turn.
-    // Broadcast ONLY on journal-watermark movement: an unconditional
-    // per-tick broadcast (the original streaming workaround) made the client
-    // refetch every view every second — visible as spooky auto-refreshes and
-    // write-lock contention. The sweep has already committed when the
-    // watermark moves, so refetches observe the settled state.
+    // Broadcast ONLY on real movement, never per-tick: (a) journal-watermark
+    // movement covers every event-producing change; (b) the latest answered
+    // settled_at covers the conversation settle write-back, which
+    // deliberately emits NO domain event (P14 `02` §4.1) and therefore never
+    // moves the watermark — without signal (b) an answer only appears after
+    // the user's NEXT message moves something. Both signals are cheap; idle
+    // ticks broadcast nothing.
     let lastBroadcastWatermark: number | undefined;
+    let lastBroadcastAnsweredAt: string | undefined;
     const conversationTickWithRefresh = Effect.gen(function* () {
       yield* deployment.daemon.conversationTick;
       if (webTransportHandle !== undefined) {
         const sql = yield* SqlClient;
-        const rows = yield* sql.unsafe<{ watermark: number }>(
-          JOURNAL_WATERMARK_SQL,
+        const rows = yield* sql.unsafe<{
+          watermark: number;
+          answeredAt: string | null;
+        }>(
+          "SELECT (SELECT COALESCE(MAX(sequence), 0) FROM domain_events) AS watermark, (SELECT MAX(settled_at) FROM human_messages WHERE state = 'Answered') AS answeredAt",
         );
         const watermark = Number(rows[0]?.watermark ?? 0);
-        if (watermark !== lastBroadcastWatermark) {
+        const answeredAt = rows[0]?.answeredAt ?? undefined;
+        if (
+          watermark !== lastBroadcastWatermark ||
+          answeredAt !== lastBroadcastAnsweredAt
+        ) {
           lastBroadcastWatermark = watermark;
+          lastBroadcastAnsweredAt = answeredAt;
           webTransportHandle.fanout.publishWatermark(watermark);
         }
       }
