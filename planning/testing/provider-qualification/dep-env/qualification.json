@@ -62,11 +62,11 @@
       "evidence": [
         {
           "layer": "L1",
-          "artifact": "conformance:A2/A3 + adapters/provider-openai/test/r1-segmentation.test.ts — 16 fixed chunk sizes, 60 randomized segmentations, adversarial boundary cuts, multi-call interleave/duplicate-id/empty-delta shapes: canonical tool arguments BYTE-IDENTICAL to the raw concatenation in every segmentation"
+          "artifact": "conformance:A2/A3 + adapters/provider-openai/test/r1-segmentation.test.ts — 16 fixed chunk sizes, 60 randomized segmentations, adversarial boundary cuts, multi-call interleave/duplicate-id/empty-delta shapes: canonical tool arguments BYTE-IDENTICAL to the raw concatenation in every segmentation (readSse reassembly proven segmentation-independent)."
         },
         {
           "layer": "L3",
-          "artifact": "R4 requalification: 3/3 PASS + 5 additional stress rounds PASS (8 consecutive clean rounds after remediation). ROOT CAUSE (first divergence): PROVIDER-side intermittent truncation — the live endpoint occasionally emits an unterminated arguments stream while still setting finish_reason=tool_calls (run1 evidence: adapter output ~385 chars vs raw-capture 702 chars, outputTokens 356 vs 492). readSse reassembly proven segmentation-independent. REMEDIATION: flush-time fail-closed validation — tool arguments that do not parse as JSON under finish_reason=tool_calls now classify ProtocolViolation (tool_arguments_truncated); no repair, no tolerance."
+          "artifact": "R4 requalification: 3/3 PASS + 5 additional stress rounds PASS. ROOT-CAUSE CONFIDENCE: BEST_SUPPORTED_PROVIDER_SIDE (D2 bookkeeping correction) — the failing run itself has NO verbatim raw SSE capture; the evidence chain is (a) the adapter-side wire of the failed run (truncated ~385-char argumentsJson, finish_reason=tool_calls, outputTokens=356) plus (b) a raw SSE capture of a DIFFERENT request of the same shape carrying a complete valid 702-char JSON (outputTokens=492). The provider-side truncation hypothesis is the best-supported explanation (usage volume matches the truncated output), but the first divergence is NOT mechanically proven on the failing run's own bytes. REMEDIATION (unchanged, behavioral hardening): flush-time fail-closed validation — tool arguments that do not parse as JSON under finish_reason=tool_calls classify ProtocolViolation (tool_arguments_truncated); no repair."
         }
       ]
     },
@@ -165,6 +165,6 @@
     "executedAt": "2026-09-29 (R4 requalification)",
     "results": "10/10 oracles passed, three runs each; tool-fragmented-args additionally stress-verified (5 extra rounds); cache-usage asserts native==canonical identity per run",
     "threeRunPolicy": "every oracle executed 3x against the live endpoint",
-    "remediationHistory": "D1 first pass: tool-fragmented-args FAILED (provider-side intermittent truncation; adapter silently accepted malformed args). R1: segmentation-independence proof + flush-time fail-closed validation (ProtocolViolation on truncated args). R2: cache extraction + declaration alignment. R3: cache-usage UNSUPPORTED→PROVEN reconciliation."
+    "remediationHistory": "D1 first pass: tool-fragmented-args FAILED (provider-side intermittent truncation; adapter silently accepted malformed args). R1: segmentation-independence proof + flush-time fail-closed validation (ProtocolViolation on truncated args). R2: cache extraction + declaration alignment. R3: cache-usage UNSUPPORTED→PROVEN reconciliation. D2 bookkeeping: fragmented-args root-cause confidence graded BEST_SUPPORTED_PROVIDER_SIDE (no verbatim raw SSE of the failing run; provider-side truncation is inferred from adapter-side wire + same-shape raw capture + usage-volume match, not mechanically proven on the failing bytes)."
   }
 }
