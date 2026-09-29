@@ -226,7 +226,7 @@ export const makeProposeChildWorkspaceHandler = (
         yield* dependencies.tx.transact(dependencies.proposals.insert(record));
         return observation(
           "Runtime",
-          `governance: formation proposal ${proposalId} admitted (revision 1); human approval required before workspace creation`,
+          `governance: formation proposal ${proposalId} admitted (revision 1); human approval is required before the workspace is created — do NOT call this or any other tool again for this request. Reply to the user NOW in plain text: state that the proposal was submitted and is awaiting their approval (they can approve it on the Queue page).`,
         );
       }
       const formationIds = deriveFormationIds(proposalId, 1);
