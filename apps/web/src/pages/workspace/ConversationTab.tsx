@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
+import type { VirtuosoHandle } from "react-virtuoso";
 import { Virtuoso } from "react-virtuoso";
 import { useViewQuery } from "../../api/useViewQuery.js";
 import { SubmitHumanMessageForm } from "../../commands/forms/SubmitHumanMessageForm.js";
@@ -64,6 +65,8 @@ export function ConversationTab({
     void queryClient.invalidateQueries({ queryKey: ["view", "transcript"] });
   }, [queryClient]);
 
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const pinnedWorkspaceRef = useRef<string | null>(null);
   const conversation = useConversation(
     "local",
     ["view", "transcript", workspaceId],
@@ -146,6 +149,27 @@ export function ConversationTab({
           itemContent={(_, message) => <MessageRow message={message} />}
         />
       )}
+      {(() => {
+        // Initial data lands asynchronously; initialTopMostItemIndex alone
+        // only covers the empty first frame. Jump ONCE per workspace when
+        // history arrives so the newest turn is visible; followOutput owns
+        // every later append (it never drags the user back down while they
+        // scroll up).
+        if (
+          conversation.messages.length > 0 &&
+          pinnedWorkspaceRef.current !== workspaceId
+        ) {
+          pinnedWorkspaceRef.current = workspaceId;
+          queueMicrotask(() => {
+            virtuosoRef.current?.scrollToIndex({
+              index: conversation.messages.length - 1,
+              align: "end",
+              behavior: "auto",
+            });
+          });
+        }
+        return null;
+      })()}
       {isRoot ? (
         <div className={styles.composer}>
           <SubmitHumanMessageForm
