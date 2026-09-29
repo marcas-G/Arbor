@@ -63,6 +63,10 @@ const satisfies = (
  */
 export const ModelCapabilityPortLive = (
   catalog: ModelCatalog,
+  /** Composition-selected modelRef (the configured deployment's model).
+   * When given it takes precedence over the catalog default — the catalog
+   * default stays the CI fake unless a real deployment is bound. */
+  preferredModelRef?: string,
 ): Layer.Layer<ModelCapabilityPort> =>
   Layer.succeed(ModelCapabilityPort, {
     resolve: ({ requiredCapabilities }) => {
@@ -70,9 +74,13 @@ export const ModelCapabilityPortLive = (
         satisfies(entry.capability, requiredCapabilities),
       );
       const chosen =
+        (preferredModelRef !== undefined
+          ? candidates.find((entry) => entry.modelRef === preferredModelRef)
+          : undefined) ??
         candidates.find(
           (entry) => entry.modelRef === catalog.defaultModelRef,
-        ) ?? candidates[0];
+        ) ??
+        candidates[0];
       if (chosen === undefined) {
         return Effect.fail({
           _tag: "ModelCapabilityError",

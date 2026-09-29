@@ -10,8 +10,10 @@ import type {
 } from "@arbor/application";
 import {
   completionConsumerLoop,
+  type FormationConsumerDependencies,
   pollOnce,
   probeDrift,
+  runFormationConsumer,
   verificationConsumerLoop,
 } from "@arbor/application";
 import type { Principal, ProjectId, ResourceAddress } from "@arbor/domain";
@@ -87,6 +89,35 @@ export const verificationConsumerDaemon = <R>(deps: {
         deps.principal,
         deps.dependencies,
       ),
+    }),
+  });
+
+/** P6 D1 formation consumer: an approved DecisionRecorded fact turns into the
+ * idempotent CreateChildWorkspace (+AssignWork) execution. Wired onto the P1
+ * offset infrastructure like its siblings. */
+export const formationConsumerDaemon = (deps: {
+  readonly consumerId: string;
+  readonly projectId: ProjectId;
+  readonly batchSize: number;
+  readonly stores: ConsumerLoopStores;
+  readonly dependencies: FormationConsumerDependencies;
+}): ConsumerLoopDaemon<never> =>
+  makeConsumerLoopDaemon({
+    consumerId: deps.consumerId,
+    projectId: deps.projectId,
+    batchSize: deps.batchSize,
+    poll: pollOnce(deps.consumerId, deps.projectId, deps.batchSize, {
+      ...deps.stores,
+      handlers: (events) =>
+        runFormationConsumer(
+          events.map((event) => ({
+            eventType: event.eventType,
+            payload: event.payload,
+            eventId: String(event.eventId),
+          })),
+          deps.dependencies,
+          deps.projectId,
+        ),
     }),
   });
 

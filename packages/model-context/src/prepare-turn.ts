@@ -154,12 +154,15 @@ export const ModelContextLive: Layer.Layer<
             tools.push(yield* toolCatalog.resolveForModel(ref));
           }
         }
-        const controlTools =
-          input.includeTools === false
-            ? []
-            : Option.isSome(controlToolCatalog)
-              ? yield* controlToolCatalog.value.visibleDefinitions()
-              : [];
+        // P14 `02` S05: the conversation face suppresses catalogued
+        // EXECUTABLE tools only — the control (directive) channel stays
+        // model-facing. The registry's shallow definitions are the explicit
+        // controlTools, which also stops compileTurn from injecting the
+        // legacy monolithic `arbor_directive` (the representation whose
+        // routes never matched the registry — RouteRegistryMismatch).
+        const controlTools = Option.isSome(controlToolCatalog)
+          ? yield* controlToolCatalog.value.visibleDefinitions()
+          : [];
         const skillRefs: SkillRef[] = [];
         for (const skillId of input.bodySkillIds) {
           const loaded = yield* skills.load(skillId, "Body");

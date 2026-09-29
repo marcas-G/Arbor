@@ -121,7 +121,15 @@ export const formationCreatePlan = (args: {
     name: args.snapshot.proposal.name,
     responsibilityDefinition: args.snapshot.proposal.responsibilityDraft,
     responsibilityRevision: parse(ResponsibilityRevision)(1),
-    resourceBoundary: args.snapshot.proposal.resourceBoundaryDraft,
+    // The created child's boundary is based on ITS OWN responsibility
+    // revision (1) — the draft's provisional basis (0, model-supplied) is
+    // normalized here so the payload passes the basis-revision precondition
+    // (the ceiling subset was already validated against the PARENT boundary
+    // at admission and re-checked in the consumer).
+    resourceBoundary: {
+      ...args.snapshot.proposal.resourceBoundaryDraft,
+      basisResponsibilityRevision: parse(ResponsibilityRevision)(1),
+    },
     resourceBoundaryRevision: parse(ResourceBoundaryRevision)(1),
     agentBinding: responsibilityBound(args.ids.workspaceId),
     workspacePolicy: makeWorkspacePolicy(),
