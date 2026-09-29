@@ -132,7 +132,8 @@
     {
       "type": "usage",
       "inputTokens": 18,
-      "outputTokens": 29
+      "outputTokens": 29,
+      "cacheReadTokens": 0
     },
     {
       "type": "completed",

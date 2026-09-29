@@ -15,86 +15,6 @@
   "wire": [
     {
       "type": "text",
-      "text": "好的"
-    },
-    {
-      "type": "text",
-      "text": "，"
-    },
-    {
-      "type": "text",
-      "text": "按"
-    },
-    {
-      "type": "text",
-      "text": "你的"
-    },
-    {
-      "type": "text",
-      "text": "要求"
-    },
-    {
-      "type": "text",
-      "text": "，"
-    },
-    {
-      "type": "text",
-      "text": "从"
-    },
-    {
-      "type": "text",
-      "text": " "
-    },
-    {
-      "type": "text",
-      "text": "1"
-    },
-    {
-      "type": "text",
-      "text": " "
-    },
-    {
-      "type": "text",
-      "text": "数"
-    },
-    {
-      "type": "text",
-      "text": "到"
-    },
-    {
-      "type": "text",
-      "text": " "
-    },
-    {
-      "type": "text",
-      "text": "15"
-    },
-    {
-      "type": "text",
-      "text": "，"
-    },
-    {
-      "type": "text",
-      "text": "每个"
-    },
-    {
-      "type": "text",
-      "text": "数字"
-    },
-    {
-      "type": "text",
-      "text": "单独"
-    },
-    {
-      "type": "text",
-      "text": "一行"
-    },
-    {
-      "type": "text",
-      "text": "：\n\n"
-    },
-    {
-      "type": "text",
       "text": "1"
     },
     {
@@ -212,7 +132,8 @@
     {
       "type": "usage",
       "inputTokens": 18,
-      "outputTokens": 49
+      "outputTokens": 29,
+      "cacheReadTokens": 0
     },
     {
       "type": "completed",

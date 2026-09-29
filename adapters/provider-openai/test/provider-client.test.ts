@@ -244,7 +244,7 @@ describe("OpenAI-compatible fetch provider", () => {
               {
                 delta: {
                   tool_calls: [
-                    { index: 1, function: { arguments: "" } },
+                    { index: 1, function: { arguments: "{}" } },
                     { index: 0, function: { arguments: "}" } },
                   ],
                 },
@@ -298,7 +298,7 @@ describe("OpenAI-compatible fetch provider", () => {
         _tag: "ToolCallProposed",
         callRef: "directive-1",
         toolName: "arbor_directive",
-        argumentsJson: "",
+        argumentsJson: "{}",
       },
     ]);
     expect(canonicalEvents.at(-1)).toEqual({
