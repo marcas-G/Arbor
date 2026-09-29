@@ -488,6 +488,7 @@ export const ProjectionQueryPortLive: Layer.Layer<
                     executionId: row.execution_id ?? "",
                     body: row.body,
                     occurredAt: row.occurred_at,
+                    messageId: row.message_id,
                   },
             );
             const oldestCursor: ConversationHistoryCursor | undefined =
