@@ -1,0 +1,22 @@
+{
+  "name": "@arbor/provider-testecho",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@arbor/domain": "workspace:*",
+    "@arbor/ports": "workspace:*",
+    "effect": "4.0.0-rc.115"
+  }
+}

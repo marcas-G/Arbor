@@ -1,6 +1,7 @@
 import type { ProtocolAdapter } from "@arbor/ports";
 import { providerFakeAdapter } from "@arbor/provider-fake";
 import { providerOpenaiAdapter } from "@arbor/provider-openai";
+import { providerTestechoAdapter } from "@arbor/provider-testecho";
 
 /**
  * P16 `01` §6 — the static, closed provider registry table.
@@ -12,4 +13,5 @@ import { providerOpenaiAdapter } from "@arbor/provider-openai";
 export const PROVIDER_REGISTRY_TABLE: ReadonlyArray<ProtocolAdapter> = [
   providerFakeAdapter,
   providerOpenaiAdapter,
+  providerTestechoAdapter,
 ];

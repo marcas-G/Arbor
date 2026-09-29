@@ -247,6 +247,18 @@ importers:
         specifier: 24.13.5
         version: 24.13.5
 
+  adapters/provider-testecho:
+    dependencies:
+      '@arbor/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@arbor/ports':
+        specifier: workspace:*
+        version: link:../../packages/ports
+      effect:
+        specifier: 4.0.0-rc.115
+        version: 4.0.0-rc.115
+
   adapters/sandbox-local:
     dependencies:
       '@arbor/domain':
