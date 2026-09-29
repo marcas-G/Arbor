@@ -101,7 +101,10 @@ export const TestechoProviderLive = (
 export const providerTestechoAdapter: ProtocolAdapter = {
   adapterId: "provider-testecho",
   profile: {
-    protocolFamily: "in-process-deterministic",
+    // G-B2 (Final Closure Audit): a DISTINCT test protocol-family identity —
+    // the E4b proof must demonstrate a new protocol family, not merely a new
+    // adapter implementation inside an existing family.
+    protocolFamily: "testecho-echo-v1",
     authMode: { _tag: "None" },
     capabilityFlags: {
       reportsCacheTokens: false,

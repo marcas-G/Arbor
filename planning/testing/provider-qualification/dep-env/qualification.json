@@ -2,7 +2,7 @@
   "deploymentId": "dep-env",
   "adapterId": "provider-openai",
   "modelRef": "model-openai",
-  "bindingFingerprint": "p16fp_849097a97b1edcac",
+  "bindingFingerprint": "p16fp_07b21fcb479510ce441274efa7b47b015f2af31b93371ea7354a508ef420d1b4",
   "identity": {
     "adapterId": "provider-openai",
     "providerSite": "https://api.deepseek.com/v1",
