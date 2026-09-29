@@ -21,10 +21,15 @@ import { secretRef } from "@arbor/ports";
 export interface ArborProviderSecretConfig {
   /** "env": `ref` names the environment variable holding the key.
    *  "file": `ref` is a path (relative to `root` when given) to a file whose
-   *  trimmed content is the key. */
-  readonly kind: "env" | "file";
-  readonly ref: string;
+   *  trimmed content is the key.
+   *  "inline": the key value lives in this config file itself. The deployment
+   *  still carries only a sentinel SecretRef — the value is materialized into
+   *  a process-local SecretStore at composition, so no-leak invariants
+   *  (logs/journal/diagnostics) are unchanged. Keep the file out of VCS. */
+  readonly kind: "env" | "file" | "inline";
+  readonly ref?: string;
   readonly root?: string;
+  readonly value?: string;
 }
 
 export interface ArborProviderConfigFile {
@@ -39,12 +44,17 @@ export interface ArborProviderConfigFile {
   };
 }
 
+/** Sentinel SecretRef for inline credentials (value never enters the
+ * deployment object — INV-P16-8 shape preserved). */
+export const INLINE_SECRET_REF = "arbor:inline-secret";
+
 export interface LoadedProviderConfig {
   readonly deployment: ModelDeployment;
   /** Which secret adapter must back the SecretStorePort for this ref kind. */
   readonly secretStore:
     | { readonly _tag: "Env" }
-    | { readonly _tag: "File"; readonly root: string };
+    | { readonly _tag: "File"; readonly root: string }
+    | { readonly _tag: "Inline"; readonly material: string };
 }
 
 export type ProviderConfigError = {
@@ -162,7 +172,15 @@ export const providerDeploymentOfConfig = (
       provider.wireModelName.length > 0
         ? { wireModelName: provider.wireModelName }
         : {}),
-      ...(secret !== undefined ? { secretRef: secretRef(secret.ref) } : {}),
+      ...(secret !== undefined
+        ? {
+            secretRef: secretRef(
+              secret.kind === "inline"
+                ? INLINE_SECRET_REF
+                : (secret.ref as string),
+            ),
+          }
+        : {}),
       ...(provider.executionPolicyOverrides !== undefined
         ? { executionPolicyOverrides: provider.executionPolicyOverrides }
         : {}),
@@ -171,8 +189,10 @@ export const providerDeploymentOfConfig = (
         : {}),
     },
     secretStore:
-      secret?.kind === "file"
-        ? { _tag: "File", root: secret.root ?? resolve(process.cwd()) }
-        : { _tag: "Env" },
+      secret?.kind === "inline"
+        ? { _tag: "Inline", material: secret.value as string }
+        : secret?.kind === "file"
+          ? { _tag: "File", root: secret.root ?? resolve(process.cwd()) }
+          : { _tag: "Env" },
   };
 };

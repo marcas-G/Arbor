@@ -1,11 +1,11 @@
 {
-  "$comment": "Arbor standard provider configuration. Copy to arbor.config.json and edit. The raw API key NEVER goes in this file — the secret entry names where the key lives (environment variable or a file path), and the SecretStore resolves it at the execution boundary. Lookup order: $ARBOR_CONFIG, ./arbor.config.json, ~/.config/arbor/arbor.config.json.",
+  "$comment": "Arbor standard provider configuration. Copy to arbor.config.json and edit. Three secret modes: inline (key value right here — keep the file out of VCS; it is materialized into a process-local SecretStore, never logged), env (ref names the environment variable), file (ref is a key-file path, relative to root). Lookup order: $ARBOR_CONFIG, ./arbor.config.json, ~/.config/arbor/arbor.config.json.",
   "provider": {
     "deploymentId": "dep-env",
     "modelRef": "model-openai",
     "endpoint": "https://api.deepseek.com/v1",
     "wireModelName": "deepseek-chat",
-    "secret": { "kind": "env", "ref": "ARBOR_MODEL_API_KEY" },
+    "secret": { "kind": "inline", "value": "sk-REPLACE-ME" },
     "executionPolicyOverrides": {}
   }
 }
