@@ -1,0 +1,982 @@
+{
+  "label": "continuation-observation",
+  "run": 3,
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModel": "deepseek-chat",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "续传机制观察请求。"
+      }
+    ],
+    "tools": []
+  },
+  "wire": [
+    {
+      "type": "text",
+      "text": "你的"
+    },
+    {
+      "type": "text",
+      "text": "消息"
+    },
+    {
+      "type": "text",
+      "text": "似乎"
+    },
+    {
+      "type": "text",
+      "text": "不"
+    },
+    {
+      "type": "text",
+      "text": "完整"
+    },
+    {
+      "type": "text",
+      "text": "。“"
+    },
+    {
+      "type": "text",
+      "text": "续"
+    },
+    {
+      "type": "text",
+      "text": "传"
+    },
+    {
+      "type": "text",
+      "text": "机制"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "”"
+    },
+    {
+      "type": "text",
+      "text": "这个"
+    },
+    {
+      "type": "text",
+      "text": "表述"
+    },
+    {
+      "type": "text",
+      "text": "缺少"
+    },
+    {
+      "type": "text",
+      "text": "上下文"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "我不"
+    },
+    {
+      "type": "text",
+      "text": "确定"
+    },
+    {
+      "type": "text",
+      "text": "你"
+    },
+    {
+      "type": "text",
+      "text": "具体"
+    },
+    {
+      "type": "text",
+      "text": "想"
+    },
+    {
+      "type": "text",
+      "text": "了解"
+    },
+    {
+      "type": "text",
+      "text": "什么"
+    },
+    {
+      "type": "text",
+      "text": "。"
+    },
+    {
+      "type": "text",
+      "text": "可以"
+    },
+    {
+      "type": "text",
+      "text": "补充"
+    },
+    {
+      "type": "text",
+      "text": "一下"
+    },
+    {
+      "type": "text",
+      "text": "以下"
+    },
+    {
+      "type": "text",
+      "text": "信息"
+    },
+    {
+      "type": "text",
+      "text": "吗"
+    },
+    {
+      "type": "text",
+      "text": "：\n\n"
+    },
+    {
+      "type": "text",
+      "text": "1"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "你"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "的对象"
+    },
+    {
+      "type": "text",
+      "text": "是什么"
+    },
+    {
+      "type": "text",
+      "text": "？"
+    },
+    {
+      "type": "text",
+      "text": "**\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " HTTP"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "断"
+    },
+    {
+      "type": "text",
+      "text": "点"
+    },
+    {
+      "type": "text",
+      "text": "续"
+    },
+    {
+      "type": "text",
+      "text": "传"
+    },
+    {
+      "type": "text",
+      "text": "（"
+    },
+    {
+      "type": "text",
+      "text": "Range"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "）"
+    },
+    {
+      "type": "text",
+      "text": "？\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "文件"
+    },
+    {
+      "type": "text",
+      "text": "上传"
+    },
+    {
+      "type": "text",
+      "text": "/"
+    },
+    {
+      "type": "text",
+      "text": "下载"
+    },
+    {
+      "type": "text",
+      "text": "的"
+    },
+    {
+      "type": "text",
+      "text": "续"
+    },
+    {
+      "type": "text",
+      "text": "传"
+    },
+    {
+      "type": "text",
+      "text": "（"
+    },
+    {
+      "type": "text",
+      "text": "如"
+    },
+    {
+      "type": "text",
+      "text": "迅"
+    },
+    {
+      "type": "text",
+      "text": "雷"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "浏览器"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "oss"
+    },
+    {
+      "type": "text",
+      "text": "/s"
+    },
+    {
+      "type": "text",
+      "text": "3"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "分"
+    },
+    {
+      "type": "text",
+      "text": "片"
+    },
+    {
+      "type": "text",
+      "text": "）"
+    },
+    {
+      "type": "text",
+      "text": "？\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "消息"
+    },
+    {
+      "type": "text",
+      "text": "队列"
+    },
+    {
+      "type": "text",
+      "text": "/"
+    },
+    {
+      "type": "text",
+      "text": "流"
+    },
+    {
+      "type": "text",
+      "text": "式"
+    },
+    {
+      "type": "text",
+      "text": "传输"
+    },
+    {
+      "type": "text",
+      "text": "的"
+    },
+    {
+      "type": "text",
+      "text": "续"
+    },
+    {
+      "type": "text",
+      "text": "传"
+    },
+    {
+      "type": "text",
+      "text": "（"
+    },
+    {
+      "type": "text",
+      "text": "如"
+    },
+    {
+      "type": "text",
+      "text": " SSE"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "Web"
+    },
+    {
+      "type": "text",
+      "text": "Socket"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "g"
+    },
+    {
+      "type": "text",
+      "text": "R"
+    },
+    {
+      "type": "text",
+      "text": "PC"
+    },
+    {
+      "type": "text",
+      "text": " stream"
+    },
+    {
+      "type": "text",
+      "text": "）"
+    },
+    {
+      "type": "text",
+      "text": "？\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "某个"
+    },
+    {
+      "type": "text",
+      "text": "具体"
+    },
+    {
+      "type": "text",
+      "text": "软件"
+    },
+    {
+      "type": "text",
+      "text": "或"
+    },
+    {
+      "type": "text",
+      "text": "协议的"
+    },
+    {
+      "type": "text",
+      "text": "续"
+    },
+    {
+      "type": "text",
+      "text": "传"
+    },
+    {
+      "type": "text",
+      "text": "行为"
+    },
+    {
+      "type": "text",
+      "text": "？\n\n"
+    },
+    {
+      "type": "text",
+      "text": "2"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "你想"
+    },
+    {
+      "type": "text",
+      "text": "“"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "”"
+    },
+    {
+      "type": "text",
+      "text": "什么"
+    },
+    {
+      "type": "text",
+      "text": "？"
+    },
+    {
+      "type": "text",
+      "text": "**\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "抓"
+    },
+    {
+      "type": "text",
+      "text": "包"
+    },
+    {
+      "type": "text",
+      "text": "看"
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "头"
+    },
+    {
+      "type": "text",
+      "text": "/"
+    },
+    {
+      "type": "text",
+      "text": "响应"
+    },
+    {
+      "type": "text",
+      "text": "头"
+    },
+    {
+      "type": "text",
+      "text": "？\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "验证"
+    },
+    {
+      "type": "text",
+      "text": "服务"
+    },
+    {
+      "type": "text",
+      "text": "端"
+    },
+    {
+      "type": "text",
+      "text": "是否"
+    },
+    {
+      "type": "text",
+      "text": "支持"
+    },
+    {
+      "type": "text",
+      "text": " `"
+    },
+    {
+      "type": "text",
+      "text": "Accept"
+    },
+    {
+      "type": "text",
+      "text": "-R"
+    },
+    {
+      "type": "text",
+      "text": "anges"
+    },
+    {
+      "type": "text",
+      "text": "`"
+    },
+    {
+      "type": "text",
+      "text": " /"
+    },
+    {
+      "type": "text",
+      "text": " `"
+    },
+    {
+      "type": "text",
+      "text": "Content"
+    },
+    {
+      "type": "text",
+      "text": "-R"
+    },
+    {
+      "type": "text",
+      "text": "ange"
+    },
+    {
+      "type": "text",
+      "text": "`"
+    },
+    {
+      "type": "text",
+      "text": "？\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "断"
+    },
+    {
+      "type": "text",
+      "text": "网"
+    },
+    {
+      "type": "text",
+      "text": "重"
+    },
+    {
+      "type": "text",
+      "text": "连"
+    },
+    {
+      "type": "text",
+      "text": "后"
+    },
+    {
+      "type": "text",
+      "text": "是否"
+    },
+    {
+      "type": "text",
+      "text": "从"
+    },
+    {
+      "type": "text",
+      "text": "断"
+    },
+    {
+      "type": "text",
+      "text": "点"
+    },
+    {
+      "type": "text",
+      "text": "继续"
+    },
+    {
+      "type": "text",
+      "text": "？\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "续"
+    },
+    {
+      "type": "text",
+      "text": "传"
+    },
+    {
+      "type": "text",
+      "text": "的"
+    },
+    {
+      "type": "text",
+      "text": "触发"
+    },
+    {
+      "type": "text",
+      "text": "条件"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "重"
+    },
+    {
+      "type": "text",
+      "text": "试"
+    },
+    {
+      "type": "text",
+      "text": "策略"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "校验"
+    },
+    {
+      "type": "text",
+      "text": "方式"
+    },
+    {
+      "type": "text",
+      "text": "？\n\n"
+    },
+    {
+      "type": "text",
+      "text": "3"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "你"
+    },
+    {
+      "type": "text",
+      "text": "目前的"
+    },
+    {
+      "type": "text",
+      "text": "场景"
+    },
+    {
+      "type": "text",
+      "text": "**\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "是"
+    },
+    {
+      "type": "text",
+      "text": "排"
+    },
+    {
+      "type": "text",
+      "text": "障"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "逆向"
+    },
+    {
+      "type": "text",
+      "text": "分析"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "还是"
+    },
+    {
+      "type": "text",
+      "text": "写"
+    },
+    {
+      "type": "text",
+      "text": "代码"
+    },
+    {
+      "type": "text",
+      "text": "实现"
+    },
+    {
+      "type": "text",
+      "text": "续"
+    },
+    {
+      "type": "text",
+      "text": "传"
+    },
+    {
+      "type": "text",
+      "text": "？\n\n"
+    },
+    {
+      "type": "text",
+      "text": "补充"
+    },
+    {
+      "type": "text",
+      "text": "后"
+    },
+    {
+      "type": "text",
+      "text": "我可以"
+    },
+    {
+      "type": "text",
+      "text": "给你"
+    },
+    {
+      "type": "text",
+      "text": "具体的"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "方法"
+    },
+    {
+      "type": "text",
+      "text": "（"
+    },
+    {
+      "type": "text",
+      "text": "工具"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "抓"
+    },
+    {
+      "type": "text",
+      "text": "包"
+    },
+    {
+      "type": "text",
+      "text": "点"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "关键"
+    },
+    {
+      "type": "text",
+      "text": "字段"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "判定"
+    },
+    {
+      "type": "text",
+      "text": "标准"
+    },
+    {
+      "type": "text",
+      "text": "）"
+    },
+    {
+      "type": "text",
+      "text": "和"
+    },
+    {
+      "type": "text",
+      "text": "实现"
+    },
+    {
+      "type": "text",
+      "text": "/"
+    },
+    {
+      "type": "text",
+      "text": "验证"
+    },
+    {
+      "type": "text",
+      "text": "思路"
+    },
+    {
+      "type": "text",
+      "text": "。"
+    },
+    {
+      "type": "usage",
+      "inputTokens": 10,
+      "outputTokens": 239
+    },
+    {
+      "type": "completed",
+      "finishReason": "stop"
+    }
+  ]
+}

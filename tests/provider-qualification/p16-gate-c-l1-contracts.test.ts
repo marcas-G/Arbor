@@ -279,6 +279,7 @@ describe("C4 — qualification status machine", () => {
   const declared = {
     reportsCacheTokens: false,
     supportsContinuation: false,
+    streamsDeltas: true,
     capabilities: ["text", "tools"],
   };
 

@@ -1,0 +1,2638 @@
+{
+  "label": "cache-usage-observation",
+  "run": 1,
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModel": "deepseek-chat",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "说明缓存证据观察请求。"
+      }
+    ],
+    "tools": []
+  },
+  "wire": [
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "证据"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "（"
+    },
+    {
+      "type": "text",
+      "text": "Cache"
+    },
+    {
+      "type": "text",
+      "text": " Evidence"
+    },
+    {
+      "type": "text",
+      "text": " Observation"
+    },
+    {
+      "type": "text",
+      "text": " Request"
+    },
+    {
+      "type": "text",
+      "text": "）"
+    },
+    {
+      "type": "text",
+      "text": "通常"
+    },
+    {
+      "type": "text",
+      "text": "出现在"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "数字"
+    },
+    {
+      "type": "text",
+      "text": "取证"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "网络安全"
+    },
+    {
+      "type": "text",
+      "text": "审计"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "司法"
+    },
+    {
+      "type": "text",
+      "text": "取证"
+    },
+    {
+      "type": "text",
+      "text": "或"
+    },
+    {
+      "type": "text",
+      "text": "合规"
+    },
+    {
+      "type": "text",
+      "text": "调查"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "场景"
+    },
+    {
+      "type": "text",
+      "text": "中"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "指的是"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "相关"
+    },
+    {
+      "type": "text",
+      "text": "方"
+    },
+    {
+      "type": "text",
+      "text": "提供"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "保全"
+    },
+    {
+      "type": "text",
+      "text": "或"
+    },
+    {
+      "type": "text",
+      "text": "说明"
+    },
+    {
+      "type": "text",
+      "text": "与"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "（"
+    },
+    {
+      "type": "text",
+      "text": "Cache"
+    },
+    {
+      "type": "text",
+      "text": "）"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "相关的"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "证据"
+    },
+    {
+      "type": "text",
+      "text": "性"
+    },
+    {
+      "type": "text",
+      "text": "数据"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "以便"
+    },
+    {
+      "type": "text",
+      "text": "用于"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "分析"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "举证"
+    },
+    {
+      "type": "text",
+      "text": "或"
+    },
+    {
+      "type": "text",
+      "text": "审计"
+    },
+    {
+      "type": "text",
+      "text": "。\n\n"
+    },
+    {
+      "type": "text",
+      "text": "下面"
+    },
+    {
+      "type": "text",
+      "text": "从"
+    },
+    {
+      "type": "text",
+      "text": "几个"
+    },
+    {
+      "type": "text",
+      "text": "角度"
+    },
+    {
+      "type": "text",
+      "text": "说明"
+    },
+    {
+      "type": "text",
+      "text": "。\n\n"
+    },
+    {
+      "type": "text",
+      "text": "---\n\n"
+    },
+    {
+      "type": "text",
+      "text": "##"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "一"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "核心"
+    },
+    {
+      "type": "text",
+      "text": "含义"
+    },
+    {
+      "type": "text",
+      "text": "\n\n"
+    },
+    {
+      "type": "text",
+      "text": "它"
+    },
+    {
+      "type": "text",
+      "text": "本质"
+    },
+    {
+      "type": "text",
+      "text": "是一种"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "取证"
+    },
+    {
+      "type": "text",
+      "text": " /"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "审计"
+    },
+    {
+      "type": "text",
+      "text": "动作"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "包含"
+    },
+    {
+      "type": "text",
+      "text": "三个"
+    },
+    {
+      "type": "text",
+      "text": "要素"
+    },
+    {
+      "type": "text",
+      "text": "：\n\n"
+    },
+    {
+      "type": "text",
+      "text": "|"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "要素"
+    },
+    {
+      "type": "text",
+      "text": " |"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "说明"
+    },
+    {
+      "type": "text",
+      "text": " |\n"
+    },
+    {
+      "type": "text",
+      "text": "|"
+    },
+    {
+      "type": "text",
+      "text": "------"
+    },
+    {
+      "type": "text",
+      "text": "|"
+    },
+    {
+      "type": "text",
+      "text": "------"
+    },
+    {
+      "type": "text",
+      "text": "|\n"
+    },
+    {
+      "type": "text",
+      "text": "|"
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": " |"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "被"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "的对象"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "如"
+    },
+    {
+      "type": "text",
+      "text": "浏览器"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "CD"
+    },
+    {
+      "type": "text",
+      "text": "N"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "DNS"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "CPU"
+    },
+    {
+      "type": "text",
+      "text": "/"
+    },
+    {
+      "type": "text",
+      "text": "内存"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "代理"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "应用"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": " |\n"
+    },
+    {
+      "type": "text",
+      "text": "|"
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "证据"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": " |"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "中"
+    },
+    {
+      "type": "text",
+      "text": "留存"
+    },
+    {
+      "type": "text",
+      "text": "的可"
+    },
+    {
+      "type": "text",
+      "text": "作为"
+    },
+    {
+      "type": "text",
+      "text": "证明"
+    },
+    {
+      "type": "text",
+      "text": "的数据"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "如"
+    },
+    {
+      "type": "text",
+      "text": "时间"
+    },
+    {
+      "type": "text",
+      "text": "戳"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "URL"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "响应"
+    },
+    {
+      "type": "text",
+      "text": "内容"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "哈希"
+    },
+    {
+      "type": "text",
+      "text": "值"
+    },
+    {
+      "type": "text",
+      "text": " |\n"
+    },
+    {
+      "type": "text",
+      "text": "|"
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": " |"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "要求"
+    },
+    {
+      "type": "text",
+      "text": "对"
+    },
+    {
+      "type": "text",
+      "text": "上述"
+    },
+    {
+      "type": "text",
+      "text": "证据"
+    },
+    {
+      "type": "text",
+      "text": "进行"
+    },
+    {
+      "type": "text",
+      "text": "提取"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "记录"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "监控"
+    },
+    {
+      "type": "text",
+      "text": "或"
+    },
+    {
+      "type": "text",
+      "text": "保全"
+    },
+    {
+      "type": "text",
+      "text": "的"
+    },
+    {
+      "type": "text",
+      "text": "正式"
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": " |\n\n"
+    },
+    {
+      "type": "text",
+      "text": "---\n\n"
+    },
+    {
+      "type": "text",
+      "text": "##"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "二"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "常见"
+    },
+    {
+      "type": "text",
+      "text": "应用"
+    },
+    {
+      "type": "text",
+      "text": "场景"
+    },
+    {
+      "type": "text",
+      "text": "\n\n"
+    },
+    {
+      "type": "text",
+      "text": "1"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "网络"
+    },
+    {
+      "type": "text",
+      "text": "犯罪"
+    },
+    {
+      "type": "text",
+      "text": "调查"
+    },
+    {
+      "type": "text",
+      "text": "**\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "从"
+    },
+    {
+      "type": "text",
+      "text": "嫌疑人"
+    },
+    {
+      "type": "text",
+      "text": "设备"
+    },
+    {
+      "type": "text",
+      "text": "提取"
+    },
+    {
+      "type": "text",
+      "text": "浏览器"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "证明"
+    },
+    {
+      "type": "text",
+      "text": "其"
+    },
+    {
+      "type": "text",
+      "text": "访问"
+    },
+    {
+      "type": "text",
+      "text": "过"
+    },
+    {
+      "type": "text",
+      "text": "特定"
+    },
+    {
+      "type": "text",
+      "text": "网站"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "2"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "CD"
+    },
+    {
+      "type": "text",
+      "text": "N"
+    },
+    {
+      "type": "text",
+      "text": " /"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "云"
+    },
+    {
+      "type": "text",
+      "text": "服务"
+    },
+    {
+      "type": "text",
+      "text": "取证"
+    },
+    {
+      "type": "text",
+      "text": "**\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "CD"
+    },
+    {
+      "type": "text",
+      "text": "N"
+    },
+    {
+      "type": "text",
+      "text": "提供商"
+    },
+    {
+      "type": "text",
+      "text": "说明"
+    },
+    {
+      "type": "text",
+      "text": "某"
+    },
+    {
+      "type": "text",
+      "text": "时间"
+    },
+    {
+      "type": "text",
+      "text": "点"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "了"
+    },
+    {
+      "type": "text",
+      "text": "哪些"
+    },
+    {
+      "type": "text",
+      "text": "内容"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "用于"
+    },
+    {
+      "type": "text",
+      "text": "证明"
+    },
+    {
+      "type": "text",
+      "text": "内容"
+    },
+    {
+      "type": "text",
+      "text": "传播"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "3"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "知识产权"
+    },
+    {
+      "type": "text",
+      "text": " /"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "侵权"
+    },
+    {
+      "type": "text",
+      "text": "取证"
+    },
+    {
+      "type": "text",
+      "text": "**\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "通过"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "快"
+    },
+    {
+      "type": "text",
+      "text": "照"
+    },
+    {
+      "type": "text",
+      "text": "证明"
+    },
+    {
+      "type": "text",
+      "text": "某"
+    },
+    {
+      "type": "text",
+      "text": "页面"
+    },
+    {
+      "type": "text",
+      "text": "在"
+    },
+    {
+      "type": "text",
+      "text": "特定"
+    },
+    {
+      "type": "text",
+      "text": "时间"
+    },
+    {
+      "type": "text",
+      "text": "存在"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "4"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "合规"
+    },
+    {
+      "type": "text",
+      "text": "审计"
+    },
+    {
+      "type": "text",
+      "text": "**\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "系统"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "是否"
+    },
+    {
+      "type": "text",
+      "text": "泄露"
+    },
+    {
+      "type": "text",
+      "text": "敏感"
+    },
+    {
+      "type": "text",
+      "text": "数据"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "5"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "OS"
+    },
+    {
+      "type": "text",
+      "text": "INT"
+    },
+    {
+      "type": "text",
+      "text": " /"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "电子"
+    },
+    {
+      "type": "text",
+      "text": "证据"
+    },
+    {
+      "type": "text",
+      "text": "固定"
+    },
+    {
+      "type": "text",
+      "text": "**\n"
+    },
+    {
+      "type": "text",
+      "text": "  "
+    },
+    {
+      "type": "text",
+      "text": " -"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "使用"
+    },
+    {
+      "type": "text",
+      "text": "搜索引擎"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "Way"
+    },
+    {
+      "type": "text",
+      "text": "back"
+    },
+    {
+      "type": "text",
+      "text": " Machine"
+    },
+    {
+      "type": "text",
+      "text": "等"
+    },
+    {
+      "type": "text",
+      "text": "作为"
+    },
+    {
+      "type": "text",
+      "text": "证据"
+    },
+    {
+      "type": "text",
+      "text": "来源"
+    },
+    {
+      "type": "text",
+      "text": "。\n\n"
+    },
+    {
+      "type": "text",
+      "text": "---\n\n"
+    },
+    {
+      "type": "text",
+      "text": "##"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "三"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "通常"
+    },
+    {
+      "type": "text",
+      "text": "包含"
+    },
+    {
+      "type": "text",
+      "text": "的内容"
+    },
+    {
+      "type": "text",
+      "text": "\n\n"
+    },
+    {
+      "type": "text",
+      "text": "一份"
+    },
+    {
+      "type": "text",
+      "text": "规范的"
+    },
+    {
+      "type": "text",
+      "text": "“"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "证据"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "”"
+    },
+    {
+      "type": "text",
+      "text": "一般"
+    },
+    {
+      "type": "text",
+      "text": "会"
+    },
+    {
+      "type": "text",
+      "text": "写明"
+    },
+    {
+      "type": "text",
+      "text": "：\n\n"
+    },
+    {
+      "type": "text",
+      "text": "1"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "主体"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "谁"
+    },
+    {
+      "type": "text",
+      "text": "提出"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "依据"
+    },
+    {
+      "type": "text",
+      "text": "什么"
+    },
+    {
+      "type": "text",
+      "text": "权限"
+    },
+    {
+      "type": "text",
+      "text": "（"
+    },
+    {
+      "type": "text",
+      "text": "法院"
+    },
+    {
+      "type": "text",
+      "text": "令"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "合同"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "法规"
+    },
+    {
+      "type": "text",
+      "text": "）。\n"
+    },
+    {
+      "type": "text",
+      "text": "2"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "对象"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "哪"
+    },
+    {
+      "type": "text",
+      "text": "类"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "（"
+    },
+    {
+      "type": "text",
+      "text": "浏览器"
+    },
+    {
+      "type": "text",
+      "text": "/CD"
+    },
+    {
+      "type": "text",
+      "text": "N"
+    },
+    {
+      "type": "text",
+      "text": "/D"
+    },
+    {
+      "type": "text",
+      "text": "NS"
+    },
+    {
+      "type": "text",
+      "text": "/"
+    },
+    {
+      "type": "text",
+      "text": "应用"
+    },
+    {
+      "type": "text",
+      "text": "层"
+    },
+    {
+      "type": "text",
+      "text": "）。\n"
+    },
+    {
+      "type": "text",
+      "text": "3"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "时间"
+    },
+    {
+      "type": "text",
+      "text": "范围"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "需要"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "的时间"
+    },
+    {
+      "type": "text",
+      "text": "窗口"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "4"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "数据"
+    },
+    {
+      "type": "text",
+      "text": "字段"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "URL"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "时间"
+    },
+    {
+      "type": "text",
+      "text": "戳"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "HTTP"
+    },
+    {
+      "type": "text",
+      "text": "头"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "响应"
+    },
+    {
+      "type": "text",
+      "text": "体"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "哈希"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "IP"
+    },
+    {
+      "type": "text",
+      "text": "等"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "5"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "保全"
+    },
+    {
+      "type": "text",
+      "text": "要求"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "只"
+    },
+    {
+      "type": "text",
+      "text": "读"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "哈希"
+    },
+    {
+      "type": "text",
+      "text": "校验"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "链"
+    },
+    {
+      "type": "text",
+      "text": "式"
+    },
+    {
+      "type": "text",
+      "text": "保管"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "6"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "交付"
+    },
+    {
+      "type": "text",
+      "text": "形式"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "原始"
+    },
+    {
+      "type": "text",
+      "text": "镜像"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "日志"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "报告"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "7"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "法律"
+    },
+    {
+      "type": "text",
+      "text": "/"
+    },
+    {
+      "type": "text",
+      "text": "合规"
+    },
+    {
+      "type": "text",
+      "text": "依据"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "如"
+    },
+    {
+      "type": "text",
+      "text": "GDP"
+    },
+    {
+      "type": "text",
+      "text": "R"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "刑"
+    },
+    {
+      "type": "text",
+      "text": "诉"
+    },
+    {
+      "type": "text",
+      "text": "法"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "电子"
+    },
+    {
+      "type": "text",
+      "text": "证据"
+    },
+    {
+      "type": "text",
+      "text": "规则"
+    },
+    {
+      "type": "text",
+      "text": "。\n\n"
+    },
+    {
+      "type": "text",
+      "text": "---\n\n"
+    },
+    {
+      "type": "text",
+      "text": "##"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "四"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "技术"
+    },
+    {
+      "type": "text",
+      "text": "要点"
+    },
+    {
+      "type": "text",
+      "text": "\n\n"
+    },
+    {
+      "type": "text",
+      "text": "-"
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "易"
+    },
+    {
+      "type": "text",
+      "text": "失"
+    },
+    {
+      "type": "text",
+      "text": "性"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "可能"
+    },
+    {
+      "type": "text",
+      "text": "随时"
+    },
+    {
+      "type": "text",
+      "text": "被"
+    },
+    {
+      "type": "text",
+      "text": "覆盖"
+    },
+    {
+      "type": "text",
+      "text": "或"
+    },
+    {
+      "type": "text",
+      "text": "过期"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "需"
+    },
+    {
+      "type": "text",
+      "text": "尽快"
+    },
+    {
+      "type": "text",
+      "text": "固定"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "-"
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "完整性"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "通常"
+    },
+    {
+      "type": "text",
+      "text": "配合"
+    },
+    {
+      "type": "text",
+      "text": "哈希"
+    },
+    {
+      "type": "text",
+      "text": "（"
+    },
+    {
+      "type": "text",
+      "text": "MD"
+    },
+    {
+      "type": "text",
+      "text": "5"
+    },
+    {
+      "type": "text",
+      "text": "/S"
+    },
+    {
+      "type": "text",
+      "text": "HA"
+    },
+    {
+      "type": "text",
+      "text": "-"
+    },
+    {
+      "type": "text",
+      "text": "256"
+    },
+    {
+      "type": "text",
+      "text": "）"
+    },
+    {
+      "type": "text",
+      "text": "保证"
+    },
+    {
+      "type": "text",
+      "text": "未被"
+    },
+    {
+      "type": "text",
+      "text": "篡"
+    },
+    {
+      "type": "text",
+      "text": "改"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "-"
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "可"
+    },
+    {
+      "type": "text",
+      "text": "采"
+    },
+    {
+      "type": "text",
+      "text": "性"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "需"
+    },
+    {
+      "type": "text",
+      "text": "保证"
+    },
+    {
+      "type": "text",
+      "text": "取证"
+    },
+    {
+      "type": "text",
+      "text": "过程"
+    },
+    {
+      "type": "text",
+      "text": "可"
+    },
+    {
+      "type": "text",
+      "text": "复"
+    },
+    {
+      "type": "text",
+      "text": "现"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "可"
+    },
+    {
+      "type": "text",
+      "text": "追溯"
+    },
+    {
+      "type": "text",
+      "text": "。\n"
+    },
+    {
+      "type": "text",
+      "text": "-"
+    },
+    {
+      "type": "text",
+      "text": " **"
+    },
+    {
+      "type": "text",
+      "text": "时效"
+    },
+    {
+      "type": "text",
+      "text": "性"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "："
+    },
+    {
+      "type": "text",
+      "text": "DNS"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "CD"
+    },
+    {
+      "type": "text",
+      "text": "N"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "TT"
+    },
+    {
+      "type": "text",
+      "text": "L"
+    },
+    {
+      "type": "text",
+      "text": "有限"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "窗口"
+    },
+    {
+      "type": "text",
+      "text": "很"
+    },
+    {
+      "type": "text",
+      "text": "关键"
+    },
+    {
+      "type": "text",
+      "text": "。\n\n"
+    },
+    {
+      "type": "text",
+      "text": "---\n\n"
+    },
+    {
+      "type": "text",
+      "text": "##"
+    },
+    {
+      "type": "text",
+      "text": " "
+    },
+    {
+      "type": "text",
+      "text": "五"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "示例"
+    },
+    {
+      "type": "text",
+      "text": "表述"
+    },
+    {
+      "type": "text",
+      "text": "\n\n"
+    },
+    {
+      "type": "text",
+      "text": ">"
+    },
+    {
+      "type": "text",
+      "text": " “"
+    },
+    {
+      "type": "text",
+      "text": "现"
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "贵"
+    },
+    {
+      "type": "text",
+      "text": "方"
+    },
+    {
+      "type": "text",
+      "text": "对"
+    },
+    {
+      "type": "text",
+      "text": "202"
+    },
+    {
+      "type": "text",
+      "text": "4"
+    },
+    {
+      "type": "text",
+      "text": "年"
+    },
+    {
+      "type": "text",
+      "text": "X"
+    },
+    {
+      "type": "text",
+      "text": "月"
+    },
+    {
+      "type": "text",
+      "text": "X"
+    },
+    {
+      "type": "text",
+      "text": "日至"
+    },
+    {
+      "type": "text",
+      "text": "X"
+    },
+    {
+      "type": "text",
+      "text": "月"
+    },
+    {
+      "type": "text",
+      "text": "X"
+    },
+    {
+      "type": "text",
+      "text": "日"
+    },
+    {
+      "type": "text",
+      "text": "期间"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "涉案"
+    },
+    {
+      "type": "text",
+      "text": "域名"
+    },
+    {
+      "type": "text",
+      "text": "在"
+    },
+    {
+      "type": "text",
+      "text": "贵"
+    },
+    {
+      "type": "text",
+      "text": "方"
+    },
+    {
+      "type": "text",
+      "text": "CD"
+    },
+    {
+      "type": "text",
+      "text": "N"
+    },
+    {
+      "type": "text",
+      "text": "节点"
+    },
+    {
+      "type": "text",
+      "text": "上的"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "记录"
+    },
+    {
+      "type": "text",
+      "text": "进行"
+    },
+    {
+      "type": "text",
+      "text": "观察"
+    },
+    {
+      "type": "text",
+      "text": "与"
+    },
+    {
+      "type": "text",
+      "text": "保全"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "包括"
+    },
+    {
+      "type": "text",
+      "text": "缓存"
+    },
+    {
+      "type": "text",
+      "text": "键"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "命中"
+    },
+    {
+      "type": "text",
+      "text": "时间"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "响应"
+    },
+    {
+      "type": "text",
+      "text": "状态"
+    },
+    {
+      "type": "text",
+      "text": "码"
+    },
+    {
+      "type": "text",
+      "text": "及"
+    },
+    {
+      "type": "text",
+      "text": "内容"
+    },
+    {
+      "type": "text",
+      "text": "哈希"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "并"
+    },
+    {
+      "type": "text",
+      "text": "出具"
+    },
+    {
+      "type": "text",
+      "text": "书面"
+    },
+    {
+      "type": "text",
+      "text": "说明"
+    },
+    {
+      "type": "text",
+      "text": "。”\n\n"
+    },
+    {
+      "type": "text",
+      "text": "---\n\n"
+    },
+    {
+      "type": "text",
+      "text": "如果你"
+    },
+    {
+      "type": "text",
+      "text": "是在"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "某个"
+    },
+    {
+      "type": "text",
+      "text": "具体"
+    },
+    {
+      "type": "text",
+      "text": "系统"
+    },
+    {
+      "type": "text",
+      "text": "、"
+    },
+    {
+      "type": "text",
+      "text": "法律"
+    },
+    {
+      "type": "text",
+      "text": "程序"
+    },
+    {
+      "type": "text",
+      "text": "或"
+    },
+    {
+      "type": "text",
+      "text": "技术"
+    },
+    {
+      "type": "text",
+      "text": "文档"
+    },
+    {
+      "type": "text",
+      "text": "**"
+    },
+    {
+      "type": "text",
+      "text": "中"
+    },
+    {
+      "type": "text",
+      "text": "看到"
+    },
+    {
+      "type": "text",
+      "text": "这个词"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "可以"
+    },
+    {
+      "type": "text",
+      "text": "告诉我"
+    },
+    {
+      "type": "text",
+      "text": "上下文"
+    },
+    {
+      "type": "text",
+      "text": "，"
+    },
+    {
+      "type": "text",
+      "text": "我可以"
+    },
+    {
+      "type": "text",
+      "text": "给出"
+    },
+    {
+      "type": "text",
+      "text": "更"
+    },
+    {
+      "type": "text",
+      "text": "精准"
+    },
+    {
+      "type": "text",
+      "text": "的解释"
+    },
+    {
+      "type": "text",
+      "text": "或"
+    },
+    {
+      "type": "text",
+      "text": "帮你"
+    },
+    {
+      "type": "text",
+      "text": "起草"
+    },
+    {
+      "type": "text",
+      "text": "一份"
+    },
+    {
+      "type": "text",
+      "text": "请求"
+    },
+    {
+      "type": "text",
+      "text": "模板"
+    },
+    {
+      "type": "text",
+      "text": "。"
+    },
+    {
+      "type": "usage",
+      "inputTokens": 10,
+      "outputTokens": 653
+    },
+    {
+      "type": "completed",
+      "finishReason": "stop"
+    }
+  ]
+}

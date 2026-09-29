@@ -1,0 +1,34 @@
+{
+  "label": "tool-fragmented-args",
+  "run": 1,
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModel": "deepseek-chat",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "调用 write_file 把 path 设为 notes.md，content 写一段至少 200 字的中文短文（关于秋天）。"
+      }
+    ],
+    "tools": [
+      "write_file"
+    ]
+  },
+  "wire": [
+    {
+      "type": "usage",
+      "inputTokens": 303,
+      "outputTokens": 350
+    },
+    {
+      "type": "tool_call",
+      "callRef": "call_00_m36tll1qQUr6lT0mZCrL7861",
+      "toolName": "write_file",
+      "argumentsJson": "{\"path\": \"notes.md\", \"content\": \"# 秋日小记\\n\\n秋天总是来得不动声色。先是清晨的风里添了一丝凉意，接着是梧桐叶的边缘悄悄染上焦黄。等到你真正察觉的时候，天空已经高得让人仰头就想深呼吸，云也被风梳成薄薄的一层，铺在瓦蓝的底子上，像谁随手抹开的一笔白颜料。\\n\\n我喜欢在这样的季节里慢慢走。路边的桂花开了，香气不浓烈，却固执，一阵一阵地钻进衣领里，让人想起小时候外婆做的糖桂花。稻田收割过了，只剩下整齐的稻茬，在斜阳里泛着金黄的光。远处的银杏一天比一天亮，仿佛把整整一个夏天的阳光都攒了下来，专门留到这个时节还给世界。\\n\\n秋天并不只是萧瑟。它更像一场缓慢的整理——草木把力气收回根部，候鸟把方向交给远方，人也终于愿意放慢脚步，把心事一件件摊开晾晒。风一吹，那些积攒的焦躁似乎都被带走了，只剩一种平静的、带着凉意的清朗。\\n\\n傍晚回家时，天边常有橘红色的晚霞。我站在楼下看了很久，忽然觉得，秋天其实是最温柔的告别：它把繁盛一点一点收拾好，然后轻声说，该休息了。于是我也裹紧外套，走进屋里，煮一壶热茶，开始期待冬天的第一场雪。（全文约 420 字）\\n\"}"
+    },
+    {
+      "type": "completed",
+      "finishReason": "tool_calls"
+    }
+  ]
+}

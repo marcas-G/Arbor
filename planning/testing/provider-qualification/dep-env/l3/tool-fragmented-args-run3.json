@@ -1,0 +1,34 @@
+{
+  "label": "tool-fragmented-args",
+  "run": 3,
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModel": "deepseek-chat",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "调用 write_file 把 path 设为 notes.md，content 写一段至少 200 字的中文短文（关于秋天）。"
+      }
+    ],
+    "tools": [
+      "write_file"
+    ]
+  },
+  "wire": [
+    {
+      "type": "usage",
+      "inputTokens": 303,
+      "outputTokens": 277
+    },
+    {
+      "type": "tool_call",
+      "callRef": "call_00_w7ZfhEYQlP6gqeYC00He4739",
+      "toolName": "write_file",
+      "argumentsJson": "{\"path\": \"notes.md\", \"content\": \"# 秋日随笔\\n\\n秋天总是在一场细雨之后悄然抵达。清晨推开窗，空气里带着一丝凉意，风不再黏稠，而是干净、利落，像被溪水洗过一般。梧桐的叶子开始泛黄，先是边角微微卷起，随后整片叶子在枝头摇晃，像是犹豫了很久，终于决定放手，旋转着落向地面。银杏则不同，它的黄是明亮而热烈的，一阵风过，满地碎金，踩上去沙沙作响，仿佛大地在低声说话。\\n\\n秋天的天空似乎格外高远，云被风推得很薄，蓝天干净得让人想深呼吸。田野里稻穗低垂，果园中果实沉甸甸地坠着，阳光不再灼人，只是温和地铺在万物之上。傍晚来得早了，夕阳把影子拉得很长，炊烟升起，归家的人披着一身暖橙色的光。\\n\\n秋天不是衰败，而是一种成熟的安静。它教人放慢脚步，学会收获，也学会告别，在微凉的夜里，把一年的心事慢慢沉淀下来。\\n\"}"
+    },
+    {
+      "type": "completed",
+      "finishReason": "tool_calls"
+    }
+  ]
+}

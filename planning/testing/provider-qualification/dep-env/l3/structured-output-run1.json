@@ -1,0 +1,70 @@
+{
+  "label": "structured-output",
+  "run": 1,
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModel": "deepseek-chat",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "请只输出一个 JSON 对象：{\"_tag\":\" completion \",\"text\":\"确认\"}，把 _tag 填为 completion，text 填一段确认语。不要输出其它内容。"
+      }
+    ],
+    "tools": []
+  },
+  "wire": [
+    {
+      "type": "text",
+      "text": "{\""
+    },
+    {
+      "type": "text",
+      "text": "_"
+    },
+    {
+      "type": "text",
+      "text": "tag"
+    },
+    {
+      "type": "text",
+      "text": "\":\""
+    },
+    {
+      "type": "text",
+      "text": "com"
+    },
+    {
+      "type": "text",
+      "text": "pletion"
+    },
+    {
+      "type": "text",
+      "text": "\",\""
+    },
+    {
+      "type": "text",
+      "text": "text"
+    },
+    {
+      "type": "text",
+      "text": "\":\""
+    },
+    {
+      "type": "text",
+      "text": "确认"
+    },
+    {
+      "type": "text",
+      "text": "\"}"
+    },
+    {
+      "type": "usage",
+      "inputTokens": 43,
+      "outputTokens": 11
+    },
+    {
+      "type": "completed",
+      "finishReason": "stop"
+    }
+  ]
+}

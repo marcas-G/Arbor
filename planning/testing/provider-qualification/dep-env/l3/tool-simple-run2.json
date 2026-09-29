@@ -1,0 +1,34 @@
+{
+  "label": "tool-simple",
+  "run": 2,
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModel": "deepseek-chat",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "帮我查询北京现在的天气。"
+      }
+    ],
+    "tools": [
+      "get_weather"
+    ]
+  },
+  "wire": [
+    {
+      "type": "usage",
+      "inputTokens": 270,
+      "outputTokens": 38
+    },
+    {
+      "type": "tool_call",
+      "callRef": "call_00_rVuDMhKoz5T1syKxWa5K0229",
+      "toolName": "get_weather",
+      "argumentsJson": "{\"city\": \"北京\"}"
+    },
+    {
+      "type": "completed",
+      "finishReason": "tool_calls"
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "label": "tool-fragmented-args",
+  "run": 2,
+  "endpoint": "https://api.deepseek.com/v1",
+  "wireModel": "deepseek-chat",
+  "request": {
+    "messages": [
+      {
+        "role": "user",
+        "text": "调用 write_file 把 path 设为 notes.md，content 写一段至少 200 字的中文短文（关于秋天）。"
+      }
+    ],
+    "tools": [
+      "write_file"
+    ]
+  },
+  "wire": [
+    {
+      "type": "text",
+      "text": "I"
+    },
+    {
+      "type": "text",
+      "text": "'ll"
+    },
+    {
+      "type": "text",
+      "text": " write"
+    },
+    {
+      "type": "text",
+      "text": " the"
+    },
+    {
+      "type": "text",
+      "text": " autumn"
+    },
+    {
+      "type": "text",
+      "text": "-themed"
+    },
+    {
+      "type": "text",
+      "text": " essay"
+    },
+    {
+      "type": "text",
+      "text": " to"
+    },
+    {
+      "type": "text",
+      "text": " notes"
+    },
+    {
+      "type": "text",
+      "text": ".md"
+    },
+    {
+      "type": "text",
+      "text": " for"
+    },
+    {
+      "type": "text",
+      "text": " you"
+    },
+    {
+      "type": "text",
+      "text": "."
+    },
+    {
+      "type": "usage",
+      "inputTokens": 303,
+      "outputTokens": 395
+    },
+    {
+      "type": "tool_call",
+      "callRef": "call_00_6BeTsizNL3NIxsBtYapN5632",
+      "toolName": "write_file",
+      "argumentsJson": "{\"path\": \"notes.md\", \"content\": \"# 秋日随笔\\n\\n秋天大概是一年之中最容易被忽略、却又最值得细细品味的季节。它不像春天那样喧闹，也不像夏天那样炽烈，更不像冬天那样决绝。秋天是温和的、克制的，它把一整年的热闹慢慢收拢起来，交还给大地。\\n\\n清晨推开窗，空气里已经带上了一层薄薄的凉意。天空格外高远，蓝得干净而透亮，云像是被谁用水轻轻洗过，稀疏地挂在天边。梧桐叶子开始泛黄，风一吹，便打着旋儿落下来，铺在路面上，踩上去沙沙作响。那是秋天特有的声音，安静，却并不寂寞。\\n\\n田野里是另一番景象。稻子熟了，金灿灿地弯着腰，像是对土地道谢。果园里的柿子挂满枝头，红得像一盏盏小灯笼。农人忙着收割、晾晒，脸上带着满足的笑意。秋天从来不是空手而来的，它把春天的播种、夏天的生长，都酿成了此刻沉甸甸的收获。\\n\\n人们常说秋天萧瑟，可我倒觉得，秋天更像是一种沉淀。它让人放慢脚步，去想想走过的路，也去准备迎接即将到来的寒冬。落叶归根，并非终结，而是为来年的新生悄悄积蓄力量。\\n\\n傍晚时分，夕阳把天边染成暖橙色，风里飘着桂花的甜香。这样的时刻，总让人心生安宁。秋天教会我们的，也许正是这种从容——不张扬，不慌张，只是静静地丰盈着自己，然后坦然地把一切交给时间。\\n\"}"
+    },
+    {
+      "type": "completed",
+      "finishReason": "tool_calls"
+    }
+  ]
+}
