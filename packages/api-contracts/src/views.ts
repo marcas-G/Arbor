@@ -233,6 +233,9 @@ export type TranscriptEntry =
       readonly executionId: string;
       readonly body: string;
       readonly occurredAt: string;
+      /** The human message this answer settles (additive; lets streaming
+       * previews correlate with the authoritative turn). */
+      readonly messageId?: string;
     }
   | {
       readonly kind: string;

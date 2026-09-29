@@ -35,10 +35,15 @@ export function SubmitHumanMessageForm({
   readonly projectId: string;
   readonly targetWorkspaceId: string;
   readonly onSubmitted?: ((receipt: CommandReceiptView) => void) | undefined;
-  readonly onMessageSubmitted?: ((messageId: string) => void) | undefined;
+  readonly onMessageSubmitted?:
+    | ((messageId: string, body: string) => void)
+    | undefined;
 }) {
   const queryClient = useQueryClient();
-  const idsRef = useRef<{ readonly messageId: string } | null>(null);
+  const idsRef = useRef<{
+    readonly messageId: string;
+    readonly bodyRef: string;
+  } | null>(null);
   const { handleSubmit, setValue, watch, reset, formState } =
     useForm<MessageValues>({
       resolver: zodResolver(
@@ -51,9 +56,9 @@ export function SubmitHumanMessageForm({
     actor,
     token,
     onSubmitted: (receipt) => {
-      const submittedMessageId = idsRef.current?.messageId;
-      if (submittedMessageId !== undefined) {
-        onMessageSubmitted?.(submittedMessageId);
+      const submitted = idsRef.current;
+      if (submitted !== null) {
+        onMessageSubmitted?.(submitted.messageId, submitted.bodyRef);
       }
       idsRef.current = null;
       reset({ bodyRef: "" });
@@ -64,7 +69,10 @@ export function SubmitHumanMessageForm({
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
     void handleSubmit((values) => {
-      const ids = idsRef.current ?? { messageId: `msg_${uuidv7()}` };
+      const ids = idsRef.current ?? {
+        messageId: `msg_${uuidv7()}`,
+        bodyRef: values.bodyRef,
+      };
       idsRef.current = ids;
       void submit("SubmitHumanMessage", projectId, {
         messageId: ids.messageId,

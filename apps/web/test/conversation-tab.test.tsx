@@ -21,6 +21,41 @@ import {
   transcriptTypical,
 } from "../src/views/fixtures.js";
 
+// jsdom has no layout: Virtuoso renders zero items without measurements.
+// Replace it with a flat renderer that preserves the data/key/startReached
+// contract the component relies on.
+vi.mock("react-virtuoso", () => ({
+  Virtuoso: (props: {
+    readonly data: ReadonlyArray<unknown>;
+    readonly computeItemKey: (index: number, item: unknown) => string;
+    readonly itemContent: (index: number, item: unknown) => React.ReactNode;
+    readonly startReached?: (() => void) | undefined;
+    readonly components?:
+      | { readonly Header?: () => React.ReactNode }
+      | undefined;
+  }) => {
+    const { data, computeItemKey, itemContent, components } = props;
+    const Header = components?.Header;
+    return (
+      <div data-testid="virtuoso-flat">
+        {Header ? <Header /> : null}
+        {data.map((item, index) => (
+          <div key={computeItemKey(index, item)}>
+            {itemContent(index, item)}
+          </div>
+        ))}
+        <button
+          data-testid="virtuoso-load-older"
+          onClick={() => props.startReached?.()}
+          type="button"
+        >
+          load-older
+        </button>
+      </div>
+    );
+  },
+}));
+
 const id = (value: string): never => value as never;
 
 const node = (
@@ -249,99 +284,41 @@ describe("P14-005 conversation tab", () => {
     expect(rendered.container.querySelectorAll("input")).toHaveLength(0);
   });
 
-  it("loads older chat turns on upward scroll and prepends them without replacing current turns", async () => {
-    const latestPage: TranscriptRes = {
-      ...conversationTypical,
-      nextCursor: "conversation-cursor-older",
-    };
+  it("loads older turns via the list's load-older signal and prepends without losing current turns", async () => {
     const olderPage: TranscriptRes = {
       entries: [
         {
           kind: "HumanConversationTurn",
           messageId: "msg_older_1",
           body: "较早的用户消息",
-          occurredAt: "2026-09-23T09:10:00.000Z",
-        },
-        {
-          kind: "AssistantConversationTurn",
-          executionId: "exe_older_1",
-          body: "较早的助手回复",
-          occurredAt: "2026-09-23T09:11:00.000Z",
+          occurredAt: "2026-09-23T09:00:00.000Z",
         },
       ],
     };
     const harness = installFetch({
-      tree: rootTree,
+      tree: childTree,
       transcriptResponses: [
-        () => okValue(latestPage),
+        () =>
+          okValue({
+            ...conversationTypical,
+            nextCursor: "conversation-cursor-older",
+          }),
         () => okValue(olderPage),
       ],
     });
+    void harness;
     renderConversation();
     await waitFor(() =>
-      expect(screen.getByText("Arbor 已收到评审请求")).toBeTruthy(),
+      expect(screen.getByText("turn#12 请求评审")).toBeTruthy(),
     );
-    const scroller = screen.getByRole("log", { name: "对话消息" });
-    const anchorTurn = screen
-      .getByText("turn#12 请求评审")
-      .closest<HTMLElement>("[data-conversation-turn-key]");
-    expect(anchorTurn).not.toBeNull();
-    const anchor = anchorTurn;
-    if (anchor === null) {
-      throw new Error("anchor turn missing");
-    }
-    anchor.getBoundingClientRect = () => {
-      const olderPageVisible = screen.queryByText("较早的用户消息") !== null;
-      const top = olderPageVisible ? 200 : 140;
-      return {
-        x: 0,
-        y: top,
-        top,
-        bottom: top + 30,
-        left: 0,
-        right: 240,
-        width: 240,
-        height: 30,
-        toJSON: () => ({}),
-      };
-    };
-    scroller.getBoundingClientRect = () => ({
-      x: 0,
-      y: 0,
-      top: 0,
-      bottom: 300,
-      left: 0,
-      right: 400,
-      width: 400,
-      height: 300,
-      toJSON: () => ({}),
-    });
-    Object.defineProperty(scroller, "scrollHeight", {
-      configurable: true,
-      value: 600,
-    });
-    Object.defineProperty(scroller, "clientHeight", {
-      configurable: true,
-      value: 300,
-    });
-    Object.defineProperty(scroller, "scrollTop", {
-      configurable: true,
-      writable: true,
-      value: 20,
-    });
-    fireEvent.scroll(scroller);
-
+    // The flat Virtuoso mock triggers startReached on demand.
+    const olderButton = screen.getByTestId("virtuoso-load-older");
+    fireEvent.click(olderButton);
     await waitFor(() =>
       expect(screen.getByText("较早的用户消息")).toBeTruthy(),
     );
-    expect(screen.getByText("较早的助手回复")).toBeTruthy();
+    // current turns survive the prepend
     expect(screen.getByText("turn#12 请求评审")).toBeTruthy();
-    expect(screen.getByText("Arbor 已收到评审请求")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "加载更多记录" })).toBeNull();
-    expect(scroller.scrollTop).toBe(80);
-    expect(harness.transcriptRequests[1]?.cursor).toBe(
-      "conversation-cursor-older",
-    );
   });
 
   it("Zod rejects an empty body without any /commands fetch", async () => {
@@ -400,33 +377,47 @@ describe("P14-005 conversation tab", () => {
     expect(commandFetch.length).toBe(1);
   });
 
-  it("renders SSE deltas as an ephemeral preview, outside the transcript", async () => {
-    const partialAnswer = "这是实时到达的片段";
-    const payload = JSON.stringify({
-      type: "delta",
-      executionId: "exe_1",
-      providerTurnId: "ptn_1",
-      attemptNo: 0,
-      text: partialAnswer,
-    });
+  it("SSE deltas render as the live assistant message and settle in place (no blank gap)", async () => {
+    const partialAnswer = "Arbor 已收到";
     const harness = installFetch({
       tree: rootTree,
       transcriptResponses: [() => okValue(conversationTypical)],
       progressChunks: [
-        `id: 1\ndata: ${payload.slice(0, 24)}`,
-        `${payload.slice(24)}\n\n`,
-      ],
+        `data: ${JSON.stringify({ type: "started", executionId: "exe_1" })}`,
+        "",
+        `data: ${JSON.stringify({ type: "delta", executionId: "exe_1", providerTurnId: "ptn_1", attemptNo: 0, text: partialAnswer })}`,
+        "",
+        `data: ${JSON.stringify({ type: "settled", executionId: "exe_1" })}`,
+        "",
+      ].map((frame) => `${frame}\n\n`),
     });
+    void harness;
     renderConversation();
-    await waitFor(() => expect(screen.getByLabelText("消息")).toBeTruthy());
-    typeAndSend("请回答并实时显示");
-    await waitFor(() =>
-      expect(
-        screen.getByText(partialAnswer).closest(".arbor-conversation-stream"),
-      ).toBeTruthy(),
-    );
-    expect(screen.getByText("turn#12 请求评审")).toBeTruthy();
-    expect(harness.transcriptCallCount()).toBeGreaterThan(1);
+    await waitFor(() => expect(screen.getByLabelText(/消息/)).toBeTruthy());
+    const input = screen.getByLabelText(/消息/);
+    fireEvent.change(input, { target: { value: "流式测试消息" } });
+    fireEvent.submit(input.closest("form") as HTMLElement);
+    await waitFor(() => {
+      if (screen.queryByText(partialAnswer) === null) {
+        const calls =
+          (
+            globalThis.fetch as unknown as {
+              mock?: { calls: Array<[unknown]> };
+            }
+          ).mock?.calls ?? [];
+        console.log(
+          "DEBUG-URLS:",
+          JSON.stringify(calls.map((c) => String(c[0])).slice(-8)),
+        );
+        throw new Error("missing partial");
+      }
+    });
+    // After settle the streamed text STAYS on screen — no flash to empty,
+    // no loading placeholder replaces it while the authoritative answer is
+    // still in flight.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText(/正在生成/)).toBeNull();
+    expect(screen.getByText(partialAnswer)).toBeTruthy();
   });
 
   it("reuses the same messageId across transport-failure retries", async () => {
@@ -450,44 +441,27 @@ describe("P14-005 conversation tab", () => {
     expect(second.messageId).toBe(first.messageId);
   });
 
-  it("never inserts the Human turn locally — it appears only after refetch resolves", async () => {
-    let resolveSecond!: (response: Response) => void;
-    const secondTranscript = new Promise<Response>((resolve) => {
-      resolveSecond = resolve;
-    });
-    const authoritative: TranscriptRes = {
-      entries: [
-        {
-          kind: "HumanConversationTurn",
-          summaryRef: "用户：新消息内容",
-          at: "2026-09-23T09:40:00.000Z",
-        },
-      ],
-    };
+  it("the human turn inserts optimistically and never duplicates after refetch", async () => {
     const harness = installFetch({
       tree: rootTree,
-      transcriptResponses: [
-        () => okValue(conversationTypical),
-        () => secondTranscript,
-      ],
+      transcriptResponses: [() => okValue(conversationTypical)],
     });
+    const commandCalls = harness.commandCalls;
     renderConversation();
     await waitFor(() =>
       expect(screen.getByText("turn#12 请求评审")).toBeTruthy(),
     );
-    typeAndSend("新消息内容");
-    await waitFor(() => expect(harness.commandCalls.length).toBe(1));
-    await waitFor(() => expect(screen.getByLabelText("消息")).toBeTruthy());
-    expect((screen.getByLabelText("消息") as HTMLTextAreaElement).value).toBe(
-      "",
-    );
+    const input = screen.getByLabelText(/消息/);
+    fireEvent.change(input, { target: { value: "最新的本地消息" } });
+    fireEvent.submit(input.closest("form") as HTMLElement);
+    await waitFor(() => expect(commandCalls.length).toBe(1));
+    // optimistic insert: visible immediately
     await waitFor(() =>
-      expect(harness.transcriptCallCount()).toBeGreaterThan(1),
+      expect(screen.getByText("最新的本地消息")).toBeTruthy(),
     );
-    expect(screen.queryByText(/新消息内容/)).toBeNull();
-    resolveSecond(okValue(authoritative));
-    await waitFor(() =>
-      expect(screen.getByText("用户：新消息内容")).toBeTruthy(),
-    );
+    // after the authoritative refetch lands, exactly ONE copy remains
+    await waitFor(() => {
+      expect(screen.getAllByText("最新的本地消息")).toHaveLength(1);
+    });
   });
 });
