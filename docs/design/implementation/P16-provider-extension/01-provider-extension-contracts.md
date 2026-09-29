@@ -248,7 +248,7 @@ export const makeProviderRegistry = (
 
 ---
 
-## 7. CapabilityQualification（冻结）
+## 7. CapabilityQualification（冻结；Gate B acceptance 澄清 2 并入）
 
 资格对象 = **deployment**（不是 adapter、不是 modelRef）：同一 adapter 家族在不同 endpoint/模型上有不同行为，资格必须绑定具体部署。
 
@@ -257,15 +257,38 @@ export interface CapabilityQualification {
   readonly deploymentId: string;
   readonly adapterId: ProtocolAdapterId;
   readonly modelRef: string;
+  /**
+   * Gate B acceptance 澄清 2：资格绑定具体 ResolvedModelBinding 的指纹。
+   * fingerprint = 对 binding 稳定字段（modelRef/adapterId/deploymentId/
+   * endpoint/wireModelName/capability 摘要/executionPolicy 摘要/
+   * protocolFamily/failureTaxonomy）的 canonical-JSON 确定性哈希（SHA-256）。
+   */
+  readonly bindingFingerprint: string;
+  /**
+   * 身份与版本记录——足以机械判定既有证据是否仍然适用：
+   * 任一字段变化 ⇒ fingerprint 变化 ⇒ 证据失效需重跑。
+   */
+  readonly identity: {
+    readonly adapterId: ProtocolAdapterId;
+    readonly adapterVersion?: string;        // 可获得时
+    readonly providerSite: string;           // endpoint（无网络家族为 "in-process"）
+    readonly wireModelName: string;
+    readonly modelRevision?: string;         // 可获得时
+    readonly serverBuildId?: string;         // 可获得时
+    readonly parserProfile?: string;         // 可获得时
+    readonly protocolFamily: ProviderProtocolFamily;
+    readonly failureTaxonomy: string;
+  };
+  /** 资格判定时 ModelProfile 的声明能力快照（一致性比较用，非回写）。 */
+  readonly declaredCapability: ModelCapability;
+  /** 证据实际观察到的能力（conformance + three-run 汇总）。 */
+  readonly qualifiedCapability: ModelCapability;
   /** capability 证据根（现有 planning/testing/core-capability/evidence/…）。 */
   readonly evidenceDir: string;
   /** three-run stability oracle 的通过计数（≥3）。 */
   readonly stableRuns: number;
-  readonly serverBuildId?: string;      // 现有 HttpProviderRuntime.serverBuildId
-  readonly modelRevision?: string;
-  readonly qualifiedAt: string;         // ISO 8601
-  /** conformance suite 结果引用（离线 fake-transport 跑，见 E3）。 */
   readonly conformanceRun: string;
+  readonly qualifiedAt: string;              // ISO 8601
 }
 ```
 
@@ -274,8 +297,10 @@ export interface CapabilityQualification {
 |---|---|---|
 | Q1 | 离线 conformance | E3 suite 全绿（fake transport，无网络） |
 | Q2 | 真实端点 three-run | `run-capability.mjs --repeats 3` 全过，evidence 文件 ≥3 份（现有 oracle） |
-| Q3 | 身份绑定 | evidence 目录含 provider-config（endpoint/model/serverBuildId），与 deployment 字段一致 |
-| Q4 | 能力位一致 | profile.capabilityFlags 与 evidence 中实际观察一致（Q2 观察到 cache token 报告而 flags 声明 false → 拒绝） |
+| Q3 | 身份绑定 | qualification.identity 与 deployment/adapter/profile 字段一致，且 bindingFingerprint 与当前 ResolvedModelBinding 重算值一致 |
+| Q4 | 能力位一致 | `declaredCapability`/capabilityFlags 与 `qualifiedCapability`/观察一致；**declared capability ≠ qualified capability ⇒ 资格失败（FAIL）** |
+
+**数据流单向性**：qualification evidence **不修改** ModelProfile / ProviderRegistry / ModelCatalog（INV-P16-10）。资格失败只影响对应 deployment 的 qualification 状态（该 deployment 不得进入生产启用），不改变任何声明面。
 
 CI 不依赖资格（CI 永远 fake）；资格是**生产 deployment 启用**的流程前置（main.ts 显式配置 + evidence 存在性检查，Gate B 落地为 `verify-provider-extension.mjs --check-qualification`，非运行时强制）。
 
@@ -302,6 +327,8 @@ INV-P16-5  capabilityFlags 声明 true ⇔ 对应 conformance 用例 + qualifica
 INV-P16-6  P16 不引入 agent-runtime 的任何 import/行为变更（Gate B diff 为空）
 INV-P16-7  Profile/Deployment/Registry 是纯数据（函数字段仅 ProtocolAdapter.layerFor）；可 JSON 序列化
 INV-P16-8  deployment 只携带 SecretRef；raw secret 仅执行边界解析（P12 `03` no-leak 全覆盖）
+INV-P16-9  declared capability ≠ qualified capability ⇒ 该 deployment 资格失败（FAIL，机械判据）
+INV-P16-10 qualification evidence 不修改 ModelProfile/Registry/Catalog；资格失败只影响该 deployment 的 qualification 状态
 ```
 
 ---

@@ -60,14 +60,16 @@ Next activity: **Dogfooding / Release Validation** — use Arbor for real tasks;
 Web v1 implementation is closed.
 P16 (Provider Extension Architecture — DID-side implementation design under
 `docs/design/implementation/P16-provider-extension/`, governance-authorized
-2026-09-29): **Gate A design contracts FROZEN** (`01-provider-extension-contracts.md`:
-ProtocolAdapter / ProviderProfile / ModelProfile / ModelDeployment /
-ResolvedModelBinding / ProviderRegistry / CapabilityQualification + INV-P16-1..8;
-`02-extensibility-proof-plan.md`: mechanical gates E1–E5). **Gate B (implementation)
-NOT YET AUTHORIZED** — requires design closure review Blocking=0 plus explicit
-governance authorization. Scope guards: no real new provider family, zero
-agent-runtime diff, no cache-usage/continuation implementation (declarative
-capability flags only).
+2026-09-29): **Gate A design contracts FROZEN**; **Gate B Design Closure =
+ACCEPTED, implementation = AUTHORIZED (2026-09-29)** with two acceptance
+clarifications merged (E4 split into E4a compatible-provider / E4b
+protocol-family extensibility; CapabilityQualification binds a
+ResolvedModelBinding fingerprint with full identity/version records,
+INV-P16-9/10 frozen). Exit = mechanical evidence E1–E5 incl. E4a/E4b
+proofs; **STOP if either E4a or E4b fails — no further provider family
+onboarding**. Scope guards: no real new provider family, zero agent-runtime
+diff, no Model Context semantic compilation change, no cache-usage/native
+continuation implementation, no CanonicalProviderEvent extension.
 **SYSTEM IMPLEMENTATION COMPLETE** — **FINAL CLOSURE PASS**
 (`planning/final-system-closure.md`; `planning/results/ARBOR_FINAL.result.md`).
 P14 (Chat-First 主工作区对话面 — DID v1.16 G-A–G-F: SubmitHumanMessage +
