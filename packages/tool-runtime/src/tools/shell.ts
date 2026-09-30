@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { Effect } from "effect";
 import {
   bounded,
@@ -51,41 +51,34 @@ export const shellExecutor: ToolExecutor = {
           resultRef: null,
         };
       }
-      try {
-        const _stdout = execFileSync("sh", ["-c", args.command], {
-          cwd: sandbox.rootPath,
-          timeout: args.timeoutMs ?? 10_000,
-          encoding: "utf8",
-        });
-        return {
-          settlement: { _tag: "Success" },
-          observation: bounded(
-            JSON.stringify({
-              exitCode: 0,
-              stdoutRef: "",
-              stderrRef: "",
-              truncated: false,
-            }),
-          ),
-          resultRef: null,
-        };
-      } catch (error) {
-        const status =
-          typeof error === "object" && error !== null && "status" in error
-            ? Number((error as { status: unknown }).status)
-            : 1;
-        return {
-          settlement: { _tag: "Success" },
-          observation: bounded(
-            JSON.stringify({
-              exitCode: status,
-              stdoutRef: "",
-              stderrRef: "",
-              truncated: false,
-            }),
-          ),
-          resultRef: null,
-        };
-      }
+      const executable = process.platform === "win32" ? "pwsh" : "bash";
+      const shellArgs =
+        process.platform === "win32"
+          ? ["-NoProfile", "-NonInteractive", "-Command", args.command]
+          : ["-lc", args.command];
+      const result = spawnSync(executable, shellArgs, {
+        cwd: sandbox.rootPath,
+        timeout: args.timeoutMs ?? 10_000,
+        encoding: "utf8",
+      });
+      const exitCode = result.status ?? 1;
+      const payload = JSON.stringify({
+        exitCode,
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+        stdoutRef: "",
+        stderrRef: "",
+        truncated: false,
+      });
+      return {
+        settlement:
+          result.error?.name === "ETIMEDOUT"
+            ? { _tag: "RuntimeFailure", cause: "shell timeout" }
+            : exitCode === 0
+              ? { _tag: "Success" }
+              : { _tag: "ExpectedFailure" },
+        observation: bounded(payload),
+        resultRef: null,
+      };
     }),
 };

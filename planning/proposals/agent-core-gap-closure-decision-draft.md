@@ -1,6 +1,6 @@
 # Agent Core Gap Closure — Governance Decision Draft
 
-**Status:** RECOMMENDED / AWAITING MANUAL ACCEPTANCE
+**Status:** ACCEPTED BY MANUAL GOVERNANCE — 2026-10-01
 **Date:** 2026-10-01
 
 ## 1. Tool authority source
@@ -15,21 +15,23 @@ capabilities, which must be removed.
 
 ### Recommended ruling
 
-Adopt a hybrid baseline:
+Adopt explicit parent-distributed capabilities:
 
-1. `read` and `list` are baseline capabilities of a ResponsibilityBound
-   Execution, limited to the Workspace's current ResourceBoundary and current
-   ControlBasis.
-2. `patch`, `shell`, Project tools, and every non-read-only tool require an
-   active explicit PermissionGrant whose scope covers every requested
-   capability.
-3. ExecutionBound specialists inherit no new capability. Their ceiling is the
+1. Root Workspace receives its initial capability ceiling from the Project
+   creator/Project Policy.
+2. Parent Workspace creation of a Child explicitly distributes any of
+   `list`, `read`, `patch`, `shell`; every child capability must be a subset of
+   the parent's current ceiling.
+3. No capability is implicit, including list/read.
+4. Every tool invocation must be covered by the owning Workspace ceiling and
+   any narrower active PermissionGrant.
+5. ExecutionBound specialists inherit no new capability. Their ceiling is the
    intersection of the parent InvocationAuthority and their mission/resource
    boundary.
-4. Authority TTL comes from policy; no indefinite expiry.
-5. Tool Runtime resolves regions first, then invokes AuthorityResolver with the
+6. Authority TTL comes from policy; no indefinite expiry.
+7. Tool Runtime resolves regions first, then invokes AuthorityResolver with the
    exact ToolDefinition capability metadata and resolved resource-space IDs.
-6. Denial is a normal `Denied` observation, not a defect and not a canonical
+8. Denial is a normal `Denied` observation, not a defect and not a canonical
    mutation.
 
 ## 2. G-V2-1 — AssignWork provenance
