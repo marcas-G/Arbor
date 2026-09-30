@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { Duplex } from "node:stream";
 import type { ConversationStreamFrame } from "@arbor/api-contracts";
 import type { Principal } from "@arbor/domain";
+import type { ProjectDirectoryService } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -37,6 +38,7 @@ export interface WebTransportConfig {
   readonly conversationProgress?: ConversationProgressHub | undefined;
   /** Journal-tail watermark source (SqlClient-backed). */
   readonly sql: SqlClient;
+  readonly projectDirectory: ProjectDirectoryService;
   /** Vite build output; absent disables static hosting. */
   readonly staticRoot?: string | undefined;
   readonly host?: string | undefined;
@@ -247,29 +249,18 @@ const readLocalProjectDirectory = async (
     });
     return;
   }
-  const rows = await Effect.runPromise(
-    config.sql.unsafe<{
-      project_id: string;
-      name: string;
-      lifecycle: "Open" | "Closed";
-      root_workspace_id: string;
-      revision: number;
-      updated_at: string;
-    }>(
-      "SELECT project_id, name, lifecycle, root_workspace_id, revision, updated_at FROM projects ORDER BY updated_at DESC, project_id ASC",
-    ),
-  );
+  const rows = await Effect.runPromise(config.projectDirectory.list());
   sendJson(response, 200, {
     ok: true,
     status: 200,
     body: {
       projects: rows.map((row) => ({
-        projectId: row.project_id,
+        projectId: row.projectId,
         name: row.name,
         lifecycle: row.lifecycle,
-        rootWorkspaceId: row.root_workspace_id,
+        rootWorkspaceId: row.rootWorkspaceId,
         revision: row.revision,
-        updatedAt: row.updated_at,
+        updatedAt: row.updatedAt,
       })),
     },
   });

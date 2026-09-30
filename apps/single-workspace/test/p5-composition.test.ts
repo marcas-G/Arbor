@@ -8,7 +8,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   buildSliceLayer,
-  P16_MIGRATIONS,
+  CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
 
@@ -23,7 +23,7 @@ describe("P5 composition root", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P16_MIGRATIONS);
+          yield* runMigrations(CURRENT_MIGRATIONS);
           const sql = yield* SqlClient;
           const version = yield* sql.unsafe<{ user_version: number }>(
             "PRAGMA user_version",

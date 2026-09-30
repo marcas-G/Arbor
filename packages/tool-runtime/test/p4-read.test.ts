@@ -1,6 +1,6 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ToolExecutionContext, ToolIntent } from "@arbor/ports";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
@@ -40,6 +40,50 @@ describe("P4 read tool", () => {
       Effect.exit(
         readExecutor.execute({
           intent: intent('{"path":{"path":"../../etc/passwd"}}'),
+          definition: {} as never,
+          context,
+          sandbox,
+          regions: [],
+        }),
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+  });
+
+  it("rejects an adjacent directory that shares the root string prefix", async () => {
+    const sibling = `${root}-escape`;
+    mkdirSync(sibling, { recursive: true });
+    writeFileSync(join(sibling, "secret.txt"), "secret");
+    const exit = await Effect.runPromise(
+      Effect.exit(
+        readExecutor.execute({
+          intent: intent(
+            JSON.stringify({
+              path: { path: `../${basename(sibling)}/secret.txt` },
+            }),
+          ),
+          definition: {} as never,
+          context,
+          sandbox,
+          regions: [],
+        }),
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+  });
+
+  it("rejects a sandbox symlink or junction that resolves outside", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "p4-read-outside-"));
+    writeFileSync(join(outside, "secret.txt"), "secret");
+    symlinkSync(
+      outside,
+      join(root, "outside-link"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const exit = await Effect.runPromise(
+      Effect.exit(
+        readExecutor.execute({
+          intent: intent('{"path":{"path":"outside-link/secret.txt"}}'),
           definition: {} as never,
           context,
           sandbox,

@@ -12,6 +12,7 @@ const EXPECTED_ERROR_TAGS = [
   "IdempotencyConflict",
   "AuthorityDenied",
   "RevisionConflict",
+  "InvalidProjectName",
   "WorkNotOpen",
   "TerminalLifecycleMutation",
   "RetirePreconditionFailed",
@@ -40,6 +41,8 @@ const describeError = (error: DomainError): string => {
       return `authority:${error.reason}`;
     case "RevisionConflict":
       return `revision:${error.expected}/${error.actual}`;
+    case "InvalidProjectName":
+      return `project-name:${error.reason}`;
     case "WorkNotOpen":
       return `work:${error.workId}`;
     case "TerminalLifecycleMutation":

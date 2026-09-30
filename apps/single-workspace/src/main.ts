@@ -7,6 +7,7 @@ import {
 } from "@arbor/execution-runtime";
 import {
   type ModelDeployment,
+  ProjectDirectory,
   type ProviderExecutionPolicyOverrides,
   secretRef,
 } from "@arbor/ports";
@@ -14,7 +15,7 @@ import { Duration, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   buildSliceLayer,
-  P17_MIGRATIONS,
+  CURRENT_MIGRATIONS,
   runMigrations,
   type SliceConfig,
   type SliceServices,
@@ -193,7 +194,7 @@ const isWorkspaceId = (value: string): boolean =>
 
 export const runOnce = (workspaceId: string, principalRef = "runtime:system") =>
   Effect.gen(function* () {
-    yield* runMigrations(P17_MIGRATIONS);
+    yield* runMigrations(CURRENT_MIGRATIONS);
     yield* startupRecovery(parse(Principal)(principalRef));
     return yield* evaluateAndSelect(
       parse(WorkspaceId)(workspaceId),
@@ -257,12 +258,14 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
     if (config.webTransport !== undefined) {
       const boundary = yield* TransportBoundary;
       const sql = yield* SqlClient;
+      const projectDirectory = yield* ProjectDirectory;
       const handle = yield* Effect.promise(() =>
         startWebTransport({
           http: boundary.http,
           webSocket: boundary.webSocket,
           authenticator: boundary.authenticator,
           sql,
+          projectDirectory,
           ...(config.webTransport?.staticRoot !== undefined
             ? { staticRoot: config.webTransport.staticRoot }
             : {}),

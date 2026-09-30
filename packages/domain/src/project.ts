@@ -16,6 +16,32 @@ export const makeProjectPolicy = (
 
 export type ProjectLifecycle = "Open" | "Closed";
 
+const PROJECT_NAME_MAX_SCALARS = 120;
+const UNSAFE_PROJECT_NAME = /[\p{Cc}\p{Cf}\p{Cs}]/u;
+
+/** Local-product ProjectName v1: deterministic, useful and intentionally
+ * smaller than the previously proposed UTS#39 directory policy. */
+export const normalizeProjectName = (input: string): DomainResult<string> => {
+  const normalized = input
+    .normalize("NFC")
+    .replace(/\p{White_Space}+/gu, " ")
+    .trim();
+  const length = [...normalized].length;
+  if (length === 0 || length > PROJECT_NAME_MAX_SCALARS) {
+    return err({
+      _tag: "InvalidProjectName",
+      reason: `name must contain 1..${PROJECT_NAME_MAX_SCALARS} Unicode scalars`,
+    });
+  }
+  if (UNSAFE_PROJECT_NAME.test(normalized)) {
+    return err({
+      _tag: "InvalidProjectName",
+      reason: "name contains control, format, or surrogate characters",
+    });
+  }
+  return ok(normalized);
+};
+
 export interface Project {
   readonly projectId: ProjectId;
   readonly name: string;
@@ -122,9 +148,13 @@ export const renameProject = (
       actual: project.revision,
     });
   }
+  const name = normalizeProjectName(input.name);
+  if (!name.ok) {
+    return name;
+  }
   return ok({
     ...project,
-    name: input.name,
+    name: name.value,
     revision: incrementOrdinal(Revision)(project.revision),
   });
 };

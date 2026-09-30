@@ -14,8 +14,8 @@ import { SecretFileLive } from "../adapters/secret-file/dist/index.js";
 import {
   admitExecution,
   buildSliceLayer,
+  CURRENT_MIGRATIONS,
   evaluateAndSelect,
-  P12_MIGRATIONS,
   runMigrations,
 } from "../apps/single-workspace/src/index.js";
 import {
@@ -341,7 +341,7 @@ describe("P12-003 sentinel no-leak", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P12_MIGRATIONS);
+            yield* runMigrations(CURRENT_MIGRATIONS);
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               envelope("CreateProject", projectPayload, commandId("1")),

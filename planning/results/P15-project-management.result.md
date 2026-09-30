@@ -16,13 +16,17 @@
 - Closed projects reject new human messages.
 - Pending/unadmitted/failed conversation turns converge without Closed-project retry loops.
 - Close requests cooperative stop for every unsettled execution in the project.
+- CommandGateway centrally rejects OpenRequired commands for an existing Closed Project.
+- Close terminalizes eligible messages and consumes their Inbox entries atomically.
+- ProjectName v1 is enforced server-side.
+- ProjectDirectory is a local single-user Port backed by SQLite; HTTP owns no directory SQL.
 
 ## Mechanical evidence
 
 - pnpm lint: PASS (751 files)
 - pnpm typecheck: PASS
 - architecture: PASS (115/115)
-- core tests: PASS (1465 passed, 1 skipped)
+- core tests: PASS (1475 passed, 1 skipped)
 - web production build: PASS
 - web tests: PASS (211/211)
 - P18 migration fixture: PASS

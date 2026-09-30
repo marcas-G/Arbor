@@ -27,7 +27,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildSliceLayer,
-  P12_MIGRATIONS,
+  CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
 
@@ -169,7 +169,7 @@ const admitWorkExecution = Effect.gen(function* () {
 
 const runTurns = (_turns: ReadonlyArray<ReadonlyArray<unknown>>) =>
   Effect.gen(function* () {
-    yield* runMigrations(P12_MIGRATIONS);
+    yield* runMigrations(CURRENT_MIGRATIONS);
     yield* seed;
     yield* admitWorkExecution;
     const settlement = yield* runExecution(

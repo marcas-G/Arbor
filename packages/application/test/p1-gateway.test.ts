@@ -23,6 +23,8 @@ import {
   IdGenerator,
   type IdGeneratorService,
   type PendingDomainEvent,
+  ProjectRepository,
+  type ProjectRepositoryService,
   TransactionPort,
   TransactionScope,
 } from "@arbor/ports";
@@ -38,6 +40,7 @@ import {
   FenceStopCheckInertLive,
   type FenceStopOutcome,
   type GatewayEnvelope,
+  projectAdmissionOf,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
 } from "../src/index.js";
@@ -116,6 +119,7 @@ const buildApp = (
   handlers: ReadonlyArray<CommandHandler<unknown, unknown>>,
   fence: Layer.Layer<FenceStopCheck> = FenceStopCheckInertLive,
   transaction: Layer.Layer<TransactionPort> = TransactionPortLive,
+  projectLifecycle: "Open" | "Closed" = "Open",
 ): { readonly app: Layer.Layer<CommandGateway>; readonly state: FakeState } => {
   const state: FakeState = {
     rows: new Map(),
@@ -206,6 +210,10 @@ const buildApp = (
     Layer.succeed(DomainEventJournal, journal),
     Layer.succeed(Clock, clock),
     Layer.succeed(IdGenerator, ids),
+    Layer.succeed(ProjectRepository, {
+      findById: () =>
+        Effect.succeed(Option.some({ lifecycle: projectLifecycle } as never)),
+    } as unknown as ProjectRepositoryService),
     CommandHandlerRegistryLive(handlers),
     fence,
   );
@@ -594,5 +602,46 @@ describe("command authority (P1-DG-11)", () => {
     expect(first.resolution._tag).toBe("Committed");
     expect(replay.resolution._tag).toBe("Committed");
     expect(executions).toBe(1);
+  });
+
+  it("rejects an OpenRequired command before its handler on a Closed project", async () => {
+    let executed = false;
+    const { app } = buildApp(
+      [
+        handler(
+          () => ok({ result: { ok: true }, events: [] }),
+          () => {
+            executed = true;
+          },
+        ),
+      ],
+      FenceStopCheckInertLive,
+      TransactionPortLive,
+      "Closed",
+    );
+    const receipt = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway.execute(
+          envelope({ x: 1 }),
+          externalContext,
+          authorityFor({ x: 1 }),
+        );
+      }),
+      app,
+    );
+    expect(receipt.resolution._tag).toBe("TerminalRejected");
+    if (receipt.resolution._tag === "TerminalRejected") {
+      expect(receipt.resolution.error._tag).toBe("TerminalLifecycleMutation");
+    }
+    expect(executed).toBe(false);
+  });
+
+  it("defaults new commands to OpenRequired and explicitly allows convergence controls", () => {
+    expect(projectAdmissionOf("FutureCommand")).toBe("OpenRequired");
+    expect(projectAdmissionOf("CreateProject")).toBe("Bootstrap");
+    expect(projectAdmissionOf("StopExecution")).toBe("ClosedAllowed");
+    expect(projectAdmissionOf("SettleExecution")).toBe("ClosedAllowed");
+    expect(projectAdmissionOf("RevokePermission")).toBe("ClosedAllowed");
   });
 });

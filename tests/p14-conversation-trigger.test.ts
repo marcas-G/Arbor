@@ -1,4 +1,5 @@
 import { Effect, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   type ConversationSettlementDependencies,
@@ -404,6 +405,18 @@ describe("P14 multi-project daemon coverage (production shape)", () => {
     };
     const program = Effect.gen(function* () {
       yield* adapter.runMigrations(adapter.P16_MIGRATIONS);
+      const sql = yield* SqlClient;
+      yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+      for (const projectId of [
+        "prj_a1111111-0000-7000-8000-000000000001",
+        "prj_b2222222-0000-7000-8000-000000000002",
+        "prj_c3333333-0000-7000-8000-000000000003",
+      ]) {
+        yield* sql.unsafe(
+          "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?, 'p', 'ws_018f2b3c-4d5e-7abc-8def-0123456789ab', '{}', 0, '{}', 'local', 'Open', 0, 't', 't')",
+          [projectId],
+        );
+      }
       const store = yield* port.HumanMessageStore;
       const tx = yield* port.TransactionPort;
       const mk = (

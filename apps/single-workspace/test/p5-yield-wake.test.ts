@@ -32,7 +32,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   buildSliceLayer,
-  P12_MIGRATIONS,
+  CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
 
@@ -183,7 +183,7 @@ describe("I0 Wait control route -> P2 WorkWait -> wake", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P12_MIGRATIONS);
+          yield* runMigrations(CURRENT_MIGRATIONS);
           yield* seed;
           yield* admit(
             parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),

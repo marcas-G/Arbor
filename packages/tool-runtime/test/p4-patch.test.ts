@@ -53,4 +53,48 @@ describe("P4 patch tool", () => {
     );
     expect(result.settlement._tag).toBe("ExpectedFailure");
   });
+
+  it("rejects a stale hunk instead of overwriting unrelated content", async () => {
+    writeFileSync(file, "line1\nnew concurrent line\nline3");
+    const result = await Effect.runPromise(
+      patchExecutor.execute({
+        intent: intent(
+          JSON.stringify({
+            path: { path: "a.txt" },
+            unifiedDiff: "@@ -2,1 +2,1 @@\n-line2\n+LINE2",
+          }),
+        ),
+        definition: {} as never,
+        context,
+        sandbox,
+        regions: [],
+      }),
+    );
+    expect(result.settlement._tag).toBe("ExpectedFailure");
+    expect(readFileSync(file, "utf8")).toBe(
+      "line1\nnew concurrent line\nline3",
+    );
+  });
+
+  it("treats an already-applied insertion as an idempotent replay", async () => {
+    writeFileSync(file, "line1\nline2");
+    const diff = "@@ -1,0 +1,1 @@\n+inserted";
+    const execute = () =>
+      Effect.runPromise(
+        patchExecutor.execute({
+          intent: intent(
+            JSON.stringify({ path: { path: "a.txt" }, unifiedDiff: diff }),
+          ),
+          definition: {} as never,
+          context,
+          sandbox,
+          regions: [],
+        }),
+      );
+    const first = await execute();
+    const second = await execute();
+    expect(first.settlement._tag).toBe("Success");
+    expect(second.settlement._tag).toBe("Success");
+    expect(readFileSync(file, "utf8")).toBe("inserted\nline1\nline2");
+  });
 });

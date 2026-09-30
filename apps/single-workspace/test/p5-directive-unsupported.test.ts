@@ -23,7 +23,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   buildSliceLayer,
-  P12_MIGRATIONS,
+  CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
 
@@ -143,7 +143,7 @@ describe("OBSOLETE_CONTRACT_TEST — DirectiveUnsupported universal envelope", (
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P12_MIGRATIONS);
+          yield* runMigrations(CURRENT_MIGRATIONS);
           yield* seed;
           const tx = yield* TransactionPort;
           const leases = yield* LeaseService;
