@@ -2,7 +2,7 @@
 
 ## Status
 
-**PHASE 1 COMPLETE — behavior-preserving foundation.**
+**PHASE 2 COMPLETE — runtime turn pipeline decomposed without semantic change.**
 
 ## RuntimeClock
 
@@ -25,5 +25,19 @@ Pure driver policy moved to driver-policy.ts:
 - conversation classification;
 - canonical prompt fragments.
 
-AgentDriver still owns DecisionTurn and action orchestration in phase 1. Future extraction must follow durable AgentLoopStep state ownership and preserve the current exhaustive recovery suites; line-count-only splitting is not a goal.
+AgentDriver now owns only top-level execution-loop composition. The turn pipeline
+is divided by durable state ownership:
+
+- `decision-turn.ts`: prepare/provider/decode/repair progression;
+- `turn-journal.ts`: provider-result acceptance and model-output journaling;
+- `action-progressor.ts`: executable/control routing, action ledger,
+  freshness and early settlement;
+- `turn-finalizer.ts`: observation commit, step-effects commit, successor and
+  conversation settlement;
+- `driver-policy.ts`: pure bounds, classification and settlement policy.
+
+These are internal Agent Runtime modules, not new Ports or wire contracts.
+Durable `AgentLoopStep` transitions and transaction/fencing boundaries are
+unchanged. Further decomposition should target `control.ts` by control-action
+family, not split the orchestration loop by line count.
 
