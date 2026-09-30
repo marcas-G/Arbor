@@ -102,6 +102,11 @@ never silently drop hard control facts; if Pinned+Protected cannot fit →
 Budget (DID §8.10): `B_ctx = B_model − B_output − B_protocol − B_tools`;
 output reserved first. `CacheClass = Stable | SemiStable | TurnDynamic`.
 
+Production budget accounting includes resolved instruction bodies, every
+provider message (conversation and tool observations), executable/control tool
+definitions and ContextFragments. Message or schema text may not bypass the
+model-window calculation.
+
 ## 6. Plan, prepared turn, manifest
 
 ```ts

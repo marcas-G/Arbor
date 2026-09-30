@@ -32,6 +32,7 @@ import {
   planContext,
 } from "./context.js";
 import type { InstructionFragment, PromptProgram } from "./prompt.js";
+import { estimateFixedRequestTokens } from "./request-budget.js";
 import { type GovernanceIssue, resolveInstructions } from "./resolver.js";
 
 /** DID v1.7 §6A.10/§8.2; P3 `02` §1. */
@@ -127,26 +128,6 @@ export const ModelContextLive: Layer.Layer<
           } as TurnPreparation;
         }
 
-        const planned = planContext(input.contextFragments, input.budget);
-        if (planned.unsatisfiable) {
-          const hard = input.contextFragments.filter(
-            (fragment) =>
-              fragment.retention === "Pinned" ||
-              fragment.retention === "Protected",
-          );
-          return yield* Effect.fail<ContextUnsatisfiable>({
-            _tag: "ContextUnsatisfiable",
-            requiredTokens: hard.reduce((sum, f) => sum + f.tokens, 0),
-            availableTokens: contextBudget(input.budget),
-          });
-        }
-        if (planned.evicted.length > 0) {
-          return {
-            _tag: "NeedsCompaction",
-            reason: "BudgetPressure",
-          } as TurnPreparation;
-        }
-
         const capability = yield* capabilityPort.resolve({
           binding: input.binding,
           cognitiveMode: input.cognitiveMode,
@@ -172,6 +153,43 @@ export const ModelContextLive: Layer.Layer<
         for (const skillId of input.bodySkillIds) {
           const loaded = yield* skills.load(skillId, "Body");
           skillRefs.push(loaded.skillRef);
+        }
+        const messages = input.messages ?? input.conversationMessages ?? [];
+        const availableTokens = contextBudget(input.budget);
+        const fixedTokens = estimateFixedRequestTokens({
+          instructions: resolved.effective,
+          ...(input.instructionContents === undefined
+            ? {}
+            : { instructionContents: input.instructionContents }),
+          messages,
+          tools,
+          controlTools,
+        });
+        const planned = planContext(input.contextFragments, {
+          modelWindow: availableTokens - fixedTokens,
+          outputReserve: 0,
+          protocolReserve: 0,
+          toolReserve: 0,
+        });
+        if (planned.unsatisfiable) {
+          const hard = input.contextFragments.filter(
+            (fragment) =>
+              fragment.retention === "Pinned" ||
+              fragment.retention === "Protected",
+          );
+          return yield* Effect.fail<ContextUnsatisfiable>({
+            _tag: "ContextUnsatisfiable",
+            requiredTokens:
+              fixedTokens +
+              hard.reduce((sum, fragment) => sum + fragment.tokens, 0),
+            availableTokens,
+          });
+        }
+        if (planned.evicted.length > 0) {
+          return {
+            _tag: "NeedsCompaction",
+            reason: "BudgetPressure",
+          } as TurnPreparation;
         }
 
         const compiled = compileTurn({
