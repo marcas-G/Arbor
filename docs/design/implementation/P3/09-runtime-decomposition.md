@@ -2,7 +2,7 @@
 
 ## Status
 
-**PHASE 2 COMPLETE — runtime turn pipeline decomposed without semantic change.**
+**PHASE 3 COMPLETE — runtime turn and control-tool pipelines decomposed without semantic change.**
 
 ## RuntimeClock
 
@@ -38,6 +38,25 @@ is divided by durable state ownership:
 
 These are internal Agent Runtime modules, not new Ports or wire contracts.
 Durable `AgentLoopStep` transitions and transaction/fencing boundaries are
-unchanged. Further decomposition should target `control.ts` by control-action
-family, not split the orchestration loop by line count.
+unchanged.
+
+## Control-tool boundary
+
+`control.ts` remains the stable public composition surface. Its internal
+responsibilities are divided as follows:
+
+- `control-types.ts`: provider-neutral `AgentAction`, handler and registry
+  contracts;
+- `control-catalog.ts`: model-visible names, schemas, versions, capabilities
+  and definition hashes;
+- `control-decoder.ts`: closed tool-name dispatch only;
+- `control-decode-shared.ts`: closed-object and identifier parsing primitives;
+- `control-decode-wait.ts`: durable wait conditions;
+- `control-decode-coordination.ts`: messaging and child-workspace proposals;
+- `control-decode-work.ts`: completion claims and dependency declarations;
+- `control-decode-delegation.ts`: temporary specialist delegation.
+
+The public import path and registry semantics are unchanged. Model-facing JSON
+is still decoded into the internal `AgentAction` ADT before policy or handlers
+run. No family decoder can execute effects or bypass the shared registry.
 
