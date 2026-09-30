@@ -222,6 +222,7 @@ export const AgentLoopDriverLive = (
                 sessions,
                 humanMessages,
                 works,
+                workspaces,
                 options,
                 admit,
                 failure,
