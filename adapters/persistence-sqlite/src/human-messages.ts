@@ -143,7 +143,7 @@ export const HumanMessageStoreLive: Layer.Layer<
           // Single-statement CAS: only a still-Pending row flips.
           const updated = yield* sql
             .unsafe<{ message_id: string }>(
-              "UPDATE human_messages SET state = 'Claimed', claimed_by_execution_id = ? WHERE message_id = ? AND state = 'Pending' RETURNING message_id",
+              "UPDATE human_messages SET state = 'Claimed', claimed_by_execution_id = ? WHERE message_id = ? AND state = 'Pending' AND EXISTS (SELECT 1 FROM projects p WHERE p.project_id = human_messages.project_id AND p.lifecycle = 'Open') RETURNING message_id",
               [claimedByExecutionId, messageId],
             )
             .pipe(Effect.mapError(toOperationalFailure));

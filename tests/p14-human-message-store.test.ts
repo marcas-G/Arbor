@@ -62,6 +62,15 @@ const app = () => {
   ) as Layer.Layer<HumanMessageStore | TransactionPort | SqlClient>;
 };
 
+const seedOpenProject = Effect.gen(function* () {
+  const sql = yield* SqlClient;
+  yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+  yield* sql.unsafe(
+    "INSERT OR IGNORE INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?, 'p', ?, '{}', 0, '{}', 'local', 'Open', 0, 't', 't')",
+    [PROJECT, ROOT],
+  );
+});
+
 describe("P14-002 human_messages migration + store", () => {
   it("migration 0014 settles PRAGMA user_version at 14 and creates the table", async () => {
     const result = await Effect.runPromise(
@@ -95,6 +104,7 @@ describe("P14-002 human_messages migration + store", () => {
         Effect.provide(
           Effect.gen(function* () {
             yield* runMigrations(P16_MIGRATIONS);
+            yield* seedOpenProject;
             const store = yield* HumanMessageStore;
             const tx = yield* TransactionPort;
 
@@ -136,6 +146,7 @@ describe("P14-002 human_messages migration + store", () => {
         Effect.provide(
           Effect.gen(function* () {
             yield* runMigrations(P16_MIGRATIONS);
+            yield* seedOpenProject;
             const store = yield* HumanMessageStore;
             const tx = yield* TransactionPort;
             yield* tx.transact(store.insertPending(record("msg_2")));
@@ -161,6 +172,7 @@ describe("P14-002 human_messages migration + store", () => {
         Effect.provide(
           Effect.gen(function* () {
             yield* runMigrations(P16_MIGRATIONS);
+            yield* seedOpenProject;
             const store = yield* HumanMessageStore;
             const tx = yield* TransactionPort;
             yield* tx.transact(
@@ -196,6 +208,7 @@ describe("P14-002 human_messages migration + store", () => {
         Effect.provide(
           Effect.gen(function* () {
             yield* runMigrations(P16_MIGRATIONS);
+            yield* seedOpenProject;
             const store = yield* HumanMessageStore;
             const tx = yield* TransactionPort;
             yield* tx.transact(store.insertPending(record("msg_3")));

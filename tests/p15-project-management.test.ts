@@ -1,7 +1,8 @@
 import { Effect } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  P1_MIGRATIONS,
+  P18_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -58,10 +59,10 @@ const authority = (
 
 describe("P15 project management commands", () => {
   it("renames then archives with durable events; Closed project refuses a new rename", async () => {
-    const app = makeP1App();
+    const app = makeP1App(":memory:", undefined, true);
     const result = await runP1(
       Effect.gen(function* () {
-        yield* runMigrations(P1_MIGRATIONS);
+        yield* runMigrations(P18_MIGRATIONS);
         yield* seedProject({
           projectId,
           rootWorkspaceId: workspaceId,
@@ -84,6 +85,15 @@ describe("P15 project management commands", () => {
           },
           { _tag: "External", principal: testPrincipal },
           authority("RenameProject", command("000000000002"), rename),
+        );
+        const sql = yield* SqlClient;
+        yield* sql.unsafe(
+          "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, created_at, attempt_no) VALUES ('msg_pending', ?, ?, 'user:test', 'body', 'cmd_pending', 'fp_pending', 'Pending', 't2', 0)",
+          [projectId, workspaceId],
+        );
+        yield* sql.unsafe(
+          "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, admitted_at, consumed_at) VALUES (?, 'humanmsg:msg_pending', 'HumanConversation', 'body', 't2', NULL)",
+          [workspaceId],
         );
         const close: CloseProjectPayload = {
           expectedRevision: revision(1),
@@ -117,13 +127,29 @@ describe("P15 project management commands", () => {
           { _tag: "External", principal: testPrincipal },
           authority("RenameProject", command("000000000004"), rejectedRename),
         );
-        return { renamed, closed, rejected, events: yield* eventTypes };
+        const messageRows = yield* sql.unsafe<{ state: string }>(
+          "SELECT state FROM human_messages WHERE message_id = 'msg_pending'",
+        );
+        const inboxRows = yield* sql.unsafe<{ consumed_at: string | null }>(
+          "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = 'humanmsg:msg_pending'",
+          [workspaceId],
+        );
+        return {
+          renamed,
+          closed,
+          rejected,
+          events: yield* eventTypes,
+          messageState: messageRows[0]?.state,
+          inboxConsumedAt: inboxRows[0]?.consumed_at,
+        };
       }),
       app,
     );
     expect(result.renamed.resolution._tag).toBe("Committed");
     expect(result.closed.resolution._tag).toBe("Committed");
     expect(result.rejected.resolution._tag).toBe("TerminalRejected");
+    expect(result.messageState).toBe("Declined");
+    expect(result.inboxConsumedAt).not.toBeNull();
     expect(result.events).toEqual([
       "ProjectCreated",
       "WorkspaceCreated",

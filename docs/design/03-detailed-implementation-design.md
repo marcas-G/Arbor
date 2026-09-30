@@ -4757,7 +4757,7 @@ normalizedRegion
 | Capability | Command / mutation path | Durable Event | State / Repository | Owning implementation boundary | Critical invariant |
 |---|---|---|---|---|---|
 | Project lifecycle / name | CreateProject / RenameProject / CloseProject | ProjectCreated / ProjectRenamed / ProjectClosed | ProjectRepository | application | one root; CAS; Closed blocks new autonomous admission; P15 |
-| Project directory | — (principal-scoped read) | — | ProjectDirectory resolver/snapshot store | read boundary (P15) | opaque non-bearer continuation; revoke fails closed; no invisible-project disclosure |
+| Project directory | — (local read) | — | ProjectDirectoryPort / SQLite adapter | read boundary (P15) | local single-user, no pagination; transport owns no SQL |
 | Child Workspace | CreateChildWorkspace | WorkspaceCreated | WorkspaceRepository | application | same Project; parent immutable |
 | Responsibility | ChangeResponsibility | ResponsibilityChanged | WorkspaceRepository | application | authority + revision |
 | Resource boundary / ownership | UpdateResourceBoundary | ResourceBoundaryChanged / ResourceOwnershipChanged | Workspace + ResourceOwnershipRepository | application | canonical write regions do not overlap |
@@ -4806,7 +4806,7 @@ Package-level ownership由 §10.4.1 的 allowed-edge matrix 强制。
 |---|---|---|---|---|
 | absent | CreateProject | valid root/bootstrap transaction | Open | creates Project + Root Workspace + Primary Session atomically |
 | Open | UpdateProjectPolicy | authority + expected revision | Open | revision++, projectPolicyRevision++ |
-| Open | RenameProject | authority + expected revision + ProjectNamePolicy | Open | revision++; `ProjectRenamed`; policy revision unchanged |
+| Open | RenameProject | authority + expected revision + ProjectName v1 | Open | revision++; `ProjectRenamed`; policy revision unchanged |
 | Open | CloseProject | authority + expected revision + confirmation | Closed | `ProjectClosed`; P15 lifecycle gate rejects new activity and cooperatively quiesces existing executions |
 | Closed | lifecycle mutation | — | **illegal** | Closed lifecycle terminal |
 

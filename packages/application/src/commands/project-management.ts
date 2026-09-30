@@ -6,6 +6,8 @@ import {
 } from "@arbor/domain";
 import type {
   ExecutionRepositoryService,
+  HumanMessageStoreService,
+  InboxProjectionStoreService,
   PendingDomainEvent,
   ProjectRepositoryService,
 } from "@arbor/ports";
@@ -29,9 +31,17 @@ export interface CloseProjectResult {
   readonly revision: Revision;
   readonly lifecycle: "Closed";
 }
-type ProjectDeps = {
+type RenameProjectDeps = {
   readonly projects: ProjectRepositoryService;
-  readonly executions?: ExecutionRepositoryService;
+};
+type CloseProjectDeps = {
+  readonly projects: ProjectRepositoryService;
+  readonly executions: ExecutionRepositoryService;
+  readonly messages: Pick<
+    HumanMessageStoreService,
+    "pendingOrderedByCreated" | "claimedOrderedByCreated" | "decline"
+  >;
+  readonly inbox: Pick<InboxProjectionStoreService, "markConsumed">;
 };
 
 const governance = (commandType: "RenameProject" | "CloseProject") => ({
@@ -42,7 +52,7 @@ const governance = (commandType: "RenameProject" | "CloseProject") => ({
 });
 
 export const makeRenameProjectHandler = (
-  deps: ProjectDeps,
+  deps: RenameProjectDeps,
 ): CommandHandler<RenameProjectPayload, RenameProjectResult> => ({
   commandType: "RenameProject",
   schemaVersion: "1",
@@ -93,7 +103,7 @@ export const makeRenameProjectHandler = (
 });
 
 export const makeCloseProjectHandler = (
-  deps: ProjectDeps,
+  deps: CloseProjectDeps,
 ): CommandHandler<CloseProjectPayload, CloseProjectResult> => ({
   commandType: "CloseProject",
   schemaVersion: "1",
@@ -120,6 +130,12 @@ export const makeCloseProjectHandler = (
         });
       const closed = closeProject(project.value, { authorized: true });
       if (!closed.ok) return commandErr(closed.error);
+      const pendingMessages = yield* deps.messages.pendingOrderedByCreated(
+        envelope.projectId,
+      );
+      const claimedMessages = yield* deps.messages.claimedOrderedByCreated(
+        envelope.projectId,
+      );
       yield* deps.projects.closeIfRevision(
         envelope.projectId,
         project.value.revision,
@@ -127,15 +143,45 @@ export const makeCloseProjectHandler = (
       );
       const executions = deps.executions;
       let activeExecutions: ReadonlyArray<Execution> = [];
-      if (executions !== undefined) {
-        activeExecutions = (yield* executions.findUnsettledExecutions()).filter(
-          (execution) => execution.projectId === envelope.projectId,
-        );
-        for (const execution of activeExecutions) {
-          yield* executions.requestStop(
-            execution.executionId,
-            envelope.issuedAt,
+      activeExecutions = (yield* executions.findUnsettledExecutions()).filter(
+        (execution) => execution.projectId === envelope.projectId,
+      );
+      for (const execution of activeExecutions) {
+        yield* executions.requestStop(execution.executionId, envelope.issuedAt);
+      }
+      const declineMessage = (message: {
+        readonly messageId: string;
+        readonly rootWorkspaceId: import("@arbor/domain").WorkspaceId;
+      }) =>
+        Effect.gen(function* () {
+          yield* deps.messages.decline(message.messageId, envelope.issuedAt);
+          yield* deps.inbox.markConsumed(
+            message.rootWorkspaceId,
+            `humanmsg:${message.messageId}`,
           );
+        });
+      for (const message of pendingMessages) {
+        yield* declineMessage(message);
+      }
+      for (const message of claimedMessages) {
+        const executionId = message.claimedByExecutionId;
+        if (executionId === null) {
+          yield* declineMessage(message);
+          continue;
+        }
+        const execution = yield* executions.findById(
+          executionId as import("@arbor/domain").ExecutionId,
+        );
+        if (Option.isNone(execution)) {
+          yield* declineMessage(message);
+          continue;
+        }
+        if (
+          execution.value.state.status === "Settled" &&
+          (execution.value.state.settlement._tag === "Failed" ||
+            execution.value.state.settlement._tag === "OutcomeUnknown")
+        ) {
+          yield* declineMessage(message);
         }
       }
       const events: PendingDomainEvent[] = [

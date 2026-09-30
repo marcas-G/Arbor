@@ -5,6 +5,7 @@ import {
   makeDeclareDependencyHandler,
   makeGrantPermissionHandler,
   makeP1CommandHandlers,
+  makeP15CommandHandlers,
   makeRecordDecisionHandler,
   makeRevokePermissionHandler,
   makeSelectCurrentWorkHandler,
@@ -89,7 +90,12 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
         workspaces,
         sessions,
         works,
+      }),
+      ...makeP15CommandHandlers({
+        projects,
         executions,
+        messages: humanMessages,
+        inbox,
       }),
       makeSelectCurrentWorkHandler({
         workspaces,
@@ -162,15 +168,6 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
                 Option.isSome(found)
                   ? found.value.rootWorkspaceId
                   : (projectId as unknown as never),
-              ),
-            ),
-        projectIsOpen: (projectId: ProjectId) =>
-          projects
-            .findById(projectId)
-            .pipe(
-              Effect.map(
-                (found) =>
-                  Option.isSome(found) && found.value.lifecycle === "Open",
               ),
             ),
       }) as unknown as CommandHandler<unknown, unknown>,

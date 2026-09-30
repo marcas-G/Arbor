@@ -7,7 +7,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   buildSliceLayer,
-  P16_MIGRATIONS,
+  CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/composition.js";
 import {
@@ -54,7 +54,7 @@ beforeAll(async () => {
   const program = Effect.scoped(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P16_MIGRATIONS);
+        yield* runMigrations(CURRENT_MIGRATIONS);
         const boundary = yield* TransportBoundary;
         const sql = yield* SqlClient;
         const deployment = yield* ProductionDaemonService;
@@ -80,6 +80,7 @@ beforeAll(async () => {
             http: boundary.http,
             webSocket: boundary.webSocket,
             sql,
+            projectDirectory: { list: () => Effect.succeed([]) },
             staticRoot: dist,
             pollIntervalMs: 60_000,
           }),

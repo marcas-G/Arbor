@@ -21,7 +21,7 @@ import { describe, expect, it } from "vitest";
 import {
   admitExecution,
   buildSliceLayer,
-  P12_MIGRATIONS,
+  CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
 
@@ -129,7 +129,7 @@ describe("I0 SendMessage durable integration", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P12_MIGRATIONS);
+          yield* runMigrations(CURRENT_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* sql.withTransaction(
             Effect.gen(function* () {

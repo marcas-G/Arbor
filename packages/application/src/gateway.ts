@@ -22,6 +22,7 @@ import {
   type MessageStoreError,
   type PendingDomainEvent,
   type PermissionGrantRepositoryError,
+  ProjectRepository,
   type ProjectRepositoryError,
   type ProjectToolRegistryError,
   type ResourceOwnershipRepositoryError,
@@ -99,6 +100,24 @@ export interface CommandHandler<C, R> {
     TransactionScope
   >;
 }
+
+export type ProjectAdmission = "Bootstrap" | "OpenRequired" | "ClosedAllowed";
+
+const CLOSED_ALLOWED_COMMANDS = new Set([
+  "StopExecution",
+  "SettleExecution",
+  "RevokePermission",
+  "RetireWorktree",
+]);
+
+/** Safe default: every new command targets an existing Open Project unless it
+ * is explicitly classified as bootstrap or a reducing/convergence action. */
+export const projectAdmissionOf = (commandType: string): ProjectAdmission =>
+  commandType === "CreateProject"
+    ? "Bootstrap"
+    : CLOSED_ALLOWED_COMMANDS.has(commandType)
+      ? "ClosedAllowed"
+      : "OpenRequired";
 
 export interface CommandHandlerRegistryService {
   readonly lookup: (
@@ -214,6 +233,7 @@ export const CommandGatewayLive: Layer.Layer<
     const journal = yield* DomainEventJournal;
     const registry = yield* CommandHandlerRegistry;
     const fence = yield* FenceStopCheck;
+    const projects = yield* Effect.serviceOption(ProjectRepository);
     const clock = yield* Clock;
     const idGenerator = yield* IdGenerator;
 
@@ -340,6 +360,46 @@ export const CommandGatewayLive: Layer.Layer<
               startedAt,
               settledAt,
             );
+          }
+
+          if (projectAdmissionOf(envelope.commandType) === "OpenRequired") {
+            const project = Option.isSome(projects)
+              ? yield* projects.value.findById(envelope.projectId)
+              : Option.none();
+            // The lifecycle gate owns the positive Closed fact. Entity
+            // existence remains command-specific (and is backed by canonical
+            // foreign keys); this also keeps isolated handler fixtures useful.
+            if (Option.isSome(project) && project.value.lifecycle !== "Open") {
+              const rejection: CommandRejection = {
+                _tag: "TerminalLifecycleMutation",
+                entity: "Project",
+                lifecycle: project.value.lifecycle,
+              };
+              const settledAt = yield* clock.now();
+              yield* store.insertTerminalRejected(
+                envelope.commandId,
+                envelope.projectId,
+                fingerprint,
+                schemaVersion,
+                FINGERPRINT_ALGORITHM_VERSION,
+                JSON.stringify(rejection),
+              );
+              yield* store.recordResolvingAttempt(
+                envelope.commandId,
+                "TerminalRejected",
+                startedAt,
+                settledAt,
+              );
+              return makeReceipt<R>(
+                envelope.commandId,
+                envelope.projectId,
+                fingerprint,
+                schemaVersion,
+                { _tag: "TerminalRejected", error: rejection },
+                startedAt,
+                settledAt,
+              );
+            }
           }
 
           const outcome = yield* handler.execute(envelope, context);

@@ -53,9 +53,6 @@ export interface SubmitHumanMessageDependencies {
   readonly rootWorkspaceOf: (
     projectId: ProjectId,
   ) => Effect.Effect<WorkspaceId, ProjectRepositoryError, TransactionScope>;
-  readonly projectIsOpen?: (
-    projectId: ProjectId,
-  ) => Effect.Effect<boolean, ProjectRepositoryError, TransactionScope>;
 }
 
 export const makeSubmitHumanMessageHandler = (
@@ -74,16 +71,6 @@ export const makeSubmitHumanMessageHandler = (
   execute: (envelope, context) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
-      if (
-        dependencies.projectIsOpen !== undefined &&
-        !(yield* dependencies.projectIsOpen(envelope.projectId))
-      ) {
-        return commandErr({
-          _tag: "TerminalLifecycleMutation",
-          entity: "Project",
-          lifecycle: "Closed",
-        });
-      }
       if (
         typeof payload.messageId !== "string" ||
         typeof payload.targetWorkspaceId !== "string" ||

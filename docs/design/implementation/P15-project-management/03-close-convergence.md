@@ -1,10 +1,15 @@
 # P15 — Archive Convergence
 
-Close is not hard delete and does not kill an Execution or cancel Work. It submits a deterministic existing cooperative StopExecution/Quiescence request for every Active execution. Runtime rechecks the closed gate before new ProviderTurn, ToolInvocation, AgentAction or successor admission.
+Close is not hard delete and does not cancel Work. It closes the authoritative Gateway admission gate and requests existing StopExecution/Quiescence for every unsettled project execution.
 
-Pending/unadmitted human turns become Declined(ProjectClosed) with Inbox retract. Claimed turns with committed execution settle/write back first. Failed/OutcomeUnknown turns on a Closed Project become Declined and never retry. Replayed HumanMessageSubmitted must observe canonical Declined state and not revive Inbox.
+Within the Close command transaction:
 
-Close uses existing AgentLoopStep and settlement vocabulary: in-flight Provider without complete evidence cancels to existing terminal provider failure then Interrupted/Failed; OutcomeUnknown requires real nonempty unresolved ToolInvocation refs. OutputRejected Retry and NextStepReady ensure their already durable Prepared successor, but start no provider turn; StepEffectsCommitted has no successor and progresses via SettlementProposed Interrupted or real-tool-ref OutcomeUnknown. Existing SettlementProposed settles normally.
+- Pending messages become Declined and their humanmsg:* Inbox rows are consumed.
+- Claimed messages with no committed execution, or a settled Failed/OutcomeUnknown execution, become Declined and their Inbox rows are consumed.
+- Active executions receive stop requests and remain on the normal settlement path.
+- Settled Completed/Interrupted conversations retain the normal Answered write-back path.
 
-Initial name-policy adoption runs read-only preflight. Only unchanged compliant rows get idempotent metadata backfill. Noncompliant/normalization-changing legacy rows fail the P15 feature closed until a separately governed, auditable repair contract exists; direct SQL rewrite is forbidden.
+In local v1, Declined means ProjectClosed exclusively. settledAt and claimedByExecutionId provide its audit correlation; no generic decline-reason taxonomy is introduced.
+
+Pending → Claimed is one SQL CAS guarded by an EXISTS Project lifecycle = Open predicate, so Close-first cannot claim. Delayed trigger passes can only observe and converge durable state; they are not the lifecycle authority.
 

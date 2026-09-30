@@ -17,6 +17,7 @@ export * from "./migrate.js";
 export * from "./migrations.js";
 export * from "./ownership.js";
 export * from "./permission-grant-repository.js";
+export * from "./project-directory.js";
 export * from "./project-tool-registry.js";
 export * from "./provider-turns.js";
 export * from "./repositories.js";

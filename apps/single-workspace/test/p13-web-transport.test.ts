@@ -63,7 +63,7 @@ const fakeViews = {
 };
 
 const fakeAuthenticator = {
-  authenticate: () => Effect.succeed("user:alice" as never),
+  authenticate: () => Effect.succeed("user:local" as never),
 };
 
 const fakeSubmission = {
@@ -87,7 +87,7 @@ const webSocket = makeWebSocketShell(core);
 const fakeSql = {
   unsafe: (query: string) =>
     query.includes("human_messages")
-      ? Effect.succeed([{ human_principal: "user:alice" }])
+      ? Effect.succeed([{ human_principal: "user:local" }])
       : Effect.succeed([{ watermark: 0 }]),
 } as unknown as SqlClient;
 
@@ -110,6 +110,19 @@ beforeAll(async () => {
     authenticator: fakeAuthenticator,
     conversationProgress: progress,
     sql: fakeSql,
+    projectDirectory: {
+      list: () =>
+        Effect.succeed([
+          {
+            projectId: "prj_1" as never,
+            name: "Project One",
+            lifecycle: "Open" as const,
+            rootWorkspaceId: "ws_1" as never,
+            revision: 2 as never,
+            updatedAt: "t",
+          },
+        ]),
+    },
     staticRoot: dist,
     pollIntervalMs: 10_000,
   });
@@ -164,6 +177,19 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     };
     expect(payload.ok).toBe(true);
     expect(payload.body.resolution).toBe("Committed");
+  });
+
+  it("serves the local project directory through its injected read port", async () => {
+    const response = await fetch(`${base()}/projects`, {
+      headers: { Authorization: "Bearer local" },
+    });
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as {
+      body: { projects: ReadonlyArray<{ name: string; revision: number }> };
+    };
+    expect(payload.body.projects).toEqual([
+      expect.objectContaining({ name: "Project One", revision: 2 }),
+    ]);
   });
 
   it("WS request frames answer with the frozen shell response", async () => {

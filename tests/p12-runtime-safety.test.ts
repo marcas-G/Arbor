@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 import {
   admitExecution,
   buildSliceLayer,
+  CURRENT_MIGRATIONS,
   evaluateAndSelect,
-  P12_MIGRATIONS,
   runMigrations,
 } from "../apps/single-workspace/src/index.js";
 import {
@@ -613,7 +613,7 @@ const runScenario = async (
   return Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(CURRENT_MIGRATIONS);
         const gateway = yield* CommandGateway;
         yield* gateway.execute(
           envelope("CreateProject", projectPayload, commandId("1")),

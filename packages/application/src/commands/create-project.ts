@@ -4,6 +4,7 @@ import {
   createSession,
   createWorkspace,
   err,
+  normalizeProjectName,
   ok,
   type ProjectId,
   type ProjectPolicy,
@@ -73,6 +74,10 @@ export const makeCreateProjectHandler = (
   execute: (envelope) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
+      const projectName = normalizeProjectName(payload.name);
+      if (!projectName.ok) {
+        return err(projectName.error);
+      }
       if (
         payload.rootWorkspace.resourceBoundary.basisResponsibilityRevision !==
         payload.rootWorkspace.responsibilityRevision
@@ -86,7 +91,7 @@ export const makeCreateProjectHandler = (
       yield* dependencies.projects.create(
         createProject({
           projectId: envelope.projectId,
-          name: payload.name,
+          name: projectName.value,
           rootWorkspaceId: payload.rootWorkspaceId,
           projectPolicy: payload.projectPolicy,
           projectPolicyRevision: payload.projectPolicyRevision,
@@ -137,7 +142,7 @@ export const makeCreateProjectHandler = (
           causedByCommandId: envelope.commandId,
           payload: {
             projectId: envelope.projectId,
-            name: payload.name,
+            name: projectName.value,
             rootWorkspaceId: payload.rootWorkspaceId,
           },
         },

@@ -1,5 +1,7 @@
 import {
   type ExecutionRepositoryService,
+  type HumanMessageStoreService,
+  type InboxProjectionStoreService,
   type PermissionGrantRepositoryService,
   ProjectRepository,
   type ProjectRepositoryService,
@@ -29,7 +31,6 @@ export interface P1CommandDependencies {
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
   readonly works: WorkRepositoryService;
-  readonly executions?: ExecutionRepositoryService;
 }
 
 export const makeP1CommandHandlers = (
@@ -39,15 +40,6 @@ export const makeP1CommandHandlers = (
     unknown,
     unknown
   >,
-  makeRenameProjectHandler({
-    projects: dependencies.projects,
-  }) as unknown as CommandHandler<unknown, unknown>,
-  makeCloseProjectHandler({
-    projects: dependencies.projects,
-    ...(dependencies.executions === undefined
-      ? {}
-      : { executions: dependencies.executions }),
-  }) as unknown as CommandHandler<unknown, unknown>,
   makeCreateChildWorkspaceHandler(dependencies) as unknown as CommandHandler<
     unknown,
     unknown
@@ -56,6 +48,30 @@ export const makeP1CommandHandlers = (
     unknown,
     unknown
   >,
+];
+
+export interface P15CommandDependencies {
+  readonly projects: ProjectRepositoryService;
+  readonly executions: ExecutionRepositoryService;
+  readonly messages: Pick<
+    HumanMessageStoreService,
+    "pendingOrderedByCreated" | "claimedOrderedByCreated" | "decline"
+  >;
+  readonly inbox: Pick<InboxProjectionStoreService, "markConsumed">;
+}
+
+export const makeP15CommandHandlers = (
+  dependencies: P15CommandDependencies,
+): ReadonlyArray<CommandHandler<unknown, unknown>> => [
+  makeRenameProjectHandler({
+    projects: dependencies.projects,
+  }) as unknown as CommandHandler<unknown, unknown>,
+  makeCloseProjectHandler({
+    projects: dependencies.projects,
+    executions: dependencies.executions,
+    messages: dependencies.messages,
+    inbox: dependencies.inbox,
+  }) as unknown as CommandHandler<unknown, unknown>,
 ];
 
 export const P1CommandHandlerRegistryLive: Layer.Layer<

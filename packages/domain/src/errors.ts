@@ -2,6 +2,7 @@ export const DOMAIN_ERROR_TAGS = [
   "IdempotencyConflict",
   "AuthorityDenied",
   "RevisionConflict",
+  "InvalidProjectName",
   "WorkNotOpen",
   "TerminalLifecycleMutation",
   "RetirePreconditionFailed",
@@ -21,6 +22,7 @@ export type DomainError =
       readonly expected: number;
       readonly actual: number;
     }
+  | { readonly _tag: "InvalidProjectName"; readonly reason: string }
   | { readonly _tag: "WorkNotOpen"; readonly workId: string }
   | {
       readonly _tag: "TerminalLifecycleMutation";

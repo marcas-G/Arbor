@@ -7,6 +7,7 @@ import {
   isProjectClosed,
   isProjectOpen,
   makeProjectPolicy,
+  normalizeProjectName,
   ProjectId,
   parse,
   Revision,
@@ -81,6 +82,20 @@ describe("project aggregate", () => {
       expect(result.value.revision).toBe(5);
       expect(result.value.projectPolicyRevision).toBe(2);
     }
+  });
+
+  it("normalizes safe names and rejects invisible control characters", () => {
+    const normalized = normalizeProjectName("  Arbor\t研究  ");
+    expect(normalized).toEqual({ ok: true, value: "Arbor 研究" });
+
+    const invisible = normalizeProjectName("Arbor\u200B研究");
+    expect(invisible.ok).toBe(false);
+    if (!invisible.ok) {
+      expect(invisible.error._tag).toBe("InvalidProjectName");
+    }
+
+    const empty = normalizeProjectName(" \n\t ");
+    expect(empty.ok).toBe(false);
   });
 
   it("rejects every lifecycle mutation on a Closed project", () => {

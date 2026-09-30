@@ -53,8 +53,12 @@ import {
   LeaseServiceLive,
   layer,
   MessageStoreLive,
+  P12_MIGRATIONS,
+  P16_MIGRATIONS,
+  P17_MIGRATIONS,
   P18_MIGRATIONS,
   PermissionGrantRepositoryLive,
+  ProjectDirectoryLive,
   ProjectionStoreLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
@@ -81,6 +85,7 @@ import {
   type ModelDeployment,
   makeProviderRegistry,
   type PersistenceHealthProbe,
+  type ProjectDirectory,
   type ProjectionQueryPort,
   type ProviderFailureKind,
   type ProviderPort,
@@ -256,6 +261,7 @@ export type SliceServices =
   | AuthorityResolverPort
   | RemoteWorkerMediationPort
   | ProjectionQueryPort
+  | ProjectDirectory
   | ToolCatalogPort
   | HealthPort
   | PersistenceHealthProbe
@@ -418,6 +424,7 @@ export const buildSliceLayer = (
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),
+    Layer.provide(ProjectDirectoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
@@ -644,9 +651,9 @@ export const buildSliceLayer = (
 };
 
 export {
-  P18_MIGRATIONS,
-  P18_MIGRATIONS as P17_MIGRATIONS,
-  P18_MIGRATIONS as P16_MIGRATIONS,
-  P18_MIGRATIONS as P12_MIGRATIONS,
+  P12_MIGRATIONS,
+  P16_MIGRATIONS,
+  P17_MIGRATIONS,
+  P18_MIGRATIONS as CURRENT_MIGRATIONS,
   runMigrations,
 };

@@ -42,8 +42,8 @@ import { describe, expect, it } from "vitest";
 import {
   admitExecution,
   buildSliceLayer,
+  CURRENT_MIGRATIONS,
   evaluateAndSelect,
-  P12_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
 
@@ -193,7 +193,7 @@ describe("I0 executable/control vertical slice", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P12_MIGRATIONS);
+          yield* runMigrations(CURRENT_MIGRATIONS);
           const gateway = yield* CommandGateway;
           const scheduler = yield* ExecutionScheduler;
           const sql = yield* SqlClient;
@@ -449,7 +449,7 @@ describe("I0 executable/control vertical slice", () => {
     );
 
     // P12 composition: the slice runs the current full migration baseline
-    // (`P12_MIGRATIONS`), so the P8 verification tables are now installed.
+    // (`CURRENT_MIGRATIONS`), so the P8 verification tables are installed.
     expect([...result.verificationTables].sort()).toEqual([
       "verification_evidence",
       "verification_executions",
