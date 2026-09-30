@@ -14,12 +14,14 @@ import {
   IdGeneratorLive,
   layer,
   P16_MIGRATIONS,
+  ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RuntimeClockLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
   WorkRepositoryLive,
+  WorkspaceRepositoryLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import {
@@ -226,6 +228,8 @@ const makeApp = () => {
       capability,
       Layer.provide(SessionRepositoryLive, infra),
       Layer.provide(HumanMessageStoreLive, infra),
+      Layer.provide(ProjectRepositoryLive, infra),
+      Layer.provide(WorkspaceRepositoryLive, infra),
       Layer.provide(WorkRepositoryLive, infra),
       tx,
       revisions,

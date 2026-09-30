@@ -39,6 +39,27 @@ const depsOf = (name: string): ReadonlyArray<string> =>
   all().find((pkg) => pkg.name === name)?.internalDependencies ?? [];
 
 describe("P3 package DAG", () => {
+  it("wires durable tool observations back into context and forbids static ControlBasis", () => {
+    const decisionTurn = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/decision-turn.ts"),
+      "utf8",
+    );
+    const driver = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/driver.ts"),
+      "utf8",
+    );
+    const sessionContext = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/session-context.ts"),
+      "utf8",
+    );
+    expect(decisionTurn).toContain("assembleSessionContext");
+    expect(decisionTurn).toContain("listRecentEntries");
+    expect(sessionContext).toContain('role: "tool"');
+    expect(driver).toContain("makeControlBasisResolver");
+    expect(driver).not.toContain("staticControlBasis");
+    expect(driver).not.toContain('authorizationDigest: "digest"');
+  });
+
   it("declares only allowed edges for the P3 packages", () => {
     expect(checkEdges(all())).toEqual([]);
   });

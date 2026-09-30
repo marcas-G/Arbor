@@ -35,6 +35,10 @@ is divided by durable state ownership:
 - `turn-finalizer.ts`: observation commit, step-effects commit, successor and
   conversation settlement;
 - `driver-policy.ts`: pure bounds, classification and settlement policy.
+- `session-context.ts`: bounded durable Observation → provider tool-message
+  assembly;
+- `control-basis-resolver.ts`: canonical revision snapshot and authorization
+  digest assembly.
 
 These are internal Agent Runtime modules, not new Ports or wire contracts.
 Durable `AgentLoopStep` transitions and transaction/fencing boundaries are

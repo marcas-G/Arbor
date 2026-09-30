@@ -41,9 +41,13 @@ export interface ModelContextPlan {
     readonly role: "user" | "assistant";
     readonly text: string;
   }>;
+  /** Generic provider messages assembled by Agent Runtime (including tool
+   * observations). Takes precedence over the P14 compatibility field. */
+  readonly messages?: ReadonlyArray<PortableModelRequest["messages"][number]>;
   /** P14 conversation refs (human-input:<messageId>) — carried into the
    * manifest contextRefs so the claimed turn is auditable per turn. */
   readonly conversationContextRefs?: ReadonlyArray<string>;
+  readonly messageContextRefs?: ReadonlyArray<string>;
   readonly providerRef?: string;
   /** Optional content table: contentRef -> instruction body text. When
    * present, compiled instructions carry the resolved text instead of the
@@ -191,7 +195,11 @@ export const compileTurn = (input: {
       input.plan.instructions.effective,
       input.plan.instructionContents,
     ),
-    messages: (input.plan.conversationMessages ?? []).map((message) => ({
+    messages: (
+      input.plan.messages ??
+      input.plan.conversationMessages ??
+      []
+    ).map((message) => ({
       role: message.role,
       text: message.text,
     })),
@@ -233,6 +241,7 @@ export const compileTurn = (input: {
     contextRefs: [
       ...input.plan.context.map((fragment) => fragment.ref),
       ...(input.plan.conversationContextRefs ?? []),
+      ...(input.plan.messageContextRefs ?? []),
     ],
     skillRefs: input.plan.skills.map((skill) => ({
       skillId: skill.skillId,

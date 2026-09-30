@@ -5,7 +5,7 @@ import type {
   ExecutionSettlement,
   WakeReason,
 } from "@arbor/domain";
-import { type ControlBasis, ModelContext } from "@arbor/model-context";
+import { ModelContext } from "@arbor/model-context";
 import {
   type AgentLoopStepFence,
   AgentLoopStepStore,
@@ -16,6 +16,7 @@ import {
   ExecutionDriverPort,
   HumanMessageStore,
   ModelCapabilityPort,
+  ProjectRepository,
   type ProviderExecutionPolicyOverrides,
   ProviderRuntime,
   ProviderTurnStore,
@@ -25,6 +26,7 @@ import {
   SessionRepository,
   TransactionPort,
   WorkRepository,
+  WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { progressActions } from "./action-progressor.js";
@@ -33,6 +35,7 @@ import {
   type ExecutableInvocationHandler,
   makeControlToolRegistry,
 } from "./control.js";
+import { makeControlBasisResolver } from "./control-basis-resolver.js";
 import { runDecisionTurn as executeDecisionTurn } from "./decision-turn.js";
 import type { DirectiveHandler } from "./directive.js";
 import {
@@ -83,7 +86,9 @@ export const AgentDriverLive = (
   | TransactionPort
   | EnvironmentRevisionStore
   | HumanMessageStore
+  | ProjectRepository
   | WorkRepository
+  | WorkspaceRepository
   | Clock
 > =>
   Layer.effect(
@@ -106,6 +111,8 @@ export const AgentDriverLive = (
         ? providerTurnStoreOption.value
         : undefined;
       const environmentRevisions = yield* EnvironmentRevisionStore;
+      const projects = yield* ProjectRepository;
+      const workspaces = yield* WorkspaceRepository;
       const works = yield* WorkRepository;
       const clock = yield* Clock;
       const controlRegistry =
@@ -151,33 +158,19 @@ export const AgentDriverLive = (
                 }),
               ),
             );
-          // DID §8.19 / P3 `06` §4: the ControlBasis is captured into the
-          // Manifest at prepareTurn and re-read at effectful-directive
-          // admission. Only the environment revision has a live store in this
-          // slice (P11-003); the other revisions are anchored constants here.
-          const staticControlBasis = {
-            projectPolicyRevision: 0,
-            workspacePolicyRevision: 0,
-            responsibilityRevision: 0,
-            resourceBoundaryRevision: 0,
-            authorizationDigest: "digest",
-          } as const;
-          const currentControlBasis = (): Effect.Effect<
-            ControlBasis,
-            ExecutionDriverError
-          > =>
-            tx
-              .transact(environmentRevisions.current(input.execution.projectId))
-              .pipe(
-                Effect.mapError(failure),
-                Effect.map(Option.getOrElse(() => "0")),
-                Effect.map(
-                  (environmentRevision): ControlBasis => ({
-                    ...staticControlBasis,
-                    environmentRevision,
-                  }),
-                ),
-              );
+          // DID §8.19 / P3 `06` §4: capture and re-read the full trusted
+          // control basis at every effectful action admission.
+          const currentControlBasis = makeControlBasisResolver(
+            {
+              tx,
+              projects,
+              workspaces,
+              works,
+              environmentRevisions,
+              failure,
+            },
+            input,
+          );
 
           // P12 `08` §7: the driver reports the D1/D3/D4/D5/D6 observation
           // signals at the ProviderTurn / ToolInvocation / Specialist
@@ -228,6 +221,7 @@ export const AgentDriverLive = (
                 modelContext,
                 providerRuntime,
                 tx,
+                sessions,
                 humanMessages,
                 works,
                 options,

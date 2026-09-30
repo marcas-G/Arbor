@@ -891,6 +891,59 @@ describe("P3-013 agent driver", () => {
     expect(settlement._tag).toBe("Completed");
     expect(received?.executionPolicyOverrides).toEqual(overrides);
   });
+
+  it("captures live project and workspace revisions in the ControlBasis", async () => {
+    let received: ProviderRunInput | undefined;
+    const app = makeApp([], {
+      providerRuntime: Layer.succeed(ProviderRuntime, {
+        runTurn: (input) => {
+          received = input;
+          return Effect.succeed({
+            events: [
+              {
+                _tag: "TurnStarted",
+                providerTurnId: input.providerTurnId,
+                attemptNo: 0,
+                modelRef: input.request.modelRef,
+              },
+              ...sendMessageTurn("basis captured"),
+            ],
+            attemptNo: 0,
+            retryDecisions: [],
+          });
+        },
+      }),
+    });
+    await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P17_MIGRATIONS);
+        yield* seed;
+        const sql = yield* SqlClient;
+        yield* sql.unsafe(
+          "UPDATE projects SET project_policy_revision = 3 WHERE project_id = ?",
+          [projectId],
+        );
+        yield* sql.unsafe(
+          "UPDATE workspaces SET workspace_policy_revision = 5, responsibility_revision = 7, resource_boundary_revision = 9 WHERE workspace_id = ?",
+          [workspaceId],
+        );
+        return yield* drive(allowGate);
+      }),
+      app,
+    );
+
+    const manifest = JSON.parse(received?.manifestJson ?? "{}") as {
+      readonly controlBasis?: Record<string, unknown>;
+    };
+    expect(manifest.controlBasis).toMatchObject({
+      projectPolicyRevision: 3,
+      workspacePolicyRevision: 5,
+      responsibilityRevision: 7,
+      resourceBoundaryRevision: 9,
+      environmentRevision: "0",
+    });
+    expect(manifest.controlBasis?.authorizationDigest).not.toBe("digest");
+  });
 });
 
 const invalidTurn: ReadonlyArray<CanonicalProviderEvent> = [
@@ -1137,5 +1190,69 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
     expect(
       (result as typeof result & { observationCount: number }).observationCount,
     ).toBe(1);
+  });
+
+  it("returns a durable executable observation to the next model turn", async () => {
+    const requests: ProviderRunInput["request"][] = [];
+    let call = 0;
+    const observationMarker = "OBSERVATION_RETURN_MARKER";
+    const app = makeApp([], {
+      toolDefinitions: [
+        {
+          name: "read",
+          description: "Read a file.",
+          schemaJson: JSON.stringify({ type: "object" }),
+          version: "1",
+          hash: "read-v1",
+          capabilityMetadata: [],
+          sideEffectSemantics: "ReadOnly",
+        },
+      ],
+      executableHandler: {
+        handle: () =>
+          Effect.succeed({
+            _tag: "Observation",
+            source: "Tool",
+            observation: { text: observationMarker, truncated: false },
+          }),
+      },
+      providerRuntime: Layer.succeed(ProviderRuntime, {
+        runTurn: (input) => {
+          requests.push(input.request);
+          const events =
+            call === 0 ? readToolTurn : sendMessageTurn("observation received");
+          call += 1;
+          return Effect.succeed({
+            events: [
+              {
+                _tag: "TurnStarted",
+                providerTurnId: input.providerTurnId,
+                attemptNo: 0,
+                modelRef: input.request.modelRef,
+              },
+              ...events,
+            ],
+            attemptNo: 0,
+            retryDecisions: [],
+          });
+        },
+      }),
+    });
+    const settlement = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P17_MIGRATIONS);
+        yield* seed;
+        return yield* drive(allowGate);
+      }),
+      app,
+    );
+
+    expect(settlement._tag).toBe("Completed");
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "tool", text: observationMarker }),
+      ]),
+    );
   });
 });

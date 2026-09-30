@@ -28,6 +28,11 @@ type TurnPreparation =
 `binding`, `responsibility`, `work | mission`, `cognitiveMode`,
 `permissionState`, `environmentRef`, `availableSkills`, `toolSurface`.
 
+Provider-neutral runtime messages are an explicit input. Durable Tool
+Observations enter as `role: "tool"` messages and remain DataOnly; their text
+is never promoted into an InstructionFragment. The Manifest records their
+durable Session source refs.
+
 ## 2. Agent policy resolution
 
 Deterministic resolution of binding, responsibility, work/mission, cognitive
@@ -125,6 +130,11 @@ Every effectful invocation is associated by trusted Runtime context with this
 Manifest/ControlBasis; the model-authored payload does not carry the binding.
 A stale relevant control basis yields `DecisionStale` (`06` §4; DID v1.18
 ACR-3/ACR-4). AgentLoopStep replay uses the pinned Manifest and decoder version.
+
+The production ControlBasis resolver reads Project policy, Workspace policy,
+Responsibility, ResourceBoundary, optional Work revision, and Environment
+revision from canonical repositories. Placeholder revisions or constant
+authorization digests are forbidden.
 
 ## 7. Skills surface (C1)
 

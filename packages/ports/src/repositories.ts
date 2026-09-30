@@ -236,6 +236,16 @@ export interface SessionRepositoryService {
     SessionRepositoryError,
     TransactionScope
   >;
+  /** Runtime context read: newest entries, returned in ascending sequence
+   * order so provider messages preserve causal order. */
+  readonly listRecentEntries: (
+    sessionId: SessionId,
+    limit: number,
+  ) => Effect.Effect<
+    ReadonlyArray<SessionEntryRecord>,
+    SessionRepositoryError,
+    TransactionScope
+  >;
   /** P10-007 deps 申报: every session visible for a workspace — the
    * WorkspacePrimary binding plus ExecutionScoped sessions of the
    * workspace's executions. Read-only Transcript scoping face. */
