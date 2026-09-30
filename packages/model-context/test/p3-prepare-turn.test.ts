@@ -184,4 +184,23 @@ describe("P3 prepareTurn", () => {
     expect(exit._tag).toBe("Failure");
     void Option;
   });
+
+  it("counts provider messages in the context window", async () => {
+    const exit = await Effect.runPromise(
+      Effect.exit(
+        Effect.provide(
+          Effect.gen(function* () {
+            const modelContext = yield* ModelContext;
+            return yield* modelContext.prepareTurn(
+              input({
+                messages: [{ role: "tool", text: "x".repeat(4000) }],
+              }) as never,
+            );
+          }),
+          app,
+        ) as Effect.Effect<unknown, unknown, never>,
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+  });
 });
