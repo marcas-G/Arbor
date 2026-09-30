@@ -14,11 +14,11 @@ import {
 import { Duration, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
-  type SliceConfig,
-  type SliceServices,
+  type SingleWorkspaceConfig,
+  type SingleWorkspaceServices,
 } from "./composition.js";
 import { evaluateAndSelect } from "./loop.js";
 import { ProductionDaemonService, TransportBoundary } from "./production.js";
@@ -35,8 +35,8 @@ import { startWebTransport } from "./transport/server.js";
 /** The production composition entry: build the single-workspace slice layer
  * with every frozen production capability assembled (B-7). */
 export const main = (
-  overrides: Partial<SliceConfig> = {},
-): ReturnType<typeof buildSliceLayer> => {
+  overrides: Partial<SingleWorkspaceConfig> = {},
+): ReturnType<typeof buildSingleWorkspaceLayer> => {
   const authenticator = authenticatorFromEnv();
   // Standard config file (arbor.config.json) is the primary provider source;
   // legacy env vars remain a compatibility fallback; absent both = fake.
@@ -51,7 +51,7 @@ export const main = (
       ? providerDeploymentOfConfig(configFile.config)
       : undefined;
   const deployment = fromConfig?.deployment ?? deploymentFromEnv();
-  return buildSliceLayer({
+  return buildSingleWorkspaceLayer({
     databaseFile: process.env.ARBOR_DB ?? "./arbor-slice.db",
     ...(process.env.ARBOR_PROJECT_ID !== undefined
       ? { projectId: process.env.ARBOR_PROJECT_ID as never }
@@ -169,7 +169,8 @@ const authenticatorFromEnv = () => {
     : makeStaticAuthenticator(map);
 };
 
-export interface ProductionDaemonRunConfig extends Partial<SliceConfig> {
+export interface ProductionDaemonRunConfig
+  extends Partial<SingleWorkspaceConfig> {
   /** The workspace whose scheduler/loop is evaluated each tick. Absent means
    * only the recovery/consumer daemons run. */
   readonly workspaceId?: WorkspaceId;
@@ -356,7 +357,7 @@ export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
     }),
   );
 
-export type { SliceServices };
+export type { SingleWorkspaceServices };
 
 const entrypoint = process.argv[1];
 

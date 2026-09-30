@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { SecretStorePort, secretRef } from "@arbor/ports";
 import { Effect, type Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildSliceLayer } from "../src/composition.js";
+import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   type ArborProviderConfigFile,
   findArborConfigFile,
@@ -111,7 +111,7 @@ describe("arbor.config.json — standard provider configuration", () => {
 
   it("the inline secret store rejects every ref except its sentinel", async () => {
     const { dir } = withConfig("{}");
-    const app = buildSliceLayer({
+    const app = buildSingleWorkspaceLayer({
       databaseFile: join(dir, "slice.db"),
       secretRef: secretRef("arbor:inline-secret"),
       secretStore: {

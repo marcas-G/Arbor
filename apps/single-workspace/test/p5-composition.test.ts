@@ -7,14 +7,14 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
 
 const makeApp = () => {
   const dir = mkdtempSync(join(tmpdir(), "p5-comp-"));
-  return buildSliceLayer({ databaseFile: join(dir, "slice.db") });
+  return buildSingleWorkspaceLayer({ databaseFile: join(dir, "slice.db") });
 };
 
 describe("P5 composition root", () => {

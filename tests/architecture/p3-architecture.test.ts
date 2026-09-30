@@ -41,11 +41,11 @@ const depsOf = (name: string): ReadonlyArray<string> =>
 describe("P3 package DAG", () => {
   it("wires durable tool observations back into context and forbids static ControlBasis", () => {
     const decisionTurn = readFileSync(
-      join(repoRoot, "packages/agent-runtime/src/decision-turn.ts"),
+      join(repoRoot, "packages/agent-runtime/src/model-decision.ts"),
       "utf8",
     );
     const driver = readFileSync(
-      join(repoRoot, "packages/agent-runtime/src/driver.ts"),
+      join(repoRoot, "packages/agent-runtime/src/agent-loop-driver.ts"),
       "utf8",
     );
     const sessionContext = readFileSync(

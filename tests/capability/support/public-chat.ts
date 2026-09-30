@@ -6,7 +6,7 @@ import type {
   OpenAISdkClient,
 } from "../../../adapters/provider-openai/src/index.js";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../../../apps/single-workspace/src/composition.js";
@@ -258,7 +258,7 @@ export const withPublicConversationApp = async (
   const authenticator = makeStaticAuthenticator({
     [capabilityToken]: capabilityHuman,
   });
-  const app = buildSliceLayer({
+  const app = buildSingleWorkspaceLayer({
     databaseFile: input.databaseFile,
     projectId,
     modelCatalog: makeModelCatalog(input.modelRef),

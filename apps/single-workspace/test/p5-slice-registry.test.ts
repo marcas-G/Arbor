@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { CommandHandlerRegistry } from "@arbor/application";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
-import { buildSliceLayer } from "../src/index.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 describe("P5 slice command handler registry", () => {
   it("resolves the P1 + P2 command set", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-reg-"));
-    const app = buildSliceLayer({ databaseFile: join(dir, "slice.db") });
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: join(dir, "slice.db"),
+    });
     const present = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {

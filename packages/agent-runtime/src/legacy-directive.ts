@@ -17,7 +17,7 @@ export interface DirectiveUnsupported {
   readonly reason: string;
 }
 
-export type DirectiveOutcome =
+export type LegacyDirectiveOutcome =
   | {
       readonly _tag: "Observation";
       readonly observation: BoundedObservation;
@@ -26,11 +26,11 @@ export type DirectiveOutcome =
   | { readonly _tag: "Unsupported"; readonly reason: string }
   | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
 
-export interface DirectiveHandler {
+export interface LegacyDirectiveHandler {
   readonly kind: AgentDirective["_tag"];
   readonly handle: (input: {
     readonly directive: AgentDirective;
     readonly execution: Execution;
     readonly context: CommandSubmissionContext;
-  }) => Effect.Effect<DirectiveOutcome, ExecutionDriverError>;
+  }) => Effect.Effect<LegacyDirectiveOutcome, ExecutionDriverError>;
 }

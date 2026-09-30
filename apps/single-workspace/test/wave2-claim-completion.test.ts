@@ -26,7 +26,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
@@ -284,7 +284,7 @@ const setupApp = (turns: ReadonlyArray<ReadonlyArray<unknown>>) => {
   const dir = mkdtempSync(join(tmpdir(), "wave2-"));
   directories.push(dir);
   return {
-    app: buildSliceLayer({
+    app: buildSingleWorkspaceLayer({
       databaseFile: join(dir, "slice.db"),
       providerTurns: turns as never,
     }),

@@ -6,7 +6,7 @@ import { Effect, Fiber } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/composition.js";
@@ -65,7 +65,7 @@ beforeAll(async () => {
               Effect.gen(function* () {
                 yield* deployment.daemon.pollConsumers;
               }),
-              buildSliceLayer({
+              buildSingleWorkspaceLayer({
                 databaseFile: join(dir, "slice.db"),
                 authenticator: makeStaticAuthenticator({ [TOKEN]: HUMAN }),
                 governance: {
@@ -89,7 +89,7 @@ beforeAll(async () => {
         // hold the scope open for the whole suite (layers close at process end)
         yield* Effect.promise(() => new Promise<never>(() => undefined));
       }),
-      buildSliceLayer({
+      buildSingleWorkspaceLayer({
         databaseFile: join(dir, "slice.db"),
         authenticator: makeStaticAuthenticator({ [TOKEN]: HUMAN }),
         governance: { authenticatedHumans: [HUMAN], directParentOf: [] },

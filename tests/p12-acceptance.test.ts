@@ -54,10 +54,10 @@ import { SecretEnvLive } from "../adapters/secret-env/dist/index.js";
 import { selectProviderLayer } from "../apps/single-workspace/src/composition.js";
 import {
   admitExecution,
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   evaluateAndSelect,
 } from "../apps/single-workspace/src/index.js";
-import { SliceCommandHandlerRegistryLive } from "../apps/single-workspace/src/registry.js";
+import { SingleWorkspaceCommandHandlerRegistryLive } from "../apps/single-workspace/src/registry.js";
 import { runRestoreDrill } from "../apps/single-workspace/src/restore-drill.js";
 import {
   isViewId,
@@ -720,7 +720,7 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
     const sentinelValue = `sentinel-value-${randomUUID()}`;
     process.env[sentinelEnv] = sentinelValue;
     const dir = mkdtempSync(join(tmpdir(), "p12-acceptance-secret-"));
-    const app = buildSliceLayer({
+    const app = buildSingleWorkspaceLayer({
       databaseFile: join(dir, "slice.db"),
       providerTurns: [
         [
@@ -1630,7 +1630,7 @@ const runSafetyScenario = async (
   providerTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>,
 ): Promise<SafetyScenario> => {
   const dir = mkdtempSync(join(tmpdir(), "p12-acceptance-safety-"));
-  const app = buildSliceLayer({
+  const app = buildSingleWorkspaceLayer({
     databaseFile: join(dir, "slice.db"),
     providerTurns,
     runtimeSafetyPolicy: safetyPolicyConfig,
@@ -2056,7 +2056,7 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
     infra,
     deps,
     FenceStopCheckInertLive,
-    Layer.provide(SliceCommandHandlerRegistryLive, deps),
+    Layer.provide(SingleWorkspaceCommandHandlerRegistryLive, deps),
     AuthorityResolverPortLive,
   );
   return Layer.mergeAll(

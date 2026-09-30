@@ -45,7 +45,7 @@
 ## Remaining backend structure
 
 The two largest Agent Runtime implementation modules are now
-`decision-turn.ts` and `action-progressor.ts`. Their sizes follow durable state
+`model-decision.ts` and `agent-loop-actions.ts`. Their sizes follow durable state
 ownership rather than mixed concerns, so further splitting is not currently
 justified by line count alone. The next architectural review should move to
 Application command-family composition and persistence adapter boundaries.

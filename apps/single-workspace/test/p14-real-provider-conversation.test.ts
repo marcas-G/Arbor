@@ -24,7 +24,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   ProductionDaemonService,
   runMigrations,
@@ -103,7 +103,7 @@ describe("P14 production conversation model context", () => {
               productionCallPath: [
                 "apps/single-workspace ProductionDaemonService.conversationTick",
                 "execution-runtime.runExecution worker/lease lifecycle",
-                "ExecutionDriverPort -> agent-runtime AgentDriverLive",
+                "ExecutionDriverPort -> agent-runtime AgentLoopDriverLive",
                 "ModelContext.prepareTurn with current claimed Human Input",
                 "ProviderRuntime.runTurn",
                 "OpenAIProviderLive -> OpenAICompatibleFetchClient -> live endpoint",
@@ -209,7 +209,7 @@ describe("P14 production conversation model context", () => {
           }
         },
       };
-      const app = buildSliceLayer({
+      const app = buildSingleWorkspaceLayer({
         databaseFile,
         projectId,
         modelCatalog,
@@ -396,7 +396,7 @@ describe("P14 production conversation model context", () => {
         },
       ],
     };
-    const app = buildSliceLayer({
+    const app = buildSingleWorkspaceLayer({
       databaseFile: join(dir, "slice.db"),
       projectId,
       modelCatalog,

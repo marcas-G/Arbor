@@ -10,9 +10,9 @@ import type {
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
-import { sessionFence } from "./driver-policy.js";
+import { sessionFence } from "./agent-loop-policy.js";
 
-export interface TurnJournalDependencies {
+export interface ModelOutputJournalDependencies {
   readonly input: {
     readonly execution: Execution;
     readonly context: CommandSubmissionContext;
@@ -33,8 +33,8 @@ export interface TurnJournalDependencies {
  * The model output and loop-step transition share one transaction on the
  * fenced path; legacy in-process callers retain their existing append path.
  */
-export const acceptTurnOutput = (
-  dependencies: TurnJournalDependencies,
+export const recordAcceptedModelOutput = (
+  dependencies: ModelOutputJournalDependencies,
 ): Effect.Effect<AgentLoopStepRecord | undefined, ExecutionDriverError> => {
   const {
     input,

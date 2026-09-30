@@ -17,7 +17,7 @@ The durable ISO Clock remains separate and owns recorded timestamps.
 
 ## Agent Driver boundary
 
-Pure driver policy moved to driver-policy.ts:
+Pure Agent Loop policy moved to `agent-loop-policy.ts`:
 
 - repair bounds;
 - provider failure/timeout settlement mapping;
@@ -28,13 +28,13 @@ Pure driver policy moved to driver-policy.ts:
 AgentDriver now owns only top-level execution-loop composition. The turn pipeline
 is divided by durable state ownership:
 
-- `decision-turn.ts`: prepare/provider/decode/repair progression;
-- `turn-journal.ts`: provider-result acceptance and model-output journaling;
-- `action-progressor.ts`: executable/control routing, action ledger,
+- `model-decision.ts`: prepare/provider/decode/repair progression;
+- `model-output-journal.ts`: provider-result acceptance and model-output journaling;
+- `agent-loop-actions.ts`: executable/control routing, action ledger,
   freshness and early settlement;
-- `turn-finalizer.ts`: observation commit, step-effects commit, successor and
+- `agent-loop-step-completion.ts`: observation commit, step-effects commit, successor and
   conversation settlement;
-- `driver-policy.ts`: pure bounds, classification and settlement policy.
+- `agent-loop-policy.ts`: pure bounds, classification and settlement policy.
 - `session-context.ts`: bounded durable Observation → provider tool-message
   assembly;
 - `control-basis-resolver.ts`: canonical revision snapshot and authorization

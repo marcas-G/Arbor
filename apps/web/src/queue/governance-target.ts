@@ -2,7 +2,7 @@
  * W-00 proof ③ — Governance Queue action-target feasibility (FROZEN
  * conclusion).
  *
- * The frozen P6 admission (governance-directive.ts RequestGovernance/
+ * The frozen P6 admission (legacy-governance-directive-handler.ts RequestGovernance/
  * FormationApproval) writes inbox entries with the DETERMINISTIC structured
  * key `gov:${proposalId}:${revision}` and kind "Governance". The key is a
  * machine identifier (not the presentation `summary` string), so the Queue

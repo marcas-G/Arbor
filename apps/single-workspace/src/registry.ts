@@ -50,7 +50,7 @@ import { Effect, Layer, Option } from "effect";
  * frozen P6/P8/P12 implementations; only the composition wiring is new).
  * No new command semantics (P5 `01` / P13 `01`).
  */
-export const SliceCommandHandlerRegistryLive: Layer.Layer<
+export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
   CommandHandlerRegistry,
   never,
   | ProjectRepository

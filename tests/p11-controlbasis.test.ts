@@ -26,7 +26,7 @@ import {
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import {
   type AgentActionHandler,
-  AgentDriverLive,
+  AgentLoopDriverLive,
   checkFreshness,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
@@ -220,7 +220,7 @@ const makeApp = () => {
   const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
   const driver = Layer.provide(
-    AgentDriverLive([], { controlRegistry }),
+    AgentLoopDriverLive({ controlRegistry }),
     Layer.mergeAll(
       infra,
       recordingModelContext(recorded),
@@ -406,8 +406,11 @@ describe("P11 GQ4b ControlBasis environmentRevision service-internal read", () =
     expect(stale?.changed).toContain("environmentRevision");
   });
 
-  it("hardcode removal: driver.ts contains no '\"env\"' literal", () => {
-    const source = readFileSync("packages/agent-runtime/src/driver.ts", "utf8");
+  it("hardcode removal: agent-loop-driver.ts contains no '\"env\"' literal", () => {
+    const source = readFileSync(
+      "packages/agent-runtime/src/agent-loop-driver.ts",
+      "utf8",
+    );
     expect(source.includes('"env"')).toBe(false);
   });
 });

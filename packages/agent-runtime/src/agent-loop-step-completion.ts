@@ -14,9 +14,9 @@ import type {
   TransactionPortService,
 } from "@arbor/ports";
 import { Effect } from "effect";
-import { MAX_TURNS, sessionFence } from "./driver-policy.js";
+import { MAX_TURNS, sessionFence } from "./agent-loop-policy.js";
 
-export interface TurnFinalizerDependencies {
+export interface AgentLoopStepCompletionDependencies {
   readonly input: {
     readonly execution: Execution;
     readonly context: CommandSubmissionContext;
@@ -37,7 +37,7 @@ export interface TurnFinalizerDependencies {
   readonly now: () => Effect.Effect<string>;
 }
 
-export type TurnFinalization =
+export type AgentLoopStepCompletion =
   | { readonly _tag: "Continue" }
   | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
 
@@ -46,9 +46,9 @@ export type TurnFinalization =
  * It is the sole owner of the `ActionsInProgress -> StepEffectsCommitted ->
  * NextStepReady|SettlementProposed` progression.
  */
-export const finalizeTurn = (
-  dependencies: TurnFinalizerDependencies,
-): Effect.Effect<TurnFinalization, ExecutionDriverError> => {
+export const completeAgentLoopStep = (
+  dependencies: AgentLoopStepCompletionDependencies,
+): Effect.Effect<AgentLoopStepCompletion, ExecutionDriverError> => {
   const {
     input,
     decodedOutput,

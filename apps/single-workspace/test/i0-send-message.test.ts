@@ -24,7 +24,7 @@ import type {
 } from "@arbor/ports";
 import { Effect, Option, Stream } from "effect";
 import { describe, expect, it } from "vitest";
-import { makeSliceControlActionHandlers } from "../src/control-actions.js";
+import { makeSingleWorkspaceControlActionHandlers } from "../src/control-actions.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const senderWorkspaceId = parse(WorkspaceId)(
@@ -105,7 +105,7 @@ describe("I0 SendMessage control action", () => {
       works: {} as WorkRepositoryService,
       proposals: {} as FormationProposalStoreService,
     };
-    const [handler] = makeSliceControlActionHandlers(dependencies);
+    const [handler] = makeSingleWorkspaceControlActionHandlers(dependencies);
     expect(handler).toBeDefined();
     const input: AgentActionHandlerInput = {
       action: {
@@ -161,7 +161,7 @@ describe("I0 SendMessage control action", () => {
         focus: { _tag: "Coordination" },
       },
     };
-    const handler = makeSliceControlActionHandlers({
+    const handler = makeSingleWorkspaceControlActionHandlers({
       gateway: {
         execute: () => {
           gatewayCalls += 1;

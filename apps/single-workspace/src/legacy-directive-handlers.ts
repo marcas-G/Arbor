@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
-  DirectiveHandler,
-  DirectiveOutcome,
-  ExecutableInvocationHandler,
+  LegacyDirectiveHandler,
+  LegacyDirectiveOutcome,
 } from "@arbor/agent-runtime";
 import {
   CommandGateway,
@@ -41,20 +40,15 @@ import {
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
-import { makeRequestGovernanceHandler } from "./governance-directive.js";
+import { makeRequestGovernanceHandler } from "./legacy-governance-directive-handler.js";
 
 /** P5 `03` §2. The slice's directive handler set: `InvokeTool` (P4), plus the
  * observation-only directives. Directives whose owning phase is absent are left
  * to the driver's `DirectiveUnsupported` path. */
-export class SliceDirectiveHandlers extends Context.Service<
-  SliceDirectiveHandlers,
-  ReadonlyArray<DirectiveHandler>
->()("arbor/SliceDirectiveHandlers") {}
-
-export class SliceExecutableInvocation extends Context.Service<
-  SliceExecutableInvocation,
-  ExecutableInvocationHandler
->()("arbor/SliceExecutableInvocation") {}
+export class LegacyLegacyDirectiveHandlers extends Context.Service<
+  LegacyLegacyDirectiveHandlers,
+  ReadonlyArray<LegacyDirectiveHandler>
+>()("arbor/LegacyLegacyDirectiveHandlers") {}
 
 const MAX_OBSERVATION_CHARS = 2000;
 
@@ -71,13 +65,15 @@ const driverError = (cause: unknown): ExecutionDriverError => ({
 const observation = (
   source: "Runtime" | "Tool",
   text: string,
-): DirectiveOutcome => ({
+): LegacyDirectiveOutcome => ({
   _tag: "Observation",
   source,
   observation: bounded(text),
 });
 
-const toOutcome = (result: CanonicalToolObservation): DirectiveOutcome => {
+const toOutcome = (
+  result: CanonicalToolObservation,
+): LegacyDirectiveOutcome => {
   switch (result._tag) {
     case "Success":
     case "ExpectedFailure":
@@ -110,61 +106,6 @@ const toolInvocationIdFor = (callRef: string) =>
       .slice(0, 12)}`,
   );
 
-export const makeExecutableInvocationHandler = (
-  tools: import("@arbor/ports").ToolRuntimePortService,
-  clock: import("@arbor/ports").ClockService,
-): ExecutableInvocationHandler => ({
-  handle: ({ invocation, execution, context }) =>
-    Effect.gen(function* () {
-      const requestedAt = yield* clock.now();
-      const toolVersion = "1";
-      const intent: ToolIntent = {
-        callRef: invocation.callRef,
-        toolName: invocation.toolName,
-        toolVersion,
-        argumentsJson: invocation.argumentsJson,
-        invocationId: toolInvocationIdFor(invocation.callRef),
-        approvalId: null,
-      };
-      const toolContext: ToolExecutionContext = {
-        executionId: execution.executionId,
-        workspaceId: execution.workspaceId,
-        sessionId: execution.sessionId,
-        projectId: execution.projectId,
-        actor: context.principal as never,
-        authenticatedPrincipal: context.principal,
-        authority: {
-          principal: context.principal,
-          workspaceId: execution.workspaceId,
-          executionId: execution.executionId,
-          toolName: invocation.toolName,
-          toolVersion,
-          resourceSpaceIds: ["filesystem"],
-          allowedCapabilities: ["fs:read", "fs:write", "shell:exec"],
-          controlBasisDigest: "slice",
-          expiresAt: "2999-01-01T00:00:00.000Z",
-          delegationDepth: 0,
-        },
-        controlBasisDigest: "slice",
-        requestedAt,
-      };
-      const result = yield* tools.invoke(intent, toolContext);
-      const outcome = toOutcome(result);
-      if (outcome._tag !== "Observation") {
-        return yield* Effect.fail({
-          _tag: "AgentActionError" as const,
-          cause: "executable tool route returned a non-observation result",
-        });
-      }
-      return outcome;
-    }).pipe(
-      Effect.mapError((cause) => ({
-        _tag: "AgentActionError" as const,
-        cause,
-      })),
-    ),
-});
-
 export interface ProposeChildWorkspaceDependencies {
   readonly gateway: import("@arbor/application").CommandGatewayService;
   readonly workspaces: import("@arbor/ports").WorkspaceRepositoryService;
@@ -179,7 +120,7 @@ export interface ProposeChildWorkspaceDependencies {
  * tests; wired into the slice handler set below. */
 export const makeProposeChildWorkspaceHandler = (
   dependencies: ProposeChildWorkspaceDependencies,
-): DirectiveHandler => ({
+): LegacyDirectiveHandler => ({
   kind: "ProposeChildWorkspace",
   handle: ({ directive, execution, context }) =>
     Effect.gen(function* () {
@@ -292,7 +233,7 @@ export const makeProposeChildWorkspaceHandler = (
  * execution's quiescence refuses new spawn admission (DID §3.4). */
 export const makeSpawnSpecialistHandler = (
   dependencies: ProposeChildWorkspaceDependencies,
-): DirectiveHandler => ({
+): LegacyDirectiveHandler => ({
   kind: "SpawnSpecialist",
   handle: ({ directive, execution, context }) =>
     Effect.gen(function* () {
@@ -383,8 +324,8 @@ export const makeSpawnSpecialistHandler = (
     }).pipe(Effect.mapError(driverError)),
 });
 
-export const SliceDirectiveHandlersLive: Layer.Layer<
-  SliceDirectiveHandlers,
+export const LegacyLegacyDirectiveHandlersLive: Layer.Layer<
+  LegacyLegacyDirectiveHandlers,
   never,
   | ToolRuntimePort
   | SkillRegistry
@@ -397,7 +338,7 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
   | InboxProjectionStore
   | MessageStore
 > = Layer.effect(
-  SliceDirectiveHandlers,
+  LegacyLegacyDirectiveHandlers,
   Effect.gen(function* () {
     const tools = yield* ToolRuntimePort;
     const skills = yield* SkillRegistry;
@@ -408,7 +349,7 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
     const workspaces = yield* WorkspaceRepository;
     const proposals = yield* FormationProposalStore;
 
-    const invokeTool: DirectiveHandler = {
+    const invokeTool: LegacyDirectiveHandler = {
       kind: "InvokeTool",
       handle: ({ directive, execution, context }) =>
         Effect.gen(function* () {
@@ -455,7 +396,7 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
         }).pipe(Effect.mapError(driverError)),
     };
 
-    const communicate: DirectiveHandler = {
+    const communicate: LegacyDirectiveHandler = {
       kind: "Communicate",
       handle: ({ directive }) =>
         Effect.succeed(
@@ -465,7 +406,7 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
         ),
     };
 
-    const loadSkill: DirectiveHandler = {
+    const loadSkill: LegacyDirectiveHandler = {
       kind: "LoadSkill",
       handle: ({ directive }) =>
         Effect.gen(function* () {
@@ -482,7 +423,7 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
         }),
     };
 
-    const changeMode: DirectiveHandler = {
+    const changeMode: LegacyDirectiveHandler = {
       kind: "ChangeMode",
       handle: ({ directive, execution }) =>
         Effect.gen(function* () {
@@ -508,7 +449,7 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
 
     // P6 `02` §6: FormationApproval / DecisionRequest are minimally routed;
     // every other governance kind keeps the P5 observation-only behavior.
-    return [
+    return LegacyLegacyDirectiveHandlers.of([
       invokeTool,
       communicate,
       loadSkill,
@@ -536,21 +477,6 @@ export const SliceDirectiveHandlersLive: Layer.Layer<
         tx,
         clock,
       }),
-    ];
-  }),
-);
-
-export const SliceExecutableInvocationLive: Layer.Layer<
-  SliceExecutableInvocation,
-  never,
-  ToolRuntimePort | Clock
-> = Layer.effect(
-  SliceExecutableInvocation,
-  Effect.gen(function* () {
-    const tools = yield* ToolRuntimePort;
-    const clock = yield* Clock;
-    return SliceExecutableInvocation.of(
-      makeExecutableInvocationHandler(tools, clock),
-    );
+    ]);
   }),
 );

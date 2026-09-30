@@ -6,7 +6,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   admitExecution,
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   evaluateAndSelect,
   runMigrations,
@@ -604,7 +604,7 @@ const runScenario = async (
   providerFailures?: ReadonlyArray<ProviderFailureKind>,
 ): Promise<ScenarioResult> => {
   const dir = mkdtempSync(join(tmpdir(), "p12-safety-"));
-  const app = buildSliceLayer({
+  const app = buildSingleWorkspaceLayer({
     databaseFile: join(dir, "slice.db"),
     providerTurns,
     ...(providerFailures !== undefined ? { providerFailures } : {}),

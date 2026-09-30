@@ -49,10 +49,10 @@ import {
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
 
-export class SliceControlActionHandlers extends Context.Service<
-  SliceControlActionHandlers,
+export class SingleWorkspaceControlActionHandlers extends Context.Service<
+  SingleWorkspaceControlActionHandlers,
   ReadonlyArray<AgentActionHandler>
->()("arbor/SliceControlActionHandlers") {}
+>()("arbor/SingleWorkspaceControlActionHandlers") {}
 
 export interface SendMessageDependencies {
   readonly gateway: CommandGatewayService;
@@ -609,7 +609,7 @@ const declareDependencyHandler = (
     }).pipe(Effect.mapError(actionError)),
 });
 
-export const makeSliceControlActionHandlers = (
+export const makeSingleWorkspaceControlActionHandlers = (
   dependencies: SendMessageDependencies &
     ClaimCompletionDependencies &
     ProposeChildDependencies &
@@ -623,8 +623,8 @@ export const makeSliceControlActionHandlers = (
   declareDependencyHandler(dependencies),
 ];
 
-export const SliceControlActionHandlersLive: Layer.Layer<
-  SliceControlActionHandlers,
+export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
+  SingleWorkspaceControlActionHandlers,
   never,
   | CommandGateway
   | BlobStorePort
@@ -635,7 +635,7 @@ export const SliceControlActionHandlersLive: Layer.Layer<
   | WorkRepository
   | WorkspaceRepository
 > = Layer.effect(
-  SliceControlActionHandlers,
+  SingleWorkspaceControlActionHandlers,
   Effect.gen(function* () {
     const gateway = yield* CommandGateway;
     const blobs = yield* BlobStorePort;
@@ -645,8 +645,8 @@ export const SliceControlActionHandlersLive: Layer.Layer<
     const works = yield* WorkRepository;
     const workspaces = yield* WorkspaceRepository;
     const proposals = yield* FormationProposalStore;
-    return SliceControlActionHandlers.of(
-      makeSliceControlActionHandlers({
+    return SingleWorkspaceControlActionHandlers.of(
+      makeSingleWorkspaceControlActionHandlers({
         gateway,
         blobs,
         clock,

@@ -41,7 +41,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   admitExecution,
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   evaluateAndSelect,
   runMigrations,
@@ -185,7 +185,7 @@ const turns = [
 describe("I0 executable/control vertical slice", () => {
   it("routes shell through ToolRuntime and Wait through ControlToolRegistry", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-accept-"));
-    const app = buildSliceLayer({
+    const app = buildSingleWorkspaceLayer({
       databaseFile: join(dir, "slice.db"),
       providerTurns: turns,
     });

@@ -26,7 +26,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
@@ -171,7 +171,7 @@ const admit = (commandId: CommandId) =>
 describe("STILL_VALID_INVARIANT — superseded CompletionClaim representation", () => {
   it("keeps Work Open and fails closed when the old universal envelope is submitted", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-cc-"));
-    const app = buildSliceLayer({
+    const app = buildSingleWorkspaceLayer({
       databaseFile: join(dir, "slice.db"),
       providerTurns: [legacyAgentDirectiveTurn],
     });

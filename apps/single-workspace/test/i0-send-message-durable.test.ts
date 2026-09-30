@@ -20,7 +20,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   admitExecution,
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
@@ -121,7 +121,7 @@ const invalidRootReportTurn: ReadonlyArray<CanonicalProviderEvent> = [
 describe("I0 SendMessage durable integration", () => {
   it("persists valid SendMessage and fails closed before persisting an invalid root Report", async () => {
     const root = mkdtempSync(join(tmpdir(), "i0-send-message-durable-"));
-    const app = buildSliceLayer({
+    const app = buildSingleWorkspaceLayer({
       databaseFile: join(root, "slice.db"),
       providerTurns: [reportTurn, waitTurn, invalidRootReportTurn],
     });

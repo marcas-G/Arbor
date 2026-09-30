@@ -22,7 +22,7 @@ import {
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import {
   type AgentActionHandler,
-  AgentDriverLive,
+  AgentLoopDriverLive,
   type ExecutableInvocationHandler,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
@@ -246,7 +246,7 @@ const makeApp = (
     options.environmentRevisions ??
     Layer.provide(EnvironmentRevisionStoreLive, infra);
   const driver = Layer.provide(
-    AgentDriverLive([], {
+    AgentLoopDriverLive({
       controlRegistry,
       ...(options.executableHandler !== undefined
         ? { executableInvocationHandler: options.executableHandler }
