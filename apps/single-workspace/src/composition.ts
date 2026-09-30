@@ -145,6 +145,7 @@ import { INLINE_SECRET_REF } from "./provider-config.js";
 import { PROVIDER_REGISTRY_TABLE } from "./provider-registry.table.js";
 import { SingleWorkspaceCommandHandlerRegistryLive } from "./registry.js";
 import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
+import { ToolAuthorityResolverLive } from "./tool-authority-resolver.js";
 import {
   type AuthenticatorService,
   makeLocalAuthenticator,
@@ -470,6 +471,13 @@ export const buildSingleWorkspaceLayer = (
     BlobStorePortLive,
   );
   const admission = Layer.provide(ResourceAdmissionLive, repos);
+  const authorityResolver = AuthorityResolverPortLive;
+  const toolAuthority = Layer.provide(
+    ToolAuthorityResolverLive(
+      config.governance ?? { authenticatedHumans: [], directParentOf: [] },
+    ),
+    Layer.mergeAll(repos, authorityResolver),
+  );
   const toolRuntime = Layer.provide(
     ToolRuntimeLive(BUILTIN_EXECUTORS),
     Layer.mergeAll(
@@ -478,6 +486,7 @@ export const buildSingleWorkspaceLayer = (
       ToolDefinitionStoreLive,
       SandboxPortLive,
       infra,
+      toolAuthority,
     ),
   );
   const registry = Layer.provide(
@@ -595,7 +604,6 @@ export const buildSingleWorkspaceLayer = (
   // assembles the P12 shells over the composition-root submission face; the
   // production daemon drives migrate -> T1 recovery -> offset consumer loops;
   // health/usage are the operational plane (B-8).
-  const authorityResolver = AuthorityResolverPortLive;
   const recordEnvironmentChange = Layer.provide(
     RecordEnvironmentChangeLive,
     Layer.mergeAll(infra, repos),

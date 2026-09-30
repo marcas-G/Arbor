@@ -7,6 +7,7 @@ import {
   ResourceAdmission,
   type SandboxHandle,
   SandboxPort,
+  ToolAuthorityResolver,
   type ToolDefinition,
   ToolDefinitionStore,
   type ToolExecutionContext,
@@ -91,6 +92,9 @@ export const ToolRuntimeLive = (
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
       const environment = yield* ProjectEnvironmentPort;
+      const authorityResolver = yield* Effect.serviceOption(
+        ToolAuthorityResolver,
+      );
 
       const failure = (cause: unknown): ToolRuntimeError => ({
         _tag: "ToolRuntimeError",
@@ -132,8 +136,20 @@ export const ToolRuntimeLive = (
           );
           const regions = resolved.regions;
 
+          const resolvedAuthority = Option.isSome(authorityResolver)
+            ? yield* authorityResolver.value.resolve({
+                intent,
+                definition,
+                context,
+                regions,
+                now,
+              })
+            : context.authority;
+          if (resolvedAuthority === undefined) {
+            return denied("tool authority unavailable");
+          }
           const authority = checkInvocationAuthority({
-            authority: context.authority,
+            authority: resolvedAuthority,
             definition,
             intent,
             context,

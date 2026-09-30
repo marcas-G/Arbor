@@ -8,7 +8,7 @@ import type {
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
-import type { ToolInvocation } from "@arbor/model-context";
+import type { ControlBasis, ToolInvocation } from "@arbor/model-context";
 import type {
   BoundedObservation,
   ControlToolCatalogPortService,
@@ -148,6 +148,7 @@ export interface ExecutableInvocationInput {
   readonly invocation: ToolInvocation;
   readonly execution: Execution;
   readonly context: CommandSubmissionContext;
+  readonly controlBasis: ControlBasis;
 }
 
 export interface ExecutableInvocationHandler {

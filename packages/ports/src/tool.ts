@@ -70,10 +70,33 @@ export interface ToolExecutionContext {
   readonly projectId: ProjectId;
   readonly actor: Actor;
   readonly authenticatedPrincipal: Principal;
-  readonly authority: InvocationAuthority;
+  /** Legacy/test injection only. Production resolves authority after exact
+   * resource resolution through ToolAuthorityResolver. */
+  readonly authority?: InvocationAuthority;
   readonly controlBasisDigest: string;
+  readonly delegationDepth?: number;
   readonly requestedAt: string;
 }
+
+export interface ToolAuthorityResolutionError {
+  readonly _tag: "ToolAuthorityResolutionError";
+  readonly cause: unknown;
+}
+
+export interface ToolAuthorityResolverService {
+  readonly resolve: (input: {
+    readonly intent: ToolIntent;
+    readonly definition: ToolDefinition;
+    readonly context: ToolExecutionContext;
+    readonly regions: ReadonlyArray<CanonicalResourceRegion>;
+    readonly now: string;
+  }) => Effect.Effect<InvocationAuthority, ToolAuthorityResolutionError>;
+}
+
+export class ToolAuthorityResolver extends Context.Service<
+  ToolAuthorityResolver,
+  ToolAuthorityResolverService
+>()("arbor/ToolAuthorityResolver") {}
 
 export interface BoundedObservation {
   readonly text: string;

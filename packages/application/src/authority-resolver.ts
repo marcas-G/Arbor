@@ -710,6 +710,9 @@ const authorizeInvocation = (
   if (isAuthenticatedHuman(input)) {
     return Effect.succeed([...requested]);
   }
+  if (requested.every((capability) => capability === "fs:read")) {
+    return Effect.succeed([...requested]);
+  }
   const active = input.grants.filter((grant) => grant.state === "Active");
   if (active.length === 0) {
     return Effect.fail({

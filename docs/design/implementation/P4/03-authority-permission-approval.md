@@ -85,3 +85,19 @@ interface InvocationApproval {
 - No PermissionGrant lookup / Parent-User resolution / RBAC-ABAC-ACL.
 - No policy/ceiling computation from governance facts.
 - No escalation routing decisions (a later governance phase).
+## Workspace capability distribution (governance 2026-10-01)
+
+- `list` / `read` (`fs:read`) are baseline capabilities inside an active
+  Workspace's current ResourceBoundary.
+- `patch`, `shell`, Project tools and external tools require elevated
+  capabilities explicitly distributed by the parent Workspace; a child
+  ceiling is always a subset of its parent's current ceiling.
+- Root elevated capabilities originate from Project creator/Project Policy.
+- ExecutionBound specialists can only receive an explicit subset of their
+  parent Execution ceiling.
+- Tool Runtime resolves exact regions before authority resolution. The
+  resulting InvocationAuthority binds principal, Workspace, Execution, tool
+  version, capabilities, resource spaces, ControlBasis digest, TTL and
+  delegation depth.
+- Authority denial is a normal Tool observation, never a defect or canonical
+  mutation.
