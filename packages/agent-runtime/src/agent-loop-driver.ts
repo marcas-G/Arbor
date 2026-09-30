@@ -15,6 +15,7 @@ import {
   type ExecutionDriverError,
   ExecutionDriverPort,
   HumanMessageStore,
+  InboxProjectionStore,
   ModelCapabilityPort,
   ProjectRepository,
   type ProviderExecutionPolicyOverrides,
@@ -97,6 +98,7 @@ export const AgentLoopDriverLive = (
       const capabilityPort = yield* ModelCapabilityPort;
       const sessions = yield* SessionRepository;
       const humanMessages = yield* HumanMessageStore;
+      const inboxOption = yield* Effect.serviceOption(InboxProjectionStore);
       const tx = yield* TransactionPort;
       const loopStepStoreOption =
         yield* Effect.serviceOption(AgentLoopStepStore);
@@ -221,6 +223,9 @@ export const AgentLoopDriverLive = (
                 tx,
                 sessions,
                 humanMessages,
+                ...(Option.isSome(inboxOption)
+                  ? { inbox: inboxOption.value }
+                  : {}),
                 works,
                 workspaces,
                 options,

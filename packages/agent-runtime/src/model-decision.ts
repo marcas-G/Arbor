@@ -20,6 +20,7 @@ import type {
   ExecutionActivity,
   ExecutionDriverError,
   HumanMessageStoreService,
+  InboxProjectionStoreService,
   ModelCapability,
   ProviderExecutionPolicyOverrides,
   ProviderRunInput,
@@ -45,6 +46,7 @@ import {
   runtimeSafetyFragment,
   safetyStop,
 } from "./agent-loop-policy.js";
+import { assembleInboxContext } from "./inbox-context.js";
 import { decideRepair } from "./repair.js";
 import {
   assembleSessionContext,
@@ -80,6 +82,7 @@ export interface ModelDecisionDependencies {
   readonly providerTurns?: ProviderTurnStoreService;
   readonly sessions: SessionRepositoryService;
   readonly humanMessages: HumanMessageStoreService;
+  readonly inbox?: InboxProjectionStoreService;
   readonly works: WorkRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly options: ModelDecisionOptions;
@@ -110,6 +113,7 @@ export const runModelDecision = (
     providerTurns,
     sessions,
     humanMessages,
+    inbox,
     works,
     workspaces,
     options,
@@ -217,10 +221,19 @@ export const runModelDecision = (
         )
         .pipe(Effect.mapError(failure));
       const sessionContext = assembleSessionContext(recentSessionEntries);
+      const inboxEntries =
+        inbox === undefined
+          ? []
+          : yield* tx
+              .transact(inbox.listUnconsumed(input.execution.workspaceId))
+              .pipe(Effect.mapError(failure));
+      const inboxContext = assembleInboxContext(inboxEntries);
       const messages = [...conversationMessages, ...sessionContext.messages];
+      messages.push(...inboxContext.messages);
       const messageContextRefs = [
         ...conversationContextRefs,
         ...sessionContext.contextRefs,
+        ...inboxContext.contextRefs,
       ];
       const workspace = yield* tx
         .transact(workspaces.findById(input.execution.workspaceId))

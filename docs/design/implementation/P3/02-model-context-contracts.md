@@ -33,6 +33,11 @@ Observations enter as `role: "tool"` messages and remain DataOnly; their text
 is never promoted into an InstructionFragment. The Manifest records their
 durable Session source refs.
 
+Unconsumed Workspace Inbox entries are bounded coordination input. HumanInput,
+Governance and Message summaries enter as provider messages with exact
+`inbox:<entryKey>` Manifest refs. Context assembly never marks an entry
+consumed; consumption requires an explicit owning workflow outcome.
+
 ## 2. Agent policy resolution
 
 Deterministic resolution of binding, responsibility, work/mission, cognitive
