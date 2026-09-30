@@ -7,6 +7,7 @@ import {
   layer,
   P16_MIGRATIONS,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
@@ -199,7 +200,12 @@ const makeApp = (
   probe: ProviderProbe,
 ) => {
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive(),
     Layer.mergeAll(

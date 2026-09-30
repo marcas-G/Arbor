@@ -25,6 +25,7 @@ import {
   P15_MIGRATIONS,
   P17_MIGRATIONS,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   TransactionPortLive,
 } from "../src/index.js";
@@ -38,7 +39,12 @@ const executionId = parse(ExecutionId)(
 
 const makeApp = (script: Parameters<typeof FakeProviderLive>[0]) => {
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const deps = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(ProviderTurnStoreLive, infra),

@@ -65,6 +65,7 @@ import {
   ProviderTurnStoreLive,
   RecordEnvironmentChangeLive,
   ResourceOwnershipRepositoryLive,
+  RuntimeClockLive,
   runMigrations,
   SchedulerTimerStoreLive,
   SessionRepositoryLive,
@@ -277,7 +278,12 @@ export const buildSliceLayer = (
   config: SliceConfig,
 ): Layer.Layer<SliceServices> => {
   const base = layer({ filename: config.databaseFile });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   // P12 `09` §5: production wires the REAL resolver (not the fake
   // `environment-local` adapter). `ProjectEnvironmentPort` — consumed by
   // ownership writes and tool admission — is the resolver projection.

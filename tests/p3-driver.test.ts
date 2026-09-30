@@ -12,6 +12,7 @@ import {
   P17_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -124,7 +125,12 @@ const makeApp = (
   } = {},
 ) => {
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const provider = FakeProviderLive({ turns });
   const providerTurnStore = Layer.provide(ProviderTurnStoreLive, infra);
   const liveAgentLoopSteps = Layer.provide(AgentLoopStepStoreLive, infra);
@@ -250,6 +256,7 @@ const makeApp = (
         : {}),
     }),
     Layer.mergeAll(
+      infra,
       modelContext,
       providerRuntime,
       capability,

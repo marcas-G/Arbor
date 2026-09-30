@@ -16,6 +16,7 @@ import {
   P16_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   rebuildProjection,
   runConsumerBatch,
   runMigrations,
@@ -430,7 +431,12 @@ const nextCCommandId = () => {
 
 const makeStoryCApp = (filename: string) => {
   const base = layer({ filename });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const execRepo = Layer.provide(ExecutionRepositoryLive, infra);
   const repositories = Layer.mergeAll(
     Layer.provide(ProjectRepositoryLive, infra),
@@ -914,7 +920,12 @@ const makeStoryDApp = (
   filename: string,
 ) => {
   const base = layer({ filename });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive(),
     Layer.mergeAll(
@@ -1338,7 +1349,12 @@ const makeStoryEApp = (
   filename: string,
 ) => {
   const base = layer({ filename });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const execRepo = Layer.provide(ExecutionRepositoryLive, infra);
   const stores = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),

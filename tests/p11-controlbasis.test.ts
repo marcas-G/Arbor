@@ -15,6 +15,7 @@ import {
   layer,
   P16_MIGRATIONS,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -194,7 +195,12 @@ const recordingModelContext = (recorded: Array<ControlBasis>) =>
 const makeApp = () => {
   const recorded: Array<ControlBasis> = [];
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const provider = FakeProviderLive({
     turns: [sendMessageTurn("first"), sendMessageTurn("second")],
   });
@@ -214,6 +220,7 @@ const makeApp = () => {
   const driver = Layer.provide(
     AgentDriverLive([], { controlRegistry }),
     Layer.mergeAll(
+      infra,
       recordingModelContext(recorded),
       providerRuntime,
       capability,

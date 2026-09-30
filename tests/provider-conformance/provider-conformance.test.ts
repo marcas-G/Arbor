@@ -6,6 +6,7 @@ import {
   IdGeneratorLive,
   P16_MIGRATIONS,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   layer as sqliteLayer,
   TransactionPortLive,
@@ -719,7 +720,12 @@ describe("P16 E3 conformance — A9 observation-persistence", () => {
               { _tag: "TurnCompleted", finishReason: "Stop" },
             ]);
       const base = sqliteLayer({ filename: ":memory:" });
-      const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+      const infra = Layer.mergeAll(
+        base,
+        ClockLive,
+        RuntimeClockLive,
+        IdGeneratorLive,
+      );
       const providerLayer = adapter.layerFor(binding);
       const runtimeDeps = Layer.mergeAll(
         providerLayer,
