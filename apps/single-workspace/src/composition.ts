@@ -123,8 +123,6 @@ import {
   SliceControlActionHandlersLive,
 } from "./control-actions.js";
 import {
-  SliceDirectiveHandlers,
-  SliceDirectiveHandlersLive,
   SliceExecutableInvocation,
   SliceExecutableInvocationLive,
 } from "./directives.js";
@@ -143,6 +141,7 @@ import {
   TransportBoundaryLive,
 } from "./production.js";
 import { ProjectionQueryPortLive } from "./projection-query.js";
+import { INLINE_SECRET_REF } from "./provider-config.js";
 import { PROVIDER_REGISTRY_TABLE } from "./provider-registry.table.js";
 import { SliceCommandHandlerRegistryLive } from "./registry.js";
 import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
@@ -236,9 +235,9 @@ export interface SliceConfig {
   /** B-7: the parent/user governance facts the Authority Resolver consumes
    * (`02` §2). Absent means no external governance override is configured. */
   readonly governance?: ParentUserGovernanceFacts;
-  /** B-7: the transport-boundary authenticator. Absent means no external
-   * token is accepted (the daemon still runs; external submissions fail
-   * closed with `unauthenticated`). */
+  /** B-7: the transport-boundary authenticator. Absent selects the local
+   * single-user loopback principal; remote deployments must configure an
+   * authenticator explicitly. */
   readonly authenticator?: AuthenticatorService;
   /** B-7: the system principal the production daemon submits recovery /
    * consumer commands as (default `runtime:system`). */
@@ -300,14 +299,19 @@ export const buildSliceLayer = (
       ? SecretFileLive({ root: config.secretStore.root })
       : config.secretStore?._tag === "Inline"
         ? Layer.succeed(SecretStorePort, {
-            resolve: () =>
-              Effect.succeed(
-                SecretMaterial.of(
-                  config.secretStore?._tag === "Inline"
-                    ? config.secretStore.material
-                    : "",
-                ),
-              ),
+            resolve: (ref) =>
+              ref === INLINE_SECRET_REF
+                ? Effect.succeed(
+                    SecretMaterial.of(
+                      config.secretStore?._tag === "Inline"
+                        ? config.secretStore.material
+                        : "",
+                    ),
+                  )
+                : Effect.fail({
+                    _tag: "SecretNotFound" as const,
+                    secretRef: ref,
+                  }),
           })
         : SecretEnvLive();
 
@@ -481,10 +485,6 @@ export const buildSliceLayer = (
     CommandGatewayLive,
     Layer.mergeAll(infra, registry, repos, fence),
   );
-  const directiveHandlers = Layer.provide(
-    SliceDirectiveHandlersLive,
-    Layer.mergeAll(toolRuntime, skills, repos, infra, registry, gateway),
-  );
   const controlActionHandlers = Layer.provide(
     SliceControlActionHandlersLive,
     Layer.mergeAll(repos, infra, gateway),
@@ -509,7 +509,6 @@ export const buildSliceLayer = (
   const driver = Layer.provide(
     Layer.unwrap(
       Effect.gen(function* () {
-        const _legacyHandlers = yield* SliceDirectiveHandlers;
         const registryService = yield* ControlToolRegistry;
         const executableHandler = yield* SliceExecutableInvocation;
         return Layer.provide(
@@ -547,7 +546,7 @@ export const buildSliceLayer = (
         );
       }),
     ),
-    Layer.mergeAll(directiveHandlers, controlRegistry, executableInvocation),
+    Layer.mergeAll(controlRegistry, executableInvocation),
   );
   const runnableSource = Layer.provide(
     DependencyAwareRunnableWorkSourceLive,
@@ -650,10 +649,7 @@ export const buildSliceLayer = (
     snapshotRetention,
     usage,
   );
-  return Layer.mergeAll(
-    all,
-    Layer.provide(CommandGatewayLive, all),
-  ) as Layer.Layer<SliceServices>;
+  return all as Layer.Layer<SliceServices>;
 };
 
 export {

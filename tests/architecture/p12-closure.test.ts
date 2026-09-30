@@ -169,6 +169,14 @@ const readPackages = (): ReadonlyArray<PackageManifest> => [
 ];
 
 describe("p12-closure", () => {
+  it("the production composition has one command gateway and no legacy directive graph", () => {
+    const composition = sourceOf("apps/single-workspace/src/composition.ts");
+    expect(composition).not.toContain("SliceDirectiveHandlers");
+    expect(
+      composition.match(/Layer\.provide\(\s*CommandGatewayLive/gu) ?? [],
+    ).toHaveLength(1);
+  });
+
   it("CI-1 — no resolver / observability / worker path mutates canonical domain state directly", () => {
     // The Authority Resolver is a pure fact producer.
     const resolver = sourceOf("packages/application/src/authority-resolver.ts");

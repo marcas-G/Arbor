@@ -1,7 +1,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SecretStorePort, secretRef } from "@arbor/ports";
+import { Effect, type Layer } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
+import { buildSliceLayer } from "../src/composition.js";
 import {
   type ArborProviderConfigFile,
   findArborConfigFile,
@@ -103,6 +106,34 @@ describe("arbor.config.json — standard provider configuration", () => {
     expect(secretStore).toEqual({
       _tag: "Inline",
       material: "sk-test-inline-123",
+    });
+  });
+
+  it("the inline secret store rejects every ref except its sentinel", async () => {
+    const { dir } = withConfig("{}");
+    const app = buildSliceLayer({
+      databaseFile: join(dir, "slice.db"),
+      secretRef: secretRef("arbor:inline-secret"),
+      secretStore: {
+        _tag: "Inline",
+        material: "sk-test-inline-123",
+      },
+    }) as unknown as Layer.Layer<SecretStorePort>;
+    const failure = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const secrets = yield* SecretStorePort;
+          return yield* Effect.flip(
+            secrets.resolve(secretRef("another-provider-secret")),
+          );
+        }),
+        app,
+      ),
+    );
+
+    expect(failure).toEqual({
+      _tag: "SecretNotFound",
+      secretRef: "another-provider-secret",
     });
   });
 

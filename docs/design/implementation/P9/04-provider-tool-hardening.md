@@ -105,6 +105,18 @@ crash leaves provider_turns row with settled_at IS NULL
         rules — recovery never invents a settlement
 ```
 
+Terminal convergence is first-writer-wins. Every Turn-level settlement,
+including cancellation, timeout and recovery failure, must CAS on
+`settled_at IS NULL` and reject a zero-row update. A stale Worker may never
+overwrite a success or another terminal disposition. Recovery failure marking
+must likewise surface a lost CAS rather than report a failure mark that was not
+persisted.
+
+Persisted `turnDeadlineAt` is part of the recovery safety envelope. Recovery
+uses an injected Clock reading; a missing, malformed or non-finite deadline is
+incomplete durable evidence and therefore produces `UnsafeReplay/Stop`, never
+a retry plan.
+
 - The recovery pass itself never calls the provider: it leaves the Execution
   Active; the Scheduler re-dispatches; the driver resumes the dangling Turn
   as a new attempt under the same `providerTurnId` + `manifestId`.
@@ -137,6 +149,11 @@ I-7  crash mid-Turn + restart       → dangling Turn resumed as new
 I-8  crash after complete success evidence but before Turn settlement
                                      → local atomic convergence; zero new
                                        Provider request (P9 `07` AH1/AH2)
+I-9  stale Worker settles after another Worker completed the Turn
+                                     → terminal CAS rejected; first result and
+                                       success evidence remain unchanged
+I-10 malformed/missing persisted deadline
+                                     → fail closed; zero retry plan
 ```
 
 ## 3. Tool four-tier injection assertions (invariant 35)

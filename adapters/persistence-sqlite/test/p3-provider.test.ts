@@ -242,6 +242,58 @@ describe("P3 ProviderRuntime + fake provider", () => {
     expect(typed.row.success_evidence_version).toBe("provider-success-v1");
   });
 
+  it("keeps the first terminal ProviderTurn result when a stale worker settles later", async () => {
+    const app = makeApp({ events });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      yield* runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1");
+      const tx = yield* TransactionPort;
+      const store = yield* ProviderTurnStore;
+      const staleSettlement = yield* Effect.flip(
+        tx.transact(
+          store.settleTurn(
+            providerTurnId,
+            "Cancelled",
+            "{}",
+            "2999-01-01T00:00:00.000Z",
+          ),
+        ),
+      );
+      const staleFailureMark = yield* Effect.flip(
+        tx.transact(store.failTurn(providerTurnId, "2999-01-01T00:00:01.000Z")),
+      );
+      const replay = yield* tx.transact(
+        store.findSettledResult(providerTurnId),
+      );
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<{
+        finish_reason: string | null;
+        usage_json: string | null;
+      }>(
+        "SELECT finish_reason, usage_json FROM provider_turns WHERE provider_turn_id = ?",
+        [providerTurnId],
+      );
+      return { staleSettlement, staleFailureMark, replay, row: rows[0] };
+    });
+
+    const result = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
+    expect(result).toMatchObject({
+      staleSettlement: {
+        _tag: "ProviderFailure",
+        safeDiagnostic: "provider-turn-settlement-cas-rejected",
+      },
+      staleFailureMark: {
+        _tag: "ProviderFailure",
+        safeDiagnostic: "provider-turn-failure-cas-rejected",
+      },
+      replay: { _tag: "SettledSuccess" },
+      row: { finish_reason: "Stop" },
+    });
+  });
+
   it("streams the frozen ADT and records the turn/attempt", async () => {
     const app = makeApp({ events });
     const program = Effect.gen(function* () {
