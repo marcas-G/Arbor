@@ -14,9 +14,11 @@ import {
   withdrawDependency,
 } from "@arbor/domain";
 import type {
+  DependencyRepositoryError,
   DependencyRepositoryService,
   PendingDomainEvent,
   TransactionScope,
+  WorkRepositoryError,
   WorkRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -54,20 +56,20 @@ interface TransitionApplied {
 /** Shared rejection baseline (§5–§7 rows, identical order): not found →
  * terminal → revision; then the domain transition and the state+revision
  * CAS (first committer wins, §10). A lost CAS re-reads the row and
- * classifies the loser's typed rejection by what it observes — the
- * store channel itself is defects-only here (adapter-specific errors
- * never cross the semantic boundary; the gateway error union does not
- * carry DependencyRepositoryError yet). */
+ * classifies the loser's typed rejection by what it observes. Repository
+ * failures remain typed through the command gateway. */
 const applyUnsatisfiedTransition = (
   dependencies: DependencyTransitionDependencies,
   dependencyId: DependencyId,
   targetDependencyRevision: DependencyRevision,
   transition: (dependency: Dependency) => DomainResult<Dependency>,
-): Effect.Effect<CommandResult<TransitionApplied>, never, TransactionScope> =>
+): Effect.Effect<
+  CommandResult<TransitionApplied>,
+  DependencyRepositoryError,
+  TransactionScope
+> =>
   Effect.gen(function* () {
-    const existing = yield* dependencies.dependencies
-      .findById(dependencyId)
-      .pipe(Effect.orDie);
+    const existing = yield* dependencies.dependencies.findById(dependencyId);
     if (Option.isNone(existing)) {
       return commandErr({ _tag: "DependencyNotFound", dependencyId });
     }
@@ -90,19 +92,16 @@ const applyUnsatisfiedTransition = (
     if (!next.ok) {
       return commandErr(next.error);
     }
-    const applied = yield* dependencies.dependencies
-      .transitionIfUnsatisfiedRevision(
+    const applied =
+      yield* dependencies.dependencies.transitionIfUnsatisfiedRevision(
         dependencyId,
         targetDependencyRevision,
         next.value,
-      )
-      .pipe(Effect.orDie);
+      );
     if (Option.isSome(applied)) {
       return commandOk({ from: dependency, next: next.value });
     }
-    const reread = yield* dependencies.dependencies
-      .findById(dependencyId)
-      .pipe(Effect.orDie);
+    const reread = yield* dependencies.dependencies.findById(dependencyId);
     const current = Option.isNone(reread) ? dependency : reread.value;
     if (current.state !== "Unsatisfied") {
       return commandErr({
@@ -139,22 +138,23 @@ const dependencyEvent = (
  * emitted ONLY for a human-originated submitting principal (provenance
  * AuthenticatedHuman, DID §8.4A); agent submissions emit nothing. Target
  * = the Workspace owning the consumer Work; same semantic transaction as
- * the primary event. The store channel is defects-only here (the §5–§7
- * precedent). */
+ * the primary event. */
 const humanGovernanceFact = (
   dependencies: DependencyTransitionDependencies,
   envelope: GatewayEnvelope<unknown>,
   contextPrincipal: Principal,
   consumerWorkId: WorkId,
   summaryRef: string,
-): Effect.Effect<PendingDomainEvent | null, never, TransactionScope> =>
+): Effect.Effect<
+  PendingDomainEvent | null,
+  WorkRepositoryError,
+  TransactionScope
+> =>
   Effect.gen(function* () {
     if (!isHumanOriginatedPrincipal(contextPrincipal)) {
       return null;
     }
-    const work = yield* dependencies.works
-      .findById(consumerWorkId)
-      .pipe(Effect.orDie);
+    const work = yield* dependencies.works.findById(consumerWorkId);
     if (Option.isNone(work)) {
       return null;
     }

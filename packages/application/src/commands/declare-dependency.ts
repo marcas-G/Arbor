@@ -151,16 +151,9 @@ export const makeDeclareDependencyHandler = (
         revision: payload.revision,
         expectedDeliverable: payload.expectedDeliverable,
       });
-      // The gateway's CommandHandlerError union predates the P7 dependency
-      // store; insert's only failure mode is operational (SqlError), which
-      // is unrecoverable at this boundary — the transaction aborts as a
-      // defect (the gateway uses the same orDie convention for its own
-      // retry-attempt writes). Re-declaration with a different commandId
-      // cannot surface here: same-commandId replays are absorbed by the
-      // CommandReceipt before the handler runs.
-      yield* dependencies.dependencies
-        .insert(declared, envelope.projectId)
-        .pipe(Effect.orDie);
+      // Same-commandId replays are absorbed by the CommandReceipt before the
+      // handler runs. Repository failures remain typed through the gateway.
+      yield* dependencies.dependencies.insert(declared, envelope.projectId);
 
       const events: PendingDomainEvent[] = [
         {

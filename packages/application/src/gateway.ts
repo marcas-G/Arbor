@@ -1,219 +1,37 @@
-import type {
-  Actor,
-  CommandId,
-  CommandReceipt,
-  CommandResolution,
-  CommandSubmissionContext,
-  ProjectId,
-  SemanticRequestFingerprint,
-} from "@arbor/domain";
+import type { CommandReceipt, CommandSubmissionContext } from "@arbor/domain";
 import {
   Clock,
   CommandStore,
-  type CommandStoreError,
   DomainEventJournal,
-  type DomainEventJournalError,
-  type EnvironmentError,
-  type ExecutionRepositoryError,
-  type FormationProposalStoreError,
-  type HumanMessageStoreError,
   IdGenerator,
-  type InboxProjectionStoreError,
-  type MessageStoreError,
-  type PendingDomainEvent,
-  type PermissionGrantRepositoryError,
   ProjectRepository,
-  type ProjectRepositoryError,
-  type ProjectToolRegistryError,
-  type ResourceOwnershipRepositoryError,
-  type SchedulerTimerStoreError,
-  type SessionRepositoryError,
-  type TransactionOperationalFailure,
   TransactionPort,
-  type TransactionScope,
-  type WorkRepositoryError,
-  type WorkspaceRepositoryError,
-  type WorktreeStoreError,
-  type WorkWaitStoreError,
 } from "@arbor/ports";
-import { Context, Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option } from "effect";
 import {
   type CommandAuthorityFact,
-  type CommandAuthorityRule,
-  type StopAdmission,
   validateCommandAuthority,
 } from "./authority.js";
-import type { CommandResult } from "./command-result.js";
+import { CommandHandlerRegistry } from "./command-handler-registry.js";
+import { decodeCommandReceipt, makeCommandReceipt } from "./command-receipt.js";
+import { FenceStopCheck } from "./fence-stop.js";
 import {
   FINGERPRINT_ALGORITHM_VERSION,
   semanticRequestFingerprint,
 } from "./fingerprint.js";
+import {
+  CommandGateway,
+  type CommandGatewayError,
+  type GatewayEnvelope,
+} from "./gateway-contracts.js";
+import { projectAdmissionOf } from "./project-admission.js";
 import type { CommandRejection } from "./rejection.js";
 
-export interface GatewayEnvelope<C> {
-  readonly commandType: string;
-  readonly commandId: CommandId;
-  readonly projectId: ProjectId;
-  readonly actor: Actor;
-  readonly issuedAt: string;
-  readonly causationRef?: string;
-  readonly correlationRef?: string;
-  readonly payload: C;
-}
-
-export interface CommandOutcome<R> {
-  readonly result: R;
-  readonly events: ReadonlyArray<PendingDomainEvent>;
-}
-
-export type CommandHandlerError =
-  | ProjectRepositoryError
-  | WorkspaceRepositoryError
-  | WorkRepositoryError
-  | SessionRepositoryError
-  | ExecutionRepositoryError
-  | WorkWaitStoreError
-  | SchedulerTimerStoreError
-  | CommandStoreError
-  | DomainEventJournalError
-  | FormationProposalStoreError
-  | MessageStoreError
-  | InboxProjectionStoreError
-  | EnvironmentError
-  | WorktreeStoreError
-  | ResourceOwnershipRepositoryError
-  | ProjectToolRegistryError
-  | PermissionGrantRepositoryError
-  | HumanMessageStoreError;
-
-export interface CommandHandler<C, R> {
-  readonly commandType: string;
-  readonly schemaVersion: string;
-  readonly authority: CommandAuthorityRule<C>;
-  readonly stopAdmission: StopAdmission;
-  readonly execute: (
-    envelope: GatewayEnvelope<C>,
-    context: CommandSubmissionContext,
-  ) => Effect.Effect<
-    CommandResult<CommandOutcome<R>>,
-    CommandHandlerError,
-    TransactionScope
-  >;
-}
-
-export type ProjectAdmission = "Bootstrap" | "OpenRequired" | "ClosedAllowed";
-
-const CLOSED_ALLOWED_COMMANDS = new Set([
-  "StopExecution",
-  "SettleExecution",
-  "RevokePermission",
-  "RetireWorktree",
-]);
-
-/** Safe default: every new command targets an existing Open Project unless it
- * is explicitly classified as bootstrap or a reducing/convergence action. */
-export const projectAdmissionOf = (commandType: string): ProjectAdmission =>
-  commandType === "CreateProject"
-    ? "Bootstrap"
-    : CLOSED_ALLOWED_COMMANDS.has(commandType)
-      ? "ClosedAllowed"
-      : "OpenRequired";
-
-export interface CommandHandlerRegistryService {
-  readonly lookup: (
-    commandType: string,
-  ) => Option.Option<CommandHandler<unknown, unknown>>;
-}
-
-export class CommandHandlerRegistry extends Context.Service<
-  CommandHandlerRegistry,
-  CommandHandlerRegistryService
->()("arbor/CommandHandlerRegistry") {}
-
-export const CommandHandlerRegistryLive = (
-  handlers: ReadonlyArray<CommandHandler<unknown, unknown>>,
-): Layer.Layer<CommandHandlerRegistry> =>
-  Layer.succeed(CommandHandlerRegistry, {
-    lookup: (commandType) => {
-      const handler = handlers.find(
-        (candidate) => candidate.commandType === commandType,
-      );
-      return handler === undefined ? Option.none() : Option.some(handler);
-    },
-  });
-
-export type FenceStopOutcome = "Pass" | "FencingRejected" | "ExecutionStopping";
-
-export interface FenceStopCheckService {
-  readonly check: (
-    context: CommandSubmissionContext,
-    stopAdmission: StopAdmission,
-  ) => Effect.Effect<
-    FenceStopOutcome,
-    ExecutionRepositoryError,
-    TransactionScope
-  >;
-}
-
-export class FenceStopCheck extends Context.Service<
-  FenceStopCheck,
-  FenceStopCheckService
->()("arbor/FenceStopCheck") {}
-
-export const FenceStopCheckInertLive: Layer.Layer<FenceStopCheck> =
-  Layer.succeed(FenceStopCheck, {
-    check: () => Effect.succeed("Pass"),
-  });
-
-export type CommandGatewayError =
-  | CommandHandlerError
-  | ExecutionRepositoryError
-  | TransactionOperationalFailure;
-
-export interface CommandGatewayService {
-  readonly execute: <C, R>(
-    envelope: GatewayEnvelope<C>,
-    context: CommandSubmissionContext,
-    authority: CommandAuthorityFact,
-  ) => Effect.Effect<CommandReceipt<R, CommandRejection>, CommandGatewayError>;
-}
-
-export class CommandGateway extends Context.Service<
-  CommandGateway,
-  CommandGatewayService
->()("arbor/CommandGateway") {}
-
-const decodeReceipt = <R>(
-  stored: CommandReceipt<unknown, unknown>,
-): CommandReceipt<R, CommandRejection> => ({
-  ...stored,
-  resolution:
-    stored.resolution._tag === "Committed"
-      ? { _tag: "Committed", result: stored.resolution.result as R }
-      : {
-          _tag: "TerminalRejected",
-          error: stored.resolution.error as CommandRejection,
-        },
-});
-
-const makeReceipt = <R>(
-  commandId: CommandId,
-  projectId: ProjectId,
-  fingerprint: SemanticRequestFingerprint,
-  schemaVersion: string,
-  resolution: CommandResolution<R, CommandRejection>,
-  createdAt: string,
-  settledAt: string,
-): CommandReceipt<R, CommandRejection> => ({
-  commandId,
-  projectId,
-  semanticRequestFingerprint: fingerprint,
-  schemaVersion,
-  fingerprintAlgorithmVersion: FINGERPRINT_ALGORITHM_VERSION,
-  resolution,
-  createdAt,
-  settledAt,
-});
+export * from "./command-handler-registry.js";
+export * from "./command-receipt.js";
+export * from "./fence-stop.js";
+export * from "./gateway-contracts.js";
+export * from "./project-admission.js";
 
 export const CommandGatewayLive: Layer.Layer<
   CommandGateway,
@@ -273,7 +91,7 @@ export const CommandGatewayLive: Layer.Layer<
               stored.fingerprintAlgorithmVersion ===
                 FINGERPRINT_ALGORITHM_VERSION
             ) {
-              return decodeReceipt<R>(stored);
+              return decodeCommandReceipt<R>(stored);
             }
             return {
               ...stored,
@@ -307,7 +125,7 @@ export const CommandGatewayLive: Layer.Layer<
                 startedAt,
                 settledAt,
               );
-              return makeReceipt<R>(
+              return makeCommandReceipt<R>(
                 envelope.commandId,
                 envelope.projectId,
                 fingerprint,
@@ -351,7 +169,7 @@ export const CommandGatewayLive: Layer.Layer<
               startedAt,
               settledAt,
             );
-            return makeReceipt<R>(
+            return makeCommandReceipt<R>(
               envelope.commandId,
               envelope.projectId,
               fingerprint,
@@ -390,7 +208,7 @@ export const CommandGatewayLive: Layer.Layer<
                 startedAt,
                 settledAt,
               );
-              return makeReceipt<R>(
+              return makeCommandReceipt<R>(
                 envelope.commandId,
                 envelope.projectId,
                 fingerprint,
@@ -420,7 +238,7 @@ export const CommandGatewayLive: Layer.Layer<
               startedAt,
               settledAt,
             );
-            return makeReceipt<R>(
+            return makeCommandReceipt<R>(
               envelope.commandId,
               envelope.projectId,
               fingerprint,
@@ -447,7 +265,7 @@ export const CommandGatewayLive: Layer.Layer<
             startedAt,
             settledAt,
           );
-          return makeReceipt<R>(
+          return makeCommandReceipt<R>(
             envelope.commandId,
             envelope.projectId,
             fingerprint,
@@ -471,7 +289,7 @@ export const CommandGatewayLive: Layer.Layer<
                     settledAt,
                   ),
                 )
-                .pipe(Effect.orDie);
+                .pipe(Effect.ignore);
               return yield* Effect.fail(failure);
             }),
           ),

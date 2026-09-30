@@ -111,11 +111,10 @@ export const makeRecordVerificationEvidenceHandler = (
       const payload = envelope.payload;
 
       // Rejection order (§2): not found → terminal → authority. The P8
-      // store channels are not in the gateway error union — defects-only
-      // here (semantic-boundary convention).
-      const existing = yield* dependencies.verifications
-        .findById(payload.verificationId)
-        .pipe(Effect.orDie);
+      // Repository failures remain typed through the gateway.
+      const existing = yield* dependencies.verifications.findById(
+        payload.verificationId,
+      );
       if (Option.isNone(existing)) {
         return commandErr({
           _tag: "VerificationNotFound",
@@ -180,9 +179,9 @@ export const makeRecordVerificationEvidenceHandler = (
       if (Option.isNone(insertFailure)) {
         return commandOk({ result, events: [] });
       }
-      const storedRows = yield* dependencies.evidence
-        .listByVerification(payload.verificationId)
-        .pipe(Effect.orDie);
+      const storedRows = yield* dependencies.evidence.listByVerification(
+        payload.verificationId,
+      );
       const stored = storedRows.find(
         (row) => row.evidenceId === record.evidenceId,
       );
@@ -308,9 +307,9 @@ export const makeConcludeVerificationHandler = (
     Effect.gen(function* () {
       const payload = envelope.payload;
 
-      const existing = yield* dependencies.verifications
-        .findById(payload.verificationId)
-        .pipe(Effect.orDie);
+      const existing = yield* dependencies.verifications.findById(
+        payload.verificationId,
+      );
       if (Option.isNone(existing)) {
         return commandErr({
           _tag: "VerificationNotFound",
@@ -390,9 +389,9 @@ export const makeConcludeVerificationHandler = (
           }
           evidenceRefs.push(...result.evidenceRefs);
         }
-        const appended = yield* dependencies.evidence
-          .listByVerification(payload.verificationId)
-          .pipe(Effect.orDie);
+        const appended = yield* dependencies.evidence.listByVerification(
+          payload.verificationId,
+        );
         const appendedIds = new Set(
           appended.map((row) => row.evidenceId as string),
         );
@@ -414,17 +413,15 @@ export const makeConcludeVerificationHandler = (
       // Conclude CAS: only an Open row transitions; a lost race re-reads
       // and classifies (dependency-transitions precedent). After this
       // commit the verdict is immutable — no path rewrites a Concluded row.
-      const applied = yield* dependencies.verifications
-        .concludeIfOpen(
-          payload.verificationId,
-          payload.verdict,
-          payload.conclusionReason,
-        )
-        .pipe(Effect.orDie);
+      const applied = yield* dependencies.verifications.concludeIfOpen(
+        payload.verificationId,
+        payload.verdict,
+        payload.conclusionReason,
+      );
       if (Option.isNone(applied)) {
-        const reread = yield* dependencies.verifications
-          .findById(payload.verificationId)
-          .pipe(Effect.orDie);
+        const reread = yield* dependencies.verifications.findById(
+          payload.verificationId,
+        );
         const current = Option.isNone(reread) ? verification : reread.value;
         return commandErr({
           _tag: "TerminalLifecycleMutation",
@@ -439,9 +436,7 @@ export const makeConcludeVerificationHandler = (
       // targetWorkRevision) VerificationChanged wait for any verdict.
       // The owner Work row is referential — a verification without its
       // Work row is an integrity break (defect).
-      const ownerWork = yield* dependencies.works
-        .findById(verification.workId)
-        .pipe(Effect.orDie);
+      const ownerWork = yield* dependencies.works.findById(verification.workId);
       if (Option.isNone(ownerWork)) {
         return yield* Effect.die(
           new Error(

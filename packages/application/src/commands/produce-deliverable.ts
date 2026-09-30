@@ -137,26 +137,16 @@ export const makeProduceDeliverableHandler = (
         );
 
       if (Option.isSome(insertFailure)) {
-        // The gateway's CommandHandlerError union predates the P7 deliverable
-        // store; read failures here are operational (SqlError), unrecoverable
-        // at this boundary — defect, matching the orDie convention the
-        // gateway itself uses for operational write failures.
-        const storedOption = yield* dependencies.deliverables
-          .findById(payload.deliverableId)
-          .pipe(Effect.orDie);
+        const storedOption = yield* dependencies.deliverables.findById(
+          payload.deliverableId,
+        );
         if (Option.isNone(storedOption)) {
-          return yield* Effect.die(
-            new Error(
-              `deliverable insert failed and no existing row to absorb: ${String(
-                insertFailure.value._tag,
-              )}`,
-            ),
-          );
+          return yield* Effect.fail(insertFailure.value);
         }
         const stored = storedOption.value;
-        const storedRoles = yield* dependencies.deliverables
-          .listArtifactRoles(payload.deliverableId)
-          .pipe(Effect.orDie);
+        const storedRoles = yield* dependencies.deliverables.listArtifactRoles(
+          payload.deliverableId,
+        );
         // The store returns roles in index (not insertion) order — compare as
         // sorted multisets; the fact content is order-free.
         const sortedStored = [...storedRoles].sort();

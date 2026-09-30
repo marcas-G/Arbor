@@ -123,9 +123,9 @@ export const submitDeliver = (
   Effect.gen(function* () {
     // §3: deliverableId references, never creates. Read failures are
     // operational (SqlError) — defect, matching the P7 store convention.
-    const stored = yield* dependencies.deliverables
-      .findById(args.deliverableId)
-      .pipe(Effect.orDie);
+    const stored = yield* dependencies.deliverables.findById(
+      args.deliverableId,
+    );
     if (Option.isNone(stored)) {
       return rejected({
         _tag: "DeliverableNotFound",
