@@ -127,6 +127,8 @@ transact { ... } ROLLBACK
 `SQLITE_BUSY_SNAPSHOT`) is **not** a `CommandRejection` and never produces a
 receipt. The attempt trace write uses its own connection/transaction; it is
 non-authoritative and may be lost on crash (see `06-recovery-matrix.md`).
+Failure of that best-effort trace must not replace, defect, or otherwise mask
+the original typed `TransactionOperationalFailure`.
 
 ### 3.4 Concurrent duplicate attempt (commit-conflict protocol)
 
@@ -199,6 +201,27 @@ Repository method
   `RevisionConflict`); they are not a generic persistence error.
 - Adapter-specific errors (`SqliteError`, …) are translated at the adapter
   boundary and never appear in a port `E` (DID §0A.6).
+- `CommandHandlerError` is the closed union of normalized Port failures that
+  command handlers may expose. A handler must not convert a declared
+  repository failure into a defect merely because that repository was added
+  after P1. Such a failure rolls back the transaction and produces no Receipt.
+
+### 5.1 Implementation boundaries
+
+The Application implementation keeps these responsibilities separate while
+preserving the public `gateway.ts` export surface:
+
+- `gateway-contracts.ts`: command/gateway Effect contracts and error union;
+- `command-handler-registry.ts`: command-type lookup;
+- `project-admission.ts`: bootstrap/open/closed lifecycle admission policy;
+- `fence-stop.ts`: execution-origin admission service contract;
+- `command-receipt.ts`: stored Receipt decoding and Receipt construction;
+- `gateway.ts`: transaction orchestration only.
+
+The SQLite adapter separates Project, Workspace, Work and Session repositories
+by aggregate. `repositories.ts` is a compatibility barrel only. This is an
+implementation boundary; transaction scope, SQL, CAS and Port contracts are
+unchanged.
 
 ## 6. Open items closed here
 

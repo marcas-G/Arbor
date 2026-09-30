@@ -450,6 +450,71 @@ describe("command gateway", () => {
       { commandId, outcome: "Retryable:TransactionOperationalFailure" },
     ]);
   });
+
+  it("preserves the original transaction failure when attempt tracing also fails", async () => {
+    const unavailable: Layer.Layer<TransactionPort> = Layer.succeed(
+      TransactionPort,
+      {
+        transact: () =>
+          Effect.fail({
+            _tag: "TransactionOperationalFailure",
+            cause: "database unavailable",
+          }),
+      },
+    );
+    const { app, state } = buildApp(
+      [handler(() => ok({ result: { ok: true }, events: [] }))],
+      FenceStopCheckInertLive,
+      unavailable,
+    );
+    const failure = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway
+          .execute(envelope({ x: 1 }), externalContext, authorityFor({ x: 1 }))
+          .pipe(Effect.flip);
+      }),
+      app,
+    );
+
+    expect(failure).toEqual({
+      _tag: "TransactionOperationalFailure",
+      cause: "database unavailable",
+    });
+    expect(state.rows.size).toBe(0);
+    expect(state.attempts).toEqual([]);
+  });
+
+  it("propagates a normalized handler repository failure as a typed failure", async () => {
+    const repositoryFailure = {
+      _tag: "DependencyRepositoryFailure" as const,
+      cause: "database unavailable",
+    };
+    const failingHandler: CommandHandler<unknown, { readonly ok: boolean }> = {
+      commandType: "TestCommand",
+      schemaVersion: "1",
+      authority: {
+        tag: "CreateProjectAuthority",
+        targetMatches: () => true,
+      },
+      stopAdmission: { _tag: "Unclassified" },
+      execute: () => Effect.fail(repositoryFailure),
+    };
+    const { app, state } = buildApp([failingHandler]);
+    const failure = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway
+          .execute(envelope({ x: 1 }), externalContext, authorityFor({ x: 1 }))
+          .pipe(Effect.flip);
+      }),
+      app,
+    );
+
+    expect(failure).toEqual(repositoryFailure);
+    expect(state.rows.size).toBe(0);
+    expect(state.attempts).toEqual([]);
+  });
 });
 
 describe("command authority (P1-DG-11)", () => {

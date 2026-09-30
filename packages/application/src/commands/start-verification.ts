@@ -161,8 +161,7 @@ export const makeStartVerificationHandler = (
 
       // Rejection table (§1, frozen order): not found → terminal →
       // revision. WorkRepositoryError is in the gateway error union;
-      // the P8/P7 store channels are defects-only at this boundary
-      // (semantic-boundary convention).
+      // P8/P7 repository failures remain typed through the gateway.
       const existing = yield* dependencies.works.findById(payload.workId);
       if (Option.isNone(existing)) {
         return commandErr({ _tag: "WorkNotFound", workId: payload.workId });
@@ -201,9 +200,8 @@ export const makeStartVerificationHandler = (
       const targetDeliverables = payload.targetDeliverables ?? [];
       const targetArtifactVersions: ArtifactId[] = [];
       for (const deliverableId of targetDeliverables) {
-        const storedOption = yield* dependencies.deliverables
-          .findById(deliverableId)
-          .pipe(Effect.orDie);
+        const storedOption =
+          yield* dependencies.deliverables.findById(deliverableId);
         if (Option.isNone(storedOption)) {
           return commandErr({
             _tag: "InvalidVerificationMission",
@@ -229,9 +227,8 @@ export const makeStartVerificationHandler = (
             reason: `deliverable ${deliverableId} source work does not resolve in this project`,
           });
         }
-        const artifacts = yield* dependencies.deliverables
-          .listArtifacts(deliverableId)
-          .pipe(Effect.orDie);
+        const artifacts =
+          yield* dependencies.deliverables.listArtifacts(deliverableId);
         for (const artifact of artifacts) {
           targetArtifactVersions.push(artifact.artifactId as ArtifactId);
         }
@@ -241,9 +238,9 @@ export const makeStartVerificationHandler = (
       // required; purely static review binds none.
       let targetEnvironmentRevision: string | null = null;
       if (payload.executableMission) {
-        const current = yield* dependencies.environmentRevisions
-          .current(envelope.projectId)
-          .pipe(Effect.orDie);
+        const current = yield* dependencies.environmentRevisions.current(
+          envelope.projectId,
+        );
         if (Option.isNone(current)) {
           return commandErr({
             _tag: "InvalidVerificationMission",
@@ -257,9 +254,10 @@ export const makeStartVerificationHandler = (
       // One-Open pre-check (v1.11 G2); the partial unique index backs the
       // insert race below. Orphan re-Start requires a prior
       // Unknown(Orphaned) conclusion (G5 — path in P8-004).
-      const open = yield* dependencies.verifications
-        .findOpenByWorkRevision(payload.workId, work.revision)
-        .pipe(Effect.orDie);
+      const open = yield* dependencies.verifications.findOpenByWorkRevision(
+        payload.workId,
+        work.revision,
+      );
       if (Option.isSome(open)) {
         return commandErr({
           _tag: "VerificationAlreadyOpen",
@@ -278,9 +276,9 @@ export const makeStartVerificationHandler = (
         verificationExecutionIds: [payload.verifierExecutionId],
       });
 
-      // One-Open backstop: a UniqueViolation flip on insert is the
-      // partial unique index deciding a lost race (G2); every other
-      // insert failure is operational — defect (orDie convention).
+      // One-Open backstop: a UniqueViolation flip on insert is the partial
+      // unique index deciding a lost race (G2). Other repository failures
+      // remain typed command-handler failures so the gateway can retry them.
       const insertFailure = yield* dependencies.verifications
         .insert(verification, envelope.projectId, work.workspaceId)
         .pipe(
@@ -300,11 +298,7 @@ export const makeStartVerificationHandler = (
             workId: payload.workId,
           });
         }
-        return yield* Effect.die(
-          new Error(
-            `verification insert failed: ${String(insertFailure.value._tag)}`,
-          ),
-        );
+        return yield* Effect.fail(insertFailure.value);
       }
 
       const events: PendingDomainEvent[] = [
