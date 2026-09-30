@@ -8,6 +8,7 @@ import {
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
+  sha256Hex,
   type ToolExecutionContext,
   type ToolIntent,
   ToolRuntimePort,
@@ -74,7 +75,7 @@ export const makeExecutableToolHandler = (
   tools: import("@arbor/ports").ToolRuntimePortService,
   clock: import("@arbor/ports").ClockService,
 ): ExecutableInvocationHandler => ({
-  handle: ({ invocation, execution, context }) =>
+  handle: ({ invocation, execution, context, controlBasis }) =>
     Effect.gen(function* () {
       const requestedAt = yield* clock.now();
       const toolVersion = "1";
@@ -86,7 +87,7 @@ export const makeExecutableToolHandler = (
         invocationId: toolInvocationIdFor(invocation.callRef),
         approvalId: null,
       };
-      const controlBasisDigest = "single-workspace";
+      const controlBasisDigest = sha256Hex(JSON.stringify(controlBasis));
       const toolContext: ToolExecutionContext = {
         executionId: execution.executionId,
         workspaceId: execution.workspaceId,
@@ -94,19 +95,9 @@ export const makeExecutableToolHandler = (
         projectId: execution.projectId,
         actor: context.principal as never,
         authenticatedPrincipal: context.principal,
-        authority: {
-          principal: context.principal,
-          workspaceId: execution.workspaceId,
-          executionId: execution.executionId,
-          toolName: invocation.toolName,
-          toolVersion,
-          resourceSpaceIds: ["filesystem"],
-          allowedCapabilities: ["fs:read", "fs:write", "shell:exec"],
-          controlBasisDigest,
-          expiresAt: "2999-01-01T00:00:00.000Z",
-          delegationDepth: 0,
-        },
         controlBasisDigest,
+        delegationDepth:
+          execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,
       };
       const result = yield* tools.invoke(intent, toolContext);

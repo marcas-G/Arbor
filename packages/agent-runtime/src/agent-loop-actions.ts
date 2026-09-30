@@ -379,6 +379,7 @@ export const executeAgentLoopActions = (
             invocation,
             execution: input.execution,
             context: input.context,
+            controlBasis: preparedTurn.manifest.controlBasis,
           }),
           {
             onFailure: (cause) => ({ ok: false as const, cause }),

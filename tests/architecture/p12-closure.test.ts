@@ -177,6 +177,17 @@ describe("p12-closure", () => {
     ).toHaveLength(1);
   });
 
+  it("production executable tools resolve authority instead of hardcoding capabilities", () => {
+    const composition = sourceOf("apps/single-workspace/src/composition.ts");
+    const handler = sourceOf(
+      "apps/single-workspace/src/executable-tool-handler.ts",
+    );
+    expect(composition).toContain("ToolAuthorityResolverLive");
+    expect(handler).not.toContain("allowedCapabilities:");
+    expect(handler).not.toContain("2999-01-01");
+    expect(handler).not.toContain('controlBasisDigest = "single-workspace"');
+  });
+
   it("CI-1 — no resolver / observability / worker path mutates canonical domain state directly", () => {
     // The Authority Resolver is a pure fact producer.
     const resolver = sourceOf("packages/application/src/authority-resolver.ts");
