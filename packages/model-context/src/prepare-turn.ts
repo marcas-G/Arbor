@@ -12,6 +12,7 @@ import {
   ModelCapabilityPort,
   type ModelContextError,
   type ModelFacingToolDefinition,
+  type PortableMessage,
   type SkillRef,
   SkillRegistry,
   type SkillRegistryError,
@@ -66,8 +67,12 @@ export interface PrepareTurnInput {
     readonly role: "user" | "assistant";
     readonly text: string;
   }>;
+  /** Provider-neutral messages assembled by the runtime. Supports tool
+   * observations without treating their text as instructions. */
+  readonly messages?: ReadonlyArray<PortableMessage>;
   /** Manifest refs for the conversation context (human-input:<messageId>). */
   readonly conversationContextRefs?: ReadonlyArray<string>;
+  readonly messageContextRefs?: ReadonlyArray<string>;
   /** Adapter identity recorded on the manifest (composition-provided). */
   readonly providerRef?: string;
   /** P14 conversation: suppress catalogued executable tools (WAVE1 S05 —
@@ -186,9 +191,16 @@ export const ModelContextLive: Layer.Layer<
             input.conversationMessages.length > 0
               ? { conversationMessages: input.conversationMessages }
               : {}),
+            ...(input.messages !== undefined && input.messages.length > 0
+              ? { messages: input.messages }
+              : {}),
             ...(input.conversationContextRefs !== undefined &&
             input.conversationContextRefs.length > 0
               ? { conversationContextRefs: input.conversationContextRefs }
+              : {}),
+            ...(input.messageContextRefs !== undefined &&
+            input.messageContextRefs.length > 0
+              ? { messageContextRefs: input.messageContextRefs }
               : {}),
             ...(input.providerRef !== undefined
               ? { providerRef: input.providerRef }

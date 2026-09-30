@@ -28,6 +28,36 @@ interface SessionRow {
   readonly context_epoch: number;
 }
 
+interface SessionEntryRow {
+  readonly session_id: string;
+  readonly sequence: number;
+  readonly entry_kind: SessionEntryKind;
+  readonly payload_json: string;
+  readonly created_at: string;
+  readonly source_kind: string | null;
+  readonly source_ref: string | null;
+  readonly content_hash: string | null;
+}
+
+const toSessionEntry = (row: SessionEntryRow) => ({
+  sessionId: row.session_id as SessionId,
+  sequence: Number(row.sequence),
+  entryKind: row.entry_kind,
+  payload: JSON.parse(row.payload_json) as unknown,
+  createdAt: row.created_at,
+  ...(row.source_kind !== null &&
+  row.source_ref !== null &&
+  row.content_hash !== null
+    ? {
+        source: {
+          kind: row.source_kind,
+          ref: row.source_ref,
+          contentHash: row.content_hash,
+        },
+      }
+    : {}),
+});
+
 const toSession = (row: SessionRow): Session => ({
   sessionId: row.session_id as SessionId,
   binding:
@@ -218,38 +248,32 @@ export const SessionRepositoryLive: Layer.Layer<
         Effect.gen(function* () {
           yield* TransactionScope;
           const rows = yield* run(
-            sql.unsafe<{
-              session_id: string;
-              sequence: number;
-              entry_kind: SessionEntryKind;
-              payload_json: string;
-              created_at: string;
-              source_kind: string | null;
-              source_ref: string | null;
-              content_hash: string | null;
-            }>(
+            sql.unsafe<SessionEntryRow>(
               "SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND sequence > ? ORDER BY sequence LIMIT ?",
               [sessionId, afterSequence, limit],
             ),
           );
-          return rows.map((row) => ({
-            sessionId: row.session_id as SessionId,
-            sequence: Number(row.sequence),
-            entryKind: row.entry_kind,
-            payload: JSON.parse(row.payload_json) as unknown,
-            createdAt: row.created_at,
-            ...(row.source_kind !== null &&
-            row.source_ref !== null &&
-            row.content_hash !== null
-              ? {
-                  source: {
-                    kind: row.source_kind,
-                    ref: row.source_ref,
-                    contentHash: row.content_hash,
-                  },
-                }
-              : {}),
-          }));
+          return rows.map(toSessionEntry);
+        }),
+      listRecentEntries: (sessionId, limit) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const columns = yield* run(
+            sql.unsafe<{ name: string }>("PRAGMA table_info(session_entries)"),
+          );
+          const hasSources = columns.some(
+            (column) => column.name === "source_kind",
+          );
+          const selection = hasSources
+            ? "session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash"
+            : "session_id, sequence, entry_kind, payload_json, created_at, NULL AS source_kind, NULL AS source_ref, NULL AS content_hash";
+          const rows = yield* run(
+            sql.unsafe<SessionEntryRow>(
+              `SELECT ${selection} FROM session_entries WHERE session_id = ? ORDER BY sequence DESC LIMIT ?`,
+              [sessionId, limit],
+            ),
+          );
+          return [...rows].reverse().map(toSessionEntry);
         }),
       listSessionsByWorkspace: (workspaceId) =>
         Effect.gen(function* () {

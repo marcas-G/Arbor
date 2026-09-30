@@ -48,6 +48,8 @@ reconstruct/validate route → action ledger → owning boundary
 ↓
 Observation appended per action → successor or persisted settlement proposal
 ↓
+recent durable Observations assembled as DataOnly tool messages for next turn
+↓
 continue while a meaningful runnable action exists, else settle
 ```
 

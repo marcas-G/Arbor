@@ -28,6 +28,7 @@ import type {
   ProviderTurnStoreService,
   RuntimeSafetyObservation,
   SecretRef,
+  SessionRepositoryService,
   TransactionPortService,
   WorkRepositoryService,
 } from "@arbor/ports";
@@ -45,6 +46,10 @@ import {
   workObjectiveFragment,
 } from "./driver-policy.js";
 import { decideRepair } from "./repair.js";
+import {
+  assembleSessionContext,
+  SESSION_CONTEXT_ENTRY_LIMIT,
+} from "./session-context.js";
 
 export interface DecisionTurnOptions {
   readonly secretRef?: SecretRef;
@@ -72,6 +77,7 @@ export interface DecisionTurnRunnerDependencies {
   readonly loopSteps?: AgentLoopStepStoreService;
   readonly loopStepFence?: AgentLoopStepFence;
   readonly providerTurns?: ProviderTurnStoreService;
+  readonly sessions: SessionRepositoryService;
   readonly humanMessages: HumanMessageStoreService;
   readonly works: WorkRepositoryService;
   readonly options: DecisionTurnOptions;
@@ -100,6 +106,7 @@ export const runDecisionTurn = (
     loopSteps,
     loopStepFence,
     providerTurns,
+    sessions,
     humanMessages,
     works,
     options,
@@ -198,6 +205,20 @@ export const runDecisionTurn = (
           conversationContextRefs.push(`human-input:${claimed.messageId}`);
         }
       }
+      const recentSessionEntries = yield* tx
+        .transact(
+          sessions.listRecentEntries(
+            input.execution.sessionId,
+            SESSION_CONTEXT_ENTRY_LIMIT,
+          ),
+        )
+        .pipe(Effect.mapError(failure));
+      const sessionContext = assembleSessionContext(recentSessionEntries);
+      const messages = [...conversationMessages, ...sessionContext.messages];
+      const messageContextRefs = [
+        ...conversationContextRefs,
+        ...sessionContext.contextRefs,
+      ];
       // Work executions carry the objective body through the
       // content table so the compiled instruction shows the task
       // text instead of the bare `work:<executionId>` reference.
@@ -255,10 +276,8 @@ export const runDecisionTurn = (
                 includeTools: false,
               }
             : { outputContractRef: TOOL_INVOCATION_CONTRACT }),
-          ...(conversationMessages.length > 0 ? { conversationMessages } : {}),
-          ...(conversationContextRefs.length > 0
-            ? { conversationContextRefs: conversationContextRefs }
-            : {}),
+          ...(messages.length > 0 ? { messages } : {}),
+          ...(messageContextRefs.length > 0 ? { messageContextRefs } : {}),
           ...(options.providerRef !== undefined
             ? { providerRef: options.providerRef }
             : {}),
