@@ -5,7 +5,7 @@ import {
   P6_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { makeRequestGovernanceHandler } from "../apps/single-workspace/src/governance-directive.js";
+import { makeRequestGovernanceHandler } from "../apps/single-workspace/src/legacy-governance-directive-handler.js";
 import {
   type SendMessagePayload,
   type SendMessageResult,

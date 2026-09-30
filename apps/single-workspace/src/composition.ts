@@ -1,5 +1,5 @@
 import {
-  AgentDriverLive,
+  AgentLoopDriverLive,
   ControlToolRegistry,
   ControlToolRegistryLive,
 } from "@arbor/agent-runtime";
@@ -119,13 +119,13 @@ import {
 import { WorkerDispatchPortLive } from "@arbor/worker-local";
 import { Effect, Layer } from "effect";
 import {
-  SliceControlActionHandlers,
-  SliceControlActionHandlersLive,
+  SingleWorkspaceControlActionHandlers,
+  SingleWorkspaceControlActionHandlersLive,
 } from "./control-actions.js";
 import {
-  SliceExecutableInvocation,
-  SliceExecutableInvocationLive,
-} from "./directives.js";
+  ExecutableToolHandler,
+  ExecutableToolHandlerLive,
+} from "./executable-tool-handler.js";
 import {
   PersistenceHealthProbeSqliteLive,
   ProductionHealthPortLive,
@@ -143,7 +143,7 @@ import {
 import { ProjectionQueryPortLive } from "./projection-query.js";
 import { INLINE_SECRET_REF } from "./provider-config.js";
 import { PROVIDER_REGISTRY_TABLE } from "./provider-registry.table.js";
-import { SliceCommandHandlerRegistryLive } from "./registry.js";
+import { SingleWorkspaceCommandHandlerRegistryLive } from "./registry.js";
 import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
 import {
   type AuthenticatorService,
@@ -202,7 +202,7 @@ export const selectProviderLayer = (
   return adapter.layerFor({ transportOverride });
 };
 
-export interface SliceConfig {
+export interface SingleWorkspaceConfig {
   readonly databaseFile: string;
   /** P12 cross-contract completeness correction: the runtime project whose
    * committed Project-tool registrations are unioned into the model-facing
@@ -249,7 +249,7 @@ export interface SliceConfig {
   readonly blobRoot?: string;
 }
 
-export type SliceServices =
+export type SingleWorkspaceServices =
   | CommandGateway
   | AgentLoopStepStore
   | ExecutionScheduler
@@ -273,9 +273,9 @@ export type SliceServices =
   | SnapshotRetention;
 
 /** The single-workspace composition root: wires P1–P4 into one runtime. */
-export const buildSliceLayer = (
-  config: SliceConfig,
-): Layer.Layer<SliceServices> => {
+export const buildSingleWorkspaceLayer = (
+  config: SingleWorkspaceConfig,
+): Layer.Layer<SingleWorkspaceServices> => {
   const base = layer({ filename: config.databaseFile });
   const infra = Layer.mergeAll(
     base,
@@ -480,26 +480,29 @@ export const buildSliceLayer = (
       infra,
     ),
   );
-  const registry = Layer.provide(SliceCommandHandlerRegistryLive, repos);
+  const registry = Layer.provide(
+    SingleWorkspaceCommandHandlerRegistryLive,
+    repos,
+  );
   const gateway = Layer.provide(
     CommandGatewayLive,
     Layer.mergeAll(infra, registry, repos, fence),
   );
   const controlActionHandlers = Layer.provide(
-    SliceControlActionHandlersLive,
+    SingleWorkspaceControlActionHandlersLive,
     Layer.mergeAll(repos, infra, gateway),
   );
   const controlRegistry = Layer.provide(
     Layer.unwrap(
       Effect.gen(function* () {
-        const handlers = yield* SliceControlActionHandlers;
+        const handlers = yield* SingleWorkspaceControlActionHandlers;
         return ControlToolRegistryLive(handlers);
       }),
     ),
     controlActionHandlers,
   );
   const executableInvocation = Layer.provide(
-    SliceExecutableInvocationLive,
+    ExecutableToolHandlerLive,
     Layer.mergeAll(toolRuntime, infra),
   );
   const modelContext = Layer.provide(
@@ -510,9 +513,9 @@ export const buildSliceLayer = (
     Layer.unwrap(
       Effect.gen(function* () {
         const registryService = yield* ControlToolRegistry;
-        const executableHandler = yield* SliceExecutableInvocation;
+        const executableHandler = yield* ExecutableToolHandler;
         return Layer.provide(
-          AgentDriverLive([], {
+          AgentLoopDriverLive({
             ...(config.secretRef !== undefined
               ? { secretRef: config.secretRef }
               : {}),
@@ -649,7 +652,7 @@ export const buildSliceLayer = (
     snapshotRetention,
     usage,
   );
-  return all as Layer.Layer<SliceServices>;
+  return all as Layer.Layer<SingleWorkspaceServices>;
 };
 
 export {

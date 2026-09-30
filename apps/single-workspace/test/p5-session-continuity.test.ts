@@ -23,7 +23,7 @@ import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
@@ -138,7 +138,9 @@ const admit = (executionId: ExecutionId, commandId: CommandId) =>
 describe("P5 multi-turn session continuity", () => {
   it("reuses the same primary session across Executions and keeps entries", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-sc-"));
-    const app = buildSliceLayer({ databaseFile: join(dir, "slice.db") });
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: join(dir, "slice.db"),
+    });
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {

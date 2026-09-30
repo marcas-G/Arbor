@@ -29,25 +29,24 @@ import {
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-import { progressActions } from "./action-progressor.js";
+import { executeAgentLoopActions } from "./agent-loop-actions.js";
+import {
+  isConversationExecution,
+  MAX_TURNS,
+  type ModelDecisionOutcome,
+  safetyStop,
+} from "./agent-loop-policy.js";
+import { completeAgentLoopStep } from "./agent-loop-step-completion.js";
 import {
   type ControlToolRegistryService,
   type ExecutableInvocationHandler,
   makeControlToolRegistry,
 } from "./control.js";
 import { makeControlBasisResolver } from "./control-basis-resolver.js";
-import { runDecisionTurn as executeDecisionTurn } from "./decision-turn.js";
-import type { DirectiveHandler } from "./directive.js";
-import {
-  type DecisionTurn,
-  isConversationExecution,
-  MAX_TURNS,
-  safetyStop,
-} from "./driver-policy.js";
-import { finalizeTurn } from "./turn-finalizer.js";
-import { acceptTurnOutput } from "./turn-journal.js";
+import { runModelDecision } from "./model-decision.js";
+import { recordAcceptedModelOutput } from "./model-output-journal.js";
 
-export interface AgentDriverOptions {
+export interface AgentLoopDriverOptions {
   /** P12 `03` §3: the credential reference the driver binds to a ProviderTurn.
    * Comes from Composition-Root config; the driver never hardcodes a raw ref.
    * The raw credential is resolved by ProviderRuntime at the execution
@@ -73,9 +72,8 @@ export interface AgentDriverOptions {
       ) => void)
     | undefined;
 }
-export const AgentDriverLive = (
-  _legacyHandlers: ReadonlyArray<DirectiveHandler> = [],
-  options: AgentDriverOptions = {},
+export const AgentLoopDriverLive = (
+  options: AgentLoopDriverOptions = {},
 ): Layer.Layer<
   ExecutionDriverPort,
   never,
@@ -208,11 +206,11 @@ export const AgentDriverLive = (
           // ProviderTurn) and re-validate, up to the bounded attempt count.
           // On exhaustion the frozen settle rule applies (Failed, or
           // Interrupted for a safety/looping signal).
-          const runDecisionTurn = (
+          const decideModelOutput = (
             turn: number,
             activity: ExecutionActivity,
-          ): Effect.Effect<DecisionTurn, ExecutionDriverError> =>
-            executeDecisionTurn(
+          ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
+            runModelDecision(
               {
                 input,
                 agentBinding,
@@ -261,19 +259,19 @@ export const AgentDriverLive = (
             }
             progressedSinceBoundary = false;
 
-            const decisionTurn = yield* runDecisionTurn(turn, activity);
-            if (decisionTurn._tag === "Settle") {
-              return decisionTurn.settlement;
+            const modelDecision = yield* decideModelOutput(turn, activity);
+            if (modelDecision._tag === "Settle") {
+              return modelDecision.settlement;
             }
-            const preparedTurn = decisionTurn.turn;
-            const decodedOutput = decisionTurn.output;
-            let currentLoopStep = yield* acceptTurnOutput({
+            const preparedTurn = modelDecision.turn;
+            const decodedOutput = modelDecision.output;
+            let currentLoopStep = yield* recordAcceptedModelOutput({
               input,
               preparedTurn,
               decodedOutput,
-              ...(decisionTurn.loopStep === undefined
+              ...(modelDecision.loopStep === undefined
                 ? {}
-                : { currentLoopStep: decisionTurn.loopStep }),
+                : { currentLoopStep: modelDecision.loopStep }),
               ...(loopSteps === undefined ? {} : { loopSteps }),
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
@@ -281,7 +279,7 @@ export const AgentDriverLive = (
               failure,
               now,
             });
-            const actionProgression = yield* progressActions({
+            const actionProgression = yield* executeAgentLoopActions({
               input,
               preparedTurn,
               decodedOutput,
@@ -316,11 +314,11 @@ export const AgentDriverLive = (
             sawToolInvocation =
               sawToolInvocation || decodedOutput.toolInvocations.length > 0;
             producedText = producedText || decodedOutput.text.trim().length > 0;
-            const finalization = yield* finalizeTurn({
+            const finalization = yield* completeAgentLoopStep({
               input,
               decodedOutput,
               observations,
-              conversation: decisionTurn.conversation === true,
+              conversation: modelDecision.conversation === true,
               turn,
               ...(currentLoopStep === undefined ? {} : { currentLoopStep }),
               ...(loopSteps === undefined ? {} : { loopSteps }),

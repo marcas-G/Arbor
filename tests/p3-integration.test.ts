@@ -26,7 +26,7 @@ import {
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import { WorkerDispatchPortLive } from "../adapters/worker-local/src/index.js";
 import {
-  AgentDriverLive,
+  AgentLoopDriverLive,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
 import {
@@ -154,7 +154,7 @@ const makeApp = () => {
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
   );
   const driver = Layer.provide(
-    AgentDriverLive([], { controlRegistry }),
+    AgentLoopDriverLive({ controlRegistry }),
     Layer.mergeAll(
       modelContext,
       providerRuntime,

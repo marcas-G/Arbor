@@ -31,7 +31,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
@@ -176,7 +176,7 @@ const admit = (commandId: CommandId) =>
 describe("I0 Wait control route -> P2 WorkWait -> wake", () => {
   it("routes a typed Wait action into durable WorkWait settlement", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-yw-"));
-    const app = buildSliceLayer({
+    const app = buildSingleWorkspaceLayer({
       databaseFile: join(dir, "slice.db"),
       providerTurns: [waitTurn],
     });

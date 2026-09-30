@@ -5,7 +5,7 @@ import {
   P6_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { makeProposeChildWorkspaceHandler } from "../apps/single-workspace/src/directives.js";
+import { makeProposeChildWorkspaceHandler } from "../apps/single-workspace/src/legacy-directive-handlers.js";
 import {
   CommandGateway,
   formationPathOf,

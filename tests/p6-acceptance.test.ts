@@ -24,8 +24,8 @@ import {
 import {
   makeProposeChildWorkspaceHandler,
   makeSpawnSpecialistHandler,
-} from "../apps/single-workspace/src/directives.js";
-import { makeRequestGovernanceHandler } from "../apps/single-workspace/src/governance-directive.js";
+} from "../apps/single-workspace/src/legacy-directive-handlers.js";
+import { makeRequestGovernanceHandler } from "../apps/single-workspace/src/legacy-governance-directive-handler.js";
 import {
   assertProgramGate,
   evalAllPrograms,

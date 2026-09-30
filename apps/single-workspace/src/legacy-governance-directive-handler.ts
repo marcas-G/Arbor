@@ -1,4 +1,7 @@
-import type { DirectiveHandler, DirectiveOutcome } from "@arbor/agent-runtime";
+import type {
+  LegacyDirectiveHandler,
+  LegacyDirectiveOutcome,
+} from "@arbor/agent-runtime";
 import {
   type CommandGatewayService,
   newUuid7,
@@ -42,7 +45,7 @@ const driverError = (cause: unknown): ExecutionDriverError => ({
 const observation = (
   source: "Runtime" | "Tool",
   text: string,
-): DirectiveOutcome => ({
+): LegacyDirectiveOutcome => ({
   _tag: "Observation",
   source,
   observation: bounded(text),
@@ -79,7 +82,7 @@ export interface RequestGovernanceDependencies {
  * observation-only behavior. */
 export const makeRequestGovernanceHandler = (
   dependencies: RequestGovernanceDependencies,
-): DirectiveHandler => ({
+): LegacyDirectiveHandler => ({
   kind: "RequestGovernance",
   handle: ({ directive, execution, context }) =>
     Effect.gen(function* () {

@@ -10,7 +10,7 @@
 - Removed all direct Date.now calls from Provider Runtime.
 - Provider phase timeout elapsed time is monotonic; persisted turn deadlines remain epoch-based.
 - Removed Agent Driver's direct new Date fallback in favor of Clock.
-- Extracted pure settlement, provider-error, session-fence and prompt policy into driver-policy.ts.
+- Extracted pure settlement, provider-error, session-fence and prompt policy into `agent-loop-policy.ts` (current name).
 - Updated direct Runtime test compositions to provide explicit clocks.
 
 ## Evidence
@@ -24,5 +24,6 @@
 
 ## Remaining decomposition
 
-DecisionTurn orchestration and action/settlement progression remain in driver.ts. They should be extracted by durable AgentLoopStep state in later behavior-preserving phases.
+Model-decision orchestration and action/settlement progression remained in the
+then-monolithic driver; later phases split them by durable AgentLoopStep state.
 

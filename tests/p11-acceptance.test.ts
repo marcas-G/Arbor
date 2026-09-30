@@ -45,7 +45,7 @@ import {
 } from "../adapters/sandbox-worktree/src/index.js";
 import {
   type AgentActionHandler,
-  AgentDriverLive,
+  AgentLoopDriverLive,
   checkFreshness,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
@@ -513,7 +513,7 @@ const cbMakeApp = () => {
   const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
   const driver = Layer.provide(
-    AgentDriverLive([], { controlRegistry: cbControlRegistry }),
+    AgentLoopDriverLive({ controlRegistry: cbControlRegistry }),
     Layer.mergeAll(
       infra,
       cbRecordingModelContext(recorded),
@@ -1018,7 +1018,11 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
 
   it("CI-2 real ControlBasis — driver has no hardcoded env revision (grep) and an anchor move trips DecisionStale (p11-controlbasis pattern)", async () => {
     const source = readFileSync(
-      join(import.meta.dirname, "..", "packages/agent-runtime/src/driver.ts"),
+      join(
+        import.meta.dirname,
+        "..",
+        "packages/agent-runtime/src/agent-loop-driver.ts",
+      ),
       "utf8",
     );
     expect(source.includes('"env"')).toBe(false);

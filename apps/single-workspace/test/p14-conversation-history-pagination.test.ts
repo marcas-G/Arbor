@@ -8,7 +8,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
@@ -23,7 +23,7 @@ describe("P14 conversation history paging", () => {
   it("returns the latest chronological page, then older pages by stable cursor", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p14-conversation-history-"));
     const databaseFile = join(dir, "history.db");
-    const app = buildSliceLayer({ databaseFile, projectId });
+    const app = buildSingleWorkspaceLayer({ databaseFile, projectId });
     try {
       const pages = await Effect.runPromise(
         Effect.provide(

@@ -22,7 +22,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
@@ -136,7 +136,7 @@ const context: CommandSubmissionContext = {
 describe("OBSOLETE_CONTRACT_TEST — DirectiveUnsupported universal envelope", () => {
   it("fails closed on an unregistered legacy control envelope", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-du-"));
-    const app = buildSliceLayer({
+    const app = buildSingleWorkspaceLayer({
       databaseFile: join(dir, "slice.db"),
       providerTurns: turns,
     });

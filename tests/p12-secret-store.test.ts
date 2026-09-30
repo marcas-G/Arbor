@@ -13,7 +13,7 @@ import { SecretEnvLive } from "../adapters/secret-env/dist/index.js";
 import { SecretFileLive } from "../adapters/secret-file/dist/index.js";
 import {
   admitExecution,
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   evaluateAndSelect,
   runMigrations,
@@ -164,7 +164,7 @@ describe("P12-003 secret-file adapter", () => {
 describe("P12-003 driver + sandbox mechanism", () => {
   it("driver no longer hardcodes a raw secretRef (P12 `03` §6 / B5)", () => {
     const source = readFileSync(
-      join(repoRoot, "packages/agent-runtime/src/driver.ts"),
+      join(repoRoot, "packages/agent-runtime/src/agent-loop-driver.ts"),
       "utf8",
     );
     expect(source).not.toMatch(/secretRef\s*:\s*"secret"/);
@@ -314,7 +314,7 @@ describe("P12-003 sentinel no-leak", () => {
     process.env[sentinelEnv] = sentinelValue;
 
     const dir = mkdtempSync(join(tmpdir(), "p12-secret-"));
-    const app = buildSliceLayer({
+    const app = buildSingleWorkspaceLayer({
       databaseFile: join(dir, "slice.db"),
       providerTurns: turns,
       secretRef: secretRef(sentinelEnv),

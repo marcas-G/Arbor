@@ -8,8 +8,8 @@ import {
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
-  buildSliceLayer,
-  type SliceServices,
+  buildSingleWorkspaceLayer,
+  type SingleWorkspaceServices,
 } from "../apps/single-workspace/src/composition.js";
 import { runDaemonOnce } from "../apps/single-workspace/src/main.js";
 import {
@@ -115,7 +115,7 @@ const createProjectPayload = (): CreateProjectPayload => ({
 });
 
 const buildLayer = (dbFile: string) =>
-  buildSliceLayer({
+  buildSingleWorkspaceLayer({
     databaseFile: dbFile,
     projectId: PROJECT,
     authenticator: makeStaticAuthenticator({ "test-token": HUMAN }),
@@ -124,7 +124,7 @@ const buildLayer = (dbFile: string) =>
 
 const runWith = <A>(
   dbFile: string,
-  program: Effect.Effect<A, unknown, SliceServices>,
+  program: Effect.Effect<A, unknown, SingleWorkspaceServices>,
 ): Promise<A> =>
   Effect.runPromise(
     Effect.scoped(Effect.provide(program, buildLayer(dbFile))),

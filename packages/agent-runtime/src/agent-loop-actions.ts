@@ -22,15 +22,15 @@ import type {
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
+import { MAX_TURNS, safetyStop } from "./agent-loop-policy.js";
 import {
   type ControlToolRegistryService,
   classifyToolRoute,
   type ExecutableInvocationHandler,
 } from "./control.js";
-import { MAX_TURNS, safetyStop } from "./driver-policy.js";
 import { checkFreshness, requirementForAction } from "./freshness.js";
 
-export interface ActionProgressorDependencies {
+export interface AgentLoopActionDependencies {
   readonly input: {
     readonly execution: Execution;
     readonly context: CommandSubmissionContext;
@@ -57,7 +57,7 @@ export interface ActionProgressorDependencies {
   readonly now: () => Effect.Effect<string>;
 }
 
-export type ActionProgression =
+export type AgentLoopActionOutcome =
   | {
       readonly _tag: "Completed";
       readonly loopStep?: AgentLoopStepRecord;
@@ -76,9 +76,9 @@ export type ActionProgression =
  * action ledger, idempotency rules, freshness admission, and early-settlement
  * semantics. The driver only consumes the resulting progression state.
  */
-export const progressActions = (
-  dependencies: ActionProgressorDependencies,
-): Effect.Effect<ActionProgression, ExecutionDriverError> => {
+export const executeAgentLoopActions = (
+  dependencies: AgentLoopActionDependencies,
+): Effect.Effect<AgentLoopActionOutcome, ExecutionDriverError> => {
   const {
     input,
     preparedTurn,

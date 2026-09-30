@@ -7,15 +7,15 @@
 ## Delivered
 
 - Reduced `driver.ts` from 1,662 lines at the Phase 1 baseline to 355 lines.
-- Extracted DecisionTurn preparation, provider execution, decoding and bounded
-  repair into `decision-turn.ts`.
+- Extracted model-decision preparation, provider execution, decoding and bounded
+  repair into `model-decision.ts` (current name).
 - Extracted model-output journal acceptance and the
   `ProviderResultAvailable -> OutputAccepted -> ActionsInProgress` transition
-  into `turn-journal.ts`.
+  into `model-output-journal.ts` (current name).
 - Extracted executable/control tool routing, durable action records,
-  freshness rejection and early settlement into `action-progressor.ts`.
+  freshness rejection and early settlement into `agent-loop-actions.ts`.
 - Extracted observation commit, step-effects commit, successor creation and
-  conversation settlement into `turn-finalizer.ts`.
+  conversation settlement into `agent-loop-step-completion.ts`.
 - Kept all new modules internal to `agent-runtime`; no Domain, Port, SQL,
   transport or public contract changed.
 

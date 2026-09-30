@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../../../apps/single-workspace/src/composition.js";
@@ -73,7 +73,7 @@ describe("B01 L2 — public Human Input to durable transcript", () => {
       const projectId = parse(ProjectId)(project.projectId);
       const requests: Array<Record<string, unknown>> = [];
       const client = makeRecordingProvider(assistantResponse, requests);
-      const app = buildSliceLayer({
+      const app = buildSingleWorkspaceLayer({
         databaseFile,
         projectId,
         modelCatalog,

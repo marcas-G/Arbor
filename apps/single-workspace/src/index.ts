@@ -1,5 +1,5 @@
 export * from "./composition.js";
-export * from "./directives.js";
+export * from "./executable-tool-handler.js";
 export * from "./health.js";
 export * from "./loop.js";
 export * from "./production.js";

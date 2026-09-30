@@ -27,7 +27,7 @@ import {
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { SliceCommandHandlerRegistryLive } from "../apps/single-workspace/src/registry.js";
+import { SingleWorkspaceCommandHandlerRegistryLive } from "../apps/single-workspace/src/registry.js";
 import {
   isViewId,
   makeCliShell,
@@ -309,7 +309,7 @@ const makeApp = (): Layer.Layer<DbServices> => {
     infra,
     deps,
     FenceStopCheckInertLive,
-    Layer.provide(SliceCommandHandlerRegistryLive, deps),
+    Layer.provide(SingleWorkspaceCommandHandlerRegistryLive, deps),
     CountingResolverLive,
   );
   return Layer.mergeAll(

@@ -28,7 +28,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
@@ -233,7 +233,7 @@ describe("P5 restart continuity", () => {
           );
           return yield* readState;
         }),
-        buildSliceLayer({ databaseFile, providerTurns: turns }),
+        buildSingleWorkspaceLayer({ databaseFile, providerTurns: turns }),
       ) as unknown as Effect.Effect<
         {
           executions: ReadonlyArray<{
@@ -259,7 +259,7 @@ describe("P5 restart continuity", () => {
           const state = yield* readState;
           return { recovery, state };
         }),
-        buildSliceLayer({ databaseFile }),
+        buildSingleWorkspaceLayer({ databaseFile }),
       ) as unknown as Effect.Effect<
         {
           recovery: { invalidated: number; settled: ReadonlyArray<string> };

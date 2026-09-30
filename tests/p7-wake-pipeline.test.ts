@@ -9,7 +9,7 @@ import {
   runMigrations,
   WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { buildSliceLayer } from "../apps/single-workspace/src/index.js";
+import { buildSingleWorkspaceLayer } from "../apps/single-workspace/src/index.js";
 import {
   consumeWakeSignals,
   deliverWakeSignal,
@@ -300,9 +300,11 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
     );
   });
 
-  it("composition smoke: buildSliceLayer builds and migrates a durable DB to v7 (P7_MIGRATIONS)", async () => {
+  it("composition smoke: buildSingleWorkspaceLayer builds and migrates a durable DB to v7 (P7_MIGRATIONS)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p7-wake-"));
-    const app = buildSliceLayer({ databaseFile: join(dir, "slice.db") });
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: join(dir, "slice.db"),
+    });
     const version = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {

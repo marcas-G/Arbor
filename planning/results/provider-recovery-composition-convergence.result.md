@@ -23,7 +23,7 @@
   longer consumed.
 - Removed the second `CommandGatewayLive` construction at the final Layer
   return; the gateway already present in `coreAll` is the single instance.
-- Corrected the `SliceConfig.authenticator` comment to describe the actual
+- Corrected the `SingleWorkspaceConfig.authenticator` comment to describe the actual
   local-single-user fallback.
 
 ## Regression evidence

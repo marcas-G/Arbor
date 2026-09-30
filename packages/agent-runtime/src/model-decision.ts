@@ -34,24 +34,24 @@ import type {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
-  type DecisionTurn,
   isConversationExecution,
   isProviderExecutionTimeout,
   isProviderTurnBindingChanged,
+  type ModelDecisionOutcome,
   providerExecutionTimeoutSettlement,
   providerTurnBindingChangedSettlement,
   REPAIR_POLICY,
   runtimeSafetyFragment,
   safetyStop,
   workObjectiveFragment,
-} from "./driver-policy.js";
+} from "./agent-loop-policy.js";
 import { decideRepair } from "./repair.js";
 import {
   assembleSessionContext,
   SESSION_CONTEXT_ENTRY_LIMIT,
 } from "./session-context.js";
 
-export interface DecisionTurnOptions {
+export interface ModelDecisionOptions {
   readonly secretRef?: SecretRef;
   readonly executionPolicyOverrides?: ProviderExecutionPolicyOverrides;
   readonly providerRef?: string;
@@ -60,7 +60,7 @@ export interface DecisionTurnOptions {
     | undefined;
 }
 
-export interface DecisionTurnRunnerDependencies {
+export interface ModelDecisionDependencies {
   readonly input: {
     readonly execution: Execution;
     readonly agentExecutionState: AgentExecutionState;
@@ -80,7 +80,7 @@ export interface DecisionTurnRunnerDependencies {
   readonly sessions: SessionRepositoryService;
   readonly humanMessages: HumanMessageStoreService;
   readonly works: WorkRepositoryService;
-  readonly options: DecisionTurnOptions;
+  readonly options: ModelDecisionOptions;
   readonly admit: (
     activity: ExecutionActivity,
     observation: RuntimeSafetyObservation,
@@ -90,11 +90,11 @@ export interface DecisionTurnRunnerDependencies {
   readonly leaseGeneration?: LeaseGeneration;
 }
 
-export const runDecisionTurn = (
-  dependencies: DecisionTurnRunnerDependencies,
+export const runModelDecision = (
+  dependencies: ModelDecisionDependencies,
   turn: number,
   activity: ExecutionActivity,
-): Effect.Effect<DecisionTurn, ExecutionDriverError> => {
+): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> => {
   const {
     input,
     agentBinding,

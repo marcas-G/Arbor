@@ -53,7 +53,7 @@ const P7_ADAPTER_MODULES: ReadonlyArray<string> = [
 
 const P7_APPS_MODULES: ReadonlyArray<string> = [
   "apps/single-workspace/src/runnable-source-p7.ts",
-  "apps/single-workspace/src/governance-directive.ts",
+  "apps/single-workspace/src/legacy-governance-directive-handler.ts",
 ];
 
 const WAIT_GRAPH_SEAM_EXPORTS: ReadonlyArray<string> = [

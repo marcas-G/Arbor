@@ -22,7 +22,7 @@ export const MAX_TURNS = 8;
 export const MAX_REPAIRS = 2;
 export const REPAIR_POLICY: RepairPolicy = { maxRepairs: MAX_REPAIRS };
 
-export type DecisionTurn =
+export type ModelDecisionOutcome =
   | {
       readonly _tag: "Ready";
       readonly turn: PreparedModelTurn;

@@ -32,7 +32,7 @@ SqliteClient (durable file DB) + ClockLive + IdGeneratorLive
 ├── ResourceAdmission + ResourceOwnershipRepository
 ├── FenceStopCheck + RuntimeSafetyGate + ExecutionScheduler + RunnableWorkSource (02)
 ├── P2/P3 command handler registry + CommandGateway
-└── ExecutionDriverPort (AgentDriverLive) + runExecution orchestration
+└── ExecutionDriverPort (AgentLoopDriverLive) + runExecution orchestration
 ```
 
 - The durable DB is a **file** path (not `:memory:`) so restart continuity can be
