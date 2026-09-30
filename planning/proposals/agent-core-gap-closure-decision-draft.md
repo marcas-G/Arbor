@@ -15,16 +15,19 @@ capabilities, which must be removed.
 
 ### Recommended ruling
 
-Adopt explicit parent-distributed capabilities:
+Adopt a read-only baseline plus explicit parent-distributed elevated capabilities:
 
-1. Root Workspace receives its initial capability ceiling from the Project
+1. `list` and `read` are baseline capabilities of every active Workspace,
+   limited strictly to its current ResourceBoundary and ControlBasis.
+2. Root Workspace receives elevated capabilities from the Project
    creator/Project Policy.
-2. Parent Workspace creation of a Child explicitly distributes any of
-   `list`, `read`, `patch`, `shell`; every child capability must be a subset of
-   the parent's current ceiling.
-3. No capability is implicit, including list/read.
-4. Every tool invocation must be covered by the owning Workspace ceiling and
-   any narrower active PermissionGrant.
+3. Parent Workspace creation of a Child explicitly distributes elevated
+   capabilities such as `patch`, `shell`, Project tools and external tools;
+   every distributed capability must be a subset of the parent's current
+   ceiling.
+4. `patch`, `shell`, Project tools and external tools are never implicit and
+   require the owning Workspace ceiling plus any narrower active
+   PermissionGrant required by policy.
 5. ExecutionBound specialists inherit no new capability. Their ceiling is the
    intersection of the parent InvocationAuthority and their mission/resource
    boundary.
