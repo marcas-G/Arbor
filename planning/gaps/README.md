@@ -37,6 +37,11 @@ CLOSED   — disposed by a later phase / governance ruling (see file)
 | P7-GAP-01 | Vacant-workspace silent wait | P7 / P10 | P10-004, P10-013 | CLOSED (P10 WaitingOnVacantProducer view) |
 | DOGFOOD-DG-01 | Settled ProviderTurn with active Execution after fenced session write | DID v1.20 AHT-1…AHT-8; P3 `08`; P9 `07` | Quant-research dogfood recovery (implementation separately gated) | RESOLVED |
 | DPM-DG-01 | Project directory, rename and close/archive product surface | DID §3.1/§4.2/§5/§12.10–§12.11; P15 project-management contracts | Project management surface | RESOLVED |
+| G-V2-1 | AssignWork provenance source | DID v1.19 field-source closure | Agent AssignWork | OPEN |
+| G-V2-2 | ToolObservation exact evidence identity | DID v1.19 field-source closure | B10 Verification | OPEN |
+| G-V2-3 | Verification conclusion summaryRef | DID v1.19 field-source closure | B10 Verification | OPEN |
+| G-V2-4 | initialWork VerificationMission lifecycle | DID v1.19 field-source closure | Formation / B10 | OPEN |
+| TOOL-AUTH-DG-01 | Execution tool capability source | DID §8 / P4 invocation authority | Executable Tool Calling | OPEN |
 
 All six gaps were resolved by the System Design v1.3 / DID v1.4 governance
 patch. Resolution authority is recorded in each gap file.
