@@ -12,6 +12,7 @@ import {
   IdGeneratorLive,
   P16_MIGRATIONS,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   layer as sqliteLayer,
   TransactionPortLive,
@@ -99,7 +100,12 @@ const makeApp = (
   runtimeConfig: Parameters<typeof ProviderRuntimeLive>[0] = {},
 ) => {
   const base = sqliteLayer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const providerLayer = providerFakeAdapter.layerFor({
     transportOverride: { events },
   });

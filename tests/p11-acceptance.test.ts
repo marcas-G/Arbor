@@ -25,6 +25,7 @@ import {
   ProviderTurnStoreLive,
   RecordEnvironmentChangeLive,
   ResourceOwnershipRepositoryLive,
+  RuntimeClockLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -250,7 +251,12 @@ const driftAppLayer = (
   reprobe?: Layer.Layer<EnvironmentReProbePort>,
 ): Layer.Layer<DriftAppEnv> => {
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const tx = Layer.provide(TransactionPortLive, base);
   const journal = Layer.provide(DomainEventJournalLive, infra);
   const waits = Layer.provide(WorkWaitStoreLive, infra);
@@ -483,7 +489,12 @@ const cbRecordingModelContext = (recorded: Array<ControlBasis>) =>
 const cbMakeApp = () => {
   const recorded: Array<ControlBasis> = [];
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const provider = FakeProviderLive({
     turns: [cbSendMessageTurn("first"), cbSendMessageTurn("second")],
   });
@@ -503,6 +514,7 @@ const cbMakeApp = () => {
   const driver = Layer.provide(
     AgentDriverLive([], { controlRegistry: cbControlRegistry }),
     Layer.mergeAll(
+      infra,
       cbRecordingModelContext(recorded),
       providerRuntime,
       cbCapability,

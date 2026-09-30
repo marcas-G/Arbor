@@ -20,6 +20,8 @@ import {
   type ProviderRuntimeService,
   ProviderTurnStore,
   providerRetryCauseFromAttempt,
+  RuntimeClock,
+  type RuntimeClockService,
   SecretStorePort,
   type TransactionOperationalFailure,
   TransactionPort,
@@ -322,6 +324,7 @@ const consumeAttempt = (
     readonly store: import("@arbor/ports").ProviderTurnStoreService;
     readonly tx: import("@arbor/ports").TransactionPortService;
     readonly clock: import("@arbor/ports").ClockService;
+    readonly runtimeClock: RuntimeClockService;
   },
   abortTransport: () => void,
   updateState: (input: {
@@ -358,7 +361,7 @@ const consumeAttempt = (
         checkpoint === null
           ? initialAttemptObservation()
           : observationForContinuation(checkpoint);
-      const attemptStartedAtMs = Date.now();
+      const attemptStartedAtMs = deps.runtimeClock.monotonicMillis();
       let responseStartedAtMs: number | null = null;
       let firstDataAtMs: number | null = null;
       let timeoutTriggeredPhase: ProviderExecutionTimeout["phase"] | null =
@@ -397,8 +400,9 @@ const consumeAttempt = (
         if (callerIsCancelled()) {
           return yield* Effect.interrupt;
         }
-        const now = Date.now();
-        const remainingTurnMs = deadlineAtMs - now;
+        const epochNow = deps.runtimeClock.epochMillis();
+        const monotonicNow = deps.runtimeClock.monotonicMillis();
+        const remainingTurnMs = deadlineAtMs - epochNow;
         if (remainingTurnMs <= 0) {
           return { _tag: "Timeout", phase: "TurnDeadline" };
         }
@@ -414,7 +418,7 @@ const consumeAttempt = (
               ? (responseStartedAtMs as number)
               : (firstDataAtMs as number);
         const remainingPhaseMs =
-          phaseTimeoutMs(policy, phase) - (now - phaseStart);
+          phaseTimeoutMs(policy, phase) - (monotonicNow - phaseStart);
         if (remainingPhaseMs <= 0) {
           return { _tag: "Timeout", phase };
         }
@@ -490,7 +494,7 @@ const consumeAttempt = (
             }
             yield* persist(nextObservation);
             if (event.delta.responseStarted === true) {
-              responseStartedAtMs ??= Date.now();
+              responseStartedAtMs ??= deps.runtimeClock.monotonicMillis();
             }
             continue;
           }
@@ -590,7 +594,7 @@ const consumeAttempt = (
             yield* Effect.yieldNow;
           }
           if (canonical._tag !== "TurnStarted") {
-            firstDataAtMs ??= Date.now();
+            firstDataAtMs ??= deps.runtimeClock.monotonicMillis();
           }
         }
       }
@@ -628,6 +632,7 @@ export const ProviderRuntimeLive = (
   | Clock
   | SecretStorePort
   | IdGenerator
+  | RuntimeClock
 > =>
   Layer.effect(
     ProviderRuntime,
@@ -637,6 +642,7 @@ export const ProviderRuntimeLive = (
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
       const ids = yield* IdGenerator;
+      const runtimeClock = yield* RuntimeClock;
       const secretStore = yield* SecretStorePort;
       const notifyProgress = (
         input: ProviderRunInput,
@@ -666,7 +672,8 @@ export const ProviderRuntimeLive = (
                   modelDeploymentOverride: input.executionPolicyOverrides,
                 }),
           });
-          let turnDeadlineAtMs = Date.now() + policy.turnTimeoutMs;
+          let turnDeadlineAtMs =
+            runtimeClock.epochMillis() + policy.turnTimeoutMs;
           let turnDeadlineAt = new Date(turnDeadlineAtMs).toISOString();
           let firstAttemptNo = 0;
           let resumeCheckpoint: ProviderContinuationCheckpoint | null =
@@ -807,7 +814,8 @@ export const ProviderRuntimeLive = (
                         attemptNo: last?.attemptNo ?? -1,
                         maxAttempts: persistedPolicy.maxAttempts,
                         cancelled: last?.outcome === "Cancelled",
-                        deadlineExpired: deadlineAtMs <= Date.now(),
+                        deadlineExpired:
+                          deadlineAtMs <= runtimeClock.epochMillis(),
                       });
                 const decidedAt = yield* clock.now();
                 const recordDecision = () =>
@@ -942,7 +950,7 @@ export const ProviderRuntimeLive = (
                 attemptNo: last?.attemptNo ?? -1,
                 maxAttempts: policy.maxAttempts,
                 cancelled: false,
-                deadlineExpired: turnDeadlineAtMs <= Date.now(),
+                deadlineExpired: turnDeadlineAtMs <= runtimeClock.epochMillis(),
               });
               if (
                 recheckedDecision.decision !== "Retry" ||
@@ -1003,7 +1011,7 @@ export const ProviderRuntimeLive = (
                   ? undefined
                   : yield* secretStore.resolve(input.secretRef);
               }),
-              Math.max(1, turnDeadlineAtMs - Date.now()),
+              Math.max(1, turnDeadlineAtMs - runtimeClock.epochMillis()),
             );
             if (Option.isNone(authResult)) {
               const settledAt = yield* clock.now();
@@ -1028,7 +1036,7 @@ export const ProviderRuntimeLive = (
               attemptNo += 1
             ) {
               if (controller.signal.aborted) return yield* Effect.interrupt;
-              if (Date.now() >= turnDeadlineAtMs) {
+              if (runtimeClock.epochMillis() >= turnDeadlineAtMs) {
                 const settledAt = yield* clock.now();
                 yield* tx.transact(
                   store.settleTurn(
@@ -1088,7 +1096,7 @@ export const ProviderRuntimeLive = (
                   policy,
                   turnDeadlineAtMs,
                   config,
-                  { store, tx, clock },
+                  { store, tx, clock, runtimeClock },
                   () => controller.abort(),
                   (state) => {
                     activeObservation = state.observation;
@@ -1227,7 +1235,7 @@ export const ProviderRuntimeLive = (
                 attemptNo,
                 maxAttempts: policy.maxAttempts,
                 cancelled,
-                deadlineExpired: Date.now() >= turnDeadlineAtMs,
+                deadlineExpired: runtimeClock.epochMillis() >= turnDeadlineAtMs,
               });
               retryDecisions.push(decision);
               const outcome = cancelled
@@ -1292,12 +1300,12 @@ export const ProviderRuntimeLive = (
               }
               const backoffMs = Math.min(
                 policy.retryBackoffMs,
-                Math.max(0, turnDeadlineAtMs - Date.now()),
+                Math.max(0, turnDeadlineAtMs - runtimeClock.epochMillis()),
               );
               if (backoffMs > 0) {
                 const waitResult = yield* Effect.timeoutOption(
                   Effect.sleep(backoffMs),
-                  Math.max(1, turnDeadlineAtMs - Date.now()),
+                  Math.max(1, turnDeadlineAtMs - runtimeClock.epochMillis()),
                 );
                 if (Option.isNone(waitResult)) {
                   const backoffAt = yield* clock.now();

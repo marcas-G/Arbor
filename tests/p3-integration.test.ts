@@ -15,6 +15,7 @@ import {
   P16_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -108,7 +109,12 @@ const tools = Layer.succeed(ToolCatalogPort, {
 
 const makeApp = () => {
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
   const provider = FakeProviderLive({ turns: [waitTurn] });

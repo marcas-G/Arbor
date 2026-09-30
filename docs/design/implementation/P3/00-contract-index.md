@@ -34,6 +34,7 @@ superseded representation.
 | `06-provider-failure-repair.md` | failure translation, bounded repair, `ContextUnsatisfiable`, `DecisionStale`, `GovernanceBlocked` |
 | `07-behavioral-eval-harness.md` | shared Prompt/Context behavioral-eval harness; per-phase ownership of programs/eval cases/acceptance |
 | `08-agent-loop-step-handoff.md` | DID v1.20 durable AgentLoopStep identity/state machine、Provider success replay、idempotent Session/action progression、successor/settlement handoff |
+| `09-runtime-decomposition.md` | explicit epoch/monotonic RuntimeClock and behavior-preserving Agent Driver decomposition |
 | `00-contract-index.md` | this index |
 
 ## P3 scope (DID §11 P3)

@@ -1,11 +1,8 @@
 import type {
   AgentBinding,
   AgentExecutionState,
-  CommandSubmissionContext,
   Execution,
-  ExecutionId,
   ExecutionSettlement,
-  LeaseGeneration,
   WakeReason,
 } from "@arbor/domain";
 import {
@@ -13,8 +10,6 @@ import {
   decodeTurn,
   type InstructionFragment,
   ModelContext,
-  type ModelOutput,
-  type PreparedModelTurn,
   TOOL_INVOCATION_CONTRACT,
   WORK_EXECUTION_PROGRAM,
 } from "@arbor/model-context";
@@ -24,6 +19,7 @@ import {
   type AgentLoopStepRecord,
   AgentLoopStepStore,
   type BoundedObservation,
+  Clock,
   EnvironmentRevisionStore,
   type ExecutionActivity,
   type ExecutionDriverError,
@@ -31,8 +27,6 @@ import {
   HumanMessageStore,
   ModelCapabilityPort,
   type ProviderExecutionPolicyOverrides,
-  type ProviderExecutionTimeout,
-  type ProviderFailure,
   type ProviderRunInput,
   ProviderRuntime,
   ProviderTurnStore,
@@ -52,145 +46,22 @@ import {
   makeControlToolRegistry,
 } from "./control.js";
 import type { DirectiveHandler } from "./directive.js";
+import {
+  type DecisionTurn,
+  isConversationExecution,
+  isProviderExecutionTimeout,
+  isProviderTurnBindingChanged,
+  MAX_TURNS,
+  providerExecutionTimeoutSettlement,
+  providerTurnBindingChangedSettlement,
+  REPAIR_POLICY,
+  runtimeSafetyFragment,
+  safetyStop,
+  sessionFence,
+  workObjectiveFragment,
+} from "./driver-policy.js";
 import { checkFreshness, requirementForAction } from "./freshness.js";
-import { CANONICAL_TRUST } from "./prompt-assets.js";
-import { decideRepair, type RepairPolicy } from "./repair.js";
-
-const MAX_TURNS = 8;
-
-/** P3 `06` §3: N is empirical; the bounded mechanism and the
- * settle-after-exhaustion rule are contract. */
-const MAX_REPAIRS = 2;
-const REPAIR_POLICY: RepairPolicy = { maxRepairs: MAX_REPAIRS };
-
-/** One decoded decision: either a validated turn to act on, or the frozen
- * settlement reached when bounded repair is exhausted / a control result
- * requires settling. */
-type DecisionTurn =
-  | {
-      readonly _tag: "Ready";
-      readonly turn: PreparedModelTurn;
-      readonly output: ModelOutput;
-      readonly loopStep?: AgentLoopStepRecord;
-      /** P14: this turn carried conversation context (a claimed human
-       * message) — the first text answer settles the episode. */
-      readonly conversation?: boolean;
-    }
-  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
-
-const safetyStop = (reason: string): ExecutionSettlement => ({
-  _tag: "Interrupted",
-  result: { _tag: "ControlledInterruption", reason },
-});
-
-/** A ProviderTurn is immutable once its manifest is durable. This exact
- * rejection means configuration changed after an execution started: it is a
- * terminal result for that execution, not a daemon-level operational fault.
- * All other ProviderRuntime failures retain their narrow typed error path. */
-const isProviderTurnBindingChanged = (
-  cause: unknown,
-): cause is ProviderFailure =>
-  typeof cause === "object" &&
-  cause !== null &&
-  (cause as { readonly _tag?: unknown })._tag === "ProviderFailure" &&
-  (cause as { readonly kind?: unknown }).kind === "UnknownProviderFailure" &&
-  (cause as { readonly safeDiagnostic?: unknown }).safeDiagnostic ===
-    "provider-turn-resume-binding-invalid";
-
-const providerTurnBindingChangedSettlement = (): ExecutionSettlement => ({
-  _tag: "Failed",
-  failure: {
-    _tag: "ExecutionFailure",
-    reason: "ProviderTurnBindingChanged",
-  },
-});
-
-const isProviderExecutionTimeout = (
-  cause: unknown,
-): cause is ProviderExecutionTimeout =>
-  typeof cause === "object" &&
-  cause !== null &&
-  (cause as { readonly _tag?: unknown })._tag === "ProviderExecutionTimeout" &&
-  typeof (cause as { readonly phase?: unknown }).phase === "string";
-
-const providerExecutionTimeoutSettlement = (
-  timeout: ProviderExecutionTimeout,
-): ExecutionSettlement => ({
-  _tag: "Failed",
-  failure: {
-    _tag: "ExecutionFailure",
-    reason: `ProviderExecutionTimedOut:${timeout.phase}`,
-  },
-});
-
-/** P12 `06` §3 (TR-9): the session-append fence. The authenticated worker
- * identity is threaded from the ExecutionOrigin context when present; legacy
- * in-process contexts omit it (generation-only fence). */
-const sessionFence = (
-  executionId: ExecutionId,
-  context: CommandSubmissionContext,
-):
-  | {
-      readonly executionId: ExecutionId;
-      readonly workerId?: string;
-      readonly workerIncarnationId?: string;
-      readonly fencingGeneration: LeaseGeneration;
-    }
-  | undefined =>
-  context._tag === "ExecutionOrigin"
-    ? {
-        executionId,
-        fencingGeneration: context.fencingGeneration,
-        ...(context.workerId !== undefined
-          ? { workerId: context.workerId }
-          : {}),
-        ...(context.workerIncarnationId !== undefined
-          ? { workerIncarnationId: context.workerIncarnationId }
-          : {}),
-      }
-    : undefined;
-
-const isConversationExecution = (execution: Execution): boolean =>
-  execution.binding._tag === "WorkspaceExecution" &&
-  execution.binding.focus._tag === "Coordination";
-
-const workObjectiveFragment = (execution: Execution): InstructionFragment => ({
-  identity: "work-objective",
-  revision: 1,
-  hash: "h",
-  semanticKind: "WorkObjective",
-  source: "Canonical",
-  scope: "work-objective",
-  authorityRole: "A3",
-  strength: "Hard",
-  compositionMode: "Constrain",
-  activationCondition: "always",
-  lifetime: "Pinned",
-  cacheClass: "Stable",
-  budgetClass: "b",
-  modelCompatibility: [],
-  contentRef: `work:${execution.executionId}`,
-  provenance: CANONICAL_TRUST,
-});
-
-const runtimeSafetyFragment: InstructionFragment = {
-  identity: "runtime-safety",
-  revision: 1,
-  hash: "h0",
-  semanticKind: "RuntimeSafety",
-  source: "Canonical",
-  scope: "runtime-safety",
-  authorityRole: "A0",
-  strength: "Hard",
-  compositionMode: "Constrain",
-  activationCondition: "always",
-  lifetime: "Pinned",
-  cacheClass: "Stable",
-  budgetClass: "b",
-  modelCompatibility: [],
-  contentRef: "runtime safety",
-  provenance: CANONICAL_TRUST,
-};
+import { decideRepair } from "./repair.js";
 
 export interface AgentDriverOptions {
   /** P12 `03` §3: the credential reference the driver binds to a ProviderTurn.
@@ -232,6 +103,7 @@ export const AgentDriverLive = (
   | EnvironmentRevisionStore
   | HumanMessageStore
   | WorkRepository
+  | Clock
 > =>
   Layer.effect(
     ExecutionDriverPort,
@@ -254,6 +126,7 @@ export const AgentDriverLive = (
         : undefined;
       const environmentRevisions = yield* EnvironmentRevisionStore;
       const works = yield* WorkRepository;
+      const clock = yield* Clock;
       const controlRegistry =
         options.controlRegistry ?? makeControlToolRegistry();
       const failure = (cause: unknown): ExecutionDriverError => ({
@@ -328,8 +201,7 @@ export const AgentDriverLive = (
           // P12 `08` §7: the driver reports the D1/D3/D4/D5/D6 observation
           // signals at the ProviderTurn / ToolInvocation / Specialist
           // boundaries. The gate never reads durable state (R = never).
-          const now = (): Effect.Effect<string> =>
-            Effect.sync(() => new Date().toISOString());
+          const now = clock.now;
           const leaseGeneration =
             input.context._tag === "ExecutionOrigin"
               ? input.context.fencingGeneration

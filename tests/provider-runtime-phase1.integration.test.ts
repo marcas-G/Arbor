@@ -11,6 +11,7 @@ import {
   layer,
   P16_MIGRATIONS,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
@@ -186,7 +187,12 @@ const makeHarness = (
   const root = mkdtempSync(join(tmpdir(), "provider-runtime-phase1-"));
   const databaseFile = join(root, "provider.db");
   const base = layer({ filename: databaseFile });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const transaction = Layer.provide(TransactionPortLive, infra);
   const turnStore = Layer.provide(ProviderTurnStoreLive, infra);
   const providerRuntime = Layer.provide(
