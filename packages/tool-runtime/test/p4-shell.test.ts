@@ -51,6 +51,20 @@ describe("P4 shell tool + policy", () => {
       }),
     );
     expect(ran.settlement._tag).toBe("Success");
-    expect(JSON.parse(ran.observation.text).exitCode).toBe(0);
+    expect(JSON.parse(ran.observation.text)).toMatchObject({
+      exitCode: 0,
+      stdout: expect.stringContaining("hi"),
+    });
+    const failed = await Effect.runPromise(
+      shellExecutor.execute({
+        intent: intent("exit 7"),
+        definition: {} as never,
+        context,
+        sandbox,
+        regions: [],
+      }),
+    );
+    expect(failed.settlement._tag).toBe("ExpectedFailure");
+    expect(JSON.parse(failed.observation.text).exitCode).toBe(7);
   });
 });
