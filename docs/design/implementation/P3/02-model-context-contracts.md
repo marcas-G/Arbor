@@ -136,6 +136,12 @@ Responsibility, ResourceBoundary, optional Work revision, and Environment
 revision from canonical repositories. Placeholder revisions or constant
 authorization digests are forbidden.
 
+The production Work context assembler emits separate A2/A3 hard fragments for
+ResponsibilityDefinition, ResourceBoundary, WorkObjective, WorkConstraints,
+CompletionExpectation and VerificationMissionSummary. Combining these facts
+into one free-form objective string is forbidden because it loses authority,
+revision and scope identity.
+
 ## 7. Skills surface (C1)
 
 P3 owns the **Skill surface contract**:

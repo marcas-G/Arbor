@@ -8,10 +8,10 @@ import type {
 import {
   type ControlBasis,
   decodeTurn,
+  GENERIC_COGNITION_PROGRAM,
   type InstructionFragment,
   type ModelContextService,
   TOOL_INVOCATION_CONTRACT,
-  WORK_EXECUTION_PROGRAM,
 } from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
@@ -31,6 +31,7 @@ import type {
   SessionRepositoryService,
   TransactionPortService,
   WorkRepositoryService,
+  WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
@@ -43,13 +44,13 @@ import {
   REPAIR_POLICY,
   runtimeSafetyFragment,
   safetyStop,
-  workObjectiveFragment,
 } from "./agent-loop-policy.js";
 import { decideRepair } from "./repair.js";
 import {
   assembleSessionContext,
   SESSION_CONTEXT_ENTRY_LIMIT,
 } from "./session-context.js";
+import { assembleWorkContext } from "./work-context.js";
 
 export interface ModelDecisionOptions {
   readonly secretRef?: SecretRef;
@@ -80,6 +81,7 @@ export interface ModelDecisionDependencies {
   readonly sessions: SessionRepositoryService;
   readonly humanMessages: HumanMessageStoreService;
   readonly works: WorkRepositoryService;
+  readonly workspaces: WorkspaceRepositoryService;
   readonly options: ModelDecisionOptions;
   readonly admit: (
     activity: ExecutionActivity,
@@ -109,6 +111,7 @@ export const runModelDecision = (
     sessions,
     humanMessages,
     works,
+    workspaces,
     options,
     admit,
     failure,
@@ -219,10 +222,18 @@ export const runModelDecision = (
         ...conversationContextRefs,
         ...sessionContext.contextRefs,
       ];
-      // Work executions carry the objective body through the
-      // content table so the compiled instruction shows the task
-      // text instead of the bare `work:<executionId>` reference.
-      let instructionContents: ReadonlyMap<string, string> | undefined;
+      const workspace = yield* tx
+        .transact(workspaces.findById(input.execution.workspaceId))
+        .pipe(Effect.mapError(failure));
+      if (Option.isNone(workspace)) {
+        return yield* Effect.fail(
+          failure({
+            _tag: "WorkspaceContextMissing",
+            workspaceId: input.execution.workspaceId,
+          }),
+        );
+      }
+      let currentWork: import("@arbor/domain").Work | null = null;
       if (
         input.execution.binding._tag === "WorkspaceExecution" &&
         input.execution.binding.focus._tag === "Work"
@@ -230,19 +241,17 @@ export const runModelDecision = (
         const work = yield* tx
           .transact(works.findById(input.execution.binding.focus.workId))
           .pipe(Effect.mapError(failure));
-        if (Option.isSome(work)) {
-          instructionContents = new Map([
-            [
-              `work:${input.execution.executionId}`,
-              [
-                `objective: ${work.value.objective}`,
-                `why: ${work.value.why}`,
-                `completion expectation: ${work.value.completionExpectation}`,
-              ].join("\n"),
-            ],
-          ]);
+        if (Option.isNone(work)) {
+          return yield* Effect.fail(
+            failure({
+              _tag: "WorkContextMissing",
+              workId: input.execution.binding.focus.workId,
+            }),
+          );
         }
+        currentWork = work.value;
       }
+      const workContext = assembleWorkContext(workspace.value, currentWork);
       const preparation = yield* modelContext
         .prepareTurn({
           executionId: input.execution.executionId,
@@ -252,10 +261,10 @@ export const runModelDecision = (
           binding: agentBinding,
           workspaceId: input.execution.workspaceId,
           cognitiveMode: input.agentExecutionState.currentMode ?? "execute",
-          program: WORK_EXECUTION_PROGRAM,
+          program: GENERIC_COGNITION_PROGRAM,
           fragments: [
             runtimeSafetyFragment,
-            workObjectiveFragment(input.execution),
+            ...workContext.fragments,
             ...repairFragments,
           ],
           contextFragments: [],
@@ -268,7 +277,7 @@ export const runModelDecision = (
           controlBasis,
           maxOutputTokens: capability.outputCeiling,
           bodySkillIds: [],
-          ...(instructionContents !== undefined ? { instructionContents } : {}),
+          instructionContents: workContext.contents,
           ...(isConversationExecution(input.execution) &&
           conversationMessages.length > 0
             ? {
