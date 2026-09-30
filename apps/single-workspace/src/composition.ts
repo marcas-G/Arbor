@@ -35,6 +35,7 @@ import {
 import {
   AcceptanceRepositoryLive,
   AgentExecutionStateStoreLive,
+  AgentLoopStepStoreLive,
   ArtifactMetadataRepositoryLive,
   ClockLive,
   CommandStoreLive,
@@ -52,7 +53,7 @@ import {
   LeaseServiceLive,
   layer,
   MessageStoreLive,
-  P16_MIGRATIONS,
+  P18_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectionStoreLive,
   ProjectRepositoryLive,
@@ -71,6 +72,7 @@ import {
   WorkWaitStoreLive,
 } from "@arbor/persistence-sqlite";
 import {
+  type AgentLoopStepStore,
   type CanonicalProviderEvent,
   type ExecutionDriverPort,
   type ExecutionScheduler,
@@ -141,7 +143,6 @@ import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
 import {
   type AuthenticatorService,
   makeLocalAuthenticator,
-  makeStaticAuthenticator,
 } from "./transport/auth.js";
 import { publishConversationProgress } from "./transport/conversation-progress-bridge.js";
 
@@ -245,6 +246,7 @@ export interface SliceConfig {
 
 export type SliceServices =
   | CommandGateway
+  | AgentLoopStepStore
   | ExecutionScheduler
   | RunnableWorkSource
   | WorkWaitStore
@@ -420,6 +422,7 @@ export const buildSliceLayer = (
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(AgentExecutionStateStoreLive, infra),
+    Layer.provide(AgentLoopStepStoreLive, infra),
     Layer.provide(ProviderTurnStoreLive, infra),
     Layer.provide(ToolInvocationStoreLive, infra),
     Layer.provide(ArtifactMetadataRepositoryLive, infra),
@@ -503,6 +506,13 @@ export const buildSliceLayer = (
               : {}),
             ...(deploymentBinding?.deployment.secretRef !== undefined
               ? { secretRef: deploymentBinding.deployment.secretRef }
+              : {}),
+            ...(deploymentBinding?.deployment.executionPolicyOverrides !==
+            undefined
+              ? {
+                  executionPolicyOverrides:
+                    deploymentBinding.deployment.executionPolicyOverrides,
+                }
               : {}),
             controlRegistry: registryService,
             executableInvocationHandler: executableHandler,
@@ -633,4 +643,10 @@ export const buildSliceLayer = (
   ) as Layer.Layer<SliceServices>;
 };
 
-export { P16_MIGRATIONS, P16_MIGRATIONS as P12_MIGRATIONS, runMigrations };
+export {
+  P18_MIGRATIONS,
+  P18_MIGRATIONS as P17_MIGRATIONS,
+  P18_MIGRATIONS as P16_MIGRATIONS,
+  P18_MIGRATIONS as P12_MIGRATIONS,
+  runMigrations,
+};

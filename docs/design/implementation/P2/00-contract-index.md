@@ -18,9 +18,9 @@ favor of the DID.
 | Doc | Owns |
 |---|---|
 | `01-command-contracts.md` | P2 command set, runtime authority facts, mutation classes, payload/result/rejection/events |
-| `02-port-contracts.md` | P2 ports (ExecutionRepository, Session append, WorkerDispatch, ExecutionDriver, RuntimeSafetyGate, ExecutionScheduler, WorkWaitStore, timers), Effect A/E/R |
+| `02-port-contracts.md` | P2 ports (ExecutionRepository, Session append/idempotent source write, AgentLoopStepStore, WorkerDispatch, ExecutionDriver, RuntimeSafetyGate, ExecutionScheduler, WorkWaitStore, timers), Effect A/E/R |
 | `03-lease-fencing-model.md` | lease lifecycle, generation, fence/stop predicates, quiescence-control admission, recovery authority |
-| `04-sqlite-schema.md` | P2 DDL (`executions`, `execution_leases`, `agent_execution_state`, `session_entries`, `work_waits`, `scheduler_timers`), indexes, CAS SQL |
+| `04-sqlite-schema.md` | P2 DDL (`executions`, `execution_leases`, `agent_execution_state`, `session_entries`, `work_waits`, `scheduler_timers`) + DID v1.20 `agent_loop_steps`/`agent_loop_step_actions` successor migration, indexes, CAS SQL |
 | `05-scheduler-wait.md` | ExecutionScheduler, deterministic re-evaluation trigger, durable WorkWait, wake/timer, lost-wake-up protection |
 | `06-recovery-skeleton.md` | recovery order, expired-lease invalidation, unsettled detection, RecoveryController settlement, DurabilityEnvelope |
 | `00-contract-index.md` | this index |
@@ -54,6 +54,7 @@ facts only.
 | `Fake Driver` contract | `02` §5, `05` §7 |
 | tool/provider reconciliation boundary (skeleton only) | `06` §5 |
 | `AgentExecutionState` persistence | `04` §3.3 |
+| DID v1.20 durable AgentLoopStep fencing / idempotent Session source seam | `02` §3/§3A, `04` §3.4/§3.7, `06` §4A |
 
 ## Inherited-artifact evolutions (authorized by DID v1.7 G1)
 
@@ -98,3 +99,7 @@ No open Blocking item after R1/R2. R3–R5 are non-blocking closures.
 FROZEN — P2 phase-scoped contracts; review Blocking = 0 (P2 FORMALLY CLOSED).
 `planning/gaps/` once review starts. No P2 planning is generated until
 Blocking = 0.
+
+**v1.20 successor:** the AgentLoopStep additions are additive cross-phase design
+contracts. They do not reopen P2 completion and do not authorize migration or
+runtime implementation.

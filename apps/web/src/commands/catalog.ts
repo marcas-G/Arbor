@@ -7,6 +7,8 @@
  */
 export const HUMAN_ACTIONABLE_COMMANDS = [
   "CreateProject",
+  "RenameProject",
+  "CloseProject",
   "RecordDecision",
   "SteerWork",
   "AcceptWorkOutcome",

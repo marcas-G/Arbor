@@ -23,6 +23,7 @@ in favor of the DID.
 | `05-event-journal.md` | sequence scope + durable counter, `eventVersion`, offset/projection boundary, poison handling |
 | `04-sqlite-schema.md` | DDL, cyclic FKs, indexes, resource-region encoding, migration, retention |
 | `06-recovery-matrix.md` | crash-point matrix, durability, attempt recording |
+| `07-agent-loop-step-command-identity.md` | DID v1.20 LogicalActionId/LogicalSettlementId、generation-scoped CommandId、receipt-first takeover eligibility |
 | `00-contract-index.md` | this index |
 
 ## Gap closure mapping
@@ -54,3 +55,6 @@ All P1-DG-01…11 are RESOLVED. **P1-DG-11** was resolved by manual governance a
 not implement a Permission/RBAC/Authority Resolver and has no default-allow.
 No frozen DID document was modified while producing these contracts (DID v1.6
 was a separate governance patch).
+
+**v1.20 successor:** `07` is an additive cross-phase design contract. It does
+not reopen P1 completion and does not authorize AgentLoopStep implementation.

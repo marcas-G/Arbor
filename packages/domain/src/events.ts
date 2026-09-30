@@ -8,6 +8,7 @@ export const ProjectPolicyChanged = Schema.TaggedStruct(
   "ProjectPolicyChanged",
   {},
 );
+export const ProjectRenamed = Schema.TaggedStruct("ProjectRenamed", {});
 export const ProjectClosed = Schema.TaggedStruct("ProjectClosed", {});
 export const WorkspaceCreated = Schema.TaggedStruct("WorkspaceCreated", {});
 export const ResponsibilityChanged = Schema.TaggedStruct(
@@ -191,6 +192,7 @@ export const HumanInterventionApplied = Schema.TaggedStruct(
 export const DomainEventPayload = Schema.Union([
   ProjectCreated,
   ProjectPolicyChanged,
+  ProjectRenamed,
   ProjectClosed,
   WorkspaceCreated,
   ResponsibilityChanged,
@@ -235,6 +237,7 @@ export type DomainEventPayload = Schema.Schema.Type<typeof DomainEventPayload>;
 export const EVENT_CATALOG = {
   ProjectCreated,
   ProjectPolicyChanged,
+  ProjectRenamed,
   ProjectClosed,
   WorkspaceCreated,
   ResponsibilityChanged,

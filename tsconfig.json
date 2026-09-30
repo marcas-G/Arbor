@@ -50,6 +50,9 @@
       "path": "./adapters/provider-openai"
     },
     {
+      "path": "./adapters/provider-testecho"
+    },
+    {
       "path": "./packages/tool-runtime"
     },
     {

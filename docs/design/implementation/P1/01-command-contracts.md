@@ -329,6 +329,12 @@ same commandId + different fingerprint                  -> IdempotencyConflict
 absent                                                  -> execute
 ```
 
+> **DID v1.20 AHT-4 propagation.** Agent recovery adds a stable
+> `LogicalActionId` / `LogicalSettlementId` outside the Command model. Every
+> lease generation derives a new immutable `CommandId` only after receipt-first
+> eligibility checks; ordinary transient retry of that exact request still
+> reuses the same CommandId. See `07-agent-loop-step-command-identity.md`.
+
 `result_json` / `terminal_error_json` are JSON keyed by the stored
 `schema_version` (see `04-sqlite-schema.md`).
 

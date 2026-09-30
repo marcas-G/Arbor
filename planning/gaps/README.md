@@ -35,6 +35,8 @@ CLOSED   — disposed by a later phase / governance ruling (see file)
 | DG-06 | Architecture test placement conflict | DID §10.1 vs `AGENTS.md` rule 5 | P0-001, P0-017 | RESOLVED |
 | P5-DG-01 | Acceptance story cannot reach `Admit Work(current)` | P5 `05` §1, P5 `02` §2; DID §8.18A; P2 `05` §4 | P5-009, P5-011 | RESOLVED |
 | P7-GAP-01 | Vacant-workspace silent wait | P7 / P10 | P10-004, P10-013 | CLOSED (P10 WaitingOnVacantProducer view) |
+| DOGFOOD-DG-01 | Settled ProviderTurn with active Execution after fenced session write | DID v1.20 AHT-1…AHT-8; P3 `08`; P9 `07` | Quant-research dogfood recovery (implementation separately gated) | RESOLVED |
+| DPM-DG-01 | Project directory, rename and close/archive product surface | DID §3.1/§4.2/§5/§12.10–§12.11; P15 project-management contracts | Project management surface | RESOLVED |
 
 All six gaps were resolved by the System Design v1.3 / DID v1.4 governance
 patch. Resolution authority is recorded in each gap file.

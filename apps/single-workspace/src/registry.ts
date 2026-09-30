@@ -84,7 +84,13 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
     const humanMessages = yield* HumanMessageStore;
     const dependencyStore = yield* DependencyRepository;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
-      ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
+      ...makeP1CommandHandlers({
+        projects,
+        workspaces,
+        sessions,
+        works,
+        executions,
+      }),
       makeSelectCurrentWorkHandler({
         workspaces,
         works,
@@ -156,6 +162,15 @@ export const SliceCommandHandlerRegistryLive: Layer.Layer<
                 Option.isSome(found)
                   ? found.value.rootWorkspaceId
                   : (projectId as unknown as never),
+              ),
+            ),
+        projectIsOpen: (projectId: ProjectId) =>
+          projects
+            .findById(projectId)
+            .pipe(
+              Effect.map(
+                (found) =>
+                  Option.isSome(found) && found.value.lifecycle === "Open",
               ),
             ),
       }) as unknown as CommandHandler<unknown, unknown>,

@@ -34,15 +34,19 @@ prepareTurn()  ── NeedsCompaction ─→ compaction ProviderTurn → re-prep
               ├─ GovernanceBlocked ─→ settle Interrupted/GovernanceBlocked path
               └─ Ready(PreparedModelTurn)
 ↓
-persist ProviderTurn intent + Manifest   (04 §3)
+persist AgentLoopStep Prepared + ProviderTurn intent + Manifest   (04 §3; 08)
 ↓
 ProviderPort.runTurn → CanonicalProviderEvent stream
 ↓
-decodeTurn() → ModelOutput + validated AgentDirective
+atomically settle Provider success → AgentLoopStep ProviderResultAvailable
 ↓
-execute AgentDirective (via its owning boundary)
+decodeTurn() → ModelOutput + provider-neutral typed invocations
 ↓
-Observation → append Session entry
+idempotent sourced ModelOutput append → AgentLoopStep OutputAccepted
+↓
+reconstruct/validate route → action ledger → owning boundary
+↓
+Observation appended per action → successor or persisted settlement proposal
 ↓
 continue while a meaningful runnable action exists, else settle
 ```
@@ -50,29 +54,22 @@ continue while a meaningful runnable action exists, else settle
 `OutcomeGap` (expected outcome − established evidence) drives action selection;
 the Agent does not mechanically replay an original plan (DID §8.15).
 
-## 3. `decodeTurn` and `AgentDirective`
+## 3. `decodeTurn` and invocation routing
 
 ```ts
-type AgentDirective =
-  | { readonly _tag: "InvokeTool"; readonly intent: ToolIntent }
-  | { readonly _tag: "Communicate"; readonly message: OutboundMessage }
-  | { readonly _tag: "DeclareDependency"; readonly spec: DependencySpec }
-  | { readonly _tag: "RequestGovernance"; readonly request: GovernanceRequest }
-  | { readonly _tag: "SpawnSpecialist"; readonly spec: SpecialistSpec }
-  | { readonly _tag: "ProposeChildWorkspace"; readonly spec: ChildWorkspaceProposal }
-  | { readonly _tag: "LoadSkill"; readonly skillId: string; readonly tier: "Summary" | "Body" }
-  | { readonly _tag: "ChangeMode"; readonly mode: string }
-  | { readonly _tag: "CompletionClaim"; readonly claim: CompletionClaim }
-  | { readonly _tag: "Yield"; readonly reason: string; readonly waitSpec: WaitSpec };
+decodeTurn(pinnedCanonicalEvents, pinnedDecoderVersion)
+  → ModelOutput + ReadonlyArray<TypedToolInvocation>
 ```
 
-- `decodeTurn` maps `CanonicalProviderEvent` (`01` §3) + the Output Contract
-  into a validated directive. A `ToolCallProposed` event is **not** itself a
-  directive; it must decode into `InvokeTool` (and pass tool-surface +
-  Output Contract validation) or be rejected.
-- Every directive carries `decisionBasisManifestId` (DID §8.19).
-- A directive that changes canonical Domain truth goes through
-  `CommandGateway`/Application, never a raw repository write (DID §7.6).
+- `decodeTurn` reconstructs provider-neutral invocations and preserves call
+  correlation; it does not construct the superseded universal AgentDirective.
+- Executable calls route to P4 ToolRuntime. Control calls pass registered
+  codecs in `ControlToolRegistry`, which constructs process-local AgentAction.
+- Trusted Execution/authority/revision/Manifest facts come from runtime context,
+  never model payload.
+- `AgentLoopStepActionRecord` persists identity/hash/disposition/result refs only;
+  it never serializes AgentAction. See `08` §1/§7.
+- Canonical Domain mutation still goes through CommandGateway/Application.
 
 ## 4. Output Contract
 
@@ -81,6 +78,8 @@ type AgentDirective =
   produce (directive kinds + required fields).
 - Output that violates the contract is a `ModelOutputContractViolation`
   (`06` §3), handled by bounded repair — **not** a provider transport failure.
+- The repair decision and complete successor identity are persisted in
+  `OutputRejected` before any successor is created (`08` §4/§8).
 
 ## 5. Runtime Safety / control gating
 
@@ -92,10 +91,14 @@ type AgentDirective =
   Open; Attention is emitted. Safety never auto-cancels Work.
 - P3 supplies only activity observations (fingerprints, kind); P2 owns the
   counters and the execution-wide envelope.
+- Every durable AgentLoopStep/action transition is a short fenced transaction.
+  Long Provider/event/action loops must yield scheduling so TTL/3 renewal can
+  commit; write-before-renew is only a mitigation, never a recovery mechanism.
 
 ## 6. Settlement
 
-The driver returns exactly one of the DID `ExecutionSettlement` forms:
+Before the driver returns, it persists `SettlementProposed` containing exactly
+one of the DID `ExecutionSettlement` forms:
 
 - `Completed(CompletionClaimed(...))` on a `CompletionClaim` directive;
 - `Completed(Yielded(reason, waitSpec))` on a `Yield` directive;
@@ -108,6 +111,10 @@ The driver returns exactly one of the DID `ExecutionSettlement` forms:
 
 Work completion requires `Verification PASS + Acceptance + CompleteWork` (P8),
 never a model claim alone.
+
+On resume, the persisted proposal is authoritative. The driver does not repeat
+the Provider request or action that produced it; Execution Runtime submits a
+current-generation SettleExecution command under P1 `07`.
 
 ## 7. Must Not Decide
 

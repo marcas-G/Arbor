@@ -7,6 +7,7 @@ export * from "./declare-dependency.js";
 export * from "./deliver-command.js";
 export * from "./grant-permission.js";
 export * from "./produce-deliverable.js";
+export * from "./project-management.js";
 export * from "./record-decision.js";
 export * from "./register-project-tool.js";
 export * from "./registry.js";

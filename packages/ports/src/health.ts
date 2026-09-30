@@ -20,6 +20,9 @@ export const P14_MIGRATION_BASELINE = 14;
 /** Provider Runtime Correctness Phase 1 migration baseline. */
 export const P16_MIGRATION_BASELINE = 16;
 
+/** DID v1.21 ALS-I1 AgentLoopStep migration baseline. */
+export const P18_MIGRATION_BASELINE = 18;
+
 /** @deprecated Legacy alias kept for compiled references; the baseline is P16. */
 export const P15_MIGRATION_BASELINE = P16_MIGRATION_BASELINE;
 

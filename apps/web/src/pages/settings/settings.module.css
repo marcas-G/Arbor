@@ -42,6 +42,22 @@
   color: var(--arbor-ink-soft);
 }
 
+.renameLabel {
+  display: grid;
+  gap: var(--arbor-space-1);
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+.renameLabel input {
+  min-height: var(--arbor-row-height);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius-small);
+  padding: 0 var(--arbor-space-2);
+  background: var(--arbor-surface);
+  color: var(--arbor-ink);
+  font: inherit;
+}
+
 .projectBox {
   padding: var(--arbor-space-2);
   border: 1px solid transparent;

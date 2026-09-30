@@ -58,8 +58,9 @@ is a domain ID (`ptn_`); `CancellationRef` and `CacheHint` are P3 port types.
 ## 3. CanonicalProviderEvent (frozen ADT — C4)
 
 Provider events are **normalized transport/runtime vocabulary**. They must
-**not** directly express an `AgentDirective`; decoding a proposal into a
-validated directive is the AgentRuntime/ModelContext job (`03` §3).
+**not** directly express an `AgentAction`; provider-neutral invocation assembly
+is the AgentRuntime/ModelContext job and control semantics belong to
+`ControlToolRegistry` (`03` §3; DID v1.18 ACR-2…ACR-4).
 
 ```ts
 type CanonicalProviderEvent =
@@ -81,7 +82,7 @@ type ProviderFinishReason =
 ```
 
 - `ToolCallProposed` is a **raw model proposal**, not an authorized invocation
-  and not an `AgentDirective`.
+  and not an `AgentAction`.
 - Streaming deltas (`TextDelta` / `ReasoningDelta`) never enter Session history
   (DID §9.8); only a decoded `ModelOutput` entry does.
 - `ContinuationState` carries provider continuation metadata for multi-turn
@@ -112,6 +113,11 @@ Agent `turnNo` (DID §6A.9).
 - The Turn intent + Manifest are persisted **before** the provider request
   (`04` §3).
 - `UsageReported` aggregates per Turn (sum over attempts).
+- **DID v1.20 AHT-2:** a successful Attempt and ProviderTurn settlement commit
+  atomically through one semantic store operation. `findSettledResult` exposes
+  the validated canonical sequence for local AgentLoopStep replay. Complete success
+  evidence is never sent to the Provider again; legacy split-commit windows are
+  reconciled locally before safe-retry eligibility (P3 `08` §5, P9 `07`).
 
 ## 6. Provider failure model (DID §6A.8)
 
@@ -136,7 +142,8 @@ type ProviderFailureKind =
 - A `StopExecution` (P2) closes admission of new ProviderTurns; an in-flight
   Turn is cancelled through `ProviderExecutionContext.cancellation`.
 - A cancelled Turn ends with `TurnFailed("StreamInterrupted")` or a controlled
-  interruption; it never produces a partial `AgentDirective`.
+  interruption; it never produces an accepted partial ModelOutput/invocation
+  batch.
 - Streaming deltas are transient; only the settled Turn produces Session entries.
 
 ## 8. ModelCapabilityPort
@@ -163,7 +170,7 @@ interface ModelCapabilityPortService {
 
 ## 10. Must Not Decide
 
-- No `AgentDirective` in `CanonicalProviderEvent`.
+- No `AgentAction` or universal control directive in `CanonicalProviderEvent`.
 - No tool authorization/execution (P4 `ToolRuntimePort`).
 - No prompt text (P3 `05` / feature phases).
 - No Session/Epoch/Checkpoint persistence (P2).

@@ -281,6 +281,21 @@ describe("P12-011 provider adapter", () => {
 });
 
 describe("P12-011 model catalog / model capability", () => {
+  it("keeps the DeepSeek Flash deployment on its own 128K / 8K profile", () => {
+    const deepseek = resolveModelCatalogEntry(
+      DEFAULT_MODEL_CATALOG,
+      "model-deepseek-v4-flash",
+    );
+
+    expect(deepseek?.adapterId).toBe("provider-openai");
+    expect(deepseek?.capability).toMatchObject({
+      modelRef: "model-deepseek-v4-flash",
+      family: "deepseek",
+      contextWindow: 128_000,
+      outputCeiling: 8_192,
+    });
+  });
+
   it("deterministically resolves modelRef -> adapter + capability; unknown -> typed error", async () => {
     const openai = resolveModelCatalogEntry(
       DEFAULT_MODEL_CATALOG,

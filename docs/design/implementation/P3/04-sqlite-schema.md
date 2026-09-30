@@ -14,6 +14,7 @@ WAL; `foreign_keys = ON`; `busy_timeout`; `synchronous = FULL`;
 P1: 0001_init
 P2: 0002_execution_session_kernel
 P3: 0003_provider_model_context      (forward-only; PRAGMA user_version = 3)
+v1.21: 0017_agent_loop_step_handoff (forward-only; implementation authorized)
 ```
 
 ## 3. DDL
@@ -63,6 +64,13 @@ CREATE TABLE provider_attempts (
 `attempt_no` is Turn-local from 0; retries never create a new Turn or bump the
 Agent `turnNo` (DID §6A.9).
 
+> **Current-baseline propagation.** P16 continuation/usage migrations already
+> add `canonical_event_prefix_json`, delivered position/checkpoint and retry
+> evidence. DID v1.20 migration 0017 adds `success_evidence_version`; P3 `08`
+> uses the persisted canonical prefix plus that validator version for complete-
+> success local convergence. New Provider success atomically updates Attempt
+> and Turn in one transaction.
+
 ### 3.3 model_context_manifests
 
 ```sql
@@ -89,7 +97,8 @@ P2 owns `session_entries`; P3 owns the payload shapes for its entry kinds:
 ```ts
 type P3SessionEntry =
   | { entryKind: "ModelOutput"; payload: { providerTurnId; outputContractRef;
-      directiveKinds: ReadonlyArray<string>; textRef?: string } }
+      decoderVersion: string; invocationKinds: ReadonlyArray<string>;
+      textRef?: string; contentHash: string } }
   | { entryKind: "Observation"; payload: { source: "Tool" | "Provider" | "Runtime";
       ref: string; trust: InformationTrustMetadata } }
   | { entryKind: "CheckpointReference"; payload: { checkpointRef; summaryRef;
@@ -100,6 +109,17 @@ type P3SessionEntry =
 
 - Streaming deltas are never stored (DID §9.8).
 - Entry append is fenced when worker-originated (P2 `02` §3).
+- `invocationKinds` is diagnostic metadata only; trusted invocation identity
+  and disposition live in the AgentLoopStep action ledger, not this payload.
+- DID v1.20 adds `source_kind/source_ref/content_hash` and the unique partial
+  source index through migration 0017 (P2 `04` §3.4). ModelOutput source is the
+  owning ProviderTurn; same source/different hash is an invariant conflict.
+
+### 3.5 AgentLoopStep handoff schema (v1.20 successor)
+
+P2 `04` §3.7 owns the exact `agent_loop_steps` / `agent_loop_step_actions` DDL. P3 `08`
+owns their state semantics. This document does not define a second schema.
+Migration 0017 is authorized by DID v1.21 ALS-I1.
 
 ## 4. Retention
 
@@ -107,6 +127,7 @@ type P3SessionEntry =
 provider_turns / provider_attempts   runtime trace; retention/archival allowed.
 model_context_manifests              provenance; retained with the Turn.
 session_entries                      append-only history; Session policy.
+agent_loop_steps / agent_loop_step_actions     retained with Execution + Provider result.
 ```
 
 ## 5. Out of scope

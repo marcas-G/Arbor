@@ -12,6 +12,7 @@ import {
 const EXPECTED_EVENTS = [
   "ProjectCreated",
   "ProjectPolicyChanged",
+  "ProjectRenamed",
   "ProjectClosed",
   "WorkspaceCreated",
   "ResponsibilityChanged",

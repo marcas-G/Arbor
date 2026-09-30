@@ -11,7 +11,7 @@ Arbor is a multi-agent work system organized around long-lived Responsibilities,
 | `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 60 system invariants | FROZEN |
 | `docs/design/03-detailed-implementation-design.md` | Executable contracts: ADT/Command/Event/Ports/SQL/Package DAG/phases | TOP-LEVEL FROZEN |
 
-These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.19).
+These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.21).
 
 ## Design governance (docs/design/**)
 
@@ -41,6 +41,25 @@ and Wave 2 (scope = `planning/tool-surface-review/51` module map sequenced by
 G-V2-2/3/4) remain OPEN and gate only the actions that consume them; B10 stays
 `BLOCKED_BY_DESIGN_GAP` until they close.
 
+DID v1.20 governance adoption (`AHT-1`…`AHT-8`) freezes the durable Provider
+result handoff: persisted `AgentLoopStep`, replayable complete Provider success,
+idempotent sourced Session/action progression, generation-scoped Application
+Command identity, unresolved-side-effect gate, deterministic successors,
+evidence-gated legacy adoption, and P14 final convergence. Design landing is
+complete; at the v1.20 checkpoint **implementation was NOT AUTHORIZED**. Migration
+`0017_agent_loop_step_handoff`, recovery implementation, and replay/mutation of the
+preserved DOGFOOD database require separate implementation authorization plus
+AH1–AH14 and equivalent-fixture evidence. `DOGFOOD-DG-01`'s design question is
+RESOLVED by v1.20; that resolution is not implementation evidence.
+
+DID v1.21 (`ALS-N1`, `ALS-I1`) renames the current durable record from the
+reviewed proposal's historical `AgentTurn` to `AgentLoopStep` and AUTHORIZES
+implementation. `AgentLoop` = overall runtime algorithm; `AgentLoopStep` = one
+durable recoverable iteration; `ProviderTurn` = one logical model decision.
+Authorized scope is migration 0017, stores/ports, runtime/recovery integration
+and AH1–AH14. The preserved dogfood database remains read-only until the
+equivalent fixture and migration verification pass.
+
 ## Planning
 
 - `planning/phases/` — one file per phase P0–P12 (see DID §11)
@@ -58,6 +77,10 @@ Product UI Final Convergence COMPLETE — **Web Product UI FORMALLY CLOSED** at
 `planning/results/D10-web-product-ui-final-convergence.result.md`.
 Next activity: **Dogfooding / Release Validation** — use Arbor for real tasks;
 Web v1 implementation is closed.
+Provider-result handoff governance: **DESIGN CLOSED at DID v1.20;
+IMPLEMENTATION AUTHORIZED at DID v1.21**. `DOGFOOD-DG-01` is RESOLVED at the
+design layer; implementation still requires TDD/AH1–AH14 evidence before any
+preserved-database recovery.
 P16 (Provider Extension Architecture — DID-side implementation design under
 `docs/design/implementation/P16-provider-extension/`, governance-authorized
 2026-09-29): **Gate A design contracts FROZEN**; **Gate B Design Closure =

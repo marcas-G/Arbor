@@ -10,6 +10,7 @@ import {
   ProjectId,
   parse,
   Revision,
+  renameProject,
   updateProjectPolicy,
   WorkspaceId,
 } from "../src/index.js";
@@ -65,6 +66,20 @@ describe("project aggregate", () => {
       expect(result.value.projectPolicyRevision).toBe(2);
       expect(isProjectClosed(result.value)).toBe(true);
       expect(allowsNewAutonomousExecution(result.value)).toBe(false);
+    }
+  });
+
+  it("RenameProject changes only name and aggregate revision", () => {
+    const result = renameProject(makeProject(4, 2), {
+      authorized: true,
+      expectedRevision: revision(4),
+      name: "Arbor Next",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.name).toBe("Arbor Next");
+      expect(result.value.revision).toBe(5);
+      expect(result.value.projectPolicyRevision).toBe(2);
     }
   });
 

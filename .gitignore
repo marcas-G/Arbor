@@ -4,6 +4,9 @@ coverage/
 *.tsbuildinfo
 .pnpm-store/
 *.log
+*.db
+*.db-shm
+*.db-wal
 .worktrees/
 
 # capability real-provider config (may contain a literal apiKey)

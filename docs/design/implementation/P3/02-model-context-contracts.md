@@ -121,8 +121,10 @@ compiledRequestHash, and `ControlBasis { projectPolicyRevision,
 workspacePolicyRevision, responsibilityRevision, resourceBoundaryRevision,
 workId?/workRevision?, authorizationDigest, environmentRevision }`.
 
-Every effectful `AgentDirective` carries `decisionBasisManifestId`; a stale
-relevant control basis yields `DecisionStale` (`06` §4).
+Every effectful invocation is associated by trusted Runtime context with this
+Manifest/ControlBasis; the model-authored payload does not carry the binding.
+A stale relevant control basis yields `DecisionStale` (`06` §4; DID v1.18
+ACR-3/ACR-4). AgentLoopStep replay uses the pinned Manifest and decoder version.
 
 ## 7. Skills surface (C1)
 

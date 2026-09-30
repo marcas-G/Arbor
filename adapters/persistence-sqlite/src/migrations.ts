@@ -836,3 +836,149 @@ export const P16_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P16_REASONING_ATTACHMENT_DDL,
   },
 ];
+
+/** DID v1.21 ALS-I1: durable AgentLoopStep handoff. The source columns are
+ * nullable only for pre-0017 rows; triggers require new/updated rows to use an
+ * all-null legacy shape or an all-present source identity. */
+const P17_AGENT_LOOP_STEP_HANDOFF_DDL = `
+ALTER TABLE provider_attempts ADD COLUMN success_evidence_version TEXT;
+
+ALTER TABLE session_entries RENAME TO session_entries_legacy_v1;
+
+CREATE TABLE session_entries (
+  session_id   TEXT NOT NULL REFERENCES sessions(session_id),
+  sequence     INTEGER NOT NULL,
+  entry_kind   TEXT NOT NULL CHECK (entry_kind IN
+                 ('Input','ModelOutput','Observation','CheckpointReference','ContextUpdate')),
+  payload_json TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  source_kind  TEXT,
+  source_ref   TEXT,
+  content_hash TEXT,
+  PRIMARY KEY (session_id, sequence),
+  CHECK (
+    (source_kind IS NULL AND source_ref IS NULL AND content_hash IS NULL)
+    OR
+    (source_kind IS NOT NULL AND source_ref IS NOT NULL AND content_hash IS NOT NULL)
+  )
+);
+
+INSERT INTO session_entries (
+  session_id, sequence, entry_kind, payload_json, created_at,
+  source_kind, source_ref, content_hash
+)
+SELECT
+  session_id, sequence, entry_kind, payload_json, created_at,
+  NULL, NULL, NULL
+FROM session_entries_legacy_v1;
+
+DROP TABLE session_entries_legacy_v1;
+
+CREATE UNIQUE INDEX idx_session_entries_source
+  ON session_entries(session_id, entry_kind, source_kind, source_ref)
+  WHERE source_kind IS NOT NULL;
+
+CREATE TABLE agent_loop_steps (
+  execution_id                  TEXT NOT NULL REFERENCES executions(execution_id),
+  logical_step_no               INTEGER NOT NULL CHECK (logical_step_no >= 0),
+  repair_attempt                INTEGER NOT NULL CHECK (repair_attempt >= 0),
+  provider_turn_id              TEXT NOT NULL UNIQUE,
+  predecessor_logical_step_no   INTEGER,
+  predecessor_repair_attempt    INTEGER,
+  manifest_id                   TEXT,
+  state                         TEXT NOT NULL CHECK (state IN
+    ('Prepared','ProviderResultAvailable','OutputRejected','OutputAccepted',
+     'ActionsInProgress','StepEffectsCommitted','NextStepReady',
+     'SettlementProposed')),
+  decoder_version               TEXT,
+  provider_failure_json         TEXT,
+  repair_disposition_json       TEXT,
+  successor_json                TEXT,
+  next_step_reason              TEXT,
+  decoded_output_hash           TEXT,
+  model_output_session_sequence INTEGER,
+  next_action_index             INTEGER NOT NULL DEFAULT 0 CHECK (next_action_index >= 0),
+  settlement_json               TEXT,
+  migration_provenance_json     TEXT,
+  revision                      INTEGER NOT NULL CHECK (revision >= 0),
+  updated_at                    TEXT NOT NULL,
+  PRIMARY KEY (execution_id, logical_step_no, repair_attempt),
+  CHECK ((predecessor_logical_step_no IS NULL) =
+         (predecessor_repair_attempt IS NULL)),
+  CHECK ((state = 'SettlementProposed') = (settlement_json IS NOT NULL))
+);
+
+CREATE INDEX idx_agent_loop_steps_execution_state
+  ON agent_loop_steps(execution_id, state);
+
+CREATE TABLE agent_loop_step_actions (
+  execution_id           TEXT NOT NULL,
+  logical_step_no        INTEGER NOT NULL,
+  repair_attempt         INTEGER NOT NULL,
+  action_index           INTEGER NOT NULL CHECK (action_index >= 0),
+  logical_action_id      TEXT NOT NULL UNIQUE,
+  call_ref               TEXT NOT NULL,
+  route_kind             TEXT NOT NULL CHECK (route_kind IN ('Executable','Control')),
+  action_kind            TEXT NOT NULL,
+  input_hash             TEXT NOT NULL,
+  state                  TEXT NOT NULL CHECK (state IN
+    ('Pending','Applied','SkippedStale','SkippedEarlySettlement',
+     'TerminalRejected','ReconciliationPending')),
+  result_ref             TEXT,
+  settlement_ref         TEXT,
+  disposition_json       TEXT,
+  observation_source_ref TEXT,
+  revision               INTEGER NOT NULL CHECK (revision >= 0),
+  updated_at              TEXT NOT NULL,
+  PRIMARY KEY (execution_id, logical_step_no, repair_attempt, action_index),
+  FOREIGN KEY (execution_id, logical_step_no, repair_attempt)
+    REFERENCES agent_loop_steps(execution_id, logical_step_no, repair_attempt)
+);
+`;
+
+/** AgentLoopStep implementation baseline; settles user_version at 17. */
+export const P17_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P16_MIGRATIONS,
+  {
+    id: 17,
+    name: "agent_loop_step_handoff",
+    sql: P17_AGENT_LOOP_STEP_HANDOFF_DDL,
+  },
+];
+
+const P18_PROJECT_ARCHIVE_DDL = `
+ALTER TABLE human_messages RENAME TO human_messages_p17;
+CREATE TABLE human_messages (
+  message_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  root_workspace_id TEXT NOT NULL,
+  human_principal TEXT NOT NULL,
+  body_ref TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('Pending','Claimed','Answered','Declined')),
+  claimed_by_execution_id TEXT,
+  created_at TEXT NOT NULL,
+  settled_at TEXT,
+  response_body TEXT,
+  attempt_no INTEGER NOT NULL DEFAULT 0,
+  provider_reasoning_json TEXT,
+  UNIQUE (command_id, fingerprint)
+);
+INSERT INTO human_messages
+SELECT message_id, project_id, root_workspace_id, human_principal, body_ref,
+       command_id, fingerprint, state, claimed_by_execution_id, created_at,
+       settled_at, response_body, attempt_no, provider_reasoning_json
+FROM human_messages_p17;
+DROP TABLE human_messages_p17;
+CREATE INDEX human_messages_pending ON human_messages (project_id, state, created_at);
+`;
+
+export const P18_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P17_MIGRATIONS,
+  {
+    id: 18,
+    name: "project_archive_human_message_terminal",
+    sql: P18_PROJECT_ARCHIVE_DDL,
+  },
+];

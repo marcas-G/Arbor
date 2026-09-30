@@ -582,6 +582,13 @@ const consumeAttempt = (
             events.splice(0, events.length, ...priorEvents);
             return yield* Effect.fail(error as ProviderFailure);
           }
+          // A buffered SSE response can supply thousands of immediately
+          // resolved chunks. Durably recording each delta is required, but
+          // the consuming fiber must periodically yield so the execution's
+          // concurrent lease-renewal timer can run during a long turn.
+          if (events.length % 16 === 0) {
+            yield* Effect.yieldNow;
+          }
           if (canonical._tag !== "TurnStarted") {
             firstDataAtMs ??= Date.now();
           }
@@ -761,6 +768,14 @@ export const ProviderRuntimeLive = (
                   recoveryTurn.turn.outputContractRef !==
                     input.outputContractRef
                 ) {
+                  // A persisted turn is permanently pinned to its original
+                  // manifest and portable request. A later model/provider
+                  // configuration must never resume it under a new binding;
+                  // close this stale Turn so it cannot remain an invisible
+                  // recovery candidate after its owning execution fails.
+                  yield* tx.transact(
+                    store.failTurn(input.providerTurnId, yield* clock.now()),
+                  );
                   return yield* Effect.fail(
                     unknownFailure("provider-turn-resume-binding-invalid"),
                   );
@@ -1127,7 +1142,7 @@ export const ProviderRuntimeLive = (
                 activeEvents = [...attempt.events];
                 const finishedAt = yield* clock.now();
                 yield* tx.transact(
-                  store.settleAttempt(
+                  store.settleSuccessAtomically(
                     input.providerTurnId,
                     attemptNo,
                     {
@@ -1140,18 +1155,13 @@ export const ProviderRuntimeLive = (
                       canonicalEventPrefixJson: JSON.stringify(attempt.events),
                       deliveredPosition: attempt.events.length,
                     },
-                    finishedAt,
-                  ),
-                );
-                activeAttemptNo = null;
-                yield* tx.transact(
-                  store.settleTurn(
-                    input.providerTurnId,
                     attempt.finishReason,
                     attempt.usageJson,
                     finishedAt,
+                    "provider-success-v1",
                   ),
                 );
+                activeAttemptNo = null;
                 turnSettled = true;
                 removeExternalAbort();
                 return {

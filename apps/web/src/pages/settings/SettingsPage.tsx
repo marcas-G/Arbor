@@ -1,7 +1,11 @@
 /** Frozen Settings capabilities: project/session commands and local layout only. */
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import type { Route } from "../../api/router.js";
+import { fetchProjectDirectory } from "../../api/transport.js";
 import { CreateProjectForm } from "../../commands/forms/CreateProjectForm.js";
 import { GrantPermissionForm } from "../../commands/forms/GrantPermissionForm.js";
+import { useCommandSubmission } from "../../commands/useCommandSubmission.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { cx } from "../../components/cx.js";
@@ -55,6 +59,37 @@ function ProjectSection({
   readonly token: string | null;
   readonly projectId: string;
 }) {
+  const session = useSession();
+  const directory = useQuery({
+    queryKey: ["project-directory"],
+    queryFn: () =>
+      fetchProjectDirectory({
+        token,
+        onUnauthenticated: session.reportUnauthenticated,
+      }),
+    enabled: token !== null,
+  });
+  const current =
+    directory.data?.ok === true
+      ? directory.data.dto.projects.find(
+          (project) => project.projectId === projectId,
+        )
+      : undefined;
+  const [name, setName] = useState("");
+  const rename = useCommandSubmission({
+    actor: actor ?? "",
+    token: token ?? undefined,
+    onSubmitted: () => {
+      void directory.refetch();
+    },
+  });
+  const close = useCommandSubmission({
+    actor: actor ?? "",
+    token: token ?? undefined,
+    onSubmitted: () => {
+      void directory.refetch();
+    },
+  });
   return (
     <section className={styles.section} aria-label="项目">
       <h2 className={styles.sectionTitle}>项目</h2>
@@ -77,6 +112,52 @@ function ProjectSection({
       <p className={styles.note}>
         当前项目：<MonoText>{projectId}</MonoText>。项目切换使用左侧栏的切换器。
       </p>
+      {actor !== null &&
+      token !== null &&
+      current !== undefined &&
+      current.lifecycle === "Open" ? (
+        <Card title="项目管理">
+          <div className={styles.stack}>
+            <label className={styles.renameLabel}>
+              项目名称
+              <input
+                value={name}
+                placeholder={current.name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <Button
+              variant="quiet"
+              disabled={
+                name.trim().length === 0 || rename.state.phase === "submitting"
+              }
+              onClick={() => {
+                void rename.submit("RenameProject", projectId, {
+                  name: name.trim(),
+                  expectedRevision: current.revision,
+                });
+              }}
+            >
+              重命名项目
+            </Button>
+            <p className={styles.note}>
+              归档后不会删除历史，但不再接收新任务或新对话。
+            </p>
+            <Button
+              variant="danger"
+              disabled={close.state.phase === "submitting"}
+              onClick={() => {
+                void close.submit("CloseProject", projectId, {
+                  expectedRevision: current.revision,
+                  confirmed: true,
+                });
+              }}
+            >
+              归档项目
+            </Button>
+          </div>
+        </Card>
+      ) : null}
     </section>
   );
 }

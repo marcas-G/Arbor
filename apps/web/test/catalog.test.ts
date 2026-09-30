@@ -14,8 +14,10 @@ import {
 } from "../src/commands/catalog.js";
 import { uuidv7 } from "../src/commands/uuid7.js";
 
-const EXPECTED_EIGHT = [
+const EXPECTED_TEN = [
   "CreateProject",
+  "RenameProject",
+  "CloseProject",
   "RecordDecision",
   "SteerWork",
   "AcceptWorkOutcome",
@@ -38,11 +40,11 @@ const UUIDV7_SHAPE =
   /^(0|1)[0-9a-f]{7}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 describe("EC-6 human-actionable catalog", () => {
-  it("is exactly the frozen eight-item set (order-independent)", () => {
+  it("is exactly the P15 ten-item set (order-independent)", () => {
     expect([...HUMAN_ACTIONABLE_COMMANDS].sort()).toEqual(
-      [...EXPECTED_EIGHT].sort(),
+      [...EXPECTED_TEN].sort(),
     );
-    expect(HUMAN_ACTIONABLE_COMMANDS.length).toBe(8);
+    expect(HUMAN_ACTIONABLE_COMMANDS.length).toBe(10);
   });
 
   it("contains no system-internal / agent-originated commandType", () => {
@@ -50,7 +52,7 @@ describe("EC-6 human-actionable catalog", () => {
       expect(HUMAN_ACTIONABLE_COMMANDS).not.toContain(commandType);
       expect(isHumanActionableCommand(commandType)).toBe(false);
     }
-    for (const commandType of EXPECTED_EIGHT) {
+    for (const commandType of EXPECTED_TEN) {
       expect(isHumanActionableCommand(commandType)).toBe(true);
     }
   });

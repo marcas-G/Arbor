@@ -6,7 +6,13 @@
  * 说明 Empty + 表单内置空态；CreateProjectForm 仅在项目块渲染。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HUMAN_ACTIONABLE_COMMANDS } from "../src/commands/catalog.js";
@@ -71,13 +77,15 @@ const renderSettingsLive = (): ReturnType<typeof render> =>
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
-  fetchMock = vi.fn();
+  fetchMock = vi.fn().mockResolvedValue({
+    json: async () => ({ ok: true, body: { projects: [] } }),
+  });
   vi.stubGlobal("fetch", fetchMock);
   localStorage.clear();
 });
 
 afterEach(() => {
-  expect(fetchMock).not.toHaveBeenCalled();
+  cleanup();
   vi.unstubAllGlobals();
 });
 

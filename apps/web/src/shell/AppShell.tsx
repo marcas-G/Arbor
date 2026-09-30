@@ -4,7 +4,7 @@
  * the recent-selection memory used solely for the empty-path redirect.
  */
 
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 import {
   formatRoute,
@@ -12,6 +12,7 @@ import {
   parseRoute,
   type Route,
 } from "../api/router.js";
+import { fetchProjectDirectory } from "../api/transport.js";
 import { Button } from "../components/Button.js";
 import { Empty } from "../components/Empty.js";
 import { FreshnessChip } from "../components/FreshnessChip.js";
@@ -139,27 +140,33 @@ function SideRail({ route }: { readonly route: Route | null }) {
   }
   return (
     <nav className={styles.rail} aria-label="主导航">
-      <span className={styles.brand}>Arbor</span>
+      <div className={styles.brandBlock}>
+        <span className={styles.brand}>Arbor</span>
+        <span className={styles.brandTagline}>项目与责任</span>
+      </div>
       <ProjectSwitcher route={route} />
-      <div className={styles.navList}>
-        {NAV.map((item) => (
-          <button
-            key={item.label}
-            type="button"
-            className={`${styles.navItem} ${route !== null && item.match(route) ? styles.navItemActive : ""}`}
-            onClick={() => {
-              if (route !== null) {
-                item.go(route.projectId);
+      <div className={styles.navSection}>
+        <span className={styles.navCaption}>项目内部导航</span>
+        <div className={styles.navList}>
+          {NAV.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className={`${styles.navItem} ${route !== null && item.match(route) ? styles.navItemActive : ""}`}
+              onClick={() => {
+                if (route !== null) {
+                  item.go(route.projectId);
+                }
+              }}
+              disabled={route === null}
+              aria-current={
+                route !== null && item.match(route) ? "page" : undefined
               }
-            }}
-            disabled={route === null}
-            aria-current={
-              route !== null && item.match(route) ? "page" : undefined
-            }
-          >
-            {item.label}
-          </button>
-        ))}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className={styles.sessionBlock}>
         <span className={styles.sessionActor}>{session.actor}</span>
@@ -173,53 +180,70 @@ function SideRail({ route }: { readonly route: Route | null }) {
 
 function ProjectSwitcher({ route }: { readonly route: Route | null }) {
   const session = useSession();
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState("");
-  const commit = (): void => {
-    const next = value.trim();
-    setEditing(false);
-    if (next.length > 0) {
-      session.setProjectId(next);
-      navigate({ name: "workbench", projectId: next });
-    }
-  };
-  if (editing) {
-    return (
-      <form
-        className={styles.projectSwitch}
-        onSubmit={(event) => {
-          event.preventDefault();
-          commit();
-        }}
-      >
-        <input
-          ref={(element) => {
-            element?.focus();
-          }}
-          className={styles.projectInput}
-          value={value}
-          placeholder="prj_…"
-          onChange={(event) => {
-            setValue(event.target.value);
-          }}
-          onBlur={commit}
-        />
-      </form>
-    );
-  }
+  const [open, setOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const directory = useQuery({
+    queryKey: ["project-directory"],
+    queryFn: () =>
+      fetchProjectDirectory({
+        token: session.token,
+        onUnauthenticated: session.reportUnauthenticated,
+      }),
+    enabled: session.token !== null,
+  });
+  const allProjects =
+    directory.data?.ok === true ? directory.data.dto.projects : [];
+  const projects = allProjects.filter(
+    (project) => showArchived || project.lifecycle === "Open",
+  );
+  const current = allProjects.find(
+    (project) => project.projectId === route?.projectId,
+  );
   return (
-    <button
-      type="button"
-      className={styles.projectSwitch}
-      aria-label={`切换项目，当前 ${route?.projectId ?? "未选择"}`}
-      onClick={() => {
-        setValue(route?.projectId ?? "");
-        setEditing(true);
-      }}
-    >
-      <span className={styles.projectLabel}>项目</span>
-      <span className={styles.projectId}>{route?.projectId ?? "未选择"}</span>
-    </button>
+    <div className={styles.projectMenu}>
+      <button
+        type="button"
+        className={styles.projectSwitch}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <span className={styles.projectLabel}>当前项目</span>
+        <span className={styles.projectName}>
+          {current?.name ?? "选择项目"}
+        </span>
+        <span className={styles.projectHint}>
+          {projects.length === 0 ? "先创建一个项目" : "点击切换项目"}
+        </span>
+      </button>
+      {open ? (
+        <div className={styles.projectList} role="listbox">
+          <label className={styles.projectFilter}>
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(event) => setShowArchived(event.target.checked)}
+            />{" "}
+            显示已归档项目
+          </label>
+          {projects.map((project) => (
+            <button
+              key={project.projectId}
+              type="button"
+              role="option"
+              aria-selected={project.projectId === route?.projectId}
+              className={styles.projectOption}
+              onClick={() => {
+                session.setProjectId(project.projectId);
+                navigate({ name: "workbench", projectId: project.projectId });
+                setOpen(false);
+              }}
+            >
+              {project.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

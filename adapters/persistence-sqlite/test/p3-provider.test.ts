@@ -23,6 +23,7 @@ import {
   layer,
   P14_MIGRATIONS,
   P15_MIGRATIONS,
+  P17_MIGRATIONS,
   ProviderTurnStoreLive,
   runMigrations,
   TransactionPortLive,
@@ -188,6 +189,53 @@ const events = [
 ];
 
 describe("P3 ProviderRuntime + fake provider", () => {
+  it("atomically settles success and replays the validated durable result", async () => {
+    const app = makeApp({ events });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      const result = yield* runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1");
+      const tx = yield* TransactionPort;
+      const store = yield* ProviderTurnStore;
+      const replay = yield* tx.transact(
+        store.findSettledResult(providerTurnId),
+      );
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<{
+        attempt_outcome: string;
+        turn_settled_at: string | null;
+        success_evidence_version: string | null;
+      }>(
+        "SELECT pa.outcome AS attempt_outcome, pt.settled_at AS turn_settled_at, pa.success_evidence_version AS success_evidence_version FROM provider_attempts pa JOIN provider_turns pt ON pt.provider_turn_id = pa.provider_turn_id WHERE pa.provider_turn_id = ?",
+        [providerTurnId],
+      );
+      return { result, replay, row: rows[0] };
+    });
+
+    const output = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
+    const typed = output as {
+      result: { events: ReadonlyArray<unknown> };
+      replay: {
+        _tag: string;
+        canonicalEvents?: ReadonlyArray<unknown>;
+        evidenceVersion?: string;
+      };
+      row: {
+        attempt_outcome: string;
+        turn_settled_at: string | null;
+        success_evidence_version: string | null;
+      };
+    };
+    expect(typed.replay._tag).toBe("SettledSuccess");
+    expect(typed.replay.canonicalEvents).toEqual(typed.result.events);
+    expect(typed.replay.evidenceVersion).toBe("provider-success-v1");
+    expect(typed.row.attempt_outcome).toBe("Success");
+    expect(typed.row.turn_settled_at).not.toBeNull();
+    expect(typed.row.success_evidence_version).toBe("provider-success-v1");
+  });
+
   it("streams the frozen ADT and records the turn/attempt", async () => {
     const app = makeApp({ events });
     const program = Effect.gen(function* () {

@@ -82,7 +82,8 @@ export interface ConversationTriggerDependencies {
   readonly messages: Pick<
     HumanMessageStoreService,
     "pendingOrderedByCreated" | "claim" | "rollbackClaim"
-  >;
+  > &
+    Partial<Pick<HumanMessageStoreService, "decline">>;
   readonly projects: Pick<ProjectRepositoryService, "findById">;
   readonly executions: Pick<
     ExecutionRepositoryService,
@@ -129,6 +130,19 @@ export const runConversationTrigger = (
       return { records: ["skipped:ProjectNotFound"] };
     }
     const rootWorkspaceId = project.value.rootWorkspaceId;
+
+    if (project.value.lifecycle === "Closed") {
+      if (dependencies.messages.decline !== undefined) {
+        const now = yield* dependencies.clock.now();
+        for (const message of pending) {
+          yield* tx.transact(
+            dependencies.messages.decline(message.messageId, now),
+          );
+          records.push(`declined:${message.messageId}`);
+        }
+      }
+      return { records };
+    }
 
     // one-active-main (S5): no second main, no interruption — stay queued.
     const active = yield* tx.transact(
@@ -262,7 +276,8 @@ export interface ConversationSweepDependencies {
     | "markAnswered"
     | "rollbackClaim"
     | "rollbackForRetry"
-  >;
+  > &
+    Partial<Pick<HumanMessageStoreService, "decline">>;
   readonly executions: Pick<ExecutionRepositoryService, "findById">;
   readonly clock: Pick<ClockService, "now">;
   /** Bounded assistant response persisted at settle (P14 `02` §4 / `03`): the
@@ -271,6 +286,9 @@ export interface ConversationSweepDependencies {
   readonly responseBodyOf: (
     messageId: string,
   ) => Effect.Effect<string | null, never, never>;
+  readonly projectIsOpen?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<boolean, ProjectRepositoryError, TransactionScope>;
 }
 
 /** Settle sweep (P14 `02` §4): for every Claimed message whose coordination
@@ -281,11 +299,15 @@ export const runConversationSettlementSweep = (
   projectId: ProjectId,
 ): Effect.Effect<
   ReadonlyArray<string>,
-  HumanMessageStoreError | ExecutionRepositoryError,
+  HumanMessageStoreError | ExecutionRepositoryError | ProjectRepositoryError,
   TransactionScope
 > =>
   Effect.gen(function* () {
     const records: Array<string> = [];
+    const projectOpen =
+      dependencies.projectIsOpen === undefined
+        ? true
+        : yield* dependencies.projectIsOpen(projectId);
     const claimed =
       yield* dependencies.messages.claimedOrderedByCreated(projectId);
     for (const message of claimed) {
@@ -300,8 +322,16 @@ export const runConversationSettlementSweep = (
         // Crash@claim: no live execution — roll the claim back so the
         // message is retried (retry-until-response); never leave it stuck
         // Claimed forever.
-        yield* dependencies.messages.rollbackClaim(message.messageId);
-        records.push(`stale-claim-rolled-back:${message.messageId}`);
+        if (!projectOpen && dependencies.messages.decline !== undefined) {
+          yield* dependencies.messages.decline(
+            message.messageId,
+            yield* dependencies.clock.now(),
+          );
+          records.push(`declined:${message.messageId}`);
+        } else {
+          yield* dependencies.messages.rollbackClaim(message.messageId);
+          records.push(`stale-claim-rolled-back:${message.messageId}`);
+        }
         continue;
       }
       if (execution.value.state.status !== "Settled") {
@@ -316,8 +346,16 @@ export const runConversationSettlementSweep = (
         settlement._tag === "Failed" ||
         settlement._tag === "OutcomeUnknown"
       ) {
-        yield* dependencies.messages.rollbackForRetry(message.messageId);
-        records.push(`retry:${message.messageId}`);
+        if (!projectOpen && dependencies.messages.decline !== undefined) {
+          yield* dependencies.messages.decline(
+            message.messageId,
+            yield* dependencies.clock.now(),
+          );
+          records.push(`declined:${message.messageId}`);
+        } else {
+          yield* dependencies.messages.rollbackForRetry(message.messageId);
+          records.push(`retry:${message.messageId}`);
+        }
         continue;
       }
       if (settlement._tag === "Interrupted") {

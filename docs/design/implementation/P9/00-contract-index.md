@@ -1,6 +1,6 @@
 # P9 — 00 Contract Index
 
-**Authority:** DID v1.11 §11 P9, v1.9 G5, v1.7 G1/G3/G5; SD v1.3 §6.5/§7.3/§10/§14 (No.15/16/34/35/36/37/39/46/47/48/53/54/60); S4, S3 步骤 10; P1 `06`, P2 `03`/`06`, P3 `06`, P4 `01`/`02`/`06`, P5 `04`/`05`, P8 `00`/`02`/`03`; `planning/results/P8.result.md`; GQ1–GQ5 裁决（2026-09-21，本轮会话）.
+**Authority:** DID v1.20（含原 DID v1.11 P9 closure 与 AHT-1…AHT-8）；SD v1.3 §6.5/§7.3/§10/§14；P1 `06`/`07`, P2 `03`/`06`, P3 `06`/`08`, P4 `01`/`02`/`06`, P5 `04`/`05`, P8 `00`/`02`/`03`；GQ1–GQ5 与 2026-09-30 AgentLoopStep 治理裁决。
 **Status:** FROZEN (first draft for contract review).
 
 ## Governance decisions recorded (GQ1–GQ5; no DID catalog changes)
@@ -10,7 +10,7 @@
 | GQ1 | X1–X11 = **superseded / non-normative archival**; P9 never cites them — `02` §0 |
 | GQ2 | **P9 owns generic recovery/rebuild semantics; P10 owns concrete business projections / at-scale rebuild** — `02` §10, `05` §3 |
 | GQ3 | Recovery triggers = **startup full pass + periodic/event-triggered sweeps + targeted pre-dispatch fence check**; pre-dispatch never runs the nine steps — `01` §3, `03` §2 |
-| GQ4 | **No new provider failure tag**; connect-phase failure → `ProviderUnavailable`, post-stream → `StreamInterrupted`; **P9 owns unsettled-ProviderTurn crash recovery** (same ProviderTurn, new ProviderAttempt, turnNo unchanged) — `02` §6, `04` §2 |
+| GQ4 | **No new provider failure tag**; connect-phase failure → `ProviderUnavailable`, post-stream → `StreamInterrupted`; **P9 owns unsettled-ProviderTurn crash recovery**. DID v1.20 refines it: complete success evidence converges locally; only absence of such evidence permits same ProviderTurn/new ProviderAttempt, turnNo unchanged — `02` §6, `04` §2, `07` |
 | GQ5 | **No fault-injecting SQLite adapter**; real process/daemon/worker crash injection; power-loss/WAL semantics proven via SQLite durability contract + DurabilityEnvelope + reopen/integrity evidence; **crash-injected vs durability-asserted guarantees explicitly distinguished** — `02` §0/§12, `05` §4 |
 | — | ReconciliationSourceStub replacement is **P9 phase-scoped closure**, not a Design Gap — `01` §1 |
 
@@ -24,13 +24,15 @@
 | `04-provider-tool-hardening.md` | Provider disconnect mapping + unsettled-turn recovery (GQ4), tool four-tier assertions, dispatch-failure semantics |
 | `05-consumer-rebuild-hardening.md` | Consumer offset wiring + crash matrix, generic rebuild (GQ2 P9 face), P10 boundary |
 | `06-acceptance.md` | Stories A–G and mechanical assertion list |
+| `07-agent-loop-step-recovery.md` | DID v1.20 Provider success local convergence、AgentLoopStep recovery matrix、legacy adoption、AH1–AH14 |
 
 ## Scope (DID §11 P9, nine faces)
 
 ```text
 worker crash / daemon crash / provider disconnect / tool outcome unknown /
 lease expiration / old worker resurrection / dispatch failure /
-consumer crash / projection rebuild (generic face, GQ2)
+consumer crash / projection rebuild (generic face, GQ2) /
+settled Provider result handoff / AgentLoopStep crash windows / legacy adoption
 ```
 
 P9 is hardening over existing semantics: P2 owns the mechanism, P1 owns the
@@ -41,7 +43,10 @@ systematizes, closes the two visibility gaps, and injects.
 
 - Concrete business-projection rebuild at scale (P10, GQ2).
 - Attention presentation (P10); recovery daemon/composition surface (P12).
-- Environment/git (P11); new failure taxonomies; settle-rule changes; X1–X11.
+- Environment/git (P11); new failure taxonomies; X1–X11. The original
+  “no settle-rule changes” boundary remains except for the explicitly governed
+  DID v1.20 AgentLoopStep successor in `07`; DID v1.21 ALS-I1 now authorizes
+  its implementation.
 
 ## Implementation baseline highlights (from scope extraction)
 
@@ -70,3 +75,6 @@ Review round 1 (independent): 6 Blocking (1 HIGH / 1 MED-HIGH / 2 MED / 2 LOW) �
 FROZEN — P9 phase-scoped contracts; review Blocking = 0 (P9 FORMALLY CLOSED).
 freezes; then planning/phases/P9.md, then implementation authorization.
 ```
+
+The v1.20 `07` successor is FROZEN as design and implementation is AUTHORIZED
+by DID v1.21 ALS-I1; it does not reopen the historical P9 completion record.

@@ -40,6 +40,11 @@ P2 skeleton defers:
 9. Resume meaningful work only
 ```
 
+DID v1.20 refines steps 4–5 without reordering them: reconcile complete
+Provider evidence and the durable AgentLoopStep handoff before deciding whether an
+Execution has a deterministic settlement. P9 `07` owns the full disposition
+matrix and fault injection.
+
 Core principle (SD §10.6): **recover reality before cognition**;
 **runtime failure != organizational change**.
 
@@ -47,11 +52,14 @@ Core principle (SD §10.6): **recover reality before cognition**;
 
 ```text
 for each execution_leases row with expires_at <= now:
-  delete the lease row (or mark invalid)
+  retain it as expired; acquisition may replace the holder only while deriving
+  generation = prior generation + 1
 ```
 
 - Invalidation never settles an Execution by itself (DID §3.4/§12.11).
-- After invalidation, a previously leased Worker's fence no longer validates:
+- Expired/released lease rows are never deleted; generation remains monotone
+  (P2 `03`/`04`). After invalidation, a previously leased Worker's fence no
+  longer validates:
   any late durable write is rejected authoritatively
   (`FencingRejected` / `LeaseFencingRejected`).
 - Old-worker resurrection is therefore safe by construction; systematic
@@ -80,6 +88,27 @@ Non-deterministic cases are **not** guessed: they remain Active or become
 `OutcomeUnknown(ReconciliationRequired)` only when the reconciliation source
 can enumerate `invocationRefs`; otherwise they are escalated (step 6) with no
 blind replay (DID §3.4/§6A.6).
+
+### 4A. Durable AgentLoopStep proposal (DID v1.20)
+
+```text
+for each Active Execution:
+  if AgentLoopStep is SettlementProposed:
+    apply unresolved-side-effect gate
+    if clear:
+      submit the persisted settlement through SettleExecution
+    else:
+      reconcile / Attention / OutcomeUnknown only
+  else if AgentLoopStep has resumable durable progress:
+    leave Active and re-dispatch under a current lease
+  if Execution is already settled:
+    converge runtime/conversation records only; execute no new action
+```
+
+The P2 runtime never invents a proposal from a settled ProviderTurn. P3 owns
+AgentLoopStep progression; P9 owns legacy adoption and recovery classification.
+An expired lease is therefore an ordinary takeover input, not a reason to lose
+or repeat a Provider result.
 
 ## 5. Reconciliation boundary
 

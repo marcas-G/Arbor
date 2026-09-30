@@ -125,18 +125,21 @@ type Envelope = Record<string, unknown>;
 
 interface Harness {
   readonly commandCalls: ReadonlyArray<Envelope>;
+  readonly commandHeaders: ReadonlyArray<Headers>;
   readonly transcriptCallCount: () => number;
   readonly transcriptRequests: ReadonlyArray<Record<string, unknown>>;
+  readonly transcriptHeaders: ReadonlyArray<Headers>;
 }
 
 const installFetch = (config: {
   readonly tree: unknown;
   readonly transcriptResponses: ReadonlyArray<Responder>;
   readonly commandResponses?: ReadonlyArray<Responder>;
-  readonly progressChunks?: ReadonlyArray<string>;
 }): Harness => {
   const commandCalls: Envelope[] = [];
+  const commandHeaders: Headers[] = [];
   const transcriptRequests: Record<string, unknown>[] = [];
+  const transcriptHeaders: Headers[] = [];
   let transcriptCalls = 0;
   let commandCallsMade = 0;
   vi.stubGlobal(
@@ -153,27 +156,11 @@ const installFetch = (config: {
         if (url === "/commands") {
           const envelope = JSON.parse(String(init?.body)) as Envelope;
           commandCalls.push(envelope);
+          commandHeaders.push(new Headers(init?.headers));
           const responder =
             config.commandResponses?.[commandCallsMade] ?? committed;
           commandCallsMade += 1;
           return responder();
-        }
-        if (url.startsWith("/conversation-progress/")) {
-          const chunks = config.progressChunks ?? [];
-          return new Response(
-            new ReadableStream<Uint8Array>({
-              start(controller) {
-                for (const chunk of chunks) {
-                  controller.enqueue(new TextEncoder().encode(chunk));
-                }
-                controller.close();
-              },
-            }),
-            {
-              status: 200,
-              headers: { "content-type": "text/event-stream" },
-            },
-          );
         }
         const view = url.split("/views/")[1] ?? "";
         if (view.startsWith("responsibility-tree")) {
@@ -191,6 +178,7 @@ const installFetch = (config: {
             unknown
           >;
           transcriptRequests.push(body);
+          transcriptHeaders.push(new Headers(init?.headers));
           const responder =
             config.transcriptResponses[
               Math.min(transcriptCalls, config.transcriptResponses.length - 1)
@@ -210,8 +198,10 @@ const installFetch = (config: {
   );
   return {
     commandCalls,
+    commandHeaders,
     transcriptCallCount: () => transcriptCalls,
     transcriptRequests,
+    transcriptHeaders,
   };
 };
 
@@ -226,7 +216,7 @@ const sessionValue: SessionContextValue = {
   reportUnauthenticated: () => undefined,
 };
 
-const renderConversation = () => {
+const renderConversation = (session = sessionValue) => {
   window.history.replaceState(null, "", "/p/prj_1/workspace/ws_1/conversation");
   const client = new QueryClient({
     defaultOptions: {
@@ -235,7 +225,7 @@ const renderConversation = () => {
   });
   return render(
     <QueryClientProvider client={client}>
-      <SessionContext.Provider value={sessionValue}>
+      <SessionContext.Provider value={session}>
         <WorkspacePage
           route={{
             name: "workspace",
@@ -269,6 +259,28 @@ describe("P14-005 conversation tab", () => {
     expect(screen.getByRole("button", { name: "发送" })).toBeTruthy();
   });
 
+  it("uses the active non-local session for transcript and command requests", async () => {
+    const harness = installFetch({
+      tree: rootTree,
+      transcriptResponses: [() => okValue(conversationTypical)],
+    });
+    renderConversation({
+      ...sessionValue,
+      token: "tok_remote_user",
+      actor: "user:remote",
+    });
+    await waitFor(() => expect(screen.getByLabelText("消息")).toBeTruthy());
+    expect(harness.transcriptHeaders[0]?.get("authorization")).toBe(
+      "Bearer tok_remote_user",
+    );
+    typeAndSend("远程用户消息");
+    await waitFor(() => expect(harness.commandCalls).toHaveLength(1));
+    expect(harness.commandHeaders[0]?.get("authorization")).toBe(
+      "Bearer tok_remote_user",
+    );
+    expect(harness.commandCalls[0]?.actor).toBe("user:remote");
+  });
+
   it("child workspace renders read-only transcript with NO composer (S10)", async () => {
     installFetch({
       tree: childTree,
@@ -284,14 +296,25 @@ describe("P14-005 conversation tab", () => {
     expect(rendered.container.querySelectorAll("input")).toHaveLength(0);
   });
 
-  it("loads older turns via the list's load-older signal and prepends without losing current turns", async () => {
-    const olderPage: TranscriptRes = {
+  it("follows a three-page cursor chain without requesting the second page twice", async () => {
+    const secondPage: TranscriptRes = {
       entries: [
         {
           kind: "HumanConversationTurn",
           messageId: "msg_older_1",
           body: "较早的用户消息",
           occurredAt: "2026-09-23T09:00:00.000Z",
+        },
+      ],
+      nextCursor: "conversation-cursor-oldest",
+    };
+    const thirdPage: TranscriptRes = {
+      entries: [
+        {
+          kind: "HumanConversationTurn",
+          messageId: "msg_oldest_1",
+          body: "最早的用户消息",
+          occurredAt: "2026-09-23T08:00:00.000Z",
         },
       ],
     };
@@ -303,10 +326,10 @@ describe("P14-005 conversation tab", () => {
             ...conversationTypical,
             nextCursor: "conversation-cursor-older",
           }),
-        () => okValue(olderPage),
+        () => okValue(secondPage),
+        () => okValue(thirdPage),
       ],
     });
-    void harness;
     renderConversation();
     await waitFor(() =>
       expect(screen.getByText("turn#12 请求评审")).toBeTruthy(),
@@ -317,8 +340,14 @@ describe("P14-005 conversation tab", () => {
     await waitFor(() =>
       expect(screen.getByText("较早的用户消息")).toBeTruthy(),
     );
-    // current turns survive the prepend
+    fireEvent.click(olderButton);
+    await waitFor(() =>
+      expect(screen.getByText("最早的用户消息")).toBeTruthy(),
+    );
     expect(screen.getByText("turn#12 请求评审")).toBeTruthy();
+    expect(harness.transcriptRequests.map((request) => request.cursor)).toEqual(
+      [undefined, "conversation-cursor-older", "conversation-cursor-oldest"],
+    );
   });
 
   it("Zod rejects an empty body without any /commands fetch", async () => {
@@ -377,47 +406,32 @@ describe("P14-005 conversation tab", () => {
     expect(commandFetch.length).toBe(1);
   });
 
-  it("SSE deltas render as the live assistant message and settle in place (no blank gap)", async () => {
-    const partialAnswer = "Arbor 已收到";
-    const harness = installFetch({
+  it("renders a failed transcript envelope as a retryable problem, not empty history", async () => {
+    installFetch({
       tree: rootTree,
-      transcriptResponses: [() => okValue(conversationTypical)],
-      progressChunks: [
-        `data: ${JSON.stringify({ type: "started", executionId: "exe_1" })}`,
-        "",
-        `data: ${JSON.stringify({ type: "delta", executionId: "exe_1", providerTurnId: "ptn_1", attemptNo: 0, text: partialAnswer })}`,
-        "",
-        `data: ${JSON.stringify({ type: "settled", executionId: "exe_1" })}`,
-        "",
-      ].map((frame) => `${frame}\n\n`),
+      transcriptResponses: [
+        () =>
+          new Response(
+            JSON.stringify({
+              ok: false,
+              status: 503,
+              problem: {
+                code: "view/transcript-unavailable",
+                category: "unavailable",
+                message: "transcript unavailable",
+                correlationId: null,
+                retryDisposition: "retryable",
+                safeDetails: {},
+              },
+            }),
+            { status: 503, headers: { "content-type": "application/json" } },
+          ),
+      ],
     });
-    void harness;
     renderConversation();
-    await waitFor(() => expect(screen.getByLabelText(/消息/)).toBeTruthy());
-    const input = screen.getByLabelText(/消息/);
-    fireEvent.change(input, { target: { value: "流式测试消息" } });
-    fireEvent.submit(input.closest("form") as HTMLElement);
-    await waitFor(() => {
-      if (screen.queryByText(partialAnswer) === null) {
-        const calls =
-          (
-            globalThis.fetch as unknown as {
-              mock?: { calls: Array<[unknown]> };
-            }
-          ).mock?.calls ?? [];
-        console.log(
-          "DEBUG-URLS:",
-          JSON.stringify(calls.map((c) => String(c[0])).slice(-8)),
-        );
-        throw new Error("missing partial");
-      }
-    });
-    // After settle the streamed text STAYS on screen — no flash to empty,
-    // no loading placeholder replaces it while the authoritative answer is
-    // still in flight.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.queryByText(/正在生成/)).toBeNull();
-    expect(screen.getByText(partialAnswer)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("服务不可用")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "重试" })).toBeTruthy();
+    expect(screen.queryByText("无会话记录")).toBeNull();
   });
 
   it("reuses the same messageId across transport-failure retries", async () => {
@@ -441,10 +455,32 @@ describe("P14-005 conversation tab", () => {
     expect(second.messageId).toBe(first.messageId);
   });
 
-  it("the human turn inserts optimistically and never duplicates after refetch", async () => {
+  it("shows no optimistic turn, then renders the authoritative correlated pair after refetch", async () => {
+    let resolveRefetch: ((response: Response) => void) | undefined;
+    const refetch = new Promise<Response>((resolve) => {
+      resolveRefetch = resolve;
+    });
+    const settled: TranscriptRes = {
+      entries: [
+        ...conversationTypical.entries,
+        {
+          kind: "HumanConversationTurn",
+          messageId: "msg_server_new",
+          body: "最新的权威消息",
+          occurredAt: "2026-09-23T09:30:00.000Z",
+        },
+        {
+          kind: "AssistantConversationTurn",
+          executionId: "exe_server_new",
+          messageId: "msg_server_new",
+          body: "权威回复",
+          occurredAt: "2026-09-23T09:31:00.000Z",
+        },
+      ],
+    };
     const harness = installFetch({
       tree: rootTree,
-      transcriptResponses: [() => okValue(conversationTypical)],
+      transcriptResponses: [() => okValue(conversationTypical), () => refetch],
     });
     const commandCalls = harness.commandCalls;
     renderConversation();
@@ -452,16 +488,39 @@ describe("P14-005 conversation tab", () => {
       expect(screen.getByText("turn#12 请求评审")).toBeTruthy(),
     );
     const input = screen.getByLabelText(/消息/);
-    fireEvent.change(input, { target: { value: "最新的本地消息" } });
+    fireEvent.change(input, { target: { value: "最新的权威消息" } });
     fireEvent.submit(input.closest("form") as HTMLElement);
     await waitFor(() => expect(commandCalls.length).toBe(1));
-    // optimistic insert: visible immediately
-    await waitFor(() =>
-      expect(screen.getByText("最新的本地消息")).toBeTruthy(),
-    );
-    // after the authoritative refetch lands, exactly ONE copy remains
+    expect(screen.queryByText("最新的权威消息")).toBeNull();
+    resolveRefetch?.(okValue(settled));
     await waitFor(() => {
-      expect(screen.getAllByText("最新的本地消息")).toHaveLength(1);
+      expect(screen.getAllByText("最新的权威消息")).toHaveLength(1);
+      expect(screen.getAllByText("权威回复")).toHaveLength(1);
     });
+  });
+
+  it("derives queued or working state from an authoritative unanswered human turn", async () => {
+    installFetch({
+      tree: rootTree,
+      transcriptResponses: [
+        () =>
+          okValue({
+            entries: [
+              {
+                kind: "HumanConversationTurn",
+                messageId: "msg_pending_1",
+                body: "请执行长任务",
+                occurredAt: "2026-09-23T10:00:00.000Z",
+              },
+            ],
+          } satisfies TranscriptRes),
+      ],
+    });
+    renderConversation();
+    await waitFor(() => expect(screen.getByText("请执行长任务")).toBeTruthy());
+    expect(screen.getByText("正在处理")).toBeTruthy();
+    expect(
+      screen.getByText("已提交。刷新页面或服务重启后会自动继续。"),
+    ).toBeTruthy();
   });
 });

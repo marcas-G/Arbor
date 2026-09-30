@@ -45,6 +45,54 @@ export interface ViewFetchOptions {
   readonly onUnauthenticated?: ((problem: Problem) => void) | undefined;
 }
 
+export interface ProjectDirectoryEntry {
+  readonly projectId: string;
+  readonly name: string;
+  readonly lifecycle: "Open" | "Closed";
+  readonly rootWorkspaceId: string;
+  readonly revision: number;
+  readonly updatedAt: string;
+}
+
+export const fetchProjectDirectory = async (
+  options: ViewFetchOptions,
+): Promise<
+  ViewOutcome<{ readonly projects: ReadonlyArray<ProjectDirectoryEntry> }>
+> => {
+  if (options.token === null)
+    return {
+      ok: false,
+      problem: localProblem("project-directory/no-session-token"),
+    };
+  try {
+    const response = await fetch("/projects", {
+      headers: { Authorization: `Bearer ${options.token}` },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+    const parsed: unknown = await response.json();
+    if (typeof parsed === "object" && parsed !== null) {
+      const record = parsed as Record<string, unknown>;
+      if (
+        record.ok === true &&
+        typeof record.body === "object" &&
+        record.body !== null
+      )
+        return {
+          ok: true,
+          dto: record.body as {
+            readonly projects: ReadonlyArray<ProjectDirectoryEntry>;
+          },
+        };
+      if (record.ok === false && isProblem(record.problem))
+        return { ok: false, problem: record.problem };
+    }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError")
+      throw error;
+  }
+  return { ok: false, problem: localProblem("project-directory/fetch-failed") };
+};
+
 export const fetchView = async <View extends keyof ViewRequestMap & string>(
   view: View,
   request: ViewRequestMap[View],

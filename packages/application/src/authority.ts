@@ -26,6 +26,15 @@ export type VerifiedCommandAuthority =
       readonly projectId: ProjectId;
     }
   | {
+      /** P15: exact project-scoped governance authority for rename/archive. */
+      readonly _tag: "ProjectGovernanceAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly commandType: "RenameProject" | "CloseProject";
+    }
+  | {
       readonly _tag: "CreateChildWorkspaceAuthority";
       readonly principal: Principal;
       readonly commandId: CommandId;

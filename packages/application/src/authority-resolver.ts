@@ -426,6 +426,21 @@ const governanceCommandFact = (
         projectId,
       });
     }
+    case "RenameProject":
+    case "CloseProject": {
+      const error = guarded(commandType, projectId);
+      if (error !== null) {
+        return Effect.fail(error);
+      }
+      return Effect.succeed({
+        _tag: "ProjectGovernanceAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        commandType,
+      });
+    }
     case "CreateChildWorkspace": {
       const parentWorkspaceId =
         input.canonicalFacts.workspace?.parentWorkspaceId ??
