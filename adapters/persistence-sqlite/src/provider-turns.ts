@@ -843,12 +843,19 @@ export const ProviderTurnStoreLive: Layer.Layer<
       settleTurn: (providerTurnId, finishReason, usageJson, settledAt) =>
         Effect.gen(function* () {
           yield* TransactionScope;
-          yield* run(
-            sql.unsafe(
-              "UPDATE provider_turns SET settled_at = ?, finish_reason = ?, usage_json = ? WHERE provider_turn_id = ?",
+          const rows = yield* run(
+            sql.unsafe<{ provider_turn_id: string }>(
+              "UPDATE provider_turns SET settled_at = ?, finish_reason = ?, usage_json = ? WHERE provider_turn_id = ? AND settled_at IS NULL RETURNING provider_turn_id",
               [settledAt, finishReason, usageJson, providerTurnId],
             ),
           );
+          if (rows.length !== 1) {
+            return yield* Effect.fail<ProviderFailure>({
+              _tag: "ProviderFailure",
+              kind: "UnknownProviderFailure",
+              safeDiagnostic: "provider-turn-settlement-cas-rejected",
+            });
+          }
         }),
       findUnsettledByProject: (projectId) =>
         Effect.gen(function* () {
@@ -956,12 +963,19 @@ export const ProviderTurnStoreLive: Layer.Layer<
       failTurn: (providerTurnId, settledAt) =>
         Effect.gen(function* () {
           yield* TransactionScope;
-          yield* run(
-            sql.unsafe(
-              "UPDATE provider_turns SET settled_at = ?, finish_reason = 'Failed', usage_json = '{}' WHERE provider_turn_id = ? AND settled_at IS NULL",
+          const rows = yield* run(
+            sql.unsafe<{ provider_turn_id: string }>(
+              "UPDATE provider_turns SET settled_at = ?, finish_reason = 'Failed', usage_json = '{}' WHERE provider_turn_id = ? AND settled_at IS NULL RETURNING provider_turn_id",
               [settledAt, providerTurnId],
             ),
           );
+          if (rows.length !== 1) {
+            return yield* Effect.fail<ProviderFailure>({
+              _tag: "ProviderFailure",
+              kind: "UnknownProviderFailure",
+              safeDiagnostic: "provider-turn-failure-cas-rejected",
+            });
+          }
         }),
       listUsageByProject: (projectId) =>
         Effect.gen(function* () {

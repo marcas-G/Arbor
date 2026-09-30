@@ -101,9 +101,21 @@ const manifestMatchesTurn = (entry: UnsettledProviderTurn): boolean => {
   }
 };
 
-const turnDeadlineExpired = (turn: UnsettledProviderTurn): boolean =>
-  turn.turn.turnDeadlineAt !== undefined &&
-  Date.parse(turn.turn.turnDeadlineAt) <= Date.now();
+const turnDeadline = (
+  turn: UnsettledProviderTurn,
+  observedAtMs: number,
+):
+  | { readonly valid: true; readonly expired: boolean }
+  | { readonly valid: false } => {
+  if (turn.turn.turnDeadlineAt === undefined) {
+    return { valid: false };
+  }
+  const deadlineAtMs = Date.parse(turn.turn.turnDeadlineAt);
+  if (!Number.isFinite(deadlineAtMs) || !Number.isFinite(observedAtMs)) {
+    return { valid: false };
+  }
+  return { valid: true, expired: deadlineAtMs <= observedAtMs };
+};
 
 const unresolvedDecision = (reason: string): ProviderRetryDecision => ({
   safety: "UnsafeReplay",
@@ -128,20 +140,26 @@ export const recoverUnsettledProviderTurns = (
     const retryPlan: Array<ProviderTurnRetryPlanEntry> = [];
     const failedTurns: Array<ProviderTurnFailureMark> = [];
     for (const entry of dangling) {
+      const observedAtMs = Date.parse(yield* deps.clock.now());
       const last = entry.attempts.at(-1) ?? null;
       const kind = last?.providerErrorKind ?? null;
       const policy = entry.turn.executionPolicy;
       const evidence =
         last === null ? noAttemptObservation() : (last.observation ?? null);
       const cause = providerRetryCauseFromAttempt(last);
+      const deadline = turnDeadline(entry, observedAtMs);
       let retryDecision: ProviderRetryDecision;
       if (!manifestMatchesTurn(entry)) {
         retryDecision = unresolvedDecision(
           "durable ProviderTurn → ModelContextManifest binding is missing or mismatched",
         );
-      } else if (policy === undefined || evidence === null) {
+      } else if (
+        policy === undefined ||
+        evidence === null ||
+        deadline.valid === false
+      ) {
         retryDecision = unresolvedDecision(
-          "persisted attempt evidence or execution limits are incomplete",
+          "persisted attempt evidence, execution limits, or deadline are incomplete",
         );
       } else {
         retryDecision = decideProviderRetry({
@@ -151,7 +169,7 @@ export const recoverUnsettledProviderTurns = (
           attemptNo: last?.attemptNo ?? -1,
           maxAttempts: policy.maxAttempts,
           cancelled: last?.outcome === "Cancelled",
-          deadlineExpired: turnDeadlineExpired(entry),
+          deadlineExpired: deadline.expired,
         });
       }
 
