@@ -42,8 +42,10 @@
 - web tests: PASS (211/211)
 - git diff check: PASS
 
-## Remaining structural work
+## Subsequent structural closure
 
-`provider-turns.ts` still combines intent, attempt journal, settlement evidence,
-recovery and usage read paths. It should be split as a separate
-behavior-preserving phase after these repaired invariants are committed.
+The follow-up behavior-preserving phase split `provider-turns.ts` by Turn
+intent, Attempt journal, settlement evidence and project recovery ownership.
+The public `ProviderTurnStoreLive` remains the single adapter entry point.
+Project recovery now batches Attempt lookup into at most 500 Turn IDs per SQL
+statement.

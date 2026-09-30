@@ -156,6 +156,24 @@ I-10 malformed/missing persisted deadline
                                      → fail closed; zero retry plan
 ```
 
+### 2.4 SQLite implementation boundaries
+
+The public adapter remains `ProviderTurnStoreLive`, composed from modules that
+own distinct durable responsibilities:
+
+- `provider-turn-intent-store.ts`: Turn intent, Manifest and legacy intent;
+- `provider-attempt-store.ts`: Attempt start, observation journal and
+  settlement;
+- `provider-turn-settlement-store.ts`: atomic success, evidence replay,
+  evidence adoption and terminal CAS;
+- `provider-turn-project-store.ts`: project recovery reads, recovery decision
+  journal, failure marking and usage rows;
+- `provider-turn-store-shared.ts`: row codecs and invariant helpers.
+
+Project recovery may return all dangling Turns, but SQLite Attempt lookup must
+split the Turn IDs into fixed-size batches. No generated `IN` statement may
+grow with the full project backlog.
+
 ## 3. Tool four-tier injection assertions (invariant 35)
 
 Intent-before-effect (P4 `06` §2) makes every dangling invocation visible to
