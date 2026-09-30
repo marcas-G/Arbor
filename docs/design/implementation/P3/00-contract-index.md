@@ -1,12 +1,12 @@
 # P3 — Contract Index
 
-**Authority:** DID v1.18, with P3 phase contracts frozen under the prior DID
-versions except where this index records the v1.18 source-of-truth supersession.
+**Authority:** DID v1.20, with P3 phase contracts frozen under prior DID
+versions except where this index records v1.18 and v1.20 supersessions.
 These documents are **not** a fifth design layer; they are P3-owned
 implementation contracts authorized by DID §13.
 
 ```text
-Detailed Implementation Design v1.18 (frozen)
+Detailed Implementation Design v1.20 (frozen)
         ↓ delegates phase-scoped closure
 docs/design/implementation/P3/**   (these contracts)
 ```
@@ -33,6 +33,7 @@ superseded representation.
 | `05-prompt-context-contracts.md` | versioned Prompt Program artifacts, provenance, model-family compiler |
 | `06-provider-failure-repair.md` | failure translation, bounded repair, `ContextUnsatisfiable`, `DecisionStale`, `GovernanceBlocked` |
 | `07-behavioral-eval-harness.md` | shared Prompt/Context behavioral-eval harness; per-phase ownership of programs/eval cases/acceptance |
+| `08-agent-loop-step-handoff.md` | DID v1.20 durable AgentLoopStep identity/state machine、Provider success replay、idempotent Session/action progression、successor/settlement handoff |
 | `00-contract-index.md` | this index |
 
 ## P3 scope (DID §11 P3)
@@ -50,6 +51,7 @@ Output Contract, Prompt provenance, real model multi-turn continuity.
 | C3 | **P3** establishes the shared Prompt/Context behavioral-eval harness; each phase owns its own Prompt Program text, eval cases and acceptance criteria. |
 | C4 | `CanonicalProviderEvent` remains provider-neutral transport/runtime vocabulary. It does not directly express an authorized `AgentAction`; `decodeTurn` extracts `ModelOutput` and generic typed `ToolInvocation` values, while ControlToolRegistry owns control semantics (DID v1.18 ACR-4). |
 | C5 | Prompt Program **actual text** is **not** implementation choice. The Programs P3 uses (Base Agent Protocol, Responsibility-bound Protocol, Work Execution Program, Compaction, …) are versioned phase-scoped **contract artifacts** with regression eval. Only wording iteration that does not change the contract, and numeric defaults, are empirical. |
+| C6 | DID v1.20 `AgentLoopStep` is the durable handoff state. It persists no process-local `AgentAction`; pinned Provider events + decoder reconstruct invocations and the action ledger verifies identity/hash (`08`). |
 
 ## Inherited from P2
 
@@ -58,6 +60,8 @@ Output Contract, Prompt provenance, real model multi-turn continuity.
 - `WorkWait` / `WaitSpec` / `WakeCondition` / `WakeReason` (P2 `05`).
 - Admission binding, lease/fencing, `Settlement`, `RecoveryController`.
 - `ReconciliationSource` stub → P3/P4 provide Provider/Tool reconciliation content.
+- DID v1.20 idempotent Session source write + fenced `AgentLoopStepStore` are P2
+  persistence seams; P3 owns their orchestration (`08`).
 
 ## Contract review (round 1)
 
@@ -76,3 +80,6 @@ implementation choices, all resolved in-contract.
 FROZEN (contracts) — independent review round 1 complete, **Blocking = 0**.
 No P3 planning is generated until the phase plan + tasks are derived from these
 contracts.
+
+The v1.20 `08` successor is design-frozen; DID v1.21 ALS-I1 authorizes its
+implementation without reopening the historical P3 completion record.

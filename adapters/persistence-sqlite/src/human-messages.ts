@@ -234,6 +234,16 @@ export const HumanMessageStoreLive: Layer.Layer<
             )
             .pipe(Effect.mapError(toOperationalFailure));
         }),
+      decline: (messageId, settledAt) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          yield* sql
+            .unsafe(
+              "UPDATE human_messages SET state = 'Declined', settled_at = ? WHERE message_id = ? AND state IN ('Pending','Claimed')",
+              [settledAt, messageId],
+            )
+            .pipe(Effect.mapError(toOperationalFailure));
+        }),
     };
     return HumanMessageStore.of(service);
   }),

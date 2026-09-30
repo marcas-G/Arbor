@@ -89,8 +89,13 @@ describe("p13-web-boundaries", () => {
     }
   });
 
-  it("I3: network URLs are exactly the whitelist (/views/:view, /commands, /ws)", () => {
-    const allowed = new Set(["/commands", "/ws", "/conversation-progress/"]);
+  it("I3: network URLs are exactly the whitelist (/views/:view, /projects, /commands, /ws)", () => {
+    const allowed = new Set([
+      "/commands",
+      "/projects",
+      "/ws",
+      "/conversation-progress/",
+    ]);
     const urlLiteral = /["'`](\/[a-z][a-z0-9/_-]*)["'`]/g;
     for (const file of sourceFiles) {
       const source = readFileSync(file, "utf8");

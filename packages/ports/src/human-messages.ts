@@ -22,7 +22,7 @@ export interface HumanMessageRecord {
   readonly bodyRef: string;
   readonly commandId: CommandId;
   readonly fingerprint: string;
-  readonly state: "Pending" | "Claimed" | "Answered";
+  readonly state: "Pending" | "Claimed" | "Answered" | "Declined";
   readonly claimedByExecutionId: string | null;
   readonly createdAt: string;
   readonly settledAt: string | null;
@@ -150,6 +150,15 @@ export interface HumanMessageStoreService {
    * response (`02` §4.2). */
   readonly rollbackForRetry: (
     messageId: string,
+  ) => Effect.Effect<
+    void,
+    HumanMessageStoreError,
+    import("./session.js").TransactionScope
+  >;
+  /** P15 archive terminalization. Never returns to the admission queue. */
+  readonly decline: (
+    messageId: string,
+    settledAt: string,
   ) => Effect.Effect<
     void,
     HumanMessageStoreError,

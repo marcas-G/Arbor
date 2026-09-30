@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import { inspect } from "node:util";
 import { Principal, parse, WorkspaceId } from "@arbor/domain";
 import {
@@ -13,7 +14,7 @@ import { Duration, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   buildSliceLayer,
-  P16_MIGRATIONS,
+  P17_MIGRATIONS,
   runMigrations,
   type SliceConfig,
   type SliceServices,
@@ -28,7 +29,6 @@ import {
   makeBasicAuthenticator,
   makeStaticAuthenticator,
 } from "./transport/auth.js";
-import { JOURNAL_WATERMARK_SQL } from "./transport/invalidation.js";
 import { startWebTransport } from "./transport/server.js";
 
 /** The production composition entry: build the single-workspace slice layer
@@ -193,7 +193,7 @@ const isWorkspaceId = (value: string): boolean =>
 
 export const runOnce = (workspaceId: string, principalRef = "runtime:system") =>
   Effect.gen(function* () {
-    yield* runMigrations(P16_MIGRATIONS);
+    yield* runMigrations(P17_MIGRATIONS);
     yield* startupRecovery(parse(Principal)(principalRef));
     return yield* evaluateAndSelect(
       parse(WorkspaceId)(workspaceId),
@@ -355,7 +355,12 @@ export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
 
 export type { SliceServices };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+const entrypoint = process.argv[1];
+
+if (
+  entrypoint !== undefined &&
+  import.meta.url === pathToFileURL(entrypoint).href
+) {
   const workspaceId = process.env.ARBOR_WORKSPACE_ID;
   const webPort = process.env.ARBOR_HTTP_PORT;
   const webHost = process.env.ARBOR_HTTP_HOST;

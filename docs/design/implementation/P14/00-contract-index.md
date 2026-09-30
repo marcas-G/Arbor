@@ -7,7 +7,7 @@
 | Doc | Owns |
 |---|---|
 | `01-human-message.md` | `SubmitHumanMessage` 命令语义、payload/前置/拒绝、`HumanMessageSubmitted` 事件、persistence/DDL、幂等 |
-| `02-conversation-execution.md` | deterministic conversation trigger、`AdmitExecution(WorkspaceMain, Coordination)` server-side wiring、one-active-main 排队、exact-once logical response、crash/replay |
+| `02-conversation-execution.md` | deterministic conversation trigger、`AdmitExecution(WorkspaceMain, Coordination)` server-side wiring、one-active-main 排队、exact-once logical response、AgentLoopStep→HumanMessage final convergence、crash/replay |
 | `03-transcript-read-model.md` | transcript read model 升级 DTO（Human/Assistant turn）、correlation、projection 归属 |
 | `04-web-surface.md` | `/p/:projectId` Root Workbench（Tree + Root Conversation）、root deep-link mirror、child read-only、无 /chat、无 streaming、UI 无直连 AdmitExecution |
 | `05-acceptance.md` | 十 review seams 的机械化验收 + 完成定义 |
@@ -32,6 +32,7 @@
 | 日期 | 项 | 结论 |
 |---|---|---|
 | 2026-09-23 | settle response write-back 协议（`02` §4） | 上游只要求 durable two-step（B）；合同由"同事务"精确修订为 §4.1 协议 + §4.2 settlement 分支；sweep 为 correctness mechanism；P2 不 reopen（`02` §4.3） |
+| 2026-09-30 | DID v1.20/v1.21 AgentLoopStep successor | `02` §4.4：settled Provider result 在原 Execution 内完成持久交接后才允许 settlement；P14 two-step message write-back 保持，Failed/OutcomeUnknown 才释放新 conversation attempt；implementation authorized by ALS-I1 |
 
 ## Phase state
 
@@ -40,4 +41,5 @@ P14 design closure: contracts FROZEN（两轮 review，Blocking=0）
 P14 planning COMPLETE (planning/phases/P14.md)
 P14 implementation COMPLETE; P14 FORMALLY CLOSED (planning/results/P14.result.md)
 P14 presentation/read-model successor adopted by D-1; no P14 backend phase reopen
+DID v1.20 AgentLoopStep convergence successor FROZEN; implementation AUTHORIZED by DID v1.21 ALS-I1
 ```

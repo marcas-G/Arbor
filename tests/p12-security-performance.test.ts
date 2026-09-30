@@ -158,7 +158,7 @@ describe("P12-013 §2 Information Trust Plane at the context boundary", () => {
         }
         const source = readFileSync(path, "utf8");
         if (fieldShape.every((token) => source.includes(token))) {
-          offenders.push(path.slice(repoRoot.length + 1));
+          offenders.push(path.slice(repoRoot.length + 1).replaceAll("\\", "/"));
         }
       }
     };

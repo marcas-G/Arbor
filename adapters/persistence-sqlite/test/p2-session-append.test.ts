@@ -22,6 +22,7 @@ import {
   ExecutionRepositoryLive,
   layer,
   P12_MIGRATIONS,
+  P17_MIGRATIONS,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -112,6 +113,78 @@ const seed = Effect.gen(function* () {
 });
 
 describe("P2 Session appendEntry + AgentExecutionState", () => {
+  it("idempotently appends one sourced ModelOutput and rejects hash conflicts", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      const tx = yield* TransactionPort;
+      const repo = yield* ExecutionRepository;
+      const sessions = yield* SessionRepository;
+      yield* tx.transact(repo.tryAdmitMainExecution(execution));
+      yield* tx.transact(
+        repo.tryAcquireLease(
+          executionId,
+          "worker:a",
+          "inc-a",
+          "2999-01-01T00:00:00.000Z",
+        ),
+      );
+      const fence = {
+        executionId,
+        workerId: "worker:a",
+        workerIncarnationId: "inc-a",
+        fencingGeneration: 0 as never,
+      };
+      const source = {
+        kind: "ProviderTurn" as const,
+        ref: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      };
+      const first = yield* tx.transact(
+        sessions.appendEntryIdempotent(
+          sessionId,
+          source,
+          { entryKind: "ModelOutput", payload: { text: "answer" } },
+          "hash-a",
+          fence,
+        ),
+      );
+      const replay = yield* tx.transact(
+        sessions.appendEntryIdempotent(
+          sessionId,
+          source,
+          { entryKind: "ModelOutput", payload: { text: "answer" } },
+          "hash-a",
+          fence,
+        ),
+      );
+      const conflict = yield* tx
+        .transact(
+          sessions.appendEntryIdempotent(
+            sessionId,
+            source,
+            { entryKind: "ModelOutput", payload: { text: "changed" } },
+            "hash-b",
+            fence,
+          ),
+        )
+        .pipe(Effect.flip);
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn'",
+      );
+      return { first, replay, conflict, count: Number(rows[0]?.count ?? 0) };
+    });
+
+    const result = await Effect.runPromise(Effect.provide(program, app));
+    expect(result.first).toEqual({ sequence: 0, inserted: true });
+    expect(result.replay).toEqual({ sequence: 0, inserted: false });
+    expect((result.conflict as { _tag: string })._tag).toBe(
+      "SessionSourceConflict",
+    );
+    expect(result.count).toBe(1);
+  });
+
   it("allocates contiguous Session-local sequences", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {

@@ -94,3 +94,7 @@ Resolve/canonicalize happens outside the write transaction (DID §9.5).
 - Worker crash / lease expiry / old-worker resurrection (P2, DID §3.4/§9.7).
 - Provider disconnect, tool `OutcomeUnknown` reconciliation (P3/P4).
 - Projection rebuild at scale (P9/P10).
+
+AgentLoopStep action/settlement takeover reuses this matrix per generated
+CommandId. Cross-generation logical eligibility and receipt-first convergence
+are owned by `07`; AgentLoopStep state recovery is P9 `07`.

@@ -123,6 +123,22 @@
   font-size: var(--arbor-text-caption);
 }
 
+.conversationStatus {
+  display: grid;
+  gap: 0.15rem;
+  margin: var(--arbor-space-1) 0 var(--arbor-space-3);
+  padding: var(--arbor-space-2) var(--arbor-space-3);
+  border-left: 3px solid var(--arbor-attention);
+  border-radius: 0 var(--arbor-radius) var(--arbor-radius) 0;
+  background: color-mix(in srgb, var(--arbor-attention) 8%, transparent);
+  color: var(--arbor-muted);
+  font-size: var(--arbor-text-caption);
+}
+
+.conversationStatus strong {
+  color: var(--arbor-ink);
+}
+
 .composer {
   display: flex;
   flex-direction: column;

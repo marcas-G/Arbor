@@ -30,7 +30,7 @@ import {
   startupRecovery,
   sweepRecovery,
 } from "@arbor/execution-runtime";
-import { P16_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
+import { P18_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   type AgentExecutionStateStore,
@@ -424,7 +424,19 @@ export const ProductionDaemonServiceLive = (
           for (const projectId of activeProjects) {
             yield* tx.transact(
               runConversationSettlementSweep(
-                { messages, executions, clock, responseBodyOf },
+                {
+                  messages,
+                  executions,
+                  clock,
+                  responseBodyOf,
+                  projectIsOpen: (candidateProjectId) =>
+                    Effect.map(
+                      projects.findById(candidateProjectId),
+                      (found) =>
+                        Option.isSome(found) &&
+                        found.value.lifecycle === "Open",
+                    ),
+                },
                 projectId,
               ),
             );
@@ -484,7 +496,7 @@ export const ProductionDaemonServiceLive = (
       );
 
       const daemon = makeProductionDaemon({
-        migrate: runMigrations(P16_MIGRATIONS),
+        migrate: runMigrations(P18_MIGRATIONS),
         recovery,
         consumers,
         conversationTick,

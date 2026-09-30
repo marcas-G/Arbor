@@ -39,6 +39,24 @@ const unauthenticatedProblem = {
   safeDetails: {},
 };
 
+const directoryResponse = () =>
+  jsonResponse(200, {
+    ok: true,
+    status: 200,
+    body: {
+      projects: [
+        {
+          projectId: "prj_demo",
+          name: "Demo",
+          lifecycle: "Open",
+          rootWorkspaceId: "ws_root",
+          revision: 0,
+          updatedAt: "t",
+        },
+      ],
+    },
+  });
+
 function stubFetch(impl: FetchImpl): FetchFn {
   const fetchMock = vi.fn(impl);
   vi.stubGlobal("fetch", fetchMock);
@@ -57,21 +75,15 @@ async function login(actor = "human:root", token = "tok_1"): Promise<void> {
     target: { value: actor },
   });
   fireEvent.click(screen.getByRole("button", { name: "连接" }));
-  await waitFor(() => expect(screen.getByText("项目")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("当前项目")).toBeTruthy());
 }
 
 /** W-02: pick a project via the rail ProjectSwitcher (URL is authority). */
 async function switchProject(projectId: string): Promise<void> {
-  fireEvent.click(screen.getByText("未选择"));
-  await waitFor(() =>
-    expect(screen.getByPlaceholderText("prj_…")).toBeTruthy(),
-  );
-  fireEvent.change(screen.getByPlaceholderText("prj_…"), {
-    target: { value: projectId },
-  });
-  fireEvent.submit(
-    screen.getByPlaceholderText("prj_…").closest("form") as HTMLFormElement,
-  );
+  fireEvent.click(screen.getByText("选择项目"));
+  await waitFor(() => expect(screen.getByText("Demo")).toBeTruthy());
+  fireEvent.click(screen.getByRole("option", { name: "Demo" }));
+  expect(projectId).toBe("prj_demo");
 }
 
 afterEach(() => {
@@ -166,13 +178,15 @@ describe("P13-007 memory-only session (frozen contract 01 §4)", () => {
 
 describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
   it("a 401 unauthenticated view problem blocks content and offers re-login", async () => {
-    const fetchMock = stubFetch(() =>
+    const fetchMock = stubFetch((url) =>
       Promise.resolve(
-        jsonResponse(401, {
-          ok: false,
-          status: 401,
-          problem: unauthenticatedProblem,
-        }),
+        url === "/projects"
+          ? directoryResponse()
+          : jsonResponse(401, {
+              ok: false,
+              status: 401,
+              problem: unauthenticatedProblem,
+            }),
       ),
     );
     render(<App />);
@@ -182,7 +196,7 @@ describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
     fireEvent.click(treeButtons[0] as HTMLElement);
     await waitFor(() => expect(screen.getByText("未认证")).toBeTruthy());
     expect(screen.queryByRole("heading", { name: "工作台" })).toBeNull();
-    const call = fetchMock.mock.calls[0];
+    const call = fetchMock.mock.calls.find(([url]) => /^\/views\//.test(url));
     expect(call).toBeDefined();
     const [url, init] = call as unknown as [string, RequestInit];
     expect(url).toMatch(/^\/views\//);
@@ -198,13 +212,15 @@ describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
 
 describe("Web v1 shell integration smoke (W-02)", () => {
   it("login → project switch routes to /p/:projectId → rail nav → disconnect returns to login", async () => {
-    stubFetch(() =>
+    stubFetch((url) =>
       Promise.resolve(
-        jsonResponse(200, {
-          ok: true,
-          status: 200,
-          body: { value: { rows: [] }, watermark: 1 },
-        }),
+        url === "/projects"
+          ? directoryResponse()
+          : jsonResponse(200, {
+              ok: true,
+              status: 200,
+              body: { value: { rows: [] }, watermark: 1 },
+            }),
       ),
     );
     history.replaceState(null, "", "/");

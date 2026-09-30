@@ -93,6 +93,42 @@ export const updateProjectPolicy = (
   });
 };
 
+export interface RenameProjectInput {
+  readonly authorized: boolean;
+  readonly expectedRevision: Revision;
+  readonly name: string;
+}
+
+/** P15 `01`: name is a canonical Project field. The application boundary owns
+ * the versioned Unicode policy; this pure aggregate preserves the authority,
+ * lifecycle and optimistic-concurrency invariants. */
+export const renameProject = (
+  project: Project,
+  input: RenameProjectInput,
+): DomainResult<Project> => {
+  if (project.lifecycle !== "Open") {
+    return err(closedProjectError(project));
+  }
+  if (!input.authorized) {
+    return err({
+      _tag: "AuthorityDenied",
+      reason: "RenameProject requires authority",
+    });
+  }
+  if (project.revision !== input.expectedRevision) {
+    return err({
+      _tag: "RevisionConflict",
+      expected: input.expectedRevision,
+      actual: project.revision,
+    });
+  }
+  return ok({
+    ...project,
+    name: input.name,
+    revision: incrementOrdinal(Revision)(project.revision),
+  });
+};
+
 export interface CloseProjectInput {
   readonly authorized: boolean;
 }

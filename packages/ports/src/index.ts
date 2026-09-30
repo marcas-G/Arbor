@@ -1,3 +1,4 @@
+export * from "./agent-loop-step.js";
 export * from "./command.js";
 export * from "./consumer.js";
 export * from "./dependency-store.js";

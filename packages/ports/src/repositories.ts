@@ -22,6 +22,7 @@ import type {
   ProjectRepositoryError,
   ResourceOwnershipRepositoryError,
   SessionRepositoryError,
+  SessionSourceConflict,
   WorkRepositoryError,
   WorkspaceRepositoryError,
 } from "./errors.js";
@@ -43,6 +44,12 @@ export interface ProjectRepositoryService {
     expectedRevision: Revision,
     policy: ProjectPolicy,
     newPolicyRevision: Revision,
+    newRevision: Revision,
+  ) => Effect.Effect<void, ProjectRepositoryError, TransactionScope>;
+  readonly renameIfRevision: (
+    projectId: ProjectId,
+    expectedRevision: Revision,
+    name: string,
     newRevision: Revision,
   ) => Effect.Effect<void, ProjectRepositoryError, TransactionScope>;
   readonly closeIfRevision: (
@@ -200,6 +207,22 @@ export interface SessionRepositoryService {
     SessionRepositoryError | LeaseFencingRejected,
     TransactionScope
   >;
+  readonly appendEntryIdempotent: (
+    sessionId: SessionId,
+    source: SessionEntrySource,
+    entry: { readonly entryKind: SessionEntryKind; readonly payload: unknown },
+    contentHash: string,
+    fence: {
+      readonly executionId: ExecutionId;
+      readonly workerId: string;
+      readonly workerIncarnationId: string;
+      readonly fencingGeneration: LeaseGeneration;
+    },
+  ) => Effect.Effect<
+    { readonly sequence: number; readonly inserted: boolean },
+    SessionRepositoryError | LeaseFencingRejected | SessionSourceConflict,
+    TransactionScope
+  >;
   /** P10-007 deps 申报: minimal read-only production read path over
    * session_entries for the Transcript view (on-demand debug projection,
    * never truth — SD §12.4 note). Deterministic (sequence-ascending)
@@ -232,6 +255,12 @@ export interface SessionEntryRecord {
   readonly entryKind: SessionEntryKind;
   readonly payload: unknown;
   readonly createdAt: string;
+  readonly source?: SessionEntrySource & { readonly contentHash: string };
+}
+
+export interface SessionEntrySource {
+  readonly kind: string;
+  readonly ref: string;
 }
 
 export type SessionEntryKind =

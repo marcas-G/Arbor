@@ -60,6 +60,7 @@ const isStaticCandidate = (method: string, path: string): boolean =>
 
 const isApiPath = (path: string): boolean =>
   path === "/commands" ||
+  path === "/projects" ||
   path.startsWith("/views/") ||
   path === "/views" ||
   path.startsWith("/conversation-progress/");
@@ -216,6 +217,64 @@ const streamConversationProgress = async (
   response.on("close", cleanup);
 };
 
+/** P15 local-single-user directory face. It deliberately is not a `/views`
+ * endpoint: no individual Project watermark can truthfully describe a
+ * cross-project list. A multi-principal deployment must install the future
+ * visibility resolver rather than silently exposing this SQL listing. */
+const readLocalProjectDirectory = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: WebTransportConfig,
+): Promise<void> => {
+  const token = bearerToken(request.headers.authorization);
+  const principal =
+    config.authenticator === undefined
+      ? (LOCAL_PRINCIPAL as unknown as Principal)
+      : await Effect.runPromise(
+          config.authenticator.authenticate(token === null ? null : { token }),
+        ).catch(() => null);
+  if (principal === null) {
+    sendJson(response, 401, {
+      ok: false,
+      problem: { code: "auth/unauthenticated" },
+    });
+    return;
+  }
+  if (String(principal) !== LOCAL_PRINCIPAL) {
+    sendJson(response, 503, {
+      ok: false,
+      problem: { code: "project-directory/visibility-resolver-required" },
+    });
+    return;
+  }
+  const rows = await Effect.runPromise(
+    config.sql.unsafe<{
+      project_id: string;
+      name: string;
+      lifecycle: "Open" | "Closed";
+      root_workspace_id: string;
+      revision: number;
+      updated_at: string;
+    }>(
+      "SELECT project_id, name, lifecycle, root_workspace_id, revision, updated_at FROM projects ORDER BY updated_at DESC, project_id ASC",
+    ),
+  );
+  sendJson(response, 200, {
+    ok: true,
+    status: 200,
+    body: {
+      projects: rows.map((row) => ({
+        projectId: row.project_id,
+        name: row.name,
+        lifecycle: row.lifecycle,
+        rootWorkspaceId: row.root_workspace_id,
+        revision: row.revision,
+        updatedAt: row.updated_at,
+      })),
+    },
+  });
+};
+
 export const startWebTransport = async (
   config: WebTransportConfig,
 ): Promise<WebTransportHandle> => {
@@ -236,6 +295,11 @@ export const startWebTransport = async (
           decodeURIComponent(progressMatch[1] ?? ""),
           config,
         );
+        return;
+      }
+
+      if (path === "/projects" && method === "GET") {
+        await readLocalProjectDirectory(request, response, config);
         return;
       }
 

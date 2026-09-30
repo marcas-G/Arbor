@@ -1,9 +1,9 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.19\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — governance authorization (`AGENT_CONTROL_IMPLEMENTATION_AUTHORIZED`)\
-**Supersedes:** v1.18\
-**Date:** 2026-09-28\
+**Version:** 1.21\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — durable AgentLoopStep implementation AUTHORIZED\
+**Supersedes:** v1.20\
+**Date:** 2026-09-30\
 **Depends on:** `Arbor System Design Specification v1.3`  
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
@@ -234,6 +234,79 @@ P12 implementation COMPLETE; P12 FORMALLY CLOSED
 This is an additive read-model/presentation adoption, **not** a reopened P13/P14 backend phase:
 no command semantics, event semantics, DDL, authority, transport protocol, System Design, or
 G2–G5 product-domain gap is changed.
+
+**Governance changes (v1.20 → v1.21):** (Agent Loop terminology and
+implementation authorization, 2026-09-30)
+
+- **ALS-N1 — terminology-only successor.** The durable per-iteration record
+  called `AgentTurn` in the immutable reviewed proposal and v1.20 decision is
+  renamed **`AgentLoopStep`** in current contracts and implementation. The
+  overall runtime algorithm/component remains `AgentLoop`; `ProviderTurn`
+  remains one logical model decision; `ProviderAttempt` remains one transport
+  attempt. This removes the collision between conversation/model/runtime uses
+  of “turn” without changing AHT-1…AHT-8 semantics, state transitions, DDL or
+  acceptance obligations.
+- **ALS-I1 — implementation authorized.** The user explicitly authorized
+  execution after accepting the `AgentLoopStep` name. Authorized scope:
+  migration `0017_agent_loop_step_handoff`, ports/stores, atomic Provider
+  success, idempotent sourced Session writes, AgentLoop integration, legacy
+  adoption, recovery and AH1–AH14 tests. The preserved dogfood database remains
+  read-only until the equivalent fixture and migration verification pass; this
+  authorization does not permit speculative direct repair.
+- **ALS-I2 — migration executability correction.** Migration 0017 enforces the
+  sourced-Session all-null/all-present invariant by transactionally rebuilding
+  `session_entries` with a table `CHECK`, rather than `CREATE TRIGGER` bodies
+  that the existing semicolon-splitting migration runner cannot parse. The
+  unique source index and observable invariant are unchanged; this is a
+  mechanism correction proven by the first red migration test.
+
+**Governance changes (v1.19 → v1.20):** (Provider Result Handoff / Durable
+AgentLoopStep Adoption; decision record:
+`planning/proposals/provider-result-handoff-governance-decision.md`)
+
+- **AHT-1 — durable handoff replaces process-local progress.** Add a persisted
+  `AgentLoopStepRecord`, keyed by `(executionId, logicalStepNo, repairAttempt)`,
+  between Provider result settlement and Session/action/Execution settlement.
+  Provider Runtime still owns Provider calls; Agent Runtime owns result
+  consumption and action progression; Execution Runtime owns lease/fencing and
+  canonical settlement. Lease loss stops a writer but never erases business
+  progress (`P3 08`).
+- **AHT-2 — complete Provider success converges locally.** A complete successful
+  canonical event sequence is a replayable durable result. New success writes
+  atomically settle ProviderAttempt + ProviderTurn. Legacy complete success
+  evidence is locally completed before P9 retry eligibility; the same
+  ProviderTurn is never requested again (`P3 08` §5, `P9 07` §2).
+- **AHT-3 — Session and action handoff are idempotent.** Session entries gain a
+  stable source key/content hash. ModelOutput append and
+  `ProviderResultAvailable → OutputAccepted` share a fenced transaction.
+  `AgentLoopStepActionRecord` persists only logical identity/disposition/result
+  references; it does **not** persist the v1.18 process-local `AgentAction` ADT
+  (`P2 02`/`04`, `P3 08` §§6–7).
+- **AHT-4 — logical Agent identity is distinct from Application Command
+  identity.** `LogicalActionId`/`LogicalSettlementId` identify Agent semantics.
+  Each lease generation submits a distinct deterministic `CommandId`; that
+  Command remains immutable and terminal under the existing P1 rules. A later
+  owner may create a new generation-scoped Command only after querying the
+  logical ledger and existing receipts (`P1 07`).
+- **AHT-5 — unresolved side effects are a hard gate.** An action in
+  `ReconciliationPending` cannot reach `StepEffectsCommitted`, a next model
+  turn, or ordinary Completed/Interrupted/Failed. It may only reconcile,
+  produce durable Attention, or use the existing
+  `OutcomeUnknown(ReconciliationRequired)` exit (`P3 08` §7).
+- **AHT-6 — successor identity is committed before handoff.** Repair and normal
+  next-turn predecessors persist exactly one complete successor identity.
+  Recovery uses idempotent `ensureSuccessor`; it never recomputes the decision,
+  consumes budget twice, or creates a second ProviderTurn (`P3 08` §8).
+- **AHT-7 — legacy adoption is evidence-gated.** Migration `0017_agent_loop_step_handoff`
+  may synthesize AgentLoopStep only from unique, consistent evidence. The
+  DOGFOOD-DG-01 equivalent no-action fixture is authorized to adopt at
+  `ProviderResultAvailable`; ambiguous repair/action/effect evidence produces
+  durable Attention and no replay (`P9 07` §3).
+- **AHT-8 — authorization boundary.** v1.20 authorizes design-contract landing
+  only. It does not authorize migration execution, recovery implementation,
+  mutation of the preserved failure database, or automatic closure of
+  DOGFOOD-DG-01 before owning-contract landing and consistency audit. Those
+  design steps now resolve the design question; implementation remains gated.
 
 **Governance changes (v1.18 → v1.19):** (Agent Control Implementation
 Authorization — D9 of the `52-migration-and-implementation-dag.md` sequencing)
@@ -1263,6 +1336,8 @@ CommandId
 EventId
 ProviderTurnId
 ToolInvocationId
+LogicalActionId
+LogicalSettlementId
 WorkerId
 WorkerIncarnationId
 PluginId
@@ -1280,9 +1355,16 @@ Root/Primary 是关系角色，不是新实体类型。
 
 `PluginVersion` / `PluginSdkApiVersion` 是 branded version 值，不是 entity ID。
 
+`AgentLoopStepIdentity` 是 `(ExecutionId, logicalStepNo, repairAttempt)` 复合身份，
+不是新增全局 entity ID。`LogicalActionId` / `LogicalSettlementId` 是稳定派生的
+runtime semantic identity；它们不替代 `CommandId`。
+
 ## 2.2 ID 规则
 
 - 底层采用 UUIDv7 类可时间排序随机标识；
+- deterministic runtime semantic identities（`LogicalActionId` /
+  `LogicalSettlementId`）例外：使用版本化 canonical serialization + SHA-256
+  派生，并保留 Appendix A prefix；
 - 增加 `prj_ / ws_ / wrk_ / exe_ / ses_ ...` prefix 便于运行时校验和调试；
 - TypeScript 使用 nominal/branded type，运行时使用 Schema codec；
 - ID 不编码名称、父子路径、业务 location 或 sequence；
@@ -1591,6 +1673,8 @@ Work revision (WorkRevision)
 
 ```text
 AgentExecutionState
+AgentLoopStepRecord
+AgentLoopStepActionRecord
 ProviderTurn
 ToolInvocation
 CommandAttempt
@@ -1622,7 +1706,14 @@ updatedAt
 Workspace            = long-lived responsibility state
 Session              = long-lived cognitive continuity
 AgentExecutionState  = current episode control state
+AgentLoopStepRecord      = durable Provider-result/action/settlement handoff state
 ```
+
+`AgentLoopStepRecord` 与 action ledger 的完整 ADT、状态机和恢复不变量由 P3 `08`
+冻结。它们是 durable runtime records，不是 Aggregate、Domain Event 或模型输出
+wire contract。特别地，v1.18 的 process-local `AgentAction` 仍不得持久化；恢复通过
+固定 Provider 结果 + pinned decoder 重建 typed invocation，并用 stored hash/ledger
+校验。
 
 ---
 
@@ -1751,6 +1842,10 @@ CommandResolution
 - terminal rejection 不产生 Domain Event，因为 Domain truth 未变化；
 - transport / transient persistence failure 不产生 authoritative Resolution；调用方使用同一 CommandId 重试，可产生新的 attempt；
 - `FencingRejected` 对该 Execution-originated logical Command 是 terminal；旧 Worker 不得普通 retry；
+- 对 Agent action/settlement，`FencingRejected` 只终止该 `CommandId`。P1 `07`
+  冻结更外层身份：`LogicalActionId` / `LogicalSettlementId` 保持稳定，而新租约
+  generation 在读取 ledger/receipt 并确认仍 eligible 后创建**新的** deterministic
+  `CommandId`。这不是 same-Command retry，也不改变 terminal receipt；
 - 同一 CommandId 一旦进入 Committed 或 TerminalRejected，后续同 payload retry 直接返回已存在 Receipt；
 - Command 不按 CRUD setter 设计，而按领域意图设计。
 
@@ -1783,6 +1878,7 @@ ResourceBoundary.basisResponsibilityRevision == Workspace.responsibilityRevision
 ```text
 CreateProject
 UpdateProjectPolicy
+RenameProject
 CloseProject
 ```
 
@@ -2474,6 +2570,8 @@ WorkspaceRepository
 WorkRepository
 ExecutionRepository
 SessionRepository
+AgentLoopStepStore
+ProviderTurnStore
 VerificationRepository
 DependencyRepository
 DeliverableRepository
@@ -3249,6 +3347,12 @@ canonical wire value、Domain Event、Application Command DTO，也不得整体
 持久化。Action variants/payload 与各 control tool codec 的逐项定义属于后续
 phase-scoped contract；本裁决不冻结工具清单或暴露集合。
 
+v1.20 的 `AgentLoopStepActionRecord` 不违反上述边界：它只保存 stable call/logical
+identity、route/action kind、input/output hash、disposition 与 result refs。恢复先从
+持久 Provider result 以 pinned decoder 重建 invocation，再与 ledger 校验；不得把
+`AgentAction` 对象或模型自报的 trusted context 序列化进记录。完整交接状态机见
+P3 `08`。
+
 `decodeTurn` 只负责 `CanonicalProviderEvent` → `ModelOutput` / typed
 `ToolInvocation`，包括 provider-neutral tool-call reconstruction、correlation
 保留及 malformed/incomplete framing rejection。它不解释 control semantics、
@@ -3703,6 +3807,13 @@ ContextUpdate
 
 streaming delta 不直接进入 Session history。
 
+v1.20 起，runtime-produced entry 可携带 `source_kind`、`source_ref` 与
+`content_hash`。`ModelOutput` 使用 `ProviderTurn` source；同一
+`(session_id, entry_kind, source_kind, source_ref)` 至多一条。重复相同 hash 返回
+既有 sequence，不同 hash 是 invariant conflict。Worker-originated append 与
+AgentLoopStep 状态推进在同一事务中验证完整 lease-holder triple（P2 `02`/`04`，P3
+`08` §6）。
+
 ## 9.9 Commands / Events
 
 `commands` 保存 logical request 的 authoritative resolution，而不是只保存成功 mutation：
@@ -3794,11 +3905,51 @@ settled_at
 outcome
 provider_error_kind nullable
 transport_metadata_json
+canonical_event_prefix_json       # current P16 baseline
+success_evidence_version nullable  # v1.20 migration 0017
 
 PRIMARY KEY(provider_turn_id, attempt_no)
 ```
 
 同一 Turn 的 retry 不产生新的 ModelContextManifest，不增加 Agent `turnNo`。只有新的语义模型决策才创建新的 ProviderTurn。
+
+成功路径必须以一个语义 store 操作原子提交 `ProviderAttempt Success` 与
+`ProviderTurn settled`。恢复发现完整成功证据时先本地收敛，禁止再次请求同一
+Turn；仅无完整成功证据的 unsettled Turn 才进入 P9 safe retry。完整性校验按
+`success_evidence_version` 选择版本化规则；legacy null 只能经受治理的 legacy
+validator 采纳，不能自动视为成功。
+
+## 9.11A AgentLoopStep / AgentLoopStepAction
+
+Migration `0017_agent_loop_step_handoff` adds:
+
+```text
+agent_loop_steps
+  PK(execution_id, logical_step_no, repair_attempt)
+  UNIQUE(provider_turn_id)
+  predecessor identity, manifest_id?, state, decoder_version?,
+  provider_failure_json?, repair_disposition_json?, successor_json?,
+  decoded_output_hash?, model_output_session_sequence?, next_action_index,
+  settlement_json?, migration_provenance_json?, revision, updated_at
+
+agent_loop_step_actions
+  FK AgentLoopStep identity + action_index
+  UNIQUE(logical_action_id)
+  call_ref, route_kind, action_kind, input_hash, state,
+  result_ref?, settlement_ref?, disposition_json?, observation_source_ref?,
+  revision, updated_at
+
+session_entries (additive)
+  source_kind?, source_ref?, content_hash?
+  UNIQUE(session_id, entry_kind, source_kind, source_ref)
+    WHERE source_kind IS NOT NULL
+```
+
+Exact DDL/check constraints and forward-only legacy adoption are frozen in P2
+`04`, P3 `08`, and P9 `07`. Every AgentLoopStep/action transition is a short
+`BEGIN IMMEDIATE` transaction with authoritative fence validation, or converges
+through an already committed stable idempotent result. No AgentLoopStep row enters
+the Domain Event journal solely because runtime progress advanced.
 
 ## 9.12 Tool side-effect metadata
 
@@ -3867,8 +4018,8 @@ v1.14 (G8): `verification-runtime` **不是**独立物理包——Verification �
 | `ports` | 系统需要哪些外部能力 |
 | `application` | 哪个 Command 如何提交 |
 | `model-context` | 模型在当前 Turn 如何理解世界 |
-| `agent-runtime` | 执行 Model→Action→Observation loop；拥有 ControlToolRegistry、internal AgentAction 与 shared control policy |
-| `execution-runtime` | 谁何时运行、Lease/Fencing/Recovery |
+| `agent-runtime` | 执行 Model→Action→Observation loop；拥有 ControlToolRegistry、internal AgentAction、durable AgentLoopStep orchestration 与 shared control policy |
+| `execution-runtime` | 谁何时运行、Lease/Fencing/Recovery；消费持久 settlement proposal |
 | Verification (无独立包; v1.14 G8) | 组织独立 Agentic Verification（由 `domain` / `application` + generic `ExecutionBound` runtime 实现） |
 | `provider-runtime` | 可靠调用模型与协议适配 |
 | `tool-runtime` | 实现 Tool invocation authorization/sandbox/settlement；Tool catalog contract 位于 `ports` |
@@ -3935,6 +4086,12 @@ package. The app Composition Root joins the registry's data-only control-tool
 definition projection with executable definitions and supplies both to Model
 Context. Thus `model-context !-> agent-runtime` and
 `model-context !-> tool-runtime` remain hard boundaries.
+
+DID v1.20 also adds no package or dependency edge. `AgentLoopStepStore` and the
+extended Provider/Session stores are `ports` contracts implemented by the
+existing persistence adapter; orchestration remains in `agent-runtime`, while
+`execution-runtime` consumes the persisted proposal through existing allowed
+edges.
 
 额外硬规则：
 
@@ -4109,6 +4266,9 @@ P3 通过 P2 的 `ExecutionDriverPort` 提供真实 Agent loop，并只上报 tu
 observations；execution-wide Runtime Safety / control gating 由 P2 执行。
 P3 Output Contract remains available for independent bounded structured-output
 protocols; it no longer defines a universal control-action output union.
+P3 `08` additionally freezes the durable AgentLoopStep handoff: Provider success
+replay, pinned decode, idempotent Session acceptance, action ledger,
+unresolved-side-effect gate, successor and settlement proposal.
 
 ## P4 — Tool Runtime
 
@@ -4244,11 +4404,16 @@ old worker resurrection
 dispatch failure
 consumer crash
 projection rebuild
+settled Provider result / AgentLoopStep handoff crash windows
+legacy AgentLoopStep adoption
 ```
 
 Systematic fault injection and hardening belong to P9; **P2 owns the recovery
 mechanism** and P5 owns only the representative restart-continuity acceptance
 proof against the same durable state (DID v1.9 G5).
+P9 `07` owns the v1.20 state-disposition matrix, AH1–AH14 crash injection and
+evidence-gated legacy adoption. Complete Provider success always converges
+locally before transport retry eligibility.
 
 ## P10 — Projection / UI
 
@@ -4591,7 +4756,8 @@ normalizedRegion
 
 | Capability | Command / mutation path | Durable Event | State / Repository | Owning implementation boundary | Critical invariant |
 |---|---|---|---|---|---|
-| Project lifecycle | CreateProject / CloseProject | ProjectCreated / ProjectClosed | ProjectRepository | application | one root; closed blocks new autonomous admission |
+| Project lifecycle / name | CreateProject / RenameProject / CloseProject | ProjectCreated / ProjectRenamed / ProjectClosed | ProjectRepository | application | one root; CAS; Closed blocks new autonomous admission; P15 |
+| Project directory | — (principal-scoped read) | — | ProjectDirectory resolver/snapshot store | read boundary (P15) | opaque non-bearer continuation; revoke fails closed; no invisible-project disclosure |
 | Child Workspace | CreateChildWorkspace | WorkspaceCreated | WorkspaceRepository | application | same Project; parent immutable |
 | Responsibility | ChangeResponsibility | ResponsibilityChanged | WorkspaceRepository | application | authority + revision |
 | Resource boundary / ownership | UpdateResourceBoundary | ResourceBoundaryChanged / ResourceOwnershipChanged | Workspace + ResourceOwnershipRepository | application | canonical write regions do not overlap |
@@ -4640,7 +4806,8 @@ Package-level ownership由 §10.4.1 的 allowed-edge matrix 强制。
 |---|---|---|---|---|
 | absent | CreateProject | valid root/bootstrap transaction | Open | creates Project + Root Workspace + Primary Session atomically |
 | Open | UpdateProjectPolicy | authority + expected revision | Open | revision++, projectPolicyRevision++ |
-| Open | CloseProject | authority | Closed | `ProjectClosed` |
+| Open | RenameProject | authority + expected revision + ProjectNamePolicy | Open | revision++; `ProjectRenamed`; policy revision unchanged |
+| Open | CloseProject | authority + expected revision + confirmation | Closed | `ProjectClosed`; P15 lifecycle gate rejects new activity and cooperatively quiesces existing executions |
 | Closed | lifecycle mutation | — | **illegal** | Closed lifecycle terminal |
 
 `Closed` 后不 admission 新 autonomous Execution；read/recovery/audit 仍允许。
@@ -4829,6 +4996,7 @@ v1.3 已关闭 P0 前必须通过推理确定的 C1–C10 与 X1–X11 cross-cut
 | Runtime Safety Envelope 六维补全（§8.16A cross-phase closure） | **P12 PHASE CONTRACT** | `docs/design/implementation/P12/**` |
 | P13 Product Web Client（client boundary/role；Command → UI exposure policy matrix；view rendering + Problem 呈现；TR-WPU-A design token system；transport/build binding；acceptance） | **P13 PHASE CONTRACT** | `docs/design/implementation/P13/**` |
 | P14 Chat-First 对话面（SubmitHumanMessage 命令/事件/persistence；conversation trigger + Coordination admission + one-active-main 排队 + exact-once；transcript read model 升级；TR-WPU-D Root Workbench/root-only web placement；acceptance 十 seams） | **P14 PHASE CONTRACT** | `docs/design/implementation/P14/**` |
+| Durable AgentLoopStep handoff（Provider success replay、idempotent Session/action progression、generation-scoped Command identity、settlement recovery、legacy adoption、AH1–AH14） | **IMPLEMENTATION AUTHORIZED (v1.21 ALS-I1)** | `P1 07`, `P2 02/04/06`, `P3 08`, `P9 07`, `P12 08`, `P14 02/05` |
 
 P1 phase-scoped implementation contracts are owned by:
 
@@ -5111,6 +5279,8 @@ Long-lived Agent != long-running process.
 | Event | `evt_` |
 | Provider Turn | `ptn_` |
 | Tool Invocation | `tin_` |
+| Logical Action | `lac_` |
+| Logical Settlement | `lst_` |
 | Worker | `wkr_` |
 | Worker Incarnation | `wic_` |
 | Plugin | `plg_` |
@@ -5146,6 +5316,7 @@ ModelContext
 AgentRuntime
 ├── ModelContext
 ├── ProviderPort
+├── AgentLoopStepStore
 ├── ControlToolRegistry
 ├── ToolRuntimePort (executable route only)
 ├── SessionRepository
@@ -5183,7 +5354,7 @@ Composition Root
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
 System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.19     TOP-LEVEL FROZEN
+Detailed Implementation Design v1.21     TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED
@@ -5192,6 +5363,10 @@ Agent control representation              FROZEN — internal AgentAction bounda
 Agent control implementation authorization AUTHORIZED (v1.19 ACR-6; field-source gaps gate only their consumers per ACR-8)
 S01 qualification authorization            AUTHORIZED (v1.19 ACR-7 — Control/Executable Route Qualification)
 Wave 2 implementation authorization         AUTHORIZED (v1.19 ACR-6; scope = 51 module map, 52 DAG order)
+Durable AgentLoopStep handoff design          FROZEN (v1.20 AHT-1…AHT-8; v1.21 name)
+Durable AgentLoopStep implementation          AUTHORIZED (v1.21 ALS-I1)
+DOGFOOD-DG-01 design question             RESOLVED by v1.20 AHT-1…AHT-8
+AgentLoopStep recovery implementation gate    OPEN — requires authorization + AH1–AH14 + equivalent fixture
 P0 Technical Baseline                     FROZEN (versioned baseline)
 P0 coding authorization                   AUTHORIZED
 P1 coding authorization                   AFTER P1 exact contracts / DDL closure

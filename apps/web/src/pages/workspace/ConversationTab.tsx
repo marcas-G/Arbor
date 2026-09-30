@@ -1,45 +1,31 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useRef } from "react";
+import { useRef } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { Virtuoso } from "react-virtuoso";
 import { useViewQuery } from "../../api/useViewQuery.js";
 import { SubmitHumanMessageForm } from "../../commands/forms/SubmitHumanMessageForm.js";
 import { Empty } from "../../components/Empty.js";
-import type { ConversationMessage } from "../../conversation/store.js";
-import { useConversation } from "../../conversation/useConversation.js";
+import {
+  type ConversationMessage,
+  useConversation,
+} from "../../conversation/useConversation.js";
+import { ProblemCard } from "../../problems/ProblemCard.js";
+import { useSession } from "../../session/SessionContext.js";
 import { presentResponsibilityTree } from "../tree/treePresentation.js";
 import styles from "./workspace.module.css";
 
-/**
- * Conversation face (frontend rework 2026-09-29): one message-level store
- * (streaming preview and authoritative answer are phases of the SAME
- * record — atomic swap, no blank gap) + a virtualized list with native
- * follow/anchor behavior (no manual scroll math, no reflow jumps).
- */
+/** The browser displays one server-authoritative conversation timeline. */
 function MessageRow({ message }: { readonly message: ConversationMessage }) {
-  const pending = message.phase === "optimistic";
-  const live = message.phase === "streaming" || message.phase === "settling";
-  const body =
-    message.text !== ""
-      ? message.text
-      : (message.statusNote ??
-        (message.phase === "streaming"
-          ? "正在生成…"
-          : message.phase === "settling"
-            ? "正在保存回复…"
-            : ""));
   return (
     <div
       className={`arbor-conversation-turn arbor-conversation-${
         message.role === "human" ? "human" : "assistant"
       }`}
-      data-phase={message.phase}
-      style={pending ? { opacity: 0.72 } : undefined}
+      data-phase="authoritative"
     >
       <span className="arbor-conversation-author">
         {message.role === "human" ? "你" : "Arbor"}
       </span>
-      <span className="arbor-conversation-body">{body}</span>
+      <span className="arbor-conversation-body">{message.body}</span>
     </div>
   );
 }
@@ -51,7 +37,7 @@ export function ConversationTab({
   readonly projectId: string;
   readonly workspaceId: string;
 }) {
-  const queryClient = useQueryClient();
+  const { actor, token } = useSession();
   const tree = useViewQuery("responsibility-tree", {
     projectId: projectId as never,
   });
@@ -60,58 +46,15 @@ export function ConversationTab({
       ? undefined
       : presentResponsibilityTree(tree.data.nodes);
   const isRoot = presented?.root.workspaceId === workspaceId;
-
-  const invalidateViews = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["view", "transcript"] });
-  }, [queryClient]);
-
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const pinnedWorkspaceRef = useRef<string | null>(null);
-  const conversation = useConversation(
-    "local",
-    ["view", "transcript", workspaceId],
-    async (cursor) => {
-      const res = await fetch("/views/transcript", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          workspaceId,
-          limit: 50,
-          conversationOnly: true,
-          ...(cursor !== undefined ? { cursor } : {}),
-        }),
-      });
-      const json = (await res.json()) as {
-        readonly ok: boolean;
-        readonly body?:
-          | {
-              readonly value?: {
-                readonly entries?: unknown[];
-                readonly nextCursor?: string;
-              };
-            }
-          | { readonly entries?: unknown[]; readonly nextCursor?: string };
-      };
-      const value = (json.body as { readonly value?: unknown } | undefined)
-        ?.value;
-      const page =
-        value !== undefined && value !== null
-          ? (value as { entries?: unknown[]; nextCursor?: string })
-          : (json.body as
-              | { entries?: unknown[]; nextCursor?: string }
-              | undefined);
-      return {
-        entries: (page?.entries ?? []) as Array<{
-          kind: string;
-          messageId?: string;
-          body?: string;
-          occurredAt?: string;
-        }>,
-        nextCursor: page?.nextCursor,
-      };
-    },
-    isRoot,
-    invalidateViews,
+  const conversation = useConversation(workspaceId);
+  const answeredMessageIds = new Set(
+    conversation.messages.flatMap((message) =>
+      message.role === "assistant" && message.messageId !== undefined
+        ? [message.messageId]
+        : [],
+    ),
   );
 
   return (
@@ -123,7 +66,10 @@ export function ConversationTab({
         <Empty>加载中</Empty>
       ) : conversation.historyError !== null &&
         conversation.messages.length === 0 ? (
-        <Empty>会话记录暂不可用</Empty>
+        <ProblemCard
+          problem={conversation.historyError as never}
+          onRetry={conversation.retryHistory}
+        />
       ) : conversation.messages.length === 0 ? (
         <Empty>无会话记录</Empty>
       ) : (
@@ -140,7 +86,7 @@ export function ConversationTab({
             0,
             conversation.messages.length - 1,
           )}
-          followOutput={"smooth"}
+          followOutput="smooth"
           increaseViewportBy={{ top: 600, bottom: 600 }}
           startReached={() => {
             conversation.loadOlder?.();
@@ -151,15 +97,22 @@ export function ConversationTab({
                 <p className={styles.historyLoading}>正在加载更早的消息…</p>
               ) : null,
           }}
-          itemContent={(_, message) => <MessageRow message={message} />}
+          itemContent={(_, message) => (
+            <>
+              <MessageRow message={message} />
+              {message.role === "human" &&
+              message.messageId !== undefined &&
+              !answeredMessageIds.has(message.messageId) ? (
+                <p className={styles.conversationStatus} role="status">
+                  <strong>正在处理</strong>
+                  <span>已提交。刷新页面或服务重启后会自动继续。</span>
+                </p>
+              ) : null}
+            </>
+          )}
         />
       )}
       {(() => {
-        // Initial data lands asynchronously; initialTopMostItemIndex alone
-        // only covers the empty first frame. Jump ONCE per workspace when
-        // history arrives so the newest turn is visible; followOutput owns
-        // every later append (it never drags the user back down while they
-        // scroll up).
         if (
           conversation.messages.length > 0 &&
           pinnedWorkspaceRef.current !== workspaceId
@@ -178,13 +131,10 @@ export function ConversationTab({
       {isRoot ? (
         <div className={styles.composer}>
           <SubmitHumanMessageForm
-            actor="user:local"
-            token={undefined}
+            actor={actor ?? ""}
+            token={token ?? undefined}
             projectId={projectId}
             targetWorkspaceId={workspaceId}
-            onMessageSubmitted={(messageId, body) => {
-              conversation.submit(messageId, body.trim());
-            }}
           />
         </div>
       ) : null}

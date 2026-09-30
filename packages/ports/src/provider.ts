@@ -407,6 +407,31 @@ export interface ProviderAttemptSettlement {
   readonly retryDecision?: ProviderRetryDecisionRecord;
 }
 
+export type SettledProviderTurnResult =
+  | { readonly _tag: "NotFound" }
+  | { readonly _tag: "Unsettled"; readonly turn: ProviderTurnRecord }
+  | {
+      readonly _tag: "SettledSuccess";
+      readonly turn: ProviderTurnRecord;
+      readonly manifestId: string;
+      readonly manifestJson: string;
+      readonly canonicalEvents: ReadonlyArray<CanonicalProviderEvent>;
+      readonly attemptNo: number;
+      readonly finishReason: string;
+      readonly usageJson: string;
+      readonly evidenceVersion: string;
+    }
+  | {
+      readonly _tag: "SettledFailure";
+      readonly turn: ProviderTurnRecord;
+      readonly finishReason: string;
+    }
+  | {
+      readonly _tag: "SettledEvidenceInvalid";
+      readonly turn: ProviderTurnRecord;
+      readonly reason: string;
+    };
+
 export interface UnsettledProviderTurn {
   readonly turn: ProviderTurnRecord;
   readonly attempts: ReadonlyArray<ProviderAttemptSummary>;
@@ -456,6 +481,28 @@ export interface ProviderTurnStoreService {
     attemptNo: number,
     settlement: ProviderAttemptSettlement,
     settledAt: string,
+  ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
+  readonly settleSuccessAtomically: (
+    providerTurnId: ProviderTurnId,
+    attemptNo: number,
+    settlement: ProviderAttemptSettlement & { readonly outcome: "Success" },
+    finishReason: string,
+    usageJson: string,
+    settledAt: string,
+    evidenceVersion: "provider-success-v1",
+  ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
+  readonly findSettledResult: (
+    providerTurnId: ProviderTurnId,
+  ) => Effect.Effect<
+    SettledProviderTurnResult,
+    ProviderFailure,
+    TransactionScope
+  >;
+  readonly adoptSettledSuccessEvidence: (
+    providerTurnId: ProviderTurnId,
+    attemptNo: number,
+    fromVersion: "legacy-success-v1",
+    toVersion: "provider-success-v1",
   ) => Effect.Effect<void, ProviderFailure, TransactionScope>;
   readonly startTurn: (
     record: ProviderTurnRecord,

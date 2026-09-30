@@ -8,6 +8,13 @@ export type ProjectRepositoryError = RepositoryFailure<"ProjectRepository">;
 export type WorkspaceRepositoryError = RepositoryFailure<"WorkspaceRepository">;
 export type WorkRepositoryError = RepositoryFailure<"WorkRepository">;
 export type SessionRepositoryError = RepositoryFailure<"SessionRepository">;
+export interface SessionSourceConflict {
+  readonly _tag: "SessionSourceConflict";
+  readonly sessionId: string;
+  readonly entryKind: string;
+  readonly sourceKind: string;
+  readonly sourceRef: string;
+}
 export type ResourceOwnershipRepositoryError =
   RepositoryFailure<"ResourceOwnershipRepository">;
 export type CommandStoreError = RepositoryFailure<"CommandStore">;

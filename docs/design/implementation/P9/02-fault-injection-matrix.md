@@ -155,7 +155,7 @@ The §6A.8 six-class model is unchanged (GQ4 option a).
 | PD1 | connection-phase failure | `ProviderUnavailable` → retryable under safe-retry policy (P3 `06` §2); retries are new `ProviderAttempt`s under the **same** ProviderTurn; `turnNo` unchanged (DID §6A.9) | crash-injected |
 | PD2 | mid-stream interruption | `StreamInterrupted` → retryable; cancelled attempt ends; next attempt same Turn, `turnNo` unchanged; attempt history append-only | crash-injected |
 | PD3 | terminal classes (AuthenticationFailed / RequestRejected / ProtocolViolation) | no transport retry (P3 `06` §2); Attention where required; terminal Turn failure does **not** itself settle Execution `Failed` — driver decides bounded retry/repair vs settle after exhaustion | crash-injected |
-| PD4 | daemon crash leaves ProviderTurn unsettled | recovery resumes the **same Turn** with a new Attempt (`turnNo` invariant); transport retry is never recorded as an extra model round (DID §6A.9); retry boundary and exhaustion path per P3 `06` §2 | crash-injected |
+| PD4 | daemon crash leaves ProviderTurn unsettled | first validate complete success evidence: present → local atomic Attempt/Turn settlement, zero request; absent → recovery resumes the **same Turn** with a new Attempt (`turnNo` invariant); retry boundary/exhaustion per P3 `06`; DID v1.20 / P9 `07` | crash-injected |
 
 Note: retry counts / backoff are empirical (P3 `06` §3 discipline); the
 Turn/Attempt identity invariants above are contract. Detailed disposition
@@ -247,6 +247,9 @@ evidence protocol (per daemon restart / suite run):
   are reported truthfully (P2 `06` §7).
 
 ## 13. Must Not Decide
+
+The full DID v1.20 AgentLoopStep handoff matrix AH1–AH14 is owned by `07`; it is
+additive to this historical ten-face matrix and authorized by DID v1.21 ALS-I1.
 
 - No recovery mechanism / settlement-rule changes (P2 `06` owns; P9 injects
   and asserts only).

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Principal, parse } from "@arbor/domain";
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -37,8 +37,9 @@ let dir: string;
 let dist: string;
 let runConsumers: (() => Promise<void>) | undefined;
 let startupError: unknown;
+let programFiber: ReturnType<typeof Effect.runFork> | undefined;
 
-const shutdown: Array<() => void> = [];
+const shutdown: Array<() => Promise<void>> = [];
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "arbor-p13-e2e-"));
@@ -83,9 +84,7 @@ beforeAll(async () => {
             pollIntervalMs: 60_000,
           }),
         );
-        shutdown.push(() => {
-          void handle.close();
-        });
+        shutdown.push(() => handle.close());
         // hold the scope open for the whole suite (layers close at process end)
         yield* Effect.promise(() => new Promise<never>(() => undefined));
       }),
@@ -96,9 +95,7 @@ beforeAll(async () => {
       }),
     ),
   );
-  void Effect.runPromise(program).catch((error) => {
-    startupError = error;
-  });
+  programFiber = Effect.runFork(program);
   for (
     let i = 0;
     i < 200 && handle === undefined && startupError === undefined;
@@ -115,11 +112,14 @@ beforeAll(async () => {
   expect(handle).toBeDefined();
 }, 30_000);
 
-afterAll(() => {
+afterAll(async () => {
   for (const stop of shutdown.reverse()) {
-    stop();
+    await stop();
   }
-  rmSync(dir, { recursive: true, force: true });
+  if (programFiber !== undefined) {
+    await Effect.runPromise(Fiber.interrupt(programFiber));
+  }
+  rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
 
 const base = () => `http://127.0.0.1:${handle.port}`;

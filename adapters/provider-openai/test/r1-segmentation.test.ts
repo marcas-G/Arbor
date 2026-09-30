@@ -34,7 +34,9 @@ const rawArgumentsOf = (): ReadonlyArray<{ index: number; args: string }> => {
   const perCall = new Map<number, string>();
   for (const line of RAW.split("\n")) {
     if (!line.startsWith("data:")) continue;
-    const payload = line.slice(5).trimStart();
+    // Captures can be checked out with CRLF; the SSE payload itself is
+    // line-ending agnostic, so remove the record terminator before parsing.
+    const payload = line.slice(5).trim();
     if (payload === "[DONE]") continue;
     const frame = JSON.parse(payload) as {
       choices?: Array<{

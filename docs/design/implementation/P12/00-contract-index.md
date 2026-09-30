@@ -70,7 +70,7 @@ P12 implementation COMPLETE; P12 FORMALLY CLOSED
 | `05-storage-scale-durability.md` | `StorageScaleAssessment`; SQLite default; DurabilityEnvelope/backup/RPO-RTO/drill |
 | `06-remote-worker.md` | Remote Worker transport, identity, single-writer mediation |
 | `07-toolcatalog-model-facing.md` | `ToolCatalogPort` model-facing resolution (inherited correction) |
-| `08-runtime-safety-completion.md` | §8.16A six dimensions with the eight evidence facets |
+| `08-runtime-safety-completion.md` | §8.16A six dimensions with the eight evidence facets + DID v1.20 AgentLoopStep fenced-transition/schedulability successor |
 | `09-region-encoding-convergence.md` | Region encoding correctness (P11 C2) |
 | `10-transport-shells.md` | HTTP/WS/CLI/web shell/auth/deployment transport |
 | `12-providers-tools.md` | more providers/tools: additional `ProviderPort` / `CanonicalProviderEvent` adapters + tool additions |
@@ -119,6 +119,15 @@ Revisions P12 explicitly owns against frozen P0–P11 contracts or the frozen DI
 | TR-9 | lease-triple port evolution: `LeaseRecord` + `ExecutionRepository.{tryAcquireLease,renewLease,releaseLease}` + `LeaseService` + `SessionRepository.appendEntry` fence + `FenceStopCheck` gain `worker_incarnation_id` | P2 `02` §3/§6, `03` §2, `04` §3.2 | `06` |
 | TR-10 | optional `RuntimeSafetyObservation` channel widening the frozen P2 `RuntimeSafetyGate.admitActivity` (additive third argument) | P2 `02` §5 | `08` |
 | TR-11 | `ToolCatalogPortService.definitions()` → `visibleRefs()` + `resolveForModel()` (model-facing resolution; P12 completion blocker #2) | P3 `01` §1/§2; P4 `01` §1 | `07` |
+
+### DID v1.20 successor (not a historical P12 reopen)
+
+`08` additionally records the AgentLoopStep write/scheduling obligations adopted by
+DID v1.20: every durable handoff transition validates the full lease-holder
+triple; long immediately-ready loops yield so TTL/3 renewal can commit; durable
+AgentLoopStep monotone progression counts as D4 progress evidence. This is a
+cross-phase successor contract, not implementation authorization and not a
+reopening of P12's historical completion.
 
 **Propagation status (B-2 reconciliation).** TR-1/2/5/6/8/9/10/11 are propagated
 back to their owning frozen contracts as documentation reconciliation (no
@@ -183,3 +192,6 @@ CI-7  region encoding at every producer matches the frozen object encoding; narr
 **FROZEN.** Four independent four-way review rounds complete; **Blocking = 0**.
 P12 planning is COMPLETE (`planning/phases/P12.md` + 13 task contracts; planning
 review Blocking = 0). P12 implementation COMPLETE; P12 FORMALLY CLOSED.
+
+DID v1.20 AgentLoopStep successor design is FROZEN / implementation AUTHORIZED
+by DID v1.21 ALS-I1.

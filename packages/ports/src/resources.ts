@@ -11,9 +11,17 @@ const keyOf = (value: unknown): string | null => {
   return typeof candidate === "string" ? candidate : null;
 };
 
+// Filesystem regions originate from native path APIs. Compare their segment
+// form rather than the host separator so a canonical region works on every
+// checkout platform.
+const normalizedPathKey = (key: string): string =>
+  key.replaceAll("\\", "/").replace(/\/+$/, "");
+
 const containsRegion = (a: unknown, b: unknown): boolean => {
-  const keyA = keyOf(a);
-  const keyB = keyOf(b);
+  const rawKeyA = keyOf(a);
+  const rawKeyB = keyOf(b);
+  const keyA = rawKeyA === null ? null : normalizedPathKey(rawKeyA);
+  const keyB = rawKeyB === null ? null : normalizedPathKey(rawKeyB);
   if (keyA === null || keyB === null) {
     return false;
   }

@@ -45,19 +45,36 @@ after N exhausted:
   Interrupted(RuntimeSafetyStop) if the failure is a safety/looping signal
 ```
 
+DID v1.20 makes the decision durable:
+
+```text
+invalid output → OutputRejected(
+  Retry(complete stable successor identity)
+  | Exhausted(full settlement proposal)
+)
+```
+
+Recovery never re-runs this decision or consumes the repair budget again;
+`ensureSuccessor` creates/finds the single recorded successor (P3 `08` §8).
+
 - `N` and backoff are empirical; the mechanism and the settle-after-exhaustion
   rule are contract.
 - Repair never mutates canonical Domain truth outside `CommandGateway`.
 
 ## 4. `DecisionStale` / freshness
 
-- Every effectful `AgentDirective` carries `decisionBasisManifestId` (DID §8.19).
+- Every effectful invocation is bound by trusted Runtime context to the pinned
+  Manifest/ControlBasis; it is not a model-authored AgentAction field (DID
+  v1.18 ACR-3/ACR-4; P3 `08`).
 - Tool/Command admission declares a `FreshnessRequirement` per action type.
 - If a relevant Work/Responsibility/Boundary/Policy/Authorization/Environment
   revision changed since the Manifest, admission returns `DecisionStale`; the
   action is **not** executed and the AgentRuntime must re-`prepareTurn`.
 - Read-only actions may use weaker freshness; write/destructive actions must
   validate their relevant control basis.
+- If staleness is discovered after earlier actions committed, their results and
+  Observations remain. Remaining actions become `SkippedStale`, and one
+  `NextStepReady` successor is persisted; completed actions are not replayed.
 
 ## 5. `ContextUnsatisfiable`
 
@@ -78,8 +95,9 @@ prepareTurn -> E.ContextUnsatisfiable
   unresolvable same-level canonical instruction conflict (DID §8.7, §6A.10).
 - The AgentRuntime emits Attention / a governance request; it does not
   improvise a resolution and does not mutate governance state.
-- `RequestGovernance` directives are routed through the Application command
-  pipeline, not applied by the runtime.
+- A decoded governance control invocation is validated by
+  `ControlToolRegistry`, becomes a process-local AgentAction, and routes through
+  the Application command pipeline; the runtime never applies it directly.
 
 ## 7. Must Not Decide
 

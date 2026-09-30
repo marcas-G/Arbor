@@ -1,6 +1,6 @@
 # P12 — 08 Runtime Safety Envelope Completion (G7)
 
-**Authority:** DID v1.14 G7, §8.16A, §3.4 (quiescence), §6.2; SD v1.3 §7.7, §14 No.54/58; P2 `02` §5, P9 `03` §4.
+**Authority:** DID v1.20（继承 v1.14 G7，并含 AHT-1/AHT-5）；§8.16A, §3.4；SD v1.3 §7.7, §14 No.54/58；P2 `02` §5/§3A, P3 `08`, P9 `03`/`07`。
 **Status:** DRAFT.
 
 ## 1. Six dimensions (frozen, DID §8.16A)
@@ -70,7 +70,9 @@ D4's "durable progress" is defined concretely as:
 ```text
 durable progress := a committed canonical mutation (any CommandGateway-
 committed state change) OR a ToolInvocation settlement recorded in the
-journal, observed at a turn boundary since the previous turn boundary.
+journal OR a monotone fenced AgentLoopStep transition / idempotent sourced Session
+or Observation commit, observed at a turn boundary since the previous turn
+boundary.
 ```
 
 - The turn boundary is the point at which the driver reports the next
@@ -88,6 +90,9 @@ journal, observed at a turn boundary since the previous turn boundary.
   `Interrupted(RuntimeSafetyStop)`, Work remains Open (§4).
 - The progress **evidence** is durable (canonical/journal), but the D4
   **counter** is in-process per §3 (RG-11).
+- AgentLoopStep progress is runtime durable evidence, not a Domain Event and not a
+  substitute for canonical progress. It prevents recovery/hand-off work from
+  being misclassified as an in-memory no-progress loop.
 
 ## 6. Policy injection surface (E-03)
 
@@ -196,6 +201,25 @@ readonly admitActivity: (
 - This is filed like `06` §3's lease-incarnation evolution: the P2 port shape
   changes, the ownership/semantics do not.
 
+## 7B. AgentLoopStep write and scheduling obligations (DID v1.20)
+
+- Every AgentLoopStep/action/Session handoff mutation is a short transaction that
+  validates `(workerId, workerIncarnationId, generation)` and lease expiry with
+  the write. A pre-write renewal is optional optimization only.
+- Provider event consumption, decode, action reconstruction and reconciliation
+  loops must remain cooperatively schedulable. A loop of immediately resolved
+  effects may not monopolize the runtime past the lease TTL; it yields often
+  enough for the TTL/3 renewal fiber to commit.
+- Lease loss stops the current writer. It does not convert a settled Provider
+  success to failure and does not authorize another request; P9 `07` resumes
+  from the durable AgentLoopStep.
+- `ReconciliationPending` is checked before safety-stop settlement. A runtime
+  safety Stop cannot downgrade unknown side effects to ordinary Interrupted;
+  the P3/P4/P9 reconciliation/OutcomeUnknown rule wins.
+- Mechanical evidence includes a dense immediately-ready Provider stream whose
+  wall time exceeds one renewal interval and asserts at least one durable
+  renewal before result handoff.
+
 ## 8. Invariants
 
 ```text
@@ -204,6 +228,8 @@ safety counters never auto-Cancel Work
 P2 gating ownership unchanged (P3 reports; P2 decides)
 the only P2 gate port change is the declared optional observation argument (§7A)
 gate counters are in-process and reset on restart (RG-11; P9 `03` §4)
+AgentLoopStep transitions are fenced durable progress; AgentAction itself remains process-local
+RuntimeSafety Stop cannot bypass the unresolved-side-effect gate
 ```
 
 ## 9. Must Not Decide

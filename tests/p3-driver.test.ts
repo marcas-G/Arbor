@@ -2,12 +2,14 @@ import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
+  AgentLoopStepStoreLive,
   ClockLive,
   EnvironmentRevisionStoreLive,
   HumanMessageStoreLive,
   IdGeneratorLive,
   layer,
   P16_MIGRATIONS,
+  P17_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   runMigrations,
@@ -39,13 +41,18 @@ import {
   ModelContextLive,
 } from "../packages/model-context/src/index.js";
 import {
+  AgentLoopStepStore,
   type CanonicalProviderEvent,
   ControlToolCatalogPort,
   EnvironmentRevisionStore,
   ExecutionDriverPort,
   ModelCapabilityPort,
   type ModelFacingToolDefinition,
+  type ProviderExecutionPolicyOverrides,
+  type ProviderRunInput,
+  ProviderRuntime,
   type RuntimeSafetyGateService,
+  SessionRepository,
   SkillRegistry,
   ToolCatalogPort,
 } from "../packages/ports/src/index.js";
@@ -110,21 +117,86 @@ const makeApp = (
     readonly controlHandlers?: ReadonlyArray<AgentActionHandler>;
     readonly executableHandler?: ExecutableInvocationHandler;
     readonly toolDefinitions?: ReadonlyArray<ModelFacingToolDefinition>;
+    readonly providerRuntime?: Layer.Layer<ProviderRuntime>;
+    readonly executionPolicyOverrides?: ProviderExecutionPolicyOverrides;
+    readonly failFirstSourcedAppend?: boolean;
+    readonly failFirstOutputAcceptedTransition?: boolean;
   } = {},
 ) => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const provider = FakeProviderLive({ turns });
-  const providerRuntime = Layer.provide(
+  const providerTurnStore = Layer.provide(ProviderTurnStoreLive, infra);
+  const liveAgentLoopSteps = Layer.provide(AgentLoopStepStoreLive, infra);
+  const agentLoopSteps =
+    options.failFirstOutputAcceptedTransition === true
+      ? Layer.provide(
+          Layer.effect(
+            AgentLoopStepStore,
+            Effect.gen(function* () {
+              const delegate = yield* AgentLoopStepStore;
+              let fail = true;
+              return AgentLoopStepStore.of({
+                ...delegate,
+                transition: (input, fence) => {
+                  if (fail && input.next.state === "OutputAccepted") {
+                    fail = false;
+                    return Effect.fail({
+                      _tag: "AgentLoopStepInvariantConflict" as const,
+                      reason: "injected-after-session-write",
+                    });
+                  }
+                  return delegate.transition(input, fence);
+                },
+              });
+            }),
+          ),
+          liveAgentLoopSteps,
+        )
+      : liveAgentLoopSteps;
+  const liveSessions = Layer.provide(SessionRepositoryLive, infra);
+  const sessions =
+    options.failFirstSourcedAppend === true
+      ? Layer.provide(
+          Layer.effect(
+            SessionRepository,
+            Effect.gen(function* () {
+              const delegate = yield* SessionRepository;
+              let fail = true;
+              const rejectOnce = <A, E, R>(
+                fallback: Effect.Effect<A, E, R>,
+              ) => {
+                if (!fail) return fallback;
+                fail = false;
+                return Effect.fail({
+                  _tag: "LeaseFencingRejected" as const,
+                  executionId,
+                  generation: 0 as never,
+                });
+              };
+              return SessionRepository.of({
+                ...delegate,
+                appendEntry: (...args) =>
+                  rejectOnce(delegate.appendEntry(...args)),
+                appendEntryIdempotent: (...args) =>
+                  rejectOnce(delegate.appendEntryIdempotent(...args)),
+              });
+            }),
+          ),
+          liveSessions,
+        )
+      : liveSessions;
+  const defaultProviderRuntime = Layer.provide(
     ProviderRuntimeLive(),
     Layer.mergeAll(
       provider,
-      Layer.provide(ProviderTurnStoreLive, infra),
+      providerTurnStore,
       Layer.provide(TransactionPortLive, infra),
       FixedSecretStoreLive(),
       infra,
     ),
   );
+  const providerRuntime = options.providerRuntime ?? defaultProviderRuntime;
   const definitions = options.toolDefinitions ?? [];
   const tools = Layer.succeed(ToolCatalogPort, {
     visibleRefs: () =>
@@ -173,12 +245,17 @@ const makeApp = (
       ...(options.executableHandler !== undefined
         ? { executableInvocationHandler: options.executableHandler }
         : {}),
+      ...(options.executionPolicyOverrides !== undefined
+        ? { executionPolicyOverrides: options.executionPolicyOverrides }
+        : {}),
     }),
     Layer.mergeAll(
       modelContext,
       providerRuntime,
       capability,
-      Layer.provide(SessionRepositoryLive, infra),
+      sessions,
+      providerTurnStore,
+      agentLoopSteps,
       Layer.provide(ProjectRepositoryLive, infra),
       Layer.provide(WorkspaceRepositoryLive, infra),
       Layer.provide(WorkRepositoryLive, infra),
@@ -265,6 +342,8 @@ const context: CommandSubmissionContext = {
   principal,
   executionId,
   fencingGeneration: 0 as never,
+  workerId: "worker",
+  workerIncarnationId: "",
 };
 const allowGate: RuntimeSafetyGateService = {
   admitActivity: () => Effect.succeed("Continue" as const),
@@ -281,14 +360,17 @@ const run = <A>(
     Effect.provide(program, app) as Effect.Effect<A, any, never>,
   );
 
-const drive = (gate: RuntimeSafetyGateService) =>
+const drive = (
+  gate: RuntimeSafetyGateService,
+  submissionContext: CommandSubmissionContext = context,
+) =>
   Effect.gen(function* () {
     const driver = yield* ExecutionDriverPort;
     return yield* driver.drive({
       execution,
       agentExecutionState: state,
       wakeReason: { _tag: "WorkSelected" },
-      context,
+      context: submissionContext,
       safetyGate: gate,
     });
   });
@@ -358,10 +440,326 @@ const sendMessageTurn = (body: string) => [
 ];
 
 describe("P3-013 agent driver", () => {
+  it("persists a control settlement in the action ledger before returning", async () => {
+    const app = makeApp([sendMessageTurn("settle now")]);
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      const settlement = yield* drive(allowGate);
+      const sql = yield* SqlClient;
+      const actions = yield* sql.unsafe<{
+        state: string;
+        settlement_ref: string | null;
+      }>(
+        "SELECT state, settlement_ref FROM agent_loop_step_actions WHERE execution_id = ? ORDER BY action_index",
+        [executionId],
+      );
+      const steps = yield* sql.unsafe<{ state: string }>(
+        "SELECT state FROM agent_loop_steps WHERE execution_id = ?",
+        [executionId],
+      );
+      return { settlement, actions, stepState: steps[0]?.state };
+    });
+
+    const result = await run(program, app);
+    expect(result.settlement._tag).toBe("Completed");
+    expect(result.actions).toEqual([
+      expect.objectContaining({
+        state: "Applied",
+        settlement_ref: expect.stringMatching(/^settlement_/),
+      }),
+    ]);
+    expect(result.stepState).toBe("SettlementProposed");
+  });
+
+  it("keeps an OutcomeUnknown action pending reconciliation instead of marking it applied", async () => {
+    const app = makeApp([readToolTurn], {
+      toolDefinitions: [
+        {
+          name: "read",
+          description: "Read a file.",
+          schemaJson: JSON.stringify({ type: "object" }),
+          version: "1",
+          hash: "read-v1",
+          capabilityMetadata: [],
+          sideEffectSemantics: "NonIdempotent",
+        },
+      ],
+      executableHandler: {
+        handle: () =>
+          Effect.succeed({
+            _tag: "Settle" as const,
+            settlement: {
+              _tag: "OutcomeUnknown" as const,
+              reconciliation: {
+                _tag: "ReconciliationRequired" as const,
+                invocationRefs: ["tin_unknown"],
+              },
+            },
+          }),
+      },
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      const settlement = yield* drive(allowGate);
+      const sql = yield* SqlClient;
+      const actions = yield* sql.unsafe<{ state: string }>(
+        "SELECT state FROM agent_loop_step_actions WHERE execution_id = ?",
+        [executionId],
+      );
+      const steps = yield* sql.unsafe<{
+        state: string;
+        settlement_json: string | null;
+      }>(
+        "SELECT state, settlement_json FROM agent_loop_steps WHERE execution_id = ?",
+        [executionId],
+      );
+      return { settlement, actions, step: steps[0] };
+    });
+
+    const result = await run(program, app);
+    expect(result.settlement._tag).toBe("OutcomeUnknown");
+    expect(result.actions).toEqual([{ state: "ReconciliationPending" }]);
+    expect(result.step).toEqual(
+      expect.objectContaining({
+        state: "SettlementProposed",
+        settlement_json: expect.stringContaining("OutcomeUnknown"),
+      }),
+    );
+  });
+
+  it("replays a settled Provider result after the first sourced Session handoff is fenced", async () => {
+    const app = makeApp([textTurn], { failFirstSourcedAppend: true });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no, provider_reasoning_json) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,0,NULL)",
+        [
+          "msg_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          projectId,
+          workspaceId,
+          "user:local",
+          "hello",
+          "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          "fp",
+          "Claimed",
+          executionId,
+          "t",
+        ],
+      );
+      const first = yield* Effect.exit(drive(allowGate));
+      const second = yield* drive(allowGate);
+      const attempts = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM provider_attempts",
+      );
+      const outputs = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn' AND entry_kind = 'ModelOutput'",
+      );
+      const steps = yield* sql.unsafe<{ state: string }>(
+        "SELECT state FROM agent_loop_steps WHERE execution_id = ?",
+        [executionId],
+      );
+      return {
+        first,
+        second,
+        attemptCount: Number(attempts[0]?.count ?? 0),
+        outputCount: Number(outputs[0]?.count ?? 0),
+        stepState: steps[0]?.state,
+      };
+    });
+
+    const result = await run(program, app);
+    expect(result.first._tag).toBe("Failure");
+    expect(result.second).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "QueryCompleted" },
+    });
+    expect(result.attemptCount).toBe(1);
+    expect(result.outputCount).toBe(1);
+    expect(result.stepState).toBe("SettlementProposed");
+  });
+
+  it("rolls back the sourced answer when the OutputAccepted step transition is interrupted", async () => {
+    const app = makeApp([textTurn], {
+      failFirstOutputAcceptedTransition: true,
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no, provider_reasoning_json) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,0,NULL)",
+        [
+          "msg_018f2b3c-4d5e-7abc-8def-0123456789a3",
+          projectId,
+          workspaceId,
+          "user:local",
+          "atomic handoff",
+          "cmd_018f2b3c-4d5e-7abc-8def-0123456789a3",
+          "fp-atomic",
+          "Claimed",
+          executionId,
+          "t",
+        ],
+      );
+      const first = yield* Effect.exit(drive(allowGate));
+      const afterFirst = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn'",
+      );
+      const second = yield* drive(allowGate);
+      const afterSecond = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn'",
+      );
+      const attempts = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM provider_attempts",
+      );
+      return {
+        first,
+        afterFirst: Number(afterFirst[0]?.count ?? 0),
+        second,
+        afterSecond: Number(afterSecond[0]?.count ?? 0),
+        attempts: Number(attempts[0]?.count ?? 0),
+      };
+    });
+
+    const result = await run(program, app);
+    expect(result.first._tag).toBe("Failure");
+    expect(result.afterFirst).toBe(0);
+    expect(result.second._tag).toBe("Completed");
+    expect(result.afterSecond).toBe(1);
+    expect(result.attempts).toBe(1);
+  });
+
+  it("adopts a legacy settled no-action result after migration without another Provider request", async () => {
+    const app = makeApp([textTurn], { failFirstSourcedAppend: true });
+    const legacyContext: CommandSubmissionContext = {
+      _tag: "ExecutionOrigin",
+      principal,
+      executionId,
+      fencingGeneration: 0 as never,
+    };
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P16_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no, provider_reasoning_json) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,0,NULL)",
+        [
+          "msg_018f2b3c-4d5e-7abc-8def-0123456789a2",
+          projectId,
+          workspaceId,
+          "user:local",
+          "legacy hello",
+          "cmd_018f2b3c-4d5e-7abc-8def-0123456789a2",
+          "fp-legacy",
+          "Claimed",
+          executionId,
+          "t",
+        ],
+      );
+      const first = yield* Effect.exit(drive(allowGate, legacyContext));
+      yield* runMigrations(P17_MIGRATIONS);
+      const second = yield* drive(allowGate);
+      const attempts = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM provider_attempts",
+      );
+      const outputs = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn' AND entry_kind = 'ModelOutput'",
+      );
+      const steps = yield* sql.unsafe<{
+        state: string;
+        migration_provenance_json: string | null;
+      }>(
+        "SELECT state, migration_provenance_json FROM agent_loop_steps WHERE execution_id = ?",
+        [executionId],
+      );
+      const evidence = yield* sql.unsafe<{
+        success_evidence_version: string | null;
+      }>(
+        "SELECT success_evidence_version FROM provider_attempts WHERE provider_turn_id = ?",
+        [`ptn_${executionId}_0`],
+      );
+      return {
+        first,
+        second,
+        attemptCount: Number(attempts[0]?.count ?? 0),
+        outputCount: Number(outputs[0]?.count ?? 0),
+        step: steps[0],
+        evidenceVersion: evidence[0]?.success_evidence_version,
+      };
+    });
+
+    const result = await run(program, app);
+    expect(result.first._tag).toBe("Failure");
+    expect(result.second).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "QueryCompleted" },
+    });
+    expect(result.attemptCount).toBe(1);
+    expect(result.outputCount).toBe(1);
+    expect(result.step?.state).toBe("SettlementProposed");
+    expect(result.step?.migration_provenance_json).toContain(
+      "LegacySettledProviderSuccess",
+    );
+    expect(result.evidenceVersion).toBe("provider-success-v1");
+  });
+
+  it("settles from a durable failed ProviderTurn without calling the provider again", async () => {
+    const app = makeApp([], {
+      providerRuntime: Layer.succeed(ProviderRuntime, {
+        runTurn: () => Effect.die("provider must not be called"),
+      }),
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "INSERT INTO provider_turns (provider_turn_id, execution_id, session_id, context_epoch, model_ref, output_contract_ref, manifest_id, started_at, settled_at, finish_reason, usage_json, created_at, execution_policy_json, turn_deadline_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+        [
+          `ptn_${executionId}_0`,
+          executionId,
+          sessionId,
+          0,
+          "model-a",
+          "tool-invocation-v1",
+          "mft_failed",
+          "t",
+          "t2",
+          "Failed",
+          "{}",
+          "t",
+        ],
+      );
+      const settlement = yield* drive(allowGate);
+      const steps = yield* sql.unsafe<{
+        state: string;
+        settlement_json: string | null;
+      }>(
+        "SELECT state, settlement_json FROM agent_loop_steps WHERE execution_id = ?",
+        [executionId],
+      );
+      return { settlement, step: steps[0] };
+    });
+
+    const result = await run(program, app);
+    expect(result.settlement).toMatchObject({
+      _tag: "Failed",
+      failure: {
+        _tag: "ExecutionFailure",
+        reason: "ProviderTurnSettled:Failed",
+      },
+    });
+    expect(result.step?.state).toBe("SettlementProposed");
+  });
+
   it("runs text then routes a registered control invocation to settlement", async () => {
     const app = makeApp([textTurn, sendMessageTurn("question")]);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P16_MIGRATIONS);
+      yield* runMigrations(P17_MIGRATIONS);
       yield* seed;
       return yield* drive(allowGate);
     });
@@ -376,7 +774,7 @@ describe("P3-013 agent driver", () => {
   it("stops at the P2 safety gate", async () => {
     const app = makeApp([textTurn]);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P16_MIGRATIONS);
+      yield* runMigrations(P17_MIGRATIONS);
       yield* seed;
       return yield* drive({
         admitActivity: () => Effect.succeed("Stop" as const),
@@ -390,6 +788,101 @@ describe("P3-013 agent driver", () => {
     expect(settlement.result?.reason).toBe("RuntimeSafetyStop");
 
     void ModelContext;
+  });
+
+  it("settles the execution when a persisted ProviderTurn belongs to a different binding", async () => {
+    const app = makeApp([], {
+      providerRuntime: Layer.succeed(ProviderRuntime, {
+        runTurn: () =>
+          Effect.fail({
+            _tag: "ProviderFailure",
+            kind: "UnknownProviderFailure",
+            taxonomyVersion: "phase1-v2",
+            safeDiagnostic: "provider-turn-resume-binding-invalid",
+          }),
+      }),
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      return yield* drive(allowGate);
+    });
+    const settlement = (await run(program, app)) as {
+      _tag: string;
+      failure?: { _tag: string; reason?: string };
+    };
+    expect(settlement).toMatchObject({
+      _tag: "Failed",
+      failure: {
+        _tag: "ExecutionFailure",
+        reason: "ProviderTurnBindingChanged",
+      },
+    });
+  });
+
+  it("settles the execution when the ProviderTurn exceeds its stream idle timeout", async () => {
+    const app = makeApp([], {
+      providerRuntime: Layer.succeed(ProviderRuntime, {
+        runTurn: () =>
+          Effect.fail({
+            _tag: "ProviderExecutionTimeout",
+            phase: "StreamIdleTimeout",
+          }),
+      }),
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      return yield* drive(allowGate);
+    });
+    const settlement = (await run(program, app)) as {
+      _tag: string;
+      failure?: { _tag: string; reason?: string };
+    };
+    expect(settlement).toMatchObject({
+      _tag: "Failed",
+      failure: {
+        _tag: "ExecutionFailure",
+        reason: "ProviderExecutionTimedOut:StreamIdleTimeout",
+      },
+    });
+  });
+
+  it("passes deployment execution-policy overrides to every Provider turn", async () => {
+    let received: ProviderRunInput | undefined;
+    const overrides = {
+      streamIdleTimeoutMs: 90_000,
+      turnTimeoutMs: 600_000,
+    };
+    const app = makeApp([], {
+      executionPolicyOverrides: overrides,
+      providerRuntime: Layer.succeed(ProviderRuntime, {
+        runTurn: (input) => {
+          received = input;
+          return Effect.succeed({
+            events: [
+              {
+                _tag: "TurnStarted",
+                providerTurnId: input.providerTurnId,
+                attemptNo: 0,
+                modelRef: input.request.modelRef,
+              },
+              ...sendMessageTurn("policy received"),
+            ],
+            attemptNo: 0,
+            retryDecisions: [],
+          });
+        },
+      }),
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P17_MIGRATIONS);
+      yield* seed;
+      return yield* drive(allowGate);
+    });
+    const settlement = await run(program, app);
+    expect(settlement._tag).toBe("Completed");
+    expect(received?.executionPolicyOverrides).toEqual(overrides);
   });
 });
 
@@ -410,9 +903,19 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
   it("repairs an empty provider turn and continues to a registered control action", async () => {
     const app = makeApp([invalidTurn, sendMessageTurn("recovered")]);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P16_MIGRATIONS);
+      yield* runMigrations(P17_MIGRATIONS);
       yield* seed;
-      return yield* driveAndCount(allowGate);
+      const driven = yield* driveAndCount(allowGate);
+      const sql = yield* SqlClient;
+      const steps = yield* sql.unsafe<{
+        repair_attempt: number;
+        state: string;
+        successor_json: string | null;
+      }>(
+        "SELECT repair_attempt, state, successor_json FROM agent_loop_steps WHERE execution_id = ? AND logical_step_no = 0 ORDER BY repair_attempt",
+        [executionId],
+      );
+      return { ...driven, steps };
     });
     const result = (await run(program, app)) as {
       settlement: { _tag: string; result?: { _tag: string } };
@@ -421,14 +924,48 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
     expect(result.settlement._tag).toBe("Completed");
     expect(result.settlement.result?._tag).toBe("CoordinationCompleted");
     expect(result.turns).toBe(2);
+    expect(
+      (
+        result as typeof result & {
+          steps: ReadonlyArray<{
+            repair_attempt: number;
+            state: string;
+            successor_json: string | null;
+          }>;
+        }
+      ).steps,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          repair_attempt: 0,
+          state: "OutputRejected",
+          successor_json: expect.stringContaining("repairAttempt"),
+        }),
+        expect.objectContaining({ repair_attempt: 1 }),
+      ]),
+    );
   });
 
   it("settles Failed after bounded repair attempts are exhausted", async () => {
     const app = makeApp([invalidTurn, invalidTurn, invalidTurn]);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P16_MIGRATIONS);
+      yield* runMigrations(P17_MIGRATIONS);
       yield* seed;
-      return yield* driveAndCount(allowGate);
+      const driven = yield* driveAndCount(allowGate);
+      const sql = yield* SqlClient;
+      const actions = yield* sql.unsafe<{ state: string }>(
+        "SELECT state FROM agent_loop_step_actions WHERE execution_id = ? AND logical_step_no = 0 ORDER BY action_index",
+        [executionId],
+      );
+      const steps = yield* sql.unsafe<{
+        logical_step_no: number;
+        state: string;
+        successor_json: string | null;
+      }>(
+        "SELECT logical_step_no, state, successor_json FROM agent_loop_steps WHERE execution_id = ? ORDER BY logical_step_no",
+        [executionId],
+      );
+      return { ...driven, actions, steps };
     });
     const result = (await run(program, app)) as {
       settlement: { _tag: string; failure?: { _tag: string } };
@@ -467,9 +1004,23 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
       },
     );
     const program = Effect.gen(function* () {
-      yield* runMigrations(P16_MIGRATIONS);
+      yield* runMigrations(P17_MIGRATIONS);
       yield* seed;
-      return yield* driveAndCount(allowGate);
+      const driven = yield* driveAndCount(allowGate);
+      const sql = yield* SqlClient;
+      const actions = yield* sql.unsafe<{ state: string }>(
+        "SELECT state FROM agent_loop_step_actions WHERE execution_id = ? AND logical_step_no = 0 ORDER BY action_index",
+        [executionId],
+      );
+      const steps = yield* sql.unsafe<{
+        logical_step_no: number;
+        state: string;
+        successor_json: string | null;
+      }>(
+        "SELECT logical_step_no, state, successor_json FROM agent_loop_steps WHERE execution_id = ? ORDER BY logical_step_no",
+        [executionId],
+      );
+      return { ...driven, actions, steps };
     });
     const result = (await run(program, app)) as {
       settlement: { _tag: string; result?: { _tag: string } };
@@ -479,6 +1030,30 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
     expect(result.settlement.result?._tag).toBe("CoordinationCompleted");
     expect(invoked).toBe(1);
     expect(result.turns).toBe(2);
+    expect(
+      (result as typeof result & { actions: ReadonlyArray<{ state: string }> })
+        .actions,
+    ).toEqual([{ state: "SkippedStale" }]);
+    expect(
+      (
+        result as typeof result & {
+          steps: ReadonlyArray<{
+            logical_step_no: number;
+            state: string;
+            successor_json: string | null;
+          }>;
+        }
+      ).steps,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          logical_step_no: 0,
+          state: "NextStepReady",
+          successor_json: expect.stringContaining("logicalStepNo"),
+        }),
+        expect.objectContaining({ logical_step_no: 1 }),
+      ]),
+    );
   });
 
   it("routes executable invocations to the executable handler", async () => {
@@ -507,9 +1082,26 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
       },
     });
     const program = Effect.gen(function* () {
-      yield* runMigrations(P16_MIGRATIONS);
+      yield* runMigrations(P17_MIGRATIONS);
       yield* seed;
-      return yield* driveAndCount(allowGate);
+      const driven = yield* driveAndCount(allowGate);
+      const sql = yield* SqlClient;
+      const actions = yield* sql.unsafe<{
+        state: string;
+        result_ref: string | null;
+        observation_source_ref: string | null;
+      }>(
+        "SELECT state, result_ref, observation_source_ref FROM agent_loop_step_actions WHERE execution_id = ? AND logical_step_no = 0 ORDER BY action_index",
+        [executionId],
+      );
+      const observations = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'AgentLoopAction' AND entry_kind = 'Observation'",
+      );
+      return {
+        ...driven,
+        actions,
+        observationCount: Number(observations[0]?.count ?? 0),
+      };
     });
     const result = (await run(program, app)) as {
       settlement: { _tag: string; result?: { _tag: string } };
@@ -517,5 +1109,26 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
     };
     expect(invoked).toBe(1);
     expect(result.turns).toBeGreaterThan(0);
+    expect(
+      (
+        result as typeof result & {
+          actions: ReadonlyArray<{
+            state: string;
+            result_ref: string | null;
+            observation_source_ref: string | null;
+          }>;
+          observationCount: number;
+        }
+      ).actions,
+    ).toEqual([
+      expect.objectContaining({
+        state: "Applied",
+        result_ref: expect.stringMatching(/^result_/),
+        observation_source_ref: expect.stringMatching(/^observation_/),
+      }),
+    ]);
+    expect(
+      (result as typeof result & { observationCount: number }).observationCount,
+    ).toBe(1);
   });
 });

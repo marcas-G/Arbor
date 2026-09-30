@@ -361,6 +361,9 @@ importers:
       '@arbor/provider-runtime':
         specifier: workspace:*
         version: link:../../packages/provider-runtime
+      '@arbor/provider-testecho':
+        specifier: workspace:*
+        version: link:../../adapters/provider-testecho
       '@arbor/sandbox-local':
         specifier: workspace:*
         version: link:../../adapters/sandbox-local

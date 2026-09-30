@@ -168,6 +168,12 @@ hook; P2 provides lease acquisition/renewal/loss and the generation source. In
 P1 all commands are `External`/`System`, so the hook is inert and tested with
 a stub.
 
+For DID v1.20 AgentLoopStep takeover this terminality remains per `CommandId`.
+`07` freezes the outer logical ledger and permits a new owner to create a new
+generation-scoped CommandId only after reading existing receipts and proving
+the logical action is still eligible. It is never a retry of the terminal
+CommandId and never overwrites its receipt.
+
 > **P2 evolution (DID v1.7 G1):** `FenceStopCheck.check(context, stopAdmission)`
 > receives an explicit `StopAdmission` ADT; `QuiescenceControlMutation` is
 > admitted after `stopRequestedAt != null` while still being fence-checked. See

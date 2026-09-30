@@ -77,14 +77,17 @@ describe("no forbidden command controls in src", () => {
     expect(violations).toEqual([]);
   });
 
-  it("conversation progress is a separate authenticated preview channel", () => {
-    const source = readFileSync(
-      join(srcRoot, "data", "conversation-progress.ts"),
-      "utf8",
-    );
-    expect(source).toContain("/conversation-progress/");
-    expect(source).toContain("Authorization");
-    expect(source).toContain("getReader");
+  it("conversation uses no browser streaming or optimistic message store", () => {
+    const violations = collectSourceFiles(srcRoot).filter((path) => {
+      const source = readFileSync(path, { encoding: "utf8" });
+      return (
+        source.includes("/conversation-progress/") ||
+        source.includes("EventSource") ||
+        source.includes("addOptimisticHuman") ||
+        source.includes("appendDelta")
+      );
+    });
+    expect(violations).toEqual([]);
   });
 
   it("never submits a revision literal or fallback", () => {

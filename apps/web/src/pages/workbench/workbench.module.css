@@ -9,6 +9,7 @@
 .pageHeader {
   display: flex;
   align-items: flex-start;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--arbor-space-4);
   padding: var(--arbor-space-4);
@@ -48,6 +49,46 @@
   gap: var(--arbor-space-1);
   color: var(--arbor-ink-soft);
   font-size: var(--arbor-text-caption);
+}
+
+.projectOverview {
+  display: grid;
+  min-width: min(100%, 27rem);
+  gap: var(--arbor-space-2);
+  margin-left: auto;
+  padding: var(--arbor-space-3);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius-small);
+  background: var(--arbor-surface);
+}
+
+.projectRoot {
+  margin: 0;
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+
+.projectStats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--arbor-space-2);
+  margin: 0;
+}
+
+.projectStats div {
+  min-width: 0;
+}
+
+.projectStats dt {
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-caption);
+}
+
+.projectStats dd {
+  margin: var(--arbor-space-1) 0 0;
+  color: var(--arbor-ink);
+  font-size: var(--arbor-text-title);
+  font-weight: 700;
 }
 
 .layoutActions {
@@ -242,6 +283,13 @@
 }
 
 @media (max-width: 63.99rem) {
+  .projectOverview {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 63.99rem) {
   .workbench {
     grid-template-columns: 1fr;
     overflow: visible;
@@ -269,6 +317,10 @@
   .projectMeta {
     flex-direction: row;
     align-items: center;
+  }
+
+  .projectStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .mobileTabs {

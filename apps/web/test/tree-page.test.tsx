@@ -100,11 +100,11 @@ describe("W-04 TreePage (read-only navigation)", () => {
     expect(await screen.findByText("平台根工作区")).toBeTruthy();
     expect(screen.getByText("前端渲染")).toBeTruthy();
     expect(screen.getByText("守护进程")).toBeTruthy();
-    expect(screen.getByText("executing")).toBeTruthy();
-    expect(screen.getByText("idle")).toBeTruthy();
-    expect(screen.getByText("waiting-blocked")).toBeTruthy();
-    expect(screen.getByText("attention 2")).toBeTruthy();
-    expect(screen.getByText("actionRequired 1")).toBeTruthy();
+    expect(screen.getByText("执行中")).toBeTruthy();
+    expect(screen.getByText("空闲")).toBeTruthy();
+    expect(screen.getByText("等待条件")).toBeTruthy();
+    expect(screen.getByText("需关注 2")).toBeTruthy();
+    expect(screen.getByText("需要处理 1")).toBeTruthy();
     expect(screen.getByText("维护 P13 视图渲染合同")).toBeTruthy();
     expect(
       screen.getByText("tokens 1200 · cost 0.42 USD · turns 7"),
@@ -165,7 +165,7 @@ describe("W-04 TreePage (read-only navigation)", () => {
     expect(screen.getByText("状态")).toBeTruthy();
     expect(screen.getByText("当前工作")).toBeTruthy();
     expect(screen.getByText("用量")).toBeTruthy();
-    expect(screen.getByText("attention 0 · actionRequired 0")).toBeTruthy();
+    expect(screen.getByText("需关注 0 · 需要处理 0")).toBeTruthy();
     expect(screen.getByText("—")).toBeTruthy();
     window.history.replaceState(null, "", "/");
     fireEvent.click(screen.getByRole("button", { name: "打开工作区" }));

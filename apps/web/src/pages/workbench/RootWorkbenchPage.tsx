@@ -118,10 +118,10 @@ function TreePane({
                     node.subtreeAttention.actionRequired === 0 ? null : (
                       <span className={styles.treeNodeBadges}>
                         {node.subtreeAttention.attention === 0 ? null : (
-                          <Badge tone="attention">{`attention ${String(node.subtreeAttention.attention)}`}</Badge>
+                          <Badge tone="attention">{`需关注 ${String(node.subtreeAttention.attention)}`}</Badge>
                         )}
                         {node.subtreeAttention.actionRequired === 0 ? null : (
-                          <Badge tone="danger">{`actionRequired ${String(node.subtreeAttention.actionRequired)}`}</Badge>
+                          <Badge tone="danger">{`需要处理 ${String(node.subtreeAttention.actionRequired)}`}</Badge>
                         )}
                       </span>
                     )}
@@ -219,6 +219,28 @@ export function RootWorkbenchPage({
   );
   const layoutRef = useRef<HTMLDivElement>(null);
   const stopResizeRef = useRef<(() => void) | null>(null);
+  const projectTree = useViewQuery("responsibility-tree", {
+    projectId: route.projectId as ProjectId,
+  });
+  const projectTreePresented =
+    projectTree.data === undefined
+      ? undefined
+      : presentResponsibilityTree(projectTree.data.nodes);
+  const projectOverview =
+    projectTree.data === undefined ||
+    projectTreePresented === undefined ||
+    projectTreePresented === null
+      ? undefined
+      : {
+          rootName: projectTreePresented.root.name,
+          workspaceCount: projectTree.data.nodes.length,
+          activeWorkCount: projectTree.data.nodes.filter(
+            (node) => node.currentWork?.activeExecution !== undefined,
+          ).length,
+          attention: projectTreePresented.root.subtreeAttention.attention,
+          actionRequired:
+            projectTreePresented.root.subtreeAttention.actionRequired,
+        };
 
   useEffect(
     () => () => {
@@ -308,16 +330,41 @@ export function RootWorkbenchPage({
     <div className={styles.page}>
       <header className={styles.pageHeader}>
         <div>
-          <p className={styles.eyebrow}>Arbor Workbench</p>
+          <p className={styles.eyebrow}>当前项目 · 工作台</p>
           <h1>工作台</h1>
           <p className={styles.intro}>
-            以责任树组织工作，并在对话中保持协作上下文。
+            在项目层查看整体状态；责任树仅用于进入项目内部的长期工作空间。
           </p>
         </div>
         <div className={styles.projectMeta}>
           <span>项目</span>
           <MonoText>{route.projectId}</MonoText>
         </div>
+        {projectOverview === undefined ? null : (
+          <section className={styles.projectOverview} aria-label="项目概览">
+            <p className={styles.projectRoot}>
+              根责任：{projectOverview.rootName}
+            </p>
+            <dl className={styles.projectStats}>
+              <div>
+                <dt>工作空间</dt>
+                <dd>{projectOverview.workspaceCount}</dd>
+              </div>
+              <div>
+                <dt>进行中工作</dt>
+                <dd>{projectOverview.activeWorkCount}</dd>
+              </div>
+              <div>
+                <dt>需要关注</dt>
+                <dd>{projectOverview.attention}</dd>
+              </div>
+              <div>
+                <dt>需要处理</dt>
+                <dd>{projectOverview.actionRequired}</dd>
+              </div>
+            </dl>
+          </section>
+        )}
       </header>
 
       <fieldset className={styles.mobileTabs} aria-label="工作台面板">

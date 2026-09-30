@@ -24,6 +24,14 @@ export const createProjectSchema = z.object({
   name: z.string().trim().min(1, "项目名称必填"),
 });
 
+export const renameProjectSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "项目名称必填")
+    .max(120, "项目名称最多 120 个字符"),
+});
+
 export const recordDecisionSchema = z.object({
   proposalId,
   expectedProposalRevision: z.number().int().min(1),

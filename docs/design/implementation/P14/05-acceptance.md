@@ -29,6 +29,15 @@ streaming。
 | S9 | no provider streaming in v1 | `03` §3/`04` §3 | 无新推送通道（架构扫描 EventSource/SSE 零出现）；turn body 仅来自 /views；无本地 optimistic turn（测试断言 refetch 前无新节点） |
 | S10 | Child Workspace zero composer | `04` §2/§3 | child conversation tab 只读负向测试；路由参数仅 root 生效 |
 
+## 2A. DID v1.20 successor seams（implementation authorized by v1.21）
+
+| # | Seam | 合同锚 | 机械 evidence |
+|---|---|---|---|
+| S11 | settled Provider result handoff | P3 `08` §5；P9 `07` | crash 后同 ProviderTurn 请求计数不增加；sourced ModelOutput 恰好一条 |
+| S12 | AgentLoopStep → conversation convergence | `02` §4.4；P9 `07` AH12/AH13 | proposal/settlement/writeback 两侧 kill；最终 Assistant turn 恰好一条 |
+| S13 | branch-specific message disposition | `02` §4.2/§4.4 | Completed=Answered body；Interrupted=Answered null；Failed/OutcomeUnknown=新 attempt；Attention=不释放 |
+| S14 | legacy adoption | P9 `07` §3/AH14 | DOGFOOD 等价 fixture 收敛；证据不足 fixture durable Attention、零请求 |
+
 ## 3. Exit criteria
 
 | # | Criterion | Evidence |
@@ -38,6 +47,9 @@ streaming。
 | EC-3 | 回归零红（除 TR-A/B/C 所列 supersession 外） | 五项行为资产 + Web v1 suites（exposure-matrix 断言更新为 8 项属 TR-B 预期变更） |
 | EC-4 | exposure matrix 更新（+SubmitHumanMessage = 8 项）机械锁定 | catalog 测试更新 |
 | EC-5 | 无 open P14 Design Gap | gap gate |
+
+S11–S14 belong to the v1.20 successor implementation gate and are not claimed
+by the historical P14 completion record.
 
 ## 4. 完成定义
 

@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc -b",
+    "start": "node scripts/start-local.mjs",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "test:capability": "node scripts/testing/run-capability.mjs gray-box",

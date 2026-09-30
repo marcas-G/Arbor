@@ -1,4 +1,5 @@
 import {
+  type ExecutionRepositoryService,
   type PermissionGrantRepositoryService,
   ProjectRepository,
   type ProjectRepositoryService,
@@ -16,6 +17,10 @@ import { makeAssignWorkHandler } from "./assign-work.js";
 import { makeCreateChildWorkspaceHandler } from "./create-child-workspace.js";
 import { makeCreateProjectHandler } from "./create-project.js";
 import { makeGrantPermissionHandler } from "./grant-permission.js";
+import {
+  makeCloseProjectHandler,
+  makeRenameProjectHandler,
+} from "./project-management.js";
 import { makeRegisterProjectToolHandler } from "./register-project-tool.js";
 import { makeRevokePermissionHandler } from "./revoke-permission.js";
 
@@ -24,6 +29,7 @@ export interface P1CommandDependencies {
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
   readonly works: WorkRepositoryService;
+  readonly executions?: ExecutionRepositoryService;
 }
 
 export const makeP1CommandHandlers = (
@@ -33,6 +39,15 @@ export const makeP1CommandHandlers = (
     unknown,
     unknown
   >,
+  makeRenameProjectHandler({
+    projects: dependencies.projects,
+  }) as unknown as CommandHandler<unknown, unknown>,
+  makeCloseProjectHandler({
+    projects: dependencies.projects,
+    ...(dependencies.executions === undefined
+      ? {}
+      : { executions: dependencies.executions }),
+  }) as unknown as CommandHandler<unknown, unknown>,
   makeCreateChildWorkspaceHandler(dependencies) as unknown as CommandHandler<
     unknown,
     unknown

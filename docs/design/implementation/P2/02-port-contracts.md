@@ -24,7 +24,8 @@ P2 adds port errors to `ports`:
 ```text
 ExecutionRepositoryError, WorkerDispatchError, ExecutionDriverError,
 ExecutionSchedulerError, WorkWaitStoreError, SchedulerTimerStoreError,
-RunnableWorkSourceError, LeaseFencingRejected
+RunnableWorkSourceError, LeaseFencingRejected, SessionSourceConflict,
+AgentLoopStepStoreError, AgentLoopStepInvariantConflict
 ```
 
 ## 2. ExecutionRepository
@@ -94,6 +95,19 @@ interface SessionRepositoryService {
   ): Effect<{ readonly sequence: number },
              SessionRepositoryError | LeaseFencingRejected,
              TransactionScope>;
+  appendEntryIdempotent(
+    sessionId: SessionId,
+    source: { readonly kind: string; readonly ref: string },
+    entry: { readonly entryKind: SessionEntryKind; readonly payload: unknown },
+    contentHash: string,
+    fence: { readonly executionId: ExecutionId;
+             readonly workerId: WorkerId;
+             readonly workerIncarnationId: WorkerIncarnationId;
+             readonly fencingGeneration: LeaseGeneration },
+  ): Effect<{ readonly sequence: number; readonly inserted: boolean },
+             SessionRepositoryError | LeaseFencingRejected |
+               SessionSourceConflict,
+             TransactionScope>;
 }
 
 type SessionEntryKind =
@@ -112,6 +126,59 @@ type SessionEntryKind =
 > fencingGeneration)`, matching the authoritative fence predicate (`03` §3,
 > `04` §4). Incarnation-only matching is insufficient, so `workerId` is carried
 > as well. The same-transaction authoritative fence semantics are unchanged.
+
+> **DID v1.20 AHT-3.** `appendEntryIdempotent` uses the unique source key from
+> `04` §3.4. Same source + same `contentHash` returns the existing sequence;
+> same source + different hash returns typed `SessionSourceConflict` and never
+> overwrites. Agent Runtime calls this method and the AgentLoopStep transition in
+> one `TransactionPort.transact` body, so ModelOutput visibility and
+> `OutputAccepted` are atomic.
+
+## 3A. AgentLoopStepStore (DID v1.20 successor)
+
+```ts
+interface AgentLoopStepStoreService {
+  find(identity: AgentLoopStepIdentity):
+    Effect<Option<AgentLoopStepRecord>, AgentLoopStepStoreError, TransactionScope>;
+  findCurrent(executionId: ExecutionId):
+    Effect<Option<AgentLoopStepRecord>, AgentLoopStepStoreError, TransactionScope>;
+  createPrepared(record: AgentLoopStepRecord, fence: LeaseFence):
+    Effect<AgentLoopStepRecord, AgentLoopStepStoreError | LeaseFencingRejected,
+      TransactionScope>;
+  transition(input: {
+    readonly identity: AgentLoopStepIdentity;
+    readonly expectedRevision: number;
+    readonly expectedState: AgentLoopStepState;
+    readonly next: AgentLoopStepRecord;
+    readonly fence: LeaseFence;
+  }): Effect<AgentLoopStepRecord,
+    AgentLoopStepStoreError | LeaseFencingRejected | AgentLoopStepInvariantConflict,
+    TransactionScope>;
+  ensureSuccessor(predecessor, successor, fence):
+    Effect<AgentLoopStepRecord,
+      AgentLoopStepStoreError | LeaseFencingRejected | AgentLoopStepInvariantConflict,
+      TransactionScope>;
+  findWithoutTurn(executionId: ExecutionId):
+    Effect<boolean, AgentLoopStepStoreError, TransactionScope>;
+}
+
+interface LeaseFence {
+  readonly executionId: ExecutionId;
+  readonly workerId: WorkerId;
+  readonly workerIncarnationId: WorkerIncarnationId;
+  readonly fencingGeneration: LeaseGeneration;
+}
+```
+
+Every mutating method validates the complete lease-holder triple and
+`executions.settled_at IS NULL` in the same transaction. `transition` is a
+revision + expected-state CAS; zero rows is a typed conflict and is never
+silently retried as a different transition. `ensureSuccessor` follows P3 `08`
+§8 and returns an identical existing successor or raises an invariant conflict.
+
+Action-ledger methods follow the same pattern: find by ordered index or
+`LogicalActionId`, create exact records, and transition by expected revision +
+state under the same fence. The store never executes an action.
 
 ## 4. FenceStopCheck (P2 extension of the P1 hook)
 

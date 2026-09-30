@@ -158,8 +158,17 @@ const pathOfRegion = (region: CanonicalResourceRegion): string | undefined => {
   return typeof normalized.path === "string" ? normalized.path : undefined;
 };
 
-const coversPath = (regionPath: string, target: string): boolean =>
-  target === regionPath || target.startsWith(`${regionPath}/`);
+const comparablePath = (path: string): string =>
+  path.replaceAll("\\", "/").replace(/\/+$/, "");
+
+const coversPath = (regionPath: string, target: string): boolean => {
+  const comparableRegion = comparablePath(regionPath);
+  const comparableTarget = comparablePath(target);
+  return (
+    comparableTarget === comparableRegion ||
+    comparableTarget.startsWith(`${comparableRegion}/`)
+  );
+};
 
 /** Resolve a canonical write target against a handle: the target must fall
  * inside a writable region (deepest region wins; the region is mounted at

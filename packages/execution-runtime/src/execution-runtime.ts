@@ -176,6 +176,18 @@ export const runExecution = (
       ),
     );
 
+    // The background loop keeps a long drive live. Renew once more at the
+    // durability boundary so a scheduler delay around the final tick cannot
+    // turn an otherwise owned, completed drive into a stale fenced write.
+    // This is still the same owner/generation CAS: a takeover is reported as
+    // LeaseLost and prevents the settlement command below.
+    yield* renewLeaseOnce(
+      executionId,
+      lease.workerId,
+      lease.workerIncarnationId,
+      lease.generation,
+    );
+
     const payload = {
       executionId,
       settlement,

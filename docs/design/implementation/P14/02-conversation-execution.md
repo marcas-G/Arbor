@@ -12,7 +12,7 @@ SubmitHumanMessage（durable pending）
 → scheduler / Application admission
 → AdmitExecution(WorkspaceMain, focus=Coordination)     ← server-side wiring
 → 既有 P2/P3 agent 链（ProviderTurn/ToolInvocation 任意多轮）
-→ user-visible ModelOutput
+→ AgentLoopStep 幂等接受 user-visible ModelOutput / actions / settlement proposal
 → SettleExecution(Completed(QueryCompleted))
 → transcript projection + human_messages.state=Answered
 ```
@@ -114,6 +114,39 @@ Step 2（P14 拥有，settlement durable 之后）
 
 **裁决**：上游只要求 B。本合同按 B 精确修订（§4.1/§4.2）；P2 不 reopen。
 
+### 4.4 AgentLoopStep → HumanMessage final convergence（DID v1.20 successor）
+
+P14 的两步协议继续有效，但 Execution settlement 之前新增了由 P3/P9 拥有的
+持久交接前置条件：
+
+```text
+complete Provider success
+→ AgentLoopStep.ProviderResultAvailable
+→ sourced ModelOutput exactly once
+→ actions/observations converge
+→ unresolved-side-effect gate clear OR OutcomeUnknown proposal
+→ AgentLoopStep.SettlementProposed
+→ SettleExecution
+→ existing P14 sweep converges HumanMessage
+```
+
+- `ProviderResultAvailable` / `OutputAccepted` 中的 crash 不释放消息、不创建
+  第二个 conversation attempt；原 Execution 在新 generation 下继续交接，同一
+  ProviderTurn 禁止再次请求。
+- `SettlementProposed` 已持久化但 Execution 仍 Active 时，恢复提交当前-
+  generation SettleExecution；不得从 Session 文本猜 settlement。
+- Execution 已 settle、HumanMessage 仍 Claimed 时，继续使用 §4.1 sweep；不执行
+  新 Agent action，不生成第二条 Assistant turn。
+- 只有权威 `Failed` / `OutcomeUnknown` settlement 才按 §4.2 释放为新
+  conversation attempt。`ReconciliationPending` 本身不释放消息；它保持安全
+  对账/Attention，或先形成 OutcomeUnknown。
+- `Interrupted` 保持 §4.2 的 null-body Answered 语义；Runtime Safety Stop 仍须
+  先通过 unresolved-side-effect gate。
+
+DOGFOOD-DG-01 等价 fixture 的目标收敛是：原 Claimed message 在原 Execution
+的 settled Provider result 上恢复，得到恰好一个 sourced ModelOutput 和一个
+Assistant turn，Provider 请求计数不增加。
+
 
 ## 5. Session 连续性（frozen）
 
@@ -135,3 +168,7 @@ Step 2（P14 拥有，settlement durable 之后）
 admission）；claim CAS；crash@claim / crash@settle 恢复 exact-once；
 Coordination execution 无 workId 绑定；`HumanConversation` inbox 条目
 不产生 steer 事件。
+
+DID v1.20 successor 另要求 P9 `07` AH13 与 DOGFOOD 等价 fixture：
+AgentLoopStep settlement proposal → Execution settlement → HumanMessage sweep 的
+每个 crash 窗口均收敛，且完整成功 ProviderTurn 零重复请求。
