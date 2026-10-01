@@ -7,19 +7,16 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import {
-  ControlToolCatalogPort,
   type ModelCapabilityError,
   ModelCapabilityPort,
   type ModelContextError,
-  type ModelFacingToolDefinition,
   type PortableInputItem,
   type PortableLegacyMessage,
   type SkillRef,
   SkillRegistry,
   type SkillRegistryError,
-  ToolCatalogPort,
 } from "@arbor/ports";
-import { Context, Effect, Layer, Option } from "effect";
+import { Context, Effect, Layer, type Option } from "effect";
 import {
   type ControlBasis,
   compileTurn,
@@ -35,6 +32,7 @@ import {
 import type { InstructionFragment, PromptProgram } from "./prompt.js";
 import { estimateFixedRequestTokens } from "./request-budget.js";
 import { type GovernanceIssue, resolveInstructions } from "./resolver.js";
+import type { ResolvedTurnProfile } from "./turn-profile.js";
 
 /** DID v1.7 §6A.10/§8.2; P3 `02` §1. */
 export type TurnPreparation =
@@ -60,9 +58,7 @@ export interface PrepareTurnInput {
   readonly controlBasis: ControlBasis;
   readonly maxOutputTokens: number;
   readonly bodySkillIds: ReadonlyArray<string>;
-  /** Independent bounded output protocol; control tools use the generic
-   * invocation protocol and do not select a universal AgentDirective union. */
-  readonly outputContractRef?: string;
+  readonly turnProfile: ResolvedTurnProfile;
   /** P14 conversation context: the current claimed human message (user) plus
    * recent answered turns (user/assistant). Absent on Work executions. */
   readonly conversationMessages?: ReadonlyArray<{
@@ -88,13 +84,6 @@ export interface PrepareTurnInput {
     readonly fingerprint: string;
     readonly bindingFingerprint: string;
   };
-  /** Suppress catalogued executable tools for purposes such as the root
-   * Human Conversation response episode. */
-  readonly includeTools?: boolean;
-  /** Purpose-resolved control surface. `false` is an explicit empty surface,
-   * distinct from an absent ControlToolCatalogPort. Model Context only
-   * projects this decision; it does not infer execution semantics. */
-  readonly includeControlTools?: boolean;
   /** Content table (contentRef -> instruction body). When present,
    * compiled instructions carry the resolved text instead of the bare
    * reference (P3 `05` compile semantics). */
@@ -120,16 +109,12 @@ const toModelContextError = (cause: unknown): ModelContextError => ({
 export const ModelContextLive: Layer.Layer<
   ModelContext,
   never,
-  ModelCapabilityPort | SkillRegistry | ToolCatalogPort
+  ModelCapabilityPort | SkillRegistry
 > = Layer.effect(
   ModelContext,
   Effect.gen(function* () {
     const capabilityPort = yield* ModelCapabilityPort;
     const skills = yield* SkillRegistry;
-    const toolCatalog = yield* ToolCatalogPort;
-    const controlToolCatalog = yield* Effect.serviceOption(
-      ControlToolCatalogPort,
-    );
 
     const prepareTurn = (input: PrepareTurnInput) =>
       Effect.gen(function* () {
@@ -149,22 +134,8 @@ export const ModelContextLive: Layer.Layer<
           cognitiveMode: input.cognitiveMode,
           requiredCapabilities: [],
         });
-        const tools: ModelFacingToolDefinition[] = [];
-        if (input.includeTools !== false) {
-          const toolRefs = yield* toolCatalog.visibleRefs();
-          for (const ref of toolRefs) {
-            tools.push(yield* toolCatalog.resolveForModel(ref));
-          }
-        }
-        // Preserve the distinction between an absent control catalog (legacy
-        // callers may still rely on compiler fallback) and an explicitly
-        // empty purpose-resolved surface (`includeControlTools: false`).
-        const controlTools =
-          input.includeControlTools === false
-            ? []
-            : Option.isSome(controlToolCatalog)
-              ? yield* controlToolCatalog.value.visibleDefinitions()
-              : undefined;
+        const tools = input.turnProfile.executableTools;
+        const controlTools = input.turnProfile.controlTools;
         const skillRefs: SkillRef[] = [];
         for (const skillId of input.bodySkillIds) {
           const loaded = yield* skills.load(skillId, "Body");
@@ -181,7 +152,7 @@ export const ModelContextLive: Layer.Layer<
           messages,
           inputItems,
           tools,
-          controlTools: controlTools ?? [],
+          controlTools,
         });
         const planned = planContext(input.contextFragments, {
           modelWindow: availableTokens - fixedTokens,
@@ -215,12 +186,15 @@ export const ModelContextLive: Layer.Layer<
             instructions: resolved,
             context: planned.selected,
             tools,
-            ...(controlTools === undefined ? {} : { controlTools }),
+            controlTools,
             skills: skillRefs,
-            outputContract:
-              input.outputContractRef ??
-              input.program.outputContractRefs[0] ??
-              "tool-invocation-v1",
+            outputContract: input.turnProfile.outputContractRef,
+            turnProfile: {
+              purpose: input.turnProfile.purpose,
+              version: input.turnProfile.profileVersion,
+              fingerprint: input.turnProfile.fingerprint,
+              contextPolicyRef: input.turnProfile.contextPolicyRef,
+            },
             continuation: "recent-frontier",
             controlBasis: input.controlBasis,
             ...(input.conversationMessages !== undefined &&
@@ -277,5 +251,4 @@ export const ModelContextLive: Layer.Layer<
   }),
 );
 
-export type { ModelCapabilityError, SkillRegistryError };
-export { Option };
+export type { ModelCapabilityError, Option, SkillRegistryError };

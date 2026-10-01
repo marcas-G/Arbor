@@ -14,7 +14,7 @@ import {
   type ModelContextService,
   projectSessionTimeline,
   type SessionTimelineProjection,
-  TOOL_INVOCATION_CONTRACT,
+  type TurnProfileResolverService,
 } from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
@@ -85,6 +85,7 @@ export interface ModelDecisionDependencies {
   readonly providerTurns?: ProviderTurnStoreService;
   readonly sessions: SessionRepositoryService;
   readonly humanMessages: HumanMessageStoreService;
+  readonly turnProfileResolver: TurnProfileResolverService;
   readonly responseJobs?: Pick<
     ConversationResponseJobStoreService,
     "findByExecution"
@@ -120,6 +121,7 @@ export const runModelDecision = (
     providerTurns,
     sessions,
     humanMessages,
+    turnProfileResolver,
     responseJobs,
     inbox,
     works,
@@ -379,6 +381,14 @@ export const runModelDecision = (
         currentWork = work.value;
       }
       const workContext = assembleWorkContext(workspace.value, currentWork);
+      const turnProfile = yield* turnProfileResolver
+        .resolve({
+          execution: input.execution,
+          conversation:
+            isConversationExecution(input.execution) &&
+            conversationMessages.length > 0,
+        })
+        .pipe(Effect.mapError(failure));
       const preparation = yield* modelContext
         .prepareTurn({
           executionId: input.execution.executionId,
@@ -404,16 +414,9 @@ export const runModelDecision = (
           controlBasis,
           maxOutputTokens: capability.outputCeiling,
           bodySkillIds: [],
+          turnProfile,
           instructionContents: workContext.contents,
           stepContext,
-          ...(isConversationExecution(input.execution) &&
-          conversationMessages.length > 0
-            ? {
-                outputContractRef: "agent-directive-v1",
-                includeTools: false,
-                includeControlTools: false,
-              }
-            : { outputContractRef: TOOL_INVOCATION_CONTRACT }),
           ...(inputItems.length > 0 ? { inputItems } : {}),
           ...(messageContextRefs.length > 0 ? { messageContextRefs } : {}),
           ...(options.providerRef !== undefined

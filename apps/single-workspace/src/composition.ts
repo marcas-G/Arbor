@@ -33,6 +33,8 @@ import {
   type ModelCatalog,
   ModelContextLive,
   resolveModelCatalogEntry,
+  TurnProfileResolver,
+  TurnProfileResolverLive,
 } from "@arbor/model-context";
 import {
   AcceptanceRepositoryLive,
@@ -525,15 +527,20 @@ export const buildSingleWorkspaceLayer = (
     ExecutableToolHandlerLive,
     Layer.mergeAll(toolRuntime, infra),
   );
+  const turnProfiles = Layer.provide(
+    TurnProfileResolverLive,
+    Layer.mergeAll(toolCatalog, controlRegistry),
+  );
   const modelContext = Layer.provide(
     ModelContextLive,
-    Layer.mergeAll(capability, toolCatalog, skills, controlRegistry),
+    Layer.mergeAll(capability, skills),
   );
   const driver = Layer.provide(
     Layer.unwrap(
       Effect.gen(function* () {
         const registryService = yield* ControlToolRegistry;
         const executableHandler = yield* ExecutableToolHandler;
+        const turnProfileResolver = yield* TurnProfileResolver;
         return Layer.provide(
           AgentLoopDriverLive({
             ...(config.secretRef !== undefined
@@ -550,6 +557,7 @@ export const buildSingleWorkspaceLayer = (
                 }
               : {}),
             controlRegistry: registryService,
+            turnProfileResolver,
             executableInvocationHandler: executableHandler,
             ...(config.provider !== undefined
               ? { providerRef: config.provider.adapterId }
@@ -570,7 +578,7 @@ export const buildSingleWorkspaceLayer = (
         );
       }),
     ),
-    Layer.mergeAll(controlRegistry, executableInvocation),
+    Layer.mergeAll(controlRegistry, executableInvocation, turnProfiles),
   );
   const runnableSource = Layer.provide(
     DependencyAwareRunnableWorkSourceLive,
@@ -595,6 +603,7 @@ export const buildSingleWorkspaceLayer = (
     providerRuntime,
     secretStore,
     modelContext,
+    turnProfiles,
     driver,
     toolRuntime,
     scheduler,

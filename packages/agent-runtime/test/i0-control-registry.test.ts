@@ -54,6 +54,20 @@ describe("I0 ControlToolRegistry", () => {
     ).toEqual({ _tag: "Control" });
     expect(
       classifyToolRoute(
+        [
+          {
+            name: "arbor_wait",
+            route: "Control",
+            version: "1",
+            hash: "stale-hash",
+          },
+        ],
+        registry,
+        "arbor_wait",
+      ),
+    ).toEqual({ _tag: "Stale", route: "Control" });
+    expect(
+      classifyToolRoute(
         [{ name: "arbor_missing", route: "Control" }],
         registry,
         "arbor_missing",
