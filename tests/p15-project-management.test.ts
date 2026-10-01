@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  P18_MIGRATIONS,
+  P21_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -62,7 +62,7 @@ describe("P15 project management commands", () => {
     const app = makeP1App(":memory:", undefined, true);
     const result = await runP1(
       Effect.gen(function* () {
-        yield* runMigrations(P18_MIGRATIONS);
+        yield* runMigrations(P21_MIGRATIONS);
         yield* seedProject({
           projectId,
           rootWorkspaceId: workspaceId,
@@ -94,6 +94,10 @@ describe("P15 project management commands", () => {
         yield* sql.unsafe(
           "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, admitted_at, consumed_at) VALUES (?, 'humanmsg:msg_pending', 'HumanConversation', 'body', 't2', NULL)",
           [workspaceId],
+        );
+        yield* sql.unsafe(
+          "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES ('msg_pending', ?, ?, 'Queued', NULL, 0, NULL, NULL, NULL, NULL, 'conversation-retry-v1', NULL, NULL, NULL, 0, 't2', 't2')",
+          [projectId, workspaceId],
         );
         const close: CloseProjectPayload = {
           expectedRevision: revision(1),
@@ -128,7 +132,7 @@ describe("P15 project management commands", () => {
           authority("RenameProject", command("000000000004"), rejectedRename),
         );
         const messageRows = yield* sql.unsafe<{ state: string }>(
-          "SELECT state FROM human_messages WHERE message_id = 'msg_pending'",
+          "SELECT state FROM conversation_response_jobs WHERE message_id = 'msg_pending'",
         );
         const inboxRows = yield* sql.unsafe<{ consumed_at: string | null }>(
           "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = 'humanmsg:msg_pending'",
@@ -148,7 +152,7 @@ describe("P15 project management commands", () => {
     expect(result.renamed.resolution._tag).toBe("Committed");
     expect(result.closed.resolution._tag).toBe("Committed");
     expect(result.rejected.resolution._tag).toBe("TerminalRejected");
-    expect(result.messageState).toBe("Declined");
+    expect(result.messageState).toBe("Cancelled");
     expect(result.inboxConsumedAt).not.toBeNull();
     expect(result.events).toEqual([
       "ProjectCreated",

@@ -18,28 +18,44 @@ import { projectionReadError } from "./errors.js";
 /** P14 `03` §1 — the frozen conversation-turn arms (DID v1.16 G-C). The
  * third arm keeps the pre-P14 session-entry stream verbatim, so unknown
  * kinds always pass through (presentation rule: verbatim + muted). */
+export type ConversationResponseStatusView =
+  | { readonly state: "Queued"; readonly revision: number }
+  | {
+      readonly state: "Running";
+      readonly revision: number;
+      readonly executionId: string;
+      readonly attemptNo: number;
+    }
+  | {
+      readonly state: "RetryScheduled";
+      readonly revision: number;
+      readonly nextEligibleAt: string;
+      readonly safeReason: string;
+    }
+  | {
+      readonly state: "NeedsAttention";
+      readonly revision: number;
+      readonly reason: string;
+      readonly canResume: true;
+    }
+  | {
+      readonly state: "Answered";
+      readonly revision: number;
+      readonly executionId: string;
+    }
+  | {
+      readonly state: "Cancelled";
+      readonly revision: number;
+      readonly reason: string;
+    };
+
 export type ConversationTurnView =
   | {
       readonly kind: "HumanConversationTurn";
       readonly messageId: string;
       readonly body: string;
       readonly occurredAt: string;
-      readonly responseStatus?: {
-        readonly state:
-          | "Queued"
-          | "Running"
-          | "RetryScheduled"
-          | "NeedsAttention"
-          | "Answered"
-          | "Cancelled";
-        readonly revision: number;
-        readonly executionId?: string;
-        readonly attemptNo?: number;
-        readonly nextEligibleAt?: string;
-        readonly safeReason?: string;
-        readonly reason?: string;
-        readonly canResume?: true;
-      };
+      readonly responseStatus?: ConversationResponseStatusView;
     }
   | {
       readonly kind: "AssistantConversationTurn";

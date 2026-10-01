@@ -281,11 +281,9 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
       webTransportHandle = handle;
       yield* Effect.addFinalizer(() => Effect.promise(handle.close));
     }
-    // Conversation settle write-back (markAnswered) deliberately emits no
-    // domain event (P14 `02` §4.1 two-step protocol), so the journal-
-    // watermark poller never fires for it. The conversation tick therefore
-    // broadcasts an explicit invalidation after each pass: the sweep has
-    // already committed, so any refetch observes the answered turn.
+    // ResponseJob transitions may happen in the daemon sweep without a
+    // transport command event. Track the latest Job update beside the event
+    // watermark so retry/attention/answer status invalidates immediately.
     // Broadcast ONLY on real movement, never per-tick: (a) journal-watermark
     // movement covers every event-producing change; (b) the latest answered
     // settled_at covers the conversation settle write-back, which
@@ -294,25 +292,25 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
     // the user's NEXT message moves something. Both signals are cheap; idle
     // ticks broadcast nothing.
     let lastBroadcastWatermark: number | undefined;
-    let lastBroadcastAnsweredAt: string | undefined;
+    let lastBroadcastConversationAt: string | undefined;
     const conversationTickWithRefresh = Effect.gen(function* () {
       yield* deployment.daemon.conversationTick;
       if (webTransportHandle !== undefined) {
         const sql = yield* SqlClient;
         const rows = yield* sql.unsafe<{
           watermark: number;
-          answeredAt: string | null;
+          conversationAt: string | null;
         }>(
-          "SELECT (SELECT COALESCE(MAX(sequence), 0) FROM domain_events) AS watermark, (SELECT MAX(settled_at) FROM human_messages WHERE state = 'Answered') AS answeredAt",
+          "SELECT (SELECT COALESCE(MAX(sequence), 0) FROM domain_events) AS watermark, (SELECT MAX(updated_at) FROM conversation_response_jobs) AS conversationAt",
         );
         const watermark = Number(rows[0]?.watermark ?? 0);
-        const answeredAt = rows[0]?.answeredAt ?? undefined;
+        const conversationAt = rows[0]?.conversationAt ?? undefined;
         if (
           watermark !== lastBroadcastWatermark ||
-          answeredAt !== lastBroadcastAnsweredAt
+          conversationAt !== lastBroadcastConversationAt
         ) {
           lastBroadcastWatermark = watermark;
-          lastBroadcastAnsweredAt = answeredAt;
+          lastBroadcastConversationAt = conversationAt;
           webTransportHandle.fanout.publishWatermark(watermark);
         }
       }

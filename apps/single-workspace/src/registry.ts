@@ -100,7 +100,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
       ...makeP15CommandHandlers({
         projects,
         executions,
-        messages: humanMessages,
+        responseJobs,
         inbox,
       }),
       makeSelectCurrentWorkHandler({

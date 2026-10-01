@@ -3,9 +3,9 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   ClockLive,
   CommandStoreLive,
+  ConversationResponseJobStoreLive,
   DomainEventJournalLive,
   ExecutionRepositoryLive,
-  HumanMessageStoreLive,
   IdGeneratorLive,
   InboxProjectionStoreLive,
   layer,
@@ -45,8 +45,8 @@ import {
   type WorkspaceId,
 } from "../../packages/domain/dist/index.js";
 import {
+  ConversationResponseJobStore,
   ExecutionRepository,
-  HumanMessageStore,
   InboxProjectionStore,
   ProjectRepository,
   SessionRepository,
@@ -78,7 +78,7 @@ export const makeP1App = (
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
-    Layer.provide(HumanMessageStoreLive, infra),
+    Layer.provide(ConversationResponseJobStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
@@ -92,11 +92,16 @@ export const makeP1App = (
       const sessions = yield* SessionRepository;
       const works = yield* WorkRepository;
       const executions = yield* ExecutionRepository;
-      const messages = yield* HumanMessageStore;
+      const responseJobs = yield* ConversationResponseJobStore;
       const inbox = yield* InboxProjectionStore;
       const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
         ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
-        ...makeP15CommandHandlers({ projects, executions, messages, inbox }),
+        ...makeP15CommandHandlers({
+          projects,
+          executions,
+          responseJobs,
+          inbox,
+        }),
       ];
       return CommandHandlerRegistry.of({
         lookup: (commandType) => {

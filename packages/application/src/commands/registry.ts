@@ -1,6 +1,6 @@
 import {
+  type ConversationResponseJobStoreService,
   type ExecutionRepositoryService,
-  type HumanMessageStoreService,
   type InboxProjectionStoreService,
   type PermissionGrantRepositoryService,
   ProjectRepository,
@@ -53,9 +53,9 @@ export const makeP1CommandHandlers = (
 export interface P15CommandDependencies {
   readonly projects: ProjectRepositoryService;
   readonly executions: ExecutionRepositoryService;
-  readonly messages: Pick<
-    HumanMessageStoreService,
-    "pendingOrderedByCreated" | "claimedOrderedByCreated" | "decline"
+  readonly responseJobs: Pick<
+    ConversationResponseJobStoreService,
+    "listForWorkspace" | "transition"
   >;
   readonly inbox: Pick<InboxProjectionStoreService, "markConsumed">;
 }
@@ -69,7 +69,7 @@ export const makeP15CommandHandlers = (
   makeCloseProjectHandler({
     projects: dependencies.projects,
     executions: dependencies.executions,
-    messages: dependencies.messages,
+    responseJobs: dependencies.responseJobs,
     inbox: dependencies.inbox,
   }) as unknown as CommandHandler<unknown, unknown>,
 ];

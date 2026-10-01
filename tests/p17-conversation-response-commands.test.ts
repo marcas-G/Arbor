@@ -70,7 +70,7 @@ describe("P17 conversation response commands", () => {
           } as never);
         }),
         AuthorityResolverPortLive,
-      ) as Effect.Effect<{ _tag: string; messageId: string }>,
+      ) as unknown as Effect.Effect<{ _tag: string; messageId: string }>,
     );
     expect(fact).toMatchObject({
       _tag: "ConversationResponseAuthority",

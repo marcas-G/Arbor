@@ -53,6 +53,8 @@ const EXPECTED_EVENTS = [
   // deliberately not reusing MessageSent (whose payload semantics are a
   // workspace sender).
   "HumanMessageSubmitted",
+  "ConversationResponseResumed",
+  "ConversationResponseCancelled",
 ].sort();
 
 const AGGREGATE_SNAPSHOT_FIELDS = [

@@ -213,7 +213,11 @@ const makeApp = (
       Effect.succeed(
         definitions.map(({ name, version, hash }) => ({ name, version, hash })),
       ),
-    resolveForModel: (ref) => {
+    resolveForModel: (ref: {
+      readonly name: string;
+      readonly version: string;
+      readonly hash: string;
+    }) => {
       const tool = definitions.find(
         (candidate) =>
           candidate.name === ref.name &&
