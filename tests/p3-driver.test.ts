@@ -850,6 +850,134 @@ describe("P3-013 agent driver", () => {
     expect(settlement.result?._tag).toBe("CoordinationCompleted");
   });
 
+  it("closes a rejected control call with a durable ControlResult before interruption", async () => {
+    const rejectingHandler: AgentActionHandler = {
+      action: "SendMessage",
+      handle: () =>
+        Effect.fail({
+          _tag: "AgentActionError" as const,
+          cause: "not applicable to this execution",
+        }),
+    };
+    const app = makeApp([sendMessageTurn("cannot route")], {
+      controlHandlers: [rejectingHandler],
+    });
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const settlement = yield* drive(allowGate);
+        const sql = yield* SqlClient;
+        const actions = yield* sql.unsafe<{
+          state: string;
+          disposition_json: string | null;
+        }>(
+          "SELECT state, disposition_json FROM agent_loop_step_actions WHERE execution_id = ? ORDER BY action_index",
+          [executionId],
+        );
+        const steps = yield* sql.unsafe<{
+          state: string;
+          settlement_json: string | null;
+        }>(
+          "SELECT state, settlement_json FROM agent_loop_steps WHERE execution_id = ?",
+          [executionId],
+        );
+        const timeline = yield* sql.unsafe<{
+          item_type: string;
+          payload_json: string;
+        }>(
+          "SELECT item_type, payload_json FROM session_entries WHERE item_type IN ('ToolCall','ControlResult') ORDER BY sequence",
+        );
+        return { settlement, actions, steps, timeline };
+      }),
+      app,
+    );
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Interrupted",
+      result: { reason: "ControlActionHandlerRejected" },
+    });
+    expect(result.actions).toEqual([
+      expect.objectContaining({
+        state: "TerminalRejected",
+        disposition_json: expect.stringContaining("HandlerRejected"),
+      }),
+    ]);
+    expect(result.steps).toEqual([
+      expect.objectContaining({
+        state: "SettlementProposed",
+        settlement_json: expect.stringContaining(
+          "ControlActionHandlerRejected",
+        ),
+      }),
+    ]);
+    expect(result.timeline.map((entry) => entry.item_type)).toEqual([
+      "ToolCall",
+      "ControlResult",
+    ]);
+    expect(JSON.parse(result.timeline[1]?.payload_json ?? "{}")).toMatchObject({
+      _tag: "ControlResult",
+      callRef: "c1",
+      status: "Denied",
+      disposition: "HandlerRejected",
+    });
+  });
+
+  it("pairs every call when the first control action settles and later calls are skipped", async () => {
+    const twoCalls = [
+      ...sendMessageTurn("first").slice(0, 1),
+      {
+        _tag: "ToolCallProposed" as const,
+        callRef: "c2",
+        toolName: "arbor_send_message",
+        argumentsJson: JSON.stringify({
+          kind: "Query",
+          body: "second",
+          recipientWorkspaceId: String(workspaceId),
+        }),
+      },
+      { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
+    ];
+    const app = makeApp([twoCalls]);
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const settlement = yield* drive(allowGate);
+        const sql = yield* SqlClient;
+        const actions = yield* sql.unsafe<{ state: string }>(
+          "SELECT state FROM agent_loop_step_actions WHERE execution_id = ? ORDER BY action_index",
+          [executionId],
+        );
+        const timeline = yield* sql.unsafe<{
+          item_type: string;
+          payload_json: string;
+        }>(
+          "SELECT item_type, payload_json FROM session_entries WHERE item_type IN ('ToolCall','ControlResult') ORDER BY sequence",
+        );
+        return { settlement, actions, timeline };
+      }),
+      app,
+    );
+
+    expect(result.settlement._tag).toBe("Completed");
+    expect(result.actions).toEqual([
+      { state: "Applied" },
+      { state: "SkippedEarlySettlement" },
+    ]);
+    const results = result.timeline
+      .filter((entry) => entry.item_type === "ControlResult")
+      .map((entry) => JSON.parse(entry.payload_json));
+    expect(results).toEqual([
+      expect.objectContaining({ callRef: "c1", status: "Succeeded" }),
+      expect.objectContaining({
+        callRef: "c2",
+        status: "Interrupted",
+        disposition: "SkippedEarlySettlement",
+      }),
+    ]);
+  });
+
   it("stops at the P2 safety gate", async () => {
     const app = makeApp([textTurn]);
     const program = Effect.gen(function* () {

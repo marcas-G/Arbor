@@ -556,24 +556,19 @@ describe("P14 production conversation model context", () => {
       { role: "assistant", content: priorAssistantAnswer },
       { role: "user", content: humanQuestion },
     ]);
-    // The conversation face now exposes the REGISTRY's shallow control
-    // tools (arbor_wait / arbor_send_message / arbor_claim_completion /
-    // arbor_propose_child_workspace / arbor_spawn_specialist /
-    // arbor_declare_dependency) instead of the legacy monolithic
-    // arbor_directive whose routes never matched the registry.
+    // Root Human Conversation is a response episode, not a Work execution.
+    // Its normal output surface therefore contains no Work/formation control
+    // affordances (tool-surface-review/13). In particular, exposing
+    // arbor_claim_completion here lets a model select an action that the
+    // runtime must reject because there is no bound Work.
     const toolNames = (
-      observedRequest?.tools as Array<{ function?: { name?: string } }>
+      (observedRequest?.tools ?? []) as Array<{
+        function?: { name?: string };
+      }>
     )
-      ?.map((tool) => tool.function?.name)
+      .map((tool) => tool.function?.name)
       .sort();
-    expect(toolNames).toEqual([
-      "arbor_claim_completion",
-      "arbor_declare_dependency",
-      "arbor_propose_child_workspace",
-      "arbor_send_message",
-      "arbor_spawn_specialist",
-      "arbor_wait",
-    ]);
+    expect(toolNames).toEqual([]);
     expect(result.message).toEqual({
       state: "Answered",
       response_body: assistantAnswer,

@@ -285,12 +285,15 @@ describe("P5 restart continuity", () => {
       before.executions.find((e) => e.execution_id === exe1)?.settlement_kind,
     ).toBe("Completed");
     expect(before.waits).toBe(1);
-    expect(before.entries).toBe(3);
+    // SCRC: the settling arbor_wait call is paired with a sourced
+    // ControlResult, so the durable timeline now contains one additional
+    // entry beyond the pre-SCRC legacy count.
+    expect(before.entries).toBe(4);
     expect(after.recovery.settled).toContain(exe2);
     expect(kind(exe2)).toBe("Interrupted");
     expect(kind(exe3)).toBeNull();
     expect(after.state.waits).toBe(1);
-    expect(after.state.entries).toBe(3);
+    expect(after.state.entries).toBe(4);
     expect(new Set(after.state.executions.map((e) => e.session_id))).toEqual(
       new Set([sessionId]),
     );

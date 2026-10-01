@@ -340,6 +340,7 @@ export const runModelDecision = (
             ? {
                 outputContractRef: "agent-directive-v1",
                 includeTools: false,
+                includeControlTools: false,
               }
             : { outputContractRef: TOOL_INVOCATION_CONTRACT }),
           ...(inputItems.length > 0 ? { inputItems } : {}),

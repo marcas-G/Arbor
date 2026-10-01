@@ -185,8 +185,11 @@ export const compileTurn = (input: {
   // F-TS-08 (`05`): the directive tool stays model-facing — `compileTurn`
   // appends `arbor_directive` for the agent-directive output contract when
   // no control definition of that name is already supplied.
-  const explicitControlTools =
-    input.plan.controlTools !== undefined && input.plan.controlTools.length > 0;
+  // Presence is semantically different from omission: an explicitly empty
+  // array is a purpose resolver's decision that this turn has no control
+  // surface. Re-injecting the legacy universal directive in that case would
+  // widen the turn after policy resolution.
+  const explicitControlTools = input.plan.controlTools !== undefined;
   if (
     input.plan.outputContract === "agent-directive-v1" &&
     !explicitControlTools &&
