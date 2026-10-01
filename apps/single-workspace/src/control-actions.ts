@@ -28,6 +28,7 @@ import {
   MessageId as MessageIdSchema,
   type OutboundMessage,
   parse,
+  Revision,
   SessionId,
 } from "@arbor/domain";
 import {
@@ -46,6 +47,8 @@ import {
   type WorkRepositoryService,
   WorkspaceRepository,
   type WorkspaceRepositoryService,
+  WorkWaitStore,
+  type WorkWaitStoreService,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
 
@@ -66,6 +69,8 @@ export interface SendMessageDependencies {
 export interface ClaimCompletionDependencies {
   readonly works: WorkRepositoryService;
   readonly tx: TransactionPortService;
+  readonly waits?: Pick<WorkWaitStoreService, "upsert">;
+  readonly clock: ClockService;
 }
 
 export interface ProposeChildDependencies {
@@ -334,6 +339,28 @@ const claimCompletionHandler = (
         );
       }
       const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      if (dependencies.waits !== undefined) {
+        const now = yield* dependencies.clock.now();
+        yield* dependencies.tx.transact(
+          dependencies.waits.upsert({
+            workId,
+            waitSpec: {
+              mode: "Any",
+              conditions: [
+                {
+                  _tag: "VerificationChanged",
+                  workId,
+                  targetWorkRevision: parse(Revision)(
+                    Number(work.value.revision),
+                  ),
+                },
+              ],
+            },
+            registeredAt: now,
+            updatedAt: now,
+          }),
+        );
+      }
       return {
         _tag: "Settle" as const,
         settlement: {
@@ -633,6 +660,7 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
   | MessageStore
   | TransactionPort
   | WorkRepository
+  | WorkWaitStore
   | WorkspaceRepository
 > = Layer.effect(
   SingleWorkspaceControlActionHandlers,
@@ -643,6 +671,7 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
     const messages = yield* MessageStore;
     const tx = yield* TransactionPort;
     const works = yield* WorkRepository;
+    const waits = yield* WorkWaitStore;
     const workspaces = yield* WorkspaceRepository;
     const proposals = yield* FormationProposalStore;
     return SingleWorkspaceControlActionHandlers.of(
@@ -653,6 +682,7 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
         messages,
         tx,
         works,
+        waits,
         workspaces,
         proposals,
       }),

@@ -207,6 +207,10 @@ const runTurns = (_turns: ReadonlyArray<ReadonlyArray<unknown>>) =>
     const workspaces = yield* sql.unsafe<{ workspace_id: string }>(
       "SELECT workspace_id FROM workspaces",
     );
+    const waits = yield* sql.unsafe<{
+      work_id: string;
+      conditions_json: string;
+    }>("SELECT work_id, conditions_json FROM work_waits ORDER BY work_id");
     return {
       settlement,
       work,
@@ -214,6 +218,7 @@ const runTurns = (_turns: ReadonlyArray<ReadonlyArray<unknown>>) =>
       specialists,
       dependencies,
       workspaces,
+      waits,
     };
   });
 
@@ -331,6 +336,15 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
       },
     });
     expect(result.work[0]?.lifecycle).toBe("Open");
+    expect(result.waits).toHaveLength(1);
+    expect(result.waits[0]?.work_id).toBe(workId);
+    expect(JSON.parse(result.waits[0]?.conditions_json ?? "[]")).toEqual([
+      {
+        _tag: "VerificationChanged",
+        workId,
+        targetWorkRevision: 0,
+      },
+    ]);
     expect(result.workspaces).toHaveLength(1);
   });
 
