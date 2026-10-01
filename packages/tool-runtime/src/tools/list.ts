@@ -7,6 +7,7 @@ import {
   type ToolExecutor,
 } from "../runtime.js";
 import { resolveExistingWithin } from "../safe-path.js";
+import { executeFilesystemTool } from "./filesystem-result.js";
 
 const MAX_ENTRIES = 500;
 
@@ -40,23 +41,26 @@ export const listExecutor: ToolExecutor = {
   write: false,
   requiresApproval: () => false,
   execute: ({ intent, sandbox }) =>
-    Effect.sync((): ToolExecutionResult => {
-      const args = JSON.parse(intent.argumentsJson) as {
-        path: { path: string };
-        depth?: number;
-      };
-      const start = resolveExistingWithin(sandbox.rootPath, args.path.path);
-      const entries: Array<string> = [];
-      walk(sandbox.rootPath, start, 0, args.depth ?? 1, entries);
-      return {
-        settlement: { _tag: "Success" },
-        observation: bounded(
-          JSON.stringify({
-            entries,
-            truncated: entries.length >= MAX_ENTRIES,
-          }),
-        ),
-        resultRef: null,
-      };
-    }),
+    Effect.sync(
+      (): ToolExecutionResult =>
+        executeFilesystemTool(() => {
+          const args = JSON.parse(intent.argumentsJson) as {
+            path: { path: string };
+            depth?: number;
+          };
+          const start = resolveExistingWithin(sandbox.rootPath, args.path.path);
+          const entries: Array<string> = [];
+          walk(sandbox.rootPath, start, 0, args.depth ?? 1, entries);
+          return {
+            settlement: { _tag: "Success" },
+            observation: bounded(
+              JSON.stringify({
+                entries,
+                truncated: entries.length >= MAX_ENTRIES,
+              }),
+            ),
+            resultRef: null,
+          };
+        }),
+    ),
 };
