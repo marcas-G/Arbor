@@ -106,6 +106,23 @@ export interface ModelContextManifest {
   readonly budgetDecision: { readonly maxOutputTokens: number };
   readonly compiledRequestHash: string;
   readonly controlBasis: ControlBasis;
+  readonly logicalStepNo?: number;
+  readonly repairAttempt?: number;
+  readonly operationKind?: PortableModelRequestV2["operationKind"];
+  readonly inputFrontier?: {
+    readonly firstSequence: number | null;
+    readonly lastSequence: number | null;
+  };
+  readonly typedInputItemRefs?: ReadonlyArray<string>;
+  readonly callRefs?: ReadonlyArray<string>;
+  readonly agentStepContextFingerprint?: string;
+  readonly resolvedModelBindingFingerprint?: string;
+  readonly budgetEvidence?: {
+    readonly kind: "CharsPerFourFallback";
+    readonly estimatedTokens: number;
+    readonly observedTokens: number | null;
+    readonly threshold: number;
+  };
 }
 
 export interface PreparedModelTurn {
@@ -152,6 +169,17 @@ export const compileTurn = (input: {
   readonly sessionId: SessionId;
   readonly contextEpoch: ContextEpochNumber;
   readonly maxOutputTokens: number;
+  readonly stepContext?: {
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly inputFrontier: {
+      readonly firstSequence: number | null;
+      readonly lastSequence: number | null;
+    };
+    readonly fingerprint: string;
+    readonly bindingFingerprint: string;
+  };
+  readonly estimatedInputTokens?: number;
 }): PreparedModelTurn => {
   const controlTools = [...(input.plan.controlTools ?? [])];
   // F-TS-08 (`05`): the directive tool stays model-facing — `compileTurn`
@@ -267,6 +295,31 @@ export const compileTurn = (input: {
     budgetDecision: { maxOutputTokens: input.maxOutputTokens },
     compiledRequestHash: fnv(JSON.stringify({ request, toolRoutes })),
     controlBasis: input.plan.controlBasis,
+    logicalStepNo: input.stepContext?.logicalStepNo ?? 0,
+    repairAttempt: input.stepContext?.repairAttempt ?? 0,
+    operationKind: request.operationKind,
+    inputFrontier: input.stepContext?.inputFrontier ?? {
+      firstSequence: null,
+      lastSequence: null,
+    },
+    typedInputItemRefs: [...(input.plan.messageContextRefs ?? [])],
+    callRefs: request.inputItems.flatMap((item) =>
+      item._tag === "ToolCall" ||
+      item._tag === "ToolResult" ||
+      item._tag === "ControlResult"
+        ? [item.callRef]
+        : [],
+    ),
+    agentStepContextFingerprint:
+      input.stepContext?.fingerprint ?? "legacy-step-context",
+    resolvedModelBindingFingerprint:
+      input.stepContext?.bindingFingerprint ?? "legacy-binding",
+    budgetEvidence: {
+      kind: "CharsPerFourFallback",
+      estimatedTokens: input.estimatedInputTokens ?? 0,
+      observedTokens: null,
+      threshold: input.capability.contextWindow,
+    },
   };
 
   return { request, manifest, toolRoutes };

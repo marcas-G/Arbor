@@ -78,6 +78,16 @@ export interface PrepareTurnInput {
   readonly messageContextRefs?: ReadonlyArray<string>;
   /** Adapter identity recorded on the manifest (composition-provided). */
   readonly providerRef?: string;
+  readonly stepContext?: {
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly inputFrontier: {
+      readonly firstSequence: number | null;
+      readonly lastSequence: number | null;
+    };
+    readonly fingerprint: string;
+    readonly bindingFingerprint: string;
+  };
   /** P14 conversation: suppress catalogued executable tools (WAVE1 S05 —
    * the Human Input request exposes only the directive tool). */
   readonly includeTools?: boolean;
@@ -241,6 +251,10 @@ export const ModelContextLive: Layer.Layer<
           sessionId: input.sessionId,
           contextEpoch: input.contextEpoch,
           maxOutputTokens: input.maxOutputTokens,
+          ...(input.stepContext === undefined
+            ? {}
+            : { stepContext: input.stepContext }),
+          estimatedInputTokens: fixedTokens,
         });
         return { _tag: "Ready", turn: compiled } as TurnPreparation;
       }).pipe(

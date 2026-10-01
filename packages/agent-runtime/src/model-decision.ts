@@ -11,6 +11,7 @@ import {
   GENERIC_COGNITION_PROGRAM,
   type InstructionFragment,
   type ModelContextService,
+  projectSessionTimeline,
   TOOL_INVOCATION_CONTRACT,
 } from "@arbor/model-context";
 import type {
@@ -48,10 +49,8 @@ import {
 } from "./agent-loop-policy.js";
 import { assembleInboxContext } from "./inbox-context.js";
 import { decideRepair } from "./repair.js";
-import {
-  assembleSessionContext,
-  SESSION_CONTEXT_ENTRY_LIMIT,
-} from "./session-context.js";
+import { SESSION_CONTEXT_ENTRY_LIMIT } from "./session-context.js";
+import { makeAgentStepContext } from "./step-context.js";
 import { assembleWorkContext } from "./work-context.js";
 
 export interface ModelDecisionOptions {
@@ -220,7 +219,29 @@ export const runModelDecision = (
           ),
         )
         .pipe(Effect.mapError(failure));
-      const sessionContext = assembleSessionContext(recentSessionEntries);
+      const sessionProjection = projectSessionTimeline(recentSessionEntries);
+      const sessionRecord = yield* tx
+        .transact(sessions.findById(input.execution.sessionId))
+        .pipe(Effect.mapError(failure));
+      if (Option.isNone(sessionRecord)) {
+        return yield* Effect.fail(
+          failure({
+            _tag: "SessionContextMissing",
+            sessionId: input.execution.sessionId,
+          }),
+        );
+      }
+      const stepContext = makeAgentStepContext({
+        logicalStepNo: turn,
+        repairAttempt,
+        sessionId: input.execution.sessionId,
+        contextEpoch: sessionRecord.value.contextEpoch,
+        controlBasis,
+        bindingFingerprint:
+          capability.bindingFingerprint ??
+          `legacy:${capability.providerRef ?? options.providerRef ?? "provider"}:${capability.modelRef}`,
+        inputFrontier: sessionProjection.frontier,
+      });
       const inboxEntries =
         inbox === undefined
           ? []
@@ -228,7 +249,10 @@ export const runModelDecision = (
               .transact(inbox.listUnconsumed(input.execution.workspaceId))
               .pipe(Effect.mapError(failure));
       const inboxContext = assembleInboxContext(inboxEntries);
-      const messages = [...sessionContext.messages];
+      const messages: Array<{
+        readonly role: "system" | "user" | "assistant" | "tool";
+        readonly text: string;
+      }> = [];
       messages.push(...inboxContext.messages);
       const inputItems = [
         ...conversationMessages.map((message) => ({
@@ -241,11 +265,11 @@ export const runModelDecision = (
           role: message.role,
           text: message.text,
         })),
-        ...sessionContext.inputItems,
+        ...sessionProjection.inputItems,
       ];
       const messageContextRefs = [
         ...conversationContextRefs,
-        ...sessionContext.contextRefs,
+        ...sessionProjection.contextRefs,
         ...inboxContext.contextRefs,
       ];
       const workspace = yield* tx
@@ -282,7 +306,7 @@ export const runModelDecision = (
         .prepareTurn({
           executionId: input.execution.executionId,
           sessionId: input.execution.sessionId,
-          contextEpoch: 0 as never,
+          contextEpoch: stepContext.contextEpoch,
           providerTurnId,
           binding: agentBinding,
           workspaceId: input.execution.workspaceId,
@@ -304,6 +328,7 @@ export const runModelDecision = (
           maxOutputTokens: capability.outputCeiling,
           bodySkillIds: [],
           instructionContents: workContext.contents,
+          stepContext,
           ...(isConversationExecution(input.execution) &&
           conversationMessages.length > 0
             ? {
@@ -345,7 +370,7 @@ export const runModelDecision = (
         providerTurnId: preparation.turn.manifest.providerTurnId,
         executionId: input.execution.executionId,
         sessionId: input.execution.sessionId,
-        contextEpoch: 0 as never,
+        contextEpoch: preparation.turn.manifest.contextEpoch,
         modelRef: capability.modelRef,
         outputContractRef: preparation.turn.manifest.outputContractRef,
         ...(options.onProviderProgress !== undefined

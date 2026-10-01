@@ -39,7 +39,7 @@ const depsOf = (name: string): ReadonlyArray<string> =>
   all().find((pkg) => pkg.name === name)?.internalDependencies ?? [];
 
 describe("P3 package DAG", () => {
-  it("wires durable tool observations back into context and forbids static ControlBasis", () => {
+  it("projects the typed Session Timeline and forbids static ControlBasis", () => {
     const decisionTurn = readFileSync(
       join(repoRoot, "packages/agent-runtime/src/model-decision.ts"),
       "utf8",
@@ -48,13 +48,15 @@ describe("P3 package DAG", () => {
       join(repoRoot, "packages/agent-runtime/src/agent-loop-driver.ts"),
       "utf8",
     );
-    const sessionContext = readFileSync(
-      join(repoRoot, "packages/agent-runtime/src/session-context.ts"),
+    const projector = readFileSync(
+      join(repoRoot, "packages/model-context/src/projector.ts"),
       "utf8",
     );
-    expect(decisionTurn).toContain("assembleSessionContext");
+    expect(decisionTurn).toContain("projectSessionTimeline");
     expect(decisionTurn).toContain("listRecentEntries");
-    expect(sessionContext).toContain('role: "tool"');
+    expect(projector).toContain('case "ToolCall"');
+    expect(projector).toContain('case "ToolResult"');
+    expect(projector).toContain("instructionFragments: []");
     expect(driver).toContain("makeControlBasisResolver");
     expect(driver).not.toContain("staticControlBasis");
     expect(driver).not.toContain('authorizationDigest: "digest"');
