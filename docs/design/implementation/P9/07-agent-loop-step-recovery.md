@@ -116,7 +116,7 @@ matches its result branch. Branch-specific assertions:
 | authorized transport retry | same Turn/new Attempt; no duplicate accepted output/effect |
 | repair/next-turn successor | exactly one stable new Turn; predecessor decision not recomputed |
 | Completed | no extra request; HumanMessage Answered with one bounded reply |
-| Interrupted | no automatic retry; HumanMessage Answered with null body |
+| Interrupted | no automatic retry; DID v1.24/P17 maps the ResponseJob to Cancelled or resumes the same paused Attempt; legacy P14 HumanMessage Answered(null) is migration input only |
 | Failed / OutcomeUnknown | original Execution creates no fake reply; P14 may release a new conversation attempt |
 | ReconciliationPending / Attention | no blind request/action/ordinary settlement; no duplicate reply |
 | insufficient legacy evidence | durable Attention; no request and no forced answer |

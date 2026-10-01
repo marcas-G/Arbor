@@ -1,6 +1,6 @@
 # DOGFOOD-DG-02 — Conversation retry-until-response can become a provider-call storm
 
-**Status:** OPEN DESIGN GAP
+**Status:** DESIGN RESOLVED BY SD v1.5 / DID v1.24; IMPLEMENTATION OPEN (P17)
 
 **Discovered:** 2026-10-01 real dogfooding, project `量化研究`
 
@@ -59,3 +59,17 @@ from DID v1.22/SCRC and can be fixed immediately: every accepted control/tool
 call must receive a sourced terminal result before execution settlement. That
 repair reduces the observed trigger but does not remove the general retry-storm
 risk, so it does not close this Design Gap.
+
+## Governance resolution
+
+Accepted 2026-10-01 by:
+
+```text
+ACCEPT_CONVERSATION_DELIVERY_RUNTIME_CONVERGENCE
+```
+
+Owning contracts are System Design v1.5, DID v1.24 and
+`docs/design/implementation/P17-conversation-delivery-runtime/**`. The gap is
+closed at the design layer. It remains implementation-open until P17 C1–C20,
+migration 0021, restart/live qualification and removal of the legacy unbounded
+retry path all pass.

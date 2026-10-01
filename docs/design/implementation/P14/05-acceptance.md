@@ -35,7 +35,7 @@ streaming。
 |---|---|---|---|
 | S11 | settled Provider result handoff | P3 `08` §5；P9 `07` | crash 后同 ProviderTurn 请求计数不增加；sourced ModelOutput 恰好一条 |
 | S12 | AgentLoopStep → conversation convergence | `02` §4.4；P9 `07` AH12/AH13 | proposal/settlement/writeback 两侧 kill；最终 Assistant turn 恰好一条 |
-| S13 | branch-specific message disposition | `02` §4.2/§4.4 | Completed=Answered body；Interrupted=Answered null；Failed/OutcomeUnknown=新 attempt；Attention=不释放 |
+| S13 | branch-specific message disposition（P17 superseded） | `02` §4.2/§4.4；P17 `03` | Completed=Answered；Interrupted=Cancelled/pause；Failed=classified retry/attention；OutcomeUnknown=Attention |
 | S14 | legacy adoption | P9 `07` §3/AH14 | DOGFOOD 等价 fixture 收敛；证据不足 fixture durable Attention、零请求 |
 
 ## 3. Exit criteria
@@ -50,6 +50,14 @@ streaming。
 
 S11–S14 belong to the v1.20 successor implementation gate and are not claimed
 by the historical P14 completion record.
+
+## 2B. DID v1.24 / P17 successor seams
+
+P17 `07-acceptance.md` C1–C20 supersede P14 retry/runtime acceptance. In
+particular, phase closure requires zero Provider bytes for blocked context,
+durable retry eligibility/backoff, explicit status projection, exact turn
+profiles, migration 0021 and removal of legacy retry/write paths. Historical
+P14 completion remains evidence for submit/root/transcript placement only.
 
 ## 4. 完成定义
 

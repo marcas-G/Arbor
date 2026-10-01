@@ -86,17 +86,20 @@ Step 2（P14 拥有，settlement durable 之后）
 - 逻辑一次 = 用户可见恰好一条 Assistant turn；物理 at-least-once 由上述锚
   收敛（`05` seam-6 机械测试：claim/settle 两点注入 crash）。
 
-### 4.2 Settlement 分支处理（frozen）
+### 4.2 Settlement 分支处理（DID v1.24 / P17 superseded）
 
 | Settlement | 写回 | 理由 |
 |---|---|---|
-| `Completed(...)`（含 Yielded/CompletionClaimed/CoordinationCompleted/QueryCompleted） | `Answered` + bounded response body | 产出 user-visible response episode |
-| `Failed` / `OutcomeUnknown` | `Pending`（`attempt_no + 1`）→ retry-until-response | 未产出回复；消息不丢、不永久 stuck |
-| `Interrupted`（`StopRequested` / `ControlledInterruption`） | `Answered`（response body = null） | human/system 有意停止该 execution；不制造重试风暴（再发消息是 human 的动作） |
+| `Completed(QueryCompleted)` | Job `Answered` + bounded response body | 产出唯一 user-visible response |
+| `Failed` | settle Attempt → typed failure classification → `RetryScheduled` 或 `NeedsAttention` | Failed 本身不授权重试 |
+| `OutcomeUnknown` | Job `NeedsAttention(ReconciliationRequired)` | 永不自动 replay |
+| `Interrupted` | Job `Cancelled(ControlledStop)`，或若有可恢复 state 则同 Attempt pause/resume | 不伪装 `Answered(null)` |
 
-**retry-until-response 的 attempt 语义（frozen）**：每次 admission 使用
-`(messageId, attempt_no)` 派生的确定性 executionId/commandId（同一 attempt
-内重放收敛；跨 attempt 必须新 id，避免与已 settle 的 execution 行冲突）。
+旧的无界 `retry-until-response` 已被撤销。新 attempt 仍使用
+`(messageId, attemptNo)` 派生确定性 executionId/commandId，但仅在 P17
+Recovery Policy 对 terminal transient failure 作出 durable RetryScheduled
+决定且 nextEligibleAt 到期后创建。Approval/reconciliation/compaction/可恢复
+stream interruption 恢复同一 Attempt/Execution。
 
 ### 4.3 Reconciliation record（P14-owns；不 reopen P2）
 
@@ -137,15 +140,29 @@ complete Provider success
   generation SettleExecution；不得从 Session 文本猜 settlement。
 - Execution 已 settle、HumanMessage 仍 Claimed 时，继续使用 §4.1 sweep；不执行
   新 Agent action，不生成第二条 Assistant turn。
-- 只有权威 `Failed` / `OutcomeUnknown` settlement 才按 §4.2 释放为新
-  conversation attempt。`ReconciliationPending` 本身不释放消息；它保持安全
-  对账/Attention，或先形成 OutcomeUnknown。
-- `Interrupted` 保持 §4.2 的 null-body Answered 语义；Runtime Safety Stop 仍须
-  先通过 unresolved-side-effect gate。
+- 只有 terminal `Failed` 且 P17 classifier 判为 transient、预算允许时，才形成
+  RetryScheduled；OutcomeUnknown/ReconciliationPending 进入 Attention/同 run
+  对账，禁止自动新 attempt。
+- `Interrupted` 按 §4.2 收敛为 Cancelled 或同 run pause/resume；Runtime Safety
+  Stop 仍须先通过 unresolved-side-effect gate。
 
 DOGFOOD-DG-01 等价 fixture 的目标收敛是：原 Claimed message 在原 Execution
 的 settled Provider result 上恢复，得到恰好一个 sourced ModelOutput 和一个
 Assistant turn，Provider 请求计数不增加。
+
+### 4.5 P17 Context/Eligibility gate
+
+Conversation trigger 不再扫描 HumanMessage Pending/Claimed；它只消费
+ResponseJob `Queued` 或到期的 `RetryScheduled`。Admission 前必须同时满足：
+
+- Project Open、root main vacant、Job revision current；
+- SessionContextGate Ready；
+- deployment breaker admits；
+- TurnProfileResolver produces RootConversationRespond v1；
+- attempt/time/fingerprint budgets 未耗尽。
+
+任何 Blocked/Attention/Cancelled/Answered 都产生零 Provider bytes。完整合同见
+P17 `02`–`04`。
 
 
 ## 5. Session 连续性（frozen）

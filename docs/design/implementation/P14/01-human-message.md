@@ -79,9 +79,9 @@ CREATE INDEX idx_human_messages_pending ON human_messages(project_id, state, cre
 ```
 
 - 迁移 `0014_human_messages.sql`（P14 拥有；PRAGMA user_version → 14；命名沿既有单下划线风格）。
-- `attempt_no`：retry-until-response 的 attempt 计数（`02` §4.2）；每次
-  Failed/OutcomeUnknown 回滚时 +1，admission id 由 `(messageId, attempt_no)`
-  派生。
+- `attempt_no`：历史 P14 retry-until-response 计数；DID v1.24/P17 后仅供
+  migration 0021 backfill/provenance。新 attempt 由 ResponseJob.nextAttemptNo
+  和 ConversationAttempt ledger 拥有，禁止 Failed/OutcomeUnknown 直接改写此列。
 - durable 在命令事务内（与 event append 同事务）。
 
 ## 5. Inbox admission
@@ -113,3 +113,19 @@ DDL 迁移 + 约束；inbox admission 形状。
 `InboxArrival` kind 封闭集扩展 `HumanConversation`（见 §5）；api-contracts
 `InboxEntryKind` 随扩。P6 其余语义（四种 message kinds、SendMessage
 规则、HumanInput=steer 专属）不 reopen。
+
+## 9. DID v1.24 / P17 recorded supersession
+
+`HumanMessageSubmitted`、root-only authority、内容/idempotency 与 Human turn
+语义保持。§4 的 `state/claimed_by_execution_id/attempt_no/response` 运行时
+职责被 P17 拆出到 `ConversationResponseJob` 与 append-only
+`ConversationAttempt`：
+
+- HumanMessage 是 immutable submitted-user fact；
+- SubmitHumanMessage 同事务创建 HumanMessage + Queued ResponseJob + events；
+- legacy columns 只供 migration 0021 backfill/compatibility read，完成 marker 后
+  不再是 scheduler truth；
+- 新写路径禁止调用 `rollbackForRetry`；
+- response/attention/cancel state 由 Job 拥有。
+
+Exact ADT/DDL/ports 见 P17 `01-domain-storage.md`，迁移规则见 `06`。
