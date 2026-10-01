@@ -982,3 +982,65 @@ export const P18_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P18_PROJECT_ARCHIVE_DDL,
   },
 ];
+
+/** DID v1.22 / SCRC-002: versioned typed Session Timeline carrier. Legacy
+ * rows remain byte-preserved evidence and intentionally receive no inferred
+ * callRef or context epoch. */
+const P19_SESSION_CONTEXT_RUNTIME_CONVERGENCE_DDL = `
+ALTER TABLE session_entries RENAME TO session_entries_legacy_v2;
+
+CREATE TABLE session_entries (
+  session_id    TEXT NOT NULL REFERENCES sessions(session_id),
+  sequence      INTEGER NOT NULL,
+  entry_kind    TEXT NOT NULL CHECK (entry_kind IN
+                  ('Input','ModelOutput','Observation','CheckpointReference','ContextUpdate')),
+  item_type     TEXT NOT NULL CHECK (item_type IN
+                  ('LegacyInput','LegacyModelOutput','LegacyObservation',
+                   'LegacyCheckpointReference','LegacyContextUpdate',
+                   'UserMessage','AssistantMessage','ToolCall','ToolResult',
+                   'ControlResult','ContextUpdate','CompactionCheckpoint','AttachmentRef')),
+  schema_version INTEGER NOT NULL CHECK (schema_version IN (1,2)),
+  context_epoch INTEGER,
+  payload_json  TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  source_kind   TEXT,
+  source_ref    TEXT,
+  content_hash  TEXT,
+  PRIMARY KEY (session_id, sequence),
+  CHECK (
+    (source_kind IS NULL AND source_ref IS NULL AND content_hash IS NULL)
+    OR
+    (source_kind IS NOT NULL AND source_ref IS NOT NULL AND content_hash IS NOT NULL)
+  ),
+  CHECK (
+    (schema_version = 1 AND item_type LIKE 'Legacy%' AND context_epoch IS NULL)
+    OR
+    (schema_version = 2 AND item_type NOT LIKE 'Legacy%' AND context_epoch IS NOT NULL)
+  )
+);
+
+INSERT INTO session_entries (
+  session_id, sequence, entry_kind, item_type, schema_version, context_epoch,
+  payload_json, created_at, source_kind, source_ref, content_hash
+)
+SELECT
+  session_id, sequence, entry_kind, 'Legacy' || entry_kind, 1, NULL,
+  payload_json, created_at, source_kind, source_ref, content_hash
+FROM session_entries_legacy_v2;
+
+DROP TABLE session_entries_legacy_v2;
+
+CREATE UNIQUE INDEX idx_session_entries_source
+  ON session_entries(session_id, item_type, source_kind, source_ref)
+  WHERE source_kind IS NOT NULL;
+`;
+
+/** SCRC implementation baseline; settles user_version at 19. */
+export const P19_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P18_MIGRATIONS,
+  {
+    id: 19,
+    name: "session_context_runtime_convergence",
+    sql: P19_SESSION_CONTEXT_RUNTIME_CONVERGENCE_DDL,
+  },
+];

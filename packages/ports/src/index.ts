@@ -23,6 +23,7 @@ export * from "./resources.js";
 export * from "./runtime.js";
 export * from "./sandbox-env.js";
 export * from "./session.js";
+export * from "./session-timeline.js";
 export * from "./snapshot-fingerprint.js";
 export * from "./tool.js";
 export * from "./verification-store.js";

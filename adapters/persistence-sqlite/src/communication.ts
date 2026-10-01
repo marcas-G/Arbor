@@ -181,6 +181,20 @@ export const InboxProjectionStoreLive: Layer.Layer<
           );
           return rows.map(toInboxEntry);
         }),
+      findByKey: (workspaceId, entryKey) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<InboxRow>(
+              "SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
+              [workspaceId, entryKey],
+            ),
+          );
+          const row = rows[0];
+          return row === undefined
+            ? Option.none()
+            : Option.some(toInboxEntry(row));
+        }),
       markConsumed: (workspaceId, entryKey) =>
         Effect.gen(function* () {
           yield* TransactionScope;

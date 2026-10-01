@@ -21,7 +21,7 @@ contracts. Any newly discovered semantic gap stops the affected task.
 Design:          CLOSED — SD v1.4 / DID v1.22
 Design Gap:      SCRC-DG-01 RESOLVED
 Planning:        COMPLETE — 8 tasks; review Blocking = 0
-Implementation:  AUTHORIZED — SCRC-001 COMPLETE; next SCRC-002
+Implementation:  AUTHORIZED — SCRC-001/002 COMPLETE; next SCRC-003 + SCRC-004
 Migration:       0019 authorized only within SCRC-002 and its TDD/migration gates
 ```
 

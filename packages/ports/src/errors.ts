@@ -15,6 +15,12 @@ export interface SessionSourceConflict {
   readonly sourceKind: string;
   readonly sourceRef: string;
 }
+export interface SessionEpochConflict {
+  readonly _tag: "SessionEpochConflict";
+  readonly sessionId: string;
+  readonly expectedEpoch: number;
+  readonly currentEpoch: number;
+}
 export type ResourceOwnershipRepositoryError =
   RepositoryFailure<"ResourceOwnershipRepository">;
 export type CommandStoreError = RepositoryFailure<"CommandStore">;

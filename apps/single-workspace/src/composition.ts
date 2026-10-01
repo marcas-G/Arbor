@@ -9,6 +9,8 @@ import {
   type CommandGateway,
   CommandGatewayLive,
   type CommandHandlerRegistry,
+  type InputPromotionService,
+  InputPromotionServiceLive,
   type ParentUserGovernanceFacts,
   type RemoteWorkerMediationPort,
   RemoteWorkerMediationPortLive,
@@ -56,7 +58,7 @@ import {
   P12_MIGRATIONS,
   P16_MIGRATIONS,
   P17_MIGRATIONS,
-  P18_MIGRATIONS,
+  P19_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -269,6 +271,7 @@ export type SingleWorkspaceServices =
   | UsageService
   | TransportBoundary
   | HumanMessageStore
+  | InputPromotionService
   | ProductionDaemonService
   | ProductionDaemonServices
   | SnapshotRetention;
@@ -471,6 +474,7 @@ export const buildSingleWorkspaceLayer = (
     BlobStorePortLive,
   );
   const admission = Layer.provide(ResourceAdmissionLive, repos);
+  const inputPromotion = Layer.provide(InputPromotionServiceLive, repos);
   const authorityResolver = AuthorityResolverPortLive;
   const toolAuthority = Layer.provide(
     ToolAuthorityResolverLive(
@@ -648,6 +652,7 @@ export const buildSingleWorkspaceLayer = (
 
   const all = Layer.mergeAll(
     coreAll,
+    inputPromotion,
     authorityResolver,
     mediation,
     t1Recovery,
@@ -667,6 +672,6 @@ export {
   P12_MIGRATIONS,
   P16_MIGRATIONS,
   P17_MIGRATIONS,
-  P18_MIGRATIONS as CURRENT_MIGRATIONS,
+  P19_MIGRATIONS as CURRENT_MIGRATIONS,
   runMigrations,
 };
