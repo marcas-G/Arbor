@@ -52,10 +52,6 @@ export interface HumanMessageStoreError {
   readonly cause: unknown;
 }
 
-export interface ClaimOutcome {
-  readonly _tag: "Claimed" | "AlreadyClaimed" | "NotFound";
-}
-
 export interface HumanMessageStoreService {
   /** Insert a Pending message; conflict surfaces the existing row so the
    * handler can converge semantic idempotency or reject a fingerprint
@@ -74,93 +70,11 @@ export interface HumanMessageStoreService {
     HumanMessageStoreError,
     import("./session.js").TransactionScope
   >;
-  /** Oldest-first pending for a project (FIFO claim order, `02` §2). */
-  readonly pendingOrderedByCreated: (
-    projectId: ProjectId,
-  ) => Effect.Effect<
-    ReadonlyArray<HumanMessageRecord>,
-    HumanMessageStoreError,
-    import("./session.js").TransactionScope
-  >;
-  /** CAS claim: Pending → Claimed(claimedByExecutionId). */
-  readonly claim: (
-    messageId: string,
-    claimedByExecutionId: string,
-  ) => Effect.Effect<
-    ClaimOutcome,
-    HumanMessageStoreError,
-    import("./session.js").TransactionScope
-  >;
-  /** Settled write-back: Claimed → Answered (+ bounded response body). */
-  readonly markAnswered: (
-    messageId: string,
-    settledAt: string,
-    responseBody: string | null,
-    providerReasoning?: ReasoningAttachment | null,
-  ) => Effect.Effect<
-    void,
-    HumanMessageStoreError,
-    import("./session.js").TransactionScope
-  >;
   /** All messages for a workspace (transcript read model, P14 `03`). */
   readonly listForWorkspace: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<
     ReadonlyArray<HumanMessageRecord>,
-    HumanMessageStoreError,
-    import("./session.js").TransactionScope
-  >;
-  /** Projects with active conversation messages (Pending or Claimed) —
-   * the daemon tick drives EVERY such project (product shape: any project
-   * a human submits to must be answered; single-project config would
-   * silently orphan the rest). */
-  readonly projectsWithConversationWork: () => Effect.Effect<
-    ReadonlyArray<ProjectId>,
-    HumanMessageStoreError,
-    import("./session.js").TransactionScope
-  >;
-  /** Claimed messages for a project (settle sweep, FIFO order). */
-  readonly claimedOrderedByCreated: (
-    projectId: ProjectId,
-  ) => Effect.Effect<
-    ReadonlyArray<HumanMessageRecord>,
-    HumanMessageStoreError,
-    import("./session.js").TransactionScope
-  >;
-  /** Settle-side lookup: the message claimed by a coordination execution
-   * (P14 `02` §4 write-back). */
-  readonly findByClaimedExecution: (
-    executionId: string,
-  ) => Effect.Effect<
-    Option.Option<HumanMessageRecord>,
-    HumanMessageStoreError,
-    import("./session.js").TransactionScope
-  >;
-  /** Crash recovery: rollback stale claims (no live execution) — the SAME
-   * attempt (no progress was made). */
-  readonly rollbackClaim: (
-    messageId: string,
-  ) => Effect.Effect<
-    void,
-    HumanMessageStoreError,
-    import("./session.js").TransactionScope
-  >;
-  /** Unproductive settle (Failed/OutcomeUnknown): rollback AND advance the
-   * attempt so the next admission uses fresh derived ids — retry-until-
-   * response (`02` §4.2). */
-  readonly rollbackForRetry: (
-    messageId: string,
-  ) => Effect.Effect<
-    void,
-    HumanMessageStoreError,
-    import("./session.js").TransactionScope
-  >;
-  /** P15 archive terminalization. Never returns to the admission queue. */
-  readonly decline: (
-    messageId: string,
-    settledAt: string,
-  ) => Effect.Effect<
-    void,
     HumanMessageStoreError,
     import("./session.js").TransactionScope
   >;

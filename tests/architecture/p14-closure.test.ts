@@ -24,8 +24,8 @@ const SEAMS: ReadonlyArray<SeamEvidence> = [
   {
     seam: "S1",
     title: "durability / idempotency",
-    file: "apps/web/test/../../tests/p14-human-message-store.test.ts",
-    marker: "Answered lifecycle",
+    file: "adapters/persistence-sqlite/test/p21-conversation-response-store.test.ts",
+    marker: "append-only Attempt",
   },
   {
     seam: "S2",
@@ -42,20 +42,20 @@ const SEAMS: ReadonlyArray<SeamEvidence> = [
   {
     seam: "S4",
     title: "Coordination execution ≠ Work execution",
-    file: "tests/p14-conversation-trigger.test.ts",
-    marker: "focus",
+    file: "packages/application/src/conversation-response-runtime.ts",
+    marker: 'focus: { _tag: "Coordination" }',
   },
   {
     seam: "S5",
-    title: "FIFO claim + one-active-main queueing",
-    file: "tests/p14-conversation-trigger.test.ts",
-    marker: "one-active-main",
+    title: "eligible Job + one-active-main queueing",
+    file: "packages/application/src/conversation-response-runtime.ts",
+    marker: "findActiveMainByWorkspace",
   },
   {
     seam: "S6",
-    title: "crash/replay exact-once logical response (two-step protocol)",
-    file: "tests/p14-settle-writeback-protocol.test.ts",
-    marker: "durable two-step recovery protocol",
+    title: "durable Job/Attempt exact-once response",
+    file: "tests/p17-conversation-response-runtime.test.ts",
+    marker: "without retry",
   },
   {
     seam: "S7",
@@ -104,7 +104,7 @@ describe("p14-closure", () => {
     }
   });
 
-  it("EC-4: the exposure matrix has exactly eight Human-actionable commands incl. SubmitHumanMessage (TR-B)", () => {
+  it("EC-4/P17: the exposure matrix includes conversation submit/resume/cancel", () => {
     const catalog = sourceOf("apps/web/src/commands/catalog.ts");
     for (const command of [
       "CreateProject",
@@ -115,6 +115,8 @@ describe("p14-closure", () => {
       "GrantPermission",
       "RevokePermission",
       "SubmitHumanMessage",
+      "ResumeConversationResponse",
+      "CancelConversationResponse",
     ]) {
       expect(catalog.includes(`"${command}"`)).toBe(true);
     }
@@ -165,7 +167,7 @@ describe("p14-closure", () => {
 
   it("G-B: the trigger admits Coordination (not a conversational Work)", () => {
     const trigger = sourceOf(
-      "packages/application/src/conversation-trigger.ts",
+      "packages/application/src/conversation-response-runtime.ts",
     );
     expect(trigger).toContain('"Coordination"');
     expect(trigger).not.toMatch(/conversational|ConversationWork/);

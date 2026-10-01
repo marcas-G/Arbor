@@ -32,6 +32,13 @@ const failed = (reason: string): ExecutionSettlement => ({
   failure: { _tag: "ExecutionFailure", reason },
 });
 
+const jobExecutionId =
+  job.state._tag === "Running"
+    ? job.state.executionId
+    : (() => {
+        throw new Error("test job must be Running");
+      })();
+
 describe("P17 conversation recovery policy", () => {
   it("schedules a first transient provider failure with deterministic delay", () => {
     const input = {
@@ -71,7 +78,7 @@ describe("P17 conversation recovery policy", () => {
     const prior: ConversationAttempt = {
       messageId: job.messageId,
       attemptNo: 0,
-      executionId: (job.state as { executionId: never }).executionId,
+      executionId: jobExecutionId,
       admittedAt: "2026-10-01T00:00:00.000Z",
       settledAt: "2026-10-01T00:00:10.000Z",
       settlementKind: "Failed",
@@ -122,7 +129,10 @@ describe("P17 conversation recovery policy", () => {
       attempts: [],
       settlement: {
         _tag: "OutcomeUnknown",
-        reconciliation: { invocationRefs: ["inv_1"] },
+        reconciliation: {
+          _tag: "ReconciliationRequired",
+          invocationRefs: ["inv_1"],
+        },
       },
       responseBody: null,
       now: "2026-10-01T00:00:10.000Z",

@@ -5,8 +5,8 @@ import {
   renameProject,
 } from "@arbor/domain";
 import type {
+  ConversationResponseJobStoreService,
   ExecutionRepositoryService,
-  HumanMessageStoreService,
   InboxProjectionStoreService,
   PendingDomainEvent,
   ProjectRepositoryService,
@@ -37,9 +37,9 @@ type RenameProjectDeps = {
 type CloseProjectDeps = {
   readonly projects: ProjectRepositoryService;
   readonly executions: ExecutionRepositoryService;
-  readonly messages: Pick<
-    HumanMessageStoreService,
-    "pendingOrderedByCreated" | "claimedOrderedByCreated" | "decline"
+  readonly responseJobs: Pick<
+    ConversationResponseJobStoreService,
+    "listForWorkspace" | "transition"
   >;
   readonly inbox: Pick<InboxProjectionStoreService, "markConsumed">;
 };
@@ -130,11 +130,8 @@ export const makeCloseProjectHandler = (
         });
       const closed = closeProject(project.value, { authorized: true });
       if (!closed.ok) return commandErr(closed.error);
-      const pendingMessages = yield* deps.messages.pendingOrderedByCreated(
-        envelope.projectId,
-      );
-      const claimedMessages = yield* deps.messages.claimedOrderedByCreated(
-        envelope.projectId,
+      const responseJobs = yield* deps.responseJobs.listForWorkspace(
+        project.value.rootWorkspaceId,
       );
       yield* deps.projects.closeIfRevision(
         envelope.projectId,
@@ -149,40 +146,38 @@ export const makeCloseProjectHandler = (
       for (const execution of activeExecutions) {
         yield* executions.requestStop(execution.executionId, envelope.issuedAt);
       }
-      const declineMessage = (message: {
-        readonly messageId: string;
-        readonly rootWorkspaceId: import("@arbor/domain").WorkspaceId;
-      }) =>
-        Effect.gen(function* () {
-          yield* deps.messages.decline(message.messageId, envelope.issuedAt);
-          yield* deps.inbox.markConsumed(
-            message.rootWorkspaceId,
-            `humanmsg:${message.messageId}`,
-          );
-        });
-      for (const message of pendingMessages) {
-        yield* declineMessage(message);
-      }
-      for (const message of claimedMessages) {
-        const executionId = message.claimedByExecutionId;
-        if (executionId === null) {
-          yield* declineMessage(message);
-          continue;
-        }
-        const execution = yield* executions.findById(
-          executionId as import("@arbor/domain").ExecutionId,
-        );
-        if (Option.isNone(execution)) {
-          yield* declineMessage(message);
-          continue;
-        }
+      for (const job of responseJobs) {
         if (
-          execution.value.state.status === "Settled" &&
-          (execution.value.state.settlement._tag === "Failed" ||
-            execution.value.state.settlement._tag === "OutcomeUnknown")
+          job.state._tag === "Answered" ||
+          job.state._tag === "Cancelled" ||
+          job.state._tag === "Running"
         ) {
-          yield* declineMessage(message);
+          continue;
         }
+        yield* deps.responseJobs
+          .transition({
+            messageId: job.messageId,
+            expectedRevision: job.revision,
+            expectedState: job.state._tag,
+            next: {
+              ...job,
+              state: { _tag: "Cancelled", reason: "ProjectClosed" },
+              revision: job.revision + 1,
+              updatedAt: envelope.issuedAt,
+            },
+          })
+          .pipe(
+            Effect.catchTag("ConversationJobConflict", (conflict) =>
+              Effect.fail({
+                _tag: "ConversationJobStoreError" as const,
+                cause: conflict,
+              }),
+            ),
+          );
+        yield* deps.inbox.markConsumed(
+          job.rootWorkspaceId,
+          `humanmsg:${job.messageId}`,
+        );
       }
       const events: PendingDomainEvent[] = [
         {

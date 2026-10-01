@@ -26,6 +26,7 @@ export const P18_MIGRATION_BASELINE = 18;
 /** DID v1.22 SCRC typed Session Timeline migration baseline. */
 export const P19_MIGRATION_BASELINE = 19;
 export const P20_MIGRATION_BASELINE = 20;
+export const P21_MIGRATION_BASELINE = 21;
 
 /** @deprecated Legacy alias kept for compiled references; the baseline is P16. */
 export const P15_MIGRATION_BASELINE = P16_MIGRATION_BASELINE;
