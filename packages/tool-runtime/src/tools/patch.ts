@@ -6,6 +6,7 @@ import {
   type ToolExecutor,
 } from "../runtime.js";
 import { resolveExistingWithin } from "../safe-path.js";
+import { executeFilesystemTool } from "./filesystem-result.js";
 
 const sameLines = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
   left.length === right.length &&
@@ -89,37 +90,46 @@ export const patchExecutor: ToolExecutor = {
   write: true,
   requiresApproval: () => false,
   execute: ({ intent, sandbox }) =>
-    Effect.sync((): ToolExecutionResult => {
-      const args = JSON.parse(intent.argumentsJson) as {
-        path: { path: string };
-        unifiedDiff: string;
-      };
-      const target = resolveExistingWithin(sandbox.rootPath, args.path.path);
-      const content = readFileSync(target, "utf8");
-      const applied = applyDiff(content, args.unifiedDiff);
-      if (!applied.ok) {
-        return {
-          settlement: { _tag: "ExpectedFailure" },
-          observation: bounded(applied.reason),
-          resultRef: null,
-        };
-      }
-      if (applied.hunks === 0) {
-        return {
-          settlement: { _tag: "ExpectedFailure" },
-          observation: bounded("diff contained no applicable hunk"),
-          resultRef: null,
-        };
-      }
-      if (applied.changed) {
-        writeFileSync(target, applied.content);
-      }
-      return {
-        settlement: { _tag: "Success" },
-        observation: bounded(
-          JSON.stringify({ applied: applied.changed, hunks: applied.hunks }),
-        ),
-        resultRef: null,
-      };
-    }),
+    Effect.sync(
+      (): ToolExecutionResult =>
+        executeFilesystemTool(() => {
+          const args = JSON.parse(intent.argumentsJson) as {
+            path: { path: string };
+            unifiedDiff: string;
+          };
+          const target = resolveExistingWithin(
+            sandbox.rootPath,
+            args.path.path,
+          );
+          const content = readFileSync(target, "utf8");
+          const applied = applyDiff(content, args.unifiedDiff);
+          if (!applied.ok) {
+            return {
+              settlement: { _tag: "ExpectedFailure" },
+              observation: bounded(applied.reason),
+              resultRef: null,
+            };
+          }
+          if (applied.hunks === 0) {
+            return {
+              settlement: { _tag: "ExpectedFailure" },
+              observation: bounded("diff contained no applicable hunk"),
+              resultRef: null,
+            };
+          }
+          if (applied.changed) {
+            writeFileSync(target, applied.content);
+          }
+          return {
+            settlement: { _tag: "Success" },
+            observation: bounded(
+              JSON.stringify({
+                applied: applied.changed,
+                hunks: applied.hunks,
+              }),
+            ),
+            resultRef: null,
+          };
+        }),
+    ),
 };

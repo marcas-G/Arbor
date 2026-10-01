@@ -97,4 +97,23 @@ describe("P4 patch tool", () => {
     expect(second.settlement._tag).toBe("Success");
     expect(readFileSync(file, "utf8")).toBe("inserted\nline1\nline2");
   });
+
+  it("fails closed without a defect when the target escapes the sandbox", async () => {
+    const result = await Effect.runPromise(
+      patchExecutor.execute({
+        intent: intent(
+          JSON.stringify({
+            path: { path: "../outside.txt" },
+            unifiedDiff: "@@ -0,0 +1,1 @@\n+outside",
+          }),
+        ),
+        definition: {} as never,
+        context,
+        sandbox,
+        regions: [],
+      }),
+    );
+
+    expect(result.settlement._tag).toBe("ExpectedFailure");
+  });
 });

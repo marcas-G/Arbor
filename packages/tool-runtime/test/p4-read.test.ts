@@ -36,40 +36,36 @@ describe("P4 read tool", () => {
   });
 
   it("rejects a path escaping the sandbox root", async () => {
-    const exit = await Effect.runPromise(
-      Effect.exit(
-        readExecutor.execute({
-          intent: intent('{"path":{"path":"../../etc/passwd"}}'),
-          definition: {} as never,
-          context,
-          sandbox,
-          regions: [],
-        }),
-      ),
+    const result = await Effect.runPromise(
+      readExecutor.execute({
+        intent: intent('{"path":{"path":"../../etc/passwd"}}'),
+        definition: {} as never,
+        context,
+        sandbox,
+        regions: [],
+      }),
     );
-    expect(exit._tag).toBe("Failure");
+    expect(result.settlement._tag).toBe("ExpectedFailure");
   });
 
   it("rejects an adjacent directory that shares the root string prefix", async () => {
     const sibling = `${root}-escape`;
     mkdirSync(sibling, { recursive: true });
     writeFileSync(join(sibling, "secret.txt"), "secret");
-    const exit = await Effect.runPromise(
-      Effect.exit(
-        readExecutor.execute({
-          intent: intent(
-            JSON.stringify({
-              path: { path: `../${basename(sibling)}/secret.txt` },
-            }),
-          ),
-          definition: {} as never,
-          context,
-          sandbox,
-          regions: [],
-        }),
-      ),
+    const result = await Effect.runPromise(
+      readExecutor.execute({
+        intent: intent(
+          JSON.stringify({
+            path: { path: `../${basename(sibling)}/secret.txt` },
+          }),
+        ),
+        definition: {} as never,
+        context,
+        sandbox,
+        regions: [],
+      }),
     );
-    expect(exit._tag).toBe("Failure");
+    expect(result.settlement._tag).toBe("ExpectedFailure");
   });
 
   it("rejects a sandbox symlink or junction that resolves outside", async () => {
@@ -80,17 +76,15 @@ describe("P4 read tool", () => {
       join(root, "outside-link"),
       process.platform === "win32" ? "junction" : "dir",
     );
-    const exit = await Effect.runPromise(
-      Effect.exit(
-        readExecutor.execute({
-          intent: intent('{"path":{"path":"outside-link/secret.txt"}}'),
-          definition: {} as never,
-          context,
-          sandbox,
-          regions: [],
-        }),
-      ),
+    const result = await Effect.runPromise(
+      readExecutor.execute({
+        intent: intent('{"path":{"path":"outside-link/secret.txt"}}'),
+        definition: {} as never,
+        context,
+        sandbox,
+        regions: [],
+      }),
     );
-    expect(exit._tag).toBe("Failure");
+    expect(result.settlement._tag).toBe("ExpectedFailure");
   });
 });
