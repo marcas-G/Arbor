@@ -34,7 +34,10 @@ interface ChildWorkspaceProposal {
 ```
 
 - `responsibilityDraft.resourceBoundary` 的 `basisResponsibilityRevision` 一致性由 P1 `01` §6 precondition 承担；P6 不重复校验。
-- `initialWork.verificationMission` 不在 proposal 中：P6 不拥有 Verification 语义（P8）；`AssignWork` 需要该字段时使用 P1 冻结的 minimal 占位 mission，P8 到位后收紧。
+- DID v1.26 VDC：`initialWork` 若存在，proposal 必须带完整
+  `verificationMission`（goal、structured criteria、至少一个 required criterion、
+  riskRequirements）。Parent 提供该语义；Runtime 不得从 objective/why 自动生成
+  placeholder mission。没有 initialWork 的 child proposal 仍合法。
 
 ## 3. `SpawnSpecialist`（P6 冻结载荷；含 D3 约束）
 
