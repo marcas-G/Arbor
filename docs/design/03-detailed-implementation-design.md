@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.25\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — Execution Workspace Binding authorized\
-**Supersedes:** v1.24\
+**Version:** 1.26\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — Verification Delivery convergence authorized\
+**Supersedes:** v1.25\
 **Date:** 2026-10-02\
 **Depends on:** `Arbor System Design Specification v1.5`
 
@@ -125,6 +125,41 @@ Manual governance accepted the mount-relative design and implementation on
 in the governing thread. This authorizes the owning-contract landing and the
 EWB implementation. `DOGFOOD-DG-03` closes only after mechanical tests and the
 isolated release-validation Work prove the path.
+
+**Governance changes (v1.25 → v1.26):**（Verification Delivery Convergence，
+VDC-1…VDC-8）
+
+- `Completed(CompletionClaimed)` emits the exact top-level
+  `{ executionId, workId, workRevision, claimRef, settlement }` trigger. Old
+  nested events reconcile from the durable Execution Work binding; consumer
+  offsets are never reset to repair historical delivery.
+- Evidence kind `ToolObservation` is identified by the durable pair
+  `(ToolInvocationId, ToolResult.observationRef)`, plus its exact
+  `(executionId, callRef)` binding. A model selects evidence meaning but never
+  authors source identity.
+- Normal Verifier conclusions carry model-authored summary content. Runtime
+  persists the bytes through BlobStore and produces `summaryRef`; the
+  concluded Verification and `VerificationConcluded` event durably retain that
+  ref. `Unknown(Orphaned)` summary content is authored by the authorized Parent.
+- A child `initialWork`, when present, carries a complete explicit
+  VerificationMission in its Parent-approved proposal. Runtime does not
+  synthesize a placeholder mission from objective text. A proposal without an
+  initialWork remains valid.
+- Model-facing `AssignWork` binds `predecessorWorkId` from the current parent
+  Work execution when one exists (otherwise null); the model supplies the
+  human-readable `reason`. Runtime validates the target Workspace and parent
+  authority before command submission.
+- A producer CompletionClaim registers a `VerificationChanged(workId, revision)`
+  wait. Verification conclusion releases it; a producer Work is not re-run
+  while its claim awaits verification.
+- StartVerification and deterministic verifier spawn are production-wired;
+  crash/replay reuses the preallocated Verification and verifier Execution ids.
+- Verification Pass remains distinct from Parent Acceptance and Work
+  completion. CompleteWork revalidates the exact Work/Verification/Acceptance
+  revision triple.
+
+Manual governance accepted VDC-1…VDC-8 by the user instruction `完成这些` on
+2026-10-02. The current dogfood Work is the live qualification path.
 
 **Governance changes (v1.3 → v1.4):**
 

@@ -1,7 +1,22 @@
-# P8 — 01 Verification / Acceptance Commands (DRAFT for contract review)
+# P8 — 01 Verification / Acceptance Commands
 
 **Authority:** DID v1.10 §3.5/§3.6/§4.2/§5.3/§12.10/§12.11 (Work + Verification truth tables), §12.8 C7; SD v1.3 §9.1/§9.6/§9.7; 不变量 22/23/49; P0 domain（verification.ts/work.ts/dependency.ts Acceptance 冻结实现）。
-**Status:** DRAFT (first draft for contract review).
+**Status:** FROZEN — DID v1.26 VDC addendum.
+
+## VDC addendum — evidence identity and conclusion summary
+
+`RecordVerificationEvidence(kind="ToolObservation")` carries Runtime-bound
+source identity `{ toolInvocationId, observationRef, executionId, callRef }`.
+The verifier model may choose and explain an observation but cannot author those
+identity fields. The record is rejected unless the invocation/result pair is
+terminal, sourced and visible to the exact Verifier Execution.
+
+For a normal `ConcludeVerification`, the model-facing semantic input contains
+summary content, not `summaryRef`. Runtime writes the exact UTF-8 bytes to
+BlobStore, verifies the returned content-addressed ref and submits the existing
+command with that `summaryRef`. The Verification conclusion row and
+`VerificationConcluded` event retain `summaryRef` durably. Parent governance
+supplies summary content only for `Unknown(Orphaned)`.
 
 ## 1. `StartVerification`
 

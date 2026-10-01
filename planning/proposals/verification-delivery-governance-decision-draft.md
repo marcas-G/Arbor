@@ -1,6 +1,6 @@
 # Verification Delivery Governance Decision Draft
 
-**Status:** DRAFT — awaiting manual governance
+**Status:** ACCEPTED / IMPLEMENTATION AUTHORIZED
 
 **Decision token:** `ACCEPT_VERIFICATION_DELIVERY_CONVERGENCE`
 
@@ -102,14 +102,10 @@ This decision does not allow Verification Pass to auto-accept Work. Parent
 Acceptance remains a separate governance judgment. `CompleteWork` still
 revalidates the exact Work revision, Pass Verification and matching Acceptance.
 
-## Acceptance
+## Acceptance record
 
-To accept the complete VD-1…VD-6 contract, reply:
-
-```text
-ACCEPT_VERIFICATION_DELIVERY_CONVERGENCE
-```
-
-Acceptance authorizes the explicitly permitted Codex governance writer to land
-the owning `docs/design/**` changes and close G-V2-2/3/4. Track-B runtime
-implementation begins only after that landing and an implementation plan review.
+The user accepted the complete VD-1…VD-6 contract through the explicit
+instruction `完成这些` on 2026-10-02. This authorizes the owning contract landing
+and Track-B implementation. The historical token
+`ACCEPT_VERIFICATION_DELIVERY_CONVERGENCE` remains the stable audit label for
+this decision.

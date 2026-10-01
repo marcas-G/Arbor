@@ -1,7 +1,7 @@
-# P8 — 04 Evidence & Version Binding (DRAFT for contract review)
+# P8 — 04 Evidence & Version Binding
 
 **Authority:** DID v1.11 §3.5:1161-1185, §3.7:1237, §8.4A, §12.8 C7; SD v1.3 §9.2/§9.5/§9.6; 不变量 26/27/44/49; P4 blob/artifact 基建; P7 `01` §3（Deliverable 不可变）; P6 `01` §2（占位 mission）。
-**Status:** DRAFT (first draft for contract review; GQ2 decided: criteria structured per v1.11 G1)。
+**Status:** FROZEN — DID v1.26 VDC addendum.
 
 ## 1. EvidenceRecord（runtime record，DID §3.7——非聚合、无 domain event）
 
@@ -15,10 +15,19 @@ interface EvidenceRecord {
   readonly observedEnvironmentRevision?: string;   // 可执行验证时必填（§3）
   readonly recordedByExecutionId: ExecutionId;     // Verifier Execution 绑定
   readonly recordedAt: string;
+  /** Required only when kind = ToolObservation; Runtime-bound, never model-authored. */
+  readonly toolInvocationId?: ToolInvocationId;
+  readonly observationRef?: string;
+  readonly callRef?: string;
 }
 ```
 
 - append-only、immutable；仅 VerifierExecutionAuthority 可 append（`01` §2）。
+- ToolObservation uses `(toolInvocationId, observationRef, executionId, callRef)`
+  as its exact source identity. `artifactRef` is content evidence, not a
+  substitute for the invocation/result identity.
+- A concluded Verification stores `summaryRef: BlobRef | null`; normal
+  conclusions require non-null summaryRef and the event carries the same ref.
 - trust metadata（DID §8.4A）：evidence 片段进 Model Context 时 `provenanceKind: ToolObservation/…` 默认 `DataOnly`——verdict 推理链不得自我提升 authority。
 
 ## 2. Criterion 级 verdict（GQ2 已裁决：mission schema 结构化——v1.11 G1）
