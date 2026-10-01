@@ -20,10 +20,15 @@ import type {
   HumanMessageStoreService,
   ProjectRepositoryError,
   ProjectRepositoryService,
+  ProviderDeploymentBreakerService,
   TransactionPortService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { CommandAuthorityFact } from "./authority.js";
+import {
+  CONVERSATION_RETRY_POLICY_V1,
+  decideConversationRecovery,
+} from "./conversation-recovery.js";
 import { semanticRequestFingerprint } from "./fingerprint.js";
 import { newUuid7 } from "./formation-plan.js";
 import type { CommandGatewayError, CommandGatewayService } from "./gateway.js";
@@ -63,6 +68,9 @@ export interface ConversationResponseTriggerDependencies {
   readonly clock: Pick<ClockService, "now">;
   readonly tx: Pick<TransactionPortService, "transact">;
   readonly principal: Principal;
+  readonly breaker?: ProviderDeploymentBreakerService;
+  readonly bindingFingerprint?: string;
+  readonly configurationRevision?: string;
 }
 
 export type ConversationResponseRuntimeError =
@@ -122,6 +130,56 @@ export const runConversationResponseTrigger = (
     const attemptNo = job.nextAttemptNo;
     const executionId = executionIdOf(job.messageId, attemptNo);
     const commandId = commandIdOf(job.messageId, attemptNo);
+    if (
+      dependencies.breaker !== undefined &&
+      dependencies.bindingFingerprint !== undefined &&
+      dependencies.configurationRevision !== undefined
+    ) {
+      const admission = yield* dependencies.tx.transact(
+        dependencies.breaker.admit({
+          bindingFingerprint: dependencies.bindingFingerprint,
+          configurationRevision: dependencies.configurationRevision,
+          executionId,
+          now,
+        }),
+      );
+      if (admission._tag === "Denied") {
+        const failureFingerprint = `breaker:${dependencies.bindingFingerprint}:${admission.failureClass}`;
+        const next: ConversationResponseJob = {
+          ...job,
+          state:
+            admission.retryAt === undefined
+              ? {
+                  _tag: "NeedsAttention",
+                  reason:
+                    admission.failureClass === "AuthenticationFailed"
+                      ? "AuthenticationFailed"
+                      : admission.failureClass === "RequestRejected"
+                        ? "RequestRejected"
+                        : "UnknownFailure",
+                  failureFingerprint,
+                }
+              : {
+                  _tag: "RetryScheduled",
+                  attemptNo,
+                  nextEligibleAt: admission.retryAt,
+                  failureFingerprint,
+                },
+          lastFailureClass: admission.failureClass,
+          revision: job.revision + 1,
+          updatedAt: now,
+        };
+        yield* dependencies.tx.transact(
+          dependencies.jobs.transition({
+            messageId: job.messageId,
+            expectedRevision: job.revision,
+            expectedState: job.state._tag,
+            next,
+          }),
+        );
+        return [`breaker:${next.state._tag}:${job.messageId}`];
+      }
+    }
     const payload: AdmitWorkspaceMainPayload = {
       _tag: "WorkspaceMain",
       executionId,
@@ -210,13 +268,16 @@ export interface ConversationResponseSweepDependencies {
     ConversationResponseJobStoreService,
     "listRunning" | "transition"
   >;
-  readonly attempts: Pick<ConversationAttemptStoreService, "settle">;
+  readonly attempts: Pick<ConversationAttemptStoreService, "settle" | "list">;
   readonly executions: Pick<ExecutionRepositoryService, "findById">;
   readonly legacyMessages?: Pick<HumanMessageStoreService, "markAnswered">;
   readonly clock: Pick<ClockService, "now">;
   readonly responseBodyOf: (
     messageId: string,
   ) => Effect.Effect<string | null, never, never>;
+  readonly breaker?: ProviderDeploymentBreakerService;
+  readonly bindingFingerprint?: string;
+  readonly configurationRevision?: string;
 }
 
 const attentionJob = (
@@ -253,14 +314,15 @@ export const runConversationResponseSettlementSweep = (
     const running = yield* dependencies.jobs.listRunning(projectId);
     for (const job of running) {
       if (job.state._tag !== "Running") continue;
-      const executionId = job.state.executionId;
+      const runningState = job.state;
+      const executionId = runningState.executionId;
       const execution = yield* dependencies.executions.findById(executionId);
       if (Option.isNone(execution)) {
         const now = yield* dependencies.clock.now();
         const next = attentionJob(job, executionId, "UnknownFailure", now);
         yield* dependencies.attempts.settle({
           messageId: job.messageId,
-          attemptNo: job.state.attemptNo,
+          attemptNo: runningState.attemptNo,
           settledAt: now,
           settlementKind: "MissingExecution",
           failureClass: "UnknownFailure",
@@ -283,64 +345,56 @@ export const runConversationResponseSettlementSweep = (
         settlement._tag === "Completed"
           ? yield* dependencies.responseBodyOf(job.messageId)
           : null;
-      const next: ConversationResponseJob =
-        settlement._tag === "Completed" && responseBody !== null
-          ? {
-              ...job,
-              state: {
-                _tag: "Answered",
-                executionId,
-                responseBody,
-              },
-              lastFailureClass: null,
-              revision: job.revision + 1,
-              updatedAt: now,
-            }
-          : settlement._tag === "Interrupted"
-            ? {
-                ...job,
-                state: { _tag: "Cancelled", reason: "ControlledStop" },
-                lastFailureClass: "ControlledInterruption",
-                revision: job.revision + 1,
-                updatedAt: now,
-              }
-            : attentionJob(
-                job,
-                executionId,
-                settlement._tag === "OutcomeUnknown"
-                  ? "ReconciliationRequired"
-                  : "UnknownFailure",
-                now,
-              );
-      const failureClass =
-        next.state._tag === "NeedsAttention"
-          ? next.lastFailureClass
-          : next.state._tag === "Cancelled"
-            ? "ControlledInterruption"
-            : null;
-      const retryDecision =
-        next.state._tag === "Answered"
-          ? ({ _tag: "Answer" } as const)
-          : next.state._tag === "Cancelled"
-            ? ({ _tag: "Cancel", reason: next.state.reason } as const)
-            : next.state._tag === "NeedsAttention"
-              ? ({ _tag: "Attention", reason: next.state.reason } as const)
-              : yield* Effect.die(
-                  new Error(
-                    `invalid settled response job state ${next.state._tag}`,
-                  ),
-                );
+      const priorAttempts = (yield* dependencies.attempts.list(
+        job.messageId,
+      )).filter((attempt) => attempt.attemptNo < runningState.attemptNo);
+      const decision = decideConversationRecovery({
+        job,
+        attempts: priorAttempts,
+        settlement,
+        responseBody,
+        now,
+        policy: CONVERSATION_RETRY_POLICY_V1,
+      });
+      const next: ConversationResponseJob = {
+        ...job,
+        state: decision.nextState,
+        lastFailureClass: decision.failureClass,
+        revision: job.revision + 1,
+        updatedAt: now,
+      };
+      if (
+        dependencies.breaker !== undefined &&
+        dependencies.bindingFingerprint !== undefined &&
+        dependencies.configurationRevision !== undefined
+      ) {
+        if (decision.failureClass === null) {
+          yield* dependencies.breaker.recordSuccess({
+            bindingFingerprint: dependencies.bindingFingerprint,
+            configurationRevision: dependencies.configurationRevision,
+            now,
+          });
+        } else if (
+          decision.failureClass === "TransientProviderUnavailable" ||
+          decision.failureClass === "AuthenticationFailed" ||
+          decision.failureClass === "RequestRejected"
+        ) {
+          yield* dependencies.breaker.recordFailure({
+            bindingFingerprint: dependencies.bindingFingerprint,
+            configurationRevision: dependencies.configurationRevision,
+            failureClass: decision.failureClass,
+            now,
+          });
+        }
+      }
       yield* dependencies.attempts.settle({
         messageId: job.messageId,
-        attemptNo: job.state.attemptNo,
+        attemptNo: runningState.attemptNo,
         settledAt: now,
         settlementKind: settlement._tag,
-        failureClass,
-        failureFingerprint:
-          next.state._tag === "NeedsAttention"
-            ? next.state.failureFingerprint
-            : null,
-        retryDecision,
+        failureClass: decision.failureClass,
+        failureFingerprint: decision.failureFingerprint,
+        retryDecision: decision.retryDecision,
       });
       yield* dependencies.jobs.transition({
         messageId: job.messageId,

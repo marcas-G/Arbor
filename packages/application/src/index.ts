@@ -6,6 +6,7 @@ export * from "./commands/index.js";
 export * from "./completion-consumer.js";
 export * from "./consumer-loop.js";
 export * from "./conversation-response-runtime.js";
+export * from "./conversation-recovery.js";
 export * from "./conversation-trigger.js";
 export * from "./durability.js";
 export * from "./environment-drift.js";

@@ -49,6 +49,7 @@ import {
   ProjectionQueryPort,
   ProjectionStore,
   ProjectRepository,
+  ProviderDeploymentBreaker,
   type ReconciliationSource,
   RecordEnvironmentChange,
   type RuntimeSafetyGate,
@@ -184,6 +185,8 @@ export interface ProductionDaemonConfig {
   readonly projectId?: ProjectId;
   readonly principal: Principal;
   readonly batchSize?: number;
+  readonly bindingFingerprint: string;
+  readonly configurationRevision: string;
 }
 
 export type ProductionDaemonServices =
@@ -218,6 +221,7 @@ export type ProductionDaemonServices =
   | HumanMessageStore
   | ConversationResponseJobStore
   | ConversationAttemptStore
+  | ProviderDeploymentBreaker
   | ProjectRepository;
 
 /** The production daemon assembly. `start` = migrations -> T1 startup recovery
@@ -407,6 +411,7 @@ export const ProductionDaemonServiceLive = (
           const messages = yield* HumanMessageStore;
           const jobs = yield* ConversationResponseJobStore;
           const attempts = yield* ConversationAttemptStore;
+          const breaker = yield* ProviderDeploymentBreaker;
           const projects = yield* ProjectRepository;
           const executions = yield* ExecutionRepository;
           const gateway = yield* CommandGateway;
@@ -430,6 +435,9 @@ export const ProductionDaemonServiceLive = (
                   clock,
                   responseBodyOf,
                   legacyMessages: messages,
+                  breaker,
+                  bindingFingerprint: config.bindingFingerprint,
+                  configurationRevision: config.configurationRevision,
                 },
                 projectId,
               ),
@@ -440,6 +448,9 @@ export const ProductionDaemonServiceLive = (
                 jobs,
                 attempts,
                 legacyMessages: messages,
+                breaker,
+                bindingFingerprint: config.bindingFingerprint,
+                configurationRevision: config.configurationRevision,
                 projects,
                 executions,
                 clock,

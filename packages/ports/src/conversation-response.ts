@@ -204,3 +204,40 @@ export class ConversationAttemptStore extends Context.Service<
   ConversationAttemptStore,
   ConversationAttemptStoreService
 >()("arbor/ConversationAttemptStore") {}
+
+export type ProviderBreakerAdmission =
+  | { readonly _tag: "Admitted"; readonly probe: boolean }
+  | {
+      readonly _tag: "Denied";
+      readonly failureClass: ConversationFailureClass;
+      readonly retryAt?: string;
+    };
+
+export interface ProviderDeploymentBreakerService {
+  readonly admit: (input: {
+    readonly bindingFingerprint: string;
+    readonly configurationRevision: string;
+    readonly executionId: ExecutionId;
+    readonly now: string;
+  }) => Effect.Effect<
+    ProviderBreakerAdmission,
+    ConversationJobStoreError,
+    TransactionScope
+  >;
+  readonly recordSuccess: (input: {
+    readonly bindingFingerprint: string;
+    readonly configurationRevision: string;
+    readonly now: string;
+  }) => Effect.Effect<void, ConversationJobStoreError, TransactionScope>;
+  readonly recordFailure: (input: {
+    readonly bindingFingerprint: string;
+    readonly configurationRevision: string;
+    readonly failureClass: ConversationFailureClass;
+    readonly now: string;
+  }) => Effect.Effect<void, ConversationJobStoreError, TransactionScope>;
+}
+
+export class ProviderDeploymentBreaker extends Context.Service<
+  ProviderDeploymentBreaker,
+  ProviderDeploymentBreakerService
+>()("arbor/ProviderDeploymentBreaker") {}
