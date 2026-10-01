@@ -1,10 +1,10 @@
 # Arbor System Design Specification
 
-**Version:** 1.4
+**Version:** 1.5
 
-**Status:** FROZEN — Session / Context Runtime convergence governance patch
+**Status:** FROZEN — Conversation Delivery Runtime convergence governance patch
 
-**Supersedes:** v1.3
+**Supersedes:** v1.4
 
 **Date:** 2026-10-01
 
@@ -44,6 +44,34 @@ semantics only and did not change WHY or user-visible behavior.
 `Problem & Goals` and `Scenarios` remain unchanged. The accepted proposal is
 fixed by SHA-256
 `200D9EE0F252915F1816C57FC5FEE470E77D7FB924A95A7474E03DF68BFAFD05`.
+
+**Governance changes (v1.4 → v1.5):**
+
+- CDRC-1: an immutable HumanMessage is separated from its durable
+  ConversationResponseJob delivery lifecycle and append-only attempts.
+- CDRC-2/3: Provider transport retry, Agent output repair and Conversation
+  execution retry are distinct bounded policies; `Execution Failed` alone no
+  longer means immediate re-admission.
+- CDRC-4: deterministic/non-retryable failures and exhausted budgets converge
+  to durable NeedsAttention; retryable failures use durable eligibility time.
+- CDRC-5: recoverable approval, reconciliation, compaction and interruption
+  resume the same run state rather than fabricating a new human turn.
+- CDRC-6: Session projection admits only a causally closed invocation frontier;
+  unresolved or contradictory tool/control history blocks Provider bytes.
+- CDRC-7: one authoritative continuation strategy is used per request;
+  provider-native continuation is binding-scoped and never double-injected
+  with the portable typed timeline.
+- CDRC-8: model-visible tools come from a purpose/readiness/authority-aware
+  TurnProfileResolver; visibility still does not grant invocation authority.
+- CDRC-9: durable failure fingerprints, bounded scheduling and a deployment
+  circuit breaker prevent repeated deterministic/systemic request storms.
+- CDRC-10: retry/attention/cancelled state is user-visible and resumable through
+  explicit human commands, never encoded as an indefinitely processing turn.
+
+The accepted proposal is fixed by SHA-256
+`66FF684CFD71A76C20A6FA32B30C1413BED85F34A694DE06301B122366C121B2`.
+The external implementation comparison is research input only; the frozen
+semantics above remain Arbor-owned.
 
 ---
 
@@ -1600,6 +1628,14 @@ Domain Core + Persistence/Event Journal
 66. Provider-native checkpoint 只在兼容 ResolvedModelBinding 下使用；不兼容时 portable rebuild。
 67. Permission/Authority 不从 Session、summary、checkpoint、Tool text 或模型声明恢复。
 68. Provider overflow recovery 有界；任何已产生 durable assistant/tool effect 的 logical step 不得通过全步 replay 恢复。
+69. HumanMessage 是不可变用户事实；回复调度、attempt、retry 与 attention 由独立 ConversationResponseJob 拥有。
+70. 一个 ConversationResponseJob 同时最多一个 Running attempt，且最多提交一个 authoritative Assistant response。
+71. Provider transport retry、Agent output repair、Conversation execution retry 是三个独立有界预算；任何一层不得隐式创建或重置另一层预算。
+72. Failed/OutcomeUnknown 不自动等于重新排队；只有明确 classified transient failure 可进入带 durable nextEligibleAt 的 RetryScheduled。
+73. 任何 Provider inference request 只能包含 causally closed ToolCall/ToolResult 或 ControlResult pair；dangling/contradictory frontier 必须先 reconcile 或进入 Attention。
+74. Approval、reconciliation、compaction 与可恢复 interruption 属于同一 run 的 pause/resume，不得伪装成新 HumanMessage 或新 Conversation attempt。
+75. Model-visible tool surface 必须由 Execution purpose、exact registration readiness、capability 与当前 control facts 解析；静态 catalog 或布尔开关不是最终资格判定。
+76. 同一确定性 failure fingerprint 或 deployment systemic failure 达到 policy 阈值后必须停止 Provider bytes 并形成 durable Attention/circuit state。
 
 ---
 

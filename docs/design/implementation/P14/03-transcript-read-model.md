@@ -58,3 +58,13 @@ type TranscriptEntry =
 单测：三 kind 联合渲染 fixture（含未知 kind 原样）；bounded 截断；
 executionId/messageId correlation；cursor 分页；upsert 重放幂等；
 api-contracts types 编译级穷尽。
+
+## 6. DID v1.24 / P17 status successor
+
+Transcript content union 保持 backward compatible；Assistant turn 只从
+ResponseJob.Answered 投影。另增 keyed-by-messageId 的
+`ConversationResponseStatus` read model：Queued、Running、RetryScheduled、
+NeedsAttention、Answered、Cancelled，并携带 Job revision 与安全可呈现字段。
+
+Web 禁止再用“Human turn 后没有 Assistant turn”推导处理中；NeedsAttention 或
+Cancelled 也不得生成空 Assistant turn。Exact DTO/commands 见 P17 `05`。

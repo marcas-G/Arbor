@@ -7,7 +7,9 @@ Within the Close command transaction:
 - Pending messages become Declined and their humanmsg:* Inbox rows are consumed.
 - Claimed messages with no committed execution, or a settled Failed/OutcomeUnknown execution, become Declined and their Inbox rows are consumed.
 - Active executions receive stop requests and remain on the normal settlement path.
-- Settled Completed/Interrupted conversations retain the normal Answered write-back path.
+- Settled conversation convergence follows DID v1.24/P17: Completed may become
+  Job.Answered; Interrupted becomes Cancelled or same-Attempt pause/resume.
+  Legacy Answered(null) rows are migration input only.
 
 In local v1, Declined means ProjectClosed exclusively. settledAt and claimedByExecutionId provide its audit correlation; no generic decline-reason taxonomy is introduced.
 

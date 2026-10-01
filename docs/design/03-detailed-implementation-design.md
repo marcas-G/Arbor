@@ -1,10 +1,10 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.23\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — overflow successor chain authorized\
-**Supersedes:** v1.22\
+**Version:** 1.24\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — Conversation Delivery Runtime convergence authorized\
+**Supersedes:** v1.23\
 **Date:** 2026-10-01\
-**Depends on:** `Arbor System Design Specification v1.4`
+**Depends on:** `Arbor System Design Specification v1.5`
 
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
@@ -55,6 +55,37 @@ implementation require separate authorization.
 Accepted proposal SHA-256:
 `09EE81EFAD5583585F7E8885E3647451C06F15F46F0CC40203158531A124E538`.
 Migration 0020 and implementation are authorized within SCRC-007/008.
+
+**Governance changes (v1.23 → v1.24):**（CDRC-1…CDRC-10）
+
+- HumanMessage content/idempotency is separated from a new durable
+  ConversationResponseJob state machine and append-only ConversationAttempt
+  ledger. Legacy Pending/Claimed/attempt columns cease to be scheduling truth.
+- Conversation Job states are Queued, Running, RetryScheduled,
+  NeedsAttention, Answered and Cancelled; one Job owns at most one running
+  attempt and one authoritative response.
+- transport retry, model-output repair and conversation retry have distinct
+  versioned budgets. Settlement is classified before the conversation policy
+  chooses answer, durable delay, attention or cancellation.
+- Session projection returns Ready or Blocked and admits only the maximal
+  causally closed frontier. Adapter validation rejects dangling call pairs
+  before sending Provider bytes.
+- recoverable pause/reconciliation/approval/compaction resumes the same
+  Attempt/Execution. A new attempt is permitted only after a terminal,
+  explicitly retryable classification and durable eligibility decision.
+- TurnProfileResolver replaces includeTools/includeControlTools and binds the
+  exact purpose-eligible tool identities/output contract/context policy for one
+  turn. Runtime authority/freshness checks remain mandatory.
+- durable failure fingerprints, deterministic backoff, explicit Resume/Cancel
+  commands and a ResolvedModelBinding-scoped deployment breaker close request
+  storms across both one message and many messages.
+
+Accepted proposal SHA-256:
+`66FF684CFD71A76C20A6FA32B30C1413BED85F34A694DE06301B122366C121B2`.
+P17 implementation contracts under
+`docs/design/implementation/P17-conversation-delivery-runtime/**` are FROZEN;
+implementation and migration 0021 are AUTHORIZED by the accepted governance
+token `ACCEPT_CONVERSATION_DELIVERY_RUNTIME_CONVERGENCE`.
 
 **Governance changes (v1.3 → v1.4):**
 
