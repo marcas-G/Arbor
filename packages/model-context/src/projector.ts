@@ -115,6 +115,15 @@ export const projectSessionTimeline = (
         });
         contextRefs.push(refOf(entry));
         break;
+      case "CompactionCheckpoint":
+        if (typeof payload.summaryText !== "string") break;
+        inputItems.push({
+          _tag: "Message",
+          role: "system",
+          text: `[Continuation checkpoint]\n${payload.summaryText}`,
+        });
+        contextRefs.push(refOf(entry));
+        break;
       default: {
         if (entry.entryKind !== "Observation") break;
         const observation = payload.observation as

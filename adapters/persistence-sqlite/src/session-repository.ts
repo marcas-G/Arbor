@@ -530,13 +530,26 @@ export const SessionRepositoryLive: Layer.Layer<
           const hasSources = columns.some(
             (column) => column.name === "source_kind",
           );
+          const hasTimeline = columns.some(
+            (column) => column.name === "item_type",
+          );
           const selection = hasSources
             ? "session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash"
             : "session_id, sequence, entry_kind, payload_json, created_at, NULL AS source_kind, NULL AS source_ref, NULL AS content_hash";
+          const checkpointFloor = hasTimeline
+            ? Number(
+                (yield* run(
+                  sql.unsafe<{ sequence: number }>(
+                    "SELECT sequence FROM session_entries WHERE session_id = ? AND item_type = 'CompactionCheckpoint' ORDER BY sequence DESC LIMIT 1",
+                    [sessionId],
+                  ),
+                ))[0]?.sequence ?? -1,
+              )
+            : -1;
           const rows = yield* run(
             sql.unsafe<SessionEntryRow>(
-              `SELECT ${selection} FROM session_entries WHERE session_id = ? ORDER BY sequence DESC LIMIT ?`,
-              [sessionId, limit],
+              `SELECT ${selection} FROM session_entries WHERE session_id = ? AND sequence >= ? ORDER BY sequence DESC LIMIT ?`,
+              [sessionId, checkpointFloor, limit],
             ),
           );
           return [...rows].reverse().map(toSessionEntry);

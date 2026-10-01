@@ -43,6 +43,7 @@ CLOSED   — disposed by a later phase / governance ruling (see file)
 | G-V2-4 | initialWork VerificationMission lifecycle | DID v1.19 field-source closure | Formation / B10 | OPEN |
 | TOOL-AUTH-DG-01 | Execution tool capability source | DID §8 / P4 invocation authority | Executable Tool Calling | RESOLVED |
 | SCRC-DG-01 | Session / Context Runtime convergence | System Design v1.4; DID v1.22; landing `75589c5` | Session timeline, inbox promotion, typed tool items, compaction | RESOLVED |
+| SCRC-DG-02 | Context overflow successor ProviderTurn identity | DID ProviderTurn/AgentLoopStep/Compaction recovery | SCRC-007 overflow integration; SCRC-008 closure | OPEN |
 
 All six gaps were resolved by the System Design v1.3 / DID v1.4 governance
 patch. Resolution authority is recorded in each gap file.

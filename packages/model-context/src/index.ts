@@ -1,3 +1,4 @@
+export * from "./budget-evidence.js";
 export * from "./compaction.js";
 export * from "./compiler.js";
 export * from "./context.js";
