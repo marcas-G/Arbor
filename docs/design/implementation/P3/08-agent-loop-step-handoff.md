@@ -288,9 +288,22 @@ checkpoint never permits replay of already resolved action-ledger entries. The
 related compaction ProviderTurn/Manifest refs provide audit correlation without
 creating a second semantic Agent step.
 
+### DID v1.23 overflow successor chain
+
+After terminal ContextLimitExceeded with no durable output/effect, the same
+AgentLoopStep may ensure exactly one ordinal-0 chain:
+
+```text
+Inference(failed) → OverflowCompaction → OverflowReplacement
+```
+
+Every link has a stable role/identity and immutable ProviderTurn/Manifest.
+Replacement success resumes the existing action phase; replacement overflow is
+terminal. `repairAttempt` is unchanged.
+
 ## 11. Must Not Decide
 
 - No Provider transport changes beyond the atomic success/store read contract.
 - No new tool side-effect taxonomy; P4 remains authoritative.
 - No new Execution settlement variants.
-- No implementation or migration authorization.
+- No implementation beyond the separately authorized v1.23 bounded overflow chain.

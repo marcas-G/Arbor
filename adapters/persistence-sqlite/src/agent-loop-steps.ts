@@ -5,6 +5,7 @@ import {
   type AgentLoopStepFence,
   type AgentLoopStepIdentity,
   type AgentLoopStepInvariantConflict,
+  type AgentLoopStepProviderTurnLink,
   type AgentLoopStepRecord,
   type AgentLoopStepState,
   AgentLoopStepStore,
@@ -58,6 +59,39 @@ interface ActionRow {
   readonly revision: number;
   readonly updated_at: string;
 }
+
+interface ProviderTurnLinkRow {
+  readonly execution_id: string;
+  readonly logical_step_no: number;
+  readonly repair_attempt: number;
+  readonly overflow_ordinal: 0;
+  readonly role: AgentLoopStepProviderTurnLink["role"];
+  readonly provider_turn_id: string;
+  readonly predecessor_provider_turn_id: string | null;
+  readonly context_epoch: number;
+  readonly manifest_id: string | null;
+  readonly state: AgentLoopStepProviderTurnLink["state"];
+  readonly created_at: string;
+}
+
+const toProviderTurnLink = (
+  row: ProviderTurnLinkRow,
+): AgentLoopStepProviderTurnLink => ({
+  identity: toIdentity(row),
+  overflowOrdinal: 0,
+  role: row.role,
+  providerTurnId: row.provider_turn_id as ProviderTurnId,
+  ...(row.predecessor_provider_turn_id === null
+    ? {}
+    : {
+        predecessorProviderTurnId:
+          row.predecessor_provider_turn_id as ProviderTurnId,
+      }),
+  contextEpoch: row.context_epoch as never,
+  ...(row.manifest_id === null ? {} : { manifestId: row.manifest_id }),
+  state: row.state,
+  createdAt: row.created_at,
+});
 
 const parseJson = (value: string | null): unknown | undefined =>
   value === null ? undefined : (JSON.parse(value) as unknown);
@@ -445,6 +479,65 @@ export const AgentLoopStepStoreLive: Layer.Layer<
             ),
           );
           return rows.map(toAction);
+        }),
+      ensureProviderTurnLink: (link, fence) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          yield* checkFence(fence);
+          const existing = yield* run(
+            sql.unsafe<ProviderTurnLinkRow>(
+              "SELECT * FROM agent_loop_step_provider_turns WHERE execution_id=? AND logical_step_no=? AND repair_attempt=? AND overflow_ordinal=? AND role=?",
+              [
+                link.identity.executionId,
+                link.identity.logicalStepNo,
+                link.identity.repairAttempt,
+                link.overflowOrdinal,
+                link.role,
+              ],
+            ),
+          );
+          if (existing[0] !== undefined) {
+            const prior = toProviderTurnLink(existing[0]);
+            return same(prior, link)
+              ? prior
+              : yield* Effect.fail(
+                  conflict("existing provider turn link differs"),
+                );
+          }
+          const rows = yield* run(
+            sql.unsafe<ProviderTurnLinkRow>(
+              "INSERT INTO agent_loop_step_provider_turns (execution_id,logical_step_no,repair_attempt,overflow_ordinal,role,provider_turn_id,predecessor_provider_turn_id,context_epoch,manifest_id,state,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING *",
+              [
+                link.identity.executionId,
+                link.identity.logicalStepNo,
+                link.identity.repairAttempt,
+                link.overflowOrdinal,
+                link.role,
+                link.providerTurnId,
+                link.predecessorProviderTurnId ?? null,
+                link.contextEpoch,
+                link.manifestId ?? null,
+                link.state,
+                link.createdAt,
+              ],
+            ),
+          );
+          return toProviderTurnLink(rows[0] as ProviderTurnLinkRow);
+        }),
+      listProviderTurnLinks: (identity) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<ProviderTurnLinkRow>(
+              "SELECT * FROM agent_loop_step_provider_turns WHERE execution_id=? AND logical_step_no=? AND repair_attempt=? ORDER BY overflow_ordinal, role",
+              [
+                identity.executionId,
+                identity.logicalStepNo,
+                identity.repairAttempt,
+              ],
+            ),
+          );
+          return rows.map(toProviderTurnLink);
         }),
     });
   }),

@@ -11,7 +11,7 @@ Arbor is a multi-agent work system organized around long-lived Responsibilities,
 | `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 68 system invariants | FROZEN |
 | `docs/design/03-detailed-implementation-design.md` | Executable contracts: ADT/Command/Event/Ports/SQL/Package DAG/phases | TOP-LEVEL FROZEN |
 
-These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.4, DID v1.22).
+These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.4, DID v1.23).
 
 ## Design governance (docs/design/**)
 
@@ -96,7 +96,7 @@ SCRC code implementation are AUTHORIZED by the manual token
 (`planning/phases/SCRC.md`; 8 task contracts; T01–T30 acceptance matrix;
 planning review Blocking = 0). Execute SCRC-001…SCRC-008 strictly by the phase
 DAG; only SCRC-008 may claim full completion. Current implementation state:
-**SCRC-001…006 COMPLETE; SCRC-007 PARTIAL/BLOCKED by SCRC-DG-02**
+**SCRC-001…008 COMPLETE; FORMALLY CLOSED; SCRC-DG-01/02 RESOLVED**
 (`planning/results/SCRC-001.result.md`, `planning/results/SCRC-002.result.md`,
 `planning/results/SCRC-003.result.md`).
 See also `planning/results/SCRC-004.result.md`.

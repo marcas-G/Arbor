@@ -2,7 +2,7 @@
 
 ## 状态
 
-**OPEN — blocks SCRC-007 overflow integration and SCRC-008 final closure.**
+**RESOLVED — DID v1.23 OVS-1…OVS-7; migration 0020; overflow-chain tests green.**
 
 ## 失败证据
 
@@ -31,3 +31,9 @@ overflow successor identity；同时明确旧 Turn 终止、replacement binding�
 
 Summary/ProviderNative/budget primitives 保留；自动 overflow successor wiring 停止。
 不得用 `_r1` repairAttempt 或随机 TurnId 绕过。
+
+## Resolution
+
+人工治理接受 OVS-1…OVS-7。DID v1.23 与 P3/P9 owning contracts 已落字；
+`0020_agent_loop_step_provider_turn_chain`、ordinal-0 ensure/recovery、replacement
+inference 已实现并通过定向测试。第二次 overflow 不创建新 chain。

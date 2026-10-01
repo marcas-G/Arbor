@@ -6,6 +6,7 @@ import {
   layer,
   P18_MIGRATIONS,
   P19_MIGRATIONS,
+  P20_MIGRATIONS,
   runMigrations,
 } from "../src/index.js";
 
@@ -128,5 +129,27 @@ describe("SCRC migration 0019", () => {
         source_ref: null,
       },
     ]);
+  });
+
+  it("adds the bounded overflow chain table once", async () => {
+    const program = Effect.gen(function* () {
+      const first = yield* runMigrations(P20_MIGRATIONS);
+      const second = yield* runMigrations(P20_MIGRATIONS);
+      const sql = yield* SqlClient;
+      const version = yield* sql.unsafe<{ user_version: number }>(
+        "PRAGMA user_version",
+      );
+      const tables = yield* sql.unsafe<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_loop_step_provider_turns'",
+      );
+      return { first, second, version: version[0]?.user_version, tables };
+    });
+    const result = await Effect.runPromise(
+      Effect.provide(program, layer({ filename: ":memory:" })),
+    );
+    expect(result.first).toBe(20);
+    expect(result.second).toBe(0);
+    expect(result.version).toBe(20);
+    expect(result.tables).toHaveLength(1);
   });
 });

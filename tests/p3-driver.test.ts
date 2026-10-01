@@ -11,6 +11,7 @@ import {
   P16_MIGRATIONS,
   P17_MIGRATIONS,
   P19_MIGRATIONS,
+  P20_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RuntimeClockLive,
@@ -449,6 +450,75 @@ const sendMessageTurn = (body: string) => [
 ];
 
 describe("P3-013 agent driver", () => {
+  it("uses one persisted overflow chain and replacement inference", async () => {
+    const operations: string[] = [];
+    const providerRuntime = Layer.succeed(ProviderRuntime, {
+      runTurn: (input) => {
+        const operation =
+          input.request.requestVersion === 2
+            ? input.request.operationKind
+            : "Inference";
+        operations.push(operation);
+        if (operations.length === 1) {
+          return Effect.fail({
+            _tag: "ProviderFailure" as const,
+            kind: "ContextLimitExceeded" as const,
+          });
+        }
+        if (operation === "CompactionSummary") {
+          return Effect.succeed({
+            attemptNo: 0,
+            retryDecisions: [],
+            events: [
+              { _tag: "TextDelta" as const, text: "compact state" },
+              { _tag: "TurnCompleted" as const, finishReason: "Stop" as const },
+            ],
+          });
+        }
+        return Effect.succeed({
+          attemptNo: 0,
+          retryDecisions: [],
+          events: [
+            {
+              _tag: "TurnStarted" as const,
+              providerTurnId: input.providerTurnId,
+              attemptNo: 0,
+              modelRef: input.modelRef,
+            },
+            ...sendMessageTurn("replacement complete"),
+          ],
+        });
+      },
+    });
+    const app = makeApp([], { providerRuntime });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P20_MIGRATIONS);
+      yield* seed;
+      const settlement = yield* drive(allowGate);
+      const sql = yield* SqlClient;
+      const links = yield* sql.unsafe<{
+        role: string;
+        overflow_ordinal: number;
+      }>(
+        "SELECT role, overflow_ordinal FROM agent_loop_step_provider_turns ORDER BY role",
+      );
+      return { settlement, links };
+    });
+    const result = await run(program, app);
+    expect(result.settlement, JSON.stringify(result)).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "CoordinationCompleted" },
+    });
+    expect(operations).toEqual(["Inference", "CompactionSummary", "Inference"]);
+    expect(result.links).toHaveLength(3);
+    expect(new Set(result.links.map((link) => link.role))).toEqual(
+      new Set(["Inference", "OverflowCompaction", "OverflowReplacement"]),
+    );
+    expect(result.links.every((link) => link.overflow_ordinal === 0)).toBe(
+      true,
+    );
+  });
+
   it("persists a control settlement in the action ledger before returning", async () => {
     const app = makeApp([sendMessageTurn("settle now")]);
     const program = Effect.gen(function* () {
