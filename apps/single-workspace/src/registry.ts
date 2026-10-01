@@ -2,11 +2,13 @@ import {
   type CommandHandler,
   CommandHandlerRegistry,
   makeAcceptWorkOutcomeHandler,
+  makeCancelConversationResponseHandler,
   makeDeclareDependencyHandler,
   makeGrantPermissionHandler,
   makeP1CommandHandlers,
   makeP15CommandHandlers,
   makeRecordDecisionHandler,
+  makeResumeConversationResponseHandler,
   makeRevokePermissionHandler,
   makeSelectCurrentWorkHandler,
   makeSendMessageHandler,
@@ -178,6 +180,12 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
                   : (projectId as unknown as never),
               ),
             ),
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeResumeConversationResponseHandler({
+        jobs: responseJobs,
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeCancelConversationResponseHandler({
+        jobs: responseJobs,
       }) as unknown as CommandHandler<unknown, unknown>,
     ];
     return CommandHandlerRegistry.of({

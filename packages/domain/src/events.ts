@@ -178,6 +178,20 @@ export const HumanMessageSubmitted = Schema.TaggedStruct(
     bodyRef: Schema.String,
   },
 );
+export const ConversationResponseResumed = Schema.TaggedStruct(
+  "ConversationResponseResumed",
+  {
+    messageId: Schema.String,
+    revision: Schema.Number,
+  },
+);
+export const ConversationResponseCancelled = Schema.TaggedStruct(
+  "ConversationResponseCancelled",
+  {
+    messageId: Schema.String,
+    revision: Schema.Number,
+  },
+);
 export const HumanInterventionApplied = Schema.TaggedStruct(
   "HumanInterventionApplied",
   {
@@ -230,6 +244,8 @@ export const DomainEventPayload = Schema.Union([
   WorktreeRetired,
   HumanInterventionApplied,
   HumanMessageSubmitted,
+  ConversationResponseResumed,
+  ConversationResponseCancelled,
 ]);
 
 export type DomainEventPayload = Schema.Schema.Type<typeof DomainEventPayload>;
@@ -275,6 +291,8 @@ export const EVENT_CATALOG = {
   WorktreeRetired,
   HumanInterventionApplied,
   HumanMessageSubmitted,
+  ConversationResponseResumed,
+  ConversationResponseCancelled,
 } as const;
 
 export type EventTypeName = keyof typeof EVENT_CATALOG;

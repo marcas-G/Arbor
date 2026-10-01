@@ -93,6 +93,17 @@ export type VerifiedCommandAuthority =
       readonly messageId: string;
     }
   | {
+      readonly _tag: "ConversationResponseAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly commandKind:
+        | "ResumeConversationResponse"
+        | "CancelConversationResponse";
+      readonly messageId: string;
+    }
+  | {
       /** P6 `04` §2: steer authority (human or structurally-entitled parent). */
       readonly _tag: "SteerWorkAuthority";
       readonly principal: Principal;

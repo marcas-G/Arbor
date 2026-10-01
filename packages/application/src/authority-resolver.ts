@@ -513,6 +513,26 @@ const governanceCommandFact = (
         messageId,
       });
     }
+    case "ResumeConversationResponse":
+    case "CancelConversationResponse": {
+      const messageId = payloadString(payload, "messageId");
+      const rootWorkspaceId =
+        input.canonicalFacts.project?.rootWorkspaceId ?? null;
+      const error = guarded(commandType, rootWorkspaceId);
+      if (error !== null) return Effect.fail(error);
+      if (messageId === null || rootWorkspaceId === null) {
+        return Effect.fail(denyCommand(input, commandType, "Denied"));
+      }
+      return Effect.succeed({
+        _tag: "ConversationResponseAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        commandKind: commandType,
+        messageId,
+      });
+    }
     case "SelectCurrentWork": {
       const error = guarded("SelectCurrentWork", workspaceId);
       if (error !== null || workspaceId === null) {

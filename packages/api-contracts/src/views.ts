@@ -219,6 +219,37 @@ export interface TranscriptReq {
   readonly conversationOnly?: boolean | undefined;
 }
 
+export type ConversationResponseStatus =
+  | { readonly state: "Queued"; readonly revision: number }
+  | {
+      readonly state: "Running";
+      readonly revision: number;
+      readonly executionId: string;
+      readonly attemptNo: number;
+    }
+  | {
+      readonly state: "RetryScheduled";
+      readonly revision: number;
+      readonly nextEligibleAt: string;
+      readonly safeReason: string;
+    }
+  | {
+      readonly state: "NeedsAttention";
+      readonly revision: number;
+      readonly reason: string;
+      readonly canResume: true;
+    }
+  | {
+      readonly state: "Answered";
+      readonly revision: number;
+      readonly executionId: string;
+    }
+  | {
+      readonly state: "Cancelled";
+      readonly revision: number;
+      readonly reason: string;
+    };
+
 /** P14 `03` §1 (DID v1.16 G-C): conversation turns + the legacy session-entry
  * arm. Bounded bodies; the browser reads this shape only (no streaming). */
 export type TranscriptEntry =
@@ -227,6 +258,7 @@ export type TranscriptEntry =
       readonly messageId: string;
       readonly body: string;
       readonly occurredAt: string;
+      readonly responseStatus?: ConversationResponseStatus;
     }
   | {
       readonly kind: "AssistantConversationTurn";
