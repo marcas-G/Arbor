@@ -1,3 +1,4 @@
+import { InputPromotionService } from "@arbor/application";
 import type {
   AgentBinding,
   AgentExecutionState,
@@ -46,6 +47,7 @@ import {
 import { makeControlBasisResolver } from "./control-basis-resolver.js";
 import { runModelDecision } from "./model-decision.js";
 import { recordAcceptedModelOutput } from "./model-output-journal.js";
+import { selectPendingInputPromotions } from "./safe-input-drain.js";
 
 export interface AgentLoopDriverOptions {
   /** P12 `03` §3: the credential reference the driver binds to a ProviderTurn.
@@ -99,6 +101,9 @@ export const AgentLoopDriverLive = (
       const sessions = yield* SessionRepository;
       const humanMessages = yield* HumanMessageStore;
       const inboxOption = yield* Effect.serviceOption(InboxProjectionStore);
+      const inputPromotionOption = yield* Effect.serviceOption(
+        InputPromotionService,
+      );
       const tx = yield* TransactionPort;
       const loopStepStoreOption =
         yield* Effect.serviceOption(AgentLoopStepStore);
@@ -223,7 +228,8 @@ export const AgentLoopDriverLive = (
                 tx,
                 sessions,
                 humanMessages,
-                ...(Option.isSome(inboxOption)
+                ...(Option.isSome(inboxOption) &&
+                Option.isNone(inputPromotionOption)
                   ? { inbox: inboxOption.value }
                   : {}),
                 works,
@@ -244,6 +250,30 @@ export const AgentLoopDriverLive = (
           let sawToolInvocation = false;
           let producedText = false;
           for (let turn = 0; turn < MAX_TURNS; turn += 1) {
+            if (
+              Option.isSome(inboxOption) &&
+              Option.isSome(inputPromotionOption) &&
+              loopStepFence !== undefined
+            ) {
+              const pending = yield* tx
+                .transact(
+                  inboxOption.value.listUnconsumed(input.execution.workspaceId),
+                )
+                .pipe(Effect.mapError(failure));
+              for (const selected of selectPendingInputPromotions(pending, {
+                freshDrain: turn === 0,
+              })) {
+                yield* inputPromotionOption.value
+                  .promoteInbox({
+                    workspaceId: input.execution.workspaceId,
+                    entryKey: selected.entry.entryKey,
+                    targetSessionId: input.execution.sessionId,
+                    delivery: selected.delivery,
+                    fence: loopStepFence,
+                  })
+                  .pipe(Effect.mapError(failure));
+              }
+            }
             const activity: ExecutionActivity = {
               _tag: "ProviderTurn",
               fingerprint: `turn-${turn}`,
