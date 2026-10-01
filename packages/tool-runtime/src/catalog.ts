@@ -8,30 +8,25 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 
-/** P4 `01` §1, `08` §1–§4; DID v1.8 G5/G6. Exact input/result schemas are
+/** P4 `01` §1, `08`; DID v1.25 EWB. Exact input/result schemas are
  * frozen contract for each tool version. */
+
+const TARGET_SCHEMA = {
+  type: "object",
+  required: ["mount", "path"],
+  additionalProperties: false,
+  properties: {
+    mount: { type: "string", minLength: 1 },
+    path: { type: "string", minLength: 1 },
+  },
+} as const;
 
 const READ_INPUT_SCHEMA = JSON.stringify({
   type: "object",
-  required: ["path"],
+  required: ["target"],
+  additionalProperties: false,
   properties: {
-    path: {
-      oneOf: [
-        {
-          type: "object",
-          required: ["_tag", "path"],
-          properties: { _tag: { const: "FileTree" }, path: { type: "string" } },
-        },
-        {
-          type: "object",
-          required: ["_tag", "path"],
-          properties: {
-            _tag: { const: "GitWorktree" },
-            path: { type: "string" },
-          },
-        },
-      ],
-    },
+    target: TARGET_SCHEMA,
     offset: { type: "integer", minimum: 0 },
     limit: { type: "integer", minimum: 0 },
   },
@@ -49,25 +44,31 @@ const READ_RESULT_SCHEMA = JSON.stringify({
 
 const PATCH_INPUT_SCHEMA = JSON.stringify({
   type: "object",
-  required: ["path", "unifiedDiff"],
+  required: ["target", "unifiedDiff"],
+  additionalProperties: false,
   properties: {
-    path: { type: "object", required: ["_tag", "path"] },
+    target: TARGET_SCHEMA,
     unifiedDiff: { type: "string" },
   },
 });
 
 const PATCH_RESULT_SCHEMA = JSON.stringify({
   type: "object",
-  required: ["applied", "hunks"],
-  properties: { applied: { type: "boolean" }, hunks: { type: "integer" } },
+  required: ["applied", "hunks", "created"],
+  properties: {
+    applied: { type: "boolean" },
+    hunks: { type: "integer" },
+    created: { type: "boolean" },
+  },
 });
 
 const SHELL_INPUT_SCHEMA = JSON.stringify({
   type: "object",
   required: ["command", "cwd"],
+  additionalProperties: false,
   properties: {
     command: { type: "string" },
-    cwd: { type: "object", required: ["_tag", "path"] },
+    cwd: TARGET_SCHEMA,
     timeoutMs: { type: "integer", minimum: 1 },
   },
 });
@@ -85,25 +86,10 @@ const SHELL_RESULT_SCHEMA = JSON.stringify({
 
 const LIST_INPUT_SCHEMA = JSON.stringify({
   type: "object",
-  required: ["path"],
+  required: ["target"],
+  additionalProperties: false,
   properties: {
-    path: {
-      oneOf: [
-        {
-          type: "object",
-          required: ["_tag", "path"],
-          properties: { _tag: { const: "FileTree" }, path: { type: "string" } },
-        },
-        {
-          type: "object",
-          required: ["_tag", "path"],
-          properties: {
-            _tag: { const: "GitWorktree" },
-            path: { type: "string" },
-          },
-        },
-      ],
-    },
+    target: TARGET_SCHEMA,
     depth: { type: "integer", minimum: 0 },
   },
 });
@@ -119,10 +105,10 @@ const LIST_RESULT_SCHEMA = JSON.stringify({
 
 export const READ_DEFINITION: ToolDefinition = {
   name: "read",
-  version: "1",
-  hash: "read-v1",
+  version: "2",
+  hash: "read-v2-mount-relative",
   description:
-    "Read a bounded slice of a file inside the admitted resource regions.",
+    "Read a bounded slice of a workspace-relative file. Use mount 'workspace' for the current coding worktree.",
   inputSchemaJson: READ_INPUT_SCHEMA,
   resultSchemaJson: READ_RESULT_SCHEMA,
   capabilityMetadata: ["fs:read"],
@@ -132,10 +118,10 @@ export const READ_DEFINITION: ToolDefinition = {
 
 export const PATCH_DEFINITION: ToolDefinition = {
   name: "patch",
-  version: "1",
-  hash: "patch-v1",
+  version: "2",
+  hash: "patch-v2-mount-relative-create",
   description:
-    "Apply a unified diff to a file inside the admitted resource regions.",
+    "Create or update one workspace-relative file with an idempotent unified diff.",
   inputSchemaJson: PATCH_INPUT_SCHEMA,
   resultSchemaJson: PATCH_RESULT_SCHEMA,
   capabilityMetadata: ["fs:write"],
@@ -145,9 +131,10 @@ export const PATCH_DEFINITION: ToolDefinition = {
 
 export const SHELL_DEFINITION: ToolDefinition = {
   name: "shell",
-  version: "1",
-  hash: "shell-v1",
-  description: "Run a policy-checked shell command inside the sandbox.",
+  version: "2",
+  hash: "shell-v2-mount-relative-cwd",
+  description:
+    "Run a policy-checked shell command with a workspace-relative cwd.",
   inputSchemaJson: SHELL_INPUT_SCHEMA,
   resultSchemaJson: SHELL_RESULT_SCHEMA,
   capabilityMetadata: ["shell:exec"],
@@ -159,10 +146,10 @@ export const SHELL_DEFINITION: ToolDefinition = {
  * generic `ToolDefinition` + `ToolExecutor` seam (P4 pipeline unchanged). */
 export const LIST_DEFINITION: ToolDefinition = {
   name: "list",
-  version: "1",
-  hash: "list-v1",
+  version: "2",
+  hash: "list-v2-mount-relative",
   description:
-    "List files and directories inside an admitted resource region, bounded by depth.",
+    "List a workspace-relative directory, bounded by depth. Use target { mount: 'workspace', path: '.' } for the root.",
   inputSchemaJson: LIST_INPUT_SCHEMA,
   resultSchemaJson: LIST_RESULT_SCHEMA,
   capabilityMetadata: ["fs:read"],

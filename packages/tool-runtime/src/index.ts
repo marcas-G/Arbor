@@ -7,5 +7,6 @@ export * from "./reconciliation.js";
 export * from "./resolution.js";
 export * from "./runtime.js";
 export * from "./safe-path.js";
+export * from "./sandbox-target.js";
 export * from "./tools/index.js";
 export * from "./validation.js";

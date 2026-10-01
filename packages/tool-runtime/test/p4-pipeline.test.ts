@@ -18,6 +18,7 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
+  WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
@@ -46,7 +47,7 @@ const authority = {
   workspaceId,
   executionId,
   toolName: "read",
-  toolVersion: "1",
+  toolVersion: "2",
   resourceSpaceIds: ["filesystem"],
   allowedCapabilities: ["fs:read"],
   controlBasisDigest: "d",
@@ -67,7 +68,7 @@ const context = {
 const intent = (argumentsJson: string) => ({
   callRef: "c",
   toolName: "read",
-  toolVersion: "1",
+  toolVersion: "2",
   argumentsJson,
   invocationId,
   approvalId: null,
@@ -127,6 +128,17 @@ const app = (admissionDeny = false, executor: ToolExecutor = okExecutor) => {
           observedEnvironmentRevision: "rev",
         }),
     }),
+    Layer.succeed(WorkspaceRepository, {
+      findById: () =>
+        Effect.succeed(
+          Option.some({
+            projectId,
+            resourceBoundary: {
+              addresses: [{ _tag: "GitWorktree", path: "/repo/a" }],
+            },
+          }),
+        ),
+    } as never),
     Layer.succeed(Clock, {
       now: () => Effect.succeed("2026-01-01T00:00:00.000Z"),
     }),
@@ -150,7 +162,7 @@ describe("P4 tool runtime pipeline", () => {
   it("runs the pipeline and returns Success", async () => {
     const result = await run(
       app(),
-      '{"path":{"_tag":"FileTree","path":"/repo/a"}}',
+      '{"target":{"mount":"workspace","path":"."}}',
     );
     expect(result._tag).toBe("Success");
   });
@@ -163,7 +175,7 @@ describe("P4 tool runtime pipeline", () => {
   it("returns Denied when admission denies", async () => {
     const result = await run(
       app(true),
-      '{"path":{"_tag":"FileTree","path":"/repo/a"}}',
+      '{"target":{"mount":"workspace","path":"."}}',
     );
     expect(result._tag).toBe("Denied");
   });
@@ -193,7 +205,7 @@ describe("P4 tool runtime pipeline", () => {
     };
     const result = await run(
       app(false, approvalExecutor),
-      '{"path":{"_tag":"FileTree","path":"/repo/a"}}',
+      '{"target":{"mount":"workspace","path":"."}}',
     );
     expect(result._tag).toBe("Denied");
   });

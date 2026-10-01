@@ -1049,16 +1049,8 @@ describe("P3-013 agent driver", () => {
     ]);
   });
 
-  it("blocks a dangling Session call before any Provider bytes", async () => {
-    let providerCalls = 0;
-    const app = makeApp([], {
-      providerRuntime: Layer.succeed(ProviderRuntime, {
-        runTurn: () => {
-          providerCalls += 1;
-          return Effect.die("provider must not run for blocked context");
-        },
-      }),
-    });
+  it("repairs a dangling call from an ended execution before the next Provider turn", async () => {
+    const app = makeApp([sendMessageTurn("frontier repaired")]);
     const result = await run(
       Effect.gen(function* () {
         yield* runMigrations(P19_MIGRATIONS);
@@ -1095,22 +1087,33 @@ describe("P3-013 agent driver", () => {
           "SELECT state, settlement_json FROM agent_loop_steps WHERE execution_id = ?",
           [executionId],
         );
-        return { settlement, step: steps[0] };
+        const repaired = yield* sql.unsafe<{
+          item_type: string;
+          payload_json: string;
+          source_kind: string | null;
+        }>(
+          "SELECT item_type, payload_json, source_kind FROM session_entries WHERE session_id = ? AND item_type = 'ToolResult' ORDER BY sequence",
+          [sessionId],
+        );
+        return { settlement, step: steps[0], repaired };
       }),
       app,
     );
 
-    expect(providerCalls).toBe(0);
     expect(result.settlement).toMatchObject({
-      _tag: "Interrupted",
-      result: {
-        _tag: "ControlledInterruption",
-        reason: "SessionContextBlocked:UnresolvedInvocation:dangling",
-      },
+      _tag: "Completed",
+      result: { _tag: "CoordinationCompleted" },
     });
     expect(result.step).toMatchObject({
       state: "SettlementProposed",
-      settlement_json: expect.stringContaining("SessionContextBlocked"),
+      settlement_json: expect.stringContaining("CoordinationCompleted"),
+    });
+    expect(result.repaired).toHaveLength(1);
+    expect(result.repaired[0]?.source_kind).toBe("SessionFrontierRepair");
+    expect(JSON.parse(result.repaired[0]?.payload_json ?? "{}")).toMatchObject({
+      _tag: "ToolResult",
+      callRef: "dangling",
+      status: "Interrupted",
     });
   });
 

@@ -7,6 +7,7 @@ import {
   type ToolExecutor,
 } from "../runtime.js";
 import { resolveExistingWithin } from "../safe-path.js";
+import { resolveSandboxTarget } from "../sandbox-target.js";
 import { executeFilesystemTool } from "./filesystem-result.js";
 
 const MAX_ENTRIES = 500;
@@ -28,8 +29,10 @@ const walk = (
     const absolute = join(current, entry);
     const safeAbsolute = resolveExistingWithin(root, relative(root, absolute));
     const rel = relative(root, absolute);
-    out.push(statSync(safeAbsolute).isDirectory() ? `${rel}/` : rel);
-    if (statSync(safeAbsolute).isDirectory()) {
+    const portableRel = rel.replaceAll("\\", "/");
+    const stat = statSync(safeAbsolute);
+    out.push(stat.isDirectory() ? `${portableRel}/` : portableRel);
+    if (stat.isDirectory()) {
       walk(root, safeAbsolute, depth + 1, maxDepth, out);
     }
   }
@@ -45,12 +48,17 @@ export const listExecutor: ToolExecutor = {
       (): ToolExecutionResult =>
         executeFilesystemTool(() => {
           const args = JSON.parse(intent.argumentsJson) as {
-            path: { path: string };
+            target: { mount: string; path: string };
             depth?: number;
           };
-          const start = resolveExistingWithin(sandbox.rootPath, args.path.path);
+          const start = resolveSandboxTarget(sandbox, args.target, {
+            access: "ReadOnly",
+          });
+          const mountRoot =
+            sandbox.mounts?.find((entry) => entry.ref === args.target.mount)
+              ?.rootPath ?? sandbox.rootPath;
           const entries: Array<string> = [];
-          walk(sandbox.rootPath, start, 0, args.depth ?? 1, entries);
+          walk(mountRoot, start, 0, args.depth ?? 1, entries);
           return {
             settlement: { _tag: "Success" },
             observation: bounded(

@@ -22,7 +22,7 @@ import {
   ExecutionRepositoryLive,
   layer,
   P12_MIGRATIONS,
-  P17_MIGRATIONS,
+  P21_MIGRATIONS,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -116,7 +116,7 @@ describe("P2 Session appendEntry + AgentExecutionState", () => {
   it("idempotently appends one sourced ModelOutput and rejects hash conflicts", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P17_MIGRATIONS);
+      yield* runMigrations(P21_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const repo = yield* ExecutionRepository;
@@ -214,6 +214,77 @@ describe("P2 Session appendEntry + AgentExecutionState", () => {
     });
     const r = await Effect.runPromise(Effect.provide(program, app));
     expect([r.a.sequence, r.b.sequence, r.c.sequence]).toEqual([0, 1, 2]);
+  });
+
+  it("expands a recent window backward to include the call for every included result", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P21_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      const insert = (
+        sequence: number,
+        entryKind: string,
+        itemType: string,
+        payload: unknown,
+      ) =>
+        sql.unsafe(
+          "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,2,0,?,'t','test',?,?)",
+          [
+            sessionId,
+            sequence,
+            entryKind,
+            itemType,
+            JSON.stringify(payload),
+            `ref-${sequence}`,
+            `hash-${sequence}`,
+          ],
+        );
+      yield* insert(0, "ModelOutput", "ToolCall", {
+        _tag: "ToolCall",
+        callRef: "call-a",
+        toolRef: "read",
+        argumentsJson: "{}",
+      });
+      yield* insert(1, "ModelOutput", "ToolCall", {
+        _tag: "ToolCall",
+        callRef: "call-b",
+        toolRef: "read",
+        argumentsJson: "{}",
+      });
+      yield* insert(2, "Observation", "ToolResult", {
+        _tag: "ToolResult",
+        callRef: "call-a",
+        toolName: "read",
+        status: "Succeeded",
+        outputText: "a",
+      });
+      for (let sequence = 3; sequence < 64; sequence += 1) {
+        yield* insert(sequence, "Input", "UserMessage", {
+          _tag: "UserMessage",
+          text: `filler-${sequence}`,
+        });
+      }
+      yield* insert(64, "Observation", "ToolResult", {
+        _tag: "ToolResult",
+        callRef: "call-b",
+        toolName: "read",
+        status: "Succeeded",
+        outputText: "ok",
+      });
+      yield* insert(65, "Input", "UserMessage", {
+        _tag: "UserMessage",
+        text: "latest",
+      });
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      return yield* tx.transact(sessions.listRecentEntries(sessionId, 2));
+    });
+
+    const entries = await Effect.runPromise(Effect.provide(program, app));
+    expect(entries[0]?.sequence).toBe(0);
+    expect(entries.at(-1)?.sequence).toBe(65);
+    expect(entries.map((entry) => entry.sequence)).toContain(64);
   });
 
   it("rejects a fenced append with a stale generation without writing", async () => {

@@ -10,13 +10,28 @@ const root = mkdtempSync(join(tmpdir(), "p4-shell-"));
 const intent = (command: string): ToolIntent => ({
   callRef: "c",
   toolName: "shell",
-  toolVersion: "1",
-  argumentsJson: JSON.stringify({ command, cwd: { path: "." } }),
+  toolVersion: "2",
+  argumentsJson: JSON.stringify({
+    command,
+    cwd: { mount: "workspace", path: "." },
+  }),
   invocationId: "tin_x" as never,
   approvalId: null,
 });
 const context = {} as ToolExecutionContext;
-const sandbox = { handleId: "s", rootPath: root, writableRegions: [] };
+const sandbox = {
+  handleId: "s",
+  rootPath: root,
+  mounts: [
+    {
+      ref: "workspace",
+      rootPath: root,
+      region: { resourceSpaceId: "filesystem", normalizedRegion: {} },
+      access: "ReadWrite" as const,
+    },
+  ],
+  writableRegions: [],
+};
 
 describe("P4 shell tool + policy", () => {
   it("classifies commands deterministically", () => {

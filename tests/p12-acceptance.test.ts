@@ -231,7 +231,7 @@ import {
   TransactionPort,
   TransactionScope,
   type WorkRepository,
-  type WorkspaceRepository,
+  WorkspaceRepository,
   type WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import {
@@ -2297,7 +2297,7 @@ const story12ToolContext = {
     workspaceId: parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789a1"),
     executionId: parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
     toolName: "list",
-    toolVersion: "1",
+    toolVersion: "2",
     resourceSpaceIds: ["filesystem"],
     allowedCapabilities: ["fs:read"],
     controlBasisDigest: "d",
@@ -2430,6 +2430,19 @@ describe("p12-acceptance story 12 — real provider adapter + non-minimal tool",
             observedEnvironmentRevision: "rev",
           }),
       }),
+      Layer.succeed(WorkspaceRepository, {
+        findById: () =>
+          Effect.succeed(
+            Option.some({
+              projectId: parse(ProjectId)(
+                "prj_018f2b3c-4d5e-7abc-8def-0123456789a1",
+              ),
+              resourceBoundary: {
+                addresses: [{ _tag: "GitWorktree", path: root }],
+              },
+            }),
+          ),
+      } as never),
       Layer.succeed(Clock, {
         now: () => Effect.succeed("2026-01-01T00:00:00.000Z"),
       }),
@@ -2446,9 +2459,9 @@ describe("p12-acceptance story 12 — real provider adapter + non-minimal tool",
             {
               callRef: "c",
               toolName: "list",
-              toolVersion: "1",
+              toolVersion: "2",
               argumentsJson: JSON.stringify({
-                path: { _tag: "FileTree", path: "." },
+                target: { mount: "workspace", path: "." },
                 depth: 2,
               }),
               invocationId: parse(ToolInvocationId)(

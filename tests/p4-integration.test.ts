@@ -12,6 +12,7 @@ import {
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
+  WorkspaceRepositoryLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import { SandboxPortLive } from "../adapters/sandbox-local/src/index.js";
 import {
@@ -63,7 +64,7 @@ const authority = {
   workspaceId,
   executionId,
   toolName: "read",
-  toolVersion: "1",
+  toolVersion: "2",
   resourceSpaceIds: ["filesystem"],
   allowedCapabilities: ["fs:read"],
   controlBasisDigest: "d",
@@ -84,7 +85,7 @@ const context = {
 const intent = (toolName: string, argumentsJson: string) => ({
   callRef: "c",
   toolName,
-  toolVersion: "1",
+  toolVersion: "2",
   argumentsJson,
   invocationId,
   approvalId: null,
@@ -122,7 +123,10 @@ const seed = Effect.gen(function* () {
           "w",
           "{}",
           0,
-          "{}",
+          JSON.stringify({
+            basisResponsibilityRevision: 0,
+            addresses: [{ _tag: "GitWorktree", path: root }],
+          }),
           0,
           "{}",
           sessionId,
@@ -162,6 +166,7 @@ const makeApp = () => {
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(ToolInvocationStoreLive, infra),
     Layer.provide(ArtifactMetadataRepositoryLive, infra),
+    Layer.provide(WorkspaceRepositoryLive, infra),
     ToolDefinitionStoreLive,
     sandbox,
     Layer.succeed(ResourceAdmission, {
@@ -228,7 +233,9 @@ describe("P4 integration — tool runtime end to end", () => {
     const result = await run(
       app,
       "read",
-      JSON.stringify({ path: { path: "a.txt" } }),
+      JSON.stringify({
+        target: { mount: "workspace", path: "a.txt" },
+      }),
     );
     expect(result._tag).toBe("Success");
     expect(JSON.parse(result.observation?.text ?? "{}").text).toBe(

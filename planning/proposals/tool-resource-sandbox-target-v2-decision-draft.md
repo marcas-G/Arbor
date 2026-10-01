@@ -1,6 +1,10 @@
 # Tool Resource / Sandbox Target V2 治理决策草案
 
-**Status:** DRAFT — awaiting manual governance
+**Status:** SUPERSEDED — do not accept; replaced by the mount-relative decision
+
+> 本草案的 `root + relativePath` 方案已被后续治理否决。权威方案是
+> `ExecutionWorkspaceBinding + mount + path`，见
+> `tool-resource-sandbox-target-v2-governance-decision.md` 与 DID v1.25。
 
 **Design Gap:** `DOGFOOD-DG-03`
 

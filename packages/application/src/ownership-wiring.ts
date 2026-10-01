@@ -83,12 +83,39 @@ const buildClaims = (
   ReadonlyArray<ResourceOwnershipClaimRecord>,
   EnvironmentError
 > =>
-  Effect.forEach(payload.addresses, (address, index) => {
-    const region = regions[index];
-    if (region === undefined) {
+  Effect.forEach(regions, (region) => {
+    const normalized = region.normalizedRegion as {
+      readonly kind?: unknown;
+      readonly path?: unknown;
+      readonly namespace?: unknown;
+      readonly address?: unknown;
+    };
+    const address = payload.addresses.find((candidate) => {
+      if (
+        (normalized.kind === "FileTree" || normalized.kind === "GitWorktree") &&
+        (candidate._tag === "FileTree" || candidate._tag === "GitWorktree")
+      ) {
+        return (
+          candidate.path.replaceAll("\\", "/").toLowerCase() ===
+          String(normalized.path).replaceAll("\\", "/").toLowerCase()
+        );
+      }
+      if (
+        normalized.kind === "DatabaseNamespace" &&
+        candidate._tag === "DatabaseNamespace"
+      ) {
+        return candidate.namespace === normalized.namespace;
+      }
+      return (
+        normalized.kind === "ExternalResource" &&
+        candidate._tag === "ExternalResource" &&
+        candidate.address === normalized.address
+      );
+    });
+    if (address === undefined) {
       return Effect.fail<EnvironmentError>({
         _tag: "EnvironmentError",
-        cause: "resolver region/address arity mismatch",
+        cause: "resolver produced a canonical region without a source address",
       });
     }
     return Effect.gen(function* () {

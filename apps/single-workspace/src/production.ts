@@ -44,13 +44,16 @@ import {
   FormationProposalStore,
   type IdGenerator,
   type LeaseService,
+  type OwnershipWriteService,
   type PermissionGrantRepository,
+  type ProjectEnvironmentPort,
   ProjectionQueryPort,
   ProjectionStore,
   ProjectRepository,
   ProviderDeploymentBreaker,
   type ReconciliationSource,
   RecordEnvironmentChange,
+  type ResourceOwnershipRepository,
   type RuntimeSafetyGate,
   type SchedulerTimerStore,
   TransactionPort,
@@ -135,7 +138,13 @@ export type TransportBoundaryServices =
   | WorkspaceRepository
   | ExecutionRepository
   | WorkRepository
-  | PermissionGrantRepository;
+  | PermissionGrantRepository
+  | Clock
+  | IdGenerator
+  | ExecutionScheduler
+  | ProjectEnvironmentPort
+  | OwnershipWriteService
+  | ResourceOwnershipRepository;
 
 /** The production transport boundary: the composition-root submission face
  * (resolver + canonicalFacts/grants loading) plus the P12 shells bound to the

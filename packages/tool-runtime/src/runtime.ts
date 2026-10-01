@@ -17,6 +17,7 @@ import {
   type ToolRuntimeError,
   ToolRuntimePort,
   TransactionPort,
+  WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { matchApproval } from "./approval.js";
@@ -47,7 +48,21 @@ const bounded = (text: string, limit = 2000): BoundedObservation => ({
   truncated: text.length > limit,
 });
 
-const resourceArguments = (
+const requestedMountRefs = (argumentsJson: string): ReadonlyArray<string> => {
+  try {
+    const parsed = JSON.parse(argumentsJson) as {
+      target?: { readonly mount?: unknown };
+      cwd?: { readonly mount?: unknown };
+    };
+    return [parsed.target?.mount, parsed.cwd?.mount].filter(
+      (value): value is string => typeof value === "string",
+    );
+  } catch {
+    return [];
+  }
+};
+
+const legacyResourceArguments = (
   argumentsJson: string,
 ): ReadonlyArray<ResourceAddress> => {
   try {
@@ -61,6 +76,30 @@ const resourceArguments = (
   } catch {
     return [];
   }
+};
+
+type FilesystemAddress = Extract<
+  ResourceAddress,
+  { readonly _tag: "FileTree" | "GitWorktree" }
+>;
+
+const primaryFilesystemAddress = (
+  addresses: ReadonlyArray<ResourceAddress>,
+): FilesystemAddress | undefined => {
+  const candidates = addresses.filter(
+    (address): address is FilesystemAddress =>
+      address._tag === "GitWorktree" || address._tag === "FileTree",
+  );
+  const paths = new Set(
+    candidates.map((address) =>
+      address.path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase(),
+    ),
+  );
+  if (paths.size !== 1) return undefined;
+  return (
+    candidates.find((address) => address._tag === "GitWorktree") ??
+    candidates[0]
+  );
 };
 
 const denied = (reason: string): CanonicalToolObservation => ({
@@ -92,6 +131,7 @@ export const ToolRuntimeLive = (
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
       const environment = yield* ProjectEnvironmentPort;
+      const workspaces = yield* Effect.serviceOption(WorkspaceRepository);
       const authorityResolver = yield* Effect.serviceOption(
         ToolAuthorityResolver,
       );
@@ -130,11 +170,51 @@ export const ToolRuntimeLive = (
           }
 
           const now = options.now ?? (yield* clock.now());
+          const mountRefs = requestedMountRefs(intent.argumentsJson);
+          let address: FilesystemAddress | undefined;
+          let addresses: ReadonlyArray<ResourceAddress>;
+          if (mountRefs.length > 0) {
+            if (
+              mountRefs.length !== 1 ||
+              mountRefs.some((mount) => mount !== "workspace")
+            ) {
+              return denied("tool target must reference the workspace mount");
+            }
+            if (Option.isNone(workspaces)) {
+              return denied("workspace mount resolver unavailable");
+            }
+            const workspace = yield* tx.transact(
+              workspaces.value.findById(context.workspaceId),
+            );
+            if (Option.isNone(workspace)) {
+              return denied("workspace not found");
+            }
+            address = primaryFilesystemAddress(
+              workspace.value.resourceBoundary.addresses,
+            );
+            if (address === undefined) {
+              return denied(
+                "workspace filesystem mount is missing or ambiguous",
+              );
+            }
+            addresses = [address];
+          } else {
+            addresses = legacyResourceArguments(intent.argumentsJson);
+          }
           const resolved = yield* environment.resolve(
             context.projectId,
-            resourceArguments(intent.argumentsJson),
+            addresses,
           );
           const regions = resolved.regions;
+          const region = regions[0];
+          if (
+            address !== undefined &&
+            (region === undefined || regions.length !== 1)
+          ) {
+            return denied(
+              "workspace filesystem region is unresolved or ambiguous",
+            );
+          }
 
           const resolvedAuthority = Option.isSome(authorityResolver)
             ? yield* authorityResolver.value.resolve({
@@ -219,11 +299,26 @@ export const ToolRuntimeLive = (
             }
           }
 
-          const handle = yield* sandbox.open({
-            executionId: context.executionId,
-            workspaceId: context.workspaceId,
-            regions,
-          });
+          const handle = yield* sandbox.open(
+            address === undefined || region === undefined
+              ? {
+                  executionId: context.executionId,
+                  workspaceId: context.workspaceId,
+                  regions,
+                }
+              : {
+                  executionId: context.executionId,
+                  workspaceId: context.workspaceId,
+                  mounts: [
+                    {
+                      ref: "workspace",
+                      address,
+                      region,
+                      access: executor.write ? "ReadWrite" : "ReadOnly",
+                    },
+                  ],
+                },
+          );
           const outcome = yield* executor
             .execute({ intent, definition, context, sandbox: handle, regions })
             .pipe(

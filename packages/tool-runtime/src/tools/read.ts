@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { Effect } from "effect";
 import type { ToolExecutionResult, ToolExecutor } from "../runtime.js";
 import { bounded } from "../runtime.js";
-import { resolveExistingWithin } from "../safe-path.js";
+import { resolveSandboxTarget } from "../sandbox-target.js";
 import { executeFilesystemTool } from "./filesystem-result.js";
 
 /** P4 `08` §2. ReadOnly. */
@@ -15,12 +15,12 @@ export const readExecutor: ToolExecutor = {
       (): ToolExecutionResult =>
         executeFilesystemTool(() => {
           const args = JSON.parse(intent.argumentsJson) as {
-            path: { path: string };
+            target: { mount: string; path: string };
             offset?: number;
             limit?: number;
           };
           const content = readFileSync(
-            resolveExistingWithin(sandbox.rootPath, args.path.path),
+            resolveSandboxTarget(sandbox, args.target, { access: "ReadOnly" }),
             "utf8",
           );
           const offset = args.offset ?? 0;

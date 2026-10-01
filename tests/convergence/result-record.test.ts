@@ -92,20 +92,14 @@ describe("P6–P12 result records", () => {
     }
   });
 
-  it("tracks the explicitly scope-gated G-V2 gaps and the active dogfood blocker", () => {
+  it("only the explicitly scope-gated G-V2 field-source gaps remain OPEN", () => {
     const gaps = read("planning/gaps/README.md");
     const openIds = [
       ...gaps.matchAll(/^\|\s*([^|]+?)\s*\|[^\n]*\|\s*OPEN\s*\|$/gmu),
     ]
       .map((match) => match[1]?.trim())
       .filter((value): value is string => value !== undefined);
-    expect(openIds).toEqual([
-      "DOGFOOD-DG-03",
-      "G-V2-1",
-      "G-V2-2",
-      "G-V2-3",
-      "G-V2-4",
-    ]);
+    expect(openIds).toEqual(["G-V2-1", "G-V2-2", "G-V2-3", "G-V2-4"]);
   });
 });
 

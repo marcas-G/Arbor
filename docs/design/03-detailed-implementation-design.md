@@ -1,9 +1,9 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.24\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — Conversation Delivery Runtime convergence authorized\
-**Supersedes:** v1.23\
-**Date:** 2026-10-01\
+**Version:** 1.25\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — Execution Workspace Binding authorized\
+**Supersedes:** v1.24\
+**Date:** 2026-10-02\
 **Depends on:** `Arbor System Design Specification v1.5`
 
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
@@ -86,6 +86,45 @@ P17 implementation contracts under
 `docs/design/implementation/P17-conversation-delivery-runtime/**` are FROZEN;
 implementation and migration 0021 are AUTHORIZED by the accepted governance
 token `ACCEPT_CONVERSATION_DELIVERY_RUNTIME_CONVERGENCE`.
+
+**Governance changes (v1.24 → v1.25):**（Execution Workspace Binding，
+EWB-1…EWB-10）
+
+- A filesystem `ResourceAddress` remains an environment/authority identity and
+  is never interpreted as a sandbox-relative tool path.
+- Every executable turn has a deterministic logical mount namespace. The
+  primary admitted filesystem resource is exposed as mount `workspace`; the
+  binding retains the source address, canonical region, access mode and the
+  captured ResourceBoundary/Environment basis.
+- Model-facing filesystem tools address `{ mount, path }`. `path` is a
+  normalized workspace-relative path; host absolute paths and `..` escape are
+  invalid. The model never supplies a host path as authority evidence.
+- Sandbox adapters own source-resource → execution-path materialization. Tool
+  Runtime resolves a target through the opened mount; executors never strip a
+  host prefix or reconstruct a mount.
+- Existing-target resolution performs lexical and realpath confinement.
+  New-file resolution additionally confines the nearest existing ancestor, so
+  symlink/junction escape remains impossible.
+- The primary writable coding resource is a managed GitWorktree. Local trusted
+  execution may bind it directly; hardened providers mount it into an isolated
+  `/workspace`-like root. Provider choice cannot change tool semantics.
+- `read/list/patch/shell` version 2 consume logical targets. `patch@2` supports
+  idempotent file creation as well as existing-file update. Version 1 remains
+  auditable but is not model-visible for new turns and is never reinterpreted.
+- Ordinary invalid/missing/unmapped filesystem targets are terminal
+  `ExpectedFailure` observations. Genuine executor/process defects and
+  ambiguous effects remain in the P9 crash/reconciliation protocol.
+- Tool identity is resolved from the exact model-visible catalog/profile; the
+  executable handler must not hard-code a version.
+- A mount binding is reconstructed only when its captured boundary/environment
+  basis is still fresh. Drift fails closed; permission and ownership are always
+  rechecked before effect admission.
+
+Manual governance accepted the mount-relative design and implementation on
+2026-10-02 by the instruction `执行`, following the complete design explanation
+in the governing thread. This authorizes the owning-contract landing and the
+EWB implementation. `DOGFOOD-DG-03` closes only after mechanical tests and the
+isolated release-validation Work prove the path.
 
 **Governance changes (v1.3 → v1.4):**
 

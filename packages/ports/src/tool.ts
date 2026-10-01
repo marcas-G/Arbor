@@ -156,9 +156,31 @@ export class ToolDefinitionStore extends Context.Service<
   ToolDefinitionStoreService
 >()("arbor/ToolDefinitionStore") {}
 
+export type SandboxMountAccess = "ReadOnly" | "ReadWrite";
+
+export interface SandboxMountBinding {
+  readonly ref: string;
+  readonly address: Extract<
+    ResourceAddress,
+    { readonly _tag: "FileTree" | "GitWorktree" }
+  >;
+  readonly region: CanonicalResourceRegion;
+  readonly access: SandboxMountAccess;
+}
+
+export interface SandboxOpenedMount {
+  readonly ref: string;
+  readonly rootPath: string;
+  readonly region: CanonicalResourceRegion;
+  readonly access: SandboxMountAccess;
+}
+
 export interface SandboxHandle {
   readonly handleId: string;
   readonly rootPath: string;
+  /** @deprecated Compatibility for pre-EWB test/adapters. Production handles
+   * always carry exact mounts. */
+  readonly mounts?: ReadonlyArray<SandboxOpenedMount>;
   readonly writableRegions: ReadonlyArray<CanonicalResourceRegion>;
 }
 
@@ -166,7 +188,9 @@ export interface SandboxPortService {
   readonly open: (input: {
     readonly executionId: ExecutionId;
     readonly workspaceId: WorkspaceId;
-    readonly regions: ReadonlyArray<CanonicalResourceRegion>;
+    readonly mounts?: ReadonlyArray<SandboxMountBinding>;
+    /** @deprecated Pre-EWB adapter compatibility only. */
+    readonly regions?: ReadonlyArray<CanonicalResourceRegion>;
   }) => Effect.Effect<SandboxHandle, SandboxError>;
   readonly close: (handle: SandboxHandle) => Effect.Effect<void, SandboxError>;
 }

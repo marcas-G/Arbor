@@ -13,13 +13,25 @@ writeFileSync(file, "line1\nline2\nline3");
 const intent = (argumentsJson: string): ToolIntent => ({
   callRef: "c",
   toolName: "patch",
-  toolVersion: "1",
+  toolVersion: "2",
   argumentsJson,
   invocationId: "tin_x" as never,
   approvalId: null,
 });
 const context = {} as ToolExecutionContext;
-const sandbox = { handleId: "s", rootPath: root, writableRegions: [] };
+const sandbox = {
+  handleId: "s",
+  rootPath: root,
+  mounts: [
+    {
+      ref: "workspace",
+      rootPath: root,
+      region: { resourceSpaceId: "filesystem", normalizedRegion: {} },
+      access: "ReadWrite" as const,
+    },
+  ],
+  writableRegions: [],
+};
 
 describe("P4 patch tool", () => {
   it("applies a unified diff", async () => {
@@ -27,7 +39,10 @@ describe("P4 patch tool", () => {
     const result = await Effect.runPromise(
       patchExecutor.execute({
         intent: intent(
-          JSON.stringify({ path: { path: "a.txt" }, unifiedDiff: diff }),
+          JSON.stringify({
+            target: { mount: "workspace", path: "a.txt" },
+            unifiedDiff: diff,
+          }),
         ),
         definition: {} as never,
         context,
@@ -43,7 +58,10 @@ describe("P4 patch tool", () => {
     const result = await Effect.runPromise(
       patchExecutor.execute({
         intent: intent(
-          JSON.stringify({ path: { path: "a.txt" }, unifiedDiff: "no hunks" }),
+          JSON.stringify({
+            target: { mount: "workspace", path: "a.txt" },
+            unifiedDiff: "no hunks",
+          }),
         ),
         definition: {} as never,
         context,
@@ -60,7 +78,7 @@ describe("P4 patch tool", () => {
       patchExecutor.execute({
         intent: intent(
           JSON.stringify({
-            path: { path: "a.txt" },
+            target: { mount: "workspace", path: "a.txt" },
             unifiedDiff: "@@ -2,1 +2,1 @@\n-line2\n+LINE2",
           }),
         ),
@@ -83,7 +101,10 @@ describe("P4 patch tool", () => {
       Effect.runPromise(
         patchExecutor.execute({
           intent: intent(
-            JSON.stringify({ path: { path: "a.txt" }, unifiedDiff: diff }),
+            JSON.stringify({
+              target: { mount: "workspace", path: "a.txt" },
+              unifiedDiff: diff,
+            }),
           ),
           definition: {} as never,
           context,
@@ -103,7 +124,7 @@ describe("P4 patch tool", () => {
       patchExecutor.execute({
         intent: intent(
           JSON.stringify({
-            path: { path: "../outside.txt" },
+            target: { mount: "workspace", path: "../outside.txt" },
             unifiedDiff: "@@ -0,0 +1,1 @@\n+outside",
           }),
         ),
@@ -115,5 +136,31 @@ describe("P4 patch tool", () => {
     );
 
     expect(result.settlement._tag).toBe("ExpectedFailure");
+  });
+
+  it("creates a missing file and treats an identical replay as idempotent", async () => {
+    const target = join(root, "created.txt");
+    const diff = "@@ -0,0 +1,2 @@\n+first\n+second\n";
+    const execute = () =>
+      Effect.runPromise(
+        patchExecutor.execute({
+          intent: intent(
+            JSON.stringify({
+              target: { mount: "workspace", path: "created.txt" },
+              unifiedDiff: diff,
+            }),
+          ),
+          definition: {} as never,
+          context,
+          sandbox,
+          regions: [],
+        }),
+      );
+
+    const first = await execute();
+    const second = await execute();
+    expect(first.settlement._tag).toBe("Success");
+    expect(second.settlement._tag).toBe("Success");
+    expect(readFileSync(target, "utf8")).toBe("first\nsecond");
   });
 });

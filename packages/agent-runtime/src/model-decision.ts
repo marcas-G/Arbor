@@ -38,6 +38,7 @@ import type {
   WorkRepositoryService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
+import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
   isConversationExecution,
@@ -258,7 +259,7 @@ export const runModelDecision = (
           conversationContextRefs.push(`human-input:${claimed.messageId}`);
         }
       }
-      const recentSessionEntries = yield* tx
+      let recentSessionEntries = yield* tx
         .transact(
           sessions.listRecentEntries(
             input.execution.sessionId,
@@ -266,7 +267,102 @@ export const runModelDecision = (
           ),
         )
         .pipe(Effect.mapError(failure));
-      const projectionDecision = decideSessionProjection(recentSessionEntries);
+      let projectionDecision = decideSessionProjection(recentSessionEntries);
+      if (
+        projectionDecision._tag === "Blocked" &&
+        loopStepFence !== undefined &&
+        (yield* tx
+          .transact(sessions.supportsTypedTimeline())
+          .pipe(Effect.mapError(failure)))
+      ) {
+        const unresolved = projectionDecision.callRefs.map((callRef) => {
+          const entry = recentSessionEntries.find(
+            (candidate) =>
+              candidate.entryKind === "ModelOutput" &&
+              typeof candidate.payload === "object" &&
+              candidate.payload !== null &&
+              (candidate.payload as { readonly _tag?: unknown })._tag ===
+                "ToolCall" &&
+              (candidate.payload as { readonly callRef?: unknown }).callRef ===
+                callRef,
+          );
+          if (entry === undefined) return undefined;
+          const payload = entry.payload as {
+            readonly providerTurnId?: unknown;
+            readonly callRef: string;
+            readonly toolRef?: unknown;
+          };
+          return typeof payload.providerTurnId === "string" &&
+            payload.providerTurnId !== providerTurnId
+            ? {
+                callRef: payload.callRef,
+                toolName:
+                  typeof payload.toolRef === "string"
+                    ? payload.toolRef
+                    : "unknown",
+              }
+            : undefined;
+        });
+        if (
+          unresolved.length > 0 &&
+          unresolved.every(
+            (entry): entry is NonNullable<typeof entry> => entry !== undefined,
+          )
+        ) {
+          const repairSession = yield* tx
+            .transact(sessions.findById(input.execution.sessionId))
+            .pipe(Effect.mapError(failure));
+          if (Option.isNone(repairSession)) {
+            return {
+              _tag: "Settle" as const,
+              settlement: safetyStop("SessionContextBlocked:SessionNotFound"),
+            };
+          }
+          for (const invocation of unresolved) {
+            const observationRef = `observation_${sha256Hex(
+              `session-frontier-repair:${input.execution.sessionId}:${invocation.callRef}`,
+            )}`;
+            const item = {
+              _tag: "ToolResult" as const,
+              callRef: invocation.callRef,
+              toolName: invocation.toolName,
+              status: "Interrupted" as const,
+              observationRef,
+              modelOutputRef: `result_${sha256Hex(observationRef)}`,
+              outputText:
+                "tool invocation interrupted when its originating execution ended",
+              truncated: false,
+              artifactRefs: [],
+            };
+            yield* tx
+              .transact(
+                sessions.appendItemIdempotent(
+                  input.execution.sessionId,
+                  {
+                    item,
+                    contextEpoch: repairSession.value.contextEpoch,
+                    source: {
+                      kind: "SessionFrontierRepair",
+                      ref: observationRef,
+                    },
+                    contentHash: sha256Hex(JSON.stringify(item)),
+                  },
+                  loopStepFence,
+                ),
+              )
+              .pipe(Effect.mapError(failure));
+          }
+          recentSessionEntries = yield* tx
+            .transact(
+              sessions.listRecentEntries(
+                input.execution.sessionId,
+                SESSION_CONTEXT_ENTRY_LIMIT,
+              ),
+            )
+            .pipe(Effect.mapError(failure));
+          projectionDecision = decideSessionProjection(recentSessionEntries);
+        }
+      }
       let sessionProjection: SessionTimelineProjection;
       if (projectionDecision._tag === "Blocked") {
         const settledForRecovery =

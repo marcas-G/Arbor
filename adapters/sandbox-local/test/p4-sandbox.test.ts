@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   type CanonicalResourceRegion,
   ExecutionId,
@@ -20,7 +22,8 @@ const regions: ReadonlyArray<CanonicalResourceRegion> = [
 ];
 
 describe("P4 local sandbox", () => {
-  it("opens a confined root and releases it on close", async () => {
+  it("binds the admitted workspace root and never deletes it on close", async () => {
+    const root = mkdtempSync(join(tmpdir(), "arbor-local-bind-"));
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -28,13 +31,22 @@ describe("P4 local sandbox", () => {
           const handle = yield* sandbox.open({
             executionId,
             workspaceId: "ws_x" as never,
-            regions,
+            mounts: [
+              {
+                ref: "workspace",
+                address: { _tag: "GitWorktree", path: root },
+                region: regions[0] as CanonicalResourceRegion,
+                access: "ReadWrite",
+              },
+            ],
           });
           const existed = existsSync(handle.rootPath);
           yield* sandbox.close(handle);
           return {
             existed,
             after: existsSync(handle.rootPath),
+            rootPath: handle.rootPath,
+            mounts: handle.mounts,
             regions: handle.writableRegions,
           };
         }),
@@ -42,7 +54,9 @@ describe("P4 local sandbox", () => {
       ),
     );
     expect(result.existed).toBe(true);
-    expect(result.after).toBe(false);
+    expect(result.after).toBe(true);
+    expect(result.rootPath).toBe(root);
+    expect(result.mounts?.map((mount) => mount.ref)).toEqual(["workspace"]);
     expect(result.regions).toHaveLength(1);
   });
 });

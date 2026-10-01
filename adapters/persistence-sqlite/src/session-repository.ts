@@ -552,7 +552,52 @@ export const SessionRepositoryLive: Layer.Layer<
               [sessionId, checkpointFloor, limit],
             ),
           );
-          return [...rows].reverse().map(toSessionEntry);
+          const recent = [...rows].reverse().map(toSessionEntry);
+          let causalFloor = recent[0]?.sequence ?? checkpointFloor;
+          let closed = recent;
+          while (closed.length > 0) {
+            const resultRefs = closed.flatMap((entry) => {
+              if (
+                entry.entryKind !== "Observation" ||
+                typeof entry.payload !== "object" ||
+                entry.payload === null
+              ) {
+                return [];
+              }
+              const payload = entry.payload as {
+                readonly _tag?: unknown;
+                readonly callRef?: unknown;
+              };
+              return (payload._tag === "ToolResult" ||
+                payload._tag === "ControlResult") &&
+                typeof payload.callRef === "string"
+                ? [payload.callRef]
+                : [];
+            });
+            let expandedFloor = causalFloor;
+            for (const callRef of new Set(resultRefs)) {
+              const callRows = yield* run(
+                sql.unsafe<{ sequence: number }>(
+                  "SELECT sequence FROM session_entries WHERE session_id = ? AND sequence >= ? AND item_type = 'ToolCall' AND json_extract(payload_json, '$.callRef') = ? ORDER BY sequence DESC LIMIT 1",
+                  [sessionId, checkpointFloor, callRef],
+                ),
+              );
+              const callSequence = callRows[0]?.sequence;
+              if (callSequence !== undefined) {
+                expandedFloor = Math.min(expandedFloor, Number(callSequence));
+              }
+            }
+            if (expandedFloor >= causalFloor) return closed;
+            causalFloor = expandedFloor;
+            const closedRows = yield* run(
+              sql.unsafe<SessionEntryRow>(
+                `SELECT ${selection} FROM session_entries WHERE session_id = ? AND sequence >= ? ORDER BY sequence`,
+                [sessionId, causalFloor],
+              ),
+            );
+            closed = closedRows.map(toSessionEntry);
+          }
+          return closed;
         }),
       listSessionsByWorkspace: (workspaceId) =>
         Effect.gen(function* () {

@@ -1,6 +1,6 @@
 # DOGFOOD-DG-03 — Executable filesystem tool target cannot be mapped into the sandbox
 
-**Status:** OPEN — awaiting manual governance
+**Status:** RESOLVED — DID v1.25 EWB-1…EWB-10 + live dogfood
 
 **Discovered:** 2026-10-02 real Work Agent Loop dogfooding, project `发布候选验证`
 
@@ -124,7 +124,27 @@ execution.
 
 ## Closure condition
 
-This gap becomes `RESOLVED` only after manual governance updates the owning
-design contracts, records the resolving revision here, and separately
-authorizes implementation. Until then, the affected release-validation Work is
-`BLOCKED_BY_DESIGN_GAP`.
+## Resolution
+
+Manual governance accepted and authorized the mount-relative design on
+2026-10-02 by the instruction `执行`. Owning contracts landed in DID v1.25 and
+P4/P11 implementation documents. Implementation replaced model-facing host
+paths with `{ mount, path }`, bound the admitted primary worktree as
+`workspace`, added v2 tools, target confinement, idempotent file creation,
+catalog-resolved tool identity, causal-window repair, transaction
+serialization and post-command ownership/wake convergence.
+
+The original isolated Work completed without a human writing its deliverable:
+
+```text
+Execution: exe_886068a0-850b-7174-89ec-163bc7b1aa34
+Settlement: CompletionClaimed
+Claim: clm_1ab275af-4c0d-7511-8c98-eb00ede04d1a
+Focused test: 3/3 PASS
+Architecture: 124/124 PASS in the isolated worktree
+Scope: one new test file; git diff --check PASS
+```
+
+Full implementation evidence is
+`planning/results/execution-workspace-binding.result.md`. Resolving Git revision
+is the commit that contains this record and that result.

@@ -59,6 +59,7 @@ import {
   LeaseServiceLive,
   layer,
   MessageStoreLive,
+  OwnershipWriteServiceLive,
   P12_MIGRATIONS,
   P16_MIGRATIONS,
   P17_MIGRATIONS,
@@ -483,6 +484,7 @@ export const buildSingleWorkspaceLayer = (
     BlobStorePortLive,
   );
   const admission = Layer.provide(ResourceAdmissionLive, repos);
+  const ownershipWrite = Layer.provide(OwnershipWriteServiceLive, repos);
   const inputPromotion = Layer.provide(InputPromotionServiceLive, repos);
   const authorityResolver = AuthorityResolverPortLive;
   const toolAuthority = Layer.provide(
@@ -525,7 +527,7 @@ export const buildSingleWorkspaceLayer = (
   );
   const executableInvocation = Layer.provide(
     ExecutableToolHandlerLive,
-    Layer.mergeAll(toolRuntime, infra),
+    Layer.mergeAll(toolRuntime, infra, toolCatalog),
   );
   const turnProfiles = Layer.provide(
     TurnProfileResolverLive,
@@ -608,6 +610,7 @@ export const buildSingleWorkspaceLayer = (
     toolRuntime,
     scheduler,
     admission,
+    ownershipWrite,
     runnableSource,
     WorkerDispatchPortLive,
     RuntimeSafetyGateLive(config.runtimeSafetyPolicy),

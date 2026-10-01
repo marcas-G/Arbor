@@ -48,6 +48,7 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
+  WorkspaceRepository,
 } from "../packages/ports/dist/index.js";
 import {
   BUILTIN_EXECUTORS,
@@ -396,7 +397,7 @@ const authority = {
   workspaceId,
   executionId,
   toolName: "list",
-  toolVersion: "1",
+  toolVersion: "2",
   resourceSpaceIds: ["filesystem"],
   allowedCapabilities: ["fs:read"],
   controlBasisDigest: "d",
@@ -419,9 +420,9 @@ const toolContext = {
 const toolIntent = {
   callRef: "c",
   toolName: "list",
-  toolVersion: "1",
+  toolVersion: "2",
   argumentsJson: JSON.stringify({
-    path: { _tag: "FileTree", path: "." },
+    target: { mount: "workspace", path: "." },
     depth: 2,
   }),
   invocationId,
@@ -465,6 +466,17 @@ const makeToolApp = (root: string) => {
           observedEnvironmentRevision: "rev",
         }),
     }),
+    Layer.succeed(WorkspaceRepository, {
+      findById: () =>
+        Effect.succeed(
+          Option.some({
+            projectId,
+            resourceBoundary: {
+              addresses: [{ _tag: "GitWorktree", path: root }],
+            },
+          }),
+        ),
+    } as never),
     Layer.succeed(Clock, {
       now: () => Effect.succeed("2026-01-01T00:00:00.000Z"),
     }),
@@ -479,7 +491,7 @@ describe("P12-011 non-minimal tool through the unchanged P4 pipeline", () => {
   it("registers a versioned non-read/patch/shell builtin with real schemas", () => {
     expect(BUILTIN_TOOLS.some((tool) => tool.name === "list")).toBe(true);
     expect(LIST_DEFINITION.name).toBe("list");
-    expect(LIST_DEFINITION.version).toBe("1");
+    expect(LIST_DEFINITION.version).toBe("2");
     expect(LIST_DEFINITION.source).toBe("Builtin");
     expect(LIST_DEFINITION.inputSchemaJson).not.toBe("{}");
     expect(LIST_DEFINITION.resultSchemaJson).not.toBe("{}");
