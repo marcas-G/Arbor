@@ -293,6 +293,18 @@ export const ConversationResponseJobStoreLive = Layer.effect(
             .pipe(Effect.mapError(jobStoreError));
           return rows.map(toJob);
         }),
+      listForWorkspace: (workspaceId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* sql
+            .unsafe<JobRow>(
+              `SELECT ${JOB_COLUMNS} FROM conversation_response_jobs
+               WHERE root_workspace_id = ? ORDER BY created_at, message_id`,
+              [workspaceId],
+            )
+            .pipe(Effect.mapError(jobStoreError));
+          return rows.map(toJob);
+        }),
       projectsWithWork: () =>
         Effect.gen(function* () {
           yield* TransactionScope;

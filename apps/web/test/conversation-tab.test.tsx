@@ -499,7 +499,7 @@ describe("P14-005 conversation tab", () => {
     });
   });
 
-  it("derives queued or working state from an authoritative unanswered human turn", async () => {
+  it("renders the authoritative response status instead of inferring from a missing answer", async () => {
     installFetch({
       tree: rootTree,
       transcriptResponses: [
@@ -511,6 +511,12 @@ describe("P14-005 conversation tab", () => {
                 messageId: "msg_pending_1",
                 body: "请执行长任务",
                 occurredAt: "2026-09-23T10:00:00.000Z",
+                responseStatus: {
+                  state: "Running",
+                  revision: 1,
+                  executionId: "exe_running_1",
+                  attemptNo: 0,
+                },
               },
             ],
           } satisfies TranscriptRes),
@@ -518,9 +524,51 @@ describe("P14-005 conversation tab", () => {
     });
     renderConversation();
     await waitFor(() => expect(screen.getByText("请执行长任务")).toBeTruthy());
-    expect(screen.getByText("正在处理")).toBeTruthy();
-    expect(
-      screen.getByText("已提交。刷新页面或服务重启后会自动继续。"),
-    ).toBeTruthy();
+    expect(screen.getByText("正在处理（第 1 次执行）")).toBeTruthy();
+    expect(screen.getByText("紧急停止执行")).toBeTruthy();
+  });
+
+  it("submits an explicit resume command for NeedsAttention", async () => {
+    const harness = installFetch({
+      tree: rootTree,
+      transcriptResponses: [
+        () =>
+          okValue({
+            entries: [
+              {
+                kind: "HumanConversationTurn",
+                messageId: "msg_attention_1",
+                body: "请继续",
+                occurredAt: "2026-09-23T10:00:00.000Z",
+                responseStatus: {
+                  state: "NeedsAttention",
+                  revision: 4,
+                  reason: "DeterministicModelFailure",
+                  canResume: true,
+                },
+              },
+            ],
+          } satisfies TranscriptRes),
+      ],
+    });
+    renderConversation();
+    await waitFor(() =>
+      expect(
+        screen.getByText("需要处理：DeterministicModelFailure"),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByText("重新开始"));
+    await waitFor(() => expect(harness.commandCalls).toHaveLength(1));
+    const envelope = harness.commandCalls[0] as {
+      commandType?: string;
+      payload?: { messageId?: string; expectedJobRevision?: number };
+    };
+    expect(envelope).toMatchObject({
+      commandType: "ResumeConversationResponse",
+      payload: {
+        messageId: "msg_attention_1",
+        expectedJobRevision: 4,
+      },
+    });
   });
 });

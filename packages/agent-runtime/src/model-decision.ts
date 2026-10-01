@@ -88,7 +88,7 @@ export interface ModelDecisionDependencies {
   readonly turnProfileResolver: TurnProfileResolverService;
   readonly responseJobs?: Pick<
     ConversationResponseJobStoreService,
-    "findByExecution"
+    "findByExecution" | "listForWorkspace"
   >;
   readonly inbox?: InboxProjectionStoreService;
   readonly works: WorkRepositoryService;
@@ -207,6 +207,17 @@ export const runModelDecision = (
             message.claimedByExecutionId ===
             String(input.execution.executionId),
         );
+        const responseJobRows =
+          responseJobs === undefined
+            ? []
+            : yield* tx
+                .transact(
+                  responseJobs.listForWorkspace(input.execution.workspaceId),
+                )
+                .pipe(Effect.mapError(failure));
+        const responseJobsByMessage = new Map(
+          responseJobRows.map((job) => [String(job.messageId), job] as const),
+        );
         if (responseJobs !== undefined) {
           const job = yield* tx
             .transact(responseJobs.findByExecution(input.execution.executionId))
@@ -219,14 +230,23 @@ export const runModelDecision = (
           }
         }
         for (const message of history) {
-          if (message.state === "Answered" && message.responseBody !== null) {
+          const responseJob = responseJobsByMessage.get(message.messageId);
+          const responseBody =
+            responseJob?.state._tag === "Answered"
+              ? responseJob.state.responseBody
+              : responseJob === undefined &&
+                  message.state === "Answered" &&
+                  message.responseBody !== null
+                ? message.responseBody
+                : null;
+          if (responseBody !== null) {
             conversationMessages.push({
               role: "user",
               text: message.bodyRef,
             });
             conversationMessages.push({
               role: "assistant",
-              text: message.responseBody,
+              text: responseBody,
             });
           }
         }

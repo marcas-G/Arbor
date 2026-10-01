@@ -90,6 +90,18 @@ describe("P14 conversation history paging", () => {
                       `assistant-${index}`,
                     ],
                   );
+                  yield* sql.unsafe(
+                    "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Answered',NULL,1,NULL,NULL,NULL,NULL,'conversation-retry-v1',?,?,NULL,0,?,?)",
+                    [
+                      `msg_${minute}`,
+                      projectId,
+                      workspaceId,
+                      `assistant-${index}`,
+                      `exe_${minute}`,
+                      `2026-09-25T00:${minute}:00.000Z`,
+                      `2026-09-25T00:${minute}:30.000Z`,
+                    ],
+                  );
                 }
               }),
             );

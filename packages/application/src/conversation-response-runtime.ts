@@ -16,8 +16,6 @@ import type {
   ConversationResponseJobStoreService,
   ExecutionRepositoryError,
   ExecutionRepositoryService,
-  HumanMessageStoreError,
-  HumanMessageStoreService,
   ProjectRepositoryError,
   ProjectRepositoryService,
   ProviderDeploymentBreakerService,
@@ -57,9 +55,6 @@ export interface ConversationResponseTriggerDependencies {
     "listEligible" | "transition"
   >;
   readonly attempts: Pick<ConversationAttemptStoreService, "insert">;
-  /** Transitional P14 compatibility; removed when transcript/model history
-   * read exclusively from ResponseJob in P17-005. */
-  readonly legacyMessages?: Pick<HumanMessageStoreService, "claim">;
   readonly projects: Pick<ProjectRepositoryService, "findById">;
   readonly executions: Pick<
     ExecutionRepositoryService,
@@ -80,8 +75,7 @@ export type ConversationResponseRuntimeError =
   | ConversationJobStoreError
   | ConversationAttemptStoreError
   | ExecutionRepositoryError
-  | ProjectRepositoryError
-  | HumanMessageStoreError;
+  | ProjectRepositoryError;
 
 export const runConversationResponseTrigger = (
   dependencies: ConversationResponseTriggerDependencies,
@@ -231,9 +225,6 @@ export const runConversationResponseTrigger = (
 
     yield* dependencies.tx.transact(
       Effect.gen(function* () {
-        if (dependencies.legacyMessages !== undefined) {
-          yield* dependencies.legacyMessages.claim(job.messageId, executionId);
-        }
         yield* dependencies.attempts.insert({
           messageId: job.messageId,
           attemptNo,
@@ -270,7 +261,6 @@ export interface ConversationResponseSweepDependencies {
   >;
   readonly attempts: Pick<ConversationAttemptStoreService, "settle" | "list">;
   readonly executions: Pick<ExecutionRepositoryService, "findById">;
-  readonly legacyMessages?: Pick<HumanMessageStoreService, "markAnswered">;
   readonly clock: Pick<ClockService, "now">;
   readonly responseBodyOf: (
     messageId: string,
@@ -402,17 +392,6 @@ export const runConversationResponseSettlementSweep = (
         expectedState: "Running",
         next,
       });
-      if (
-        next.state._tag === "Answered" &&
-        dependencies.legacyMessages !== undefined
-      ) {
-        yield* dependencies.legacyMessages.markAnswered(
-          job.messageId,
-          now,
-          next.state.responseBody,
-          job.providerReasoning,
-        );
-      }
       records.push(`${next.state._tag.toLowerCase()}:${job.messageId}`);
     }
     return records;

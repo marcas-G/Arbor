@@ -42,7 +42,6 @@ import {
   ExecutionRepository,
   type ExecutionScheduler,
   FormationProposalStore,
-  HumanMessageStore,
   type IdGenerator,
   type LeaseService,
   type PermissionGrantRepository,
@@ -218,7 +217,6 @@ export type ProductionDaemonServices =
   | EnvironmentRevisionStore
   | BlobStorePort
   | T1RecoveryState
-  | HumanMessageStore
   | ConversationResponseJobStore
   | ConversationAttemptStore
   | ProviderDeploymentBreaker
@@ -408,7 +406,6 @@ export const ProductionDaemonServiceLive = (
 
       const conversationTick = Effect.asVoid(
         Effect.gen(function* () {
-          const messages = yield* HumanMessageStore;
           const jobs = yield* ConversationResponseJobStore;
           const attempts = yield* ConversationAttemptStore;
           const breaker = yield* ProviderDeploymentBreaker;
@@ -434,7 +431,6 @@ export const ProductionDaemonServiceLive = (
                   executions,
                   clock,
                   responseBodyOf,
-                  legacyMessages: messages,
                   breaker,
                   bindingFingerprint: config.bindingFingerprint,
                   configurationRevision: config.configurationRevision,
@@ -447,7 +443,6 @@ export const ProductionDaemonServiceLive = (
                 gateway,
                 jobs,
                 attempts,
-                legacyMessages: messages,
                 breaker,
                 bindingFingerprint: config.bindingFingerprint,
                 configurationRevision: config.configurationRevision,

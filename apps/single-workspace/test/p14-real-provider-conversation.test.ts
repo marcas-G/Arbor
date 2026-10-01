@@ -312,7 +312,7 @@ describe("P14 production conversation model context", () => {
               state: string;
               response_body: string | null;
             }>(
-              "SELECT state, response_body FROM human_messages WHERE message_id = ?",
+              "SELECT state, response_body FROM conversation_response_jobs WHERE message_id = ?",
               ["msg_wave1_018f2b3c-4d5e-7abc-8def-0123456789ac"],
             );
             return { manifests, message: messages[0] };
@@ -545,7 +545,7 @@ describe("P14 production conversation model context", () => {
             state: string;
             response_body: string | null;
           }>(
-            "SELECT state, response_body FROM human_messages WHERE message_id = ?",
+            "SELECT state, response_body FROM conversation_response_jobs WHERE message_id = ?",
             ["msg_018f2b3c-4d5e-7abc-8def-0123456789ac"],
           );
           const executionRows = yield* sql.unsafe<{

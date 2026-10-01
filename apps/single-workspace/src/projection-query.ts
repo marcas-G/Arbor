@@ -1,3 +1,4 @@
+import type { ConversationResponseStatus } from "@arbor/api-contracts";
 import type {
   DomainEvent,
   ExecutionSettlement,
@@ -51,6 +52,62 @@ import {
 } from "@arbor/projection-runtime";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+
+interface ConversationJobViewRow {
+  readonly message_id: string;
+  readonly job_state: string | null;
+  readonly job_revision: number | null;
+  readonly active_execution_id: string | null;
+  readonly next_attempt_no: number | null;
+  readonly next_eligible_at: string | null;
+  readonly attention_reason: string | null;
+  readonly response_execution_id: string | null;
+}
+
+const responseStatusOf = (
+  row: ConversationJobViewRow,
+): ConversationResponseStatus | undefined => {
+  const revision = Number(row.job_revision ?? 0);
+  switch (row.job_state) {
+    case "Queued":
+      return { state: "Queued", revision };
+    case "Running":
+      return {
+        state: "Running",
+        revision,
+        executionId: row.active_execution_id ?? "",
+        attemptNo: Math.max(0, Number(row.next_attempt_no ?? 1) - 1),
+      };
+    case "RetryScheduled":
+      return {
+        state: "RetryScheduled",
+        revision,
+        nextEligibleAt: row.next_eligible_at ?? "",
+        safeReason: row.attention_reason ?? "Provider 暂时不可用",
+      };
+    case "NeedsAttention":
+      return {
+        state: "NeedsAttention",
+        revision,
+        reason: row.attention_reason ?? "UnknownFailure",
+        canResume: true,
+      };
+    case "Answered":
+      return {
+        state: "Answered",
+        revision,
+        executionId: row.response_execution_id ?? "",
+      };
+    case "Cancelled":
+      return {
+        state: "Cancelled",
+        revision,
+        reason: row.attention_reason ?? "ControlledStop",
+      };
+    default:
+      return undefined;
+  }
+};
 
 /**
  * B-7 — the production `ProjectionQueryPort` wiring.
@@ -362,16 +419,26 @@ export const ProjectionQueryPortLive: Layer.Layer<
       conversationTurns: (workspaceId) =>
         inTx(
           Effect.gen(function* () {
-            const rows = yield* sql.unsafe<{
-              message_id: string;
-              body_ref: string;
-              created_at: string;
-              state: string;
-              claimed_by_execution_id: string | null;
-              settled_at: string | null;
-              response_body: string | null;
-            }>(
-              "SELECT message_id, body_ref, created_at, state, claimed_by_execution_id, settled_at, response_body FROM human_messages WHERE root_workspace_id = ? ORDER BY created_at ASC, message_id ASC",
+            const rows = yield* sql.unsafe<
+              ConversationJobViewRow & {
+                message_id: string;
+                body_ref: string;
+                created_at: string;
+                response_body: string | null;
+                response_updated_at: string | null;
+              }
+            >(
+              `SELECT hm.message_id, hm.body_ref, hm.created_at,
+                 job.state AS job_state, job.revision AS job_revision,
+                 job.active_execution_id, job.next_attempt_no,
+                 job.next_eligible_at, job.attention_reason,
+                 job.response_execution_id, job.response_body,
+                 job.updated_at AS response_updated_at
+               FROM human_messages hm
+               LEFT JOIN conversation_response_jobs job
+                 ON job.message_id = hm.message_id
+               WHERE hm.root_workspace_id = ?
+               ORDER BY hm.created_at ASC, hm.message_id ASC`,
               [workspaceId],
             );
             const turns: Array<{
@@ -380,24 +447,27 @@ export const ProjectionQueryPortLive: Layer.Layer<
               executionId?: string;
               body: string;
               occurredAt: string;
+              responseStatus?: ConversationResponseStatus;
             }> = [];
             for (const row of rows) {
+              const responseStatus = responseStatusOf(row);
               turns.push({
                 kind: "HumanConversationTurn",
                 messageId: row.message_id,
                 body: row.body_ref,
                 occurredAt: row.created_at,
+                ...(responseStatus === undefined ? {} : { responseStatus }),
               });
               if (
-                row.state === "Answered" &&
-                row.settled_at !== null &&
+                row.job_state === "Answered" &&
+                row.response_updated_at !== null &&
                 row.response_body !== null
               ) {
                 turns.push({
                   kind: "AssistantConversationTurn",
-                  executionId: row.claimed_by_execution_id ?? "",
+                  executionId: row.response_execution_id ?? "",
                   body: row.response_body,
-                  occurredAt: row.settled_at,
+                  occurredAt: row.response_updated_at,
                   messageId: row.message_id,
                 });
               }
@@ -446,18 +516,19 @@ export const ProjectionQueryPortLive: Layer.Layer<
                  WHERE root_workspace_id = ?
                  UNION ALL
                  SELECT
-                   message_id,
-                   claimed_by_execution_id AS execution_id,
+                   hm.message_id,
+                   job.response_execution_id AS execution_id,
                    'assistant' AS turn_kind,
                    1 AS turn_order,
-                   response_body AS body,
-                   settled_at AS occurred_at
-                 FROM human_messages
-                 WHERE root_workspace_id = ?
-                   AND state = 'Answered'
-                   AND claimed_by_execution_id IS NOT NULL
-                   AND settled_at IS NOT NULL
-                   AND response_body IS NOT NULL
+                   job.response_body AS body,
+                   job.updated_at AS occurred_at
+                 FROM human_messages hm
+                 JOIN conversation_response_jobs job
+                   ON job.message_id = hm.message_id
+                 WHERE hm.root_workspace_id = ?
+                   AND job.state = 'Answered'
+                   AND job.response_execution_id IS NOT NULL
+                   AND job.response_body IS NOT NULL
                )
                SELECT
                  message_id,
@@ -475,22 +546,43 @@ export const ProjectionQueryPortLive: Layer.Layer<
             const hasMore = rows.length > limit;
             const pageRows = rows.slice(0, limit);
             const oldest = pageRows[pageRows.length - 1];
-            const turns = pageRows.reverse().map((row) =>
-              row.turn_kind === "human"
-                ? {
-                    kind: "HumanConversationTurn" as const,
-                    messageId: row.message_id,
-                    body: row.body,
-                    occurredAt: row.occurred_at,
-                  }
-                : {
-                    kind: "AssistantConversationTurn" as const,
-                    executionId: row.execution_id ?? "",
-                    body: row.body,
-                    occurredAt: row.occurred_at,
-                    messageId: row.message_id,
-                  },
+            const messageIds = [
+              ...new Set(pageRows.map((row) => row.message_id)),
+            ];
+            const jobRows =
+              messageIds.length === 0
+                ? []
+                : yield* sql.unsafe<ConversationJobViewRow>(
+                    `SELECT message_id, state AS job_state,
+                       revision AS job_revision, active_execution_id,
+                       next_attempt_no, next_eligible_at, attention_reason,
+                       response_execution_id
+                     FROM conversation_response_jobs
+                     WHERE message_id IN (${messageIds.map(() => "?").join(",")})`,
+                    messageIds,
+                  );
+            const statusByMessage = new Map(
+              jobRows.map((row) => [row.message_id, responseStatusOf(row)]),
             );
+            const turns = pageRows.reverse().map((row) => {
+              if (row.turn_kind === "human") {
+                const responseStatus = statusByMessage.get(row.message_id);
+                return {
+                  kind: "HumanConversationTurn" as const,
+                  messageId: row.message_id,
+                  body: row.body,
+                  occurredAt: row.occurred_at,
+                  ...(responseStatus === undefined ? {} : { responseStatus }),
+                };
+              }
+              return {
+                kind: "AssistantConversationTurn" as const,
+                executionId: row.execution_id ?? "",
+                body: row.body,
+                occurredAt: row.occurred_at,
+                messageId: row.message_id,
+              };
+            });
             const oldestCursor: ConversationHistoryCursor | undefined =
               hasMore && oldest !== undefined
                 ? {

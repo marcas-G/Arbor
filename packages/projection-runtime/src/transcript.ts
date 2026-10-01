@@ -24,6 +24,22 @@ export type ConversationTurnView =
       readonly messageId: string;
       readonly body: string;
       readonly occurredAt: string;
+      readonly responseStatus?: {
+        readonly state:
+          | "Queued"
+          | "Running"
+          | "RetryScheduled"
+          | "NeedsAttention"
+          | "Answered"
+          | "Cancelled";
+        readonly revision: number;
+        readonly executionId?: string;
+        readonly attemptNo?: number;
+        readonly nextEligibleAt?: string;
+        readonly safeReason?: string;
+        readonly reason?: string;
+        readonly canResume?: true;
+      };
     }
   | {
       readonly kind: "AssistantConversationTurn";

@@ -3,7 +3,11 @@
  * in TanStack Query; the browser never manufactures a message or merges a
  * streaming preview over an authoritative turn.
  */
-import type { TranscriptEntry, TranscriptRes } from "@arbor/api-contracts";
+import type {
+  ConversationResponseStatus,
+  TranscriptEntry,
+  TranscriptRes,
+} from "@arbor/api-contracts";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { fetchView } from "../api/transport.js";
@@ -15,6 +19,7 @@ export interface ConversationMessage {
   readonly messageId?: string | undefined;
   readonly body: string;
   readonly occurredAt: string;
+  readonly responseStatus?: ConversationResponseStatus;
 }
 
 const toMessage = (
@@ -28,6 +33,9 @@ const toMessage = (
       messageId: entry.messageId,
       body: entry.body,
       occurredAt: entry.occurredAt,
+      ...(entry.responseStatus === undefined
+        ? {}
+        : { responseStatus: entry.responseStatus }),
     };
   }
   if (entry.kind === "AssistantConversationTurn" && "executionId" in entry) {

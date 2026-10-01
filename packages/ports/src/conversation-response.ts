@@ -148,6 +148,13 @@ export interface ConversationResponseJobStoreService {
     ConversationJobStoreError,
     TransactionScope
   >;
+  readonly listForWorkspace: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<ConversationResponseJob>,
+    ConversationJobStoreError,
+    TransactionScope
+  >;
   readonly projectsWithWork: () => Effect.Effect<
     ReadonlyArray<ProjectId>,
     ConversationJobStoreError,

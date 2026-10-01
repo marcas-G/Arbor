@@ -1,6 +1,7 @@
 export * from "./accept-complete.js";
 export * from "./assign-work.js";
 export * from "./conclude-verification.js";
+export * from "./conversation-response.js";
 export * from "./create-child-workspace.js";
 export * from "./create-project.js";
 export * from "./declare-dependency.js";
