@@ -18,6 +18,8 @@ import { makeP2CommandHandlers } from "@arbor/execution-runtime";
 import {
   AcceptanceRepository,
   type AcceptanceRepositoryService,
+  ConversationResponseJobStore,
+  type ConversationResponseJobStoreService,
   DependencyRepository,
   type DependencyRepositoryService,
   ExecutionRepository,
@@ -67,6 +69,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
   | AcceptanceRepository
   | PermissionGrantRepository
   | HumanMessageStore
+  | ConversationResponseJobStore
 > = Layer.effect(
   CommandHandlerRegistry,
   Effect.gen(function* () {
@@ -83,6 +86,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const acceptances = yield* AcceptanceRepository;
     const grants = yield* PermissionGrantRepository;
     const humanMessages = yield* HumanMessageStore;
+    const responseJobs = yield* ConversationResponseJobStore;
     const dependencyStore = yield* DependencyRepository;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
       ...makeP1CommandHandlers({
@@ -158,6 +162,10 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
         messages: humanMessages as Pick<
           HumanMessageStoreService,
           "insertPending" | "findById"
+        >,
+        responseJobs: responseJobs as Pick<
+          ConversationResponseJobStoreService,
+          "insert"
         >,
         inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
         rootWorkspaceOf: (projectId: ProjectId) =>

@@ -20,6 +20,7 @@ import type {
   AgentLoopStepFence,
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
+  ConversationResponseJobStoreService,
   ExecutionActivity,
   ExecutionDriverError,
   HumanMessageStoreService,
@@ -84,6 +85,10 @@ export interface ModelDecisionDependencies {
   readonly providerTurns?: ProviderTurnStoreService;
   readonly sessions: SessionRepositoryService;
   readonly humanMessages: HumanMessageStoreService;
+  readonly responseJobs?: Pick<
+    ConversationResponseJobStoreService,
+    "findByExecution"
+  >;
   readonly inbox?: InboxProjectionStoreService;
   readonly works: WorkRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
@@ -115,6 +120,7 @@ export const runModelDecision = (
     providerTurns,
     sessions,
     humanMessages,
+    responseJobs,
     inbox,
     works,
     workspaces,
@@ -194,11 +200,22 @@ export const runModelDecision = (
               }),
             ),
           );
-        const claimed = history.find(
+        let claimed = history.find(
           (message) =>
             message.claimedByExecutionId ===
             String(input.execution.executionId),
         );
+        if (responseJobs !== undefined) {
+          const job = yield* tx
+            .transact(responseJobs.findByExecution(input.execution.executionId))
+            .pipe(Effect.mapError(failure));
+          if (Option.isSome(job)) {
+            const message = yield* tx
+              .transact(humanMessages.findById(job.value.messageId))
+              .pipe(Effect.mapError(failure));
+            if (Option.isSome(message)) claimed = message.value;
+          }
+        }
         for (const message of history) {
           if (message.state === "Answered" && message.responseBody !== null) {
             conversationMessages.push({

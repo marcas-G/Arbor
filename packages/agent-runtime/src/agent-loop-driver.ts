@@ -11,6 +11,7 @@ import {
   type AgentLoopStepFence,
   AgentLoopStepStore,
   Clock,
+  ConversationResponseJobStore,
   EnvironmentRevisionStore,
   type ExecutionActivity,
   type ExecutionDriverError,
@@ -100,6 +101,9 @@ export const AgentLoopDriverLive = (
       const capabilityPort = yield* ModelCapabilityPort;
       const sessions = yield* SessionRepository;
       const humanMessages = yield* HumanMessageStore;
+      const responseJobsOption = yield* Effect.serviceOption(
+        ConversationResponseJobStore,
+      );
       const inboxOption = yield* Effect.serviceOption(InboxProjectionStore);
       const inputPromotionOption = yield* Effect.serviceOption(
         InputPromotionService,
@@ -228,6 +232,9 @@ export const AgentLoopDriverLive = (
                 tx,
                 sessions,
                 humanMessages,
+                ...(Option.isSome(responseJobsOption)
+                  ? { responseJobs: responseJobsOption.value }
+                  : {}),
                 ...(Option.isSome(inboxOption) &&
                 Option.isNone(inputPromotionOption)
                   ? { inbox: inboxOption.value }
