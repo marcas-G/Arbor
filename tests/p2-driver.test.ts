@@ -206,17 +206,27 @@ describe("P2-014 driver / dispatch / safety", () => {
         principal,
       );
       const sql = yield* SqlClient;
-      const rows = yield* sql.unsafe<{ settlement_kind: string | null }>(
-        "SELECT settlement_kind FROM executions WHERE execution_id = ?",
+      const rows = yield* sql.unsafe<{
+        settlement_kind: string | null;
+        settled_at: string | null;
+      }>(
+        "SELECT settlement_kind, settled_at FROM executions WHERE execution_id = ?",
         [executionId],
       );
-      return { settlement, kind: rows[0]?.settlement_kind };
+      return {
+        settlement,
+        kind: rows[0]?.settlement_kind,
+        settledAt: rows[0]?.settled_at,
+      };
     });
     const r = await run(program, app);
     expect((r as { settlement: { _tag: string } }).settlement._tag).toBe(
       "Completed",
     );
     expect((r as { kind: string | null }).kind).toBe("Completed");
+    const settledAt = (r as { settledAt: string | null }).settledAt;
+    expect(settledAt).not.toBe("t");
+    expect(Number.isNaN(Date.parse(settledAt ?? ""))).toBe(false);
   });
 
   it("stops repeated action fingerprints at the safety gate", async () => {

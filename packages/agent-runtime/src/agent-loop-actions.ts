@@ -7,6 +7,7 @@ import type {
   ControlBasis,
   ModelOutput,
   PreparedModelTurn,
+  ToolInvocation,
 } from "@arbor/model-context";
 import type {
   AgentLoopStepActionRecord,
@@ -163,9 +164,102 @@ export const executeAgentLoopActions = (
         }
       }
 
-      const persistActionSettlement = (
-        settlement: ExecutionSettlement,
-      ): Effect.Effect<void, ExecutionDriverError> =>
+      const appendTerminalResult = (
+        targetInvocation: ToolInvocation,
+        targetRoute:
+          | { readonly _tag: "Executable" }
+          | { readonly _tag: "Control" },
+        terminal: {
+          readonly status: import("@arbor/ports").PortableToolResultStatus;
+          readonly disposition: string;
+          readonly outputText: string;
+          readonly canonicalRefs?: ReadonlyArray<string>;
+        },
+        fence: AgentLoopStepFence,
+      ) =>
+        Effect.gen(function* () {
+          const resultRef = `result_${sha256Hex(
+            JSON.stringify({
+              callRef: targetInvocation.callRef,
+              status: terminal.status,
+              disposition: terminal.disposition,
+              outputText: terminal.outputText,
+            }),
+          )}`;
+          const observationSourceRef = `observation_${sha256Hex(
+            JSON.stringify({
+              providerTurnId: preparedTurn.manifest.providerTurnId,
+              callRef: targetInvocation.callRef,
+              resultRef,
+            }),
+          )}`;
+          if (yield* sessions.supportsTypedTimeline()) {
+            const item =
+              targetRoute._tag === "Executable"
+                ? {
+                    _tag: "ToolResult" as const,
+                    callRef: targetInvocation.callRef,
+                    toolName: targetInvocation.toolName,
+                    status: terminal.status,
+                    observationRef: observationSourceRef,
+                    modelOutputRef: resultRef,
+                    outputText: terminal.outputText,
+                    truncated: false,
+                    artifactRefs: [],
+                  }
+                : {
+                    _tag: "ControlResult" as const,
+                    callRef: targetInvocation.callRef,
+                    actionKind: targetInvocation.toolName,
+                    status: terminal.status,
+                    disposition: terminal.disposition,
+                    outputText: terminal.outputText,
+                    truncated: false,
+                    canonicalRefs: terminal.canonicalRefs ?? [],
+                    observationRef: observationSourceRef,
+                  };
+            yield* sessions.appendItemIdempotent(
+              input.execution.sessionId,
+              {
+                item,
+                contextEpoch: preparedTurn.manifest.contextEpoch,
+                source: {
+                  kind: "AgentLoopAction",
+                  ref: observationSourceRef,
+                },
+                contentHash: sha256Hex(JSON.stringify(item)),
+              },
+              fence,
+            );
+          } else {
+            const payload = {
+              source: targetRoute._tag === "Executable" ? "Tool" : "Runtime",
+              observation: {
+                text: terminal.outputText,
+                truncated: false,
+              },
+            } as const;
+            yield* sessions.appendEntryIdempotent(
+              input.execution.sessionId,
+              { kind: "AgentLoopAction", ref: observationSourceRef },
+              { entryKind: "Observation", payload },
+              sha256Hex(JSON.stringify(payload)),
+              fence,
+            );
+          }
+          return { resultRef, observationSourceRef };
+        });
+
+      const persistTerminalAction = (terminal: {
+        readonly settlement: ExecutionSettlement;
+        readonly actionState:
+          | "Applied"
+          | "TerminalRejected"
+          | "ReconciliationPending";
+        readonly status: import("@arbor/ports").PortableToolResultStatus;
+        readonly disposition: string;
+        readonly outputText: string;
+      }): Effect.Effect<void, ExecutionDriverError> =>
         Effect.gen(function* () {
           if (
             loopAction === undefined ||
@@ -179,11 +273,22 @@ export const executeAgentLoopActions = (
           const pendingAction = loopAction;
           const actionsStep = currentLoopStep;
           const settlementRef = `settlement_${sha256Hex(
-            JSON.stringify(settlement),
+            JSON.stringify(terminal.settlement),
           )}`;
           currentLoopStep = yield* tx
             .transact(
               Effect.gen(function* () {
+                const terminalResult = yield* appendTerminalResult(
+                  invocation,
+                  route,
+                  {
+                    status: terminal.status,
+                    disposition: terminal.disposition,
+                    outputText: terminal.outputText,
+                    canonicalRefs: [settlementRef],
+                  },
+                  loopStepFence,
+                );
                 yield* loopSteps.transitionAction(
                   {
                     identity: pendingAction.identity,
@@ -192,11 +297,11 @@ export const executeAgentLoopActions = (
                     expectedState: "Pending",
                     next: {
                       ...pendingAction,
-                      state:
-                        settlement._tag === "OutcomeUnknown"
-                          ? "ReconciliationPending"
-                          : "Applied",
+                      state: terminal.actionState,
+                      resultRef: terminalResult.resultRef,
                       settlementRef,
+                      disposition: { _tag: terminal.disposition },
+                      observationSourceRef: terminalResult.observationSourceRef,
                       revision: pendingAction.revision + 1,
                       updatedAt: yield* now(),
                     },
@@ -240,6 +345,17 @@ export const executeAgentLoopActions = (
                     },
                     loopStepFence,
                   );
+                  const skippedResult = yield* appendTerminalResult(
+                    skippedInvocation,
+                    skippedRoute,
+                    {
+                      status: "Interrupted",
+                      disposition: "SkippedEarlySettlement",
+                      outputText: `${skippedInvocation.toolName} skipped because an earlier action settled the execution`,
+                      canonicalRefs: [settlementRef],
+                    },
+                    loopStepFence,
+                  );
                   yield* loopSteps.transitionAction(
                     {
                       identity: pending.identity,
@@ -249,7 +365,11 @@ export const executeAgentLoopActions = (
                       next: {
                         ...pending,
                         state: "SkippedEarlySettlement",
+                        resultRef: skippedResult.resultRef,
                         settlementRef,
+                        disposition: { _tag: "SkippedEarlySettlement" },
+                        observationSourceRef:
+                          skippedResult.observationSourceRef,
                         revision: pending.revision + 1,
                         updatedAt: yield* now(),
                       },
@@ -266,7 +386,7 @@ export const executeAgentLoopActions = (
                       ...actionsStep,
                       state: "SettlementProposed",
                       nextActionIndex: decodedOutput.toolInvocations.length,
-                      settlement,
+                      settlement: terminal.settlement,
                       revision: actionsStep.revision + 1,
                       updatedAt: yield* now(),
                     },
@@ -276,6 +396,40 @@ export const executeAgentLoopActions = (
               }),
             )
             .pipe(Effect.mapError(failure));
+        });
+
+      const persistActionSettlement = (
+        settlement: ExecutionSettlement,
+      ): Effect.Effect<void, ExecutionDriverError> =>
+        persistTerminalAction({
+          settlement,
+          actionState:
+            settlement._tag === "OutcomeUnknown"
+              ? "ReconciliationPending"
+              : "Applied",
+          status:
+            settlement._tag === "OutcomeUnknown"
+              ? "OutcomeUnknown"
+              : settlement._tag === "Interrupted"
+                ? "Interrupted"
+                : settlement._tag === "Failed"
+                  ? "Failed"
+                  : "Succeeded",
+          disposition: `ExecutionSettlement:${settlement._tag}`,
+          outputText: `Control action settled the execution (${settlement._tag})`,
+        });
+
+      const persistActionRejection = (
+        settlement: ExecutionSettlement,
+        disposition: string,
+        status: import("@arbor/ports").PortableToolResultStatus = "Denied",
+      ): Effect.Effect<void, ExecutionDriverError> =>
+        persistTerminalAction({
+          settlement,
+          actionState: "TerminalRejected",
+          status,
+          disposition,
+          outputText: `${invocation.toolName} rejected by runtime (${disposition})`,
         });
 
       const persistActionObservation = (
@@ -406,17 +560,25 @@ export const executeAgentLoopActions = (
         { chainDepth: 1, observedAt: yield* now() },
       );
       if (activityDecision === "Stop") {
+        const settlement = safetyStop("RuntimeSafetyStop");
+        yield* persistActionRejection(
+          settlement,
+          "RuntimeSafetyStop",
+          "Interrupted",
+        );
         return {
           _tag: "Settle",
-          settlement: safetyStop("RuntimeSafetyStop"),
+          settlement,
         };
       }
 
       if (route._tag === "Executable") {
         if (executableInvocationHandler === undefined) {
+          const settlement = safetyStop("ExecutableToolHandlerUnavailable");
+          yield* persistActionRejection(settlement, "HandlerUnavailable");
           return {
             _tag: "Settle",
-            settlement: safetyStop("ExecutableToolHandlerUnavailable"),
+            settlement,
           };
         }
         const executed = yield* Effect.match(
@@ -432,9 +594,11 @@ export const executeAgentLoopActions = (
           },
         );
         if (!executed.ok) {
+          const settlement = safetyStop("ExecutableToolInvocationRejected");
+          yield* persistActionRejection(settlement, "HandlerRejected");
           return {
             _tag: "Settle",
-            settlement: safetyStop("ExecutableToolInvocationRejected"),
+            settlement,
           };
         }
         if (executed.outcome._tag === "Settle") {
@@ -477,11 +641,13 @@ export const executeAgentLoopActions = (
         },
       );
       if (!decodedAction.ok) {
+        const settlement = safetyStop(
+          `ControlToolDecodeFailed:${decodedAction.cause._tag}`,
+        );
+        yield* persistActionRejection(settlement, "DecodeRejected");
         return {
           _tag: "Settle",
-          settlement: safetyStop(
-            `ControlToolDecodeFailed:${decodedAction.cause._tag}`,
-          ),
+          settlement,
         };
       }
 
@@ -512,6 +678,16 @@ export const executeAgentLoopActions = (
           yield* tx
             .transact(
               Effect.gen(function* () {
+                const staleResult = yield* appendTerminalResult(
+                  invocation,
+                  route,
+                  {
+                    status: "Denied",
+                    disposition: "DecisionStale",
+                    outputText: `${invocation.toolName} skipped because the decision basis became stale`,
+                  },
+                  loopStepFence,
+                );
                 yield* loopSteps.transitionAction(
                   {
                     identity: staleAction.identity,
@@ -521,7 +697,9 @@ export const executeAgentLoopActions = (
                     next: {
                       ...staleAction,
                       state: "SkippedStale",
+                      resultRef: staleResult.resultRef,
                       disposition: { _tag: "DecisionStale" },
+                      observationSourceRef: staleResult.observationSourceRef,
                       revision: staleAction.revision + 1,
                       updatedAt: yield* now(),
                     },
@@ -565,6 +743,16 @@ export const executeAgentLoopActions = (
                     },
                     loopStepFence,
                   );
+                  const skippedStaleResult = yield* appendTerminalResult(
+                    skippedInvocation,
+                    skippedRoute,
+                    {
+                      status: "Denied",
+                      disposition: "DecisionStale",
+                      outputText: `${skippedInvocation.toolName} skipped because the decision basis became stale`,
+                    },
+                    loopStepFence,
+                  );
                   yield* loopSteps.transitionAction(
                     {
                       identity: pending.identity,
@@ -574,7 +762,10 @@ export const executeAgentLoopActions = (
                       next: {
                         ...pending,
                         state: "SkippedStale",
+                        resultRef: skippedStaleResult.resultRef,
                         disposition: { _tag: "DecisionStale" },
+                        observationSourceRef:
+                          skippedStaleResult.observationSourceRef,
                         revision: pending.revision + 1,
                         updatedAt: yield* now(),
                       },
@@ -635,9 +826,11 @@ export const executeAgentLoopActions = (
         },
       );
       if (!handled.ok) {
+        const settlement = safetyStop("ControlActionHandlerRejected");
+        yield* persistActionRejection(settlement, "HandlerRejected");
         return {
           _tag: "Settle",
-          settlement: safetyStop("ControlActionHandlerRejected"),
+          settlement,
         };
       }
       if (handled.outcome._tag === "Settle") {

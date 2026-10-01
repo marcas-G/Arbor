@@ -13,6 +13,7 @@ import type {
 } from "@arbor/domain";
 import {
   AgentExecutionStateStore,
+  Clock,
   ExecutionDriverPort,
   ExecutionRepository,
   type ExecutionRepositoryError,
@@ -125,6 +126,7 @@ export const runExecution = (
     const driver = yield* ExecutionDriverPort;
     const safety = yield* RuntimeSafetyGate;
     const gateway = yield* CommandGateway;
+    const clock = yield* Clock;
 
     const execution = yield* tx.transact(repository.findById(executionId));
     if (Option.isNone(execution)) {
@@ -139,6 +141,7 @@ export const runExecution = (
       leases.acquire(executionId, WORKER_ID, WORKER_INCARNATION_ID),
     );
     const state = yield* tx.transact(states.find(executionId));
+    const stateUpdatedAt = yield* clock.now();
     // P9 `03` §1: race the drive against the renewal loop — the first to
     // complete wins; a lost renewal (LeaseLost) interrupts the drive so no
     // durable mutation is attempted, and no ordinary retry occurs.
@@ -154,7 +157,7 @@ export const runExecution = (
           turnNo: 0,
           recentDirectiveRefs: [],
           recentActionFingerprints: [],
-          updatedAt: "t",
+          updatedAt: stateUpdatedAt,
         })),
         wakeReason,
         context: {
@@ -187,6 +190,7 @@ export const runExecution = (
       lease.workerIncarnationId,
       lease.generation,
     );
+    const settledAt = yield* clock.now();
 
     const payload = {
       executionId,
@@ -225,7 +229,7 @@ export const runExecution = (
         commandId,
         projectId: execution.value.projectId,
         actor: principal as never,
-        issuedAt: "t",
+        issuedAt: settledAt,
         payload,
       },
       context,

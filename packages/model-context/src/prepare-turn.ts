@@ -88,9 +88,13 @@ export interface PrepareTurnInput {
     readonly fingerprint: string;
     readonly bindingFingerprint: string;
   };
-  /** P14 conversation: suppress catalogued executable tools (WAVE1 S05 —
-   * the Human Input request exposes only the directive tool). */
+  /** Suppress catalogued executable tools for purposes such as the root
+   * Human Conversation response episode. */
   readonly includeTools?: boolean;
+  /** Purpose-resolved control surface. `false` is an explicit empty surface,
+   * distinct from an absent ControlToolCatalogPort. Model Context only
+   * projects this decision; it does not infer execution semantics. */
+  readonly includeControlTools?: boolean;
   /** Content table (contentRef -> instruction body). When present,
    * compiled instructions carry the resolved text instead of the bare
    * reference (P3 `05` compile semantics). */
@@ -152,15 +156,15 @@ export const ModelContextLive: Layer.Layer<
             tools.push(yield* toolCatalog.resolveForModel(ref));
           }
         }
-        // P14 `02` S05: the conversation face suppresses catalogued
-        // EXECUTABLE tools only — the control (directive) channel stays
-        // model-facing. The registry's shallow definitions are the explicit
-        // controlTools, which also stops compileTurn from injecting the
-        // legacy monolithic `arbor_directive` (the representation whose
-        // routes never matched the registry — RouteRegistryMismatch).
-        const controlTools = Option.isSome(controlToolCatalog)
-          ? yield* controlToolCatalog.value.visibleDefinitions()
-          : [];
+        // Preserve the distinction between an absent control catalog (legacy
+        // callers may still rely on compiler fallback) and an explicitly
+        // empty purpose-resolved surface (`includeControlTools: false`).
+        const controlTools =
+          input.includeControlTools === false
+            ? []
+            : Option.isSome(controlToolCatalog)
+              ? yield* controlToolCatalog.value.visibleDefinitions()
+              : undefined;
         const skillRefs: SkillRef[] = [];
         for (const skillId of input.bodySkillIds) {
           const loaded = yield* skills.load(skillId, "Body");
@@ -177,7 +181,7 @@ export const ModelContextLive: Layer.Layer<
           messages,
           inputItems,
           tools,
-          controlTools,
+          controlTools: controlTools ?? [],
         });
         const planned = planContext(input.contextFragments, {
           modelWindow: availableTokens - fixedTokens,
@@ -211,7 +215,7 @@ export const ModelContextLive: Layer.Layer<
             instructions: resolved,
             context: planned.selected,
             tools,
-            controlTools,
+            ...(controlTools === undefined ? {} : { controlTools }),
             skills: skillRefs,
             outputContract:
               input.outputContractRef ??

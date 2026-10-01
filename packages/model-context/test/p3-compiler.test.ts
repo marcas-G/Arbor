@@ -174,6 +174,30 @@ describe("P3 model-family compiler", () => {
     ]);
   });
 
+  it("preserves an explicitly empty control surface without legacy directive injection", () => {
+    const result = compileTurn({
+      plan: {
+        ...plan,
+        outputContract: "agent-directive-v1",
+        controlTools: [],
+      },
+      capability,
+      providerTurnId: parse(ProviderTurnId)(
+        "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      ),
+      executionId: parse(ExecutionId)(
+        "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      ),
+      sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+      contextEpoch: parse(ContextEpochNumber)(0),
+      maxOutputTokens: 128,
+    });
+
+    expect(result.request.toolDefinitions).toEqual([]);
+    expect(result.toolRoutes).toEqual([]);
+    expect(result.manifest.toolRefs).toEqual([]);
+  });
+
   it("rejects an identity collision across executable and control categories", () => {
     expect(() =>
       compileTurn({
