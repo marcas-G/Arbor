@@ -66,6 +66,9 @@ authority + ownership admission, and opens that resource as the process-local
 5. External CreateProject/CreateChildWorkspace post-commit convergence now
    activates missing ownership claims. Successful SteerWork clears a prior
    WorkWait so human intervention actually wakes the Work.
+6. `ClaimCompletion` now registers a `VerificationChanged` WorkWait before
+   settlement, preventing the scheduler from repeatedly re-running an Open
+   Work while its completion claim is awaiting verification.
 
 ## Live qualification
 
