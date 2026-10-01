@@ -1,21 +1,50 @@
-# P11 — 12 P4 Sandbox Handoff (GQ1a-adjacent; demoted GQ6)
+# P11 — 12 Worktree Sandbox Binding
 
-**Authority:** P4 `04` (frozen SandboxPort + guarantees); v1.8 G3.
-**Status:** DRAFT.
+**Authority:** DID v1.25 EWB-1…EWB-10; P4 `04`.
+**Status:** FROZEN.
 
-## 1. Continuity (frozen by P4 contract — restated)
+## 1. Managed-worktree binding
 
-`SandboxPort` signature **unchanged**. Advanced isolation = new adapters:
+The primary writable coding mount is a `GitWorktree` already created and
+governed by the P11 Worktree lifecycle. Opening a tool sandbox binds that
+resource as logical mount `workspace`.
 
-- `sandbox-worktree` adapter: open() materializes writableRegions into the sandbox root from their worktrees (clone/worktree-add/copy — strategy empirical). **B3 wiring (CI-1/CI-3/CI-4)**:
-  - (a) worktree-add creates a real GitWorktree → **must go through `09` CreateWorktree** (command, not raw fs); if the region set changed, a WorktreeLifecycle-cause `RecordEnvironmentChange` follows `03` CAS — the adapter never advances the anchor directly.
-  - (b) close() write-back changes worktree content (fingerprint-visible at `02` §2 granularity) → convergence owner is fixed: the adapter's write-back emits a **Governance-cause RecordEnvironmentChange** proposal in the same flow (auto-submitted for sandbox write-back — it is an Arbor-originated mutation, not external drift); ExternalDrift is never used for self-made changes (no unrecorded CURRENT window).
-  - (c) adapter-created worktrees have a terminal path: they are RetireWorktree-eligible at close when the declared policy is ephemeral (CI-3); persistent policy keeps them Active for Parent integration (SD §11.4).
-  - integration/merge decisions stay Parent cognition per SD §11.4.
-- `SandboxHandle` gains **optional metadata** (`{ source: "worktree", worktreeId? }`) — additive only.
+Provider strategies may differ without changing the tool contract:
 
-## 2. Inherited guarantees (all four, incl. close-releases)
+```text
+LocalTrusted     -> bind the managed worktree directly
+Container/Remote -> mount the managed worktree at an isolated provider path
+ReadOnlyMirror   -> materialize a read-only resource into an adapter-owned root
+```
 
-Root-confined execution; writes confined to writableRegions; control-DB unreachable; secrets unreachable; **close releases all sandbox resources**. Each gains a test in the new adapter. The existing `sandbox-local`欠账 (env allow-list from P4 §4) is repaid here.
+A managed worktree is already the integration boundary. The default writable
+path does not copy the entire tree to another temporary root and copy it back
+on close. That historical strategy is retired because it loses mount identity,
+can overwrite concurrent changes and can cross-write multiple backings.
 
-## (mapping: none directly; supports CI-3 via region materialization)
+## 2. Lifecycle and convergence
+
+- Creation/retirement still goes through `CreateWorktree` / `RetireWorktree`.
+- `open` never creates a worktree implicitly for an unresolved mount.
+- Directly bound worktree changes are immediately fingerprint-visible; the
+  existing environment watcher / explicit Governance change path records the
+  environment transition. Sandbox close is not the ownership mutation owner.
+- `close` removes only adapter-created ephemeral resources and never deletes or
+  retires a pre-existing managed worktree.
+- Parent integration/merge remains Parent cognition under SD §11.4.
+
+## 3. Recovery
+
+The mount binding retains source address + canonical region + captured
+ResourceBoundary/Environment basis. Recovery may reopen the same logical mount
+only when the current source still resolves to that basis. Drift or a retired
+worktree fails closed and produces Attention; no host-prefix guessing is
+allowed.
+
+## 4. Security statement
+
+Git worktree separation is resource isolation, not process isolation.
+`LocalTrusted` is suitable for a trusted local user and still applies target,
+permission, ownership, environment and shell-policy checks. Untrusted automatic
+execution requires a hardened provider that prevents the process from reaching
+host files, control storage, secrets and unauthorized networks.

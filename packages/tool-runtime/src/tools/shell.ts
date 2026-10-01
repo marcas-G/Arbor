@@ -5,6 +5,7 @@ import {
   type ToolExecutionResult,
   type ToolExecutor,
 } from "../runtime.js";
+import { resolveSandboxTarget } from "../sandbox-target.js";
 
 /** P4 `08` §4 (G6). Deterministic policy evaluation; concrete lists are
  * configurable but the mechanism is contract. */
@@ -41,6 +42,7 @@ export const shellExecutor: ToolExecutor = {
     Effect.sync((): ToolExecutionResult => {
       const args = JSON.parse(intent.argumentsJson) as {
         command: string;
+        cwd: { mount: string; path: string };
         timeoutMs?: number;
       };
       const decision = shellPolicy(args.command);
@@ -52,12 +54,26 @@ export const shellExecutor: ToolExecutor = {
         };
       }
       const executable = process.platform === "win32" ? "pwsh" : "bash";
+      let cwd: string;
+      try {
+        cwd = resolveSandboxTarget(sandbox, args.cwd, {
+          access: "ReadWrite",
+        });
+      } catch {
+        return {
+          settlement: { _tag: "ExpectedFailure" },
+          observation: bounded(
+            "shell cwd could not be resolved inside the writable workspace mount",
+          ),
+          resultRef: null,
+        };
+      }
       const shellArgs =
         process.platform === "win32"
           ? ["-NoProfile", "-NonInteractive", "-Command", args.command]
           : ["-lc", args.command];
       const result = spawnSync(executable, shellArgs, {
-        cwd: sandbox.rootPath,
+        cwd,
         timeout: args.timeoutMs ?? 10_000,
         encoding: "utf8",
       });

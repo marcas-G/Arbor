@@ -284,7 +284,9 @@ export const SandboxWorktreeLive = (
               (record: WorktreeRecord) => record.state === "Active",
             );
             const backing: Array<BackingWorktree> = [];
-            for (const region of input.regions) {
+            const regions =
+              input.mounts?.map((mount) => mount.region) ?? input.regions ?? [];
+            for (const region of regions) {
               const regionPath = worktreeRegionPath(region);
               if (regionPath === undefined) {
                 continue;
@@ -331,7 +333,7 @@ export const SandboxWorktreeLive = (
             states.set(handleId, {
               rootPath,
               workspaceId: input.workspaceId,
-              regions: input.regions,
+              regions,
               retention,
               backing,
             });
@@ -343,7 +345,22 @@ export const SandboxWorktreeLive = (
             const handle: WorktreeSandboxHandle = {
               handleId,
               rootPath,
-              writableRegions: input.regions,
+              ...(input.mounts === undefined
+                ? {}
+                : {
+                    mounts: input.mounts.map((mount) => ({
+                      ref: mount.ref,
+                      rootPath,
+                      region: mount.region,
+                      access: mount.access,
+                    })),
+                  }),
+              writableRegions:
+                input.mounts === undefined
+                  ? regions
+                  : input.mounts
+                      .filter((mount) => mount.access === "ReadWrite")
+                      .map((mount) => mount.region),
               metadata,
             };
             return handle;

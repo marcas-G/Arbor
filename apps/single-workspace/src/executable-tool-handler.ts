@@ -9,6 +9,8 @@ import {
   type CanonicalToolObservation,
   Clock,
   sha256Hex,
+  ToolCatalogPort,
+  type ToolCatalogPortService,
   type ToolExecutionContext,
   type ToolIntent,
   ToolRuntimePort,
@@ -87,11 +89,24 @@ const toolInvocationIdFor = (callRef: string) =>
 export const makeExecutableToolHandler = (
   tools: import("@arbor/ports").ToolRuntimePortService,
   clock: import("@arbor/ports").ClockService,
+  catalog: ToolCatalogPortService,
 ): ExecutableInvocationHandler => ({
   handle: ({ invocation, execution, context, controlBasis }) =>
     Effect.gen(function* () {
       const requestedAt = yield* clock.now();
-      const toolVersion = "1";
+      const matchingRefs = (yield* catalog.visibleRefs()).filter(
+        (ref) => ref.name === invocation.toolName,
+      );
+      if (matchingRefs.length !== 1) {
+        return yield* Effect.fail({
+          _tag: "AgentActionError" as const,
+          cause:
+            matchingRefs.length === 0
+              ? `tool is not visible: ${invocation.toolName}`
+              : `tool identity is ambiguous: ${invocation.toolName}`,
+        });
+      }
+      const toolVersion = matchingRefs[0]?.version as string;
       const intent: ToolIntent = {
         callRef: invocation.callRef,
         toolName: invocation.toolName,
@@ -126,12 +141,15 @@ export const makeExecutableToolHandler = (
 export const ExecutableToolHandlerLive: Layer.Layer<
   ExecutableToolHandler,
   never,
-  ToolRuntimePort | Clock
+  ToolRuntimePort | Clock | ToolCatalogPort
 > = Layer.effect(
   ExecutableToolHandler,
   Effect.gen(function* () {
     const tools = yield* ToolRuntimePort;
     const clock = yield* Clock;
-    return ExecutableToolHandler.of(makeExecutableToolHandler(tools, clock));
+    const catalog = yield* ToolCatalogPort;
+    return ExecutableToolHandler.of(
+      makeExecutableToolHandler(tools, clock, catalog),
+    );
   }),
 );

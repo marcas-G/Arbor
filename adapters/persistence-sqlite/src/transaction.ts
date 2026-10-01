@@ -4,7 +4,7 @@ import {
   type TransactionPortService,
   TransactionScope,
 } from "@arbor/ports";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option, Semaphore } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 
 const operationalFailure = (
@@ -23,6 +23,7 @@ export const TransactionPortLive: Layer.Layer<
   TransactionPort,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
+    const transactionPermit = yield* Semaphore.make(1);
 
     const run = (statement: string) =>
       sql
@@ -39,32 +40,36 @@ export const TransactionPortLive: Layer.Layer<
             operationalFailure("nested transaction rejected"),
           );
         }
-        yield* run("BEGIN IMMEDIATE");
-        const exit = yield* Effect.exit(
-          Effect.provideService(body, TransactionScope, {
-            session: { id: "sqlite" },
+        return yield* transactionPermit.withPermits(1)(
+          Effect.gen(function* () {
+            yield* run("BEGIN IMMEDIATE");
+            const exit = yield* Effect.exit(
+              Effect.provideService(body, TransactionScope, {
+                session: { id: "sqlite" },
+              }),
+            );
+            if (Exit.isSuccess(exit)) {
+              const commitExit = yield* Effect.exit(run("COMMIT"));
+              if (Exit.isFailure(commitExit)) {
+                // PB1 (P9 `02` §11): COMMIT failure must roll back explicitly —
+                // WAL all-or-nothing either way, but the connection never stays
+                // inside an open transaction.
+                yield* run("ROLLBACK").pipe(Effect.ignore, Effect.orDie);
+                return yield* Effect.failCause(commitExit.cause).pipe(
+                  Effect.mapError(
+                    (cause): TransactionOperationalFailure => ({
+                      _tag: "TransactionOperationalFailure",
+                      cause,
+                    }),
+                  ),
+                );
+              }
+              return exit.value;
+            }
+            yield* run("ROLLBACK");
+            return yield* Effect.failCause(exit.cause);
           }),
         );
-        if (Exit.isSuccess(exit)) {
-          const commitExit = yield* Effect.exit(run("COMMIT"));
-          if (Exit.isFailure(commitExit)) {
-            // PB1 (P9 `02` §11): COMMIT failure must roll back explicitly —
-            // WAL all-or-nothing either way, but the connection never stays
-            // inside an open transaction.
-            yield* run("ROLLBACK").pipe(Effect.ignore, Effect.orDie);
-            return yield* Effect.failCause(commitExit.cause).pipe(
-              Effect.mapError(
-                (cause): TransactionOperationalFailure => ({
-                  _tag: "TransactionOperationalFailure",
-                  cause,
-                }),
-              ),
-            );
-          }
-          return exit.value;
-        }
-        yield* run("ROLLBACK");
-        return yield* Effect.failCause(exit.cause);
       });
 
     return TransactionPort.of({ transact });

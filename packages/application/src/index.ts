@@ -15,6 +15,7 @@ export * from "./formation-plan.js";
 export * from "./gateway.js";
 export * from "./human-intervention.js";
 export * from "./input-promotion.js";
+export * from "./ownership-wiring.js";
 export * from "./provider-turn-recovery.js";
 export * from "./rejection.js";
 export * from "./remote-worker-mediation.js";

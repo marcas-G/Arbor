@@ -1,11 +1,11 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { Effect } from "effect";
 import {
   bounded,
   type ToolExecutionResult,
   type ToolExecutor,
 } from "../runtime.js";
-import { resolveExistingWithin } from "../safe-path.js";
+import { resolveSandboxTarget } from "../sandbox-target.js";
 import { executeFilesystemTool } from "./filesystem-result.js";
 
 const sameLines = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
@@ -23,7 +23,7 @@ const applyDiff = (
       readonly changed: boolean;
     }
   | { readonly ok: false; readonly reason: string } => {
-  const lines = content.split("\n");
+  const lines = content === "" ? [] : content.split("\n");
   const diffLines = diff.split("\n");
   let index = 0;
   let hunks = 0;
@@ -55,7 +55,10 @@ const applyDiff = (
       } else if (line.startsWith(" ")) {
         oldLines.push(line.slice(1));
         newLines.push(line.slice(1));
-      } else if (line !== "\\ No newline at end of file") {
+      } else if (
+        line !== "\\ No newline at end of file" &&
+        !(line === "" && index === diffLines.length - 1)
+      ) {
         return { ok: false, reason: `invalid hunk line: ${line}` };
       }
       index += 1;
@@ -94,14 +97,15 @@ export const patchExecutor: ToolExecutor = {
       (): ToolExecutionResult =>
         executeFilesystemTool(() => {
           const args = JSON.parse(intent.argumentsJson) as {
-            path: { path: string };
+            target: { mount: string; path: string };
             unifiedDiff: string;
           };
-          const target = resolveExistingWithin(
-            sandbox.rootPath,
-            args.path.path,
-          );
-          const content = readFileSync(target, "utf8");
+          const target = resolveSandboxTarget(sandbox, args.target, {
+            access: "ReadWrite",
+            allowMissing: true,
+          });
+          const existed = existsSync(target);
+          const content = existed ? readFileSync(target, "utf8") : "";
           const applied = applyDiff(content, args.unifiedDiff);
           if (!applied.ok) {
             return {
@@ -126,6 +130,7 @@ export const patchExecutor: ToolExecutor = {
               JSON.stringify({
                 applied: applied.changed,
                 hunks: applied.hunks,
+                created: !existed,
               }),
             ),
             resultRef: null,

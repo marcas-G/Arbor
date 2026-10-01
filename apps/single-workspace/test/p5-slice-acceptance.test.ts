@@ -173,7 +173,7 @@ const turns = [
       toolName: "shell",
       argumentsJson: JSON.stringify({
         command: "echo hello",
-        cwd: { _tag: "FileTree", path: "." },
+        cwd: { mount: "workspace", path: "." },
       }),
     },
     { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },

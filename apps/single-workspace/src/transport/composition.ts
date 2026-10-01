@@ -11,6 +11,7 @@ import type {
 } from "@arbor/application";
 import {
   AuthorityResolverPort,
+  activateWorkspaceBoundary,
   CommandGateway,
   CommandHandlerRegistry,
   semanticRequestFingerprint,
@@ -33,9 +34,15 @@ import type {
   ProjectionQueryPortService,
 } from "@arbor/ports";
 import {
+  Clock,
   ExecutionRepository,
+  ExecutionScheduler,
+  IdGenerator,
+  OwnershipWriteService,
   PermissionGrantRepository,
+  ProjectEnvironmentPort,
   ProjectRepository,
+  ResourceOwnershipRepository,
   TransactionPort,
   WorkRepository,
   WorkspaceRepository,
@@ -197,6 +204,9 @@ export interface ExternalSubmissionDeps {
   readonly loadInputs: (
     envelope: ExternalCommandEnvelope,
   ) => Effect.Effect<AuthorityInputs, never>;
+  readonly afterCommitted?: (
+    envelope: ExternalCommandEnvelope,
+  ) => Effect.Effect<void, unknown>;
 }
 
 const receiptToView = (
@@ -276,6 +286,25 @@ export const makeExternalSubmission = (
           }),
         );
       }
+      if (
+        executed.receipt.resolution._tag === "Committed" &&
+        deps.afterCommitted !== undefined
+      ) {
+        const converged = yield* Effect.match(deps.afterCommitted(envelope), {
+          onFailure: (error) => ({ _tag: "failure" as const, error }),
+          onSuccess: () => ({ _tag: "success" as const }),
+        });
+        if (converged._tag === "failure") {
+          return failureResponse(
+            makeProblem(
+              "command/post-commit-convergence-failure",
+              "unavailable",
+              "retryable",
+              { cause: String(converged.error) },
+            ),
+          );
+        }
+      }
       return {
         ok: true as const,
         status: 200,
@@ -302,5 +331,98 @@ export const makeExternalSubmissionFromServices = (
     const gateway = yield* CommandGateway;
     const registry = yield* CommandHandlerRegistry;
     const loadInputs = yield* makeRepositoryInputsLoader(governance);
-    return makeExternalSubmission({ resolver, gateway, registry, loadInputs });
+    const tx = yield* TransactionPort;
+    const ownershipOption = yield* Effect.serviceOption(
+      ResourceOwnershipRepository,
+    );
+    const environmentOption = yield* Effect.serviceOption(
+      ProjectEnvironmentPort,
+    );
+    const ownershipWriteOption = yield* Effect.serviceOption(
+      OwnershipWriteService,
+    );
+    const clockOption = yield* Effect.serviceOption(Clock);
+    const idsOption = yield* Effect.serviceOption(IdGenerator);
+    const schedulerOption = yield* Effect.serviceOption(ExecutionScheduler);
+    if (
+      Option.isNone(ownershipOption) ||
+      Option.isNone(environmentOption) ||
+      Option.isNone(ownershipWriteOption) ||
+      Option.isNone(clockOption) ||
+      Option.isNone(idsOption) ||
+      Option.isNone(schedulerOption)
+    ) {
+      return makeExternalSubmission({
+        resolver,
+        gateway,
+        registry,
+        loadInputs,
+      });
+    }
+    const ownership = ownershipOption.value;
+    const environment = environmentOption.value;
+    const ownershipWrite = ownershipWriteOption.value;
+    const clock = clockOption.value;
+    const ids = idsOption.value;
+    const scheduler = schedulerOption.value;
+    const activateIfMissing = (input: {
+      readonly projectId: ExternalCommandEnvelope["projectId"];
+      readonly workspaceId: WorkspaceId;
+      readonly resourceBoundaryRevision: number;
+      readonly resourceBoundary: {
+        readonly addresses?: unknown;
+      };
+    }) =>
+      Effect.gen(function* () {
+        const active = yield* tx.transact(
+          ownership.listActiveByWorkspace(input.workspaceId),
+        );
+        if (active.length > 0) return;
+        const addresses = Array.isArray(input.resourceBoundary.addresses)
+          ? input.resourceBoundary.addresses
+          : [];
+        yield* activateWorkspaceBoundary(
+          {
+            projectId: input.projectId,
+            workspaceId: input.workspaceId,
+            resourceBoundaryRevision: input.resourceBoundaryRevision as never,
+            addresses: addresses as never,
+          },
+          { environment, ownershipWrite, clock, ids },
+        );
+      });
+    const afterCommitted = (envelope: ExternalCommandEnvelope) => {
+      const payload = payloadRecord(envelope.payload);
+      if (envelope.commandType === "CreateProject") {
+        const root = payloadRecord(payload.rootWorkspace);
+        return activateIfMissing({
+          projectId: envelope.projectId,
+          workspaceId: String(payload.rootWorkspaceId) as WorkspaceId,
+          resourceBoundaryRevision: Number(root.resourceBoundaryRevision),
+          resourceBoundary: payloadRecord(root.resourceBoundary),
+        });
+      }
+      if (envelope.commandType === "CreateChildWorkspace") {
+        return activateIfMissing({
+          projectId: envelope.projectId,
+          workspaceId: String(payload.workspaceId) as WorkspaceId,
+          resourceBoundaryRevision: Number(payload.resourceBoundaryRevision),
+          resourceBoundary: payloadRecord(payload.resourceBoundary),
+        });
+      }
+      if (envelope.commandType === "SteerWork") {
+        const workId = payloadString(payload, "workId") as WorkId | null;
+        return workId === null
+          ? Effect.void
+          : tx.transact(scheduler.clearWorkWait(workId));
+      }
+      return Effect.void;
+    };
+    return makeExternalSubmission({
+      resolver,
+      gateway,
+      registry,
+      loadInputs,
+      afterCommitted,
+    });
   });

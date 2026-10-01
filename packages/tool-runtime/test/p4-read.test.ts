@@ -12,19 +12,33 @@ writeFileSync(join(root, "a.txt"), "hello world");
 const intent = (argumentsJson: string): ToolIntent => ({
   callRef: "c",
   toolName: "read",
-  toolVersion: "1",
+  toolVersion: "2",
   argumentsJson,
   invocationId: "tin_x" as never,
   approvalId: null,
 });
 const context = {} as ToolExecutionContext;
-const sandbox = { handleId: "s", rootPath: root, writableRegions: [] };
+const sandbox = {
+  handleId: "s",
+  rootPath: root,
+  mounts: [
+    {
+      ref: "workspace",
+      rootPath: root,
+      region: { resourceSpaceId: "filesystem", normalizedRegion: {} },
+      access: "ReadOnly" as const,
+    },
+  ],
+  writableRegions: [],
+};
 
 describe("P4 read tool", () => {
   it("reads a bounded slice within the sandbox", async () => {
     const result = await Effect.runPromise(
       readExecutor.execute({
-        intent: intent('{"path":{"path":"a.txt"},"limit":5}'),
+        intent: intent(
+          '{"target":{"mount":"workspace","path":"a.txt"},"limit":5}',
+        ),
         definition: {} as never,
         context,
         sandbox,
@@ -38,7 +52,9 @@ describe("P4 read tool", () => {
   it("rejects a path escaping the sandbox root", async () => {
     const result = await Effect.runPromise(
       readExecutor.execute({
-        intent: intent('{"path":{"path":"../../etc/passwd"}}'),
+        intent: intent(
+          '{"target":{"mount":"workspace","path":"../../etc/passwd"}}',
+        ),
         definition: {} as never,
         context,
         sandbox,
@@ -56,7 +72,10 @@ describe("P4 read tool", () => {
       readExecutor.execute({
         intent: intent(
           JSON.stringify({
-            path: { path: `../${basename(sibling)}/secret.txt` },
+            target: {
+              mount: "workspace",
+              path: `../${basename(sibling)}/secret.txt`,
+            },
           }),
         ),
         definition: {} as never,
@@ -78,7 +97,9 @@ describe("P4 read tool", () => {
     );
     const result = await Effect.runPromise(
       readExecutor.execute({
-        intent: intent('{"path":{"path":"outside-link/secret.txt"}}'),
+        intent: intent(
+          '{"target":{"mount":"workspace","path":"outside-link/secret.txt"}}',
+        ),
         definition: {} as never,
         context,
         sandbox,

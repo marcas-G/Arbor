@@ -36,7 +36,7 @@ CLOSED   — disposed by a later phase / governance ruling (see file)
 | P5-DG-01 | Acceptance story cannot reach `Admit Work(current)` | P5 `05` §1, P5 `02` §2; DID §8.18A; P2 `05` §4 | P5-009, P5-011 | RESOLVED |
 | P7-GAP-01 | Vacant-workspace silent wait | P7 / P10 | P10-004, P10-013 | CLOSED (P10 WaitingOnVacantProducer view) |
 | DOGFOOD-DG-01 | Settled ProviderTurn with active Execution after fenced session write | DID v1.20 AHT-1…AHT-8; P3 `08`; P9 `07` | Quant-research dogfood recovery (implementation separately gated) | RESOLVED |
-| DOGFOOD-DG-03 | Executable filesystem tool target cannot be mapped into the sandbox | DID §1.5; P4 `04`/`08`; P11 worktree sandbox | Filesystem tools / release-validation Work | OPEN |
+| DOGFOOD-DG-03 | Executable filesystem tool target cannot be mapped into the sandbox | DID v1.25 EWB-1…10; P4 `04`/`08`; P11 `12` | Filesystem tools / release-validation Work | RESOLVED |
 | DPM-DG-01 | Project directory, rename and close/archive product surface | DID §3.1/§4.2/§5/§12.10–§12.11; P15 project-management contracts | Project management surface | RESOLVED |
 | G-V2-1 | AssignWork provenance source | DID v1.19 field-source closure | Agent AssignWork | OPEN |
 | G-V2-2 | ToolObservation exact evidence identity | DID v1.19 field-source closure | B10 Verification | OPEN |
