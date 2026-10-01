@@ -2,7 +2,7 @@
 
 **Baseline:** System Design v1.5 · DID v1.24 · accepted CDRC-1…CDRC-10
 
-**Status:** FROZEN / IMPLEMENTATION AUTHORIZED
+**Status:** FROZEN / IMPLEMENTATION COMPLETE / FORMALLY CLOSED
 
 ## Scope
 

@@ -102,15 +102,17 @@ DAG; only SCRC-008 may claim full completion. Current implementation state:
 See also `planning/results/SCRC-004.result.md`.
 See also `planning/results/SCRC-005.result.md`.
 See also `planning/results/SCRC-006.result.md`.
-P17 (Conversation Delivery Runtime convergence): governance proposal accepted
+P17 (Conversation Delivery Runtime convergence): **COMPLETE / FORMALLY CLOSED**.
+Governance proposal accepted
 2026-10-01 by `ACCEPT_CONVERSATION_DELIVERY_RUNTIME_CONVERGENCE`; owning
 contracts landed as System Design v1.5 / DID v1.24 plus
 `docs/design/implementation/P17-conversation-delivery-runtime/**`.
-Implementation and migration 0021 are AUTHORIZED. Required order is Context
-Gate → ResponseJob/Attempt → Recovery/Scheduler/Breaker → TurnProfileResolver
-→ Commands/UI → migration/restart/live qualification. P17 remains OPEN until
-C1–C20, `pnpm check`, live qualification, legacy boolean/fallback removal and
-`DOGFOOD-DG-02` closure all pass. Do not restore P14's unbounded
+Implementation and migration 0021 landed in order: Context Gate →
+ResponseJob/Attempt → Recovery/Scheduler/Breaker → TurnProfileResolver →
+Commands/UI → migration/restart/live qualification. C1–C20 and `pnpm check`
+passed; legacy booleans/fallback and the old P14 trigger/sweep/rollback runtime
+were removed; `DOGFOOD-DG-02` is CLOSED. Evidence:
+`planning/results/P17.result.md`. Do not restore P14's unbounded
 `Failed -> Pending -> retry-until-response` path.
 P16 (Provider Extension Architecture — DID-side implementation design under
 `docs/design/implementation/P16-provider-extension/`, governance-authorized
