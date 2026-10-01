@@ -2,7 +2,7 @@
 
 ## 状态
 
-**OPEN — SCRC-1…SCRC-12 已获人工治理接受；等待 owning design landing。**
+**RESOLVED — System Design v1.4 / DID v1.22；landing `75589c5`；post-landing review Blocking = 0。**
 
 人工治理裁决：
 [`session-context-runtime-convergence-governance-decision.md`](../proposals/session-context-runtime-convergence-governance-decision.md)。
@@ -12,9 +12,12 @@
 SHA-256
 `200D9EE0F252915F1816C57FC5FEE470E77D7FB924A95A7474E03DF68BFAFD05`。
 
-本缺口只有在人工治理把 accepted semantics 写入拥有语义的设计文档、完成跨文档
-一致性审计并在此记录 resolving revision 后，才能标记 `RESOLVED`。治理方向已被
-接受不等于冻结合同已经落地，也不授权代码实现。
+本缺口的设计问题已经由 System Design v1.4、DID v1.22 与 P2/P3/P4/P9/P12
+owning contracts 回答。落字提交为 `75589c5`；一致性审阅见
+[`session-context-runtime-convergence-design-landing.review.md`](../proposals/session-context-runtime-convergence-design-landing.review.md)，
+Blocking = 0。
+
+`RESOLVED` 只表示设计合同闭合；migration 0019 和代码实现仍未授权。
 
 ## 失败证据
 
@@ -66,9 +69,9 @@ SHA-256
 | Authority | DID §8 / P4 | 已有 resolver；需明确不从 summary/session 恢复 |
 | Recovery / safety | P9/P12 | 缺 promotion/tool/checkpoint fault windows |
 
-## 当前阻塞范围
+## 历史阻塞范围（设计闭合前）
 
-在本缺口 `RESOLVED` 前，禁止：
+在本缺口 `RESOLVED` 前曾禁止：
 
 - 为 `PortableMessage` 增加新的伪结构化字符串协议；
 - 把更多 Inbox/Dependency/Child Report 每轮重复拼入 Prompt；
@@ -93,6 +96,18 @@ SHA-256
 4. 完成跨文档一致性审阅，Blocking = 0；
 5. 更新本记录为 `RESOLVED` 并链接 resolving revision；
 6. 另行创建 implementation authorization、phase/tasks 与 TDD acceptance matrix。
+
+## Resolution
+
+- System Design：v1.4；
+- DID：v1.22；
+- owning-contract landing：`75589c5`；
+- review：Blocking = 0；
+- design closure result：
+  `planning/results/session-context-runtime-convergence-design-closure.result.md`。
+
+六项解决条件中的 1–5 已完成。第 6 项属于后续 implementation gate，不再保持本
+Design Gap 为 OPEN，也不因 Gap 解决而自动授权实现。
 
 ## 非目标
 
