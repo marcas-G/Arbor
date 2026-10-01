@@ -5,6 +5,7 @@ export * from "./client.js";
 export * from "./command-store.js";
 export * from "./communication.js";
 export * from "./consumer.js";
+export * from "./conversation-response.js";
 export * from "./dependency-store.js";
 export * from "./environment-change.js";
 export * from "./errors.js";

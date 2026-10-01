@@ -8,6 +8,7 @@ import type {
 import type {
   AcceptanceRepositoryError,
   CommandStoreError,
+  ConversationJobStoreError,
   DeliverableRepositoryError,
   DependencyRepositoryError,
   DomainEventJournalError,
@@ -81,6 +82,7 @@ export type CommandHandlerError =
   | ProjectToolRegistryError
   | PermissionGrantRepositoryError
   | HumanMessageStoreError
+  | ConversationJobStoreError
   | DependencyRepositoryError
   | DeliverableRepositoryError
   | VerificationRepositoryError

@@ -17,6 +17,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import type {
+  ConversationResponseJobStoreService,
   HumanMessageRecord,
   HumanMessageStoreService,
   InboxProjectionStoreService,
@@ -47,6 +48,7 @@ export interface SubmitHumanMessageDependencies {
     HumanMessageStoreService,
     "insertPending" | "findById"
   >;
+  readonly responseJobs: Pick<ConversationResponseJobStoreService, "insert">;
   readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert">;
   /** Composition-provided project root lookup (defense in depth beside the
    * resolver's root-only authority rule). */
@@ -175,6 +177,29 @@ export const makeSubmitHumanMessageHandler = (
               commandId: envelope.commandId,
             });
       }
+
+      yield* dependencies.responseJobs
+        .insert({
+          messageId: payload.messageId as never,
+          projectId: envelope.projectId,
+          rootWorkspaceId: root,
+          state: { _tag: "Queued" },
+          nextAttemptNo: 0,
+          policyVersion: "conversation-retry-v1",
+          providerReasoning: null,
+          lastFailureClass: null,
+          revision: 0,
+          createdAt: envelope.issuedAt,
+          updatedAt: envelope.issuedAt,
+        })
+        .pipe(
+          Effect.catchTag("ConversationJobConflict", (conflict) =>
+            Effect.fail({
+              _tag: "ConversationJobStoreError" as const,
+              cause: conflict,
+            }),
+          ),
+        );
 
       // Root Inbox admission — kind=HumanConversation (≠ HumanInput steer).
       yield* dependencies.inbox.admitUpsert({

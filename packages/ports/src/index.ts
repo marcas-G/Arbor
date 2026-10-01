@@ -1,6 +1,7 @@
 export * from "./agent-loop-step.js";
 export * from "./command.js";
 export * from "./consumer.js";
+export * from "./conversation-response.js";
 export * from "./dependency-store.js";
 export * from "./environment.js";
 export * from "./environment-change.js";

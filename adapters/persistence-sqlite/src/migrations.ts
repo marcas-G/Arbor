@@ -1072,3 +1072,122 @@ export const P20_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P20_AGENT_LOOP_STEP_PROVIDER_TURN_CHAIN_DDL,
   },
 ];
+
+const P21_CONVERSATION_DELIVERY_RUNTIME_DDL = `
+CREATE TABLE conversation_response_jobs (
+  message_id TEXT PRIMARY KEY REFERENCES human_messages(message_id),
+  project_id TEXT NOT NULL,
+  root_workspace_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN
+    ('Queued','Running','RetryScheduled','NeedsAttention','Answered','Cancelled')),
+  active_execution_id TEXT UNIQUE,
+  next_attempt_no INTEGER NOT NULL CHECK (next_attempt_no >= 0),
+  next_eligible_at TEXT,
+  attention_reason TEXT,
+  last_failure_class TEXT,
+  last_failure_fingerprint TEXT,
+  policy_version TEXT NOT NULL,
+  response_body TEXT,
+  response_execution_id TEXT,
+  provider_reasoning_json TEXT,
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_conversation_jobs_eligible
+  ON conversation_response_jobs(state, next_eligible_at, created_at);
+
+CREATE TABLE conversation_attempts (
+  message_id TEXT NOT NULL REFERENCES human_messages(message_id),
+  attempt_no INTEGER NOT NULL CHECK (attempt_no >= 0),
+  execution_id TEXT NOT NULL UNIQUE,
+  admitted_at TEXT NOT NULL,
+  settled_at TEXT,
+  settlement_kind TEXT,
+  failure_class TEXT,
+  failure_fingerprint TEXT,
+  retry_decision_json TEXT,
+  policy_version TEXT NOT NULL,
+  PRIMARY KEY (message_id, attempt_no)
+);
+
+CREATE TABLE provider_deployment_breakers (
+  binding_fingerprint TEXT PRIMARY KEY,
+  state TEXT NOT NULL CHECK (state IN ('Closed','Open','HalfOpen')),
+  consecutive_failures INTEGER NOT NULL CHECK (consecutive_failures >= 0),
+  cooldown_until TEXT,
+  failure_class TEXT,
+  configuration_revision TEXT NOT NULL,
+  half_open_execution_id TEXT,
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  updated_at TEXT NOT NULL
+);
+
+INSERT INTO conversation_response_jobs (
+  message_id, project_id, root_workspace_id, state, active_execution_id,
+  next_attempt_no, next_eligible_at, attention_reason, last_failure_class,
+  last_failure_fingerprint, policy_version, response_body,
+  response_execution_id, provider_reasoning_json, revision, created_at,
+  updated_at
+)
+SELECT
+  message_id,
+  project_id,
+  root_workspace_id,
+  CASE
+    WHEN state = 'Pending' THEN 'Queued'
+    WHEN state = 'Claimed' THEN 'Running'
+    WHEN state = 'Answered' AND response_body IS NOT NULL THEN 'Answered'
+    WHEN state = 'Answered' THEN 'Cancelled'
+    ELSE 'Cancelled'
+  END,
+  CASE WHEN state = 'Claimed' THEN claimed_by_execution_id ELSE NULL END,
+  CASE WHEN state = 'Pending' THEN attempt_no ELSE attempt_no + 1 END,
+  NULL,
+  CASE
+    WHEN state = 'Answered' AND response_body IS NULL THEN 'LegacyInterrupted'
+    WHEN state = 'Declined' THEN 'ProjectClosed'
+    ELSE NULL
+  END,
+  NULL,
+  NULL,
+  'conversation-retry-v1',
+  CASE WHEN state = 'Answered' THEN response_body ELSE NULL END,
+  CASE WHEN state = 'Answered' THEN claimed_by_execution_id ELSE NULL END,
+  provider_reasoning_json,
+  0,
+  created_at,
+  COALESCE(settled_at, created_at)
+FROM human_messages;
+
+INSERT INTO conversation_attempts (
+  message_id, attempt_no, execution_id, admitted_at, settled_at,
+  settlement_kind, failure_class, failure_fingerprint, retry_decision_json,
+  policy_version
+)
+SELECT
+  hm.message_id,
+  hm.attempt_no,
+  hm.claimed_by_execution_id,
+  COALESCE(e.admitted_at, hm.created_at),
+  e.settled_at,
+  e.settlement_kind,
+  NULL,
+  NULL,
+  NULL,
+  'conversation-retry-v1'
+FROM human_messages hm
+LEFT JOIN executions e ON e.execution_id = hm.claimed_by_execution_id
+WHERE hm.claimed_by_execution_id IS NOT NULL;
+`;
+
+/** DID v1.24 / P17 Conversation Delivery Runtime; user_version 21. */
+export const P21_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P20_MIGRATIONS,
+  {
+    id: 21,
+    name: "conversation_delivery_runtime",
+    sql: P21_CONVERSATION_DELIVERY_RUNTIME_DDL,
+  },
+];

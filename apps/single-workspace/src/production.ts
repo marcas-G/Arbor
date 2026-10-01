@@ -12,25 +12,20 @@ import {
   planSnapshotRetention,
   pruneSnapshots,
   type RetentionPolicy,
-  runConversationSettlementSweep,
-  runConversationTrigger,
+  runConversationResponseSettlementSweep,
+  runConversationResponseTrigger,
   type SnapshotPruningResult,
   type SnapshotRetentionError,
   type SnapshotRetentionPlan,
   type VerificationConsumerDependencies,
 } from "@arbor/application";
-import {
-  ExecutionId,
-  type Principal,
-  type ProjectId,
-  parse,
-} from "@arbor/domain";
+import type { Principal, ProjectId } from "@arbor/domain";
 import {
   runExecution,
   startupRecovery,
   sweepRecovery,
 } from "@arbor/execution-runtime";
-import { P20_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
+import { P21_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   type AgentExecutionStateStore,
@@ -38,6 +33,8 @@ import {
   Clock,
   ConsumerDeadLetterStore,
   ConsumerOffsetStore,
+  ConversationAttemptStore,
+  ConversationResponseJobStore,
   DomainEventJournal,
   EnvironmentResolverPort,
   EnvironmentRevisionStore,
@@ -219,6 +216,8 @@ export type ProductionDaemonServices =
   | BlobStorePort
   | T1RecoveryState
   | HumanMessageStore
+  | ConversationResponseJobStore
+  | ConversationAttemptStore
   | ProjectRepository;
 
 /** The production daemon assembly. `start` = migrations -> T1 startup recovery
@@ -406,6 +405,8 @@ export const ProductionDaemonServiceLive = (
       const conversationTick = Effect.asVoid(
         Effect.gen(function* () {
           const messages = yield* HumanMessageStore;
+          const jobs = yield* ConversationResponseJobStore;
+          const attempts = yield* ConversationAttemptStore;
           const projects = yield* ProjectRepository;
           const executions = yield* ExecutionRepository;
           const gateway = yield* CommandGateway;
@@ -418,32 +419,27 @@ export const ProductionDaemonServiceLive = (
           // project, the frozen P14 `02` step is unchanged: settle sweep
           // (Claimed → Answered / stale rollback) first, then admit the
           // FIFO-oldest pending message when idle.
-          const activeProjects = yield* tx.transact(
-            messages.projectsWithConversationWork(),
-          );
+          const activeProjects = yield* tx.transact(jobs.projectsWithWork());
           for (const projectId of activeProjects) {
             yield* tx.transact(
-              runConversationSettlementSweep(
+              runConversationResponseSettlementSweep(
                 {
-                  messages,
+                  jobs,
+                  attempts,
                   executions,
                   clock,
                   responseBodyOf,
-                  projectIsOpen: (candidateProjectId) =>
-                    Effect.map(
-                      projects.findById(candidateProjectId),
-                      (found) =>
-                        Option.isSome(found) &&
-                        found.value.lifecycle === "Open",
-                    ),
+                  legacyMessages: messages,
                 },
                 projectId,
               ),
             );
-            yield* runConversationTrigger(
+            yield* runConversationResponseTrigger(
               {
                 gateway,
-                messages,
+                jobs,
+                attempts,
+                legacyMessages: messages,
                 projects,
                 executions,
                 clock,
@@ -457,16 +453,14 @@ export const ProductionDaemonServiceLive = (
             // execution to the existing fenced P2/P3 runner. Claims are
             // the exact correlation between a human turn and its main
             // execution, so ordinary Work mains are never selected here.
-            const claimed = yield* tx.transact(
-              messages.claimedOrderedByCreated(projectId),
-            );
-            for (const message of claimed) {
-              const claimedExecutionId = message.claimedByExecutionId;
-              if (claimedExecutionId === null) {
+            const runningJobs = yield* tx.transact(jobs.listRunning(projectId));
+            for (const job of runningJobs) {
+              if (job.state._tag !== "Running") {
                 continue;
               }
+              const claimedExecutionId = job.state.executionId;
               const execution = yield* tx.transact(
-                executions.findById(parse(ExecutionId)(claimedExecutionId)),
+                executions.findById(claimedExecutionId),
               );
               if (
                 Option.isSome(execution) &&
@@ -476,12 +470,9 @@ export const ProductionDaemonServiceLive = (
               ) {
                 // Conversation streaming bridge: link execution → message for
                 // the presentation tap, publish terminal at settlement.
-                registerExecutionMessageLink(
-                  claimedExecutionId,
-                  message.messageId,
-                );
+                registerExecutionMessageLink(claimedExecutionId, job.messageId);
                 const settlement = yield* runExecution(
-                  parse(ExecutionId)(claimedExecutionId),
+                  claimedExecutionId,
                   { _tag: "Recovery" },
                   config.principal,
                 );
@@ -496,7 +487,7 @@ export const ProductionDaemonServiceLive = (
       );
 
       const daemon = makeProductionDaemon({
-        migrate: runMigrations(P20_MIGRATIONS),
+        migrate: runMigrations(P21_MIGRATIONS),
         recovery,
         consumers,
         conversationTick,
