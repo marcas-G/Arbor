@@ -8,12 +8,14 @@ import {
   type CompletionConsumerDependencies,
   type ConsumerLoopStores,
   type EnvironmentDriftDeps,
+  ensureVerifierSpawned,
   type ParentUserGovernanceFacts,
   planSnapshotRetention,
   pruneSnapshots,
   type RetentionPolicy,
   runConversationResponseSettlementSweep,
   runConversationResponseTrigger,
+  runVerificationConsumer,
   type SnapshotPruningResult,
   type SnapshotRetentionError,
   type SnapshotRetentionPlan,
@@ -241,6 +243,7 @@ export const ProductionDaemonServiceLive = (
     ProductionDaemonService,
     Effect.gen(function* () {
       const tx = yield* TransactionPort;
+      const clock = yield* Clock;
       const journal = yield* DomainEventJournal;
       const offsets = yield* ConsumerOffsetStore;
       const deadLetters = yield* ConsumerDeadLetterStore;
@@ -250,6 +253,7 @@ export const ProductionDaemonServiceLive = (
       const works = yield* WorkRepository;
       const proposals = yield* FormationProposalStore;
       const workspaces = yield* WorkspaceRepository;
+      const executions = yield* ExecutionRepository;
       const gateway = yield* CommandGateway;
       const t1 = yield* T1RecoveryState;
       const resolver = yield* EnvironmentResolverPort;
@@ -271,6 +275,7 @@ export const ProductionDaemonServiceLive = (
       // created at runtime get consumers without a daemon restart. The
       // explicit config entry is always included first.
       const seenConsumerProjects = new Set<string>();
+      const reconciledLegacyClaims = new Set<string>();
       const dynamicConsumers: Array<
         ConsumerLoopDaemon<ProductionDaemonServices>
       > = [];
@@ -288,6 +293,10 @@ export const ProductionDaemonServiceLive = (
         workspaces: {
           findById: (workspaceId) =>
             tx.transact(workspaces.findById(workspaceId)),
+        },
+        executions: {
+          findById: (executionId) =>
+            tx.transact(executions.findById(executionId)),
         },
       };
       const completionDeps: CompletionConsumerDependencies = {
@@ -317,6 +326,34 @@ export const ProductionDaemonServiceLive = (
           seenConsumerProjects.add(row.project_id);
         }
         for (const projectIdValue of seenConsumerProjects) {
+          const projectId = projectIdValue as never;
+          if (!reconciledLegacyClaims.has(projectIdValue)) {
+            let sequence = 0;
+            while (true) {
+              const historical = yield* tx.transact(
+                journal.readAfter(projectId, sequence, 500),
+              );
+              if (historical.length === 0) break;
+              const claimEvents = historical.filter(
+                (event) => event.eventType === "ExecutionSettled",
+              );
+              if (claimEvents.length > 0) {
+                yield* runVerificationConsumer(
+                  claimEvents.map((event) => ({
+                    eventType: event.eventType,
+                    payload: event.payload,
+                    eventId: String(event.eventId),
+                  })),
+                  verificationDeps,
+                  projectId,
+                  config.principal,
+                );
+              }
+              sequence = historical.at(-1)?.sequence ?? sequence;
+              if (historical.length < 500) break;
+            }
+            reconciledLegacyClaims.add(projectIdValue);
+          }
           if (
             dynamicConsumers.some(
               (consumer) => String(consumer.projectId) === projectIdValue,
@@ -324,7 +361,6 @@ export const ProductionDaemonServiceLive = (
           ) {
             continue;
           }
-          const projectId = projectIdValue as never;
           dynamicConsumers.push(
             formationConsumerDaemon({
               consumerId: "formation",
@@ -362,14 +398,58 @@ export const ProductionDaemonServiceLive = (
           );
         }
       }).pipe(Effect.asVoid);
+      const spawnOpenVerifiers = Effect.gen(function* () {
+        const consumerSql = yield* SqlClient;
+        const rows = yield* consumerSql.unsafe<{
+          verification_id: string;
+          work_id: string;
+          project_id: string;
+        }>(
+          "SELECT verification_id, work_id, project_id FROM verifications WHERE state = 'Open' ORDER BY created_at, verification_id",
+        );
+        for (const row of rows) {
+          const verification = yield* tx.transact(
+            verifications.findById(row.verification_id as never),
+          );
+          const work = yield* tx.transact(works.findById(row.work_id as never));
+          if (Option.isNone(verification) || Option.isNone(work)) continue;
+          const verifierExecutionId =
+            verification.value.verificationExecutionIds[0];
+          if (verifierExecutionId === undefined) continue;
+          const mission = verification.value.missionSnapshot;
+          const required = mission.criteria.filter(
+            (criterion) => criterion.required,
+          ).length;
+          yield* ensureVerifierSpawned(
+            {
+              verification: verification.value,
+              projectId: row.project_id as never,
+              ownerWorkspaceId: work.value.workspaceId,
+              verifierExecutionId,
+              missionDigest: `${mission.goal} [criteria=${mission.criteria.length} required=${required}]`,
+            },
+            {
+              gateway,
+              verifications,
+              executions,
+              tx,
+              clock,
+              principal: config.principal,
+            },
+          );
+        }
+      }).pipe(Effect.asVoid);
       consumers.push({
         consumerId: "dynamic-project-consumers",
         projectId: config.projectId ?? ("" as never),
         batchSize: config.batchSize ?? 50,
         poll: Effect.flatMap(registerProjectConsumers, () =>
-          Effect.forEach(dynamicConsumers, (consumer) => consumer.poll, {
-            concurrency: 1,
-          }),
+          Effect.flatMap(
+            Effect.forEach(dynamicConsumers, (consumer) => consumer.poll, {
+              concurrency: 1,
+            }),
+            () => spawnOpenVerifiers,
+          ),
         ) as never,
       });
 

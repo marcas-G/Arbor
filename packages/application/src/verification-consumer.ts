@@ -58,6 +58,15 @@ export interface VerificationConsumerDependencies<R> {
       workspaceId: WorkspaceId,
     ) => Effect.Effect<Option.Option<Workspace>, unknown, R>;
   };
+  readonly executions?: {
+    readonly findById: (
+      executionId: ExecutionId,
+    ) => Effect.Effect<
+      Option.Option<import("@arbor/domain").Execution>,
+      unknown,
+      R
+    >;
+  };
 }
 
 /** Caller-preallocated identity set (P8 `02` §1, v1.7 G5): deterministic
@@ -120,6 +129,36 @@ const asCompletionClaimed = (
   };
 };
 
+const asNestedCompletionClaimed = (
+  payload: unknown,
+): {
+  readonly executionId: ExecutionId;
+  readonly workRevision: number;
+  readonly claimRef: string;
+} | null => {
+  if (typeof payload !== "object" || payload === null) return null;
+  const candidate = payload as Record<string, unknown>;
+  const settlement = candidate.settlement;
+  if (typeof candidate.executionId !== "string") return null;
+  if (typeof settlement !== "object" || settlement === null) return null;
+  const result = (settlement as Record<string, unknown>).result;
+  if (
+    (settlement as Record<string, unknown>)._tag !== "Completed" ||
+    typeof result !== "object" ||
+    result === null ||
+    (result as Record<string, unknown>)._tag !== "CompletionClaimed" ||
+    typeof (result as Record<string, unknown>).workRevision !== "number" ||
+    typeof (result as Record<string, unknown>).claimRef !== "string"
+  ) {
+    return null;
+  }
+  return {
+    executionId: candidate.executionId as ExecutionId,
+    workRevision: (result as Record<string, unknown>).workRevision as number,
+    claimRef: (result as Record<string, unknown>).claimRef as string,
+  };
+};
+
 /** One record per event decision: "StartVerification" for a committed
  * submission, "skipped:<reason>:<ref>" for pre-check misses and typed
  * gateway rejections, "needSpawn:<verificationId>:<verifierExecutionId>"
@@ -159,7 +198,30 @@ export const runVerificationConsumer = <R>(
       if (event.eventType !== "ExecutionSettled") {
         continue;
       }
-      const trigger = asCompletionClaimed(event.payload);
+      let trigger = asCompletionClaimed(event.payload);
+      if (
+        trigger !== null &&
+        "legacy" in trigger &&
+        dependencies.executions !== undefined
+      ) {
+        const nested = asNestedCompletionClaimed(event.payload);
+        if (nested !== null) {
+          const execution = yield* dependencies.executions
+            .findById(nested.executionId)
+            .pipe(Effect.orDie);
+          if (
+            Option.isSome(execution) &&
+            execution.value.binding._tag === "WorkspaceExecution" &&
+            execution.value.binding.focus._tag === "Work"
+          ) {
+            trigger = {
+              workId: execution.value.binding.focus.workId,
+              workRevision: nested.workRevision,
+              claimRef: nested.claimRef,
+            };
+          }
+        }
+      }
       if (trigger === null) {
         records.push(`skipped:NotCompletionClaimed:${event.eventId}`);
         continue;

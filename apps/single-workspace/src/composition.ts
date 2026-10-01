@@ -47,6 +47,7 @@ import {
   ConsumerOffsetStoreLive,
   ConversationAttemptStoreLive,
   ConversationResponseJobStoreLive,
+  DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
@@ -462,6 +463,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
     Layer.provide(DependencyRepositoryLive, infra),
+    Layer.provide(DeliverableRepositoryLive, infra),
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(EvidenceRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
@@ -506,7 +508,7 @@ export const buildSingleWorkspaceLayer = (
   );
   const registry = Layer.provide(
     SingleWorkspaceCommandHandlerRegistryLive,
-    repos,
+    Layer.mergeAll(repos, infra),
   );
   const gateway = Layer.provide(
     CommandGatewayLive,
