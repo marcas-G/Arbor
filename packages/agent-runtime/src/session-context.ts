@@ -27,6 +27,31 @@ export const assembleSessionContext = (
   const messages: PortableLegacyMessage[] = [];
   const contextRefs: string[] = [];
   for (const entry of entries) {
+    if (
+      entry.entryKind === "Input" &&
+      typeof entry.payload === "object" &&
+      entry.payload !== null &&
+      (entry.payload as { readonly _tag?: unknown })._tag === "UserMessage"
+    ) {
+      const item = entry.payload as {
+        readonly text?: unknown;
+        readonly source?: { readonly kind?: unknown };
+      };
+      // P14 still supplies the exact claimed human body from HumanMessageStore;
+      // its bounded Inbox summary is retained durably but not injected twice.
+      if (
+        typeof item.text === "string" &&
+        item.source?.kind !== "HumanConversation"
+      ) {
+        messages.push({ role: "user", text: item.text });
+        contextRefs.push(
+          entry.source === undefined
+            ? `session-input:${entry.sequence}`
+            : `session-input:${entry.source.kind}:${entry.source.ref}`,
+        );
+      }
+      continue;
+    }
     if (entry.entryKind !== "Observation") continue;
     const text = observationText(entry.payload);
     if (text === null) continue;

@@ -557,6 +557,7 @@ export const buildSingleWorkspaceLayer = (
             providerRuntime,
             capability,
             repos,
+            inputPromotion,
             infra,
           ),
         );
