@@ -2,7 +2,11 @@
 
 ## 状态
 
-**PENDING MANUAL AUTHORIZATION — 未授权代码或 migration。**
+**AUTHORIZED — 2026-10-01。**
+
+人工治理通过精确口令
+`AUTHORIZE_SESSION_CONTEXT_RUNTIME_IMPLEMENTATION` 授权本文件固定对象对应的
+SCRC-001…SCRC-008 完整实现范围。
 
 ## 固定授权对象
 
@@ -51,4 +55,6 @@ Task bundle hash recipe: sort task files by filename; for each line emit
 AUTHORIZE_SESSION_CONTEXT_RUNTIME_IMPLEMENTATION
 ```
 
-只有收到该精确口令后，Coding Agent 才能从 SCRC-001 的 failing tests 开始。
+该精确口令已收到。Coding Agent 必须从 SCRC-001 的 failing tests 开始，严格按
+phase DAG 推进；每个 task 的通过不代表整个 SCRC 完成，只有 SCRC-008 可以形成
+最终 completion result。
