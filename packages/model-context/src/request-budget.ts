@@ -1,7 +1,7 @@
 import type {
   ModelFacingControlToolDefinition,
   ModelFacingToolDefinition,
-  PortableMessage,
+  PortableLegacyMessage,
 } from "@arbor/ports";
 import type { InstructionFragment } from "./prompt.js";
 
@@ -11,7 +11,7 @@ export const estimateTextTokens = (text: string): number =>
 export const estimateFixedRequestTokens = (input: {
   readonly instructions: ReadonlyArray<InstructionFragment>;
   readonly instructionContents?: ReadonlyMap<string, string>;
-  readonly messages: ReadonlyArray<PortableMessage>;
+  readonly messages: ReadonlyArray<PortableLegacyMessage>;
   readonly tools: ReadonlyArray<ModelFacingToolDefinition>;
   readonly controlTools: ReadonlyArray<ModelFacingControlToolDefinition>;
 }): number => {

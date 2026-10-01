@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe } from "vitest";
-import { secretRef } from "../../../packages/ports/dist/provider.js";
+import {
+  type PortableModelRequest,
+  portableInputItems,
+  secretRef,
+} from "../../../packages/ports/dist/provider.js";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
 import { runAndCapture } from "../support/capture.js";
 import {
@@ -174,7 +178,11 @@ describe("B05 L3 — human steer reaches durable state and the next cognition", 
           // Cognitive half of the oracle (B05 card): the next real provider
           // request must include the steer guidance.
           const requestsWithSteer = result.providerCalls.filter((call) =>
-            JSON.stringify(call.request.messages ?? []).includes(result.marker),
+            JSON.stringify(
+              portableInputItems(
+                call.request as unknown as PortableModelRequest,
+              ),
+            ).includes(result.marker),
           );
           if (requestsWithSteer.length === 0) {
             throw new Error(

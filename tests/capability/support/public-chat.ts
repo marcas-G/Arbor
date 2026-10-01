@@ -22,7 +22,10 @@ import {
   parse,
 } from "../../../packages/domain/src/index.js";
 import type { ModelCatalog } from "../../../packages/model-context/src/index.js";
-import type { SecretRef } from "../../../packages/ports/dist/provider.js";
+import {
+  portableInputItems,
+  type SecretRef,
+} from "../../../packages/ports/dist/provider.js";
 
 export const capabilityHuman = parse(Principal)("user:capability-test");
 export const capabilityToken = "tok_arbor_capability_harness";
@@ -135,10 +138,12 @@ export const makeRecordingProvider = (
           role: "system",
           content: instruction.text,
         })),
-        ...request.messages.map((message) => ({
-          role: message.role,
-          content: message.text,
-        })),
+        ...portableInputItems(request)
+          .filter((item) => item._tag === "Message")
+          .map((message) => ({
+            role: message.role,
+            content: message.text,
+          })),
       ],
       tools: request.toolDefinitions,
       max_tokens: request.budget.maxOutputTokens,

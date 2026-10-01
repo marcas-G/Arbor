@@ -7,9 +7,9 @@ import {
   OpenAIProtocolError,
   OpenAISdkError,
 } from "../../../adapters/provider-openai/src/index.js";
-import type {
-  PortableMessage,
-  PortableModelRequest,
+import {
+  type PortableModelRequest,
+  portableInputItems,
 } from "../../../packages/ports/src/provider.js";
 
 export interface HttpProviderCallEvidence {
@@ -43,13 +43,15 @@ const messageBody = (
       role: "system",
       content: instruction.text,
     })),
-    ...request.messages.map((message: PortableMessage) => ({
-      role: message.role === "tool" ? "user" : message.role,
-      content:
-        message.role === "tool"
-          ? `Tool observation:\n${message.text}`
-          : message.text,
-    })),
+    ...portableInputItems(request)
+      .filter((item) => item._tag === "Message")
+      .map((message) => ({
+        role: message.role === "tool" ? "user" : message.role,
+        content:
+          message.role === "tool"
+            ? `Tool observation:\n${message.text}`
+            : message.text,
+      })),
   ];
   return {
     model: modelRef,

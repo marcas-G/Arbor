@@ -1,9 +1,9 @@
-import type { PortableMessage, SessionEntryRecord } from "@arbor/ports";
+import type { PortableLegacyMessage, SessionEntryRecord } from "@arbor/ports";
 
 export const SESSION_CONTEXT_ENTRY_LIMIT = 64;
 
 export interface SessionContextAssembly {
-  readonly messages: ReadonlyArray<PortableMessage>;
+  readonly messages: ReadonlyArray<PortableLegacyMessage>;
   readonly contextRefs: ReadonlyArray<string>;
 }
 
@@ -24,7 +24,7 @@ const observationText = (payload: unknown): string | null => {
 export const assembleSessionContext = (
   entries: ReadonlyArray<SessionEntryRecord>,
 ): SessionContextAssembly => {
-  const messages: PortableMessage[] = [];
+  const messages: PortableLegacyMessage[] = [];
   const contextRefs: string[] = [];
   for (const entry of entries) {
     if (entry.entryKind !== "Observation") continue;

@@ -8,7 +8,9 @@ import type {
   ModelCapability,
   ModelFacingControlToolDefinition,
   ModelFacingToolDefinition,
+  PortableLegacyMessage,
   PortableModelRequest,
+  PortableModelRequestV2,
   SkillRef,
 } from "@arbor/ports";
 import type { ContextFragment } from "./context.js";
@@ -43,7 +45,7 @@ export interface ModelContextPlan {
   }>;
   /** Generic provider messages assembled by Agent Runtime (including tool
    * observations). Takes precedence over the P14 compatibility field. */
-  readonly messages?: ReadonlyArray<PortableModelRequest["messages"][number]>;
+  readonly messages?: ReadonlyArray<PortableLegacyMessage>;
   /** P14 conversation refs (human-input:<messageId>) — carried into the
    * manifest contextRefs so the claimed turn is auditable per turn. */
   readonly conversationContextRefs?: ReadonlyArray<string>;
@@ -189,17 +191,20 @@ export const compileTurn = (input: {
       route: "Control" as const,
     })),
   ];
-  const request: PortableModelRequest = {
+  const request: PortableModelRequestV2 = {
+    requestVersion: 2,
+    operationKind: "Inference",
     modelRef: input.capability.modelRef,
     instructions: compile(
       input.plan.instructions.effective,
       input.plan.instructionContents,
     ),
-    messages: (
+    inputItems: (
       input.plan.messages ??
       input.plan.conversationMessages ??
       []
     ).map((message) => ({
+      _tag: "Message" as const,
       role: message.role,
       text: message.text,
     })),

@@ -52,6 +52,7 @@ import {
   type ProviderExecutionPolicyOverrides,
   type ProviderRunInput,
   ProviderRuntime,
+  portableInputItems,
   type RuntimeSafetyGateService,
   SessionRepository,
   SkillRegistry,
@@ -1249,9 +1250,15 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
 
     expect(settlement._tag).toBe("Completed");
     expect(requests).toHaveLength(2);
-    expect(requests[1]?.messages).toEqual(
+    expect(
+      requests[1] === undefined ? [] : portableInputItems(requests[1]),
+    ).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ role: "tool", text: observationMarker }),
+        expect.objectContaining({
+          _tag: "Message",
+          role: "tool",
+          text: observationMarker,
+        }),
       ]),
     );
   });

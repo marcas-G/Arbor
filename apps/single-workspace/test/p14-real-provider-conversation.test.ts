@@ -13,6 +13,7 @@ import type { ModelCatalog } from "@arbor/model-context";
 import {
   HumanMessageStore,
   type PortableModelRequest,
+  portableInputItems,
   secretRef,
 } from "@arbor/ports";
 import {
@@ -317,10 +318,14 @@ describe("P14 production conversation model context", () => {
       );
 
       expect(
-        portableRequest?.messages.filter(
-          (message) => message.role !== "system",
-        ),
-      ).toEqual([{ role: "user", text: currentHumanQuestion }]);
+        portableRequest === undefined
+          ? undefined
+          : portableInputItems(portableRequest).filter(
+              (item) => item._tag === "Message" && item.role !== "system",
+            ),
+      ).toEqual([
+        { _tag: "Message", role: "user", text: currentHumanQuestion },
+      ]);
       expect(observedRequest?.messages).toContainEqual({
         role: "user",
         content: currentHumanQuestion,

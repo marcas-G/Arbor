@@ -93,7 +93,10 @@ const manifestMatchesTurn = (entry: UnsettledProviderTurn): boolean => {
       request.modelRef === entry.turn.modelRef &&
       request.outputContractRef === entry.turn.outputContractRef &&
       Array.isArray(request.instructions) &&
-      Array.isArray(request.messages) &&
+      ((request.requestVersion === 2 &&
+        typeof request.operationKind === "string" &&
+        Array.isArray(request.inputItems)) ||
+        (request.requestVersion !== 2 && Array.isArray(request.messages))) &&
       Array.isArray(request.toolDefinitions)
     );
   } catch {

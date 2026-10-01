@@ -13,7 +13,7 @@ Phases: **P0–P12** (complete) plus the post-closure **SCRC** convergence phase
 
 | Scope | Plan | Status | Result |
 |---|---|---|---|
-| Session / Context Runtime Convergence | `planning/phases/SCRC.md` | PLANNING COMPLETE / IMPLEMENTATION NOT AUTHORIZED | pending |
+| Session / Context Runtime Convergence | `planning/phases/SCRC.md` | IN PROGRESS — SCRC-001 COMPLETE; next SCRC-002 | `planning/results/SCRC-001.result.md` |
 
 ```text
 SCRC-001 → SCRC-002

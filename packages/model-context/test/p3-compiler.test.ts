@@ -93,6 +93,12 @@ describe("P3 model-family compiler", () => {
       "runtime-safety",
     ]);
     expect(first.request.instructions[0]?.authorityRole).toBe("A0");
+    expect(first.request.requestVersion).toBe(2);
+    if (first.request.requestVersion !== 2) {
+      throw new Error("compiler emitted a legacy portable request");
+    }
+    expect(first.request.operationKind).toBe("Inference");
+    expect(first.request.inputItems).toEqual([]);
     expect(first.manifest.controlBasis.environmentRevision).toBe("env-1");
   });
 
