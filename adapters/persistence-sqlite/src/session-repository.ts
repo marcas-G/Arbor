@@ -9,9 +9,14 @@ import {
   Clock,
   type LeaseFencingRejected,
   type SessionEntryKind,
+  type SessionEpochConflict,
+  type SessionItemRecord,
+  type SessionItemWrite,
   SessionRepository,
   type SessionRepositoryError,
   type SessionSourceConflict,
+  type SessionWriteFence,
+  sessionEntryKindOf,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -37,6 +42,15 @@ interface SessionEntryRow {
   readonly source_kind: string | null;
   readonly source_ref: string | null;
   readonly content_hash: string | null;
+  readonly item_type?: string | null;
+  readonly schema_version?: number | null;
+  readonly context_epoch?: number | null;
+}
+
+interface TypedSessionItemRow extends SessionEntryRow {
+  readonly item_type: SessionItemRecord["itemType"];
+  readonly schema_version: 2;
+  readonly context_epoch: number;
 }
 
 const toSessionEntry = (row: SessionEntryRow) => ({
@@ -56,6 +70,21 @@ const toSessionEntry = (row: SessionEntryRow) => ({
         },
       }
     : {}),
+});
+
+const toSessionItemRecord = (row: TypedSessionItemRow): SessionItemRecord => ({
+  sessionId: row.session_id as SessionId,
+  sequence: Number(row.sequence),
+  itemType: row.item_type,
+  schemaVersion: 2,
+  contextEpoch: Number(row.context_epoch) as ContextEpochNumber,
+  item: JSON.parse(row.payload_json) as SessionItemRecord["item"],
+  createdAt: row.created_at,
+  source: {
+    kind: row.source_kind as string,
+    ref: row.source_ref as string,
+  },
+  contentHash: row.content_hash as string,
 });
 
 const toSession = (row: SessionRow): Session => ({
@@ -92,6 +121,107 @@ export const SessionRepositoryLive: Layer.Layer<
     });
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
+    const hasTimelineColumns = Effect.gen(function* () {
+      const columns = yield* run(
+        sql.unsafe<{ name: string }>("PRAGMA table_info(session_entries)"),
+      );
+      return columns.some((column) => column.name === "item_type");
+    });
+    const checkFence = (fence: SessionWriteFence) =>
+      Effect.gen(function* () {
+        const fenceNow = yield* clock.now();
+        const rows = yield* run(
+          sql.unsafe<{ ok: number }>(
+            "SELECT 1 AS ok FROM executions e JOIN execution_leases l ON l.execution_id = e.execution_id WHERE e.execution_id = ? AND l.worker_id = ? AND l.worker_incarnation_id = ? AND l.generation = ? AND l.expires_at > ? AND e.settled_at IS NULL",
+            [
+              fence.executionId,
+              fence.workerId,
+              fence.workerIncarnationId,
+              fence.fencingGeneration,
+              fenceNow,
+            ],
+          ),
+        );
+        if (rows.length === 0) {
+          return yield* Effect.fail<LeaseFencingRejected>({
+            _tag: "LeaseFencingRejected",
+            executionId: fence.executionId,
+            generation: fence.fencingGeneration,
+          });
+        }
+      });
+    const appendTyped = (
+      sessionId: SessionId,
+      write: SessionItemWrite,
+      fence: SessionWriteFence,
+    ) =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        yield* checkFence(fence);
+        if (!(yield* hasTimelineColumns)) {
+          return yield* Effect.fail<SessionRepositoryError>(
+            failure(
+              new Error("typed Session Timeline requires migration 0019"),
+            ),
+          );
+        }
+        const existing = yield* run(
+          sql.unsafe<{ sequence: number; content_hash: string }>(
+            "SELECT sequence, content_hash FROM session_entries WHERE session_id = ? AND item_type = ? AND source_kind = ? AND source_ref = ?",
+            [sessionId, write.item._tag, write.source.kind, write.source.ref],
+          ),
+        );
+        const prior = existing[0];
+        if (prior !== undefined) {
+          if (prior.content_hash !== write.contentHash) {
+            return yield* Effect.fail<SessionSourceConflict>({
+              _tag: "SessionSourceConflict",
+              sessionId,
+              entryKind: write.item._tag,
+              sourceKind: write.source.kind,
+              sourceRef: write.source.ref,
+            });
+          }
+          return { sequence: Number(prior.sequence), inserted: false };
+        }
+        const epochRows = yield* run(
+          sql.unsafe<{ context_epoch: number }>(
+            "SELECT context_epoch FROM sessions WHERE session_id = ?",
+            [sessionId],
+          ),
+        );
+        const currentEpoch = Number(epochRows[0]?.context_epoch ?? -1);
+        if (currentEpoch !== Number(write.contextEpoch)) {
+          return yield* Effect.fail<SessionEpochConflict>({
+            _tag: "SessionEpochConflict",
+            sessionId,
+            expectedEpoch: Number(write.contextEpoch),
+            currentEpoch,
+          });
+        }
+        const now = yield* clock.now();
+        const rows = yield* run(
+          sql.unsafe<{ sequence: number }>(
+            "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 2, ?, ?, ?, ?, ?, ?) RETURNING sequence",
+            [
+              sessionId,
+              sessionId,
+              sessionEntryKindOf(write.item),
+              write.item._tag,
+              write.contextEpoch,
+              JSON.stringify(write.item),
+              now,
+              write.source.kind,
+              write.source.ref,
+              write.contentHash,
+            ],
+          ),
+        );
+        return {
+          sequence: Number(rows[0]?.sequence ?? 0),
+          inserted: true,
+        };
+      });
     return SessionRepository.of({
       findById: (sessionId) =>
         Effect.gen(function* () {
@@ -165,17 +295,30 @@ export const SessionRepositoryLive: Layer.Layer<
             }
           }
           const now = yield* clock.now();
+          const timeline = yield* hasTimelineColumns;
           const rows = yield* run(
-            sql.unsafe<{ sequence: number }>(
-              "INSERT INTO session_entries (session_id, sequence, entry_kind, payload_json, created_at) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, ?) RETURNING sequence",
-              [
-                sessionId,
-                sessionId,
-                entry.entryKind satisfies SessionEntryKind,
-                JSON.stringify(entry.payload),
-                now,
-              ],
-            ),
+            timeline
+              ? sql.unsafe<{ sequence: number }>(
+                  "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 1, NULL, ?, ?) RETURNING sequence",
+                  [
+                    sessionId,
+                    sessionId,
+                    entry.entryKind satisfies SessionEntryKind,
+                    `Legacy${entry.entryKind}`,
+                    JSON.stringify(entry.payload),
+                    now,
+                  ],
+                )
+              : sql.unsafe<{ sequence: number }>(
+                  "INSERT INTO session_entries (session_id, sequence, entry_kind, payload_json, created_at) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, ?) RETURNING sequence",
+                  [
+                    sessionId,
+                    sessionId,
+                    entry.entryKind satisfies SessionEntryKind,
+                    JSON.stringify(entry.payload),
+                    now,
+                  ],
+                ),
           );
           return { sequence: Number(rows[0]?.sequence ?? 0) };
         }),
@@ -203,10 +346,18 @@ export const SessionRepositoryLive: Layer.Layer<
             });
           }
 
+          const timeline = yield* hasTimelineColumns;
           const existing = yield* run(
             sql.unsafe<{ sequence: number; content_hash: string }>(
-              "SELECT sequence, content_hash FROM session_entries WHERE session_id = ? AND entry_kind = ? AND source_kind = ? AND source_ref = ?",
-              [sessionId, entry.entryKind, source.kind, source.ref],
+              timeline
+                ? "SELECT sequence, content_hash FROM session_entries WHERE session_id = ? AND item_type = ? AND source_kind = ? AND source_ref = ?"
+                : "SELECT sequence, content_hash FROM session_entries WHERE session_id = ? AND entry_kind = ? AND source_kind = ? AND source_ref = ?",
+              [
+                sessionId,
+                timeline ? `Legacy${entry.entryKind}` : entry.entryKind,
+                source.kind,
+                source.ref,
+              ],
             ),
           );
           const prior = existing[0];
@@ -225,24 +376,134 @@ export const SessionRepositoryLive: Layer.Layer<
 
           const now = yield* clock.now();
           const rows = yield* run(
-            sql.unsafe<{ sequence: number }>(
-              "INSERT INTO session_entries (session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, ?, ?, ?, ?) RETURNING sequence",
-              [
-                sessionId,
-                sessionId,
-                entry.entryKind satisfies SessionEntryKind,
-                JSON.stringify(entry.payload),
-                now,
-                source.kind,
-                source.ref,
-                contentHash,
-              ],
-            ),
+            timeline
+              ? sql.unsafe<{ sequence: number }>(
+                  "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 1, NULL, ?, ?, ?, ?, ?) RETURNING sequence",
+                  [
+                    sessionId,
+                    sessionId,
+                    entry.entryKind satisfies SessionEntryKind,
+                    `Legacy${entry.entryKind}`,
+                    JSON.stringify(entry.payload),
+                    now,
+                    source.kind,
+                    source.ref,
+                    contentHash,
+                  ],
+                )
+              : sql.unsafe<{ sequence: number }>(
+                  "INSERT INTO session_entries (session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, ?, ?, ?, ?) RETURNING sequence",
+                  [
+                    sessionId,
+                    sessionId,
+                    entry.entryKind satisfies SessionEntryKind,
+                    JSON.stringify(entry.payload),
+                    now,
+                    source.kind,
+                    source.ref,
+                    contentHash,
+                  ],
+                ),
           );
           return {
             sequence: Number(rows[0]?.sequence ?? 0),
             inserted: true,
           };
+        }),
+      appendItemIdempotent: (sessionId, write, fence) =>
+        appendTyped(sessionId, write, fence),
+      listActiveFrontier: (sessionId, contextEpoch, limit) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          if (!(yield* hasTimelineColumns)) return [];
+          const rows = yield* run(
+            sql.unsafe<TypedSessionItemRow>(
+              "SELECT session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 AND context_epoch <= ? ORDER BY sequence DESC LIMIT ?",
+              [sessionId, contextEpoch, limit],
+            ),
+          );
+          return [...rows].reverse().map(toSessionItemRecord);
+        }),
+      commitCompaction: (sessionId, input, fence) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          yield* checkFence(fence);
+          if (!(yield* hasTimelineColumns)) {
+            return yield* Effect.fail<SessionRepositoryError>(
+              failure(
+                new Error("typed Session Timeline requires migration 0019"),
+              ),
+            );
+          }
+          const existing = yield* run(
+            sql.unsafe<{ sequence: number; content_hash: string }>(
+              "SELECT sequence, content_hash FROM session_entries WHERE session_id = ? AND item_type = 'CompactionCheckpoint' AND source_kind = ? AND source_ref = ?",
+              [sessionId, input.source.kind, input.source.ref],
+            ),
+          );
+          const prior = existing[0];
+          if (prior !== undefined) {
+            if (prior.content_hash !== input.contentHash) {
+              return yield* Effect.fail<SessionSourceConflict>({
+                _tag: "SessionSourceConflict",
+                sessionId,
+                entryKind: "CompactionCheckpoint",
+                sourceKind: input.source.kind,
+                sourceRef: input.source.ref,
+              });
+            }
+            return {
+              sequence: Number(prior.sequence),
+              inserted: false,
+              newEpoch: input.nextEpoch,
+            };
+          }
+          const epochRows = yield* run(
+            sql.unsafe<{ context_epoch: number }>(
+              "SELECT context_epoch FROM sessions WHERE session_id = ?",
+              [sessionId],
+            ),
+          );
+          const currentEpoch = Number(epochRows[0]?.context_epoch ?? -1);
+          if (
+            currentEpoch !== Number(input.expectedEpoch) ||
+            Number(input.nextEpoch) !== Number(input.expectedEpoch) + 1 ||
+            Number(input.checkpoint.fromEpoch) !==
+              Number(input.expectedEpoch) ||
+            Number(input.checkpoint.toEpoch) !== Number(input.nextEpoch)
+          ) {
+            return yield* Effect.fail<SessionEpochConflict>({
+              _tag: "SessionEpochConflict",
+              sessionId,
+              expectedEpoch: Number(input.expectedEpoch),
+              currentEpoch,
+            });
+          }
+          const updated = yield* run(
+            sql.unsafe<{ context_epoch: number }>(
+              "UPDATE sessions SET context_epoch = ? WHERE session_id = ? AND context_epoch = ? RETURNING context_epoch",
+              [input.nextEpoch, sessionId, input.expectedEpoch],
+            ),
+          );
+          if (updated.length === 0) {
+            return yield* Effect.fail<SessionEpochConflict>({
+              _tag: "SessionEpochConflict",
+              sessionId,
+              expectedEpoch: Number(input.expectedEpoch),
+              currentEpoch,
+            });
+          }
+          const appended = yield* appendTyped(
+            sessionId,
+            {
+              item: input.checkpoint,
+              contextEpoch: input.nextEpoch,
+              source: input.source,
+              contentHash: input.contentHash,
+            },
+            fence,
+          );
+          return { ...appended, newEpoch: input.nextEpoch };
         }),
       listEntries: (sessionId, afterSequence, limit) =>
         Effect.gen(function* () {

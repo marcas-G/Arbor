@@ -1,5 +1,6 @@
 import type {
   CanonicalResourceRegion,
+  ContextEpochNumber,
   ExecutionId,
   LeaseGeneration,
   Project,
@@ -21,12 +22,19 @@ import type {
   LeaseFencingRejected,
   ProjectRepositoryError,
   ResourceOwnershipRepositoryError,
+  SessionEpochConflict,
   SessionRepositoryError,
   SessionSourceConflict,
   WorkRepositoryError,
   WorkspaceRepositoryError,
 } from "./errors.js";
 import type { TransactionScope } from "./session.js";
+import type {
+  SessionCompactionCommit,
+  SessionItemRecord,
+  SessionItemWrite,
+  SessionWriteFence,
+} from "./session-timeline.js";
 
 export interface ProjectRepositoryService {
   readonly findById: (
@@ -221,6 +229,43 @@ export interface SessionRepositoryService {
   ) => Effect.Effect<
     { readonly sequence: number; readonly inserted: boolean },
     SessionRepositoryError | LeaseFencingRejected | SessionSourceConflict,
+    TransactionScope
+  >;
+  readonly appendItemIdempotent: (
+    sessionId: SessionId,
+    write: SessionItemWrite,
+    fence: SessionWriteFence,
+  ) => Effect.Effect<
+    { readonly sequence: number; readonly inserted: boolean },
+    | SessionRepositoryError
+    | LeaseFencingRejected
+    | SessionSourceConflict
+    | SessionEpochConflict,
+    TransactionScope
+  >;
+  readonly listActiveFrontier: (
+    sessionId: SessionId,
+    contextEpoch: ContextEpochNumber,
+    limit: number,
+  ) => Effect.Effect<
+    ReadonlyArray<SessionItemRecord>,
+    SessionRepositoryError,
+    TransactionScope
+  >;
+  readonly commitCompaction: (
+    sessionId: SessionId,
+    input: SessionCompactionCommit,
+    fence: SessionWriteFence,
+  ) => Effect.Effect<
+    {
+      readonly sequence: number;
+      readonly inserted: boolean;
+      readonly newEpoch: ContextEpochNumber;
+    },
+    | SessionRepositoryError
+    | LeaseFencingRejected
+    | SessionSourceConflict
+    | SessionEpochConflict,
     TransactionScope
   >;
   /** P10-007 deps 申报: minimal read-only production read path over

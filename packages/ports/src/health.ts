@@ -23,13 +23,17 @@ export const P16_MIGRATION_BASELINE = 16;
 /** DID v1.21 ALS-I1 AgentLoopStep migration baseline. */
 export const P18_MIGRATION_BASELINE = 18;
 
+/** DID v1.22 SCRC typed Session Timeline migration baseline. */
+export const P19_MIGRATION_BASELINE = 19;
+
 /** @deprecated Legacy alias kept for compiled references; the baseline is P16. */
 export const P15_MIGRATION_BASELINE = P16_MIGRATION_BASELINE;
 
 export interface ReadinessState {
   /** Canonical DB connection is open (reopen / integrity_check path available). */
   readonly dbOpen: boolean;
-  /** `PRAGMA user_version` equals {@link P12_MIGRATION_BASELINE}. */
+  /** `PRAGMA user_version` equals the composition's current migration
+   * baseline (currently {@link P19_MIGRATION_BASELINE}). */
   readonly migrationBaseline: boolean;
   /** The T1 startup recovery pass (SD §10.6; P9 `03` §2) has completed. */
   readonly t1RecoveryComplete: boolean;

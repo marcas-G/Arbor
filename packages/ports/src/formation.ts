@@ -103,6 +103,14 @@ export interface InboxProjectionStoreService {
     InboxProjectionStoreError,
     TransactionScope
   >;
+  readonly findByKey: (
+    workspaceId: WorkspaceId,
+    entryKey: string,
+  ) => Effect.Effect<
+    Option.Option<InboxEntry>,
+    InboxProjectionStoreError,
+    TransactionScope
+  >;
   readonly markConsumed: (
     workspaceId: WorkspaceId,
     entryKey: string,
