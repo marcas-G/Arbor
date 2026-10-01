@@ -435,3 +435,20 @@ conversation_attempts
 ```text
 ACCEPT_CONVERSATION_DELIVERY_RUNTIME_CONVERGENCE
 ```
+
+## 18. Codex / OpenCode 对照后的收敛修订
+
+外部一手设计对照记录：
+
+```text
+C:/Arbor/planning/proposals/conversation-delivery-runtime-codex-opencode-review.md
+```
+
+对照结论不改变本草案主结构，但增加四项硬要求：
+
+1. **同一 run 优先恢复。** Codex 官方将 approval、stream interruption 与 delayed review 建模为保存 state 后恢复同一个 run；因此 Arbor 的 approval、reconciliation、compaction 和可恢复 stream interruption 必须留在同一 `ConversationAttempt/Execution`，只有 terminal transient failure 才允许新 attempt。
+2. **只允许一个 continuation truth。** Codex 官方警告混用 local replay 与 server-managed continuation 会重复上下文；Arbor 必须以 typed Session 为权威，provider-native continuation 只能通过 binding-scoped manifest 引用和对账，禁止双重注入。
+3. **工具按当前 turn materialize。** OpenCode 按 model/provider/agent/session permission materialize 工具，且 registry settlement 捕获 exact registration identity；Arbor 的 `TurnProfileResolver` 也必须输出 exact tool identity，stale registration 形成 typed result，visibility 仍不替代 runtime authorization。
+4. **统一 loop fingerprint。** OpenCode 对三次相同 tool/input 触发 doom-loop，并对 Provider retry 使用分类、max retries、backoff、jitter 和 next timestamp；Arbor 将其泛化为 durable tool/failure fingerprints，但分别保留 transport、output repair、conversation attempt 三个预算。
+
+不会照搬 OpenCode 的默认 allow、次数常量或 session-centric durability；不会依赖 Codex 托管 harness 替代 Arbor 自己的 authority、migration、remote-worker 与 recovery contracts。
