@@ -25,40 +25,53 @@ const bounded = (text: string, limit = 2000): BoundedObservation => ({
   truncated: text.length > limit,
 });
 
-const toExecutableOutcome = (
+export const toExecutableOutcome = (
   result: CanonicalToolObservation,
 ): ExecutableInvocationOutcome => {
   switch (result._tag) {
     case "Success":
+      return {
+        _tag: "Observation",
+        source: "Tool",
+        observation: result.observation,
+        status: "Succeeded",
+        ...(result.resultRef === null ? {} : { resultRef: result.resultRef }),
+        artifactRefs: result.resultRef === null ? [] : [result.resultRef],
+      };
     case "ExpectedFailure":
       return {
         _tag: "Observation",
         source: "Tool",
         observation: result.observation,
+        status: "Failed",
       };
     case "Denied":
       return {
         _tag: "Observation",
         source: "Runtime",
         observation: bounded(`tool denied: ${result.reason}`),
+        status: "Denied",
       };
     case "Interrupted":
       return {
         _tag: "Observation",
         source: "Runtime",
         observation: bounded("tool invocation interrupted"),
+        status: "Interrupted",
       };
     case "OutcomeUnknown":
       return {
         _tag: "Observation",
         source: "Runtime",
         observation: bounded("tool outcome unknown"),
+        status: "OutcomeUnknown",
       };
     case "RuntimeFailure":
       return {
         _tag: "Observation",
         source: "Runtime",
         observation: bounded(`tool runtime failure: ${result.cause}`),
+        status: "Failed",
       };
   }
 };

@@ -96,9 +96,10 @@ SCRC code implementation are AUTHORIZED by the manual token
 (`planning/phases/SCRC.md`; 8 task contracts; T01–T30 acceptance matrix;
 planning review Blocking = 0). Execute SCRC-001…SCRC-008 strictly by the phase
 DAG; only SCRC-008 may claim full completion. Current implementation state:
-**SCRC-001/002/003 COMPLETE; next SCRC-004**
+**SCRC-001…004 COMPLETE; next SCRC-005**
 (`planning/results/SCRC-001.result.md`, `planning/results/SCRC-002.result.md`,
 `planning/results/SCRC-003.result.md`).
+See also `planning/results/SCRC-004.result.md`.
 P16 (Provider Extension Architecture — DID-side implementation design under
 `docs/design/implementation/P16-provider-extension/`, governance-authorized
 2026-09-29): **Gate A design contracts FROZEN**; **Gate B Design Closure =

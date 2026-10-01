@@ -434,16 +434,18 @@ describe("I0 executable/control vertical slice", () => {
             _tag?: string;
             source?: string;
             observation?: { text?: string };
+            outputText?: string;
+            status?: string;
           },
       );
     const shellObservation = observations.find(
       (o) =>
-        o._tag === undefined &&
-        o.source === "Tool" &&
+        o._tag === "ToolResult" &&
+        o.status === "Succeeded" &&
         JSON.stringify(o).includes("exitCode"),
     );
     expect(shellObservation).toBeDefined();
-    expect(shellObservation?.observation?.text).toContain('"exitCode":0');
+    expect(shellObservation?.outputText).toContain('"exitCode":0');
     expect(observations.some((o) => o._tag === "DirectiveUnsupported")).toBe(
       false,
     );

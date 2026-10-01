@@ -223,6 +223,11 @@ export const SessionRepositoryLive: Layer.Layer<
         };
       });
     return SessionRepository.of({
+      supportsTypedTimeline: () =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          return yield* hasTimelineColumns;
+        }),
       findById: (sessionId) =>
         Effect.gen(function* () {
           yield* TransactionScope;

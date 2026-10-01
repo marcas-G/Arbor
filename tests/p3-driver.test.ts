@@ -10,6 +10,7 @@ import {
   layer,
   P16_MIGRATIONS,
   P17_MIGRATIONS,
+  P19_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RuntimeClockLive,
@@ -1143,7 +1144,7 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
       },
     });
     const program = Effect.gen(function* () {
-      yield* runMigrations(P17_MIGRATIONS);
+      yield* runMigrations(P19_MIGRATIONS);
       yield* seed;
       const driven = yield* driveAndCount(allowGate);
       const sql = yield* SqlClient;
@@ -1155,13 +1156,16 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
         "SELECT state, result_ref, observation_source_ref FROM agent_loop_step_actions WHERE execution_id = ? AND logical_step_no = 0 ORDER BY action_index",
         [executionId],
       );
-      const observations = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'AgentLoopAction' AND entry_kind = 'Observation'",
+      const timeline = yield* sql.unsafe<{
+        item_type: string;
+        payload_json: string;
+      }>(
+        "SELECT item_type, payload_json FROM session_entries WHERE item_type IN ('ToolCall','ToolResult','ControlResult','LegacyObservation') ORDER BY sequence",
       );
       return {
         ...driven,
         actions,
-        observationCount: Number(observations[0]?.count ?? 0),
+        timeline,
       };
     });
     const result = (await run(program, app)) as {
@@ -1178,7 +1182,10 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
             result_ref: string | null;
             observation_source_ref: string | null;
           }>;
-          observationCount: number;
+          timeline: ReadonlyArray<{
+            item_type: string;
+            payload_json: string;
+          }>;
         }
       ).actions,
     ).toEqual([
@@ -1188,9 +1195,36 @@ describe("P3-013 recovery — bounded repair + DecisionStale (B-9)", () => {
         observation_source_ref: expect.stringMatching(/^observation_/),
       }),
     ]);
-    expect(
-      (result as typeof result & { observationCount: number }).observationCount,
-    ).toBe(1);
+    const timeline = (
+      result as typeof result & {
+        timeline: ReadonlyArray<{
+          item_type: string;
+          payload_json: string;
+        }>;
+      }
+    ).timeline;
+    expect(timeline.map((entry) => entry.item_type)).not.toContain(
+      "LegacyObservation",
+    );
+    const callEntry = timeline.find((entry) => {
+      if (entry.item_type !== "ToolCall") return false;
+      const payload = JSON.parse(entry.payload_json) as { toolRef?: string };
+      return payload.toolRef === "read";
+    });
+    const call = JSON.parse(callEntry?.payload_json ?? "{}") as {
+      callRef?: string;
+    };
+    const resultEntry = timeline.find(
+      (entry) => entry.item_type === "ToolResult",
+    );
+    const toolResult = JSON.parse(resultEntry?.payload_json ?? "{}") as {
+      callRef?: string;
+      status?: string;
+    };
+    expect(toolResult).toMatchObject({
+      callRef: call.callRef,
+      status: "Succeeded",
+    });
   });
 
   it("returns a durable executable observation to the next model turn", async () => {
