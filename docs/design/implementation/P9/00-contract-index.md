@@ -78,3 +78,8 @@ freezes; then planning/phases/P9.md, then implementation authorization.
 
 The v1.20 `07` successor is FROZEN as design and implementation is AUTHORIZED
 by DID v1.21 ALS-I1; it does not reopen the historical P9 completion record.
+
+The DID v1.22 SCRC successor adds recovery contracts for Inbox promotion,
+callRef-paired ToolResult, checkpoint/epoch atomicity, bounded overflow recovery
+and native-binding fallback in `04`/`07`. It is design-frozen but implementation
+is not authorized and does not reopen historical P9 completion.

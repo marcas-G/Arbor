@@ -103,3 +103,8 @@ Blocking = 0.
 **v1.20 successor:** the AgentLoopStep additions are additive cross-phase design
 contracts. They do not reopen P2 completion and do not authorize migration or
 runtime implementation.
+
+**v1.22 SCRC successor:** typed Session Timeline append/frontier/checkpoint,
+source-key Inbox promotion and checkpoint/epoch recovery are additive
+cross-phase design contracts in `02`/`04`/`06`. They do not reopen historical
+P2 completion. Migration 0019 and implementation require separate authorization.

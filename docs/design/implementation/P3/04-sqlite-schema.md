@@ -15,6 +15,8 @@ P1: 0001_init
 P2: 0002_execution_session_kernel
 P3: 0003_provider_model_context      (forward-only; PRAGMA user_version = 3)
 v1.21: 0017_agent_loop_step_handoff (forward-only; implementation authorized)
+post-v1.21: 0018_project_archive_human_message_terminal (already allocated)
+v1.22: 0019_session_context_runtime_convergence (reserved; NOT authorized)
 ```
 
 ## 3. DDL
@@ -120,6 +122,24 @@ type P3SessionEntry =
 P2 `04` §3.7 owns the exact `agent_loop_steps` / `agent_loop_step_actions` DDL. P3 `08`
 owns their state semantics. This document does not define a second schema.
 Migration 0017 is authorized by DID v1.21 ALS-I1.
+
+### 3.6 SCRC typed Session/Provider evolution (v1.22)
+
+Migration 0019 evolves the physical Session carrier with `item_type`,
+`schema_version`, and `context_epoch`, while retaining source identity/hash and
+Session-local sequence. New payloads implement the DID v1.22 SessionItem ADT;
+legacy rows remain explicitly legacy and never infer callRef from text.
+
+`provider_turns` gains semantic `operation_kind = Inference |
+CompactionSummary | CompactionNative`. `model_context_manifests` records the
+input frontier, typed item refs/callRefs, AgentStepContext fingerprint,
+ResolvedModelBinding fingerprint, budget evidence and compaction metadata.
+ProviderNative opaque payloads live behind a durable ref with their binding
+fingerprint; credentials are excluded.
+
+Checkpoint append + epoch advance use one epoch-CAS/fenced transaction. This
+section freezes the successor schema requirements only; implementation and
+migration 0019 remain separately gated.
 
 ## 4. Retention
 

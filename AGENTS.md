@@ -8,10 +8,10 @@ Arbor is a multi-agent work system organized around long-lived Responsibilities,
 |---|---|---|
 | `docs/design/00-problem-goals.md` | WHY/WHAT: P1–P8, G1–G8, mission, success criteria | FROZEN |
 | `docs/design/01-scenarios.md` | Observable end-to-end behavior S1–S4 | FROZEN |
-| `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 60 system invariants | FROZEN |
+| `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 68 system invariants | FROZEN |
 | `docs/design/03-detailed-implementation-design.md` | Executable contracts: ADT/Command/Event/Ports/SQL/Package DAG/phases | TOP-LEVEL FROZEN |
 
-These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.21).
+These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.4, DID v1.22).
 
 ## Design governance (docs/design/**)
 
@@ -22,6 +22,13 @@ docs/design/** = manually governed source of truth
 ```
 
 Only manual governance changes design documents, and only in the document that owns the semantics. Never silently rewrite upstream semantics from implementation code or planning artifacts.
+
+Manual-governance delegation exception (authorized 2026-10-01): after the
+user/manual governor explicitly accepts a fixed governance proposal, Codex may
+apply that exact accepted landing package to `docs/design/**` on the governor's
+behalf. The proposal hash, decision record, owning-document revisions and
+post-landing consistency review must remain auditable. This exception does not
+permit Codex to invent unaccepted semantics or silently resolve a new gap.
 
 If a code implementation discovers a design gap: **stop implementation and raise a Design Gap** (with failure evidence: failing test, concurrency counterexample, or recovery failure) for manual governance — do not edit the design directly.
 
@@ -81,6 +88,10 @@ Provider-result handoff governance: **DESIGN CLOSED at DID v1.20;
 IMPLEMENTATION AUTHORIZED at DID v1.21**. `DOGFOOD-DG-01` is RESOLVED at the
 design layer; implementation still requires TDD/AH1–AH14 evidence before any
 preserved-database recovery.
+Session / Context Runtime convergence: **SCRC-1…SCRC-12 ACCEPTED; owning
+contracts landed as System Design v1.4 / DID v1.22**. `SCRC-DG-01` remains
+OPEN pending post-landing consistency review. Migration 0019 and SCRC code
+implementation are NOT AUTHORIZED.
 P16 (Provider Extension Architecture — DID-side implementation design under
 `docs/design/implementation/P16-provider-extension/`, governance-authorized
 2026-09-29): **Gate A design contracts FROZEN**; **Gate B Design Closure =

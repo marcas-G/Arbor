@@ -96,6 +96,11 @@ Kill before and after every commit boundary, restart on the same durable DB:
 | AH12 | SettlementProposed → SettleExecution |
 | AH13 | Execution settled → HumanMessage convergence |
 | AH14 | legacy adoption first run → identical second run |
+| AH15 | Inbox Session append ↔ Inbox consumed |
+| AH16 | Tool settlement ↔ sourced ToolResult append |
+| AH17 | Compaction completed checkpoint ↔ epoch advance |
+| AH18 | Provider overflow first recovery ↔ second terminal overflow |
+| AH19 | ProviderNative binding match ↔ mismatch portable rebuild |
 
 Every injection asserts stale-generation writes are rejected, stable identities
 prevent duplicate Session entries/external effects, and the state transition
@@ -130,6 +135,8 @@ Implementation completion remains separately gated and requires:
 4. evidence-insufficient fixtures stop at durable Attention;
 5. the preserved database remains untouched until an explicitly authorized,
    separately verified migration run.
+6. AH15–AH19 pass on both sides of each commit boundary; no duplicate Inbox
+   delivery, Tool effect, inference step or checkpoint occurs.
 
 ## 6. Must Not Decide
 

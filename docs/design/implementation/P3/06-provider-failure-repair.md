@@ -85,9 +85,11 @@ prepareTurn -> E.ContextUnsatisfiable
 ```
 
 - Never silently truncate hard control facts (DID §8.9).
-- The AgentRuntime handles it by running the compaction ProviderTurn (`02` §9)
-  and re-invoking `prepareTurn`; if still unsatisfiable, settle
-  `Interrupted` / escalate Attention — never a partial context.
+- DID v1.22 supersedes the former compact-and-retry handling. Ordinary
+  compressible pressure returns `NeedsCompaction`; `ContextUnsatisfiable` means
+  fixed mandatory context cannot fit after all allowed model policy choices.
+  AgentRuntime therefore settles typed failure/Attention — never a partial
+  context and never an unproductive compaction loop.
 
 ## 6. `GovernanceBlocked`
 

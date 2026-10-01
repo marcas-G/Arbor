@@ -153,10 +153,25 @@ G5  minimal read/patch/shell remain versioned contract artifacts; new tools are 
 G6  tool parameter/result schemas + shell policy enforcement remain P4 contracts
 ```
 
+## 7A. SCRC provider qualification additions (DID v1.22)
+
+Every provider/deployment qualification now records:
+
+1. typed ToolCall/ToolResult `callRef` round-trip and parallel-call pairing;
+2. supported `PortableInputItem` kinds without silent text fallback;
+3. Summary and/or ProviderNative compaction capability;
+4. ProviderNative binding fingerprint portability and mismatch rejection;
+5. provider-reported usage/token-estimation capability and fallback grade;
+6. first context-overflow compact/retry and second-overflow terminal behavior.
+
+The existing CanonicalProviderEvent ADT remains unchanged: native opaque state
+uses `ContinuationState(stateRef)` plus the ProviderTurn operation/Manifest.
+
 ## 8. Must Not Decide
 
-- No change to `ProviderPort` / `CanonicalProviderEvent` semantics; no provider protocol
-  decision in Domain or Application.
+- No change beyond DID v1.22's typed request/operation-kind evolution to the
+  ProviderPort boundary; `CanonicalProviderEvent` remains unchanged and no
+  provider protocol decision enters Domain or Application.
 - No tool authorization/execution semantics change; no authority resolution inside tool-runtime.
 - No new package category or dependency edge beyond `adapters/* → domain, ports`.
 - No LLM-driven model selection; no silent model fallback.

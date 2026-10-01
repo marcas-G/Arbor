@@ -1,12 +1,12 @@
 # P3 — Contract Index
 
-**Authority:** DID v1.20, with P3 phase contracts frozen under prior DID
-versions except where this index records v1.18 and v1.20 supersessions.
+**Authority:** DID v1.22, with P3 phase contracts frozen under prior DID
+versions except where this index records v1.18, v1.20 and v1.22 supersessions.
 These documents are **not** a fifth design layer; they are P3-owned
 implementation contracts authorized by DID §13.
 
 ```text
-Detailed Implementation Design v1.20 (frozen)
+Detailed Implementation Design v1.22 (frozen)
         ↓ delegates phase-scoped closure
 docs/design/implementation/P3/**   (these contracts)
 ```
@@ -21,6 +21,14 @@ superseded by DID v1.18 ACR-1–ACR-5. Provider-neutral event semantics, the P3
 loop, P2 safety gate, Application boundary, settlement, freshness rules, and
 bounded-repair semantics remain authoritative where they do not depend on that
 superseded representation.
+
+**DID v1.22 SCRC supersession:** `PortableMessage` is no longer the universal
+request carrier; `01` uses `PortableInputItem`. `02` §1's plain `role:tool`
+Observation and every-turn unconsumed Inbox injection are superseded by typed
+callRef-paired results and source-key atomic Session promotion. `03` §2's plain
+Observation continuation is superseded by the typed Session frontier.
+DataOnly trust, explicit Compaction ProviderTurn, AgentLoopStep durability,
+authority and settlement contracts remain in force.
 
 ## Documents
 
@@ -53,6 +61,7 @@ Output Contract, Prompt provenance, real model multi-turn continuity.
 | C4 | `CanonicalProviderEvent` remains provider-neutral transport/runtime vocabulary. It does not directly express an authorized `AgentAction`; `decodeTurn` extracts `ModelOutput` and generic typed `ToolInvocation` values, while ControlToolRegistry owns control semantics (DID v1.18 ACR-4). |
 | C5 | Prompt Program **actual text** is **not** implementation choice. The Programs P3 uses (Base Agent Protocol, Responsibility-bound Protocol, Work Execution Program, Compaction, …) are versioned phase-scoped **contract artifacts** with regression eval. Only wording iteration that does not change the contract, and numeric defaults, are empirical. |
 | C6 | DID v1.20 `AgentLoopStep` is the durable handoff state. It persists no process-local `AgentAction`; pinned Provider events + decoder reconstruct invocations and the action ledger verifies identity/hash (`08`). |
+| C7 | DID v1.22 freezes typed Session Timeline, safe-boundary promotion, AgentStepContext/ContextProjector, Summary/ProviderNative compaction and provider-aware budget evidence. Migration 0019 and implementation remain unauthorized. |
 
 ## Inherited from P2
 
@@ -84,3 +93,8 @@ contracts.
 
 The v1.20 `08` successor is design-frozen; DID v1.21 ALS-I1 authorizes its
 implementation without reopening the historical P3 completion record.
+
+The v1.22 SCRC successor is design-frozen but implementation is **not
+authorized**. It supersedes only the representations and delivery/compaction
+mechanisms named above; historical P3 completion remains an audit fact, not
+SCRC implementation evidence.

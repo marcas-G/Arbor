@@ -388,7 +388,35 @@ ExecutionScheduler.reevaluate             -> opens its own short transaction per
 ProjectEnvironmentPort / Clock / IdGenerator -> NO TransactionScope (P1)
 ```
 
-## 10. Out of scope
+## 10. SCRC v1.22 Session Timeline evolution
+
+The following contracts supersede plain-text/every-turn context assembly but
+do not authorize their implementation:
+
+```ts
+interface SessionRepositoryService {
+  appendItemIdempotent(input, source, fence):
+    Effect<SessionSequence, SessionAppendError, TransactionScope>;
+  listActiveFrontier(sessionId, epoch):
+    Effect<ReadonlyArray<SessionItem>, SessionReadError, TransactionScope>;
+  commitCompaction(input: {
+    sessionId; expectedEpoch; checkpoint; nextEpoch;
+  }, fence):
+    Effect<CommittedCheckpoint, SessionCheckpointError, TransactionScope>;
+}
+```
+
+`InputPromotionService.promoteInbox` is an Application/Runtime service. In one
+`TransactionPort` scope it performs sourced Session Input append and Inbox
+`markConsumed`; exact retry returns the existing sequence and same-source/
+different-hash fails. `commitCompaction` uses epoch CAS plus the full active
+lease-holder triple. It commits checkpoint and epoch advance atomically.
+
+The transaction summary therefore evolves `SessionRepository.appendEntry` to
+typed/idempotent item append and adds Inbox promotion/checkpoint convergence;
+long-running projection/provider work remains outside the transaction.
+
+## 11. Out of scope
 
 - Provider/Tool/Model Context ports (P3/P4).
 - Real dependency/runnable graph (P7).

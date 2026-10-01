@@ -275,6 +275,19 @@ execution-runtime → ports + agent-runtime
 9. Each repair/next-turn predecessor identifies exactly one successor.
 10. Process-local `AgentAction` is never persisted.
 
+### SCRC v1.22 Compaction identity rule
+
+Compaction does not add a `Compacting` business/AgentLoopStep state. It is a
+separate explicit ProviderTurn plus an atomic Session checkpoint/epoch
+transition. The pending AgentLoopStep keeps the same
+`(executionId, logicalStepNo, repairAttempt)` across successful compaction.
+
+Recovery binds that pending identity to the latest completed epoch/frontier.
+Started-but-incomplete compaction leaves the old epoch active. A successful
+checkpoint never permits replay of already resolved action-ledger entries. The
+related compaction ProviderTurn/Manifest refs provide audit correlation without
+creating a second semantic Agent step.
+
 ## 11. Must Not Decide
 
 - No Provider transport changes beyond the atomic success/store read contract.

@@ -28,15 +28,16 @@ type TurnPreparation =
 `binding`, `responsibility`, `work | mission`, `cognitiveMode`,
 `permissionState`, `environmentRef`, `availableSkills`, `toolSurface`.
 
-Provider-neutral runtime messages are an explicit input. Durable Tool
-Observations enter as `role: "tool"` messages and remain DataOnly; their text
-is never promoted into an InstructionFragment. The Manifest records their
-durable Session source refs.
+Provider-neutral `PortableInputItem[]` is an explicit input. Durable Tool and
+Control results enter as typed `ToolResult`/`ControlResult` items with stable
+`callRef`; they remain DataOnly and their text never becomes an
+InstructionFragment. The Manifest records exact durable Session source refs.
 
-Unconsumed Workspace Inbox entries are bounded coordination input. HumanInput,
-Governance and Message summaries enter as provider messages with exact
-`inbox:<entryKey>` Manifest refs. Context assembly never marks an entry
-consumed; consumption requires an explicit owning workflow outcome.
+Workspace Inbox is not a per-turn context source. At a safe boundary,
+`InputPromotionService` atomically appends one source-keyed Session Input and
+marks that Inbox entry consumed. The Context Projector only reads promoted
+Session Items. Steer promotes at the current loop's next safe sampling
+boundary; Queue promotes FIFO after the current drain would otherwise end.
 
 ## 2. Agent policy resolution
 
@@ -108,9 +109,11 @@ Budget (DID §8.10): `B_ctx = B_model − B_output − B_protocol − B_tools`;
 output reserved first. `CacheClass = Stable | SemiStable | TurnDynamic`.
 
 Production budget accounting includes resolved instruction bodies, every
-provider message (conversation and tool observations), executable/control tool
-definitions and ContextFragments. Message or schema text may not bypass the
-model-window calculation.
+provider input item, executable/control tool definitions and ContextFragments.
+Budget evidence priority is provider-reported usage, provider/model estimator,
+adapter structured-request estimator, then conservative chars/4 fallback.
+Fallback estimation may trigger early compaction but cannot alone classify
+ordinary compressible pressure as `ContextUnsatisfiable`.
 
 ## 6. Plan, prepared turn, manifest
 
@@ -193,22 +196,40 @@ interface CompactionRequest {
   readonly executionId: ExecutionId;
   readonly sessionId: SessionId;
   readonly currentEpoch: ContextEpochNumber;
-  readonly reason: "ContextUnsatisfiable" | "BudgetPressure";
+  readonly reason: "BudgetPressure" | "SemanticBoundary" | "ProviderBoundary"
+    | "ProviderOverflow";
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly inputFrontier: SessionFrontier;
+  readonly bindingFingerprint: string;
+  readonly implementationPreference: "Summary" | "ProviderNative" | "Either";
 }
-interface CompactionResult {
-  readonly checkpoint: { readonly ref: string; readonly summaryRef: string };
-  readonly newEpoch: ContextEpochNumber;
-}
+type CompactionResult =
+  | { readonly _tag: "SummaryCheckpoint"; readonly summaryRef: string;
+      readonly retainedFrontier: SessionFrontier;
+      readonly newEpoch: ContextEpochNumber }
+  | { readonly _tag: "NativeCheckpoint"; readonly opaqueItemRef: string;
+      readonly bindingFingerprint: string;
+      readonly retainedFrontier: SessionFrontier;
+      readonly newEpoch: ContextEpochNumber };
 ```
 
 - Compaction is a ProviderTurn type (DID §9.10), never an invisible hack.
 - `prepareTurn` returns `NeedsCompaction`; the AgentRuntime runs a compaction
-  turn and then re-invokes `prepareTurn`.
+  turn, atomically commits checkpoint + next epoch, fresh-reinjects canonical
+  control and then re-invokes `prepareTurn` for the same logical step.
 - Output validation: the compaction turn must produce a valid checkpoint
   reference + summary; otherwise it is a `ModelOutputContractViolation`
   (`06` §3).
-- Persistence: P2 `SessionRepository.appendEntry` (`CheckpointReference`) +
-  epoch increment; numeric thresholds are empirical.
+- Persistence: P2 `SessionRepository.commitCompaction` atomically appends the
+  typed checkpoint and advances epoch. Started-but-incomplete compaction leaves
+  the old epoch active.
+- `ProviderNative` checkpoints are usable only with a compatible complete
+  ResolvedModelBinding fingerprint; otherwise rebuild through portable Summary.
+- Provider overflow permits at most one compact/retry before durable assistant
+  output or Tool/Control effect. A second overflow is terminal.
+- `ContextUnsatisfiable` is not a compaction reason: it means fixed mandatory
+  context cannot fit under the allowed model policy.
 
 ## 10. Information trust metadata
 
