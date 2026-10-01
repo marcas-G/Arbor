@@ -79,7 +79,20 @@ Steps:
   unresolved → `OutcomeUnknown(ReconciliationRequired(invocationRefs))` (DID §3.4,
   SD §7.3). The P2 `ReconciliationSource` is implemented in `06` §4.
 
-## 7. Must Not Decide
+## 7. SCRC v1.22 Session correlation
+
+The decoded invocation context carries stable `callRef`. ToolRuntime continues
+to own real invocation authorization/effect/settlement and returns the complete
+CanonicalToolObservation; Agent Runtime, not ToolRuntime, writes the sourced
+Session ToolResult. The model-visible bounded output retains ObservationRef,
+ArtifactRef and truncation/epistemic status.
+
+When Tool settlement exists but Session ToolResult is missing, recovery
+idempotently appends it by invocation/result source. `OutcomeUnknown` is a
+typed ToolResult but still blocks ordinary progression through the existing
+unresolved-side-effect gate. No Session text can reconstruct authority.
+
+## 8. Must Not Decide
 
 - No authority resolver (G1).
 - No ownership mutation (G4).

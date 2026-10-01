@@ -89,3 +89,8 @@ existing P4 `ToolIntent` / `ToolRuntimePort` path.
 
 FROZEN (contracts) — independent review round 1 complete, **Blocking = 0**;
 implementation reconciliation applied. **FORMALLY CLOSED.**
+
+**DID v1.22 SCRC successor:** `02` §7 freezes callRef-paired Session result
+handoff without changing P4's executable ToolRuntime pipeline. Agent Runtime
+owns Session append; ToolRuntime remains the authority/effect/settlement owner.
+This additive design successor is not SCRC implementation evidence.

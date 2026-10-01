@@ -163,7 +163,25 @@ Not covered (deployment backup/replication, explicit RPO/RTO):
 - Failures beyond the declared envelope are reported truthfully; no automatic
   recovery is promised.
 
-## 8. Out of scope
+## 8. SCRC v1.22 recovery ordering
+
+Before normal AgentLoopStep redispatch, recovery additionally performs:
+
+```text
+reconcile in-flight ToolInvocation
+→ idempotently append a missing sourced ToolResult when settlement is proven
+→ reconcile incomplete Inbox promotion
+→ keep the last completed ContextEpoch active
+→ classify an incomplete Compaction ProviderTurn from durable evidence
+→ resume the pending AgentLoopStep against the completed epoch/frontier
+```
+
+Compaction started without an atomically committed checkpoint never replaces
+the old epoch. Completed checkpoint recovery never replays already completed
+Tool/Control effects. A ProviderNative checkpoint with an incompatible binding
+is not replayed; recovery requests portable Summary/frontier rebuild.
+
+## 9. Out of scope
 
 - Systematic fault injection and hardening (P9).
 - Provider/Tool `OutcomeUnknown` reconciliation implementation (P3/P4).

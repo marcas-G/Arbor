@@ -31,8 +31,9 @@ interface ProviderPortService {
 ```ts
 interface PortableModelRequest {
   readonly modelRef: string;
+  readonly operationKind: "Inference" | "CompactionSummary" | "CompactionNative";
   readonly instructions: ReadonlyArray<PortableInstruction>;
-  readonly messages: ReadonlyArray<PortableMessage>;
+  readonly inputItems: ReadonlyArray<PortableInputItem>;
   readonly toolDefinitions: ReadonlyArray<PortableToolDefinition>;
   readonly outputContractRef: string;
   readonly budget: { readonly maxOutputTokens: number };
@@ -48,8 +49,24 @@ interface ProviderExecutionContext {
 }
 ```
 
+```ts
+type PortableInputItem =
+  | PortableMessage
+  | PortableToolCall
+  | PortableToolResult
+  | PortableContextUpdate
+  | PortableCompactionCheckpoint
+  | PortableAttachmentRef;
+```
+
 `PortableModelRequest` is model-family neutral; the model-family compiler
 (`05` §5) produces it from a `PreparedModelTurn`.
+
+`PortableMessage` remains only the Message variant; it is no longer the
+universal carrier. Adapters preserve `callRef` for ToolCall/ToolResult. An
+unsupported item/operation is a typed capability incompatibility and is never
+silently lowered to text. `CompactionNative` returns its opaque durable ref via
+the existing `ContinuationState`; the CanonicalProviderEvent ADT remains closed.
 
 `SecretRef` is a P3 `ports`-level opaque reference (DID §7.9); the raw
 credential is resolved only inside the ProviderRuntime adapter. `ProviderTurnId`
@@ -160,7 +177,9 @@ interface ModelCapabilityPortService {
 
 - Model selection is deterministic Runtime (SD §6.2), not an LLM decision.
 - `ModelCapability` carries `modelRef`, context window, output ceiling,
-  supported tool-call protocol, and model-family tag used by the compiler.
+  supported tool-call protocol, supported portable item kinds, native
+  compaction capability, token-estimation capability, ResolvedModelBinding
+  fingerprint, and model-family tag used by the compiler.
 
 ## 9. SecretStorePort
 

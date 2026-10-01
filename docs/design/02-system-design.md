@@ -1,9 +1,13 @@
 # Arbor System Design Specification
 
-**Version:** 1.3  
-**Status:** FROZEN — governance patch  
-**Supersedes:** v1.2  
-**Date:** 2026-09-20  
+**Version:** 1.4
+
+**Status:** FROZEN — Session / Context Runtime convergence governance patch
+
+**Supersedes:** v1.3
+
+**Date:** 2026-10-01
+
 **Depends on:** `Arbor Problem Definition & Goals v1.2` + `Arbor Scenarios S1–S4 v1.2`  
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量  
 **Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型  
@@ -17,6 +21,29 @@
 
 `Problem & Goals` and `Scenarios` are unchanged: these gaps closed System/DID-level
 semantics only and did not change WHY or user-visible behavior.
+
+**Governance changes (v1.3 → v1.4):**
+
+- SCRC-1/2/12: Session is an append-only durable cognitive/execution timeline;
+  the active model window is a lossy projection. Canonical control state remains
+  outside Session and is freshly snapshotted/reinjected.
+- SCRC-3/4: model/provider interaction preserves typed Message, ToolCall,
+  ToolResult, ContextUpdate, AttachmentRef and CompactionCheckpoint semantics;
+  every ToolResult is paired to a stable callRef.
+- SCRC-5/6: Inbox delivery becomes a one-time durable promotion into Session;
+  Steer and Queue have distinct safe-boundary delivery semantics.
+- SCRC-7: every sampling step captures one consistent AgentStepContext for
+  context/tool visibility/provenance; effect admission still fresh-checks
+  canonical control and authority.
+- SCRC-8/9/10: compaction is an explicit in-loop Provider operation with Summary
+  and binding-bound ProviderNative implementations, same-step resume, and
+  provider-aware budget/overflow evidence.
+- SCRC-11: permission remains a Runtime authority fact and is never recovered
+  from transcript, summary, checkpoint or model text.
+
+`Problem & Goals` and `Scenarios` remain unchanged. The accepted proposal is
+fixed by SHA-256
+`200D9EE0F252915F1816C57FC5FEE470E77D7FB924A95A7474E03DF68BFAFD05`.
 
 ---
 
@@ -285,15 +312,21 @@ semantic terminal result
 
 每个 Responsibility-bound Agent 默认拥有一个长期 Primary Session，跨多个 Work 持续存在。Primary Session 是 Workspace 对未来 Execution 的默认认知入口；已经 admission 的 Execution 使用其固定 Session binding，不随 Primary Session replacement 漂移。
 
-Session 负责：
+Session 拥有 append-only durable Timeline，用于保存认知与执行连续性：Human/
+Steer/Inbox input、Assistant output、typed ToolCall/ToolResult、ControlResult、
+ContextUpdate、AttachmentRef 与 CompactionCheckpoint。Timeline 是审计/恢复事实；
+Provider Context 只是从当前 ContextEpoch、checkpoint、recent frontier 和 canonical
+control snapshot 构造出的 active projection。
 
-- 局部认知连续性；
-- 交互历史；
-- Cache affinity；
-- Context Epoch；
-- Continuation checkpoint。
+Session 负责：局部认知连续性、交互历史、tool-call correlation、input promotion
+结果、Cache affinity、ContextEpoch 和 continuation checkpoint。
 
-Session 不是领域真相。必要时可以根据 Workspace State、History、Memory 和 Current Work 重建。
+Session 不是领域真相，也不保存 Responsibility、Current Work、Permission、
+Dependency、Verification 或 Resource Ownership 的权威副本。这些事实在每个 sampling
+step 从 canonical state fresh capture；Compaction 后重新注入。
+
+Session Timeline 可重放但不要求原样全部进入模型；active model window 可以有损压缩，
+durable Timeline、完整 Tool Result 与 Artifact 仍保留。
 
 ## 3.7 Dependency
 
@@ -593,13 +626,19 @@ Agent 可以发现新 Work，但不能借此扩大自己的 Responsibility。
 
 ## 5.4 Long-lived Primary Session
 
-Work 完成后 Session 不销毁。Session lifetime 接近 Workspace / Agent lifetime；模型实际看到的 Context 只是 Session 和 System State 的动态投影。
+Work 完成后 Session 不销毁。Session lifetime 接近 Workspace / Agent lifetime；模型实际
+看到的是 durable Session Timeline、canonical state、Knowledge 与当前输入的动态投影。
 
 ```text
-Session History != Provider Context
+Session Timeline != Provider Context != Canonical State
 ```
 
 ## 5.5 Context Construction
+
+每个 sampling step 先捕获一个一致的 AgentStepContext，固定 execution/session/epoch、
+canonical control refs/revisions、model binding、effective tool catalog、instruction
+sources、input frontier 与 budget basis。Context Projector 再从该快照和 active Session
+frontier 生成 provider-neutral typed input items、tool definitions 与 manifest。
 
 一次 Provider Context 按稳定程度分层：
 
@@ -614,6 +653,11 @@ Session History != Provider Context
 
 硬信息确定性注入；软历史按需检索。
 
+ToolCall/ToolResult 必须保留 callRef；被截断的 ToolResult 必须保留 ArtifactRef 与
+truncation/epistemic status。Effect admission 不信任旧快照作为授权缓存：真正执行
+Tool/Control Action 时仍 fresh re-read ControlBasis、authority、ResourceBoundary 与
+exact resources。
+
 ```text
 State is truth
 History is evidence
@@ -623,13 +667,22 @@ Context is projection
 
 ## 5.6 Context Compaction
 
-Compaction 只压缩认知历史，不承担保存领域真相。
+Compaction 只替换 active model representation，不删除 durable Timeline，也不承担保存
+领域真相。普通 context pressure 是 Agent Loop 内部控制动作：显式启动 Compaction
+Provider operation，耐久提交 checkpoint + next ContextEpoch，fresh reinject canonical
+control，然后继续同一个 pending logical step。
 
 可 compact：旧 reasoning、旧 conversation、旧 observation、旧 tool trace。
 
 不可依赖 compaction 保存：Responsibility、Boundary、Current Work、Constraint、Verification、Permission 等正式事实。
 
+Compaction 支持 Arbor Summary 与 ProviderNative 两类实现。Provider-native opaque
+checkpoint 必须绑定完整 model/deployment/protocol binding；不兼容时从 durable
+Timeline 走 portable Summary/recent-frontier rebuild。
+
 Compaction 产生 Continuation Checkpoint；Checkpoint 是认知辅助，不是 authority。
+Pinned/Protected fixed control 本身在允许的 model policy 下仍无法装入窗口时，才形成
+ContextUnsatisfiable。普通可压缩历史压力不得停止 Work/Execution 或要求用户手动重试。
 
 ## 5.7 Memory
 
@@ -769,13 +822,17 @@ Command 不是事实；Message 到达不表示 Agent 已经理解；Event 描述
 
 ## 7.4 Inbox
 
-重要输入持久进入 Workspace Inbox。Inbox 表示“尚未被该 Workspace 认知整合的重要输入”，不是永久历史库。
+重要输入持久进入 Workspace Inbox。Inbox 表示尚未被目标 Workspace 的 durable
+Session/确定性 Runtime 接管的重要输入，不是永久历史库，也不是每轮 Provider
+Context 的直接来源。
 
 ```text
 Inbox != Next Context
 ```
 
-Context Builder 只选择与 Current Work、Interrupt 或高价值事项相关的未消费输入。
+一个需要 Agent 认知的 InboxEntry 在 safe boundary 通过稳定 source key 幂等提升为
+Session Input；Session append 与 Inbox consumed 原子收敛。consumed 只表示 Session
+已经耐久接管并可重放，不表示模型已正确理解、业务已完成或 canonical state 已改变。
 
 ## 7.5 Input Admission / Promotion / Consumption
 
@@ -784,15 +841,20 @@ Admission → Promotion → Consumption
 ```
 
 - **Admission**：验证来源、Authority、结构并持久化。
-- **Promotion**：Runtime 将确定性后果直接提交为 Canonical State。
-- **Consumption**：Agent 将需要认知判断的输入纳入推理并产生决策。
+- **Deterministic Promotion**：Runtime 将确定性后果直接提交为 Canonical State。
+- **Session Delivery**：需要认知判断的输入一次性提升到 Session Timeline。
+- **Cognitive Consumption**：Agent 在推理中解释输入并产生决策。
 
 ```text
-Receive != Promote != Consume
+Receive != Deterministic Promote != Session Delivery != Business Completion
 Deterministic first; cognitive only when necessary
 ```
 
 例如 Deliverable 到达后，Runtime 可直接满足匹配 Dependency；Parent 是否认为结果足够则需要 Agent 判断。
+
+Steer 在当前 Agent Loop 下一个 safe sampling boundary 提升；Queue 在当前 drain 结束后
+FIFO 提升，并且一次提升一条后重新判断 continuation。普通消息到达不抢占，Critical
+Steer/Stop 继续遵循 quiescence 规则。
 
 ## 7.6 Scheduler、Waiting 与 Current Work Selection
 
@@ -1383,6 +1445,10 @@ One Generic Agent Runtime
 - Tool / Organizational Intent；
 - Completion Claim；
 - Query / Report / Decision Request。
+- safe-boundary input drain 与 Steer/Queue 区分；
+- AgentStepContext capture；
+- typed ToolCall/ToolResult continuation；
+- 同一 pending logical step 内的 Compaction orchestration。
 
 ```text
 One Agent Runtime; many controlled execution contexts.
@@ -1394,7 +1460,7 @@ One Agent Runtime; many controlled execution contexts.
 
 ## 13.5 Communication Runtime
 
-负责 Assign / Query / Report / Deliver / Dependency / Governance command 的可靠路由、Admission、Promotion、Inbox、Correlation 和 Causation。
+负责 Assign / Query / Report / Deliver / Dependency / Governance command 的可靠路由、Admission、Promotion、Inbox、Correlation 和 Causation；与 Application/Session persistence 共同完成 source-key input promotion。
 
 ## 13.6 Tool Runtime
 
@@ -1402,7 +1468,7 @@ One Agent Runtime; many controlled execution contexts.
 
 ## 13.7 Provider Runtime
 
-负责 Model Catalog / Resolution、Provider Adapter、Auth、Streaming、Retry、Timeout、Cancellation、Canonical Provider Event 与 Usage Telemetry。
+负责 Model Catalog / Resolution、Provider Adapter、Auth、Streaming、Retry、Timeout、Cancellation、Canonical Provider Event 与 Usage Telemetry；同时拥有 Inference/Summary/ProviderNative operation lowering、usage/overflow evidence 与 opaque checkpoint binding。
 
 ## 13.8 Verification Runtime
 
@@ -1412,7 +1478,7 @@ One Agent Runtime; many controlled execution contexts.
 
 ## 13.9 Persistence / Projection Runtime
 
-Persistence 保存 Canonical State、Transactions、Event Journal、Artifact metadata、Session、Execution、Lease 与 History。
+Persistence 保存 Canonical State、Transactions、Event Journal、Artifact metadata、完整 Session Timeline、Execution、Lease 与 History。Projection/Context Projector 不删除或反向修改 Timeline。
 
 Projection 消费 State + Events，生成 Agent Tree、Overview、Dependency View、Transcript、Usage、Search、Workspace Summary 和 Attention。
 
@@ -1526,6 +1592,14 @@ Domain Core + Persistence/Event Journal
 58. Runtime Safety Envelope 与用户 Cost Budget 分离；前者始终存在但不得自行 Cancel Work。
 59. CompleteWork/CancelWork 若结束 Current Work，必须在同一事务清除 currentWorkId。
 60. Durability guarantee 以声明的 failure envelope、backup 与 RPO/RTO 为准，不由具体数据库名称隐式推出。
+61. Durable Session Timeline 与 active model window 分离；Compaction/截断只改变后者。
+62. 每个模型 ToolResult 必须稳定关联一个 ToolCall；不得产生无 callRef 的新结果。
+63. 同一 InboxEntry 最多一次提升为目标 Session Input；promotion 与 consumed 原子收敛。
+64. Steer 与 Queue 使用不同 safe-boundary 语义；普通未消费 Inbox 不得每轮重复注入。
+65. NeedsCompaction 不直接 settle Execution；完成 checkpoint 后继续同一 pending logical step。
+66. Provider-native checkpoint 只在兼容 ResolvedModelBinding 下使用；不兼容时 portable rebuild。
+67. Permission/Authority 不从 Session、summary、checkpoint、Tool text 或模型声明恢复。
+68. Provider overflow recovery 有界；任何已产生 durable assistant/tool effect 的 logical step 不得通过全步 replay 恢复。
 
 ---
 

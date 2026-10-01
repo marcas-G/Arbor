@@ -213,12 +213,26 @@ observable surface injection assertions derive from Execution state
                    record (GQ ruling: no dispatch table)
 ```
 
-## 5. Must Not Decide
+## 5. SCRC v1.22 Provider/Tool recovery additions
+
+- settled ToolInvocation + missing Session ToolResult → local sourced append,
+  never re-execute;
+- dangling ToolCall → reconcile invocation or write explicit
+  Interrupted/OutcomeUnknown result, never an unpaired success text;
+- Provider context overflow → one compact/retry only when no durable assistant
+  output or Tool/Control effect exists; second overflow is terminal;
+- started/incomplete compaction leaves old epoch active; completed checkpoint
+  resumes the same AgentLoopStep without replaying settled actions;
+- incompatible ProviderNative binding → portable Summary/frontier rebuild,
+  never opaque checkpoint replay.
+
+## 6. Must Not Decide
 
 - No new failure tags; no DID §6A.8 change (GQ4: mapping only over existing
   `ProviderFailureKind`).
-- No P3 retry-bound / backoff modification (bounds stay empirical; the
-  mechanism is contract, P3 `06` §3 precedent).
+- No ordinary P3 transport retry-bound / backoff modification (bounds stay
+  empirical; the mechanism is contract, P3 `06` §3 precedent). DID v1.22's
+  one overflow-triggered compact/retry is a distinct context-recovery bound.
 - No durable dispatch table / ack surface.
 - No P8 spawn-window reopening (P8 crash windows formally closed).
 - No Attention presentation / routing / UI (P10; P9 emits facts only).

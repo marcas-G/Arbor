@@ -274,6 +274,24 @@ unique but deliberately not an immediate FK. Binding is validated by the P3
 store when Manifest/ProviderTurn is created. Action rows persist hashes and
 references only; the process-local `AgentAction` is not serialized.
 
+### 3.8 Session Timeline successor contract (DID v1.22; migration 0019 reserved)
+
+Migration 0018 is already owned by Project archive/human-message terminal
+evolution. SCRC therefore reserves **0019** for the forward-only Session
+Timeline evolution; this contract landing does not authorize running it.
+
+`session_entries` remains the append-only physical carrier and gains the
+versioned envelope fields `item_type`, `schema_version`, and `context_epoch`.
+New sourced items enforce uniqueness on
+`(session_id, item_type, source_kind, source_ref)`. Checkpoint append and
+Session epoch advance are one epoch-CAS transaction.
+
+Legacy `Input/ModelOutput/Observation/CheckpointReference/ContextUpdate` rows
+remain evidence. Migration never infers `callRef` from payload text and never
+silently upgrades a legacy Observation into a strict ToolResult. Proven legacy
+sources may be bound explicitly; all others remain legacy-only for audit or
+portable summary.
+
 ## 4. Fence / stop / CAS queries
 
 ```sql

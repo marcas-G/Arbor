@@ -30,7 +30,13 @@ interface ExecutionDriverPortService {
 ```text
 load Execution + AgentExecutionState
 ↓
-prepareTurn()  ── NeedsCompaction ─→ compaction ProviderTurn → re-prepareTurn
+promote safe-boundary Steer/Queue input once into Session
+↓
+capture AgentStepContext
+↓
+prepareTurn()  ── NeedsCompaction ─→ compaction ProviderTurn
+              │                       → atomic checkpoint/epoch advance
+              │                       → same-step re-prepareTurn
               ├─ GovernanceBlocked ─→ settle Interrupted/GovernanceBlocked path
               └─ Ready(PreparedModelTurn)
 ↓
@@ -46,15 +52,21 @@ idempotent sourced ModelOutput append → AgentLoopStep OutputAccepted
 ↓
 reconstruct/validate route → action ledger → owning boundary
 ↓
-Observation appended per action → successor or persisted settlement proposal
+typed ToolResult/ControlResult appended per action with callRef
+  → successor or persisted settlement proposal
 ↓
-recent durable Observations assembled as DataOnly tool messages for next turn
+ContextProjector builds latest checkpoint + recent typed frontier
 ↓
 continue while a meaningful runnable action exists, else settle
 ```
 
 `OutcomeGap` (expected outcome − established evidence) drives action selection;
 the Agent does not mechanically replay an original plan (DID §8.15).
+
+`NeedsCompaction` is never mapped directly to an Execution settlement. A
+successful compaction keeps `(logicalStepNo, repairAttempt)` unchanged and must
+not repeat an already settled Provider inference/action. Provider overflow can
+trigger one physical compact/retry only before durable output/effect.
 
 ## 3. `decodeTurn` and invocation routing
 

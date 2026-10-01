@@ -220,6 +220,18 @@ readonly admitActivity: (
   wall time exceeds one renewal interval and asserts at least one durable
   renewal before result handoff.
 
+## 7C. SCRC compaction / overflow safety observations (DID v1.22)
+
+- One productive compaction that advances ContextEpoch is durable progress and
+  is not by itself a no-progress/doom-loop violation.
+- Repeated compaction with no meaningful reduction, unchanged frontier, or a
+  second provider overflow is a bounded safety failure and stops the current
+  Execution with typed failure/Attention; it never loops indefinitely.
+- Overflow recovery is allowed only before durable assistant output or
+  Tool/Control effect in that logical step.
+- Runtime safety Stop cannot turn ordinary `NeedsCompaction` into a user-facing
+  manual retry requirement, and cannot bypass the unresolved-side-effect gate.
+
 ## 8. Invariants
 
 ```text
@@ -230,6 +242,7 @@ the only P2 gate port change is the declared optional observation argument (§7A
 gate counters are in-process and reset on restart (RG-11; P9 `03` §4)
 AgentLoopStep transitions are fenced durable progress; AgentAction itself remains process-local
 RuntimeSafety Stop cannot bypass the unresolved-side-effect gate
+productive epoch advance counts as progress; repeated no-gain compaction is bounded
 ```
 
 ## 9. Must Not Decide

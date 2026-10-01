@@ -1,13 +1,44 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.21\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — durable AgentLoopStep implementation AUTHORIZED\
-**Supersedes:** v1.20\
-**Date:** 2026-09-30\
-**Depends on:** `Arbor System Design Specification v1.3`  
+**Version:** 1.22\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — SCRC owning contracts landed; implementation NOT AUTHORIZED\
+**Supersedes:** v1.21\
+**Date:** 2026-10-01\
+**Depends on:** `Arbor System Design Specification v1.4`
+
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
 **Scope:** 将已冻结的系统级设计落实为可实现且可测试的契约。v1.4 是 governance patch：闭合 P0 planning 审阅发现的 DG-01…DG-06，不改变 C1–C10 / X1–X11 的语义结论；v1.5 闭合 P1 pre-implementation 审阅发现的 P1-DG-01…05 与 P1-DG-10，P1+ 的 exact DDL、逐 Command payload/signature、Prompt 正文与经验参数仍按 phase-scoped closure 管理。
+
+**Governance changes (v1.21 → v1.22):**（Session / Context Runtime
+Convergence，SCRC-1…SCRC-12）
+
+- SCRC-1/2/12: Session becomes an append-only typed Timeline; active model
+  context is a lossy projection. Canonical control state remains outside the
+  Session and is freshly captured/reinjected.
+- SCRC-3/4: `PortableInputItem` supersedes `PortableMessage` as the universal
+  request carrier. ToolCall/ToolResult and ControlResult preserve stable
+  `callRef`, status, ObservationRef and ArtifactRef.
+- SCRC-5/6: Inbox input is delivered exactly once through source-key,
+  transactionally convergent Session promotion. Steer and Queue use distinct
+  safe-boundary semantics.
+- SCRC-7: each sampling request captures one immutable `AgentStepContext`,
+  persisted by reference/fingerprint in the Manifest; effect admission still
+  fresh-checks authority and ControlBasis.
+- SCRC-8/9: `NeedsCompaction` drives an explicit Compaction ProviderTurn inside
+  the Agent Loop. Summary and binding-bound ProviderNative implementations
+  atomically advance ContextEpoch and resume the same pending logical step.
+- SCRC-10: budget evidence is layered: observed provider usage, model/provider
+  estimator, adapter estimator, then conservative chars/4 fallback. One
+  overflow-triggered compact/retry is allowed only before durable output/effect.
+- SCRC-11: permission is never reconstructed from Session, summary, checkpoint
+  or model text; parent-distributed capability and execution-time authority
+  remain authoritative.
+
+The accepted proposal is fixed by SHA-256
+`200D9EE0F252915F1816C57FC5FEE470E77D7FB924A95A7474E03DF68BFAFD05`.
+This landing freezes contracts only; migration 0019 and production
+implementation require separate authorization.
 
 **Governance changes (v1.3 → v1.4):**
 
@@ -585,7 +616,7 @@ records and are not a second frozen design source.
 
 ## 0. 文档定位与冻结规则
 
-Arbor 的系统级语义由 `Arbor System Design Specification v1.3` 拥有。本文不重新讨论问题定义、G1–G8、S1–S4，也不在实现层静默修改顶层领域语义；本文只回答如何把这些系统约束落实为可编码、可持久、可并发验证和可恢复的实现契约：
+Arbor 的系统级语义由 `Arbor System Design Specification v1.4` 拥有。本文不重新讨论问题定义、G1–G8、S1–S4，也不在实现层静默修改顶层领域语义；本文只回答如何把这些系统约束落实为可编码、可持久、可并发验证和可恢复的实现契约：
 
 1. 哪些对象是长期 Identity，哪些只是 Value Object / Runtime Record / Projection；
 2. 哪些状态必须成为 Canonical Truth，哪些只能是认知状态或 UI 投影；
@@ -1201,6 +1232,29 @@ Session 不保存：
 Checkpoint + Recent Frontier
 ```
 
+Session 的 provider-neutral typed Timeline：
+
+```text
+SessionItem =
+  UserMessage(source, contentRef, trust)
+| AssistantMessage(providerTurnId, contentRef, finishReason)
+| ToolCall(providerTurnId, callRef, toolRef, argumentsRef)
+| ToolResult(callRef, invocationId?, status, observationRef,
+             modelOutputRef, artifactRefs[])
+| ControlResult(callRef, actionKind, disposition,
+                canonicalRefs[], observationRef)
+| ContextUpdate(sourceRef, revision, Full | Replace | Revoke, contentRef)
+| CompactionCheckpoint(fromEpoch, toEpoch, Summary | ProviderNative,
+                       summaryRef?, opaqueItemRef?, bindingFingerprint?,
+                       retainedFrontier)
+| AttachmentRef(ref, mediaType, trust, disclosure)
+```
+
+`SessionItem` 是 Runtime contract，不是 Domain Aggregate。`sourceRef + item type`
+幂等；同 source、不同 content hash 是 invariant conflict。Streaming delta 仍为
+transient，只有 completed typed item 进入 Timeline。`ContextUpdate` 记录模型投影的
+supersession，不成为 canonical authority。
+
 ## 1.8 Dependency / Deliverable / Message
 
 三者严格分开：
@@ -1707,6 +1761,7 @@ Workspace            = long-lived responsibility state
 Session              = long-lived cognitive continuity
 AgentExecutionState  = current episode control state
 AgentLoopStepRecord      = durable Provider-result/action/settlement handoff state
+AgentStepContext         = immutable per-sampling snapshot carried by ModelContextManifest
 ```
 
 `AgentLoopStepRecord` 与 action ledger 的完整 ADT、状态机和恢复不变量由 P3 `08`
@@ -1714,6 +1769,11 @@ AgentLoopStepRecord      = durable Provider-result/action/settlement handoff sta
 wire contract。特别地，v1.18 的 process-local `AgentAction` 仍不得持久化；恢复通过
 固定 Provider 结果 + pinned decoder 重建 typed invocation，并用 stored hash/ledger
 校验。
+
+`AgentStepContext` 不新增 Aggregate 或独立 table；Manifest 持久化其 control refs/
+revisions、input frontier、effective tool catalog、ResolvedModelBinding 与 budget basis
+的 fingerprint。它只保证一次 sampling request 的一致视图，不能作为后续 Tool/
+Control effect 的授权缓存。
 
 ---
 
@@ -2608,6 +2668,10 @@ Clock
 IdGenerator
 ```
 
+`InputPromotionService` 是 Application/Runtime orchestration service，不是
+infrastructure Port。它使用 `TransactionPort + SessionRepository +
+InboxProjectionStore` 在同一事务中完成 sourced Session append 与 Inbox consumed。
+
 > **P12 TR-6 propagation (P12 `04` §2.1; DID v1.14 G4).** `HealthPort` is an
 > explicit P12 catalog addition (declared in `packages/ports`; implemented by the
 > `observability` module). It is a catalog addition only: it changes no existing
@@ -2750,6 +2814,26 @@ ProviderRuntime 负责：transport、auth、stream、timeout、safe retry、prot
 
 Model Context 负责 semantic compilation；ProviderRuntime 不重写 Arbor instruction 语义。
 
+`PortableModelRequest` 使用 provider-neutral typed input：
+
+```text
+PortableInputItem =
+  Message
+| ToolCall
+| ToolResult
+| ContextUpdate
+| CompactionCheckpoint
+| AttachmentRef
+
+PortableModelRequest.operationKind =
+  Inference | CompactionSummary | CompactionNative
+```
+
+Adapter 必须无损保存 Tool call/result correlation。不能支持某个 Item 或 operation
+时返回 typed capability incompatibility，不得静默文本化。`CompactionNative` 使用
+现有 `CanonicalProviderEvent.ContinuationState(stateRef)` 承载 opaque result ref，
+不扩展 CanonicalProviderEvent ADT。
+
 ## 7.6 ToolCatalogPort 与 ToolRuntimePort
 
 Tool metadata 与 Tool invocation ownership 分离。
@@ -2833,6 +2917,13 @@ Tool 不经 executable `ToolRuntime`；其可见性不产生 authority，canonic
 mutation 仍只由 Application/Domain 与现有 execution-settlement owner 决定。
 这条路由 supersedes universal `AgentDirective` output bridge，而不改变
 P1/P4/P6/P7/P8 已冻结的 command、authority、lifecycle 与 verification 语义。
+
+所有 decoded executable/control invocation 必须携带 provider-neutral `callRef`。
+ToolRuntime/Control policy 产生完整 settlement/observation；Agent Runtime 负责将其
+作为 sourced `ToolResult`/`ControlResult` 写入 Session。ToolRuntime 不直接写
+Session，也不从 Session 恢复 authority。Tool settlement 已存在而 Session Result
+缺失时，按 invocation/resultRef 幂等补写；dangling ToolCall 必须恢复为真实结果或
+明确的 Interrupted/OutcomeUnknown，禁止无配对文本。
 
 P4 tool-invocation boundaries（DID v1.8 G1–G5）：
 
@@ -2931,21 +3022,27 @@ Model
 ## 8.2 Model Turn Pipeline
 
 ```text
-Execution
+Execution + pending safe-boundary input
 ↓
-Agent Policy Resolution
+durable Input Promotion
+↓
+capture AgentStepContext once
 ├── binding
-├── responsibility
-├── work / mission
-├── cognitive mode
-├── permission state
-├── environment
-├── available skills
-└── tool surface
+├── canonical control refs/revisions
+├── session / epoch / input frontier
+├── cognitive mode / environment
+├── effective tool catalog / available skills
+├── ResolvedModelBinding fingerprint
+└── budget evidence basis
 ↓
 Instruction Resolution
 ↓
-Context Planning / Retrieval / Budget
+Context Projector
+├── retained canonical snapshot/deltas
+├── latest completed checkpoint
+└── recent typed Session frontier
+↓
+Context Planning / Retrieval / Budget Evidence
 ↓
 ModelContextPlan
 ├── Instructions
@@ -2973,6 +3070,11 @@ Ready(PreparedModelTurn)
 ```
 
 `ContextUnsatisfiable` 属于 typed `E`，不属于 success/control ADT。并非每一个 Execution step 都需要 LLM 调用。
+
+`ContextProjector` 不消费 Inbox、不执行副作用、不调用 Provider。Promotion、Tool
+settlement 与 Compaction 各自在 owning Runtime durable 完成后，Projector 只读取
+已经提交的 typed result。相同 `(sessionId, contextEpoch, inputFrontier,
+stepContextFingerprint)` 必须产生可重复验证的 Manifest。
 
 ## 8.3 六类 Model Context Surface
 
@@ -3228,6 +3330,20 @@ Synthetic
 
 Compiler 尽量保持 Stable Prefix 稳定；Authority 与 physical prompt position 分离。
 
+预算证据优先级：
+
+```text
+Provider reported usage
+> provider/model tokenizer or estimator
+> adapter structured-request estimator
+> chars/4 conservative fallback
+```
+
+BudgetDecision/Manifest 记录 evidence kind、estimated/observed tokens、threshold、
+reserves 与 model context limit。粗估算可以提前触发 Compaction，但不得单独把普通
+可压缩历史压力判为 `ContextUnsatisfiable`。该错误只用于 Mandatory/Pinned/
+Protected fixed content 在全部允许模型策略下仍不可满足。
+
 ## 8.11 Skills
 
 Skill 是 On-demand Instruction Module，而不是 Tool。
@@ -3299,6 +3415,36 @@ Canonical State restores control.
 ```
 
 Compaction 可以由 token pressure、semantic boundary 或 model/provider boundary 触发，不是简单的“达到 90% 就 summarize”。
+
+规范控制流：
+
+```text
+prepareTurn → NeedsCompaction(request)
+→ persist Compaction ProviderTurn + Manifest
+→ choose Summary | ProviderNative from capability/binding
+→ execute + validate result
+→ atomically append checkpoint + advance ContextEpoch
+→ fresh canonical control reconstruction
+→ retry the same (logicalStepNo, repairAttempt)
+```
+
+```text
+CompactionResult =
+  SummaryCheckpoint(summaryRef, retainedFrontier, newEpoch)
+| NativeCheckpoint(opaqueItemRef, bindingFingerprint,
+                   retainedFrontier, newEpoch)
+```
+
+- started 未 completed 时旧 epoch/frontier 继续有效；checkpoint + epoch advance 原子；
+- Summary rolling update 保留 objective/requirements/decisions/progress/blockers/
+  next move/relevant refs；recent frontier 有独立 token 上限；
+- ProviderNative opaque item 只在兼容 ResolvedModelBinding 下复用；
+- Provider context overflow 且尚无 durable assistant/tool effect 时允许一次 compact +
+  same-step physical retry；第二次 overflow terminal；
+- Compaction failure 可以使当前 Execution typed fail/Attention，但
+  `NeedsCompaction` 本身不是 settlement；
+- Compaction 不消费权限，不更改 Work/Verification/Acceptance，也不重放 action
+  ledger 中已经解决的动作。
 
 ## 8.14 Context Progressive Disclosure
 
@@ -3572,6 +3718,14 @@ Tool definition refs/versions
 OutputContract ref
 Budget decision
 CompiledRequestHash
+LogicalStepNo / RepairAttempt
+OperationKind
+InputFrontier { firstSequence, lastSequence, checkpointSequence? }
+TypedInputItemRefs[] / CallRefs[]
+AgentStepContextFingerprint
+ResolvedModelBindingFingerprint
+BudgetEvidence { kind, estimatedTokens, observedTokens?, reserves, threshold }
+Compaction { implementation?, fromEpoch?, retainedFrontier? }
 ControlBasis {
   projectPolicyRevision
   workspacePolicyRevision
@@ -3814,6 +3968,36 @@ v1.20 起，runtime-produced entry 可携带 `source_kind`、`source_ref` 与
 AgentLoopStep 状态推进在同一事务中验证完整 lease-holder triple（P2 `02`/`04`，P3
 `08` §6）。
 
+v1.22 起，`session_entries` 是 `SessionItem` versioned envelope 的物理 carrier。
+下一 forward-only migration 是 **0019**（0018 已由 Project archive/human-message
+terminal evolution 占用）；本设计落字不授权运行该 migration。最小列语义为：
+
+```text
+session_id + sequence
+item_type + schema_version
+payload_json
+source_kind + source_ref + content_hash
+context_epoch
+created_at
+```
+
+新 sourced item 的 `(session_id, item_type, source_kind, source_ref)` 唯一。同 source/
+different hash 是 invariant conflict。旧 `Input/ModelOutput/Observation/
+CheckpointReference/ContextUpdate` row 保留为 Legacy evidence；不得从 payload text
+猜测 callRef 或自动升级为 strict ToolResult。无法证明来源的 legacy row 只允许审计/
+portable summary，不进入 strict tool-call replay。
+
+`SessionRepository` 至少提供：
+
+```text
+appendItemIdempotent
+listActiveFrontier(sessionId, epoch)
+commitCompaction(expectedEpoch, checkpoint, fence)
+```
+
+`InputPromotionService.promoteInbox` 在同一 Transaction scope 完成 sourced Session
+Input append + Inbox consumed；重复调用返回既有 sequence。
+
 ## 9.9 Commands / Events
 
 `commands` 保存 logical request 的 authoritative resolution，而不是只保存成功 mutation：
@@ -3890,6 +4074,16 @@ ModelContextManifest
 再执行 Provider request。这样 crash 后可以回答本次调用使用了什么模型上下文。
 
 Compaction 也是 Provider Turn 类型的一种，不作为不可见内部 hack。
+
+`provider_turns` 的语义 `operation_kind` 为：
+
+```text
+Inference | CompactionSummary | CompactionNative
+```
+
+三类均先持久 intent + Manifest，再调用 Provider。Native opaque item 存入 Blob/
+Artifact 或等价耐久 carrier；ProviderTurn/Session 只保存 ref + binding fingerprint，
+raw credential 不得进入 opaque item metadata。
 
 ## 9.11 ProviderTurn / ProviderAttempt
 
@@ -4018,7 +4212,7 @@ v1.14 (G8): `verification-runtime` **不是**独立物理包——Verification �
 | `ports` | 系统需要哪些外部能力 |
 | `application` | 哪个 Command 如何提交 |
 | `model-context` | 模型在当前 Turn 如何理解世界 |
-| `agent-runtime` | 执行 Model→Action→Observation loop；拥有 ControlToolRegistry、internal AgentAction、durable AgentLoopStep orchestration 与 shared control policy |
+| `agent-runtime` | 执行 Model→Action→Observation loop；拥有 safe input drain、AgentStepContext orchestration、Compaction Coordinator、ControlToolRegistry、internal AgentAction、durable AgentLoopStep orchestration 与 shared control policy |
 | `execution-runtime` | 谁何时运行、Lease/Fencing/Recovery；消费持久 settlement proposal |
 | Verification (无独立包; v1.14 G8) | 组织独立 Agentic Verification（由 `domain` / `application` + generic `ExecutionBound` runtime 实现） |
 | `provider-runtime` | 可靠调用模型与协议适配 |
@@ -4092,6 +4286,12 @@ extended Provider/Session stores are `ports` contracts implemented by the
 existing persistence adapter; orchestration remains in `agent-runtime`, while
 `execution-runtime` consumes the persisted proposal through existing allowed
 edges.
+
+DID v1.22 adds no package or dependency edge. `model-context` owns
+ContextProjector/budget evidence/typed request compilation; `agent-runtime`
+owns safe input drain and Compaction orchestration; `application` owns the
+transactional InputPromotionService; `provider-runtime` owns operation lowering
+and provider evidence. Existing forbidden edges remain unchanged.
 
 额外硬规则：
 
@@ -5293,6 +5493,7 @@ Long-lived Agent != long-running process.
 Application (Effect services)
 ├── CommandGateway(CommandEnvelope, CommandSubmissionContext)
 │     (uses the Persistence ports below)
+└── InputPromotionService(SessionRepository + InboxProjectionStore + TransactionPort)
 
 Persistence ports (§7.2)
 ├── TransactionPort
@@ -5311,12 +5512,18 @@ ModelContext
 ├── KnowledgeQueryPort
 ├── ModelCapabilityPort
 ├── Skill Registry
-└── ToolCatalogPort
+├── ToolCatalogPort
+├── ContextProjector
+├── BudgetEvidenceResolver
+└── PortableInputItem compiler
 
 AgentRuntime
 ├── ModelContext
 ├── ProviderPort
 ├── AgentLoopStepStore
+├── SafeBoundaryInputDrain
+├── AgentStepContext capture
+├── CompactionCoordinator
 ├── ControlToolRegistry
 ├── ToolRuntimePort (executable route only)
 ├── SessionRepository
@@ -5341,6 +5548,10 @@ ProjectionRuntime
 ├── Projection Store
 └── ProjectionQueryPort
 
+ProviderRuntime
+├── Inference / CompactionSummary / CompactionNative lowering
+└── usage / overflow / binding evidence
+
 Composition Root
 ├── joins executable and control definition projections for Model Context
 └── Layer graph resolves all live adapters/services
@@ -5353,8 +5564,8 @@ Composition Root
 ```text
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
-System Design Specification v1.3          FROZEN
-Detailed Implementation Design v1.21     TOP-LEVEL FROZEN
+System Design Specification v1.4          FROZEN
+Detailed Implementation Design v1.22     TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED
@@ -5365,6 +5576,8 @@ S01 qualification authorization            AUTHORIZED (v1.19 ACR-7 — Control/E
 Wave 2 implementation authorization         AUTHORIZED (v1.19 ACR-6; scope = 51 module map, 52 DAG order)
 Durable AgentLoopStep handoff design          FROZEN (v1.20 AHT-1…AHT-8; v1.21 name)
 Durable AgentLoopStep implementation          AUTHORIZED (v1.21 ALS-I1)
+Session / Context Runtime convergence         FROZEN (v1.22 SCRC-1…SCRC-12)
+Session / Context Runtime implementation      NOT AUTHORIZED (migration 0019 reserved)
 DOGFOOD-DG-01 design question             RESOLVED by v1.20 AHT-1…AHT-8
 AgentLoopStep recovery implementation gate    OPEN — requires authorization + AH1–AH14 + equivalent fixture
 P0 Technical Baseline                     FROZEN (versioned baseline)
