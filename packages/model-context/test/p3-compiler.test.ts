@@ -83,6 +83,14 @@ describe("P3 model-family compiler", () => {
       sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
       contextEpoch: parse(ContextEpochNumber)(0),
       maxOutputTokens: 128,
+      stepContext: {
+        logicalStepNo: 2,
+        repairAttempt: 1,
+        inputFrontier: { firstSequence: 4, lastSequence: 8 },
+        fingerprint: "step-fingerprint",
+        bindingFingerprint: "binding-fingerprint",
+      },
+      estimatedInputTokens: 321,
     };
     const first = compileTurn(input);
     const second = compileTurn(input);
@@ -100,6 +108,17 @@ describe("P3 model-family compiler", () => {
     expect(first.request.operationKind).toBe("Inference");
     expect(first.request.inputItems).toEqual([]);
     expect(first.manifest.controlBasis.environmentRevision).toBe("env-1");
+    expect(first.manifest).toMatchObject({
+      logicalStepNo: 2,
+      repairAttempt: 1,
+      inputFrontier: { firstSequence: 4, lastSequence: 8 },
+      agentStepContextFingerprint: "step-fingerprint",
+      resolvedModelBindingFingerprint: "binding-fingerprint",
+      budgetEvidence: {
+        kind: "CharsPerFourFallback",
+        estimatedTokens: 321,
+      },
+    });
   });
 
   it("compiles executable and control definitions with explicit route provenance", () => {

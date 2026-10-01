@@ -5,6 +5,7 @@ export * from "./decode.js";
 export * from "./eval.js";
 export * from "./model-catalog.js";
 export * from "./prepare-turn.js";
+export * from "./projector.js";
 export * from "./prompt.js";
 export * from "./request-budget.js";
 export * from "./resolver.js";

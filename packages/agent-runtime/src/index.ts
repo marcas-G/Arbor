@@ -5,3 +5,4 @@ export * from "./legacy-directive.js";
 export * from "./prompt-assets.js";
 export * from "./repair.js";
 export * from "./safe-input-drain.js";
+export * from "./step-context.js";
