@@ -16,6 +16,20 @@ export interface SessionTimelineProjection {
   readonly instructionFragments: ReadonlyArray<InstructionFragment>;
 }
 
+export interface SessionFrontier {
+  readonly firstSequence: number | null;
+  readonly lastSequence: number | null;
+}
+
+export type SessionProjectionDecision =
+  | { readonly _tag: "Ready"; readonly projection: SessionTimelineProjection }
+  | {
+      readonly _tag: "Blocked";
+      readonly reason: "UnresolvedInvocation" | "ContradictoryTimeline";
+      readonly callRefs: ReadonlyArray<string>;
+      readonly closedFrontier: SessionFrontier;
+    };
+
 const statusOf = (value: unknown): PortableToolResultStatus => {
   switch (value) {
     case "Succeeded":
@@ -151,4 +165,97 @@ export const projectSessionTimeline = (
     // assembled by their owning source and cannot emerge from Timeline text.
     instructionFragments: [],
   };
+};
+
+const payloadOf = (
+  entry: SessionEntryRecord,
+): Record<string, unknown> | undefined =>
+  typeof entry.payload === "object" && entry.payload !== null
+    ? (entry.payload as Record<string, unknown>)
+    : undefined;
+
+const closedFrontierBefore = (
+  entries: ReadonlyArray<SessionEntryRecord>,
+  sequence: number,
+): SessionFrontier => {
+  const before = entries.filter((entry) => entry.sequence < sequence);
+  return {
+    firstSequence: before[0]?.sequence ?? null,
+    lastSequence: before.at(-1)?.sequence ?? null,
+  };
+};
+
+/** P17 Session Context Gate: only a causally closed invocation timeline may
+ * become Provider input. Parallel results may complete out of order; identity
+ * is the stable callRef, never adjacency or text inference. */
+export const decideSessionProjection = (
+  entries: ReadonlyArray<SessionEntryRecord>,
+): SessionProjectionDecision => {
+  const calls = new Map<
+    string,
+    { readonly sequence: number; readonly toolName: string }
+  >();
+  const results = new Map<string, number>();
+  for (const entry of entries) {
+    const payload = payloadOf(entry);
+    if (payload === undefined) continue;
+    if (payload._tag === "ToolCall") {
+      if (
+        typeof payload.callRef !== "string" ||
+        typeof payload.toolRef !== "string" ||
+        calls.has(payload.callRef) ||
+        results.has(payload.callRef)
+      ) {
+        const callRef = String(payload.callRef ?? "unknown");
+        return {
+          _tag: "Blocked",
+          reason: "ContradictoryTimeline",
+          callRefs: [callRef],
+          closedFrontier: closedFrontierBefore(entries, entry.sequence),
+        };
+      }
+      calls.set(payload.callRef, {
+        sequence: entry.sequence,
+        toolName: payload.toolRef,
+      });
+      continue;
+    }
+    if (payload._tag !== "ToolResult" && payload._tag !== "ControlResult") {
+      continue;
+    }
+    const callRef = String(payload.callRef ?? "unknown");
+    const call = calls.get(callRef);
+    const resultToolName =
+      payload._tag === "ToolResult"
+        ? String(payload.toolName ?? "unknown")
+        : String(payload.actionKind ?? "unknown");
+    if (
+      typeof payload.callRef !== "string" ||
+      call === undefined ||
+      results.has(callRef) ||
+      call.toolName !== resultToolName
+    ) {
+      return {
+        _tag: "Blocked",
+        reason: "ContradictoryTimeline",
+        callRefs: [callRef],
+        closedFrontier: closedFrontierBefore(entries, entry.sequence),
+      };
+    }
+    results.set(callRef, entry.sequence);
+  }
+
+  const unresolved = [...calls.entries()]
+    .filter(([callRef]) => !results.has(callRef))
+    .sort((left, right) => left[1].sequence - right[1].sequence);
+  if (unresolved.length > 0) {
+    const first = unresolved[0] as (typeof unresolved)[number];
+    return {
+      _tag: "Blocked",
+      reason: "UnresolvedInvocation",
+      callRefs: unresolved.map(([callRef]) => callRef),
+      closedFrontier: closedFrontierBefore(entries, first[1].sequence),
+    };
+  }
+  return { _tag: "Ready", projection: projectSessionTimeline(entries) };
 };

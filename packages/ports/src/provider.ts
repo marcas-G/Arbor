@@ -232,7 +232,8 @@ export interface PortableToolPairingError {
   readonly kind:
     | "DuplicateToolCall"
     | "MissingToolCall"
-    | "DuplicateToolResult";
+    | "DuplicateToolResult"
+    | "DanglingToolCall";
   readonly callRef: string;
 }
 
@@ -282,6 +283,18 @@ export const validatePortableToolPairing = (
       };
     }
     results.add(item.callRef);
+  }
+  for (const callRef of calls) {
+    if (!results.has(callRef)) {
+      return {
+        ok: false,
+        error: {
+          _tag: "PortableToolPairingError",
+          kind: "DanglingToolCall",
+          callRef,
+        },
+      };
+    }
   }
   return { ok: true };
 };
