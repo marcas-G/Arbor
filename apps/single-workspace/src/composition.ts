@@ -67,6 +67,7 @@ import {
   ProjectionStoreLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
+  ProviderDeploymentBreakerLive,
   ProviderTurnStoreLive,
   RecordEnvironmentChangeLive,
   ResourceOwnershipRepositoryLive,
@@ -465,6 +466,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(HumanMessageStoreLive, infra),
     Layer.provide(ConversationResponseJobStoreLive, infra),
     Layer.provide(ConversationAttemptStoreLive, infra),
+    Layer.provide(ProviderDeploymentBreakerLive, infra),
     Layer.provide(ConsumerOffsetStoreLive, infra),
     Layer.provide(ConsumerDeadLetterStoreLive, infra),
     Layer.provide(ProjectionStoreLive, infra),
@@ -644,6 +646,14 @@ export const buildSingleWorkspaceLayer = (
         ? { projectId: config.projectId }
         : {}),
       principal: parse(Principal)(config.principalRef ?? "runtime:system"),
+      bindingFingerprint:
+        deploymentBinding === undefined
+          ? `legacy:${modelRef}`
+          : resolvedModelBindingFingerprint(deploymentBinding),
+      configurationRevision:
+        deploymentBinding === undefined
+          ? `legacy:${modelRef}`
+          : resolvedModelBindingFingerprint(deploymentBinding),
       ...(config.consumerBatchSize !== undefined
         ? { batchSize: config.consumerBatchSize }
         : {}),

@@ -5,6 +5,7 @@ import {
   type ConversationResponseJob,
   type ConversationResponseJobState,
   ConversationResponseJobStore,
+  ProviderDeploymentBreaker,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -452,6 +453,176 @@ export const ConversationAttemptStoreLive = Layer.effect(
             retryDecision: parseJson(row.retry_decision_json) as never,
             policyVersion: row.policy_version,
           }));
+        }),
+    });
+  }),
+);
+
+interface BreakerRow {
+  binding_fingerprint: string;
+  state: "Closed" | "Open" | "HalfOpen";
+  consecutive_failures: number;
+  cooldown_until: string | null;
+  failure_class: ConversationFailureClass | null;
+  configuration_revision: string;
+  half_open_execution_id: string | null;
+  revision: number;
+  updated_at: string;
+}
+
+const BREAKER_COLUMNS = `binding_fingerprint, state, consecutive_failures,
+  cooldown_until, failure_class, configuration_revision,
+  half_open_execution_id, revision, updated_at`;
+
+export const ProviderDeploymentBreakerLive = Layer.effect(
+  ProviderDeploymentBreaker,
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const find = (bindingFingerprint: string) =>
+      sql
+        .unsafe<BreakerRow>(
+          `SELECT ${BREAKER_COLUMNS} FROM provider_deployment_breakers
+           WHERE binding_fingerprint = ?`,
+          [bindingFingerprint],
+        )
+        .pipe(Effect.mapError(jobStoreError));
+    return ProviderDeploymentBreaker.of({
+      admit: (input) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* find(input.bindingFingerprint);
+          const row = rows[0];
+          if (row === undefined) {
+            yield* sql
+              .unsafe(
+                `INSERT INTO provider_deployment_breakers
+                 (${BREAKER_COLUMNS}) VALUES (?,'Closed',0,NULL,NULL,?,NULL,0,?)`,
+                [
+                  input.bindingFingerprint,
+                  input.configurationRevision,
+                  input.now,
+                ],
+              )
+              .pipe(Effect.mapError(jobStoreError));
+            return { _tag: "Admitted" as const, probe: false };
+          }
+          if (row.configuration_revision !== input.configurationRevision) {
+            yield* sql
+              .unsafe(
+                `UPDATE provider_deployment_breakers SET state='Closed',
+                   consecutive_failures=0, cooldown_until=NULL,
+                   failure_class=NULL, configuration_revision=?,
+                   half_open_execution_id=NULL, revision=revision+1,
+                   updated_at=? WHERE binding_fingerprint=?`,
+                [
+                  input.configurationRevision,
+                  input.now,
+                  input.bindingFingerprint,
+                ],
+              )
+              .pipe(Effect.mapError(jobStoreError));
+            return { _tag: "Admitted" as const, probe: false };
+          }
+          if (row.state === "Closed") {
+            return { _tag: "Admitted" as const, probe: false };
+          }
+          if (row.state === "HalfOpen") {
+            return row.half_open_execution_id === input.executionId
+              ? { _tag: "Admitted" as const, probe: true }
+              : {
+                  _tag: "Denied" as const,
+                  failureClass: row.failure_class ?? "UnknownFailure",
+                  ...(row.cooldown_until === null
+                    ? {}
+                    : { retryAt: row.cooldown_until }),
+                };
+          }
+          if (row.cooldown_until !== null && row.cooldown_until <= input.now) {
+            const updated = yield* sql
+              .unsafe<{ binding_fingerprint: string }>(
+                `UPDATE provider_deployment_breakers SET state='HalfOpen',
+                   half_open_execution_id=?, revision=revision+1,
+                   updated_at=? WHERE binding_fingerprint=? AND state='Open'
+                   RETURNING binding_fingerprint`,
+                [input.executionId, input.now, input.bindingFingerprint],
+              )
+              .pipe(Effect.mapError(jobStoreError));
+            if (updated.length > 0) {
+              return { _tag: "Admitted" as const, probe: true };
+            }
+          }
+          return {
+            _tag: "Denied" as const,
+            failureClass: row.failure_class ?? "UnknownFailure",
+            ...(row.cooldown_until === null
+              ? {}
+              : { retryAt: row.cooldown_until }),
+          };
+        }),
+      recordSuccess: (input) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          yield* sql
+            .unsafe(
+              `INSERT INTO provider_deployment_breakers
+               (${BREAKER_COLUMNS}) VALUES (?,'Closed',0,NULL,NULL,?,NULL,0,?)
+               ON CONFLICT(binding_fingerprint) DO UPDATE SET
+                 state='Closed', consecutive_failures=0, cooldown_until=NULL,
+                 failure_class=NULL,
+                 configuration_revision=excluded.configuration_revision,
+                 half_open_execution_id=NULL,
+                 revision=provider_deployment_breakers.revision+1,
+                 updated_at=excluded.updated_at`,
+              [
+                input.bindingFingerprint,
+                input.configurationRevision,
+                input.now,
+              ],
+            )
+            .pipe(Effect.mapError(jobStoreError));
+        }),
+      recordFailure: (input) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* find(input.bindingFingerprint);
+          const row = rows[0];
+          const previousCount =
+            row?.configuration_revision === input.configurationRevision
+              ? row.consecutive_failures
+              : 0;
+          const count = previousCount + 1;
+          const opensImmediately =
+            input.failureClass === "AuthenticationFailed" ||
+            input.failureClass === "RequestRejected";
+          const open = opensImmediately || count >= 3;
+          const cooldownUntil =
+            open && !opensImmediately
+              ? new Date(Date.parse(input.now) + 60_000).toISOString()
+              : null;
+          yield* sql
+            .unsafe(
+              `INSERT INTO provider_deployment_breakers
+               (${BREAKER_COLUMNS}) VALUES (?,?,?,?,?,?,NULL,0,?)
+               ON CONFLICT(binding_fingerprint) DO UPDATE SET
+                 state=excluded.state,
+                 consecutive_failures=excluded.consecutive_failures,
+                 cooldown_until=excluded.cooldown_until,
+                 failure_class=excluded.failure_class,
+                 configuration_revision=excluded.configuration_revision,
+                 half_open_execution_id=NULL,
+                 revision=provider_deployment_breakers.revision+1,
+                 updated_at=excluded.updated_at`,
+              [
+                input.bindingFingerprint,
+                open ? "Open" : "Closed",
+                count,
+                cooldownUntil,
+                input.failureClass,
+                input.configurationRevision,
+                input.now,
+              ],
+            )
+            .pipe(Effect.mapError(jobStoreError));
         }),
     });
   }),
