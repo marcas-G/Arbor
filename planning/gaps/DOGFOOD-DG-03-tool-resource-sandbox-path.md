@@ -146,5 +146,5 @@ Scope: one new test file; git diff --check PASS
 ```
 
 Full implementation evidence is
-`planning/results/execution-workspace-binding.result.md`. Resolving Git revision
-is the commit that contains this record and that result.
+`planning/results/execution-workspace-binding.result.md`. Resolving Git revision:
+`f9c00cd`.

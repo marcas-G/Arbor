@@ -4,6 +4,8 @@
 
 **Status:** COMPLETE — DESIGN RESOLVED / IMPLEMENTATION PROVEN / LIVE DOGFOOD PASS
 
+**Implementation revision:** `f9c00cd`
+
 ## Outcome
 
 Arbor no longer asks a model-facing filesystem tool to reuse a host
