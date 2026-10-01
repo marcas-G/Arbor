@@ -77,6 +77,26 @@ describe("SCRC typed item protocol", () => {
     });
   });
 
+  it("rejects a dangling ToolCall before provider transport", () => {
+    expect(
+      validatePortableToolPairing([
+        {
+          _tag: "ToolCall",
+          callRef: "call-dangling",
+          toolName: "read",
+          argumentsJson: "{}",
+        },
+      ]),
+    ).toEqual({
+      ok: false,
+      error: {
+        _tag: "PortableToolPairingError",
+        kind: "DanglingToolCall",
+        callRef: "call-dangling",
+      },
+    });
+  });
+
   it("returns typed incompatibility instead of silently textifying an unsupported item", () => {
     const request: PortableModelRequestV2 = {
       requestVersion: 2,

@@ -7,11 +7,13 @@ import type {
 } from "@arbor/domain";
 import {
   type ControlBasis,
+  decideSessionProjection,
   decodeTurn,
   GENERIC_COGNITION_PROGRAM,
   type InstructionFragment,
   type ModelContextService,
   projectSessionTimeline,
+  type SessionTimelineProjection,
   TOOL_INVOCATION_CONTRACT,
 } from "@arbor/model-context";
 import type {
@@ -225,7 +227,59 @@ export const runModelDecision = (
           ),
         )
         .pipe(Effect.mapError(failure));
-      const sessionProjection = projectSessionTimeline(recentSessionEntries);
+      const projectionDecision = decideSessionProjection(recentSessionEntries);
+      let sessionProjection: SessionTimelineProjection;
+      if (projectionDecision._tag === "Blocked") {
+        const settledForRecovery =
+          loopStep !== undefined && providerTurns !== undefined
+            ? yield* tx
+                .transact(providerTurns.findSettledResult(providerTurnId))
+                .pipe(Effect.mapError(failure))
+            : undefined;
+        if (settledForRecovery?._tag === "SettledSuccess") {
+          const lastClosed = projectionDecision.closedFrontier.lastSequence;
+          sessionProjection = projectSessionTimeline(
+            lastClosed === null
+              ? []
+              : recentSessionEntries.filter(
+                  (entry) => entry.sequence <= lastClosed,
+                ),
+          );
+        } else {
+          const settlement = safetyStop(
+            `SessionContextBlocked:${projectionDecision.reason}:${projectionDecision.callRefs.join(",")}`,
+          );
+          if (
+            loopStep !== undefined &&
+            loopSteps !== undefined &&
+            loopStepFence !== undefined &&
+            loopStep.state === "Prepared"
+          ) {
+            yield* tx
+              .transact(
+                loopSteps.transition(
+                  {
+                    identity: loopStep.identity,
+                    expectedRevision: loopStep.revision,
+                    expectedState: "Prepared",
+                    next: {
+                      ...loopStep,
+                      state: "SettlementProposed",
+                      settlement,
+                      revision: loopStep.revision + 1,
+                      updatedAt: yield* now(),
+                    },
+                  },
+                  loopStepFence,
+                ),
+              )
+              .pipe(Effect.mapError(failure));
+          }
+          return { _tag: "Settle", settlement };
+        }
+      } else {
+        sessionProjection = projectionDecision.projection;
+      }
       const sessionRecord = yield* tx
         .transact(sessions.findById(input.execution.sessionId))
         .pipe(Effect.mapError(failure));

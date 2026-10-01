@@ -978,6 +978,71 @@ describe("P3-013 agent driver", () => {
     ]);
   });
 
+  it("blocks a dangling Session call before any Provider bytes", async () => {
+    let providerCalls = 0;
+    const app = makeApp([], {
+      providerRuntime: Layer.succeed(ProviderRuntime, {
+        runTurn: () => {
+          providerCalls += 1;
+          return Effect.die("provider must not run for blocked context");
+        },
+      }),
+    });
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const sql = yield* SqlClient;
+        yield* sql.unsafe(
+          "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+          [
+            sessionId,
+            0,
+            "ModelOutput",
+            "ToolCall",
+            2,
+            0,
+            JSON.stringify({
+              _tag: "ToolCall",
+              providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+              callRef: "dangling",
+              toolRef: "read",
+              argumentsRef: "inline:test",
+              argumentsJson: "{}",
+            }),
+            "t",
+            "ProviderTurnCall",
+            "dangling",
+            "hash-dangling",
+          ],
+        );
+        const settlement = yield* drive(allowGate);
+        const steps = yield* sql.unsafe<{
+          state: string;
+          settlement_json: string | null;
+        }>(
+          "SELECT state, settlement_json FROM agent_loop_steps WHERE execution_id = ?",
+          [executionId],
+        );
+        return { settlement, step: steps[0] };
+      }),
+      app,
+    );
+
+    expect(providerCalls).toBe(0);
+    expect(result.settlement).toMatchObject({
+      _tag: "Interrupted",
+      result: {
+        _tag: "ControlledInterruption",
+        reason: "SessionContextBlocked:UnresolvedInvocation:dangling",
+      },
+    });
+    expect(result.step).toMatchObject({
+      state: "SettlementProposed",
+      settlement_json: expect.stringContaining("SessionContextBlocked"),
+    });
+  });
+
   it("stops at the P2 safety gate", async () => {
     const app = makeApp([textTurn]);
     const program = Effect.gen(function* () {
