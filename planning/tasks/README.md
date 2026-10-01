@@ -5,8 +5,35 @@ implementable work. They are the unit a Coding Agent claims and executes.
 They may narrow implementation work but may **not** override design
 semantics.
 
-Phases: **P0–P12** (complete). Task contracts reference
-`docs/design/implementation/<phase>/**`.
+Phases: **P0–P12** (complete) plus the post-closure **SCRC** convergence phase
+(planned; implementation not authorized). Task contracts reference the owning
+`docs/design/implementation/**` contracts.
+
+## SCRC convergence plan
+
+| Scope | Plan | Status | Result |
+|---|---|---|---|
+| Session / Context Runtime Convergence | `planning/phases/SCRC.md` | PLANNING COMPLETE / IMPLEMENTATION NOT AUTHORIZED | pending |
+
+```text
+SCRC-001 → SCRC-002
+SCRC-002 → SCRC-003, SCRC-004
+SCRC-003, SCRC-004 → SCRC-005
+SCRC-005 → SCRC-006
+SCRC-005, SCRC-006 → SCRC-007
+SCRC-002…SCRC-007 → SCRC-008
+```
+
+| ID | Title |
+|---|---|
+| SCRC-001 | Typed Session / Provider Item Protocol |
+| SCRC-002 | Migration 0019, Session Store, Durable Input Promotion |
+| SCRC-003 | Steer / Queue Safe-Boundary Input Drain |
+| SCRC-004 | Tool / Control Timeline Closure |
+| SCRC-005 | AgentStepContext, ContextProjector, Manifest |
+| SCRC-006 | Summary Compaction Coordinator |
+| SCRC-007 | ProviderNative Compaction, Budget and Overflow Evidence |
+| SCRC-008 | Recovery, Qualification, Migration Proof and Closure |
 
 ## Web Product UI execution plans
 
@@ -191,6 +218,9 @@ Blocking=0; governed by the GQ1–GQ5 decisions recorded in
 by the GQ1–GQ7 + GAP-01 decisions recorded in `P10/00-contract-index.md`
 under DID v1.13 G1–G8).
 `Problem & Goals v1.2` / `Scenarios v1.2` / `System Design v1.3` are unchanged.
+
+SCRC tasks project `System Design v1.4` / `DID v1.22` plus the SCRC successor
+contracts in P2/P3/P4/P9/P12. They do not reopen historical phase completion.
 
 ## Entry blocker
 

@@ -91,7 +91,10 @@ preserved-database recovery.
 Session / Context Runtime convergence: **SCRC-1…SCRC-12 ACCEPTED; owning
 contracts landed as System Design v1.4 / DID v1.22 at `75589c5`;
 post-landing review Blocking = 0; `SCRC-DG-01` RESOLVED**. Migration 0019 and
-SCRC code implementation are NOT AUTHORIZED.
+SCRC code implementation are NOT AUTHORIZED. SCRC planning is COMPLETE
+(`planning/phases/SCRC.md`; 8 task contracts; T01–T30 acceptance matrix;
+planning review Blocking = 0) and awaits the explicit
+`AUTHORIZE_SESSION_CONTEXT_RUNTIME_IMPLEMENTATION` token.
 P16 (Provider Extension Architecture — DID-side implementation design under
 `docs/design/implementation/P16-provider-extension/`, governance-authorized
 2026-09-29): **Gate A design contracts FROZEN**; **Gate B Design Closure =
