@@ -123,6 +123,15 @@ const input = (overrides: Record<string, unknown> = {}) => ({
   },
   maxOutputTokens: 128,
   bodySkillIds: [],
+  turnProfile: {
+    purpose: "WorkspaceWork" as const,
+    profileVersion: "turn-profile-v1" as const,
+    outputContractRef: "tool-invocation-v1",
+    executableTools: [],
+    controlTools: [],
+    contextPolicyRef: "workspace-work-context-v1",
+    fingerprint: "tpf_test",
+  },
   ...overrides,
 });
 

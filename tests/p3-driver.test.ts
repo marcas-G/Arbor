@@ -42,11 +42,12 @@ import {
 import {
   ModelContext,
   ModelContextLive,
+  makeTurnProfileResolver,
+  type TurnProfileResolverService,
 } from "../packages/model-context/src/index.js";
 import {
   AgentLoopStepStore,
   type CanonicalProviderEvent,
-  ControlToolCatalogPort,
   EnvironmentRevisionStore,
   ExecutionDriverPort,
   ModelCapabilityPort,
@@ -58,7 +59,6 @@ import {
   type RuntimeSafetyGateService,
   SessionRepository,
   SkillRegistry,
-  ToolCatalogPort,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
@@ -125,6 +125,7 @@ const makeApp = (
     readonly executionPolicyOverrides?: ProviderExecutionPolicyOverrides;
     readonly failFirstSourcedAppend?: boolean;
     readonly failFirstOutputAcceptedTransition?: boolean;
+    readonly turnProfileResolver?: TurnProfileResolverService;
   } = {},
 ) => {
   const base = layer({ filename: ":memory:" });
@@ -207,7 +208,7 @@ const makeApp = (
   );
   const providerRuntime = options.providerRuntime ?? defaultProviderRuntime;
   const definitions = options.toolDefinitions ?? [];
-  const tools = Layer.succeed(ToolCatalogPort, {
+  const toolCatalogService = {
     visibleRefs: () =>
       Effect.succeed(
         definitions.map(({ name, version, hash }) => ({ name, version, hash })),
@@ -223,7 +224,7 @@ const makeApp = (
         ? Effect.die(`no tool definition for ${ref.name}`)
         : Effect.succeed(tool);
     },
-  });
+  };
   const defaultSendHandler: AgentActionHandler = {
     action: "SendMessage",
     handle: () =>
@@ -238,12 +239,15 @@ const makeApp = (
   const controlRegistry = makeControlToolRegistry(
     options.controlHandlers ?? [defaultSendHandler],
   );
-  const controlToolCatalog = Layer.succeed(ControlToolCatalogPort, {
-    visibleDefinitions: controlRegistry.visibleDefinitions,
-  });
+  const turnProfileResolver =
+    options.turnProfileResolver ??
+    makeTurnProfileResolver({
+      toolCatalog: toolCatalogService,
+      controlCatalog: controlRegistry,
+    });
   const modelContext = Layer.provide(
     ModelContextLive,
-    Layer.mergeAll(capability, skills, tools, controlToolCatalog),
+    Layer.mergeAll(capability, skills),
   );
   const environmentRevisions =
     options.environmentRevisions ??
@@ -251,6 +255,7 @@ const makeApp = (
   const driver = Layer.provide(
     AgentLoopDriverLive({
       controlRegistry,
+      turnProfileResolver,
       ...(options.executableHandler !== undefined
         ? { executableInvocationHandler: options.executableHandler }
         : {}),
@@ -920,6 +925,68 @@ describe("P3-013 agent driver", () => {
       callRef: "c1",
       status: "Denied",
       disposition: "HandlerRejected",
+    });
+  });
+
+  it("turns a changed control registration into a typed stale result", async () => {
+    const app = makeApp([sendMessageTurn("stale")], {
+      turnProfileResolver: {
+        resolve: () =>
+          Effect.succeed({
+            purpose: "WorkspaceCoordination",
+            profileVersion: "turn-profile-v1",
+            outputContractRef: "tool-invocation-v1",
+            executableTools: [],
+            controlTools: [
+              {
+                name: "arbor_send_message",
+                description: "stale registration",
+                schemaJson: "{}",
+                version: "1",
+                hash: "stale-hash",
+                requiredCapability: "agent:communicate",
+              },
+            ],
+            contextPolicyRef: "workspace-coordination-context-v1",
+            fingerprint: "tpf_stale",
+          }),
+      },
+    });
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const settlement = yield* drive(allowGate);
+        const sql = yield* SqlClient;
+        const actions = yield* sql.unsafe<{
+          state: string;
+          disposition_json: string | null;
+        }>(
+          "SELECT state, disposition_json FROM agent_loop_step_actions WHERE execution_id = ?",
+          [executionId],
+        );
+        const results = yield* sql.unsafe<{ payload_json: string }>(
+          "SELECT payload_json FROM session_entries WHERE item_type = 'ControlResult'",
+        );
+        return { settlement, actions, results };
+      }),
+      app,
+    );
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Interrupted",
+      result: { reason: "StaleToolRegistration" },
+    });
+    expect(result.actions).toEqual([
+      expect.objectContaining({
+        state: "TerminalRejected",
+        disposition_json: expect.stringContaining("StaleToolRegistration"),
+      }),
+    ]);
+    expect(JSON.parse(result.results[0]?.payload_json ?? "{}")).toMatchObject({
+      _tag: "ControlResult",
+      status: "Denied",
+      disposition: "StaleToolRegistration",
     });
   });
 

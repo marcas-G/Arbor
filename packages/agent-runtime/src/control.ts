@@ -27,6 +27,7 @@ import {
 export type ToolRouteClassification =
   | { readonly _tag: "Executable" }
   | { readonly _tag: "Control" }
+  | { readonly _tag: "Stale"; readonly route: "Control" }
   | {
       readonly _tag: "Invalid";
       readonly reason: "UnknownTool" | "RouteRegistryMismatch";
@@ -38,8 +39,10 @@ export const classifyToolRoute = (
   toolRoutes: ReadonlyArray<{
     readonly name: string;
     readonly route: "Executable" | "Control";
+    readonly version?: string;
+    readonly hash?: string;
   }>,
-  registry: Pick<ControlToolRegistryService, "classify">,
+  registry: Pick<ControlToolRegistryService, "classify" | "definitions">,
   toolName: string,
 ): ToolRouteClassification => {
   const route = toolRoutes.find((candidate) => candidate.name === toolName);
@@ -50,6 +53,18 @@ export const classifyToolRoute = (
     (route.route === "Executable" && registryRoute === "Control")
   ) {
     return { _tag: "Invalid", reason: "RouteRegistryMismatch" };
+  }
+  if (route.route === "Control" && route.version !== undefined) {
+    const current = registry
+      .definitions()
+      .find((definition) => definition.name === toolName);
+    if (
+      current === undefined ||
+      current.version !== route.version ||
+      (route.hash !== undefined && current.hash !== route.hash)
+    ) {
+      return { _tag: "Stale", route: "Control" };
+    }
   }
   return { _tag: route.route };
 };

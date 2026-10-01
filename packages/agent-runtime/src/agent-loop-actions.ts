@@ -109,14 +109,22 @@ export const executeAgentLoopActions = (
       actionIndex,
       invocation,
     ] of decodedOutput.toolInvocations.entries()) {
-      const route = classifyToolRoute(
+      const classification = classifyToolRoute(
         preparedTurn.toolRoutes,
         controlRegistry,
         invocation.toolName,
       );
-      if (route._tag === "Invalid") {
-        return { _tag: "Settle", settlement: safetyStop(route.reason) };
+      if (classification._tag === "Invalid") {
+        return {
+          _tag: "Settle",
+          settlement: safetyStop(classification.reason),
+        };
       }
+      const staleRegistration = classification._tag === "Stale";
+      const route =
+        classification._tag === "Stale"
+          ? ({ _tag: classification.route } as const)
+          : classification;
 
       let loopAction: AgentLoopStepActionRecord | undefined;
       if (
@@ -316,12 +324,16 @@ export const executeAgentLoopActions = (
                   const skippedInvocation =
                     decodedOutput.toolInvocations[skippedIndex];
                   if (skippedInvocation === undefined) continue;
-                  const skippedRoute = classifyToolRoute(
+                  const skippedClassification = classifyToolRoute(
                     preparedTurn.toolRoutes,
                     controlRegistry,
                     skippedInvocation.toolName,
                   );
-                  if (skippedRoute._tag === "Invalid") continue;
+                  if (skippedClassification._tag === "Invalid") continue;
+                  const skippedRoute =
+                    skippedClassification._tag === "Stale"
+                      ? ({ _tag: skippedClassification.route } as const)
+                      : skippedClassification;
                   const pending = yield* loopSteps.createAction(
                     {
                       identity: actionsStep.identity,
@@ -559,6 +571,11 @@ export const executeAgentLoopActions = (
         },
         { chainDepth: 1, observedAt: yield* now() },
       );
+      if (staleRegistration) {
+        const settlement = safetyStop("StaleToolRegistration");
+        yield* persistActionRejection(settlement, "StaleToolRegistration");
+        return { _tag: "Settle", settlement };
+      }
       if (activityDecision === "Stop") {
         const settlement = safetyStop("RuntimeSafetyStop");
         yield* persistActionRejection(
@@ -714,12 +731,16 @@ export const executeAgentLoopActions = (
                   const skippedInvocation =
                     decodedOutput.toolInvocations[skippedIndex];
                   if (skippedInvocation === undefined) continue;
-                  const skippedRoute = classifyToolRoute(
+                  const skippedClassification = classifyToolRoute(
                     preparedTurn.toolRoutes,
                     controlRegistry,
                     skippedInvocation.toolName,
                   );
-                  if (skippedRoute._tag === "Invalid") continue;
+                  if (skippedClassification._tag === "Invalid") continue;
+                  const skippedRoute =
+                    skippedClassification._tag === "Stale"
+                      ? ({ _tag: skippedClassification.route } as const)
+                      : skippedClassification;
                   const pending = yield* loopSteps.createAction(
                     {
                       identity: staleStep.identity,

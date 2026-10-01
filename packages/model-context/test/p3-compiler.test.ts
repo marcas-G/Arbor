@@ -164,8 +164,18 @@ describe("P3 model-family compiler", () => {
       "arbor_wait",
     ]);
     expect(result.toolRoutes).toEqual([
-      { name: "read", route: "Executable" },
-      { name: "arbor_wait", route: "Control" },
+      {
+        name: "read",
+        route: "Executable",
+        version: "1",
+        hash: "exec-hash",
+      },
+      {
+        name: "arbor_wait",
+        route: "Control",
+        version: "1",
+        hash: "control-hash",
+      },
     ]);
     expect(result.manifest.toolRoutes).toEqual(result.toolRoutes);
     expect(result.manifest.toolRefs).toEqual([

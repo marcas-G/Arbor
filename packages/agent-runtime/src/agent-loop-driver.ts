@@ -6,7 +6,11 @@ import type {
   ExecutionSettlement,
   WakeReason,
 } from "@arbor/domain";
-import { ModelContext } from "@arbor/model-context";
+import {
+  ModelContext,
+  makeTurnProfileResolver,
+  type TurnProfileResolverService,
+} from "@arbor/model-context";
 import {
   type AgentLoopStepFence,
   AgentLoopStepStore,
@@ -62,6 +66,7 @@ export interface AgentLoopDriverOptions {
   /** The typed control-tool registry. Composition supplies the live registry;
    * the default keeps Wait available for focused runtime tests. */
   readonly controlRegistry?: ControlToolRegistryService;
+  readonly turnProfileResolver?: TurnProfileResolverService;
   readonly executableInvocationHandler?: ExecutableInvocationHandler;
   /** Adapter identity recorded on manifests (P14 conversation audit). */
   readonly providerRef?: string;
@@ -126,6 +131,16 @@ export const AgentLoopDriverLive = (
       const clock = yield* Clock;
       const controlRegistry =
         options.controlRegistry ?? makeControlToolRegistry();
+      const turnProfileResolver =
+        options.turnProfileResolver ??
+        makeTurnProfileResolver({
+          toolCatalog: {
+            visibleRefs: () => Effect.succeed([]),
+            resolveForModel: (ref) =>
+              Effect.fail({ _tag: "ToolNotRegistered", ref }),
+          },
+          controlCatalog: controlRegistry,
+        });
       const failure = (cause: unknown): ExecutionDriverError => ({
         _tag: "ExecutionDriverError",
         cause,
@@ -232,6 +247,7 @@ export const AgentLoopDriverLive = (
                 tx,
                 sessions,
                 humanMessages,
+                turnProfileResolver,
                 ...(Option.isSome(responseJobsOption)
                   ? { responseJobs: responseJobsOption.value }
                   : {}),

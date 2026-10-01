@@ -15,7 +15,6 @@ import type {
   SkillRef,
 } from "@arbor/ports";
 import type { ContextFragment } from "./context.js";
-import { outputContractSchemaJson } from "./decode.js";
 import type { InstructionFragment } from "./prompt.js";
 import type { ResolvedInstructionSet } from "./resolver.js";
 
@@ -37,6 +36,12 @@ export interface ModelContextPlan {
   readonly context: ReadonlyArray<ContextFragment>;
   readonly tools: ReadonlyArray<ModelFacingToolDefinition>;
   readonly controlTools?: ReadonlyArray<ModelFacingControlToolDefinition>;
+  readonly turnProfile?: {
+    readonly purpose: string;
+    readonly version: string;
+    readonly fingerprint: string;
+    readonly contextPolicyRef: string;
+  };
   readonly skills: ReadonlyArray<SkillRef>;
   readonly outputContract: string;
   /** P14 conversation context (user/assistant turns); absent on Work. */
@@ -101,6 +106,8 @@ export interface ModelContextManifest {
   readonly toolRoutes: ReadonlyArray<{
     readonly name: string;
     readonly route: "Executable" | "Control";
+    readonly version?: string;
+    readonly hash?: string;
   }>;
   readonly outputContractRef: string;
   readonly budgetDecision: { readonly maxOutputTokens: number };
@@ -117,6 +124,12 @@ export interface ModelContextManifest {
   readonly callRefs?: ReadonlyArray<string>;
   readonly agentStepContextFingerprint?: string;
   readonly resolvedModelBindingFingerprint?: string;
+  readonly turnProfile?: {
+    readonly purpose: string;
+    readonly version: string;
+    readonly fingerprint: string;
+    readonly contextPolicyRef: string;
+  };
   readonly budgetEvidence?: {
     readonly kind: "CharsPerFourFallback";
     readonly estimatedTokens: number;
@@ -131,6 +144,8 @@ export interface PreparedModelTurn {
   readonly toolRoutes: ReadonlyArray<{
     readonly name: string;
     readonly route: "Executable" | "Control";
+    readonly version?: string;
+    readonly hash?: string;
   }>;
 }
 
@@ -182,31 +197,6 @@ export const compileTurn = (input: {
   readonly estimatedInputTokens?: number;
 }): PreparedModelTurn => {
   const controlTools = [...(input.plan.controlTools ?? [])];
-  // F-TS-08 (`05`): the directive tool stays model-facing — `compileTurn`
-  // appends `arbor_directive` for the agent-directive output contract when
-  // no control definition of that name is already supplied.
-  // Presence is semantically different from omission: an explicitly empty
-  // array is a purpose resolver's decision that this turn has no control
-  // surface. Re-injecting the legacy universal directive in that case would
-  // widen the turn after policy resolution.
-  const explicitControlTools = input.plan.controlTools !== undefined;
-  if (
-    input.plan.outputContract === "agent-directive-v1" &&
-    !explicitControlTools &&
-    !controlTools.some((tool) => tool.name === "arbor_directive")
-  ) {
-    const schemaJson = outputContractSchemaJson("agent-directive-v1");
-    if (schemaJson !== null) {
-      controlTools.push({
-        name: "arbor_directive",
-        description: "Emit structured Arbor directives.",
-        schemaJson,
-        version: "1",
-        hash: "arbor-directive-v1",
-        requiredCapability: "agent:directives",
-      });
-    }
-  }
   const names = [
     ...input.plan.tools.map((tool) => tool.name),
     ...controlTools.map((tool) => tool.name),
@@ -218,10 +208,14 @@ export const compileTurn = (input: {
     ...input.plan.tools.map((tool) => ({
       name: tool.name,
       route: "Executable" as const,
+      version: tool.version,
+      hash: tool.hash,
     })),
     ...controlTools.map((tool) => ({
       name: tool.name,
       route: "Control" as const,
+      version: tool.version,
+      hash: tool.hash,
     })),
   ];
   const request: PortableModelRequestV2 = {
@@ -317,6 +311,9 @@ export const compileTurn = (input: {
       input.stepContext?.fingerprint ?? "legacy-step-context",
     resolvedModelBindingFingerprint:
       input.stepContext?.bindingFingerprint ?? "legacy-binding",
+    ...(input.plan.turnProfile === undefined
+      ? {}
+      : { turnProfile: input.plan.turnProfile }),
     budgetEvidence: {
       kind: "CharsPerFourFallback",
       estimatedTokens: input.estimatedInputTokens ?? 0,

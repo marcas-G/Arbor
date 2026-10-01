@@ -17,6 +17,7 @@ import {
   AcceptanceRepositoryLive,
   ClockLive,
   CommandStoreLive,
+  ConversationResponseJobStoreLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
   ExecutionRepositoryLive,
@@ -196,6 +197,7 @@ import type { ProjectionStale } from "../packages/ports/src/errors.js";
 import {
   Clock,
   type CommandStore,
+  type ConversationResponseJobStore,
   type DomainEventJournal,
   EnvironmentResolverPort,
   type ExecutionOriginMutation,
@@ -1324,7 +1326,11 @@ describe("p12-acceptance story 7 — remote worker fenced mediation", () => {
 // story 8 (`07`): model-facing ToolCatalogPort; compiled request carries real metadata
 // ---------------------------------------------------------------------------
 
-const story8Input = () => ({
+const story8Input = (
+  executableTools: ReadonlyArray<
+    import("../packages/ports/src/index.js").ModelFacingToolDefinition
+  >,
+) => ({
   executionId: parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1"),
   sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
   contextEpoch: parse(ContextEpochNumber)(0),
@@ -1378,6 +1384,15 @@ const story8Input = () => ({
   },
   maxOutputTokens: 128,
   bodySkillIds: [],
+  turnProfile: {
+    purpose: "WorkspaceWork" as const,
+    profileVersion: "turn-profile-v1" as const,
+    outputContractRef: "tool-invocation-v1",
+    executableTools,
+    controlTools: [],
+    contextPolicyRef: "workspace-work-context-v1",
+    fingerprint: "tpf_p12_acceptance",
+  },
 });
 
 describe("p12-acceptance story 8 — model-facing tool catalog in the compiled request", () => {
@@ -1424,8 +1439,15 @@ describe("p12-acceptance story 8 — model-facing tool catalog in the compiled r
               definitions: [ECHO_DEFINITION],
             }),
           );
+          const toolCatalog = yield* ToolCatalogPort;
+          const executableTools: ModelFacingToolDefinition[] = [];
+          for (const ref of yield* toolCatalog.visibleRefs()) {
+            executableTools.push(yield* toolCatalog.resolveForModel(ref));
+          }
           const modelContextPort = yield* ModelContext;
-          return yield* modelContextPort.prepareTurn(story8Input() as never);
+          return yield* modelContextPort.prepareTurn(
+            story8Input(executableTools) as never,
+          );
         }),
         app,
       ) as never,
@@ -2025,6 +2047,7 @@ type TransportDbServices =
   | SessionRepository
   | WorkWaitStore
   | Clock
+  | ConversationResponseJobStore
   | IdGenerator;
 
 const transportApp = (): Layer.Layer<TransportDbServices> => {
@@ -2044,6 +2067,7 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
     Layer.provide(PermissionGrantRepositoryLive, infra),
     // P14: the registry also wires SubmitHumanMessage (human chat-turn).
     Layer.provide(HumanMessageStoreLive, infra),
+    Layer.provide(ConversationResponseJobStoreLive, infra),
     // P13: the external registry also wires the Human-actionable governance
     // handlers (RecordDecision/SteerWork/AcceptWorkOutcome/Grant/Revoke).
     Layer.provide(FormationProposalStoreLive, infra),

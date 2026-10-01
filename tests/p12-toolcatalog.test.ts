@@ -161,6 +161,23 @@ const input = () => ({
   },
   maxOutputTokens: 128,
   bodySkillIds: [],
+  turnProfile: {
+    purpose: "WorkspaceWork" as const,
+    profileVersion: "turn-profile-v1" as const,
+    outputContractRef: "tool-invocation-v1",
+    executableTools: BUILTIN_TOOLS.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      schemaJson: tool.inputSchemaJson,
+      version: tool.version,
+      hash: tool.hash,
+      capabilityMetadata: tool.capabilityMetadata,
+      sideEffectSemantics: tool.sideEffectSemantics,
+    })),
+    controlTools: [],
+    contextPolicyRef: "workspace-work-context-v1",
+    fingerprint: "tpf_p12_toolcatalog",
+  },
 });
 
 const withCatalog = <A>(
@@ -255,20 +272,11 @@ describe("P12-007 compiler emits real tool metadata (CI-6)", () => {
       prepared.turn.request.toolDefinitions.map((tool) => [tool.name, tool]),
     );
     expect(Object.keys(byName).sort()).toEqual([
-      "arbor_directive",
       "list",
       "patch",
       "read",
       "shell",
     ]);
-    const directiveSchema = JSON.parse(
-      byName.arbor_directive?.schemaJson ?? "{}",
-    );
-    // OpenAI-compatible tool schemas need a top-level type:"object" (the
-    // directive union is a discriminated _tag enum — DeepSeek rejects a
-    // bare oneOf; tool-surface-review finding).
-    expect(directiveSchema.type).toBe("object");
-    expect(directiveSchema.properties._tag.enum).toContain("Yield");
     for (const builtin of BUILTIN_TOOLS) {
       const compiled = byName[builtin.name];
       expect(compiled).toBeDefined();
