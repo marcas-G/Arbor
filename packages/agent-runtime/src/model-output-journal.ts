@@ -69,16 +69,67 @@ export const recordAcceptedModelOutput = (
         currentLoopStep = yield* tx
           .transact(
             Effect.gen(function* () {
-              const appended = yield* sessions.appendEntryIdempotent(
-                input.execution.sessionId,
-                {
-                  kind: "ProviderTurn",
-                  ref: preparedTurn.manifest.providerTurnId,
-                },
-                { entryKind: "ModelOutput", payload: modelOutputPayload },
-                sha256Hex(JSON.stringify(modelOutputPayload)),
-                loopStepFence,
-              );
+              const typed = yield* sessions.supportsTypedTimeline();
+              const appended = typed
+                ? yield* sessions.appendItemIdempotent(
+                    input.execution.sessionId,
+                    {
+                      item: {
+                        _tag: "AssistantMessage",
+                        providerTurnId: preparedTurn.manifest.providerTurnId,
+                        contentRef: `provider:${preparedTurn.manifest.providerTurnId}:assistant`,
+                        text: decodedOutput.text,
+                        finishReason: decodedOutput.finishReason,
+                      },
+                      contextEpoch: preparedTurn.manifest.contextEpoch,
+                      source: {
+                        kind: "ProviderTurn",
+                        ref: `${preparedTurn.manifest.providerTurnId}:assistant`,
+                      },
+                      contentHash: sha256Hex(
+                        JSON.stringify({
+                          text: decodedOutput.text,
+                          finishReason: decodedOutput.finishReason,
+                        }),
+                      ),
+                    },
+                    loopStepFence,
+                  )
+                : yield* sessions.appendEntryIdempotent(
+                    input.execution.sessionId,
+                    {
+                      kind: "ProviderTurn",
+                      ref: preparedTurn.manifest.providerTurnId,
+                    },
+                    { entryKind: "ModelOutput", payload: modelOutputPayload },
+                    sha256Hex(JSON.stringify(modelOutputPayload)),
+                    loopStepFence,
+                  );
+              if (typed) {
+                for (const invocation of decodedOutput.toolInvocations) {
+                  const item = {
+                    _tag: "ToolCall" as const,
+                    providerTurnId: preparedTurn.manifest.providerTurnId,
+                    callRef: invocation.callRef,
+                    toolRef: invocation.toolName,
+                    argumentsRef: `inline:${sha256Hex(invocation.argumentsJson)}`,
+                    argumentsJson: invocation.argumentsJson,
+                  };
+                  yield* sessions.appendItemIdempotent(
+                    input.execution.sessionId,
+                    {
+                      item,
+                      contextEpoch: preparedTurn.manifest.contextEpoch,
+                      source: {
+                        kind: "ProviderTurnCall",
+                        ref: `${preparedTurn.manifest.providerTurnId}:${invocation.callRef}`,
+                      },
+                      contentHash: sha256Hex(JSON.stringify(item)),
+                    },
+                    loopStepFence,
+                  );
+                }
+              }
               return yield* loopSteps.transition(
                 {
                   identity: acceptedFrom.identity,

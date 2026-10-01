@@ -281,6 +281,11 @@ export const executeAgentLoopActions = (
       const persistActionObservation = (
         source: "Runtime" | "Tool",
         observation: BoundedObservation,
+        resultMetadata: {
+          readonly status?: import("@arbor/ports").PortableToolResultStatus;
+          readonly resultRef?: string;
+          readonly artifactRefs?: ReadonlyArray<string>;
+        } = {},
       ): Effect.Effect<boolean, ExecutionDriverError> =>
         Effect.gen(function* () {
           if (
@@ -306,13 +311,53 @@ export const executeAgentLoopActions = (
           currentLoopStep = yield* tx
             .transact(
               Effect.gen(function* () {
-                yield* sessions.appendEntryIdempotent(
-                  input.execution.sessionId,
-                  { kind: "AgentLoopAction", ref: observationSourceRef },
-                  { entryKind: "Observation", payload },
-                  sha256Hex(JSON.stringify(payload)),
-                  loopStepFence,
-                );
+                if (yield* sessions.supportsTypedTimeline()) {
+                  const item =
+                    route._tag === "Executable"
+                      ? {
+                          _tag: "ToolResult" as const,
+                          callRef: invocation.callRef,
+                          toolName: invocation.toolName,
+                          status: resultMetadata.status ?? "Succeeded",
+                          observationRef: observationSourceRef,
+                          modelOutputRef: resultMetadata.resultRef ?? resultRef,
+                          outputText: observation.text,
+                          truncated: observation.truncated,
+                          artifactRefs: resultMetadata.artifactRefs ?? [],
+                        }
+                      : {
+                          _tag: "ControlResult" as const,
+                          callRef: invocation.callRef,
+                          actionKind: invocation.toolName,
+                          status: resultMetadata.status ?? "Succeeded",
+                          disposition: "Applied",
+                          outputText: observation.text,
+                          truncated: observation.truncated,
+                          canonicalRefs: [],
+                          observationRef: observationSourceRef,
+                        };
+                  yield* sessions.appendItemIdempotent(
+                    input.execution.sessionId,
+                    {
+                      item,
+                      contextEpoch: preparedTurn.manifest.contextEpoch,
+                      source: {
+                        kind: "AgentLoopAction",
+                        ref: observationSourceRef,
+                      },
+                      contentHash: sha256Hex(JSON.stringify(item)),
+                    },
+                    loopStepFence,
+                  );
+                } else {
+                  yield* sessions.appendEntryIdempotent(
+                    input.execution.sessionId,
+                    { kind: "AgentLoopAction", ref: observationSourceRef },
+                    { entryKind: "Observation", payload },
+                    sha256Hex(JSON.stringify(payload)),
+                    loopStepFence,
+                  );
+                }
                 yield* loopSteps.transitionAction(
                   {
                     identity: pendingAction.identity,
@@ -402,6 +447,17 @@ export const executeAgentLoopActions = (
         const persisted = yield* persistActionObservation(
           executed.outcome.source,
           executed.outcome.observation,
+          {
+            ...(executed.outcome.status === undefined
+              ? {}
+              : { status: executed.outcome.status }),
+            ...(executed.outcome.resultRef === undefined
+              ? {}
+              : { resultRef: executed.outcome.resultRef }),
+            ...(executed.outcome.artifactRefs === undefined
+              ? {}
+              : { artifactRefs: executed.outcome.artifactRefs }),
+          },
         );
         if (!persisted) {
           observations.push({

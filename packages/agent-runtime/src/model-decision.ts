@@ -228,8 +228,21 @@ export const runModelDecision = (
               .transact(inbox.listUnconsumed(input.execution.workspaceId))
               .pipe(Effect.mapError(failure));
       const inboxContext = assembleInboxContext(inboxEntries);
-      const messages = [...conversationMessages, ...sessionContext.messages];
+      const messages = [...sessionContext.messages];
       messages.push(...inboxContext.messages);
+      const inputItems = [
+        ...conversationMessages.map((message) => ({
+          _tag: "Message" as const,
+          role: message.role,
+          text: message.text,
+        })),
+        ...messages.map((message) => ({
+          _tag: "Message" as const,
+          role: message.role,
+          text: message.text,
+        })),
+        ...sessionContext.inputItems,
+      ];
       const messageContextRefs = [
         ...conversationContextRefs,
         ...sessionContext.contextRefs,
@@ -298,7 +311,7 @@ export const runModelDecision = (
                 includeTools: false,
               }
             : { outputContractRef: TOOL_INVOCATION_CONTRACT }),
-          ...(messages.length > 0 ? { messages } : {}),
+          ...(inputItems.length > 0 ? { inputItems } : {}),
           ...(messageContextRefs.length > 0 ? { messageContextRefs } : {}),
           ...(options.providerRef !== undefined
             ? { providerRef: options.providerRef }

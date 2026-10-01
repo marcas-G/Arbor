@@ -141,6 +141,9 @@ export type ExecutableInvocationOutcome =
       readonly _tag: "Observation";
       readonly source: "Runtime" | "Tool";
       readonly observation: BoundedObservation;
+      readonly status?: import("@arbor/ports").PortableToolResultStatus;
+      readonly resultRef?: string;
+      readonly artifactRefs?: ReadonlyArray<string>;
     }
   | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
 

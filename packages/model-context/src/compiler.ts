@@ -8,6 +8,7 @@ import type {
   ModelCapability,
   ModelFacingControlToolDefinition,
   ModelFacingToolDefinition,
+  PortableInputItem,
   PortableLegacyMessage,
   PortableModelRequest,
   PortableModelRequestV2,
@@ -46,6 +47,7 @@ export interface ModelContextPlan {
   /** Generic provider messages assembled by Agent Runtime (including tool
    * observations). Takes precedence over the P14 compatibility field. */
   readonly messages?: ReadonlyArray<PortableLegacyMessage>;
+  readonly inputItems?: ReadonlyArray<PortableInputItem>;
   /** P14 conversation refs (human-input:<messageId>) — carried into the
    * manifest contextRefs so the claimed turn is auditable per turn. */
   readonly conversationContextRefs?: ReadonlyArray<string>;
@@ -199,15 +201,15 @@ export const compileTurn = (input: {
       input.plan.instructions.effective,
       input.plan.instructionContents,
     ),
-    inputItems: (
-      input.plan.messages ??
-      input.plan.conversationMessages ??
-      []
-    ).map((message) => ({
-      _tag: "Message" as const,
-      role: message.role,
-      text: message.text,
-    })),
+    inputItems:
+      input.plan.inputItems ??
+      (input.plan.messages ?? input.plan.conversationMessages ?? []).map(
+        (message) => ({
+          _tag: "Message" as const,
+          role: message.role,
+          text: message.text,
+        }),
+      ),
     toolDefinitions: [
       ...input.plan.tools.map((tool) => ({
         name: tool.name,

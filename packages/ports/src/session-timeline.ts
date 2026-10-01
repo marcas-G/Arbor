@@ -42,14 +42,18 @@ export type SessionItem =
       readonly callRef: string;
       readonly toolRef: string;
       readonly argumentsRef: string;
+      readonly argumentsJson: string;
     }
   | {
       readonly _tag: "ToolResult";
       readonly callRef: string;
+      readonly toolName: string;
       readonly invocationId?: string;
       readonly status: PortableToolResultStatus;
       readonly observationRef: string;
       readonly modelOutputRef: string;
+      readonly outputText: string;
+      readonly truncated: boolean;
       readonly artifactRefs: ReadonlyArray<string>;
     }
   | {
@@ -58,6 +62,8 @@ export type SessionItem =
       readonly actionKind: string;
       readonly status: PortableToolResultStatus;
       readonly disposition: string;
+      readonly outputText: string;
+      readonly truncated: boolean;
       readonly canonicalRefs: ReadonlyArray<string>;
       readonly observationRef: string;
     }

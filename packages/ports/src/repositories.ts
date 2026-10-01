@@ -186,6 +186,11 @@ export class WorkRepository extends Context.Service<
 >()("arbor/WorkRepository") {}
 
 export interface SessionRepositoryService {
+  readonly supportsTypedTimeline: () => Effect.Effect<
+    boolean,
+    SessionRepositoryError,
+    TransactionScope
+  >;
   readonly findById: (
     sessionId: SessionId,
   ) => Effect.Effect<

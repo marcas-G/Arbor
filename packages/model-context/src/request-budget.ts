@@ -1,6 +1,7 @@
 import type {
   ModelFacingControlToolDefinition,
   ModelFacingToolDefinition,
+  PortableInputItem,
   PortableLegacyMessage,
 } from "@arbor/ports";
 import type { InstructionFragment } from "./prompt.js";
@@ -12,6 +13,7 @@ export const estimateFixedRequestTokens = (input: {
   readonly instructions: ReadonlyArray<InstructionFragment>;
   readonly instructionContents?: ReadonlyMap<string, string>;
   readonly messages: ReadonlyArray<PortableLegacyMessage>;
+  readonly inputItems?: ReadonlyArray<PortableInputItem>;
   readonly tools: ReadonlyArray<ModelFacingToolDefinition>;
   readonly controlTools: ReadonlyArray<ModelFacingControlToolDefinition>;
 }): number => {
@@ -28,6 +30,10 @@ export const estimateFixedRequestTokens = (input: {
     (sum, message) => sum + 4 + estimateTextTokens(message.text),
     0,
   );
+  const inputItemTokens = (input.inputItems ?? []).reduce(
+    (sum, item) => sum + 4 + estimateTextTokens(JSON.stringify(item)),
+    0,
+  );
   const toolTokens = [...input.tools, ...input.controlTools].reduce(
     (sum, tool) =>
       sum +
@@ -36,5 +42,5 @@ export const estimateFixedRequestTokens = (input: {
       estimateTextTokens(tool.schemaJson),
     0,
   );
-  return instructionTokens + messageTokens + toolTokens;
+  return instructionTokens + messageTokens + inputItemTokens + toolTokens;
 };

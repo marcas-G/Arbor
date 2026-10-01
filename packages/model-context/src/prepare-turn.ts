@@ -12,6 +12,7 @@ import {
   ModelCapabilityPort,
   type ModelContextError,
   type ModelFacingToolDefinition,
+  type PortableInputItem,
   type PortableLegacyMessage,
   type SkillRef,
   SkillRegistry,
@@ -71,6 +72,7 @@ export interface PrepareTurnInput {
   /** Provider-neutral messages assembled by the runtime. Supports tool
    * observations without treating their text as instructions. */
   readonly messages?: ReadonlyArray<PortableLegacyMessage>;
+  readonly inputItems?: ReadonlyArray<PortableInputItem>;
   /** Manifest refs for the conversation context (human-input:<messageId>). */
   readonly conversationContextRefs?: ReadonlyArray<string>;
   readonly messageContextRefs?: ReadonlyArray<string>;
@@ -155,6 +157,7 @@ export const ModelContextLive: Layer.Layer<
           skillRefs.push(loaded.skillRef);
         }
         const messages = input.messages ?? input.conversationMessages ?? [];
+        const inputItems = input.inputItems ?? [];
         const availableTokens = contextBudget(input.budget);
         const fixedTokens = estimateFixedRequestTokens({
           instructions: resolved.effective,
@@ -162,6 +165,7 @@ export const ModelContextLive: Layer.Layer<
             ? {}
             : { instructionContents: input.instructionContents }),
           messages,
+          inputItems,
           tools,
           controlTools,
         });
@@ -211,6 +215,9 @@ export const ModelContextLive: Layer.Layer<
               : {}),
             ...(input.messages !== undefined && input.messages.length > 0
               ? { messages: input.messages }
+              : {}),
+            ...(input.inputItems !== undefined && input.inputItems.length > 0
+              ? { inputItems: input.inputItems }
               : {}),
             ...(input.conversationContextRefs !== undefined &&
             input.conversationContextRefs.length > 0

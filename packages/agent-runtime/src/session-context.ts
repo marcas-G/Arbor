@@ -1,9 +1,14 @@
-import type { PortableLegacyMessage, SessionEntryRecord } from "@arbor/ports";
+import type {
+  PortableInputItem,
+  PortableLegacyMessage,
+  SessionEntryRecord,
+} from "@arbor/ports";
 
 export const SESSION_CONTEXT_ENTRY_LIMIT = 64;
 
 export interface SessionContextAssembly {
   readonly messages: ReadonlyArray<PortableLegacyMessage>;
+  readonly inputItems: ReadonlyArray<PortableInputItem>;
   readonly contextRefs: ReadonlyArray<string>;
 }
 
@@ -25,6 +30,7 @@ export const assembleSessionContext = (
   entries: ReadonlyArray<SessionEntryRecord>,
 ): SessionContextAssembly => {
   const messages: PortableLegacyMessage[] = [];
+  const inputItems: PortableInputItem[] = [];
   const contextRefs: string[] = [];
   for (const entry of entries) {
     if (
@@ -43,7 +49,7 @@ export const assembleSessionContext = (
         typeof item.text === "string" &&
         item.source?.kind !== "HumanConversation"
       ) {
-        messages.push({ role: "user", text: item.text });
+        inputItems.push({ _tag: "Message", role: "user", text: item.text });
         contextRefs.push(
           entry.source === undefined
             ? `session-input:${entry.sequence}`
@@ -51,6 +57,61 @@ export const assembleSessionContext = (
         );
       }
       continue;
+    }
+    if (
+      entry.entryKind === "ModelOutput" &&
+      typeof entry.payload === "object" &&
+      entry.payload !== null &&
+      (entry.payload as { readonly _tag?: unknown })._tag === "ToolCall"
+    ) {
+      const item = entry.payload as {
+        readonly callRef: string;
+        readonly toolRef: string;
+        readonly argumentsJson: string;
+      };
+      inputItems.push({
+        _tag: "ToolCall",
+        callRef: item.callRef,
+        toolName: item.toolRef,
+        argumentsJson: item.argumentsJson,
+      });
+      continue;
+    }
+    if (
+      entry.entryKind === "Observation" &&
+      typeof entry.payload === "object" &&
+      entry.payload !== null
+    ) {
+      const item = entry.payload as Record<string, unknown>;
+      if (item._tag === "ToolResult") {
+        inputItems.push({
+          _tag: "ToolResult",
+          callRef: String(item.callRef),
+          toolName: String(item.toolName),
+          status: item.status as "Succeeded",
+          outputText: String(item.outputText),
+          observationRef: String(item.observationRef),
+          artifactRefs: Array.isArray(item.artifactRefs)
+            ? item.artifactRefs.map(String)
+            : [],
+          truncated: item.truncated === true,
+        });
+        continue;
+      }
+      if (item._tag === "ControlResult") {
+        inputItems.push({
+          _tag: "ControlResult",
+          callRef: String(item.callRef),
+          actionKind: String(item.actionKind),
+          status: item.status as "Succeeded",
+          outputText: String(item.outputText),
+          observationRef: String(item.observationRef),
+          canonicalRefs: Array.isArray(item.canonicalRefs)
+            ? item.canonicalRefs.map(String)
+            : [],
+        });
+        continue;
+      }
     }
     if (entry.entryKind !== "Observation") continue;
     const text = observationText(entry.payload);
@@ -62,5 +123,5 @@ export const assembleSessionContext = (
         : `session-observation:${entry.source.kind}:${entry.source.ref}`,
     );
   }
-  return { messages, contextRefs };
+  return { messages, inputItems, contextRefs };
 };
