@@ -3,6 +3,7 @@ import { TextEncoder } from "node:util";
 import { ProviderTurnId, parse } from "@arbor/domain";
 import {
   type PortableModelRequest,
+  type PortableModelRequestV2,
   ProviderPort,
   SecretMaterial,
 } from "@arbor/ports";
@@ -36,6 +37,7 @@ const request: PortableModelRequest = {
 const chunks = async (
   client: ReturnType<typeof OpenAICompatibleFetchClient>,
   secretMaterial: SecretMaterial | null = SecretMaterial.of("test-only-key"),
+  portableRequest: PortableModelRequest = request,
 ): Promise<ReadonlyArray<OpenAISdkChunk>> => {
   const result: OpenAISdkChunk[] = [];
   const context = {
@@ -53,7 +55,7 @@ const chunks = async (
   };
   for await (const chunk of client.streamChat({
     modelRef: "model-live",
-    request,
+    request: portableRequest,
     context,
   })) {
     result.push(chunk);
@@ -155,6 +157,130 @@ describe("OpenAI-compatible fetch provider", () => {
         },
       },
     ]);
+  });
+
+  it("lowers parallel typed tool calls and out-of-order results with exact callRef pairing", async () => {
+    let observedBody: Record<string, unknown> | undefined;
+    const client = OpenAICompatibleFetchClient({
+      baseUrl: "http://provider.test/v1",
+      fetch: async (_input, init) => {
+        observedBody = JSON.parse(init.body) as Record<string, unknown>;
+        return eventStream({
+          choices: [{ delta: { content: "done" }, finish_reason: "stop" }],
+        });
+      },
+    });
+    const typedRequest: PortableModelRequestV2 = {
+      requestVersion: 2,
+      operationKind: "Inference",
+      modelRef: "model-live",
+      instructions: [],
+      inputItems: [
+        { _tag: "Message", role: "user", text: "read both" },
+        {
+          _tag: "ToolCall",
+          callRef: "call-a",
+          toolName: "read",
+          argumentsJson: '{"path":"a.ts"}',
+        },
+        {
+          _tag: "ToolCall",
+          callRef: "call-b",
+          toolName: "read",
+          argumentsJson: '{"path":"b.ts"}',
+        },
+        {
+          _tag: "ToolResult",
+          callRef: "call-b",
+          toolName: "read",
+          status: "Succeeded",
+          outputText: "b",
+          observationRef: "obs-b",
+          artifactRefs: [],
+          truncated: false,
+        },
+        {
+          _tag: "ToolResult",
+          callRef: "call-a",
+          toolName: "read",
+          status: "Succeeded",
+          outputText: "a",
+          observationRef: "obs-a",
+          artifactRefs: [],
+          truncated: false,
+        },
+      ],
+      toolDefinitions: [],
+      outputContractRef: "tool-invocation-v1",
+      budget: { maxOutputTokens: 64 },
+      cacheHints: [],
+    };
+
+    await expect(
+      chunks(client, SecretMaterial.of("test-only-key"), typedRequest),
+    ).resolves.toEqual([
+      { type: "text", text: "done" },
+      { type: "completed", finishReason: "stop" },
+    ]);
+    expect(observedBody?.messages).toEqual([
+      { role: "user", content: "read both" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call-a",
+            type: "function",
+            function: { name: "read", arguments: '{"path":"a.ts"}' },
+          },
+          {
+            id: "call-b",
+            type: "function",
+            function: { name: "read", arguments: '{"path":"b.ts"}' },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "call-b", content: "b" },
+      { role: "tool", tool_call_id: "call-a", content: "a" },
+    ]);
+  });
+
+  it("rejects unsupported typed items before sending provider bytes", async () => {
+    let calls = 0;
+    const client = OpenAICompatibleFetchClient({
+      baseUrl: "http://provider.test/v1",
+      fetch: async () => {
+        calls += 1;
+        return eventStream();
+      },
+    });
+    const unsupported: PortableModelRequestV2 = {
+      requestVersion: 2,
+      operationKind: "Inference",
+      modelRef: "model-live",
+      instructions: [],
+      inputItems: [
+        {
+          _tag: "AttachmentRef",
+          ref: "artifact://image",
+          mediaType: "image/png",
+          trust: "DataOnly",
+        },
+      ],
+      toolDefinitions: [],
+      outputContractRef: "tool-invocation-v1",
+      budget: { maxOutputTokens: 64 },
+      cacheHints: [],
+    };
+
+    await expect(
+      chunks(client, SecretMaterial.of("test-only-key"), unsupported),
+    ).rejects.toMatchObject({
+      name: "OpenAISdkError",
+      status: 400,
+      code: "portable_request_incompatible",
+    });
+    expect(calls).toBe(0);
   });
 
   it("joins streamed tool-call fragments into one canonical proposal", async () => {

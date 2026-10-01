@@ -3,7 +3,11 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe } from "vitest";
-import { secretRef } from "../../../packages/ports/dist/provider.js";
+import {
+  type PortableModelRequest,
+  portableInputItems,
+  secretRef,
+} from "../../../packages/ports/dist/provider.js";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
 import { runAndCapture } from "../support/capture.js";
 import {
@@ -112,7 +116,13 @@ describe("B02 L3 — real-model executable tool use (S01-E)", () => {
           // echoed marker) as conversational input.
           const subsequentMessages = result.providerCalls
             .slice(1)
-            .map((call) => JSON.stringify(call.request.messages ?? []));
+            .map((call) =>
+              JSON.stringify(
+                portableInputItems(
+                  call.request as unknown as PortableModelRequest,
+                ),
+              ),
+            );
           const carriedObservation = subsequentMessages.some(
             (serialized) =>
               serialized.includes("Tool observation") ||

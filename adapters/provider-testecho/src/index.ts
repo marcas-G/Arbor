@@ -5,7 +5,7 @@ import type {
   ProviderExecutionContext,
   ProviderPortEvent,
 } from "@arbor/ports";
-import { ProviderPort } from "@arbor/ports";
+import { ProviderPort, portableInputItems } from "@arbor/ports";
 import { Effect, Layer, Stream } from "effect";
 
 /**
@@ -73,7 +73,7 @@ export const TestechoProviderLive = (
               Stream.fail(failureOf(kind)),
             );
           }
-          const echo = `echo:${request.modelRef}:${request.messages.length}:${request.toolDefinitions.length}`;
+          const echo = `echo:${request.modelRef}:${portableInputItems(request).length}:${request.toolDefinitions.length}`;
           const events: ReadonlyArray<CanonicalProviderEvent> =
             script.events ?? [
               { _tag: "TextDelta", text: echo },

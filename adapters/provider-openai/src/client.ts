@@ -2,9 +2,15 @@ import type { ReadableStream } from "node:stream/web";
 import { clearTimeout, setTimeout } from "node:timers";
 import { TextDecoder } from "node:util";
 import type {
-  PortableMessage,
+  PortableInputItem,
   PortableModelRequest,
+  PortableRequestCompatibility,
   ProviderCancellationSignal,
+} from "@arbor/ports";
+import {
+  portableInputItems,
+  validatePortableRequestCompatibility,
+  validatePortableToolPairing,
 } from "@arbor/ports";
 import {
   type OpenAISdkChunk,
@@ -57,21 +63,115 @@ const stringField = (value: unknown, key: string): string | undefined => {
   return typeof field === "string" ? field : undefined;
 };
 
+const OPENAI_CHAT_COMPATIBILITY = {
+  operationKinds: ["Inference", "CompactionSummary"],
+  inputItemKinds: [
+    "Message",
+    "ToolCall",
+    "ToolResult",
+    "ControlResult",
+    "ContextUpdate",
+  ],
+} as const satisfies PortableRequestCompatibility;
+
+const resultContent = (
+  item: Extract<
+    PortableInputItem,
+    { readonly _tag: "ToolResult" | "ControlResult" }
+  >,
+): string =>
+  item.status === "Succeeded"
+    ? item.outputText
+    : `[${item.status}] ${item.outputText}`;
+
+const lowerInputItem = (
+  item: PortableInputItem,
+): Readonly<Record<string, unknown>> => {
+  switch (item._tag) {
+    case "Message":
+      return item.role === "tool"
+        ? {
+            role: "user",
+            content: `Legacy tool observation:\n${item.text}`,
+          }
+        : { role: item.role, content: item.text };
+    case "ToolCall":
+      throw new OpenAISdkError(400, "portable_tool_call_grouping_invalid");
+    case "ToolResult":
+    case "ControlResult":
+      return {
+        role: "tool",
+        tool_call_id: item.callRef,
+        content: resultContent(item),
+      };
+    case "ContextUpdate":
+      return {
+        role: "system",
+        content: `[Context ${item.updateKind} ${item.sourceRef}@${item.revision}]\n${item.text}`,
+      };
+    case "CompactionCheckpoint":
+    case "AttachmentRef":
+      throw new OpenAISdkError(400, "portable_request_incompatible");
+  }
+};
+
+const lowerInputItems = (
+  items: ReadonlyArray<PortableInputItem>,
+): ReadonlyArray<Readonly<Record<string, unknown>>> => {
+  const lowered: Array<Readonly<Record<string, unknown>>> = [];
+  for (let index = 0; index < items.length; ) {
+    const item = items[index] as PortableInputItem;
+    if (item._tag !== "ToolCall") {
+      lowered.push(lowerInputItem(item));
+      index += 1;
+      continue;
+    }
+    const calls: Array<Extract<PortableInputItem, { _tag: "ToolCall" }>> = [];
+    while (index < items.length && items[index]?._tag === "ToolCall") {
+      calls.push(
+        items[index] as Extract<PortableInputItem, { _tag: "ToolCall" }>,
+      );
+      index += 1;
+    }
+    lowered.push({
+      role: "assistant",
+      content: null,
+      tool_calls: calls.map((call) => ({
+        id: call.callRef,
+        type: "function",
+        function: {
+          name: call.toolName,
+          arguments: call.argumentsJson,
+        },
+      })),
+    });
+  }
+  return lowered;
+};
+
 const portableMessages = (
   request: PortableModelRequest,
-): ReadonlyArray<{ readonly role: string; readonly content: string }> => [
-  ...request.instructions.map((instruction) => ({
-    role: "system",
-    content: instruction.text,
-  })),
-  ...request.messages.map((message: PortableMessage) => ({
-    role: message.role === "tool" ? "user" : message.role,
-    content:
-      message.role === "tool"
-        ? `Tool observation:\n${message.text}`
-        : message.text,
-  })),
-];
+): ReadonlyArray<Readonly<Record<string, unknown>>> => {
+  const compatible = validatePortableRequestCompatibility(
+    request,
+    OPENAI_CHAT_COMPATIBILITY,
+  );
+  if (!compatible.ok) {
+    throw new OpenAISdkError(400, "portable_request_incompatible");
+  }
+  const items = portableInputItems(request);
+  const pairing = validatePortableToolPairing(items);
+  if (!pairing.ok) {
+    throw new OpenAISdkError(400, "portable_tool_pairing_invalid");
+  }
+  return [
+    ...request.instructions.map((instruction) => ({
+      role: "system",
+      content: instruction.text,
+    })),
+    ...lowerInputItems(items),
+  ];
+};
 
 const requestBody = (
   modelRef: string,
@@ -357,7 +457,11 @@ export const OpenAICompatibleFetchClient = (
         // distinguish TransportFailed (pre-response) from StreamInterrupted
         // (post-response) — pre-classifying here would erase the distinction
         // (found by P16 conformance A5).
-        if (error instanceof TypeError || controller.signal.aborted) {
+        if (
+          error instanceof OpenAISdkError ||
+          error instanceof TypeError ||
+          controller.signal.aborted
+        ) {
           throw error;
         }
         throw new OpenAISdkError(503, "server_error");

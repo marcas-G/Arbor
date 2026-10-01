@@ -8,7 +8,10 @@ import type {
   PortableModelRequest,
   ProviderExecutionContext,
 } from "../../../packages/ports/dist/provider.js";
-import { SecretMaterial } from "../../../packages/ports/dist/provider.js";
+import {
+  portableInputItems,
+  SecretMaterial,
+} from "../../../packages/ports/dist/provider.js";
 
 /**
  * P16 Gate D1 — Existing Deployment Live Qualification (dep-env / DeepSeek).
@@ -131,7 +134,7 @@ const runOnce = async (
         endpoint: ENDPOINT,
         wireModel: WIRE_MODEL,
         request: {
-          messages: request.messages,
+          inputItems: portableInputItems(request),
           tools: request.toolDefinitions.map((tool) => tool.name),
         },
         wire,

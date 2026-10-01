@@ -12,7 +12,7 @@ import {
   ModelCapabilityPort,
   type ModelContextError,
   type ModelFacingToolDefinition,
-  type PortableMessage,
+  type PortableLegacyMessage,
   type SkillRef,
   SkillRegistry,
   type SkillRegistryError,
@@ -70,7 +70,7 @@ export interface PrepareTurnInput {
   }>;
   /** Provider-neutral messages assembled by the runtime. Supports tool
    * observations without treating their text as instructions. */
-  readonly messages?: ReadonlyArray<PortableMessage>;
+  readonly messages?: ReadonlyArray<PortableLegacyMessage>;
   /** Manifest refs for the conversation context (human-input:<messageId>). */
   readonly conversationContextRefs?: ReadonlyArray<string>;
   readonly messageContextRefs?: ReadonlyArray<string>;
