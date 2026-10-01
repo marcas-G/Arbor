@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.22\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — SCRC owning contracts landed; implementation NOT AUTHORIZED\
-**Supersedes:** v1.21\
+**Version:** 1.23\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — overflow successor chain authorized\
+**Supersedes:** v1.22\
 **Date:** 2026-10-01\
 **Depends on:** `Arbor System Design Specification v1.4`
 
@@ -39,6 +39,22 @@ The accepted proposal is fixed by SHA-256
 `200D9EE0F252915F1816C57FC5FEE470E77D7FB924A95A7474E03DF68BFAFD05`.
 This landing freezes contracts only; migration 0019 and production
 implementation require separate authorization.
+
+**Governance changes (v1.22 → v1.23):**（OVS-1…OVS-7）
+
+- A logical AgentLoopStep may own one bounded overflow ProviderTurn chain while
+  retaining its `(executionId, logicalStepNo, repairAttempt)` identity.
+- Chain roles are `Inference | OverflowCompaction | OverflowReplacement`;
+  v1 admits only `overflowOrdinal = 0`.
+- The original ContextLimitExceeded Turn remains immutable and terminal; the
+  replacement uses a new ProviderTurn/Manifest after atomic checkpoint/epoch.
+- Overflow ordinal is distinct from output-contract repairAttempt. Recovery is
+  allowed only before durable assistant/tool/control output or external effect;
+  a second overflow is terminal.
+
+Accepted proposal SHA-256:
+`09EE81EFAD5583585F7E8885E3647451C06F15F46F0CC40203158531A124E538`.
+Migration 0020 and implementation are authorized within SCRC-007/008.
 
 **Governance changes (v1.3 → v1.4):**
 
@@ -4139,6 +4155,26 @@ session_entries (additive)
     WHERE source_kind IS NOT NULL
 ```
 
+Migration `0020_agent_loop_step_provider_turn_chain` adds:
+
+```text
+agent_loop_step_provider_turns
+  FK AgentLoopStep identity
+  overflow_ordinal = 0
+  role = Inference | OverflowCompaction | OverflowReplacement
+  provider_turn_id UNIQUE
+  predecessor_provider_turn_id?
+  context_epoch
+  manifest_id?
+  state = Prepared | SettledSuccess | SettledFailure
+  PRIMARY KEY(step identity, overflow_ordinal, role)
+```
+
+The existing `agent_loop_steps.provider_turn_id` remains the original Inference
+Turn for compatibility. Chain ensure is idempotent; binding mismatch is an
+invariant conflict/Attention. Ordinary transport attempts and output repair do
+not enter this chain.
+
 Exact DDL/check constraints and forward-only legacy adoption are frozen in P2
 `04`, P3 `08`, and P9 `07`. Every AgentLoopStep/action transition is a short
 `BEGIN IMMEDIATE` transaction with authoritative fence validation, or converges
@@ -5565,7 +5601,7 @@ Composition Root
 Problem Definition & Goals v1.2           FROZEN
 Scenarios S1–S4 v1.2                      FROZEN / COMPLETE
 System Design Specification v1.4          FROZEN
-Detailed Implementation Design v1.22     TOP-LEVEL FROZEN
+Detailed Implementation Design v1.23     TOP-LEVEL FROZEN
 Model Context Control Plane               INCLUDED / TOP-LEVEL FROZEN
 Effect A/E/R + Service/Layer Contract     CLOSED
 Error Algebra + Failure Semantics         CLOSED

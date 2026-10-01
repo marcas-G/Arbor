@@ -102,6 +102,10 @@ Kill before and after every commit boundary, restart on the same durable DB:
 | AH18 | Provider overflow first recovery ↔ second terminal overflow |
 | AH19 | ProviderNative binding match ↔ mismatch portable rebuild |
 
+AH18 uses the DID v1.23 ordinal-0 ProviderTurn chain. Recovery ensures links
+idempotently and never rewrites the failed inference Manifest. A replacement
+overflow creates no second ordinal.
+
 Every injection asserts stale-generation writes are rejected, stable identities
 prevent duplicate Session entries/external effects, and the state transition
 matches its result branch. Branch-specific assertions:

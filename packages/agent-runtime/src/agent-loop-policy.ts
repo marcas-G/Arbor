@@ -39,7 +39,10 @@ export const safetyStop = (reason: string): ExecutionSettlement => ({
 
 export const isProviderTurnBindingChanged = (
   cause: unknown,
-): cause is ProviderFailure =>
+): cause is ProviderFailure & {
+  readonly kind: "UnknownProviderFailure";
+  readonly safeDiagnostic: "provider-turn-resume-binding-invalid";
+} =>
   typeof cause === "object" &&
   cause !== null &&
   (cause as { readonly _tag?: unknown })._tag === "ProviderFailure" &&

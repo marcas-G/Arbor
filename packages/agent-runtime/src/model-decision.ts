@@ -125,14 +125,18 @@ export const runModelDecision = (
   return Effect.gen(function* () {
     let repairAttempt = 0;
     let compactionAttempts = 0;
+    let overflowRecoveryAttempt = 0;
+    let overflowReplacementProviderTurnId:
+      | import("@arbor/domain").ProviderTurnId
+      | undefined;
     let repairFragments: ReadonlyArray<InstructionFragment> = [];
     while (true) {
       const controlBasis = yield* currentControlBasis();
-      const providerTurnId = (
-        repairAttempt === 0
+      const providerTurnId =
+        overflowReplacementProviderTurnId ??
+        ((repairAttempt === 0
           ? `ptn_${input.execution.executionId}_${turn}`
-          : `ptn_${input.execution.executionId}_${turn}_r${repairAttempt}`
-      ) as never;
+          : `ptn_${input.execution.executionId}_${turn}_r${repairAttempt}`) as never);
       const loopStepIdentity = {
         executionId: input.execution.executionId,
         logicalStepNo: turn,
@@ -458,7 +462,8 @@ export const runModelDecision = (
           if (
             settled.turn.executionId !== input.execution.executionId ||
             settled.turn.sessionId !== input.execution.sessionId ||
-            settled.turn.contextEpoch !== 0 ||
+            settled.turn.contextEpoch !==
+              preparation.turn.manifest.contextEpoch ||
             persistedManifest.providerTurnId !== settled.turn.providerTurnId ||
             persistedManifest.executionId !== settled.turn.executionId ||
             persistedManifest.sessionId !== settled.turn.sessionId ||
@@ -547,7 +552,7 @@ export const runModelDecision = (
           if (
             settled.turn.executionId !== input.execution.executionId ||
             settled.turn.sessionId !== input.execution.sessionId ||
-            settled.turn.contextEpoch !== 0
+            settled.turn.contextEpoch !== preparation.turn.manifest.contextEpoch
           ) {
             return yield* Effect.fail(
               failure({
@@ -624,6 +629,104 @@ export const runModelDecision = (
               providerResult.cause,
             ),
           };
+        }
+        if (
+          typeof providerResult.cause === "object" &&
+          providerResult.cause !== null &&
+          "_tag" in providerResult.cause &&
+          providerResult.cause._tag === "ProviderFailure" &&
+          "kind" in providerResult.cause &&
+          providerResult.cause.kind === "ContextLimitExceeded" &&
+          overflowRecoveryAttempt === 0 &&
+          loopStepFence !== undefined &&
+          loopStep !== undefined &&
+          loopSteps !== undefined
+        ) {
+          const overflowStep = loopStep;
+          const overflowFence = loopStepFence;
+          const overflowSteps = loopSteps;
+          const observedAt = yield* now();
+          if (providerTurns !== undefined) {
+            const existingTurn = yield* tx
+              .transact(providerTurns.findUnsettledByTurn(providerTurnId))
+              .pipe(Effect.mapError(failure));
+            if (existingTurn !== null) {
+              yield* tx
+                .transact(providerTurns.failTurn(providerTurnId, observedAt))
+                .pipe(Effect.mapError(failure));
+            }
+          }
+          const nativeSupported =
+            capability.portableRequestCompatibility?.operationKinds.includes(
+              "CompactionNative",
+            ) === true;
+          const compactTurnId =
+            `${input.execution.executionId}_${turn}_${nativeSupported ? "native_" : ""}compact_${stepContext.contextEpoch}` as never;
+          yield* tx
+            .transact(
+              Effect.gen(function* () {
+                yield* overflowSteps.ensureProviderTurnLink(
+                  {
+                    identity: overflowStep.identity,
+                    overflowOrdinal: 0,
+                    role: "Inference",
+                    providerTurnId,
+                    contextEpoch: stepContext.contextEpoch,
+                    state: "SettledFailure",
+                    createdAt: observedAt,
+                  },
+                  overflowFence,
+                );
+                yield* overflowSteps.ensureProviderTurnLink(
+                  {
+                    identity: overflowStep.identity,
+                    overflowOrdinal: 0,
+                    role: "OverflowCompaction",
+                    providerTurnId: `ptn_${compactTurnId}` as never,
+                    predecessorProviderTurnId: providerTurnId,
+                    contextEpoch: stepContext.contextEpoch,
+                    state: "Prepared",
+                    createdAt: observedAt,
+                  },
+                  overflowFence,
+                );
+              }),
+            )
+            .pipe(Effect.mapError(failure));
+          const compacted = yield* runCompaction(
+            {
+              execution: input.execution,
+              logicalStepNo: turn,
+              currentEpoch: stepContext.contextEpoch,
+              modelRef: capability.modelRef,
+              bindingFingerprint: stepContext.bindingFingerprint,
+              inputItems,
+              fence: overflowFence,
+              nativeSupported,
+            },
+            { providerRuntime, sessions, tx },
+          ).pipe(Effect.mapError(failure));
+          overflowReplacementProviderTurnId =
+            `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+          yield* tx
+            .transact(
+              overflowSteps.ensureProviderTurnLink(
+                {
+                  identity: overflowStep.identity,
+                  overflowOrdinal: 0,
+                  role: "OverflowReplacement",
+                  providerTurnId: overflowReplacementProviderTurnId,
+                  predecessorProviderTurnId: compacted.providerTurnId,
+                  contextEpoch: compacted.newEpoch,
+                  state: "Prepared",
+                  createdAt: yield* now(),
+                },
+                overflowFence,
+              ),
+            )
+            .pipe(Effect.mapError(failure));
+          overflowRecoveryAttempt = 1;
+          continue;
         }
         return yield* Effect.fail(failure(providerResult.cause));
       }

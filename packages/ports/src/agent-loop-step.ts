@@ -78,6 +78,18 @@ export interface AgentLoopStepFence {
   readonly fencingGeneration: LeaseGeneration;
 }
 
+export interface AgentLoopStepProviderTurnLink {
+  readonly identity: AgentLoopStepIdentity;
+  readonly overflowOrdinal: 0;
+  readonly role: "Inference" | "OverflowCompaction" | "OverflowReplacement";
+  readonly providerTurnId: ProviderTurnId;
+  readonly predecessorProviderTurnId?: ProviderTurnId;
+  readonly contextEpoch: import("@arbor/domain").ContextEpochNumber;
+  readonly manifestId?: string;
+  readonly state: "Prepared" | "SettledSuccess" | "SettledFailure";
+  readonly createdAt: string;
+}
+
 export interface AgentLoopStepStoreError {
   readonly _tag: "AgentLoopStepStoreError";
   readonly cause: unknown;
@@ -157,6 +169,21 @@ export interface AgentLoopStepStoreService {
     identity: AgentLoopStepIdentity,
   ) => Effect.Effect<
     ReadonlyArray<AgentLoopStepActionRecord>,
+    AgentLoopStepStoreError,
+    TransactionScope
+  >;
+  readonly ensureProviderTurnLink: (
+    link: AgentLoopStepProviderTurnLink,
+    fence: AgentLoopStepFence,
+  ) => Effect.Effect<
+    AgentLoopStepProviderTurnLink,
+    StepMutationError,
+    TransactionScope
+  >;
+  readonly listProviderTurnLinks: (
+    identity: AgentLoopStepIdentity,
+  ) => Effect.Effect<
+    ReadonlyArray<AgentLoopStepProviderTurnLink>,
     AgentLoopStepStoreError,
     TransactionScope
   >;

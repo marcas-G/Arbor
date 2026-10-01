@@ -1044,3 +1044,31 @@ export const P19_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P19_SESSION_CONTEXT_RUNTIME_CONVERGENCE_DDL,
   },
 ];
+
+const P20_AGENT_LOOP_STEP_PROVIDER_TURN_CHAIN_DDL = `
+CREATE TABLE agent_loop_step_provider_turns (
+  execution_id TEXT NOT NULL,
+  logical_step_no INTEGER NOT NULL,
+  repair_attempt INTEGER NOT NULL,
+  overflow_ordinal INTEGER NOT NULL CHECK (overflow_ordinal = 0),
+  role TEXT NOT NULL CHECK (role IN ('Inference','OverflowCompaction','OverflowReplacement')),
+  provider_turn_id TEXT NOT NULL UNIQUE,
+  predecessor_provider_turn_id TEXT,
+  context_epoch INTEGER NOT NULL,
+  manifest_id TEXT,
+  state TEXT NOT NULL CHECK (state IN ('Prepared','SettledSuccess','SettledFailure')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (execution_id, logical_step_no, repair_attempt, overflow_ordinal, role),
+  FOREIGN KEY (execution_id, logical_step_no, repair_attempt)
+    REFERENCES agent_loop_steps(execution_id, logical_step_no, repair_attempt)
+);
+`;
+
+export const P20_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P19_MIGRATIONS,
+  {
+    id: 20,
+    name: "agent_loop_step_provider_turn_chain",
+    sql: P20_AGENT_LOOP_STEP_PROVIDER_TURN_CHAIN_DDL,
+  },
+];
