@@ -33,10 +33,12 @@ import {
   ProjectId,
   parse,
   SessionId,
+  WorkId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
   type AdmitExecutionPayload,
+  executionSettledEventPayload,
   FenceStopCheckLive,
   P2CommandHandlerRegistryLive,
   type SettleExecutionPayload,
@@ -53,6 +55,7 @@ const principal = parse(Principal)("runtime:system");
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 ) as ExecutionId;
+const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 
 const makeApp = () => {
   const base = layer({ filename: ":memory:" });
@@ -232,6 +235,49 @@ const completed: SettleExecutionPayload["settlement"] = {
 };
 
 describe("P2-011 SettleExecution", () => {
+  it("emits the exact top-level CompletionClaim trigger only for Work-bound claims", () => {
+    const claim = {
+      _tag: "Completed" as const,
+      result: {
+        _tag: "CompletionClaimed" as const,
+        workRevision: 3 as never,
+        claimRef: "clm_test",
+      },
+    };
+    const workPayload = executionSettledEventPayload(
+      {
+        executionId,
+        binding: {
+          _tag: "WorkspaceExecution",
+          workspaceId,
+          focus: { _tag: "Work", workId },
+        },
+      },
+      claim,
+    );
+    const coordinationPayload = executionSettledEventPayload(
+      {
+        executionId,
+        binding: {
+          _tag: "WorkspaceExecution",
+          workspaceId,
+          focus: { _tag: "Coordination" },
+        },
+      },
+      completed,
+    );
+
+    expect(workPayload).toMatchObject({
+      executionId,
+      workId,
+      workRevision: 3,
+      claimRef: "clm_test",
+      settlement: claim,
+    });
+    expect(coordinationPayload).not.toHaveProperty("workId");
+    expect(coordinationPayload).not.toHaveProperty("claimRef");
+  });
+
   it("settles on the ExecutionOrigin path and emits ExecutionSettled", async () => {
     const app = makeApp();
     const admitId = parse(CommandId)(

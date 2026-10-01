@@ -7,6 +7,7 @@ import {
   DeliverableRepositoryLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
+  ExecutionRepositoryLive,
   IdGeneratorLive,
   layer,
   P8_MIGRATIONS,
@@ -38,6 +39,7 @@ import {
 import {
   CommandId,
   type CommandSubmissionContext,
+  ExecutionId,
   parse,
   startVerification,
   VerificationId,
@@ -49,6 +51,7 @@ import {
   DeliverableRepository,
   type DeliverableRepositoryError,
   EnvironmentRevisionStore,
+  ExecutionRepository,
   ProjectRepository,
   SessionRepository,
   TransactionPort,
@@ -58,6 +61,7 @@ import {
 } from "../packages/ports/src/index.js";
 import {
   p7Project,
+  p7RootSession,
   p7RootWorkspace,
   p7SeedProject,
   p7SeedWork,
@@ -66,6 +70,9 @@ import {
 } from "./support/p7-app.js";
 
 const WORK_1 = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000001");
+const LEGACY_EXECUTION = parse(ExecutionId)(
+  "exe_00000000-0000-7000-8000-000000000099",
+);
 const ASSIGN_CMD = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const VER = (suffix: string) =>
   parse(VerificationId)(`ver_00000000-0000-7000-8000-00000000${suffix}`);
@@ -108,6 +115,22 @@ const settledEvent = (n: number) => ({
     claimRef: `claim-${n}`,
   },
 });
+
+const legacyNestedClaimEvent = {
+  eventType: "ExecutionSettled",
+  eventId: "evt-legacy-nested-claim",
+  payload: {
+    executionId: LEGACY_EXECUTION,
+    settlement: {
+      _tag: "Completed",
+      result: {
+        _tag: "CompletionClaimed",
+        workRevision: 0,
+        claimRef: "legacy-claim",
+      },
+    },
+  },
+} as const;
 
 const countVerifications = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -196,6 +219,7 @@ const makeConsumerDeps = (
     const verifications = yield* VerificationRepository;
     const works = yield* WorkRepository;
     const workspaces = yield* WorkspaceRepository;
+    const executions = yield* ExecutionRepository;
     return {
       gateway: wrapGateway === undefined ? gateway : wrapGateway(gateway),
       verifications: {
@@ -213,6 +237,10 @@ const makeConsumerDeps = (
         findById: (workspaceId: WorkspaceId) =>
           tx.transact(workspaces.findById(workspaceId)),
       },
+      executions: {
+        findById: (executionId: ExecutionId) =>
+          tx.transact(executions.findById(executionId)),
+      },
     };
   });
 
@@ -226,6 +254,7 @@ type MiniAppServices =
   | TransactionPort
   | WorkspaceRepository
   | WorkRepository
+  | ExecutionRepository
   | VerificationRepository;
 
 const makeMiniApp = (): Layer.Layer<MiniAppServices> => {
@@ -236,6 +265,7 @@ const makeMiniApp = (): Layer.Layer<MiniAppServices> => {
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(DeliverableRepositoryLive, infra),
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(EnvironmentRevisionStoreLive, infra),
@@ -367,6 +397,36 @@ describe("p8-consumer-a", () => {
         // Deterministic CommandId: the committed receipt is stored under
         // the re-derivable id — the at-least-once absorption face.
         expect(yield* receiptResolution(ids.commandId)).toBe("Committed");
+      }),
+    );
+  });
+
+  it("reconciles a legacy nested CompletionClaim from the durable Work-bound Execution", async () => {
+    await runMini(
+      Effect.gen(function* () {
+        yield* seed;
+        const sql = yield* SqlClient;
+        yield* sql.unsafe(
+          "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?, ?,NULL,NULL,?, 't',NULL,'Completed',?, 't')",
+          [
+            LEGACY_EXECUTION,
+            p7Project,
+            "workspace",
+            p7RootWorkspace,
+            "work",
+            WORK_1,
+            p7RootSession,
+            JSON.stringify(legacyNestedClaimEvent.payload.settlement),
+          ],
+        );
+        const records = yield* consume([legacyNestedClaimEvent]);
+        expect(records).toEqual(["StartVerification"]);
+        const ids = verificationSpawnIds(WORK_1, 0, "legacy-claim");
+        const open = yield* openVerification;
+        expect(Option.isSome(open)).toBe(true);
+        if (Option.isSome(open)) {
+          expect(open.value.verificationId).toBe(ids.verificationId);
+        }
       }),
     );
   });

@@ -61,6 +61,31 @@ const yieldedWorkId = (execution: {
     ? execution.binding.focus.workId
     : null;
 
+export const executionSettledEventPayload = (
+  execution: {
+    readonly executionId: ExecutionId;
+    readonly binding: import("@arbor/domain").ExecutionBinding;
+  },
+  settlement: ExecutionSettlement,
+) => {
+  const completionClaimFields =
+    execution.binding._tag === "WorkspaceExecution" &&
+    execution.binding.focus._tag === "Work" &&
+    settlement._tag === "Completed" &&
+    settlement.result._tag === "CompletionClaimed"
+      ? {
+          workId: execution.binding.focus.workId,
+          workRevision: settlement.result.workRevision,
+          claimRef: settlement.result.claimRef,
+        }
+      : {};
+  return {
+    executionId: execution.executionId,
+    ...completionClaimFields,
+    settlement,
+  };
+};
+
 export const makeSettleExecutionHandler = (
   dependencies: SettleExecutionDependencies,
 ): CommandHandler<SettleExecutionPayload, SettleExecutionResult> => ({
@@ -132,10 +157,7 @@ export const makeSettleExecutionHandler = (
           aggregateRef: payload.executionId,
           actor: envelope.actor,
           causedByCommandId: envelope.commandId,
-          payload: {
-            executionId: payload.executionId,
-            settlement: payload.settlement,
-          },
+          payload: executionSettledEventPayload(current, payload.settlement),
         },
       ];
 

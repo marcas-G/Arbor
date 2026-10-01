@@ -12,6 +12,7 @@ import {
   makeRevokePermissionHandler,
   makeSelectCurrentWorkHandler,
   makeSendMessageHandler,
+  makeStartVerificationHandler,
   makeSteerWorkHandler,
   makeSubmitHumanMessageHandler,
 } from "@arbor/application";
@@ -22,8 +23,10 @@ import {
   type AcceptanceRepositoryService,
   ConversationResponseJobStore,
   type ConversationResponseJobStoreService,
+  DeliverableRepository,
   DependencyRepository,
   type DependencyRepositoryService,
+  EnvironmentRevisionStore,
   ExecutionRepository,
   FormationProposalStore,
   type FormationProposalStoreService,
@@ -44,6 +47,7 @@ import {
   WorkWaitStore,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 
 /**
  * The slice's command handler registry: P1 commands (CreateProject /
@@ -62,6 +66,8 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
   | SessionRepository
   | WorkRepository
   | DependencyRepository
+  | DeliverableRepository
+  | EnvironmentRevisionStore
   | ExecutionRepository
   | WorkWaitStore
   | FormationProposalStore
@@ -72,6 +78,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
   | PermissionGrantRepository
   | HumanMessageStore
   | ConversationResponseJobStore
+  | SqlClient
 > = Layer.effect(
   CommandHandlerRegistry,
   Effect.gen(function* () {
@@ -90,6 +97,9 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const humanMessages = yield* HumanMessageStore;
     const responseJobs = yield* ConversationResponseJobStore;
     const dependencyStore = yield* DependencyRepository;
+    const deliverables = yield* DeliverableRepository;
+    const environmentRevisions = yield* EnvironmentRevisionStore;
+    const sql = yield* SqlClient;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
       ...makeP1CommandHandlers({
         projects,
@@ -153,6 +163,35 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
           AcceptanceRepositoryService,
           "insert" | "findByWorkRevision"
         >,
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeStartVerificationHandler({
+        works,
+        verifications,
+        environmentRevisions,
+        deliverables: {
+          ...deliverables,
+          listArtifacts: (deliverableId) =>
+            sql
+              .unsafe<{ readonly role: string; readonly artifact_id: string }>(
+                "SELECT role, artifact_id FROM deliverable_artifacts WHERE deliverable_id = ?",
+                [deliverableId],
+              )
+              .pipe(
+                Effect.map((rows) =>
+                  rows.map((row) => ({
+                    role: row.role,
+                    artifactId: row.artifact_id as never,
+                  })),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    ({
+                      _tag: "DeliverableRepositoryFailure",
+                      cause,
+                    }) as never,
+                ),
+              ),
+        },
       }) as unknown as CommandHandler<unknown, unknown>,
       makeGrantPermissionHandler({
         grants: grants as PermissionGrantRepositoryService,
