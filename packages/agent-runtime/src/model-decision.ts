@@ -47,6 +47,7 @@ import {
   runtimeSafetyFragment,
   safetyStop,
 } from "./agent-loop-policy.js";
+import { runCompaction } from "./compaction-coordinator.js";
 import { assembleInboxContext } from "./inbox-context.js";
 import { decideRepair } from "./repair.js";
 import { SESSION_CONTEXT_ENTRY_LIMIT } from "./session-context.js";
@@ -123,6 +124,7 @@ export const runModelDecision = (
   } = dependencies;
   return Effect.gen(function* () {
     let repairAttempt = 0;
+    let compactionAttempts = 0;
     let repairFragments: ReadonlyArray<InstructionFragment> = [];
     while (true) {
       const controlBasis = yield* currentControlBasis();
@@ -358,12 +360,40 @@ export const runModelDecision = (
         };
       }
       if (preparation._tag === "NeedsCompaction") {
-        // Kernel: an explicit compaction ProviderTurn would run here
-        // (P3-008 protocol); the fake provider treats it as normal.
-        return {
-          _tag: "Settle",
-          settlement: safetyStop("CompactionRequired"),
-        };
+        if (loopStepFence === undefined) {
+          return yield* Effect.fail(
+            failure({
+              _tag: "CompactionFenceUnavailable",
+              executionId: input.execution.executionId,
+            }),
+          );
+        }
+        if (compactionAttempts >= 1) {
+          return yield* Effect.fail(
+            failure({
+              _tag: "CompactionNoGain",
+              executionId: input.execution.executionId,
+            }),
+          );
+        }
+        compactionAttempts += 1;
+        yield* runCompaction(
+          {
+            execution: input.execution,
+            logicalStepNo: turn,
+            currentEpoch: stepContext.contextEpoch,
+            modelRef: capability.modelRef,
+            bindingFingerprint: stepContext.bindingFingerprint,
+            inputItems,
+            fence: loopStepFence,
+            nativeSupported:
+              capability.portableRequestCompatibility?.operationKinds.includes(
+                "CompactionNative",
+              ) === true,
+          },
+          { providerRuntime, sessions, tx },
+        ).pipe(Effect.mapError(failure));
+        continue;
       }
 
       const turnInput: ProviderRunInput = {

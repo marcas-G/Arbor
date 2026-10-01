@@ -82,6 +82,7 @@ export type SessionItem =
       readonly toEpoch: ContextEpochNumber;
       readonly retainedFrontierRef: string;
       readonly summaryRef?: string;
+      readonly summaryText?: string;
       readonly opaqueItemRef?: string;
       readonly bindingFingerprint: string | null;
     }

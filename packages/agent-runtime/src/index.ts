@@ -1,4 +1,5 @@
 export * from "./agent-loop-driver.js";
+export * from "./compaction-coordinator.js";
 export * from "./control.js";
 export * from "./freshness.js";
 export * from "./legacy-directive.js";
