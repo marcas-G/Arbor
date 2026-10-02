@@ -306,7 +306,7 @@ const RECORD_VERIFICATION_EVIDENCE_SCHEMA = JSON.stringify({
       type: "string",
       minLength: 1,
       description:
-        "callRef of a successful executable ToolResult visible in this verifier session; Runtime binds its canonical identity.",
+        "Selector for a successful executable ToolResult visible in this verifier session: copy its exact callRef, or use a newest-first ordinal ('1' = most recent). Runtime binds canonical identity.",
     },
   },
 });

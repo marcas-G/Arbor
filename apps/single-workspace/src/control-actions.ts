@@ -692,19 +692,28 @@ const recordVerificationEvidenceHandler = (
       const entries = yield* dependencies.tx.transact(
         dependencies.sessions.listEntries(execution.sessionId, -1, 10_000),
       );
-      const resultEntry = [...entries].reverse().find((entry) => {
+      const visibleResults = [...entries].reverse().filter((entry) => {
         const payload = entry.payload as {
           readonly _tag?: unknown;
-          readonly callRef?: unknown;
+          readonly status?: unknown;
         };
-        return (
-          payload._tag === "ToolResult" &&
-          payload.callRef === action.sourceCallRef
-        );
+        return payload._tag === "ToolResult" && payload.status === "Succeeded";
       });
+      const exact = visibleResults.find(
+        (entry) =>
+          (entry.payload as { readonly callRef?: unknown }).callRef ===
+          action.sourceCallRef,
+      );
+      const ordinal = /^\d+$/u.test(action.sourceCallRef)
+        ? Number(action.sourceCallRef)
+        : 0;
+      const resultEntry =
+        exact ?? (ordinal > 0 ? visibleResults[ordinal - 1] : undefined);
       if (resultEntry === undefined) {
         return yield* Effect.fail(
-          actionError("sourceCallRef has no visible terminal ToolResult"),
+          actionError(
+            "sourceCallRef has no visible successful ToolResult (exact callRef or newest-first ordinal)",
+          ),
         );
       }
       const result = resultEntry.payload as {
