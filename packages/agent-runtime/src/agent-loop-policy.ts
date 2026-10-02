@@ -18,7 +18,10 @@ import type {
 import { CANONICAL_TRUST } from "./prompt-assets.js";
 import type { RepairPolicy } from "./repair.js";
 
-export const MAX_TURNS = 8;
+/** Bounded execution budget. Sixteen leaves room for inspect → test → bind
+ * evidence → conclude workflows while RuntimeSafety still stops non-progress
+ * and looping patterns before the hard ceiling. */
+export const MAX_TURNS = 16;
 export const MAX_REPAIRS = 2;
 export const REPAIR_POLICY: RepairPolicy = { maxRepairs: MAX_REPAIRS };
 
