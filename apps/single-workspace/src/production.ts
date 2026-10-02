@@ -288,6 +288,7 @@ export const ProductionDaemonServiceLive = (
             ),
           findById: (verificationId) =>
             tx.transact(verifications.findById(verificationId)),
+          listByWork: (workId) => tx.transact(verifications.listByWork(workId)),
         },
         works: { findById: (workId) => tx.transact(works.findById(workId)) },
         workspaces: {
