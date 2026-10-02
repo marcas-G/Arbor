@@ -505,10 +505,31 @@ describe("p8-consumer-a", () => {
           eventId: "evt-unrelated",
           payload: { deliverableId: "del_x" },
         };
-        const records = yield* consume([unrelated, legacy, noClaim]);
+        const verifierCompleted = {
+          eventType: "ExecutionSettled",
+          eventId: "evt-verifier-completed",
+          payload: {
+            executionId: "exe_00000000-0000-7000-8000-00000000009c",
+            settlement: {
+              _tag: "Completed",
+              result: {
+                _tag: "VerificationConcluded",
+                verificationId: "ver_00000000-0000-7000-8000-000000000001",
+                verdict: "Pass",
+              },
+            },
+          },
+        };
+        const records = yield* consume([
+          unrelated,
+          legacy,
+          noClaim,
+          verifierCompleted,
+        ]);
         expect(records).toEqual([
           `skipped:LegacyExecutionSettled:evt-legacy`,
           `skipped:NotCompletionClaimed:evt-noclaim`,
+          `skipped:NotCompletionClaimed:evt-verifier-completed`,
         ]);
         expect(yield* countVerifications).toBe(0);
       }),

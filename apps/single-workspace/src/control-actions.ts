@@ -931,11 +931,14 @@ const concludeVerificationHandler = (
         );
       }
       return {
-        _tag: "Observation" as const,
-        source: "Runtime" as const,
-        observation: {
-          text: `VerificationConcluded(${verification.value.verificationId}, ${action.verdict}, ${summaryRef})`,
-          truncated: false,
+        _tag: "Settle" as const,
+        settlement: {
+          _tag: "Completed" as const,
+          result: {
+            _tag: "VerificationConcluded" as const,
+            verificationId: verification.value.verificationId,
+            verdict: action.verdict,
+          },
         },
       };
     }).pipe(Effect.mapError(actionError)),
