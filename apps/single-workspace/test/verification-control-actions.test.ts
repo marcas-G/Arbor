@@ -241,6 +241,34 @@ describe("verification control actions", () => {
     });
   });
 
+  it("accepts newest-first ordinal selection while still binding canonical identity", async () => {
+    const state = setup();
+    const handler = state.handlers.find(
+      (candidate) => candidate.action === "RecordVerificationEvidence",
+    );
+    await Effect.runPromise(
+      handler?.handle(
+        input(
+          {
+            _tag: "RecordVerificationEvidence",
+            criterionId: "focused-test",
+            sourceCallRef: "1",
+          },
+          1,
+        ),
+      ) as Effect.Effect<unknown>,
+    );
+    expect(state.submitted).toHaveLength(1);
+    // biome-ignore lint/style/noNonNullAssertion: guarded by length assertion
+    const payload = state.submitted[0]!.payload as {
+      evidence: Record<string, unknown>;
+    };
+    expect(payload.evidence).toMatchObject({
+      toolInvocationId,
+      callRef: "tool-call-1",
+    });
+  });
+
   it("stores exact summary bytes and submits only the returned BlobRef", async () => {
     const state = setup();
     const handler = state.handlers.find(
