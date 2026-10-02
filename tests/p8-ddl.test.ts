@@ -173,6 +173,11 @@ describe("P8-002 DDL + repositories", () => {
         );
         yield* tx.transact(repos.bindExecution(VER_1, EXE_1, "t"));
         yield* tx.transact(repos.bindExecution(VER_1, EXE_1, "t2"));
+        const byExecution = yield* tx.transact(repos.findByExecutionId(EXE_1));
+        expect(Option.isSome(byExecution)).toBe(true);
+        expect(
+          Option.isSome(byExecution) && byExecution.value.verificationId,
+        ).toBe(VER_1);
         const orphaned = concludeVerification(
           verificationOf(VER_1),
           "Unknown",

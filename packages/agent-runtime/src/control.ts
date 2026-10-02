@@ -124,6 +124,8 @@ export const makeControlToolRegistry = (
     arbor_propose_child_workspace: "ProposeChildWorkspace",
     arbor_spawn_specialist: "SpawnSpecialist",
     arbor_declare_dependency: "DeclareDependency",
+    arbor_record_verification_evidence: "RecordVerificationEvidence",
+    arbor_conclude_verification: "ConcludeVerification",
   };
   const registered = allDefinitions.filter((tool) => {
     const action = definitionAction[tool.name];

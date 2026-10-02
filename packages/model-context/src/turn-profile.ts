@@ -1,4 +1,4 @@
-import type { Execution } from "@arbor/domain";
+import type { Execution, ExecutionId } from "@arbor/domain";
 import {
   ControlToolCatalogPort,
   type ControlToolCatalogPortService,
@@ -7,6 +7,10 @@ import {
   sha256Hex,
   ToolCatalogPort,
   type ToolCatalogPortService,
+  type TransactionOperationalFailure,
+  TransactionPort,
+  VerificationRepository,
+  type VerificationRepositoryError,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
 
@@ -14,7 +18,8 @@ export type ExecutionPurpose =
   | "RootConversationRespond"
   | "WorkspaceWork"
   | "WorkspaceCoordination"
-  | "ExecutionBoundSpecialist";
+  | "ExecutionBoundSpecialist"
+  | "Verifier";
 
 export interface ResolvedTurnProfile {
   readonly purpose: ExecutionPurpose;
@@ -32,7 +37,9 @@ export interface TurnProfileResolverService {
     readonly conversation: boolean;
   }) => Effect.Effect<
     ResolvedTurnProfile,
-    import("@arbor/ports").ToolCatalogError
+    | import("@arbor/ports").ToolCatalogError
+    | VerificationRepositoryError
+    | TransactionOperationalFailure
   >;
 }
 
@@ -59,15 +66,37 @@ const specialistControls = new Set([
   "arbor_spawn_specialist",
 ]);
 
+const verifierControls = new Set([
+  "arbor_record_verification_evidence",
+  "arbor_conclude_verification",
+]);
+
 export const makeTurnProfileResolver = (dependencies: {
   readonly toolCatalog: ToolCatalogPortService;
   readonly controlCatalog?: ControlToolCatalogPortService;
+  readonly verificationForExecution?: (
+    executionId: ExecutionId,
+  ) => Effect.Effect<
+    Option.Option<import("@arbor/domain").Verification>,
+    VerificationRepositoryError | TransactionOperationalFailure
+  >;
 }): TurnProfileResolverService => ({
   resolve: ({ execution, conversation }) =>
     Effect.gen(function* () {
-      const purpose = purposeOf(execution, conversation);
+      const verifier =
+        execution.binding._tag === "ExecutionBoundAgentBinding" &&
+        dependencies.verificationForExecution !== undefined
+          ? yield* dependencies.verificationForExecution(execution.executionId)
+          : Option.none();
+      const purpose = Option.isSome(verifier)
+        ? "Verifier"
+        : purposeOf(execution, conversation);
       const executableTools: ModelFacingToolDefinition[] = [];
-      if (purpose === "WorkspaceWork" || purpose === "WorkspaceCoordination") {
+      if (
+        purpose === "WorkspaceWork" ||
+        purpose === "WorkspaceCoordination" ||
+        purpose === "Verifier"
+      ) {
         for (const ref of yield* dependencies.toolCatalog.visibleRefs()) {
           executableTools.push(
             yield* dependencies.toolCatalog.resolveForModel(ref),
@@ -83,7 +112,9 @@ export const makeTurnProfileResolver = (dependencies: {
           ? []
           : purpose === "ExecutionBoundSpecialist"
             ? allControls.filter((tool) => specialistControls.has(tool.name))
-            : allControls;
+            : purpose === "Verifier"
+              ? allControls.filter((tool) => verifierControls.has(tool.name))
+              : allControls.filter((tool) => !verifierControls.has(tool.name));
       const outputContractRef =
         purpose === "RootConversationRespond"
           ? "text-response-v1"
@@ -95,7 +126,9 @@ export const makeTurnProfileResolver = (dependencies: {
             ? "workspace-work-context-v1"
             : purpose === "WorkspaceCoordination"
               ? "workspace-coordination-context-v1"
-              : "specialist-context-v1";
+              : purpose === "Verifier"
+                ? "verifier-context-v1"
+                : "specialist-context-v1";
       const identity = {
         purpose,
         profileVersion: "turn-profile-v1" as const,
@@ -124,14 +157,18 @@ export const makeTurnProfileResolver = (dependencies: {
 export const TurnProfileResolverLive: Layer.Layer<
   TurnProfileResolver,
   never,
-  ToolCatalogPort
+  ToolCatalogPort | VerificationRepository | TransactionPort
 > = Layer.effect(
   TurnProfileResolver,
   Effect.gen(function* () {
     const toolCatalog = yield* ToolCatalogPort;
     const controlCatalog = yield* Effect.serviceOption(ControlToolCatalogPort);
+    const verifications = yield* VerificationRepository;
+    const tx = yield* TransactionPort;
     return makeTurnProfileResolver({
       toolCatalog,
+      verificationForExecution: (executionId) =>
+        tx.transact(verifications.findByExecutionId(executionId)),
       ...(Option.isSome(controlCatalog)
         ? { controlCatalog: controlCatalog.value }
         : {}),

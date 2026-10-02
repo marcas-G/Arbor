@@ -6,11 +6,15 @@ import type {
 import {
   CommandGateway,
   type CommandGatewayService,
+  type ConcludeVerificationPayload,
+  type ConcludeVerificationResult,
   type DeclareDependencyPayload,
   type DeclareDependencyResult,
   isChildWorkspaceProposal,
   newFormationProposalId,
   newUuid7,
+  type RecordVerificationEvidencePayload,
+  type RecordVerificationEvidenceResult,
   semanticRequestFingerprint,
   sendMessagePlan,
 } from "@arbor/application";
@@ -23,6 +27,7 @@ import {
   type DeliverableKind,
   DependencyId,
   DependencyRevision,
+  EvidenceId,
   ExecutionId,
   type MessageId,
   MessageId as MessageIdSchema,
@@ -30,6 +35,7 @@ import {
   parse,
   Revision,
   SessionId,
+  ToolInvocationId,
 } from "@arbor/domain";
 import {
   BlobStorePort,
@@ -41,8 +47,14 @@ import {
   type MessageRecord,
   MessageStore,
   type MessageStoreService,
+  SessionRepository,
+  type SessionRepositoryService,
+  ToolInvocationStore,
+  type ToolInvocationStoreService,
   TransactionPort,
   type TransactionPortService,
+  VerificationRepository,
+  type VerificationRepositoryService,
   WorkRepository,
   type WorkRepositoryService,
   WorkspaceRepository,
@@ -89,6 +101,19 @@ export interface DeclareDependencyDependencies {
   readonly works: WorkRepositoryService;
   readonly clock: ClockService;
   readonly tx: TransactionPortService;
+}
+
+export interface VerificationActionDependencies {
+  readonly gateway: CommandGatewayService;
+  readonly blobs: BlobStorePortService;
+  readonly clock: ClockService;
+  readonly tx: TransactionPortService;
+  readonly verifications: Pick<
+    VerificationRepositoryService,
+    "findByExecutionId"
+  >;
+  readonly sessions: Pick<SessionRepositoryService, "listEntries">;
+  readonly toolInvocations: Pick<ToolInvocationStoreService, "findById">;
 }
 
 const actionError = (cause: unknown): AgentActionError => ({
@@ -636,19 +661,291 @@ const declareDependencyHandler = (
     }).pipe(Effect.mapError(actionError)),
 });
 
+const verifierBinding = (
+  dependencies: VerificationActionDependencies,
+  executionId: import("@arbor/domain").ExecutionId,
+) =>
+  dependencies.tx.transact(
+    dependencies.verifications.findByExecutionId(executionId),
+  );
+
+const recordVerificationEvidenceHandler = (
+  dependencies: VerificationActionDependencies,
+): AgentActionHandler => ({
+  action: "RecordVerificationEvidence",
+  handle: ({ action, invocation, execution, context }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "RecordVerificationEvidence") {
+        return yield* Effect.fail(
+          actionError("verification evidence handler received another action"),
+        );
+      }
+      const verification = yield* verifierBinding(
+        dependencies,
+        execution.executionId,
+      );
+      if (Option.isNone(verification)) {
+        return yield* Effect.fail(
+          actionError("execution is not bound to a Verification"),
+        );
+      }
+      const entries = yield* dependencies.tx.transact(
+        dependencies.sessions.listEntries(execution.sessionId, -1, 10_000),
+      );
+      const resultEntry = [...entries].reverse().find((entry) => {
+        const payload = entry.payload as {
+          readonly _tag?: unknown;
+          readonly callRef?: unknown;
+        };
+        return (
+          payload._tag === "ToolResult" &&
+          payload.callRef === action.sourceCallRef
+        );
+      });
+      if (resultEntry === undefined) {
+        return yield* Effect.fail(
+          actionError("sourceCallRef has no visible terminal ToolResult"),
+        );
+      }
+      const result = resultEntry.payload as {
+        readonly _tag: "ToolResult";
+        readonly callRef: string;
+        readonly invocationId?: string;
+        readonly observationRef: string;
+        readonly status: string;
+      };
+      if (
+        result.status !== "Succeeded" ||
+        typeof result.invocationId !== "string" ||
+        typeof result.observationRef !== "string"
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            "ToolObservation source must be a successful result with canonical invocation identity",
+          ),
+        );
+      }
+      let toolInvocationId: import("@arbor/domain").ToolInvocationId;
+      try {
+        toolInvocationId = parse(ToolInvocationId)(result.invocationId);
+      } catch (cause) {
+        return yield* Effect.fail(actionError(cause));
+      }
+      const storedInvocation = yield* dependencies.tx.transact(
+        dependencies.toolInvocations.findById(toolInvocationId),
+      );
+      if (
+        Option.isNone(storedInvocation) ||
+        storedInvocation.value.executionId !== execution.executionId ||
+        storedInvocation.value.settledAt === null
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            "ToolObservation source is missing, unsettled, or belongs to another execution",
+          ),
+        );
+      }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const evidenceId = parse(EvidenceId)(
+        `evd_${newUuid7("verification-evidence", occurrence)}`,
+      );
+      const payload: RecordVerificationEvidencePayload = {
+        verificationId: verification.value.verificationId,
+        evidence: {
+          evidenceId,
+          criterionId: action.criterionId,
+          kind: "ToolObservation",
+          toolInvocationId,
+          observationRef: result.observationRef,
+          callRef: result.callRef,
+          recordedAt: yield* dependencies.clock.now(),
+        },
+      };
+      const commandId = parse(CommandId)(
+        `cmd_${newUuid7("record-verification-evidence", occurrence)}`,
+      );
+      const actor = context.principal as never;
+      const receipt = yield* dependencies.gateway.execute<
+        RecordVerificationEvidencePayload,
+        RecordVerificationEvidenceResult
+      >(
+        {
+          commandType: "RecordVerificationEvidence",
+          commandId,
+          projectId: execution.projectId,
+          actor,
+          issuedAt: yield* dependencies.clock.now(),
+          payload,
+        },
+        context,
+        {
+          _tag: "VerifierExecutionAuthority",
+          principal: context.principal,
+          commandId,
+          semanticRequestFingerprint: semanticRequestFingerprint({
+            commandType: "RecordVerificationEvidence",
+            projectId: execution.projectId,
+            actor,
+            schemaVersion: "1",
+            payload,
+          }),
+          projectId: execution.projectId,
+          verificationId: verification.value.verificationId,
+          executionId: execution.executionId,
+        },
+      );
+      if (receipt.resolution._tag !== "Committed") {
+        return yield* Effect.fail(
+          actionError(
+            receipt.resolution._tag === "TerminalRejected"
+              ? receipt.resolution.error
+              : "evidence command failed operationally",
+          ),
+        );
+      }
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: `VerificationEvidenceRecorded(${evidenceId}, ${action.criterionId})`,
+          truncated: false,
+        },
+      };
+    }).pipe(Effect.mapError(actionError)),
+});
+
+const concludeVerificationHandler = (
+  dependencies: VerificationActionDependencies,
+): AgentActionHandler => ({
+  action: "ConcludeVerification",
+  handle: ({ action, invocation, execution, context }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "ConcludeVerification") {
+        return yield* Effect.fail(
+          actionError(
+            "verification conclusion handler received another action",
+          ),
+        );
+      }
+      const verification = yield* verifierBinding(
+        dependencies,
+        execution.executionId,
+      );
+      if (Option.isNone(verification)) {
+        return yield* Effect.fail(
+          actionError("execution is not bound to a Verification"),
+        );
+      }
+      const summaryBytes = new TextEncoder().encode(action.summary);
+      const summaryRef = yield* dependencies.blobs.put(summaryBytes);
+      const resolved = yield* dependencies.blobs.get(summaryRef);
+      if (
+        resolved.length !== summaryBytes.length ||
+        resolved.some((byte, index) => byte !== summaryBytes[index])
+      ) {
+        return yield* Effect.fail(
+          actionError("persisted verification summary failed byte validation"),
+        );
+      }
+      const payload: ConcludeVerificationPayload = {
+        verificationId: verification.value.verificationId,
+        verdict: action.verdict,
+        criteriaResults: action.criteriaResults,
+        summaryRef,
+      };
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const commandId = parse(CommandId)(
+        `cmd_${newUuid7("conclude-verification", occurrence)}`,
+      );
+      const actor = context.principal as never;
+      const receipt = yield* dependencies.gateway.execute<
+        ConcludeVerificationPayload,
+        ConcludeVerificationResult
+      >(
+        {
+          commandType: "ConcludeVerification",
+          commandId,
+          projectId: execution.projectId,
+          actor,
+          issuedAt: yield* dependencies.clock.now(),
+          payload,
+        },
+        context,
+        {
+          _tag: "VerifierExecutionAuthority",
+          principal: context.principal,
+          commandId,
+          semanticRequestFingerprint: semanticRequestFingerprint({
+            commandType: "ConcludeVerification",
+            projectId: execution.projectId,
+            actor,
+            schemaVersion: "1",
+            payload,
+          }),
+          projectId: execution.projectId,
+          verificationId: verification.value.verificationId,
+          executionId: execution.executionId,
+        },
+      );
+      if (receipt.resolution._tag !== "Committed") {
+        return yield* Effect.fail(
+          actionError(
+            receipt.resolution._tag === "TerminalRejected"
+              ? receipt.resolution.error
+              : "verification conclusion failed operationally",
+          ),
+        );
+      }
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: `VerificationConcluded(${verification.value.verificationId}, ${action.verdict}, ${summaryRef})`,
+          truncated: false,
+        },
+      };
+    }).pipe(Effect.mapError(actionError)),
+});
+
 export const makeSingleWorkspaceControlActionHandlers = (
   dependencies: SendMessageDependencies &
     ClaimCompletionDependencies &
     ProposeChildDependencies &
     SpawnSpecialistDependencies &
-    DeclareDependencyDependencies,
-): ReadonlyArray<AgentActionHandler> => [
-  sendMessageHandler(dependencies),
-  claimCompletionHandler(dependencies),
-  proposeChildWorkspaceHandler(dependencies),
-  spawnSpecialistHandler(dependencies),
-  declareDependencyHandler(dependencies),
-];
+    DeclareDependencyDependencies &
+    Partial<
+      Pick<
+        VerificationActionDependencies,
+        "verifications" | "sessions" | "toolInvocations"
+      >
+    >,
+): ReadonlyArray<AgentActionHandler> => {
+  const handlers: AgentActionHandler[] = [
+    sendMessageHandler(dependencies),
+    claimCompletionHandler(dependencies),
+    proposeChildWorkspaceHandler(dependencies),
+    spawnSpecialistHandler(dependencies),
+    declareDependencyHandler(dependencies),
+  ];
+  const { verifications, sessions, toolInvocations } = dependencies;
+  if (
+    verifications !== undefined &&
+    sessions !== undefined &&
+    toolInvocations !== undefined
+  ) {
+    const verificationDependencies: VerificationActionDependencies = {
+      ...dependencies,
+      verifications,
+      sessions,
+      toolInvocations,
+    };
+    handlers.push(
+      recordVerificationEvidenceHandler(verificationDependencies),
+      concludeVerificationHandler(verificationDependencies),
+    );
+  }
+  return handlers;
+};
 
 export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
   SingleWorkspaceControlActionHandlers,
@@ -662,6 +959,9 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
   | WorkRepository
   | WorkWaitStore
   | WorkspaceRepository
+  | SessionRepository
+  | ToolInvocationStore
+  | VerificationRepository
 > = Layer.effect(
   SingleWorkspaceControlActionHandlers,
   Effect.gen(function* () {
@@ -674,6 +974,8 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
     const waits = yield* WorkWaitStore;
     const workspaces = yield* WorkspaceRepository;
     const proposals = yield* FormationProposalStore;
+    const verifications = yield* VerificationRepository;
+    const toolInvocations = yield* ToolInvocationStore;
     return SingleWorkspaceControlActionHandlers.of(
       makeSingleWorkspaceControlActionHandlers({
         gateway,
@@ -685,6 +987,9 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
         waits,
         workspaces,
         proposals,
+        verifications,
+        sessions: yield* SessionRepository,
+        toolInvocations,
       }),
     );
   }),

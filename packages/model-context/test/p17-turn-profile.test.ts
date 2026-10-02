@@ -7,7 +7,7 @@ import {
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { makeTurnProfileResolver } from "../src/turn-profile.js";
 
@@ -58,8 +58,30 @@ const resolver = makeTurnProfileResolver({
           hash: "send-hash",
           requiredCapability: "agent:communicate",
         },
+        {
+          name: "arbor_record_verification_evidence",
+          description: "record evidence",
+          schemaJson: "{}",
+          version: "1",
+          hash: "record-hash",
+          requiredCapability: "agent:verify",
+        },
+        {
+          name: "arbor_conclude_verification",
+          description: "conclude",
+          schemaJson: "{}",
+          version: "1",
+          hash: "conclude-hash",
+          requiredCapability: "agent:verify",
+        },
       ]),
   },
+  verificationForExecution: (executionId) =>
+    Effect.succeed(
+      String(executionId).endsWith("a2")
+        ? Option.some({} as import("@arbor/domain").Verification)
+        : Option.none(),
+    ),
 });
 
 describe("P17 TurnProfileResolver", () => {
@@ -129,6 +151,31 @@ describe("P17 TurnProfileResolver", () => {
     expect(profile.executableTools).toEqual([]);
     expect(profile.controlTools.map((tool) => tool.name)).toEqual([
       "arbor_send_message",
+    ]);
+  });
+
+  it("recognizes a durably bound verifier and exposes only verification tools", async () => {
+    const profile = await Effect.runPromise(
+      resolver.resolve({
+        conversation: false,
+        execution: {
+          ...base,
+          executionId: parse(ExecutionId)(
+            "exe_018f2b3c-4d5e-7abc-8def-0123456789a2",
+          ),
+          binding: {
+            _tag: "ExecutionBoundAgentBinding",
+            parentExecutionId: base.executionId,
+            mission: "verify the bound work",
+          },
+        },
+      }),
+    );
+    expect(profile.purpose).toBe("Verifier");
+    expect(profile.executableTools.map((tool) => tool.name)).toEqual(["read"]);
+    expect(profile.controlTools.map((tool) => tool.name)).toEqual([
+      "arbor_record_verification_evidence",
+      "arbor_conclude_verification",
     ]);
   });
 });

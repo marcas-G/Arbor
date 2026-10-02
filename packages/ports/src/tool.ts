@@ -272,6 +272,13 @@ export interface ToolInvocationStoreService {
     ToolInvocationStoreError,
     TransactionScope
   >;
+  readonly findById: (
+    invocationId: ToolInvocationId,
+  ) => Effect.Effect<
+    Option.Option<ToolInvocationRecord>,
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
   readonly findUnsettled: (
     executionId: ExecutionId,
   ) => Effect.Effect<

@@ -125,6 +125,19 @@ export const VerificationRepositoryLive: Layer.Layer<
             ? Option.some(toVerification(rows[0] as VerificationRow))
             : Option.none();
         }),
+      findByExecutionId: (executionId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<VerificationRow>(
+              "SELECT v.* FROM verifications v INNER JOIN verification_executions ve ON ve.verification_id = v.verification_id WHERE ve.execution_id = ? ORDER BY ve.bound_at, v.verification_id LIMIT 1",
+              [executionId],
+            ),
+          );
+          return rows.length > 0
+            ? Option.some(toVerification(rows[0] as VerificationRow))
+            : Option.none();
+        }),
       findOpenByWorkRevision: (workId, targetWorkRevision) =>
         Effect.gen(function* () {
           yield* TransactionScope;
@@ -240,19 +253,43 @@ export const EvidenceRepositoryLive: Layer.Layer<
       append: (record) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          const columns = yield* run(
+            sql.unsafe<{ name: string }>(
+              "PRAGMA table_info(verification_evidence)",
+            ),
+          );
+          const supportsSourceIdentity = columns.some(
+            (column) => column.name === "tool_invocation_id",
+          );
           yield* run(
             sql.unsafe(
-              "INSERT INTO verification_evidence (evidence_id, verification_id, criterion_id, kind, artifact_ref, observed_environment_revision, recorded_by_execution_id, recorded_at) VALUES (?,?,?,?,?,?,?,?)",
-              [
-                record.evidenceId,
-                record.verificationId,
-                record.criterionId,
-                record.kind,
-                record.artifactRef,
-                record.observedEnvironmentRevision,
-                record.recordedByExecutionId,
-                record.recordedAt,
-              ],
+              supportsSourceIdentity
+                ? "INSERT INTO verification_evidence (evidence_id, verification_id, criterion_id, kind, artifact_ref, observed_environment_revision, recorded_by_execution_id, recorded_at, tool_invocation_id, observation_ref, call_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+                : "INSERT INTO verification_evidence (evidence_id, verification_id, criterion_id, kind, artifact_ref, observed_environment_revision, recorded_by_execution_id, recorded_at) VALUES (?,?,?,?,?,?,?,?)",
+              supportsSourceIdentity
+                ? [
+                    record.evidenceId,
+                    record.verificationId,
+                    record.criterionId,
+                    record.kind,
+                    record.artifactRef,
+                    record.observedEnvironmentRevision,
+                    record.recordedByExecutionId,
+                    record.recordedAt,
+                    record.toolInvocationId ?? null,
+                    record.observationRef ?? null,
+                    record.callRef ?? null,
+                  ]
+                : [
+                    record.evidenceId,
+                    record.verificationId,
+                    record.criterionId,
+                    record.kind,
+                    record.artifactRef,
+                    record.observedEnvironmentRevision,
+                    record.recordedByExecutionId,
+                    record.recordedAt,
+                  ],
             ),
           );
         }),
@@ -269,8 +306,11 @@ export const EvidenceRepositoryLive: Layer.Layer<
               observed_environment_revision: string | null;
               recorded_by_execution_id: string;
               recorded_at: string;
+              tool_invocation_id?: string | null;
+              observation_ref?: string | null;
+              call_ref?: string | null;
             }>(
-              "SELECT evidence_id, verification_id, criterion_id, kind, artifact_ref, observed_environment_revision, recorded_by_execution_id, recorded_at FROM verification_evidence WHERE verification_id = ? ORDER BY recorded_at, evidence_id",
+              "SELECT * FROM verification_evidence WHERE verification_id = ? ORDER BY recorded_at, evidence_id",
               [verificationId],
             ),
           );
@@ -285,6 +325,9 @@ export const EvidenceRepositoryLive: Layer.Layer<
               recordedByExecutionId:
                 row.recorded_by_execution_id as ExecutionId,
               recordedAt: row.recorded_at,
+              toolInvocationId: (row.tool_invocation_id ?? null) as never,
+              observationRef: row.observation_ref ?? null,
+              callRef: row.call_ref ?? null,
             }),
           );
         }),
