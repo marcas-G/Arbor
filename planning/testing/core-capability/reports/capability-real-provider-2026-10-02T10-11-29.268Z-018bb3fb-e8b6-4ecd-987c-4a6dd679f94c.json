@@ -1,0 +1,1614 @@
+{
+  "schemaVersion": "arbor-capability-report-v1",
+  "runId": "2026-10-02T10-11-29.268Z-018bb3fb-e8b6-4ecd-987c-4a6dd679f94c",
+  "mode": "real-provider",
+  "selectedCapabilities": [
+    "B01",
+    "B02",
+    "B03",
+    "B04",
+    "B05",
+    "B06",
+    "B07",
+    "B08",
+    "B09",
+    "B11",
+    "B12",
+    "B13",
+    "B14"
+  ],
+  "startedAt": "2026-10-02T10:11:29.268Z",
+  "completedAt": "2026-10-02T10:27:01.328Z",
+  "runtime": {
+    "node": "v24.21.0",
+    "vitestVersion": "5.0.1",
+    "providerMode": "REAL",
+    "providerConfiguration": {
+      "ready": true,
+      "provider": "openai-compatible",
+      "model": "deepseek-flash",
+      "endpoint": "https://api.agicto.cn/v1",
+      "serverBuildId": "agict-deepseek-flash-20261002",
+      "authMode": "env"
+    }
+  },
+  "suiteInventory": {
+    "files": 253,
+    "cases": 1467,
+    "byLevel": {
+      "L1": {
+        "files": 76,
+        "cases": 456
+      },
+      "L2": {
+        "files": 134,
+        "cases": 751
+      },
+      "L3": {
+        "files": 1,
+        "cases": 6
+      },
+      "MIXED": {
+        "files": 10,
+        "cases": 79
+      },
+      "UNKNOWN": {
+        "files": 32,
+        "cases": 175
+      }
+    }
+  },
+  "executedRuns": [
+    {
+      "exitCode": 0,
+      "totalTests": 214,
+      "passedTests": 214,
+      "failedTests": 0,
+      "totalSuites": 95,
+      "passedSuites": 95,
+      "failedSuites": 0,
+      "testFiles": [
+        "tests/p10-humanintervention.test.ts",
+        "tests/p12-providers-tools.test.ts",
+        "tests/p14-transcript.test.ts",
+        "tests/p4-integration.test.ts",
+        "tests/p6-acceptance.test.ts",
+        "tests/p6-critical-steer.test.ts",
+        "tests/p6-formation-consumer.test.ts",
+        "tests/p6-formation-governance.test.ts",
+        "tests/p6-inbox-promotion.test.ts",
+        "tests/p6-send-message.test.ts",
+        "tests/p6-specialist-settlement.test.ts",
+        "tests/p6-specialist-spawn.test.ts",
+        "tests/p6-steer.test.ts",
+        "tests/p7-acceptance.test.ts",
+        "tests/p7-produce-deliverable.test.ts",
+        "tests/p7-satisfy-dependency.test.ts",
+        "tests/p8-acceptance-commands.test.ts",
+        "tests/p8-acceptance.test.ts",
+        "tests/p9-acceptance.test.ts",
+        "tests/p9-provider-disconnect.test.ts",
+        "tests/p9-tool-outcome-unknown.test.ts",
+        "tests/p9-worker-crash.test.ts",
+        "tests/capability/harness.test.ts",
+        "apps/single-workspace/test/i0-send-message-durable.test.ts",
+        "apps/single-workspace/test/i0-send-message.test.ts",
+        "apps/single-workspace/test/p14-conversation-history-pagination.test.ts",
+        "apps/single-workspace/test/p5-restart-continuity.test.ts",
+        "apps/single-workspace/test/p5-session-continuity.test.ts",
+        "apps/single-workspace/test/p5-slice-acceptance.test.ts",
+        "apps/single-workspace/test/p5-yield-wake.test.ts",
+        "packages/agent-runtime/test/i0-control-registry.test.ts",
+        "packages/domain/test/dependency.test.ts",
+        "packages/domain/test/events.test.ts",
+        "packages/domain/test/execution.test.ts",
+        "packages/domain/test/session.test.ts",
+        "packages/domain/test/work.test.ts",
+        "packages/domain/test/workspace.test.ts",
+        "packages/model-context/test/p3-context.test.ts",
+        "packages/model-context/test/p3-decode.test.ts",
+        "packages/tool-runtime/test/p4-read.test.ts",
+        "tests/capability/gray-box/b01-public-conversation.test.ts",
+        "tests/capability/gray-box/b06-blob-message-inbox.test.ts"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "totalTests": 34,
+      "passedTests": 34,
+      "failedTests": 0,
+      "totalSuites": 9,
+      "passedSuites": 9,
+      "failedSuites": 0,
+      "testFiles": [
+        "apps/web/test/conversation-tab.test.tsx",
+        "apps/web/test/views-render.test.tsx"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "totalTests": 2,
+      "passedTests": 1,
+      "failedTests": 0,
+      "totalSuites": 2,
+      "passedSuites": 2,
+      "failedSuites": 0,
+      "testFiles": [
+        "tests/capability/real-provider/b01-b04-conversation.test.ts"
+      ]
+    },
+    {
+      "exitCode": 1,
+      "totalTests": 1,
+      "passedTests": 0,
+      "failedTests": 1,
+      "totalSuites": 2,
+      "passedSuites": 0,
+      "failedSuites": 2,
+      "testFiles": [
+        "tests/capability/real-provider/b02-s01e-executable.test.ts"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "totalTests": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "totalSuites": 2,
+      "passedSuites": 2,
+      "failedSuites": 0,
+      "testFiles": [
+        "tests/capability/real-provider/b03-s01c-control.test.ts"
+      ]
+    },
+    {
+      "exitCode": 1,
+      "totalTests": 2,
+      "passedTests": 0,
+      "failedTests": 1,
+      "totalSuites": 2,
+      "passedSuites": 0,
+      "failedSuites": 2,
+      "testFiles": [
+        "tests/capability/real-provider/b01-b04-conversation.test.ts"
+      ]
+    },
+    {
+      "exitCode": 1,
+      "totalTests": 1,
+      "passedTests": 0,
+      "failedTests": 1,
+      "totalSuites": 2,
+      "passedSuites": 0,
+      "failedSuites": 2,
+      "testFiles": [
+        "tests/capability/real-provider/b05-human-steer.test.ts"
+      ]
+    },
+    {
+      "exitCode": 1,
+      "totalTests": 1,
+      "passedTests": 0,
+      "failedTests": 1,
+      "totalSuites": 2,
+      "passedSuites": 0,
+      "failedSuites": 2,
+      "testFiles": [
+        "tests/capability/real-provider/b06-parent-child-communication.test.ts"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "totalTests": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "totalSuites": 2,
+      "passedSuites": 2,
+      "failedSuites": 0,
+      "testFiles": [
+        "tests/capability/real-provider/b07-responsibility-delegation.test.ts"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "totalTests": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "totalSuites": 2,
+      "passedSuites": 2,
+      "failedSuites": 0,
+      "testFiles": [
+        "tests/capability/real-provider/b08-specialist-delegation.test.ts"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "totalTests": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "totalSuites": 2,
+      "passedSuites": 2,
+      "failedSuites": 0,
+      "testFiles": [
+        "tests/capability/real-provider/b09-dependency-deliverable.test.ts"
+      ]
+    },
+    {
+      "exitCode": 1,
+      "totalTests": 1,
+      "passedTests": 0,
+      "failedTests": 1,
+      "totalSuites": 2,
+      "passedSuites": 0,
+      "failedSuites": 2,
+      "testFiles": [
+        "tests/capability/real-provider/b11-completion-acceptance.test.ts"
+      ]
+    },
+    {
+      "exitCode": 1,
+      "totalTests": 1,
+      "passedTests": 0,
+      "failedTests": 1,
+      "totalSuites": 2,
+      "passedSuites": 0,
+      "failedSuites": 2,
+      "testFiles": [
+        "tests/capability/real-provider/b12-restart-continuation.test.ts"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "totalTests": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "totalSuites": 2,
+      "passedSuites": 2,
+      "failedSuites": 0,
+      "testFiles": [
+        "tests/capability/real-provider/b13-failure-recovery.test.ts"
+      ]
+    },
+    {
+      "exitCode": 0,
+      "totalTests": 1,
+      "passedTests": 1,
+      "failedTests": 0,
+      "totalSuites": 2,
+      "passedSuites": 2,
+      "failedSuites": 0,
+      "testFiles": [
+        "tests/capability/real-provider/b14-web-projection.test.ts"
+      ]
+    }
+  ],
+  "assertionFailures": [
+    {
+      "suiteFile": "tests/capability/real-provider/b02-s01e-executable.test.ts",
+      "testName": "B02 L3 — real-model executable tool use (S01-E) [B02-L3-REAL] B02: a real model selects the shell tool, ToolRuntime executes it, and the observation returns to the model"
+    },
+    {
+      "suiteFile": "tests/capability/real-provider/b01-b04-conversation.test.ts",
+      "testName": "real-provider capability sentinels [B04-L3-REAL] B04: real-model recall uses same-root history and isolates another root"
+    },
+    {
+      "suiteFile": "tests/capability/real-provider/b05-human-steer.test.ts",
+      "testName": "B05 L3 — human steer reaches durable state and the next cognition [B05-L3-REAL] B05: a durable steer is visible in Work state and in the next real provider request"
+    },
+    {
+      "suiteFile": "tests/capability/real-provider/b06-parent-child-communication.test.ts",
+      "testName": "B06 L3 — parent/child communication through the adopted route [B06-L3-REAL] B06: a real model in a child workspace sends a durable Report to the parent"
+    },
+    {
+      "suiteFile": "tests/capability/real-provider/b11-completion-acceptance.test.ts",
+      "testName": "B11 L3 — completion claim through the adopted route [B11-L3-REAL] B11: a real model claims completion; verification gates the lifecycle, not the claim"
+    },
+    {
+      "suiteFile": "tests/capability/real-provider/b12-restart-continuation.test.ts",
+      "testName": "B12 L3 — daemon process restart continues cognition without replay [B12-L3-REAL] B12: a killed daemon process restarts, completes the pending turn, and never replays the completed one"
+    }
+  ],
+  "notes": [
+    "provider config file: none (env only)",
+    "B02 real-provider behavioral sentinel failed or was unstable.",
+    "B04 real-provider behavioral sentinel failed or was unstable.",
+    "B05 real-provider behavioral sentinel failed or was unstable.",
+    "B06 real-provider behavioral sentinel failed or was unstable.",
+    "B11 real-provider behavioral sentinel failed or was unstable.",
+    "B12 real-provider behavioral sentinel failed or was unstable."
+  ],
+  "capabilities": [
+    {
+      "capabilityId": "B01",
+      "title": "Basic Human Conversation",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "PASS",
+      "providerModes": [
+        "NONE",
+        "RECORDING",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/session.test.ts",
+        "tests/capability/gray-box/b01-public-conversation.test.ts",
+        "tests/capability/real-provider/b01-b04-conversation.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B01-L3-REAL-2026-10-02T10-12-31.764Z-2d7b383c-0dca-4c8e-a5cb-666d668f1aea.json",
+        "planning/testing/core-capability/evidence/real-provider/B01-L3-REAL-2026-10-02T10-12-34.533Z-f3f07046-3a76-4187-841b-7fb295c47894.json",
+        "planning/testing/core-capability/evidence/real-provider/B01-L3-REAL-2026-10-02T10-12-36.982Z-e62617c2-da35-4a3a-a3b4-1e3b049f3806.json",
+        "planning/testing/core-capability/evidence/real-provider/B01-L3-REAL-2026-10-02T10-12-39.583Z-74c364ba-7cf2-4117-97f9-902b8a89fc2d.json"
+      ],
+      "blockingReasons": [],
+      "cases": [
+        {
+          "caseId": "B01-L1",
+          "capabilityId": "B01",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/session.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B01-L2",
+          "capabilityId": "B01",
+          "evidenceLevel": "L2",
+          "providerMode": "RECORDING",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/capability/gray-box/b01-public-conversation.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B01-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b01-b04-conversation.test.ts",
+          "blockingReason": "Three-run real-provider qualification is pending.",
+          "status": "PASS",
+          "repetitions": {
+            "expected": 3,
+            "passed": 4,
+            "failed": 0,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B01-L3-REAL-2026-10-02T10-12-31.764Z-2d7b383c-0dca-4c8e-a5cb-666d668f1aea.json",
+            "planning/testing/core-capability/evidence/real-provider/B01-L3-REAL-2026-10-02T10-12-34.533Z-f3f07046-3a76-4187-841b-7fb295c47894.json",
+            "planning/testing/core-capability/evidence/real-provider/B01-L3-REAL-2026-10-02T10-12-36.982Z-e62617c2-da35-4a3a-a3b4-1e3b049f3806.json",
+            "planning/testing/core-capability/evidence/real-provider/B01-L3-REAL-2026-10-02T10-12-39.583Z-74c364ba-7cf2-4117-97f9-902b8a89fc2d.json"
+          ],
+          "assertionFailures": [],
+          "sourceSuites": [
+            "tests/capability/real-provider/b01-b04-conversation.test.ts"
+          ],
+          "failures": [
+            {
+              "suiteFile": "tests/capability/real-provider/b01-b04-conversation.test.ts",
+              "testName": "real-provider capability sentinels [B04-L3-REAL] B04: real-model recall uses same-root history and isolates another root"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "capabilityId": "B02",
+      "title": "Executable Tool Use",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "FAIL",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/model-context/test/p3-decode.test.ts",
+        "packages/tool-runtime/test/p4-read.test.ts",
+        "tests/p4-integration.test.ts",
+        "tests/p12-providers-tools.test.ts",
+        "tests/capability/real-provider/b02-s01e-executable.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B02-L3-REAL-2026-10-02T10-13-40.184Z-05773a19-02fb-4cb4-b6d8-571f8740d7ef.json",
+        "planning/testing/core-capability/evidence/real-provider/B02-L3-REAL-2026-10-02T10-14-26.018Z-272a86c6-3bdd-43b2-b8ef-c0bcc4c4e316.json",
+        "planning/testing/core-capability/evidence/real-provider/B02-L3-REAL-2026-10-02T10-15-16.200Z-e5fec12e-ff4e-40b3-b7c3-a2c03fbd2eab.json",
+        "planning/testing/core-capability/evidence/real-provider/B02-L3-REAL-2026-10-02T10-16-03.542Z-fe7b8ef5-1986-42c3-9fbf-3e1dae3531ed.json"
+      ],
+      "blockingReasons": [
+        "B02-L3-REAL: Real-provider stability oracle: 0/3 PASS, 4/3 FAIL (evidence-counted)."
+      ],
+      "cases": [
+        {
+          "caseId": "B02-L1",
+          "capabilityId": "B02",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/model-context/test/p3-decode.test.ts",
+            "packages/tool-runtime/test/p4-read.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B02-L2",
+          "capabilityId": "B02",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p4-integration.test.ts",
+            "tests/p12-providers-tools.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B02-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b02-s01e-executable.test.ts",
+          "blockingReason": "Three-run S01-E qualification is pending.",
+          "status": "FAIL",
+          "reason": "Real-provider stability oracle: 0/3 PASS, 4/3 FAIL (evidence-counted).",
+          "repetitions": {
+            "expected": 3,
+            "passed": 0,
+            "failed": 4,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B02-L3-REAL-2026-10-02T10-13-40.184Z-05773a19-02fb-4cb4-b6d8-571f8740d7ef.json",
+            "planning/testing/core-capability/evidence/real-provider/B02-L3-REAL-2026-10-02T10-14-26.018Z-272a86c6-3bdd-43b2-b8ef-c0bcc4c4e316.json",
+            "planning/testing/core-capability/evidence/real-provider/B02-L3-REAL-2026-10-02T10-15-16.200Z-e5fec12e-ff4e-40b3-b7c3-a2c03fbd2eab.json",
+            "planning/testing/core-capability/evidence/real-provider/B02-L3-REAL-2026-10-02T10-16-03.542Z-fe7b8ef5-1986-42c3-9fbf-3e1dae3531ed.json"
+          ],
+          "assertionFailures": [
+            {
+              "testName": "B02 L3 — real-model executable tool use (S01-E) [B02-L3-REAL] B02: a real model selects the shell tool, ToolRuntime executes it, and the observation returns to the model",
+              "failureMessages": [
+                "Error: no subsequent provider request carried the shell observation back to the model\n    at Object.verify (C:/Arbor/tests/capability/real-provider/b02-s01e-executable.test.ts:133:19)\n    at runAndCapture (C:/Arbor/tests/capability/support/capture.ts:134:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at C:/Arbor/tests/capability/real-provider/b02-s01e-executable.test.ts:38:7\n    at file:///C:/Arbor/node_modules/.pnpm/vitest@5.0.1_@types+node@24_780ba72b9b80a0a7916e4c1cfcca5bc3/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20",
+                "Error: no subsequent provider request carried the shell observation back to the model\n    at Object.verify (C:/Arbor/tests/capability/real-provider/b02-s01e-executable.test.ts:133:19)\n    at runAndCapture (C:/Arbor/tests/capability/support/capture.ts:134:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at C:/Arbor/tests/capability/real-provider/b02-s01e-executable.test.ts:38:7\n    at file:///C:/Arbor/node_modules/.pnpm/vitest@5.0.1_@types+node@24_780ba72b9b80a0a7916e4c1cfcca5bc3/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20",
+                "Error: no subsequent provider request carried the shell observation back to the model\n    at Object.verify (C:/Arbor/tests/capability/real-provider/b02-s01e-executable.test.ts:133:19)\n    at runAndCapture (C:/Arbor/tests/capability/support/capture.ts:134:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at C:/Arbor/tests/capability/real-provider/b02-s01e-executable.test.ts:38:7\n    at file:///C:/Arbor/node_modules/.pnpm/vitest@5.0.1_@types+node@24_780ba72b9b80a0a7916e4c1cfcca5bc3/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20",
+                "Error: no subsequent provider request carried the shell observation back to the model\n    at Object.verify (C:/Arbor/tests/capability/real-provider/b02-s01e-executable.test.ts:133:19)\n    at runAndCapture (C:/Arbor/tests/capability/support/capture.ts:134:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at C:/Arbor/tests/capability/real-provider/b02-s01e-executable.test.ts:38:7\n    at file:///C:/Arbor/node_modules/.pnpm/vitest@5.0.1_@types+node@24_780ba72b9b80a0a7916e4c1cfcca5bc3/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20"
+              ]
+            }
+          ],
+          "sourceSuites": [
+            "tests/capability/real-provider/b02-s01e-executable.test.ts"
+          ],
+          "failures": [
+            {
+              "suiteFile": "tests/capability/real-provider/b02-s01e-executable.test.ts",
+              "testName": "B02 L3 — real-model executable tool use (S01-E) [B02-L3-REAL] B02: a real model selects the shell tool, ToolRuntime executes it, and the observation returns to the model"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "capabilityId": "B03",
+      "title": "Control Action",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "PASS",
+      "providerModes": [
+        "NONE",
+        "FAKE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/events.test.ts",
+        "packages/agent-runtime/test/i0-control-registry.test.ts",
+        "apps/single-workspace/test/p5-slice-acceptance.test.ts",
+        "apps/single-workspace/test/p5-yield-wake.test.ts",
+        "apps/single-workspace/test/i0-send-message.test.ts",
+        "apps/single-workspace/test/i0-send-message-durable.test.ts",
+        "tests/p6-send-message.test.ts",
+        "tests/p6-acceptance.test.ts",
+        "tests/capability/real-provider/b03-s01c-control.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B03-L3-REAL-2026-10-02T10-16-13.940Z-27624bdb-f080-4806-b15f-a4ae434afe1e.json",
+        "planning/testing/core-capability/evidence/real-provider/B03-L3-REAL-2026-10-02T10-16-16.539Z-d9d86006-8fd0-46f4-8567-6b5f0c571261.json",
+        "planning/testing/core-capability/evidence/real-provider/B03-L3-REAL-2026-10-02T10-16-19.372Z-afcad81d-41fa-4003-b3c9-114b8d16c8e1.json",
+        "planning/testing/core-capability/evidence/real-provider/B03-L3-REAL-2026-10-02T10-16-22.118Z-c2b106c7-720e-46d8-b5cb-a328f487e2ad.json"
+      ],
+      "blockingReasons": [],
+      "cases": [
+        {
+          "caseId": "B03-L1",
+          "capabilityId": "B03",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/events.test.ts",
+            "packages/agent-runtime/test/i0-control-registry.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B03-L2",
+          "capabilityId": "B03",
+          "evidenceLevel": "L2",
+          "providerMode": "FAKE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "apps/single-workspace/test/p5-slice-acceptance.test.ts",
+            "apps/single-workspace/test/p5-yield-wake.test.ts",
+            "apps/single-workspace/test/i0-send-message.test.ts",
+            "apps/single-workspace/test/i0-send-message-durable.test.ts",
+            "tests/p6-send-message.test.ts",
+            "tests/p6-acceptance.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B03-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b03-s01c-control.test.ts",
+          "blockingReason": "Three-run S01-C qualification is pending.",
+          "status": "PASS",
+          "repetitions": {
+            "expected": 3,
+            "passed": 4,
+            "failed": 0,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B03-L3-REAL-2026-10-02T10-16-13.940Z-27624bdb-f080-4806-b15f-a4ae434afe1e.json",
+            "planning/testing/core-capability/evidence/real-provider/B03-L3-REAL-2026-10-02T10-16-16.539Z-d9d86006-8fd0-46f4-8567-6b5f0c571261.json",
+            "planning/testing/core-capability/evidence/real-provider/B03-L3-REAL-2026-10-02T10-16-19.372Z-afcad81d-41fa-4003-b3c9-114b8d16c8e1.json",
+            "planning/testing/core-capability/evidence/real-provider/B03-L3-REAL-2026-10-02T10-16-22.118Z-c2b106c7-720e-46d8-b5cb-a328f487e2ad.json"
+          ],
+          "assertionFailures": [],
+          "sourceSuites": [
+            "tests/capability/real-provider/b03-s01c-control.test.ts"
+          ],
+          "failures": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B04",
+      "title": "Multi-turn Memory / Cognitive Continuity",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "FAIL",
+      "providerModes": [
+        "NONE",
+        "RECORDING",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/model-context/test/p3-context.test.ts",
+        "apps/single-workspace/test/p5-session-continuity.test.ts",
+        "tests/capability/real-provider/b01-b04-conversation.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B04-L3-REAL-2026-10-02T10-16-34.036Z-abd0777b-5e5b-4b3a-8612-9d8f6991a93f.json",
+        "planning/testing/core-capability/evidence/real-provider/B04-L3-REAL-2026-10-02T10-16-39.156Z-57b4b938-4d95-416d-a1b2-f2bcef949b30.json",
+        "planning/testing/core-capability/evidence/real-provider/B04-L3-REAL-2026-10-02T10-16-44.086Z-5bba8f15-5f79-4328-8b3e-1cfe4a939576.json",
+        "planning/testing/core-capability/evidence/real-provider/B04-L3-REAL-2026-10-02T10-16-48.941Z-b754c97d-a6d9-46f4-870d-0c0863f31767.json"
+      ],
+      "blockingReasons": [
+        "B04-L3-REAL: Real-provider stability oracle: 0/3 PASS, 4/3 FAIL (evidence-counted)."
+      ],
+      "cases": [
+        {
+          "caseId": "B04-L1",
+          "capabilityId": "B04",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/model-context/test/p3-context.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B04-L2",
+          "capabilityId": "B04",
+          "evidenceLevel": "L2",
+          "providerMode": "RECORDING",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "apps/single-workspace/test/p5-session-continuity.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B04-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b01-b04-conversation.test.ts",
+          "blockingReason": "Three-run real-provider recall/isolation qualification is pending.",
+          "status": "FAIL",
+          "reason": "Real-provider stability oracle: 0/3 PASS, 4/3 FAIL (evidence-counted).",
+          "repetitions": {
+            "expected": 3,
+            "passed": 0,
+            "failed": 4,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B04-L3-REAL-2026-10-02T10-16-34.036Z-abd0777b-5e5b-4b3a-8612-9d8f6991a93f.json",
+            "planning/testing/core-capability/evidence/real-provider/B04-L3-REAL-2026-10-02T10-16-39.156Z-57b4b938-4d95-416d-a1b2-f2bcef949b30.json",
+            "planning/testing/core-capability/evidence/real-provider/B04-L3-REAL-2026-10-02T10-16-44.086Z-5bba8f15-5f79-4328-8b3e-1cfe4a939576.json",
+            "planning/testing/core-capability/evidence/real-provider/B04-L3-REAL-2026-10-02T10-16-48.941Z-b754c97d-a6d9-46f4-870d-0c0863f31767.json"
+          ],
+          "assertionFailures": [
+            {
+              "testName": "real-provider capability sentinels [B04-L3-REAL] B04: real-model recall uses same-root history and isolates another root",
+              "failureMessages": [
+                "Error: public CreateProject failed: 503 {\"ok\":false,\"status\":503,\"problem\":{\"code\":\"command/post-commit-convergence-failure\",\"category\":\"unavailable\",\"message\":\"command/post-commit-convergence-failure\",\"correlationId\":null,\"retryDisposition\":\"retryable\",\"safeDetails\":{\"cause\":\"[object Object]\"}}}\n    at C:/Arbor/tests/capability/support/public-chat.ts:406:13\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)",
+                "Error: public CreateProject failed: 503 {\"ok\":false,\"status\":503,\"problem\":{\"code\":\"command/post-commit-convergence-failure\",\"category\":\"unavailable\",\"message\":\"command/post-commit-convergence-failure\",\"correlationId\":null,\"retryDisposition\":\"retryable\",\"safeDetails\":{\"cause\":\"[object Object]\"}}}\n    at C:/Arbor/tests/capability/support/public-chat.ts:406:13\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)",
+                "Error: public CreateProject failed: 503 {\"ok\":false,\"status\":503,\"problem\":{\"code\":\"command/post-commit-convergence-failure\",\"category\":\"unavailable\",\"message\":\"command/post-commit-convergence-failure\",\"correlationId\":null,\"retryDisposition\":\"retryable\",\"safeDetails\":{\"cause\":\"[object Object]\"}}}\n    at C:/Arbor/tests/capability/support/public-chat.ts:406:13\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)",
+                "Error: public CreateProject failed: 503 {\"ok\":false,\"status\":503,\"problem\":{\"code\":\"command/post-commit-convergence-failure\",\"category\":\"unavailable\",\"message\":\"command/post-commit-convergence-failure\",\"correlationId\":null,\"retryDisposition\":\"retryable\",\"safeDetails\":{\"cause\":\"[object Object]\"}}}\n    at C:/Arbor/tests/capability/support/public-chat.ts:406:13\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+              ]
+            }
+          ],
+          "sourceSuites": [
+            "tests/capability/real-provider/b01-b04-conversation.test.ts"
+          ],
+          "failures": [
+            {
+              "suiteFile": "tests/capability/real-provider/b01-b04-conversation.test.ts",
+              "testName": "real-provider capability sentinels [B04-L3-REAL] B04: real-model recall uses same-root history and isolates another root"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "capabilityId": "B05",
+      "title": "Human Steer",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "FAIL",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/work.test.ts",
+        "tests/p6-steer.test.ts",
+        "tests/p6-critical-steer.test.ts",
+        "tests/p10-humanintervention.test.ts",
+        "tests/capability/real-provider/b05-human-steer.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B05-L3-REAL-2026-10-02T10-16-57.296Z-fcb24342-337f-4b3b-ace2-77fffb302462.json",
+        "planning/testing/core-capability/evidence/real-provider/B05-L3-REAL-2026-10-02T10-16-58.495Z-9c24b7da-37ee-46d1-8dea-0303d89a8f2d.json",
+        "planning/testing/core-capability/evidence/real-provider/B05-L3-REAL-2026-10-02T10-16-59.622Z-90c12233-32cb-4500-85c1-7b2055a8c1a2.json",
+        "planning/testing/core-capability/evidence/real-provider/B05-L3-REAL-2026-10-02T10-17-00.970Z-70538ee5-293a-4566-8333-4f5834268bcb.json"
+      ],
+      "blockingReasons": [
+        "B05-L3-REAL: Real-provider stability oracle: 0/3 PASS, 4/3 FAIL (evidence-counted)."
+      ],
+      "cases": [
+        {
+          "caseId": "B05-L1",
+          "capabilityId": "B05",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/work.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B05-L2",
+          "capabilityId": "B05",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p6-steer.test.ts",
+            "tests/p6-critical-steer.test.ts",
+            "tests/p10-humanintervention.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B05-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "FAIL",
+          "testFile": "tests/capability/real-provider/b05-human-steer.test.ts",
+          "blockingReason": "Sentinel executable against the public HTTP face. Known implementation gap it keeps visible: durable SteerWork state is complete, but steer-to-cognition promotion (guidance into the next provider request) is not implemented, so the full B05 oracle is expected to FAIL until that seam exists.",
+          "status": "FAIL",
+          "reason": "Real-provider stability oracle: 0/3 PASS, 4/3 FAIL (evidence-counted).",
+          "repetitions": {
+            "expected": 3,
+            "passed": 0,
+            "failed": 4,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B05-L3-REAL-2026-10-02T10-16-57.296Z-fcb24342-337f-4b3b-ace2-77fffb302462.json",
+            "planning/testing/core-capability/evidence/real-provider/B05-L3-REAL-2026-10-02T10-16-58.495Z-9c24b7da-37ee-46d1-8dea-0303d89a8f2d.json",
+            "planning/testing/core-capability/evidence/real-provider/B05-L3-REAL-2026-10-02T10-16-59.622Z-90c12233-32cb-4500-85c1-7b2055a8c1a2.json",
+            "planning/testing/core-capability/evidence/real-provider/B05-L3-REAL-2026-10-02T10-17-00.970Z-70538ee5-293a-4566-8333-4f5834268bcb.json"
+          ],
+          "assertionFailures": [
+            {
+              "testName": "B05 L3 — human steer reaches durable state and the next cognition [B05-L3-REAL] B05: a durable steer is visible in Work state and in the next real provider request",
+              "failureMessages": [
+                "SyntaxError: Unexpected end of JSON input\n    at JSON.parse (<anonymous>)\n    at parseJSONFromBytes (node:internal/deps/undici/undici:4394:19)\n    at successSteps (node:internal/deps/undici/undici:7048:27)\n    at readAllBytes (node:internal/deps/undici/undici:5965:13)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)",
+                "SyntaxError: Unexpected end of JSON input\n    at JSON.parse (<anonymous>)\n    at parseJSONFromBytes (node:internal/deps/undici/undici:4394:19)\n    at successSteps (node:internal/deps/undici/undici:7048:27)\n    at readAllBytes (node:internal/deps/undici/undici:5965:13)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)",
+                "SyntaxError: Unexpected end of JSON input\n    at JSON.parse (<anonymous>)\n    at parseJSONFromBytes (node:internal/deps/undici/undici:4394:19)\n    at successSteps (node:internal/deps/undici/undici:7048:27)\n    at readAllBytes (node:internal/deps/undici/undici:5965:13)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)",
+                "SyntaxError: Unexpected end of JSON input\n    at JSON.parse (<anonymous>)\n    at parseJSONFromBytes (node:internal/deps/undici/undici:4394:19)\n    at successSteps (node:internal/deps/undici/undici:7048:27)\n    at readAllBytes (node:internal/deps/undici/undici:5965:13)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+              ]
+            }
+          ],
+          "sourceSuites": [
+            "tests/capability/real-provider/b05-human-steer.test.ts"
+          ],
+          "failures": [
+            {
+              "suiteFile": "tests/capability/real-provider/b05-human-steer.test.ts",
+              "testName": "B05 L3 — human steer reaches durable state and the next cognition [B05-L3-REAL] B05: a durable steer is visible in Work state and in the next real provider request"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "capabilityId": "B06",
+      "title": "Parent / Child Communication",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "FAIL",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/events.test.ts",
+        "tests/capability/gray-box/b06-blob-message-inbox.test.ts",
+        "tests/p6-send-message.test.ts",
+        "tests/p6-inbox-promotion.test.ts",
+        "tests/capability/real-provider/b06-parent-child-communication.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B06-L3-REAL-2026-10-02T10-17-09.185Z-8beebd22-7131-40d5-ab07-633b1c177987.json",
+        "planning/testing/core-capability/evidence/real-provider/B06-L3-REAL-2026-10-02T10-17-10.286Z-5579b20d-a35c-4e80-b45d-5222522c5ae5.json",
+        "planning/testing/core-capability/evidence/real-provider/B06-L3-REAL-2026-10-02T10-17-11.336Z-6e5dc00b-d9f4-4088-b47e-434126b234a2.json",
+        "planning/testing/core-capability/evidence/real-provider/B06-L3-REAL-2026-10-02T10-17-12.405Z-679f70b8-3826-4a2e-ab6c-bdd8fcff67a2.json"
+      ],
+      "blockingReasons": [
+        "B06-L3-REAL: Real-provider stability oracle: 0/3 PASS, 4/3 FAIL (evidence-counted)."
+      ],
+      "cases": [
+        {
+          "caseId": "B06-L1",
+          "capabilityId": "B06",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/events.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B06-L2",
+          "capabilityId": "B06",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/capability/gray-box/b06-blob-message-inbox.test.ts",
+            "tests/p6-send-message.test.ts",
+            "tests/p6-inbox-promotion.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B06-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b06-parent-child-communication.test.ts",
+          "blockingReason": "Executable sentinel: a real model in a child workspace sends a durable Report to the parent through arbor_send_message (I0 route). Parent-cognition consumption stays spec'd until the inbox-to-prompt promotion seam lands.",
+          "status": "FAIL",
+          "reason": "Real-provider stability oracle: 0/3 PASS, 4/3 FAIL (evidence-counted).",
+          "repetitions": {
+            "expected": 3,
+            "passed": 0,
+            "failed": 4,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B06-L3-REAL-2026-10-02T10-17-09.185Z-8beebd22-7131-40d5-ab07-633b1c177987.json",
+            "planning/testing/core-capability/evidence/real-provider/B06-L3-REAL-2026-10-02T10-17-10.286Z-5579b20d-a35c-4e80-b45d-5222522c5ae5.json",
+            "planning/testing/core-capability/evidence/real-provider/B06-L3-REAL-2026-10-02T10-17-11.336Z-6e5dc00b-d9f4-4088-b47e-434126b234a2.json",
+            "planning/testing/core-capability/evidence/real-provider/B06-L3-REAL-2026-10-02T10-17-12.405Z-679f70b8-3826-4a2e-ab6c-bdd8fcff67a2.json"
+          ],
+          "assertionFailures": [
+            {
+              "testName": "B06 L3 — parent/child communication through the adopted route [B06-L3-REAL] B06: a real model in a child workspace sends a durable Report to the parent",
+              "failureMessages": [
+                "Error: public CreateChildWorkspace failed: 503 {\"ok\":false,\"status\":503,\"problem\":{\"code\":\"command/post-commit-convergence-failure\",\"category\":\"unavailable\",\"message\":\"command/post-commit-convergence-failure\",\"correlationId\":null,\"retryDisposition\":\"retryable\",\"safeDetails\":{\"cause\":\"[object Object]\"}}}\n    at C:/Arbor/tests/capability/real-provider/b06-parent-child-communication.test.ts:128:23\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)",
+                "Error: public CreateChildWorkspace failed: 503 {\"ok\":false,\"status\":503,\"problem\":{\"code\":\"command/post-commit-convergence-failure\",\"category\":\"unavailable\",\"message\":\"command/post-commit-convergence-failure\",\"correlationId\":null,\"retryDisposition\":\"retryable\",\"safeDetails\":{\"cause\":\"[object Object]\"}}}\n    at C:/Arbor/tests/capability/real-provider/b06-parent-child-communication.test.ts:128:23\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)",
+                "Error: public CreateChildWorkspace failed: 503 {\"ok\":false,\"status\":503,\"problem\":{\"code\":\"command/post-commit-convergence-failure\",\"category\":\"unavailable\",\"message\":\"command/post-commit-convergence-failure\",\"correlationId\":null,\"retryDisposition\":\"retryable\",\"safeDetails\":{\"cause\":\"[object Object]\"}}}\n    at C:/Arbor/tests/capability/real-provider/b06-parent-child-communication.test.ts:128:23\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)",
+                "Error: public CreateChildWorkspace failed: 503 {\"ok\":false,\"status\":503,\"problem\":{\"code\":\"command/post-commit-convergence-failure\",\"category\":\"unavailable\",\"message\":\"command/post-commit-convergence-failure\",\"correlationId\":null,\"retryDisposition\":\"retryable\",\"safeDetails\":{\"cause\":\"[object Object]\"}}}\n    at C:/Arbor/tests/capability/real-provider/b06-parent-child-communication.test.ts:128:23\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)"
+              ]
+            }
+          ],
+          "sourceSuites": [
+            "tests/capability/real-provider/b06-parent-child-communication.test.ts"
+          ],
+          "failures": [
+            {
+              "suiteFile": "tests/capability/real-provider/b06-parent-child-communication.test.ts",
+              "testName": "B06 L3 — parent/child communication through the adopted route [B06-L3-REAL] B06: a real model in a child workspace sends a durable Report to the parent"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "capabilityId": "B07",
+      "title": "Responsibility Delegation",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "PASS",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/workspace.test.ts",
+        "tests/p6-acceptance.test.ts",
+        "tests/p6-formation-consumer.test.ts",
+        "tests/p6-formation-governance.test.ts",
+        "tests/capability/real-provider/b07-responsibility-delegation.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B07-L3-REAL-2026-10-02T10-17-32.347Z-80bcc4cf-7787-4fd8-9f79-f78c62f336a7.json",
+        "planning/testing/core-capability/evidence/real-provider/B07-L3-REAL-2026-10-02T10-18-20.464Z-a85bf13b-ca87-4b4c-99be-8d98740f8707.json",
+        "planning/testing/core-capability/evidence/real-provider/B07-L3-REAL-2026-10-02T10-18-48.091Z-3a33f239-0eb7-43ce-82f7-43077833f70f.json",
+        "planning/testing/core-capability/evidence/real-provider/B07-L3-REAL-2026-10-02T10-19-09.596Z-973014a5-d31e-44e1-803f-761cc76a94d7.json"
+      ],
+      "blockingReasons": [],
+      "cases": [
+        {
+          "caseId": "B07-L1",
+          "capabilityId": "B07",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/workspace.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B07-L2",
+          "capabilityId": "B07",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p6-acceptance.test.ts",
+            "tests/p6-formation-consumer.test.ts",
+            "tests/p6-formation-governance.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B07-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b07-responsibility-delegation.test.ts",
+          "blockingReason": "Executable sentinel: a real model proposes a child workspace through arbor_propose_child_workspace (Wave 2); the human RecordDecision gate and the formation consumer stay in charge of creation.",
+          "status": "PASS",
+          "repetitions": {
+            "expected": 3,
+            "passed": 4,
+            "failed": 0,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B07-L3-REAL-2026-10-02T10-17-32.347Z-80bcc4cf-7787-4fd8-9f79-f78c62f336a7.json",
+            "planning/testing/core-capability/evidence/real-provider/B07-L3-REAL-2026-10-02T10-18-20.464Z-a85bf13b-ca87-4b4c-99be-8d98740f8707.json",
+            "planning/testing/core-capability/evidence/real-provider/B07-L3-REAL-2026-10-02T10-18-48.091Z-3a33f239-0eb7-43ce-82f7-43077833f70f.json",
+            "planning/testing/core-capability/evidence/real-provider/B07-L3-REAL-2026-10-02T10-19-09.596Z-973014a5-d31e-44e1-803f-761cc76a94d7.json"
+          ],
+          "assertionFailures": [],
+          "sourceSuites": [
+            "tests/capability/real-provider/b07-responsibility-delegation.test.ts"
+          ],
+          "failures": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B08",
+      "title": "Specialist Delegation",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "PASS",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/execution.test.ts",
+        "tests/p6-specialist-spawn.test.ts",
+        "tests/p6-specialist-settlement.test.ts",
+        "tests/capability/real-provider/b08-specialist-delegation.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B08-L3-REAL-2026-10-02T10-19-40.905Z-464c56b9-aa7e-4a84-bc1c-19840f2661ec.json",
+        "planning/testing/core-capability/evidence/real-provider/B08-L3-REAL-2026-10-02T10-20-27.184Z-82f43920-16d1-413e-8868-c4ef99d1b795.json",
+        "planning/testing/core-capability/evidence/real-provider/B08-L3-REAL-2026-10-02T10-20-41.130Z-66e5ae14-2ed4-4013-b602-ff04762e8fa2.json",
+        "planning/testing/core-capability/evidence/real-provider/B08-L3-REAL-2026-10-02T10-21-03.358Z-c7753b9b-e816-428d-aa42-8f98da8130fd.json"
+      ],
+      "blockingReasons": [],
+      "cases": [
+        {
+          "caseId": "B08-L1",
+          "capabilityId": "B08",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/execution.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B08-L2",
+          "capabilityId": "B08",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p6-specialist-spawn.test.ts",
+            "tests/p6-specialist-settlement.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B08-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b08-specialist-delegation.test.ts",
+          "blockingReason": "Executable sentinel: a real model spawns an ExecutionBound specialist through arbor_spawn_specialist (Wave 2); lifecycle ends with the execution, no durable responsibility.",
+          "status": "PASS",
+          "repetitions": {
+            "expected": 3,
+            "passed": 4,
+            "failed": 0,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B08-L3-REAL-2026-10-02T10-19-40.905Z-464c56b9-aa7e-4a84-bc1c-19840f2661ec.json",
+            "planning/testing/core-capability/evidence/real-provider/B08-L3-REAL-2026-10-02T10-20-27.184Z-82f43920-16d1-413e-8868-c4ef99d1b795.json",
+            "planning/testing/core-capability/evidence/real-provider/B08-L3-REAL-2026-10-02T10-20-41.130Z-66e5ae14-2ed4-4013-b602-ff04762e8fa2.json",
+            "planning/testing/core-capability/evidence/real-provider/B08-L3-REAL-2026-10-02T10-21-03.358Z-c7753b9b-e816-428d-aa42-8f98da8130fd.json"
+          ],
+          "assertionFailures": [],
+          "sourceSuites": [
+            "tests/capability/real-provider/b08-specialist-delegation.test.ts"
+          ],
+          "failures": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B09",
+      "title": "Dependency / Deliverable",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "PASS",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/dependency.test.ts",
+        "tests/p7-produce-deliverable.test.ts",
+        "tests/p7-satisfy-dependency.test.ts",
+        "tests/p7-acceptance.test.ts",
+        "tests/capability/real-provider/b09-dependency-deliverable.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B09-L3-REAL-2026-10-02T10-22-01.903Z-9bea1a21-d341-445e-92d2-5b62ebcaa0c5.json",
+        "planning/testing/core-capability/evidence/real-provider/B09-L3-REAL-2026-10-02T10-22-58.875Z-57e12502-f574-4424-9485-7a3ab1ad7fe2.json",
+        "planning/testing/core-capability/evidence/real-provider/B09-L3-REAL-2026-10-02T10-23-50.688Z-91698561-fbec-4cc9-9e32-6bafab121371.json",
+        "planning/testing/core-capability/evidence/real-provider/B09-L3-REAL-2026-10-02T10-24-40.368Z-5d87592d-65cf-43a5-86a9-d56fc1f26f51.json"
+      ],
+      "blockingReasons": [],
+      "cases": [
+        {
+          "caseId": "B09-L1",
+          "capabilityId": "B09",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/dependency.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B09-L2",
+          "capabilityId": "B09",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p7-produce-deliverable.test.ts",
+            "tests/p7-satisfy-dependency.test.ts",
+            "tests/p7-acceptance.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B09-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b09-dependency-deliverable.test.ts",
+          "blockingReason": "Executable sentinel: a real model declares a dependency through arbor_declare_dependency (Wave 2); satisfaction stays with the deterministic matcher (deliver/match coverage remains L2).",
+          "status": "PASS",
+          "repetitions": {
+            "expected": 3,
+            "passed": 4,
+            "failed": 0,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B09-L3-REAL-2026-10-02T10-22-01.903Z-9bea1a21-d341-445e-92d2-5b62ebcaa0c5.json",
+            "planning/testing/core-capability/evidence/real-provider/B09-L3-REAL-2026-10-02T10-22-58.875Z-57e12502-f574-4424-9485-7a3ab1ad7fe2.json",
+            "planning/testing/core-capability/evidence/real-provider/B09-L3-REAL-2026-10-02T10-23-50.688Z-91698561-fbec-4cc9-9e32-6bafab121371.json",
+            "planning/testing/core-capability/evidence/real-provider/B09-L3-REAL-2026-10-02T10-24-40.368Z-5d87592d-65cf-43a5-86a9-d56fc1f26f51.json"
+          ],
+          "assertionFailures": [],
+          "sourceSuites": [
+            "tests/capability/real-provider/b09-dependency-deliverable.test.ts"
+          ],
+          "failures": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B10",
+      "title": "Verification",
+      "selected": false,
+      "l1Status": "NOT_RUN",
+      "l2Status": "NOT_RUN",
+      "l3Status": "BLOCKED_BY_DESIGN_GAP",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [],
+      "blockingReasons": [
+        "B10-L1: Not selected in this qualification batch.",
+        "B10-L2: Not selected in this qualification batch.",
+        "B10-L3-REAL: Existing G-V2-2, G-V2-3, and G-V2-4 verification-reference/lifecycle gaps remain open."
+      ],
+      "cases": [
+        {
+          "caseId": "B10-L1",
+          "capabilityId": "B10",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "NOT_RUN",
+          "status": "NOT_RUN",
+          "sourceSuites": [],
+          "reason": "Not selected in this qualification batch.",
+          "failures": []
+        },
+        {
+          "caseId": "B10-L2",
+          "capabilityId": "B10",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "NOT_RUN",
+          "status": "NOT_RUN",
+          "sourceSuites": [],
+          "reason": "Not selected in this qualification batch.",
+          "failures": []
+        },
+        {
+          "caseId": "B10-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "BLOCKED_BY_DESIGN_GAP",
+          "testFile": null,
+          "blockingReason": "Existing G-V2-2, G-V2-3, and G-V2-4 verification-reference/lifecycle gaps remain open.",
+          "capabilityId": "B10",
+          "status": "BLOCKED_BY_DESIGN_GAP",
+          "sourceSuites": [],
+          "failures": [],
+          "reason": "Existing G-V2-2, G-V2-3, and G-V2-4 verification-reference/lifecycle gaps remain open."
+        }
+      ]
+    },
+    {
+      "capabilityId": "B11",
+      "title": "Completion / Acceptance",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "FAIL",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/work.test.ts",
+        "tests/p8-acceptance.test.ts",
+        "tests/p8-acceptance-commands.test.ts",
+        "tests/capability/real-provider/b11-completion-acceptance.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B11-L3-REAL-2026-10-02T10-25-04.014Z-e622f20c-0409-4036-9b32-2f5e71f091ff.json",
+        "planning/testing/core-capability/evidence/real-provider/B11-L3-REAL-2026-10-02T10-25-07.574Z-ded4f849-aedd-45d5-aeee-546d5f5c469d.json",
+        "planning/testing/core-capability/evidence/real-provider/B11-L3-REAL-2026-10-02T10-25-17.981Z-a3229bf3-05c0-4590-84fc-931ae7bb40ac.json",
+        "planning/testing/core-capability/evidence/real-provider/B11-L3-REAL-2026-10-02T10-25-22.772Z-2534198d-61a6-4290-9c7b-f6bc0ccc582b.json"
+      ],
+      "blockingReasons": [
+        "B11-L3-REAL: Real-provider stability oracle: 3/3 PASS, 1/3 FAIL (evidence-counted)."
+      ],
+      "cases": [
+        {
+          "caseId": "B11-L1",
+          "capabilityId": "B11",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/work.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B11-L2",
+          "capabilityId": "B11",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p8-acceptance.test.ts",
+            "tests/p8-acceptance-commands.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B11-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b11-completion-acceptance.test.ts",
+          "blockingReason": "Executable sentinel: a real model claims completion through arbor_claim_completion (Wave 2); the Work stays Open and the verification/acceptance gates own the lifecycle.",
+          "status": "FAIL",
+          "reason": "Real-provider stability oracle: 3/3 PASS, 1/3 FAIL (evidence-counted).",
+          "repetitions": {
+            "expected": 3,
+            "passed": 3,
+            "failed": 1,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B11-L3-REAL-2026-10-02T10-25-04.014Z-e622f20c-0409-4036-9b32-2f5e71f091ff.json",
+            "planning/testing/core-capability/evidence/real-provider/B11-L3-REAL-2026-10-02T10-25-07.574Z-ded4f849-aedd-45d5-aeee-546d5f5c469d.json",
+            "planning/testing/core-capability/evidence/real-provider/B11-L3-REAL-2026-10-02T10-25-17.981Z-a3229bf3-05c0-4590-84fc-931ae7bb40ac.json",
+            "planning/testing/core-capability/evidence/real-provider/B11-L3-REAL-2026-10-02T10-25-22.772Z-2534198d-61a6-4290-9c7b-f6bc0ccc582b.json"
+          ],
+          "assertionFailures": [
+            {
+              "testName": "B11 L3 — completion claim through the adopted route [B11-L3-REAL] B11: a real model claims completion; verification gates the lifecycle, not the claim",
+              "failureMessages": [
+                "Error: the execution did not settle Completed(CompletionClaimed): {\"_tag\":\"Failed\",\"failure\":{\"_tag\":\"ExecutionFailure\",\"reason\":\"turn produced neither text nor a tool invocation\"}}\n    at Object.verify (C:/Arbor/tests/capability/real-provider/b11-completion-acceptance.test.ts:98:19)\n    at runAndCapture (C:/Arbor/tests/capability/support/capture.ts:134:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at C:/Arbor/tests/capability/real-provider/b11-completion-acceptance.test.ts:35:7\n    at file:///C:/Arbor/node_modules/.pnpm/vitest@5.0.1_@types+node@24_780ba72b9b80a0a7916e4c1cfcca5bc3/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20"
+              ]
+            }
+          ],
+          "sourceSuites": [
+            "tests/capability/real-provider/b11-completion-acceptance.test.ts"
+          ],
+          "failures": [
+            {
+              "suiteFile": "tests/capability/real-provider/b11-completion-acceptance.test.ts",
+              "testName": "B11 L3 — completion claim through the adopted route [B11-L3-REAL] B11: a real model claims completion; verification gates the lifecycle, not the claim"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "capabilityId": "B12",
+      "title": "Restart / Continuation",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "FAIL",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/domain/test/execution.test.ts",
+        "apps/single-workspace/test/p5-restart-continuity.test.ts",
+        "tests/p9-provider-disconnect.test.ts",
+        "tests/p9-worker-crash.test.ts",
+        "tests/p9-tool-outcome-unknown.test.ts",
+        "tests/capability/real-provider/b12-restart-continuation.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B12-L3-REAL-2026-10-02T10-25-40.397Z-b8c772ea-cf55-41c2-93f4-6861d4265045.json",
+        "planning/testing/core-capability/evidence/real-provider/B12-L3-REAL-2026-10-02T10-25-52.020Z-dbd8f47e-79d2-4b95-be0c-7eb581bcdce7.json",
+        "planning/testing/core-capability/evidence/real-provider/B12-L3-REAL-2026-10-02T10-26-02.913Z-9a6c7cfa-b62d-4bf7-a881-c5c6e5475df8.json",
+        "planning/testing/core-capability/evidence/real-provider/B12-L3-REAL-2026-10-02T10-26-14.476Z-01eff28b-c1ea-49d1-93eb-8bca96f23464.json"
+      ],
+      "blockingReasons": [
+        "B12-L3-REAL: Real-provider stability oracle: 0/3 PASS, 4/3 FAIL (evidence-counted)."
+      ],
+      "cases": [
+        {
+          "caseId": "B12-L1",
+          "capabilityId": "B12",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/domain/test/execution.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B12-L2",
+          "capabilityId": "B12",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": true,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "apps/single-workspace/test/p5-restart-continuity.test.ts",
+            "tests/p9-provider-disconnect.test.ts",
+            "tests/p9-worker-crash.test.ts",
+            "tests/p9-tool-outcome-unknown.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B12-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": true,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b12-restart-continuation.test.ts",
+          "blockingReason": "Process-restart harness implemented (spawn dist/main.js behind a recording proxy; SIGKILL between a completed and a pending turn). Status reflects the executed sentinel outcome.",
+          "status": "FAIL",
+          "reason": "Real-provider stability oracle: 0/3 PASS, 4/3 FAIL (evidence-counted).",
+          "repetitions": {
+            "expected": 3,
+            "passed": 0,
+            "failed": 4,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B12-L3-REAL-2026-10-02T10-25-40.397Z-b8c772ea-cf55-41c2-93f4-6861d4265045.json",
+            "planning/testing/core-capability/evidence/real-provider/B12-L3-REAL-2026-10-02T10-25-52.020Z-dbd8f47e-79d2-4b95-be0c-7eb581bcdce7.json",
+            "planning/testing/core-capability/evidence/real-provider/B12-L3-REAL-2026-10-02T10-26-02.913Z-9a6c7cfa-b62d-4bf7-a881-c5c6e5475df8.json",
+            "planning/testing/core-capability/evidence/real-provider/B12-L3-REAL-2026-10-02T10-26-14.476Z-01eff28b-c1ea-49d1-93eb-8bca96f23464.json"
+          ],
+          "assertionFailures": [
+            {
+              "testName": "B12 L3 — daemon process restart continues cognition without replay [B12-L3-REAL] B12: a killed daemon process restarts, completes the pending turn, and never replays the completed one",
+              "failureMessages": [
+                "Error: the completed turn-1 effect was replayed or lost: 0 provider requests are driven by the turn-1 input\n    at Object.verify (C:/Arbor/tests/capability/real-provider/b12-restart-continuation.test.ts:377:19)\n    at runAndCapture (C:/Arbor/tests/capability/support/capture.ts:134:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at C:/Arbor/tests/capability/real-provider/b12-restart-continuation.test.ts:258:7\n    at file:///C:/Arbor/node_modules/.pnpm/vitest@5.0.1_@types+node@24_780ba72b9b80a0a7916e4c1cfcca5bc3/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20",
+                "Error: the completed turn-1 effect was replayed or lost: 0 provider requests are driven by the turn-1 input\n    at Object.verify (C:/Arbor/tests/capability/real-provider/b12-restart-continuation.test.ts:377:19)\n    at runAndCapture (C:/Arbor/tests/capability/support/capture.ts:134:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at C:/Arbor/tests/capability/real-provider/b12-restart-continuation.test.ts:258:7\n    at file:///C:/Arbor/node_modules/.pnpm/vitest@5.0.1_@types+node@24_780ba72b9b80a0a7916e4c1cfcca5bc3/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20",
+                "Error: the completed turn-1 effect was replayed or lost: 0 provider requests are driven by the turn-1 input\n    at Object.verify (C:/Arbor/tests/capability/real-provider/b12-restart-continuation.test.ts:377:19)\n    at runAndCapture (C:/Arbor/tests/capability/support/capture.ts:134:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at C:/Arbor/tests/capability/real-provider/b12-restart-continuation.test.ts:258:7\n    at file:///C:/Arbor/node_modules/.pnpm/vitest@5.0.1_@types+node@24_780ba72b9b80a0a7916e4c1cfcca5bc3/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20",
+                "Error: the completed turn-1 effect was replayed or lost: 0 provider requests are driven by the turn-1 input\n    at Object.verify (C:/Arbor/tests/capability/real-provider/b12-restart-continuation.test.ts:377:19)\n    at runAndCapture (C:/Arbor/tests/capability/support/capture.ts:134:11)\n    at processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at C:/Arbor/tests/capability/real-provider/b12-restart-continuation.test.ts:258:7\n    at file:///C:/Arbor/node_modules/.pnpm/vitest@5.0.1_@types+node@24_780ba72b9b80a0a7916e4c1cfcca5bc3/node_modules/vitest/dist/chunks/run.C5UmxDPh.js:2783:20"
+              ]
+            }
+          ],
+          "sourceSuites": [
+            "tests/capability/real-provider/b12-restart-continuation.test.ts"
+          ],
+          "failures": [
+            {
+              "suiteFile": "tests/capability/real-provider/b12-restart-continuation.test.ts",
+              "testName": "B12 L3 — daemon process restart continues cognition without replay [B12-L3-REAL] B12: a killed daemon process restarts, completes the pending turn, and never replays the completed one"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "capabilityId": "B13",
+      "title": "Failure Recovery",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "PASS",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "packages/model-context/test/p3-decode.test.ts",
+        "tests/p9-acceptance.test.ts",
+        "tests/p9-provider-disconnect.test.ts",
+        "tests/p9-tool-outcome-unknown.test.ts",
+        "tests/p9-worker-crash.test.ts",
+        "tests/capability/real-provider/b13-failure-recovery.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B13-L3-REAL-2026-10-02T10-26-23.953Z-b2149ff7-3c9e-4136-98b8-27aee016b3f3.json",
+        "planning/testing/core-capability/evidence/real-provider/B13-L3-REAL-2026-10-02T10-26-26.455Z-f28fc4b8-faad-4d49-bcf6-4ba6e9b28f0d.json",
+        "planning/testing/core-capability/evidence/real-provider/B13-L3-REAL-2026-10-02T10-26-28.905Z-7ba90224-9375-43bd-87ac-63a38144949b.json",
+        "planning/testing/core-capability/evidence/real-provider/B13-L3-REAL-2026-10-02T10-26-31.574Z-28d5b46a-4dd0-4432-a9e3-a9079e8a9fc3.json"
+      ],
+      "blockingReasons": [],
+      "cases": [
+        {
+          "caseId": "B13-L1",
+          "capabilityId": "B13",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "packages/model-context/test/p3-decode.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B13-L2",
+          "capabilityId": "B13",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": true,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "tests/p9-acceptance.test.ts",
+            "tests/p9-provider-disconnect.test.ts",
+            "tests/p9-tool-outcome-unknown.test.ts",
+            "tests/p9-worker-crash.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B13-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": true,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b13-failure-recovery.test.ts",
+          "blockingReason": "Executable sentinel: one deterministic retryable provider fault injected through the harness provider wrapper (B13 allowed setup); real provider drives the behavior.",
+          "status": "PASS",
+          "repetitions": {
+            "expected": 3,
+            "passed": 4,
+            "failed": 0,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B13-L3-REAL-2026-10-02T10-26-23.953Z-b2149ff7-3c9e-4136-98b8-27aee016b3f3.json",
+            "planning/testing/core-capability/evidence/real-provider/B13-L3-REAL-2026-10-02T10-26-26.455Z-f28fc4b8-faad-4d49-bcf6-4ba6e9b28f0d.json",
+            "planning/testing/core-capability/evidence/real-provider/B13-L3-REAL-2026-10-02T10-26-28.905Z-7ba90224-9375-43bd-87ac-63a38144949b.json",
+            "planning/testing/core-capability/evidence/real-provider/B13-L3-REAL-2026-10-02T10-26-31.574Z-28d5b46a-4dd0-4432-a9e3-a9079e8a9fc3.json"
+          ],
+          "assertionFailures": [],
+          "sourceSuites": [
+            "tests/capability/real-provider/b13-failure-recovery.test.ts"
+          ],
+          "failures": []
+        }
+      ]
+    },
+    {
+      "capabilityId": "B14",
+      "title": "Web / Product Projection",
+      "selected": true,
+      "l1Status": "PASS",
+      "l2Status": "PASS",
+      "l3Status": "PASS",
+      "providerModes": [
+        "NONE",
+        "REAL"
+      ],
+      "evidenceFiles": [
+        "apps/web/test/conversation-tab.test.tsx",
+        "apps/web/test/views-render.test.tsx",
+        "apps/single-workspace/test/p14-conversation-history-pagination.test.ts",
+        "tests/p14-transcript.test.ts",
+        "tests/capability/real-provider/b14-web-projection.test.ts",
+        "planning/testing/core-capability/evidence/real-provider/B14-L3-REAL-2026-10-02T10-26-43.776Z-4d337082-790a-4094-8e98-428d20a0d75c.json",
+        "planning/testing/core-capability/evidence/real-provider/B14-L3-REAL-2026-10-02T10-26-49.224Z-7d67aa23-e678-4a64-8554-a897d8ff6754.json",
+        "planning/testing/core-capability/evidence/real-provider/B14-L3-REAL-2026-10-02T10-26-54.661Z-b0777a68-1958-4c5d-a31c-db701c8041cd.json",
+        "planning/testing/core-capability/evidence/real-provider/B14-L3-REAL-2026-10-02T10-27-00.216Z-83638e2e-065c-4201-ab3a-8c2def920ae3.json"
+      ],
+      "blockingReasons": [],
+      "cases": [
+        {
+          "caseId": "B14-L1",
+          "capabilityId": "B14",
+          "evidenceLevel": "L1",
+          "providerMode": "NONE",
+          "requiresPersistence": false,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "apps/web/test/conversation-tab.test.tsx",
+            "apps/web/test/views-render.test.tsx"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B14-L2",
+          "capabilityId": "B14",
+          "evidenceLevel": "L2",
+          "providerMode": "NONE",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "status": "PASS",
+          "sourceSuiteStatus": "PASS",
+          "sourceSuites": [
+            "apps/single-workspace/test/p14-conversation-history-pagination.test.ts",
+            "tests/p14-transcript.test.ts"
+          ],
+          "failures": []
+        },
+        {
+          "caseId": "B14-L3-REAL",
+          "evidenceLevel": "L3",
+          "providerMode": "REAL",
+          "requiresPersistence": true,
+          "requiresRestart": false,
+          "expectedStatus": "PASS",
+          "testFile": "tests/capability/real-provider/b14-web-projection.test.ts",
+          "blockingReason": "Executable sentinel over the public HTTP transcript with cursor pagination and real generated replies.",
+          "status": "PASS",
+          "repetitions": {
+            "expected": 3,
+            "passed": 4,
+            "failed": 0,
+            "reported": 4
+          },
+          "evidenceFiles": [
+            "planning/testing/core-capability/evidence/real-provider/B14-L3-REAL-2026-10-02T10-26-43.776Z-4d337082-790a-4094-8e98-428d20a0d75c.json",
+            "planning/testing/core-capability/evidence/real-provider/B14-L3-REAL-2026-10-02T10-26-49.224Z-7d67aa23-e678-4a64-8554-a897d8ff6754.json",
+            "planning/testing/core-capability/evidence/real-provider/B14-L3-REAL-2026-10-02T10-26-54.661Z-b0777a68-1958-4c5d-a31c-db701c8041cd.json",
+            "planning/testing/core-capability/evidence/real-provider/B14-L3-REAL-2026-10-02T10-27-00.216Z-83638e2e-065c-4201-ab3a-8c2def920ae3.json"
+          ],
+          "assertionFailures": [],
+          "sourceSuites": [
+            "tests/capability/real-provider/b14-web-projection.test.ts"
+          ],
+          "failures": []
+        }
+      ]
+    }
+  ]
+}
