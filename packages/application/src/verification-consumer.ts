@@ -47,6 +47,9 @@ export interface VerificationConsumerDependencies<R> {
     readonly findById: (
       verificationId: VerificationId,
     ) => Effect.Effect<Option.Option<Verification>, unknown, R>;
+    readonly listByWork: (
+      workId: WorkId,
+    ) => Effect.Effect<ReadonlyArray<Verification>, unknown, R>;
   };
   readonly works: {
     readonly findById: (
@@ -289,6 +292,21 @@ export const runVerificationConsumer = <R>(
         .pipe(Effect.orDie);
       if (Option.isSome(mine)) {
         records.push(replayRecord(mine.value, ids, workId));
+        continue;
+      }
+      const history = yield* dependencies.verifications
+        .listByWork(workId)
+        .pipe(Effect.orDie);
+      const sameRevision = history.find(
+        (verification) =>
+          Number(verification.targetWorkRevision) === workRevision,
+      );
+      if (sameRevision !== undefined) {
+        records.push(
+          sameRevision.state.status === "Open"
+            ? replayRecord(sameRevision, ids, workId)
+            : `skipped:VerificationAlreadyConcluded:${workId}:${workRevision}`,
+        );
         continue;
       }
       const open = yield* dependencies.verifications

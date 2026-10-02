@@ -229,6 +229,8 @@ const makeConsumerDeps = (
           ),
         findById: (verificationId: VerificationId) =>
           tx.transact(verifications.findById(verificationId)),
+        listByWork: (workId: WorkId) =>
+          tx.transact(verifications.listByWork(workId)),
       },
       works: {
         findById: (workId: WorkId) => tx.transact(works.findById(workId)),
@@ -440,6 +442,35 @@ describe("p8-consumer-a", () => {
         expect(first).toEqual(["StartVerification"]);
         const replay = yield* consume([event]);
         expect(replay).toEqual([`skipped:VerificationAlreadyOpen:${WORK_1}`]);
+        expect(yield* countVerifications).toBe(1);
+        expect(yield* countDomainEvents("VerificationStarted")).toBe(1);
+      }),
+    );
+  });
+
+  it("does not auto-start re-verification from a duplicate claim after the revision already concluded", async () => {
+    await runMini(
+      Effect.gen(function* () {
+        yield* seed;
+        expect(yield* consume([settledEvent(2)])).toEqual([
+          "StartVerification",
+        ]);
+        const ids = verificationSpawnIds(WORK_1, 0, "claim-2");
+        const tx = yield* TransactionPort;
+        const verifications = yield* VerificationRepository;
+        const concluded = yield* tx.transact(
+          verifications.concludeIfOpen(
+            ids.verificationId,
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
+        );
+        expect(Option.isSome(concluded)).toBe(true);
+
+        expect(yield* consume([settledEvent(4)])).toEqual([
+          `skipped:VerificationAlreadyConcluded:${WORK_1}:0`,
+        ]);
         expect(yield* countVerifications).toBe(1);
         expect(yield* countDomainEvents("VerificationStarted")).toBe(1);
       }),

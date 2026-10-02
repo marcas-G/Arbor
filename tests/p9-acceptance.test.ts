@@ -1807,6 +1807,8 @@ const makeVerificationDeps = (gateway: CommandGatewayService) =>
           ),
         findById: (verificationId: VerificationId) =>
           tx.transact(verifications.findById(verificationId)),
+        listByWork: (workId: WorkId) =>
+          tx.transact(verifications.listByWork(workId)),
       },
       works: {
         findById: (workId: WorkId) => tx.transact(works.findById(workId)),
@@ -3051,13 +3053,20 @@ describe("p9-acceptance", () => {
             undefined,
           ),
         );
+        // Advance the Work revision: a duplicate claim on revision 0 must not
+        // auto-start re-verification after conclusion; revision 1 is a new
+        // producer outcome and legitimately drives Consumer A again.
+        yield* sql.unsafe("UPDATE works SET revision = 1 WHERE work_id = ?", [
+          G_WORK,
+        ]);
         // WF3a: consumer A interrupted before the StartVerification commit
-        // — replay converges to exactly one more Verification.
+        // for the new revision — replay converges to exactly one more
+        // Verification.
         const head3 = yield* preconsume("sg3a");
         yield* journalEvent("ExecutionSettled", {
           executionId: "exe_00000000-0000-7000-8000-0000000000g3",
           workId: G_WORK,
-          workRevision: 0,
+          workRevision: 1,
           claimRef: "claim-sg3",
         });
         const interruptedA = transientOnceGateway(gateway, "StartVerification");
@@ -3090,7 +3099,7 @@ describe("p9-acceptance", () => {
         // replay converges to exactly one Completion. The verification
         // opened by WF3a (same work + revision, partial unique index) is
         // the one concluded and accepted.
-        const ids3 = verificationSpawnIds(G_WORK, 0, "claim-sg3");
+        const ids3 = verificationSpawnIds(G_WORK, 1, "claim-sg3");
         yield* tx.transact(
           verifications.concludeIfOpen(
             ids3.verificationId,
@@ -3101,7 +3110,7 @@ describe("p9-acceptance", () => {
         );
         yield* sql.unsafe(
           "INSERT INTO work_acceptances (acceptance_id, project_id, work_id, target_work_revision, verification_id, actor, accepted_at) VALUES (?,?,?,?,?,?,'t')",
-          [G_ACC, p7Project, G_WORK, 0, ids3.verificationId, p7TestActor],
+          [G_ACC, p7Project, G_WORK, 1, ids3.verificationId, p7TestActor],
         );
         yield* sql.unsafe(
           "UPDATE workspaces SET current_work_id = ? WHERE workspace_id = ?",
@@ -3111,7 +3120,7 @@ describe("p9-acceptance", () => {
         yield* journalEvent("WorkOutcomeAccepted", {
           acceptanceId: G_ACC,
           workId: G_WORK,
-          targetWorkRevision: 0,
+          targetWorkRevision: 1,
           verificationId: ids3.verificationId,
           actor: p7TestActor,
         });

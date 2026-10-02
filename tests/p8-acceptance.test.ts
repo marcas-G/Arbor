@@ -897,6 +897,8 @@ const makeConsumerADeps = Effect.gen(function* () {
         ),
       findById: (verificationId: VerificationId) =>
         tx.transact(verifications.findById(verificationId)),
+      listByWork: (workId: WorkId) =>
+        tx.transact(verifications.listByWork(workId)),
     },
     works: {
       findById: (workId: WorkId) => tx.transact(works.findById(workId)),
