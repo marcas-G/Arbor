@@ -96,6 +96,7 @@ const context = {
 const setup = () => {
   const submitted: Array<GatewayEnvelope<unknown>> = [];
   let blob = new Uint8Array();
+  let waitClears = 0;
   const gateway: CommandGatewayService = {
     execute: (envelope) => {
       submitted.push(envelope);
@@ -184,10 +185,36 @@ const setup = () => {
     workspaces: {} as WorkspaceRepositoryService,
     works: {} as WorkRepositoryService,
     proposals: {} as FormationProposalStoreService,
+    waits: {
+      findByWork: () =>
+        Effect.succeed(
+          Option.some({
+            workId: verification.workId,
+            waitSpec: {
+              mode: "Any" as const,
+              conditions: [
+                {
+                  _tag: "VerificationChanged" as const,
+                  workId: verification.workId,
+                  targetWorkRevision: verification.targetWorkRevision as never,
+                },
+              ],
+            },
+            registeredAt: "t",
+            updatedAt: "t",
+          }),
+        ),
+      clear: () =>
+        Effect.sync(() => {
+          waitClears += 1;
+        }),
+      upsert: () => Effect.void,
+    },
   };
   return {
     submitted,
     readBlob: () => new TextDecoder().decode(blob),
+    waitClears: () => waitClears,
     handlers: makeSingleWorkspaceControlActionHandlers(dependencies),
   };
 };
@@ -301,5 +328,6 @@ describe("verification control actions", () => {
       verificationId,
       summaryRef: "blob:summary",
     });
+    expect(state.waitClears()).toBe(1);
   });
 });

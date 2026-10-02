@@ -81,7 +81,10 @@ export interface SendMessageDependencies {
 export interface ClaimCompletionDependencies {
   readonly works: WorkRepositoryService;
   readonly tx: TransactionPortService;
-  readonly waits?: Pick<WorkWaitStoreService, "upsert">;
+  readonly waits?: Pick<
+    WorkWaitStoreService,
+    "upsert" | "findByWork" | "clear"
+  >;
   readonly clock: ClockService;
 }
 
@@ -114,6 +117,7 @@ export interface VerificationActionDependencies {
   >;
   readonly sessions: Pick<SessionRepositoryService, "listEntries">;
   readonly toolInvocations: Pick<ToolInvocationStoreService, "findById">;
+  readonly waits?: Pick<WorkWaitStoreService, "findByWork" | "clear">;
 }
 
 const actionError = (cause: unknown): AgentActionError => ({
@@ -903,6 +907,27 @@ const concludeVerificationHandler = (
               ? receipt.resolution.error
               : "verification conclusion failed operationally",
           ),
+        );
+      }
+      if (dependencies.waits !== undefined) {
+        const release = receipt.resolution.result.channel1Release;
+        const waits = dependencies.waits;
+        yield* dependencies.tx.transact(
+          Effect.gen(function* () {
+            const wait = yield* waits.findByWork(release.workId);
+            if (
+              Option.isSome(wait) &&
+              wait.value.waitSpec.conditions.some(
+                (condition) =>
+                  condition._tag === "VerificationChanged" &&
+                  condition.workId === release.workId &&
+                  Number(condition.targetWorkRevision) ===
+                    Number(release.targetWorkRevision),
+              )
+            ) {
+              yield* waits.clear(release.workId);
+            }
+          }),
         );
       }
       return {
