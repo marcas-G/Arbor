@@ -159,6 +159,20 @@ const asNestedCompletionClaimed = (
   };
 };
 
+const isExplicitNonClaimSettlement = (payload: unknown): boolean => {
+  if (typeof payload !== "object" || payload === null) return false;
+  const settlement = (payload as Record<string, unknown>).settlement;
+  if (typeof settlement !== "object" || settlement === null) return false;
+  const result = (settlement as Record<string, unknown>).result;
+  return (
+    (settlement as Record<string, unknown>)._tag === "Completed" &&
+    typeof result === "object" &&
+    result !== null &&
+    typeof (result as Record<string, unknown>)._tag === "string" &&
+    (result as Record<string, unknown>)._tag !== "CompletionClaimed"
+  );
+};
+
 /** One record per event decision: "StartVerification" for a committed
  * submission, "skipped:<reason>:<ref>" for pre-check misses and typed
  * gateway rejections, "needSpawn:<verificationId>:<verifierExecutionId>"
@@ -196,6 +210,10 @@ export const runVerificationConsumer = <R>(
 
     for (const event of events) {
       if (event.eventType !== "ExecutionSettled") {
+        continue;
+      }
+      if (isExplicitNonClaimSettlement(event.payload)) {
+        records.push(`skipped:NotCompletionClaimed:${event.eventId}`);
         continue;
       }
       let trigger = asCompletionClaimed(event.payload);

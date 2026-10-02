@@ -146,6 +146,25 @@ describe("execution binding & settlement", () => {
     }
   });
 
+  it("represents verifier delivery without implying Work completion", () => {
+    const settlement: ExecutionSettlement = {
+      _tag: "Completed",
+      result: {
+        _tag: "VerificationConcluded",
+        verificationId: "ver_018f2b3c-4d5e-7abc-8def-0123456789ab" as never,
+        verdict: "Pass",
+      },
+    };
+    const settled = settleExecution(
+      admit(executionBound("verify"), false),
+      settlement,
+    );
+    expect(settled.ok).toBe(true);
+    if (settled.ok && settled.value.state.status === "Settled") {
+      expect(settled.value.state.settlement).toEqual(settlement);
+    }
+  });
+
   it("rejects stopping a settled execution", () => {
     const settled = settleExecution(admit(), {
       _tag: "OutcomeUnknown",

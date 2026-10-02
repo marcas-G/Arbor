@@ -3,6 +3,7 @@ import type {
   ExecutionId,
   ProjectId,
   SessionId,
+  VerificationId,
   WorkId,
   WorkspaceId,
 } from "./ids.js";
@@ -10,6 +11,7 @@ import type { WorkRevision } from "./ordinals.js";
 import type { DomainResult } from "./result.js";
 import { err, ok } from "./result.js";
 import type { WaitSpec, WakeReason } from "./scheduler.js";
+import type { VerificationVerdict } from "./verification.js";
 
 export type ExecutionFocus =
   | { readonly _tag: "Work"; readonly workId: WorkId }
@@ -40,7 +42,13 @@ export type CompletedResult =
       readonly claimRef: string;
     }
   | { readonly _tag: "CoordinationCompleted" }
-  | { readonly _tag: "QueryCompleted" };
+  | { readonly _tag: "QueryCompleted" }
+  | {
+      /** DID v1.27 VES: exact-bound verifier delivery completed. */
+      readonly _tag: "VerificationConcluded";
+      readonly verificationId: VerificationId;
+      readonly verdict: VerificationVerdict;
+    };
 
 export type InterruptedResult =
   | { readonly _tag: "StopRequested" }

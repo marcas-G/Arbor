@@ -266,6 +266,24 @@ describe("P2-011 SettleExecution", () => {
       },
       completed,
     );
+    const verifierPayload = executionSettledEventPayload(
+      {
+        executionId,
+        binding: {
+          _tag: "ExecutionBoundAgentBinding",
+          parentExecutionId: null,
+          mission: "verify",
+        },
+      },
+      {
+        _tag: "Completed",
+        result: {
+          _tag: "VerificationConcluded",
+          verificationId: "ver_00000000-0000-7000-8000-000000000001" as never,
+          verdict: "Pass",
+        },
+      },
+    );
 
     expect(workPayload).toMatchObject({
       executionId,
@@ -276,6 +294,15 @@ describe("P2-011 SettleExecution", () => {
     });
     expect(coordinationPayload).not.toHaveProperty("workId");
     expect(coordinationPayload).not.toHaveProperty("claimRef");
+    expect(verifierPayload).toMatchObject({
+      executionId,
+      settlement: {
+        _tag: "Completed",
+        result: { _tag: "VerificationConcluded", verdict: "Pass" },
+      },
+    });
+    expect(verifierPayload).not.toHaveProperty("workId");
+    expect(verifierPayload).not.toHaveProperty("claimRef");
   });
 
   it("settles on the ExecutionOrigin path and emits ExecutionSettled", async () => {

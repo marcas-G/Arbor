@@ -93,13 +93,30 @@ const context = {
   fencingGeneration: 0 as LeaseGeneration,
 };
 
-const setup = () => {
+const setup = (
+  options: {
+    readonly rejectConclusion?: boolean;
+    readonly corruptBlobRead?: boolean;
+  } = {},
+) => {
   const submitted: Array<GatewayEnvelope<unknown>> = [];
   let blob = new Uint8Array();
   let waitClears = 0;
+  let waitPresent = true;
   const gateway: CommandGatewayService = {
     execute: (envelope) => {
       submitted.push(envelope);
+      if (
+        options.rejectConclusion === true &&
+        envelope.commandType === "ConcludeVerification"
+      ) {
+        return Effect.succeed({
+          resolution: {
+            _tag: "TerminalRejected",
+            error: { _tag: "AuthorityDenied", reason: "test rejection" },
+          },
+        } as never);
+      }
       return Effect.succeed({
         resolution: {
           _tag: "Committed",
@@ -127,7 +144,10 @@ const setup = () => {
         blob = bytes.slice();
         return "blob:summary";
       }),
-    get: () => Effect.succeed(blob),
+    get: () =>
+      Effect.succeed(
+        options.corruptBlobRead === true ? new Uint8Array([0]) : blob,
+      ),
     stream: () => Stream.empty,
   };
   const tx = {
@@ -188,25 +208,29 @@ const setup = () => {
     waits: {
       findByWork: () =>
         Effect.succeed(
-          Option.some({
-            workId: verification.workId,
-            waitSpec: {
-              mode: "Any" as const,
-              conditions: [
-                {
-                  _tag: "VerificationChanged" as const,
-                  workId: verification.workId,
-                  targetWorkRevision: verification.targetWorkRevision as never,
+          waitPresent
+            ? Option.some({
+                workId: verification.workId,
+                waitSpec: {
+                  mode: "Any" as const,
+                  conditions: [
+                    {
+                      _tag: "VerificationChanged" as const,
+                      workId: verification.workId,
+                      targetWorkRevision:
+                        verification.targetWorkRevision as never,
+                    },
+                  ],
                 },
-              ],
-            },
-            registeredAt: "t",
-            updatedAt: "t",
-          }),
+                registeredAt: "t",
+                updatedAt: "t",
+              })
+            : Option.none(),
         ),
       clear: () =>
         Effect.sync(() => {
           waitClears += 1;
+          waitPresent = false;
         }),
       upsert: () => Effect.void,
     },
@@ -302,7 +326,7 @@ describe("verification control actions", () => {
       (candidate) => candidate.action === "ConcludeVerification",
     );
     expect(handler).toBeDefined();
-    await Effect.runPromise(
+    const outcome = await Effect.runPromise(
       handler?.handle(
         input(
           {
@@ -329,5 +353,83 @@ describe("verification control actions", () => {
       summaryRef: "blob:summary",
     });
     expect(state.waitClears()).toBe(1);
+    expect(outcome).toEqual({
+      _tag: "Settle",
+      settlement: {
+        _tag: "Completed",
+        result: {
+          _tag: "VerificationConcluded",
+          verificationId,
+          verdict: "Pass",
+        },
+      },
+    });
+  });
+
+  it("replays one conclusion occurrence with one command identity and an idempotent wake", async () => {
+    const state = setup();
+    const handler = state.handlers.find(
+      (candidate) => candidate.action === "ConcludeVerification",
+    );
+    const invocation = input(
+      {
+        _tag: "ConcludeVerification",
+        verdict: "Pass",
+        criteriaResults: [
+          {
+            criterionId: "focused-test",
+            requirement: "focused test passes",
+            required: true,
+            verdict: "Pass",
+            evidenceRefs: [evidenceId],
+          },
+        ],
+        summary: "Focused verification passed.",
+      },
+      2,
+    );
+    const first = await Effect.runPromise(
+      handler?.handle(invocation) as Effect.Effect<unknown>,
+    );
+    const replay = await Effect.runPromise(
+      handler?.handle(invocation) as Effect.Effect<unknown>,
+    );
+    expect(replay).toEqual(first);
+    expect(state.submitted).toHaveLength(2);
+    expect(state.submitted[0]?.commandId).toBe(state.submitted[1]?.commandId);
+    expect(state.waitClears()).toBe(1);
+  });
+
+  it("never settles when summary verification or the conclusion command fails", async () => {
+    const action = input(
+      {
+        _tag: "ConcludeVerification",
+        verdict: "Pass",
+        criteriaResults: [
+          {
+            criterionId: "focused-test",
+            requirement: "focused test passes",
+            required: true,
+            verdict: "Pass",
+            evidenceRefs: [evidenceId],
+          },
+        ],
+        summary: "Focused verification passed.",
+      },
+      2,
+    );
+    for (const state of [
+      setup({ corruptBlobRead: true }),
+      setup({ rejectConclusion: true }),
+    ]) {
+      const handler = state.handlers.find(
+        (candidate) => candidate.action === "ConcludeVerification",
+      );
+      const exit = await Effect.runPromise(
+        Effect.exit(handler?.handle(action) as Effect.Effect<unknown, unknown>),
+      );
+      expect(exit._tag).toBe("Failure");
+      expect(state.waitClears()).toBe(0);
+    }
   });
 });
