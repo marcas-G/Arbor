@@ -1,10 +1,14 @@
 # Verifier Execution Settlement 治理裁决草案
 
-**Status:** READY FOR MANUAL GOVERNANCE
+**Status:** ACCEPTED — implementation authorized
 
 **Decision token:** `ACCEPT_VERIFIER_EXECUTION_SETTLEMENT`
 
 **Date:** 2026-10-02
+
+**Decision:** accepted by manual governance token
+`ACCEPT_VERIFIER_EXECUTION_SETTLEMENT` on 2026-10-02. Accepted proposal
+SHA-256: `1D66E7A53134FE2494EA9077DA36D361CEA2B1C8ED1996321C521108460E88BD`.
 
 ## 1. 要解决的问题
 

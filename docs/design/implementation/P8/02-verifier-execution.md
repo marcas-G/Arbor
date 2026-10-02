@@ -1,7 +1,7 @@
-# P8 — 02 Verifier Execution (DRAFT for contract review)
+# P8 — 02 Verifier Execution
 
 **Authority:** DID v1.11 §11 P8, §10.4.1 (verification-runtime deps = domain/ports/application), §12.10 (verification + application 双边界), §8.4 (P9 Verification Program), §8.4A; v1.7 G5; SD v1.3 §9.2/§9.3/§13.10; 不变量 25/44; P2 `01` §5, P6 `01` §3 (spawn 模板), P3 `05`/`07`, P6 `05` (D4 版本模型)。
-**Status:** DRAFT (first draft for contract review).
+**Status:** FROZEN — DID v1.27 Verifier Execution Settlement addendum.
 
 ## 1. Spawn（generic admission 之上的 P8 语义）
 
@@ -38,6 +38,8 @@ StartVerification payload 携带 caller-preallocated verifierExecutionId
 ## 3. Verifier 回流
 
 - Verifier Execution settle → 结论路径只有 ConcludeVerification（命令）；settlement 本身不直接写 Verification 聚合（与 P6 specialist-settlement 的 Inbox 模式不同——Verifier 的产物是**结论命令**而非观察；settle-without-conclude 属 Verifier 执行失败 → Verification 保持 Open + Attention 记录（L6），不自动 Unknown——"没有发现问题不能自动等价于 PASS"（S1 步骤 9）也不自动 UNKNOWN）。
+- **DID v1.27 VES**：结论命令 committed 且 Verification wake 幂等交付后，控制动作必须立即产生 `Completed(VerificationConcluded { verificationId, verdict })`。该 result 只终止 exact-bound Verifier Execution；不写 Verification、不表示 Parent Acceptance/Work Completed，也不触发 CompletionClaim consumer。
+- **Crash/replay**：Blob 写后、命令前允许孤儿 Blob；命令后、wake 前以及 wake 后、settle 前都以相同 commandId 重读 Receipt、幂等重放 wake，再 settle。Execution settle 后不得再驱动。历史 Failed/Interrupted verifier Execution 不回写；Verification 已 Concluded 时不属于 orphan scan。
 - 长时未结论：不设 P8 定时器（durable timer 归 P2/P12）；契约只冻结"Open Verification 不阻塞其他任何链路"。
 - **Verifier 长调查的连续性（round-1 补）**：Verifier Execution 可用 P2 通用 `Yield(waitSpec)` 暂停恢复（ExecutionScoped Session admission 时固定 + P5 slice-continuity 同机制免费支撑跨执行调查）；Yield 不结论、不产生 verdict 语义。孤儿 Open Verification（settle-without-conclude 后无人再驱动）→ Attention 记录；**再驱动（v1.11 G5 已裁决）**：显式治理动作先以 Unknown(conclusionReason `Orphaned`) 结论（`01` §3 Orphaned 路径），再以新 VerificationId re-Start；禁止 silent automatic restart 与 identity reuse。
 

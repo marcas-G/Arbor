@@ -1,7 +1,26 @@
 # P8 — 01 Verification / Acceptance Commands
 
 **Authority:** DID v1.10 §3.5/§3.6/§4.2/§5.3/§12.10/§12.11 (Work + Verification truth tables), §12.8 C7; SD v1.3 §9.1/§9.6/§9.7; 不变量 22/23/49; P0 domain（verification.ts/work.ts/dependency.ts Acceptance 冻结实现）。
-**Status:** FROZEN — DID v1.26 VDC addendum.
+**Status:** FROZEN — DID v1.27 VDC + Verifier Execution Settlement addenda.
+
+## DID v1.27 addendum — conclusion action settlement
+
+The model-facing `arbor_conclude_verification` action executes the following
+ordered boundary:
+
+```text
+summary bytes → BlobStore.put → byte-for-byte get verification
+→ ConcludeVerification through CommandGateway
+→ committed Receipt
+→ idempotent Verification wake delivery
+→ Completed(VerificationConcluded { verificationId, verdict })
+```
+
+A rejection or operational failure at any step before the final boundary must
+not produce the Completed result. Blob-before-command may leave an orphan Blob.
+Command/wake/settlement crash windows replay the same deterministic command and
+idempotent wake. The Completed result is an Execution fact only: it is neither
+Parent Acceptance nor Work completion.
 
 ## VDC addendum — evidence identity and conclusion summary
 
@@ -60,7 +79,7 @@ Handler 内解析：`targetArtifactVersions`（从 targetDeliverables 的 artifa
 - Preconditions: Open；verifier authority；mission/evidence record valid——criterion 级结果齐全且每条绑 evidenceRef（SD §9.6/不变量 26）；整体 verdict 必须等于确定性聚合（v1.11 G1：任一 **required** Fail→Fail；无 required Fail 但有 required 未决→Unknown；全 required Pass→Pass；optional 不阻塞——域纯函数 L1）。
 - **Orphaned 路径（G5）**：`conclusionReason: "Orphaned"` 时豁免 evidence 齐全前置（孤儿定义上无活 Verifier）；提交者为 Parent Workspace 治理链 authority（显式治理动作，非 verifier-only）——用途仅限为 re-Start 清障，事件载荷携带 conclusionReason。
 - 域转移：concludeVerification（P0 冻结）；verdict 此后 immutable。
-- Events: `VerificationConcluded { verificationId, workId, targetWorkRevision, verdict, evidenceRefs }`；同事务产 wake（`03` §3）。
+- Events: `VerificationConcluded { verificationId, workId, targetWorkRevision, verdict, evidenceRefs, summaryRef }`；同事务产 wake（`03` §3）。模型控制动作在 committed Receipt 与 wake 交付后产生 `Completed(VerificationConcluded { verificationId, verdict })`；该 Execution result 不进入 CompletionClaim consumer。
 
 ## 4. `AcceptWorkOutcome`
 
