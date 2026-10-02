@@ -1,6 +1,6 @@
 # Verification Delivery Convergence Tasks
 
-**Status:** IN PROGRESS — VDC-001..007 implemented and live-proven; VDC-008 awaits Parent acceptance; VD-RUNTIME-GAP-01 CLOSED
+**Status:** COMPLETE / FORMALLY CLOSED — VDC-001..008 live-proven; VD-RUNTIME-GAP-01 CLOSED
 
 **Plan:** `planning/proposals/verification-delivery-convergence-implementation-plan.md`
 
@@ -68,18 +68,18 @@
 
 ### VDC-008 Parent acceptance and completion
 
-- [ ] Present exact Verification/revision to Parent/human.
-- [ ] Submit AcceptWorkOutcome only for deliberate acceptance.
-- [ ] Consume WorkOutcomeAccepted through deterministic CompleteWork.
-- [ ] Prove seven-fold revalidation and Work lifecycle `Completed`.
+- [x] Present exact Verification/revision to Parent/human.
+- [x] Submit AcceptWorkOutcome only for deliberate acceptance.
+- [x] Consume WorkOutcomeAccepted through deterministic CompleteWork.
+- [x] Prove seven-fold revalidation and Work lifecycle `Completed`.
 
 ## Closure
 
-- [ ] Current dogfood Work is Completed or has an explicit honest Fail/Unknown
+- [x] Current dogfood Work is Completed or has an explicit honest Fail/Unknown
   disposition; never silently left Open.
-- [ ] No active main Execution and no stale WorkWait.
-- [ ] Verification/Acceptance/Completion rows are mutually revision-consistent.
-- [ ] Consumer offsets caught up; dead letters zero or explicitly dispositioned.
-- [ ] Restart matrix passes.
-- [ ] `pnpm check` green.
-- [ ] Write `planning/results/verification-delivery-convergence.result.md`.
+- [x] No active main Execution and no stale WorkWait.
+- [x] Verification/Acceptance/Completion rows are mutually revision-consistent.
+- [x] Consumer offsets caught up; dead letters zero or explicitly dispositioned.
+- [x] Restart matrix passes.
+- [x] `pnpm check` green.
+- [x] Write `planning/results/verification-delivery-convergence.result.md`.

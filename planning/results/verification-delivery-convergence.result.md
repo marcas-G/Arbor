@@ -1,6 +1,6 @@
 # Verification Delivery Convergence — 阶段结果
 
-**Status:** CORE DELIVERY + VERIFIER SETTLEMENT PROVEN; Parent acceptance pending
+**Status:** COMPLETE / FORMALLY CLOSED
 
 **Date:** 2026-10-02
 
@@ -79,11 +79,31 @@ e9603d2 fix(verification): release concluded work waits
 a872b25 docs(governance): freeze verifier execution settlement
 3f57c9e feat(verification): settle concluded verifier executions
 83bebfa fix(verification): suppress duplicate claim reverification
+9b4d55d fix(completion): register complete work handler
 ```
 
 ## 尚未关闭
 
-1. Parent 尚未提交 `AcceptWorkOutcome`；因此 Work 保持 Open 是正确行为，
-   `Pass != Acceptance != Completed`。
-2. VD-RUNTIME-GAP-01 已关闭；历史 Failed/Interrupted verifier Execution 按
-   冻结规则保留，不回写。
+无。VD-RUNTIME-GAP-01 已关闭；历史 Failed/Interrupted verifier Execution 按
+冻结规则保留，不回写。
+
+## Parent Acceptance / Completion closure
+
+用户明确指令：`接收当前验证结果并完成 Work`。
+
+```text
+Acceptance: acc_2a359296-6f90-7182-84bf-f42cc242d3bd
+Work: wrk_01a0f834-681f-7b62-9455-aa83bba1e10b @ revision 1
+Verification: ver_a5e19904-f0a2-782c-8af3-93aa39273d5d / Pass
+Work lifecycle: Completed
+Workspace currentWorkId: null
+WorkOutcomeAccepted events: 1
+WorkCompleted events: 1
+active WorkWait: 0
+active main Execution after governed Stop cleanup: 0
+consumer dead letters: 0
+```
+
+Production registry now includes `CompleteWork`; completion remained entirely
+on the canonical `WorkOutcomeAccepted → completion consumer → CompleteWork`
+path. No direct database lifecycle mutation was used.

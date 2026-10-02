@@ -71,8 +71,10 @@ typecheck/build/lint: PASS
 git diff --check: PASS
 ```
 
-## Remaining governance boundary
+## Parent boundary disposition
 
-The target Work remains Open because Parent Acceptance is intentionally
-separate. This result authorizes no automatic `AcceptWorkOutcome` and no
-automatic `CompleteWork`.
+Parent Acceptance was subsequently given explicitly by the user. The accepted
+revision/Verification pair was committed as
+`acc_2a359296-6f90-7182-84bf-f42cc242d3bd`; the deterministic completion
+consumer then committed `CompleteWork`. This later acceptance does not alter
+the separation proven above: no automatic acceptance was introduced.
