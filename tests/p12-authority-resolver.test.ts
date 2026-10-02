@@ -278,6 +278,46 @@ describe("P12-002 authority resolver production plane", () => {
     }
   });
 
+  it("gives an exact verifier role a narrow read-and-execute ceiling without a reusable grant", async () => {
+    const verifier = await runResolver(
+      Effect.gen(function* () {
+        const resolver = yield* AuthorityResolverPort;
+        return yield* resolver.resolveInvocation(
+          invocationInput({
+            grants: [],
+            delegationDepth: 1,
+            policy: makeProjectPolicy({ delegationCeiling: 0 }),
+            executionRole: "Verifier",
+            intent: {
+              ...invocationInput().intent,
+              requestedCapabilities: ["fs:read", "shell:exec"],
+            },
+          }),
+        );
+      }),
+    );
+    expect(verifier.allowedCapabilities).toEqual(["fs:read", "shell:exec"]);
+
+    const denied = await runResolver(
+      Effect.flip(
+        Effect.gen(function* () {
+          const resolver = yield* AuthorityResolverPort;
+          return yield* resolver.resolveInvocation(
+            invocationInput({
+              grants: [],
+              executionRole: "Verifier",
+              intent: {
+                ...invocationInput().intent,
+                requestedCapabilities: ["fs:write"],
+              },
+            }),
+          );
+        }),
+      ),
+    );
+    expect(denied._tag).toBe("CapabilityCeilingExceeded");
+  });
+
   it("only the exact (principal, commandType, commandId, fingerprint) tuple yields a fact", async () => {
     const noGrant = (await runResolver(
       resolveError(decisionInput({ grants: [] })),

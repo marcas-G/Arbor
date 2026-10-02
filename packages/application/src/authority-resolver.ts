@@ -116,6 +116,8 @@ export interface InvocationDecisionInput {
   readonly governance: ParentUserGovernanceFacts;
   readonly policy: ProjectPolicy | WorkspacePolicy;
   readonly delegationDepth: number;
+  /** Canonical runtime role projected from durable execution binding. */
+  readonly executionRole?: "Verifier";
   readonly now: string;
 }
 
@@ -720,12 +722,26 @@ const authorizeInvocation = (
 ): Effect.Effect<ReadonlyArray<string>, InvocationResolutionError, never> => {
   const requested = input.intent.requestedCapabilities;
   const ceiling = readPolicyNumber(input.policy, "delegationCeiling", 0);
-  if (input.delegationDepth > ceiling) {
+  if (input.executionRole !== "Verifier" && input.delegationDepth > ceiling) {
     return Effect.fail({
       _tag: "DelegationCeilingExceeded",
       delegationDepth: input.delegationDepth,
       ceiling,
     });
+  }
+  if (input.executionRole === "Verifier") {
+    const verifierCapabilities = new Set(["fs:read", "shell:exec"]);
+    const allowed = requested.filter((capability) =>
+      verifierCapabilities.has(capability),
+    );
+    if (allowed.length !== requested.length) {
+      return Effect.fail({
+        _tag: "CapabilityCeilingExceeded",
+        requested,
+        allowed,
+      });
+    }
+    return Effect.succeed(allowed);
   }
   if (isAuthenticatedHuman(input)) {
     return Effect.succeed([...requested]);

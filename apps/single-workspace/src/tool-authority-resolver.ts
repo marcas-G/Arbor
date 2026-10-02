@@ -6,6 +6,7 @@ import {
   sha256Hex,
   ToolAuthorityResolver,
   TransactionPort,
+  VerificationRepository,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -20,6 +21,7 @@ export const ToolAuthorityResolverLive = (
   | ProjectRepository
   | WorkspaceRepository
   | PermissionGrantRepository
+  | VerificationRepository
 > =>
   Layer.effect(
     ToolAuthorityResolver,
@@ -29,6 +31,7 @@ export const ToolAuthorityResolverLive = (
       const projects = yield* ProjectRepository;
       const workspaces = yield* WorkspaceRepository;
       const grants = yield* PermissionGrantRepository;
+      const verifications = yield* VerificationRepository;
       return ToolAuthorityResolver.of({
         resolve: (input) =>
           Effect.gen(function* () {
@@ -43,7 +46,10 @@ export const ToolAuthorityResolverLive = (
                 const activeGrants = yield* grants.activeGrants(
                   input.context.projectId,
                 );
-                return { project, workspace, activeGrants };
+                const verification = yield* verifications.findByExecutionId(
+                  input.context.executionId,
+                );
+                return { project, workspace, activeGrants, verification };
               }),
             );
             if (Option.isNone(snapshot.workspace)) {
@@ -79,6 +85,9 @@ export const ToolAuthorityResolverLive = (
                 governance,
                 policy: snapshot.workspace.value.workspacePolicy,
                 delegationDepth: input.context.delegationDepth ?? 0,
+                ...(Option.isSome(snapshot.verification)
+                  ? { executionRole: "Verifier" as const }
+                  : {}),
                 now: input.now,
               })
               .pipe(
