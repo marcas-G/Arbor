@@ -1,6 +1,6 @@
 # VD-RUNTIME-GAP-01 — Verifier 成功交付后的 Execution Settlement 缺口
 
-**Status:** OPEN — blocks clean verifier execution settlement only; does not invalidate the concluded Verification
+**Status:** DESIGN RESOLVED / IMPLEMENTATION IN PROGRESS — accepted by `ACCEPT_VERIFIER_EXECUTION_SETTLEMENT`; does not invalidate the concluded Verification
 
 **Date:** 2026-10-02
 

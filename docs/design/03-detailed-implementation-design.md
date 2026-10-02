@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.26\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — Verification Delivery convergence authorized\
-**Supersedes:** v1.25\
+**Version:** 1.27\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — Verifier Execution Settlement authorized\
+**Supersedes:** v1.26\
 **Date:** 2026-10-02\
 **Depends on:** `Arbor System Design Specification v1.5`
 
@@ -160,6 +160,33 @@ VDC-1…VDC-8）
 
 Manual governance accepted VDC-1…VDC-8 by the user instruction `完成这些` on
 2026-10-02. The current dogfood Work is the live qualification path.
+
+**Governance changes (v1.26 → v1.27):**（Verifier Execution Settlement，
+VES-1…VES-6）
+
+- `CompletedResult` gains
+  `VerificationConcluded { verificationId, verdict }`, used only by an
+  exact-bound Verifier Execution after its canonical conclusion command has
+  committed.
+- This Execution result is not the Verification aggregate/event, not Parent
+  Acceptance and not Work completion.
+- The model-facing conclusion action performs summary Blob persistence and
+  byte verification, commits `ConcludeVerification`, delivers the idempotent
+  Verification wake, and only then proposes the Completed settlement.
+- Blob-before-command may leave an orphan Blob. Command-before-wake and
+  wake-before-settlement crash windows replay the same command receipt and
+  idempotent wake before settling the same durable Execution.
+- `ExecutionSettled(VerificationConcluded)` is not a CompletionClaim trigger;
+  Verification Consumer must ignore it.
+- A verifier that settles without a committed conclusion remains an orphan
+  candidate exactly as before. Concluded Verifications are outside the orphan
+  scan; historical Failed/Interrupted verifier Executions are immutable.
+
+Manual governance accepted the fixed proposal by token
+`ACCEPT_VERIFIER_EXECUTION_SETTLEMENT` on 2026-10-02. Accepted proposal
+SHA-256:
+`1D66E7A53134FE2494EA9077DA36D361CEA2B1C8ED1996321C521108460E88BD`.
+Implementation is authorized within this exact scope.
 
 **Governance changes (v1.3 → v1.4):**
 
@@ -1724,7 +1751,8 @@ ExecutionSettlement
 │   ├── Yielded(reason, waitSpec)
 │   ├── CompletionClaimed
 │   ├── CoordinationCompleted
-│   └── QueryCompleted
+│   ├── QueryCompleted
+│   └── VerificationConcluded(verificationId, verdict)
 ├── Interrupted(InterruptedResult)
 │   └── StopRequested / other controlled interruption
 ├── Failed(ExecutionFailure)
@@ -1734,6 +1762,7 @@ ExecutionSettlement
 关键约束：
 
 - `CompletionClaimed` 必须持久携带足够的 claim/reference 与 target Work revision，使 event replay 可以可靠触发后续 Verification；
+- `VerificationConcluded` 只表示该 Verifier Execution 已提交 canonical conclusion；它不得表达 Parent Acceptance 或 Work Completed，也不得进入 CompletionClaim consumer；
 - Worker crash、lease expiry 或旧 Worker resurrection **本身不直接 settle Execution**；Recovery 可以继续同一 durable Execution；
 - `OutcomeUnknown` 表示存在未解决的现实副作用歧义，reconciliation 前禁止盲目 replay；
 - `Completed != Work Completed`，`Failed != Work Cancelled`。
@@ -2520,7 +2549,7 @@ ExecutionSettlement
 
 精确定义：
 
-- `Completed(...)`：episode 正常到达稳定边界；result 必须说明是 `Yielded`、`CompletionClaimed`、`CoordinationCompleted`、`QueryCompleted` 等哪一种语义；
+- `Completed(...)`：episode 正常到达稳定边界；result 必须说明是 `Yielded`、`CompletionClaimed`、`CoordinationCompleted`、`QueryCompleted`、`VerificationConcluded` 等哪一种语义；
 - `Interrupted(...)`：外部控制明确提前结束，并且不存在 unresolved ambiguous side effect；
 - `Failed(...)`：当前 episode 无法继续，正常恢复策略已耗尽或错误不可恢复；
 - `OutcomeUnknown(...)`：存在外部副作用可能已经发生但系统无法确定，必须先 reconciliation。
@@ -4902,7 +4931,7 @@ Failed(ExecutionFailure)
 OutcomeUnknown(ReconciliationRequired)
 ```
 
-`CompletedResult` 至少区分 `Yielded / CompletionClaimed / CoordinationCompleted / QueryCompleted`。Crash recovery 不能从一个裸 `Completed` 猜测下一步。
+`CompletedResult` 至少区分 `Yielded / CompletionClaimed / CoordinationCompleted / QueryCompleted / VerificationConcluded`。Crash recovery 不能从一个裸 `Completed` 猜测下一步。`VerificationConcluded { verificationId, verdict }` 仅由 exact-bound Verifier 在结论命令提交、wake 幂等交付后产生；它不触发 CompletionClaim consumer，且不蕴含 Acceptance 或 Work Completed。
 
 `CompletionClaimed` 的 durable settlement + `ExecutionSettled` event 足以在 daemon crash 后通过 deterministic `StartVerification` Command replay 恢复后续动作。
 
