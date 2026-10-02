@@ -451,6 +451,7 @@ export const executeAgentLoopActions = (
           readonly status?: import("@arbor/ports").PortableToolResultStatus;
           readonly resultRef?: string;
           readonly artifactRefs?: ReadonlyArray<string>;
+          readonly invocationId?: import("@arbor/domain").ToolInvocationId;
         } = {},
       ): Effect.Effect<boolean, ExecutionDriverError> =>
         Effect.gen(function* () {
@@ -484,6 +485,9 @@ export const executeAgentLoopActions = (
                           _tag: "ToolResult" as const,
                           callRef: invocation.callRef,
                           toolName: invocation.toolName,
+                          ...(resultMetadata.invocationId === undefined
+                            ? {}
+                            : { invocationId: resultMetadata.invocationId }),
                           status: resultMetadata.status ?? "Succeeded",
                           observationRef: observationSourceRef,
                           modelOutputRef: resultMetadata.resultRef ?? resultRef,
@@ -638,6 +642,9 @@ export const executeAgentLoopActions = (
             ...(executed.outcome.artifactRefs === undefined
               ? {}
               : { artifactRefs: executed.outcome.artifactRefs }),
+            ...(executed.outcome.invocationId === undefined
+              ? {}
+              : { invocationId: executed.outcome.invocationId }),
           },
         );
         if (!persisted) {

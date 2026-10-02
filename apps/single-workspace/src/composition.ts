@@ -67,6 +67,7 @@ import {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
+  P23_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -534,7 +535,7 @@ export const buildSingleWorkspaceLayer = (
   );
   const turnProfiles = Layer.provide(
     TurnProfileResolverLive,
-    Layer.mergeAll(toolCatalog, controlRegistry),
+    Layer.mergeAll(toolCatalog, controlRegistry, repos),
   );
   const modelContext = Layer.provide(
     ModelContextLive,
@@ -705,6 +706,7 @@ export {
   P17_MIGRATIONS,
   P20_MIGRATIONS,
   P21_MIGRATIONS,
-  P22_MIGRATIONS as CURRENT_MIGRATIONS,
+  P22_MIGRATIONS,
+  P23_MIGRATIONS as CURRENT_MIGRATIONS,
   runMigrations,
 };

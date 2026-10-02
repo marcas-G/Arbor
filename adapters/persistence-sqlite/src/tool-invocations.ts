@@ -157,6 +157,18 @@ export const ToolInvocationStoreLive: Layer.Layer<
             ? Option.none()
             : Option.some(toApproval(row));
         }),
+      findById: (invocationId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<InvocationRow>(
+              "SELECT * FROM tool_invocations WHERE invocation_id = ?",
+              [invocationId],
+            ),
+          );
+          const row = rows[0];
+          return row === undefined ? Option.none() : Option.some(toRecord(row));
+        }),
       findUnsettled: (executionId) =>
         Effect.gen(function* () {
           yield* TransactionScope;

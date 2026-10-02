@@ -28,6 +28,7 @@ export const P19_MIGRATION_BASELINE = 19;
 export const P20_MIGRATION_BASELINE = 20;
 export const P21_MIGRATION_BASELINE = 21;
 export const P22_MIGRATION_BASELINE = 22;
+export const P23_MIGRATION_BASELINE = 23;
 
 /** @deprecated Legacy alias kept for compiled references; the baseline is P16. */
 export const P15_MIGRATION_BASELINE = P16_MIGRATION_BASELINE;

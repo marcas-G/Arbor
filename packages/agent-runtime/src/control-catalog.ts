@@ -296,6 +296,57 @@ const DECLARE_DEPENDENCY_SCHEMA = JSON.stringify({
   required: ["producerBinding", "expectedDeliverable"],
 });
 
+const RECORD_VERIFICATION_EVIDENCE_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  required: ["criterionId", "sourceCallRef"],
+  properties: {
+    criterionId: { type: "string", minLength: 1 },
+    sourceCallRef: {
+      type: "string",
+      minLength: 1,
+      description:
+        "callRef of a successful executable ToolResult visible in this verifier session; Runtime binds its canonical identity.",
+    },
+  },
+});
+
+const CONCLUDE_VERIFICATION_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  required: ["verdict", "criteriaResults", "summary"],
+  properties: {
+    verdict: { enum: ["Pass", "Fail", "Unknown"] },
+    criteriaResults: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "criterionId",
+          "requirement",
+          "required",
+          "verdict",
+          "evidenceRefs",
+        ],
+        properties: {
+          criterionId: { type: "string", minLength: 1 },
+          requirement: { type: "string", minLength: 1 },
+          required: { type: "boolean" },
+          verdict: { enum: ["Pass", "Fail", "Unknown"] },
+          evidenceRefs: {
+            type: "array",
+            minItems: 1,
+            items: { type: "string", pattern: "^evd_" },
+          },
+        },
+      },
+    },
+    summary: { type: "string", minLength: 1 },
+  },
+});
+
 export const controlToolDefinitions =
   (): ReadonlyArray<ModelFacingControlToolDefinition> => {
     const raw = [
@@ -346,6 +397,22 @@ export const controlToolDefinitions =
         schemaJson: DECLARE_DEPENDENCY_SCHEMA,
         version: "1",
         requiredCapability: "agent:dependency",
+      },
+      {
+        name: "arbor_record_verification_evidence",
+        description:
+          "Bind a visible executable ToolResult as evidence for one verification criterion. Canonical source identity is resolved by Runtime.",
+        schemaJson: RECORD_VERIFICATION_EVIDENCE_SCHEMA,
+        version: "1",
+        requiredCapability: "agent:verify",
+      },
+      {
+        name: "arbor_conclude_verification",
+        description:
+          "Conclude the exact Verification bound to this verifier execution. Runtime stores summary content and submits its BlobRef.",
+        schemaJson: CONCLUDE_VERIFICATION_SCHEMA,
+        version: "1",
+        requiredCapability: "agent:verify",
       },
     ] as const;
     return raw.map((tool) => ({

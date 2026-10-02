@@ -1,9 +1,11 @@
 import type {
   CommandSubmissionContext,
+  EvidenceId,
   Execution,
   ExecutionSettlement,
   MessageId,
   MessageKind,
+  VerificationVerdict,
   WaitSpec,
   WorkId,
   WorkspaceId,
@@ -17,6 +19,26 @@ import type {
 import { Context, type Effect } from "effect";
 
 export type AgentAction =
+  | {
+      readonly _tag: "RecordVerificationEvidence";
+      readonly criterionId: string;
+      /** Model selects a visible ToolResult by callRef; Runtime binds every
+       * canonical source-identity field. */
+      readonly sourceCallRef: string;
+    }
+  | {
+      readonly _tag: "ConcludeVerification";
+      readonly verdict: VerificationVerdict;
+      readonly criteriaResults: ReadonlyArray<{
+        readonly criterionId: string;
+        readonly requirement: string;
+        readonly required: boolean;
+        readonly verdict: VerificationVerdict;
+        readonly evidenceRefs: ReadonlyArray<EvidenceId>;
+      }>;
+      /** Human-readable content; Runtime persists bytes and binds BlobRef. */
+      readonly summary: string;
+    }
   | {
       readonly _tag: "Wait";
       readonly reason: string;
@@ -151,6 +173,7 @@ export type ExecutableInvocationOutcome =
       readonly status?: import("@arbor/ports").PortableToolResultStatus;
       readonly resultRef?: string;
       readonly artifactRefs?: ReadonlyArray<string>;
+      readonly invocationId?: import("@arbor/domain").ToolInvocationId;
     }
   | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
 

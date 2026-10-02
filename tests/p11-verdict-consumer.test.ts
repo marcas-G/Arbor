@@ -328,6 +328,9 @@ const evidencePayload = (
     evidenceId,
     criterionId,
     kind: "ToolObservation",
+    toolInvocationId: "tin_00000000-0000-7000-8000-000000000001" as never,
+    observationRef: `observation:${criterionId}`,
+    callRef: `call:${criterionId}`,
     observedEnvironmentRevision: observedRevision,
     recordedAt: "t1",
   },
@@ -425,7 +428,7 @@ const concludePassAtCurrentRevision = (
           concludeCommandId,
           concludePassPayload(verificationId, evidenceIds),
         ),
-        externalContext,
+        executionContext,
       ),
     );
     expect(concluded.ok).toBe(true);
@@ -652,6 +655,9 @@ describe("p11-verdict-consumer (P11-013: P8 binding under the real moving revisi
             observedEnvironmentRevision: "1",
             recordedByExecutionId: EXE_1,
             recordedAt: "t1",
+            toolInvocationId: null,
+            observationRef: null,
+            callRef: null,
           },
           {
             evidenceId: EVD("0012"),
@@ -662,6 +668,9 @@ describe("p11-verdict-consumer (P11-013: P8 binding under the real moving revisi
             observedEnvironmentRevision: "1",
             recordedByExecutionId: EXE_1,
             recordedAt: "t1",
+            toolInvocationId: null,
+            observationRef: null,
+            callRef: null,
           },
         ]);
 

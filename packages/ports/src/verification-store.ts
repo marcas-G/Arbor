@@ -30,6 +30,9 @@ export interface EvidenceRecordRow {
   readonly observedEnvironmentRevision: string | null;
   readonly recordedByExecutionId: ExecutionId;
   readonly recordedAt: string;
+  readonly toolInvocationId?: import("@arbor/domain").ToolInvocationId | null;
+  readonly observationRef?: string | null;
+  readonly callRef?: string | null;
 }
 
 /** P8 `01`/`02`: verification aggregate persistence; one-Open-per-revision
@@ -42,6 +45,14 @@ export interface VerificationRepositoryService {
   ) => Effect.Effect<void, VerificationRepositoryError, TransactionScope>;
   readonly findById: (
     verificationId: VerificationId,
+  ) => Effect.Effect<
+    Option.Option<Verification>,
+    VerificationRepositoryError,
+    TransactionScope
+  >;
+  /** Durable verifier-role lookup; never infer the role from mission text. */
+  readonly findByExecutionId: (
+    executionId: ExecutionId,
   ) => Effect.Effect<
     Option.Option<Verification>,
     VerificationRepositoryError,

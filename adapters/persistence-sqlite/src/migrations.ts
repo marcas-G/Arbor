@@ -1221,3 +1221,22 @@ export const P22_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P22_VERIFICATION_DELIVERY_CONVERGENCE_DDL,
   },
 ];
+
+export const P23_VERIFICATION_EVIDENCE_IDENTITY_DDL = `
+ALTER TABLE verification_evidence ADD COLUMN tool_invocation_id TEXT;
+ALTER TABLE verification_evidence ADD COLUMN observation_ref TEXT;
+ALTER TABLE verification_evidence ADD COLUMN call_ref TEXT;
+
+CREATE INDEX idx_verification_evidence_tool_invocation
+  ON verification_evidence(tool_invocation_id);
+`;
+
+/** DID v1.26 Verification ToolObservation source identity; user_version 23. */
+export const P23_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P22_MIGRATIONS,
+  {
+    id: 23,
+    name: "verification_evidence_identity",
+    sql: P23_VERIFICATION_EVIDENCE_IDENTITY_DDL,
+  },
+];

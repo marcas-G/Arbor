@@ -129,7 +129,10 @@ export const makeExecutableToolHandler = (
         requestedAt,
       };
       const result = yield* tools.invoke(intent, toolContext);
-      return toExecutableOutcome(result);
+      const outcome = toExecutableOutcome(result);
+      return outcome._tag === "Observation"
+        ? { ...outcome, invocationId: intent.invocationId }
+        : outcome;
     }).pipe(
       Effect.mapError((cause) => ({
         _tag: "AgentActionError" as const,

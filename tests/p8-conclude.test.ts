@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
-  P22_MIGRATIONS,
+  P23_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -75,7 +75,7 @@ const mission: VerificationMission = {
 };
 
 const seed = Effect.gen(function* () {
-  yield* runMigrations(P22_MIGRATIONS);
+  yield* runMigrations(P23_MIGRATIONS);
   yield* p7SeedProject;
   const receipt = yield* p7SeedWork(WORK_1, ASSIGN_CMD);
   expect(receipt.resolution._tag).toBe("Committed");
@@ -94,6 +94,7 @@ const seedVerification = (verificationId: VerificationId) =>
           workId: WORK_1,
           targetWorkRevision: parse(WorkRevision)(0),
           missionSnapshot: mission,
+          verificationExecutionIds: [EXE_1],
         }),
         p7Project,
         p7RootWorkspace,
@@ -186,6 +187,9 @@ const recordPayload = (
     evidenceId,
     criterionId,
     kind: "ToolObservation",
+    toolInvocationId: "tin_00000000-0000-7000-8000-000000000001" as never,
+    observationRef: "observation:test",
+    callRef: "call:test",
     recordedAt: "t",
   },
 });
@@ -281,6 +285,11 @@ describe("p8-conclude", () => {
         expect(rows[0]?.criterionId).toBe("c1");
         expect(rows[0]?.kind).toBe("ToolObservation");
         expect(rows[0]?.recordedByExecutionId).toBe(EXE_1);
+        expect(rows[0]?.toolInvocationId).toBe(
+          "tin_00000000-0000-7000-8000-000000000001",
+        );
+        expect(rows[0]?.observationRef).toBe("observation:test");
+        expect(rows[0]?.callRef).toBe("call:test");
 
         // Idempotent replay: same content (recordedAt differs) → no-op.
         const replay: RecordOutcome = yield* tx.transact(
@@ -291,6 +300,10 @@ describe("p8-conclude", () => {
                 evidenceId: EV(1),
                 criterionId: "c1",
                 kind: "ToolObservation",
+                toolInvocationId:
+                  "tin_00000000-0000-7000-8000-000000000001" as never,
+                observationRef: "observation:test",
+                callRef: "call:test",
                 recordedAt: "t2",
               },
             }),
@@ -380,6 +393,33 @@ describe("p8-conclude", () => {
           ),
         );
         expectRejected(external, "AuthorityDenied");
+      }),
+      makeP7App(),
+    );
+  });
+
+  it("RecordVerificationEvidence rejects a ToolObservation without Runtime-bound source identity", async () => {
+    await runP7(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* seedVerification(VER(1));
+        const tx = yield* TransactionPort;
+        const handlers = yield* makeHandlers;
+        const outcome: RecordOutcome = yield* tx.transact(
+          handlers.record.execute(
+            recordEnvelope(CMD("0123456789cf"), {
+              verificationId: VER(1),
+              evidence: {
+                evidenceId: EV(1),
+                criterionId: "c1",
+                kind: "ToolObservation",
+                recordedAt: "t",
+              },
+            }),
+            verifierContext,
+          ),
+        );
+        expectRejected(outcome, "AuthorityDenied");
       }),
       makeP7App(),
     );

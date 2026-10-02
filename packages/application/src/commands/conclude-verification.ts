@@ -46,6 +46,9 @@ export interface EvidenceSubmission {
     | "ReproductionLog";
   readonly artifactRef?: ArtifactId;
   readonly observedEnvironmentRevision?: string;
+  readonly toolInvocationId?: import("@arbor/domain").ToolInvocationId;
+  readonly observationRef?: string;
+  readonly callRef?: string;
   readonly recordedAt: string;
 }
 
@@ -146,6 +149,27 @@ export const makeRecordVerificationEvidenceHandler = (
             "evidence recording requires the bound Verifier Execution submission origin (P8 01 §2)",
         });
       }
+      if (
+        !existing.value.verificationExecutionIds.includes(context.executionId)
+      ) {
+        return commandErr({
+          _tag: "AuthorityDenied",
+          reason:
+            "evidence recording execution is not bound to this Verification",
+        });
+      }
+      if (
+        payload.evidence.kind === "ToolObservation" &&
+        (payload.evidence.toolInvocationId === undefined ||
+          payload.evidence.observationRef === undefined ||
+          payload.evidence.callRef === undefined)
+      ) {
+        return commandErr({
+          _tag: "AuthorityDenied",
+          reason:
+            "ToolObservation requires Runtime-bound toolInvocationId, observationRef, and callRef",
+        });
+      }
       const record: EvidenceRecordRow = {
         evidenceId: payload.evidence.evidenceId,
         verificationId: payload.verificationId,
@@ -156,6 +180,9 @@ export const makeRecordVerificationEvidenceHandler = (
           payload.evidence.observedEnvironmentRevision ?? null,
         recordedByExecutionId: context.executionId,
         recordedAt: payload.evidence.recordedAt,
+        toolInvocationId: payload.evidence.toolInvocationId ?? null,
+        observationRef: payload.evidence.observationRef ?? null,
+        callRef: payload.evidence.callRef ?? null,
       };
 
       const result: RecordVerificationEvidenceResult = {
@@ -201,7 +228,12 @@ export const makeRecordVerificationEvidenceHandler = (
         stored.observedEnvironmentRevision ===
           record.observedEnvironmentRevision &&
         stored.recordedByExecutionId === record.recordedByExecutionId;
-      if (!sameContent) {
+      const sameSourceIdentity =
+        (stored.toolInvocationId ?? null) ===
+          (record.toolInvocationId ?? null) &&
+        (stored.observationRef ?? null) === (record.observationRef ?? null) &&
+        (stored.callRef ?? null) === (record.callRef ?? null);
+      if (!sameContent || !sameSourceIdentity) {
         return commandErr({
           _tag: "IdempotencyConflict",
           commandId: envelope.commandId,
@@ -304,7 +336,7 @@ export const makeConcludeVerificationHandler = (
     },
   },
   stopAdmission: { _tag: "NormalExecutionMutation" },
-  execute: (envelope) =>
+  execute: (envelope, context) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
 
@@ -318,6 +350,18 @@ export const makeConcludeVerificationHandler = (
         });
       }
       const verification = existing.value;
+
+      if (
+        payload.conclusionReason !== "Orphaned" &&
+        (context._tag !== "ExecutionOrigin" ||
+          !verification.verificationExecutionIds.includes(context.executionId))
+      ) {
+        return commandErr({
+          _tag: "AuthorityDenied",
+          reason:
+            "verification conclusion execution is not bound to this Verification",
+        });
+      }
 
       // P0-frozen transition: Open-state + Orphaned↔Unknown pairing (G5).
       const transition = concludeVerification(
