@@ -97,9 +97,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "FAIL",
+        "expectedStatus": "PASS",
         "testFile": "tests/capability/real-provider/b05-human-steer.test.ts",
-        "blockingReason": "Sentinel executable against the public HTTP face. Known implementation gap it keeps visible: durable SteerWork state is complete, but steer-to-cognition promotion (guidance into the next provider request) is not implemented, so the full B05 oracle is expected to FAIL until that seam exists."
+        "blockingReason": "Executable sentinel against the public HTTP face: durable SteerWork guidance is promoted into the next real provider request."
       }
     },
     {
@@ -188,17 +188,19 @@
       "l2Suites": [
         "tests/p8-start-verification.test.ts",
         "tests/p8-conclude.test.ts",
-        "tests/p8-acceptance-commands.test.ts"
+        "tests/p8-acceptance-commands.test.ts",
+        "tests/capability/black-box/s1-s4-public-api.test.ts"
       ],
+      "l2ProviderMode": "RECORDING",
       "l3": {
         "caseId": "B10-L3-REAL",
         "evidenceLevel": "L3",
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "BLOCKED_BY_DESIGN_GAP",
+        "expectedStatus": "NOT_RUN",
         "testFile": null,
-        "blockingReason": "Existing G-V2-2, G-V2-3, and G-V2-4 verification-reference/lifecycle gaps remain open."
+        "blockingReason": "G-V2-2/3/4 are closed and live real-provider Verification passed; a repeatable B10-only REAL sentinel has not yet been extracted from the S1-S4 process black-box suite."
       }
     },
     {

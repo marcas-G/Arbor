@@ -73,7 +73,7 @@ describe("Core Capability test harness metadata", () => {
       CAPABILITY_CATALOG.capabilities.find(
         (capability) => capability.capabilityId === "B10",
       )?.l3.expectedStatus,
-    ).toBe("BLOCKED_BY_DESIGN_GAP");
+    ).toBe("NOT_RUN");
     const b03Route = metadataFor("B03", "L2");
     expect(b03Route.expectedStatus).toBe("PASS");
     expect(b03Route.providerMode).toBe("FAKE");

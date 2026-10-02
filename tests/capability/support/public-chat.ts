@@ -117,7 +117,7 @@ export const makeModelCatalog = (modelRef: string): ModelCatalog => ({
         modelRef,
         family: "openai-compatible",
         contextWindow: 8_192,
-        outputCeiling: 512,
+        outputCeiling: 2_048,
         toolProtocol: "json",
         capabilities: ["text", "tools"],
       },
@@ -167,7 +167,10 @@ const commandEnvelope = (
   payload,
 });
 
-export const makePublicProject = (key: string): PublicProject => {
+export const makePublicProject = (
+  key: string,
+  resourcePath = process.cwd(),
+): PublicProject => {
   const projectId = prefixedId("prj");
   const rootWorkspaceId = prefixedId("ws");
   const sessionId = prefixedId("ses");
@@ -198,10 +201,13 @@ export const makePublicProject = (key: string): PublicProject => {
         // Without an address, ResourceAdmission denies every tool region
         // ("region outside ResourceBoundary") and tool-use capabilities
         // cannot be exercised.
-        addresses: [
-          { _tag: "FileTree", path: process.cwd() },
-          { _tag: "GitWorktree", path: process.cwd() },
-        ],
+        addresses:
+          resourcePath === process.cwd()
+            ? [
+                { _tag: "FileTree", path: resourcePath },
+                { _tag: "GitWorktree", path: resourcePath },
+              ]
+            : [{ _tag: "FileTree", path: resourcePath }],
       },
       resourceBoundaryRevision: 0,
       agentBinding: {

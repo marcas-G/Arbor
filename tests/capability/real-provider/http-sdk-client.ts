@@ -38,21 +38,54 @@ const messageBody = (
   modelRef: string,
   request: PortableModelRequest,
 ): Record<string, unknown> => {
-  const messages = [
+  const messages: Array<Record<string, unknown>> = [
     ...request.instructions.map((instruction) => ({
       role: "system",
       content: instruction.text,
     })),
-    ...portableInputItems(request)
-      .filter((item) => item._tag === "Message")
-      .map((message) => ({
-        role: message.role === "tool" ? "user" : message.role,
-        content:
-          message.role === "tool"
-            ? `Tool observation:\n${message.text}`
-            : message.text,
-      })),
   ];
+  for (const item of portableInputItems(request)) {
+    switch (item._tag) {
+      case "Message":
+        messages.push({
+          role: item.role === "tool" ? "user" : item.role,
+          content:
+            item.role === "tool"
+              ? `Tool observation:\n${item.text}`
+              : item.text,
+        });
+        break;
+      case "ToolCall":
+        messages.push({
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: item.callRef,
+              type: "function",
+              function: {
+                name: item.toolName,
+                arguments: item.argumentsJson,
+              },
+            },
+          ],
+        });
+        break;
+      case "ToolResult":
+      case "ControlResult":
+        messages.push({
+          role: "tool",
+          tool_call_id: item.callRef,
+          content: item.outputText,
+        });
+        break;
+      case "ContextUpdate":
+        messages.push({ role: "system", content: item.text });
+        break;
+      case "AttachmentRef":
+        break;
+    }
+  }
   return {
     model: modelRef,
     messages,

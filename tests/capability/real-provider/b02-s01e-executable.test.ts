@@ -3,11 +3,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe } from "vitest";
-import {
-  type PortableModelRequest,
-  portableInputItems,
-  secretRef,
-} from "../../../packages/ports/dist/provider.js";
+import { secretRef } from "../../../packages/ports/dist/provider.js";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
 import { runAndCapture } from "../support/capture.js";
 import {
@@ -44,9 +40,10 @@ describe("B02 L3 — real-model executable tool use (S01-E)", () => {
           mkdirSync(directory, { recursive: true });
           temporaryDirectories.push(directory);
           const objective =
-            `立即使用 shell 工具执行命令 echo ${marker}（cwd 用 {"_tag":"FileTree","path":"."}），` +
-            "不要使用 list 或 read。拿到输出后在回复中原样包含命令输出，" +
-            '最后调用 arbor_wait 工具（reason: done，waitSpec 为 mode Any 与 conditions [{_tag: "Manual"}]）进入等待。';
+            `第一个 Provider Turn 只调用 shell 执行 echo ${marker}（cwd 用 {"mount":"workspace","path":"."}），` +
+            "不要在同一轮调用 arbor_wait，也不要使用 list/read/patch。" +
+            "必须先等 Runtime 把 shell ToolResult 返回到下一个 Provider Turn；看到 exitCode/stdout 后，" +
+            '再调用 arbor_wait（reason: done，waitSpec 为 mode Any 与 conditions [{_tag: "Manual"}]）。';
           let durable:
             | Awaited<ReturnType<typeof queryDurableEffects>>
             | undefined;
@@ -116,16 +113,9 @@ describe("B02 L3 — real-model executable tool use (S01-E)", () => {
           // echoed marker) as conversational input.
           const subsequentMessages = result.providerCalls
             .slice(1)
-            .map((call) =>
-              JSON.stringify(
-                portableInputItems(
-                  call.request as unknown as PortableModelRequest,
-                ),
-              ),
-            );
+            .map((call) => JSON.stringify(call.request.messages ?? []));
           const carriedObservation = subsequentMessages.some(
             (serialized) =>
-              serialized.includes("Tool observation") ||
               serialized.includes("exitCode") ||
               serialized.includes(result.marker),
           );
