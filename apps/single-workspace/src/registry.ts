@@ -3,6 +3,7 @@ import {
   CommandHandlerRegistry,
   makeAcceptWorkOutcomeHandler,
   makeCancelConversationResponseHandler,
+  makeCompleteWorkHandler,
   makeConcludeVerificationHandler,
   makeDeclareDependencyHandler,
   makeGrantPermissionHandler,
@@ -168,6 +169,12 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
           AcceptanceRepositoryService,
           "insert" | "findByWorkRevision"
         >,
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeCompleteWorkHandler({
+        works,
+        workspaces,
+        verifications,
+        acceptances,
       }) as unknown as CommandHandler<unknown, unknown>,
       makeStartVerificationHandler({
         works,
