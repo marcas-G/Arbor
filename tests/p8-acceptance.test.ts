@@ -1068,6 +1068,7 @@ describe("p8-acceptance", () => {
           verdict: "Pass",
           conclusionReason: "",
           evidenceRefs: [EV_A1, EV_A2],
+          summaryRef: "summary:a",
         });
 
         const accept = yield* submitAccept(cmd("89a0000000a6"), {

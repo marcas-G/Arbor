@@ -3044,7 +3044,12 @@ describe("p9-acceptance", () => {
         // Close the WF2 verification so consumer A's next replay (same
         // work revision) is not gated by VerificationAlreadyOpen.
         yield* tx.transact(
-          verifications.concludeIfOpen(ids.verificationId, "Pass", undefined),
+          verifications.concludeIfOpen(
+            ids.verificationId,
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
         );
         // WF3a: consumer A interrupted before the StartVerification commit
         // — replay converges to exactly one more Verification.
@@ -3087,7 +3092,12 @@ describe("p9-acceptance", () => {
         // the one concluded and accepted.
         const ids3 = verificationSpawnIds(G_WORK, 0, "claim-sg3");
         yield* tx.transact(
-          verifications.concludeIfOpen(ids3.verificationId, "Pass", undefined),
+          verifications.concludeIfOpen(
+            ids3.verificationId,
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
         );
         yield* sql.unsafe(
           "INSERT INTO work_acceptances (acceptance_id, project_id, work_id, target_work_revision, verification_id, actor, accepted_at) VALUES (?,?,?,?,?,?,'t')",

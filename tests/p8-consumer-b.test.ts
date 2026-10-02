@@ -108,7 +108,12 @@ const seedVerification = (
     );
     if (verdict !== undefined) {
       const concluded = yield* tx.transact(
-        verifications.concludeIfOpen(verificationId, verdict, undefined),
+        verifications.concludeIfOpen(
+          verificationId,
+          verdict,
+          "summary:test",
+          undefined,
+        ),
       );
       expect(Option.isSome(concluded)).toBe(true);
     }

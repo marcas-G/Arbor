@@ -7,6 +7,7 @@ import type {
 } from "./resources.js";
 import type { DomainResult } from "./result.js";
 import { err, ok } from "./result.js";
+import type { VerificationMission } from "./verification.js";
 
 /** P6 `01` §2. Model-visible formation proposal payload (fills the P3 `03`
  * name-only slot). */
@@ -21,6 +22,7 @@ export interface ChildWorkspaceProposal {
         readonly why: string;
         readonly constraints: ReadonlyArray<string>;
         readonly completionExpectation: string;
+        readonly verificationMission: VerificationMission;
       }
     | undefined;
   readonly formationDepthHint?: "Single" | "Recursive";

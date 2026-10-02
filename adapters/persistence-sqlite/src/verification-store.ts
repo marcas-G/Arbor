@@ -36,6 +36,7 @@ interface VerificationRow {
   readonly state: string;
   readonly verdict: string | null;
   readonly conclusion_reason: string | null;
+  readonly summary_ref?: string | null;
 }
 
 const toVerification = (row: VerificationRow): Verification =>
@@ -50,6 +51,7 @@ const toVerification = (row: VerificationRow): Verification =>
     environmentSnapshotRef: row.environment_snapshot_ref,
     evidenceRefs: [],
     verificationExecutionIds: JSON.parse(row.verification_execution_ids),
+    summaryRef: row.summary_ref ?? null,
     state:
       row.state === "Open"
         ? { status: "Open" }
@@ -64,8 +66,10 @@ const toVerification = (row: VerificationRow): Verification =>
           },
   }) as unknown as Verification;
 
-const VERIFICATION_COLUMNS =
-  "verification_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason";
+// `*` intentionally keeps the repository readable against historical phase
+// schemas used by migration tests; P22 contributes `summary_ref` in current
+// production databases.
+const VERIFICATION_COLUMNS = "*";
 
 export const VerificationRepositoryLive: Layer.Layer<
   VerificationRepository,
@@ -155,18 +159,34 @@ export const VerificationRepositoryLive: Layer.Layer<
           );
           return rows.map((row) => toVerification(row as VerificationRow));
         }),
-      concludeIfOpen: (verificationId, verdict, conclusionReason) =>
+      concludeIfOpen: (verificationId, verdict, summaryRef, conclusionReason) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          const columns = yield* run(
+            sql.unsafe<{ name: string }>("PRAGMA table_info(verifications)"),
+          );
+          const supportsSummary = columns.some(
+            (column) => column.name === "summary_ref",
+          );
           const rows = yield* run(
             sql.unsafe<{ verification_id: string }>(
-              "UPDATE verifications SET state = 'Concluded', verdict = ?, conclusion_reason = ?, updated_at = ? WHERE verification_id = ? AND state = 'Open' RETURNING verification_id",
-              [
-                verdict,
-                conclusionReason ?? null,
-                new Date().toISOString(),
-                verificationId,
-              ],
+              supportsSummary
+                ? "UPDATE verifications SET state = 'Concluded', verdict = ?, summary_ref = ?, conclusion_reason = ?, updated_at = ? WHERE verification_id = ? AND state = 'Open' RETURNING verification_id"
+                : "UPDATE verifications SET state = 'Concluded', verdict = ?, conclusion_reason = ?, updated_at = ? WHERE verification_id = ? AND state = 'Open' RETURNING verification_id",
+              supportsSummary
+                ? [
+                    verdict,
+                    summaryRef,
+                    conclusionReason ?? null,
+                    new Date().toISOString(),
+                    verificationId,
+                  ]
+                : [
+                    verdict,
+                    conclusionReason ?? null,
+                    new Date().toISOString(),
+                    verificationId,
+                  ],
             ),
           );
           if (rows.length !== 1) {

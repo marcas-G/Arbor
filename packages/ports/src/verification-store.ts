@@ -75,6 +75,7 @@ export interface VerificationRepositoryService {
   readonly concludeIfOpen: (
     verificationId: VerificationId,
     verdict: VerificationVerdict,
+    summaryRef: string,
     conclusionReason: ConclusionReason | undefined,
   ) => Effect.Effect<
     Option.Option<Verification>,

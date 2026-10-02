@@ -418,7 +418,12 @@ describe("P10-010 governance emission set (four human-originated commands)", () 
           ),
         );
         yield* tx.transact(
-          verifications.concludeIfOpen(VER_1, "Pass", undefined),
+          verifications.concludeIfOpen(
+            VER_1,
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
         );
         const handler = makeAcceptWorkOutcomeHandler({
           works,
@@ -485,7 +490,12 @@ describe("P10-010 governance emission set (four human-originated commands)", () 
           ),
         );
         yield* tx.transact(
-          verifications.concludeIfOpen(VER_1, "Pass", undefined),
+          verifications.concludeIfOpen(
+            VER_1,
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
         );
         const handler = makeAcceptWorkOutcomeHandler({
           works,

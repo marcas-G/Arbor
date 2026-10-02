@@ -2075,7 +2075,12 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
           ),
         );
         yield* tx.transact(
-          verifications.concludeIfOpen(verificationId, "Pass", undefined),
+          verifications.concludeIfOpen(
+            verificationId,
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
         );
         const acceptWork = makeAcceptWorkOutcomeHandler({
           works,

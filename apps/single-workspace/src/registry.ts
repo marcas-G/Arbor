@@ -3,11 +3,13 @@ import {
   CommandHandlerRegistry,
   makeAcceptWorkOutcomeHandler,
   makeCancelConversationResponseHandler,
+  makeConcludeVerificationHandler,
   makeDeclareDependencyHandler,
   makeGrantPermissionHandler,
   makeP1CommandHandlers,
   makeP15CommandHandlers,
   makeRecordDecisionHandler,
+  makeRecordVerificationEvidenceHandler,
   makeResumeConversationResponseHandler,
   makeRevokePermissionHandler,
   makeSelectCurrentWorkHandler,
@@ -27,6 +29,7 @@ import {
   DependencyRepository,
   type DependencyRepositoryService,
   EnvironmentRevisionStore,
+  EvidenceRepository,
   ExecutionRepository,
   FormationProposalStore,
   type FormationProposalStoreService,
@@ -68,6 +71,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
   | DependencyRepository
   | DeliverableRepository
   | EnvironmentRevisionStore
+  | EvidenceRepository
   | ExecutionRepository
   | WorkWaitStore
   | FormationProposalStore
@@ -99,6 +103,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const dependencyStore = yield* DependencyRepository;
     const deliverables = yield* DeliverableRepository;
     const environmentRevisions = yield* EnvironmentRevisionStore;
+    const evidence = yield* EvidenceRepository;
     const sql = yield* SqlClient;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
       ...makeP1CommandHandlers({
@@ -192,6 +197,15 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
                 ),
               ),
         },
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeRecordVerificationEvidenceHandler({
+        verifications,
+        evidence,
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeConcludeVerificationHandler({
+        verifications,
+        evidence,
+        works,
       }) as unknown as CommandHandler<unknown, unknown>,
       makeGrantPermissionHandler({
         grants: grants as PermissionGrantRepositoryService,

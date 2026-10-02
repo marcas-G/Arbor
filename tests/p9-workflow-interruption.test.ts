@@ -768,7 +768,12 @@ describe("p9-workflow-interruption (WF1–WF3 / DF1–DF2 / D5)", () => {
           ),
         );
         yield* tx.transact(
-          verifications.concludeIfOpen(VER(31), "Pass", undefined),
+          verifications.concludeIfOpen(
+            VER(31),
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
         );
         yield* sql.unsafe(
           "INSERT INTO work_acceptances (acceptance_id, project_id, work_id, target_work_revision, verification_id, actor, accepted_at) VALUES (?,?,?,?,?,?,'t')",

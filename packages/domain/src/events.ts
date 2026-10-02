@@ -120,6 +120,7 @@ export const VerificationConcluded = Schema.TaggedStruct(
     verdict: Schema.String,
     conclusionReason: Schema.String,
     evidenceRefs: Schema.Array(Schema.String),
+    summaryRef: Schema.String,
   },
 );
 export const WorkOutcomeAccepted = Schema.TaggedStruct("WorkOutcomeAccepted", {

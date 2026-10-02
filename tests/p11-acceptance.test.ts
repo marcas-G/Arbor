@@ -343,7 +343,7 @@ const concludedVerification = (
     },
     targetEnvironmentRevision,
   });
-  const result = concludeVerification(started, verdict);
+  const result = concludeVerification(started, verdict, "summary:test");
   if (!result.ok) {
     throw new Error(`concludeVerification failed: ${result.error._tag}`);
   }

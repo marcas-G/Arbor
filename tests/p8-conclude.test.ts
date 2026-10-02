@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
-  P8_MIGRATIONS,
+  P22_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -75,7 +75,7 @@ const mission: VerificationMission = {
 };
 
 const seed = Effect.gen(function* () {
-  yield* runMigrations(P8_MIGRATIONS);
+  yield* runMigrations(P22_MIGRATIONS);
   yield* p7SeedProject;
   const receipt = yield* p7SeedWork(WORK_1, ASSIGN_CMD);
   expect(receipt.resolution._tag).toBe("Committed");
@@ -347,7 +347,12 @@ describe("p8-conclude", () => {
         // conclude VER(2) by repository before keeping VER(1) Open.
         yield* seedVerification(VER(2));
         const concluded = yield* tx.transact(
-          verifications.concludeIfOpen(VER(2), "Pass", undefined),
+          verifications.concludeIfOpen(
+            VER(2),
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
         );
         expect(Option.isSome(concluded)).toBe(true);
         yield* seedVerification(VER(1));
@@ -408,6 +413,7 @@ describe("p8-conclude", () => {
             verificationId: VER(1),
             state: "Concluded",
             verdict: "Pass",
+            summaryRef: "summary:1",
             conclusionReason: undefined,
             wakeSignals: [],
             channel1Release: { workId: WORK_1, targetWorkRevision: 0 },
@@ -427,10 +433,12 @@ describe("p8-conclude", () => {
             verdict: "Pass",
             conclusionReason: "",
             evidenceRefs: [EV(1), EV(2)],
+            summaryRef: "summary:1",
           });
         }
         const stored = yield* storedVerification(VER(1));
         expect(stored?.state).toEqual({ status: "Concluded", verdict: "Pass" });
+        expect(stored?.summaryRef).toBe("summary:1");
       }),
       makeP7App(),
     );
@@ -659,6 +667,7 @@ describe("p8-conclude", () => {
             verdict: "Unknown",
             conclusionReason: "Orphaned",
             evidenceRefs: [],
+            summaryRef: "summary:1",
           });
         }
         const stored = yield* storedVerification(VER(1));

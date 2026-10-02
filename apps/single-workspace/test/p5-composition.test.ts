@@ -36,6 +36,6 @@ describe("P5 composition root", () => {
         app,
       ) as Effect.Effect<number, unknown, never>,
     );
-    expect(result).toBe(21);
+    expect(result).toBe(22);
   });
 });

@@ -9,11 +9,31 @@ export interface MigrationFile {
   readonly sql: string;
 }
 
-export const splitStatements = (sql: string): ReadonlyArray<string> =>
-  sql
-    .split(";")
-    .map((statement) => statement.trim())
-    .filter((statement) => statement.length > 0);
+export const splitStatements = (sql: string): ReadonlyArray<string> => {
+  const statements: string[] = [];
+  let current = "";
+  for (const character of sql) {
+    if (character !== ";") {
+      current += character;
+      continue;
+    }
+    const trimmed = current.trim();
+    const isTrigger = /^CREATE\s+TRIGGER\b/i.test(trimmed);
+    if (isTrigger && !/\bEND$/i.test(trimmed)) {
+      current += character;
+      continue;
+    }
+    if (trimmed.length > 0) {
+      statements.push(trimmed);
+    }
+    current = "";
+  }
+  const trailing = current.trim();
+  if (trailing.length > 0) {
+    statements.push(trailing);
+  }
+  return statements;
+};
 
 /**
  * Forward-only migration runner keyed on `PRAGMA user_version`.

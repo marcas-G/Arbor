@@ -75,7 +75,7 @@ describe("verification aggregate", () => {
   });
 
   it("concludes with a readonly verdict and binds the target revision", () => {
-    const result = concludeVerification(start(), "Pass");
+    const result = concludeVerification(start(), "Pass", "summary:test");
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.value.state).toEqual({
@@ -83,17 +83,30 @@ describe("verification aggregate", () => {
         verdict: "Pass",
       });
       expect(result.value.targetWorkRevision).toBe(targetWorkRevision);
+      expect(result.value.summaryRef).toBe("summary:test");
       expect(isVerificationConcluded(result.value)).toBe(true);
     }
   });
 
+  it("requires a non-empty conclusion summary reference", () => {
+    const result = concludeVerification(start(), "Pass", "   ");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AuthorityDenied");
+    }
+  });
+
   it("rejects mutating a concluded verdict", () => {
-    const concluded = concludeVerification(start(), "Fail");
+    const concluded = concludeVerification(start(), "Fail", "summary:test");
     expect(concluded.ok).toBe(true);
     if (!concluded.ok) {
       throw new Error("expected conclude to succeed");
     }
-    const reconclude = concludeVerification(concluded.value, "Pass");
+    const reconclude = concludeVerification(
+      concluded.value,
+      "Pass",
+      "summary:second",
+    );
     expect(reconclude.ok).toBe(false);
     if (!reconclude.ok) {
       expect(reconclude.error._tag).toBe("TerminalLifecycleMutation");
