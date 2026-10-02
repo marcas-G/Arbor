@@ -1,6 +1,6 @@
 # Verifier Execution Settlement 治理裁决草案
 
-**Status:** ACCEPTED — implementation authorized
+**Status:** ACCEPTED / IMPLEMENTED / LIVE-QUALIFIED
 
 **Decision token:** `ACCEPT_VERIFIER_EXECUTION_SETTLEMENT`
 

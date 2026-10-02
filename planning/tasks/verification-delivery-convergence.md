@@ -1,6 +1,6 @@
 # Verification Delivery Convergence Tasks
 
-**Status:** IN PROGRESS — VDC-001..007 implemented and live-proven; VDC-008 awaits Parent acceptance; VD-RUNTIME-GAP-01 open
+**Status:** IN PROGRESS — VDC-001..007 implemented and live-proven; VDC-008 awaits Parent acceptance; VD-RUNTIME-GAP-01 CLOSED
 
 **Plan:** `planning/proposals/verification-delivery-convergence-implementation-plan.md`
 

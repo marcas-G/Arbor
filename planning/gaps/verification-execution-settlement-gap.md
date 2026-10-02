@@ -1,6 +1,6 @@
 # VD-RUNTIME-GAP-01 — Verifier 成功交付后的 Execution Settlement 缺口
 
-**Status:** DESIGN RESOLVED / IMPLEMENTATION IN PROGRESS — accepted by `ACCEPT_VERIFIER_EXECUTION_SETTLEMENT`; does not invalidate the concluded Verification
+**Status:** CLOSED — design accepted by `ACCEPT_VERIFIER_EXECUTION_SETTLEMENT`; implemented and live-qualified by `3f57c9e`
 
 **Date:** 2026-10-02
 
@@ -62,3 +62,16 @@ Yielded | CompletionClaimed | CoordinationCompleted | QueryCompleted
 所有 verifier Execution，及其与 orphan 检测的关系。
 
 在裁决前，禁止复用其他 CompletedResult 标签来掩盖缺口。
+
+## Closure evidence
+
+```text
+Verification: ver_a5e19904-f0a2-782c-8af3-93aa39273d5d
+Verifier Execution: exe_d446c231-aaa5-7af2-8735-9c4c6134acc2
+Verification: Concluded(Pass)
+Execution: Completed(VerificationConcluded { verificationId, verdict: Pass })
+Required evidence: 3/3 exact-source records
+Consumer dead letters: 0
+```
+
+No `QueryCompleted` / `CoordinationCompleted` reuse was introduced.

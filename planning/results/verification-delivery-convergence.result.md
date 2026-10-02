@@ -1,6 +1,6 @@
 # Verification Delivery Convergence — 阶段结果
 
-**Status:** CORE DELIVERY PROVEN; Parent acceptance pending; VD-RUNTIME-GAP-01 open
+**Status:** CORE DELIVERY + VERIFIER SETTLEMENT PROVEN; Parent acceptance pending
 
 **Date:** 2026-10-02
 
@@ -21,6 +21,12 @@
   ExecutionBound 执行，不再只 admission 不运行。
 - 结论摘要先写 BlobStore、逐字节回读，再提交 summaryRef。
 - 结论成功后精确释放 `VerificationChanged(workId, revision)` 等待。
+- exact-bound verifier 在结论命令和 wake 成功后立即
+  `Completed(VerificationConcluded)`；该 settlement 不进入 CompletionClaim
+  consumer。
+- 同一 Work revision 已有 Concluded Verification 时，重复 CompletionClaim
+  不再自动创建新 Verification；显式 re-verification 仍走新
+  `StartVerification` identity。
 
 ## 真实 dogfood 证据
 
@@ -52,7 +58,7 @@ canonical invocation identity，没有覆盖或伪造。
 lint PASS
 typecheck PASS
 architecture 121/121 PASS
-core 1544 PASS, 1 SKIP
+core 1548 PASS, 1 SKIP
 web typecheck/build PASS
 web 212/212 PASS
 git diff --check PASS
@@ -70,11 +76,14 @@ d9ed3c1 tune(agent-loop): expand bounded turn budget
 44e2b4c fix(verification): resolve evidence selectors
 49007db tune(agent-loop): support full verification episodes
 e9603d2 fix(verification): release concluded work waits
+a872b25 docs(governance): freeze verifier execution settlement
+3f57c9e feat(verification): settle concluded verifier executions
+83bebfa fix(verification): suppress duplicate claim reverification
 ```
 
 ## 尚未关闭
 
 1. Parent 尚未提交 `AcceptWorkOutcome`；因此 Work 保持 Open 是正确行为，
    `Pass != Acceptance != Completed`。
-2. verifier 成功结论后的 Execution 没有专用 CompletedResult，见
-   `planning/gaps/verification-execution-settlement-gap.md`。
+2. VD-RUNTIME-GAP-01 已关闭；历史 Failed/Interrupted verifier Execution 按
+   冻结规则保留，不回写。
