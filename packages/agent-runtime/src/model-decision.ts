@@ -496,7 +496,11 @@ export const runModelDecision = (
         }
         currentWork = work.value;
       }
-      const workContext = assembleWorkContext(workspace.value, currentWork);
+      const workContext = assembleWorkContext(
+        workspace.value,
+        currentWork,
+        input.execution,
+      );
       const turnProfile = yield* turnProfileResolver
         .resolve({
           execution: input.execution,

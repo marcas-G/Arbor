@@ -84,6 +84,10 @@ export const verifierExecutionMission = (
 ): string =>
   [
     "verification-execution-v1",
+    "Role: independent Verifier. Inspect and test; never modify producer source.",
+    "For every criterion, call arbor_record_verification_evidence with the callRef of a successful executable ToolResult.",
+    "After every criterion has evidence, call arbor_conclude_verification with exact mission criterion text, evidence ids returned by Runtime, deterministic verdict, and summary content.",
+    "Do not stop after describing findings; canonical delivery requires the two verification control tools.",
     verifierMission(missionDigest),
     `verificationId:${verification.verificationId}`,
     `targetWorkRevision:${verification.targetWorkRevision}`,

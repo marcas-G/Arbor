@@ -1,4 +1,4 @@
-import type { Work, Workspace } from "@arbor/domain";
+import type { Execution, Work, Workspace } from "@arbor/domain";
 import {
   hashInstructionContent,
   type InstructionFragment,
@@ -40,6 +40,7 @@ const makeFragment = (value: {
 export const assembleWorkContext = (
   workspace: Workspace,
   work: Work | null,
+  execution?: Execution,
 ): WorkContextAssembly => {
   const items = [
     {
@@ -100,6 +101,19 @@ export const assembleWorkContext = (
             content: JSON.stringify(work.verificationMission),
           },
         ]),
+    ...(execution?.binding._tag === "ExecutionBoundAgentBinding"
+      ? [
+          {
+            identity: `execution-bound-mission:${execution.executionId}`,
+            revision: 0,
+            semanticKind: "ExecutionBoundMission",
+            scope: "execution-bound-mission",
+            authorityRole: "A3" as const,
+            contentRef: `execution-bound-mission:${execution.executionId}`,
+            content: execution.binding.mission,
+          },
+        ]
+      : []),
   ];
   return {
     fragments: items.map(makeFragment),

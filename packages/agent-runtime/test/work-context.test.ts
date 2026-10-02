@@ -1,4 +1,4 @@
-import type { Work, Workspace } from "@arbor/domain";
+import type { Execution, Work, Workspace } from "@arbor/domain";
 import { describe, expect, it } from "vitest";
 import { assembleWorkContext } from "../src/work-context.js";
 
@@ -39,5 +39,31 @@ describe("WorkContextAssembler", () => {
     expect(
       assembled.fragments.every((fragment) => fragment.strength === "Hard"),
     ).toBe(true);
+  });
+
+  it("projects an ExecutionBound mission as a hard instruction", () => {
+    const workspace = {
+      workspaceId: "ws_context",
+      responsibilityRevision: 1,
+      resourceBoundaryRevision: 1,
+      responsibilityDefinition: { purpose: "verify" },
+      resourceBoundary: { addresses: [] },
+    } as unknown as Workspace;
+    const execution = {
+      executionId: "exe_context",
+      binding: {
+        _tag: "ExecutionBoundAgentBinding",
+        parentExecutionId: null,
+        mission: "verify exact criteria and submit a canonical conclusion",
+      },
+    } as unknown as Execution;
+
+    const assembled = assembleWorkContext(workspace, null, execution);
+    expect(assembled.fragments.map((fragment) => fragment.scope)).toContain(
+      "execution-bound-mission",
+    );
+    expect([...assembled.contents.values()].join("\n")).toContain(
+      "submit a canonical conclusion",
+    );
   });
 });
