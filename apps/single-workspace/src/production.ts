@@ -578,6 +578,26 @@ export const ProductionDaemonServiceLive = (
               }
             }
           }
+
+          // ExecutionBound roles (temporary specialists and exact-bound
+          // verifiers) are already admitted canonical Executions. They do
+          // not participate in Workspace-main scheduling, so the daemon must
+          // hand every still-active bound execution to the same fenced runner
+          // explicitly. Lease acquisition inside runExecution absorbs
+          // concurrent daemon/restart attempts.
+          const unsettled = yield* tx.transact(
+            executions.findUnsettledExecutions(),
+          );
+          for (const execution of unsettled) {
+            if (execution.binding._tag !== "ExecutionBoundAgentBinding") {
+              continue;
+            }
+            yield* runExecution(
+              execution.executionId,
+              { _tag: "Recovery" },
+              config.principal,
+            );
+          }
         }),
       );
 
