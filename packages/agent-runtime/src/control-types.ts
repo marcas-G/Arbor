@@ -64,11 +64,9 @@ export type AgentAction =
       };
     }
   | {
-      /** ACR-8 (DID v1.19): P6 formation semantics are closed. The model
-       * proposes; a human RecordDecision remains the governance gate. The
-       * model-facing schema deliberately omits
-       * `initialWork.verificationMission` (gated by G-V2-4) — the frozen
-       * minimal mission is produced by the formation consumer. */
+      /** The model proposes; a human RecordDecision remains the governance
+       * gate. When initial Work is proposed, its verification mission is
+       * explicit and survives formation unchanged (DID v1.26 VDC). */
       readonly _tag: "ProposeChildWorkspace";
       readonly proposal: {
         readonly name: string;
@@ -92,6 +90,15 @@ export type AgentAction =
           readonly why: string;
           readonly constraints: ReadonlyArray<string>;
           readonly completionExpectation: string;
+          readonly verificationMission: {
+            readonly goal: string;
+            readonly criteria: ReadonlyArray<{
+              readonly criterionId: string;
+              readonly requirement: string;
+              readonly required: boolean;
+            }>;
+            readonly riskRequirements: ReadonlyArray<string>;
+          };
         };
       };
     };

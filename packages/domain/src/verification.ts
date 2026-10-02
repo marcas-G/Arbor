@@ -79,6 +79,8 @@ export interface Verification {
   readonly environmentSnapshotRef: string | null;
   readonly evidenceRefs: ReadonlyArray<EvidenceId>;
   readonly verificationExecutionIds: ReadonlyArray<ExecutionId>;
+  /** Durable BlobRef for the verifier-authored conclusion summary. */
+  readonly summaryRef: string | null;
   readonly state: VerificationState;
 }
 
@@ -107,6 +109,7 @@ export const startVerification = (
   environmentSnapshotRef: input.environmentSnapshotRef ?? null,
   evidenceRefs: [],
   verificationExecutionIds: input.verificationExecutionIds ?? [],
+  summaryRef: null,
   state: { status: "Open" },
 });
 
@@ -132,6 +135,7 @@ export const recordVerificationEvidence = (
 export const concludeVerification = (
   verification: Verification,
   verdict: VerificationVerdict,
+  summaryRef: string,
   conclusionReason?: ConclusionReason,
 ): DomainResult<Verification> => {
   if (verification.state.status !== "Open") {
@@ -144,8 +148,15 @@ export const concludeVerification = (
         "conclusionReason Orphaned pairs only with verdict Unknown (v1.11 G5)",
     });
   }
+  if (summaryRef.trim().length === 0) {
+    return err({
+      _tag: "AuthorityDenied",
+      reason: "concluded Verification requires a non-empty summaryRef",
+    });
+  }
   return ok({
     ...verification,
+    summaryRef,
     state:
       conclusionReason === undefined
         ? { status: "Concluded", verdict }

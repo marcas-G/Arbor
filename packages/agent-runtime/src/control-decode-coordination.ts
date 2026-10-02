@@ -146,6 +146,7 @@ const decodeChildWorkspaceProposal = (
           "why",
           "constraints",
           "completionExpectation",
+          "verificationMission",
         ]) ||
         typeof work.objective !== "string" ||
         work.objective.length === 0 ||
@@ -157,14 +158,79 @@ const decodeChildWorkspaceProposal = (
       ) {
         return yield* invalidControlArguments(
           invocation.toolName,
-          "initialWork must carry objective, why, constraints, completionExpectation (verificationMission is deliberately not model-facing)",
+          "initialWork must carry objective, why, constraints, completionExpectation, verificationMission",
         );
       }
+      const mission =
+        typeof work.verificationMission === "object" &&
+        work.verificationMission !== null &&
+        !Array.isArray(work.verificationMission)
+          ? (work.verificationMission as Record<string, unknown>)
+          : null;
+      const riskRequirements =
+        mission === null ? null : stringList(mission.riskRequirements);
+      const rawCriteria = mission?.criteria;
+      if (
+        mission === null ||
+        !hasOnlyControlFields(mission, [
+          "goal",
+          "criteria",
+          "riskRequirements",
+        ]) ||
+        typeof mission.goal !== "string" ||
+        mission.goal.length === 0 ||
+        riskRequirements === null ||
+        !Array.isArray(rawCriteria) ||
+        rawCriteria.length === 0 ||
+        rawCriteria.some(
+          (criterion) =>
+            typeof criterion !== "object" ||
+            criterion === null ||
+            Array.isArray(criterion) ||
+            !hasOnlyControlFields(criterion as Record<string, unknown>, [
+              "criterionId",
+              "requirement",
+              "required",
+            ]) ||
+            typeof (criterion as Record<string, unknown>).criterionId !==
+              "string" ||
+            ((criterion as Record<string, unknown>).criterionId as string)
+              .length === 0 ||
+            typeof (criterion as Record<string, unknown>).requirement !==
+              "string" ||
+            ((criterion as Record<string, unknown>).requirement as string)
+              .length === 0 ||
+            typeof (criterion as Record<string, unknown>).required !==
+              "boolean",
+        ) ||
+        !rawCriteria.some(
+          (criterion) =>
+            (criterion as Record<string, unknown>).required === true,
+        )
+      ) {
+        return yield* invalidControlArguments(
+          invocation.toolName,
+          "verificationMission must carry a non-empty goal, at least one required criterion, and riskRequirements",
+        );
+      }
+      const criteria = rawCriteria.map(
+        (criterion) =>
+          criterion as {
+            readonly criterionId: string;
+            readonly requirement: string;
+            readonly required: boolean;
+          },
+      );
       initialWork = {
         objective: work.objective,
         why: work.why,
         constraints,
         completionExpectation: work.completionExpectation,
+        verificationMission: {
+          goal: mission.goal,
+          criteria,
+          riskRequirements,
+        },
       };
     }
     return {

@@ -18,8 +18,11 @@ import {
   ClockLive,
   CommandStoreLive,
   ConversationResponseJobStoreLive,
+  DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
+  EnvironmentRevisionStoreLive,
+  EvidenceRepositoryLive,
   ExecutionRepositoryLive,
   FormationProposalStoreLive,
   HumanMessageStoreLive,
@@ -2075,12 +2078,18 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
     Layer.provide(DependencyRepositoryLive, infra),
+    Layer.provide(DeliverableRepositoryLive, infra),
+    Layer.provide(EnvironmentRevisionStoreLive, infra),
+    Layer.provide(EvidenceRepositoryLive, infra),
   );
   const all = Layer.mergeAll(
     infra,
     deps,
     FenceStopCheckInertLive,
-    Layer.provide(SingleWorkspaceCommandHandlerRegistryLive, deps),
+    Layer.provide(
+      SingleWorkspaceCommandHandlerRegistryLive,
+      Layer.mergeAll(deps, infra),
+    ),
     AuthorityResolverPortLive,
   );
   return Layer.mergeAll(

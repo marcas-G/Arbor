@@ -1191,3 +1191,33 @@ export const P21_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P21_CONVERSATION_DELIVERY_RUNTIME_DDL,
   },
 ];
+
+export const P22_VERIFICATION_DELIVERY_CONVERGENCE_DDL = `
+ALTER TABLE verifications ADD COLUMN summary_ref TEXT;
+
+CREATE TRIGGER verifications_conclusion_summary_update
+BEFORE UPDATE OF state, summary_ref ON verifications
+WHEN NEW.state = 'Concluded'
+  AND (NEW.summary_ref IS NULL OR length(trim(NEW.summary_ref)) = 0)
+BEGIN
+  SELECT RAISE(ABORT, 'concluded verification requires summary_ref');
+END;
+
+CREATE TRIGGER verifications_conclusion_summary_insert
+BEFORE INSERT ON verifications
+WHEN NEW.state = 'Concluded'
+  AND (NEW.summary_ref IS NULL OR length(trim(NEW.summary_ref)) = 0)
+BEGIN
+  SELECT RAISE(ABORT, 'concluded verification requires summary_ref');
+END;
+`;
+
+/** DID v1.26 Verification Delivery Convergence; user_version 22. */
+export const P22_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P21_MIGRATIONS,
+  {
+    id: 22,
+    name: "verification_delivery_convergence",
+    sql: P22_VERIFICATION_DELIVERY_CONVERGENCE_DDL,
+  },
+];

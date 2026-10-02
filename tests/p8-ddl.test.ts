@@ -128,7 +128,9 @@ describe("P8-002 DDL + repositories", () => {
           )
           .pipe(Effect.flip);
         expect(duplicate._tag).toBe("VerificationRepositoryFailure");
-        yield* tx.transact(repos.concludeIfOpen(VER_1, "Pass", undefined));
+        yield* tx.transact(
+          repos.concludeIfOpen(VER_1, "Pass", "summary:test", undefined),
+        );
         yield* tx.transact(
           repos.insert(verificationOf(VER_2), p7Project, p7RootWorkspace),
         );
@@ -174,15 +176,21 @@ describe("P8-002 DDL + repositories", () => {
         const orphaned = concludeVerification(
           verificationOf(VER_1),
           "Unknown",
+          "summary:orphaned",
           "Orphaned",
         );
         expect(orphaned.ok).toBe(true);
         const concluded = yield* tx.transact(
-          repos.concludeIfOpen(VER_1, "Unknown", "Orphaned"),
+          repos.concludeIfOpen(
+            VER_1,
+            "Unknown",
+            "summary:orphaned",
+            "Orphaned",
+          ),
         );
         expect(Option.isSome(concluded)).toBe(true);
         const replay = yield* tx.transact(
-          repos.concludeIfOpen(VER_1, "Pass", undefined),
+          repos.concludeIfOpen(VER_1, "Pass", "summary:replay", undefined),
         );
         expect(Option.isNone(replay)).toBe(true);
         const bound = yield* tx.transact(repos.findById(VER_1));

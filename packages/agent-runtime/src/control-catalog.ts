@@ -178,12 +178,49 @@ const PROPOSE_CHILD_WORKSPACE_SCHEMA = JSON.stringify({
     initialWork: {
       type: "object",
       additionalProperties: false,
-      required: ["objective", "why", "constraints", "completionExpectation"],
+      required: [
+        "objective",
+        "why",
+        "constraints",
+        "completionExpectation",
+        "verificationMission",
+      ],
       properties: {
         objective: { type: "string", minLength: 1 },
         why: { type: "string", minLength: 1 },
         constraints: { type: "array", items: { type: "string" } },
         completionExpectation: { type: "string", minLength: 1 },
+        verificationMission: {
+          type: "object",
+          additionalProperties: false,
+          required: ["goal", "criteria", "riskRequirements"],
+          properties: {
+            goal: { type: "string", minLength: 1 },
+            criteria: {
+              type: "array",
+              minItems: 1,
+              contains: {
+                type: "object",
+                required: ["required"],
+                properties: { required: { const: true } },
+              },
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["criterionId", "requirement", "required"],
+                properties: {
+                  criterionId: { type: "string", minLength: 1 },
+                  requirement: { type: "string", minLength: 1 },
+                  required: { type: "boolean" },
+                },
+              },
+            },
+            riskRequirements: {
+              type: "array",
+              items: { type: "string" },
+            },
+          },
+        },
       },
     },
   },

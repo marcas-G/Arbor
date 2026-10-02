@@ -40,6 +40,17 @@ const fullProposal = {
     why: "flaky builds",
     constraints: [],
     completionExpectation: "5 green nights",
+    verificationMission: {
+      goal: "verify five consecutive successful nightly runs",
+      criteria: [
+        {
+          criterionId: "green-runs",
+          requirement: "five consecutive nightly runs are green",
+          required: true,
+        },
+      ],
+      riskRequirements: ["inspect the real scheduled-run output"],
+    },
   },
 };
 
@@ -54,6 +65,9 @@ describe("arbor_propose_child_workspace codec", () => {
     expect(decoded.action.proposal.name).toBe("data-pipeline");
     expect(decoded.action.proposal.initialWork?.objective).toBe(
       "stabilize the nightly run",
+    );
+    expect(decoded.action.proposal.initialWork?.verificationMission.goal).toBe(
+      "verify five consecutive successful nightly runs",
     );
   });
 
@@ -120,6 +134,22 @@ describe("arbor_propose_child_workspace codec", () => {
                 completionExpectation: "y",
               },
             }),
+          ),
+        ),
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+  });
+
+  it("rejects initialWork without an explicit verificationMission", async () => {
+    const registry = makeControlToolRegistry([stubHandler]);
+    const { verificationMission: _missing, ...incompleteWork } =
+      fullProposal.initialWork;
+    const exit = await Effect.runPromise(
+      Effect.exit(
+        registry.decode(
+          invocation(
+            JSON.stringify({ ...fullProposal, initialWork: incompleteWork }),
           ),
         ),
       ),

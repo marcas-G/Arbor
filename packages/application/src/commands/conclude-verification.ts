@@ -259,6 +259,7 @@ export interface ConcludeVerificationResult {
   readonly verificationId: VerificationId;
   readonly state: "Concluded";
   readonly verdict: VerificationVerdict;
+  readonly summaryRef: string;
   readonly conclusionReason: ConclusionReason | undefined;
   readonly wakeSignals: ReadonlyArray<ConcludeVerificationWakeSignal>;
   readonly channel1Release: Channel1Release;
@@ -322,6 +323,7 @@ export const makeConcludeVerificationHandler = (
       const transition = concludeVerification(
         verification,
         payload.verdict,
+        payload.summaryRef,
         payload.conclusionReason,
       );
       if (!transition.ok) {
@@ -416,6 +418,7 @@ export const makeConcludeVerificationHandler = (
       const applied = yield* dependencies.verifications.concludeIfOpen(
         payload.verificationId,
         payload.verdict,
+        payload.summaryRef,
         payload.conclusionReason,
       );
       if (Option.isNone(applied)) {
@@ -477,6 +480,7 @@ export const makeConcludeVerificationHandler = (
             verdict: payload.verdict,
             conclusionReason: payload.conclusionReason ?? "",
             evidenceRefs,
+            summaryRef: payload.summaryRef,
           },
         },
       ];
@@ -486,6 +490,7 @@ export const makeConcludeVerificationHandler = (
           verificationId: payload.verificationId,
           state: "Concluded",
           verdict: payload.verdict,
+          summaryRef: payload.summaryRef,
           conclusionReason: payload.conclusionReason,
           wakeSignals,
           channel1Release: {
