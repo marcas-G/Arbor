@@ -105,10 +105,7 @@ describe("B06 L3 — parent/child communication through the adopted route", () =
                   responsibilityRevision: 0,
                   resourceBoundary: {
                     basisResponsibilityRevision: 0,
-                    addresses: [
-                      { _tag: "FileTree", path: process.cwd() },
-                      { _tag: "GitWorktree", path: process.cwd() },
-                    ],
+                    addresses: [],
                   },
                   resourceBoundaryRevision: 0,
                   agentBinding: {

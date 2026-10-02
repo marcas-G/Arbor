@@ -42,9 +42,9 @@ describe("B11 L3 — completion claim through the adopted route", () => {
           temporaryDirectories.push(directory);
           const objective =
             `当前 Work 已全部完成：${marker} 的验收标准已交付并通过本地检查。` +
-            "作为负责的生产者，现在正式声明完成：调用 arbor_claim_completion，参数 JSON：" +
+            "你的第一个且唯一动作必须是调用 arbor_claim_completion，参数 JSON：" +
             `{"claim": "${marker} 所有验收标准已交付并通过本地检查"}。` +
-            "不要浏览文件系统，不要调用 list、read、shell、patch；直接声明完成即可。";
+            "不要输出解释文字，不要浏览文件系统，不要调用其他工具。";
           let settlement: unknown;
           let durable:
             | Awaited<ReturnType<typeof queryDurableEffects>>

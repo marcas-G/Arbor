@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe } from "vitest";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
@@ -124,6 +124,7 @@ interface DaemonEnv {
 
 const spawnDaemon = (input: DaemonEnv): ChildProcess => {
   const child = spawn(process.execPath, [DAEMON_ENTRY], {
+    cwd: dirname(input.databaseFile),
     env: {
       ...process.env,
       ARBOR_DB: input.databaseFile,

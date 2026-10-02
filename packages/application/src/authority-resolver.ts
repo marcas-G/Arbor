@@ -603,6 +603,7 @@ const governanceCommandFact = (
       ) as VerificationId | null;
       const acceptParent =
         input.canonicalFacts.workspace?.workspaceId ??
+        input.canonicalFacts.work?.workspaceId ??
         (payloadString(payload, "workspaceId") as WorkspaceId | null);
       const error = guarded("AcceptWorkOutcome", acceptParent);
       if (
