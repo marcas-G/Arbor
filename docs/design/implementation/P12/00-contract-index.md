@@ -1,5 +1,11 @@
 # P12 — 00 Contract Index
 
+> **MAC successor (DID v1.31):** Authority, Permission, ToolRuntime and safety
+> ceilings remain. Executable/control exact approvals share the MAC
+> `ActionApproval` semantic contract; physical ledger convergence is MAC-P4.
+> Owning Effect errors must be typed and active legacy branches isolated. See
+> `docs/design/implementation/MAC/**`.
+
 **Authority:** DID v1.14 §11 P12, §2.1, §6.3, §7.2/§7.5/§7.6/§7.9, §8.4/§8.5/§8.16A, §9.1/§9.7, §10.1/§10.2/§10.4.1/§10.5, §12.3/§12.10, §13; v1.13 G4/G6; v1.14 G1–G8; SD v1.3 §6.1/§6.2/§7.7/§8/§8A/§10.2/§10.7/§12/§13/§14; P0–P11 contracts.
 **Status:** **FROZEN** — four independent review rounds complete; **Blocking = 0**.
 

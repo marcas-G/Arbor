@@ -1,7 +1,14 @@
 # P14 — 02 Conversation Execution（trigger/admission/排队/精确一次）
 
-**Owns:** durable human message → bounded Coordination Execution 的 server-side 闭环
+**Owns:** durable human message → exact-bound ConversationResponseEpisode 的 server-side 闭环
 **Does not own:** 命令语义（`01`）、read model（`03`）
+
+> **DID v1.28 EGP supersession（2026-10-03）**：本文后续出现的
+> `Coordination` / `focus=Coordination` / `QueryCompleted` 是历史合同记录。
+> 新写路径必须使用 exact
+> `ConversationResponseEpisode(messageId, responseJobRevision)`，并以
+> `ConversationResponseProduced(messageId)` 结算。历史段落仅用于迁移审计，
+> 不再授权实现。
 
 ## 1. 执行链（frozen，G-B）
 
@@ -10,17 +17,17 @@ SubmitHumanMessage（durable pending）
 → Root Inbox admission（HumanConversation）
 → deterministic conversation trigger（本合同 §2）
 → scheduler / Application admission
-→ AdmitExecution(WorkspaceMain, focus=Coordination)     ← server-side wiring
+→ AdmitExecution(ConversationResponseEpisode(messageId, jobRevision))
 → 既有 P2/P3 agent 链（ProviderTurn/ToolInvocation 任意多轮）
 → AgentLoopStep 幂等接受 user-visible ModelOutput / actions / settlement proposal
-→ SettleExecution(Completed(QueryCompleted))
+→ SettleExecution(Completed(ConversationResponseProduced(messageId)))
 → transcript projection + human_messages.state=Answered
 ```
 
-- **复用**：`ExecutionFocus=Coordination`、`Completed(QueryCompleted)`、
-  WorkspaceMain admission、WorkspacePrimary Session（认知连续）。
-- **不发明** conversational/synthetic Work（`05` seam-4 机械锁定：
-  Coordination execution 不得绑定 workId；Work 路径不受影响）。
+- **不创建 conversational/synthetic Work**：Conversation Episode 精确绑定
+  message/job，不绑定 workId，也不读取 Workspace Work Session frontier。
+- **统一 Agent Loop**：对话与 Work 共用机械循环；binding 只决定 Context、工具
+  表面和 settlement contract，不产生 Conversation/Coordination 专用 loop。
 - **浏览器/UI 不得直连 external `AdmitExecution`**（`05` seam-8：web 源码
   架构扫描 AdmitExecution 零出现；P13 `02` U-3 的 UI 面不推翻）。
 
@@ -158,7 +165,7 @@ ResponseJob `Queued` 或到期的 `RetryScheduled`。Admission 前必须同时�
 - Project Open、root main vacant、Job revision current；
 - SessionContextGate Ready；
 - deployment breaker admits；
-- TurnProfileResolver produces RootConversationRespond v1；
+- TurnProfileResolver produces DID v1.29 `RootConversation`：zero executable/Work tools，v1 仅暴露受治理的 `propose_workspace` control；
 - attempt/time/fingerprint budgets 未耗尽。
 
 任何 Blocked/Attention/Cancelled/Answered 都产生零 Provider bytes。完整合同见

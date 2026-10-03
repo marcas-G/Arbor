@@ -1,5 +1,12 @@
 # P6 — 00 Contract Index
 
+> **MAC successor (DID v1.31):** child Workspace formation/authority remains
+> durable responsibility semantics and resumes in MAC-P2. `Specialist` is no
+> longer active product/domain vocabulary; optional parallel Agent execution is
+> deferred to MAC-P4 Runtime ActionCall. Formation approval and asynchronous
+> fulfillment must be represented separately. See
+> `docs/design/implementation/MAC/**`.
+
 **Authority:** DID v1.9 §11 P6, G3 (v1.9), G5 (v1.7); SD v1.3 §7.2–§7.5, §8.1–§8.3, §13.5, §14; Scenarios v1.2 S1.4, S2; P1 `01`/`02`, P2 `01`/`05`, P3 `03`, P4 `02`, P5 `03`.
 **Status:** FROZEN — manual governance adoption (D1–D4 confirmed with binding constraints); four-way review Blocking=0.
 

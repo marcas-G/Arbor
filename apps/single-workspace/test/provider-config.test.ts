@@ -158,6 +158,30 @@ describe("arbor.config.json — standard provider configuration", () => {
     }
   });
 
+  it("invalid JSON never echoes nearby secret material in diagnostics", () => {
+    const { path } = withConfig(
+      '{"provider":{"secret":{"kind":"inline","value":"sk-sensitive-value"}',
+    );
+    const priorConfig = process.env.ARBOR_CONFIG;
+    process.env.ARBOR_CONFIG = path;
+    try {
+      const found = findArborConfigFile();
+      expect(found?.ok).toBe(false);
+      if (found?.ok !== false) return;
+      expect(found.error).toMatchObject({
+        _tag: "ProviderConfigInvalid",
+        reason: "JSON parse failed",
+      });
+      expect(JSON.stringify(found.error)).not.toContain("sk-sensitive-value");
+    } finally {
+      if (priorConfig === undefined) {
+        delete process.env.ARBOR_CONFIG;
+      } else {
+        process.env.ARBOR_CONFIG = priorConfig;
+      }
+    }
+  });
+
   it("malformed JSON produces a typed parse error, never a silent fallback", () => {
     const { path } = withConfig("{ not json");
     const priorConfig = process.env.ARBOR_CONFIG;

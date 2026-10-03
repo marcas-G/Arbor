@@ -35,7 +35,11 @@ const isProblem = (value: unknown): value is Problem => {
   return (
     typeof record.code === "string" &&
     typeof record.category === "string" &&
-    typeof record.message === "string"
+    typeof record.message === "string" &&
+    (record.retryDisposition === "retryable" ||
+      record.retryDisposition === "non-retryable") &&
+    typeof record.safeDetails === "object" &&
+    record.safeDetails !== null
   );
 };
 

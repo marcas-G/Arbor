@@ -92,7 +92,15 @@ const unavailable = (cause: ProjectionReadError): ProjectionUnavailable => ({
   category: "unavailable",
   correlationId: null,
   retryDisposition: "retryable",
-  safeDetails: { cause: cause.cause },
+  safeDetails: {
+    sourceTag:
+      typeof cause.cause === "object" &&
+      cause.cause !== null &&
+      "_tag" in cause.cause &&
+      typeof cause.cause._tag === "string"
+        ? cause.cause._tag
+        : "ProjectionReadFailure",
+  },
 });
 
 const invalidRequest = (

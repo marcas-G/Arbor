@@ -162,7 +162,10 @@ describe("P7-002 DDL + repositories", () => {
             ),
           )
           .pipe(Effect.flip);
-        expect(duplicate._tag).toBe("DeliverableRepositoryFailure");
+        expect(duplicate).toMatchObject({
+          _tag: "PersistenceConstraintViolation",
+          repository: "DeliverableRepository",
+        });
       }),
       makeP7App(),
     );

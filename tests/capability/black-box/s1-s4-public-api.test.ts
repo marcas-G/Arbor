@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
@@ -89,6 +90,8 @@ const toolDelta = (name: string, args: unknown) => ({
   ],
 });
 
+const macRootGoalMarker = "MAC-P1-BLACKBOX-GOAL";
+
 const startProvider = () =>
   new Promise<{ server: Server; port: number; calls: ProviderCall[] }>(
     (resolveStart) => {
@@ -113,7 +116,45 @@ const startProvider = () =>
           );
           const serialized = JSON.stringify(call.messages);
 
-          if (toolNames.has("arbor_record_verification_evidence")) {
+          if (
+            toolNames.has("assign_work") &&
+            !toolNames.has("claim_completion") &&
+            serialized.includes(macRootGoalMarker)
+          ) {
+            if (serialized.includes("WorkAssigned(")) {
+              sse(
+                response,
+                { role: "assistant", content: "工作已创建并进入异步执行。" },
+                "stop",
+              );
+              return;
+            }
+            sse(
+              response,
+              toolDelta("assign_work", {
+                objective: `Claim ${macRootGoalMarker} complete immediately.`,
+                why: "exercise the complete MAC-P1 user path",
+                constraints: ["do not place real orders"],
+                completionExpectation: "verified and accepted",
+                verificationMission: {
+                  goal: "independently verify the black-box shell observation",
+                  criteria: [
+                    {
+                      criterionId: "bb-criterion",
+                      requirement: "shell observation contains BB_VERIFIED",
+                      required: true,
+                    },
+                  ],
+                  riskRequirements: ["do not place real orders"],
+                },
+                reason: "start the bounded goal from the root conversation",
+              }),
+              "tool_calls",
+            );
+            return;
+          }
+
+          if (toolNames.has("record_verification_evidence")) {
             const evidenceIds = [
               ...serialized.matchAll(/evd_[0-9a-f-]{36}/gu),
             ].map((match) => match[0]);
@@ -131,7 +172,7 @@ const startProvider = () =>
             if (evidenceIds.length === 0) {
               sse(
                 response,
-                toolDelta("arbor_record_verification_evidence", {
+                toolDelta("record_verification_evidence", {
                   criterionId: "bb-criterion",
                   sourceCallRef: "1",
                 }),
@@ -141,7 +182,7 @@ const startProvider = () =>
             }
             sse(
               response,
-              toolDelta("arbor_conclude_verification", {
+              toolDelta("conclude_verification", {
                 verdict: "Pass",
                 criteriaResults: [
                   {
@@ -159,10 +200,10 @@ const startProvider = () =>
             return;
           }
 
-          if (toolNames.has("arbor_claim_completion")) {
+          if (toolNames.has("claim_completion")) {
             sse(
               response,
-              toolDelta("arbor_claim_completion", {
+              toolDelta("claim_completion", {
                 claim: "black-box work complete",
               }),
               "tool_calls",
@@ -299,7 +340,7 @@ const projectId = id("prj");
 const rootWorkspaceId = id("ws");
 const rootSessionId = id("ses");
 const childWorkspaceId = id("ws");
-const workId = id("wrk");
+let workId = id("wrk");
 const memoryCode = `BB-MEMORY-${randomUUID().slice(0, 8).toUpperCase()}`;
 
 beforeAll(async () => {
@@ -443,39 +484,97 @@ describe("S1-S4 public-process black-box", () => {
       transcript.entries.some((entry) => entry.body?.includes(memoryCode)),
     ).toBe(true);
 
-    await command(projectId, "AssignWork", {
-      workId,
-      workspaceId: rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: "Claim this black-box work complete immediately.",
-      why: "exercise S1 delivery",
-      constraints: [],
-      completionExpectation: "verified and accepted",
-      verificationMission: {
-        goal: "independently verify the black-box shell observation",
-        criteria: [
-          {
-            criterionId: "bb-criterion",
-            requirement: "shell observation contains BB_VERIFIED",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      provenance: { predecessorWorkId: null, reason: "black-box" },
-      revision: 0,
+    await command(projectId, "SubmitHumanMessage", {
+      messageId: id("msg"),
+      targetWorkspaceId: rootWorkspaceId,
+      bodyRef:
+        `请创建并执行正式目标 ${macRootGoalMarker}。` +
+        "约束：不要真实下单。完成标准：经过独立验证并被接受。信息充分，请直接调用 assign_work。",
     });
-    const verification = await waitFor(
-      () =>
-        view<{
-          verificationId?: string;
-          targetWorkRevision?: number;
-          verdict?: string;
-          evidenceRefs: string[];
-        }>("verification", { workId }),
-      (value) => value.verdict === "Pass" && value.evidenceRefs.length === 1,
+    const approval = await waitFor(
+      async () => {
+        const database = new DatabaseSync(databaseFile, { readOnly: true });
+        try {
+          return database
+            .prepare(
+              "SELECT approval_id, revision, state FROM action_approvals WHERE route_kind = 'Control' AND stable_action_id = 'core.control.assign-work' ORDER BY requested_at DESC LIMIT 1",
+            )
+            .get() as
+            | { approval_id: string; revision: number; state: string }
+            | undefined;
+        } finally {
+          database.close();
+        }
+      },
+      (value) => value?.state === "Pending",
+    );
+    const beforeApproval = new DatabaseSync(databaseFile, { readOnly: true });
+    try {
+      const row = beforeApproval
+        .prepare("SELECT COUNT(*) AS n FROM works")
+        .get() as { n: number };
+      expect(Number(row.n)).toBe(0);
+    } finally {
+      beforeApproval.close();
+    }
+    await command(projectId, "ResolveControlApproval", {
+      approvalId: approval?.approval_id,
+      expectedRevision: approval?.revision,
+      decision: "Approve",
+      reason: "approve exact MAC-P1 black-box Work",
+    });
+    const createdWork = await waitFor(
+      async () => {
+        const database = new DatabaseSync(databaseFile, { readOnly: true });
+        try {
+          return database
+            .prepare(
+              "SELECT work_id, constraints, provenance FROM works WHERE objective LIKE ? LIMIT 1",
+            )
+            .get(`%${macRootGoalMarker}%`) as
+            | { work_id: string; constraints: string; provenance: string }
+            | undefined;
+        } finally {
+          database.close();
+        }
+      },
+      (value) => value !== undefined,
       45_000,
     );
+    if (createdWork === undefined) {
+      throw new Error("approved root goal produced no Work");
+    }
+    workId = createdWork.work_id;
+    expect(JSON.parse(createdWork.constraints)).toContain(
+      "do not place real orders",
+    );
+    expect(JSON.parse(createdWork.provenance)).toEqual({
+      predecessorWorkId: null,
+      reason: "start the bounded goal from the root conversation",
+    });
+    let verification: {
+      verificationId?: string;
+      targetWorkRevision?: number;
+      verdict?: string;
+      evidenceRefs: string[];
+    };
+    try {
+      verification = await waitFor(
+        () =>
+          view<{
+            verificationId?: string;
+            targetWorkRevision?: number;
+            verdict?: string;
+            evidenceRefs: string[];
+          }>("verification", { workId }),
+        (value) => value.verdict === "Pass" && value.evidenceRefs.length === 1,
+        45_000,
+      );
+    } catch (error) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; daemon=${daemonErrors.join(" | ")}; providerTail=${JSON.stringify(provider.calls.slice(-6))}`,
+      );
+    }
     expect(verification.targetWorkRevision).toBe(0);
 
     await command(projectId, "AcceptWorkOutcome", {

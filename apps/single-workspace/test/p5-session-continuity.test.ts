@@ -102,7 +102,11 @@ const admit = (executionId: ExecutionId, commandId: CommandId) =>
       _tag: "WorkspaceMain",
       executionId,
       workspaceId,
-      focus: { _tag: "Coordination" },
+      episode: {
+        _tag: "InboxEpisode",
+        entryKey: `session-continuity:${executionId}`,
+        inputKind: "SessionContinuityTest",
+      },
     };
     const authority: VerifiedRuntimeCommandAuthority = {
       _tag: "AdmitExecutionAuthority",

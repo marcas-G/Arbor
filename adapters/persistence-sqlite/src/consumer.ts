@@ -15,6 +15,7 @@ import {
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 export interface ConsumerRunResult {
   readonly fromSequence: number;
@@ -44,10 +45,7 @@ export const ConsumerOffsetStoreLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): ConsumerOffsetStoreError => ({
-      _tag: "ConsumerOffsetStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure("ConsumerOffsetStore", "offset");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return ConsumerOffsetStore.of({
@@ -86,10 +84,7 @@ export const ConsumerDeadLetterStoreLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): ConsumerDeadLetterStoreError => ({
-      _tag: "ConsumerDeadLetterStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure("ConsumerDeadLetterStore", "dead-letter");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return ConsumerDeadLetterStore.of({
@@ -116,10 +111,7 @@ export const ProjectionStoreLive: Layer.Layer<
   ProjectionStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): ConsumerOffsetStoreError => ({
-      _tag: "ConsumerOffsetStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure("ConsumerOffsetStore", "projection");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     yield* run(
@@ -232,12 +224,7 @@ export const rebuildProjection = (
         [projectId],
       )
       .pipe(
-        Effect.mapError(
-          (cause): ConsumerOffsetStoreError => ({
-            _tag: "ConsumerOffsetStoreFailure",
-            cause,
-          }),
-        ),
+        Effect.mapError(repositoryFailure("ConsumerOffsetStore", "rebuild")),
       );
     const floor = Number(floorRows[0]?.floor ?? 0);
     const offset = yield* tx.transact(offsets.read(consumerId, projectId));

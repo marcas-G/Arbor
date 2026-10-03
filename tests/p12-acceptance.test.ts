@@ -33,7 +33,7 @@ import {
   MessageStoreLive,
   P11_MIGRATIONS,
   P12_MIGRATIONS,
-  P16_MIGRATIONS,
+  P26_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
@@ -732,7 +732,7 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
           {
             _tag: "ToolCallProposed",
             callRef: "c1",
-            toolName: "arbor_wait",
+            toolName: "wait",
             argumentsJson: JSON.stringify({
               reason: "secret-store sentinel completion",
               waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -765,7 +765,7 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P16_MIGRATIONS);
+            yield* runMigrations(P26_MIGRATIONS);
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               secretEnvelope("CreateProject", secretProjectPayload(), "1"),
@@ -1619,7 +1619,7 @@ const claimTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>> = [
     {
       _tag: "ToolCallProposed",
       callRef: "c1",
-      toolName: "arbor_wait",
+      toolName: "wait",
       argumentsJson: JSON.stringify({
         reason: "secret-store sentinel completion",
         waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -1663,7 +1663,7 @@ const runSafetyScenario = async (
   return Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P16_MIGRATIONS);
+        yield* runMigrations(P26_MIGRATIONS);
         const gateway = yield* CommandGateway;
         const created = yield* gateway.execute(
           safetyEnvelope("CreateProject", safetyProjectPayload, "1"),
@@ -2272,11 +2272,7 @@ const providerContext: ProviderExecutionContext = {
   ),
   attemptNo: 0,
   cancellationSignal: new AbortController().signal,
-  connectTimeoutMs: 1000,
-  firstEventTimeoutMs: 1000,
-  streamIdleTimeoutMs: 1000,
   turnDeadlineAt: new Date(Date.now() + 5_000).toISOString(),
-  maxAttempts: 3,
 };
 const sdkClient = (
   chunks: ReadonlyArray<OpenAISdkChunk>,

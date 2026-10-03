@@ -185,7 +185,7 @@ describe("W-04 TreePage (read-only navigation)", () => {
             category: "not-found",
             message: "tree missing",
             correlationId: null,
-            retryDisposition: "none",
+            retryDisposition: "non-retryable",
             safeDetails: {},
           },
         }),

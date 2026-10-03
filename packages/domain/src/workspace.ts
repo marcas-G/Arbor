@@ -228,8 +228,8 @@ export interface CandidateWorkFact {
   readonly lifecycle: "Open" | "Completed" | "Cancelled";
 }
 
-export interface ActiveMainFocusFact {
-  readonly kind: "Work" | "Coordination";
+export interface ActiveMainEpisodeFact {
+  readonly kind: "Work" | "NonWork";
   readonly workId: WorkId | null;
 }
 
@@ -237,7 +237,7 @@ export interface SelectCurrentWorkInput {
   readonly authorized: boolean;
   readonly expectedRevision: Revision;
   readonly candidate: CandidateWorkFact;
-  readonly activeMainFocus: ActiveMainFocusFact | null;
+  readonly activeMainEpisode: ActiveMainEpisodeFact | null;
 }
 
 export const selectCurrentWork = (
@@ -262,11 +262,11 @@ export const selectCurrentWork = (
   if (input.candidate.lifecycle !== "Open") {
     return err({ _tag: "WorkNotOpen", workId: input.candidate.workId });
   }
-  const focus = input.activeMainFocus;
+  const episode = input.activeMainEpisode;
   if (
-    focus !== null &&
-    focus.kind === "Work" &&
-    focus.workId === workspace.currentWorkId
+    episode !== null &&
+    episode.kind === "Work" &&
+    episode.workId === workspace.currentWorkId
   ) {
     return err({
       _tag: "ActiveExecutionConflict",

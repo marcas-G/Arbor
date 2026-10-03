@@ -1,4 +1,5 @@
 import type { Execution, ExecutionId } from "@arbor/domain";
+import { executionEpisode } from "@arbor/domain";
 import {
   ControlToolCatalogPort,
   type ControlToolCatalogPortService,
@@ -15,9 +16,11 @@ import {
 import { Context, Effect, Layer, Option } from "effect";
 
 export type ExecutionPurpose =
-  | "RootConversationRespond"
+  | "RootConversation"
   | "WorkspaceWork"
-  | "WorkspaceCoordination"
+  | "WorkspaceInput"
+  | "WorkspaceDecision"
+  | "LegacyAmbiguous"
   | "ExecutionBoundSpecialist"
   | "Verifier";
 
@@ -54,21 +57,61 @@ const purposeOf = (
 ): ExecutionPurpose =>
   execution.binding._tag === "ExecutionBoundAgentBinding"
     ? "ExecutionBoundSpecialist"
-    : conversation
-      ? "RootConversationRespond"
-      : execution.binding.focus._tag === "Coordination"
-        ? "WorkspaceCoordination"
-        : "WorkspaceWork";
+    : executionEpisode(execution)?._tag === "ConversationResponseEpisode" ||
+        conversation
+      ? "RootConversation"
+      : executionEpisode(execution)?._tag === "InboxEpisode"
+        ? "WorkspaceInput"
+        : executionEpisode(execution)?._tag === "DecisionEpisode"
+          ? "WorkspaceDecision"
+          : executionEpisode(execution)?._tag === "WorkEpisode"
+            ? "WorkspaceWork"
+            : "LegacyAmbiguous";
 
-const specialistControls = new Set([
-  "arbor_send_message",
-  "arbor_propose_child_workspace",
-  "arbor_spawn_specialist",
-]);
+/** MAC-P4 owns any future runtime subagent surface. Historical
+ * ExecutionBound specialists fail closed until that phase is authorized. */
+const specialistControls = new Set<string>();
 
 const verifierControls = new Set([
-  "arbor_record_verification_evidence",
-  "arbor_conclude_verification",
+  "core.control.record-verification-evidence",
+  "core.control.conclude-verification",
+]);
+
+const decisionControls = new Set(["core.control.select-current-work"]);
+
+const workControls = new Set([
+  "core.control.assign-work",
+  "core.control.accept-result",
+  "core.control.list-workspaces",
+  "core.control.read-workspace",
+  "core.control.send-message",
+  "core.control.wait",
+  "core.control.update-plan",
+  "core.control.claim-completion",
+  "core.control.propose-workspace",
+  "core.control.declare-dependency",
+  "core.control.produce-deliverable",
+  "core.control.deliver",
+]);
+
+/** Cross-Workspace Inbox cognition reopens only with the complete MAC-P3
+ * declare/produce/deliver/satisfy/wake path. */
+const inputControls = new Set([
+  "core.control.accept-result",
+  "core.control.send-message",
+  "core.control.list-workspaces",
+  "core.control.read-workspace",
+]);
+
+/** MAC-P1: RootConversation can turn one bounded human goal into Work in the
+ * current root Workspace. Formation and cross-Workspace placement reopen in
+ * MAC-P2; executable tools remain WorkEpisode-only. */
+const conversationControls = new Set([
+  "core.control.assign-work",
+  "core.control.accept-result",
+  "core.control.list-workspaces",
+  "core.control.read-workspace",
+  "core.control.propose-workspace",
 ]);
 
 export const makeTurnProfileResolver = (dependencies: {
@@ -92,11 +135,7 @@ export const makeTurnProfileResolver = (dependencies: {
         ? "Verifier"
         : purposeOf(execution, conversation);
       const executableTools: ModelFacingToolDefinition[] = [];
-      if (
-        purpose === "WorkspaceWork" ||
-        purpose === "WorkspaceCoordination" ||
-        purpose === "Verifier"
-      ) {
+      if (purpose === "WorkspaceWork" || purpose === "Verifier") {
         for (const ref of yield* dependencies.toolCatalog.visibleRefs()) {
           executableTools.push(
             yield* dependencies.toolCatalog.resolveForModel(ref),
@@ -108,27 +147,40 @@ export const makeTurnProfileResolver = (dependencies: {
           ? []
           : yield* dependencies.controlCatalog.visibleDefinitions();
       const controlTools =
-        purpose === "RootConversationRespond"
-          ? []
-          : purpose === "ExecutionBoundSpecialist"
-            ? allControls.filter((tool) => specialistControls.has(tool.name))
-            : purpose === "Verifier"
-              ? allControls.filter((tool) => verifierControls.has(tool.name))
-              : allControls.filter((tool) => !verifierControls.has(tool.name));
-      const outputContractRef =
-        purpose === "RootConversationRespond"
-          ? "text-response-v1"
-          : "tool-invocation-v1";
+        purpose === "RootConversation"
+          ? allControls.filter((tool) =>
+              conversationControls.has(tool.stableId),
+            )
+          : purpose === "WorkspaceDecision"
+            ? allControls.filter((tool) => decisionControls.has(tool.stableId))
+            : purpose === "WorkspaceWork"
+              ? allControls.filter((tool) => workControls.has(tool.stableId))
+              : purpose === "WorkspaceInput"
+                ? allControls.filter((tool) => inputControls.has(tool.stableId))
+                : purpose === "ExecutionBoundSpecialist"
+                  ? allControls.filter((tool) =>
+                      specialistControls.has(tool.stableId),
+                    )
+                  : purpose === "Verifier"
+                    ? allControls.filter((tool) =>
+                        verifierControls.has(tool.stableId),
+                      )
+                    : [];
+      const outputContractRef = "tool-invocation-v1";
       const contextPolicyRef =
-        purpose === "RootConversationRespond"
+        purpose === "RootConversation"
           ? "root-conversation-context-v1"
           : purpose === "WorkspaceWork"
             ? "workspace-work-context-v1"
-            : purpose === "WorkspaceCoordination"
-              ? "workspace-coordination-context-v1"
-              : purpose === "Verifier"
-                ? "verifier-context-v1"
-                : "specialist-context-v1";
+            : purpose === "WorkspaceInput"
+              ? "workspace-input-context-v1"
+              : purpose === "WorkspaceDecision"
+                ? "workspace-decision-context-v1"
+                : purpose === "Verifier"
+                  ? "verifier-context-v1"
+                  : purpose === "LegacyAmbiguous"
+                    ? "legacy-ambiguous-fail-closed-v1"
+                    : "legacy-specialist-fail-closed-v1";
       const identity = {
         purpose,
         profileVersion: "turn-profile-v1" as const,
@@ -138,7 +190,8 @@ export const makeTurnProfileResolver = (dependencies: {
           version,
           hash,
         })),
-        controlTools: controlTools.map(({ name, version, hash }) => ({
+        controlTools: controlTools.map(({ stableId, name, version, hash }) => ({
+          stableId,
           name,
           version,
           hash,

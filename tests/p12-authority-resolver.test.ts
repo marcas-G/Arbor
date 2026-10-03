@@ -91,13 +91,22 @@ const ISSUED_AT = "2026-09-22T00:00:00.000Z";
 const makeGrant = (
   scope: string,
   state: PermissionGrantLifecycle = "Active",
-): PermissionGrant => ({
-  permissionGrantId: GRANT,
-  scope,
-  issuer: HUMAN,
-  lifetime: "PT1H",
-  state,
-});
+): PermissionGrant => {
+  const [capability = scope, target] = scope.split("@", 2);
+  return {
+    permissionGrantId: GRANT,
+    scope,
+    issuer: HUMAN,
+    lifetime: "PT1H",
+    subject: { _tag: "WorkspaceAgent", workspaceId: WORKSPACE },
+    capability,
+    target: target ?? null,
+    validFrom: "2026-09-21T00:00:00.000Z",
+    expiresAt: "2026-09-23T00:00:00.000Z",
+    revision: 0,
+    state,
+  };
+};
 
 const externalContext = (principal: Principal): CommandSubmissionContext => ({
   _tag: "External",
@@ -215,7 +224,12 @@ describe("P12-002 authority resolver production plane", () => {
             },
           },
           canonicalFacts: { projectId: PROJECT },
-          grants: [makeGrant("RegisterProjectTool")],
+          grants: [
+            {
+              ...makeGrant("RegisterProjectTool"),
+              subject: { _tag: "HumanPrincipal", principal: AGENT },
+            },
+          ],
         }),
       ),
     );
@@ -426,6 +440,39 @@ describe("P12-002 authority resolver production plane", () => {
     expect(revoked._tag).toBe("NoApplicableGrant");
   });
 
+  it("wrong-subject and expired grants are never authority facts", async () => {
+    const wrongSubject = (await runResolver(
+      resolveError(
+        decisionInput({
+          grants: [
+            {
+              ...makeGrant(`AssignWork@${WORKSPACE}`),
+              subject: {
+                _tag: "WorkspaceAgent",
+                workspaceId: OTHER_WORKSPACE,
+              },
+            },
+          ],
+        }),
+      ),
+    )) as { _tag: string };
+    expect(wrongSubject._tag).toBe("NoApplicableGrant");
+
+    const expired = (await runResolver(
+      resolveError(
+        decisionInput({
+          grants: [
+            {
+              ...makeGrant(`AssignWork@${WORKSPACE}`),
+              expiresAt: ISSUED_AT,
+            },
+          ],
+        }),
+      ),
+    )) as { _tag: string };
+    expect(expired._tag).toBe("NoApplicableGrant");
+  });
+
   it("permission_grants migration 12 + repository: only Active grants are loaded; revoke removes the fact", async () => {
     await run(
       Effect.gen(function* () {
@@ -492,9 +539,11 @@ describe("P12-002 authority resolver production plane", () => {
               issuedAt: ISSUED_AT,
               payload: {
                 permissionGrantId: GRANT,
-                scope: `AssignWork@${WORKSPACE}`,
                 issuer: HUMAN,
-                lifetime: "PT1H",
+                subject: { _tag: "WorkspaceAgent", workspaceId: WORKSPACE },
+                capability: "AssignWork",
+                target: WORKSPACE,
+                expiresAt: "2026-09-23T00:00:00.000Z",
               },
             },
             context,

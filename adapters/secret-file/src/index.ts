@@ -57,7 +57,7 @@ const ioReason = (cause: unknown): string => {
       return code;
     }
   }
-  return String(cause);
+  return "SecretFileIoFailure";
 };
 
 export const SecretFileLive = (

@@ -7,11 +7,11 @@ const invocation = (argumentsJson: string): ToolInvocation => ({
   providerTurnId: "ptn_test" as never,
   outputPosition: 0,
   callRef: "call_test",
-  toolName: "arbor_claim_completion",
+  toolName: "claim_completion",
   argumentsJson,
 });
 
-describe("arbor_claim_completion codec (49 §126-136)", () => {
+describe("claim_completion codec (49 §126-136)", () => {
   it("decodes a well-formed claim", async () => {
     const registry = makeControlToolRegistry([
       {
@@ -79,9 +79,9 @@ describe("arbor_claim_completion codec (49 §126-136)", () => {
 
   it("is not exposed without a registered handler (no placeholder)", async () => {
     const registry = makeControlToolRegistry();
-    expect(registry.classify("arbor_claim_completion")).toBe("NotControl");
+    expect(registry.classify("claim_completion")).toBe("NotControl");
     const visible = await Effect.runPromise(registry.visibleDefinitions());
-    expect(visible.some((tool) => tool.name === "arbor_claim_completion")).toBe(
+    expect(visible.some((tool) => tool.name === "claim_completion")).toBe(
       false,
     );
   });
@@ -104,12 +104,13 @@ describe("arbor_claim_completion codec (49 §126-136)", () => {
           }),
       },
     ]);
-    expect(registry.classify("arbor_claim_completion")).toBe("Control");
+    expect(registry.classify("claim_completion")).toBe("Control");
     const visible = await Effect.runPromise(registry.visibleDefinitions());
     const tool = visible.find(
-      (definition) => definition.name === "arbor_claim_completion",
+      (definition) => definition.name === "claim_completion",
     );
     expect(tool).toBeDefined();
+    expect(tool?.stableId).toBe("core.control.claim-completion");
     expect(JSON.parse(tool?.schemaJson ?? "{}")).toMatchObject({
       required: ["claim"],
     });

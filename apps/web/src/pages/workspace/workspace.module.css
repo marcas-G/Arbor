@@ -85,11 +85,14 @@
 
 .conversation {
   display: flex;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   gap: var(--arbor-space-3);
 }
 
 .conversationLabel {
+  display: none;
   margin: 0;
   color: var(--arbor-muted);
   font-size: var(--arbor-text-caption);
@@ -123,6 +126,15 @@
   font-size: var(--arbor-text-caption);
 }
 
+.conversation :global([data-testid="virtuoso-flat"]) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-3);
+  padding: var(--arbor-space-3);
+  border-radius: var(--arbor-radius);
+  background: color-mix(in srgb, var(--arbor-paper) 44%, transparent);
+}
+
 .conversationStatus {
   display: grid;
   gap: 0.15rem;
@@ -139,14 +151,47 @@
   color: var(--arbor-ink);
 }
 
+.technicalReason {
+  color: var(--arbor-muted);
+}
+
+.technicalReason summary {
+  cursor: pointer;
+}
+
+.technicalReason code {
+  display: block;
+  margin-top: var(--arbor-space-1);
+  font-family: var(--arbor-font-mono);
+}
+
 .composer {
   display: flex;
   flex-direction: column;
   gap: var(--arbor-space-2);
-  padding: var(--arbor-space-3);
-  border: 1px solid var(--arbor-line);
-  border-radius: var(--arbor-radius);
+  padding: var(--arbor-space-2) var(--arbor-space-3) var(--arbor-space-3);
+  border: 1px solid var(--arbor-line-strong);
+  border-radius: var(--arbor-radius-large);
   background: var(--arbor-surface);
+  box-shadow: 0 8px 26px color-mix(in srgb, var(--arbor-ink) 8%, transparent);
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.composer:focus-within {
+  border-color: var(--arbor-leaf-bright);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--arbor-focus) 12%, transparent),
+    0 12px 30px color-mix(in srgb, var(--arbor-ink) 9%, transparent);
+}
+
+.composer :global(.arbor-field-label) {
+  color: var(--arbor-leaf);
+}
+
+.composer :global(.arbor-button-primary) {
+  min-width: 76px;
 }
 
 .composerStatus {

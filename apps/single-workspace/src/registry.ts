@@ -9,10 +9,13 @@ import {
   makeGrantPermissionHandler,
   makeP1CommandHandlers,
   makeP15CommandHandlers,
+  makeProduceDeliverableHandler,
   makeRecordDecisionHandler,
   makeRecordVerificationEvidenceHandler,
+  makeResolveControlApprovalHandler,
   makeResumeConversationResponseHandler,
   makeRevokePermissionHandler,
+  makeSatisfyDependencyHandler,
   makeSelectCurrentWorkHandler,
   makeSendMessageHandler,
   makeStartVerificationHandler,
@@ -21,9 +24,12 @@ import {
 } from "@arbor/application";
 import type { ProjectId } from "@arbor/domain";
 import { makeP2CommandHandlers } from "@arbor/execution-runtime";
+import { repositoryFailure } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   type AcceptanceRepositoryService,
+  ControlApprovalStore,
+  type ControlApprovalStoreService,
   ConversationResponseJobStore,
   type ConversationResponseJobStoreService,
   DeliverableRepository,
@@ -32,6 +38,7 @@ import {
   EnvironmentRevisionStore,
   EvidenceRepository,
   ExecutionRepository,
+  FormationFulfillmentStore,
   FormationProposalStore,
   type FormationProposalStoreService,
   HumanMessageStore,
@@ -94,6 +101,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const executions = yield* ExecutionRepository;
     const workWaits = yield* WorkWaitStore;
     const proposals = yield* FormationProposalStore;
+    const fulfillments = yield* Effect.serviceOption(FormationFulfillmentStore);
     const inbox = yield* InboxProjectionStore;
     const messages = yield* MessageStore;
     const verifications = yield* VerificationRepository;
@@ -101,6 +109,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const grants = yield* PermissionGrantRepository;
     const humanMessages = yield* HumanMessageStore;
     const responseJobs = yield* ConversationResponseJobStore;
+    const controlApprovals = yield* Effect.serviceOption(ControlApprovalStore);
     const dependencyStore = yield* DependencyRepository;
     const deliverables = yield* DeliverableRepository;
     const environmentRevisions = yield* EnvironmentRevisionStore;
@@ -147,14 +156,40 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
           "insert"
         >,
       }) as unknown as CommandHandler<unknown, unknown>,
+      makeProduceDeliverableHandler({
+        works,
+        deliverables,
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeSatisfyDependencyHandler({
+        dependencies: dependencyStore,
+        deliverables,
+        works,
+      }) as unknown as CommandHandler<unknown, unknown>,
       makeRecordDecisionHandler({
         proposals: proposals as Pick<
           FormationProposalStoreService,
           "findById" | "decideIfPendingRevision"
         >,
-        inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+        inbox: inbox as Pick<
+          InboxProjectionStoreService,
+          "admitUpsert" | "markConsumed"
+        >,
+        ...(Option.isSome(fulfillments)
+          ? { fulfillments: fulfillments.value }
+          : {}),
         originatingWorkspaceOf: (record) => record.parentWorkspaceId,
       }) as unknown as CommandHandler<unknown, unknown>,
+      ...(Option.isSome(controlApprovals)
+        ? [
+            makeResolveControlApprovalHandler({
+              approvals: controlApprovals.value as Pick<
+                ControlApprovalStoreService,
+                "findById" | "decide"
+              >,
+              inbox: inbox as Pick<InboxProjectionStoreService, "markConsumed">,
+            }) as unknown as CommandHandler<unknown, unknown>,
+          ]
+        : []),
       makeSteerWorkHandler({
         works,
         inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
@@ -196,11 +231,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
                   })),
                 ),
                 Effect.mapError(
-                  (cause) =>
-                    ({
-                      _tag: "DeliverableRepositoryFailure",
-                      cause,
-                    }) as never,
+                  repositoryFailure("DeliverableRepository", "list-artifacts"),
                 ),
               ),
         },

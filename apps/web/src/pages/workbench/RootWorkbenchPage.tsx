@@ -12,7 +12,7 @@ import { useViewQuery } from "../../api/useViewQuery.js";
 import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
 import { Empty } from "../../components/Empty.js";
-import { MonoText } from "../../components/MonoText.js";
+import { Icon } from "../../components/Icon.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { presentResponsibilityTree } from "../tree/treePresentation.js";
@@ -60,9 +60,14 @@ function TreePane({
       aria-labelledby="workbench-tree-title"
     >
       <header className={styles.paneHeader}>
-        <div>
-          <p className={styles.eyebrow}>组织视图</p>
-          <h2 id="workbench-tree-title">责任树</h2>
+        <div className={styles.paneTitleGroup}>
+          <span className={styles.paneIcon}>
+            <Icon name="tree" size={18} />
+          </span>
+          <div>
+            <p className={styles.eyebrow}>组织视图</p>
+            <h2 id="workbench-tree-title">责任树</h2>
+          </div>
         </div>
         <Button
           variant="quiet"
@@ -177,9 +182,14 @@ function ConversationPane({
       aria-labelledby="workbench-conversation-title"
     >
       <header className={styles.paneHeader}>
-        <div>
-          <p className={styles.eyebrow}>协作上下文</p>
-          <h2 id="workbench-conversation-title">对话</h2>
+        <div className={styles.paneTitleGroup}>
+          <span className={styles.paneIcon}>
+            <Icon name="conversation" size={18} />
+          </span>
+          <div>
+            <p className={styles.eyebrow}>协作上下文</p>
+            <h2 id="workbench-conversation-title">对话</h2>
+          </div>
         </div>
         <span className={styles.paneState}>根工作区</span>
       </header>
@@ -329,22 +339,24 @@ export function RootWorkbenchPage({
   return (
     <div className={styles.page}>
       <header className={styles.pageHeader}>
-        <div>
-          <p className={styles.eyebrow}>当前项目 · 工作台</p>
-          <h1>工作台</h1>
-          <p className={styles.intro}>
-            在项目层查看整体状态；责任树仅用于进入项目内部的长期工作空间。
-          </p>
-        </div>
-        <div className={styles.projectMeta}>
-          <span>项目</span>
-          <MonoText>{route.projectId}</MonoText>
+        <div className={styles.headingBlock}>
+          <span className={styles.headingIcon}>
+            <Icon name="workbench" size={21} />
+          </span>
+          <div>
+            <p className={styles.eyebrow}>项目工作空间</p>
+            <h1>工作台</h1>
+            <p className={styles.intro}>
+              从一次对话开始，让责任树承接持续推进的工作。
+            </p>
+          </div>
         </div>
         {projectOverview === undefined ? null : (
           <section className={styles.projectOverview} aria-label="项目概览">
-            <p className={styles.projectRoot}>
-              根责任：{projectOverview.rootName}
-            </p>
+            <div className={styles.projectRoot}>
+              <span className={styles.liveDot} />
+              <strong>{`根责任：${projectOverview.rootName}`}</strong>
+            </div>
             <dl className={styles.projectStats}>
               <div>
                 <dt>工作空间</dt>
@@ -393,12 +405,15 @@ export function RootWorkbenchPage({
       </fieldset>
 
       <div className={styles.layoutActions}>
-        <Button variant="quiet" onClick={swapPanes}>
-          交换树与对话位置
-        </Button>
-        <Button variant="quiet" onClick={resetTreeBasis}>
-          重置分栏比例
-        </Button>
+        <span className={styles.layoutHint}>工作空间布局</span>
+        <div className={styles.layoutButtons}>
+          <Button variant="quiet" onClick={swapPanes}>
+            交换树与对话位置
+          </Button>
+          <Button variant="quiet" onClick={resetTreeBasis}>
+            重置分栏比例
+          </Button>
+        </div>
       </div>
 
       <div

@@ -1,5 +1,14 @@
 # P12 — 02 Authority Resolver Production Plane (G2)
 
+> **DID v1.30 CAPA supersession (2026-10-03).** The original §5 conclusion
+> that PermissionGrant could not gain a subject is superseded. PermissionGrant
+> v2 is subject/capability/target/time-bound; unbound legacy rows are revoked by
+> migration 0029. Control Actions use `Authorized | Denied |
+> ApprovalRequired`; migration 0030 adds exact durable control approvals.
+> Approval pauses before handler execution and resumes the same
+> Execution/AgentLoopStep after human resolution. Sandbox and executable-tool
+> approval remain separate boundaries.
+
 **Authority:** DID v1.14 G2, v1.13 G4, v1.8 G2; §4.1 (CommandSubmissionContext), §4.1A, §4.2, §4.3, §6.2 (L2), §12.3, §12.10; SD v1.3 §8.1–§8.5; P1 `01` §2A/§4/§9, P2 `01` §2 + `00` R1, P4 `03` §2/§4, P5 `01` §3.1; P1-DG-11.
 **Status:** DRAFT.
 

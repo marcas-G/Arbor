@@ -23,10 +23,12 @@ export function CreateProjectForm({
   actor,
   token,
   onSubmitted,
+  embedded = false,
 }: {
   readonly actor: string;
   readonly token?: string | undefined;
   readonly onSubmitted: (receipt: CommandReceiptView) => void;
+  readonly embedded?: boolean | undefined;
 }) {
   const idsRef = useRef<{
     readonly projectId: string;
@@ -96,30 +98,29 @@ export function CreateProjectForm({
       });
     })();
   };
-  return (
-    <Card title="创建项目">
-      <form className="arbor-command-form" onSubmit={doSubmit}>
-        <Field
-          control="input"
-          label="项目名称"
-          placeholder="例如：论文写作平台"
-          value={name}
-          onChange={(next) => {
-            setValue("name", next);
-          }}
-        />
-        {formState.errors.name ? (
-          <p className="arbor-command-error">{formState.errors.name.message}</p>
-        ) : null}
-        <FormFeedback state={state} onRetry={() => doSubmit()} />
-        <Button
-          variant="primary"
-          type="submit"
-          disabled={state.phase === "submitting"}
-        >
-          创建项目
-        </Button>
-      </form>
-    </Card>
+  const form = (
+    <form className="arbor-command-form" onSubmit={doSubmit}>
+      <Field
+        control="input"
+        label="项目名称"
+        placeholder="例如：论文写作平台"
+        value={name}
+        onChange={(next) => {
+          setValue("name", next);
+        }}
+      />
+      {formState.errors.name ? (
+        <p className="arbor-command-error">{formState.errors.name.message}</p>
+      ) : null}
+      <FormFeedback state={state} onRetry={() => doSubmit()} />
+      <Button
+        variant="primary"
+        type="submit"
+        disabled={state.phase === "submitting"}
+      >
+        创建项目
+      </Button>
+    </form>
   );
+  return embedded ? form : <Card title="创建项目">{form}</Card>;
 }

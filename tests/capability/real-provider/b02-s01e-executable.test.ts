@@ -41,9 +41,9 @@ describe("B02 L3 — real-model executable tool use (S01-E)", () => {
           temporaryDirectories.push(directory);
           const objective =
             `第一个 Provider Turn 只调用 shell 执行 echo ${marker}（cwd 用 {"mount":"workspace","path":"."}），` +
-            "不要在同一轮调用 arbor_wait，也不要使用 list/read/patch。" +
+            "不要在同一轮调用 wait，也不要使用 list/read/patch。" +
             "必须先等 Runtime 把 shell ToolResult 返回到下一个 Provider Turn；看到 exitCode/stdout 后，" +
-            '再调用 arbor_wait（reason: done，waitSpec 为 mode Any 与 conditions [{_tag: "Manual"}]）。';
+            '再调用 wait（reason: done，waitSpec 为 mode Any 与 conditions [{_tag: "Manual"}]）。';
           let durable:
             | Awaited<ReturnType<typeof queryDurableEffects>>
             | undefined;

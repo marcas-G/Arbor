@@ -10,6 +10,7 @@ export const DOMAIN_ERROR_TAGS = [
   "VerificationAcceptanceMismatch",
   "DependencyNotSatisfiable",
   "PermissionRevoked",
+  "WorkPlanInvalid",
 ] as const;
 
 export type DomainErrorTag = (typeof DOMAIN_ERROR_TAGS)[number];
@@ -46,7 +47,8 @@ export type DomainError =
   | {
       readonly _tag: "PermissionRevoked";
       readonly permissionGrantId: string;
-    };
+    }
+  | { readonly _tag: "WorkPlanInvalid"; readonly reason: string };
 
 export const isDomainErrorTag = (value: unknown): value is DomainErrorTag =>
   typeof value === "string" &&

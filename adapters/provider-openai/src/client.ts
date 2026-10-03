@@ -13,6 +13,7 @@ import {
   validatePortableToolPairing,
 } from "@arbor/ports";
 import {
+  OpenAIProtocolError,
   type OpenAISdkChunk,
   type OpenAISdkClient,
   OpenAISdkError,
@@ -51,6 +52,20 @@ const endpointOf = (baseUrl: string): string => {
   return trimmed.endsWith("/chat/completions")
     ? trimmed
     : `${trimmed}/chat/completions`;
+};
+
+const isLoopbackEndpoint = (endpoint: string): boolean => {
+  try {
+    const hostname = new URL(endpoint).hostname.toLowerCase();
+    return (
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      /^127(?:\.\d{1,3}){3}$/u.test(hostname) ||
+      hostname === "[::1]"
+    );
+  } catch {
+    return false;
+  }
 };
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
@@ -173,7 +188,14 @@ const portableMessages = (
   ];
 };
 
-const requestBody = (
+/**
+ * The sole OpenAI-compatible rendering boundary for a portable request.
+ *
+ * Qualification clients may capture or dispatch this value, but must not
+ * reimplement message lowering: doing so can turn one typed ToolCall batch
+ * into invalid assistant/tool history.
+ */
+export const openAICompatibleRequestBody = (
   modelRef: string,
   request: PortableModelRequest,
 ): Record<string, unknown> => ({
@@ -200,6 +222,8 @@ const finishReasonOf = (
   reason: unknown,
 ): OpenAISdkChunk & { readonly type: "completed" } => {
   switch (reason) {
+    case "stop":
+      return { type: "completed", finishReason: "stop" };
     case "length":
       return { type: "completed", finishReason: "length" };
     case "tool_calls":
@@ -208,7 +232,7 @@ const finishReasonOf = (
     case "content_filter":
       return { type: "completed", finishReason: "content_filter" };
     default:
-      return { type: "completed", finishReason: "stop" };
+      throw new OpenAIProtocolError("unsupported-finish-reason");
   }
 };
 
@@ -231,9 +255,13 @@ const readSse = async function* (
   let buffer = "";
   let dataLines: string[] = [];
   let finishReason: unknown;
+  let finishReasonSeen = false;
+  let doneSeen = false;
+  let streamCompleted = false;
 
   const consumeEvent = (data: string): ReadonlyArray<OpenAISdkChunk> => {
     if (data === "[DONE]") {
+      doneSeen = true;
       return [];
     }
     let parsed: unknown;
@@ -328,6 +356,7 @@ const readSse = async function* (
     }
     if (firstChoice?.finish_reason !== undefined) {
       finishReason = firstChoice.finish_reason;
+      if (finishReason !== null) finishReasonSeen = true;
     }
     return chunks;
   };
@@ -364,11 +393,19 @@ const readSse = async function* (
           }
           dataLines = [];
         }
+        streamCompleted = true;
         break;
       }
     }
   } finally {
+    if (!streamCompleted) {
+      await reader.cancel().catch(() => undefined);
+    }
     reader.releaseLock();
+  }
+
+  if (!doneSeen || !finishReasonSeen) {
+    throw new OpenAIProtocolError("stream-termination-incomplete");
   }
 
   for (const call of calls.values()) {
@@ -397,9 +434,9 @@ const readSse = async function* (
 export const OpenAICompatibleFetchClient = (
   config: OpenAICompatibleClientConfig,
 ): OpenAISdkClient => ({
-  // A pure model call sends request bytes to the provider endpoint but has no
-  // externally observable side effect beyond that transport.
-  externalEffectPossible: false,
+  // A remote provider request can be billed or accepted even when the local
+  // transport later fails. Loopback qualification endpoints are effect-free.
+  externalEffectPossible: !isLoopbackEndpoint(endpointOf(config.baseUrl)),
   streamChat: async function* ({ modelRef, request, context }) {
     const credential = context.secretMaterial?.reveal();
     if (
@@ -446,7 +483,7 @@ export const OpenAICompatibleFetchClient = (
               ...config.extraHeaders,
             },
             body: JSON.stringify(
-              requestBody(config.model ?? modelRef, request),
+              openAICompatibleRequestBody(config.model ?? modelRef, request),
             ),
             signal: controller.signal,
           },
@@ -460,12 +497,16 @@ export const OpenAICompatibleFetchClient = (
         if (
           error instanceof OpenAISdkError ||
           error instanceof TypeError ||
+          (typeof error === "object" &&
+            error !== null &&
+            typeof (error as { readonly code?: unknown }).code === "string") ||
           controller.signal.aborted
         ) {
           throw error;
         }
         throw new OpenAISdkError(503, "server_error");
       }
+      yield { type: "response_started" };
       if (!response.ok) {
         throw new OpenAISdkError(
           response.status,

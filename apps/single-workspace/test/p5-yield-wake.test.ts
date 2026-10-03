@@ -57,7 +57,7 @@ const waitTurn = [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_wait",
+    toolName: "wait",
     argumentsJson: JSON.stringify({
       reason: "waiting",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -141,6 +141,11 @@ const admit = (commandId: CommandId) =>
       executionId,
       workspaceId,
       focus: { _tag: "Work", workId },
+      episode: {
+        _tag: "WorkEpisode",
+        workId,
+        targetWorkRevision: 0 as never,
+      },
     };
     const authority: VerifiedRuntimeCommandAuthority = {
       _tag: "AdmitExecutionAuthority",
@@ -234,6 +239,6 @@ describe("I0 Wait control route -> P2 WorkWait -> wake", () => {
     }
     expect(result.waits).toEqual([workId]);
     expect(result.blocked).toBe("Idle");
-    expect(result.woken).toBe("Admit");
+    expect(result.woken).toBe("AdmitWork");
   });
 });

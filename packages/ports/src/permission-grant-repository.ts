@@ -4,6 +4,7 @@ import type {
   ProjectId,
 } from "@arbor/domain";
 import { Context, type Effect } from "effect";
+import type { RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
 
 /**
@@ -23,10 +24,7 @@ export type PermissionGrantRepositoryError =
       readonly _tag: "PermissionGrantNotFound";
       readonly permissionGrantId: PermissionGrantId;
     }
-  | {
-      readonly _tag: "PermissionGrantRepositoryFailure";
-      readonly cause: unknown;
-    };
+  | RepositoryFailure<"PermissionGrantRepository">;
 
 export interface PermissionGrantRepositoryService {
   /** Active grants only (`state = 'Active'`); a Revoked grant is never loaded. */

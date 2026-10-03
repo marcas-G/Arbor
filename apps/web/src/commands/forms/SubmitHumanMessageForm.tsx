@@ -82,7 +82,10 @@ export function SubmitHumanMessageForm({
     })();
   };
   return (
-    <form className="arbor-command-form" onSubmit={doSubmit}>
+    <form
+      className="arbor-command-form arbor-conversation-composer"
+      onSubmit={doSubmit}
+    >
       <Field
         control="textarea"
         label="消息"
@@ -105,13 +108,18 @@ export function SubmitHumanMessageForm({
         </p>
       ) : null}
       <FormFeedback state={state} onRetry={() => doSubmit()} />
-      <Button
-        variant="primary"
-        type="submit"
-        disabled={state.phase === "submitting"}
-      >
-        发送
-      </Button>
+      <div className="arbor-composer-footer">
+        <span className="arbor-composer-hint">
+          Enter 发送 · Shift + Enter 换行
+        </span>
+        <Button
+          variant="primary"
+          type="submit"
+          disabled={state.phase === "submitting"}
+        >
+          发送
+        </Button>
+      </div>
     </form>
   );
 }

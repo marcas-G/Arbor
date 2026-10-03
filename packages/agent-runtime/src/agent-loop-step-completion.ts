@@ -3,6 +3,7 @@ import type {
   Execution,
   ExecutionSettlement,
 } from "@arbor/domain";
+import { conversationResponseEpisode } from "@arbor/domain";
 import type { ModelOutput } from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
@@ -114,9 +115,25 @@ export const completeAgentLoopStep = (
       decodedOutput.toolInvocations.length === 0 &&
       decodedOutput.text.trim().length > 0
     ) {
+      const episode = conversationResponseEpisode(input.execution);
+      if (episode === null) {
+        return {
+          _tag: "Settle",
+          settlement: {
+            _tag: "Failed",
+            failure: {
+              _tag: "ExecutionFailure",
+              reason: "conversation response lacks exact episode binding",
+            },
+          },
+        };
+      }
       const settlement: ExecutionSettlement = {
         _tag: "Completed",
-        result: { _tag: "QueryCompleted" },
+        result: {
+          _tag: "ConversationResponseProduced",
+          messageId: episode.messageId,
+        },
       };
       if (
         currentLoopStep !== undefined &&

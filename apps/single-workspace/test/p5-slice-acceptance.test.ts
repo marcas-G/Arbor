@@ -156,7 +156,7 @@ const wait = (reason: string) => [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c",
-    toolName: "arbor_wait",
+    toolName: "wait",
     argumentsJson: JSON.stringify({
       reason,
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -321,8 +321,7 @@ describe("I0 executable/control vertical slice", () => {
             assigned: assigned.resolution._tag,
             decision: decision._tag,
             selections: step.selections,
-            focus:
-              decision._tag === "Admit" ? decision.focus._tag : decision._tag,
+            focus: decision._tag === "AdmitWork" ? "Work" : decision._tag,
             firstAdmit: (firstAdmit as { resolution: { _tag: string } })
               .resolution._tag,
             conflict: (() => {
@@ -385,7 +384,7 @@ describe("I0 executable/control vertical slice", () => {
     expect(result.created).toBe("Committed");
     expect(result.assigned).toBe("Committed");
     expect(result.selections).toEqual([workId]);
-    expect(result.decision).toBe("Admit");
+    expect(result.decision).toBe("AdmitWork");
     expect(result.focus).toBe("Work");
     expect(result.firstAdmit).toBe("Committed");
     expect(result.conflict).toBe("ActiveExecutionConflict");
@@ -400,7 +399,7 @@ describe("I0 executable/control vertical slice", () => {
     }
 
     expect(result.waitsAfterYield).toBe(1);
-    expect(result.woken).toBe("Admit");
+    expect(result.woken).toBe("AdmitWork");
     expect(result.waitsAfterWake).toBe(0);
     expect(result.invocations).toHaveLength(1);
     expect(result.invocations[0]?.tool_name).toBe("shell");

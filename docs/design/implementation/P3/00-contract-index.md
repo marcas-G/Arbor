@@ -1,7 +1,13 @@
 # P3 — Contract Index
 
-**Authority:** DID v1.22, with P3 phase contracts frozen under prior DID
-versions except where this index records v1.18, v1.20 and v1.22 supersessions.
+> **MAC successor (DID v1.31):** the common Agent Loop, typed timeline and
+> Provider recovery remain. `LocalPlan`, one model ActionCall facade, typed
+> consumer errors and active legacy isolation are governed by
+> `docs/design/implementation/MAC/**`; conflicting new-write clauses here are
+> superseded.
+
+**Authority:** DID v1.28, with P3 phase contracts frozen under prior DID
+versions except where this index records later supersessions.
 These documents are **not** a fifth design layer; they are P3-owned
 implementation contracts authorized by DID §13.
 
@@ -29,6 +35,12 @@ callRef-paired results and source-key atomic Session promotion. `03` §2's plain
 Observation continuation is superseded by the typed Session frontier.
 DataOnly trust, explicit Compaction ProviderTurn, AgentLoopStep durability,
 authority and settlement contracts remain in force.
+
+**DID v1.28 EGP supersession:** Agent Runtime has one loop and no Coordination
+mode. TurnProfile/Context/settlement are derived from exact EpisodeBinding.
+`WorkspaceCoordination`, `workspace-coordination-context-v1`, and any branch
+that infers conversation or tools from missing WorkId are historical. Plan is
+optional tool-maintained progress state and never an output/authority contract.
 
 ## Documents
 

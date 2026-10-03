@@ -97,6 +97,12 @@ const setup = (
   options: {
     readonly rejectConclusion?: boolean;
     readonly corruptBlobRead?: boolean;
+    readonly toolStatus?:
+      | "Succeeded"
+      | "Failed"
+      | "Interrupted"
+      | "OutcomeUnknown";
+    readonly toolSettlement?: import("@arbor/ports").ToolInvocationSettlement;
   } = {},
 ) => {
   const submitted: Array<GatewayEnvelope<unknown>> = [];
@@ -175,7 +181,7 @@ const setup = (
               callRef: "tool-call-1",
               invocationId: toolInvocationId,
               observationRef: "observation:1",
-              status: "Succeeded",
+              status: options.toolStatus ?? "Succeeded",
             },
             createdAt: "t",
           },
@@ -196,7 +202,7 @@ const setup = (
             approvalId: null,
             intentAt: "t",
             settledAt: "t2",
-            settlement: { _tag: "Success" },
+            settlement: options.toolSettlement ?? { _tag: "Success" },
             resultRef: null,
           }),
         ),
@@ -205,6 +211,7 @@ const setup = (
     workspaces: {} as WorkspaceRepositoryService,
     works: {} as WorkRepositoryService,
     proposals: {} as FormationProposalStoreService,
+    inbox: { admitUpsert: () => Effect.void },
     waits: {
       findByWork: () =>
         Effect.succeed(
@@ -320,6 +327,70 @@ describe("verification control actions", () => {
     });
   });
 
+  it.each([
+    ["Failed", { _tag: "ExpectedFailure" }],
+    ["Failed", { _tag: "RuntimeFailure", cause: "tool defect" }],
+    ["Interrupted", { _tag: "Interrupted" }],
+    [
+      "OutcomeUnknown",
+      { _tag: "OutcomeUnknown", reconciliationRefs: ["tin:unknown"] },
+    ],
+  ] as const)(
+    "records %s ToolResult as verifier evidence when durable settlement matches",
+    async (toolStatus, toolSettlement) => {
+      const state = setup({ toolStatus, toolSettlement });
+      const handler = state.handlers.find(
+        (candidate) => candidate.action === "RecordVerificationEvidence",
+      );
+      await Effect.runPromise(
+        handler?.handle(
+          input(
+            {
+              _tag: "RecordVerificationEvidence",
+              criterionId: "focused-test",
+              sourceCallRef: "tool-call-1",
+            },
+            1,
+          ),
+        ) as Effect.Effect<unknown>,
+      );
+      expect(state.submitted).toHaveLength(1);
+      expect(state.submitted[0]?.payload).toMatchObject({
+        evidence: {
+          toolInvocationId,
+          observationRef: "observation:1",
+          callRef: "tool-call-1",
+        },
+      });
+    },
+  );
+
+  it("rejects a ToolResult whose model-visible status contradicts durable settlement", async () => {
+    const state = setup({
+      toolStatus: "Failed",
+      toolSettlement: { _tag: "Success" },
+    });
+    const handler = state.handlers.find(
+      (candidate) => candidate.action === "RecordVerificationEvidence",
+    );
+    const exit = await Effect.runPromise(
+      Effect.exit(
+        handler?.handle(
+          input(
+            {
+              _tag: "RecordVerificationEvidence",
+              criterionId: "focused-test",
+              sourceCallRef: "tool-call-1",
+            },
+            1,
+          ),
+        ) as Effect.Effect<unknown, unknown>,
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+    expect(state.submitted).toHaveLength(0);
+  });
+
   it("stores exact summary bytes and submits only the returned BlobRef", async () => {
     const state = setup();
     const handler = state.handlers.find(
@@ -352,7 +423,9 @@ describe("verification control actions", () => {
       verificationId,
       summaryRef: "blob:summary",
     });
-    expect(state.waitClears()).toBe(1);
+    // The command only records VerificationConcluded. The durable workflow
+    // signal consumer owns wait release after the event commits.
+    expect(state.waitClears()).toBe(0);
     expect(outcome).toEqual({
       _tag: "Settle",
       settlement: {
@@ -366,7 +439,7 @@ describe("verification control actions", () => {
     });
   });
 
-  it("replays one conclusion occurrence with one command identity and an idempotent wake", async () => {
+  it("replays one conclusion occurrence with one command identity and no synchronous wake", async () => {
     const state = setup();
     const handler = state.handlers.find(
       (candidate) => candidate.action === "ConcludeVerification",
@@ -397,7 +470,7 @@ describe("verification control actions", () => {
     expect(replay).toEqual(first);
     expect(state.submitted).toHaveLength(2);
     expect(state.submitted[0]?.commandId).toBe(state.submitted[1]?.commandId);
-    expect(state.waitClears()).toBe(1);
+    expect(state.waitClears()).toBe(0);
   });
 
   it("never settles when summary verification or the conclusion command fails", async () => {

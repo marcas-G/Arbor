@@ -61,11 +61,7 @@ const makeContext = (
   providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789c0" as never,
   attemptNo: 0,
   cancellationSignal: new AbortController().signal,
-  connectTimeoutMs: 2_000,
-  firstEventTimeoutMs: 2_000,
-  streamIdleTimeoutMs: 2_000,
   turnDeadlineAt: new Date(Date.now() + 10_000).toISOString(),
-  maxAttempts: 3,
   ...overrides,
 });
 
@@ -127,10 +123,14 @@ const sse = (payloads: ReadonlyArray<string>): string =>
   payloads.map((payload) => `data: ${payload}\n\n`).join("") +
   "data: [DONE]\n\n";
 
-const jsonChunks = (deltas: ReadonlyArray<string>): ReadonlyArray<string> =>
-  deltas.map((delta) =>
+const jsonChunks = (deltas: ReadonlyArray<string>): ReadonlyArray<string> => [
+  ...deltas.map((delta) =>
     JSON.stringify({ choices: [{ delta: { content: delta } }] }),
-  );
+  ),
+  JSON.stringify({
+    choices: [{ delta: {}, finish_reason: "stop" }],
+  }),
+];
 
 type FetchDouble = (
   url: unknown,

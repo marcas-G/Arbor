@@ -7,6 +7,7 @@ import {
   type CommandHandlerRegistry,
   type CompletionConsumerDependencies,
   type ConsumerLoopStores,
+  type DependencyCoordinatorDependencies,
   type EnvironmentDriftDeps,
   ensureVerifierSpawned,
   type ParentUserGovernanceFacts,
@@ -20,14 +21,19 @@ import {
   type SnapshotRetentionError,
   type SnapshotRetentionPlan,
   type VerificationConsumerDependencies,
+  WorkflowSignalConsumer,
 } from "@arbor/application";
-import type { Principal, ProjectId } from "@arbor/domain";
+import {
+  conversationResponseEpisode,
+  type Principal,
+  type ProjectId,
+} from "@arbor/domain";
 import {
   runExecution,
   startupRecovery,
   sweepRecovery,
 } from "@arbor/execution-runtime";
-import { P23_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
+import { P32_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   type AgentExecutionStateStore,
@@ -35,16 +41,21 @@ import {
   Clock,
   ConsumerDeadLetterStore,
   ConsumerOffsetStore,
+  ControlApprovalStore,
   ConversationAttemptStore,
   ConversationResponseJobStore,
+  DeliverableRepository,
+  DependencyRepository,
   DomainEventJournal,
   EnvironmentResolverPort,
   EnvironmentRevisionStore,
   type ExecutionDriverPort,
   ExecutionRepository,
   type ExecutionScheduler,
+  FormationFulfillmentStore,
   FormationProposalStore,
   type IdGenerator,
+  InboxProjectionStore,
   type LeaseService,
   type OwnershipWriteService,
   type PermissionGrantRepository,
@@ -77,12 +88,14 @@ import {
   type ConsumerLoopDaemon,
   completionConsumerDaemon,
   type DriftWatcherTrigger,
+  dependencyCoordinatorDaemon,
   driftWatcherFromDeps,
   formationConsumerDaemon,
   makeProductionDaemon,
   type ProductionDaemon,
   type RecoveryDaemon,
   verificationConsumerDaemon,
+  workflowSignalConsumerDaemon,
 } from "./transport/daemons.js";
 import {
   type CliShell,
@@ -220,15 +233,21 @@ export type ProductionDaemonServices =
   | IdGenerator
   | VerificationRepository
   | AcceptanceRepository
+  | DependencyRepository
+  | DeliverableRepository
   | WorkRepository
   | WorkspaceRepository
   | FormationProposalStore
+  | FormationFulfillmentStore
+  | InboxProjectionStore
+  | WorkflowSignalConsumer
   | EnvironmentResolverPort
   | RecordEnvironmentChange
   | EnvironmentRevisionStore
   | BlobStorePort
   | T1RecoveryState
   | ConversationResponseJobStore
+  | ControlApprovalStore
   | ConversationAttemptStore
   | ProviderDeploymentBreaker
   | ProjectRepository;
@@ -250,10 +269,16 @@ export const ProductionDaemonServiceLive = (
       const projection = yield* ProjectionStore;
       const verifications = yield* VerificationRepository;
       const acceptances = yield* AcceptanceRepository;
+      const dependencies = yield* DependencyRepository;
+      const deliverables = yield* DeliverableRepository;
       const works = yield* WorkRepository;
       const proposals = yield* FormationProposalStore;
+      const formationFulfillments = yield* FormationFulfillmentStore;
+      const controlApprovals = yield* ControlApprovalStore;
+      const inbox = yield* InboxProjectionStore;
       const workspaces = yield* WorkspaceRepository;
       const executions = yield* ExecutionRepository;
+      const workflowSignals = yield* WorkflowSignalConsumer;
       const gateway = yield* CommandGateway;
       const t1 = yield* T1RecoveryState;
       const resolver = yield* EnvironmentResolverPort;
@@ -312,6 +337,45 @@ export const ProductionDaemonServiceLive = (
         },
         works: { findById: (workId) => tx.transact(works.findById(workId)) },
       };
+      const dependencyDeps: DependencyCoordinatorDependencies<never> = {
+        gateway,
+        dependencies: {
+          listUnsatisfiedByProject: (targetProjectId) =>
+            tx.transact(dependencies.listUnsatisfiedByProject(targetProjectId)),
+        },
+        deliverables: {
+          findById: (deliverableId) =>
+            tx.transact(deliverables.findById(deliverableId)),
+          listArtifactRoles: (deliverableId) =>
+            tx.transact(deliverables.listArtifactRoles(deliverableId)),
+          deliverablesByProject: (targetProjectId) =>
+            Effect.gen(function* () {
+              const rows = yield* tx.transact(
+                deliverables.listByProject(targetProjectId),
+              );
+              return yield* Effect.forEach(
+                rows,
+                (row) =>
+                  Effect.map(
+                    tx.transact(
+                      deliverables.listArtifactRoles(row.deliverableId),
+                    ),
+                    (artifactRoles) => ({
+                      deliverableId: row.deliverableId,
+                      sourceWorkId: row.sourceWorkId,
+                      sourceWorkRevision: row.sourceWorkRevision,
+                      kind: row.kind,
+                      artifactRoles,
+                    }),
+                  ),
+                { concurrency: 1 },
+              );
+            }),
+        },
+        works: {
+          findById: (workId) => tx.transact(works.findById(workId)),
+        },
+      };
 
       const registerProjectConsumers = Effect.gen(function* () {
         const consumerSql = yield* SqlClient;
@@ -363,6 +427,14 @@ export const ProductionDaemonServiceLive = (
             continue;
           }
           dynamicConsumers.push(
+            dependencyCoordinatorDaemon({
+              consumerId: "dependency-coordinator",
+              projectId,
+              principal: config.principal,
+              batchSize: config.batchSize ?? 50,
+              stores,
+              dependencies: dependencyDeps,
+            }),
             formationConsumerDaemon({
               consumerId: "formation",
               projectId,
@@ -377,6 +449,10 @@ export const ProductionDaemonServiceLive = (
                 proposals: {
                   findById: (proposalId) =>
                     tx.transact(proposals.findById(proposalId)),
+                },
+                fulfillments: {
+                  put: (record) =>
+                    tx.transact(formationFulfillments.put(record)),
                 },
               },
             }),
@@ -395,6 +471,13 @@ export const ProductionDaemonServiceLive = (
               stores,
               principal: config.principal,
               dependencies: completionDeps,
+            }),
+            workflowSignalConsumerDaemon({
+              consumerId: "workflow-signals",
+              projectId,
+              batchSize: config.batchSize ?? 50,
+              stores,
+              consumer: workflowSignals,
             }),
           );
         }
@@ -544,7 +627,7 @@ export const ProductionDaemonServiceLive = (
               },
               projectId,
             );
-            // The P14 trigger admits a durable Coordination execution;
+            // The trigger admits an exact ConversationResponseEpisode;
             // the local production composition must also hand that
             // execution to the existing fenced P2/P3 runner. Claims are
             // the exact correlation between a human turn and its main
@@ -561,8 +644,7 @@ export const ProductionDaemonServiceLive = (
               if (
                 Option.isSome(execution) &&
                 execution.value.state.status === "Active" &&
-                execution.value.binding._tag === "WorkspaceExecution" &&
-                execution.value.binding.focus._tag === "Coordination"
+                conversationResponseEpisode(execution.value) !== null
               ) {
                 // Conversation streaming bridge: link execution → message for
                 // the presentation tap, publish terminal at settlement.
@@ -572,10 +654,12 @@ export const ProductionDaemonServiceLive = (
                   { _tag: "Recovery" },
                   config.principal,
                 );
-                publishConversationSettled(
-                  claimedExecutionId,
-                  settlement as { readonly _tag: string },
-                );
+                if (settlement._tag !== "ApprovalRequired") {
+                  publishConversationSettled(
+                    claimedExecutionId,
+                    settlement as { readonly _tag: string },
+                  );
+                }
               }
             }
           }
@@ -599,11 +683,40 @@ export const ProductionDaemonServiceLive = (
               config.principal,
             );
           }
+
+          const approvalNow = yield* clock.now();
+          const resolvedControlActions = yield* tx.transact(
+            Effect.gen(function* () {
+              const expired = yield* controlApprovals.expireDue(approvalNow);
+              for (const approval of expired) {
+                yield* inbox.markConsumed(
+                  approval.workspaceId,
+                  `cap:${approval.approvalId}:${approval.revision - 1}`,
+                );
+              }
+              return yield* controlApprovals.listResolved();
+            }),
+          );
+          for (const approval of resolvedControlActions) {
+            const execution = yield* tx.transact(
+              executions.findById(approval.executionId),
+            );
+            if (
+              Option.isSome(execution) &&
+              execution.value.state.status === "Active"
+            ) {
+              yield* runExecution(
+                approval.executionId,
+                { _tag: "HumanIntervention" },
+                config.principal,
+              );
+            }
+          }
         }),
       );
 
       const daemon = makeProductionDaemon({
-        migrate: runMigrations(P23_MIGRATIONS),
+        migrate: runMigrations(P32_MIGRATIONS),
         recovery,
         consumers,
         conversationTick,

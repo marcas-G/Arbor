@@ -44,8 +44,8 @@ interface ProviderExecutionContext {
   readonly providerTurnId: ProviderTurnId;
   readonly attemptNo: number;
   readonly secretRef: SecretRef;
-  readonly timeoutMs: number;
   readonly cancellation: CancellationRef;
+  readonly turnDeadlineAt: string;
 }
 ```
 
@@ -105,6 +105,13 @@ type ProviderFinishReason =
 - `ContinuationState` carries provider continuation metadata for multi-turn
   continuity; it is opaque to Model Context.
 
+`inputItems` are a canonical projection, not retained provider wire JSON.
+`Model Context` is the sole semantic compiler of this projection; each
+ProtocolAdapter owns the only provider-message renderer for its family. The
+renderer validates `callRef` pairing and legal provider ordering before network
+dispatch. Qualification clients reuse that renderer rather than maintaining a
+second message-lowering implementation.
+
 ## 4. ProviderRuntime responsibilities
 
 ```text
@@ -120,6 +127,12 @@ cancellation propagation
 
 Provider retry never creates a new `ProviderTurn` and never increments the
 Agent `turnNo` (DID §6A.9).
+
+ProviderRuntime exclusively resolves and evaluates connect, first-event,
+stream-idle, Turn-deadline, retry-count and backoff policy. Protocol adapters
+receive the Runtime cancellation signal plus the already-resolved terminal
+`turnDeadlineAt`; they may enforce that terminal upper bound at the transport
+edge but never select policy values or retry.
 
 ## 5. ProviderTurn vs ProviderAttempt
 

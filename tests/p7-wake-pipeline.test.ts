@@ -125,7 +125,7 @@ const waitOf = (deps: WakeSinkDependencies, workId: WorkId) =>
   deps.tx.transact(deps.waits.findByWork(workId));
 
 describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
-  it("DependencySatisfied clears only the advanced DependencyChanged wait and reevaluates the target workspace", async () => {
+  it("DependencySatisfied clears the exact wait without requiring revision advance and reevaluates", async () => {
     const { calls, app } = makeWakeApp();
     await runP7(
       Effect.gen(function* () {
@@ -149,7 +149,7 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
           {
             workspaceId: p7RootWorkspace,
             reason: "DependencySatisfied",
-            detail: { dependencyId: DEP, fromRevision: 0, toRevision: 1 },
+            detail: { dependencyId: DEP, fromRevision: 0, toRevision: 0 },
           },
           deps,
         );
@@ -168,7 +168,7 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
     );
   });
 
-  it("observedRevision already at/after toRevision clears nothing (already seen); reevaluate still fires at-least-once", async () => {
+  it("DependencySatisfied clears a matching wait even when observedRevision equals or exceeds the stable revision", async () => {
     const { calls, app } = makeWakeApp();
     await runP7(
       Effect.gen(function* () {
@@ -189,8 +189,8 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
           },
           deps,
         );
-        expect(outcome).toEqual({ woke: false, clearedWaits: 0 });
-        expect(Option.isSome(yield* waitOf(deps, WORK_CONSUMER))).toBe(true);
+        expect(outcome).toEqual({ woke: true, clearedWaits: 1 });
+        expect(yield* waitOf(deps, WORK_CONSUMER)).toEqual(Option.none());
         expect(calls.length).toBe(1);
       }),
       app,

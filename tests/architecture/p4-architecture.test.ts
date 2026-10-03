@@ -54,6 +54,39 @@ describe("P4 package DAG", () => {
     expect(depsOf("agent-runtime")).not.toContain("tool-runtime");
   });
 
+  it("keeps ToolRuntime failures stage-owned and cleanup out of the defect channel", () => {
+    const errors = readFileSync(
+      join(repoRoot, "packages/ports/src/errors.ts"),
+      "utf8",
+    );
+    const runtime = readFileSync(
+      join(repoRoot, "packages/tool-runtime/src/runtime.ts"),
+      "utf8",
+    );
+    expect(errors).toContain("ToolRuntimeOperationalFailure");
+    expect(errors).toContain("ToolRuntimeCleanupFailure");
+    expect(errors).toContain(
+      'effectDisposition: "NotStarted" | "OutcomeUncertain"',
+    );
+    expect(errors).not.toContain('readonly _tag: "ToolRuntimeError"');
+    expect(runtime).not.toContain("Effect.orDie");
+    for (const stage of [
+      "WorkspaceLookup",
+      "EnvironmentResolution",
+      "AuthorityResolution",
+      "ApprovalLookup",
+      "IntentJournal",
+      "ApprovalConsumption",
+      "ResourceAdmission",
+      "SandboxOpen",
+      "Executor",
+      "SettlementJournal",
+      "SandboxClose",
+    ]) {
+      expect(runtime).toContain(stage);
+    }
+  });
+
   it("allows the P4 adapters only domain/ports", () => {
     for (const adapter of ["sandbox-local", "blob-local"]) {
       expect([...depsOf(adapter)].sort()).toEqual(["domain", "ports"]);

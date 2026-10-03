@@ -48,7 +48,11 @@ const isProblem = (value: unknown): value is Problem => {
   return (
     typeof record.code === "string" &&
     typeof record.category === "string" &&
-    typeof record.message === "string"
+    typeof record.message === "string" &&
+    (record.retryDisposition === "retryable" ||
+      record.retryDisposition === "non-retryable") &&
+    typeof record.safeDetails === "object" &&
+    record.safeDetails !== null
   );
 };
 
@@ -69,11 +73,11 @@ export async function submitCommand(
       headers,
       body: JSON.stringify(envelope),
     });
-  } catch (error) {
+  } catch {
     return {
       ok: false,
       status: 0,
-      problem: unavailableProblem(`fetch failed: ${String(error)}`),
+      problem: unavailableProblem("fetch failed"),
     };
   }
   let parsed: unknown;

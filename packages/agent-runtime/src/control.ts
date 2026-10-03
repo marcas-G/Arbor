@@ -1,3 +1,4 @@
+import { workEpisode } from "@arbor/domain";
 import { ControlToolCatalogPort } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 
@@ -26,8 +27,12 @@ import {
 
 export type ToolRouteClassification =
   | { readonly _tag: "Executable" }
-  | { readonly _tag: "Control" }
-  | { readonly _tag: "Stale"; readonly route: "Control" }
+  | { readonly _tag: "Control"; readonly stableId: string }
+  | {
+      readonly _tag: "Stale";
+      readonly route: "Control";
+      readonly stableId: string;
+    }
   | {
       readonly _tag: "Invalid";
       readonly reason: "UnknownTool" | "RouteRegistryMismatch";
@@ -39,6 +44,7 @@ export const classifyToolRoute = (
   toolRoutes: ReadonlyArray<{
     readonly name: string;
     readonly route: "Executable" | "Control";
+    readonly stableId?: string;
     readonly version?: string;
     readonly hash?: string;
   }>,
@@ -47,6 +53,13 @@ export const classifyToolRoute = (
 ): ToolRouteClassification => {
   const route = toolRoutes.find((candidate) => candidate.name === toolName);
   if (route === undefined) return { _tag: "Invalid", reason: "UnknownTool" };
+  const definition = registry
+    .definitions()
+    .find(
+      (candidate) =>
+        candidate.name === toolName ||
+        candidate.legacyNames?.some((legacy) => legacy.name === toolName),
+    );
   const registryRoute = registry.classify(toolName);
   if (
     (route.route === "Control" && registryRoute !== "Control") ||
@@ -55,18 +68,32 @@ export const classifyToolRoute = (
     return { _tag: "Invalid", reason: "RouteRegistryMismatch" };
   }
   if (route.route === "Control" && route.version !== undefined) {
-    const current = registry
-      .definitions()
-      .find((definition) => definition.name === toolName);
+    const current = definition;
+    const legacyMatch =
+      current?.legacyNames?.some(
+        (legacy) =>
+          legacy.name === toolName &&
+          legacy.version === route.version &&
+          legacy.hash === route.hash,
+      ) ?? false;
     if (
       current === undefined ||
-      current.version !== route.version ||
-      (route.hash !== undefined && current.hash !== route.hash)
+      (route.stableId !== undefined && current.stableId !== route.stableId) ||
+      (!legacyMatch &&
+        (current.version !== route.version ||
+          (route.hash !== undefined && current.hash !== route.hash)))
     ) {
-      return { _tag: "Stale", route: "Control" };
+      return {
+        _tag: "Stale",
+        route: "Control",
+        stableId: current?.stableId ?? route.stableId ?? "unknown",
+      };
     }
+    return { _tag: "Control", stableId: current.stableId };
   }
-  return { _tag: route.route };
+  return route.route === "Control"
+    ? { _tag: "Control", stableId: definition?.stableId ?? "unknown" }
+    : { _tag: "Executable" };
 };
 
 import { controlToolDefinitions } from "./control-catalog.js";
@@ -80,18 +107,18 @@ export const makeControlToolRegistry = (
     handle: ({ action, execution }) => {
       if (action._tag !== "Wait") {
         return Effect.fail({
-          _tag: "AgentActionError",
+          _tag: "AgentActionOperationalFailure",
+          operation: "ControlRegistry.WaitDispatch",
           cause: "Wait handler received a different AgentAction",
         });
       }
-      if (
-        execution.binding._tag !== "WorkspaceExecution" ||
-        execution.binding.focus._tag !== "Work"
-      ) {
+      if (workEpisode(execution) === null) {
         return Effect.fail({
-          _tag: "AgentActionError",
-          cause:
+          _tag: "AgentActionRejected",
+          code: "action/not-applicable",
+          safeMessage:
             "Wait requires an active Work binding for durable WorkWait registration",
+          correction: "ChooseAlternative",
         });
       }
       return Effect.succeed({
@@ -115,23 +142,34 @@ export const makeControlToolRegistry = (
     allHandlers.map((handler) => [handler.action, handler] as const),
   );
   const allDefinitions = controlToolDefinitions();
-  const definitionAction: Readonly<
-    Record<(typeof allDefinitions)[number]["name"], AgentAction["_tag"]>
-  > = {
-    arbor_wait: "Wait",
-    arbor_send_message: "SendMessage",
-    arbor_claim_completion: "ClaimCompletion",
-    arbor_propose_child_workspace: "ProposeChildWorkspace",
-    arbor_spawn_specialist: "SpawnSpecialist",
-    arbor_declare_dependency: "DeclareDependency",
-    arbor_record_verification_evidence: "RecordVerificationEvidence",
-    arbor_conclude_verification: "ConcludeVerification",
+  const definitionAction: Readonly<Record<string, AgentAction["_tag"]>> = {
+    "core.control.wait": "Wait",
+    "core.control.assign-work": "AssignWork",
+    "core.control.list-workspaces": "ListWorkspaces",
+    "core.control.read-workspace": "ReadWorkspace",
+    "core.control.accept-result": "AcceptResult",
+    "core.control.update-plan": "UpdatePlan",
+    "core.control.select-current-work": "SelectCurrentWork",
+    "core.control.send-message": "SendMessage",
+    "core.control.claim-completion": "ClaimCompletion",
+    "core.control.propose-workspace": "ProposeChildWorkspace",
+    "core.control.spawn-specialist": "SpawnSpecialist",
+    "core.control.declare-dependency": "DeclareDependency",
+    "core.control.produce-deliverable": "ProduceDeliverable",
+    "core.control.deliver": "Deliver",
+    "core.control.record-verification-evidence": "RecordVerificationEvidence",
+    "core.control.conclude-verification": "ConcludeVerification",
   };
   const registered = allDefinitions.filter((tool) => {
-    const action = definitionAction[tool.name];
+    const action = definitionAction[tool.stableId];
     return action !== undefined && handlerMap.has(action);
   });
-  const names = new Set(registered.map((tool) => tool.name));
+  const names = new Set(
+    registered.flatMap((tool) => [
+      tool.name,
+      ...(tool.legacyNames?.map((legacy) => legacy.name) ?? []),
+    ]),
+  );
   const visibleDefinitions = () => Effect.succeed(registered);
   return {
     definitions: () => registered,
@@ -148,7 +186,8 @@ export const makeControlToolRegistry = (
       const handler = handlerMap.get(input.action._tag);
       return handler === undefined
         ? Effect.fail({
-            _tag: "AgentActionError",
+            _tag: "AgentActionOperationalFailure",
+            operation: "ControlRegistry.HandlerLookup",
             cause: `no handler registered for ${input.action._tag}`,
           })
         : handler.handle(input);

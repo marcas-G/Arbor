@@ -42,7 +42,6 @@ import {
 import {
   ModelContext,
   ModelContextLive,
-  makeTurnProfileResolver,
   type TurnProfileResolverService,
 } from "../packages/model-context/src/index.js";
 import {
@@ -50,8 +49,10 @@ import {
   type CanonicalProviderEvent,
   EnvironmentRevisionStore,
   ExecutionDriverPort,
+  type ModelCapability,
   ModelCapabilityPort,
   type ModelFacingToolDefinition,
+  type PortableModelRequest,
   type ProviderExecutionPolicyOverrides,
   type ProviderRunInput,
   ProviderRuntime,
@@ -80,7 +81,11 @@ const execution: Execution = {
   binding: {
     _tag: "WorkspaceExecution",
     workspaceId,
-    focus: { _tag: "Coordination" },
+    episode: {
+      _tag: "InboxEpisode",
+      entryKey: "p3-driver-fixture",
+      inputKind: "TestInput",
+    },
   },
   sessionId,
   admittedAt: "t",
@@ -90,7 +95,11 @@ const execution: Execution = {
 
 const state: AgentExecutionState = {
   executionId,
-  focus: { _tag: "Coordination" },
+  episode: {
+    _tag: "InboxEpisode",
+    entryKey: "p3-driver-fixture",
+    inputKind: "TestInput",
+  },
   wakeReason: { _tag: "WorkSelected" },
   currentMode: "execute",
   activeSkillRefs: [],
@@ -126,6 +135,7 @@ const makeApp = (
     readonly failFirstSourcedAppend?: boolean;
     readonly failFirstOutputAcceptedTransition?: boolean;
     readonly turnProfileResolver?: TurnProfileResolverService;
+    readonly modelCapability?: ModelCapability;
   } = {},
 ) => {
   const base = layer({ filename: ":memory:" });
@@ -136,6 +146,13 @@ const makeApp = (
     IdGeneratorLive,
   );
   const provider = FakeProviderLive({ turns });
+  const capabilityLayer =
+    options.modelCapability === undefined
+      ? capability
+      : Layer.succeed(ModelCapabilityPort, {
+          resolve: () =>
+            Effect.succeed(options.modelCapability as ModelCapability),
+        });
   const providerTurnStore = Layer.provide(ProviderTurnStoreLive, infra);
   const liveAgentLoopSteps = Layer.provide(AgentLoopStepStoreLive, infra);
   const agentLoopSteps =
@@ -208,27 +225,6 @@ const makeApp = (
   );
   const providerRuntime = options.providerRuntime ?? defaultProviderRuntime;
   const definitions = options.toolDefinitions ?? [];
-  const toolCatalogService = {
-    visibleRefs: () =>
-      Effect.succeed(
-        definitions.map(({ name, version, hash }) => ({ name, version, hash })),
-      ),
-    resolveForModel: (ref: {
-      readonly name: string;
-      readonly version: string;
-      readonly hash: string;
-    }) => {
-      const tool = definitions.find(
-        (candidate) =>
-          candidate.name === ref.name &&
-          candidate.version === ref.version &&
-          candidate.hash === ref.hash,
-      );
-      return tool === undefined
-        ? Effect.die(`no tool definition for ${ref.name}`)
-        : Effect.succeed(tool);
-    },
-  };
   const defaultSendHandler: AgentActionHandler = {
     action: "SendMessage",
     handle: () =>
@@ -245,13 +241,21 @@ const makeApp = (
   );
   const turnProfileResolver =
     options.turnProfileResolver ??
-    makeTurnProfileResolver({
-      toolCatalog: toolCatalogService,
-      controlCatalog: controlRegistry,
-    });
+    ({
+      resolve: () =>
+        Effect.map(controlRegistry.visibleDefinitions(), (controlTools) => ({
+          purpose: "WorkspaceInput" as const,
+          profileVersion: "turn-profile-v1" as const,
+          outputContractRef: "tool-invocation-v1",
+          executableTools: definitions,
+          controlTools,
+          contextPolicyRef: "p3-driver-test-context-v1",
+          fingerprint: "tpf_p3_driver_test",
+        })),
+    } satisfies TurnProfileResolverService);
   const modelContext = Layer.provide(
     ModelContextLive,
-    Layer.mergeAll(capability, skills),
+    Layer.mergeAll(capabilityLayer, skills),
   );
   const environmentRevisions =
     options.environmentRevisions ??
@@ -271,7 +275,7 @@ const makeApp = (
       infra,
       modelContext,
       providerRuntime,
-      capability,
+      capabilityLayer,
       sessions,
       providerTurnStore,
       agentLoopSteps,
@@ -288,7 +292,7 @@ const makeApp = (
     driver,
     providerRuntime,
     modelContext,
-    capability,
+    capabilityLayer,
   );
 };
 
@@ -382,17 +386,36 @@ const run = <A>(
 const drive = (
   gate: RuntimeSafetyGateService,
   submissionContext: CommandSubmissionContext = context,
+  executionOverride: Execution = execution,
 ) =>
   Effect.gen(function* () {
     const driver = yield* ExecutionDriverPort;
+    const episode =
+      executionOverride.binding._tag === "WorkspaceExecution"
+        ? executionOverride.binding.episode
+        : undefined;
     return yield* driver.drive({
-      execution,
-      agentExecutionState: state,
+      execution: executionOverride,
+      agentExecutionState:
+        episode === undefined ? state : { ...state, episode },
       wakeReason: { _tag: "WorkSelected" },
       context: submissionContext,
       safetyGate: gate,
     });
   });
+
+const conversationExecution = (messageId: string): Execution => ({
+  ...execution,
+  binding: {
+    _tag: "WorkspaceExecution",
+    workspaceId,
+    episode: {
+      _tag: "ConversationResponseEpisode",
+      messageId: messageId as never,
+      responseJobRevision: 0,
+    },
+  },
+});
 
 /** B-9: the drive plus the durable ProviderTurn count, so tests can prove that
  * bounded repair really re-prepared (a new ProviderTurn) and that a stale
@@ -444,11 +467,11 @@ const textTurn = [
   { _tag: "TextDelta" as const, text: "thinking" },
   { _tag: "TurnCompleted" as const, finishReason: "Stop" as const },
 ];
-const sendMessageTurn = (body: string) => [
+const sendMessageTurn = (body: string, callRef = "c1") => [
   {
     _tag: "ToolCallProposed" as const,
-    callRef: "c1",
-    toolName: "arbor_send_message",
+    callRef,
+    toolName: "send_message",
     argumentsJson: JSON.stringify({
       kind: "Query",
       body,
@@ -457,8 +480,127 @@ const sendMessageTurn = (body: string) => [
   },
   { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
 ];
+const invalidSendMessageTurn = [
+  {
+    _tag: "ToolCallProposed" as const,
+    callRef: "c0",
+    toolName: "send_message",
+    argumentsJson: JSON.stringify({
+      kind: "Query",
+      recipientWorkspaceId: String(workspaceId),
+    }),
+  },
+  { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
+];
+const proposeWorkspaceTurn = [
+  {
+    _tag: "ToolCallProposed" as const,
+    callRef: "proposal-call",
+    toolName: "propose_workspace",
+    argumentsJson: JSON.stringify({
+      name: "research-child",
+      rationale: "independent long-lived research responsibility",
+      responsibilityDraft: {
+        purpose: "own the research stream",
+        ownedResponsibilities: [],
+        obligations: [],
+        includes: [],
+        excludes: [],
+        interfaces: [],
+      },
+      resourceBoundaryDraft: {
+        addresses: [{ _tag: "FileTree", path: "." }],
+      },
+    }),
+  },
+  { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
+];
 
 describe("P3-013 agent driver", () => {
+  it("carries a conversation-safe control result into the next turn before answering", async () => {
+    const requests: PortableModelRequest[] = [];
+    const observationMarker = "ProposalRecorded(fpr_test); awaiting approval";
+    let call = 0;
+    const proposalHandler: AgentActionHandler = {
+      action: "ProposeChildWorkspace",
+      handle: () =>
+        Effect.succeed({
+          _tag: "Observation",
+          source: "Runtime",
+          observation: { text: observationMarker, truncated: false },
+        }),
+    };
+    const app = makeApp([], {
+      controlHandlers: [proposalHandler],
+      providerRuntime: Layer.succeed(ProviderRuntime, {
+        runTurn: (input) => {
+          requests.push(input.request);
+          const events = call === 0 ? proposeWorkspaceTurn : textTurn;
+          call += 1;
+          return Effect.succeed({
+            events: [
+              {
+                _tag: "TurnStarted",
+                providerTurnId: input.providerTurnId,
+                attemptNo: 0,
+                modelRef: input.request.modelRef,
+              },
+              ...events,
+            ],
+            attemptNo: 0,
+            retryDecisions: [],
+          });
+        },
+      }),
+    });
+    const messageId = "msg_018f2b3c-4d5e-7abc-8def-0123456789a4";
+    const settlement = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P17_MIGRATIONS);
+        yield* seed;
+        const sql = yield* SqlClient;
+        yield* sql.unsafe(
+          "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no, provider_reasoning_json) VALUES (?,?,?,?,?,?,?,?,?,?,NULL,NULL,0,NULL)",
+          [
+            messageId,
+            projectId,
+            workspaceId,
+            "user:local",
+            "创建子工作区",
+            "cmd_018f2b3c-4d5e-7abc-8def-0123456789a4",
+            "fp-conversation-action",
+            "Claimed",
+            executionId,
+            "t",
+          ],
+        );
+        return yield* drive(
+          allowGate,
+          context,
+          conversationExecution(messageId),
+        );
+      }),
+      app,
+    );
+
+    expect(settlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "ConversationResponseProduced", messageId },
+    });
+    expect(requests).toHaveLength(2);
+    expect(
+      requests[1] === undefined ? [] : portableInputItems(requests[1]),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          _tag: "Message",
+          role: "tool",
+          text: observationMarker,
+        }),
+      ]),
+    );
+  });
+
   it("uses one persisted overflow chain and replacement inference", async () => {
     const operations: string[] = [];
     const providerRuntime = Layer.succeed(ProviderRuntime, {
@@ -638,8 +780,13 @@ describe("P3-013 agent driver", () => {
           "t",
         ],
       );
-      const first = yield* Effect.exit(drive(allowGate));
-      const second = yield* drive(allowGate);
+      const exactExecution = conversationExecution(
+        "msg_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      );
+      const first = yield* Effect.exit(
+        drive(allowGate, context, exactExecution),
+      );
+      const second = yield* drive(allowGate, context, exactExecution);
       const attempts = yield* sql.unsafe<{ count: number }>(
         "SELECT COUNT(*) AS count FROM provider_attempts",
       );
@@ -663,7 +810,7 @@ describe("P3-013 agent driver", () => {
     expect(result.first._tag).toBe("Failure");
     expect(result.second).toMatchObject({
       _tag: "Completed",
-      result: { _tag: "QueryCompleted" },
+      result: { _tag: "ConversationResponseProduced" },
     });
     expect(result.attemptCount).toBe(1);
     expect(result.outputCount).toBe(1);
@@ -693,11 +840,16 @@ describe("P3-013 agent driver", () => {
           "t",
         ],
       );
-      const first = yield* Effect.exit(drive(allowGate));
+      const exactExecution = conversationExecution(
+        "msg_018f2b3c-4d5e-7abc-8def-0123456789a3",
+      );
+      const first = yield* Effect.exit(
+        drive(allowGate, context, exactExecution),
+      );
       const afterFirst = yield* sql.unsafe<{ count: number }>(
         "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn'",
       );
-      const second = yield* drive(allowGate);
+      const second = yield* drive(allowGate, context, exactExecution);
       const afterSecond = yield* sql.unsafe<{ count: number }>(
         "SELECT COUNT(*) AS count FROM session_entries WHERE source_kind = 'ProviderTurn'",
       );
@@ -721,7 +873,7 @@ describe("P3-013 agent driver", () => {
     expect(result.attempts).toBe(1);
   });
 
-  it("adopts a legacy settled no-action result after migration without another Provider request", async () => {
+  it("adopts a settled no-action result after migration without another Provider request", async () => {
     const app = makeApp([textTurn], { failFirstSourcedAppend: true });
     const legacyContext: CommandSubmissionContext = {
       _tag: "ExecutionOrigin",
@@ -748,9 +900,14 @@ describe("P3-013 agent driver", () => {
           "t",
         ],
       );
-      const first = yield* Effect.exit(drive(allowGate, legacyContext));
+      const exactExecution = conversationExecution(
+        "msg_018f2b3c-4d5e-7abc-8def-0123456789a2",
+      );
+      const first = yield* Effect.exit(
+        drive(allowGate, legacyContext, exactExecution),
+      );
       yield* runMigrations(P17_MIGRATIONS);
-      const second = yield* drive(allowGate);
+      const second = yield* drive(allowGate, context, exactExecution);
       const attempts = yield* sql.unsafe<{ count: number }>(
         "SELECT COUNT(*) AS count FROM provider_attempts",
       );
@@ -784,7 +941,7 @@ describe("P3-013 agent driver", () => {
     expect(result.first._tag).toBe("Failure");
     expect(result.second).toMatchObject({
       _tag: "Completed",
-      result: { _tag: "QueryCompleted" },
+      result: { _tag: "ConversationResponseProduced" },
     });
     expect(result.attemptCount).toBe(1);
     expect(result.outputCount).toBe(1);
@@ -859,12 +1016,116 @@ describe("P3-013 agent driver", () => {
     expect(settlement.result?._tag).toBe("CoordinationCompleted");
   });
 
+  it("returns invalid control arguments to the model and accepts a corrected action", async () => {
+    const app = makeApp([
+      invalidSendMessageTurn,
+      sendMessageTurn("corrected question"),
+    ]);
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const driven = yield* driveAndCount(allowGate);
+        const sql = yield* SqlClient;
+        const results = yield* sql.unsafe<{ payload_json: string }>(
+          "SELECT payload_json FROM session_entries WHERE item_type = 'ControlResult' ORDER BY sequence",
+        );
+        const actions = yield* sql.unsafe<{
+          state: string;
+          disposition_json: string | null;
+        }>(
+          "SELECT state, disposition_json FROM agent_loop_step_actions WHERE execution_id = ? ORDER BY logical_step_no, action_index",
+          [executionId],
+        );
+        return { ...driven, results, actions };
+      }),
+      app,
+    );
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "CoordinationCompleted" },
+    });
+    expect(result.turns).toBe(2);
+    expect(JSON.parse(result.results[0]?.payload_json ?? "{}")).toMatchObject({
+      _tag: "ControlResult",
+      callRef: "c0",
+      actionKind: "send_message",
+      status: "Failed",
+      disposition: "ModelCorrectable:InvalidControlArguments",
+    });
+    expect(result.actions[0]).toMatchObject({
+      state: "Applied",
+      disposition_json: expect.stringContaining(
+        "ModelCorrectable:InvalidControlArguments",
+      ),
+    });
+  });
+
+  it("returns a semantic action rejection to the model without hiding it as an exception", async () => {
+    let attempts = 0;
+    const handler: AgentActionHandler = {
+      action: "SendMessage",
+      handle: () => {
+        attempts += 1;
+        return attempts === 1
+          ? Effect.fail({
+              _tag: "AgentActionRejected" as const,
+              code: "action/target-unavailable" as const,
+              safeMessage: "the selected recipient is not currently available",
+              correction: "ChooseAlternative" as const,
+            })
+          : Effect.succeed({
+              _tag: "Settle" as const,
+              settlement: {
+                _tag: "Completed" as const,
+                result: { _tag: "CoordinationCompleted" as const },
+              },
+            });
+      },
+    };
+    const app = makeApp(
+      [
+        sendMessageTurn("unavailable target", "c0"),
+        sendMessageTurn("alternative target", "c1"),
+      ],
+      { controlHandlers: [handler] },
+    );
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const driven = yield* driveAndCount(allowGate);
+        const sql = yield* SqlClient;
+        const results = yield* sql.unsafe<{ payload_json: string }>(
+          "SELECT payload_json FROM session_entries WHERE item_type = 'ControlResult' ORDER BY sequence",
+        );
+        return { ...driven, results };
+      }),
+      app,
+    );
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "CoordinationCompleted" },
+    });
+    expect(result.turns).toBe(2);
+    expect(JSON.parse(result.results[0]?.payload_json ?? "{}")).toMatchObject({
+      _tag: "ControlResult",
+      callRef: "c0",
+      status: "Failed",
+      disposition: "ModelUsable:action/target-unavailable",
+      outputText: expect.stringContaining("selected recipient"),
+    });
+  });
+
   it("closes a rejected control call with a durable ControlResult before interruption", async () => {
     const rejectingHandler: AgentActionHandler = {
       action: "SendMessage",
       handle: () =>
         Effect.fail({
-          _tag: "AgentActionError" as const,
+          _tag: "AgentActionOperationalFailure" as const,
+          operation: "test.injected-handler-failure",
           cause: "not applicable to this execution",
         }),
     };
@@ -937,13 +1198,14 @@ describe("P3-013 agent driver", () => {
       turnProfileResolver: {
         resolve: () =>
           Effect.succeed({
-            purpose: "WorkspaceCoordination",
+            purpose: "WorkspaceWork",
             profileVersion: "turn-profile-v1",
             outputContractRef: "tool-invocation-v1",
             executableTools: [],
             controlTools: [
               {
-                name: "arbor_send_message",
+                stableId: "core.control.send-message",
+                name: "send_message",
                 description: "stale registration",
                 schemaJson: "{}",
                 version: "1",
@@ -1000,7 +1262,7 @@ describe("P3-013 agent driver", () => {
       {
         _tag: "ToolCallProposed" as const,
         callRef: "c2",
-        toolName: "arbor_send_message",
+        toolName: "send_message",
         argumentsJson: JSON.stringify({
           kind: "Query",
           body: "second",
@@ -1134,6 +1396,88 @@ describe("P3-013 agent driver", () => {
     expect(settlement.result?.reason).toBe("RuntimeSafetyStop");
 
     void ModelContext;
+  });
+
+  it("settles a terminal Provider failure and durably proposes the settlement", async () => {
+    const app = makeApp([], {
+      providerRuntime: Layer.succeed(ProviderRuntime, {
+        runTurn: () =>
+          Effect.fail({
+            _tag: "ProviderFailure",
+            kind: "QuotaExceeded",
+            taxonomyVersion: "phase1-v2",
+            safeDiagnostic: "quota-exhausted",
+          }),
+      }),
+    });
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P17_MIGRATIONS);
+        yield* seed;
+        const settlement = yield* drive(allowGate);
+        const sql = yield* SqlClient;
+        const steps = yield* sql.unsafe<{
+          state: string;
+          settlement_json: string | null;
+        }>(
+          "SELECT state, settlement_json FROM agent_loop_steps WHERE execution_id = ?",
+          [executionId],
+        );
+        return { settlement, step: steps[0] };
+      }),
+      app,
+    );
+    expect(result.settlement).toEqual({
+      _tag: "Failed",
+      failure: {
+        _tag: "ExecutionFailure",
+        reason: "ProviderFailure:QuotaExceeded",
+      },
+    });
+    expect(result.step).toMatchObject({
+      state: "SettlementProposed",
+      settlement_json: expect.stringContaining("ProviderFailure:QuotaExceeded"),
+    });
+  });
+
+  it("settles ContextUnsatisfiable instead of leaking it as a driver exception", async () => {
+    const app = makeApp([], {
+      modelCapability: {
+        modelRef: "model-tiny",
+        family: "tiny",
+        contextWindow: 64,
+        outputCeiling: 16,
+        toolProtocol: "json",
+      },
+    });
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P17_MIGRATIONS);
+        yield* seed;
+        const settlement = yield* drive(allowGate);
+        const sql = yield* SqlClient;
+        const steps = yield* sql.unsafe<{
+          state: string;
+          settlement_json: string | null;
+        }>(
+          "SELECT state, settlement_json FROM agent_loop_steps WHERE execution_id = ?",
+          [executionId],
+        );
+        return { settlement, step: steps[0] };
+      }),
+      app,
+    );
+    expect(result.settlement).toEqual({
+      _tag: "Failed",
+      failure: {
+        _tag: "ExecutionFailure",
+        reason: "ContextUnsatisfiable",
+      },
+    });
+    expect(result.step).toMatchObject({
+      state: "SettlementProposed",
+      settlement_json: expect.stringContaining("ContextUnsatisfiable"),
+    });
   });
 
   it("settles the execution when a persisted ProviderTurn belongs to a different binding", async () => {

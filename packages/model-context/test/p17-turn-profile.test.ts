@@ -43,7 +43,8 @@ const resolver = makeTurnProfileResolver({
     visibleDefinitions: () =>
       Effect.succeed([
         {
-          name: "arbor_claim_completion",
+          stableId: "core.control.claim-completion",
+          name: "claim_completion",
           description: "claim",
           schemaJson: "{}",
           version: "1",
@@ -51,7 +52,8 @@ const resolver = makeTurnProfileResolver({
           requiredCapability: "agent:claim-completion",
         },
         {
-          name: "arbor_send_message",
+          stableId: "core.control.send-message",
+          name: "send_message",
           description: "send",
           schemaJson: "{}",
           version: "1",
@@ -59,7 +61,62 @@ const resolver = makeTurnProfileResolver({
           requiredCapability: "agent:communicate",
         },
         {
-          name: "arbor_record_verification_evidence",
+          stableId: "core.control.assign-work",
+          name: "assign_work",
+          description: "assign work",
+          schemaJson: "{}",
+          version: "1",
+          hash: "assign-hash",
+          requiredCapability: "agent:assign-work",
+        },
+        {
+          stableId: "core.control.list-workspaces",
+          name: "list_workspaces",
+          description: "list workspaces",
+          schemaJson: "{}",
+          version: "1",
+          hash: "list-workspaces-hash",
+          requiredCapability: "agent:inspect-workspaces",
+        },
+        {
+          stableId: "core.control.read-workspace",
+          name: "read_workspace",
+          description: "read workspace",
+          schemaJson: "{}",
+          version: "1",
+          hash: "read-workspace-hash",
+          requiredCapability: "agent:inspect-workspaces",
+        },
+        {
+          stableId: "core.control.accept-result",
+          name: "accept_result",
+          description: "accept child result",
+          schemaJson: "{}",
+          version: "1",
+          hash: "accept-result-hash",
+          requiredCapability: "agent:accept-result",
+        },
+        {
+          stableId: "core.control.select-current-work",
+          name: "select_current_work",
+          description: "select work",
+          schemaJson: "{}",
+          version: "1",
+          hash: "select-hash",
+          requiredCapability: "agent:select-work",
+        },
+        {
+          stableId: "core.control.update-plan",
+          name: "update_plan",
+          description: "update plan",
+          schemaJson: "{}",
+          version: "1",
+          hash: "plan-hash",
+          requiredCapability: "agent:plan",
+        },
+        {
+          stableId: "core.control.record-verification-evidence",
+          name: "record_verification_evidence",
           description: "record evidence",
           schemaJson: "{}",
           version: "1",
@@ -67,12 +124,22 @@ const resolver = makeTurnProfileResolver({
           requiredCapability: "agent:verify",
         },
         {
-          name: "arbor_conclude_verification",
+          stableId: "core.control.conclude-verification",
+          name: "conclude_verification",
           description: "conclude",
           schemaJson: "{}",
           version: "1",
           hash: "conclude-hash",
           requiredCapability: "agent:verify",
+        },
+        {
+          stableId: "core.control.propose-workspace",
+          name: "propose_workspace",
+          description: "propose a governed child workspace",
+          schemaJson: "{}",
+          version: "2",
+          hash: "propose-hash",
+          requiredCapability: "agent:formation",
         },
       ]),
   },
@@ -85,7 +152,7 @@ const resolver = makeTurnProfileResolver({
 });
 
 describe("P17 TurnProfileResolver", () => {
-  it("gives Root Conversation an exact zero-tool text profile", async () => {
+  it("gives Root Conversation zero executable tools and only placement/work-initiation controls", async () => {
     const profile = await Effect.runPromise(
       resolver.resolve({
         conversation: true,
@@ -100,12 +167,18 @@ describe("P17 TurnProfileResolver", () => {
       }),
     );
     expect(profile).toMatchObject({
-      purpose: "RootConversationRespond",
-      outputContractRef: "text-response-v1",
+      purpose: "RootConversation",
+      outputContractRef: "tool-invocation-v1",
       executableTools: [],
-      controlTools: [],
       fingerprint: expect.stringMatching(/^tpf_/),
     });
+    expect(profile.controlTools.map((tool) => tool.name)).toEqual([
+      "assign_work",
+      "list_workspaces",
+      "read_workspace",
+      "accept_result",
+      "propose_workspace",
+    ]);
   });
 
   it("materializes Work tools and applicable controls deterministically", async () => {
@@ -114,9 +187,10 @@ describe("P17 TurnProfileResolver", () => {
       binding: {
         _tag: "WorkspaceExecution",
         workspaceId,
-        focus: {
-          _tag: "Work",
+        episode: {
+          _tag: "WorkEpisode",
           workId: parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+          targetWorkRevision: 0 as never,
         },
       },
     };
@@ -129,8 +203,63 @@ describe("P17 TurnProfileResolver", () => {
     expect(first).toEqual(second);
     expect(first.executableTools.map((tool) => tool.name)).toEqual(["read"]);
     expect(first.controlTools.map((tool) => tool.name)).toEqual([
-      "arbor_claim_completion",
-      "arbor_send_message",
+      "claim_completion",
+      "send_message",
+      "assign_work",
+      "list_workspaces",
+      "read_workspace",
+      "accept_result",
+      "update_plan",
+      "propose_workspace",
+    ]);
+  });
+
+  it("gives Decision and Inbox episodes disjoint minimal control surfaces", async () => {
+    const decision = await Effect.runPromise(
+      resolver.resolve({
+        conversation: false,
+        execution: {
+          ...base,
+          binding: {
+            _tag: "WorkspaceExecution",
+            workspaceId,
+            episode: {
+              _tag: "DecisionEpisode",
+              decisionId: "dec_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+              decisionKind: "SelectCurrentWork",
+              requestRevision: 0,
+            },
+          },
+        },
+      }),
+    );
+    expect(decision.executableTools).toEqual([]);
+    expect(decision.controlTools.map((tool) => tool.name)).toEqual([
+      "select_current_work",
+    ]);
+
+    const inbox = await Effect.runPromise(
+      resolver.resolve({
+        conversation: false,
+        execution: {
+          ...base,
+          binding: {
+            _tag: "WorkspaceExecution",
+            workspaceId,
+            episode: {
+              _tag: "InboxEpisode",
+              entryKey: "msg:test",
+              inputKind: "Message",
+            },
+          },
+        },
+      }),
+    );
+    expect(inbox.controlTools.map((tool) => tool.name)).toEqual([
+      "send_message",
+      "list_workspaces",
+      "read_workspace",
+      "accept_result",
     ]);
   });
 
@@ -149,9 +278,7 @@ describe("P17 TurnProfileResolver", () => {
       }),
     );
     expect(profile.executableTools).toEqual([]);
-    expect(profile.controlTools.map((tool) => tool.name)).toEqual([
-      "arbor_send_message",
-    ]);
+    expect(profile.controlTools).toEqual([]);
   });
 
   it("recognizes a durably bound verifier and exposes only verification tools", async () => {
@@ -174,8 +301,8 @@ describe("P17 TurnProfileResolver", () => {
     expect(profile.purpose).toBe("Verifier");
     expect(profile.executableTools.map((tool) => tool.name)).toEqual(["read"]);
     expect(profile.controlTools.map((tool) => tool.name)).toEqual([
-      "arbor_record_verification_evidence",
-      "arbor_conclude_verification",
+      "record_verification_evidence",
+      "conclude_verification",
     ]);
   });
 });

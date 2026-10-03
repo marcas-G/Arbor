@@ -487,7 +487,11 @@ describe("command gateway", () => {
 
   it("propagates a normalized handler repository failure as a typed failure", async () => {
     const repositoryFailure = {
-      _tag: "DependencyRepositoryFailure" as const,
+      _tag: "PersistenceUnavailable" as const,
+      repository: "DependencyRepository" as const,
+      operation: "test",
+      retryDisposition: "retryable" as const,
+      sourceTag: "InjectedFailure",
       cause: "database unavailable",
     };
     const failingHandler: CommandHandler<unknown, { readonly ok: boolean }> = {
@@ -513,7 +517,13 @@ describe("command gateway", () => {
 
     expect(failure).toEqual(repositoryFailure);
     expect(state.rows.size).toBe(0);
-    expect(state.attempts).toEqual([]);
+    expect(state.attempts).toEqual([
+      {
+        commandId,
+        outcome:
+          "Retryable:PersistenceUnavailable:DependencyRepository:InjectedFailure",
+      },
+    ]);
   });
 });
 

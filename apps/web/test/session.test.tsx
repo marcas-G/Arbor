@@ -8,7 +8,13 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { LoginCard } from "../src/session/LoginCard.js";
@@ -82,7 +88,7 @@ async function login(actor = "human:root", token = "tok_1"): Promise<void> {
 async function switchProject(projectId: string): Promise<void> {
   fireEvent.click(screen.getByText("选择项目"));
   await waitFor(() => expect(screen.getByText("Demo")).toBeTruthy());
-  fireEvent.click(screen.getByRole("option", { name: "Demo" }));
+  fireEvent.click(screen.getByRole("button", { name: /Demo/ }));
   expect(projectId).toBe("prj_demo");
 }
 
@@ -211,6 +217,50 @@ describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
 });
 
 describe("Web v1 shell integration smoke (W-02)", () => {
+  it("offers project creation directly from the project switcher", async () => {
+    stubFetch((url) =>
+      Promise.resolve(
+        url === "/projects"
+          ? directoryResponse()
+          : jsonResponse(200, {
+              ok: true,
+              status: 200,
+              body: { value: { rows: [] }, watermark: 1 },
+            }),
+      ),
+    );
+    history.replaceState(null, "", "/");
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("选择项目")).toBeTruthy());
+    fireEvent.click(screen.getByText("选择项目"));
+    fireEvent.click(screen.getByRole("button", { name: "新建项目" }));
+    const dialog = screen.getByRole("dialog", { name: "新建项目" });
+    expect(within(dialog).getByLabelText("项目名称")).toBeTruthy();
+    expect(
+      within(dialog).getByRole("button", { name: "创建项目" }),
+    ).toBeTruthy();
+  });
+
+  it("uses the same project center from the compact topbar", async () => {
+    stubFetch((url) =>
+      Promise.resolve(
+        url === "/projects"
+          ? directoryResponse()
+          : jsonResponse(200, {
+              ok: true,
+              status: 200,
+              body: { value: { rows: [] }, watermark: 1 },
+            }),
+      ),
+    );
+    history.replaceState(null, "", "/");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "打开项目中心" }));
+    fireEvent.click(screen.getByRole("button", { name: "新建项目" }));
+    const dialog = screen.getByRole("dialog", { name: "新建项目" });
+    expect(within(dialog).getByLabelText("项目名称")).toBeTruthy();
+  });
+
   it("login → project switch routes to /p/:projectId → rail nav → disconnect returns to login", async () => {
     stubFetch((url) =>
       Promise.resolve(

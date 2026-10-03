@@ -7,6 +7,37 @@
   gap: var(--arbor-space-3);
 }
 
+.arbor-conversation-composer {
+  gap: var(--arbor-space-2);
+}
+
+.arbor-conversation-composer textarea {
+  min-height: 76px;
+  border: 0;
+  background: transparent;
+  line-height: 1.55;
+  outline: none;
+}
+
+.arbor-conversation-composer textarea:focus {
+  border: 0;
+  outline: none;
+}
+
+.arbor-composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--arbor-space-3);
+  padding-top: var(--arbor-space-2);
+  border-top: 1px solid var(--arbor-line);
+}
+
+.arbor-composer-hint {
+  color: var(--arbor-muted);
+  font-size: var(--arbor-text-caption);
+}
+
 .arbor-command-check {
   display: flex;
   align-items: center;

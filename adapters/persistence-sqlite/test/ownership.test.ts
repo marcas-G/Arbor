@@ -207,7 +207,11 @@ describe("ownership write service", () => {
         .pipe(Effect.flip);
     });
     const error = await Effect.runPromise(Effect.provide(program, makeApp()));
-    expect(error._tag).toBe("ResourceOwnershipRepositoryFailure");
+    expect(error).toMatchObject({
+      _tag: "PersistenceConstraintViolation",
+      repository: "ResourceOwnershipRepository",
+      constraint: "active-resource-overlap",
+    });
   });
 
   it("allows a new claim once the conflicting claim is released", async () => {

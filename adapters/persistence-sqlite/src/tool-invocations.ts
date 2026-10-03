@@ -10,12 +10,12 @@ import {
   type ToolInvocationRecord,
   type ToolInvocationSettlement,
   ToolInvocationStore,
-  type ToolInvocationStoreError,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface InvocationRow {
   readonly invocation_id: string;
@@ -88,12 +88,18 @@ export const ToolInvocationStoreLive: Layer.Layer<
   ToolInvocationStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): ToolInvocationStoreError => ({
-      _tag: "ToolInvocationStoreError",
-      cause,
-    });
+    const failure = repositoryFailure("ToolInvocationStore", "invocation");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
+    const hasUnifiedLedger = Effect.gen(function* () {
+      yield* TransactionScope;
+      const rows = yield* run(
+        sql.unsafe<{ n: number }>(
+          "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'action_approvals'",
+        ),
+      );
+      return Number(rows[0]?.n ?? 0) === 1;
+    });
     return ToolInvocationStore.of({
       recordIntent: (invocation: ToolInvocationIntent) =>
         Effect.gen(function* () {
@@ -135,9 +141,12 @@ export const ToolInvocationStoreLive: Layer.Layer<
       consumeApproval: (approvalId, invocationId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          const unified = yield* hasUnifiedLedger;
           const rows = yield* run(
             sql.unsafe<{ approval_id: string }>(
-              "UPDATE invocation_approvals SET consumed_by = ? WHERE approval_id = ? AND consumed_by IS NULL RETURNING approval_id",
+              unified
+                ? "UPDATE action_approvals SET state = 'Consumed', revision = revision + 1, consumed_by = ?, consumed_at = CURRENT_TIMESTAMP WHERE approval_id = ? AND route_kind = 'Executable' AND state = 'Approved' AND consumed_by IS NULL RETURNING approval_id"
+                : "UPDATE invocation_approvals SET consumed_by = ? WHERE approval_id = ? AND consumed_by IS NULL RETURNING approval_id",
               [invocationId, approvalId],
             ),
           );
@@ -146,9 +155,12 @@ export const ToolInvocationStoreLive: Layer.Layer<
       findApproval: (approvalId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          const unified = yield* hasUnifiedLedger;
           const rows = yield* run(
             sql.unsafe<ApprovalRow>(
-              "SELECT * FROM invocation_approvals WHERE approval_id = ?",
+              unified
+                ? "SELECT approval_id, stable_action_id AS tool_name, action_version AS tool_version, action_digest, target_resource_space_ids_json, control_basis_digest, expires_at, consumed_by FROM action_approvals WHERE approval_id = ? AND route_kind = 'Executable'"
+                : "SELECT * FROM invocation_approvals WHERE approval_id = ?",
               [approvalId],
             ),
           );

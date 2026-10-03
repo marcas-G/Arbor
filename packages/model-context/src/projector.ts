@@ -5,6 +5,10 @@ import type {
 } from "@arbor/ports";
 import type { InstructionFragment } from "./prompt.js";
 
+/** Bounded recent Timeline window consumed by ContextProjector. The limit is
+ * context policy, not an Agent Runtime assembly concern. */
+export const SESSION_TIMELINE_ENTRY_LIMIT = 64;
+
 export interface SessionTimelineProjection {
   readonly inputItems: ReadonlyArray<PortableInputItem>;
   readonly contextRefs: ReadonlyArray<string>;

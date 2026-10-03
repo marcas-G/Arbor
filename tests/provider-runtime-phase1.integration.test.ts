@@ -881,7 +881,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       );
 
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-sse",
       authMode: "none",
@@ -889,6 +889,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const sdk = makeHttpProviderClient({ runtime, captures: [] });
     const harness = makeHarness(sdk);
@@ -934,7 +936,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       );
 
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-http-error",
       authMode: "none",
@@ -942,6 +944,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const harness = makeHarness(
       makeHttpProviderClient({ runtime, captures: [] }),
@@ -984,6 +988,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const sdk = makeHttpProviderClient({ runtime, captures: [] });
     expect(sdk.externalEffectPossible).toBe(true);
@@ -1031,7 +1037,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       });
 
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-truncated-sse",
       authMode: "none",
@@ -1039,6 +1045,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const harness = makeHarness(
       makeHttpProviderClient({ runtime, captures: [] }),
@@ -1079,7 +1087,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       );
 
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-unknown-finish-reason",
       authMode: "none",
@@ -1087,6 +1095,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const harness = makeHarness(
       makeHttpProviderClient({ runtime, captures: [] }),
@@ -1130,7 +1140,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       });
     };
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-fetch-abort",
       authMode: "none",
@@ -1138,6 +1148,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const harness = makeHarness(
       makeHttpProviderClient({ runtime, captures: [] }),
@@ -1180,7 +1192,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       });
     };
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-fetch-timeout",
       authMode: "none",
@@ -1188,6 +1200,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const policy = {
       ...DEFAULT_POLICY,
@@ -1263,7 +1277,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
     };
 
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-cancel",
       authMode: "none",
@@ -1271,6 +1285,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const base = makeHttpProviderClient({ runtime, captures: [] });
     const sdk: OpenAISdkClient = {

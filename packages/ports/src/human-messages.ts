@@ -5,6 +5,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
+import type { RepositoryFailure } from "./errors.js";
 import type { ReasoningAttachment } from "./provider-extension.js";
 
 /**
@@ -47,10 +48,7 @@ export interface HumanMessageConflict {
   readonly existing: HumanMessageRecord;
 }
 
-export interface HumanMessageStoreError {
-  readonly _tag: "HumanMessageStoreFailure";
-  readonly cause: unknown;
-}
+export type HumanMessageStoreError = RepositoryFailure<"HumanMessageStore">;
 
 export interface HumanMessageStoreService {
   /** Insert a Pending message; conflict surfaces the existing row so the

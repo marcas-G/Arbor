@@ -1,9 +1,14 @@
 # AgentDirective v2 Field-Source Closure
 
 **Date:** 2026-09-27
-**Status:** Source audit; G-V2-3 remains open after the scoped assessment in
-`44-g-v2-3-conclusion-summary-closure.md`
+**Status:** HISTORICAL SOURCE AUDIT — superseded; G-V2-1…4 RESOLVED by the
+manually accepted DID v1.26 VDC-1…VDC-8 contract
 **Scope:** G-V2-1 through G-V2-4 only. No v2 redesign, model-facing representation, S01, or implementation.
+
+> Supersession notice (2026-10-03): the OPEN findings below describe the
+> 2026-09-27 checkpoint. DID v1.26 later froze all four sources and its
+> implementation is mechanically/live qualified. Preserve the audit as
+> history; do not use its old status as a current gate.
 
 ## Decision
 

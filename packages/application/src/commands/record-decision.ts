@@ -8,12 +8,14 @@ import {
   type WorkspaceId,
 } from "@arbor/domain";
 import type {
+  FormationFulfillmentStoreService,
   FormationProposalStoreService,
   InboxProjectionStoreService,
   PendingDomainEvent,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
+import { deriveFormationIds } from "../formation-plan.js";
 import type { CommandHandler } from "../gateway.js";
 import {
   emitHumanIntervention,
@@ -40,7 +42,11 @@ export interface RecordDecisionResult {
 export interface RecordDecisionDependencies {
   readonly proposals: Pick<FormationProposalStoreService, "findById"> &
     Pick<FormationProposalStoreService, "decideIfPendingRevision">;
-  readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert">;
+  readonly inbox: Pick<
+    InboxProjectionStoreService,
+    "admitUpsert" | "markConsumed"
+  >;
+  readonly fulfillments?: Pick<FormationFulfillmentStoreService, "put">;
   readonly originatingWorkspaceOf: (
     record: FormationProposalRecord,
   ) => WorkspaceId;
@@ -92,6 +98,31 @@ export const makeRecordDecisionHandler = (
       }
 
       const fact = decided.value.fact;
+      if (dependencies.fulfillments !== undefined) {
+        const ids = deriveFormationIds(
+          decided.value.record.proposalId,
+          decided.value.record.revision,
+        );
+        const nextState =
+          fact.decision === "Approve"
+            ? ("PendingApplication" as const)
+            : fact.decision === "Reject"
+              ? ("Blocked" as const)
+              : ("AwaitingDecision" as const);
+        yield* dependencies.fulfillments.put({
+          proposalId: decided.value.record.proposalId,
+          proposalRevision: decided.value.record.revision,
+          expectedChildWorkspaceId: ids.workspaceId,
+          expectedInitialWorkId:
+            decided.value.record.proposal.initialWork === undefined
+              ? null
+              : ids.workId,
+          state: nextState,
+          typedBlock: fact.decision === "Reject" ? "FormationRejected" : null,
+          lastAttemptAt: null,
+          revision: 1,
+        });
+      }
       const events: PendingDomainEvent[] = [
         {
           projectId: envelope.projectId,
@@ -138,6 +169,10 @@ export const makeRecordDecisionHandler = (
       // The decision outcome returns to the originating Workspace Inbox as a
       // governance observation (P6 `01` §4.2) — Inbox admission only, never a
       // Session write.
+      yield* dependencies.inbox.markConsumed(
+        dependencies.originatingWorkspaceOf(record),
+        `gov:${payload.proposalId}:${payload.expectedProposalRevision}`,
+      );
       yield* dependencies.inbox.admitUpsert({
         recipientWorkspaceId: dependencies.originatingWorkspaceOf(record),
         entryKey: `dec:${payload.proposalId}:${fact.proposalRevision}:${fact.decision}`,
@@ -145,6 +180,15 @@ export const makeRecordDecisionHandler = (
         summary: `formation proposal ${fact.decision === "Modify" ? "modified" : fact.decision === "Approve" ? "approved" : "rejected"} at revision ${fact.proposalRevision}`,
         admittedAt: envelope.issuedAt,
       });
+      if (fact.decision === "Modify") {
+        yield* dependencies.inbox.admitUpsert({
+          recipientWorkspaceId: dependencies.originatingWorkspaceOf(record),
+          entryKey: `gov:${payload.proposalId}:${decided.value.record.revision}`,
+          kind: "Governance",
+          summary: `formation proposal "${decided.value.record.proposal.name}" revision ${decided.value.record.revision} awaiting human decision`,
+          admittedAt: envelope.issuedAt,
+        });
+      }
 
       return commandOk({
         result: {

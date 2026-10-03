@@ -1,11 +1,29 @@
 # Arbor Problem Definition & Goals
 
-**Version:** 1.2  
-**Status:** FROZEN — problem and goal baseline  
-**Date:** 2026-09-19  
+**Version:** 1.3
+**Status:** FROZEN — minimal architecture convergence vocabulary clarification
+**Date:** 2026-10-03
 **Position in document chain:** Problem & Goals → Scenarios → System Design → Detailed Implementation Design  
 **Owns:** problem statement, P1–P8, root tensions, mission, G1–G8, goal-level success criteria  
 **Does not own:** scenario flow, domain model, Runtime/component design, persistence/API/package/implementation contracts
+
+**Governance clarification (v1.2 → v1.3; `ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`):**
+
+- long-lived identity and responsibility belong to Workspace, not to a durable
+  Agent entity or permanently running process;
+- Agent is the cognitive execution role enacted during an Execution; wording
+  such as “long-lived Agent” refers to Workspace-backed continuity, never a
+  separate Agent lifecycle/identity;
+- Local Plan is internal cognition, not user project management or scheduling
+  truth;
+- temporary subagent execution is an optional runtime accelerator, not a
+  prerequisite for Arbor correctness or a substitute for durable Workspace;
+- success requires a reachable goal-to-Work-to-Verification-to-Acceptance path
+  before optional organization, dependency or parallelism features may be
+  counted as complete.
+
+Accepted proposal SHA-256:
+`44B549EA81E21B3D4BE5D545EA446B544D50CCA0061C83E6FC40CDC2ADCCA932`.
 
 ---
 
@@ -114,7 +132,7 @@ Main Agent
 
 ### P3. 多层分解缺少稳定组织语义
 
-Agent 可以继续调用 Agent，但“为什么拆、拆到哪里、谁长期负责什么、什么时候应该只开一个临时 Specialist”往往仍靠即时 Prompt 判断。随着层级加深，容易出现：
+Agent 可以继续调用临时 runtime subagent，但“为什么拆、拆到哪里、谁长期负责什么、什么时候只需要一次临时并行执行”往往仍靠即时 Prompt 判断。随着层级加深，容易出现：
 
 - 同一责任被多个 Agent 重复承担；
 - 临时任务被错误升级为长期组织；
@@ -189,7 +207,7 @@ Agent 可以继续调用 Agent，但“为什么拆、拆到哪里、谁长期�
 
 那么除崩溃、重试和恢复错误外，还会出现 indirect prompt injection、恶意 Tool/Artifact 内容进入认知、未验证信息被长期记忆化、Child/外部内容越权影响控制语义等问题。
 
-长期 Agent 系统必须能够同时维护**组织真相、现实一致性、认知连续性与信息信任边界**。外部或派生内容默认是数据，不因被检索、重复出现或由另一个 Agent 转发就自动获得指令权威或长期记忆资格。
+长期 Workspace 工作系统必须能够同时维护**组织真相、现实一致性、认知连续性与信息信任边界**。外部或派生内容默认是数据，不因被检索、重复出现或由另一个 Agent 转发就自动获得指令权威或长期记忆资格。
 
 ---
 
@@ -215,7 +233,7 @@ Prompt 可以指导 Agent，却不能可靠替代权限、资源边界、事务�
 
 > **构建一个以长期 Responsibility / Workspace 为组织核心的多 Agent 工作系统：让稳定责任承载长期认知，让阶段性 Work 驱动执行，让独立 Verification 建立结果可信度，让 Runtime 维护权威状态、权限与现实一致性，并让用户始终能够在高层观察、下钻和纠错。**
 
-这个使命不要求 Agent 永久在线，也不要求系统把所有工作拆成更多 Agent。系统应在“长期组织价值”高于“分解与协调成本”时才形成新的责任单元；没有 Runnable Work 时，长期 Agent 可以完全停止模型调用。
+这个使命不要求 Agent Runtime 永久在线，也不要求系统把所有工作拆成更多执行分支。系统应在“长期组织价值”高于“分解与协调成本”时才形成新的责任单元；没有 Runnable Work 时，Workspace 可以完全停止模型调用。
 
 ---
 
@@ -317,7 +335,7 @@ Worker、Provider、Tool、Runtime 或计算节点故障不能使项目退回“
 
 Arbor 必须显式声明其 Durability Envelope：进程崩溃、Worker 丢失、Runtime 重启和计算节点重启属于正常可恢复条件；Canonical Storage 本身的介质丢失、区域级故障等是否可恢复，取决于部署时声明并验证的备份/恢复能力与 RPO/RTO，不能由“使用了 SQLite/PostgreSQL”这种实现选择隐式保证。
 
-**目标状态：** 先恢复 Reality，再恢复 Cognition；长期 Agent 不等于长期运行的进程；系统对自己能承受的 failure domain 有明确且可测试的声明。
+**目标状态：** 先恢复 Reality，再恢复 Cognition；Workspace 连续性不等于长期运行的进程；系统对自己能承受的 failure domain 有明确且可测试的声明。
 
 ## G8. 默认可用、允许配置、成本透明但不默认绑架执行
 
@@ -353,7 +371,7 @@ Token、Cost、Tool Calls、Wall Time 等首先作为 Usage 指标对用户透�
 1. **用户可以停留在高层。** 正常推进不要求用户持续发送“继续”、手工选择每一级 Agent 或逐个触发测试。
 2. **Responsibility 在 Work 之间保持连续。** 阶段性任务结束不意味着对应责任和局部知识被销毁。
 3. **多 Agent 组织是必要时生长，而不是默认膨胀。** 简单 Work 不因系统具备 Subagent 能力而被强制拆分。
-4. **无 Runnable Work 时没有持续模型调用。** 长期 Agent Identity 与计算进程解耦。
+4. **无 Runnable Work 时没有持续模型调用。** Workspace Identity 与计算进程解耦。
 5. **正式完成建立在证据上。** Producer self-check、独立 Verification 和 Parent Acceptance 具有不同语义。
 6. **故障不会把项目退回“重新读聊天记录”。** Canonical State、Durable Runtime State 与 Cognitive Continuity 可以恢复。
 7. **用户能解释系统为什么这样做。** 责任、Work、Decision、Verification、Dependency 和重要外部副作用具有可追踪来源。

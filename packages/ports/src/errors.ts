@@ -1,8 +1,34 @@
 import type { ExecutionId, LeaseGeneration } from "@arbor/domain";
 
+export interface PersistenceUnavailable<Tag extends string = string> {
+  readonly _tag: "PersistenceUnavailable";
+  readonly repository: Tag;
+  readonly operation: string;
+  readonly retryDisposition: "retryable" | "non-retryable";
+  readonly sourceTag: string;
+  readonly cause: unknown;
+}
+
+export interface PersistenceConstraintViolation<Tag extends string = string> {
+  readonly _tag: "PersistenceConstraintViolation";
+  readonly repository: Tag;
+  readonly operation: string;
+  readonly constraintKind: "Unique" | "Constraint";
+  readonly constraint: string;
+}
+
+export interface PersistenceCorruption<Tag extends string = string> {
+  readonly _tag: "PersistenceCorruption";
+  readonly repository: Tag;
+  readonly operation: string;
+  readonly reason: string;
+}
+
 export type RepositoryFailure<Tag extends string> =
   | { readonly _tag: `${Tag}RevisionConflict` }
-  | { readonly _tag: `${Tag}Failure`; readonly cause: unknown };
+  | PersistenceUnavailable<Tag>
+  | PersistenceConstraintViolation<Tag>
+  | PersistenceCorruption<Tag>;
 
 export type ProjectRepositoryError = RepositoryFailure<"ProjectRepository">;
 export type WorkspaceRepositoryError = RepositoryFailure<"WorkspaceRepository">;
@@ -46,6 +72,11 @@ export interface ResourceResolutionStale {
 
 export type ExecutionRepositoryError = RepositoryFailure<"ExecutionRepository">;
 export type WorkWaitStoreError = RepositoryFailure<"WorkWaitStore">;
+export type LocalPlanStoreError = RepositoryFailure<"LocalPlanStore">;
+/** @deprecated MAC compatibility alias; active code uses LocalPlanStoreError. */
+export type WorkPlanStoreError = LocalPlanStoreError;
+export type DecisionRequestStoreError =
+  RepositoryFailure<"DecisionRequestStore">;
 export type SchedulerTimerStoreError = RepositoryFailure<"SchedulerTimerStore">;
 
 export interface LeaseFencingRejected {
@@ -59,10 +90,56 @@ export interface WorkerDispatchError {
   readonly cause: unknown;
 }
 
-export interface ExecutionDriverError {
-  readonly _tag: "ExecutionDriverError";
+export const EXECUTION_DRIVER_OPERATIONAL_STAGES = [
+  "ModelCapability",
+  "LoopStepStore",
+  "InboxProjection",
+  "InputPromotion",
+  "ControlBasis",
+  "ConversationStore",
+  "SessionStore",
+  "WorkspaceStore",
+  "WorkStore",
+  "TurnProfile",
+  "ModelContext",
+  "Compaction",
+  "ProviderTurnStore",
+  "ProviderRuntime",
+  "ActionLedger",
+  "DriverDependency",
+] as const;
+
+export type ExecutionDriverOperationalStage =
+  (typeof EXECUTION_DRIVER_OPERATIONAL_STAGES)[number];
+
+export interface ExecutionDriverOperationalFailure {
+  readonly _tag: "ExecutionDriverOperationalFailure";
+  readonly stage: ExecutionDriverOperationalStage;
+  readonly sourceTag: string;
   readonly cause: unknown;
 }
+
+export interface ExecutionDriverOwnershipLost {
+  readonly _tag: "ExecutionDriverOwnershipLost";
+  readonly executionId: ExecutionId;
+  readonly generation: LeaseGeneration;
+}
+
+export interface ExecutionDriverInvariantFailure {
+  readonly _tag: "ExecutionDriverInvariantFailure";
+  readonly stage:
+    | "SessionTimeline"
+    | "AgentLoopStep"
+    | "ProviderReplay"
+    | "ContextAssembly"
+    | "DriverContract";
+  readonly reason: string;
+}
+
+export type ExecutionDriverError =
+  | ExecutionDriverOperationalFailure
+  | ExecutionDriverOwnershipLost
+  | ExecutionDriverInvariantFailure;
 
 export interface ExecutionSchedulerError {
   readonly _tag: "ExecutionSchedulerError";
@@ -134,10 +211,47 @@ export interface ModelContextError {
 
 // --- P4 ---
 
-export interface ToolRuntimeError {
-  readonly _tag: "ToolRuntimeError";
+export const TOOL_RUNTIME_OPERATIONAL_STAGES = [
+  "WorkspaceLookup",
+  "EnvironmentResolution",
+  "AuthorityResolution",
+  "ApprovalLookup",
+  "IntentJournal",
+  "ApprovalConsumption",
+  "ResourceAdmission",
+  "SandboxOpen",
+  "Executor",
+  "SettlementJournal",
+] as const;
+
+export type ToolRuntimeOperationalStage =
+  (typeof TOOL_RUNTIME_OPERATIONAL_STAGES)[number];
+
+/** A stage-owned infrastructure failure. Callers classify on `stage`, never
+ * on the adapter-native cause. The cause remains Runtime-private. */
+export interface ToolRuntimeOperationalFailure {
+  readonly _tag: "ToolRuntimeOperationalFailure";
+  readonly stage: ToolRuntimeOperationalStage;
+  readonly effectDisposition: "NotStarted" | "OutcomeUncertain";
+  readonly invocationRef: string;
   readonly cause: unknown;
 }
+
+/** Cleanup failed after the executor was entered. The executor's own typed
+ * failure is retained separately when both execution and cleanup fail; raw
+ * causes are never flattened or projected to the model. */
+export interface ToolRuntimeCleanupFailure {
+  readonly _tag: "ToolRuntimeCleanupFailure";
+  readonly stage: "SandboxClose";
+  readonly effectDisposition: "OutcomeUncertain";
+  readonly invocationRef: string;
+  readonly cause: unknown;
+  readonly priorFailure?: ToolRuntimeOperationalFailure;
+}
+
+export type ToolRuntimeError =
+  | ToolRuntimeOperationalFailure
+  | ToolRuntimeCleanupFailure;
 export interface SandboxError {
   readonly _tag: "SandboxError";
   readonly cause: unknown;
@@ -146,10 +260,7 @@ export interface ResourceAdmissionError {
   readonly _tag: "ResourceAdmissionError";
   readonly cause: unknown;
 }
-export interface ToolInvocationStoreError {
-  readonly _tag: "ToolInvocationStoreError";
-  readonly cause: unknown;
-}
+export type ToolInvocationStoreError = RepositoryFailure<"ToolInvocationStore">;
 export interface ArtifactError {
   readonly _tag: "ArtifactError";
   readonly cause: unknown;
@@ -158,10 +269,8 @@ export interface BlobStoreError {
   readonly _tag: "BlobStoreError";
   readonly cause: unknown;
 }
-export interface ArtifactMetadataError {
-  readonly _tag: "ArtifactMetadataError";
-  readonly cause: unknown;
-}
+export type ArtifactMetadataError =
+  RepositoryFailure<"ArtifactMetadataRepository">;
 
 // --- P10 (DID §10.5 Problem DTO vocabulary; P10 `05` §1) ---
 

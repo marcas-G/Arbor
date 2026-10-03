@@ -10,17 +10,15 @@ import type {
 } from "@arbor/domain";
 import {
   AcceptanceRepository,
-  type AcceptanceRepositoryError,
   type EvidenceRecordRow,
   EvidenceRepository,
-  type EvidenceRepositoryError,
   TransactionScope,
   VerificationRepository,
-  type VerificationRepositoryError,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface VerificationRow {
   readonly verification_id: string;
@@ -79,10 +77,7 @@ export const VerificationRepositoryLive: Layer.Layer<
   VerificationRepository,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): VerificationRepositoryError => ({
-      _tag: "VerificationRepositoryFailure",
-      cause,
-    });
+    const failure = repositoryFailure("VerificationRepository", "sql");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return VerificationRepository.of({
@@ -243,10 +238,7 @@ export const EvidenceRepositoryLive: Layer.Layer<
   EvidenceRepository,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): EvidenceRepositoryError => ({
-      _tag: "EvidenceRepositoryFailure",
-      cause,
-    });
+    const failure = repositoryFailure("EvidenceRepository", "sql");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return EvidenceRepository.of({
@@ -343,10 +335,7 @@ export const AcceptanceRepositoryLive: Layer.Layer<
   AcceptanceRepository,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): AcceptanceRepositoryError => ({
-      _tag: "AcceptanceRepositoryFailure",
-      cause,
-    });
+    const failure = repositoryFailure("AcceptanceRepository", "sql");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return AcceptanceRepository.of({

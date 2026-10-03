@@ -21,6 +21,7 @@ import {
   runVerificationConsumer,
   type VerificationConsumerDependencies,
 } from "./verification-consumer.js";
+import type { WorkflowSignalConsumerService } from "./workflow-signal-consumer.js";
 
 /** P9 `05` §1 (P9-010): consumer offset wiring for the P7 coordinator and
  * the P8 consumers A/B. `pollOnce` is the P1 batch-consumption form: the
@@ -83,9 +84,34 @@ const isTransientOperational = (defect: unknown): boolean => {
     ) {
       return true;
     }
+    if (
+      typeof current === "object" &&
+      current !== null &&
+      (current as { readonly _tag?: unknown })._tag === "PersistenceUnavailable"
+    ) {
+      return (
+        (current as { readonly retryDisposition?: unknown })
+          .retryDisposition === "retryable"
+      );
+    }
     current = (current as { readonly cause?: unknown }).cause;
   }
   return false;
+};
+
+const safeFailureReason = (failure: unknown): string => {
+  if (typeof failure !== "object" || failure === null) return String(failure);
+  const record = failure as Readonly<Record<string, unknown>>;
+  switch (record._tag) {
+    case "PersistenceUnavailable":
+      return `persistence unavailable: ${String(record.repository)}/${String(record.operation)} (${String(record.sourceTag)})`;
+    case "PersistenceConstraintViolation":
+      return `persistence constraint: ${String(record.repository)}/${String(record.constraintKind)}/${String(record.constraint)}`;
+    case "PersistenceCorruption":
+      return `persistence corruption: ${String(record.repository)}/${String(record.operation)} (${String(record.reason)})`;
+    default:
+      return String(failure);
+  }
 };
 
 /** One poll over the project journal for one consumer identity: read the
@@ -144,7 +170,7 @@ export const pollOnce = <R>(
       }
       quarantined.push({
         sequence: event.sequence,
-        reason: `handler defect: ${String(defect)}`,
+        reason: `handler defect: ${safeFailureReason(defect)}`,
       });
     }
 
@@ -232,4 +258,30 @@ export const completionConsumerLoop =
       dependencies,
       projectId,
       principal,
+    );
+
+/** Durable cross-workflow signal delivery. Returned strings are diagnostics;
+ * DomainEvent + canonical repositories remain the workflow truth. */
+export const workflowSignalConsumerLoop =
+  (
+    consumer: Pick<WorkflowSignalConsumerService, "consume">,
+  ): ((
+    events: ReadonlyArray<DomainEvent<unknown>>,
+  ) => Effect.Effect<ReadonlyArray<string>, unknown>) =>
+  (events) =>
+    Effect.map(
+      consumer.consume(
+        events.map((event) => ({
+          eventType: event.eventType,
+          payload: event.payload,
+          eventId: String(event.eventId),
+          occurredAt: event.occurredAt,
+        })),
+      ),
+      (outcomes) =>
+        outcomes.map((outcome) =>
+          outcome._tag === "Delivered"
+            ? `Delivered:${outcome.kind}:${outcome.workspaceId}`
+            : `Ignored:${outcome.eventId}`,
+        ),
     );

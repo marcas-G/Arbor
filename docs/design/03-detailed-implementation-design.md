@@ -1,14 +1,146 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.27\
-**Status:** TOP-LEVEL ARCHITECTURE FROZEN — Verifier Execution Settlement authorized\
-**Supersedes:** v1.26\
-**Date:** 2026-10-02\
-**Depends on:** `Arbor System Design Specification v1.5`
+**Version:** 1.31\
+**Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
+**Supersedes:** v1.30\
+**Date:** 2026-10-03\
+**Depends on:** `Arbor System Design Specification v1.9`
 
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
 **Scope:** 将已冻结的系统级设计落实为可实现且可测试的契约。v1.4 是 governance patch：闭合 P0 planning 审阅发现的 DG-01…DG-06，不改变 C1–C10 / X1–X11 的语义结论；v1.5 闭合 P1 pre-implementation 审阅发现的 P1-DG-01…05 与 P1-DG-10，P1+ 的 exact DDL、逐 Command payload/signature、Prompt 正文与经验参数仍按 phase-scoped closure 管理。
+
+**Governance changes (v1.30 → v1.31): Minimal Architecture Convergence**
+
+- MAC-D1: `WorkPlan` is superseded as core Domain vocabulary by
+  Runtime/Cognition-owned `LocalPlan`, still exact-bound to WorkId +
+  WorkRevision and recoverable across Executions, with zero authority edges.
+- MAC-D2: active new-write `SpecialistSpec/SpecialistSettled` semantics are
+  superseded. Optional future subagent collaboration is a route of the common
+  ActionCall protocol and child Execution; historical rows/aliases remain
+  replay-only until MAC-P4 migration.
+- MAC-D3: Model output exposes one ActionCall contract resolved through exact
+  TurnProfile registration. Existing executable/control handlers remain
+  route-specific implementations under a common authorization/approval
+  facade.
+- MAC-D4: exact executable/control approval records implement one
+  `ActionApproval` semantic ADT. Physical tables may remain behind adapters
+  until MAC-P4; no steady-state dual-write convergence is permitted.
+- MAC-D5: `WorkspaceKnowledgeView` is a rebuildable projection of accepted and
+  canonical sources. Existing `MemoryId`/unprovisioned KnowledgeQueryPort are
+  not implementation evidence.
+- MAC-D6: Root conversation work initiation is MAC-P1; placement/formation is
+  MAC-P2; Dependency/Deliverable is hidden until MAC-P3 full closure; optional
+  subagent collaboration is MAC-P4.
+- MAC-D7: asynchronous consumers expose durable fulfillment separately from
+  governance/decision and final result. Formation is the first required
+  implementation.
+- MAC-D8: Application/consumer/recovery signatures use narrow typed error
+  unions and persist retry/block/attention outcomes; log-and-continue is not a
+  semantic failure strategy.
+- MAC-D9: active runtime compatibility branches move behind
+  migration/archive/recovery adapters; new turns never advertise legacy
+  names/vocabularies.
+- MAC-D10: source-marker architecture tests are insufficient phase evidence;
+  each MAC phase requires executable black-box, fault/restart and real-provider
+  proof.
+
+Accepted proposal SHA-256:
+`44B549EA81E21B3D4BE5D545EA446B544D50CCA0061C83E6FC40CDC2ADCCA932`.
+Implementation contracts under `docs/design/implementation/MAC/**` are FROZEN.
+MAC-P1 implementation is authorized by
+`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`; MAC-P2…P4 remain phase-gated by the
+accepted contract index.
+
+**Governance changes (v1.27 → v1.28):**（Execution Episode / Goal / Plan，
+EGP-1…EGP-10）
+
+- `ExecutionFocus` and the Work/Coordination dichotomy are superseded for new
+  writes by exact `ExecutionEpisodeBinding` variants: Work, ConversationResponse,
+  Inbox and Decision.
+- Work remains the long-lived Goal/lifecycle authority. An optional Plan is
+  mutable progress state maintained through `update_plan`; it cannot perform
+  tools, grant authority, claim completion, verify, accept or complete Work.
+- Agent Runtime has one loop. Binding-specific Context and tool surfaces are
+  resolved before a Turn; the loop does not branch on a Coordination mode.
+- Conversation binds MessageId + ResponseJob revision; Work binds WorkId +
+  WorkRevision; Inbox and Decision bind their own durable identifiers.
+- Scheduler ambiguity becomes an exact WorkSelectionDecisionRequest and
+  DecisionEpisode. Deterministic workflow consumers remain model-free.
+- `CoordinationCompleted` and generic `QueryCompleted` are superseded by exact
+  episode results. Binding/result mismatch is rejected mechanically.
+- migration 0024 adds episode kind/ref/revision while retaining legacy focus
+  columns as read-only migration evidence. Ambiguous active legacy
+  Coordination fails closed; no text inference is permitted.
+- new TurnProfiles are episode-derived. `WorkspaceCoordination` and
+  `workspace-coordination-context-v1` are historical aliases only and cannot
+  be materialized for a new ProviderTurn.
+
+Accepted proposal SHA-256:
+`66D64809ED103194417BCA29FB0165657AC884EA0A3E0FDC5E5468E03E821C69`.
+Migration 0024 and implementation Waves A–E are authorized by
+`ACCEPT_EXECUTION_EPISODE_GOAL_PLAN_CONVERGENCE`.
+
+**Governance changes (v1.28 → v1.29):**（Root Conversation Action
+Capability，CRAC-1…CRAC-5）
+
+- `RootConversation` replaces the response-only profile. It remains bound to
+  one exact ConversationResponseEpisode and uses the common Agent Loop.
+- Its executable-tool surface is empty. Its v1 control-tool surface is the
+  exact stable identity `core.control.propose-workspace` only.
+- The output contract admits ordinary text or provider-neutral typed tool
+  invocation. `decodeTurn` remains generic; ControlToolRegistry alone maps the
+  invocation to `AgentAction.ProposeChildWorkspace`.
+- The handler persists a Pending FormationProposal only. Human
+  RecordDecision and the formation consumer retain approval and creation
+  authority. Proposal persistence and `gov:<proposalId>:<revision>` human
+  Inbox admission are one transaction; Governance entries are excluded from
+  Agent Session input promotion.
+- ProviderTurn/ControlResult history is re-injected only when its durable
+  source identity belongs to the same conversation execution; unrelated Work
+  timeline entries remain excluded.
+- migration 0027 backfills the Governance Inbox for pre-CRAC Pending
+  proposals; migration 0028 consumes stale actionable rows for already-settled
+  proposals. Current proposal/Queue writes and decision consumption are
+  atomic and replay-safe.
+
+Accepted proposal SHA-256:
+`DEBD13AAB34B7556B221F12B647360E945F95F5D89BD0B03287963DB22B917A8`.
+Implementation is authorized by `ACCEPT_ROOT_CONVERSATION_ACTION_CAPABILITY`.
+
+**Governance changes (v1.29 → v1.30):**（Control Action Permission &
+Approval，CAPA-1…CAPA-7）
+
+- PermissionGrant v2 binds subject, stable capability, target, validity window
+  and revision. Migration revokes unbound legacy grants; no compatibility
+  default grants authority.
+- Agent Runtime projects generic AgentAction into one exact action digest and
+  asks the ControlActionAuthorizer before any handler effect.
+- The decision ADT is `Authorized | Denied | ApprovalRequired`. Denied becomes
+  a typed model-visible ControlResult; ApprovalRequired leaves canonical state
+  unchanged and releases only the lease.
+- `control_action_approvals` persists exact Execution/action/target/
+  ControlBasis/expiry and single-consumption state.
+- ResolveControlApproval is human-actionable and consumes the exact Queue item.
+  Approved and Rejected both wake the same active Execution; AgentLoopStep
+  replays the settled ProviderTurn without a second inference for the action.
+- Approval consumption follows the idempotent canonical handler attempt;
+  command replay closes crash windows without duplicate mutation.
+- Workspace policy owns `Deny | Ask | AllowWithinGrant`; default sensitive
+  controls (`assign_work`, `spawn_specialist`) ask. Sandbox and ToolRuntime
+  approval remain independent enforcement boundaries.
+
+Accepted proposal SHA-256:
+`74C0A20BCED0C7800B2EB21933967810AAB73423132D9FE06E86A7E56EA26FB9`.
+Implementation is authorized by
+`ACCEPT_CONTROL_ACTION_PERMISSION_APPROVAL_ARCHITECTURE`.
+
+**Implementation closure record (2026-10-03):** migration 0025 removes
+`executions.focus_kind/focus_work_id`; migration 0026 removes
+`agent_execution_state.focus_json` and stores exact `episode_json`. The current
+composition baseline is 26. Pre-0024 decoding remains compatibility-only;
+current admission, Agent Runtime, Model Context and settlement production are
+episode-derived and fail closed on `LegacyAmbiguousEpisode`.
 
 **Governance changes (v1.21 → v1.22):**（Session / Context Runtime
 Convergence，SCRC-1…SCRC-12）
@@ -516,17 +648,14 @@ Authorization — D9 of the `52-migration-and-implementation-dag.md` sequencing)
   (`tests/capability/real-provider/**` + `scripts/testing/run-capability.mjs`
   three-run stability oracle). Qualification must never use the legacy
   universal `arbor_directive` representation as a pass condition.
-- **ACR-8 — field-source gaps gate only the actions that need them.**
-  The four downstream gaps (AssignWork.Provenance; ToolObservation source
-  identity G-V2-2; ConcludeVerification.summaryRef G-V2-3;
-  initialWork/VerificationMission lifecycle G-V2-4) remain OPEN and keep
-  gating only the action/command paths that consume those fields
-  (`52-migration-and-implementation-dag.md` §Four former field-source gaps).
-  Actions with complete, frozen mappings — e.g. Wait, SendMessage,
-  ProposeChildWorkspace (formation semantics closed in P6), SpawnSpecialist
-  (execution-bound admission closed in P2), ClaimCompletion (P8 chain) —
-  may be implemented and qualified independently under this authorization.
-  B10's `BLOCKED_BY_DESIGN_GAP` status is unchanged until those gaps close.
+- **ACR-8 — historical field-source gating (superseded by v1.26).**
+  At the v1.19 checkpoint the four downstream mappings
+  (AssignWork.Provenance; ToolObservation identity G-V2-2;
+  ConcludeVerification.summaryRef G-V2-3; initialWork VerificationMission
+  G-V2-4) gated only their consuming paths. The manually accepted v1.26
+  VDC-1…VDC-8 contract above subsequently CLOSED all four mappings and
+  supersedes this checkpoint status. B10 is no longer
+  `BLOCKED_BY_DESIGN_GAP`; repeatable L3 qualification is authorized.
 - **Wave 2 scope.** Wave 2 is the module map of
   `51-agent-control-module-map.md` sequenced by the dependency DAG of
   `52-migration-and-implementation-dag.md`; it adds no new package or
@@ -2984,6 +3113,14 @@ Adapter 必须无损保存 Tool call/result correlation。不能支持某个 Ite
 现有 `CanonicalProviderEvent.ContinuationState(stateRef)` 承载 opaque result ref，
 不扩展 CanonicalProviderEvent ADT。
 
+Provider wire stream、durable Session facts 与下一轮 provider request 是三个不同
+边界：adapter 只把 stream 组装为完整 `CanonicalProviderEvent`；Session 只保存 typed
+ToolCall/ToolResult/ControlResult 事实；Model Context 是唯一编译
+`PortableModelRequest` 的语义入口；ProtocolAdapter 是唯一把 portable request 渲染为
+provider messages 的入口。发送前必须校验每个 `callRef` 恰有一个 Call 和一个 Result，
+Result 不得先于 Call，同批 Call 在 provider wire 上必须先完整出现再出现对应 Result。
+已知不合法的序列在本地作为 typed ProtocolViolation 拒绝，禁止发给 provider。
+
 ## 7.6 ToolCatalogPort 与 ToolRuntimePort
 
 Tool metadata 与 Tool invocation ownership 分离。
@@ -3060,6 +3197,14 @@ projection。Composition Root 将两类 definition projection 一并接入 Model
 Context，`model-context` 不依赖 `agent-runtime`、`tool-runtime` 或其 handlers。
 一个 request 中的 model-facing tool identity 必须唯一对应一条语义路由；
 歧义注册不得暴露给模型，未知调用不得降级成另一条路由。
+
+Control Tool 的 Runtime identity 与 model-facing function name 必须分离：
+`stableId + version + implementationHash` 是 registry、authority、manifest、handler
+和 replay identity；`modelName` 只是当前 provider request 的函数名。模型不需要感知
+Arbor 的产品/包名。一个 Turn 中 `modelName` 唯一；冲突使 TurnProfile 不可编译，而不以
+产品前缀消歧。历史 alias 仅由其记录的旧 Manifest 用于 replay，新 Turn 只公开当前
+无品牌 action vocabulary。provider output 必须按该 Turn 的 alias binding 先解析为
+stable identity，不能以函数名推断授权。
 
 Executable Tool 继续使用 P4 `ToolRuntime` 的 authority、resource admission、
 sandbox、invocation persistence/reconciliation 与 observation 语义。Control
@@ -3816,6 +3961,11 @@ Recovery
 Continuation Program 和 Context selection 根据 WakeReason 定制，而不是每次加载最后 N 条消息。
 
 `ChildDelivered` 由成功的 Deliver Inbox delivery 触发（v1.10 G2；P7 接线）。
+
+WSC-1（2026-10-02 人工治理）：`DependencySatisfied` 是独立终态事实。满足转移
+保持 Dependency revision 不变；消费该事实时，相同 `dependencyId` 的
+`DependencyChanged` wait 无条件、幂等清除，不要求 `observedRevision <
+toRevision`。非终态 dependency revision change 仍使用严格 revision 前进规则。
 
 ## 8.18A Deterministic Workspace Re-evaluation
 

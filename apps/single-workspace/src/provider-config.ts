@@ -96,13 +96,13 @@ export const findArborConfigFile = (): ArborConfigFileResult | undefined => {
     let parsed: unknown;
     try {
       parsed = JSON.parse(readFileSync(path, "utf8"));
-    } catch (cause) {
+    } catch {
       return {
         ok: false,
         error: {
           _tag: "ProviderConfigInvalid",
           path,
-          reason: `JSON parse failed: ${String(cause)}`,
+          reason: "JSON parse failed",
         },
       };
     }

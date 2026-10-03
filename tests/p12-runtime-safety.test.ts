@@ -565,7 +565,7 @@ const waitTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>> = [
     {
       _tag: "ToolCallProposed",
       callRef: "c1",
-      toolName: "arbor_wait",
+      toolName: "wait",
       argumentsJson: JSON.stringify({
         reason: "wait for a wake",
         waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -770,7 +770,7 @@ const secondWaitTurn: ReadonlyArray<CanonicalProviderEvent> = [
   {
     _tag: "ToolCallProposed",
     callRef: "c1",
-    toolName: "arbor_wait",
+    toolName: "wait",
     argumentsJson: JSON.stringify({
       reason: "wait for a wake",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },

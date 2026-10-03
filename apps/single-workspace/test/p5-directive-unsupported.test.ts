@@ -97,13 +97,15 @@ const seed = Effect.gen(function* () {
         ],
       );
       yield* sql.unsafe(
-        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
+        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, episode_kind, episode_ref, episode_revision, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,?,?,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
         [
           executionId,
           projectId,
           "workspace",
           workspaceId,
-          "coordination",
+          "InboxEpisode",
+          "legacy-directive-test",
+          0,
           sessionId,
           "t",
         ],
@@ -119,7 +121,11 @@ const execution: Execution = {
   binding: {
     _tag: "WorkspaceExecution",
     workspaceId,
-    focus: { _tag: "Coordination" },
+    episode: {
+      _tag: "InboxEpisode",
+      entryKey: "legacy-directive-test",
+      inputKind: "LegacyDirectiveTest",
+    },
   },
   sessionId,
   admittedAt: "t",

@@ -1,7 +1,7 @@
 /**
  * W-08 — GrantPermission form (RHF + Zod). Frozen payload
- * {permissionGrantId, scope, issuer, lifetime}; scope is the frozen
- * `capability@target` format (P12 `02`); `permissionGrantId`
+ * CAPA v2 payload binds an explicit subject, capability, target and expiry;
+ * `permissionGrantId`
  * caller-preallocated (`pgr_<uuid-v7>`) and held across retries;
  * **issuer = the current authenticated principal, UI read-only**
  * (W-00 proof ④ — no delegated issuance in Web v1).
@@ -24,9 +24,11 @@ import "./forms.css";
 const CUSTOM = "__custom__";
 
 type GrantValues = {
+  subjectKind: "HumanPrincipal" | "WorkspaceAgent" | "Execution";
+  subjectRef: string;
   capability: string;
   target: string;
-  lifetime: string;
+  expiresAt: string;
 };
 
 export function GrantPermissionForm({
@@ -53,9 +55,11 @@ export function GrantPermissionForm({
   const { handleSubmit, setValue, watch, formState } = useForm<GrantValues>({
     resolver: zodResolver(grantPermissionSchema) as Resolver<GrantValues>,
     defaultValues: {
+      subjectKind: "HumanPrincipal",
+      subjectRef: actor,
       capability: HUMAN_ACTIONABLE_COMMANDS[0],
       target: "",
-      lifetime: "PT1H",
+      expiresAt: "",
     },
   });
   const [selection, setSelection] = useState<string>(
@@ -63,7 +67,9 @@ export function GrantPermissionForm({
   );
   const [customCapability, setCustomCapability] = useState("");
   const target = watch("target");
-  const lifetime = watch("lifetime");
+  const subjectKind = watch("subjectKind");
+  const subjectRef = watch("subjectRef");
+  const expiresAt = watch("expiresAt");
   const effectiveCapability =
     selection === CUSTOM ? customCapability.trim() : selection;
   const doSubmit = (event?: FormEvent): void => {
@@ -76,22 +82,53 @@ export function GrantPermissionForm({
     void handleSubmit((values) => {
       const permissionGrantId = grantIdRef.current ?? `pgr_${uuidv7()}`;
       grantIdRef.current = permissionGrantId;
-      const scope =
-        values.target.trim().length === 0
-          ? values.capability
-          : `${values.capability}@${values.target.trim()}`;
       void submit("GrantPermission", projectId, {
         permissionGrantId,
-        scope,
         issuer: actor,
-        lifetime:
-          values.lifetime.trim().length === 0 ? "PT1H" : values.lifetime.trim(),
+        subject:
+          values.subjectKind === "HumanPrincipal"
+            ? { _tag: "HumanPrincipal", principal: values.subjectRef.trim() }
+            : values.subjectKind === "WorkspaceAgent"
+              ? {
+                  _tag: "WorkspaceAgent",
+                  workspaceId: values.subjectRef.trim(),
+                }
+              : {
+                  _tag: "Execution",
+                  executionId: values.subjectRef.trim(),
+                },
+        capability: values.capability,
+        target: values.target.trim().length === 0 ? null : values.target.trim(),
+        expiresAt:
+          values.expiresAt.trim().length === 0
+            ? null
+            : new Date(values.expiresAt).toISOString(),
       });
     })();
   };
   return (
     <Card title="授予权限（GrantPermission）">
       <form className="arbor-command-form" onSubmit={doSubmit}>
+        <Field
+          control="select"
+          label="授权主体类型"
+          value={subjectKind}
+          onChange={(next) => {
+            setValue("subjectKind", next as GrantValues["subjectKind"]);
+          }}
+          options={[
+            { value: "HumanPrincipal", label: "用户 Principal" },
+            { value: "WorkspaceAgent", label: "工作区 Agent" },
+            { value: "Execution", label: "单次 Execution" },
+          ]}
+        />
+        <Field
+          control="input"
+          label="授权主体"
+          placeholder="user:… / ws_… / exe_…"
+          value={subjectRef}
+          onChange={(next) => setValue("subjectRef", next)}
+        />
         <Field
           control="select"
           label="capability"
@@ -129,16 +166,16 @@ export function GrantPermissionForm({
         />
         <Field
           control="input"
-          label="lifetime"
-          placeholder="如 PT1H"
-          value={lifetime}
+          label="过期时间（可选）"
+          placeholder="2026-10-04T00:00:00Z；留空 = 直到撤销"
+          value={expiresAt}
           onChange={(next) => {
-            setValue("lifetime", next);
+            setValue("expiresAt", next);
           }}
         />
-        {formState.errors.lifetime ? (
+        {formState.errors.expiresAt ? (
           <p className="arbor-command-error">
-            {formState.errors.lifetime.message}
+            {formState.errors.expiresAt.message}
           </p>
         ) : null}
         <p className="arbor-command-static">

@@ -5,7 +5,11 @@ import type {
   ProviderTurnId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
-import type { LeaseFencingRejected, ProviderFailure } from "./errors.js";
+import type {
+  LeaseFencingRejected,
+  ProviderFailure,
+  RepositoryFailure,
+} from "./errors.js";
 import type { TransactionScope } from "./session.js";
 
 export interface AgentLoopStepIdentity {
@@ -90,10 +94,7 @@ export interface AgentLoopStepProviderTurnLink {
   readonly createdAt: string;
 }
 
-export interface AgentLoopStepStoreError {
-  readonly _tag: "AgentLoopStepStoreError";
-  readonly cause: unknown;
-}
+export type AgentLoopStepStoreError = RepositoryFailure<"AgentLoopStepStore">;
 
 export interface AgentLoopStepInvariantConflict {
   readonly _tag: "AgentLoopStepInvariantConflict";

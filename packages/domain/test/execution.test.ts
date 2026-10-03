@@ -11,14 +11,17 @@ import {
   executionBound,
   isExecutionActive,
   isExecutionSettled,
+  MessageId,
   ProjectId,
   parse,
   SessionId,
   settleExecution,
+  settlementMatchesEpisode,
   stopExecution,
   WorkId,
   WorkRevision,
   WorkspaceId,
+  workspaceEpisodeExecution,
   workspaceExecution,
 } from "../src/index.js";
 
@@ -113,6 +116,36 @@ describe("execution binding & settlement", () => {
       expect(stopped.value.stopRequestedAt).toBe("2026-09-20T00:00:00.000Z");
       expect(isExecutionActive(stopped.value)).toBe(true);
     }
+  });
+
+  it("binds a conversation episode exactly and rejects another message result", () => {
+    const messageId = parse(MessageId)(
+      "msg_018f2b3c-4d5e-7abc-8def-0123456789ab",
+    );
+    const conversation = admit(
+      workspaceEpisodeExecution(workspaceId, {
+        _tag: "ConversationResponseEpisode",
+        messageId,
+        responseJobRevision: 3,
+      }),
+    );
+    expect(
+      settlementMatchesEpisode(conversation, {
+        _tag: "Completed",
+        result: { _tag: "ConversationResponseProduced", messageId },
+      }),
+    ).toBe(true);
+    expect(
+      settlementMatchesEpisode(conversation, {
+        _tag: "Completed",
+        result: {
+          _tag: "ConversationResponseProduced",
+          messageId: parse(MessageId)(
+            "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
+          ),
+        },
+      }),
+    ).toBe(false);
   });
 
   it("settles once and rejects settling again", () => {

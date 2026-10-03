@@ -21,6 +21,7 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 const json = (value: unknown): string => JSON.stringify(value);
 
@@ -83,10 +84,7 @@ export const WorkspaceRepositoryLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): WorkspaceRepositoryError => ({
-      _tag: "WorkspaceRepositoryFailure",
-      cause,
-    });
+    const failure = repositoryFailure("WorkspaceRepository", "sql");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     const conflict: WorkspaceRepositoryError = {
@@ -251,6 +249,17 @@ export const WorkspaceRepositoryLive: Layer.Layer<
             ),
           );
           return Number(rows[0]?.count ?? 0);
+        }),
+      listActiveChildren: (workspaceId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<WorkspaceRow>(
+              "SELECT * FROM workspaces WHERE parent_workspace_id = ? AND lifecycle = 'Active' ORDER BY workspace_id",
+              [workspaceId],
+            ),
+          );
+          return rows.map(toWorkspace);
         }),
       hasOpenWork: (workspaceId) =>
         Effect.gen(function* () {

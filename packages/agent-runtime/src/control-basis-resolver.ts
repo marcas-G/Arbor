@@ -1,4 +1,5 @@
 import type { CommandSubmissionContext, Execution } from "@arbor/domain";
+import { workEpisode } from "@arbor/domain";
 import type { ControlBasis } from "@arbor/model-context";
 import type {
   EnvironmentRevisionStoreService,
@@ -50,17 +51,13 @@ export const makeControlBasisResolver = (
           let workBinding:
             | { readonly workId: string; readonly workRevision: number }
             | undefined;
-          if (
-            input.execution.binding._tag === "WorkspaceExecution" &&
-            input.execution.binding.focus._tag === "Work"
-          ) {
-            const work = yield* works.findById(
-              input.execution.binding.focus.workId,
-            );
+          const boundWork = workEpisode(input.execution);
+          if (boundWork !== null) {
+            const work = yield* works.findById(boundWork.workId);
             if (Option.isNone(work)) {
               return yield* Effect.fail({
                 _tag: "ControlBasisWorkMissing" as const,
-                workId: input.execution.binding.focus.workId,
+                workId: boundWork.workId,
               });
             }
             workBinding = {

@@ -436,7 +436,11 @@ describe("p9-rebuild (RB-1..RB-5 / PR1–PR4 — generic face, GQ2)", () => {
       {
         apply: () =>
           Effect.fail({
-            _tag: "ConsumerOffsetStoreFailure" as const,
+            _tag: "PersistenceUnavailable" as const,
+            repository: "ConsumerOffsetStore" as const,
+            operation: "projection-test",
+            retryDisposition: "retryable" as const,
+            sourceTag: "InjectedFailure",
             cause: "injected projection failure",
           }),
         reset: () => Effect.void,
@@ -455,9 +459,11 @@ describe("p9-rebuild (RB-1..RB-5 / PR1–PR4 — generic face, GQ2)", () => {
             const failure = yield* runConsumerBatch("pr4", projectA, 10).pipe(
               Effect.flip,
             );
-            expect((failure as { _tag: string })._tag).toBe(
-              "ConsumerOffsetStoreFailure",
-            );
+            expect(failure).toMatchObject({
+              _tag: "PersistenceUnavailable",
+              repository: "ConsumerOffsetStore",
+              retryDisposition: "retryable",
+            });
             // Invariant 37: the journaled domain facts survive.
             const after = yield* sql.unsafe<{ count: number }>(
               "SELECT COUNT(*) AS count FROM domain_events",

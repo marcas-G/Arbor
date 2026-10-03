@@ -7,3 +7,5 @@ export * from "./projection-query.js";
 export * from "./registry.js";
 export * from "./runnable-source.js";
 export * from "./transport/index.js";
+export * from "./workspace-knowledge.js";
+export * from "./workspace-placement.js";

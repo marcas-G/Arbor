@@ -3,14 +3,13 @@ import {
   type HumanMessageConflict,
   type HumanMessageRecord,
   HumanMessageStore,
-  type HumanMessageStoreError,
   type HumanMessageStoreService,
   type ReasoningAttachment,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 /**
  * P14 `01` §4 — the durable human-message store (SQLite). Writes happen in
@@ -129,7 +128,4 @@ export const HumanMessageStoreLive: Layer.Layer<
   }),
 );
 
-const toOperationalFailure = (cause: SqlError): HumanMessageStoreError => ({
-  _tag: "HumanMessageStoreFailure",
-  cause,
-});
+const toOperationalFailure = repositoryFailure("HumanMessageStore", "message");

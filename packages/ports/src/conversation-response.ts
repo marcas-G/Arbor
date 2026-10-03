@@ -5,6 +5,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
+import type { RepositoryFailure } from "./errors.js";
 import type { ReasoningAttachment } from "./provider-extension.js";
 import type { TransactionScope } from "./session.js";
 
@@ -90,10 +91,8 @@ export interface ConversationAttempt {
   readonly policyVersion: string;
 }
 
-export interface ConversationJobStoreError {
-  readonly _tag: "ConversationJobStoreError";
-  readonly cause: unknown;
-}
+export type ConversationJobStoreError =
+  RepositoryFailure<"ConversationJobStore">;
 
 export interface ConversationJobConflict {
   readonly _tag: "ConversationJobConflict";
@@ -101,10 +100,8 @@ export interface ConversationJobConflict {
   readonly reason: "AlreadyExists" | "RevisionOrStateMismatch";
 }
 
-export interface ConversationAttemptStoreError {
-  readonly _tag: "ConversationAttemptStoreError";
-  readonly cause: unknown;
-}
+export type ConversationAttemptStoreError =
+  RepositoryFailure<"ConversationAttemptStore">;
 
 export interface ConversationAttemptConflict {
   readonly _tag: "ConversationAttemptConflict";

@@ -3,9 +3,9 @@ import type {
   AgentBinding,
   AgentExecutionState,
   Execution,
-  ExecutionSettlement,
   WakeReason,
 } from "@arbor/domain";
+import { executionEpisode } from "@arbor/domain";
 import {
   ModelContext,
   makeTurnProfileResolver,
@@ -16,12 +16,15 @@ import {
   AgentLoopStepStore,
   Clock,
   ConversationResponseJobStore,
+  DecisionRequestStore,
   EnvironmentRevisionStore,
   type ExecutionActivity,
+  type ExecutionDriveOutcome,
   type ExecutionDriverError,
   ExecutionDriverPort,
   HumanMessageStore,
   InboxProjectionStore,
+  LocalPlanStore,
   ModelCapabilityPort,
   ProjectRepository,
   type ProviderExecutionPolicyOverrides,
@@ -33,12 +36,13 @@ import {
   SessionRepository,
   TransactionPort,
   WorkRepository,
+  WorkspaceKnowledgePort,
+  WorkspacePlacementPort,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { executeAgentLoopActions } from "./agent-loop-actions.js";
 import {
-  isConversationExecution,
   MAX_TURNS,
   type ModelDecisionOutcome,
   safetyStop,
@@ -49,7 +53,9 @@ import {
   type ExecutableInvocationHandler,
   makeControlToolRegistry,
 } from "./control.js";
+import type { ControlActionAuthorizerService } from "./control-authorization.js";
 import { makeControlBasisResolver } from "./control-basis-resolver.js";
+import { toExecutionDriverError } from "./execution-driver-failure.js";
 import { runModelDecision } from "./model-decision.js";
 import { recordAcceptedModelOutput } from "./model-output-journal.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
@@ -66,6 +72,7 @@ export interface AgentLoopDriverOptions {
   /** The typed control-tool registry. Composition supplies the live registry;
    * the default keeps Wait available for focused runtime tests. */
   readonly controlRegistry?: ControlToolRegistryService;
+  readonly controlAuthorizer?: ControlActionAuthorizerService;
   readonly turnProfileResolver?: TurnProfileResolverService;
   readonly executableInvocationHandler?: ExecutableInvocationHandler;
   /** Adapter identity recorded on manifests (P14 conversation audit). */
@@ -128,6 +135,15 @@ export const AgentLoopDriverLive = (
       const projects = yield* ProjectRepository;
       const workspaces = yield* WorkspaceRepository;
       const works = yield* WorkRepository;
+      const workspaceKnowledgeOption = yield* Effect.serviceOption(
+        WorkspaceKnowledgePort,
+      );
+      const workspacePlacementOption = yield* Effect.serviceOption(
+        WorkspacePlacementPort,
+      );
+      const localPlansOption = yield* Effect.serviceOption(LocalPlanStore);
+      const decisionRequestsOption =
+        yield* Effect.serviceOption(DecisionRequestStore);
       const clock = yield* Clock;
       const controlRegistry =
         options.controlRegistry ?? makeControlToolRegistry();
@@ -141,10 +157,7 @@ export const AgentLoopDriverLive = (
           },
           controlCatalog: controlRegistry,
         });
-      const failure = (cause: unknown): ExecutionDriverError => ({
-        _tag: "ExecutionDriverError",
-        cause,
-      });
+      const failure = toExecutionDriverError;
 
       const drive = (input: {
         readonly execution: Execution;
@@ -152,8 +165,20 @@ export const AgentLoopDriverLive = (
         readonly wakeReason: WakeReason;
         readonly context: import("@arbor/domain").CommandSubmissionContext;
         readonly safetyGate: RuntimeSafetyGateService;
-      }): Effect.Effect<ExecutionSettlement, ExecutionDriverError> =>
+      }): Effect.Effect<ExecutionDriveOutcome, ExecutionDriverError> =>
         Effect.gen(function* () {
+          if (
+            input.execution.binding._tag === "WorkspaceExecution" &&
+            executionEpisode(input.execution) === undefined
+          ) {
+            return {
+              _tag: "Failed",
+              failure: {
+                _tag: "ExecutionFailure",
+                reason: "legacy ambiguous Workspace execution cannot be driven",
+              },
+            } as const;
+          }
           const loopSteps =
             configuredLoopSteps !== undefined &&
             (yield* tx
@@ -174,14 +199,7 @@ export const AgentLoopDriverLive = (
               cognitiveMode: input.agentExecutionState.currentMode ?? "execute",
               requiredCapabilities: [],
             })
-            .pipe(
-              Effect.mapError(
-                (cause): ExecutionDriverError => ({
-                  _tag: "ExecutionDriverError",
-                  cause,
-                }),
-              ),
-            );
+            .pipe(Effect.mapError(failure));
           // DID §8.19 / P3 `06` §4: capture and re-read the full trusted
           // control basis at every effectful action admission.
           const currentControlBasis = makeControlBasisResolver(
@@ -189,6 +207,12 @@ export const AgentLoopDriverLive = (
               tx,
               projects,
               workspaces,
+              ...(Option.isSome(workspaceKnowledgeOption)
+                ? { workspaceKnowledge: workspaceKnowledgeOption.value }
+                : {}),
+              ...(Option.isSome(workspacePlacementOption)
+                ? { workspacePlacement: workspacePlacementOption.value }
+                : {}),
               works,
               environmentRevisions,
               failure,
@@ -251,11 +275,13 @@ export const AgentLoopDriverLive = (
                 ...(Option.isSome(responseJobsOption)
                   ? { responseJobs: responseJobsOption.value }
                   : {}),
-                ...(Option.isSome(inboxOption) &&
-                Option.isNone(inputPromotionOption)
-                  ? { inbox: inboxOption.value }
-                  : {}),
                 works,
+                ...(Option.isSome(localPlansOption)
+                  ? { localPlans: localPlansOption.value }
+                  : {}),
+                ...(Option.isSome(decisionRequestsOption)
+                  ? { decisionRequests: decisionRequestsOption.value }
+                  : {}),
                 workspaces,
                 options,
                 admit,
@@ -270,8 +296,6 @@ export const AgentLoopDriverLive = (
               activity,
             );
 
-          let sawToolInvocation = false;
-          let producedText = false;
           for (let turn = 0; turn < MAX_TURNS; turn += 1) {
             if (
               Option.isSome(inboxOption) &&
@@ -349,6 +373,9 @@ export const AgentLoopDriverLive = (
               tx,
               sessions,
               controlRegistry,
+              ...(options.controlAuthorizer === undefined
+                ? {}
+                : { controlAuthorizer: options.controlAuthorizer }),
               ...(options.executableInvocationHandler === undefined
                 ? {}
                 : {
@@ -366,13 +393,13 @@ export const AgentLoopDriverLive = (
             if (actionProgression._tag === "DecisionStale") {
               continue;
             }
+            if (actionProgression._tag === "ApprovalRequired") {
+              return actionProgression;
+            }
             currentLoopStep = actionProgression.loopStep;
             progressedSinceBoundary =
               progressedSinceBoundary || actionProgression.durableProgress;
             const observations = actionProgression.observations;
-            sawToolInvocation =
-              sawToolInvocation || decodedOutput.toolInvocations.length > 0;
-            producedText = producedText || decodedOutput.text.trim().length > 0;
             const finalization = yield* completeAgentLoopStep({
               input,
               decodedOutput,
@@ -390,16 +417,6 @@ export const AgentLoopDriverLive = (
             if (finalization._tag === "Settle") {
               return finalization.settlement;
             }
-          }
-          if (
-            isConversationExecution(input.execution) &&
-            !sawToolInvocation &&
-            producedText
-          ) {
-            return {
-              _tag: "Completed",
-              result: { _tag: "QueryCompleted" },
-            };
           }
           return {
             _tag: "Failed",

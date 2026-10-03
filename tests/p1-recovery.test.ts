@@ -256,7 +256,11 @@ describe("P1-014 recovery matrix — consumer / projection", () => {
     const failingProjection = Layer.succeed(ProjectionStore, {
       apply: () =>
         Effect.fail({
-          _tag: "ConsumerOffsetStoreFailure" as const,
+          _tag: "PersistenceUnavailable" as const,
+          repository: "ConsumerOffsetStore" as const,
+          operation: "projection-test",
+          retryDisposition: "retryable" as const,
+          sourceTag: "InjectedFailure",
           cause: "injected projection error",
         }),
       reset: () => Effect.void,
@@ -275,9 +279,11 @@ describe("P1-014 recovery matrix — consumer / projection", () => {
       return { failed, offset };
     });
     const result = await Effect.runPromise(Effect.provide(program, app));
-    expect((result.failed as { _tag: string })._tag).toBe(
-      "ConsumerOffsetStoreFailure",
-    );
+    expect(result.failed).toMatchObject({
+      _tag: "PersistenceUnavailable",
+      repository: "ConsumerOffsetStore",
+      retryDisposition: "retryable",
+    });
     expect(result.offset).toBe(0);
   });
 
@@ -423,9 +429,10 @@ describe("P1-014 recovery matrix — ownership and migration", () => {
       };
     });
     const result = await Effect.runPromise(Effect.provide(program, app));
-    expect((result.failed as { _tag: string })._tag).toBe(
-      "ResourceOwnershipRepositoryFailure",
-    );
+    expect(result.failed).toMatchObject({
+      _tag: "PersistenceConstraintViolation",
+      repository: "ResourceOwnershipRepository",
+    });
     expect(result.claims).toBe(0);
     expect(result.revisions).toBe(0);
   });

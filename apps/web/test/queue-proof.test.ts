@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isGovernanceKind,
+  parseControlApprovalEntryKey,
   parseGovernanceEntryKey,
 } from "../src/queue/governance-target.js";
 
@@ -11,6 +12,14 @@ import {
  * fail-closed parsing; never guess from the presentation summary).
  */
 describe("W-00 proof: governance queue action-target", () => {
+  it("recovers exact control approval identity and revision", () => {
+    expect(
+      parseControlApprovalEntryKey("cap:cap_deadbeef:3", "Governance"),
+    ).toEqual({ approvalId: "cap_deadbeef", approvalRevision: 3 });
+    expect(
+      parseControlApprovalEntryKey("cap:cap_deadbeef:3", "Message"),
+    ).toBeNull();
+  });
   it("recovers proposalId + revision from a well-formed Governance entryKey", () => {
     expect(
       parseGovernanceEntryKey(

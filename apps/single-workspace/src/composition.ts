@@ -1,5 +1,6 @@
 import {
   AgentLoopDriverLive,
+  ControlActionAuthorizer,
   ControlToolRegistry,
   ControlToolRegistryLive,
 } from "@arbor/agent-runtime";
@@ -14,6 +15,8 @@ import {
   type ParentUserGovernanceFacts,
   type RemoteWorkerMediationPort,
   RemoteWorkerMediationPortLive,
+  type WorkflowSignalConsumer,
+  WorkflowSignalConsumerLive,
 } from "@arbor/application";
 import { BlobStorePortLive } from "@arbor/blob-local";
 import { Principal, type ProjectId, parse } from "@arbor/domain";
@@ -45,19 +48,23 @@ import {
   CommandStoreLive,
   ConsumerDeadLetterStoreLive,
   ConsumerOffsetStoreLive,
+  ControlApprovalStoreLive,
   ConversationAttemptStoreLive,
   ConversationResponseJobStoreLive,
+  DecisionRequestStoreLive,
   DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
   EvidenceRepositoryLive,
   ExecutionRepositoryLive,
+  FormationFulfillmentStoreLive,
   FormationProposalStoreLive,
   HumanMessageStoreLive,
   IdGeneratorLive,
   InboxProjectionStoreLive,
   LeaseServiceLive,
+  LocalPlanStoreLive,
   layer,
   MessageStoreLive,
   OwnershipWriteServiceLive,
@@ -67,7 +74,7 @@ import {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P23_MIGRATIONS,
+  P32_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -91,10 +98,17 @@ import {
 import {
   type AgentLoopStepStore,
   type CanonicalProviderEvent,
+  type Clock,
+  type DecisionRequestStore,
+  type DeliverableRepository,
+  type DomainEventJournal,
   type ExecutionDriverPort,
   type ExecutionScheduler,
   type HealthPort,
   type HumanMessageStore,
+  type IdGenerator,
+  type InboxProjectionStore,
+  type MessageStore,
   type ModelDeployment,
   makeProviderRegistry,
   type PersistenceHealthProbe,
@@ -112,6 +126,11 @@ import {
   SecretStorePort,
   SkillRegistry,
   type ToolCatalogPort,
+  type TransactionPort,
+  type WorkRepository,
+  type WorkspaceKnowledgePort,
+  type WorkspacePlacementPort,
+  type WorkspaceRepository,
   type WorkWaitStore,
 } from "@arbor/ports";
 import { type UsageService, UsageServiceLive } from "@arbor/projection-runtime";
@@ -130,6 +149,7 @@ import {
 } from "@arbor/tool-runtime";
 import { WorkerDispatchPortLive } from "@arbor/worker-local";
 import { Effect, Layer } from "effect";
+import { ControlActionAuthorizerLive } from "./control-action-authorizer.js";
 import {
   SingleWorkspaceControlActionHandlers,
   SingleWorkspaceControlActionHandlersLive,
@@ -163,6 +183,8 @@ import {
   makeLocalAuthenticator,
 } from "./transport/auth.js";
 import { publishConversationProgress } from "./transport/conversation-progress-bridge.js";
+import { WorkspaceKnowledgePortLive } from "./workspace-knowledge.js";
+import { WorkspacePlacementPortLive } from "./workspace-placement.js";
 
 /** P12 `03` §3: secret adapter selection is Composition-Root config. */
 export type SecretStoreConfig =
@@ -264,10 +286,20 @@ export interface SingleWorkspaceConfig {
 
 export type SingleWorkspaceServices =
   | CommandGateway
+  | Clock
+  | DeliverableRepository
+  | DomainEventJournal
+  | IdGenerator
+  | InboxProjectionStore
+  | MessageStore
+  | TransactionPort
+  | WorkRepository
+  | WorkspaceRepository
   | AgentLoopStepStore
   | ExecutionScheduler
   | RunnableWorkSource
   | WorkWaitStore
+  | DecisionRequestStore
   | ExecutionDriverPort
   | CommandHandlerRegistry
   | ReconciliationSource
@@ -282,9 +314,12 @@ export type SingleWorkspaceServices =
   | TransportBoundary
   | HumanMessageStore
   | InputPromotionService
+  | WorkflowSignalConsumer
   | ProductionDaemonService
   | ProductionDaemonServices
-  | SnapshotRetention;
+  | SnapshotRetention
+  | WorkspaceKnowledgePort
+  | WorkspacePlacementPort;
 
 /** The single-workspace composition root: wires P1–P4 into one runtime. */
 export const buildSingleWorkspaceLayer = (
@@ -451,6 +486,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(ProjectDirectoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(LocalPlanStoreLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(AgentExecutionStateStoreLive, infra),
     Layer.provide(AgentLoopStepStoreLive, infra),
@@ -462,16 +498,19 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(ResourceOwnershipRepositoryLive, infra),
     Layer.provide(EnvironmentRevisionStoreLive, infra),
     Layer.provide(FormationProposalStoreLive, infra),
+    Layer.provide(FormationFulfillmentStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
     Layer.provide(DependencyRepositoryLive, infra),
     Layer.provide(DeliverableRepositoryLive, infra),
+    Layer.provide(DecisionRequestStoreLive, infra),
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(EvidenceRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
     Layer.provide(HumanMessageStoreLive, infra),
     Layer.provide(ConversationResponseJobStoreLive, infra),
+    Layer.provide(ControlApprovalStoreLive, infra),
     Layer.provide(ConversationAttemptStoreLive, infra),
     Layer.provide(ProviderDeploymentBreakerLive, infra),
     Layer.provide(ConsumerOffsetStoreLive, infra),
@@ -488,6 +527,8 @@ export const buildSingleWorkspaceLayer = (
     BlobStorePortLive,
   );
   const admission = Layer.provide(ResourceAdmissionLive, repos);
+  const workspaceKnowledge = Layer.provide(WorkspaceKnowledgePortLive, repos);
+  const workspacePlacement = Layer.provide(WorkspacePlacementPortLive, repos);
   const ownershipWrite = Layer.provide(OwnershipWriteServiceLive, repos);
   const inputPromotion = Layer.provide(InputPromotionServiceLive, repos);
   const authorityResolver = AuthorityResolverPortLive;
@@ -518,7 +559,7 @@ export const buildSingleWorkspaceLayer = (
   );
   const controlActionHandlers = Layer.provide(
     SingleWorkspaceControlActionHandlersLive,
-    Layer.mergeAll(repos, infra, gateway),
+    Layer.mergeAll(repos, infra, gateway, workspacePlacement),
   );
   const controlRegistry = Layer.provide(
     Layer.unwrap(
@@ -528,6 +569,10 @@ export const buildSingleWorkspaceLayer = (
       }),
     ),
     controlActionHandlers,
+  );
+  const controlAuthorizer = Layer.provide(
+    ControlActionAuthorizerLive,
+    Layer.mergeAll(repos, infra),
   );
   const executableInvocation = Layer.provide(
     ExecutableToolHandlerLive,
@@ -547,6 +592,7 @@ export const buildSingleWorkspaceLayer = (
         const registryService = yield* ControlToolRegistry;
         const executableHandler = yield* ExecutableToolHandler;
         const turnProfileResolver = yield* TurnProfileResolver;
+        const authorizer = yield* ControlActionAuthorizer;
         return Layer.provide(
           AgentLoopDriverLive({
             ...(config.secretRef !== undefined
@@ -563,6 +609,7 @@ export const buildSingleWorkspaceLayer = (
                 }
               : {}),
             controlRegistry: registryService,
+            controlAuthorizer: authorizer,
             turnProfileResolver,
             executableInvocationHandler: executableHandler,
             ...(config.provider !== undefined
@@ -578,13 +625,20 @@ export const buildSingleWorkspaceLayer = (
             providerRuntime,
             capability,
             repos,
+            workspaceKnowledge,
+            workspacePlacement,
             inputPromotion,
             infra,
           ),
         );
       }),
     ),
-    Layer.mergeAll(controlRegistry, executableInvocation, turnProfiles),
+    Layer.mergeAll(
+      controlRegistry,
+      controlAuthorizer,
+      executableInvocation,
+      turnProfiles,
+    ),
   );
   const runnableSource = Layer.provide(
     DependencyAwareRunnableWorkSourceLive,
@@ -600,6 +654,10 @@ export const buildSingleWorkspaceLayer = (
       Layer.provide(TransactionPortLive, infra),
     ),
   );
+  const workflowSignals = Layer.provide(
+    WorkflowSignalConsumerLive,
+    Layer.mergeAll(repos, scheduler),
+  );
 
   const coreAll = Layer.mergeAll(
     infra,
@@ -609,10 +667,13 @@ export const buildSingleWorkspaceLayer = (
     providerRuntime,
     secretStore,
     modelContext,
+    workspaceKnowledge,
+    workspacePlacement,
     turnProfiles,
     driver,
     toolRuntime,
     scheduler,
+    workflowSignals,
     admission,
     ownershipWrite,
     runnableSource,
@@ -707,6 +768,6 @@ export {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P23_MIGRATIONS as CURRENT_MIGRATIONS,
+  P32_MIGRATIONS as CURRENT_MIGRATIONS,
   runMigrations,
 };

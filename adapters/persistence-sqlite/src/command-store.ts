@@ -13,6 +13,7 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface CommandRow {
   readonly command_id: string;
@@ -54,10 +55,7 @@ export const CommandStoreLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): CommandStoreError => ({
-      _tag: "CommandStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure("CommandStore", "sql");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     const nextAttempt = (

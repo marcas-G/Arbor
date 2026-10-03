@@ -132,6 +132,13 @@ export interface WorkspaceRepositoryService {
   readonly countActiveChildren: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<number, WorkspaceRepositoryError, TransactionScope>;
+  readonly listActiveChildren: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<Workspace>,
+    WorkspaceRepositoryError,
+    TransactionScope
+  >;
   readonly hasOpenWork: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<boolean, WorkspaceRepositoryError, TransactionScope>;

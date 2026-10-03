@@ -12,6 +12,7 @@ export * from "./project-management.js";
 export * from "./record-decision.js";
 export * from "./register-project-tool.js";
 export * from "./registry.js";
+export * from "./resolve-control-approval.js";
 export * from "./revoke-permission.js";
 export * from "./satisfy-dependency.js";
 export * from "./select-current-work.js";

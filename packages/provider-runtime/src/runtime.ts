@@ -1078,11 +1078,7 @@ export const ProviderRuntimeLive = (
                   : { secretRef: input.secretRef }),
                 ...(secretMaterial === undefined ? {} : { secretMaterial }),
                 cancellationSignal: controller.signal,
-                connectTimeoutMs: policy.connectTimeoutMs,
-                firstEventTimeoutMs: policy.firstEventTimeoutMs,
-                streamIdleTimeoutMs: policy.streamIdleTimeoutMs,
                 turnDeadlineAt,
-                maxAttempts: policy.maxAttempts,
                 ...(resumeFrom === null
                   ? {}
                   : { continuationCheckpoint: resumeFrom }),

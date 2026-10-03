@@ -8,7 +8,6 @@ import type {
 } from "@arbor/domain";
 import {
   DomainEventJournal,
-  type DomainEventJournalError,
   IdGenerator,
   type PendingDomainEvent,
   TransactionScope,
@@ -16,6 +15,7 @@ import {
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface EventRow {
   readonly event_id: string;
@@ -62,10 +62,7 @@ export const DomainEventJournalLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const ids = yield* IdGenerator;
-    const failure = (cause: unknown): DomainEventJournalError => ({
-      _tag: "DomainEventJournalFailure",
-      cause,
-    });
+    const failure = repositoryFailure("DomainEventJournal", "event-journal");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return DomainEventJournal.of({

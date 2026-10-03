@@ -10,6 +10,7 @@ import {
   Principal,
   parse,
   ResourceBoundaryRevision,
+  type VerificationMission,
   WorkId,
 } from "../../../packages/domain/src/index.js";
 import { runExecution } from "../../../packages/execution-runtime/src/index.js";
@@ -37,6 +38,8 @@ export const submitWork = async (
   options: {
     readonly workspaceId?: string;
     readonly expectedWorkspaceRevision?: number;
+    readonly completionExpectation?: string;
+    readonly verificationMission?: VerificationMission;
     /** Skip the CreateProject step when the caller already created it
      * (e.g. a child workspace had to be created in between). */
     readonly createProject?: boolean;
@@ -76,8 +79,13 @@ export const submitWork = async (
       objective,
       why: "capability L3 sentinel",
       constraints: [],
-      completionExpectation: "report the observation",
-      verificationMission: { goal: "g", criteria: [], riskRequirements: [] },
+      completionExpectation:
+        options.completionExpectation ?? "report the observation",
+      verificationMission: options.verificationMission ?? {
+        goal: "g",
+        criteria: [],
+        riskRequirements: [],
+      },
       provenance: { predecessorWorkId: null, reason: "initial" },
       revision: 0,
     },

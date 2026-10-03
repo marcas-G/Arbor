@@ -2,7 +2,6 @@ import type {
   AgentExecutionState,
   CommandSubmissionContext,
   Execution,
-  ExecutionFocus,
   ExecutionId,
   ExecutionSettlement,
   LeaseGeneration,
@@ -203,8 +202,16 @@ export interface ExecutionDriverPortService {
     readonly wakeReason: WakeReason;
     readonly context: CommandSubmissionContext;
     readonly safetyGate: RuntimeSafetyGateService;
-  }) => Effect.Effect<ExecutionSettlement, ExecutionDriverError>;
+  }) => Effect.Effect<ExecutionDriveOutcome, ExecutionDriverError>;
 }
+
+export type ExecutionDriveOutcome =
+  | ExecutionSettlement
+  | {
+      readonly _tag: "ApprovalRequired";
+      readonly approvalId: string;
+      readonly revision: number;
+    };
 
 export class ExecutionDriverPort extends Context.Service<
   ExecutionDriverPort,
@@ -255,8 +262,12 @@ export class RuntimeSafetyGate extends Context.Service<
 
 export type SchedulerDecision =
   | { readonly _tag: "Noop"; readonly reason: "ActiveMainExecution" }
-  | { readonly _tag: "Admit"; readonly focus: ExecutionFocus }
+  | { readonly _tag: "AdmitWork"; readonly workId: WorkId }
   | { readonly _tag: "SelectCurrentWork"; readonly workId: WorkId }
+  | {
+      readonly _tag: "RequestWorkSelection";
+      readonly candidateWorkIds: ReadonlyArray<WorkId>;
+    }
   | { readonly _tag: "Idle" };
 
 export interface WorkWait {

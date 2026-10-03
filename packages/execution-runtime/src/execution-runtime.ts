@@ -142,15 +142,20 @@ export const runExecution = (
     );
     const state = yield* tx.transact(states.find(executionId));
     const stateUpdatedAt = yield* clock.now();
+    const episode =
+      execution.value.binding._tag === "ExecutionBoundAgentBinding"
+        ? ({ _tag: "ExecutionBoundEpisode", executionId } as const)
+        : (execution.value.binding.episode ??
+          ({ _tag: "LegacyAmbiguousEpisode", executionId } as const));
     // P9 `03` §1: race the drive against the renewal loop — the first to
     // complete wins; a lost renewal (LeaseLost) interrupts the drive so no
     // durable mutation is attempted, and no ordinary retry occurs.
-    const settlement = yield* Effect.raceFirst(
+    const outcome = yield* Effect.raceFirst(
       driver.drive({
         execution: execution.value,
         agentExecutionState: Option.getOrElse(state, () => ({
           executionId,
-          focus: { _tag: "Coordination" as const },
+          episode,
           wakeReason,
           currentMode: null,
           activeSkillRefs: [],
@@ -190,6 +195,20 @@ export const runExecution = (
       lease.workerIncarnationId,
       lease.generation,
     );
+    if (outcome._tag === "ApprovalRequired") {
+      yield* tx
+        .transact(
+          leases.release(
+            executionId,
+            lease.workerId,
+            lease.workerIncarnationId,
+            lease.generation,
+          ),
+        )
+        .pipe(Effect.ignore);
+      return outcome;
+    }
+    const settlement = outcome;
     const settledAt = yield* clock.now();
 
     const payload = {

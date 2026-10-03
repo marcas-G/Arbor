@@ -9,7 +9,7 @@ import type { ReactNode } from "react";
 import { navigate } from "../../api/router.js";
 import { CreateProjectForm } from "../../commands/forms/CreateProjectForm.js";
 import type { CommandReceiptView } from "../../commands/submitCommand.js";
-import { Card } from "../../components/Card.js";
+import { Icon } from "../../components/Icon.js";
 import { useSession } from "../../session/SessionContext.js";
 
 interface CreateProjectResultView {
@@ -31,14 +31,24 @@ export function BootstrapPage(): ReactNode {
     navigate({ name: "workbench", projectId });
   };
   return (
-    <div className="arbor-session-login">
-      <Card title="创建第一个项目">
+    <div className="arbor-bootstrap">
+      <section className="arbor-bootstrap-intro">
+        <span className="arbor-bootstrap-mark">
+          <Icon name="leaf" size={28} />
+        </span>
+        <p className="arbor-bootstrap-eyebrow">ARBOR WORKSPACE</p>
+        <h1>把复杂目标，变成持续推进的工作</h1>
+        <p>
+          创建一个项目。Arbor 会用长期责任组织工作，并在对话中与你协作推进。
+        </p>
+      </section>
+      <div className="arbor-session-login">
         <CreateProjectForm
           actor={session.actor ?? "user:root"}
           token={session.token ?? undefined}
           onSubmitted={onSubmitted}
         />
-      </Card>
+      </div>
     </div>
   );
 }

@@ -297,7 +297,7 @@ const turns = [
     {
       _tag: "ToolCallProposed" as const,
       callRef: "c1",
-      toolName: "arbor_wait",
+      toolName: "wait",
       argumentsJson: JSON.stringify({
         reason: "secret-store sentinel completion",
         waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },

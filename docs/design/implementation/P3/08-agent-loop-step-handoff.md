@@ -1,5 +1,12 @@
 # P3 — 08 Durable AgentLoopStep Handoff
 
+> **DID v1.30 CAPA successor:** `ApprovalRequired` is a durable pause at
+> `ActionsInProgress` with the action ledger still Pending. The Execution stays
+> Active, its lease is released, and no settlement is written. Human resolution
+> wakes the same Execution; the existing settled ProviderTurn/action identity
+> is replayed and the approved exact action is single-consumed after its
+> idempotent handler attempt.
+
 **Authority:** DID v1.20 AHT-1…AHT-8；人工治理裁决
 `planning/proposals/provider-result-handoff-governance-decision.md`。
 **Status:** FROZEN；implementation AUTHORIZED by DID v1.21 ALS-I1。

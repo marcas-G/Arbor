@@ -1,9 +1,10 @@
 # Agent Control Architecture Supersession
 
 **Date:** 2026-09-27
-**Status:** Architecture supersession proposal; frozen source documents not edited
+**Status:** ACCEPTED / IMPLEMENTED — historical proposal reconciled through DID
+v1.18 AgentAction adoption and v1.26 field-source closure
 **Accepted direction:** `REDUCE_TO_INTERNAL_AGENT_ACTION_ADT`
-**Production implementation:** Not authorized
+**Production implementation:** AUTHORIZED / COMPLETE
 
 ## Supersession statement
 

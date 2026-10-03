@@ -10,6 +10,7 @@ export const HUMAN_ACTIONABLE_COMMANDS = [
   "RenameProject",
   "CloseProject",
   "RecordDecision",
+  "ResolveControlApproval",
   "SteerWork",
   "AcceptWorkOutcome",
   "StopExecution",

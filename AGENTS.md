@@ -11,7 +11,8 @@ Arbor is a multi-agent work system organized around long-lived Responsibilities,
 | `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 76 system invariants | FROZEN |
 | `docs/design/03-detailed-implementation-design.md` | Executable contracts: ADT/Command/Event/Ports/SQL/Package DAG/phases | TOP-LEVEL FROZEN |
 
-These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.5, DID v1.24).
+These four files are the latest frozen baselines (Problem & Goals v1.3,
+Scenarios v1.3, System Design v1.9, DID v1.31).
 
 ## Design governance (docs/design/**)
 
@@ -44,9 +45,123 @@ DID v1.19 governance authorization (`AGENT_CONTROL_IMPLEMENTATION_AUTHORIZED`,
 ACR-6…ACR-8): agent control implementation, S01 qualification (redefined as
 Control/Executable Route Qualification, carried by the L3 capability suites),
 and Wave 2 (scope = `planning/tool-surface-review/51` module map sequenced by
-`52` DAG) are AUTHORIZED. The four field-source gaps (AssignWork.Provenance,
-G-V2-2/3/4) remain OPEN and gate only the actions that consume them; B10 stays
-`BLOCKED_BY_DESIGN_GAP` until they close.
+`52` DAG) are AUTHORIZED. The four historical field-source gaps were
+subsequently CLOSED by the manually accepted DID v1.26 VDC-1…VDC-8 contract:
+AssignWork provenance is Runtime-bound from the current parent Work (or null)
+plus model-authored bounded reason; ToolObservation identity is the exact
+ToolInvocationId/observationRef/executionId/callRef binding; summaryRef is
+Runtime-created content-addressed Blob storage durably retained by the
+Verification/event; child initialWork carries the Parent-approved complete
+VerificationMission. B10 is authorized and has a repeatable real-provider L3
+sentinel.
+
+DID v1.28 governance adoption
+(`ACCEPT_EXECUTION_EPISODE_GOAL_PLAN_CONVERGENCE`, EGP-1…EGP-10):
+`ExecutionFocus=Work|Coordination` is superseded for all new writes by exact
+ExecutionEpisodeBinding (Work / ConversationResponse / Inbox / Decision).
+Work is the durable Goal contract; Plan is optional tool-maintained progress
+state without completion authority; every Episode uses the same Agent Loop.
+Migration 0024 and implementation Waves A–E are AUTHORIZED. Historical
+Coordination rows remain read-only migration evidence; ambiguous active rows
+fail closed and MUST NOT be reconstructed from Session text.
+
+EGP implementation state (2026-10-03): Waves A–E are COMPLETE and evidenced by
+`planning/results/EGP-execution-episode-goal-plan-wave-a-d.result.md` and
+`planning/results/EGP-wave-e-legacy-removal.result.md`. Migration 0025 rebuilt
+`executions` without focus columns; migration 0026 rebuilt
+`agent_execution_state` around `episode_json`; CRAC recovery migrations
+0027/0028 backfill actionable Governance Inbox entries for Pending formation
+proposals and consume stale entries for settled proposals.
+Agent Runtime and Model Context
+no longer produce Coordination/QueryCompleted branches. Historical names exist
+only in migration/decoder compatibility and MUST NOT regain new-write semantic
+authority.
+
+DID v1.29 governance adoption
+(`ACCEPT_ROOT_CONVERSATION_ACTION_CAPABILITY`, CRAC-1…CRAC-5):
+`RootConversation` supersedes the zero-tool response-only profile. It exposes
+no executable/Work tools and exactly one v1 conversation-safe control,
+`propose_workspace`; that control creates only a Pending FormationProposal and
+its human Governance Inbox entry atomically, and cannot bypass human
+RecordDecision. Governance Inbox entries are never promoted into an Agent
+Session; RecordDecision consumes the exact pending Queue entry.
+Same-execution tool results re-enter the
+conversation loop; unrelated Workspace Session history remains excluded.
+Accepted proposal SHA-256:
+`DEBD13AAB34B7556B221F12B647360E945F95F5D89BD0B03287963DB22B917A8`.
+
+DID v1.30 governance adoption
+(`ACCEPT_CONTROL_ACTION_PERMISSION_APPROVAL_ARCHITECTURE`, CAPA-1…CAPA-7):
+Control visibility, authorization and execution approval are separate.
+PermissionGrant v2 is subject/capability/target/time-bound; unbound legacy
+grants are revoked. Sensitive controls resolve to Authorized, Denied or a
+durable ApprovalRequired interruption. Approve/Reject resumes the same active
+Execution/AgentLoopStep; approval never widens Sandbox/ResourceBoundary.
+Migrations 0029/0030 carry grants and control approvals. Accepted proposal
+SHA-256:
+`74C0A20BCED0C7800B2EB21933967810AAB73423132D9FE06E86A7E56EA26FB9`.
+
+Agent Control implementation state (2026-10-03): the DID v1.26 VDC-5
+`AssignWork` action is implemented and evidenced by
+`planning/results/agent-action-assign-work.result.md`. The model authors Work
+semantics and provenance reason; Runtime binds target, ids, revisions,
+predecessor and authority. After CAPA adoption it is visible in WorkspaceWork
+only and defaults to human approval; RootConversation exposure remains gated
+by `RGI-DG-01`.
+
+Minimal Architecture Convergence governance (2026-10-03):
+`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE` accepted proposal SHA-256
+`44B549EA81E21B3D4BE5D545EA446B544D50CCA0061C83E6FC40CDC2ADCCA932`.
+Owning contracts landed as Problem & Goals v1.3 / Scenarios v1.3 / System
+Design v1.9 / DID v1.31 plus `docs/design/implementation/MAC/**`. The active
+vocabulary is reduced; Plan is Workspace-local cognition; Specialist is
+superseded as a first-class concept; model output uses one ActionCall facade;
+async decisions require separate fulfillment truth. MAC-P1 implementation is
+AUTHORIZED after landing review. MAC-P2…P4 remain sequentially gated by their
+accepted phase contracts. RGI-DG-01 and SDO-DG-01 are resolved at design level
+through MAC and MUST NOT be implemented as independent proposals.
+
+MAC implementation state (2026-10-04): governance landing consistency PASS
+(`planning/results/MAC-design-landing-review.result.md`). MAC-P1 Wave A is
+complete (`planning/results/MAC1-001-003-wave-a.result.md`): RootConversation
+advertises only current-Workspace `assign_work`; later-phase formation,
+cross-Work messaging/dependency and legacy Specialist new-write surfaces are
+hidden; Runtime enforces current target and constraint preservation. Full
+`pnpm check` passes. MAC-P1 remains OPEN: Root approval black-box, LocalPlan
+relocation, WorkspaceKnowledgeView and Verification/Acceptance closure remain.
+
+MAC-P1 subsequent closure (2026-10-04): **COMPLETE / FORMALLY CLOSED**
+(`planning/results/MAC-P1.result.md`). Root natural-language goal → exact
+approval → Work → AgentLoop → independent Verification → root Acceptance →
+CompleteWork is public-process black-box and hard-restart proven. LocalPlan is
+Runtime/Cognition-owned; WorkspaceKnowledgeView promotes accepted PASS outcomes
+only; verification/completion consumer errors are typed. Real DeepSeek B01,
+B03 (including Root assign) and B11 pass. MAC-P2 implementation is AUTHORIZED.
+
+MAC-P2 closure (2026-10-04): **COMPLETE / FORMALLY CLOSED**
+(`planning/results/MAC-P2.result.md`). PlacementContext, opaque refs,
+list/read workspace controls, existing-child AssignWork, migration 0031
+FormationFulfillment, deterministic child+initial Work application and Parent
+Agent `accept_result` are implemented and restart/replay tested. Real DeepSeek
+B07 Root formation passes. `pnpm check` passes. MAC-P3 is AUTHORIZED.
+
+MAC-P3 closure (2026-10-04): **COMPLETE / FORMALLY CLOSED**
+(`planning/results/MAC-P3.result.md`). Production now wires model-facing
+declare/produce/deliver, producer Inbox admission, deterministic
+SatisfyDependency coordinator and exact wake. Real DeepSeek B09 passes both
+declaration and produce→deliver with model-free satisfaction. `pnpm check`
+passes.
+
+MAC-P4 and final MAC closure (2026-10-04): **COMPLETE / FORMALLY CLOSED**
+(`planning/results/MAC-P4.result.md`,
+`planning/results/MAC-final-convergence.result.md`). The accepted optionality
+stop condition is applied: v1 does not register or advertise a subagent action;
+historical Specialist codecs/fixtures are replay/audit-only and single-Agent
+correctness is unchanged. Migration 0032 converges control/executable exact
+approvals into one physical `action_approvals` ledger, fails unprovable legacy
+bindings closed, removes the two old tables and preserves atomic
+single-consumption. Real DeepSeek B08 disabled-mode qualification passes L1/L2/L3;
+full local gates pass (architecture 152, core 1669 + 3 skipped, Web 216).
 
 DID v1.20 governance adoption (`AHT-1`…`AHT-8`) freezes the durable Provider
 result handoff: persisted `AgentLoopStep`, replayable complete Provider success,

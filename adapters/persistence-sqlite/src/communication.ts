@@ -1,15 +1,14 @@
 import type { InboxEntry, MessageId, WorkspaceId } from "@arbor/domain";
 import {
   InboxProjectionStore,
-  type InboxProjectionStoreError,
   type MessageRecord,
   MessageStore,
-  type MessageStoreError,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface MessageRow {
   readonly message_id: string;
@@ -61,10 +60,7 @@ export const MessageStoreLive: Layer.Layer<MessageStore, never, SqlClient> =
     MessageStore,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
-      const failure = (cause: unknown): MessageStoreError => ({
-        _tag: "MessageStoreFailure",
-        cause,
-      });
+      const failure = repositoryFailure("MessageStore", "message");
       const run = <A>(effect: Effect.Effect<A, SqlError>) =>
         effect.pipe(Effect.mapError(failure));
       return MessageStore.of({
@@ -146,10 +142,7 @@ export const InboxProjectionStoreLive: Layer.Layer<
   InboxProjectionStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): InboxProjectionStoreError => ({
-      _tag: "InboxProjectionStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure("InboxProjectionStore", "inbox");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return InboxProjectionStore.of({

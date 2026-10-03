@@ -102,11 +102,7 @@ const providerContext: ProviderExecutionContext = {
   ),
   attemptNo: 0,
   cancellationSignal: new AbortController().signal,
-  connectTimeoutMs: 1000,
-  firstEventTimeoutMs: 1000,
-  streamIdleTimeoutMs: 1000,
   turnDeadlineAt: new Date(Date.now() + 5_000).toISOString(),
-  maxAttempts: 3,
 };
 
 const sdkClient = (

@@ -1,13 +1,13 @@
 import type { ArtifactId, ExecutionId, ToolInvocationId } from "@arbor/domain";
 import {
   type Artifact,
-  type ArtifactMetadataError,
   ArtifactMetadataRepository,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface Row {
   readonly artifact_id: string;
@@ -39,10 +39,10 @@ export const ArtifactMetadataRepositoryLive: Layer.Layer<
   ArtifactMetadataRepository,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): ArtifactMetadataError => ({
-      _tag: "ArtifactMetadataError",
-      cause,
-    });
+    const failure = repositoryFailure(
+      "ArtifactMetadataRepository",
+      "artifact-metadata",
+    );
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return ArtifactMetadataRepository.of({
