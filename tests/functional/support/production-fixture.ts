@@ -270,6 +270,8 @@ export const startProductionFixture = async (input: {
     index: number,
   ) => ScriptedProviderResponse;
   readonly onResponseSent?: (call: CapturedProviderCall, index: number) => void;
+  /** Host-side resource admission for the pending F21 browser contract. */
+  readonly admitWorkspaceDirectory?: boolean;
 }): Promise<ProductionFixture> => {
   const directory = mkdtempSync(join(tmpdir(), "arbor-functional-"));
   const workspaceDirectory = join(directory, "workspace");
@@ -297,6 +299,11 @@ export const startProductionFixture = async (input: {
       ARBOR_FUNCTIONAL_TEST_KEY: "test-only",
       ARBOR_CONFIG: join(directory, "no-provider-config.json"),
     };
+    if (input.admitWorkspaceDirectory === true) {
+      daemonEnv.ARBOR_PROJECT_ROOT = workspaceDirectory;
+    } else {
+      delete daemonEnv.ARBOR_PROJECT_ROOT;
+    }
     delete daemonEnv.FORCE_COLOR;
     delete daemonEnv.NO_COLOR;
     daemon = spawn(process.execPath, [DAEMON_ENTRY], {
