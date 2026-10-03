@@ -30,3 +30,15 @@ pnpm check
 
 `pnpm check` runs linting, TypeScript checks, architecture tests, core tests,
 and the web package checks.
+
+Release-functional tests build the production daemon and Web client, launch
+them against a fresh temporary database and controlled HTTP model boundary,
+then drive the public API and a real browser:
+
+```powershell
+pnpm test:functional
+```
+
+Use `pnpm check:release` to run both the engineering checks and the functional
+release gate. On non-Windows machines, install Playwright Chromium once with
+`pnpm exec playwright install chromium`.

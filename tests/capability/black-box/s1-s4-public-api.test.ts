@@ -4,7 +4,6 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
@@ -491,67 +490,79 @@ describe("S1-S4 public-process black-box", () => {
         `请创建并执行正式目标 ${macRootGoalMarker}。` +
         "约束：不要真实下单。完成标准：经过独立验证并被接受。信息充分，请直接调用 assign_work。",
     });
-    const approval = await waitFor(
-      async () => {
-        const database = new DatabaseSync(databaseFile, { readOnly: true });
-        try {
-          return database
-            .prepare(
-              "SELECT approval_id, revision, state FROM action_approvals WHERE route_kind = 'Control' AND stable_action_id = 'core.control.assign-work' ORDER BY requested_at DESC LIMIT 1",
-            )
-            .get() as
-            | { approval_id: string; revision: number; state: string }
-            | undefined;
-        } finally {
-          database.close();
-        }
-      },
-      (value) => value?.state === "Pending",
+    const approvalEntry = await waitFor(
+      () =>
+        view<{
+          unconsumed: Array<{
+            entryKey: string;
+            kind: string;
+            summary: string;
+          }>;
+        }>("inbox-view", { workspaceId: rootWorkspaceId }),
+      (value) =>
+        value.unconsumed.some(
+          (entry) =>
+            entry.kind === "Governance" &&
+            /^cap:cap_[^:]+:\d+$/u.test(entry.entryKey) &&
+            entry.summary.includes(macRootGoalMarker),
+        ),
     );
-    const beforeApproval = new DatabaseSync(databaseFile, { readOnly: true });
-    try {
-      const row = beforeApproval
-        .prepare("SELECT COUNT(*) AS n FROM works")
-        .get() as { n: number };
-      expect(Number(row.n)).toBe(0);
-    } finally {
-      beforeApproval.close();
+    const pendingApproval = approvalEntry.unconsumed.find(
+      (entry) =>
+        entry.kind === "Governance" &&
+        /^cap:cap_[^:]+:\d+$/u.test(entry.entryKey) &&
+        entry.summary.includes(macRootGoalMarker),
+    );
+    if (pendingApproval === undefined) {
+      throw new Error("public Inbox exposed no exact pending approval");
     }
+    const approvalMatch = /^cap:(cap_[^:]+):(\d+)$/u.exec(
+      pendingApproval.entryKey,
+    );
+    if (approvalMatch === null) {
+      throw new Error(
+        `invalid public approval ref ${pendingApproval.entryKey}`,
+      );
+    }
+    const beforeApproval = await view<unknown>("current-work", {
+      workspaceId: rootWorkspaceId,
+    });
+    expect(beforeApproval).toBeNull();
     await command(projectId, "ResolveControlApproval", {
-      approvalId: approval?.approval_id,
-      expectedRevision: approval?.revision,
+      approvalId: approvalMatch[1],
+      expectedRevision: Number(approvalMatch[2]),
       decision: "Approve",
       reason: "approve exact MAC-P1 black-box Work",
     });
     const createdWork = await waitFor(
-      async () => {
-        const database = new DatabaseSync(databaseFile, { readOnly: true });
-        try {
-          return database
-            .prepare(
-              "SELECT work_id, constraints, provenance FROM works WHERE objective LIKE ? LIMIT 1",
-            )
-            .get(`%${macRootGoalMarker}%`) as
-            | { work_id: string; constraints: string; provenance: string }
-            | undefined;
-        } finally {
-          database.close();
-        }
-      },
-      (value) => value !== undefined,
+      () =>
+        view<{
+          workId?: string;
+          objective: string;
+          status: string;
+          revision: number;
+        } | null>("current-work", { workspaceId: rootWorkspaceId }),
+      (value) =>
+        value?.workId !== undefined &&
+        value.objective.includes(macRootGoalMarker) &&
+        value.status === "Open",
       45_000,
     );
-    if (createdWork === undefined) {
+    if (createdWork?.workId === undefined) {
       throw new Error("approved root goal produced no Work");
     }
-    workId = createdWork.work_id;
-    expect(JSON.parse(createdWork.constraints)).toContain(
-      "do not place real orders",
+    workId = createdWork.workId;
+    await waitFor(
+      async () => provider.calls,
+      (calls) =>
+        calls.some((call) => {
+          const context = JSON.stringify(call.messages);
+          return (
+            context.includes(macRootGoalMarker) &&
+            context.includes("do not place real orders")
+          );
+        }),
     );
-    expect(JSON.parse(createdWork.provenance)).toEqual({
-      predecessorWorkId: null,
-      reason: "start the bounded goal from the root conversation",
-    });
     let verification: {
       verificationId?: string;
       targetWorkRevision?: number;

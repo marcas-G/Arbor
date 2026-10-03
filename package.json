@@ -12,6 +12,10 @@
     "start": "node scripts/start-local.mjs",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run",
+    "test:functional": "pnpm build && pnpm --filter @arbor/web build && vitest run --config vitest.functional.config.ts && playwright test --config playwright.functional.config.ts",
+    "test:functional:process": "pnpm build && pnpm --filter @arbor/web build && vitest run --config vitest.functional.config.ts",
+    "test:functional:ui": "pnpm build && pnpm --filter @arbor/web build && playwright test --config playwright.functional.config.ts",
+    "check:release": "pnpm check && pnpm test:functional",
     "test:capability": "node scripts/testing/run-capability.mjs gray-box",
     "test:capability:real": "node scripts/testing/run-capability.mjs real-provider",
     "lint": "biome check .",
@@ -23,6 +27,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
+    "@playwright/test": "1.63.0",
     "@types/node": "^24.13.5",
     "effect": "4.0.0-rc.115",
     "typescript": "7.0.2",

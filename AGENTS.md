@@ -163,6 +163,17 @@ bindings closed, removes the two old tables and preserves atomic
 single-consumption. Real DeepSeek B08 disabled-mode qualification passes L1/L2/L3;
 full local gates pass (architecture 152, core 1669 + 3 skipped, Web 216).
 
+Release functional-test foundation (2026-10-04): **FOUNDATION COMPLETE;
+RELEASE VALIDATION OPEN**
+(`planning/results/functional-test-foundation.result.md`). The production
+process journey no longer reads SQLite/internal stores: approval is observed
+through Inbox and Work through Current Work. `pnpm test:functional` builds the
+real daemon/Web client, starts a fresh isolated DB + HTTP provider boundary,
+and runs 4 public-process plus 1 Playwright browser/restart journey with zero
+retry. `pnpm check` remains green (architecture 154, core 1671 + 3 skipped,
+Web 216). This is not yet a release-readiness claim; F10–F20 remain in the
+functional journey catalog.
+
 DID v1.20 governance adoption (`AHT-1`…`AHT-8`) freezes the durable Provider
 result handoff: persisted `AgentLoopStep`, replayable complete Provider success,
 idempotent sourced Session/action progression, generation-scoped Application
