@@ -121,10 +121,11 @@ pnpm exec playwright install chromium
 
 ## Current limitations
 
-- The browser suite currently covers project creation, conversation delivery
-  and restart persistence. Approval, Verification and Acceptance are covered
-  at the public-process boundary but not yet clicked through the browser.
+- The browser suite covers project creation, conversation delivery, exact
+  approval, PASS acceptance and restart persistence.
 - Real-provider behavior remains opt-in and cannot replace deterministic
   release-functional tests.
-- Fault cases for provider outage, crash during action handoff and failed
-  Verification need additional public-process journeys.
+- F20 clean packaged-checkout qualification remains.
+- F21 is blocked by an open product-design gap: UI CreateProject currently
+  creates an empty ResourceBoundary, so a newly created project can chat but
+  cannot perform evidence-producing file tools.

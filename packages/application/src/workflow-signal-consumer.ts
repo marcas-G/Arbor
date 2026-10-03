@@ -23,6 +23,8 @@ import type {
   TransactionPortService,
   WorkRepositoryError,
   WorkRepositoryService,
+  WorkspaceRepositoryError,
+  WorkspaceRepositoryService,
   WorkWaitStoreError,
   WorkWaitStoreService,
 } from "@arbor/ports";
@@ -34,6 +36,7 @@ import {
   MessageStore,
   TransactionPort,
   WorkRepository,
+  WorkspaceRepository,
   WorkWaitStore,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
@@ -58,6 +61,7 @@ export type WorkflowSignalKind =
   | "DependencyRequested"
   | "DependencySatisfied"
   | "VerificationConcluded"
+  | "ChildResultReady"
   | "DecisionRequested"
   | "ChildDelivered"
   | "SpecialistSettled";
@@ -81,6 +85,7 @@ export type WorkflowSignalConsumerError =
   | WorkflowSignalInvariantViolation
   | DependencyRepositoryError
   | WorkRepositoryError
+  | WorkspaceRepositoryError
   | WorkWaitStoreError
   | MessageStoreError
   | ExecutionRepositoryError
@@ -96,6 +101,7 @@ export interface WorkflowSignalConsumerDependencies {
     "findByWork" | "listActive" | "clear"
   >;
   readonly works: Pick<WorkRepositoryService, "findById" | "listByWorkspace">;
+  readonly workspaces: Pick<WorkspaceRepositoryService, "findById">;
   readonly scheduler: Pick<ExecutionSchedulerService, "reevaluate">;
   readonly dependencies: Pick<DependencyRepositoryService, "findById">;
   readonly messages: Pick<MessageStoreService, "findById">;
@@ -283,6 +289,39 @@ const deliverVerificationConcluded = (
       },
       deps,
     );
+    if (payload.verdict === "Pass") {
+      const owner = yield* deps.tx.transact(
+        deps.workspaces.findById(work.value.workspaceId),
+      );
+      if (Option.isNone(owner)) {
+        return yield* Effect.fail(
+          invariant(event, `workspace not found: ${work.value.workspaceId}`),
+        );
+      }
+      const parentWorkspaceId = owner.value.parentWorkspaceId;
+      if (parentWorkspaceId !== null) {
+        const verificationId = payload.verificationId as VerificationId;
+        const targetWorkRevision = payload.targetWorkRevision as WorkRevision;
+        yield* deps.tx.transact(
+          deps.inbox.admitUpsert({
+            recipientWorkspaceId: parentWorkspaceId,
+            entryKey: `child-result:${verificationId}:${targetWorkRevision}`,
+            kind: "Message",
+            summary: `Child result ready for Work ${workId} revision ${targetWorkRevision}`,
+            admittedAt: event.occurredAt,
+          }),
+        );
+        yield* deliverWakeSignal(
+          {
+            workspaceId: parentWorkspaceId,
+            reason: "InputArrived",
+            detail: { verificationId, workId, targetWorkRevision },
+          },
+          deps,
+        );
+        return delivered(event, "ChildResultReady", parentWorkspaceId);
+      }
+    }
     return delivered(event, "VerificationConcluded", work.value.workspaceId);
   });
 
@@ -442,6 +481,7 @@ export const WorkflowSignalConsumerLive: Layer.Layer<
   | TransactionPort
   | WorkWaitStore
   | WorkRepository
+  | WorkspaceRepository
   | ExecutionScheduler
   | DependencyRepository
   | MessageStore
@@ -454,6 +494,7 @@ export const WorkflowSignalConsumerLive: Layer.Layer<
       tx: yield* TransactionPort,
       waits: yield* WorkWaitStore,
       works: yield* WorkRepository,
+      workspaces: yield* WorkspaceRepository,
       scheduler: yield* ExecutionScheduler,
       dependencies: yield* DependencyRepository,
       messages: yield* MessageStore,

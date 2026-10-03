@@ -20,6 +20,7 @@ export default defineConfig({
       "**/node_modules/**",
       "apps/web/**",
       "tests/capability/real-provider/**",
+      "tests/functional/**",
     ],
   },
 });

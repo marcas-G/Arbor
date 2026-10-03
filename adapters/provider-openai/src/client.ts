@@ -94,10 +94,19 @@ const resultContent = (
     PortableInputItem,
     { readonly _tag: "ToolResult" | "ControlResult" }
   >,
-): string =>
-  item.status === "Succeeded"
-    ? item.outputText
-    : `[${item.status}] ${item.outputText}`;
+): string => {
+  const base =
+    item.status === "Succeeded"
+      ? item.outputText
+      : `[${item.status}] ${item.outputText}`;
+  if (item._tag === "ToolResult" && item.artifactRefs.length > 0) {
+    return `${base}\n[Artifacts] ${JSON.stringify(item.artifactRefs)}`;
+  }
+  if (item._tag === "ControlResult" && item.canonicalRefs.length > 0) {
+    return `${base}\n[CanonicalRefs] ${JSON.stringify(item.canonicalRefs)}`;
+  }
+  return base;
+};
 
 const lowerInputItem = (
   item: PortableInputItem,

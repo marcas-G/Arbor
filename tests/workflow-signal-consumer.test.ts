@@ -76,6 +76,10 @@ describe("WorkflowSignalConsumer", () => {
           ),
         listByWorkspace: () => Effect.succeed([{ workId }]),
       },
+      workspaces: {
+        findById: () =>
+          Effect.succeed(Option.some({ workspaceId, parentWorkspaceId: null })),
+      },
       scheduler: {
         reevaluate: (id: WorkspaceId, reason: { readonly _tag: string }) =>
           Effect.sync(() => {
@@ -219,5 +223,85 @@ describe("WorkflowSignalConsumer", () => {
     );
     expect(admitted).toHaveLength(1);
     expect(cleared).toContain(workId);
+  });
+
+  it("routes a child PASS result to the exact parent Inbox and wake", async () => {
+    const wakes: string[] = [];
+    const admitted: Array<{
+      recipientWorkspaceId: WorkspaceId;
+      entryKey: string;
+    }> = [];
+    const deps = {
+      tx: {
+        transact: (effect: Effect.Effect<unknown, unknown, unknown>) => effect,
+      },
+      waits: {
+        findByWork: () => Effect.succeed(Option.none()),
+        listActive: () => Effect.succeed([]),
+        clear: () => Effect.void,
+      },
+      works: {
+        findById: () =>
+          Effect.succeed(
+            Option.some({ workspaceId, workId, revision: parse(Revision)(0) }),
+          ),
+        listByWorkspace: () => Effect.succeed([{ workId }]),
+      },
+      workspaces: {
+        findById: () =>
+          Effect.succeed(Option.some({ workspaceId, parentWorkspaceId })),
+      },
+      scheduler: {
+        reevaluate: (id: WorkspaceId, reason: { readonly _tag: string }) =>
+          Effect.sync(() => {
+            wakes.push(`${id}:${reason._tag}`);
+            return { _tag: "Idle" as const };
+          }),
+      },
+      dependencies: { findById: () => Effect.succeed(Option.none()) },
+      messages: { findById: () => Effect.succeed(Option.none()) },
+      executions: { findById: () => Effect.succeed(Option.none()) },
+      inbox: {
+        countByKey: () => Effect.succeed(0),
+        admitUpsert: (entry: {
+          readonly recipientWorkspaceId: WorkspaceId;
+          readonly entryKey: string;
+        }) => Effect.sync(() => void admitted.push(entry)),
+      },
+    } as unknown as WorkflowSignalConsumerDependencies;
+
+    const outcomes = await Effect.runPromise(
+      runWorkflowSignalConsumer(
+        [
+          {
+            eventId: "evt-child-pass",
+            eventType: "VerificationConcluded",
+            occurredAt: "2026-10-04T00:00:00.000Z",
+            payload: {
+              verificationId: "ver_018f2b3c-4d5e-7abc-8def-0123456789a1",
+              workId,
+              targetWorkRevision: 0,
+              verdict: "Pass",
+            },
+          },
+        ],
+        deps,
+      ),
+    );
+
+    expect(outcomes).toEqual([
+      expect.objectContaining({
+        _tag: "Delivered",
+        kind: "ChildResultReady",
+        workspaceId: parentWorkspaceId,
+      }),
+    ]);
+    expect(admitted).toEqual([
+      expect.objectContaining({
+        recipientWorkspaceId: parentWorkspaceId,
+        entryKey: "child-result:ver_018f2b3c-4d5e-7abc-8def-0123456789a1:0",
+      }),
+    ]);
+    expect(wakes).toContain(`${parentWorkspaceId}:InputArrived`);
   });
 });

@@ -1001,7 +1001,7 @@ describe("P3-013 agent driver", () => {
     expect(result.step?.state).toBe("SettlementProposed");
   });
 
-  it("runs text then routes a registered control invocation to settlement", async () => {
+  it("settles an exact InboxEpisode on its first text-only response", async () => {
     const app = makeApp([textTurn, sendMessageTurn("question")]);
     const program = Effect.gen(function* () {
       yield* runMigrations(P17_MIGRATIONS);
@@ -1010,10 +1010,13 @@ describe("P3-013 agent driver", () => {
     });
     const settlement = (await run(program, app)) as {
       _tag: string;
-      result?: { _tag: string };
+      result?: { _tag: string; entryKey?: string };
     };
     expect(settlement._tag).toBe("Completed");
-    expect(settlement.result?._tag).toBe("CoordinationCompleted");
+    expect(settlement.result).toEqual({
+      _tag: "InboxInputHandled",
+      entryKey: "p3-driver-fixture",
+    });
   });
 
   it("returns invalid control arguments to the model and accepts a corrected action", async () => {

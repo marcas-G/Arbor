@@ -13,12 +13,23 @@ export interface CapturedProviderCall {
   readonly tools: ReadonlyArray<{ function?: { name?: string } }>;
 }
 
+export type ScriptedProviderResponse =
+  | string
+  | { readonly _tag: "Text"; readonly text: string }
+  | {
+      readonly _tag: "ToolCall";
+      readonly name: string;
+      readonly arguments: unknown;
+    }
+  | { readonly _tag: "HttpError"; readonly status: number };
+
 export interface ProductionFixture {
   readonly baseUrl: string;
   readonly directory: string;
   readonly workspaceDirectory: string;
   readonly providerCalls: ReadonlyArray<CapturedProviderCall>;
   readonly daemonErrors: ReadonlyArray<string>;
+  readonly crash: () => Promise<void>;
   readonly restart: () => Promise<void>;
   readonly stop: () => Promise<void>;
 }
@@ -91,8 +102,64 @@ const sendTextResponse = (
   response.end("data: [DONE]\n\n");
 };
 
+const sendToolResponse = (
+  response: import("node:http").ServerResponse,
+  name: string,
+  argumentsValue: unknown,
+) => {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  response.write(
+    `data: ${JSON.stringify({
+      id: `chatcmpl-${randomUUID()}`,
+      object: "chat.completion.chunk",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            role: "assistant",
+            tool_calls: [
+              {
+                index: 0,
+                id: `call_${randomUUID().replaceAll("-", "")}`,
+                type: "function",
+                function: {
+                  name,
+                  arguments: JSON.stringify(argumentsValue),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+      usage: null,
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      id: `chatcmpl-${randomUUID()}`,
+      object: "chat.completion.chunk",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 5,
+        total_tokens: 15,
+      },
+    })}\n\n`,
+  );
+  response.end("data: [DONE]\n\n");
+};
+
 const startProvider = (
-  reply: (call: CapturedProviderCall, index: number) => string,
+  reply: (
+    call: CapturedProviderCall,
+    index: number,
+  ) => ScriptedProviderResponse,
+  onResponseSent?: (call: CapturedProviderCall, index: number) => void,
 ) =>
   new Promise<{
     readonly server: Server;
@@ -129,7 +196,32 @@ const startProvider = (
           tools: body.tools ?? [],
         } satisfies CapturedProviderCall;
         calls.push(call);
-        sendTextResponse(response, reply(call, calls.length - 1));
+        const responseIndex = calls.length - 1;
+        const scripted = reply(call, responseIndex);
+        if (typeof scripted === "string") {
+          sendTextResponse(response, scripted);
+          onResponseSent?.(call, responseIndex);
+          return;
+        }
+        switch (scripted._tag) {
+          case "Text":
+            sendTextResponse(response, scripted.text);
+            onResponseSent?.(call, responseIndex);
+            return;
+          case "ToolCall":
+            sendToolResponse(response, scripted.name, scripted.arguments);
+            onResponseSent?.(call, responseIndex);
+            return;
+          case "HttpError":
+            response.writeHead(scripted.status, {
+              "content-type": "application/json",
+            });
+            response.end(
+              JSON.stringify({ error: { message: "scripted unavailable" } }),
+            );
+            onResponseSent?.(call, responseIndex);
+            return;
+        }
       });
     });
     server.listen(0, "127.0.0.1", () => {
@@ -148,7 +240,19 @@ const stopChild = async (child: ChildProcess | undefined): Promise<void> => {
   const exited = new Promise<void>((resolveExit) => {
     child.once("exit", () => resolveExit());
   });
-  child.kill("SIGKILL");
+  if (process.platform === "win32" && child.pid !== undefined) {
+    await new Promise<void>((resolveKill, rejectKill) => {
+      const killer = spawn(
+        "taskkill.exe",
+        ["/PID", String(child.pid), "/T", "/F"],
+        { stdio: "ignore", windowsHide: true },
+      );
+      killer.once("error", rejectKill);
+      killer.once("exit", () => resolveKill());
+    });
+  } else {
+    child.kill("SIGKILL");
+  }
   await Promise.race([
     exited,
     new Promise<void>((_, rejectTimeout) =>
@@ -161,14 +265,18 @@ const stopChild = async (child: ChildProcess | undefined): Promise<void> => {
 };
 
 export const startProductionFixture = async (input: {
-  readonly reply: (call: CapturedProviderCall, index: number) => string;
+  readonly reply: (
+    call: CapturedProviderCall,
+    index: number,
+  ) => ScriptedProviderResponse;
+  readonly onResponseSent?: (call: CapturedProviderCall, index: number) => void;
 }): Promise<ProductionFixture> => {
   const directory = mkdtempSync(join(tmpdir(), "arbor-functional-"));
   const workspaceDirectory = join(directory, "workspace");
   mkdirSync(workspaceDirectory, { recursive: true });
   writeFileSync(join(workspaceDirectory, "proof.txt"), "FUNCTIONAL_VERIFIED");
   const databaseFile = join(directory, "arbor-functional.db");
-  const provider = await startProvider(input.reply);
+  const provider = await startProvider(input.reply, input.onResponseSent);
   const httpPort = await freePort();
   const baseUrl = `http://127.0.0.1:${httpPort}`;
   const daemonErrors: string[] = [];
@@ -220,6 +328,7 @@ export const startProductionFixture = async (input: {
     workspaceDirectory,
     providerCalls: provider.calls,
     daemonErrors,
+    crash: () => stopChild(daemon),
     restart: async () => {
       await stopChild(daemon);
       await startDaemon();

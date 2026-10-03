@@ -193,7 +193,7 @@ describe("OpenAI-compatible fetch provider", () => {
           status: "Succeeded",
           outputText: "b",
           observationRef: "obs-b",
-          artifactRefs: [],
+          artifactRefs: ["art_018f2b3c-4d5e-7abc-8def-0123456789a1"],
           truncated: false,
         },
         {
@@ -238,7 +238,11 @@ describe("OpenAI-compatible fetch provider", () => {
           },
         ],
       },
-      { role: "tool", tool_call_id: "call-b", content: "b" },
+      {
+        role: "tool",
+        tool_call_id: "call-b",
+        content: 'b\n[Artifacts] ["art_018f2b3c-4d5e-7abc-8def-0123456789a1"]',
+      },
       { role: "tool", tool_call_id: "call-a", content: "a" },
     ]);
   });
