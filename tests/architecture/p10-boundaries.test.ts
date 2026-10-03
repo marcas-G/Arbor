@@ -120,10 +120,11 @@ describe("p10-boundaries", () => {
       const normalized = file.replaceAll("\\", "/");
       return (
         /\/apps\/[^/]+\/src\/transport\//.test(normalized) ||
-        // Capability-test harnesses capture live provider-call evidence over
-        // HTTP; they are test infrastructure, not production transport (the
-        // same spirit as the apps/*/src/transport carve-out).
-        normalized.includes("/tests/capability/")
+        // Capability and release-functional harnesses exercise the built
+        // product over real HTTP process boundaries. They are external test
+        // infrastructure, not production transport.
+        normalized.includes("/tests/capability/") ||
+        normalized.includes("/tests/functional/")
       );
     };
     for (const root of ["packages", "apps", "adapters", "tests"]) {

@@ -12,6 +12,8 @@ coverage/
 # capability real-provider config (may contain a literal apiKey)
 capability.config.json
 .vitest/
+.functional-test-results/
+playwright-report/
 
 # Local provider configuration — may contain inline credentials
 arbor.config.json
