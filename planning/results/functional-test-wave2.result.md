@@ -44,6 +44,14 @@ pnpm test:functional
   public-process tests  13 / 13 PASS
   Playwright tests       2 / 2 PASS
   retries                0
+
+pnpm check
+  Biome                 900 files PASS
+  TypeScript            PASS
+  Architecture           30 files / 154 tests PASS
+  Core                   307 files / 1672 passed / 3 skipped
+  Web typecheck/build    PASS
+  Web                     31 files / 216 tests PASS
 ```
 
 ## Remaining
