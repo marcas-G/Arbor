@@ -174,6 +174,18 @@ retry. `pnpm check` remains green (architecture 154, core 1671 + 3 skipped,
 Web 216). This is not yet a release-readiness claim; F10–F20 remain in the
 functional journey catalog.
 
+Functional Wave 2 (2026-10-04): **F10–F20 COMPLETE; F21 BLOCKED BY OPEN
+DESIGN GAP** (`planning/results/functional-test-wave2.result.md`). Release
+functional coverage now includes rejection, transient provider recovery,
+Fail/Unknown verification, browser approval/acceptance, crash restart,
+three-page history, child-result Parent acceptance, true
+Artifact→Deliverable→Delivery→Dependency satisfaction, and a frozen-install
+clean-clone smoke. The tests found and closed missing parent PASS routing,
+InboxEpisode production admission/settlement, Artifact creation/composition,
+and provider loss of artifact/canonical refs. The remaining gap is
+`FT-DG-01`: browser CreateProject has no trusted resource-admission flow and
+therefore creates an empty executable boundary.
+
 DID v1.20 governance adoption (`AHT-1`…`AHT-8`) freezes the durable Provider
 result handoff: persisted `AgentLoopStep`, replayable complete Provider success,
 idempotent sourced Session/action progression, generation-scoped Application

@@ -23,12 +23,12 @@
 | F17 | long conversation pagination | public HTTP | third page reachable with no duplicate turns |
 | F18 | child Workspace proposal/approval/result | public HTTP | child initial Work PASS is parent-accepted and completed |
 | F19 | Dependency/Deliverable workflow | public HTTP | tool Artifact → Produce → Deliver → deterministic Satisfied |
+| F20 | fresh packaged checkout | clean local clone | frozen install, build and public black-box pass from committed HEAD |
 
 ## Next release-blocking journeys
 
 | ID | User journey | Required oracle |
 |---|---|---|
-| F20 | fresh packaged checkout | install, build, start and F01/F02 from committed artifact |
 | F21 | UI-created Project receives an executable boundary | evidence-based Work completes without hidden API setup |
 
 ## Definition of done for each journey
