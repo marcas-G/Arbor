@@ -1,7 +1,7 @@
 # Functional Test Wave 2 Result
 
 **Date:** 2026-10-04
-**Status:** F10–F19 COMPLETE / F20 OPEN / F21 BLOCKED BY DESIGN GAP
+**Status:** F10–F20 COMPLETE / F21 BLOCKED BY DESIGN GAP
 
 ## New functional coverage
 
@@ -16,6 +16,7 @@ F16 crash/restart answer dedup      PASS
 F17 third transcript page          PASS
 F18 child result parent acceptance PASS
 F19 Artifact/Deliverable/Dependency PASS
+F20 clean committed checkout       PASS
 ```
 
 ## Product defects found and fixed
@@ -40,12 +41,12 @@ F19 Artifact/Deliverable/Dependency PASS
 
 ```text
 pnpm test:functional
-  public-process tests  12 / 12 PASS
+  public-process tests  13 / 13 PASS
   Playwright tests       2 / 2 PASS
   retries                0
 ```
 
 ## Remaining
 
-- F20 must run install/build/start/F01/F02 from a clean committed export.
-- F21 is governed by `planning/gaps/FT-DG-01-ui-project-resource-boundary.md`.
+F21 is governed by
+`planning/gaps/FT-DG-01-ui-project-resource-boundary.md`.
