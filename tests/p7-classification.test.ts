@@ -156,12 +156,12 @@ const decideFromTable = (
   runnable: ReadonlyArray<WorkId>,
 ): SchedulerDecision =>
   Option.isSome(current)
-    ? { _tag: "Admit", focus: { _tag: "Work", workId: current.value } }
+    ? { _tag: "AdmitWork", workId: current.value }
     : runnable.length === 0
       ? { _tag: "Idle" }
       : runnable.length === 1
         ? { _tag: "SelectCurrentWork", workId: runnable[0] as WorkId }
-        : { _tag: "Admit", focus: { _tag: "Coordination" } };
+        : { _tag: "RequestWorkSelection", candidateWorkIds: runnable };
 
 describe("P7-008 dependency-aware classification (03 §2/§3)", () => {
   it("wait × dependency matrix: waiting and blocked works leave runnable; unreferenced Unsatisfied stays runnable", async () => {
@@ -190,7 +190,10 @@ describe("P7-008 dependency-aware classification (03 §2/§3)", () => {
         expect([...classified.runnable]).toEqual([WORK_DEP_ONLY, WORK_CLEAN]);
         expect(
           decideFromTable(classified.current, classified.runnable),
-        ).toEqual({ _tag: "Admit", focus: { _tag: "Coordination" } });
+        ).toEqual({
+          _tag: "RequestWorkSelection",
+          candidateWorkIds: [WORK_DEP_ONLY, WORK_CLEAN],
+        });
       }),
       makeClassificationApp(),
     );
@@ -252,10 +255,7 @@ describe("P7-008 dependency-aware classification (03 §2/§3)", () => {
         expect([...classified.runnable]).toEqual([]);
         expect(
           decideFromTable(classified.current, classified.runnable),
-        ).toEqual({
-          _tag: "Admit",
-          focus: { _tag: "Work", workId: WORK_CLEAN },
-        });
+        ).toEqual({ _tag: "AdmitWork", workId: WORK_CLEAN });
       }),
       makeClassificationApp(),
     );

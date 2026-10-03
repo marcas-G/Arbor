@@ -282,6 +282,41 @@ describe("W-08 Governance Queue（待处理）", () => {
     expect(screen.getByText(/最近命令：已提交/)).toBeTruthy();
   });
 
+  it("submits an exact control approval decision", async () => {
+    const recorded = installProjectQueue(
+      [treeDto.nodes[0] as Record<string, unknown>],
+      () => [
+        {
+          entryKey: "cap:cap_deadbeef:0",
+          kind: "Governance",
+          summary:
+            "core.control.assign-work requires approval for target ws_root",
+          watermark: 10,
+        },
+      ],
+      () => ({}),
+    );
+    renderQueue();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "批准并继续" })).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "批准并继续" }));
+    await waitFor(() =>
+      expect(recorded.urls.some((url) => url === "/commands")).toBe(true),
+    );
+    const body = recorded.bodies[recorded.urls.indexOf("/commands")] as Record<
+      string,
+      unknown
+    >;
+    expect(body.commandType).toBe("ResolveControlApproval");
+    expect(body.payload).toEqual({
+      approvalId: "cap_deadbeef",
+      expectedRevision: 0,
+      decision: "Approve",
+      reason: null,
+    });
+  });
+
   it("empty project → empty state, no fake cards", async () => {
     install({
       "responsibility-tree": () => ({ nodes: [] }),

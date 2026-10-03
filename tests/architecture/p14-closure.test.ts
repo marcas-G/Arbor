@@ -41,9 +41,9 @@ const SEAMS: ReadonlyArray<SeamEvidence> = [
   },
   {
     seam: "S4",
-    title: "Coordination execution ≠ Work execution",
+    title: "ConversationResponseEpisode exact binding ≠ Work execution",
     file: "packages/application/src/conversation-response-runtime.ts",
-    marker: 'focus: { _tag: "Coordination" }',
+    marker: '_tag: "ConversationResponseEpisode"',
   },
   {
     seam: "S5",
@@ -165,11 +165,13 @@ describe("p14-closure", () => {
     }
   });
 
-  it("G-B: the trigger admits Coordination (not a conversational Work)", () => {
+  it("G-B/EGP: the trigger admits an exact ConversationResponseEpisode", () => {
     const trigger = sourceOf(
       "packages/application/src/conversation-response-runtime.ts",
     );
-    expect(trigger).toContain('"Coordination"');
+    expect(trigger).toContain('"ConversationResponseEpisode"');
+    expect(trigger).toContain("responseJobRevision");
+    expect(trigger).not.toContain('"Coordination"');
     expect(trigger).not.toMatch(/conversational|ConversationWork/);
     // no chat runtime invention: the trigger submits the frozen P2 command
     expect(trigger).toContain('"AdmitExecution"');

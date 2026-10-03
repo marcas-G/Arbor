@@ -10,6 +10,7 @@ import {
 } from "../src/index.js";
 
 const EXPECTED_EVENTS = [
+  "ControlApprovalResolved",
   "ProjectCreated",
   "ProjectPolicyChanged",
   "ProjectRenamed",

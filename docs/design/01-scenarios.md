@@ -1,11 +1,30 @@
 # Arbor 核心场景定义（S1–S4）
 
-**Version:** 1.2  
-**Status:** FROZEN — scenario behavior baseline  
-**Date:** 2026-09-19  
-**Depends on:** `Arbor Problem Definition & Goals v1.2`  
+**Version:** 1.3
+**Status:** FROZEN — minimal architecture convergence scenario clarification
+**Date:** 2026-10-03
+**Depends on:** `Arbor Problem Definition & Goals v1.3`
 **Owns:** S1–S4 的参与者、端到端行为、分支、异常与恢复的用户可感知语义  
 **Does not own:** Domain Entity、Runtime/module、数据库、Command/Event、状态机、接口、技术实现
+
+**Governance clarification (v1.2 → v1.3; `ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`):**
+
+- the observable long-lived participant is a Workspace responsibility; Agent
+  wording denotes the currently executing cognitive role;
+- Plan is the local working reference of the Workspace Agent for one Work and
+  is never a user-managed cross-Workspace workflow;
+- Work placement/formation and temporary runtime subagent execution are
+  separate decisions: the former changes durable responsibility, the latter is
+  optional execution strategy inside an already formal Work;
+- S1 is accepted incrementally through four ordered closures: single Workspace,
+  long-term responsibility, cross-Work delivery, then optional subagent
+  parallelism. A later closure cannot be required for an earlier one to be
+  behaviorally correct;
+- every asynchronous approve/decide step must expose a later applied/blocked
+  outcome rather than presenting the decision itself as completed work.
+
+Accepted proposal SHA-256:
+`44B549EA81E21B3D4BE5D545EA446B544D50CCA0061C83E6FC40CDC2ADCCA932`.
 
 ---
 

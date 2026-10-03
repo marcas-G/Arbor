@@ -144,7 +144,7 @@
     },
     {
       "capabilityId": "B08",
-      "title": "Specialist Delegation",
+      "title": "Optional Subagent Isolation",
       "l1Suites": ["packages/domain/test/execution.test.ts"],
       "l2Suites": [
         "tests/p6-specialist-spawn.test.ts",
@@ -158,7 +158,7 @@
         "requiresRestart": false,
         "expectedStatus": "PASS",
         "testFile": "tests/capability/real-provider/b08-specialist-delegation.test.ts",
-        "blockingReason": "Executable sentinel: a real model spawns an ExecutionBound specialist through arbor_spawn_specialist (Wave 2); lifecycle ends with the execution, no durable responsibility."
+        "blockingReason": "MAC-P4 stop-condition disposition: real-provider disabled mode must preserve single-Agent correctness, advertise no legacy spawn_specialist action, and create no ExecutionBound child or durable responsibility."
       }
     },
     {
@@ -198,9 +198,9 @@
         "providerMode": "REAL",
         "requiresPersistence": true,
         "requiresRestart": false,
-        "expectedStatus": "NOT_RUN",
-        "testFile": null,
-        "blockingReason": "G-V2-2/3/4 are closed and live real-provider Verification passed; a repeatable B10-only REAL sentinel has not yet been extracted from the S1-S4 process black-box suite."
+        "expectedStatus": "PASS",
+        "testFile": "tests/capability/real-provider/b10-verification.test.ts",
+        "blockingReason": "Executable sentinel: a real exact-bound Verifier reads isolated evidence, records canonical ToolObservation identity, persists summary content through BlobStore, concludes Verification, and settles VerificationConcluded without bypassing Parent Acceptance."
       }
     },
     {
@@ -219,7 +219,7 @@
         "requiresRestart": false,
         "expectedStatus": "PASS",
         "testFile": "tests/capability/real-provider/b11-completion-acceptance.test.ts",
-        "blockingReason": "Executable sentinel: a real model claims completion through arbor_claim_completion (Wave 2); the Work stays Open and the verification/acceptance gates own the lifecycle."
+        "blockingReason": "Executable sentinel: a real model inspects an isolated worktree's completion evidence and claims completion through claim_completion; the Work stays Open and the verification/acceptance gates own the lifecycle."
       }
     },
     {

@@ -136,10 +136,21 @@ export const ToolRuntimeLive = (
         ToolAuthorityResolver,
       );
 
-      const failure = (cause: unknown): ToolRuntimeError => ({
-        _tag: "ToolRuntimeError",
-        cause,
-      });
+      const operationalFailure =
+        (
+          stage: import("@arbor/ports").ToolRuntimeOperationalStage,
+          invocationRef: string,
+        ) =>
+        (cause: unknown): ToolRuntimeError => ({
+          _tag: "ToolRuntimeOperationalFailure",
+          stage,
+          effectDisposition:
+            stage === "Executor" || stage === "SettlementJournal"
+              ? "OutcomeUncertain"
+              : "NotStarted",
+          invocationRef,
+          cause,
+        });
 
       const invoke = (intent: ToolIntent, context: ToolExecutionContext) =>
         Effect.gen(function* () {
@@ -183,9 +194,16 @@ export const ToolRuntimeLive = (
             if (Option.isNone(workspaces)) {
               return denied("workspace mount resolver unavailable");
             }
-            const workspace = yield* tx.transact(
-              workspaces.value.findById(context.workspaceId),
-            );
+            const workspace = yield* tx
+              .transact(workspaces.value.findById(context.workspaceId))
+              .pipe(
+                Effect.mapError(
+                  operationalFailure(
+                    "WorkspaceLookup",
+                    String(intent.invocationId),
+                  ),
+                ),
+              );
             if (Option.isNone(workspace)) {
               return denied("workspace not found");
             }
@@ -201,10 +219,16 @@ export const ToolRuntimeLive = (
           } else {
             addresses = legacyResourceArguments(intent.argumentsJson);
           }
-          const resolved = yield* environment.resolve(
-            context.projectId,
-            addresses,
-          );
+          const resolved = yield* environment
+            .resolve(context.projectId, addresses)
+            .pipe(
+              Effect.mapError(
+                operationalFailure(
+                  "EnvironmentResolution",
+                  String(intent.invocationId),
+                ),
+              ),
+            );
           const regions = resolved.regions;
           const region = regions[0];
           if (
@@ -217,13 +241,22 @@ export const ToolRuntimeLive = (
           }
 
           const resolvedAuthority = Option.isSome(authorityResolver)
-            ? yield* authorityResolver.value.resolve({
-                intent,
-                definition,
-                context,
-                regions,
-                now,
-              })
+            ? yield* authorityResolver.value
+                .resolve({
+                  intent,
+                  definition,
+                  context,
+                  regions,
+                  now,
+                })
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "AuthorityResolution",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                )
             : context.authority;
           if (resolvedAuthority === undefined) {
             return denied("tool authority unavailable");
@@ -246,9 +279,16 @@ export const ToolRuntimeLive = (
             if (intent.approvalId === null) {
               return denied("approval required");
             }
-            const approval = yield* tx.transact(
-              store.findApproval(intent.approvalId),
-            );
+            const approval = yield* tx
+              .transact(store.findApproval(intent.approvalId))
+              .pipe(
+                Effect.mapError(
+                  operationalFailure(
+                    "ApprovalLookup",
+                    String(intent.invocationId),
+                  ),
+                ),
+              );
             if (Option.isNone(approval)) {
               return denied("approval not found");
             }
@@ -265,76 +305,159 @@ export const ToolRuntimeLive = (
             }
           }
 
-          const admitted = yield* tx.transact(
-            admission.admit({
-              workspaceId: context.workspaceId,
-              regions,
-              write: executor.write,
-            }),
-          );
+          const admitted = yield* tx
+            .transact(
+              admission.admit({
+                workspaceId: context.workspaceId,
+                regions,
+                write: executor.write,
+              }),
+            )
+            .pipe(
+              Effect.mapError(
+                operationalFailure(
+                  "ResourceAdmission",
+                  String(intent.invocationId),
+                ),
+              ),
+            );
           if (admitted._tag === "Denied") {
             return denied(admitted.reason);
           }
 
-          yield* tx.transact(
-            store.recordIntent({
-              invocationId: intent.invocationId,
-              executionId: context.executionId,
-              workspaceId: context.workspaceId,
-              toolName: intent.toolName,
-              toolVersion: intent.toolVersion,
-              sideEffectSemantics: definition.sideEffectSemantics,
-              argumentsJson: intent.argumentsJson,
-              resolvedRegions: regions,
-              approvalId: intent.approvalId,
-              intentAt: now,
-            }),
-          );
-          if (needsApproval && intent.approvalId !== null) {
-            const consumed = yield* tx.transact(
-              store.consumeApproval(intent.approvalId, intent.invocationId),
+          yield* tx
+            .transact(
+              store.recordIntent({
+                invocationId: intent.invocationId,
+                executionId: context.executionId,
+                workspaceId: context.workspaceId,
+                toolName: intent.toolName,
+                toolVersion: intent.toolVersion,
+                sideEffectSemantics: definition.sideEffectSemantics,
+                argumentsJson: intent.argumentsJson,
+                resolvedRegions: regions,
+                approvalId: intent.approvalId,
+                intentAt: now,
+              }),
+            )
+            .pipe(
+              Effect.mapError(
+                operationalFailure(
+                  "IntentJournal",
+                  String(intent.invocationId),
+                ),
+              ),
             );
+          if (needsApproval && intent.approvalId !== null) {
+            const consumed = yield* tx
+              .transact(
+                store.consumeApproval(intent.approvalId, intent.invocationId),
+              )
+              .pipe(
+                Effect.mapError(
+                  operationalFailure(
+                    "ApprovalConsumption",
+                    String(intent.invocationId),
+                  ),
+                ),
+              );
             if (!consumed) {
               return denied("approval already consumed");
             }
           }
 
-          const handle = yield* sandbox.open(
-            address === undefined || region === undefined
-              ? {
-                  executionId: context.executionId,
-                  workspaceId: context.workspaceId,
-                  regions,
-                }
-              : {
-                  executionId: context.executionId,
-                  workspaceId: context.workspaceId,
-                  mounts: [
-                    {
-                      ref: "workspace",
-                      address,
-                      region,
-                      access: executor.write ? "ReadWrite" : "ReadOnly",
-                    },
-                  ],
-                },
-          );
-          const outcome = yield* executor
-            .execute({ intent, definition, context, sandbox: handle, regions })
+          const handle = yield* sandbox
+            .open(
+              address === undefined || region === undefined
+                ? {
+                    executionId: context.executionId,
+                    workspaceId: context.workspaceId,
+                    regions,
+                  }
+                : {
+                    executionId: context.executionId,
+                    workspaceId: context.workspaceId,
+                    mounts: [
+                      {
+                        ref: "workspace",
+                        address,
+                        region,
+                        access: executor.write ? "ReadWrite" : "ReadOnly",
+                      },
+                    ],
+                  },
+            )
             .pipe(
-              Effect.ensuring(sandbox.close(handle).pipe(Effect.orDie)),
-              Effect.mapError(failure),
+              Effect.mapError(
+                operationalFailure("SandboxOpen", String(intent.invocationId)),
+              ),
             );
+          const executed = yield* Effect.match(
+            executor.execute({
+              intent,
+              definition,
+              context,
+              sandbox: handle,
+              regions,
+            }),
+            {
+              onFailure: (cause) => ({ ok: false as const, cause }),
+              onSuccess: (value) => ({ ok: true as const, value }),
+            },
+          );
+          const closed = yield* Effect.match(sandbox.close(handle), {
+            onFailure: (cause) => ({ ok: false as const, cause }),
+            onSuccess: () => ({ ok: true as const }),
+          });
+          if (!closed.ok) {
+            return yield* Effect.fail<ToolRuntimeError>({
+              _tag: "ToolRuntimeCleanupFailure",
+              stage: "SandboxClose",
+              effectDisposition: "OutcomeUncertain",
+              invocationRef: String(intent.invocationId),
+              cause: closed.cause,
+              ...(executed.ok
+                ? {}
+                : {
+                    priorFailure: {
+                      _tag: "ToolRuntimeOperationalFailure" as const,
+                      stage: "Executor" as const,
+                      effectDisposition: "OutcomeUncertain" as const,
+                      invocationRef: String(intent.invocationId),
+                      cause: executed.cause,
+                    },
+                  }),
+            });
+          }
+          if (!executed.ok) {
+            return yield* Effect.fail<ToolRuntimeError>({
+              _tag: "ToolRuntimeOperationalFailure",
+              stage: "Executor",
+              effectDisposition: "OutcomeUncertain",
+              invocationRef: String(intent.invocationId),
+              cause: executed.cause,
+            });
+          }
+          const outcome = executed.value;
 
           const settledAt = yield* clock.now();
-          yield* tx.transact(
-            store.settle(
-              intent.invocationId,
-              outcome.settlement,
-              outcome.resultRef,
-              settledAt,
-            ),
-          );
+          yield* tx
+            .transact(
+              store.settle(
+                intent.invocationId,
+                outcome.settlement,
+                outcome.resultRef,
+                settledAt,
+              ),
+            )
+            .pipe(
+              Effect.mapError(
+                operationalFailure(
+                  "SettlementJournal",
+                  String(intent.invocationId),
+                ),
+              ),
+            );
 
           const observation: CanonicalToolObservation = (() => {
             switch (outcome.settlement._tag) {
@@ -364,7 +487,7 @@ export const ToolRuntimeLive = (
             }
           })();
           return observation;
-        }).pipe(Effect.mapError(failure));
+        });
 
       return ToolRuntimePort.of({ invoke });
     }),

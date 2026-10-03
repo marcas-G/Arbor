@@ -16,7 +16,13 @@ export const selectPendingInputPromotions = (
     .filter((entry) => entry.kind === "HumanInput")
     .map((entry) => ({ entry, delivery: "Steer" as const }));
   if (!options.freshDrain) return steer;
-  const queued = entries.find((entry) => entry.kind !== "HumanInput");
+  // Governance belongs to the authenticated human Queue and must remain
+  // actionable until RecordDecision consumes it. HumanConversation has its
+  // own exact response-job lifecycle. Neither may be drained into an Agent
+  // Session merely because a Workspace execution starts.
+  const queued = entries.find(
+    (entry) => entry.kind === "Message" || entry.kind === "SpecialistSettled",
+  );
   return queued === undefined
     ? steer
     : [...steer, { entry: queued, delivery: "Queue" as const }];

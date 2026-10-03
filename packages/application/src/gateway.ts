@@ -293,6 +293,24 @@ export const CommandGatewayLive: Layer.Layer<
               return yield* Effect.fail(failure);
             }),
           ),
+          Effect.catchTag("PersistenceUnavailable", (failure) =>
+            Effect.gen(function* () {
+              if (failure.retryDisposition === "retryable") {
+                const settledAt = yield* clock.now();
+                yield* tx
+                  .transact(
+                    store.recordRetryableAttempt(
+                      envelope.commandId,
+                      `PersistenceUnavailable:${failure.repository}:${failure.sourceTag}`,
+                      startedAt,
+                      settledAt,
+                    ),
+                  )
+                  .pipe(Effect.ignore);
+              }
+              return yield* Effect.fail(failure);
+            }),
+          ),
         );
       }).pipe(Effect.provideService(IdGenerator, idGenerator));
 

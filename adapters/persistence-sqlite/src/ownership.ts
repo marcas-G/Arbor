@@ -26,6 +26,7 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface ClaimRow {
   readonly claim_id: string;
@@ -63,10 +64,10 @@ export const ResourceOwnershipRepositoryLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): ResourceOwnershipRepositoryError => ({
-      _tag: "ResourceOwnershipRepositoryFailure",
-      cause,
-    });
+    const failure = repositoryFailure(
+      "ResourceOwnershipRepository",
+      "ownership",
+    );
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return ResourceOwnershipRepository.of({
@@ -135,10 +136,10 @@ export const EnvironmentRevisionStoreLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): EnvironmentRevisionStoreError => ({
-      _tag: "EnvironmentRevisionStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure(
+      "EnvironmentRevisionStore",
+      "environment-revision",
+    );
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return EnvironmentRevisionStore.of({
@@ -249,8 +250,11 @@ export const OwnershipWriteServiceLive: Layer.Layer<
             );
             if (overlap) {
               return yield* Effect.fail<ResourceOwnershipRepositoryError>({
-                _tag: "ResourceOwnershipRepositoryFailure",
-                cause: "resource ownership overlap",
+                _tag: "PersistenceConstraintViolation",
+                repository: "ResourceOwnershipRepository",
+                operation: "insert-active-claim",
+                constraintKind: "Constraint",
+                constraint: "active-resource-overlap",
               });
             }
             yield* Effect.forEach(claims, (claim) =>

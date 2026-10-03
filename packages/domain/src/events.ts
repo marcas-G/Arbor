@@ -203,6 +203,15 @@ export const HumanInterventionApplied = Schema.TaggedStruct(
     kind: Schema.String,
   },
 );
+export const ControlApprovalResolved = Schema.TaggedStruct(
+  "ControlApprovalResolved",
+  {
+    approvalId: Schema.String,
+    executionId: Schema.String,
+    decision: Schema.Literals(["Approve", "Reject"]),
+    revision: Schema.Number,
+  },
+);
 
 export const DomainEventPayload = Schema.Union([
   ProjectCreated,
@@ -247,6 +256,7 @@ export const DomainEventPayload = Schema.Union([
   HumanMessageSubmitted,
   ConversationResponseResumed,
   ConversationResponseCancelled,
+  ControlApprovalResolved,
 ]);
 
 export type DomainEventPayload = Schema.Schema.Type<typeof DomainEventPayload>;
@@ -294,6 +304,7 @@ export const EVENT_CATALOG = {
   HumanMessageSubmitted,
   ConversationResponseResumed,
   ConversationResponseCancelled,
+  ControlApprovalResolved,
 } as const;
 
 export type EventTypeName = keyof typeof EVENT_CATALOG;

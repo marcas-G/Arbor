@@ -1,5 +1,10 @@
 # P8 — 00 Contract Index (FROZEN)
 
+> **MAC successor (DID v1.31):** Work / independent Verification / Acceptance
+> separation remains authoritative. MAC-P1 closes root Acceptance; MAC-P2 adds
+> scoped Parent Agent acceptance for direct-child results. PASS never implies
+> Acceptance or completion. See `docs/design/implementation/MAC/**`.
+
 > Planning Agent 起草的设计收敛提案。人工治理确认 GQ1–GQ6 后正文落位
 > `docs/design/implementation/P8/**` 冻结；此前不构成 Authority 来源。
 

@@ -142,5 +142,18 @@ describe("P17 conversation recovery policy", () => {
       _tag: "NeedsAttention",
       reason: "ReconciliationRequired",
     });
+
+    const contextBlocked = decideConversationRecovery({
+      job,
+      attempts: [],
+      settlement: failed("ContextUnsatisfiable"),
+      responseBody: null,
+      now: "2026-10-01T00:00:10.000Z",
+      policy: CONVERSATION_RETRY_POLICY_V1,
+    });
+    expect(contextBlocked.nextState).toMatchObject({
+      _tag: "NeedsAttention",
+      reason: "ContextBlocked",
+    });
   });
 });

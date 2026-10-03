@@ -54,6 +54,20 @@ describe("P3 package DAG", () => {
     );
     expect(decisionTurn).toContain("projectSessionTimeline");
     expect(decisionTurn).toContain("listRecentEntries");
+    expect(decisionTurn).toContain("SESSION_TIMELINE_ENTRY_LIMIT");
+    expect(
+      existsSync(
+        join(repoRoot, "packages/agent-runtime/src/session-context.ts"),
+      ),
+    ).toBe(false);
+    expect(
+      existsSync(join(repoRoot, "packages/agent-runtime/src/inbox-context.ts")),
+    ).toBe(false);
+    expect(decisionTurn).not.toContain("listUnconsumed");
+    expect(decisionTurn).not.toContain("assembleInboxContext");
+    expect(decisionTurn).not.toContain("PortableLegacyMessage");
+    expect(decisionTurn).not.toContain("messages:");
+    expect(decisionTurn).toContain("inputItems");
     expect(projector).toContain('case "ToolCall"');
     expect(projector).toContain('case "ToolResult"');
     expect(projector).toContain("instructionFragments: []");
@@ -78,6 +92,51 @@ describe("P3 package DAG", () => {
 
   it("keeps model-context free of tool-runtime", () => {
     expect(depsOf("model-context")).not.toContain("tool-runtime");
+  });
+
+  it("separates model-usable action rejection from operational failure", () => {
+    const controlTypes = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/control-types.ts"),
+      "utf8",
+    );
+    const loopActions = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/agent-loop-actions.ts"),
+      "utf8",
+    );
+    expect(controlTypes).toContain("AgentActionRejected");
+    expect(controlTypes).toContain("AgentActionOperationalFailure");
+    expect(controlTypes).not.toContain('readonly _tag: "AgentActionError"');
+    expect(loopActions).toContain(
+      'decodedAction.cause._tag === "InvalidControlArguments"',
+    );
+    expect(loopActions).toContain('status: "Failed", disposition');
+  });
+
+  it("keeps ExecutionDriver failures classified and expected terminal failures settled", () => {
+    const errors = readFileSync(
+      join(repoRoot, "packages/ports/src/errors.ts"),
+      "utf8",
+    );
+    const translation = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/execution-driver-failure.ts"),
+      "utf8",
+    );
+    const decision = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/model-decision.ts"),
+      "utf8",
+    );
+    const preparation = readFileSync(
+      join(repoRoot, "packages/model-context/src/prepare-turn.ts"),
+      "utf8",
+    );
+    expect(errors).toContain("ExecutionDriverOperationalFailure");
+    expect(errors).toContain("ExecutionDriverOwnershipLost");
+    expect(errors).toContain("ExecutionDriverInvariantFailure");
+    expect(errors).not.toContain('readonly _tag: "ExecutionDriverError"');
+    expect(translation).toContain('tag === "LeaseFencingRejected"');
+    expect(decision).toContain("providerFailureSettlement");
+    expect(decision).toContain('reason: "ContextUnsatisfiable"');
+    expect(preparation).not.toContain("Effect.catchIf");
   });
 
   it("allows the provider-fake adapter only domain/ports", () => {

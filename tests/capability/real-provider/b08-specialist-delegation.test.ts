@@ -27,10 +27,10 @@ afterEach(() => {
   }
 });
 
-describe("B08 L3 — specialist delegation through the adopted route", () => {
+describe("B08 L3 — optional subagent disabled-mode qualification", () => {
   defineCapabilityTest(
     metadataFor("B08", "L3"),
-    "B08: a real model spawns a temporary specialist; no durable responsibility escapes",
+    "B08: a real model completes an ordinary turn without any legacy specialist surface",
     async () => {
       await runAndCapture({
         caseId: "B08-L3-REAL",
@@ -41,9 +41,9 @@ describe("B08 L3 — specialist delegation through the adopted route", () => {
           mkdirSync(directory, { recursive: true });
           temporaryDirectories.push(directory);
           const objective =
-            "你的第一个动作必须是调用 arbor_spawn_specialist，参数 JSON：" +
-            `{"mission": "执行 ${marker} 子任务", "constraints": ["read-only"]}。` +
-            "禁止调用 list、read、shell、patch。第二个动作调用 arbor_wait（reason done，waitSpec Any + Manual）。";
+            `请独立整理 ${marker} 的三步只读检查计划。` +
+            "先调用 update_plan 记录计划，再调用 wait（reason done，waitSpec Any + Manual）。" +
+            "不要创建工作区、依赖或执行任何资源副作用。";
           let settlement: unknown;
           let durable:
             | Awaited<ReturnType<typeof queryDurableEffects>>
@@ -107,32 +107,34 @@ describe("B08 L3 — specialist delegation through the adopted route", () => {
           };
         },
         verify: (result) => {
-          const specialist = result.specialists[0];
-          if (specialist === undefined) {
+          if (result.specialists.length !== 0) {
             throw new Error(
-              "the real-model run admitted no ExecutionBound specialist execution",
+              "disabled subagent mode must not admit ExecutionBound child executions",
             );
           }
-          if (specialist.binding_kind !== "execution_bound") {
-            throw new Error(
-              `specialist must be execution-bound, found ${specialist.binding_kind}`,
-            );
+          const advertisedLegacyAction = result.providerCalls.some((call) =>
+            JSON.stringify(call.request.tools ?? []).includes(
+              "spawn_specialist",
+            ),
+          );
+          if (advertisedLegacyAction) {
+            throw new Error("new turns must not advertise spawn_specialist");
           }
-          if (!specialist.mission?.includes(result.marker)) {
-            throw new Error(
-              `specialist mission does not carry the model's task: ${specialist.mission ?? "none"}`,
-            );
-          }
-          // The specialist lifecycle ends with its execution: no durable
-          // workspace or responsibility is created.
           if (result.workspaceCount !== 1) {
             throw new Error(
-              `specialist delegation must not create workspaces, found ${result.workspaceCount}`,
+              `disabled-mode execution must not create workspaces, found ${result.workspaceCount}`,
             );
           }
-          if (result.invocations.length > 0) {
+          const mutatingInvocations = result.invocations.filter(
+            (invocation) =>
+              invocation.tool_name !== "read" &&
+              invocation.tool_name !== "list",
+          );
+          if (mutatingInvocations.length > 0) {
             throw new Error(
-              "specialist admission must not perform resource-side effects",
+              `disabled-mode planning performed resource-side effects: ${mutatingInvocations
+                .map((invocation) => invocation.tool_name)
+                .join(", ")}`,
             );
           }
         },

@@ -1,6 +1,11 @@
 # P2 — Contract Index
 
-**Authority:** DID v1.7 (phase-scoped closure). These documents are **not** a
+> **MAC successor (DID v1.31):** generic durable Execution, Lease/Fencing,
+> Wait and recovery contracts remain. Active new-write temporary parallel Agent
+> semantics and MAC phase gates are owned by `docs/design/implementation/MAC/**`.
+> Conflicts resolve in favor of MAC; historical rows remain fail-closed.
+
+**Authority:** DID v1.28 (P2 phase-scoped closure plus EGP supersession). These documents are **not** a
 fifth design layer; they are the P2-owned implementation contracts authorized
 by DID §13.
 
@@ -12,6 +17,16 @@ docs/design/implementation/P2/**   (these contracts)
 
 DID §13 points at `docs/design/implementation/P2/**`; a conflict resolves in
 favor of the DID.
+
+**DID v1.28 EGP supersession:** every P2 statement that admits, persists,
+schedules or settles `ExecutionFocus=Coordination` is historical. New writes
+use exact `ExecutionEpisodeBinding`; migration 0024 retains the old focus
+columns only as migration/audit evidence. Multiple runnable Work that requires
+model judgment creates a durable WorkSelectionDecisionRequest and exact
+DecisionEpisode. `CoordinationCompleted` is not a valid new settlement.
+Implementation migrations 0025/0026 subsequently remove the focus columns from
+the current `executions` and `agent_execution_state` schemas; legacy decoding
+is compatibility-only and cannot admit or drive a new execution.
 
 ## Documents
 

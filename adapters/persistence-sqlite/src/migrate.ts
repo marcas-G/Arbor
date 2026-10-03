@@ -7,6 +7,7 @@ export interface MigrationFile {
   readonly id: number;
   readonly name: string;
   readonly sql: string;
+  readonly foreignKeysOff?: boolean;
 }
 
 export const splitStatements = (sql: string): ReadonlyArray<string> => {
@@ -67,14 +68,35 @@ export const runMigrations = (
       .filter((migration) => migration.id > current)
       .sort((a, b) => a.id - b.id);
     for (const migration of pending) {
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          for (const statement of splitStatements(migration.sql)) {
-            yield* sql.unsafe(statement);
-          }
-          yield* sql.unsafe(`PRAGMA user_version = ${migration.id}`);
-        }),
-      );
+      const apply = Effect.gen(function* () {
+        for (const statement of splitStatements(migration.sql)) {
+          yield* sql.unsafe(statement);
+        }
+        yield* sql.unsafe(`PRAGMA user_version = ${migration.id}`);
+      });
+      if (migration.foreignKeysOff === true) {
+        yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+        yield* sql.unsafe("PRAGMA legacy_alter_table = ON");
+        yield* sql.withTransaction(apply).pipe(
+          Effect.ensuring(
+            Effect.gen(function* () {
+              yield* sql.unsafe("PRAGMA legacy_alter_table = OFF");
+              yield* sql.unsafe("PRAGMA foreign_keys = ON");
+            }).pipe(Effect.orDie),
+          ),
+        );
+        const violations = yield* sql.unsafe("PRAGMA foreign_key_check");
+        if (violations.length > 0) {
+          return yield* Effect.fail(
+            sqliteAdapterError(
+              `migration ${migration.id} produced foreign-key violations`,
+              violations,
+            ),
+          );
+        }
+      } else {
+        yield* sql.withTransaction(apply);
+      }
     }
     return pending.length;
   });

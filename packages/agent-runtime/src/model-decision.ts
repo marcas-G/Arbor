@@ -6,6 +6,11 @@ import type {
   LeaseGeneration,
 } from "@arbor/domain";
 import {
+  conversationResponseEpisode,
+  executionEpisode,
+  workEpisode,
+} from "@arbor/domain";
+import {
   type ControlBasis,
   decideSessionProjection,
   decodeTurn,
@@ -13,6 +18,7 @@ import {
   type InstructionFragment,
   type ModelContextService,
   projectSessionTimeline,
+  SESSION_TIMELINE_ENTRY_LIMIT,
   type SessionTimelineProjection,
   type TurnProfileResolverService,
 } from "@arbor/model-context";
@@ -21,10 +27,11 @@ import type {
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
   ConversationResponseJobStoreService,
+  DecisionRequestStoreService,
   ExecutionActivity,
   ExecutionDriverError,
   HumanMessageStoreService,
-  InboxProjectionStoreService,
+  LocalPlanStoreService,
   ModelCapability,
   ProviderExecutionPolicyOverrides,
   ProviderRunInput,
@@ -33,28 +40,34 @@ import type {
   ProviderTurnStoreService,
   RuntimeSafetyObservation,
   SecretRef,
+  SessionEntryRecord,
   SessionRepositoryService,
   TransactionPortService,
   WorkRepositoryService,
+  WorkspaceKnowledgePortService,
+  WorkspacePlacementPortService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
-  isConversationExecution,
   isProviderExecutionTimeout,
+  isProviderFailure,
   isProviderTurnBindingChanged,
   type ModelDecisionOutcome,
   providerExecutionTimeoutSettlement,
+  providerFailureSettlement,
   providerTurnBindingChangedSettlement,
   REPAIR_POLICY,
   runtimeSafetyFragment,
   safetyStop,
 } from "./agent-loop-policy.js";
 import { runCompaction } from "./compaction-coordinator.js";
-import { assembleInboxContext } from "./inbox-context.js";
+import {
+  GENERIC_INSTRUCTION_ASSETS,
+  instructionAssetFragment,
+} from "./prompt-assets.js";
 import { decideRepair } from "./repair.js";
-import { SESSION_CONTEXT_ENTRY_LIMIT } from "./session-context.js";
 import { makeAgentStepContext } from "./step-context.js";
 import { assembleWorkContext } from "./work-context.js";
 
@@ -91,9 +104,12 @@ export interface ModelDecisionDependencies {
     ConversationResponseJobStoreService,
     "findByExecution" | "listForWorkspace"
   >;
-  readonly inbox?: InboxProjectionStoreService;
   readonly works: WorkRepositoryService;
+  readonly localPlans?: Pick<LocalPlanStoreService, "findByWork">;
+  readonly decisionRequests?: Pick<DecisionRequestStoreService, "findById">;
   readonly workspaces: WorkspaceRepositoryService;
+  readonly workspaceKnowledge?: WorkspaceKnowledgePortService;
+  readonly workspacePlacement?: WorkspacePlacementPortService;
   readonly options: ModelDecisionOptions;
   readonly admit: (
     activity: ExecutionActivity,
@@ -103,6 +119,28 @@ export interface ModelDecisionDependencies {
   readonly now: () => Effect.Effect<string>;
   readonly leaseGeneration?: LeaseGeneration;
 }
+
+/** Root conversation shares the Workspace primary Session with Work episodes.
+ * Only timeline items causally written by the exact conversation execution may
+ * re-enter its next turn; all historical Work/tool traffic stays excluded. */
+const belongsToConversationExecution = (
+  entry: SessionEntryRecord,
+  executionId: string,
+): boolean => {
+  const source = entry.source;
+  if (source === undefined) return false;
+  const providerTurnPrefix = `ptn_${executionId}_`;
+  if (
+    (source.kind === "ProviderTurn" || source.kind === "ProviderTurnCall") &&
+    source.ref.startsWith(providerTurnPrefix)
+  ) {
+    return true;
+  }
+  return (
+    source.kind === "AgentLoopAction" &&
+    source.ref.startsWith(`observation_${executionId}_`)
+  );
+};
 
 export const runModelDecision = (
   dependencies: ModelDecisionDependencies,
@@ -124,9 +162,12 @@ export const runModelDecision = (
     humanMessages,
     turnProfileResolver,
     responseJobs,
-    inbox,
     works,
+    localPlans,
+    decisionRequests,
     workspaces,
+    workspaceKnowledge,
+    workspacePlacement,
     options,
     admit,
     failure,
@@ -184,30 +225,67 @@ export const runModelDecision = (
           };
         }
       }
-      // P14 `02` (WAVE1 S02/S04): for a Coordination execution the
-      // current claimed human message is the user turn; recent
-      // answered turns carry conversation continuity.
+      const proposeSettlement = (
+        settlement: ExecutionSettlement,
+      ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
+        Effect.gen(function* () {
+          if (
+            loopStep !== undefined &&
+            loopSteps !== undefined &&
+            loopStepFence !== undefined &&
+            loopStep.state === "Prepared"
+          ) {
+            const preparedStep = loopStep;
+            loopStep = yield* tx
+              .transact(
+                loopSteps.transition(
+                  {
+                    identity: preparedStep.identity,
+                    expectedRevision: preparedStep.revision,
+                    expectedState: "Prepared",
+                    next: {
+                      ...preparedStep,
+                      state: "SettlementProposed",
+                      settlement,
+                      revision: preparedStep.revision + 1,
+                      updatedAt: yield* now(),
+                    },
+                  },
+                  loopStepFence,
+                ),
+              )
+              .pipe(Effect.mapError(failure));
+          }
+          return { _tag: "Settle", settlement };
+        });
+      // EGP: only an exact ConversationResponseEpisode can open conversation
+      // history. A generic Workspace execution never implies conversation.
       const conversationMessages: Array<{
         readonly role: "user" | "assistant";
         readonly text: string;
       }> = [];
       const conversationContextRefs: Array<string> = [];
-      if (isConversationExecution(input.execution)) {
-        const history = yield* tx
-          .transact(humanMessages.listForWorkspace(input.execution.workspaceId))
-          .pipe(
-            Effect.mapError(
-              (cause): ExecutionDriverError => ({
-                _tag: "ExecutionDriverError",
-                cause,
-              }),
-            ),
-          );
-        let claimed = history.find(
-          (message) =>
-            message.claimedByExecutionId ===
-            String(input.execution.executionId),
-        );
+      const exactConversation = conversationResponseEpisode(input.execution);
+      const history =
+        exactConversation !== null
+          ? yield* tx
+              .transact(
+                humanMessages.listForWorkspace(input.execution.workspaceId),
+              )
+              .pipe(Effect.mapError(failure))
+          : [];
+      let claimed = history.find(
+        (message) =>
+          message.claimedByExecutionId === String(input.execution.executionId),
+      );
+      if (exactConversation !== null) {
+        const message = yield* tx
+          .transact(humanMessages.findById(exactConversation.messageId))
+          .pipe(Effect.mapError(failure));
+        if (Option.isSome(message)) claimed = message.value;
+      }
+      const conversationExecution = exactConversation !== null;
+      if (conversationExecution) {
         const responseJobRows =
           responseJobs === undefined
             ? []
@@ -219,17 +297,6 @@ export const runModelDecision = (
         const responseJobsByMessage = new Map(
           responseJobRows.map((job) => [String(job.messageId), job] as const),
         );
-        if (responseJobs !== undefined) {
-          const job = yield* tx
-            .transact(responseJobs.findByExecution(input.execution.executionId))
-            .pipe(Effect.mapError(failure));
-          if (Option.isSome(job)) {
-            const message = yield* tx
-              .transact(humanMessages.findById(job.value.messageId))
-              .pipe(Effect.mapError(failure));
-            if (Option.isSome(message)) claimed = message.value;
-          }
-        }
         for (const message of history) {
           const responseJob = responseJobsByMessage.get(message.messageId);
           const responseBody =
@@ -259,14 +326,27 @@ export const runModelDecision = (
           conversationContextRefs.push(`human-input:${claimed.messageId}`);
         }
       }
-      let recentSessionEntries = yield* tx
+      // A Human Conversation has its own durable history above. The primary
+      // Workspace Session is the execution timeline for non-conversation episodes and
+      // may contain tool calls, observations, or a dangling invocation from a
+      // completely different episode. Letting that timeline participate here
+      // both leaks technical Work context into chat and can block a harmless
+      // conversation on an unrelated invocation. Start from an empty Session
+      // projection; answered HumanMessages + the claimed message are the sole
+      // conversation continuity source.
+      const recentTimeline = yield* tx
         .transact(
           sessions.listRecentEntries(
             input.execution.sessionId,
-            SESSION_CONTEXT_ENTRY_LIMIT,
+            SESSION_TIMELINE_ENTRY_LIMIT,
           ),
         )
         .pipe(Effect.mapError(failure));
+      let recentSessionEntries = conversationExecution
+        ? recentTimeline.filter((entry) =>
+            belongsToConversationExecution(entry, input.execution.executionId),
+          )
+        : recentTimeline;
       let projectionDecision = decideSessionProjection(recentSessionEntries);
       if (
         projectionDecision._tag === "Blocked" &&
@@ -356,7 +436,7 @@ export const runModelDecision = (
             .transact(
               sessions.listRecentEntries(
                 input.execution.sessionId,
-                SESSION_CONTEXT_ENTRY_LIMIT,
+                SESSION_TIMELINE_ENTRY_LIMIT,
               ),
             )
             .pipe(Effect.mapError(failure));
@@ -437,25 +517,8 @@ export const runModelDecision = (
           `legacy:${capability.providerRef ?? options.providerRef ?? "provider"}:${capability.modelRef}`,
         inputFrontier: sessionProjection.frontier,
       });
-      const inboxEntries =
-        inbox === undefined
-          ? []
-          : yield* tx
-              .transact(inbox.listUnconsumed(input.execution.workspaceId))
-              .pipe(Effect.mapError(failure));
-      const inboxContext = assembleInboxContext(inboxEntries);
-      const messages: Array<{
-        readonly role: "system" | "user" | "assistant" | "tool";
-        readonly text: string;
-      }> = [];
-      messages.push(...inboxContext.messages);
       const inputItems = [
         ...conversationMessages.map((message) => ({
-          _tag: "Message" as const,
-          role: message.role,
-          text: message.text,
-        })),
-        ...messages.map((message) => ({
           _tag: "Message" as const,
           role: message.role,
           text: message.text,
@@ -465,7 +528,6 @@ export const runModelDecision = (
       const messageContextRefs = [
         ...conversationContextRefs,
         ...sessionProjection.contextRefs,
-        ...inboxContext.contextRefs,
       ];
       const workspace = yield* tx
         .transact(workspaces.findById(input.execution.workspaceId))
@@ -478,39 +540,153 @@ export const runModelDecision = (
           }),
         );
       }
+      if (workspaceKnowledge !== undefined) {
+        const knowledge = yield* workspaceKnowledge
+          .load(input.execution.workspaceId)
+          .pipe(Effect.mapError(failure));
+        if (knowledge.entries.length > 0) {
+          inputItems.push({
+            _tag: "ContextUpdate",
+            sourceRef: `workspace-knowledge:${input.execution.workspaceId}`,
+            revision: Number(workspace.value.revision),
+            updateKind: "Full",
+            text: JSON.stringify({
+              scope: "accepted-workspace-knowledge",
+              provenance: "CanonicalAcceptance",
+              entries: knowledge.entries,
+            }),
+          });
+          messageContextRefs.push(
+            `workspace-knowledge:${input.execution.workspaceId}:${knowledge.fingerprint}`,
+          );
+        }
+      }
+      if (conversationExecution && workspacePlacement !== undefined) {
+        const placement = yield* workspacePlacement
+          .list({ rootWorkspaceId: input.execution.workspaceId })
+          .pipe(Effect.mapError(failure));
+        inputItems.push({
+          _tag: "ContextUpdate",
+          sourceRef: `workspace-placement:${input.execution.workspaceId}`,
+          revision: Number(workspace.value.revision),
+          updateKind: "Full",
+          text: JSON.stringify({
+            scope: "workspace-placement",
+            current: placement.current,
+            directChildren: placement.directChildren,
+            inFlightFormations: placement.inFlightFormations,
+            nextCursor: placement.nextCursor,
+          }),
+        });
+        messageContextRefs.push(
+          `workspace-placement:${input.execution.workspaceId}:${placement.fingerprint}`,
+        );
+      }
       let currentWork: import("@arbor/domain").Work | null = null;
-      if (
-        input.execution.binding._tag === "WorkspaceExecution" &&
-        input.execution.binding.focus._tag === "Work"
-      ) {
+      const boundWork = workEpisode(input.execution);
+      if (boundWork !== null) {
         const work = yield* tx
-          .transact(works.findById(input.execution.binding.focus.workId))
+          .transact(works.findById(boundWork.workId))
           .pipe(Effect.mapError(failure));
         if (Option.isNone(work)) {
           return yield* Effect.fail(
             failure({
               _tag: "WorkContextMissing",
-              workId: input.execution.binding.focus.workId,
+              workId: boundWork.workId,
             }),
           );
         }
         currentWork = work.value;
+        if (
+          localPlans !== undefined &&
+          executionEpisode(input.execution)?._tag === "WorkEpisode"
+        ) {
+          const plan = yield* tx
+            .transact(localPlans.findByWork(boundWork.workId))
+            .pipe(Effect.mapError(failure));
+          if (
+            Option.isSome(plan) &&
+            plan.value.targetWorkRevision === currentWork.revision
+          ) {
+            inputItems.push({
+              _tag: "ContextUpdate",
+              sourceRef: `local-plan:${boundWork.workId}`,
+              revision: plan.value.revision,
+              updateKind: "Full",
+              text: JSON.stringify({
+                scope: "progress-only",
+                items: plan.value.items,
+              }),
+            });
+            messageContextRefs.push(
+              `local-plan:${boundWork.workId}:${String(plan.value.revision)}`,
+            );
+          }
+        }
       }
       const workContext = assembleWorkContext(
         workspace.value,
         currentWork,
         input.execution,
       );
+      const conversationActionAsset =
+        GENERIC_INSTRUCTION_ASSETS.rootConversationAction;
+      const conversationActionFragments = conversationExecution
+        ? [
+            instructionAssetFragment(
+              "root-conversation-action",
+              conversationActionAsset,
+            ),
+          ]
+        : [];
+      const instructionContents = new Map(workContext.contents);
+      if (conversationExecution) {
+        instructionContents.set(
+          conversationActionAsset.contentRef,
+          conversationActionAsset.text,
+        );
+      }
+      const boundEpisode = executionEpisode(input.execution);
+      if (
+        boundEpisode?._tag === "DecisionEpisode" &&
+        decisionRequests !== undefined
+      ) {
+        const request = yield* tx
+          .transact(decisionRequests.findById(boundEpisode.decisionId))
+          .pipe(Effect.mapError(failure));
+        if (Option.isNone(request) || request.value.state._tag !== "Pending") {
+          return yield* proposeSettlement({
+            _tag: "Failed",
+            failure: {
+              _tag: "ExecutionFailure",
+              reason: "DecisionRequestMissingOrSettled",
+            },
+          });
+        }
+        inputItems.push({
+          _tag: "ContextUpdate",
+          sourceRef: `decision-request:${boundEpisode.decisionId}`,
+          revision: request.value.revision,
+          updateKind: "Full",
+          text: JSON.stringify({
+            decisionKind: "SelectCurrentWork",
+            candidateWorkIds: request.value.candidateWorkIds,
+            workspaceRevision: request.value.workspaceRevision,
+          }),
+        });
+        messageContextRefs.push(
+          `decision-request:${boundEpisode.decisionId}:${String(request.value.revision)}`,
+        );
+      }
       const turnProfile = yield* turnProfileResolver
         .resolve({
           execution: input.execution,
           conversation:
-            isConversationExecution(input.execution) &&
-            conversationMessages.length > 0,
+            conversationExecution && conversationMessages.length > 0,
         })
         .pipe(Effect.mapError(failure));
-      const preparation = yield* modelContext
-        .prepareTurn({
+      const prepared = yield* Effect.match(
+        modelContext.prepareTurn({
           executionId: input.execution.executionId,
           sessionId: input.execution.sessionId,
           contextEpoch: stepContext.contextEpoch,
@@ -522,6 +698,7 @@ export const runModelDecision = (
           fragments: [
             runtimeSafetyFragment,
             ...workContext.fragments,
+            ...conversationActionFragments,
             ...repairFragments,
           ],
           contextFragments: [],
@@ -535,28 +712,35 @@ export const runModelDecision = (
           maxOutputTokens: capability.outputCeiling,
           bodySkillIds: [],
           turnProfile,
-          instructionContents: workContext.contents,
+          instructionContents,
           stepContext,
           ...(inputItems.length > 0 ? { inputItems } : {}),
           ...(messageContextRefs.length > 0 ? { messageContextRefs } : {}),
           ...(options.providerRef !== undefined
             ? { providerRef: options.providerRef }
             : {}),
-        })
-        .pipe(
-          Effect.mapError(
-            (cause): ExecutionDriverError => ({
-              _tag: "ExecutionDriverError",
-              cause,
-            }),
-          ),
-        );
+        }),
+        {
+          onFailure: (cause) => ({ ok: false as const, cause }),
+          onSuccess: (value) => ({ ok: true as const, value }),
+        },
+      );
+      if (!prepared.ok) {
+        if (prepared.cause._tag === "ContextUnsatisfiable") {
+          return yield* proposeSettlement({
+            _tag: "Failed",
+            failure: {
+              _tag: "ExecutionFailure",
+              reason: "ContextUnsatisfiable",
+            },
+          });
+        }
+        return yield* Effect.fail(failure(prepared.cause));
+      }
+      const preparation = prepared.value;
 
       if (preparation._tag === "GovernanceBlocked") {
-        return {
-          _tag: "Settle",
-          settlement: safetyStop("GovernanceBlocked"),
-        };
+        return yield* proposeSettlement(safetyStop("GovernanceBlocked"));
       }
       if (preparation._tag === "NeedsCompaction") {
         if (loopStepFence === undefined) {
@@ -568,12 +752,7 @@ export const runModelDecision = (
           );
         }
         if (compactionAttempts >= 1) {
-          return yield* Effect.fail(
-            failure({
-              _tag: "CompactionNoGain",
-              executionId: input.execution.executionId,
-            }),
-          );
+          return yield* proposeSettlement(safetyStop("CompactionNoGain"));
         }
         compactionAttempts += 1;
         yield* runCompaction(
@@ -738,9 +917,7 @@ export const runModelDecision = (
               },
               output: decoded.output,
               loopStep,
-              ...(conversationMessages.length > 0
-                ? { conversation: true }
-                : {}),
+              ...(conversationExecution ? { conversation: true } : {}),
             };
           }
         } else if (settled._tag === "SettledFailure") {
@@ -812,18 +989,14 @@ export const runModelDecision = (
       );
       if (!providerResult.ok) {
         if (isProviderTurnBindingChanged(providerResult.cause)) {
-          return {
-            _tag: "Settle",
-            settlement: providerTurnBindingChangedSettlement(),
-          };
+          return yield* proposeSettlement(
+            providerTurnBindingChangedSettlement(),
+          );
         }
         if (isProviderExecutionTimeout(providerResult.cause)) {
-          return {
-            _tag: "Settle",
-            settlement: providerExecutionTimeoutSettlement(
-              providerResult.cause,
-            ),
-          };
+          return yield* proposeSettlement(
+            providerExecutionTimeoutSettlement(providerResult.cause),
+          );
         }
         if (
           typeof providerResult.cause === "object" &&
@@ -923,6 +1096,11 @@ export const runModelDecision = (
           overflowRecoveryAttempt = 1;
           continue;
         }
+        if (isProviderFailure(providerResult.cause)) {
+          return yield* proposeSettlement(
+            providerFailureSettlement(providerResult.cause),
+          );
+        }
         return yield* Effect.fail(failure(providerResult.cause));
       }
       const providerRun = providerResult.value;
@@ -987,7 +1165,7 @@ export const runModelDecision = (
           turn: preparation.turn,
           output: decoded.output,
           ...(loopStep === undefined ? {} : { loopStep }),
-          ...(conversationMessages.length > 0 ? { conversation: true } : {}),
+          ...(conversationExecution ? { conversation: true } : {}),
         };
       }
       const repair = decideRepair(

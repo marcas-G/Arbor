@@ -20,7 +20,7 @@ const decide = (
 ): SchedulerDecision => {
   const count = runnableWork.length;
   if (Option.isSome(current) && !hasWait) {
-    return { _tag: "Admit", focus: { _tag: "Work", workId: current.value } };
+    return { _tag: "AdmitWork", workId: current.value };
   }
   if (count === 0) {
     return { _tag: "Idle" };
@@ -28,7 +28,7 @@ const decide = (
   if (count === 1) {
     return { _tag: "SelectCurrentWork", workId: runnableWork[0] as WorkId };
   }
-  return { _tag: "Admit", focus: { _tag: "Coordination" } };
+  return { _tag: "RequestWorkSelection", candidateWorkIds: runnableWork };
 };
 
 export const ExecutionSchedulerLive: Layer.Layer<

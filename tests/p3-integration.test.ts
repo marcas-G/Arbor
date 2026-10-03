@@ -12,7 +12,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  P16_MIGRATIONS,
+  P26_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RuntimeClockLive,
@@ -79,7 +79,7 @@ const waitTurn = [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_wait",
+    toolName: "wait",
     argumentsJson: JSON.stringify({
       reason: "wait for a manual wake",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -254,6 +254,11 @@ const admitPayload: AdmitExecutionPayload = {
   executionId,
   workspaceId,
   focus: { _tag: "Work", workId },
+  episode: {
+    _tag: "WorkEpisode",
+    workId,
+    targetWorkRevision: 0 as never,
+  },
 };
 
 const run = <A>(
@@ -271,7 +276,7 @@ describe("I0 integration — Wait control route + P2 settle pipeline", () => {
   it("admits, leases, routes Wait, and durably registers WorkWait", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P16_MIGRATIONS);
+      yield* runMigrations(P26_MIGRATIONS);
       yield* seed;
       const gateway = yield* CommandGateway;
       const admitId = parse(CommandId)(

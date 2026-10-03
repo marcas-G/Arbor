@@ -50,6 +50,27 @@ export const evidenceDirectory = (): string => {
   );
 };
 
+export const safeEvidenceError = (error: unknown): string => {
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  const seen = new WeakSet<object>();
+  try {
+    const encoded = JSON.stringify(error, (key, value: unknown) => {
+      if (/authorization|api[-_]?key|secret|credential/iu.test(key)) {
+        return "[REDACTED]";
+      }
+      if (typeof value === "bigint") return value.toString();
+      if (typeof value === "object" && value !== null) {
+        if (seen.has(value)) return "[Circular]";
+        seen.add(value);
+      }
+      return value;
+    });
+    return (encoded ?? String(error)).slice(0, 8_000);
+  } catch {
+    return String(error).slice(0, 8_000);
+  }
+};
+
 export const captureEvidence = (input: {
   readonly caseId: string;
   readonly runtime: HttpProviderRuntime;
@@ -122,6 +143,7 @@ export const runAndCapture = async <A>(input: {
     model: config.model,
     serverBuildId: config.serverBuildId,
     authMode: config.authMode,
+    ...(config.apiKey === undefined ? {} : { apiKey: config.apiKey }),
     ...(config.modelRevision === undefined
       ? {}
       : { modelRevision: config.modelRevision }),
@@ -141,7 +163,7 @@ export const runAndCapture = async <A>(input: {
     });
     return result;
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = safeEvidenceError(error);
     captureEvidence({
       caseId: input.caseId,
       runtime,

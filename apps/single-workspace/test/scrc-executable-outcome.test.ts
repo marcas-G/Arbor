@@ -1,5 +1,9 @@
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { toExecutableOutcome } from "../src/executable-tool-handler.js";
+import {
+  makeExecutableToolHandler,
+  toExecutableOutcome,
+} from "../src/executable-tool-handler.js";
 
 describe("SCRC executable outcome taxonomy", () => {
   it.each([
@@ -45,6 +49,128 @@ describe("SCRC executable outcome taxonomy", () => {
       resultRef: "artifact:full",
       artifactRefs: ["artifact:full"],
       observation: { text: "excerpt", truncated: true },
+    });
+  });
+
+  it("settles OutcomeUnknown when ToolRuntime cannot establish the external effect", async () => {
+    const handler = makeExecutableToolHandler(
+      {
+        invoke: () =>
+          Effect.fail({
+            _tag: "ToolRuntimeOperationalFailure",
+            stage: "SettlementJournal",
+            effectDisposition: "OutcomeUncertain",
+            invocationRef: "tin_uncertain",
+            cause: "journal unavailable",
+          }),
+      },
+      { now: () => Effect.succeed("t") },
+      {
+        visibleRefs: () =>
+          Effect.succeed([{ name: "read", version: "2", hash: "read-v2" }]),
+        resolveForModel: () => Effect.die("unused"),
+      },
+    );
+    const outcome = await Effect.runPromise(
+      handler.handle({
+        invocation: {
+          providerTurnId: "ptn_test" as never,
+          outputPosition: 0,
+          callRef: "call-1",
+          toolName: "read",
+          argumentsJson: "{}",
+        },
+        execution: {
+          executionId: "exe_test" as never,
+          projectId: "prj_test" as never,
+          workspaceId: "ws_test" as never,
+          sessionId: "ses_test" as never,
+          binding: {
+            _tag: "WorkspaceExecution",
+            workspaceId: "ws_test" as never,
+            focus: { _tag: "Coordination" },
+          },
+          admittedAt: "t",
+          stopRequestedAt: null,
+          state: { status: "Active", settlement: null },
+        },
+        context: {
+          _tag: "ExecutionOrigin",
+          principal: "worker:test" as never,
+          executionId: "exe_test" as never,
+          fencingGeneration: 0 as never,
+        },
+        controlBasis: {} as never,
+      }),
+    );
+    expect(outcome).toEqual({
+      _tag: "Settle",
+      settlement: {
+        _tag: "OutcomeUnknown",
+        reconciliation: {
+          _tag: "ReconciliationRequired",
+          invocationRefs: ["tin_uncertain"],
+        },
+      },
+    });
+  });
+
+  it("keeps pre-effect ToolRuntime failure out of the model-result channel", async () => {
+    const handler = makeExecutableToolHandler(
+      {
+        invoke: () =>
+          Effect.fail({
+            _tag: "ToolRuntimeOperationalFailure",
+            stage: "SandboxOpen",
+            effectDisposition: "NotStarted",
+            invocationRef: "tin_not_started",
+            cause: "sandbox unavailable",
+          }),
+      },
+      { now: () => Effect.succeed("t") },
+      {
+        visibleRefs: () =>
+          Effect.succeed([{ name: "read", version: "2", hash: "read-v2" }]),
+        resolveForModel: () => Effect.die("unused"),
+      },
+    );
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        handler.handle({
+          invocation: {
+            providerTurnId: "ptn_test" as never,
+            outputPosition: 0,
+            callRef: "call-1",
+            toolName: "read",
+            argumentsJson: "{}",
+          },
+          execution: {
+            executionId: "exe_test" as never,
+            projectId: "prj_test" as never,
+            workspaceId: "ws_test" as never,
+            sessionId: "ses_test" as never,
+            binding: {
+              _tag: "WorkspaceExecution",
+              workspaceId: "ws_test" as never,
+              focus: { _tag: "Coordination" },
+            },
+            admittedAt: "t",
+            stopRequestedAt: null,
+            state: { status: "Active", settlement: null },
+          },
+          context: {
+            _tag: "ExecutionOrigin",
+            principal: "worker:test" as never,
+            executionId: "exe_test" as never,
+            fencingGeneration: 0 as never,
+          },
+          controlBasis: {} as never,
+        }),
+      ),
+    );
+    expect(failure).toMatchObject({
+      _tag: "AgentActionOperationalFailure",
+      operation: "ToolRuntime.SandboxOpen",
     });
   });
 });

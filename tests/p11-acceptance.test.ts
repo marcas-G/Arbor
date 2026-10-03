@@ -375,7 +375,11 @@ const cbExecutionOf = (index: 0 | 1): Execution => ({
   binding: {
     _tag: "WorkspaceExecution",
     workspaceId: cbWorkspaceIds[index],
-    focus: { _tag: "Coordination" },
+    episode: {
+      _tag: "InboxEpisode",
+      entryKey: `acceptance-control-basis-${index}`,
+      inputKind: "TestInput",
+    },
   },
   sessionId: cbSessionIds[index],
   admittedAt: "t",
@@ -385,7 +389,11 @@ const cbExecutionOf = (index: 0 | 1): Execution => ({
 
 const cbStateOf = (index: 0 | 1): AgentExecutionState => ({
   executionId: cbExecutionIds[index],
-  focus: { _tag: "Coordination" },
+  episode: {
+    _tag: "InboxEpisode",
+    entryKey: `acceptance-control-basis-${index}`,
+    inputKind: "TestInput",
+  },
   wakeReason: { _tag: "WorkSelected" },
   currentMode: "execute",
   activeSkillRefs: [],
@@ -421,7 +429,7 @@ const cbSendMessageTurn = (body: string) => [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_send_message",
+    toolName: "send_message",
     argumentsJson: JSON.stringify({
       kind: "Query",
       body,
@@ -461,9 +469,7 @@ const cbRecordingModelContext = (recorded: Array<ControlBasis>) =>
               budget: { maxOutputTokens: input.maxOutputTokens },
               cacheHints: [],
             },
-            toolRoutes: [
-              { name: "arbor_send_message", route: "Control" as const },
-            ],
+            toolRoutes: [{ name: "send_message", route: "Control" as const }],
             manifest: {
               providerTurnId: input.providerTurnId,
               executionId: input.executionId,
@@ -473,10 +479,8 @@ const cbRecordingModelContext = (recorded: Array<ControlBasis>) =>
               instructionFragments: [],
               contextRefs: [],
               skillRefs: [],
-              toolRefs: ["Control:arbor_send_message@1"],
-              toolRoutes: [
-                { name: "arbor_send_message", route: "Control" as const },
-              ],
+              toolRefs: ["Control:send_message@1"],
+              toolRoutes: [{ name: "send_message", route: "Control" as const }],
               outputContractRef: "tool-invocation-v1",
               budgetDecision: { maxOutputTokens: input.maxOutputTokens },
               compiledRequestHash: "hash-p11-acceptance",

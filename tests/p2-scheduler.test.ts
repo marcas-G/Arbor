@@ -84,7 +84,7 @@ describe("P2 ExecutionScheduler", () => {
             Effect.succeed({ current: Option.some(workA), runnable: [] }),
         })
       )._tag,
-    ).toBe("Admit");
+    ).toBe("AdmitWork");
     expect(
       (
         await evaluate({
@@ -102,8 +102,10 @@ describe("P2 ExecutionScheduler", () => {
       classify: () =>
         Effect.succeed({ current: Option.none(), runnable: [workA, workB] }),
     });
-    expect(many._tag).toBe("Admit");
-    if (many._tag === "Admit") expect(many.focus._tag).toBe("Coordination");
+    expect(many).toEqual({
+      _tag: "RequestWorkSelection",
+      candidateWorkIds: [workA, workB],
+    });
   });
 
   it("is Noop when an active main execution exists", async () => {

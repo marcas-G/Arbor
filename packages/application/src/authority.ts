@@ -82,6 +82,14 @@ export type VerifiedCommandAuthority =
       readonly senderWorkspaceId: WorkspaceId;
     }
   | {
+      readonly _tag: "ControlApprovalDecisionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly approvalId: string;
+    }
+  | {
       /** P14 `01` §1: human chat-turn submission — root-only exact binding
        * (target must be the project root workspace; enforced at the resolver). */
       readonly _tag: "SubmitHumanMessageAuthority";

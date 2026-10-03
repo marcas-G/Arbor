@@ -19,6 +19,44 @@ import type {
 import { Context, type Effect } from "effect";
 
 export type AgentAction =
+  | { readonly _tag: "SelectCurrentWork"; readonly workId: WorkId }
+  | {
+      readonly _tag: "AssignWork";
+      readonly targetWorkspaceRef?: string;
+      /** Replay/internal compatibility only; new model schema advertises ref. */
+      readonly targetWorkspaceId?: WorkspaceId;
+      readonly objective: string;
+      readonly why: string;
+      readonly constraints: ReadonlyArray<string>;
+      readonly completionExpectation: string;
+      readonly verificationMission: {
+        readonly goal: string;
+        readonly criteria: ReadonlyArray<{
+          readonly criterionId: string;
+          readonly requirement: string;
+          readonly required: boolean;
+        }>;
+        readonly riskRequirements: ReadonlyArray<string>;
+      };
+      /** VDC-1: human-readable causal reason is model-authored; predecessor
+       * identity remains Runtime-bound from the current parent Work. */
+      readonly reason: string;
+    }
+  | {
+      readonly _tag: "ListWorkspaces";
+      readonly cursor?: string;
+      readonly query?: string;
+    }
+  | { readonly _tag: "ReadWorkspace"; readonly workspaceRef: string }
+  | { readonly _tag: "AcceptResult"; readonly resultRef: string }
+  | {
+      readonly _tag: "UpdatePlan";
+      readonly items: ReadonlyArray<{
+        readonly itemId: string;
+        readonly text: string;
+        readonly status: "Pending" | "InProgress" | "Completed" | "Blocked";
+      }>;
+    }
   | {
       readonly _tag: "RecordVerificationEvidence";
       readonly criterionId: string;
@@ -84,6 +122,19 @@ export type AgentAction =
         readonly kind: string;
         readonly requiredArtifactRoles: ReadonlyArray<string>;
       };
+    }
+  | {
+      readonly _tag: "ProduceDeliverable";
+      readonly kind: string;
+      readonly artifacts: ReadonlyArray<{
+        readonly role: string;
+        readonly artifactId: import("@arbor/domain").ArtifactId;
+      }>;
+    }
+  | {
+      readonly _tag: "Deliver";
+      readonly deliverableId: import("@arbor/domain").DeliverableId;
+      readonly summary: string;
     }
   | {
       /** The model proposes; a human RecordDecision remains the governance
@@ -160,10 +211,36 @@ export interface AgentActionHandler {
   ) => Effect.Effect<AgentActionOutcome, AgentActionError>;
 }
 
-export interface AgentActionError {
-  readonly _tag: "AgentActionError";
+/** A semantic/precondition rejection is useful Agent feedback. It stays
+ * bounded and safe for the next model turn; native causes never cross this
+ * branch. */
+export interface AgentActionRejected {
+  readonly _tag: "AgentActionRejected";
+  readonly code:
+    | "action/not-applicable"
+    | "action/precondition"
+    | "action/target-unavailable"
+    | "action/canonical-rejected"
+    | "action/tool-unavailable";
+  readonly safeMessage: string;
+  readonly correction:
+    | "RetryWithChangedInput"
+    | "WaitForStateChange"
+    | "ChooseAlternative";
+}
+
+/** Infrastructure/configuration failure that the model cannot repair. The
+ * native cause is retained inside Runtime only and is never projected into
+ * model context. */
+export interface AgentActionOperationalFailure {
+  readonly _tag: "AgentActionOperationalFailure";
+  readonly operation: string;
   readonly cause: unknown;
 }
+
+export type AgentActionError =
+  | AgentActionRejected
+  | AgentActionOperationalFailure;
 
 export type ExecutableInvocationOutcome =
   | {

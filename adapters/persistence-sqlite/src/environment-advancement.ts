@@ -7,6 +7,7 @@ import {
 import { Context, Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 /**
  * P12 `05` §5.1 (TR-1) — the INTERNAL, non-exported advancement capability.
@@ -51,10 +52,10 @@ export const EnvironmentRevisionAdvancementLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): EnvironmentRevisionStoreError => ({
-      _tag: "EnvironmentRevisionStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure(
+      "EnvironmentRevisionStore",
+      "advance-anchor",
+    );
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return EnvironmentRevisionAdvancement.of({

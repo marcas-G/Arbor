@@ -16,7 +16,8 @@
 
 1. parent Work `ProduceDeliverable(sourceWorkRevision 绑定)` → `DeliverableProduced`。
 2. P7 coordinator 消费事件 → candidate lookup → matcher=true → `SatisfyDependency`（authority source=P7Coordinator，deterministic CommandId）→ `DependencySatisfied`。
-3. 事务内 wake（DependencySatisfied, from 0 to 1）→ reevaluate → child Work 回 runnable → §8.18A 决策继续。
+3. durable wake（DependencySatisfied, from 0 to 0）按终态事实清除相同 dependencyId
+   的 wait → reevaluate → child Work 回 runnable → §8.18A 决策继续。
 4. coordinator 重放 → 幂等（同 Receipt）。
 5. matcher 反例（kind 不匹配）→ `DependencyNotSatisfiable`，状态不变。
 6. 并发：两个 deliverable 竞争 → 首者赢，次者 typed rejection。

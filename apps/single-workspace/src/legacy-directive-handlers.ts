@@ -58,7 +58,9 @@ const bounded = (text: string): BoundedObservation =>
     : { text, truncated: false };
 
 const driverError = (cause: unknown): ExecutionDriverError => ({
-  _tag: "ExecutionDriverError",
+  _tag: "ExecutionDriverOperationalFailure",
+  stage: "ActionLedger",
+  sourceTag: "LegacyDirectiveHandler",
   cause,
 });
 

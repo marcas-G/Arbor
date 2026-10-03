@@ -1,5 +1,6 @@
 import type {
   CommandSubmissionContext,
+  ExecutionEpisodeBinding,
   MessageId,
   Principal,
   ProjectId,
@@ -35,7 +36,10 @@ interface AdmitWorkspaceMainPayload {
   readonly _tag: "WorkspaceMain";
   readonly executionId: ExecutionId;
   readonly workspaceId: never;
-  readonly focus: { readonly _tag: "Coordination" };
+  readonly episode: Extract<
+    ExecutionEpisodeBinding,
+    { readonly _tag: "ConversationResponseEpisode" }
+  >;
 }
 
 const executionIdOf = (messageId: MessageId, attemptNo: number): ExecutionId =>
@@ -178,7 +182,11 @@ export const runConversationResponseTrigger = (
       _tag: "WorkspaceMain",
       executionId,
       workspaceId: rootWorkspaceId as never,
-      focus: { _tag: "Coordination" },
+      episode: {
+        _tag: "ConversationResponseEpisode",
+        messageId: job.messageId,
+        responseJobRevision: job.revision,
+      },
     };
     const actor = parse(Actor)("system:conversation-trigger");
     const context: CommandSubmissionContext = {

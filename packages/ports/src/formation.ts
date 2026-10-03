@@ -29,6 +29,13 @@ export interface FormationProposalStoreService {
     FormationProposalStoreError,
     TransactionScope
   >;
+  readonly listByParent: (
+    parentWorkspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<FormationProposalRecord>,
+    FormationProposalStoreError,
+    TransactionScope
+  >;
   /** Atomic compare-and-set on (proposalId, expectedRevision, state=Pending).
    * `None` means the row moved on (stale decision or terminal state). */
   readonly decideIfPendingRevision: (

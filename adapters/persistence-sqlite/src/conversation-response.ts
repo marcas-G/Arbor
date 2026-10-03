@@ -1,6 +1,5 @@
 import {
   ConversationAttemptStore,
-  type ConversationAttemptStoreError,
   type ConversationFailureClass,
   type ConversationResponseJob,
   type ConversationResponseJobState,
@@ -10,6 +9,7 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+import { repositoryFailure } from "./repository-error.js";
 
 interface JobRow {
   message_id: string;
@@ -50,15 +50,12 @@ const JOB_COLUMNS = `message_id, project_id, root_workspace_id, state,
   response_execution_id, provider_reasoning_json, revision, created_at,
   updated_at`;
 
-const jobStoreError = (cause: unknown) => ({
-  _tag: "ConversationJobStoreError" as const,
-  cause,
-});
+const jobStoreError = repositoryFailure("ConversationJobStore", "job");
 
-const attemptStoreError = (cause: unknown): ConversationAttemptStoreError => ({
-  _tag: "ConversationAttemptStoreError",
-  cause,
-});
+const attemptStoreError = repositoryFailure(
+  "ConversationAttemptStore",
+  "attempt",
+);
 
 const parseJson = (value: string | null): unknown => {
   if (value === null) return null;

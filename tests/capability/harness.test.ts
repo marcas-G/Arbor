@@ -60,7 +60,7 @@ describe("Core Capability test harness metadata", () => {
     }
   });
 
-  it("retains a mechanical blocker for every non-runnable L3 case", () => {
+  it("retains blockers for non-runnable cases and exposes runnable B10", () => {
     const blocked = CAPABILITY_CATALOG.capabilities.filter((capability) =>
       ["BLOCKED_BY_IMPLEMENTATION", "BLOCKED_BY_DESIGN_GAP"].includes(
         capability.l3.expectedStatus,
@@ -69,11 +69,13 @@ describe("Core Capability test harness metadata", () => {
     for (const capability of blocked) {
       expect(capability.l3.blockingReason.trim().length).toBeGreaterThan(10);
     }
-    expect(
-      CAPABILITY_CATALOG.capabilities.find(
-        (capability) => capability.capabilityId === "B10",
-      )?.l3.expectedStatus,
-    ).toBe("NOT_RUN");
+    const b10 = CAPABILITY_CATALOG.capabilities.find(
+      (capability) => capability.capabilityId === "B10",
+    );
+    expect(b10?.l3.expectedStatus).toBe("PASS");
+    expect(b10?.l3.testFile).toBe(
+      "tests/capability/real-provider/b10-verification.test.ts",
+    );
     const b03Route = metadataFor("B03", "L2");
     expect(b03Route.expectedStatus).toBe("PASS");
     expect(b03Route.providerMode).toBe("FAKE");

@@ -8,6 +8,7 @@ import type {
 import type {
   AcceptanceRepositoryError,
   CommandStoreError,
+  ControlApprovalStoreError,
   ConversationJobStoreError,
   DeliverableRepositoryError,
   DependencyRepositoryError,
@@ -16,6 +17,7 @@ import type {
   EnvironmentRevisionStoreError,
   EvidenceRepositoryError,
   ExecutionRepositoryError,
+  FormationFulfillmentStoreError,
   FormationProposalStoreError,
   HumanMessageStoreError,
   InboxProjectionStoreError,
@@ -73,6 +75,7 @@ export type CommandHandlerError =
   | CommandStoreError
   | DomainEventJournalError
   | FormationProposalStoreError
+  | FormationFulfillmentStoreError
   | MessageStoreError
   | InboxProjectionStoreError
   | EnvironmentError
@@ -83,6 +86,7 @@ export type CommandHandlerError =
   | PermissionGrantRepositoryError
   | HumanMessageStoreError
   | ConversationJobStoreError
+  | ControlApprovalStoreError
   | DependencyRepositoryError
   | DeliverableRepositoryError
   | VerificationRepositoryError

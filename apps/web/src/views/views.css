@@ -119,27 +119,36 @@
 }
 
 .arbor-conversation-turn {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: var(--arbor-space-2);
-  max-width: 80%;
+  display: flex;
+  max-width: min(84%, 48rem);
+  flex-direction: column;
+  gap: var(--arbor-space-1);
+  padding: var(--arbor-space-3) var(--arbor-space-4);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius-large);
   color: var(--arbor-ink);
 }
 
 .arbor-conversation-human {
   align-self: flex-end;
+  border-bottom-right-radius: var(--arbor-space-1);
+  border-color: color-mix(in srgb, var(--arbor-leaf) 18%, var(--arbor-line));
+  background: var(--arbor-leaf-pale);
 }
 
 .arbor-conversation-assistant,
 .arbor-conversation-event {
   align-self: flex-start;
+  border-bottom-left-radius: var(--arbor-space-1);
+  background: var(--arbor-paper-2);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--arbor-ink) 5%, transparent);
 }
 
 .arbor-conversation-author {
   color: var(--arbor-leaf);
   font-size: var(--arbor-text-caption);
   font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .arbor-conversation-body {

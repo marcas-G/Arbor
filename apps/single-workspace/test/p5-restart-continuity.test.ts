@@ -60,7 +60,7 @@ const yieldTurn = [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_wait",
+    toolName: "wait",
     argumentsJson: JSON.stringify({
       reason: "waiting",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -144,6 +144,11 @@ const admit = (executionId: ExecutionId, commandId: CommandId) =>
       executionId,
       workspaceId,
       focus: { _tag: "Work", workId },
+      episode: {
+        _tag: "WorkEpisode",
+        workId,
+        targetWorkRevision: 0 as never,
+      },
     };
     const authority: VerifiedRuntimeCommandAuthority = {
       _tag: "AdmitExecutionAuthority",
@@ -285,7 +290,7 @@ describe("P5 restart continuity", () => {
       before.executions.find((e) => e.execution_id === exe1)?.settlement_kind,
     ).toBe("Completed");
     expect(before.waits).toBe(1);
-    // SCRC: the settling arbor_wait call is paired with a sourced
+    // SCRC: the settling wait call is paired with a sourced
     // ControlResult, so the durable timeline now contains one additional
     // entry beyond the pre-SCRC legacy count.
     expect(before.entries).toBe(4);

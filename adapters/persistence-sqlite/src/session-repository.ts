@@ -22,6 +22,7 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 // --- Session ----------------------------------------------------------------
 
@@ -115,10 +116,7 @@ export const SessionRepositoryLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): SessionRepositoryError => ({
-      _tag: "SessionRepositoryFailure",
-      cause,
-    });
+    const failure = repositoryFailure("SessionRepository", "session");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     const hasTimelineColumns = Effect.gen(function* () {

@@ -218,23 +218,6 @@ export class AuthorityResolverPort extends Context.Service<
 // (invocation); an optional `@targetId` narrows the grant to one target. `*`
 // is a capability wildcard.
 
-interface ParsedGrantScope {
-  readonly capability: string;
-  readonly target: string | null;
-}
-
-const parseGrantScope = (scope: string): ParsedGrantScope => {
-  const at = scope.indexOf("@");
-  if (at < 0) {
-    return { capability: scope, target: null };
-  }
-  const target = scope.slice(at + 1);
-  return {
-    capability: scope.slice(0, at),
-    target: target.length > 0 ? target : null,
-  };
-};
-
 const payloadRecord = (payload: unknown): Record<string, unknown> =>
   typeof payload === "object" && payload !== null
     ? (payload as Record<string, unknown>)
@@ -268,17 +251,42 @@ const matchGrant = (
   grants: ReadonlyArray<PermissionGrant>,
   capability: string,
   target: string | null,
+  subject: {
+    readonly principal: Principal;
+    readonly workspaceId: WorkspaceId | null;
+    readonly executionId: ExecutionId | null;
+    readonly now: string;
+  },
 ): GrantMatch => {
   let wrongTarget = false;
   for (const grant of grants) {
     if (grant.state !== "Active") {
       continue;
     }
-    const parsed = parseGrantScope(grant.scope);
-    if (parsed.capability !== capability && parsed.capability !== "*") {
+    if (
+      grant.subject === undefined ||
+      grant.capability === undefined ||
+      grant.validFrom === undefined ||
+      Date.parse(subject.now) < Date.parse(grant.validFrom) ||
+      (grant.expiresAt != null &&
+        Date.parse(subject.now) >= Date.parse(grant.expiresAt))
+    ) {
       continue;
     }
-    if (parsed.target !== null && parsed.target !== target) {
+    const subjectMatches =
+      (grant.subject._tag === "HumanPrincipal" &&
+        grant.subject.principal === subject.principal) ||
+      (grant.subject._tag === "WorkspaceAgent" &&
+        grant.subject.workspaceId === subject.workspaceId) ||
+      (grant.subject._tag === "Execution" &&
+        grant.subject.executionId === subject.executionId);
+    if (!subjectMatches) {
+      continue;
+    }
+    if (grant.capability !== capability && grant.capability !== "*") {
+      continue;
+    }
+    if (grant.target != null && grant.target !== target) {
       wrongTarget = true;
       continue;
     }
@@ -300,7 +308,15 @@ const authorizeCommand = (
   if (governanceAuthorizes(input.governance, input.principal, target)) {
     return "Granted";
   }
-  const match = matchGrant(input.grants, capability, target);
+  const match = matchGrant(input.grants, capability, target, {
+    principal: input.principal,
+    workspaceId:
+      input.canonicalFacts.execution?.workspaceId ??
+      input.canonicalFacts.workspace?.workspaceId ??
+      null,
+    executionId: input.canonicalFacts.execution?.executionId ?? null,
+    now: input.envelope.issuedAt,
+  });
   if (match === "Match") {
     return "Granted";
   }
@@ -573,6 +589,23 @@ const governanceCommandFact = (
         proposalId,
       });
     }
+    case "ResolveControlApproval": {
+      const approvalId = payloadString(payload, "approvalId");
+      const error = guarded("ResolveControlApproval", approvalId);
+      if (error !== null || approvalId === null) {
+        return Effect.fail(
+          error ?? denyCommand(input, "ResolveControlApproval", "Denied"),
+        );
+      }
+      return Effect.succeed({
+        _tag: "ControlApprovalDecisionAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        approvalId,
+      });
+    }
     case "SteerWork": {
       // P6 `04`: human steer — the fact binds the exact workspace + work.
       const steerWorkspaceId = payloadString(
@@ -750,8 +783,7 @@ const authorizeInvocation = (
   if (requested.every((capability) => capability === "fs:read")) {
     return Effect.succeed([...requested]);
   }
-  const active = input.grants.filter((grant) => grant.state === "Active");
-  if (active.length === 0) {
+  if (input.grants.length === 0) {
     return Effect.fail({
       _tag: "NoApplicableGrant",
       principal: input.principal,
@@ -759,14 +791,16 @@ const authorizeInvocation = (
     });
   }
   const covered = new Set<string>();
-  for (const grant of active) {
-    const capability = parseGrantScope(grant.scope).capability;
-    if (capability === "*") {
-      for (const requestedCapability of requested) {
-        covered.add(requestedCapability);
-      }
-    } else if (requested.includes(capability)) {
-      covered.add(capability);
+  for (const requestedCapability of requested) {
+    if (
+      matchGrant(input.grants, requestedCapability, input.workspaceId, {
+        principal: input.principal,
+        workspaceId: input.workspaceId,
+        executionId: input.executionId,
+        now: input.now,
+      }) === "Match"
+    ) {
+      covered.add(requestedCapability);
     }
   }
   const allowed = requested.filter((capability) => covered.has(capability));

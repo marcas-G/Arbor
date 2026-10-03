@@ -450,7 +450,7 @@ describe("StopExecutionForm", () => {
 });
 
 describe("GrantPermissionForm", () => {
-  it("grants a catalog capability with the frozen scope format and issuer", async () => {
+  it("grants a capability to an explicit subject and target", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <GrantPermissionForm
@@ -471,9 +471,14 @@ describe("GrantPermissionForm", () => {
     expect(envelope.commandType).toBe("GrantPermission");
     expect(envelope.actor).toBe("human:admin");
     const payload = payloadOf(envelope) as Record<string, unknown>;
-    expect(payload.scope).toBe("RecordDecision@ws_9");
+    expect(payload.capability).toBe("RecordDecision");
+    expect(payload.target).toBe("ws_9");
+    expect(payload.subject).toEqual({
+      _tag: "HumanPrincipal",
+      principal: "human:admin",
+    });
     expect(payload.issuer).toBe("human:admin");
-    expect(payload.lifetime).toBe("PT1H");
+    expect(payload.expiresAt).toBeNull();
     expect(String(payload.permissionGrantId)).toMatch(/^pgr_[0-9a-f-]{36}$/);
   });
 
@@ -498,7 +503,8 @@ describe("GrantPermissionForm", () => {
       string,
       unknown
     >;
-    expect(payload.scope).toBe("RegisterProjectTool");
+    expect(payload.capability).toBe("RegisterProjectTool");
+    expect(payload.target).toBeNull();
   });
 });
 

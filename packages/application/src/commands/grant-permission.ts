@@ -2,6 +2,7 @@ import {
   grantPermission,
   type PermissionGrantId,
   type PermissionGrantLifecycle,
+  type PermissionSubject,
   type Principal,
 } from "@arbor/domain";
 import type {
@@ -9,7 +10,7 @@ import type {
   PermissionGrantRepositoryService,
 } from "@arbor/ports";
 import { Effect } from "effect";
-import { commandOk } from "../command-result.js";
+import { commandErr, commandOk } from "../command-result.js";
 import type { CommandHandler } from "../gateway.js";
 
 /**
@@ -22,9 +23,11 @@ import type { CommandHandler } from "../gateway.js";
  */
 export interface GrantPermissionPayload {
   readonly permissionGrantId: PermissionGrantId;
-  readonly scope: string;
   readonly issuer: Principal;
-  readonly lifetime: string;
+  readonly subject: PermissionSubject;
+  readonly capability: string;
+  readonly target: string | null;
+  readonly expiresAt: string | null;
 }
 
 export interface GrantPermissionResult {
@@ -48,14 +51,43 @@ export const makeGrantPermissionHandler = (
       authority.permissionGrantId === payload.permissionGrantId,
   },
   stopAdmission: { _tag: "Unclassified" },
-  execute: (envelope) =>
+  execute: (envelope, context) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
+      const subjectValid =
+        (payload.subject._tag === "HumanPrincipal" &&
+          payload.subject.principal.startsWith("user:")) ||
+        (payload.subject._tag === "WorkspaceAgent" &&
+          payload.subject.workspaceId.startsWith("ws_")) ||
+        (payload.subject._tag === "Execution" &&
+          payload.subject.executionId.startsWith("exe_"));
+      if (
+        !subjectValid ||
+        payload.capability.trim().length === 0 ||
+        payload.issuer !== context.principal ||
+        (payload.expiresAt !== null &&
+          Date.parse(payload.expiresAt) <= Date.parse(envelope.issuedAt))
+      ) {
+        return commandErr({
+          _tag: "AuthorityDenied",
+          reason:
+            "GrantPermission requires an exact subject, non-empty capability, issuer=current principal, and future expiry",
+        });
+      }
       const grant = grantPermission({
         permissionGrantId: payload.permissionGrantId,
-        scope: payload.scope,
+        scope:
+          payload.target === null
+            ? payload.capability
+            : `${payload.capability}@${payload.target}`,
         issuer: payload.issuer,
-        lifetime: payload.lifetime,
+        lifetime: payload.expiresAt ?? "until-revoked",
+        subject: payload.subject,
+        capability: payload.capability,
+        target: payload.target,
+        validFrom: envelope.issuedAt,
+        expiresAt: payload.expiresAt,
+        revision: 0,
       });
       yield* dependencies.grants.put(grant, envelope.projectId);
 

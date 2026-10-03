@@ -23,7 +23,13 @@ export interface GovernanceTarget {
   readonly proposalRevision: number;
 }
 
+export interface ControlApprovalTarget {
+  readonly approvalId: string;
+  readonly approvalRevision: number;
+}
+
 const GOVERNANCE_ENTRY_KEY = /^gov:(fpr_[^:\s]+):(\d+)$/;
+const CONTROL_APPROVAL_ENTRY_KEY = /^cap:(cap_[^:\s]+):(\d+)$/;
 
 export const isGovernanceKind = (kind: string): boolean =>
   kind === "Governance";
@@ -46,4 +52,19 @@ export const parseGovernanceEntryKey = (
     return null;
   }
   return { proposalId, proposalRevision: revision };
+};
+
+export const parseControlApprovalEntryKey = (
+  entryKey: string,
+  kind: string,
+): ControlApprovalTarget | null => {
+  if (!isGovernanceKind(kind)) return null;
+  const match = CONTROL_APPROVAL_ENTRY_KEY.exec(entryKey);
+  if (match === null || match[1] === undefined || match[2] === undefined) {
+    return null;
+  }
+  return {
+    approvalId: match[1],
+    approvalRevision: Number(match[2]),
+  };
 };

@@ -7,7 +7,7 @@ const invocation = (argumentsJson: string): ToolInvocation => ({
   providerTurnId: "ptn_test" as never,
   outputPosition: 0,
   callRef: "call_test",
-  toolName: "arbor_declare_dependency",
+  toolName: "declare_dependency",
   argumentsJson,
 });
 
@@ -21,7 +21,7 @@ const stubHandler = {
     }),
 };
 
-describe("arbor_declare_dependency codec", () => {
+describe("declare_dependency codec", () => {
   it("decodes an AnyProducer dependency with roles", async () => {
     const registry = makeControlToolRegistry([stubHandler]);
     const decoded = await Effect.runPromise(
@@ -118,6 +118,6 @@ describe("arbor_declare_dependency codec", () => {
 
   it("is not exposed without a registered handler", () => {
     const registry = makeControlToolRegistry();
-    expect(registry.classify("arbor_declare_dependency")).toBe("NotControl");
+    expect(registry.classify("declare_dependency")).toBe("NotControl");
   });
 });

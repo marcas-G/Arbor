@@ -47,11 +47,7 @@ const chunks = async (
     attemptNo: 0,
     ...(secretMaterial !== null ? { secretMaterial } : {}),
     cancellationSignal: new AbortController().signal,
-    connectTimeoutMs: 5_000,
-    firstEventTimeoutMs: 5_000,
-    streamIdleTimeoutMs: 5_000,
     turnDeadlineAt: new Date(Date.now() + 30_000).toISOString(),
-    maxAttempts: 3,
   };
   for await (const chunk of client.streamChat({
     modelRef: "model-live",
@@ -133,6 +129,7 @@ describe("OpenAI-compatible fetch provider", () => {
     });
 
     await expect(chunks(client)).resolves.toEqual([
+      { type: "response_started" },
       { type: "text", text: "4" },
       { type: "usage", inputTokens: 17, outputTokens: 2 },
       { type: "completed", finishReason: "stop" },
@@ -219,6 +216,7 @@ describe("OpenAI-compatible fetch provider", () => {
     await expect(
       chunks(client, SecretMaterial.of("test-only-key"), typedRequest),
     ).resolves.toEqual([
+      { type: "response_started" },
       { type: "text", text: "done" },
       { type: "completed", finishReason: "stop" },
     ]);
@@ -323,6 +321,7 @@ describe("OpenAI-compatible fetch provider", () => {
     });
 
     await expect(chunks(client)).resolves.toEqual([
+      { type: "response_started" },
       {
         type: "tool_call",
         callRef: "call_1",
@@ -394,11 +393,7 @@ describe("OpenAI-compatible fetch provider", () => {
               ),
               attemptNo: 0,
               cancellationSignal: new AbortController().signal,
-              connectTimeoutMs: 5_000,
-              firstEventTimeoutMs: 5_000,
-              streamIdleTimeoutMs: 5_000,
               turnDeadlineAt: new Date(Date.now() + 30_000).toISOString(),
-              maxAttempts: 3,
             },
           }),
         );
@@ -450,6 +445,7 @@ describe("OpenAI-compatible fetch provider", () => {
     });
 
     await expect(chunks(client)).resolves.toEqual([
+      { type: "response_started" },
       { type: "text", text: "chunk-safe reply" },
       { type: "completed", finishReason: "stop" },
     ]);
@@ -485,6 +481,7 @@ describe("OpenAI-compatible fetch provider", () => {
     });
 
     await expect(chunks(client, null)).resolves.toEqual([
+      { type: "response_started" },
       { type: "text", text: "local response" },
       { type: "completed", finishReason: "stop" },
     ]);

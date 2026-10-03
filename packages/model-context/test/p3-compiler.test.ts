@@ -138,7 +138,8 @@ describe("P3 model-family compiler", () => {
         ],
         controlTools: [
           {
-            name: "arbor_wait",
+            stableId: "core.control.wait",
+            name: "wait",
             description: "Register a durable wait.",
             schemaJson: '{"type":"object"}',
             version: "1",
@@ -161,7 +162,7 @@ describe("P3 model-family compiler", () => {
 
     expect(result.request.toolDefinitions.map((tool) => tool.name)).toEqual([
       "read",
-      "arbor_wait",
+      "wait",
     ]);
     expect(result.toolRoutes).toEqual([
       {
@@ -171,8 +172,9 @@ describe("P3 model-family compiler", () => {
         hash: "exec-hash",
       },
       {
-        name: "arbor_wait",
+        name: "wait",
         route: "Control",
+        stableId: "core.control.wait",
         version: "1",
         hash: "control-hash",
       },
@@ -180,7 +182,7 @@ describe("P3 model-family compiler", () => {
     expect(result.manifest.toolRoutes).toEqual(result.toolRoutes);
     expect(result.manifest.toolRefs).toEqual([
       "Executable:read@1#exec-hash",
-      "Control:arbor_wait@1#control-hash",
+      "Control:core.control.wait@1#control-hash",
     ]);
   });
 
@@ -215,7 +217,7 @@ describe("P3 model-family compiler", () => {
           ...plan,
           tools: [
             {
-              name: "arbor_wait",
+              name: "wait",
               description: "Executable collision",
               schemaJson: "{}",
               version: "1",
@@ -226,7 +228,8 @@ describe("P3 model-family compiler", () => {
           ],
           controlTools: [
             {
-              name: "arbor_wait",
+              stableId: "core.control.wait",
+              name: "wait",
               description: "Control collision",
               schemaJson: "{}",
               version: "1",

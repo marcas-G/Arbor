@@ -56,6 +56,7 @@ interface DurableIntegrationResult {
     readonly result?: { readonly _tag: string };
   };
   readonly invalidSettlement: { readonly _tag: string };
+  readonly invalidControlResult: string;
   readonly message:
     | {
         readonly message_id: string;
@@ -86,7 +87,7 @@ const reportTurn: ReadonlyArray<CanonicalProviderEvent> = [
   {
     _tag: "ToolCallProposed",
     callRef: "report-call",
-    toolName: "arbor_send_message",
+    toolName: "send_message",
     argumentsJson: JSON.stringify({ kind: "Report", body }),
   },
   { _tag: "TurnCompleted", finishReason: "ToolCall" },
@@ -96,7 +97,7 @@ const waitTurn: ReadonlyArray<CanonicalProviderEvent> = [
   {
     _tag: "ToolCallProposed",
     callRef: "wait-call",
-    toolName: "arbor_wait",
+    toolName: "wait",
     argumentsJson: JSON.stringify({
       reason: "Report submitted; wait for a wake.",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -109,7 +110,7 @@ const invalidRootReportTurn: ReadonlyArray<CanonicalProviderEvent> = [
   {
     _tag: "ToolCallProposed",
     callRef: "root-report-call",
-    toolName: "arbor_send_message",
+    toolName: "send_message",
     argumentsJson: JSON.stringify({
       kind: "Report",
       body: invalidRootReportBody,
@@ -118,12 +119,30 @@ const invalidRootReportTurn: ReadonlyArray<CanonicalProviderEvent> = [
   { _tag: "TurnCompleted", finishReason: "ToolCall" },
 ];
 
+const rootRecoveryWaitTurn: ReadonlyArray<CanonicalProviderEvent> = [
+  {
+    _tag: "ToolCallProposed",
+    callRef: "root-recovery-wait-call",
+    toolName: "wait",
+    argumentsJson: JSON.stringify({
+      reason: "No parent target exists; wait for explicit coordination input.",
+      waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+    }),
+  },
+  { _tag: "TurnCompleted", finishReason: "ToolCall" },
+];
+
 describe("I0 SendMessage durable integration", () => {
-  it("persists valid SendMessage and fails closed before persisting an invalid root Report", async () => {
+  it("persists valid SendMessage and returns an invalid root Report to the agent as useful feedback", async () => {
     const root = mkdtempSync(join(tmpdir(), "i0-send-message-durable-"));
     const app = buildSingleWorkspaceLayer({
       databaseFile: join(root, "slice.db"),
-      providerTurns: [reportTurn, waitTurn, invalidRootReportTurn],
+      providerTurns: [
+        reportTurn,
+        waitTurn,
+        invalidRootReportTurn,
+        rootRecoveryWaitTurn,
+      ],
     });
 
     const result = await Effect.runPromise(
@@ -296,6 +315,12 @@ describe("I0 SendMessage durable integration", () => {
           const turns = yield* sql.unsafe<{ provider_turn_id: string }>(
             "SELECT provider_turn_id FROM provider_turns ORDER BY started_at",
           );
+          const invalidControlResults = yield* sql.unsafe<{
+            payload_json: string;
+          }>(
+            "SELECT payload_json FROM session_entries WHERE session_id = ? AND item_type = 'ControlResult' ORDER BY sequence",
+            [parentSessionId],
+          );
           const message = messages[0];
           const content = yield* (yield* BlobStorePort).get(
             message?.body_ref ?? "",
@@ -308,6 +333,8 @@ describe("I0 SendMessage durable integration", () => {
           return {
             settlement,
             invalidSettlement,
+            invalidControlResult:
+              invalidControlResults[0]?.payload_json ?? "{}",
             message,
             messageCount: messages.length,
             inbox,
@@ -326,7 +353,17 @@ describe("I0 SendMessage durable integration", () => {
       _tag: "Completed",
       result: { _tag: "Yielded" },
     });
-    expect(result.invalidSettlement._tag).toBe("Interrupted");
+    expect(result.invalidSettlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "Yielded" },
+    });
+    expect(JSON.parse(result.invalidControlResult)).toMatchObject({
+      _tag: "ControlResult",
+      callRef: "root-report-call",
+      status: "Failed",
+      disposition: "ModelUsable:action/not-applicable",
+      outputText: expect.stringContaining("no parent target"),
+    });
     expect(result.invalidBodyLookup).toBe("Failure");
     expect(result.messageCount).toBe(1);
     expect(result.message).toMatchObject({

@@ -135,14 +135,13 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
     ).toBeNull();
   });
 
-  it("CreateProject 表单仅在项目块渲染，权限块不出现", () => {
+  it("项目设置只管理当前项目，不重复提供全局创建入口", () => {
     renderSettings();
     const project = screen.getByLabelText("项目");
     expect(
-      within(project).getByRole("heading", { name: "创建项目" }),
-    ).toBeTruthy();
-    expect(within(project).getByLabelText("项目名称")).toBeTruthy();
-    expect(within(project).getByText(/项目切换/)).toBeTruthy();
+      within(project).queryByRole("heading", { name: "创建项目" }),
+    ).toBeNull();
+    expect(within(project).getByText(/全局项目中心/)).toBeTruthy();
     expect(within(project).queryByLabelText("capability")).toBeNull();
     const permissions = screen.getByLabelText("权限管理");
     expect(

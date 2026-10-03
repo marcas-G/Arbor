@@ -1,17 +1,62 @@
 # Arbor System Design Specification
 
-**Version:** 1.5
+**Version:** 1.9
 
-**Status:** FROZEN — Conversation Delivery Runtime convergence governance patch
+**Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.4
+**Supersedes:** v1.8
 
-**Date:** 2026-10-01
+**Date:** 2026-10-03
 
-**Depends on:** `Arbor Problem Definition & Goals v1.2` + `Arbor Scenarios S1–S4 v1.2`  
+**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.3`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量  
 **Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型  
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
+
+**Governance changes (v1.8 → v1.9): Minimal Architecture Convergence
+(`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`)**
+
+- MAC-1: active product/domain vocabulary is reduced to Project, Workspace,
+  Work, Artifact, Verification, Acceptance and Permission. Runtime durability
+  records remain internal and do not become user organization concepts.
+- MAC-2: Workspace is the durable responsible identity; Agent is a cognitive
+  execution role. There is no durable Agent entity/AgentId or permanently live
+  Agent process.
+- MAC-3: Plan is optional Workspace-local cognition for one exact Work
+  revision. It has no scheduling, authority, action, formation, dependency,
+  verification or completion edge.
+- MAC-4: Workspace long-term knowledge is a provenance-preserving,
+  deterministic view of accepted outcomes, current decisions, artifacts and
+  canonical responsibility facts. Raw Session/model text is not knowledge
+  truth and cannot self-promote.
+- MAC-5: `Specialist` is superseded as active product/domain vocabulary.
+  Optional temporary parallel cognition is a Runtime `spawn_agent` action
+  backed by child Execution and is never required for core correctness.
+- MAC-6: the model emits one typed ActionCall protocol. Executable, internal
+  control and optional subagent are internal routes sharing visibility,
+  authorization and exact-intent approval semantics while retaining their
+  route-specific safety handlers.
+- MAC-7: standing PermissionGrant stays distinct from one-time ActionApproval;
+  executable/control exact approvals share one semantic lifecycle and binding
+  contract. Physical store convergence is a later forward migration.
+- MAC-8: every asynchronously applied decision separates Decision state,
+  Application fulfillment state and Result state. Approval alone never means
+  applied or completed.
+- MAC-9: delivery order is single Workspace correctness, long-term
+  responsibility, cross-Work deliverables, then optional subagent parallelism.
+  Later phases cannot be correctness dependencies of earlier phases.
+- MAC-10: Dependency may be model-visible only when declare, produce, deliver,
+  deterministic satisfy and exact wake ship as one reachable path.
+- MAC-11: owning Application/consumer/recovery Effect error channels are narrow
+  typed unions; operational failure cannot disappear into `unknown`, `orDie`
+  or console-only handling.
+- MAC-12: historical formats remain readable through migration/archive
+  boundaries but are never advertised or selected for a new write/turn.
+
+Accepted proposal SHA-256:
+`44B549EA81E21B3D4BE5D545EA446B544D50CCA0061C83E6FC40CDC2ADCCA932`.
+Exact implementation contracts:
+`docs/design/implementation/MAC/**`.
 
 **Governance changes (v1.2 → v1.3):**
 
@@ -72,6 +117,97 @@ The accepted proposal is fixed by SHA-256
 `66FF684CFD71A76C20A6FA32B30C1413BED85F34A694DE06301B122366C121B2`.
 The external implementation comparison is research input only; the frozen
 semantics above remain Arbor-owned.
+
+**Governance changes (v1.5 → v1.6):**
+
+- EGP-1: `ExecutionFocus = Work | Coordination` is superseded. New Workspace
+  main executions carry an exact `ExecutionEpisodeBinding`; absence of a
+  WorkId is never an execution purpose.
+- EGP-2: bindings are closed and durable: WorkEpisode binds exact Work/revision,
+  ConversationResponseEpisode binds exact Message/ResponseJob revision,
+  InboxEpisode binds exact Inbox entry, and DecisionEpisode binds an exact
+  DecisionRequest. No generic Input/General/Coordination catch-all is allowed.
+- EGP-3: Work is the long-lived Goal contract. Execution is a recoverable
+  episode that advances a Goal or handles one exact input. Tool calls are the
+  actions inside an episode.
+- EGP-4: Plan/Todo is optional model-maintained progress state updated through
+  a typed tool. It grants no authority, performs no action, and cannot complete
+  Work or replace Verification/Acceptance.
+- EGP-5: every Episode uses one Agent Loop. Context, visible tools and terminal
+  result are compiled from the exact binding; no Agent mode or missing-field
+  inference selects them.
+- EGP-6: `CoordinationCompleted` and generic `QueryCompleted` are superseded by
+  exact results for conversation response, inbox input and decision requests.
+- EGP-7: when runnable Work selection needs semantic judgment, the Scheduler
+  persists a WorkSelectionDecisionRequest and admits an exact DecisionEpisode;
+  the Agent selects through the `select_current_work` control tool.
+- EGP-8: deterministic workflow consumers remain model-free. A signal creates
+  an Episode only when a persisted typed request requires model judgment.
+- EGP-9: migration 0024 keeps historical Coordination executions auditable. Exact Work and
+  Conversation records migrate mechanically; ambiguous active legacy records
+  fail closed and are never reconstructed from Session text.
+- EGP-10: `coordination` may remain ordinary prose, but is no longer a Domain
+  discriminant, persistence write value, TurnProfile purpose, Context selector
+  or settlement result for new executions.
+
+Accepted proposal SHA-256:
+`66D64809ED103194417BCA29FB0165657AC884EA0A3E0FDC5E5468E03E821C69`.
+Implementation is authorized by
+`ACCEPT_EXECUTION_EPISODE_GOAL_PLAN_CONVERGENCE`.
+
+**Implementation record (2026-10-03):** migration 0025 physically rebuilds
+`executions` without `focus_kind/focus_work_id`; migration 0026 rebuilds
+Agent execution state around exact `episode_json`. Runtime/Profile code has no
+Coordination or generic QueryCompleted production branch. Historical ambiguous
+rows decode as `LegacyAmbiguousEpisode` and fail closed.
+
+**Governance changes (v1.6 → v1.7):**
+
+- CRAC-1: `RootConversation` supersedes the text-only
+  `RootConversationRespond` profile. One exact ConversationResponseEpisode may
+  produce plain text or invoke a frozen conversation-safe control.
+- CRAC-2: the v1 conversation-safe allowlist contains only
+  `propose_workspace`. Root Conversation continues to expose zero executable,
+  Work, communication, specialist and verifier tools.
+- CRAC-3: tool visibility grants no creation authority. The control action may
+  atomically persist only a Pending FormationProposal plus its human
+  Governance Inbox entry; human RecordDecision remains the creation gate, and
+  Agent input promotion must never consume that governance entry. The exact
+  RecordDecision consumes it; settled proposals cannot remain actionable.
+- CRAC-4: a control result re-enters only the same exact conversation
+  execution's next turn. Workspace Work Session history remains excluded.
+- CRAC-5: missing proposal semantics cause a minimal Arbor-native
+  clarification; the Agent must not ask which external platform the user means.
+
+Accepted proposal SHA-256:
+`DEBD13AAB34B7556B221F12B647360E945F95F5D89BD0B03287963DB22B917A8`.
+Implementation is authorized by `ACCEPT_ROOT_CONVERSATION_ACTION_CAPABILITY`.
+
+**Governance changes (v1.7 → v1.8):**
+
+- CAPA-1: tool visibility, action authorization and execution approval are
+  independent decisions. A model-visible control never grants authority.
+- CAPA-2: PermissionGrant is subject-bound (`HumanPrincipal`,
+  `WorkspaceAgent`, or exact `Execution`), capability/target-bound and
+  time-bounded. Legacy grants without a subject authorize nothing.
+- CAPA-3: ControlAction authorization resolves to `Authorized`, `Denied`, or
+  `ApprovalRequired` from exact Execution/action/target/ControlBasis facts.
+- CAPA-4: ApprovalRequired persists an exact action digest and interrupts
+  before the handler. Human approval/rejection resumes the same active
+  Execution and AgentLoopStep; it never creates a replacement user turn.
+- CAPA-5: approval is single-consumed after the canonical handler attempt;
+  restart/replay reuses durable Provider output, action ledger and command
+  identity.
+- CAPA-6: approval never widens ResourceBoundary, Sandbox or executable-tool
+  authority. ToolRuntime approval remains a separate exact-intent surface.
+- CAPA-7: `assign_work` and `spawn_specialist` default to `Ask`; bounded
+  intrinsic actions retain explicit policy entries. A subject-bound standing
+  grant can permit `AllowWithinGrant`; policy can always `Deny`.
+
+Accepted proposal SHA-256:
+`74C0A20BCED0C7800B2EB21933967810AAB73423132D9FE06E86A7E56EA26FB9`.
+Implementation is authorized by
+`ACCEPT_CONTROL_ACTION_PERMISSION_APPROVAL_ARCHITECTURE`.
 
 ---
 
@@ -159,7 +295,8 @@ Arbor 是 **Workspace-centric**，不是 Session-centric 或 Agent-runtime-centr
 
 - **Workspace**：长期责任单元。
 - **Responsibility**：Workspace 为什么存在、长期负责什么、边界在哪里。
-- **Agent**：代表 Workspace 自主行动的长期执行主体。
+- **Agent**：Runtime 在一次 Execution 中代表 Workspace 进行认知与行动的执行角色；
+  不是独立长期 Entity。
 - **Work**：Workspace 在责任范围内需要达成的阶段性具体结果。
 - **Execution**：为了推进 Work 发生的临时计算活动。
 - **Session**：主 Agent 的长期认知与交互载体，不是领域真相。
@@ -173,15 +310,16 @@ Workspace identity > Session identity > Worker identity
 
 ## 2.2 两种 Agent Binding
 
-### Responsibility-bound Agent
+### Responsibility-bound Agent configuration
 
-- 绑定 Workspace；
-- 长期存在；
-- 拥有长期 Primary Session；
+- 配置绑定 Workspace；
+- Runtime 在 Workspace 的主 Execution 中激活该认知角色；
+- 连续性来自 Workspace、Primary Session、WorkspaceKnowledgeView 与 accepted facts，
+  而不是一个长期在线 Agent instance；
 - 在责任边界内拥有执行自治；
-- 进入 Responsibility Tree。
+- 进入 Responsibility Tree 的是 Workspace，不是 Agent entity。
 
-### Execution-bound Agent
+### Execution-bound Agent role
 
 - 绑定某次 Execution；
 - 临时存在；
@@ -189,9 +327,9 @@ Workspace identity > Session identity > Worker identity
 - 用于 Verification、临时专家和临时调查；
 - 不进入长期 Responsibility Tree。
 
-二者共用同一个 Agent Runtime。
+两类角色共用同一个 Agent Runtime。
 
-硬规则：Workspace 的长期 binding 必须是 responsibility-bound；
+硬规则：Workspace 的执行配置 binding 必须是 responsibility-bound；
 execution-bound binding 只能属于临时 Execution context，不得存入 Workspace。
 （DID 将其分别命名为 `ResponsibilityBoundAgentBinding` /
 `ExecutionBoundAgentBinding`，`AgentBinding` 仅作为二者的 umbrella 术语。）
@@ -421,7 +559,7 @@ Artifact 是代码、文档、测试报告、实验结果、日志等真实产�
 
 # 4. Responsibility 与组织模型
 
-## 4.1 一个 Workspace 一个主 Agent
+## 4.1 一个 Workspace 一个主认知执行角色
 
 正常情况下：
 

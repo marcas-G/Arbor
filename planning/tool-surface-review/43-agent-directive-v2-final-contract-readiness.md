@@ -1,7 +1,8 @@
 # AgentDirective v2 Final Contract Readiness
 
 **Date:** 2026-09-27
-**Status:** Not ready for model-facing representation design
+**Status:** HISTORICAL READINESS SNAPSHOT — field-source blockers superseded by
+accepted DID v1.26; universal AgentDirective remains superseded
 
 ## Gate result
 

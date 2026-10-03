@@ -4,14 +4,11 @@ import type {
   FormationProposalRecord,
   WorkspaceId,
 } from "@arbor/domain";
-import {
-  FormationProposalStore,
-  type FormationProposalStoreError,
-  TransactionScope,
-} from "@arbor/ports";
+import { FormationProposalStore, TransactionScope } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface ProposalRow {
   readonly proposal_id: string;
@@ -39,10 +36,7 @@ export const FormationProposalStoreLive: Layer.Layer<
   FormationProposalStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): FormationProposalStoreError => ({
-      _tag: "FormationProposalStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure("FormationProposalStore", "sql");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return FormationProposalStore.of({
@@ -77,6 +71,17 @@ export const FormationProposalStoreLive: Layer.Layer<
           return rows.length > 0
             ? Option.some(toRecord(rows[0] as ProposalRow))
             : Option.none();
+        }),
+      listByParent: (parentWorkspaceId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<ProposalRow>(
+              "SELECT proposal_id, parent_workspace_id, proposal_json, revision, state FROM formation_proposals WHERE parent_workspace_id = ? ORDER BY proposal_id",
+              [parentWorkspaceId],
+            ),
+          );
+          return rows.map(toRecord);
         }),
       decideIfPendingRevision: (proposalId, expectedRevision, next) =>
         Effect.gen(function* () {

@@ -104,6 +104,7 @@ describe("I0 SendMessage control action", () => {
       workspaces: {} as WorkspaceRepositoryService,
       works: {} as WorkRepositoryService,
       proposals: {} as FormationProposalStoreService,
+      inbox: { admitUpsert: () => Effect.void },
     };
     const [handler] = makeSingleWorkspaceControlActionHandlers(dependencies);
     expect(handler).toBeDefined();
@@ -118,7 +119,7 @@ describe("I0 SendMessage control action", () => {
         providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
         outputPosition: 0,
         callRef: "call-1",
-        toolName: "arbor_send_message",
+        toolName: "send_message",
         argumentsJson: "{}",
       },
       execution,
@@ -188,6 +189,7 @@ describe("I0 SendMessage control action", () => {
       } as unknown as WorkspaceRepositoryService,
       works: {} as WorkRepositoryService,
       proposals: {} as FormationProposalStoreService,
+      inbox: { admitUpsert: () => Effect.void },
     })[0];
     if (handler === undefined) {
       throw new Error("SendMessage handler was not registered");
@@ -204,7 +206,7 @@ describe("I0 SendMessage control action", () => {
             providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
             outputPosition: 0,
             callRef: "report-call",
-            toolName: "arbor_send_message",
+            toolName: "send_message",
             argumentsJson: "{}",
           },
           execution: rootExecution,

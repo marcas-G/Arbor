@@ -42,6 +42,7 @@ export {
   type OpenAICompatibleFetchInit,
   type OpenAICompatibleFetchResponse,
   openAICompatibleEndpointOf,
+  openAICompatibleRequestBody,
 } from "./client.js";
 
 const KIND_BY_CODE: Readonly<Record<string, ProviderFailureKind>> = {

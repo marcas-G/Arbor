@@ -220,7 +220,11 @@ const makeHandlers = Effect.gen(function* () {
               Effect.mapError(
                 (cause) =>
                   ({
-                    _tag: "DeliverableRepositoryFailure",
+                    _tag: "PersistenceUnavailable",
+                    repository: "DeliverableRepository",
+                    operation: "list-artifacts",
+                    retryDisposition: "non-retryable",
+                    sourceTag: "SqlError",
                     cause,
                   }) as DeliverableRepositoryError,
               ),

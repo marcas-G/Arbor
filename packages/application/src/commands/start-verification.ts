@@ -125,17 +125,15 @@ const missionDigest = (mission: VerificationMission): string => {
   return `${mission.goal} [criteria=${mission.criteria.length} required=${required}]`;
 };
 
-/** The one-Open partial unique index (v1.11 G2) surfaces as a
- * UniqueViolation reason on the wrapped SqlError cause of the
- * `${Tag}Failure` channel. */
+/** The one-Open partial unique index (v1.11 G2) is translated by the
+ * persistence adapter into a safe semantic constraint fact. Application code
+ * never inspects SqlError/native causes. */
 const isUniqueViolation = (failure: VerificationRepositoryError): boolean => {
-  if (failure._tag !== "VerificationRepositoryFailure") {
-    return false;
-  }
-  const cause = failure.cause as
-    | { readonly reason?: { readonly _tag?: string } }
-    | undefined;
-  return cause?.reason?._tag === "UniqueViolation";
+  return (
+    failure._tag === "PersistenceConstraintViolation" &&
+    failure.repository === "VerificationRepository" &&
+    failure.constraintKind === "Unique"
+  );
 };
 
 export const makeStartVerificationHandler = (

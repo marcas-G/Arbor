@@ -5,6 +5,11 @@ import type {
   Principal,
   ProjectId,
 } from "@arbor/domain";
+import type {
+  FormationFulfillmentRecord,
+  FormationFulfillmentStoreError,
+  TransactionOperationalFailure,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { validateCapabilityCeiling } from "./capability-ceiling.js";
 import {
@@ -29,6 +34,15 @@ export interface FormationConsumerDependencies {
     readonly findById: (
       proposalId: FormationProposalId,
     ) => Effect.Effect<Option.Option<FormationProposalRecord>, unknown, never>;
+  };
+  readonly fulfillments?: {
+    readonly put: (
+      record: FormationFulfillmentRecord,
+    ) => Effect.Effect<
+      void,
+      FormationFulfillmentStoreError | TransactionOperationalFailure,
+      never
+    >;
   };
 }
 
@@ -71,6 +85,7 @@ export const runFormationConsumer = (
     readonly eventType: string;
     readonly payload: unknown;
     readonly eventId: string;
+    readonly occurredAt?: string;
   }>,
   dependencies: FormationConsumerDependencies,
   projectId: ProjectId,
@@ -127,6 +142,27 @@ export const runFormationConsumer = (
       }
       const principal = decision.decidedBy as unknown as Principal;
       const ids = deriveFormationIds(snapshot.proposalId, snapshot.revision);
+      const attemptedAt = event.occurredAt ?? new Date().toISOString();
+      const fulfillment = (
+        state: FormationFulfillmentRecord["state"],
+        revision: number,
+        typedBlock: string | null = null,
+      ): FormationFulfillmentRecord => ({
+        proposalId: snapshot.proposalId,
+        proposalRevision: snapshot.revision,
+        expectedChildWorkspaceId: ids.workspaceId,
+        expectedInitialWorkId:
+          snapshot.proposal.initialWork === undefined ? null : ids.workId,
+        state,
+        typedBlock,
+        lastAttemptAt: attemptedAt,
+        revision,
+      });
+      if (dependencies.fulfillments !== undefined) {
+        yield* dependencies.fulfillments.put(
+          fulfillment("PendingApplication", 1),
+        );
+      }
       const create = formationCreatePlan({
         snapshot,
         ids,
@@ -152,13 +188,23 @@ export const runFormationConsumer = (
         create.authority,
       );
       if (createReceipt.resolution._tag !== "Committed") {
-        console.error(
-          "[formation-consumer] CreateChildWorkspace rejected:",
-          JSON.stringify(createReceipt.resolution).slice(0, 300),
-        );
+        if (dependencies.fulfillments !== undefined) {
+          yield* dependencies.fulfillments.put(
+            fulfillment(
+              "Blocked",
+              2,
+              JSON.stringify(createReceipt.resolution).slice(0, 300),
+            ),
+          );
+        }
         continue;
       }
       executed.push("CreateChildWorkspace");
+      if (dependencies.fulfillments !== undefined) {
+        yield* dependencies.fulfillments.put(
+          fulfillment("WorkspaceCreated", 2),
+        );
+      }
 
       const assign = formationAssignPlan({
         snapshot,
@@ -187,7 +233,20 @@ export const runFormationConsumer = (
         );
         if (assignReceipt.resolution._tag === "Committed") {
           executed.push("AssignWork");
+          if (dependencies.fulfillments !== undefined) {
+            yield* dependencies.fulfillments.put(fulfillment("Applied", 3));
+          }
+        } else if (dependencies.fulfillments !== undefined) {
+          yield* dependencies.fulfillments.put(
+            fulfillment(
+              "Blocked",
+              3,
+              JSON.stringify(assignReceipt.resolution).slice(0, 300),
+            ),
+          );
         }
+      } else if (dependencies.fulfillments !== undefined) {
+        yield* dependencies.fulfillments.put(fulfillment("Applied", 3));
       }
     }
     return executed;

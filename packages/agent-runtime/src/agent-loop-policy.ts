@@ -80,6 +80,31 @@ export const providerExecutionTimeoutSettlement = (
   },
 });
 
+export const isProviderFailure = (cause: unknown): cause is ProviderFailure =>
+  typeof cause === "object" &&
+  cause !== null &&
+  (cause as { readonly _tag?: unknown })._tag === "ProviderFailure" &&
+  typeof (cause as { readonly kind?: unknown }).kind === "string";
+
+export const providerFailureSettlement = (
+  failure: ProviderFailure,
+): ExecutionSettlement =>
+  failure.kind === "Cancelled"
+    ? {
+        _tag: "Interrupted",
+        result: {
+          _tag: "ControlledInterruption",
+          reason: "ProviderCancelled",
+        },
+      }
+    : {
+        _tag: "Failed",
+        failure: {
+          _tag: "ExecutionFailure",
+          reason: `ProviderFailure:${failure.kind}`,
+        },
+      };
+
 export const sessionFence = (
   executionId: ExecutionId,
   context: CommandSubmissionContext,
@@ -103,10 +128,6 @@ export const sessionFence = (
           : {}),
       }
     : undefined;
-
-export const isConversationExecution = (execution: Execution): boolean =>
-  execution.binding._tag === "WorkspaceExecution" &&
-  execution.binding.focus._tag === "Coordination";
 
 export const workObjectiveFragment = (
   execution: Execution,

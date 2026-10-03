@@ -258,7 +258,11 @@ export const makeP9ConsumerApp = (options?: {
                     Effect.mapError(
                       (cause) =>
                         ({
-                          _tag: "DeliverableRepositoryFailure",
+                          _tag: "PersistenceUnavailable",
+                          repository: "DeliverableRepository",
+                          operation: "list-artifacts",
+                          retryDisposition: "non-retryable",
+                          sourceTag: "SqlError",
                           cause,
                         }) as DeliverableRepositoryError,
                     ),

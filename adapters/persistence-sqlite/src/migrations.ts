@@ -1240,3 +1240,491 @@ export const P23_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P23_VERIFICATION_EVIDENCE_IDENTITY_DDL,
   },
 ];
+
+export const P24_EXECUTION_EPISODE_BINDING_DDL = `
+ALTER TABLE executions ADD COLUMN episode_kind TEXT;
+ALTER TABLE executions ADD COLUMN episode_ref TEXT;
+ALTER TABLE executions ADD COLUMN episode_revision INTEGER;
+
+UPDATE executions
+SET episode_kind = 'WorkEpisode',
+    episode_ref = focus_work_id,
+    episode_revision = 0
+WHERE binding_kind = 'workspace'
+  AND focus_kind = 'work'
+  AND focus_work_id IS NOT NULL;
+
+UPDATE executions
+SET episode_kind = 'ConversationResponseEpisode',
+    episode_ref = (
+      SELECT ca.message_id
+      FROM conversation_attempts ca
+      WHERE ca.execution_id = executions.execution_id
+    ),
+    episode_revision = 0
+WHERE binding_kind = 'workspace'
+  AND focus_kind = 'coordination'
+  AND EXISTS (
+    SELECT 1 FROM conversation_attempts ca
+    WHERE ca.execution_id = executions.execution_id
+  );
+
+CREATE INDEX idx_executions_episode
+  ON executions(episode_kind, episode_ref);
+
+CREATE TABLE work_plans (
+  work_id TEXT PRIMARY KEY REFERENCES works(work_id),
+  target_work_revision INTEGER NOT NULL CHECK (target_work_revision >= 0),
+  plan_revision INTEGER NOT NULL CHECK (plan_revision >= 1),
+  items_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE work_selection_decision_requests (
+  decision_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  candidate_work_ids_json TEXT NOT NULL,
+  workspace_revision INTEGER NOT NULL CHECK (workspace_revision >= 0),
+  state TEXT NOT NULL CHECK (state IN ('Pending','Submitted')),
+  selected_work_id TEXT REFERENCES works(work_id),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK ((state = 'Submitted') = (selected_work_id IS NOT NULL))
+);
+
+CREATE UNIQUE INDEX idx_work_selection_pending_workspace
+  ON work_selection_decision_requests(workspace_id)
+  WHERE state = 'Pending';
+`;
+
+/** DID v1.28 EGP exact EpisodeBinding; user_version 24. */
+export const P24_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P23_MIGRATIONS,
+  {
+    id: 24,
+    name: "execution_episode_binding",
+    sql: P24_EXECUTION_EPISODE_BINDING_DDL,
+  },
+];
+
+export const P25_EXECUTION_EPISODE_ONLY_DDL = `
+ALTER TABLE executions RENAME TO executions_legacy_focus;
+
+CREATE TABLE executions (
+  execution_id        TEXT PRIMARY KEY,
+  project_id          TEXT NOT NULL REFERENCES projects(project_id),
+  binding_kind        TEXT NOT NULL CHECK (binding_kind IN ('workspace','execution_bound')),
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  episode_kind        TEXT CHECK (episode_kind IN
+                        ('WorkEpisode','ConversationResponseEpisode','InboxEpisode',
+                         'DecisionEpisode','LegacyAmbiguousEpisode')),
+  episode_ref         TEXT,
+  episode_revision    INTEGER CHECK (episode_revision IS NULL OR episode_revision >= 0),
+  parent_execution_id TEXT REFERENCES executions(execution_id),
+  mission             TEXT,
+  session_id          TEXT NOT NULL REFERENCES sessions(session_id),
+  admitted_at         TEXT NOT NULL,
+  stop_requested_at   TEXT,
+  settlement_kind     TEXT CHECK (settlement_kind IN
+                        ('Completed','Interrupted','Failed','OutcomeUnknown')),
+  settlement_json     TEXT,
+  settled_at          TEXT,
+  CHECK ((binding_kind = 'workspace') = (episode_kind IS NOT NULL)),
+  CHECK ((binding_kind = 'workspace') = (episode_ref IS NOT NULL)),
+  CHECK ((binding_kind = 'workspace') = (episode_revision IS NOT NULL)),
+  CHECK ((binding_kind = 'execution_bound') = (parent_execution_id IS NOT NULL OR mission IS NOT NULL)),
+  CHECK ((settlement_kind IS NULL) = (settled_at IS NULL)),
+  CHECK ((settlement_kind IS NULL) = (settlement_json IS NULL))
+);
+
+INSERT INTO executions (
+  execution_id, project_id, binding_kind, workspace_id,
+  episode_kind, episode_ref, episode_revision,
+  parent_execution_id, mission, session_id, admitted_at, stop_requested_at,
+  settlement_kind, settlement_json, settled_at
+)
+SELECT
+  execution_id, project_id, binding_kind, workspace_id,
+  CASE
+    WHEN binding_kind = 'workspace' AND episode_kind IS NULL
+      THEN 'LegacyAmbiguousEpisode'
+    ELSE episode_kind
+  END,
+  CASE
+    WHEN binding_kind = 'workspace' AND episode_ref IS NULL
+      THEN execution_id
+    ELSE episode_ref
+  END,
+  CASE
+    WHEN binding_kind = 'workspace' AND episode_revision IS NULL
+      THEN 0
+    ELSE episode_revision
+  END,
+  parent_execution_id, mission, session_id, admitted_at, stop_requested_at,
+  settlement_kind, settlement_json, settled_at
+FROM executions_legacy_focus;
+
+DROP TABLE executions_legacy_focus;
+
+CREATE UNIQUE INDEX idx_executions_active_main
+  ON executions(workspace_id)
+  WHERE binding_kind = 'workspace' AND settled_at IS NULL;
+CREATE INDEX idx_executions_project ON executions(project_id);
+CREATE INDEX idx_executions_unsettled
+  ON executions(settled_at) WHERE settled_at IS NULL;
+CREATE INDEX idx_executions_episode
+  ON executions(episode_kind, episode_ref);
+`;
+
+/** DID v1.28 EGP Wave E legacy focus retirement; user_version 25. */
+export const P25_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P24_MIGRATIONS,
+  {
+    id: 25,
+    name: "execution_episode_only",
+    sql: P25_EXECUTION_EPISODE_ONLY_DDL,
+    foreignKeysOff: true,
+  },
+];
+
+export const P26_AGENT_STATE_EPISODE_ONLY_DDL = `
+ALTER TABLE agent_execution_state RENAME TO agent_execution_state_legacy_focus;
+
+CREATE TABLE agent_execution_state (
+  execution_id                    TEXT PRIMARY KEY REFERENCES executions(execution_id),
+  episode_json                    TEXT NOT NULL,
+  wake_reason                     TEXT NOT NULL,
+  current_mode                    TEXT,
+  active_skill_refs_json          TEXT NOT NULL,
+  turn_no                         INTEGER NOT NULL,
+  recent_directive_refs_json      TEXT NOT NULL,
+  recent_action_fingerprints_json TEXT NOT NULL,
+  updated_at                      TEXT NOT NULL
+);
+
+INSERT INTO agent_execution_state (
+  execution_id, episode_json, wake_reason, current_mode,
+  active_skill_refs_json, turn_no, recent_directive_refs_json,
+  recent_action_fingerprints_json, updated_at
+)
+SELECT
+  state.execution_id,
+  CASE execution.episode_kind
+    WHEN 'WorkEpisode' THEN json_object(
+      '_tag', 'WorkEpisode',
+      'workId', execution.episode_ref,
+      'targetWorkRevision', execution.episode_revision
+    )
+    WHEN 'ConversationResponseEpisode' THEN json_object(
+      '_tag', 'ConversationResponseEpisode',
+      'messageId', execution.episode_ref,
+      'responseJobRevision', execution.episode_revision
+    )
+    WHEN 'InboxEpisode' THEN json_object(
+      '_tag', 'InboxEpisode',
+      'entryKey', execution.episode_ref,
+      'inputKind', 'LegacyMigrated'
+    )
+    WHEN 'DecisionEpisode' THEN json_object(
+      '_tag', 'DecisionEpisode',
+      'decisionId', execution.episode_ref,
+      'decisionKind', 'SelectCurrentWork',
+      'requestRevision', execution.episode_revision
+    )
+    WHEN 'LegacyAmbiguousEpisode' THEN json_object(
+      '_tag', 'LegacyAmbiguousEpisode',
+      'executionId', state.execution_id
+    )
+    ELSE json_object(
+      '_tag', 'ExecutionBoundEpisode',
+      'executionId', state.execution_id
+    )
+  END,
+  state.wake_reason, state.current_mode, state.active_skill_refs_json,
+  state.turn_no, state.recent_directive_refs_json,
+  state.recent_action_fingerprints_json, state.updated_at
+FROM agent_execution_state_legacy_focus AS state
+JOIN executions AS execution ON execution.execution_id = state.execution_id;
+
+DROP TABLE agent_execution_state_legacy_focus;
+`;
+
+/** DID v1.28 EGP Wave E agent-state focus retirement; user_version 26. */
+export const P26_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P25_MIGRATIONS,
+  {
+    id: 26,
+    name: "agent_state_episode_only",
+    sql: P26_AGENT_STATE_EPISODE_ONLY_DDL,
+  },
+];
+
+export const P27_FORMATION_GOVERNANCE_INBOX_BACKFILL_DDL = `
+INSERT INTO inbox_entries (
+  workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at
+)
+SELECT
+  parent_workspace_id,
+  'gov:' || proposal_id || ':' || revision,
+  'Governance',
+  'formation proposal "' || json_extract(proposal_json, '$.name') ||
+    '" revision ' || revision || ' awaiting human decision',
+  NULL,
+  updated_at,
+  NULL
+FROM formation_proposals
+WHERE state = 'Pending'
+ON CONFLICT(workspace_id, entry_key) DO NOTHING;
+`;
+
+/** DID v1.29 CRAC recovery: every pending formation proposal is actionable. */
+export const P27_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P26_MIGRATIONS,
+  {
+    id: 27,
+    name: "formation_governance_inbox_backfill",
+    sql: P27_FORMATION_GOVERNANCE_INBOX_BACKFILL_DDL,
+  },
+];
+
+export const P28_SETTLED_GOVERNANCE_INBOX_CLEANUP_DDL = `
+UPDATE inbox_entries AS inbox
+SET consumed_at = COALESCE(consumed_at, CURRENT_TIMESTAMP)
+WHERE inbox.kind = 'Governance'
+  AND inbox.consumed_at IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM formation_proposals AS proposal
+    WHERE proposal.state <> 'Pending'
+      AND proposal.parent_workspace_id = inbox.workspace_id
+      AND inbox.entry_key =
+        'gov:' || proposal.proposal_id || ':' || proposal.revision
+  );
+`;
+
+/** DID v1.29 CRAC recovery: settled decisions leave no actionable stale row. */
+export const P28_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P27_MIGRATIONS,
+  {
+    id: 28,
+    name: "settled_governance_inbox_cleanup",
+    sql: P28_SETTLED_GOVERNANCE_INBOX_CLEANUP_DDL,
+  },
+];
+
+export const P29_SUBJECT_BOUND_PERMISSION_GRANTS_DDL = `
+ALTER TABLE permission_grants ADD COLUMN subject_kind TEXT
+  CHECK (subject_kind IS NULL OR subject_kind IN
+    ('HumanPrincipal','WorkspaceAgent','Execution'));
+ALTER TABLE permission_grants ADD COLUMN subject_ref TEXT;
+ALTER TABLE permission_grants ADD COLUMN capability TEXT;
+ALTER TABLE permission_grants ADD COLUMN target TEXT;
+ALTER TABLE permission_grants ADD COLUMN valid_from TEXT;
+ALTER TABLE permission_grants ADD COLUMN expires_at TEXT;
+ALTER TABLE permission_grants ADD COLUMN revision INTEGER
+  CHECK (revision IS NULL OR revision >= 0);
+
+UPDATE permission_grants
+SET state = 'Revoked'
+WHERE subject_kind IS NULL OR subject_ref IS NULL OR capability IS NULL;
+
+CREATE INDEX permission_grants_subject_active
+  ON permission_grants(project_id, subject_kind, subject_ref, capability, state);
+`;
+
+/** CAPA-1: legacy unbound grants fail closed; user_version 29. */
+export const P29_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P28_MIGRATIONS,
+  {
+    id: 29,
+    name: "subject_bound_permission_grants",
+    sql: P29_SUBJECT_BOUND_PERMISSION_GRANTS_DDL,
+  },
+];
+
+export const P30_CONTROL_ACTION_APPROVALS_DDL = `
+CREATE TABLE control_action_approvals (
+  approval_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(project_id),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  stable_action_id TEXT NOT NULL,
+  action_digest TEXT NOT NULL,
+  arguments_json TEXT NOT NULL,
+  target_ref TEXT NOT NULL,
+  control_basis_digest TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN
+    ('Pending','Approved','Rejected','Consumed','Expired')),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  requested_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  decided_at TEXT,
+  decided_by TEXT,
+  decision_reason TEXT,
+  consumed_at TEXT,
+  CHECK ((state IN ('Approved','Rejected','Consumed')) = (decided_at IS NOT NULL)),
+  CHECK ((state = 'Consumed') = (consumed_at IS NOT NULL))
+);
+
+CREATE UNIQUE INDEX control_action_approvals_exact_action
+  ON control_action_approvals(execution_id, action_digest, control_basis_digest);
+CREATE INDEX control_action_approvals_pending
+  ON control_action_approvals(workspace_id, state, requested_at);
+`;
+
+/** CAPA-2: durable exact-action approval interruption; user_version 30. */
+export const P30_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P29_MIGRATIONS,
+  {
+    id: 30,
+    name: "control_action_approvals",
+    sql: P30_CONTROL_ACTION_APPROVALS_DDL,
+  },
+];
+
+export const P31_FORMATION_FULFILLMENT_DDL = `
+CREATE TABLE formation_fulfillments (
+  proposal_id TEXT NOT NULL REFERENCES formation_proposals(proposal_id),
+  proposal_revision INTEGER NOT NULL CHECK (proposal_revision >= 1),
+  expected_child_workspace_id TEXT NOT NULL,
+  expected_initial_work_id TEXT,
+  state TEXT NOT NULL CHECK (state IN
+    ('AwaitingDecision','PendingApplication','WorkspaceCreated','Applied','Blocked')),
+  typed_block TEXT,
+  last_attempt_at TEXT,
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  PRIMARY KEY (proposal_id, proposal_revision),
+  CHECK ((state = 'Blocked') = (typed_block IS NOT NULL))
+);
+
+CREATE INDEX formation_fulfillments_state
+  ON formation_fulfillments(state, last_attempt_at);
+
+INSERT INTO formation_fulfillments (
+  proposal_id, proposal_revision, expected_child_workspace_id,
+  expected_initial_work_id, state, typed_block, last_attempt_at, revision
+)
+SELECT proposal_id, revision,
+       'ws_' || substr(proposal_id, 5),
+       CASE WHEN json_type(proposal_json, '$.initialWork') IS NULL
+            THEN NULL ELSE 'wrk_' || substr(proposal_id, 5) END,
+       CASE state
+         WHEN 'Pending' THEN 'AwaitingDecision'
+         WHEN 'Approved' THEN 'PendingApplication'
+         ELSE 'Blocked'
+       END,
+       CASE state WHEN 'Rejected' THEN 'FormationRejected' ELSE NULL END,
+       NULL,
+       0
+FROM formation_proposals;
+`;
+
+/** MAC-P2: durable distinction between formation decision and application. */
+export const P31_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P30_MIGRATIONS,
+  {
+    id: 31,
+    name: "formation_fulfillment",
+    sql: P31_FORMATION_FULFILLMENT_DDL,
+  },
+];
+
+export const P32_ACTION_APPROVALS_DDL = `
+CREATE TABLE action_approvals (
+  approval_id TEXT PRIMARY KEY,
+  route_kind TEXT NOT NULL CHECK (route_kind IN ('Control','Executable')),
+  project_id TEXT,
+  workspace_id TEXT,
+  execution_id TEXT,
+  subject_ref TEXT NOT NULL,
+  stable_action_id TEXT NOT NULL,
+  action_version TEXT NOT NULL,
+  side_effect_semantics TEXT NOT NULL,
+  action_digest TEXT NOT NULL,
+  arguments_json TEXT NOT NULL,
+  target_ref TEXT NOT NULL,
+  target_resource_space_ids_json TEXT NOT NULL DEFAULT '[]',
+  control_basis_digest TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN
+    ('Pending','Approved','Rejected','Consumed','Expired')),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  requested_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  decided_at TEXT,
+  decided_by TEXT,
+  decision_reason TEXT,
+  consumed_at TEXT,
+  consumed_by TEXT,
+  binding_proven INTEGER NOT NULL CHECK (binding_proven IN (0,1)),
+  source_state TEXT,
+  CHECK ((state IN ('Approved','Rejected','Consumed')) = (decided_at IS NOT NULL)),
+  CHECK ((state = 'Consumed') = (consumed_at IS NOT NULL OR consumed_by IS NOT NULL))
+);
+
+INSERT INTO action_approvals (
+  approval_id, route_kind, project_id, workspace_id, execution_id,
+  subject_ref, stable_action_id, action_version, side_effect_semantics,
+  action_digest, arguments_json,
+  target_ref, target_resource_space_ids_json, control_basis_digest,
+  state, revision, requested_at, expires_at, decided_at, decided_by,
+  decision_reason, consumed_at, consumed_by, binding_proven, source_state
+)
+SELECT approval_id, 'Control', project_id, workspace_id, execution_id,
+       'legacy:unbound', stable_action_id, 'legacy', 'InternalControl',
+       action_digest, arguments_json,
+       target_ref, '[]', control_basis_digest,
+       CASE WHEN state IN ('Pending','Approved') THEN 'Expired' ELSE state END,
+       revision, requested_at,
+       CASE WHEN state IN ('Pending','Approved') THEN '1970-01-01T00:00:00.000Z' ELSE expires_at END,
+       CASE WHEN state IN ('Pending','Approved','Expired') THEN NULL ELSE decided_at END,
+       CASE WHEN state IN ('Pending','Approved','Expired') THEN NULL ELSE decided_by END,
+       CASE WHEN state IN ('Pending','Approved') THEN 'MigrationUnprovableSubject' ELSE decision_reason END,
+       CASE WHEN state = 'Consumed' THEN consumed_at ELSE NULL END,
+       NULL, 0, state
+FROM control_action_approvals;
+
+INSERT INTO action_approvals (
+  approval_id, route_kind, project_id, workspace_id, execution_id,
+  subject_ref, stable_action_id, action_version, side_effect_semantics,
+  action_digest, arguments_json,
+  target_ref, target_resource_space_ids_json, control_basis_digest,
+  state, revision, requested_at, expires_at, decided_at, decided_by,
+  decision_reason, consumed_at, consumed_by, binding_proven, source_state
+)
+SELECT approval_id, 'Executable', NULL, NULL, NULL,
+       'legacy:unbound', tool_name, tool_version, 'LegacyUnknown',
+       action_digest, '{}',
+       target_resource_space_ids_json, target_resource_space_ids_json,
+       control_basis_digest,
+       CASE WHEN consumed_by IS NULL THEN 'Expired' ELSE 'Consumed' END,
+       CASE WHEN consumed_by IS NULL THEN 1 ELSE 2 END,
+       expires_at,
+       CASE WHEN consumed_by IS NULL THEN '1970-01-01T00:00:00.000Z' ELSE expires_at END,
+       CASE WHEN consumed_by IS NULL THEN NULL ELSE expires_at END,
+       CASE WHEN consumed_by IS NULL THEN NULL ELSE 'migration:p4' END,
+       CASE WHEN consumed_by IS NULL THEN 'MigrationUnprovableSubject' ELSE NULL END,
+       CASE WHEN consumed_by IS NULL THEN NULL ELSE expires_at END,
+       consumed_by, 0,
+       CASE WHEN consumed_by IS NULL THEN 'Approved' ELSE 'Consumed' END
+FROM invocation_approvals;
+
+DROP TABLE invocation_approvals;
+DROP TABLE control_action_approvals;
+
+CREATE UNIQUE INDEX action_approvals_exact_action
+  ON action_approvals(route_kind, execution_id, action_digest, control_basis_digest)
+  WHERE execution_id IS NOT NULL;
+CREATE INDEX action_approvals_pending
+  ON action_approvals(workspace_id, state, requested_at);
+`;
+
+/** MAC-P4: one physical exact-intent approval ledger; user_version 32. */
+export const P32_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P31_MIGRATIONS,
+  {
+    id: 32,
+    name: "action_approval_convergence",
+    sql: P32_ACTION_APPROVALS_DDL,
+  },
+];

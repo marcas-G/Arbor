@@ -1,6 +1,7 @@
 import type {
   Execution,
   ExecutionBinding,
+  ExecutionEpisodeBinding,
   ExecutionId,
   ExecutionSettlement,
   ExecutionState,
@@ -12,21 +13,24 @@ import type {
 import {
   Clock,
   ExecutionRepository,
-  type ExecutionRepositoryError,
   type LeaseRecord,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface ExecutionRow {
   readonly execution_id: string;
   readonly project_id: string;
   readonly binding_kind: string;
   readonly workspace_id: string;
-  readonly focus_kind: string | null;
-  readonly focus_work_id: string | null;
+  readonly focus_kind?: string | null;
+  readonly focus_work_id?: string | null;
+  readonly episode_kind?: string | null;
+  readonly episode_ref?: string | null;
+  readonly episode_revision?: number | null;
   readonly parent_execution_id: string | null;
   readonly mission: string | null;
   readonly session_id: string;
@@ -47,16 +51,26 @@ interface LeaseRow {
 }
 
 const toExecution = (row: ExecutionRow): Execution => {
+  const episode = episodeOfRow(row);
+  const compatibilityFocus =
+    episode?._tag === "WorkEpisode"
+      ? { _tag: "Work" as const, workId: episode.workId }
+      : row.focus_kind === "work"
+        ? { _tag: "Work" as const, workId: row.focus_work_id as WorkId }
+        : { _tag: "Coordination" as const };
   const binding: ExecutionBinding =
     row.binding_kind === "workspace"
-      ? {
-          _tag: "WorkspaceExecution",
-          workspaceId: row.workspace_id as WorkspaceId,
-          focus:
-            row.focus_kind === "work"
-              ? { _tag: "Work", workId: row.focus_work_id as WorkId }
-              : { _tag: "Coordination" },
-        }
+      ? episode === undefined
+        ? {
+            _tag: "WorkspaceExecution",
+            workspaceId: row.workspace_id as WorkspaceId,
+            focus: compatibilityFocus,
+          }
+        : {
+            _tag: "WorkspaceExecution",
+            workspaceId: row.workspace_id as WorkspaceId,
+            episode,
+          }
       : {
           _tag: "ExecutionBoundAgentBinding",
           parentExecutionId: row.parent_execution_id as ExecutionId | null,
@@ -83,6 +97,49 @@ const toExecution = (row: ExecutionRow): Execution => {
   };
 };
 
+const episodeOfRow = (
+  row: ExecutionRow,
+): ExecutionEpisodeBinding | undefined => {
+  const revision = Number(row.episode_revision ?? 0);
+  switch (row.episode_kind) {
+    case "WorkEpisode":
+      return row.episode_ref == null
+        ? undefined
+        : {
+            _tag: "WorkEpisode",
+            workId: row.episode_ref as WorkId,
+            targetWorkRevision: revision as never,
+          };
+    case "ConversationResponseEpisode":
+      return row.episode_ref == null
+        ? undefined
+        : {
+            _tag: "ConversationResponseEpisode",
+            messageId: row.episode_ref as never,
+            responseJobRevision: revision,
+          };
+    case "InboxEpisode":
+      return row.episode_ref == null
+        ? undefined
+        : {
+            _tag: "InboxEpisode",
+            entryKey: row.episode_ref,
+            inputKind: "LegacyMigrated",
+          };
+    case "DecisionEpisode":
+      return row.episode_ref == null
+        ? undefined
+        : {
+            _tag: "DecisionEpisode",
+            decisionId: row.episode_ref as never,
+            decisionKind: "SelectCurrentWork",
+            requestRevision: revision,
+          };
+    default:
+      return undefined;
+  }
+};
+
 const toLease = (row: LeaseRow): LeaseRecord => ({
   executionId: row.execution_id as ExecutionId,
   workerId: row.worker_id,
@@ -93,18 +150,106 @@ const toLease = (row: LeaseRow): LeaseRecord => ({
 });
 
 const insertSql =
+  "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at, episode_kind, episode_ref, episode_revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+
+const legacyInsertSql =
   "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+
+const episodeOnlyInsertSql =
+  "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, episode_kind, episode_ref, episode_revision, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
 const insertParams = (execution: Execution): ReadonlyArray<unknown> => {
   const binding = execution.binding;
   const isWorkspace = binding._tag === "WorkspaceExecution";
+  const episode = isWorkspace ? binding.episode : undefined;
   return [
     execution.executionId,
     execution.projectId,
     isWorkspace ? "workspace" : "execution_bound",
     execution.workspaceId,
-    isWorkspace ? binding.focus._tag.toLowerCase() : null,
-    isWorkspace && binding.focus._tag === "Work" ? binding.focus.workId : null,
+    isWorkspace
+      ? binding.episode?._tag === "WorkEpisode"
+        ? "work"
+        : binding.episode === undefined
+          ? binding.focus._tag.toLowerCase()
+          : "coordination"
+      : null,
+    isWorkspace
+      ? binding.episode?._tag === "WorkEpisode"
+        ? binding.episode.workId
+        : binding.episode === undefined && binding.focus._tag === "Work"
+          ? binding.focus.workId
+          : null
+      : null,
+    isWorkspace ? null : binding.parentExecutionId,
+    isWorkspace ? null : binding.mission,
+    execution.sessionId,
+    execution.admittedAt,
+    execution.stopRequestedAt,
+    null,
+    null,
+    null,
+    episode?._tag ?? null,
+    episode === undefined
+      ? null
+      : episode._tag === "WorkEpisode"
+        ? episode.workId
+        : episode._tag === "ConversationResponseEpisode"
+          ? episode.messageId
+          : episode._tag === "InboxEpisode"
+            ? episode.entryKey
+            : episode.decisionId,
+    episode === undefined
+      ? null
+      : episode._tag === "WorkEpisode"
+        ? episode.targetWorkRevision
+        : episode._tag === "ConversationResponseEpisode"
+          ? episode.responseJobRevision
+          : episode._tag === "DecisionEpisode"
+            ? episode.requestRevision
+            : 0,
+  ];
+};
+
+const episodeOnlyInsertParams = (
+  execution: Execution,
+): ReadonlyArray<unknown> => {
+  const binding = execution.binding;
+  const isWorkspace = binding._tag === "WorkspaceExecution";
+  const episode = isWorkspace ? binding.episode : undefined;
+  if (isWorkspace && episode === undefined) {
+    throw new Error(
+      "new Workspace execution requires an exact ExecutionEpisodeBinding",
+    );
+  }
+  const episodeRef =
+    episode === undefined
+      ? null
+      : episode._tag === "WorkEpisode"
+        ? episode.workId
+        : episode._tag === "ConversationResponseEpisode"
+          ? episode.messageId
+          : episode._tag === "InboxEpisode"
+            ? episode.entryKey
+            : episode.decisionId;
+  const episodeRevision =
+    episode === undefined
+      ? null
+      : episode._tag === "WorkEpisode"
+        ? episode.targetWorkRevision
+        : episode._tag === "ConversationResponseEpisode"
+          ? episode.responseJobRevision
+          : episode._tag === "DecisionEpisode"
+            ? episode.requestRevision
+            : 0;
+  return [
+    execution.executionId,
+    execution.projectId,
+    isWorkspace ? "workspace" : "execution_bound",
+    execution.workspaceId,
+    episode?._tag ?? null,
+    episodeRef,
+    episodeRevision,
     isWorkspace ? null : binding.parentExecutionId,
     isWorkspace ? null : binding.mission,
     execution.sessionId,
@@ -125,12 +270,32 @@ export const ExecutionRepositoryLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): ExecutionRepositoryError => ({
-      _tag: "ExecutionRepositoryFailure",
-      cause,
-    });
+    const failure = repositoryFailure("ExecutionRepository", "execution");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
+    const insertExecution = (execution: Execution) =>
+      Effect.gen(function* () {
+        const columns = yield* sql.unsafe<{ name: string }>(
+          "PRAGMA table_info(executions)",
+        );
+        const parameters = insertParams(execution);
+        const hasEpisode = columns.some(
+          (column) => column.name === "episode_kind",
+        );
+        const hasLegacyFocus = columns.some(
+          (column) => column.name === "focus_kind",
+        );
+        if (hasEpisode && !hasLegacyFocus) {
+          yield* sql.unsafe(
+            episodeOnlyInsertSql,
+            episodeOnlyInsertParams(execution),
+          );
+        } else if (hasEpisode) {
+          yield* sql.unsafe(insertSql, parameters);
+        } else {
+          yield* sql.unsafe(legacyInsertSql, parameters.slice(0, 14));
+        }
+      });
     return ExecutionRepository.of({
       tryAdmitMainExecution: (execution) =>
         Effect.gen(function* () {
@@ -148,13 +313,13 @@ export const ExecutionRepositoryLive: Layer.Layer<
           if (existing.length > 0) {
             return Option.none();
           }
-          yield* run(sql.unsafe(insertSql, insertParams(execution)));
+          yield* run(insertExecution(execution));
           return Option.some(execution);
         }),
       admitExecution: (execution) =>
         Effect.gen(function* () {
           yield* TransactionScope;
-          yield* run(sql.unsafe(insertSql, insertParams(execution)));
+          yield* run(insertExecution(execution));
         }),
       findById: (executionId) =>
         Effect.gen(function* () {

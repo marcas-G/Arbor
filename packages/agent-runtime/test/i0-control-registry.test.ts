@@ -29,9 +29,10 @@ describe("I0 ControlToolRegistry", () => {
   it("exposes only registered control identities and classifies by registry identity", () => {
     const registry = makeControlToolRegistry([sendHandler]);
     expect(registry.definitions().map((tool) => tool.name)).toEqual([
-      "arbor_wait",
-      "arbor_send_message",
+      "wait",
+      "send_message",
     ]);
+    expect(registry.classify("wait")).toBe("Control");
     expect(registry.classify("arbor_wait")).toBe("Control");
     expect(registry.classify("read")).toBe("NotControl");
     expect(registry.classify("arbor_unregistered")).toBe("NotControl");
@@ -39,7 +40,7 @@ describe("I0 ControlToolRegistry", () => {
       classifyToolRoute(
         [
           { name: "read", route: "Executable" },
-          { name: "arbor_wait", route: "Control" },
+          { name: "wait", route: "Control", stableId: "core.control.wait" },
         ],
         registry,
         "read",
@@ -47,11 +48,11 @@ describe("I0 ControlToolRegistry", () => {
     ).toEqual({ _tag: "Executable" });
     expect(
       classifyToolRoute(
-        [{ name: "arbor_wait", route: "Control" }],
+        [{ name: "wait", route: "Control", stableId: "core.control.wait" }],
         registry,
-        "arbor_wait",
+        "wait",
       ),
-    ).toEqual({ _tag: "Control" });
+    ).toEqual({ _tag: "Control", stableId: "core.control.wait" });
     expect(
       classifyToolRoute(
         [
@@ -59,13 +60,32 @@ describe("I0 ControlToolRegistry", () => {
             name: "arbor_wait",
             route: "Control",
             version: "1",
-            hash: "stale-hash",
+            hash: "3c84373e",
           },
         ],
         registry,
         "arbor_wait",
       ),
-    ).toEqual({ _tag: "Stale", route: "Control" });
+    ).toEqual({ _tag: "Control", stableId: "core.control.wait" });
+    expect(
+      classifyToolRoute(
+        [
+          {
+            name: "wait",
+            route: "Control",
+            stableId: "core.control.wait",
+            version: "1",
+            hash: "stale-hash",
+          },
+        ],
+        registry,
+        "wait",
+      ),
+    ).toEqual({
+      _tag: "Stale",
+      route: "Control",
+      stableId: "core.control.wait",
+    });
     expect(
       classifyToolRoute(
         [{ name: "arbor_missing", route: "Control" }],
@@ -83,7 +103,7 @@ describe("I0 ControlToolRegistry", () => {
     const registry = makeControlToolRegistry();
     const valid = Effect.runSync(
       registry.decode(
-        invocation("arbor_wait", {
+        invocation("wait", {
           reason: "await response",
           waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
         }),
@@ -98,7 +118,7 @@ describe("I0 ControlToolRegistry", () => {
     expect(() =>
       Effect.runSync(
         registry.decode(
-          invocation("arbor_wait", {
+          invocation("wait", {
             reason: "wait",
             waitSpec: { mode: "Any", conditions: [] },
           }),
@@ -108,7 +128,7 @@ describe("I0 ControlToolRegistry", () => {
     expect(() =>
       Effect.runSync(
         registry.decode(
-          invocation("arbor_wait", {
+          invocation("wait", {
             reason: "wait",
             waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
             authority: "invented",
@@ -122,7 +142,7 @@ describe("I0 ControlToolRegistry", () => {
     const registry = makeControlToolRegistry([sendHandler]);
     const query = Effect.runSync(
       registry.decode(
-        invocation("arbor_send_message", {
+        invocation("send_message", {
           kind: "Query",
           body: "What is the current status?",
           recipientWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
@@ -140,7 +160,7 @@ describe("I0 ControlToolRegistry", () => {
 
     const reply = Effect.runSync(
       registry.decode(
-        invocation("arbor_send_message", {
+        invocation("send_message", {
           kind: "Reply",
           body: "The status is ready.",
         }),
@@ -157,7 +177,7 @@ describe("I0 ControlToolRegistry", () => {
     expect(() =>
       Effect.runSync(
         registry.decode({
-          ...invocation("arbor_wait", {}),
+          ...invocation("wait", {}),
           argumentsJson: "{",
         }),
       ),
@@ -165,7 +185,7 @@ describe("I0 ControlToolRegistry", () => {
     expect(() =>
       Effect.runSync(
         registry.decode(
-          invocation("arbor_send_message", {
+          invocation("send_message", {
             kind: "Deliver",
             body: "not in SendMessage",
           }),

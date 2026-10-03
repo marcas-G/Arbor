@@ -114,7 +114,9 @@ const slowDriver = (
               (
                 cause,
               ): import("../packages/ports/src/index.js").ExecutionDriverError => ({
-                _tag: "ExecutionDriverError",
+                _tag: "ExecutionDriverOperationalFailure",
+                stage: "DriverDependency",
+                sourceTag: "test",
                 cause,
               }),
             ),
@@ -159,7 +161,9 @@ const stealingDriver = (
               (
                 cause,
               ): import("../packages/ports/src/index.js").ExecutionDriverError => ({
-                _tag: "ExecutionDriverError",
+                _tag: "ExecutionDriverOperationalFailure",
+                stage: "DriverDependency",
+                sourceTag: "test",
                 cause,
               }),
             ),

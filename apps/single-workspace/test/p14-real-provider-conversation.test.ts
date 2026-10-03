@@ -374,7 +374,7 @@ describe("P14 production conversation model context", () => {
     liveHumanInputSentinelEnabled ? 110_000 : 30_000,
   );
 
-  it("sends recent answered turns with the claimed human message and persists its answer", async () => {
+  it("sends only conversation history, excluding Work tool history, and persists its answer", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p14-provider-conversation-"));
     const secretRoot = join(dir, "secrets");
     mkdirSync(secretRoot);
@@ -467,6 +467,81 @@ describe("P14 production conversation model context", () => {
                 [sessionId, "WorkspacePrimary", workspaceId, 0, "t"],
               );
               yield* sql.unsafe(
+                "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                  sessionId,
+                  0,
+                  "ModelOutput",
+                  "ToolCall",
+                  2,
+                  0,
+                  JSON.stringify({
+                    _tag: "ToolCall",
+                    providerTurnId:
+                      "ptn_prior_work_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    callRef: "call_prior_work",
+                    toolRef: "shell",
+                    argumentsRef: "inline:prior-work",
+                    argumentsJson: JSON.stringify({ command: "pnpm check" }),
+                  }),
+                  "2026-09-23T00:00:00.000Z",
+                  "ProviderTurnCall",
+                  "ptn_prior_work_018f2b3c-4d5e-7abc-8def-0123456789ac:call_prior_work",
+                  "technical-work-session-call-hash",
+                ],
+              );
+              yield* sql.unsafe(
+                "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                  sessionId,
+                  1,
+                  "Observation",
+                  "ToolResult",
+                  2,
+                  0,
+                  JSON.stringify({
+                    _tag: "ToolResult",
+                    callRef: "call_prior_work",
+                    toolName: "shell",
+                    status: "Succeeded",
+                    observationRef: "observation_prior_work",
+                    modelOutputRef: "result_prior_work",
+                    outputText:
+                      "TECHNICAL_WORK_SESSION_OUTPUT_MUST_NOT_ENTER_CHAT",
+                    truncated: false,
+                    artifactRefs: [],
+                  }),
+                  "2026-09-23T00:00:01.000Z",
+                  "AgentLoopAction",
+                  "observation_prior_work",
+                  "technical-work-session-result-hash",
+                ],
+              );
+              yield* sql.unsafe(
+                "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [
+                  sessionId,
+                  2,
+                  "ModelOutput",
+                  "ToolCall",
+                  2,
+                  0,
+                  JSON.stringify({
+                    _tag: "ToolCall",
+                    providerTurnId:
+                      "ptn_dangling_work_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    callRef: "call_dangling_prior_work",
+                    toolRef: "read",
+                    argumentsRef: "inline:dangling-prior-work",
+                    argumentsJson: JSON.stringify({ target: "README.md" }),
+                  }),
+                  "2026-09-23T00:00:02.000Z",
+                  "ProviderTurnCall",
+                  "ptn_dangling_work_018f2b3c-4d5e-7abc-8def-0123456789ac:call_dangling_prior_work",
+                  "dangling-work-session-call-hash",
+                ],
+              );
+              yield* sql.unsafe(
                 "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
                 [
                   workspaceId,
@@ -550,13 +625,24 @@ describe("P14 production conversation model context", () => {
           );
           const executionRows = yield* sql.unsafe<{
             settlement_json: string | null;
+            episode_kind: string | null;
+            episode_ref: string | null;
+            episode_revision: number | null;
           }>(
-            "SELECT settlement_json FROM executions WHERE workspace_id = ? AND focus_kind = 'coordination' ORDER BY admitted_at DESC LIMIT 1",
+            "SELECT settlement_json, episode_kind, episode_ref, episode_revision FROM executions WHERE workspace_id = ? ORDER BY admitted_at DESC LIMIT 1",
             [workspaceId],
           );
           return {
             message: messageRows[0],
             settlement: executionRows[0]?.settlement_json ?? null,
+            execution:
+              executionRows[0] === undefined
+                ? undefined
+                : {
+                    episode_kind: executionRows[0].episode_kind,
+                    episode_ref: executionRows[0].episode_ref,
+                    episode_revision: executionRows[0].episode_revision,
+                  },
           };
         }),
         app,
@@ -584,10 +670,9 @@ describe("P14 production conversation model context", () => {
       { role: "user", content: humanQuestion },
     ]);
     // Root Human Conversation is a response episode, not a Work execution.
-    // Its normal output surface therefore contains no Work/formation control
-    // affordances (tool-surface-review/13). In particular, exposing
-    // arbor_claim_completion here lets a model select an action that the
-    // runtime must reject because there is no bound Work.
+    // MAC-P1 exposes only the current-Workspace work-initiation control.
+    // Actual executable tools and completion remain unavailable until the
+    // Scheduler admits the resulting WorkEpisode.
     const toolNames = (
       (observedRequest?.tools ?? []) as Array<{
         function?: { name?: string };
@@ -595,11 +680,22 @@ describe("P14 production conversation model context", () => {
     )
       .map((tool) => tool.function?.name)
       .sort();
-    expect(toolNames).toEqual([]);
+    expect(toolNames).toEqual([
+      "accept_result",
+      "assign_work",
+      "list_workspaces",
+      "propose_workspace",
+      "read_workspace",
+    ]);
     expect(result.message).toEqual({
       state: "Answered",
       response_body: assistantAnswer,
     });
-    expect(result.settlement).toContain("QueryCompleted");
+    expect(result.settlement).toContain("ConversationResponseProduced");
+    expect(result.execution).toEqual({
+      episode_kind: "ConversationResponseEpisode",
+      episode_ref: "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
+      episode_revision: 0,
+    });
   });
 });

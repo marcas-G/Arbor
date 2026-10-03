@@ -1,5 +1,11 @@
 # P17 — Conversation Delivery Runtime — Contract Index
 
+> **MAC successor (DID v1.31):** durable ConversationResponse delivery and
+> exact TurnProfile remain. MAC-P1 adds Root text-or-assign behavior through the
+> common ActionCall facade; later placement/formation belongs to MAC-P2.
+> RootConversation does not receive subagent capability. See
+> `docs/design/implementation/MAC/**`.
+
 **Baseline:** System Design v1.5 · DID v1.24 · accepted CDRC-1…CDRC-10
 
 **Status:** FROZEN / IMPLEMENTATION COMPLETE / FORMALLY CLOSED

@@ -94,16 +94,22 @@ export const makeExecutableToolHandler = (
   handle: ({ invocation, execution, context, controlBasis }) =>
     Effect.gen(function* () {
       const requestedAt = yield* clock.now();
-      const matchingRefs = (yield* catalog.visibleRefs()).filter(
-        (ref) => ref.name === invocation.toolName,
-      );
+      const matchingRefs = (yield* catalog.visibleRefs().pipe(
+        Effect.mapError((cause) => ({
+          _tag: "AgentActionOperationalFailure" as const,
+          operation: "ToolCatalog.visibleRefs",
+          cause,
+        })),
+      )).filter((ref) => ref.name === invocation.toolName);
       if (matchingRefs.length !== 1) {
         return yield* Effect.fail({
-          _tag: "AgentActionError" as const,
-          cause:
+          _tag: "AgentActionRejected" as const,
+          code: "action/tool-unavailable" as const,
+          safeMessage:
             matchingRefs.length === 0
               ? `tool is not visible: ${invocation.toolName}`
               : `tool identity is ambiguous: ${invocation.toolName}`,
+          correction: "ChooseAlternative" as const,
         });
       }
       const toolVersion = matchingRefs[0]?.version as string;
@@ -128,17 +134,35 @@ export const makeExecutableToolHandler = (
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,
       };
-      const result = yield* tools.invoke(intent, toolContext);
+      const invoked = yield* Effect.match(tools.invoke(intent, toolContext), {
+        onFailure: (cause) => ({ ok: false as const, cause }),
+        onSuccess: (value) => ({ ok: true as const, value }),
+      });
+      if (!invoked.ok) {
+        if (invoked.cause.effectDisposition === "OutcomeUncertain") {
+          return {
+            _tag: "Settle" as const,
+            settlement: {
+              _tag: "OutcomeUnknown" as const,
+              reconciliation: {
+                _tag: "ReconciliationRequired" as const,
+                invocationRefs: [invoked.cause.invocationRef],
+              },
+            },
+          };
+        }
+        return yield* Effect.fail({
+          _tag: "AgentActionOperationalFailure" as const,
+          operation: `ToolRuntime.${invoked.cause.stage}`,
+          cause: invoked.cause,
+        });
+      }
+      const result = invoked.value;
       const outcome = toExecutableOutcome(result);
       return outcome._tag === "Observation"
         ? { ...outcome, invocationId: intent.invocationId }
         : outcome;
-    }).pipe(
-      Effect.mapError((cause) => ({
-        _tag: "AgentActionError" as const,
-        cause,
-      })),
-    ),
+    }),
 });
 
 export const ExecutableToolHandlerLive: Layer.Layer<

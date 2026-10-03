@@ -41,4 +41,16 @@ describe("SCRC safe-boundary input drain", () => {
       ["q1", "Queue"],
     ]);
   });
+
+  it("never consumes human governance or conversation entries into an Agent turn", () => {
+    expect(
+      selectPendingInputPromotions(
+        [
+          entry("gov:fpr_test:1", "Governance"),
+          entry("conversation:msg_test", "HumanConversation"),
+        ],
+        { freshDrain: true },
+      ),
+    ).toEqual([]);
+  });
 });

@@ -7,7 +7,7 @@ const invocation = (argumentsJson: string): ToolInvocation => ({
   providerTurnId: "ptn_test" as never,
   outputPosition: 0,
   callRef: "call_test",
-  toolName: "arbor_propose_child_workspace",
+  toolName: "propose_workspace",
   argumentsJson,
 });
 
@@ -54,7 +54,7 @@ const fullProposal = {
   },
 };
 
-describe("arbor_propose_child_workspace codec", () => {
+describe("propose_workspace codec", () => {
   it("decodes a full proposal", async () => {
     const registry = makeControlToolRegistry([stubHandler]);
     const decoded = await Effect.runPromise(
@@ -159,8 +159,6 @@ describe("arbor_propose_child_workspace codec", () => {
 
   it("is not exposed without a registered handler", async () => {
     const registry = makeControlToolRegistry();
-    expect(registry.classify("arbor_propose_child_workspace")).toBe(
-      "NotControl",
-    );
+    expect(registry.classify("propose_workspace")).toBe("NotControl");
   });
 });

@@ -4,6 +4,7 @@ import {
   ContextEpochNumber,
   createSession,
   type ExecutionBinding,
+  type ExecutionEpisodeBinding,
   type ExecutionFocus,
   type ExecutionId,
   parse,
@@ -24,7 +25,8 @@ export type AdmitExecutionPayload =
       readonly _tag: "WorkspaceMain";
       readonly executionId: ExecutionId;
       readonly workspaceId: WorkspaceId;
-      readonly focus: ExecutionFocus;
+      readonly focus?: ExecutionFocus;
+      readonly episode?: ExecutionEpisodeBinding;
     }
   | {
       readonly _tag: "ExecutionBound";
@@ -105,11 +107,17 @@ export const makeAdmitExecutionHandler = (
         ? currentWorkspace.primarySessionId
         : payload.sessionId;
       const binding: ExecutionBinding = isMain
-        ? {
-            _tag: "WorkspaceExecution",
-            workspaceId: payload.workspaceId,
-            focus: payload.focus,
-          }
+        ? payload.episode === undefined
+          ? {
+              _tag: "WorkspaceExecution",
+              workspaceId: payload.workspaceId,
+              focus: payload.focus as ExecutionFocus,
+            }
+          : {
+              _tag: "WorkspaceExecution",
+              workspaceId: payload.workspaceId,
+              episode: payload.episode,
+            }
         : {
             _tag: "ExecutionBoundAgentBinding",
             parentExecutionId: payload.parentExecutionId,

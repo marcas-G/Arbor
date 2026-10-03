@@ -553,11 +553,9 @@ describe("P14-005 conversation tab", () => {
     });
     renderConversation();
     await waitFor(() =>
-      expect(
-        screen.getByText("需要处理：DeterministicModelFailure"),
-      ).toBeTruthy(),
+      expect(screen.getByText("模型没有返回可用回复")).toBeTruthy(),
     );
-    fireEvent.click(screen.getByText("重新开始"));
+    fireEvent.click(screen.getByText("再次尝试"));
     await waitFor(() => expect(harness.commandCalls).toHaveLength(1));
     const envelope = harness.commandCalls[0] as {
       commandType?: string;

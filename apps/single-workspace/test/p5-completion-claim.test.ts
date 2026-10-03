@@ -136,6 +136,11 @@ const admit = (commandId: CommandId) =>
       executionId,
       workspaceId,
       focus: { _tag: "Work", workId },
+      episode: {
+        _tag: "WorkEpisode",
+        workId,
+        targetWorkRevision: 0 as never,
+      },
     };
     const authority: VerifiedRuntimeCommandAuthority = {
       _tag: "AdmitExecutionAuthority",

@@ -3,12 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Route } from "../../api/router.js";
 import { fetchProjectDirectory } from "../../api/transport.js";
-import { CreateProjectForm } from "../../commands/forms/CreateProjectForm.js";
 import { GrantPermissionForm } from "../../commands/forms/GrantPermissionForm.js";
 import { useCommandSubmission } from "../../commands/useCommandSubmission.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
-import { cx } from "../../components/cx.js";
 import { Empty } from "../../components/Empty.js";
 import { KeyValue, type KeyValuePair } from "../../components/KeyValue.js";
 import { MonoText } from "../../components/MonoText.js";
@@ -93,24 +91,12 @@ function ProjectSection({
   return (
     <section className={styles.section} aria-label="项目">
       <h2 className={styles.sectionTitle}>项目</h2>
-      <div
-        className={cx([
-          styles.projectBox,
-          projectId === null ? styles.projectHighlight : null,
-        ])}
-      >
-        {actor === null || token === null ? (
-          <Empty>未连接——连接后可创建项目</Empty>
-        ) : (
-          <CreateProjectForm
-            actor={actor}
-            token={token}
-            onSubmitted={() => undefined}
-          />
-        )}
-      </div>
       <p className={styles.note}>
-        当前项目：<MonoText>{projectId}</MonoText>。项目切换使用左侧栏的切换器。
+        当前项目：{current?.name ?? "正在获取项目名称"}
+        。切换与新建项目统一使用全局项目中心。
+        <span className={styles.technicalId} aria-hidden="true">
+          {projectId}
+        </span>
       </p>
       {actor !== null &&
       token !== null &&
@@ -277,16 +263,34 @@ export function SettingsPage({
   const { actor, token } = useSession();
   return (
     <div className={styles.page}>
-      <h1 className={styles.title}>设置</h1>
-      <PermissionsSection
-        actor={actor}
-        projectId={route.projectId}
-        token={token}
-      />
-      <ProjectSection actor={actor} token={token} projectId={route.projectId} />
-      <SessionSection />
-      <WorkbenchPreferences />
-      <CapabilityUnavailableSections />
+      <header className={styles.pageHeader}>
+        <div>
+          <p className={styles.eyebrow}>项目配置</p>
+          <h1 className={styles.title}>设置</h1>
+          <p className={styles.pageIntro}>
+            管理项目、权限、工作台偏好与当前会话。
+          </p>
+        </div>
+      </header>
+      <div className={styles.settingsGrid}>
+        <main className={styles.primaryColumn}>
+          <PermissionsSection
+            actor={actor}
+            projectId={route.projectId}
+            token={token}
+          />
+          <ProjectSection
+            actor={actor}
+            token={token}
+            projectId={route.projectId}
+          />
+          <WorkbenchPreferences />
+        </main>
+        <aside className={styles.secondaryColumn}>
+          <SessionSection />
+          <CapabilityUnavailableSections />
+        </aside>
+      </div>
     </div>
   );
 }

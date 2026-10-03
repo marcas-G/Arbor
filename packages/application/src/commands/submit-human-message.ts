@@ -193,10 +193,9 @@ export const makeSubmitHumanMessageHandler = (
           updatedAt: envelope.issuedAt,
         })
         .pipe(
-          Effect.catchTag("ConversationJobConflict", (conflict) =>
+          Effect.catchTag("ConversationJobConflict", () =>
             Effect.fail({
-              _tag: "ConversationJobStoreError" as const,
-              cause: conflict,
+              _tag: "ConversationJobStoreRevisionConflict" as const,
             }),
           ),
         );

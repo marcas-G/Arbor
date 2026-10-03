@@ -236,15 +236,14 @@ export const ModelContextLive: Layer.Layer<
         });
         return { _tag: "Ready", turn: compiled } as TurnPreparation;
       }).pipe(
-        Effect.catchIf(
-          (cause): cause is ContextUnsatisfiable =>
-            typeof cause === "object" &&
-            cause !== null &&
-            "_tag" in cause &&
-            cause._tag === "ContextUnsatisfiable",
-          (cause) => Effect.fail(cause),
+        Effect.mapError((cause): ContextUnsatisfiable | ModelContextError =>
+          typeof cause === "object" &&
+          cause !== null &&
+          "_tag" in cause &&
+          cause._tag === "ContextUnsatisfiable"
+            ? (cause as ContextUnsatisfiable)
+            : toModelContextError(cause),
         ),
-        Effect.mapError(toModelContextError),
       );
 
     return ModelContext.of({ prepareTurn });

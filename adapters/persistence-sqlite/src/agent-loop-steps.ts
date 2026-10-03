@@ -9,7 +9,6 @@ import {
   type AgentLoopStepRecord,
   type AgentLoopStepState,
   AgentLoopStepStore,
-  type AgentLoopStepStoreError,
   Clock,
   type LeaseFencingRejected,
   TransactionScope,
@@ -17,6 +16,7 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface StepRow {
   readonly execution_id: string;
@@ -235,10 +235,7 @@ export const AgentLoopStepStoreLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): AgentLoopStepStoreError => ({
-      _tag: "AgentLoopStepStoreError",
-      cause,
-    });
+    const failure = repositoryFailure("AgentLoopStepStore", "agent-loop-step");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     const conflict = (reason: string): AgentLoopStepInvariantConflict => ({

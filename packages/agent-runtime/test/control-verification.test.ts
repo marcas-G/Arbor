@@ -41,7 +41,7 @@ describe("verification control codecs", () => {
     const decoded = await Effect.runPromise(
       registry.decode(
         invocation(
-          "arbor_record_verification_evidence",
+          "record_verification_evidence",
           JSON.stringify({ criterionId: "focused-test", sourceCallRef: "c1" }),
         ),
       ),
@@ -56,7 +56,7 @@ describe("verification control codecs", () => {
       Effect.exit(
         registry.decode(
           invocation(
-            "arbor_record_verification_evidence",
+            "record_verification_evidence",
             JSON.stringify({
               criterionId: "focused-test",
               sourceCallRef: "c1",
@@ -74,7 +74,7 @@ describe("verification control codecs", () => {
     const decoded = await Effect.runPromise(
       registry.decode(
         invocation(
-          "arbor_conclude_verification",
+          "conclude_verification",
           JSON.stringify({
             verdict: "Pass",
             criteriaResults: [

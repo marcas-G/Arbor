@@ -16,6 +16,7 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 const json = (value: unknown): string => JSON.stringify(value);
 
@@ -60,10 +61,7 @@ export const WorkRepositoryLive: Layer.Layer<
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const clock = yield* Clock;
-    const failure = (cause: unknown): WorkRepositoryError => ({
-      _tag: "WorkRepositoryFailure",
-      cause,
-    });
+    const failure = repositoryFailure("WorkRepository", "sql");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     const conflict: WorkRepositoryError = {

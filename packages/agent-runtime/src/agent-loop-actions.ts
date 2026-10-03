@@ -25,11 +25,24 @@ import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import { MAX_TURNS, safetyStop } from "./agent-loop-policy.js";
 import {
+  type AgentActionError,
   type ControlToolRegistryService,
   classifyToolRoute,
   type ExecutableInvocationHandler,
 } from "./control.js";
+import type { ControlActionAuthorizerService } from "./control-authorization.js";
 import { checkFreshness, requirementForAction } from "./freshness.js";
+
+const actionRejectionObservation = (
+  error: Extract<AgentActionError, { readonly _tag: "AgentActionRejected" }>,
+): BoundedObservation => ({
+  text: JSON.stringify({
+    code: error.code,
+    message: error.safeMessage,
+    correction: error.correction,
+  }),
+  truncated: false,
+});
 
 export interface AgentLoopActionDependencies {
   readonly input: {
@@ -45,6 +58,7 @@ export interface AgentLoopActionDependencies {
   readonly tx: TransactionPortService;
   readonly sessions: SessionRepositoryService;
   readonly controlRegistry: ControlToolRegistryService;
+  readonly controlAuthorizer?: ControlActionAuthorizerService;
   readonly executableInvocationHandler?: ExecutableInvocationHandler;
   readonly currentControlBasis: () => Effect.Effect<
     ControlBasis,
@@ -69,6 +83,11 @@ export type AgentLoopActionOutcome =
       readonly durableProgress: boolean;
     }
   | { readonly _tag: "DecisionStale" }
+  | {
+      readonly _tag: "ApprovalRequired";
+      readonly approvalId: string;
+      readonly revision: number;
+    }
   | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
 
 /**
@@ -90,6 +109,7 @@ export const executeAgentLoopActions = (
     tx,
     sessions,
     controlRegistry,
+    controlAuthorizer,
     executableInvocationHandler,
     currentControlBasis,
     admit,
@@ -194,7 +214,7 @@ export const executeAgentLoopActions = (
               outputText: terminal.outputText,
             }),
           )}`;
-          const observationSourceRef = `observation_${sha256Hex(
+          const observationSourceRef = `observation_${input.execution.executionId}_${sha256Hex(
             JSON.stringify({
               providerTurnId: preparedTurn.manifest.providerTurnId,
               callRef: targetInvocation.callRef,
@@ -449,6 +469,7 @@ export const executeAgentLoopActions = (
         observation: BoundedObservation,
         resultMetadata: {
           readonly status?: import("@arbor/ports").PortableToolResultStatus;
+          readonly disposition?: string;
           readonly resultRef?: string;
           readonly artifactRefs?: ReadonlyArray<string>;
           readonly invocationId?: import("@arbor/domain").ToolInvocationId;
@@ -466,9 +487,11 @@ export const executeAgentLoopActions = (
           }
           const pendingAction = loopAction;
           const actionsStep = currentLoopStep;
-          const payload = { source, observation };
+          const status = resultMetadata.status ?? "Succeeded";
+          const disposition = resultMetadata.disposition ?? "Applied";
+          const payload = { source, observation, status, disposition };
           const resultRef = `result_${sha256Hex(JSON.stringify(payload))}`;
-          const observationSourceRef = `observation_${sha256Hex(
+          const observationSourceRef = `observation_${input.execution.executionId}_${sha256Hex(
             JSON.stringify({
               providerTurnId: preparedTurn.manifest.providerTurnId,
               callRef: invocation.callRef,
@@ -488,7 +511,7 @@ export const executeAgentLoopActions = (
                           ...(resultMetadata.invocationId === undefined
                             ? {}
                             : { invocationId: resultMetadata.invocationId }),
-                          status: resultMetadata.status ?? "Succeeded",
+                          status,
                           observationRef: observationSourceRef,
                           modelOutputRef: resultMetadata.resultRef ?? resultRef,
                           outputText: observation.text,
@@ -499,8 +522,8 @@ export const executeAgentLoopActions = (
                           _tag: "ControlResult" as const,
                           callRef: invocation.callRef,
                           actionKind: invocation.toolName,
-                          status: resultMetadata.status ?? "Succeeded",
-                          disposition: "Applied",
+                          status,
+                          disposition,
                           outputText: observation.text,
                           truncated: observation.truncated,
                           canonicalRefs: [],
@@ -538,6 +561,7 @@ export const executeAgentLoopActions = (
                       ...pendingAction,
                       state: "Applied",
                       resultRef,
+                      disposition: { _tag: disposition, status },
                       observationSourceRef,
                       revision: pendingAction.revision + 1,
                       updatedAt: yield* now(),
@@ -615,6 +639,20 @@ export const executeAgentLoopActions = (
           },
         );
         if (!executed.ok) {
+          if (executed.cause._tag === "AgentActionRejected") {
+            const disposition = `ModelUsable:${executed.cause.code}`;
+            const observation = actionRejectionObservation(executed.cause);
+            const persisted = yield* persistActionObservation(
+              "Runtime",
+              observation,
+              { status: "Failed", disposition },
+            );
+            if (!persisted) {
+              observations.push({ source: "Runtime", observation });
+            }
+            durableProgress = true;
+            continue;
+          }
           const settlement = safetyStop("ExecutableToolInvocationRejected");
           yield* persistActionRejection(settlement, "HandlerRejected");
           return {
@@ -665,6 +703,30 @@ export const executeAgentLoopActions = (
         },
       );
       if (!decodedAction.ok) {
+        if (decodedAction.cause._tag === "InvalidControlArguments") {
+          const disposition =
+            "ModelCorrectable:InvalidControlArguments" as const;
+          const observation = {
+            text: JSON.stringify({
+              code: "invalid_control_arguments",
+              toolName: decodedAction.cause.toolName,
+              reason: decodedAction.cause.reason,
+              correction:
+                "Correct the arguments for this control action and try again with a new tool call.",
+            }),
+            truncated: false,
+          };
+          const persisted = yield* persistActionObservation(
+            "Runtime",
+            observation,
+            { status: "Failed", disposition },
+          );
+          if (!persisted) {
+            observations.push({ source: "Runtime", observation });
+          }
+          durableProgress = true;
+          continue;
+        }
         const settlement = safetyStop(
           `ControlToolDecodeFailed:${decodedAction.cause._tag}`,
         );
@@ -841,6 +903,49 @@ export const executeAgentLoopActions = (
         return { _tag: "DecisionStale" };
       }
 
+      const authorization =
+        controlAuthorizer === undefined
+          ? {
+              _tag: "Authorized" as const,
+              authorityRef: "legacy-test-only",
+              actionDigest: sha256Hex(
+                JSON.stringify(decodedAction.value.action),
+              ),
+              controlBasisDigest: sha256Hex(JSON.stringify(current)),
+            }
+          : yield* controlAuthorizer.authorize({
+              action: decodedAction.value.action,
+              invocation,
+              execution: input.execution,
+              context: input.context,
+              controlBasis: current,
+            });
+      if (authorization._tag === "ApprovalRequired") {
+        return {
+          _tag: "ApprovalRequired",
+          approvalId: authorization.approvalId,
+          revision: authorization.revision,
+        };
+      }
+      if (authorization._tag === "Denied") {
+        const observation = {
+          text: JSON.stringify({
+            code: "control_action_denied",
+            reason: authorization.reason,
+            correction: "RequestHumanApprovalOrChooseAlternative",
+          }),
+          truncated: false,
+        };
+        const persisted = yield* persistActionObservation(
+          "Runtime",
+          observation,
+          { status: "Denied", disposition: "AuthorizationDenied" },
+        );
+        if (!persisted) observations.push({ source: "Runtime", observation });
+        durableProgress = true;
+        continue;
+      }
+
       const handled = yield* Effect.match(
         controlRegistry.handle({
           action: decodedAction.value.action,
@@ -854,12 +959,43 @@ export const executeAgentLoopActions = (
         },
       );
       if (!handled.ok) {
+        if (handled.cause._tag === "AgentActionRejected") {
+          const disposition = `ModelUsable:${handled.cause.code}`;
+          const observation = actionRejectionObservation(handled.cause);
+          const persisted = yield* persistActionObservation(
+            "Runtime",
+            observation,
+            { status: "Failed", disposition },
+          );
+          if (!persisted) {
+            observations.push({ source: "Runtime", observation });
+          }
+          durableProgress = true;
+          continue;
+        }
         const settlement = safetyStop("ControlActionHandlerRejected");
         yield* persistActionRejection(settlement, "HandlerRejected");
         return {
           _tag: "Settle",
           settlement,
         };
+      }
+      if (
+        authorization.approvalId !== undefined &&
+        controlAuthorizer !== undefined &&
+        !(yield* controlAuthorizer.consumeApproval({
+          approvalId: authorization.approvalId,
+          approvalRevision: authorization.approvalRevision ?? 0,
+          actionDigest: authorization.actionDigest,
+          controlBasisDigest: authorization.controlBasisDigest,
+        }))
+      ) {
+        const settlement = safetyStop("ControlApprovalConsumptionRejected");
+        yield* persistActionRejection(
+          settlement,
+          "ApprovalConsumptionRejected",
+        );
+        return { _tag: "Settle", settlement };
       }
       if (handled.outcome._tag === "Settle") {
         yield* persistActionSettlement(handled.outcome.settlement);

@@ -64,13 +64,16 @@ export const stopExecutionSchema = z.object({
 });
 
 export const grantPermissionSchema = z.object({
+  subjectKind: z.enum(["HumanPrincipal", "WorkspaceAgent", "Execution"]),
+  subjectRef: z.string().trim().min(1, "授权主体必填"),
   capability: z.string().trim().min(1, "capability 必填"),
   target: z.string().trim(),
-  lifetime: z
+  expiresAt: z
     .string()
-    .regex(
-      /^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?$/,
-      "ISO 8601 时长，如 PT1H",
+    .trim()
+    .refine(
+      (value) => value.length === 0 || !Number.isNaN(Date.parse(value)),
+      "请输入 ISO 时间或留空",
     ),
 });
 

@@ -79,6 +79,12 @@ function ResponseStatusPanel({
       messageId: message.messageId,
       expectedJobRevision: status.revision,
     });
+  const attentionReason =
+    status.state === "NeedsAttention" ? status.reason : undefined;
+  const attentionCopy =
+    attentionReason === undefined
+      ? undefined
+      : presentAttentionReason(attentionReason);
   return (
     <div className={styles.conversationStatus} role="status">
       <strong>
@@ -87,26 +93,77 @@ function ResponseStatusPanel({
           : status.state === "RetryScheduled"
             ? `等待重试（${status.nextEligibleAt}）`
             : status.state === "NeedsAttention"
-              ? `需要处理：${status.reason}`
+              ? attentionCopy?.title
               : `已停止：${status.reason}`}
       </strong>
+      {attentionCopy === undefined ? null : (
+        <>
+          <span>{attentionCopy.description}</span>
+          <details className={styles.technicalReason}>
+            <summary>技术详情</summary>
+            <code>{attentionReason}</code>
+          </details>
+        </>
+      )}
       {status.state === "RetryScheduled" ? (
         <span>{status.safeReason}</span>
       ) : null}
       {status.state === "NeedsAttention" ? (
-        <Button onClick={resume}>重新开始</Button>
+        <Button onClick={resume}>再次尝试</Button>
       ) : null}
       {status.state === "Queued" ||
       status.state === "RetryScheduled" ||
       status.state === "NeedsAttention" ? (
         <Button variant="quiet" onClick={cancel}>
-          取消回复
+          停止本次回复
         </Button>
       ) : null}
       <FormFeedback state={state} onRetry={onChanged} />
     </div>
   );
 }
+
+const presentAttentionReason = (
+  reason: string,
+): { readonly title: string; readonly description: string } => {
+  switch (reason) {
+    case "DeterministicModelFailure":
+      return {
+        title: "模型没有返回可用回复",
+        description: "系统已暂停自动重试。你可以再次尝试，或停止本次回复。",
+      };
+    case "AuthenticationFailed":
+      return {
+        title: "模型服务认证失败",
+        description: "请检查模型服务的访问凭据，修复后再试。",
+      };
+    case "RequestRejected":
+      return {
+        title: "模型服务拒绝了请求",
+        description: "当前请求与模型服务不兼容，请检查模型或上下文配置。",
+      };
+    case "ContextBlocked":
+      return {
+        title: "对话上下文尚未准备好",
+        description: "系统已停止继续调用模型，以免使用不完整的上下文。",
+      };
+    case "ReconciliationRequired":
+      return {
+        title: "上一次调用结果尚未确认",
+        description: "系统需要先确认外部调用结果，避免产生重复回复。",
+      };
+    case "RetryBudgetExhausted":
+      return {
+        title: "模型服务连续不可用",
+        description: "自动重试已经停止。服务恢复后可以再次尝试。",
+      };
+    default:
+      return {
+        title: "这次回复未能完成",
+        description: "系统已暂停自动重试。你可以再次尝试或停止本次回复。",
+      };
+  }
+};
 
 export function ConversationTab({
   projectId,

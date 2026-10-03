@@ -154,7 +154,7 @@ describe("workspace structural transitions", () => {
       authorized: true,
       expectedRevision: parse(Revision)(2),
       candidate: { workId, workspaceId, lifecycle: "Open" },
-      activeMainFocus: null,
+      activeMainEpisode: null,
     });
     expect(selected.ok).toBe(true);
     if (selected.ok) {
@@ -165,7 +165,7 @@ describe("workspace structural transitions", () => {
       authorized: true,
       expectedRevision: parse(Revision)(2),
       candidate: { workId, workspaceId, lifecycle: "Completed" },
-      activeMainFocus: null,
+      activeMainEpisode: null,
     });
     expectError(notOpen, "WorkNotOpen");
 
@@ -173,7 +173,7 @@ describe("workspace structural transitions", () => {
       authorized: true,
       expectedRevision: parse(Revision)(2),
       candidate: { workId, workspaceId: otherWorkspaceId, lifecycle: "Open" },
-      activeMainFocus: null,
+      activeMainEpisode: null,
     });
     expectError(foreign, "AuthorityDenied");
 
@@ -182,7 +182,7 @@ describe("workspace structural transitions", () => {
       authorized: true,
       expectedRevision: current.revision,
       candidate: { workId, workspaceId, lifecycle: "Open" },
-      activeMainFocus: { kind: "Work", workId },
+      activeMainEpisode: { kind: "Work", workId },
     });
     expectError(conflict, "ActiveExecutionConflict");
 
@@ -190,7 +190,7 @@ describe("workspace structural transitions", () => {
       authorized: true,
       expectedRevision: current.revision,
       candidate: { workId, workspaceId, lifecycle: "Open" },
-      activeMainFocus: { kind: "Coordination", workId: null },
+      activeMainEpisode: { kind: "NonWork", workId: null },
     });
     expect(coordination.ok).toBe(true);
   });

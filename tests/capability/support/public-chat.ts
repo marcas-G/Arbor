@@ -107,7 +107,16 @@ export interface PublicConversationResult {
   }>;
 }
 
-export const makeModelCatalog = (modelRef: string): ModelCatalog => ({
+export const makeModelCatalog = (
+  modelRef: string,
+  capability: {
+    readonly contextWindow: number;
+    readonly outputCeiling: number;
+  } = {
+    contextWindow: 8_192,
+    outputCeiling: 2_048,
+  },
+): ModelCatalog => ({
   defaultModelRef: modelRef,
   entries: [
     {
@@ -116,8 +125,8 @@ export const makeModelCatalog = (modelRef: string): ModelCatalog => ({
       capability: {
         modelRef,
         family: "openai-compatible",
-        contextWindow: 8_192,
-        outputCeiling: 2_048,
+        contextWindow: capability.contextWindow,
+        outputCeiling: capability.outputCeiling,
         toolProtocol: "json",
         capabilities: ["text", "tools"],
       },
@@ -170,6 +179,7 @@ const commandEnvelope = (
 export const makePublicProject = (
   key: string,
   resourcePath = process.cwd(),
+  includeGitWorktree = resourcePath === process.cwd(),
 ): PublicProject => {
   const projectId = prefixedId("prj");
   const rootWorkspaceId = prefixedId("ws");
@@ -201,13 +211,12 @@ export const makePublicProject = (
         // Without an address, ResourceAdmission denies every tool region
         // ("region outside ResourceBoundary") and tool-use capabilities
         // cannot be exercised.
-        addresses:
-          resourcePath === process.cwd()
-            ? [
-                { _tag: "FileTree", path: resourcePath },
-                { _tag: "GitWorktree", path: resourcePath },
-              ]
-            : [{ _tag: "FileTree", path: resourcePath }],
+        addresses: [
+          { _tag: "FileTree", path: resourcePath },
+          ...(includeGitWorktree
+            ? [{ _tag: "GitWorktree" as const, path: resourcePath }]
+            : []),
+        ],
       },
       resourceBoundaryRevision: 0,
       agentBinding: {
@@ -262,6 +271,11 @@ export const withPublicConversationApp = async (
     readonly modelRef: string;
     readonly provider: OpenAISdkClient;
     readonly secretRef?: SecretRef;
+    readonly blobRoot?: string;
+    readonly modelCapability?: {
+      readonly contextWindow: number;
+      readonly outputCeiling: number;
+    };
   },
   body: (handle: PublicAppHandle) => Promise<void>,
 ): Promise<void> => {
@@ -272,9 +286,10 @@ export const withPublicConversationApp = async (
   const app = buildSingleWorkspaceLayer({
     databaseFile: input.databaseFile,
     projectId,
-    modelCatalog: makeModelCatalog(input.modelRef),
+    modelCatalog: makeModelCatalog(input.modelRef, input.modelCapability),
     modelRef: input.modelRef,
     provider: { adapterId: "provider-openai", client: input.provider },
+    ...(input.blobRoot === undefined ? {} : { blobRoot: input.blobRoot }),
     ...(input.secretRef === undefined ? {} : { secretRef: input.secretRef }),
     authenticator,
     governance: {

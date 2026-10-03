@@ -15,6 +15,7 @@ import {
   SandboxPort,
   ToolDefinitionStore,
   ToolInvocationStore,
+  type ToolRuntimeError,
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
@@ -86,7 +87,21 @@ const okExecutor: ToolExecutor = {
     }),
 };
 
-const app = (admissionDeny = false, executor: ToolExecutor = okExecutor) => {
+interface PipelineFaults {
+  readonly workspaceLookup?: boolean;
+  readonly environmentResolution?: boolean;
+  readonly resourceAdmission?: boolean;
+  readonly sandboxOpen?: boolean;
+  readonly sandboxClose?: boolean;
+  readonly intentJournal?: boolean;
+  readonly settlementJournal?: boolean;
+}
+
+const app = (
+  admissionDeny = false,
+  executor: ToolExecutor = okExecutor,
+  faults: PipelineFaults = {},
+) => {
   const tx = Layer.succeed(TransactionPort, {
     transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
       Effect.provideService(body, TransactionScope, { session: { id: "t" } }),
@@ -96,48 +111,98 @@ const app = (admissionDeny = false, executor: ToolExecutor = okExecutor) => {
     ToolDefinitionStoreLive,
     Layer.succeed(SandboxPort, {
       open: () =>
-        Effect.succeed({
-          handleId: "s",
-          rootPath: "/tmp/s",
-          writableRegions: [],
-        }),
-      close: () => Effect.void,
+        faults.sandboxOpen === true
+          ? Effect.fail({
+              _tag: "SandboxError" as const,
+              cause: "sandbox-open-failure",
+            })
+          : Effect.succeed({
+              handleId: "s",
+              rootPath: "/tmp/s",
+              writableRegions: [],
+            }),
+      close: () =>
+        faults.sandboxClose === true
+          ? Effect.fail({
+              _tag: "SandboxError" as const,
+              cause: "sandbox-close-failure",
+            })
+          : Effect.void,
     }),
     Layer.succeed(ResourceAdmission, {
       admit: () =>
-        Effect.succeed(
-          admissionDeny
-            ? { _tag: "Denied" as const, reason: "no" }
-            : { _tag: "Admitted" as const },
-        ),
+        faults.resourceAdmission === true
+          ? Effect.fail({
+              _tag: "ResourceAdmissionError" as const,
+              cause: "admission-failure",
+            })
+          : Effect.succeed(
+              admissionDeny
+                ? { _tag: "Denied" as const, reason: "no" }
+                : { _tag: "Admitted" as const },
+            ),
     } as never),
     Layer.succeed(ToolInvocationStore, {
-      recordIntent: () => Effect.void,
-      settle: () => Effect.void,
+      recordIntent: () =>
+        faults.intentJournal === true
+          ? Effect.fail({
+              _tag: "PersistenceUnavailable" as const,
+              repository: "ToolInvocationStore" as const,
+              operation: "record-intent-test",
+              retryDisposition: "retryable" as const,
+              sourceTag: "InjectedFailure",
+              cause: "intent-journal-failure",
+            })
+          : Effect.void,
+      settle: () =>
+        faults.settlementJournal === true
+          ? Effect.fail({
+              _tag: "PersistenceUnavailable" as const,
+              repository: "ToolInvocationStore" as const,
+              operation: "settle-test",
+              retryDisposition: "retryable" as const,
+              sourceTag: "InjectedFailure",
+              cause: "settlement-journal-failure",
+            })
+          : Effect.void,
       consumeApproval: () => Effect.succeed(true),
       findApproval: () => Effect.succeed(Option.none()),
       findUnsettled: () => Effect.succeed([]),
     } as never),
     Layer.succeed(ProjectEnvironmentPort, {
       resolve: (_p, addresses) =>
-        Effect.succeed({
-          regions: addresses.map((a) => ({
-            resourceSpaceId: "filesystem",
-            normalizedRegion: a,
-          })),
-          observedEnvironmentRevision: "rev",
-        }),
+        faults.environmentResolution === true
+          ? Effect.fail({
+              _tag: "EnvironmentError" as const,
+              cause: "environment-resolution-failure",
+            })
+          : Effect.succeed({
+              regions: addresses.map((a) => ({
+                resourceSpaceId: "filesystem",
+                normalizedRegion: a,
+              })),
+              observedEnvironmentRevision: "rev",
+            }),
     }),
     Layer.succeed(WorkspaceRepository, {
       findById: () =>
-        Effect.succeed(
-          Option.some({
-            projectId,
-            resourceBoundary: {
-              addresses: [{ _tag: "GitWorktree", path: "/repo/a" }],
-            },
-          }),
-        ),
+        faults.workspaceLookup === true
+          ? Effect.fail({
+              _tag: "PersistenceUnavailable" as const,
+              repository: "WorkspaceRepository" as const,
+              operation: "test",
+              retryDisposition: "retryable" as const,
+              sourceTag: "InjectedFailure",
+              cause: "workspace-lookup-failure",
+            })
+          : Effect.succeed(
+              Option.some({
+                projectId,
+                resourceBoundary: {
+                  addresses: [{ _tag: "GitWorktree", path: "/repo/a" }],
+                },
+              }),
+            ),
     } as never),
     Layer.succeed(Clock, {
       now: () => Effect.succeed("2026-01-01T00:00:00.000Z"),
@@ -156,6 +221,23 @@ const run = (appLayer: Layer.Layer<any, any, any>, argumentsJson: string) =>
       }),
       appLayer,
     ) as Effect.Effect<{ _tag: string }, unknown, never>,
+  );
+
+const runFailure = (
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases the app layer type
+  appLayer: Layer.Layer<any, any, any>,
+  argumentsJson: string,
+): Promise<ToolRuntimeError> =>
+  Effect.runPromise(
+    Effect.flip(
+      Effect.provide(
+        Effect.gen(function* () {
+          const runtime = yield* ToolRuntimePort;
+          return yield* runtime.invoke(intent(argumentsJson) as never, context);
+        }),
+        appLayer,
+      ),
+    ) as Effect.Effect<ToolRuntimeError, never, never>,
   );
 
 describe("P4 tool runtime pipeline", () => {
@@ -208,6 +290,64 @@ describe("P4 tool runtime pipeline", () => {
       '{"target":{"mount":"workspace","path":"."}}',
     );
     expect(result._tag).toBe("Denied");
+  });
+
+  it.each([
+    ["WorkspaceLookup", { workspaceLookup: true }],
+    ["EnvironmentResolution", { environmentResolution: true }],
+    ["ResourceAdmission", { resourceAdmission: true }],
+    ["IntentJournal", { intentJournal: true }],
+    ["SandboxOpen", { sandboxOpen: true }],
+    ["SettlementJournal", { settlementJournal: true }],
+  ] as const)(
+    "preserves the %s operational stage instead of flattening the cause",
+    async (stage, faults) => {
+      const failure = await runFailure(
+        app(false, okExecutor, faults),
+        '{"target":{"mount":"workspace","path":"."}}',
+      );
+      expect(failure).toMatchObject({
+        _tag: "ToolRuntimeOperationalFailure",
+        stage,
+      });
+    },
+  );
+
+  it("returns sandbox close failure as typed cleanup failure instead of a defect", async () => {
+    const failure = await runFailure(
+      app(false, okExecutor, { sandboxClose: true }),
+      '{"target":{"mount":"workspace","path":"."}}',
+    );
+    expect(failure).toMatchObject({
+      _tag: "ToolRuntimeCleanupFailure",
+      stage: "SandboxClose",
+    });
+  });
+
+  it("retains executor failure when sandbox cleanup also fails", async () => {
+    const failingExecutor: ToolExecutor = {
+      ...okExecutor,
+      execute: () =>
+        Effect.fail({
+          _tag: "ToolRuntimeOperationalFailure",
+          stage: "Executor",
+          effectDisposition: "OutcomeUncertain",
+          invocationRef: String(invocationId),
+          cause: "executor-failure",
+        }),
+    };
+    const failure = await runFailure(
+      app(false, failingExecutor, { sandboxClose: true }),
+      '{"target":{"mount":"workspace","path":"."}}',
+    );
+    expect(failure).toMatchObject({
+      _tag: "ToolRuntimeCleanupFailure",
+      stage: "SandboxClose",
+      priorFailure: {
+        _tag: "ToolRuntimeOperationalFailure",
+        stage: "Executor",
+      },
+    });
   });
 
   void ToolDefinitionStore;

@@ -24,6 +24,7 @@ import {
   IdGenerator,
   type SchedulerDecision,
   TransactionPort,
+  WorkRepository,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -150,11 +151,17 @@ export const admitExecution = (
 ): Effect.Effect<
   unknown,
   unknown,
-  CommandGateway | WorkspaceRepository | TransactionPort | Clock | IdGenerator
+  | CommandGateway
+  | WorkspaceRepository
+  | WorkRepository
+  | TransactionPort
+  | Clock
+  | IdGenerator
 > =>
   Effect.gen(function* () {
     const gateway = yield* CommandGateway;
     const workspaces = yield* WorkspaceRepository;
+    const works = yield* WorkRepository;
     const tx = yield* TransactionPort;
     const clock = yield* Clock;
     const ids = yield* IdGenerator;
@@ -164,12 +171,26 @@ export const admitExecution = (
       return;
     }
     const projectId = workspace.value.projectId;
+    if (focus._tag !== "Work") {
+      return yield* Effect.die(
+        new Error("legacy Coordination admission is retired"),
+      );
+    }
+    const work = yield* tx.transact(works.findById(focus.workId));
+    if (Option.isNone(work)) {
+      return;
+    }
     const now = yield* clock.now();
     const payload: AdmitExecutionPayload = {
       _tag: "WorkspaceMain",
       executionId,
       workspaceId,
       focus,
+      episode: {
+        _tag: "WorkEpisode",
+        workId: focus.workId,
+        targetWorkRevision: work.value.revision,
+      },
     };
     // Each admission attempt is a distinct logical command; a deterministic id
     // would replay an earlier terminal rejection (e.g. ActiveExecutionConflict).

@@ -321,11 +321,9 @@ export interface ProviderExecutionContext {
    * never logged, redacted by default under serialization. */
   readonly secretMaterial?: SecretMaterial;
   readonly cancellationSignal: ProviderCancellationSignal;
-  readonly connectTimeoutMs: number;
-  readonly firstEventTimeoutMs: number;
-  readonly streamIdleTimeoutMs: number;
+  /** ProviderRuntime-resolved terminal upper bound. Adapters may enforce this
+   * at the transport edge, but never choose or reinterpret timeout policy. */
   readonly turnDeadlineAt: string;
-  readonly maxAttempts: number;
   readonly continuationCheckpoint?: ProviderContinuationCheckpoint;
 }
 
@@ -957,12 +955,23 @@ export interface ModelFacingToolDefinition {
 /** Data-only, model-facing schema projected from Agent Runtime's control
  * registry. Model Context may compile it but never interprets the action. */
 export interface ModelFacingControlToolDefinition {
+  /** Stable Runtime identity. It is used for registration, authorization,
+   * manifests and replay; it is never sent to the model as a function name. */
+  readonly stableId: string;
+  /** Model-facing function name for newly compiled turns. */
   readonly name: string;
   readonly description: string;
   readonly schemaJson: string;
   readonly version: string;
   readonly hash: string;
   readonly requiredCapability: string;
+  /** Historical model names retained solely to replay a manifest created
+   * before a model-facing rename. They are never advertised to a new turn. */
+  readonly legacyNames?: ReadonlyArray<{
+    readonly name: string;
+    readonly version: string;
+    readonly hash: string;
+  }>;
 }
 
 /** Data-only control-tool catalog projected into Model Context by the app

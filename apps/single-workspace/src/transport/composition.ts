@@ -58,7 +58,8 @@ import {
   authorityDeniedProblem,
   failureResponse,
   invalidCommandProblem,
-  makeProblem,
+  problemFromCommandFailure,
+  problemFromUnknownFailure,
 } from "./errors.js";
 
 /**
@@ -280,11 +281,7 @@ export const makeExternalSubmission = (
         },
       );
       if (executed._tag === "failure") {
-        return failureResponse(
-          makeProblem("command/gateway-failure", "unavailable", "retryable", {
-            cause: executed.error._tag,
-          }),
-        );
+        return failureResponse(problemFromCommandFailure(executed.error));
       }
       if (
         executed.receipt.resolution._tag === "Committed" &&
@@ -296,11 +293,9 @@ export const makeExternalSubmission = (
         });
         if (converged._tag === "failure") {
           return failureResponse(
-            makeProblem(
+            problemFromUnknownFailure(
               "command/post-commit-convergence-failure",
-              "unavailable",
-              "retryable",
-              { cause: String(converged.error) },
+              converged.error,
             ),
           );
         }

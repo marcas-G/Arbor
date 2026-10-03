@@ -65,7 +65,8 @@ export const classifyConversationFailure = (
   }
   if (
     reason.includes("sessioncontextblocked") ||
-    reason.includes("contextblocked")
+    reason.includes("contextblocked") ||
+    reason.includes("contextunsatisfiable")
   ) {
     return "ContextBlocked";
   }

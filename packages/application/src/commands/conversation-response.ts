@@ -90,10 +90,9 @@ export const makeResumeConversationResponseHandler = (
           },
         })
         .pipe(
-          Effect.catchTag("ConversationJobConflict", (conflict) =>
+          Effect.catchTag("ConversationJobConflict", () =>
             Effect.fail({
-              _tag: "ConversationJobStoreError" as const,
-              cause: conflict,
+              _tag: "ConversationJobStoreRevisionConflict" as const,
             }),
           ),
         );
@@ -185,10 +184,9 @@ export const makeCancelConversationResponseHandler = (
           },
         })
         .pipe(
-          Effect.catchTag("ConversationJobConflict", (conflict) =>
+          Effect.catchTag("ConversationJobConflict", () =>
             Effect.fail({
-              _tag: "ConversationJobStoreError" as const,
-              cause: conflict,
+              _tag: "ConversationJobStoreRevisionConflict" as const,
             }),
           ),
         );

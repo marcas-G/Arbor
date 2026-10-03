@@ -106,6 +106,7 @@ export interface ModelContextManifest {
   readonly toolRoutes: ReadonlyArray<{
     readonly name: string;
     readonly route: "Executable" | "Control";
+    readonly stableId?: string;
     readonly version?: string;
     readonly hash?: string;
   }>;
@@ -144,6 +145,7 @@ export interface PreparedModelTurn {
   readonly toolRoutes: ReadonlyArray<{
     readonly name: string;
     readonly route: "Executable" | "Control";
+    readonly stableId?: string;
     readonly version?: string;
     readonly hash?: string;
   }>;
@@ -214,6 +216,7 @@ export const compileTurn = (input: {
     ...controlTools.map((tool) => ({
       name: tool.name,
       route: "Control" as const,
+      stableId: tool.stableId,
       version: tool.version,
       hash: tool.hash,
     })),
@@ -284,7 +287,7 @@ export const compileTurn = (input: {
         (tool) => `Executable:${tool.name}@${tool.version}#${tool.hash}`,
       ),
       ...controlTools.map(
-        (tool) => `Control:${tool.name}@${tool.version}#${tool.hash}`,
+        (tool) => `Control:${tool.stableId}@${tool.version}#${tool.hash}`,
       ),
     ],
     toolRoutes,

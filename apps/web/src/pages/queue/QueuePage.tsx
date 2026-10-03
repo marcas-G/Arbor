@@ -12,6 +12,7 @@ import { fetchView } from "../../api/transport.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
 import { AcceptWorkOutcomeForm } from "../../commands/forms/AcceptWorkOutcomeForm.js";
 import { RecordDecisionForm } from "../../commands/forms/RecordDecisionForm.js";
+import { ResolveControlApprovalForm } from "../../commands/forms/ResolveControlApprovalForm.js";
 import type { CommandReceiptView } from "../../commands/submitCommand.js";
 import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
@@ -22,7 +23,9 @@ import { Sheet } from "../../components/Sheet.js";
 import { useCompactLayout } from "../../components/useCompactLayout.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import {
+  type ControlApprovalTarget,
   type GovernanceTarget,
+  parseControlApprovalEntryKey,
   parseGovernanceEntryKey,
 } from "../../queue/governance-target.js";
 import { useSession } from "../../session/SessionContext.js";
@@ -48,7 +51,17 @@ type AcceptanceItem = {
   readonly verificationId: string;
 };
 
-type QueueItem = DecisionItem | AcceptanceItem;
+type ControlApprovalItem = {
+  readonly type: "control-approval";
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly entryKey: string;
+  readonly summary: string;
+  readonly watermark: number;
+  readonly target: ControlApprovalTarget;
+};
+
+type QueueItem = DecisionItem | AcceptanceItem | ControlApprovalItem;
 
 const asProblem = (error: unknown): Problem => error as Problem;
 
@@ -165,6 +178,30 @@ export function QueuePage({
       items.push({
         type: "decision",
         id: `decision:${node.workspaceId}:${entry.entryKey}`,
+        workspaceId: node.workspaceId,
+        entryKey: entry.entryKey,
+        summary: entry.summary,
+        watermark: entry.watermark,
+        target,
+      });
+    }
+    const controlApprovals = entries
+      .map((entry) => ({
+        entry,
+        target: parseControlApprovalEntryKey(entry.entryKey, entry.kind),
+      }))
+      .filter(
+        (
+          item,
+        ): item is {
+          readonly entry: (typeof entries)[number];
+          readonly target: ControlApprovalTarget;
+        } => item.target !== null,
+      );
+    for (const { entry, target } of controlApprovals) {
+      items.push({
+        type: "control-approval",
+        id: `control-approval:${node.workspaceId}:${entry.entryKey}`,
         workspaceId: node.workspaceId,
         entryKey: entry.entryKey,
         summary: entry.summary,
@@ -331,19 +368,29 @@ export function QueuePage({
                   >
                     <span className={styles.itemMeta}>
                       <Badge
-                        tone={item.type === "decision" ? "attention" : "leaf"}
+                        tone={item.type === "acceptance" ? "leaf" : "attention"}
                       >
-                        {item.type === "decision" ? "待决策" : "等待验收"}
+                        {item.type === "decision"
+                          ? "待决策"
+                          : item.type === "control-approval"
+                            ? "待授权"
+                            : "等待验收"}
                       </Badge>
                       <MonoText>{item.workspaceId}</MonoText>
                     </span>
                     <span className={styles.itemSummary}>
-                      {item.type === "decision" ? item.summary : item.objective}
+                      {item.type === "acceptance"
+                        ? item.objective
+                        : item.summary}
                     </span>
                     {item.type === "decision" ? (
                       <span className={styles.itemTarget}>
                         {item.target.proposalId} · revision{" "}
                         {item.target.proposalRevision}
+                      </span>
+                    ) : item.type === "control-approval" ? (
+                      <span className={styles.itemTarget}>
+                        精确动作 · revision {item.target.approvalRevision}
                       </span>
                     ) : (
                       <span className={styles.itemTarget}>
@@ -434,7 +481,7 @@ function QueueDetail({
     return <Empty>选择一条待处理事项查看精确目标与可用动作。</Empty>;
   }
   const openTarget = (): void => {
-    if (item.type === "decision") {
+    if (item.type !== "acceptance") {
       navigate({
         name: "workspace",
         projectId,
@@ -453,8 +500,12 @@ function QueueDetail({
   return (
     <div className={styles.detailContent}>
       <div className={styles.detailTopline}>
-        <Badge tone={item.type === "decision" ? "attention" : "leaf"}>
-          {item.type === "decision" ? "治理决策" : "工作验收"}
+        <Badge tone={item.type === "acceptance" ? "leaf" : "attention"}>
+          {item.type === "decision"
+            ? "治理决策"
+            : item.type === "control-approval"
+              ? "控制动作审批"
+              : "工作验收"}
         </Badge>
         <span className={styles.detailWorkspace}>
           工作区 {item.workspaceId}
@@ -491,6 +542,19 @@ function QueueDetail({
               proposalRevision: item.target.proposalRevision,
               summary: item.summary,
             }}
+            token={token}
+            onSubmitted={onSubmitted}
+          />
+        </>
+      ) : item.type === "control-approval" ? (
+        <>
+          <h2>{item.summary}</h2>
+          <ResolveControlApprovalForm
+            actor={actor}
+            projectId={projectId}
+            approvalId={item.target.approvalId}
+            approvalRevision={item.target.approvalRevision}
+            summary={item.summary}
             token={token}
             onSubmitted={onSubmitted}
           />
@@ -536,7 +600,7 @@ function QueueDetail({
         </>
       )}
       <Button variant="quiet" onClick={openTarget}>
-        {item.type === "decision" ? "打开工作区收件箱" : "查看工作与验证"}
+        {item.type === "acceptance" ? "查看工作与验证" : "打开工作区收件箱"}
       </Button>
       {lastReceipt === null ? null : (
         <p

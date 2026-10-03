@@ -116,11 +116,7 @@ const canonicalToolCalls = async (
       providerTurnId: "ptn_seg" as never,
       attemptNo: 0,
       cancellationSignal: new AbortController().signal,
-      connectTimeoutMs: 5_000,
-      firstEventTimeoutMs: 5_000,
-      streamIdleTimeoutMs: 5_000,
       turnDeadlineAt: new Date(Date.now() + 20_000).toISOString(),
-      maxAttempts: 1,
     },
   })) {
     chunks.push(chunk);
@@ -300,8 +296,8 @@ describe("R1 — SSE chunk-segmentation independence (frozen DeepSeek capture)",
             delta: {
               tool_calls: [{ index: 1, function: { arguments: "1}" } }],
             },
+            finish_reason: "tool_calls",
           },
-          { finish_reason: "tool_calls" },
         ],
       }) +
       "data: [DONE]\n\n";

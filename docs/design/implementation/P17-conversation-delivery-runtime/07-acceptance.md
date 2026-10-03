@@ -18,12 +18,14 @@
 | C12 | adapter rejects DanglingToolCall before transport bytes |
 | C13 | portable/native continuation never double-covers one frontier |
 | C14 | breaker Open blocks many Jobs with zero Provider bytes; one HalfOpen probe only |
-| C15 | RootConversationRespond manifest has zero Work/executable tools |
+| C15 | RootConversation manifest has zero executable/Work tools and exactly the frozen conversation-safe control allowlist (`propose_workspace` in v1) |
 | C16 | Work profile retains only applicable exact-identity tools and controls |
 | C17 | registry identity change returns typed Stale result |
 | C18 | Resume/Cancel authority, revision and idempotency matrices pass |
 | C19 | migration 0021 backfills every legacy state and is crash-reentrant |
 | C20 | Web shows retry/attention/cancelled explicitly; missing Assistant is not treated as infinite processing |
+| C21 | model-visible controls pass CAPA authorization before handlers; wrong subject/target/expiry deny |
+| C22 | ApprovalRequired pauses before mutation; Approve/Reject resume the same Execution/AgentLoopStep and consume one exact approval |
 
 ## Live qualification
 
