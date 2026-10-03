@@ -17,6 +17,7 @@ import {
   DecisionRequestStore,
   ExecutionScheduler,
   IdGenerator,
+  InboxProjectionStore,
   TransactionPort,
   WorkRepository,
   WorkspaceRepository,
@@ -54,11 +55,12 @@ export const consumeWorkspaceWake = (
     const ids = yield* IdGenerator;
     const works = yield* WorkRepository;
     const decisions = yield* DecisionRequestStore;
+    const inbox = yield* InboxProjectionStore;
 
     while (true) {
       const decision = yield* scheduler.reevaluate(workspaceId, wakeReason);
 
-      if (decision._tag === "Noop" || decision._tag === "Idle") {
+      if (decision._tag === "Noop") {
         return;
       }
 
@@ -118,6 +120,16 @@ export const consumeWorkspaceWake = (
       }
       const current = workspace.value;
       const now = yield* clock.now();
+      const inboxEntry =
+        decision._tag === "Idle"
+          ? (yield* tx.transact(inbox.listUnconsumed(workspaceId))).find(
+              (entry) =>
+                entry.kind === "Message" || entry.kind === "SpecialistSettled",
+            )
+          : undefined;
+      if (decision._tag === "Idle" && inboxEntry === undefined) {
+        return;
+      }
       const decisionRequest =
         decision._tag === "RequestWorkSelection"
           ? {
@@ -171,7 +183,15 @@ export const consumeWorkspaceWake = (
                   requestRevision: decisionRequest.revision,
                 },
               }
-            : {}),
+            : inboxEntry !== undefined
+              ? {
+                  episode: {
+                    _tag: "InboxEpisode" as const,
+                    entryKey: inboxEntry.entryKey,
+                    inputKind: inboxEntry.kind,
+                  },
+                }
+              : {}),
       };
       const commandSeed = yield* ids.generate<string>("CommandId");
       const commandId = parse(CommandId)(

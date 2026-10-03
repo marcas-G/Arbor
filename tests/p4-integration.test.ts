@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { BlobStorePortLive } from "../adapters/blob-local/src/index.js";
 import {
   ArtifactMetadataRepositoryLive,
   ClockLive,
@@ -37,6 +38,7 @@ import {
   TransactionScope,
 } from "../packages/ports/src/index.js";
 import {
+  ArtifactServiceLive,
   BUILTIN_EXECUTORS,
   ToolDefinitionStoreLive,
   ToolRuntimeLive,
@@ -168,6 +170,7 @@ const makeApp = () => {
     Layer.provide(ArtifactMetadataRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     ToolDefinitionStoreLive,
+    BlobStorePortLive,
     sandbox,
     Layer.succeed(ResourceAdmission, {
       admit: () => Effect.succeed({ _tag: "Admitted" as const }),
@@ -184,10 +187,13 @@ const makeApp = () => {
     }),
   );
   const all = Layer.mergeAll(deps, infra);
+  const artifacts = Layer.provide(ArtifactServiceLive, all);
+  const runtimeDeps = Layer.mergeAll(all, artifacts);
   return Layer.mergeAll(
     infra,
     deps,
-    Layer.provide(ToolRuntimeLive(BUILTIN_EXECUTORS), all),
+    artifacts,
+    Layer.provide(ToolRuntimeLive(BUILTIN_EXECUTORS), runtimeDeps),
   );
 };
 
@@ -210,7 +216,7 @@ const run = (
       }),
       app,
     ) as Effect.Effect<
-      { _tag: string; observation?: { text: string } },
+      { _tag: string; observation?: { text: string }; resultRef?: string },
       unknown,
       never
     >,
@@ -241,6 +247,7 @@ describe("P4 integration — tool runtime end to end", () => {
     expect(JSON.parse(result.observation?.text ?? "{}").text).toBe(
       "integration read",
     );
+    expect(result.resultRef).toMatch(/^art_/u);
   });
 
   it("denies an unknown tool and reports invalid input", async () => {
@@ -259,4 +266,5 @@ describe("P4 integration — tool runtime end to end", () => {
   void Clock;
   void SandboxPortLive;
   void Option;
+  void BlobStorePortLive;
 });

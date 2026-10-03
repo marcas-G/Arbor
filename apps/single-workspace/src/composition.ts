@@ -140,6 +140,7 @@ import { SandboxPortLive } from "@arbor/sandbox-local";
 import { SecretEnvLive } from "@arbor/secret-env";
 import { SecretFileLive } from "@arbor/secret-file";
 import {
+  ArtifactServiceLive,
   BUILTIN_EXECUTORS,
   ReconciliationSourceLive,
   ResourceAdmissionLive,
@@ -538,6 +539,10 @@ export const buildSingleWorkspaceLayer = (
     ),
     Layer.mergeAll(repos, authorityResolver),
   );
+  const artifactService = Layer.provide(
+    ArtifactServiceLive,
+    Layer.mergeAll(repos, infra),
+  );
   const toolRuntime = Layer.provide(
     ToolRuntimeLive(BUILTIN_EXECUTORS),
     Layer.mergeAll(
@@ -547,6 +552,7 @@ export const buildSingleWorkspaceLayer = (
       SandboxPortLive,
       infra,
       toolAuthority,
+      artifactService,
     ),
   );
   const registry = Layer.provide(

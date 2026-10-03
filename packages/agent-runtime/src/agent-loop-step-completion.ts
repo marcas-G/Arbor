@@ -3,7 +3,7 @@ import type {
   Execution,
   ExecutionSettlement,
 } from "@arbor/domain";
-import { conversationResponseEpisode } from "@arbor/domain";
+import { conversationResponseEpisode, executionEpisode } from "@arbor/domain";
 import type { ModelOutput } from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
@@ -133,6 +133,48 @@ export const completeAgentLoopStep = (
         result: {
           _tag: "ConversationResponseProduced",
           messageId: episode.messageId,
+        },
+      };
+      if (
+        currentLoopStep !== undefined &&
+        loopSteps !== undefined &&
+        loopStepFence !== undefined &&
+        currentLoopStep.state === "StepEffectsCommitted"
+      ) {
+        yield* tx
+          .transact(
+            loopSteps.transition(
+              {
+                identity: currentLoopStep.identity,
+                expectedRevision: currentLoopStep.revision,
+                expectedState: "StepEffectsCommitted",
+                next: {
+                  ...currentLoopStep,
+                  state: "SettlementProposed",
+                  settlement,
+                  revision: currentLoopStep.revision + 1,
+                  updatedAt: yield* now(),
+                },
+              },
+              loopStepFence,
+            ),
+          )
+          .pipe(Effect.mapError(failure));
+      }
+      return { _tag: "Settle", settlement };
+    }
+
+    const episode = executionEpisode(input.execution);
+    if (
+      episode?._tag === "InboxEpisode" &&
+      decodedOutput.toolInvocations.length === 0 &&
+      decodedOutput.text.trim().length > 0
+    ) {
+      const settlement: ExecutionSettlement = {
+        _tag: "Completed",
+        result: {
+          _tag: "InboxInputHandled",
+          entryKey: episode.entryKey,
         },
       };
       if (

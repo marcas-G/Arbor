@@ -1,5 +1,6 @@
 import type { CanonicalResourceRegion, ResourceAddress } from "@arbor/domain";
 import {
+  ArtifactService,
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
@@ -135,6 +136,7 @@ export const ToolRuntimeLive = (
       const authorityResolver = yield* Effect.serviceOption(
         ToolAuthorityResolver,
       );
+      const artifactService = yield* Effect.serviceOption(ArtifactService);
 
       const operationalFailure =
         (
@@ -440,13 +442,41 @@ export const ToolRuntimeLive = (
           }
           const outcome = executed.value;
 
+          const resultRef =
+            outcome.settlement._tag === "Success" &&
+            outcome.resultRef === null &&
+            Option.isSome(artifactService)
+              ? String(
+                  (yield* tx
+                    .transact(
+                      artifactService.value.store(
+                        new TextEncoder().encode(outcome.observation.text),
+                        `tool-result:${intent.toolName}`,
+                        {
+                          invocationId: intent.invocationId,
+                          executionId: context.executionId,
+                        },
+                        now,
+                      ),
+                    )
+                    .pipe(
+                      Effect.mapError(
+                        operationalFailure(
+                          "SettlementJournal",
+                          String(intent.invocationId),
+                        ),
+                      ),
+                    )).artifactId,
+                )
+              : outcome.resultRef;
+
           const settledAt = yield* clock.now();
           yield* tx
             .transact(
               store.settle(
                 intent.invocationId,
                 outcome.settlement,
-                outcome.resultRef,
+                resultRef,
                 settledAt,
               ),
             )
@@ -465,7 +495,7 @@ export const ToolRuntimeLive = (
                 return {
                   _tag: "Success",
                   observation: outcome.observation,
-                  resultRef: outcome.resultRef,
+                  resultRef,
                 };
               case "ExpectedFailure":
                 return {

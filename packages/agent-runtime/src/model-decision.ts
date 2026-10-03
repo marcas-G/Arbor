@@ -285,6 +285,9 @@ export const runModelDecision = (
         if (Option.isSome(message)) claimed = message.value;
       }
       const conversationExecution = exactConversation !== null;
+      const placementExecution =
+        conversationExecution ||
+        executionEpisode(input.execution)?._tag === "InboxEpisode";
       if (conversationExecution) {
         const responseJobRows =
           responseJobs === undefined
@@ -561,7 +564,7 @@ export const runModelDecision = (
           );
         }
       }
-      if (conversationExecution && workspacePlacement !== undefined) {
+      if (placementExecution && workspacePlacement !== undefined) {
         const placement = yield* workspacePlacement
           .list({ rootWorkspaceId: input.execution.workspaceId })
           .pipe(Effect.mapError(failure));
