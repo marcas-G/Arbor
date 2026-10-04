@@ -10,7 +10,7 @@ import { Effect } from "effect";
 import {
   hasOnlyControlFields,
   invalidControlArguments,
-  parseControlId,
+  parseControlField,
   stringList,
 } from "./control-decode-shared.js";
 import type {
@@ -59,7 +59,7 @@ export const decodeAssignWorkControl = (
     const targetWorkspaceId =
       object.targetWorkspaceId === undefined
         ? undefined
-        : parseControlId(
+        : parseControlField(
             invocation.toolName,
             parse(WorkspaceId),
             object.targetWorkspaceId,
@@ -325,7 +325,7 @@ export const decodeSelectCurrentWorkControl = (
       "invalid work selection",
     );
   }
-  const workId = parseControlId(
+  const workId = parseControlField(
     invocation.toolName,
     parse(WorkId),
     object.workId,
@@ -399,7 +399,7 @@ export const decodeDeclareDependencyControl = (
       hasOnlyControlFields(binding, ["_tag", "workspaceId"]) &&
       binding._tag === "WorkspaceBound"
     ) {
-      const workspaceId = parseControlId(
+      const workspaceId = parseControlField(
         invocation.toolName,
         parse(WorkspaceId),
         binding.workspaceId,
@@ -415,7 +415,7 @@ export const decodeDeclareDependencyControl = (
       hasOnlyControlFields(binding, ["_tag", "workId"]) &&
       binding._tag === "WorkBound"
     ) {
-      const workId = parseControlId(
+      const workId = parseControlField(
         invocation.toolName,
         parse(WorkId),
         binding.workId,

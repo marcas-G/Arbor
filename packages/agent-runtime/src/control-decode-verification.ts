@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import {
   hasOnlyControlFields,
   invalidControlArguments,
-  parseControlId,
+  parseControlField,
 } from "./control-decode-shared.js";
 import type {
   AgentAction,
@@ -107,7 +107,7 @@ export const decodeConcludeVerificationControl = (
         );
       }
       const evidenceRefs = result.evidenceRefs.map((value) =>
-        parseControlId(invocation.toolName, parse(EvidenceId), value),
+        parseControlField(invocation.toolName, parse(EvidenceId), value),
       );
       if (evidenceRefs.some((value) => value === null)) {
         return yield* invalidControlArguments(

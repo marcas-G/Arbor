@@ -58,3 +58,8 @@ pnpm check
 
 F21 is governed by
 `planning/gaps/FT-DG-01-ui-project-resource-boundary.md`.
+
+Later functional-oracle audit found that F05 does not expose the terminal
+Work lifecycle after Acceptance. F22 and `FT-DG-02` track that additional
+release-blocking read-model gap. See
+`planning/results/FT-functional-oracle-audit.result.md`.

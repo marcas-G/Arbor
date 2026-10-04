@@ -125,7 +125,9 @@ pnpm exec playwright install chromium
   approval, PASS acceptance and restart persistence.
 - Real-provider behavior remains opt-in and cannot replace deterministic
   release-functional tests.
-- F20 clean packaged-checkout qualification remains.
+- F20 clean packaged-checkout qualification passes from committed HEAD.
 - F21 is blocked by an open product-design gap: UI CreateProject currently
   creates an empty ResourceBoundary, so a newly created project can chat but
   cannot perform evidence-producing file tools.
+- F22 is blocked by a separate read-model gap: Completed Work disappears from
+  its original Work page, so the user cannot inspect the terminal lifecycle.

@@ -15,12 +15,12 @@ export const invalidControlArguments = (
 export const nonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
 
-export const parseControlId = <A>(
+export const parseControlField = <A>(
   _toolName: string,
-  parser: (value: string) => A,
+  parser: (value: unknown) => A,
   value: unknown,
 ): A | null => {
-  if (!nonEmptyString(value)) return null;
+  if (value === null || value === undefined) return null;
   try {
     return parser(value);
   } catch {

@@ -460,7 +460,7 @@ describe("S1-S4 public-process black-box", () => {
     );
   });
 
-  it("S1 keeps high-level conversation, verifies independently and completes only after acceptance", async () => {
+  it("S1 keeps high-level conversation, verifies independently and clears current Work after acceptance", async () => {
     await command(projectId, "SubmitHumanMessage", {
       messageId: id("msg"),
       targetWorkspaceId: rootWorkspaceId,
@@ -587,6 +587,14 @@ describe("S1-S4 public-process black-box", () => {
       );
     }
     expect(verification.targetWorkRevision).toBe(0);
+    expect(
+      await view<{ workId?: string; status: string } | null>("current-work", {
+        workspaceId: rootWorkspaceId,
+      }),
+    ).toMatchObject({ workId, status: "Open" });
+    expect(
+      await view<{ acceptance?: unknown }>("verification", { workId }),
+    ).not.toHaveProperty("acceptance");
 
     await command(projectId, "AcceptWorkOutcome", {
       acceptanceId: id("acc"),

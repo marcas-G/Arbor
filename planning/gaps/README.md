@@ -52,6 +52,8 @@ CLOSED   — disposed by a later phase / governance ruling (see file)
 | CAPA-DG-01 | Control Actions lack subject-bound permission and durable approval interruption | System Design v1.8 / DID v1.30 / P12 / P17 / AgentLoopStep | All model-facing Control Actions | RESOLVED |
 | SDO-DG-01 | ExecutionBound Specialist lacks usable subagent orchestration | System Design v1.9 / DID v1.31 / MAC-P4 | Runtime subagent context, tools, collaboration, result delivery, limits | CLOSED (optional capability disabled; legacy replay-only) |
 | MAC-DG-01 | System complexity exceeds the closed user-value path | Problem v1.3 / Scenarios v1.3 / System Design v1.9 / DID v1.31 / MAC | Vocabulary, golden path, cognition, actions, fulfillment, legacy isolation | RESOLVED |
+| FT-DG-01 | UI-created Project has no trusted resource admission | System Design / DID / P12 / P13 | F21 | OPEN |
+| FT-DG-02 | Completed Work cannot be inspected by its original link | System Design / DID / P10 / P13 | F05 terminal oracle / F22 | OPEN |
 
 All six gaps were resolved by the System Design v1.3 / DID v1.4 governance
 patch. Resolution authority is recorded in each gap file.
