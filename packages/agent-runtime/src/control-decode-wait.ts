@@ -13,7 +13,7 @@ import {
   hasOnlyControlFields,
   invalidControlArguments,
   nonEmptyString,
-  parseControlId,
+  parseControlField,
 } from "./control-decode-shared.js";
 import type {
   ControlToolDecodeError,
@@ -64,12 +64,12 @@ const decodeWaitSpec = (
     const condition = candidate as Record<string, unknown>;
     switch (condition._tag) {
       case "DependencyChanged": {
-        const dependencyId = parseControlId(
+        const dependencyId = parseControlField(
           invocation.toolName,
           parse(DependencyId),
           condition.dependencyId,
         );
-        const observedRevision = parseControlId(
+        const observedRevision = parseControlField(
           invocation.toolName,
           parse(Revision),
           condition.observedRevision,
@@ -96,12 +96,12 @@ const decodeWaitSpec = (
         break;
       }
       case "DecisionChanged": {
-        const decisionId = parseControlId(
+        const decisionId = parseControlField(
           invocation.toolName,
           parse(DecisionId),
           condition.decisionId,
         );
-        const observedRevision = parseControlId(
+        const observedRevision = parseControlField(
           invocation.toolName,
           parse(Revision),
           condition.observedRevision,
@@ -128,12 +128,12 @@ const decodeWaitSpec = (
         break;
       }
       case "VerificationChanged": {
-        const workId = parseControlId(
+        const workId = parseControlField(
           invocation.toolName,
           parse(WorkId),
           condition.workId,
         );
-        const targetWorkRevision = parseControlId(
+        const targetWorkRevision = parseControlField(
           invocation.toolName,
           parse(Revision),
           condition.targetWorkRevision,
@@ -160,7 +160,7 @@ const decodeWaitSpec = (
         break;
       }
       case "InboxAdvanced": {
-        const workspaceId = parseControlId(
+        const workspaceId = parseControlField(
           invocation.toolName,
           parse(WorkspaceId),
           condition.workspaceId,

@@ -186,6 +186,18 @@ and provider loss of artifact/canonical refs. The remaining gap is
 `FT-DG-01`: browser CreateProject has no trusted resource-admission flow and
 therefore creates an empty executable boundary.
 
+Functional-oracle audit (2026-10-04): F07 now proves that a public SteerWork
+advances the Work revision and reaches a later Agent turn. F05 now explicitly
+proves PASS keeps Work Open before Acceptance and that Acceptance clears the
+current selection. It cannot prove that the terminal Work is user-inspectable:
+F22 shows the old Work link renders “未找到该工作” after completion. This is the
+separate open `FT-DG-02` design gap with a pending browser test and draft
+public Work-detail proposal; see
+`planning/results/FT-functional-oracle-audit.result.md`.
+F19 now also proves the reverse order (Dependency wait before child Delivery),
+which exposed and fixed numeric `wait` revision decoding; full `pnpm check`
+and `pnpm test:functional` pass. F21/F22 remain open governance gaps.
+
 DID v1.20 governance adoption (`AHT-1`…`AHT-8`) freezes the durable Provider
 result handoff: persisted `AgentLoopStep`, replayable complete Provider success,
 idempotent sourced Session/action progression, generation-scoped Application

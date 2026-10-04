@@ -8,9 +8,9 @@
 | F02 | greet Root Workspace and receive answer | public HTTP | authoritative transcript contains both turns |
 | F03 | natural-language goal pauses for exact approval | public HTTP | Inbox exposes approval; Current Work remains empty |
 | F04 | approve goal and observe Work | public HTTP | Current Work exposes Open Work and objective |
-| F05 | claim, independently verify, accept and complete | public HTTP | PASS evidence; completion only after Acceptance |
+| F05 | claim, independently verify and accept | public HTTP | PASS keeps Work Open; Acceptance recorded and current Work clears; terminal lifecycle needs F22 |
 | F06 | hard restart after completion | public HTTP | state preserved; provider call count unchanged |
-| F07 | apply a user steer | public HTTP | public command commits |
+| F07 | apply a user steer | public HTTP | Work revision advances and a later Agent turn receives the correction |
 | F08 | create Project and chat as a browser user | Playwright | visible authoritative Human/Arbor turns |
 | F09 | browser reload after hard daemon restart | Playwright | same turns remain; no provider replay |
 | F10 | reject approval | public HTTP | no Work; visible rejection/correction |
@@ -22,7 +22,7 @@
 | F16 | crash after provider wire completion | public process | one visible answer after restart; safe bounded provider retry |
 | F17 | long conversation pagination | public HTTP | third page reachable with no duplicate turns |
 | F18 | child Workspace proposal/approval/result | public HTTP | child initial Work PASS is parent-accepted and completed |
-| F19 | Dependency/Deliverable workflow | public HTTP | tool Artifact → Produce → Deliver → deterministic Satisfied |
+| F19 | Dependency/Deliverable workflow in both event orders | public HTTP | existing delivery is matched on declaration; dependency-first Work stays asleep until later child delivery, then exact Dependency becomes Satisfied and consumer receives that delivery |
 | F20 | fresh packaged checkout | clean local clone | frozen install, build and public black-box pass from committed HEAD |
 
 ## Next release-blocking journeys
@@ -30,6 +30,7 @@
 | ID | User journey | Required oracle |
 |---|---|---|
 | F21 | UI-created Project receives an executable boundary | evidence-based Work completes without hidden API setup |
+| F22 | completed Work remains inspectable | objective, terminal lifecycle and acceptance remain visible on the same Work page after completion |
 
 ## Definition of done for each journey
 

@@ -5,7 +5,7 @@
 运行命令：
 
 ```powershell
-pnpm exec playwright test --config playwright.f21.config.ts
+pnpm exec playwright test --config playwright.pending-functional.config.ts --grep F21
 ```
 
 测试启动生产构建的后台进程，以 `ARBOR_PROJECT_ROOT` 指向新建的临时目录，并在目录内准备

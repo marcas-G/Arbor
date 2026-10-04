@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-/** The open F21 design gap has its own executable acceptance gate. */
+/** Open functional design gaps have executable acceptance tests here. */
 export default defineConfig({
   testDir: "./tests/functional/pending",
   fullyParallel: false,
@@ -8,7 +8,7 @@ export default defineConfig({
   retries: 0,
   timeout: 90_000,
   reporter: [["list"]],
-  outputDir: ".functional-test-results/f21",
+  outputDir: ".functional-test-results/pending",
   use: {
     headless: true,
     trace: "retain-on-failure",

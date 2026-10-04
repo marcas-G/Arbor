@@ -4,7 +4,7 @@ import { Effect } from "effect";
 import {
   hasOnlyControlFields,
   invalidControlArguments,
-  parseControlId,
+  parseControlField,
   stringList,
 } from "./control-decode-shared.js";
 import type {
@@ -288,7 +288,7 @@ export const decodeSendMessageControl = (
     const recipientWorkspaceId =
       object.recipientWorkspaceId === undefined
         ? undefined
-        : parseControlId(
+        : parseControlField(
             invocation.toolName,
             parse(WorkspaceId),
             object.recipientWorkspaceId,
@@ -296,7 +296,7 @@ export const decodeSendMessageControl = (
     const queryMessageId =
       object.queryMessageId === undefined
         ? undefined
-        : parseControlId(
+        : parseControlField(
             invocation.toolName,
             parse(MessageId),
             object.queryMessageId,
