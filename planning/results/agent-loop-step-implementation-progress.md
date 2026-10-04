@@ -69,7 +69,8 @@ Web 216）；AH3 两侧单独及合并 2/2 PASS；`bb1df77` 上
 
 2026-10-04 AH1–AH2 增量验证：同一 Provider Success 原子提交前/后真实进程
 kill/restart 与 AH3 合并 4/4 PASS；`pnpm check` PASS（架构 155、核心
-1677 + 3 skipped、Web 216）。完整发布功能批次待含本变更的提交复测。
+1677 + 3 skipped、Web 216）；`1812991` 上完整 `pnpm test:functional`
+公开进程 19/19、浏览器 2/2 PASS。
 - evidence-insufficient legacy fixture → durable Attention.
 - final crash-injection run against the migration/recovery paths; the original
   database remains read-only.
