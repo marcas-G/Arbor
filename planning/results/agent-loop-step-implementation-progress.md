@@ -60,7 +60,9 @@ qualification PASS; full AH1–AH14 closure pending.**
   bound-execution recovery paths.
 
 2026-10-04 AH3 增量验证：`pnpm check` PASS（架构 155、核心 1677 + 3 skipped、
-Web 216）；AH3 两侧单独及合并 2/2 PASS。此增量不追溯改写上文历史基线数。
+Web 216）；AH3 两侧单独及合并 2/2 PASS；`bb1df77` 上
+`pnpm test:functional` 公开进程 17/17、浏览器 2/2 PASS。此增量不追溯改写
+上文历史基线数。
 - evidence-insufficient legacy fixture → durable Attention.
 - final crash-injection run against the migration/recovery paths; the original
   database remains read-only.
