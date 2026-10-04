@@ -19,7 +19,7 @@ export const durableSnapshot = (databaseFile: string) => {
         .all(),
       steps: db
         .prepare(
-          "SELECT execution_id, provider_turn_id, repair_attempt, state, revision FROM agent_loop_steps",
+          "SELECT execution_id, provider_turn_id, repair_attempt, state, revision, decoder_version, decoded_output_hash, model_output_session_sequence FROM agent_loop_steps",
         )
         .all(),
       providerTurns: db

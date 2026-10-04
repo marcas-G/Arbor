@@ -12,6 +12,7 @@ if (
   targetBoundary !== "AH4AfterSettlementProposal" &&
   targetBoundary !== "AH4RepairBeforeSettlementProposal" &&
   targetBoundary !== "AH4RepairAfterSettlementProposal" &&
+  targetBoundary !== "AH56AfterOutputAcceptedCommit" &&
   targetBoundary !== "AH12BeforeSuccessCommit" &&
   targetBoundary !== "AH12AfterSuccessCommit"
 ) {
