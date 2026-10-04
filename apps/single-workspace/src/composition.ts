@@ -136,7 +136,10 @@ import {
 } from "@arbor/ports";
 import { type UsageService, UsageServiceLive } from "@arbor/projection-runtime";
 import type { OpenAISdkClient } from "@arbor/provider-openai";
-import { ProviderRuntimeLive } from "@arbor/provider-runtime";
+import {
+  type ProviderRuntimeConfig,
+  ProviderRuntimeLive,
+} from "@arbor/provider-runtime";
 import { SandboxPortLive } from "@arbor/sandbox-local";
 import { SecretEnvLive } from "@arbor/secret-env";
 import { SecretFileLive } from "@arbor/secret-file";
@@ -287,6 +290,7 @@ export interface SingleWorkspaceConfig {
   /** Explicit test-only in-process fault probe; never loaded from env or a
    * public request. Production startup leaves this absent. */
   readonly qualificationProbe?: AgentLoopQualificationProbe;
+  readonly providerQualificationProbe?: ProviderRuntimeConfig["qualificationProbe"];
 }
 
 export type SingleWorkspaceServices =
@@ -436,6 +440,9 @@ export const buildSingleWorkspaceLayer = (
   // (single adapter per runtime — single-deployment v1 semantics).
   const providerRuntime = Layer.provide(
     ProviderRuntimeLive({
+      ...(config.providerQualificationProbe !== undefined
+        ? { qualificationProbe: config.providerQualificationProbe }
+        : {}),
       ...(deploymentBinding !== undefined
         ? {
             adapterUsageConstraints: {

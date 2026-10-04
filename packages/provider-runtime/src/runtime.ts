@@ -60,6 +60,13 @@ export interface ProviderRuntimeConfig {
     readonly adapterId: string;
     readonly bindingFingerprint: string;
   };
+  /** Explicit process-local crash qualification seam. Production Composition
+   * leaves it absent; it is never sourced from a request or env var. */
+  readonly qualificationProbe?: (event: {
+    readonly boundary: "AH12BeforeSuccessCommit" | "AH12AfterSuccessCommit";
+    readonly providerTurnId: string;
+    readonly attemptNo: number;
+  }) => Promise<void>;
 }
 
 type AttemptResult =
@@ -1145,6 +1152,16 @@ export const ProviderRuntimeLive = (
                 activeObservation = finalObservation;
                 activeEvents = [...attempt.events];
                 const finishedAt = yield* clock.now();
+                if (config.qualificationProbe !== undefined) {
+                  yield* Effect.promise(
+                    () =>
+                      config.qualificationProbe?.({
+                        boundary: "AH12BeforeSuccessCommit",
+                        providerTurnId: input.providerTurnId,
+                        attemptNo,
+                      }) ?? Promise.resolve(),
+                  );
+                }
                 yield* tx.transact(
                   store.settleSuccessAtomically(
                     input.providerTurnId,
@@ -1165,6 +1182,16 @@ export const ProviderRuntimeLive = (
                     "provider-success-v1",
                   ),
                 );
+                if (config.qualificationProbe !== undefined) {
+                  yield* Effect.promise(
+                    () =>
+                      config.qualificationProbe?.({
+                        boundary: "AH12AfterSuccessCommit",
+                        providerTurnId: input.providerTurnId,
+                        attemptNo,
+                      }) ?? Promise.resolve(),
+                  );
+                }
                 activeAttemptNo = null;
                 turnSettled = true;
                 removeExternalAbort();

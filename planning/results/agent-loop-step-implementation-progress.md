@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN PROGRESS — core handoff path implemented; AH3 process-crash two-sided
+**IN PROGRESS — core handoff path implemented; AH1–AH3 process-crash
 qualification PASS; full AH1–AH14 closure pending.**
 
 ## Implemented
@@ -53,7 +53,10 @@ qualification PASS; full AH1–AH14 closure pending.**
 
 ## Remaining before closure
 
-- AH1–AH2、AH4–AH14 kill-before/kill-after matrix as individually named evidence.
+- AH4–AH14 kill-before/kill-after matrix as individually named evidence.
+- AH1–AH2 share one atomic Provider Success commit and have real-process
+  crash/restart evidence on both sides in
+  `planning/results/AH1-AH2-atomic-provider-success-crash.result.md`.
 - AH3 both sides now have real-process crash/restart evidence in
   `planning/results/AH3-process-crash-qualification.result.md`; it found and
   fixed missing production pre-dispatch lease fencing on conversation and
@@ -63,6 +66,10 @@ qualification PASS; full AH1–AH14 closure pending.**
 Web 216）；AH3 两侧单独及合并 2/2 PASS；`bb1df77` 上
 `pnpm test:functional` 公开进程 17/17、浏览器 2/2 PASS。此增量不追溯改写
 上文历史基线数。
+
+2026-10-04 AH1–AH2 增量验证：同一 Provider Success 原子提交前/后真实进程
+kill/restart 与 AH3 合并 4/4 PASS；`pnpm check` PASS（架构 155、核心
+1677 + 3 skipped、Web 216）。完整发布功能批次待含本变更的提交复测。
 - evidence-insufficient legacy fixture → durable Attention.
 - final crash-injection run against the migration/recovery paths; the original
   database remains read-only.

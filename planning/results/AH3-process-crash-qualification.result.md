@@ -6,7 +6,7 @@
 
 ## 测试方式
 
-`tests/functional/process/agent-loop-step-ah3.functional.test.ts` 使用真实生产
+`tests/functional/process/provider-success-ah1-ah3.functional.test.ts` 使用真实生产
 SQLite、HTTP 模型边界和独立后台进程。测试专用入口
 `tests/functional/support/ah-crash-child.mjs` 在 Composition 中显式注入进程内
 `qualificationProbe`；正式 CLI 不从环境变量装配该 probe。父测试进程收到精确
@@ -41,7 +41,7 @@ SQLite、HTTP 模型边界和独立后台进程。测试专用入口
 
 ```text
 pnpm exec vitest run --config vitest.functional.config.ts \
-  tests/functional/process/agent-loop-step-ah3.functional.test.ts
+  tests/functional/process/provider-success-ah1-ah3.functional.test.ts
   2 / 2 PASS
 ```
 
