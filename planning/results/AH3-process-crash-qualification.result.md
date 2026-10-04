@@ -45,6 +45,6 @@ pnpm exec vitest run --config vitest.functional.config.ts \
   2 / 2 PASS
 ```
 
-`pnpm check` PASS（架构 155、核心 1677 + 3 skipped、Web 216）。完整
-`pnpm test:functional` 仍需在包含本测试的提交上复测；此结果不代表整个
-AH1–AH14 矩阵完成。
+`pnpm check` PASS（架构 155、核心 1677 + 3 skipped、Web 216）。
+`bb1df77` 上完整 `pnpm test:functional` PASS：公开进程 17/17、浏览器 2/2，
+包含从该提交的干净检出测试，零重试。此结果不代表整个 AH1–AH14 矩阵完成。
