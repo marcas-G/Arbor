@@ -226,6 +226,8 @@ AgentLoopStep ProviderResultAvailable now have real-process two-sided crash
 qualification; see `planning/results/AH1-AH2-atomic-provider-success-crash.result.md`
 and `planning/results/AH3-process-crash-qualification.result.md`.
 AH4–AH14 remain open and MUST NOT be inferred from AH1–AH3/F16.
+At `1812991`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
+Web 216) and `pnpm test:functional` passes (public process 19, browser 2).
 
 ## Planning
 

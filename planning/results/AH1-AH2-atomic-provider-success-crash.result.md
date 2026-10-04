@@ -23,5 +23,6 @@ ProviderTurn settled 放在同一个 `settleSuccessAtomically` 事务。不存�
 
 测试入口只通过显式 in-process config 注入 `providerQualificationProbe`；生产
 CLI 不从外部环境变量或模型输出开启它。`pnpm check` PASS（架构 155、
-核心 1677 + 3 skipped、Web 216）。完整发布功能批次需在包含本测试的提交上
-另行验证。
+核心 1677 + 3 skipped、Web 216）。`1812991` 上完整
+`pnpm test:functional` PASS：公开进程 19/19、浏览器 2/2，包含该提交的干净
+检出测试，零重试。
