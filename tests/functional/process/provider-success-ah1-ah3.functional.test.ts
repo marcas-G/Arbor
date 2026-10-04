@@ -172,6 +172,13 @@ describe("AH1–AH3 Provider success handoff process crash", () => {
               : "Prepared",
         }),
       ]);
+      expect(crashed.outputs).toEqual([]);
+      expect(crashed.steps).toEqual([
+        expect.objectContaining({
+          decoded_output_hash: null,
+          model_output_session_sequence: null,
+        }),
+      ]);
       try {
         await fixture.restart();
       } catch (error) {

@@ -227,7 +227,9 @@ qualification; see `planning/results/AH1-AH2-atomic-provider-success-crash.resul
 and `planning/results/AH3-process-crash-qualification.result.md`.
 AH4 terminal Provider failure and repair exhaustion now also have two-sided
 process crash evidence; see `planning/results/AH4-terminal-failure-repair-crash.result.md`.
-AH5–AH14 remain open and MUST NOT be inferred from AH1–AH4/F16.
+AH5–AH6 sourced Session output / OutputAccepted now have two-sided process
+crash evidence; see `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.
+AH7–AH14 remain open and MUST NOT be inferred from AH1–AH6/F16.
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 23, browser 2).
 At `1812991`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,

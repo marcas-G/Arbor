@@ -11,6 +11,7 @@ import type {
 import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import { sessionFence } from "./agent-loop-policy.js";
+import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
 export interface ModelOutputJournalDependencies {
   readonly input: {
@@ -26,6 +27,7 @@ export interface ModelOutputJournalDependencies {
   readonly sessions: SessionRepositoryService;
   readonly failure: (cause: unknown) => ExecutionDriverError;
   readonly now: () => Effect.Effect<string>;
+  readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
 
 /**
@@ -151,6 +153,15 @@ export const recordAcceptedModelOutput = (
             }),
           )
           .pipe(Effect.mapError(failure));
+        if (dependencies.qualificationProbe !== undefined) {
+          yield* Effect.promise(
+            () =>
+              dependencies.qualificationProbe?.({
+                boundary: "AH56AfterOutputAcceptedCommit",
+                providerTurnId: preparedTurn.manifest.providerTurnId,
+              }) ?? Promise.resolve(),
+          );
+        }
       }
     } else {
       yield* tx

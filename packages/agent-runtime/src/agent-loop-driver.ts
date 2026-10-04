@@ -363,6 +363,9 @@ export const AgentLoopDriverLive = (
               sessions,
               failure,
               now,
+              ...(options.qualificationProbe === undefined
+                ? {}
+                : { qualificationProbe: options.qualificationProbe }),
             });
             const actionProgression = yield* executeAgentLoopActions({
               input,

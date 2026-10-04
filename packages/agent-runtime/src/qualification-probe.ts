@@ -9,7 +9,8 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH4BeforeSettlementProposal"
     | "AH4AfterSettlementProposal"
     | "AH4RepairBeforeSettlementProposal"
-    | "AH4RepairAfterSettlementProposal";
+    | "AH4RepairAfterSettlementProposal"
+    | "AH56AfterOutputAcceptedCommit";
   readonly providerTurnId: string;
 }
 

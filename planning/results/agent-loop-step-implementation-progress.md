@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN PROGRESS — core handoff path implemented; AH1–AH4 process-crash
+**IN PROGRESS — core handoff path implemented; AH1–AH6 process-crash
 qualification PASS; full AH1–AH14 closure pending.**
 
 ## Implemented
@@ -53,7 +53,14 @@ qualification PASS; full AH1–AH14 closure pending.**
 
 ## Remaining before closure
 
-- AH5–AH14 kill-before/kill-after matrix as individually named evidence.
+- AH7–AH14 kill-before/kill-after matrix as individually named evidence.
+- AH5–AH6 share the sourced Session append / OutputAccepted atomic commit;
+  its two-sided real-process evidence is in
+  `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.
+
+2026-10-04 AH5–AH6 增量验证：原子提交前后两侧单独 PASS；`pnpm check`
+PASS（架构 155、核心 1677 + 3 skipped、Web 216）。完整发布功能批次
+待含本变更的提交复测。
 - AH4 terminal Provider failure and repair exhaustion each have before/after
   real-process evidence in
   `planning/results/AH4-terminal-failure-repair-crash.result.md`; the tests
