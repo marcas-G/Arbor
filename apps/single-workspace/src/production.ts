@@ -25,10 +25,13 @@ import {
 } from "@arbor/application";
 import {
   conversationResponseEpisode,
+  type ExecutionId,
   type Principal,
   type ProjectId,
+  type WakeReason,
 } from "@arbor/domain";
 import {
+  preDispatchCheck,
   runExecution,
   startupRecovery,
   sweepRecovery,
@@ -588,6 +591,22 @@ export const ProductionDaemonServiceLive = (
           const clock = yield* Clock;
           const sql = yield* SqlClient;
           const responseBodyOf = makeResponseBodyOf(sql);
+          const runIfDispatchable = (
+            executionId: ExecutionId,
+            wakeReason: WakeReason,
+          ) =>
+            Effect.gen(function* () {
+              if (!(yield* preDispatchCheck(executionId))) return null;
+              return yield* runExecution(
+                executionId,
+                wakeReason,
+                config.principal,
+              ).pipe(
+                Effect.catchTag("LeaseFencingRejected", () =>
+                  Effect.succeed(null),
+                ),
+              );
+            });
           // Product shape: the daemon drives EVERY project with conversation
           // work (any project a human submits to must be answered — a
           // single-project filter would silently orphan the rest). Per
@@ -649,12 +668,14 @@ export const ProductionDaemonServiceLive = (
                 // Conversation streaming bridge: link execution → message for
                 // the presentation tap, publish terminal at settlement.
                 registerExecutionMessageLink(claimedExecutionId, job.messageId);
-                const settlement = yield* runExecution(
+                const settlement = yield* runIfDispatchable(
                   claimedExecutionId,
                   { _tag: "Recovery" },
-                  config.principal,
                 );
-                if (settlement._tag !== "ApprovalRequired") {
+                if (
+                  settlement !== null &&
+                  settlement._tag !== "ApprovalRequired"
+                ) {
                   publishConversationSettled(
                     claimedExecutionId,
                     settlement as { readonly _tag: string },
@@ -677,11 +698,9 @@ export const ProductionDaemonServiceLive = (
             if (execution.binding._tag !== "ExecutionBoundAgentBinding") {
               continue;
             }
-            yield* runExecution(
-              execution.executionId,
-              { _tag: "Recovery" },
-              config.principal,
-            );
+            yield* runIfDispatchable(execution.executionId, {
+              _tag: "Recovery",
+            });
           }
 
           const approvalNow = yield* clock.now();
@@ -705,11 +724,8 @@ export const ProductionDaemonServiceLive = (
               Option.isSome(execution) &&
               execution.value.state.status === "Active"
             ) {
-              yield* runExecution(
-                approval.executionId,
-                { _tag: "HumanIntervention" },
-                config.principal,
-              );
+              const approvalWake: WakeReason = { _tag: "HumanIntervention" };
+              yield* runIfDispatchable(approval.executionId, approvalWake);
             }
           }
         }),

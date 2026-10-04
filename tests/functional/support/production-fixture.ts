@@ -26,6 +26,7 @@ export type ScriptedProviderResponse =
 export interface ProductionFixture {
   readonly baseUrl: string;
   readonly directory: string;
+  readonly databaseFile: string;
   readonly workspaceDirectory: string;
   readonly providerCalls: ReadonlyArray<CapturedProviderCall>;
   readonly daemonErrors: ReadonlyArray<string>;
@@ -272,6 +273,11 @@ export const startProductionFixture = async (input: {
   readonly onResponseSent?: (call: CapturedProviderCall, index: number) => void;
   /** Host-side resource admission for the pending F21 browser contract. */
   readonly admitWorkspaceDirectory?: boolean;
+  /** Test-only entrypoint for the first daemon incarnation. Restarts use the
+   * ordinary production binary so recovery is never run with a fault hook. */
+  readonly firstDaemonEntry?: string;
+  readonly daemonEnvironment?: Readonly<Record<string, string>>;
+  readonly onDaemonStdout?: (line: string) => void;
 }): Promise<ProductionFixture> => {
   const directory = mkdtempSync(join(tmpdir(), "arbor-functional-"));
   const workspaceDirectory = join(directory, "workspace");
@@ -284,6 +290,7 @@ export const startProductionFixture = async (input: {
   const daemonErrors: string[] = [];
   let daemon: ChildProcess | undefined;
   let stopped = false;
+  let daemonStarts = 0;
 
   const startDaemon = async () => {
     const daemonEnv: NodeJS.ProcessEnv = {
@@ -298,6 +305,7 @@ export const startProductionFixture = async (input: {
       ARBOR_MODEL_API_KEY_VAR: "ARBOR_FUNCTIONAL_TEST_KEY",
       ARBOR_FUNCTIONAL_TEST_KEY: "test-only",
       ARBOR_CONFIG: join(directory, "no-provider-config.json"),
+      ...input.daemonEnvironment,
     };
     if (input.admitWorkspaceDirectory === true) {
       daemonEnv.ARBOR_PROJECT_ROOT = workspaceDirectory;
@@ -306,10 +314,26 @@ export const startProductionFixture = async (input: {
     }
     delete daemonEnv.FORCE_COLOR;
     delete daemonEnv.NO_COLOR;
-    daemon = spawn(process.execPath, [DAEMON_ENTRY], {
+    const entry =
+      daemonStarts === 0 && input.firstDaemonEntry !== undefined
+        ? input.firstDaemonEntry
+        : DAEMON_ENTRY;
+    daemonStarts += 1;
+    daemon = spawn(process.execPath, [entry], {
       cwd: directory,
       env: daemonEnv,
-      stdio: ["ignore", "ignore", "pipe"],
+      stdio: ["ignore", input.onDaemonStdout ? "pipe" : "ignore", "pipe"],
+    });
+    let stdoutBuffer = "";
+    daemon.stdout?.on("data", (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString("utf8");
+      let newline = stdoutBuffer.indexOf("\n");
+      while (newline >= 0) {
+        const line = stdoutBuffer.slice(0, newline).trim();
+        stdoutBuffer = stdoutBuffer.slice(newline + 1);
+        if (line.length > 0) input.onDaemonStdout?.(line);
+        newline = stdoutBuffer.indexOf("\n");
+      }
     });
     daemon.stderr?.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8").trim();
@@ -332,6 +356,7 @@ export const startProductionFixture = async (input: {
   return {
     baseUrl,
     directory,
+    databaseFile,
     workspaceDirectory,
     providerCalls: provider.calls,
     daemonErrors,

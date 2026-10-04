@@ -1,5 +1,6 @@
 import {
   AgentLoopDriverLive,
+  type AgentLoopQualificationProbe,
   ControlActionAuthorizer,
   ControlToolRegistry,
   ControlToolRegistryLive,
@@ -283,6 +284,9 @@ export interface SingleWorkspaceConfig {
   /** B-7: the content-addressed blob root used by the snapshot-retention ops
    * action (defaults to the local blob adapter root). */
   readonly blobRoot?: string;
+  /** Explicit test-only in-process fault probe; never loaded from env or a
+   * public request. Production startup leaves this absent. */
+  readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
 
 export type SingleWorkspaceServices =
@@ -625,6 +629,9 @@ export const buildSingleWorkspaceLayer = (
               ? { providerRef: deploymentBinding.adapter.adapterId }
               : {}),
             onProviderProgress: publishConversationProgress,
+            ...(config.qualificationProbe !== undefined
+              ? { qualificationProbe: config.qualificationProbe }
+              : {}),
           }),
           Layer.mergeAll(
             modelContext,
