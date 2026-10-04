@@ -2,8 +2,7 @@
 
 日期：2026-10-04
 
-状态：**同一原子提交的前/后两侧 PASS；`pnpm check` PASS，完整功能批次
-待含本变更的提交复测。**
+状态：**同一原子提交的前/后两侧 PASS；`pnpm check` 与完整功能批次 PASS。**
 
 `recordAcceptedModelOutput` 在一笔 fenced 事务中写入 sourced AssistantMessage
 （或 legacy ModelOutput）、关联 ToolCall，并把 AgentLoopStep 从
@@ -26,3 +25,5 @@
 侧别。此结果不覆盖 AH7–AH14。
 
 `pnpm check`：架构 155、核心 1677 + 3 skipped、Web 216，均 PASS。
+`b4c0fd6` 上 `pnpm test:functional`：公开进程 24/24、浏览器 2/2，包含
+从该提交的干净检出测试，零重试。

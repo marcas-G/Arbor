@@ -59,8 +59,8 @@ qualification PASS; full AH1–AH14 closure pending.**
   `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.
 
 2026-10-04 AH5–AH6 增量验证：原子提交前后两侧单独 PASS；`pnpm check`
-PASS（架构 155、核心 1677 + 3 skipped、Web 216）。完整发布功能批次
-待含本变更的提交复测。
+PASS（架构 155、核心 1677 + 3 skipped、Web 216）；`b4c0fd6` 上
+`pnpm test:functional` 公开进程 24/24、浏览器 2/2 PASS。
 - AH4 terminal Provider failure and repair exhaustion each have before/after
   real-process evidence in
   `planning/results/AH4-terminal-failure-repair-crash.result.md`; the tests
