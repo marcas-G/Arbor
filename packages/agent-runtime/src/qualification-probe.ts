@@ -3,7 +3,13 @@
  * probe through an explicit in-process config, then kill that process at the
  * named durable boundary. */
 export interface AgentLoopQualificationProbeEvent {
-  readonly boundary: "AH3BeforeStepAvailable" | "AH3AfterStepAvailable";
+  readonly boundary:
+    | "AH3BeforeStepAvailable"
+    | "AH3AfterStepAvailable"
+    | "AH4BeforeSettlementProposal"
+    | "AH4AfterSettlementProposal"
+    | "AH4RepairBeforeSettlementProposal"
+    | "AH4RepairAfterSettlementProposal";
   readonly providerTurnId: string;
 }
 
