@@ -26,6 +26,11 @@ Dependency 变为 Satisfied，消费者在再次调用模型时收到相同 Deli
 
 完整回归：`pnpm check` 通过（架构 155、核心 1677 + 3 skipped、Web 216）；
 `pnpm test:functional` 通过（公开进程 15、Playwright 2，均零重试）。
+提交 `f8d731e` 后，F20 再从该提交的干净检出单独通过。隔离执行
+`pnpm exec playwright test --config playwright.pending-functional.config.ts`
+得到预期的 2 个失败：F21 的文件工具返回“workspace filesystem mount is missing or
+ambiguous”；F22 的原 Work 链接显示“未找到该工作”，而非“已完成”。两项均未计入
+正式通过数，等待各自治理决策。
 
 ## F05 / F22 的反证
 
