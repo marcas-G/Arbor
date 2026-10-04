@@ -54,6 +54,7 @@ CLOSED   — disposed by a later phase / governance ruling (see file)
 | MAC-DG-01 | System complexity exceeds the closed user-value path | Problem v1.3 / Scenarios v1.3 / System Design v1.9 / DID v1.31 / MAC | Vocabulary, golden path, cognition, actions, fulfillment, legacy isolation | RESOLVED |
 | FT-DG-01 | UI-created Project has no trusted resource admission | System Design / DID / P12 / P13 | F21 | OPEN |
 | FT-DG-02 | Completed Work cannot be inspected by its original link | System Design / DID / P10 / P13 | F05 terminal oracle / F22 | OPEN |
+| FT-DG-03 | External Command payloads can persist malformed typed identities | System Design / DID / P12 transport / Application | F23 and all public command shells | OPEN |
 
 All six gaps were resolved by the System Design v1.3 / DID v1.4 governance
 patch. Resolution authority is recorded in each gap file.

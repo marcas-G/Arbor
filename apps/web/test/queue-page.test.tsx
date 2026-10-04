@@ -443,7 +443,7 @@ describe("W-08 Governance Queue（待处理）", () => {
                 criteriaResults: [],
                 evidenceRefs: [],
                 acceptance: {
-                  acceptanceId: "acp_existing",
+                  acceptanceId: "acc_existing",
                   actor: "user:test",
                   acceptedAt: "2026-09-23T00:00:00.000Z",
                 },

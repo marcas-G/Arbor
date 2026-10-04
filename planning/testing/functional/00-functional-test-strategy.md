@@ -131,3 +131,6 @@ pnpm exec playwright install chromium
   cannot perform evidence-producing file tools.
 - F22 is blocked by a separate read-model gap: Completed Work disappears from
   its original Work page, so the user cannot inspect the terminal lifecycle.
+- F23 is blocked by an external-command runtime validation gap: malformed
+  branded IDs can be committed despite the TypeScript Domain schema. Its
+  public-process negative case is isolated under the pending Vitest config.
