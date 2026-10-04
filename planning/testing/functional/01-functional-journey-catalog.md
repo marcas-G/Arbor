@@ -31,6 +31,7 @@
 |---|---|---|
 | F21 | UI-created Project receives an executable boundary | independent evidence-based PASS and browser Acceptance without hidden API setup; unregistered raw client paths fail closed; terminal Work visibility belongs to F22 |
 | F22 | completed Work remains inspectable | objective, terminal lifecycle and acceptance remain visible on the same Work page after completion |
+| F23 | external commands reject malformed typed payloads | an invalid `MessageId`/`AcceptanceId` is rejected before persistence through the public process; valid commands and exact receipt replay remain intact |
 
 ## Definition of done for each journey
 

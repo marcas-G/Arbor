@@ -197,6 +197,11 @@ public Work-detail proposal; see
 F19 now also proves the reverse order (Dependency wait before child Delivery),
 which exposed and fixed numeric `wait` revision decoding; full `pnpm check`
 and `pnpm test:functional` pass. F21/F22 remain open governance gaps.
+Later F22 test strengthening exposed a Web AcceptanceId prefix mismatch
+(`acp_` versus frozen `acc_`), fixed with a Web regression test. A separate
+public-process F23 test proves malformed typed `MessageId` can still be
+Committed through `/commands`; `FT-DG-03` governs the cross-command runtime
+codec and receipt boundary. F23 remains isolated pending governance.
 
 DID v1.20 governance adoption (`AHT-1`…`AHT-8`) freezes the durable Provider
 result handoff: persisted `AgentLoopStep`, replayable complete Provider success,

@@ -334,7 +334,7 @@ describe("SteerWorkForm", () => {
 });
 
 describe("AcceptWorkOutcomeForm", () => {
-  it("submits the frozen acceptance payload with a preallocated acp_ id", async () => {
+  it("submits the frozen acceptance payload with a preallocated acc_ id", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <AcceptWorkOutcomeForm
@@ -354,7 +354,7 @@ describe("AcceptWorkOutcomeForm", () => {
     expect(payload.workId).toBe("wrk_5");
     expect(payload.targetWorkRevision).toBe(3);
     expect(payload.verificationId).toBe("ver_5");
-    expect(String(payload.acceptanceId)).toMatch(/^acp_[0-9a-f-]{36}$/);
+    expect(String(payload.acceptanceId)).toMatch(/^acc_[0-9a-f-]{36}$/);
   });
 
   it("keeps a server-supplied target Work revision zero unchanged in the acceptance payload", async () => {

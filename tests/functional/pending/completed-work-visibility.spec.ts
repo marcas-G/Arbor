@@ -58,11 +58,29 @@ test("F22 a completed Work remains visible from its original page", async ({
     timeout: 30_000,
   });
 
+  const workId = /\/work\/(wrk_[^/]+)$/u.exec(workUrl)?.[1];
+  if (workId === undefined) throw new Error("original Work URL has no WorkId");
+  const verification = await makePublicClient(fixture.baseUrl).view<{
+    verificationId?: string;
+    verdict?: string;
+    acceptance?: { acceptanceId: string };
+  }>("verification", { workId });
+  expect(verification.verdict).toBe("Pass");
+  const acceptanceId = verification.acceptance?.acceptanceId;
+  const verificationId = verification.verificationId;
+  if (acceptanceId === undefined || verificationId === undefined) {
+    throw new Error("public Verification has no exact acceptance binding");
+  }
+  expect(acceptanceId).toMatch(/^acc_/u);
+  await fixture.restart();
+
   await page.goto(workUrl);
   await expect(page.getByText("已完成", { exact: true })).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByText(`Complete ${marker}.`)).toBeVisible();
   await expect(page.getByText("acceptance", { exact: true })).toBeVisible();
+  await expect(page.getByText(acceptanceId)).toBeVisible();
+  await expect(page.getByText(verificationId)).toBeVisible();
   expect(fixture.daemonErrors).toEqual([]);
 });
