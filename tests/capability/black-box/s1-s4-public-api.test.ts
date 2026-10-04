@@ -479,9 +479,18 @@ describe("S1-S4 public-process black-box", () => {
             entry.body?.includes(memoryCode) === true,
         ),
     );
-    expect(
-      transcript.entries.some((entry) => entry.body?.includes(memoryCode)),
-    ).toBe(true);
+    expect(transcript.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "HumanConversationTurn",
+          body: `请记住 ${memoryCode} 并确认。`,
+        }),
+        expect.objectContaining({
+          kind: "AssistantConversationTurn",
+          body: expect.stringContaining(memoryCode),
+        }),
+      ]),
+    );
 
     await command(projectId, "SubmitHumanMessage", {
       messageId: id("msg"),
@@ -613,7 +622,7 @@ describe("S1-S4 public-process black-box", () => {
     expect(accepted.acceptance?.acceptanceId).toMatch(/^acc_/u);
   }, 60_000);
 
-  it("S4 survives a hard process restart without replaying completed work", async () => {
+  it("S4 preserves accepted evidence after hard restart without provider replay", async () => {
     const callsBeforeRestart = provider.calls.length;
     daemon.kill("SIGKILL");
     await new Promise<void>((resolveExit) =>
