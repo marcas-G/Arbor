@@ -60,7 +60,8 @@ qualification PASS; full AH1–AH14 closure pending.**
   closed a dangling ProviderTurn/Step proposal atomicity defect.
 
 2026-10-04 AH4 增量验证：AH1–AH4 合并进程崩溃用例 8/8 PASS；
-`pnpm check` PASS（架构 155、核心 1677 + 3 skipped、Web 216）。
+`pnpm check` PASS（架构 155、核心 1677 + 3 skipped、Web 216）；`6dd3dda`
+上 `pnpm test:functional` 公开进程 23/23、浏览器 2/2 PASS。
 - AH1–AH2 share one atomic Provider Success commit and have real-process
   crash/restart evidence on both sides in
   `planning/results/AH1-AH2-atomic-provider-success-crash.result.md`.

@@ -228,6 +228,8 @@ and `planning/results/AH3-process-crash-qualification.result.md`.
 AH4 terminal Provider failure and repair exhaustion now also have two-sided
 process crash evidence; see `planning/results/AH4-terminal-failure-repair-crash.result.md`.
 AH5–AH14 remain open and MUST NOT be inferred from AH1–AH4/F16.
+At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
+Web 216) and `pnpm test:functional` passes (public process 23, browser 2).
 At `1812991`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 19, browser 2).
 
