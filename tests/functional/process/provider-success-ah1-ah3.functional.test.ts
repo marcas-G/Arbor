@@ -1,6 +1,10 @@
 import { resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
+import { durableSnapshot } from "../support/ah-durable-snapshot.js";
+import {
+  type AhProbeHit,
+  recordAhProbeLine,
+} from "../support/ah-probe-line.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -15,48 +19,6 @@ import {
 const fixtures: ProductionFixture[] = [];
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
 
-const durableSnapshot = (databaseFile: string) => {
-  const db = new DatabaseSync(databaseFile, { readOnly: true });
-  try {
-    return {
-      executions: db
-        .prepare(
-          "SELECT execution_id, stop_requested_at, settled_at FROM executions",
-        )
-        .all(),
-      leases: db
-        .prepare(
-          "SELECT execution_id, generation, expires_at FROM execution_leases",
-        )
-        .all(),
-      steps: db
-        .prepare("SELECT execution_id, state, revision FROM agent_loop_steps")
-        .all(),
-      providerTurns: db
-        .prepare(
-          "SELECT provider_turn_id, settled_at, finish_reason FROM provider_turns",
-        )
-        .all(),
-      attempts: db
-        .prepare(
-          "SELECT provider_turn_id, attempt_no, outcome, settled_at, success_evidence_version FROM provider_attempts",
-        )
-        .all(),
-      outputs: db
-        .prepare(
-          "SELECT source_ref FROM session_entries WHERE entry_kind = 'ModelOutput'",
-        )
-        .all(),
-      events: db
-        .prepare("SELECT event_type, aggregate_ref FROM domain_events")
-        .all(),
-      timers: db.prepare("SELECT * FROM scheduler_timers").all(),
-    };
-  } finally {
-    db.close();
-  }
-};
-
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
@@ -65,7 +27,7 @@ describe("AH1–AH3 Provider success handoff process crash", () => {
   it("AH1/2 before atomic Success commit leaves no half-settled Turn or accepted output", async () => {
     const marker = `AH12-PRE-${crypto.randomUUID().slice(0, 8)}`;
     const response = `RECOVERED ${marker}`;
-    const hits: Array<{ boundary: string; providerTurnId: string }> = [];
+    const hits: AhProbeHit[] = [];
     const fixture = await startProductionFixture({
       reply: (call) => ({
         _tag: "Text",
@@ -77,29 +39,7 @@ describe("AH1–AH3 Provider success handoff process crash", () => {
       daemonEnvironment: {
         ARBOR_AH_BOUNDARY: "AH12BeforeSuccessCommit",
       },
-      onDaemonStdout: (line) => {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(line);
-        } catch {
-          return;
-        }
-        if (
-          typeof parsed === "object" &&
-          parsed !== null &&
-          "tag" in parsed &&
-          parsed.tag === "AH_PROBE" &&
-          "boundary" in parsed &&
-          parsed.boundary === "AH12BeforeSuccessCommit" &&
-          "providerTurnId" in parsed &&
-          typeof parsed.providerTurnId === "string"
-        ) {
-          hits.push({
-            boundary: parsed.boundary,
-            providerTurnId: parsed.providerTurnId,
-          });
-        }
-      },
+      onDaemonStdout: (line) => recordAhProbeLine(hits, line),
     });
     fixtures.push(fixture);
     const client = makePublicClient(fixture.baseUrl);
@@ -171,7 +111,7 @@ describe("AH1–AH3 Provider success handoff process crash", () => {
     it(`recovers after process kill at ${boundary} without another Provider request`, async () => {
       const marker = `AH3-${crypto.randomUUID().slice(0, 8)}`;
       const response = `RECOVERED ${marker}`;
-      const hits: Array<{ boundary: string; providerTurnId: string }> = [];
+      const hits: AhProbeHit[] = [];
       const fixture = await startProductionFixture({
         reply: (call) => ({
           _tag: "Text",
@@ -181,29 +121,7 @@ describe("AH1–AH3 Provider success handoff process crash", () => {
         }),
         firstDaemonEntry: crashChild,
         daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
-        onDaemonStdout: (line) => {
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(line);
-          } catch {
-            return;
-          }
-          if (
-            typeof parsed === "object" &&
-            parsed !== null &&
-            "tag" in parsed &&
-            parsed.tag === "AH_PROBE" &&
-            "boundary" in parsed &&
-            typeof parsed.boundary === "string" &&
-            "providerTurnId" in parsed &&
-            typeof parsed.providerTurnId === "string"
-          ) {
-            hits.push({
-              boundary: parsed.boundary,
-              providerTurnId: parsed.providerTurnId,
-            });
-          }
-        },
+        onDaemonStdout: (line) => recordAhProbeLine(hits, line),
       });
       fixtures.push(fixture);
       const client = makePublicClient(fixture.baseUrl);

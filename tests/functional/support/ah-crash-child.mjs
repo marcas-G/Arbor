@@ -8,6 +8,10 @@ const targetBoundary = process.env.ARBOR_AH_BOUNDARY;
 if (
   targetBoundary !== "AH3BeforeStepAvailable" &&
   targetBoundary !== "AH3AfterStepAvailable" &&
+  targetBoundary !== "AH4BeforeSettlementProposal" &&
+  targetBoundary !== "AH4AfterSettlementProposal" &&
+  targetBoundary !== "AH4RepairBeforeSettlementProposal" &&
+  targetBoundary !== "AH4RepairAfterSettlementProposal" &&
   targetBoundary !== "AH12BeforeSuccessCommit" &&
   targetBoundary !== "AH12AfterSuccessCommit"
 ) {

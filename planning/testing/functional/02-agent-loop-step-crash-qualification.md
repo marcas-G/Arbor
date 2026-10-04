@@ -16,7 +16,7 @@ adoption、持久 Provider failure 后无重复调用，以及 action reconcilia
 |---|---|---|---|
 | 1–2 | Provider terminal events → Attempt Success → Turn settled | 同一原子提交前/后真实进程 kill/restart 已 PASS；`planning/results/AH1-AH2-atomic-provider-success-crash.result.md` | 无半成功态；有完整证据则不重复请求，无完整证据则原 Turn 失败关闭 |
 | 3 | Turn settled → Step ProviderResultAvailable | 真实进程两侧 kill/restart 已 PASS；`planning/results/AH3-process-crash-qualification.result.md` | 两侧已证明同一 Step/ProviderTurn、单回复、单请求 |
-| 4 | terminal failure/repair exhausted → SettlementProposed | P3 driver failed Turn | 两侧崩溃不重新推理或伪造答复 |
+| 4 | terminal failure/repair exhausted → SettlementProposed | 401 终态失败与修复耗尽各两侧真实进程 kill/restart 已 PASS；`planning/results/AH4-terminal-failure-repair-crash.result.md` | ProviderTurn/Step 同事务闭合；不重复推理或伪造答复 |
 | 5–6 | pinned decode → sourced ModelOutput → OutputAccepted | P3 driver append/fence 与回滚 | 两侧崩溃保持唯一 Session source 与 pinned decode |
 | 7 | action intent/effect/settlement/Observation/cursor 各过渡 | P3 driver action ledger | 每个子提交边界两侧，外部 effect 与 Observation 均不重复 |
 | 8 | action A 已提交，B 前 ControlBasis 变旧 | P3 driver stale 分支 | 崩溃后 B 不以旧授权执行 |

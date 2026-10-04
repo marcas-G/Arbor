@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN PROGRESS — core handoff path implemented; AH1–AH3 process-crash
+**IN PROGRESS — core handoff path implemented; AH1–AH4 process-crash
 qualification PASS; full AH1–AH14 closure pending.**
 
 ## Implemented
@@ -53,7 +53,14 @@ qualification PASS; full AH1–AH14 closure pending.**
 
 ## Remaining before closure
 
-- AH4–AH14 kill-before/kill-after matrix as individually named evidence.
+- AH5–AH14 kill-before/kill-after matrix as individually named evidence.
+- AH4 terminal Provider failure and repair exhaustion each have before/after
+  real-process evidence in
+  `planning/results/AH4-terminal-failure-repair-crash.result.md`; the tests
+  closed a dangling ProviderTurn/Step proposal atomicity defect.
+
+2026-10-04 AH4 增量验证：AH1–AH4 合并进程崩溃用例 8/8 PASS；
+`pnpm check` PASS（架构 155、核心 1677 + 3 skipped、Web 216）。
 - AH1–AH2 share one atomic Provider Success commit and have real-process
   crash/restart evidence on both sides in
   `planning/results/AH1-AH2-atomic-provider-success-crash.result.md`.

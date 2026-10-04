@@ -238,25 +238,65 @@ export const runModelDecision = (
             loopStep.state === "Prepared"
           ) {
             const preparedStep = loopStep;
+            if (
+              settlement._tag === "Failed" &&
+              options.qualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH4BeforeSettlementProposal",
+                    providerTurnId,
+                  }) ?? Promise.resolve(),
+              );
+            }
             loopStep = yield* tx
               .transact(
-                loopSteps.transition(
-                  {
-                    identity: preparedStep.identity,
-                    expectedRevision: preparedStep.revision,
-                    expectedState: "Prepared",
-                    next: {
-                      ...preparedStep,
-                      state: "SettlementProposed",
-                      settlement,
-                      revision: preparedStep.revision + 1,
-                      updatedAt: yield* now(),
+                Effect.gen(function* () {
+                  if (
+                    settlement._tag === "Failed" &&
+                    settlement.failure.reason.startsWith("ProviderFailure:") &&
+                    providerTurns !== undefined
+                  ) {
+                    const dangling =
+                      yield* providerTurns.findUnsettledByTurn(providerTurnId);
+                    if (dangling !== null) {
+                      yield* providerTurns.failTurn(
+                        providerTurnId,
+                        yield* now(),
+                      );
+                    }
+                  }
+                  return yield* loopSteps.transition(
+                    {
+                      identity: preparedStep.identity,
+                      expectedRevision: preparedStep.revision,
+                      expectedState: "Prepared",
+                      next: {
+                        ...preparedStep,
+                        state: "SettlementProposed",
+                        settlement,
+                        revision: preparedStep.revision + 1,
+                        updatedAt: yield* now(),
+                      },
                     },
-                  },
-                  loopStepFence,
-                ),
+                    loopStepFence,
+                  );
+                }),
               )
               .pipe(Effect.mapError(failure));
+            if (
+              settlement._tag === "Failed" &&
+              options.qualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH4AfterSettlementProposal",
+                    providerTurnId,
+                  }) ?? Promise.resolve(),
+              );
+            }
           }
           return { _tag: "Settle", settlement };
         });
@@ -1230,6 +1270,18 @@ export const runModelDecision = (
               ),
             )
             .pipe(Effect.mapError(failure));
+          if (
+            repair.settlement._tag === "Failed" &&
+            options.qualificationProbe !== undefined
+          ) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "AH4RepairBeforeSettlementProposal",
+                  providerTurnId,
+                }) ?? Promise.resolve(),
+            );
+          }
           yield* tx
             .transact(
               loopSteps.transition(
@@ -1249,6 +1301,18 @@ export const runModelDecision = (
               ),
             )
             .pipe(Effect.mapError(failure));
+          if (
+            repair.settlement._tag === "Failed" &&
+            options.qualificationProbe !== undefined
+          ) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "AH4RepairAfterSettlementProposal",
+                  providerTurnId,
+                }) ?? Promise.resolve(),
+            );
+          }
         }
         return { _tag: "Settle", settlement: repair.settlement };
       }
