@@ -27,6 +27,14 @@ rootWorkspace.resourceBoundary.addresses = []
 The runtime correctly fails closed. The defect is that the product offers no
 trusted way to bind a local project directory during browser creation.
 
+A second public-process counterexample shows the other side of the same trust
+boundary: even when the host registers one directory, an authenticated client
+can submit a raw `CreateProject` payload naming a different, unregistered
+directory and receive `Committed`. The pending negative test is
+`tests/functional/pending/resource-admission.functional.test.ts`. Thus merely
+adding a directory field to the browser form would hide the missing capability
+while preserving a server-file authority bypass.
+
 ## Why the test must not patch around it
 
 - A browser-supplied arbitrary server filesystem path is an authority hazard.
@@ -45,6 +53,11 @@ Choose and govern one explicit product path:
 
 The server—not free browser text—must resolve the ref to canonical
 ResourceAddress/ResourceBoundary facts.
+
+The v2 proposal at
+`planning/proposals/ui-project-resource-admission-decision-draft.md` chooses
+the host-registered profile path and defines the command receipt/replay and
+legacy raw-path boundary. It remains unaccepted.
 
 ## Evidence
 

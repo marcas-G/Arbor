@@ -29,7 +29,7 @@
 
 | ID | User journey | Required oracle |
 |---|---|---|
-| F21 | UI-created Project receives an executable boundary | evidence-based Work completes without hidden API setup |
+| F21 | UI-created Project receives an executable boundary | independent evidence-based PASS and browser Acceptance without hidden API setup; unregistered raw client paths fail closed; terminal Work visibility belongs to F22 |
 | F22 | completed Work remains inspectable | objective, terminal lifecycle and acceptance remain visible on the same Work page after completion |
 
 ## Definition of done for each journey

@@ -63,5 +63,6 @@ test("F22 a completed Work remains visible from its original page", async ({
     timeout: 15_000,
   });
   await expect(page.getByText(`Complete ${marker}.`)).toBeVisible();
+  await expect(page.getByText("acceptance", { exact: true })).toBeVisible();
   expect(fixture.daemonErrors).toEqual([]);
 });

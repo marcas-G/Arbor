@@ -19,7 +19,7 @@ test.afterAll(async () => {
   await fixture.stop();
 });
 
-test("F21 browser-created project completes an evidence-based Work", async ({
+test("F21 browser-created project reaches evidence-based PASS and acceptance", async ({
   page,
 }) => {
   await page.goto(fixture.baseUrl);
