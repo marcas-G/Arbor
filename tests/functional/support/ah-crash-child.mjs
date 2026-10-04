@@ -7,10 +7,20 @@ import {
 const targetBoundary = process.env.ARBOR_AH_BOUNDARY;
 if (
   targetBoundary !== "AH3BeforeStepAvailable" &&
-  targetBoundary !== "AH3AfterStepAvailable"
+  targetBoundary !== "AH3AfterStepAvailable" &&
+  targetBoundary !== "AH12BeforeSuccessCommit" &&
+  targetBoundary !== "AH12AfterSuccessCommit"
 ) {
   throw new Error("AH test child needs an exact boundary");
 }
+
+const pauseAtBoundary = async ({ boundary, providerTurnId }) => {
+  if (boundary !== targetBoundary) return;
+  process.stdout.write(
+    `${JSON.stringify({ tag: "AH_PROBE", boundary, providerTurnId })}\n`,
+  );
+  await new Promise(() => {});
+};
 
 const config = {
   tickIntervalMs: 25,
@@ -19,13 +29,8 @@ const config = {
     port: Number(process.env.ARBOR_HTTP_PORT),
     host: "127.0.0.1",
   },
-  qualificationProbe: async ({ boundary, providerTurnId }) => {
-    if (boundary !== targetBoundary) return;
-    process.stdout.write(
-      `${JSON.stringify({ tag: "AH_PROBE", boundary, providerTurnId })}\n`,
-    );
-    await new Promise(() => {});
-  },
+  qualificationProbe: pauseAtBoundary,
+  providerQualificationProbe: pauseAtBoundary,
 };
 
 await Effect.runPromise(

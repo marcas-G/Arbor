@@ -33,7 +33,19 @@ const durableSnapshot = (databaseFile: string) => {
         .prepare("SELECT execution_id, state, revision FROM agent_loop_steps")
         .all(),
       providerTurns: db
-        .prepare("SELECT provider_turn_id, settled_at FROM provider_turns")
+        .prepare(
+          "SELECT provider_turn_id, settled_at, finish_reason FROM provider_turns",
+        )
+        .all(),
+      attempts: db
+        .prepare(
+          "SELECT provider_turn_id, attempt_no, outcome, settled_at, success_evidence_version FROM provider_attempts",
+        )
+        .all(),
+      outputs: db
+        .prepare(
+          "SELECT source_ref FROM session_entries WHERE entry_kind = 'ModelOutput'",
+        )
         .all(),
       events: db
         .prepare("SELECT event_type, aggregate_ref FROM domain_events")
@@ -49,8 +61,110 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
 
-describe("AH3 ProviderTurn settlement to AgentLoopStep handoff", () => {
+describe("AH1–AH3 Provider success handoff process crash", () => {
+  it("AH1/2 before atomic Success commit leaves no half-settled Turn or accepted output", async () => {
+    const marker = `AH12-PRE-${crypto.randomUUID().slice(0, 8)}`;
+    const response = `RECOVERED ${marker}`;
+    const hits: Array<{ boundary: string; providerTurnId: string }> = [];
+    const fixture = await startProductionFixture({
+      reply: (call) => ({
+        _tag: "Text",
+        text: JSON.stringify(call.messages).includes(marker)
+          ? response
+          : "unrelated",
+      }),
+      firstDaemonEntry: crashChild,
+      daemonEnvironment: {
+        ARBOR_AH_BOUNDARY: "AH12BeforeSuccessCommit",
+      },
+      onDaemonStdout: (line) => {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          return;
+        }
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          "tag" in parsed &&
+          parsed.tag === "AH_PROBE" &&
+          "boundary" in parsed &&
+          parsed.boundary === "AH12BeforeSuccessCommit" &&
+          "providerTurnId" in parsed &&
+          typeof parsed.providerTurnId === "string"
+        ) {
+          hits.push({
+            boundary: parsed.boundary,
+            providerTurnId: parsed.providerTurnId,
+          });
+        }
+      },
+    });
+    fixtures.push(fixture);
+    const client = makePublicClient(fixture.baseUrl);
+    const project = await createFunctionalProject(
+      client,
+      fixture.workspaceDirectory,
+      "AH1/2 pre-commit",
+    );
+    await submitHumanMessage(client, project, `请回复 ${marker}`);
+    await waitForPublic(
+      async () => hits.length,
+      (count) => count === 1,
+    );
+    await fixture.crash();
+    const crashed = durableSnapshot(fixture.databaseFile);
+    expect(crashed.providerTurns).toEqual([
+      expect.objectContaining({
+        provider_turn_id: hits[0]?.providerTurnId,
+        settled_at: null,
+      }),
+    ]);
+    expect(crashed.attempts).toEqual([
+      expect.objectContaining({
+        outcome: "InProgress",
+        settled_at: null,
+        success_evidence_version: null,
+      }),
+    ]);
+    expect(crashed.steps).toEqual([
+      expect.objectContaining({ state: "Prepared" }),
+    ]);
+    expect(crashed.outputs).toEqual([]);
+
+    await fixture.restart();
+    const recovered = await waitForPublic(
+      async () => durableSnapshot(fixture.databaseFile),
+      (value) =>
+        value.providerTurns.length > 0 &&
+        value.providerTurns[0]?.settled_at !== null,
+      45_000,
+    );
+    expect(
+      recovered.attempts.some(
+        (attempt) => (attempt as { outcome: string }).outcome === "Success",
+      ),
+    ).toBe(false);
+    expect(recovered.providerTurns).toEqual([
+      expect.objectContaining({ finish_reason: "Failed" }),
+    ]);
+    expect(recovered.attempts).toEqual([
+      expect.objectContaining({ outcome: "TerminalFailure" }),
+    ]);
+    expect(
+      recovered.outputs.some(
+        (output) =>
+          (output as { source_ref: string }).source_ref ===
+          hits[0]?.providerTurnId,
+      ),
+    ).toBe(false);
+    expect(fixture.providerCalls.length).toBeLessThanOrEqual(2);
+    expect(fixture.daemonErrors).toEqual([]);
+  }, 90_000);
+
   for (const boundary of [
+    "AH12AfterSuccessCommit",
     "AH3BeforeStepAvailable",
     "AH3AfterStepAvailable",
   ] as const) {
@@ -135,9 +249,9 @@ describe("AH3 ProviderTurn settlement to AgentLoopStep handoff", () => {
       expect(crashed.steps).toEqual([
         expect.objectContaining({
           state:
-            boundary === "AH3BeforeStepAvailable"
-              ? "Prepared"
-              : "ProviderResultAvailable",
+            boundary === "AH3AfterStepAvailable"
+              ? "ProviderResultAvailable"
+              : "Prepared",
         }),
       ]);
       try {

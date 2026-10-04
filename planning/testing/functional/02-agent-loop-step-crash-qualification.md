@@ -14,7 +14,7 @@ adoption、持久 Provider failure 后无重复调用，以及 action reconcilia
 
 | AH | 提交边界 | 当前最近证据 | 尚需证明 |
 |---|---|---|---|
-| 1–2 | Provider terminal events → Attempt Success → Turn settled | P3 driver 成功结果复用 | 实际提交前/后崩溃；Attempt/Turn 原子性与无重复请求 |
+| 1–2 | Provider terminal events → Attempt Success → Turn settled | 同一原子提交前/后真实进程 kill/restart 已 PASS；`planning/results/AH1-AH2-atomic-provider-success-crash.result.md` | 无半成功态；有完整证据则不重复请求，无完整证据则原 Turn 失败关闭 |
 | 3 | Turn settled → Step ProviderResultAvailable | 真实进程两侧 kill/restart 已 PASS；`planning/results/AH3-process-crash-qualification.result.md` | 两侧已证明同一 Step/ProviderTurn、单回复、单请求 |
 | 4 | terminal failure/repair exhausted → SettlementProposed | P3 driver failed Turn | 两侧崩溃不重新推理或伪造答复 |
 | 5–6 | pinned decode → sourced ModelOutput → OutputAccepted | P3 driver append/fence 与回滚 | 两侧崩溃保持唯一 Session source 与 pinned decode |
@@ -38,8 +38,8 @@ adoption、持久 Provider failure 后无重复调用，以及 action reconcilia
 每个 case 记录：命中的边界和侧别、旧/新 lease generation、Provider 请求次数、
 Turn/Step/Session/action 唯一身份、Command Receipt、Tool effect 数、最终公开回复或
 Attention。DB/ledger 检查仅属于 AH 资格测试；F01–F23 仍以公开 API/浏览器作
-成功判定。AH1/2 若代码把 Attempt Success 与 Turn settled 放在同一事务，应测试
-该原子提交的前/后态，而不是发明不存在的中间提交点。
+成功判定。AH1/2 已确认 Attempt Success 与 Turn settled 在同一事务，并已测试
+该原子提交的前/后态；没有发明不存在的中间提交点。
 
 ## 退出门
 
