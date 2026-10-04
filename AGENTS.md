@@ -221,6 +221,10 @@ durable recoverable iteration; `ProviderTurn` = one logical model decision.
 Authorized scope is migration 0017, stores/ports, runtime/recovery integration
 and AH1–AH14. The preserved dogfood database remains read-only until the
 equivalent fixture and migration verification pass.
+AH3 now has a real-process two-sided ProviderTurn-settled → AgentLoopStep
+ProviderResultAvailable crash qualification, with one Provider request and
+one recovered reply; see `planning/results/AH3-process-crash-qualification.result.md`.
+AH1–AH2 and AH4–AH14 remain open and MUST NOT be inferred from AH3/F16.
 
 ## Planning
 

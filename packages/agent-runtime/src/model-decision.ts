@@ -67,6 +67,7 @@ import {
   GENERIC_INSTRUCTION_ASSETS,
   instructionAssetFragment,
 } from "./prompt-assets.js";
+import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { decideRepair } from "./repair.js";
 import { makeAgentStepContext } from "./step-context.js";
 import { assembleWorkContext } from "./work-context.js";
@@ -78,6 +79,7 @@ export interface ModelDecisionOptions {
   readonly onProviderProgress?:
     | ((executionId: string, event: ProviderRuntimeProgress) => void)
     | undefined;
+  readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
 
 export interface ModelDecisionDependencies {
@@ -1119,6 +1121,18 @@ export const runModelDecision = (
             : yield* tx
                 .transact(providerTurns.findSettledResult(providerTurnId))
                 .pipe(Effect.mapError(failure));
+        if (
+          settled?._tag === "SettledSuccess" &&
+          options.qualificationProbe !== undefined
+        ) {
+          yield* Effect.promise(
+            () =>
+              options.qualificationProbe?.({
+                boundary: "AH3BeforeStepAvailable",
+                providerTurnId,
+              }) ?? Promise.resolve(),
+          );
+        }
         loopStep = yield* tx
           .transact(
             loopSteps.transition(
@@ -1141,6 +1155,15 @@ export const runModelDecision = (
             ),
           )
           .pipe(Effect.mapError(failure));
+        if (options.qualificationProbe !== undefined) {
+          yield* Effect.promise(
+            () =>
+              options.qualificationProbe?.({
+                boundary: "AH3AfterStepAvailable",
+                providerTurnId,
+              }) ?? Promise.resolve(),
+          );
+        }
       }
       // D5: end-bracket the provider call (call completion). D1
       // (B-4): report the real ProviderAttempt ordinal observed by

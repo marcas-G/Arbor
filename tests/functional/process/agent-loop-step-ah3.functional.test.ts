@@ -1,0 +1,194 @@
+import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  type ProductionFixture,
+  startProductionFixture,
+} from "../support/production-fixture.js";
+import {
+  createFunctionalProject,
+  makePublicClient,
+  submitHumanMessage,
+  waitForPublic,
+} from "../support/public-client.js";
+
+const fixtures: ProductionFixture[] = [];
+const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
+
+const durableSnapshot = (databaseFile: string) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return {
+      executions: db
+        .prepare(
+          "SELECT execution_id, stop_requested_at, settled_at FROM executions",
+        )
+        .all(),
+      leases: db
+        .prepare(
+          "SELECT execution_id, generation, expires_at FROM execution_leases",
+        )
+        .all(),
+      steps: db
+        .prepare("SELECT execution_id, state, revision FROM agent_loop_steps")
+        .all(),
+      providerTurns: db
+        .prepare("SELECT provider_turn_id, settled_at FROM provider_turns")
+        .all(),
+      events: db
+        .prepare("SELECT event_type, aggregate_ref FROM domain_events")
+        .all(),
+      timers: db.prepare("SELECT * FROM scheduler_timers").all(),
+    };
+  } finally {
+    db.close();
+  }
+};
+
+afterEach(async () => {
+  for (const fixture of fixtures.splice(0)) await fixture.stop();
+});
+
+describe("AH3 ProviderTurn settlement to AgentLoopStep handoff", () => {
+  for (const boundary of [
+    "AH3BeforeStepAvailable",
+    "AH3AfterStepAvailable",
+  ] as const) {
+    it(`recovers after process kill at ${boundary} without another Provider request`, async () => {
+      const marker = `AH3-${crypto.randomUUID().slice(0, 8)}`;
+      const response = `RECOVERED ${marker}`;
+      const hits: Array<{ boundary: string; providerTurnId: string }> = [];
+      const fixture = await startProductionFixture({
+        reply: (call) => ({
+          _tag: "Text",
+          text: JSON.stringify(call.messages).includes(marker)
+            ? response
+            : "unrelated",
+        }),
+        firstDaemonEntry: crashChild,
+        daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
+        onDaemonStdout: (line) => {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(line);
+          } catch {
+            return;
+          }
+          if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            "tag" in parsed &&
+            parsed.tag === "AH_PROBE" &&
+            "boundary" in parsed &&
+            typeof parsed.boundary === "string" &&
+            "providerTurnId" in parsed &&
+            typeof parsed.providerTurnId === "string"
+          ) {
+            hits.push({
+              boundary: parsed.boundary,
+              providerTurnId: parsed.providerTurnId,
+            });
+          }
+        },
+      });
+      fixtures.push(fixture);
+      const client = makePublicClient(fixture.baseUrl);
+      const project = await createFunctionalProject(
+        client,
+        fixture.workspaceDirectory,
+        `AH3 ${boundary}`,
+      );
+
+      await submitHumanMessage(client, project, `请回复 ${marker}`);
+      let observed: typeof hits;
+      try {
+        observed = await waitForPublic(
+          async () => hits,
+          (value) => value.some((hit) => hit.boundary === boundary),
+          25_000,
+        );
+      } catch (error) {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}; providerCalls=${fixture.providerCalls.length}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        );
+      }
+      expect(observed).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            boundary,
+            providerTurnId: expect.stringMatching(/^ptn_/u),
+          }),
+        ]),
+      );
+
+      await fixture.crash();
+      const crashed = durableSnapshot(fixture.databaseFile);
+      expect(crashed.providerTurns).toEqual([
+        expect.objectContaining({
+          provider_turn_id: observed[0]?.providerTurnId,
+          settled_at: expect.any(String),
+        }),
+      ]);
+      expect(
+        Date.parse((crashed.leases[0] as { expires_at: string }).expires_at),
+      ).toBeGreaterThan(Date.now());
+      expect(crashed.steps).toEqual([
+        expect.objectContaining({
+          state:
+            boundary === "AH3BeforeStepAvailable"
+              ? "Prepared"
+              : "ProviderResultAvailable",
+        }),
+      ]);
+      try {
+        await fixture.restart();
+      } catch (error) {
+        throw new Error(
+          `AH3 restart failed: ${error instanceof Error ? error.message : String(error)}; hits=${JSON.stringify(hits)}; providerCalls=${fixture.providerCalls.length}; crashed=${JSON.stringify(crashed)}; after=${JSON.stringify(durableSnapshot(fixture.databaseFile))}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        );
+      }
+      let transcript: {
+        entries: Array<{ kind: string; body?: string }>;
+      };
+      try {
+        transcript = await waitForPublic(
+          () =>
+            client.view<{
+              entries: Array<{ kind: string; body?: string }>;
+            }>("transcript", {
+              workspaceId: project.rootWorkspaceId,
+              conversationOnly: true,
+              limit: 20,
+            }),
+          (value) =>
+            value.entries.some(
+              (entry) =>
+                entry.kind === "AssistantConversationTurn" &&
+                entry.body === response,
+            ),
+          45_000,
+        );
+      } catch (error) {
+        throw new Error(
+          `AH3 recovery failed: ${error instanceof Error ? error.message : String(error)}; hits=${JSON.stringify(hits)}; providerCalls=${fixture.providerCalls.length}; crashed=${JSON.stringify(crashed)}; after=${JSON.stringify(durableSnapshot(fixture.databaseFile))}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        );
+      }
+      expect(
+        transcript.entries.filter(
+          (entry) =>
+            entry.kind === "AssistantConversationTurn" &&
+            entry.body === response,
+        ),
+      ).toHaveLength(1);
+      expect(
+        fixture.providerCalls.filter((call) =>
+          JSON.stringify(call.messages).includes(marker),
+        ),
+      ).toHaveLength(1);
+      expect(durableSnapshot(fixture.databaseFile).executions).toEqual([
+        expect.objectContaining({ settled_at: expect.any(String) }),
+      ]);
+      expect(fixture.daemonErrors).toEqual([]);
+    }, 90_000);
+  }
+});

@@ -2,7 +2,8 @@
 
 ## Status
 
-**IN PROGRESS — core handoff path implemented; full AH1–AH14 closure pending.**
+**IN PROGRESS — core handoff path implemented; AH3 process-crash two-sided
+qualification PASS; full AH1–AH14 closure pending.**
 
 ## Implemented
 
@@ -52,7 +53,14 @@
 
 ## Remaining before closure
 
-- AH1–AH14 kill-before/kill-after matrix as individually named evidence.
+- AH1–AH2、AH4–AH14 kill-before/kill-after matrix as individually named evidence.
+- AH3 both sides now have real-process crash/restart evidence in
+  `planning/results/AH3-process-crash-qualification.result.md`; it found and
+  fixed missing production pre-dispatch lease fencing on conversation and
+  bound-execution recovery paths.
+
+2026-10-04 AH3 增量验证：`pnpm check` PASS（架构 155、核心 1677 + 3 skipped、
+Web 216）；AH3 两侧单独及合并 2/2 PASS。此增量不追溯改写上文历史基线数。
 - evidence-insufficient legacy fixture → durable Attention.
 - final crash-injection run against the migration/recovery paths; the original
   database remains read-only.

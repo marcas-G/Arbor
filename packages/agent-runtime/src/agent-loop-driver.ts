@@ -58,6 +58,7 @@ import { makeControlBasisResolver } from "./control-basis-resolver.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
 import { runModelDecision } from "./model-decision.js";
 import { recordAcceptedModelOutput } from "./model-output-journal.js";
+import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
 
 export interface AgentLoopDriverOptions {
@@ -87,6 +88,7 @@ export interface AgentLoopDriverOptions {
         event: import("@arbor/ports").ProviderRuntimeProgress,
       ) => void)
     | undefined;
+  readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
 export const AgentLoopDriverLive = (
   options: AgentLoopDriverOptions = {},

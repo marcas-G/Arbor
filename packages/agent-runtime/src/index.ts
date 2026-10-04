@@ -7,6 +7,7 @@ export * from "./freshness.js";
 export * from "./legacy-directive.js";
 export * from "./local-plan.js";
 export * from "./prompt-assets.js";
+export * from "./qualification-probe.js";
 export * from "./repair.js";
 export * from "./safe-input-drain.js";
 export * from "./step-context.js";
