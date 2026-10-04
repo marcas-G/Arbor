@@ -32,6 +32,20 @@ Dependency 变为 Satisfied，消费者在再次调用模型时收到相同 Deli
 ambiguous”；F22 的原 Work 链接显示“未找到该工作”，而非“已完成”。两项均未计入
 正式通过数，等待各自治理决策。
 
+后续 F21 负向公开进程测试还证明：宿主登记一个目录时，普通客户端提交另一个未登记
+绝对路径仍被 `CreateProject` Committed。这与浏览器“没有可信入口”构成同一边界的
+两侧。测试位于 `tests/functional/pending/resource-admission.functional.test.ts`，用
+`vitest.pending-functional.config.ts` 单独执行，当前失败。Playwright pending 配置
+现在仅收集 `.spec.ts`，不再误加载 Vitest 文件；F21/F22 浏览器用例重新运行仍分别
+在原产品断点失败。
+
+F22 决策稿审阅还确认：现有 Verification View 优先任意 Open Verification，可能
+遮蔽已接受的 PASS。因此终态页面不仅要读取 Work 生命周期，也必须精确绑定
+Acceptance 指向的 Verification，并允许 Acceptance 已记录、CompleteWork 尚未
+提交的短暂状态。治理稿与审阅见
+`planning/proposals/completed-work-public-view-decision-draft.md`、
+`planning/results/FT-DG-02-governance-readiness.review.md`。
+
 ## F05 / F22 的反证
 
 F05 新增的“PASS 后 Work 仍 Open 且没有 Acceptance”断言通过。尝试从

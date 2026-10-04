@@ -3,6 +3,7 @@ import { defineConfig } from "@playwright/test";
 /** Open functional design gaps have executable acceptance tests here. */
 export default defineConfig({
   testDir: "./tests/functional/pending",
+  testMatch: "**/*.spec.ts",
   fullyParallel: false,
   workers: 1,
   retries: 0,

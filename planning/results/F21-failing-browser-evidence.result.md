@@ -26,3 +26,8 @@ F21 测试放在 `tests/functional/pending/`，通过独立配置运行，不标
 默认 Playwright 功能门禁，删除 pending 配置。
 
 本测试没有调用内部 Layer/Repository，也没有通过 `/commands` 或 SQLite 预建项目。
+
+补充安全反证（2026-10-04）：`pnpm exec vitest run --config
+vitest.pending-functional.config.ts` 当前失败，因为公开 `/commands` 接受了客户端指定的
+未登记目录并返回 Committed。该测试独立于浏览器正向用例，说明需要同时解决“无可信
+目录可选”和“自由路径可扩权”，不能只修表单。
