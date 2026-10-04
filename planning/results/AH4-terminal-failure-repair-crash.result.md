@@ -3,7 +3,7 @@
 日期：2026-10-04
 
 状态：**终态 Provider 失败与输出修复耗尽，各提交边界两侧 4/4 PASS；
-`pnpm check` PASS，完整功能批次待含本变更的提交复测。**
+`pnpm check` 与完整功能批次 PASS。**
 
 测试：`tests/functional/process/provider-failure-ah4.functional.test.ts`。
 使用真实进程、隔离 SQLite、HTTP Provider、明确的测试专用 probe，父进程在收到
@@ -28,3 +28,5 @@ unsettled 的终态失败 Turn 调用既有 `ProviderTurnStore.failTurn`，再�
 本结果只关闭 AH4；AH5–AH14 仍未完成。
 
 `pnpm check`：架构 155、核心 1677 + 3 skipped、Web 216，均 PASS。
+`6dd3dda` 上 `pnpm test:functional`：公开进程 23/23、浏览器 2/2，包含该提交的
+干净检出测试，零重试。
