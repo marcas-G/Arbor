@@ -58,6 +58,9 @@ qualification PASS; full AH1–AH14 closure pending.**
   boundaries and Reconcilable intent fail-closed. See
   `planning/results/AH7-partial-crash-qualification.result.md`; remaining
   AH7 effect/settlement/approval/concurrency cases are not closed.
+- AH8 now has real-process A Applied → public SteerWork changes Strong
+  ControlBasis → kill/restart → B SkippedStale + unique successor evidence in
+  `planning/results/AH8-action-b-stale-process-crash.result.md`.
 - AH5–AH6 share the sourced Session append / OutputAccepted atomic commit;
   its two-sided real-process evidence is in
   `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.
