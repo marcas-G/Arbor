@@ -257,6 +257,8 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
             executionId,
             { _tag: "Recovery" },
             principal,
+            undefined,
+            config.executionSettlementQualificationProbe,
           ).pipe(Effect.catchTag("LeaseFencingRejected", () => Effect.void));
         });
       if (config.workspaceId !== undefined) {
@@ -286,6 +288,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           workspaceId,
           { _tag: "Recovery" },
           principal,
+          config.executionSettlementQualificationProbe,
         );
         yield* resumeActiveWork(workspaceId);
       }

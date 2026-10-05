@@ -27,6 +27,7 @@ import {
 } from "@arbor/environment-resolver-local";
 import {
   ExecutionSchedulerLive,
+  type ExecutionSettlementQualificationProbe,
   FenceStopCheckLive,
   RuntimeSafetyGateLive,
   type RuntimeSafetyPolicy,
@@ -291,6 +292,7 @@ export interface SingleWorkspaceConfig {
   /** Explicit test-only in-process fault probe; never loaded from env or a
    * public request. Production startup leaves this absent. */
   readonly qualificationProbe?: AgentLoopQualificationProbe;
+  readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
   readonly toolQualificationProbe?: ToolRuntimeQualificationProbe;
   readonly providerQualificationProbe?: ProviderRuntimeConfig["qualificationProbe"];
 }
@@ -760,6 +762,12 @@ export const buildSingleWorkspaceLayer = (
       ...(config.consumerBatchSize !== undefined
         ? { batchSize: config.consumerBatchSize }
         : {}),
+      ...(config.executionSettlementQualificationProbe === undefined
+        ? {}
+        : {
+            executionSettlementQualificationProbe:
+              config.executionSettlementQualificationProbe,
+          }),
     }),
     Layer.mergeAll(coreAll, t1Recovery, recordEnvironmentChange),
   );

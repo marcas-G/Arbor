@@ -31,6 +31,16 @@ import { Effect, Option } from "effect";
 export const LEASE_TTL_MS = 30_000;
 export const LEASE_RENEW_INTERVAL_MS = LEASE_TTL_MS / 3;
 
+/** Test-only process-local seam. Production composition leaves it absent. */
+export type ExecutionSettlementQualificationProbe = (event: {
+  readonly boundary:
+    | "AH12BeforeSettleCommandCommit"
+    | "AH12AfterSettleCommandCommit";
+  readonly executionId: ExecutionId;
+  readonly fencingGeneration: LeaseGeneration;
+  readonly commandId: string;
+}) => Promise<void>;
+
 const WORKER_ID = "worker:local";
 /** P12 `06` §2: the in-process worker incarnation. A daemon restart mints a
  * new incarnation so an old process cannot be mistaken for the current one. */
@@ -116,6 +126,7 @@ export const runExecution = (
   wakeReason: WakeReason,
   principal: Principal,
   renewIntervalMs: number = LEASE_RENEW_INTERVAL_MS,
+  qualificationProbe?: ExecutionSettlementQualificationProbe,
 ) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
@@ -242,6 +253,16 @@ export const runExecution = (
       workerId: lease.workerId,
       workerIncarnationId: lease.workerIncarnationId,
     };
+    if (qualificationProbe !== undefined) {
+      yield* Effect.promise(() =>
+        qualificationProbe({
+          boundary: "AH12BeforeSettleCommandCommit",
+          executionId,
+          fencingGeneration: lease.generation,
+          commandId,
+        }),
+      );
+    }
     const receipt = yield* gateway.execute(
       {
         commandType: "SettleExecution",
@@ -254,6 +275,16 @@ export const runExecution = (
       context,
       authority,
     );
+    if (qualificationProbe !== undefined) {
+      yield* Effect.promise(() =>
+        qualificationProbe({
+          boundary: "AH12AfterSettleCommandCommit",
+          executionId,
+          fencingGeneration: lease.generation,
+          commandId,
+        }),
+      );
+    }
     if (receipt.resolution._tag === "TerminalRejected") {
       return yield* Effect.fail(
         receipt.resolution.error as unknown as CommandRejection,

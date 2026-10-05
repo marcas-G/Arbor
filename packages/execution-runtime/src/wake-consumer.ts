@@ -24,7 +24,10 @@ import {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { AdmitExecutionPayload } from "./commands/admit-execution.js";
-import { runExecution } from "./execution-runtime.js";
+import {
+  type ExecutionSettlementQualificationProbe,
+  runExecution,
+} from "./execution-runtime.js";
 
 const systemContext = (principal: Principal): CommandSubmissionContext => ({
   _tag: "System",
@@ -45,6 +48,7 @@ export const consumeWorkspaceWake = (
   workspaceId: WorkspaceId,
   wakeReason: WakeReason,
   principal: Principal,
+  qualificationProbe?: ExecutionSettlementQualificationProbe,
 ) =>
   Effect.gen(function* () {
     const scheduler = yield* ExecutionScheduler;
@@ -230,7 +234,13 @@ export const consumeWorkspaceWake = (
         return;
       }
 
-      yield* runExecution(executionId, wakeReason, principal);
+      yield* runExecution(
+        executionId,
+        wakeReason,
+        principal,
+        undefined,
+        qualificationProbe,
+      );
       return;
     }
   });
