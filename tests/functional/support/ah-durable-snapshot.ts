@@ -19,7 +19,27 @@ export const durableSnapshot = (databaseFile: string) => {
         .all(),
       steps: db
         .prepare(
-          "SELECT execution_id, provider_turn_id, repair_attempt, state, revision, decoder_version, decoded_output_hash, model_output_session_sequence FROM agent_loop_steps",
+          "SELECT execution_id, provider_turn_id, repair_attempt, state, revision, next_action_index, decoder_version, decoded_output_hash, model_output_session_sequence FROM agent_loop_steps",
+        )
+        .all(),
+      actions: db
+        .prepare(
+          "SELECT execution_id, logical_step_no, repair_attempt, action_index, logical_action_id, call_ref, route_kind, action_kind, input_hash, state, result_ref, observation_source_ref, revision FROM agent_loop_step_actions ORDER BY execution_id, logical_step_no, repair_attempt, action_index",
+        )
+        .all(),
+      toolInvocations: db
+        .prepare(
+          "SELECT invocation_id, execution_id, tool_name, side_effect_semantics, settled_at, settlement_kind, result_ref FROM tool_invocations ORDER BY invocation_id",
+        )
+        .all(),
+      toolResults: db
+        .prepare(
+          "SELECT sequence, payload_json, source_kind, source_ref FROM session_entries WHERE item_type = 'ToolResult' ORDER BY sequence",
+        )
+        .all(),
+      artifacts: db
+        .prepare(
+          "SELECT artifact_id, invocation_id, content_hash FROM artifacts ORDER BY artifact_id",
         )
         .all(),
       providerTurns: db

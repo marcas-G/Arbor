@@ -32,6 +32,7 @@ import {
 } from "./control.js";
 import type { ControlActionAuthorizerService } from "./control-authorization.js";
 import { checkFreshness, requirementForAction } from "./freshness.js";
+import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
 const actionRejectionObservation = (
   error: Extract<AgentActionError, { readonly _tag: "AgentActionRejected" }>,
@@ -70,6 +71,7 @@ export interface AgentLoopActionDependencies {
   ) => Effect.Effect<"Continue" | "Stop">;
   readonly failure: (cause: unknown) => ExecutionDriverError;
   readonly now: () => Effect.Effect<string>;
+  readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
 
 export type AgentLoopActionOutcome =
@@ -189,6 +191,23 @@ export const executeAgentLoopActions = (
             .pipe(Effect.mapError(failure));
         } else if (loopAction.state !== "Pending") {
           continue;
+        }
+        if (
+          dependencies.qualificationProbe !== undefined &&
+          loopAction !== undefined
+        ) {
+          const pendingAction = loopAction;
+          yield* Effect.promise(
+            () =>
+              dependencies.qualificationProbe?.({
+                boundary: "AH7AfterActionIntentCommit",
+                providerTurnId: preparedTurn.manifest.providerTurnId,
+                executionId: input.execution.executionId,
+                logicalActionId: pendingAction.logicalActionId,
+                callRef: invocation.callRef,
+                actionIndex,
+              }) ?? Promise.resolve(),
+          );
         }
       }
 
@@ -589,6 +608,19 @@ export const executeAgentLoopActions = (
               }),
             )
             .pipe(Effect.mapError(failure));
+          if (dependencies.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                dependencies.qualificationProbe?.({
+                  boundary: "AH7AfterActionResultCommit",
+                  providerTurnId: preparedTurn.manifest.providerTurnId,
+                  executionId: input.execution.executionId,
+                  logicalActionId: pendingAction.logicalActionId,
+                  callRef: invocation.callRef,
+                  actionIndex,
+                }) ?? Promise.resolve(),
+            );
+          }
           return true;
         });
 

@@ -1,17 +1,21 @@
 import { pathToFileURL } from "node:url";
 import { inspect } from "node:util";
-import { Principal, parse, WorkspaceId } from "@arbor/domain";
+import { Principal, parse, WorkspaceId, workEpisode } from "@arbor/domain";
 import {
   consumeWorkspaceWake,
+  preDispatchCheck,
+  runExecution,
   startupRecovery,
 } from "@arbor/execution-runtime";
 import {
+  ExecutionRepository,
   type ModelDeployment,
   ProjectDirectory,
   type ProviderExecutionPolicyOverrides,
   secretRef,
+  TransactionPort,
 } from "@arbor/ports";
-import { Duration, Effect } from "effect";
+import { Duration, Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   buildSingleWorkspaceLayer,
@@ -224,10 +228,42 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
     // are skipped defensively — they predate the id schema and must not
     // crash the loop.
     const schedulerTick = Effect.gen(function* () {
+      const resumeActiveWork = (workspaceId: WorkspaceId) =>
+        Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          const executions = yield* ExecutionRepository;
+          const active = yield* tx.transact(
+            executions.findActiveMainByWorkspace(workspaceId),
+          );
+          if (Option.isNone(active) || workEpisode(active.value) === null) {
+            return;
+          }
+          const executionId = active.value.executionId;
+          if (!(yield* preDispatchCheck(executionId))) {
+            return;
+          }
+          // ApprovalRequired releases the lease but deliberately keeps the
+          // Execution active. Only the approval resolution consumer may wake
+          // it; an ordinary scheduler tick must not poll a human decision.
+          const sql = yield* SqlClient;
+          const pendingApproval = yield* sql.unsafe<{ present: number }>(
+            "SELECT 1 AS present FROM action_approvals WHERE execution_id = ? AND state = 'Pending' LIMIT 1",
+            [executionId],
+          );
+          if (pendingApproval.length > 0) {
+            return;
+          }
+          yield* runExecution(
+            executionId,
+            { _tag: "Recovery" },
+            principal,
+          ).pipe(Effect.catchTag("LeaseFencingRejected", () => Effect.void));
+        });
       if (config.workspaceId !== undefined) {
         yield* evaluateAndSelect(config.workspaceId, principal, {
           _tag: "Recovery",
         });
+        yield* resumeActiveWork(config.workspaceId);
         return;
       }
       const sql = yield* SqlClient;
@@ -245,11 +281,13 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
         if (!isWorkspaceId(row.workspace_id)) {
           continue;
         }
+        const workspaceId = parse(WorkspaceId)(row.workspace_id);
         yield* consumeWorkspaceWake(
-          parse(WorkspaceId)(row.workspace_id),
+          workspaceId,
           { _tag: "Recovery" },
           principal,
         );
+        yield* resumeActiveWork(workspaceId);
       }
     });
     yield* deployment.daemon.start;

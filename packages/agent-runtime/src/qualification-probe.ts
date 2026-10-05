@@ -10,8 +10,14 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH4AfterSettlementProposal"
     | "AH4RepairBeforeSettlementProposal"
     | "AH4RepairAfterSettlementProposal"
-    | "AH56AfterOutputAcceptedCommit";
+    | "AH56AfterOutputAcceptedCommit"
+    | "AH7AfterActionIntentCommit"
+    | "AH7AfterActionResultCommit";
   readonly providerTurnId: string;
+  readonly executionId?: string;
+  readonly logicalActionId?: string;
+  readonly callRef?: string;
+  readonly actionIndex?: number;
 }
 
 export type AgentLoopQualificationProbe = (

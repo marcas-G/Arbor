@@ -391,6 +391,9 @@ export const AgentLoopDriverLive = (
               admit,
               failure,
               now,
+              ...(options.qualificationProbe === undefined
+                ? {}
+                : { qualificationProbe: options.qualificationProbe }),
             });
             if (actionProgression._tag === "Settle") {
               return actionProgression.settlement;

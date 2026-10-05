@@ -54,6 +54,10 @@ qualification PASS; full AH1–AH14 closure pending.**
 ## Remaining before closure
 
 - AH7–AH14 kill-before/kill-after matrix as individually named evidence.
+- AH7 has PARTIAL real-process evidence for four ReadOnly action/tool/Observation
+  boundaries and Reconcilable intent fail-closed. See
+  `planning/results/AH7-partial-crash-qualification.result.md`; remaining
+  AH7 effect/settlement/approval/concurrency cases are not closed.
 - AH5–AH6 share the sourced Session append / OutputAccepted atomic commit;
   its two-sided real-process evidence is in
   `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.

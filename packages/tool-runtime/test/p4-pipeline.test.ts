@@ -167,6 +167,7 @@ const app = (
           : Effect.void,
       consumeApproval: () => Effect.succeed(true),
       findApproval: () => Effect.succeed(Option.none()),
+      findById: () => Effect.succeed(Option.none()),
       findUnsettled: () => Effect.succeed([]),
     } as never),
     Layer.succeed(ProjectEnvironmentPort, {

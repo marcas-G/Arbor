@@ -13,9 +13,12 @@ import {
   type ToolCatalogPortService,
   type ToolExecutionContext,
   type ToolIntent,
+  type ToolInvocationRecord,
+  ToolInvocationStore,
   ToolRuntimePort,
+  TransactionPort,
 } from "@arbor/ports";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
 
 export class ExecutableToolHandler extends Context.Service<
   ExecutableToolHandler,
@@ -63,10 +66,14 @@ export const toExecutableOutcome = (
       };
     case "OutcomeUnknown":
       return {
-        _tag: "Observation",
-        source: "Runtime",
-        observation: bounded("tool outcome unknown"),
-        status: "OutcomeUnknown",
+        _tag: "Settle",
+        settlement: {
+          _tag: "OutcomeUnknown",
+          reconciliation: {
+            _tag: "ReconciliationRequired",
+            invocationRefs: result.reconciliationRefs,
+          },
+        },
       };
     case "RuntimeFailure":
       return {
@@ -78,7 +85,18 @@ export const toExecutableOutcome = (
   }
 };
 
-const toolInvocationIdFor = (callRef: string) =>
+const toolInvocationIdFor = (executionId: string, callRef: string) =>
+  parse(ToolInvocationId)(
+    `tin_018f2b3c-4d5e-7abc-8def-${createHash("sha256")
+      .update(JSON.stringify({ executionId, callRef }))
+      .digest("hex")
+      .slice(0, 12)}`,
+  );
+
+/** Pre-AH7 identities were derived from callRef alone. Read the exact old
+ * record before choosing it for an in-flight replay; never assign that ID to
+ * a different Execution that happens to reuse the provider callRef. */
+const legacyToolInvocationIdFor = (callRef: string) =>
   parse(ToolInvocationId)(
     `tin_018f2b3c-4d5e-7abc-8def-${createHash("sha256")
       .update(callRef)
@@ -90,6 +108,9 @@ export const makeExecutableToolHandler = (
   tools: import("@arbor/ports").ToolRuntimePortService,
   clock: import("@arbor/ports").ClockService,
   catalog: ToolCatalogPortService,
+  legacyLookup?: (
+    id: ToolInvocationId,
+  ) => Effect.Effect<Option.Option<ToolInvocationRecord>, unknown>,
 ): ExecutableInvocationHandler => ({
   handle: ({ invocation, execution, context, controlBasis }) =>
     Effect.gen(function* () {
@@ -113,12 +134,36 @@ export const makeExecutableToolHandler = (
         });
       }
       const toolVersion = matchingRefs[0]?.version as string;
+      let invocationId = toolInvocationIdFor(
+        execution.executionId,
+        invocation.callRef,
+      );
+      if (legacyLookup !== undefined) {
+        const oldId = legacyToolInvocationIdFor(invocation.callRef);
+        const old = yield* legacyLookup(oldId).pipe(
+          Effect.mapError((cause) => ({
+            _tag: "AgentActionOperationalFailure" as const,
+            operation: "LegacyToolInvocationLookup",
+            cause,
+          })),
+        );
+        if (
+          Option.isSome(old) &&
+          old.value.executionId === execution.executionId &&
+          old.value.workspaceId === execution.workspaceId &&
+          old.value.toolName === invocation.toolName &&
+          old.value.toolVersion === toolVersion &&
+          old.value.argumentsJson === invocation.argumentsJson
+        ) {
+          invocationId = oldId;
+        }
+      }
       const intent: ToolIntent = {
         callRef: invocation.callRef,
         toolName: invocation.toolName,
         toolVersion,
         argumentsJson: invocation.argumentsJson,
-        invocationId: toolInvocationIdFor(invocation.callRef),
+        invocationId,
         approvalId: null,
       };
       const controlBasisDigest = sha256Hex(JSON.stringify(controlBasis));
@@ -168,15 +213,23 @@ export const makeExecutableToolHandler = (
 export const ExecutableToolHandlerLive: Layer.Layer<
   ExecutableToolHandler,
   never,
-  ToolRuntimePort | Clock | ToolCatalogPort
+  | ToolRuntimePort
+  | Clock
+  | ToolCatalogPort
+  | ToolInvocationStore
+  | TransactionPort
 > = Layer.effect(
   ExecutableToolHandler,
   Effect.gen(function* () {
     const tools = yield* ToolRuntimePort;
     const clock = yield* Clock;
     const catalog = yield* ToolCatalogPort;
+    const invocations = yield* ToolInvocationStore;
+    const tx = yield* TransactionPort;
     return ExecutableToolHandler.of(
-      makeExecutableToolHandler(tools, clock, catalog),
+      makeExecutableToolHandler(tools, clock, catalog, (id) =>
+        tx.transact(invocations.findById(id)),
+      ),
     );
   }),
 );
