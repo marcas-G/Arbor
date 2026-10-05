@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN PROGRESS — core handoff path implemented; AH1–AH6, AH8–AH9, AH11–AH12 process-crash
+**IN PROGRESS — core handoff path implemented; AH1–AH6, AH8–AH9, AH11–AH13 process-crash
 qualification PASS; full AH1–AH14 closure pending.**
 
 ## Implemented
@@ -53,7 +53,7 @@ qualification PASS; full AH1–AH14 closure pending.**
 
 ## Remaining before closure
 
-- AH7, AH10 and AH13–AH14 still need the remaining kill-before/kill-after matrix
+- AH7, AH10 and AH14 still need the remaining kill-before/kill-after matrix
   as individually named evidence.
 - AH7 has PARTIAL real-process evidence for four ReadOnly action/tool/Observation
   boundaries and Reconcilable intent fail-closed. See
@@ -79,6 +79,10 @@ qualification PASS; full AH1–AH14 closure pending.**
   `SettlementProposed → SettleExecution` gateway command boundary. There is
   one settled Execution/Command receipt and no Provider replay after restart;
   see `planning/results/AH12-settlement-command-process-crash.result.md`.
+- AH13 has two-sided real-process crash evidence after Execution settlement
+  and around P17 ResponseJob/Attempt convergence; a public transcript has
+  exactly one answer and Provider is not replayed. See
+  `planning/results/AH13-conversation-response-convergence-process-crash.result.md`.
 - AH5–AH6 share the sourced Session append / OutputAccepted atomic commit;
   its two-sided real-process evidence is in
   `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.

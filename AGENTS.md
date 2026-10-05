@@ -229,7 +229,7 @@ AH4 terminal Provider failure and repair exhaustion now also have two-sided
 process crash evidence; see `planning/results/AH4-terminal-failure-repair-crash.result.md`.
 AH5–AH6 sourced Session output / OutputAccepted now have two-sided process
 crash evidence; see `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.
-AH7, AH10 and AH13–AH14 remain open and MUST NOT be inferred from AH1–AH6/F16.
+AH7, AH10 and AH14 remain open and MUST NOT be inferred from AH1–AH6/F16.
 AH7 has PARTIAL process-crash evidence (ReadOnly action/P4 intent/settlement/
 Observation four sides and Reconcilable intent/effect-before-settlement
 fail-closed), not phase closure;
@@ -254,7 +254,10 @@ AH11 Observation → StepEffectsCommitted has two-sided real-process crash
 evidence in `planning/results/AH11-observation-step-effects-process-crash.result.md`;
 AH12 SettlementProposed → SettleExecution now also has two-sided real-process
 crash evidence in `planning/results/AH12-settlement-command-process-crash.result.md`;
-neither closes AH13–AH14.
+AH13 Execution settled → P17 ResponseJob/Attempt convergence has two-sided
+real-process crash evidence and one public reply in
+`planning/results/AH13-conversation-response-convergence-process-crash.result.md`;
+AH14 remains open.
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
