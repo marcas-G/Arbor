@@ -19,7 +19,9 @@ if (
   targetBoundary !== "AH7AfterActionResultCommit" &&
   targetBoundary !== "AH7AfterToolIntentCommit" &&
   targetBoundary !== "AH7AfterToolEffectBeforeSettlement" &&
-  targetBoundary !== "AH7AfterToolSettlementCommit"
+  targetBoundary !== "AH7AfterToolSettlementCommit" &&
+  targetBoundary !== "AH9BeforeTerminalActionCommit" &&
+  targetBoundary !== "AH9AfterTerminalActionCommit"
 ) {
   throw new Error("AH test child needs an exact boundary");
 }

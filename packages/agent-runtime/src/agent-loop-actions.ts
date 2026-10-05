@@ -322,6 +322,19 @@ export const executeAgentLoopActions = (
           const settlementRef = `settlement_${sha256Hex(
             JSON.stringify(terminal.settlement),
           )}`;
+          if (dependencies.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                dependencies.qualificationProbe?.({
+                  boundary: "AH9BeforeTerminalActionCommit",
+                  providerTurnId: preparedTurn.manifest.providerTurnId,
+                  executionId: input.execution.executionId,
+                  logicalActionId: pendingAction.logicalActionId,
+                  callRef: invocation.callRef,
+                  actionIndex,
+                }) ?? Promise.resolve(),
+            );
+          }
           currentLoopStep = yield* tx
             .transact(
               Effect.gen(function* () {
@@ -447,6 +460,19 @@ export const executeAgentLoopActions = (
               }),
             )
             .pipe(Effect.mapError(failure));
+          if (dependencies.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                dependencies.qualificationProbe?.({
+                  boundary: "AH9AfterTerminalActionCommit",
+                  providerTurnId: preparedTurn.manifest.providerTurnId,
+                  executionId: input.execution.executionId,
+                  logicalActionId: pendingAction.logicalActionId,
+                  callRef: invocation.callRef,
+                  actionIndex,
+                }) ?? Promise.resolve(),
+            );
+          }
         });
 
       const persistActionSettlement = (
