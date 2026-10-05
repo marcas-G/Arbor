@@ -229,7 +229,7 @@ AH4 terminal Provider failure and repair exhaustion now also have two-sided
 process crash evidence; see `planning/results/AH4-terminal-failure-repair-crash.result.md`.
 AH5–AH6 sourced Session output / OutputAccepted now have two-sided process
 crash evidence; see `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.
-AH7–AH14 remain open and MUST NOT be inferred from AH1–AH6/F16.
+AH7 and AH10–AH14 remain open and MUST NOT be inferred from AH1–AH6/F16.
 AH7 has PARTIAL process-crash evidence (ReadOnly action/P4 intent/settlement/
 Observation four sides and Reconcilable intent/effect-before-settlement
 fail-closed), not phase closure;
@@ -242,7 +242,12 @@ draft governance proposal. At `26f80f2`, `pnpm test:functional` passes
 AH8 A Applied / B SkippedStale after public SteerWork and process restart
 has a real-process qualification in
 `planning/results/AH8-action-b-stale-process-crash.result.md`; AH7 remains
-partial and AH9–AH14 remain open.
+partial. AH9 terminal-action transaction before/after process-crash
+qualification is in `planning/results/AH9-terminal-action-process-crash.result.md`:
+A Applied, B SkippedEarlySettlement, proposal durable, no second Work or
+Provider request. At `3e339ae`, `pnpm check` passes (architecture 155, core
+1680 + 3 skipped, Web 216) and `pnpm test:functional` passes (public process
+33, browser 2). AH10–AH14 remain open.
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
