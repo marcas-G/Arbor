@@ -1,11 +1,8 @@
-import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
-import { assignWorkHandler } from "../../../apps/single-workspace/src/control-actions.js";
-import type { AgentActionHandlerInput } from "../../../packages/agent-runtime/src/index.js";
+import type { AgentActionHandlerInput } from "@arbor/agent-runtime";
 import type {
   CommandGatewayService,
   GatewayEnvelope,
-} from "../../../packages/application/src/index.js";
+} from "@arbor/application";
 import {
   ExecutionId,
   type LeaseGeneration,
@@ -15,12 +12,16 @@ import {
   SessionId,
   WorkId,
   WorkspaceId,
-} from "../../../packages/domain/src/index.js";
+} from "@arbor/domain";
 import type {
   ClockService,
+  CommandStoreService,
   TransactionPortService,
   WorkspaceRepositoryService,
-} from "../../../packages/ports/src/index.js";
+} from "@arbor/ports";
+import { Effect, Option } from "effect";
+import { describe, expect, it } from "vitest";
+import { assignWorkHandler } from "../src/control-actions.js";
 
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
@@ -106,9 +107,25 @@ const runHandler = (
     ),
   );
 
-const makeHandler = (gateway: CommandGatewayService) =>
+const makeHandler = (
+  gateway: CommandGatewayService,
+  receipts: ReadonlyMap<string, unknown>,
+) =>
   assignWorkHandler({
     gateway,
+    commandReceipts: {
+      findResolution: (commandId) => {
+        const receipt = receipts.get(String(commandId));
+        return Effect.succeed(
+          receipt === undefined
+            ? Option.none()
+            : Option.some({
+                projectId,
+                ...(receipt as object),
+              } as never),
+        );
+      },
+    } as Pick<CommandStoreService, "findResolution">,
     workspaces: {
       findById: () =>
         Effect.succeed(
@@ -184,7 +201,7 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
       },
     } as unknown as CommandGatewayService;
 
-    const handler = makeHandler(gateway);
+    const handler = makeHandler(gateway, receipts);
 
     const oldOwner = await runHandler(handler, 0);
     expect(oldOwner._tag).toBe("Rejected");
@@ -243,7 +260,7 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
         return Effect.succeed(committed);
       },
     } as unknown as CommandGatewayService;
-    const handler = makeHandler(gateway);
+    const handler = makeHandler(gateway, receipts);
 
     expect(await runHandler(handler, 0)).toMatchObject({ _tag: "Accepted" });
     // The old owner crashed after the canonical Command committed but before
