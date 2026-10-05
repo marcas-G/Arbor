@@ -421,6 +421,9 @@ export const AgentLoopDriverLive = (
               sessions,
               failure,
               now,
+              ...(options.qualificationProbe === undefined
+                ? {}
+                : { qualificationProbe: options.qualificationProbe }),
             });
             if (finalization._tag === "Settle") {
               return finalization.settlement;

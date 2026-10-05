@@ -229,7 +229,7 @@ AH4 terminal Provider failure and repair exhaustion now also have two-sided
 process crash evidence; see `planning/results/AH4-terminal-failure-repair-crash.result.md`.
 AH5–AH6 sourced Session output / OutputAccepted now have two-sided process
 crash evidence; see `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.
-AH7 and AH10–AH14 remain open and MUST NOT be inferred from AH1–AH6/F16.
+AH7, AH10 and AH12–AH14 remain open and MUST NOT be inferred from AH1–AH6/F16.
 AH7 has PARTIAL process-crash evidence (ReadOnly action/P4 intent/settlement/
 Observation four sides and Reconcilable intent/effect-before-settlement
 fail-closed), not phase closure;
@@ -247,7 +247,12 @@ qualification is in `planning/results/AH9-terminal-action-process-crash.result.m
 A Applied, B SkippedEarlySettlement, proposal durable, no second Work or
 Provider request. At `3e339ae`, `pnpm check` passes (architecture 155, core
 1680 + 3 skipped, Web 216) and `pnpm test:functional` passes (public process
-33, browser 2). AH10–AH14 remain open.
+33, browser 2). AH10 is PARTIAL: AssignWork receipt-first takeover has two
+deterministic regression tests, but other controls and real-process takeover
+remain open (`planning/results/AH10-generation-command-takeover-gap.result.md`).
+AH11 Observation → StepEffectsCommitted has two-sided real-process crash
+evidence in `planning/results/AH11-observation-step-effects-process-crash.result.md`;
+this does not close AH12–AH14.
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
