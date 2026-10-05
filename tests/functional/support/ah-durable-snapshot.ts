@@ -19,12 +19,17 @@ export const durableSnapshot = (databaseFile: string) => {
         .all(),
       steps: db
         .prepare(
-          "SELECT execution_id, provider_turn_id, repair_attempt, state, revision, next_action_index, decoder_version, decoded_output_hash, model_output_session_sequence FROM agent_loop_steps",
+          "SELECT execution_id, logical_step_no, provider_turn_id, repair_attempt, state, revision, next_action_index, successor_json, next_step_reason, decoder_version, decoded_output_hash, model_output_session_sequence FROM agent_loop_steps ORDER BY execution_id, logical_step_no, repair_attempt",
         )
         .all(),
       actions: db
         .prepare(
-          "SELECT execution_id, logical_step_no, repair_attempt, action_index, logical_action_id, call_ref, route_kind, action_kind, input_hash, state, result_ref, observation_source_ref, revision FROM agent_loop_step_actions ORDER BY execution_id, logical_step_no, repair_attempt, action_index",
+          "SELECT execution_id, logical_step_no, repair_attempt, action_index, logical_action_id, call_ref, route_kind, action_kind, input_hash, state, result_ref, disposition_json, observation_source_ref, revision FROM agent_loop_step_actions ORDER BY execution_id, logical_step_no, repair_attempt, action_index",
+        )
+        .all(),
+      works: db
+        .prepare(
+          "SELECT work_id, workspace_id, lifecycle, revision FROM works ORDER BY work_id",
         )
         .all(),
       toolInvocations: db

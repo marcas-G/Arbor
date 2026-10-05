@@ -21,6 +21,13 @@ export type ScriptedProviderResponse =
       readonly name: string;
       readonly arguments: unknown;
     }
+  | {
+      readonly _tag: "ToolCalls";
+      readonly calls: ReadonlyArray<{
+        readonly name: string;
+        readonly arguments: unknown;
+      }>;
+    }
   | { readonly _tag: "HttpError"; readonly status: number };
 
 export interface ProductionFixture {
@@ -103,11 +110,12 @@ const sendTextResponse = (
   response.end("data: [DONE]\n\n");
 };
 
-const sendToolResponse = (
+const sendToolCallsResponse = (
   response: import("node:http").ServerResponse,
-  name: string,
-  argumentsValue: unknown,
+  calls: ReadonlyArray<{ readonly name: string; readonly arguments: unknown }>,
 ) => {
+  if (calls.length === 0)
+    throw new Error("tool response needs at least one call");
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -122,17 +130,15 @@ const sendToolResponse = (
           index: 0,
           delta: {
             role: "assistant",
-            tool_calls: [
-              {
-                index: 0,
-                id: `call_${randomUUID().replaceAll("-", "")}`,
-                type: "function",
-                function: {
-                  name,
-                  arguments: JSON.stringify(argumentsValue),
-                },
+            tool_calls: calls.map((call, index) => ({
+              index,
+              id: `call_${randomUUID().replaceAll("-", "")}`,
+              type: "function",
+              function: {
+                name: call.name,
+                arguments: JSON.stringify(call.arguments),
               },
-            ],
+            })),
           },
           finish_reason: null,
         },
@@ -154,6 +160,12 @@ const sendToolResponse = (
   );
   response.end("data: [DONE]\n\n");
 };
+
+const sendToolResponse = (
+  response: import("node:http").ServerResponse,
+  name: string,
+  argumentsValue: unknown,
+) => sendToolCallsResponse(response, [{ name, arguments: argumentsValue }]);
 
 const startProvider = (
   reply: (
@@ -211,6 +223,10 @@ const startProvider = (
             return;
           case "ToolCall":
             sendToolResponse(response, scripted.name, scripted.arguments);
+            onResponseSent?.(call, responseIndex);
+            return;
+          case "ToolCalls":
+            sendToolCallsResponse(response, scripted.calls);
             onResponseSent?.(call, responseIndex);
             return;
           case "HttpError":
