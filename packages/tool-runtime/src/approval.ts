@@ -32,9 +32,16 @@ export const matchApproval = (input: {
   readonly context: ToolExecutionContext;
   readonly regions: ReadonlyArray<CanonicalResourceRegion>;
   readonly now: string;
+  readonly replayOfRecordedInvocation?: boolean;
 }): ApprovalCheck => {
   const { approval, intent, definition, context, regions, now } = input;
-  if (approval.consumedBy !== null) {
+  if (
+    approval.consumedBy !== null &&
+    !(
+      input.replayOfRecordedInvocation === true &&
+      approval.consumedBy === intent.invocationId
+    )
+  ) {
     return { _tag: "Denied", reason: "approval already consumed" };
   }
   if (

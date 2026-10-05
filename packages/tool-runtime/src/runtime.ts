@@ -1,4 +1,5 @@
 import type { CanonicalResourceRegion, ResourceAddress } from "@arbor/domain";
+import { ArtifactId, parse } from "@arbor/domain";
 import {
   ArtifactService,
   type BoundedObservation,
@@ -43,6 +44,19 @@ export interface ToolExecutor {
     readonly regions: ReadonlyArray<CanonicalResourceRegion>;
   }) => Effect.Effect<ToolExecutionResult, ToolRuntimeError>;
 }
+
+export interface ToolRuntimeQualificationEvent {
+  readonly boundary:
+    | "AH7AfterToolIntentCommit"
+    | "AH7AfterToolSettlementCommit";
+  readonly executionId: string;
+  readonly invocationId: string;
+  readonly callRef: string;
+}
+
+export type ToolRuntimeQualificationProbe = (
+  event: ToolRuntimeQualificationEvent,
+) => Promise<void>;
 
 const bounded = (text: string, limit = 2000): BoundedObservation => ({
   text: text.length > limit ? text.slice(0, limit) : text,
@@ -110,7 +124,11 @@ const denied = (reason: string): CanonicalToolObservation => ({
 
 export const ToolRuntimeLive = (
   executors: ReadonlyArray<ToolExecutor>,
-  options: { readonly maxDelegationDepth?: number; readonly now?: string } = {},
+  options: {
+    readonly maxDelegationDepth?: number;
+    readonly now?: string;
+    readonly qualificationProbe?: ToolRuntimeQualificationProbe;
+  } = {},
 ): Layer.Layer<
   ToolRuntimePort,
   never,
@@ -277,6 +295,7 @@ export const ToolRuntimeLive = (
           }
 
           const needsApproval = executor.requiresApproval(intent);
+          let approvalAlreadyConsumedBySelf = false;
           if (needsApproval) {
             if (intent.approvalId === null) {
               return denied("approval required");
@@ -294,6 +313,22 @@ export const ToolRuntimeLive = (
             if (Option.isNone(approval)) {
               return denied("approval not found");
             }
+            if (approval.value.consumedBy === intent.invocationId) {
+              const recorded = yield* tx
+                .transact(store.findById(intent.invocationId))
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "ApprovalLookup",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              if (Option.isNone(recorded)) {
+                return denied("approval consumed without matching invocation");
+              }
+              approvalAlreadyConsumedBySelf = true;
+            }
             const matched = matchApproval({
               approval: approval.value,
               intent,
@@ -301,6 +336,7 @@ export const ToolRuntimeLive = (
               context,
               regions,
               now,
+              replayOfRecordedInvocation: approvalAlreadyConsumedBySelf,
             });
             if (matched._tag === "Denied") {
               return denied(matched.reason);
@@ -327,21 +363,8 @@ export const ToolRuntimeLive = (
             return denied(admitted.reason);
           }
 
-          yield* tx
-            .transact(
-              store.recordIntent({
-                invocationId: intent.invocationId,
-                executionId: context.executionId,
-                workspaceId: context.workspaceId,
-                toolName: intent.toolName,
-                toolVersion: intent.toolVersion,
-                sideEffectSemantics: definition.sideEffectSemantics,
-                argumentsJson: intent.argumentsJson,
-                resolvedRegions: regions,
-                approvalId: intent.approvalId,
-                intentAt: now,
-              }),
-            )
+          const prior = yield* tx
+            .transact(store.findById(intent.invocationId))
             .pipe(
               Effect.mapError(
                 operationalFailure(
@@ -350,7 +373,116 @@ export const ToolRuntimeLive = (
                 ),
               ),
             );
-          if (needsApproval && intent.approvalId !== null) {
+          if (Option.isSome(prior)) {
+            const recorded = prior.value;
+            const sameIntent =
+              recorded.executionId === context.executionId &&
+              recorded.workspaceId === context.workspaceId &&
+              recorded.toolName === intent.toolName &&
+              recorded.toolVersion === intent.toolVersion &&
+              recorded.sideEffectSemantics === definition.sideEffectSemantics &&
+              recorded.argumentsJson === intent.argumentsJson &&
+              JSON.stringify(recorded.resolvedRegions) ===
+                JSON.stringify(regions) &&
+              recorded.approvalId === intent.approvalId;
+            if (!sameIntent) {
+              return yield* Effect.fail<ToolRuntimeError>(
+                operationalFailure(
+                  "IntentJournal",
+                  String(intent.invocationId),
+                )({
+                  _tag: "ToolInvocationIdentityConflict",
+                }),
+              );
+            }
+            if (recorded.settlement !== null) {
+              if (
+                recorded.settlement._tag === "Success" &&
+                recorded.resultRef !== null &&
+                Option.isSome(artifactService)
+              ) {
+                let artifactId: ArtifactId;
+                try {
+                  artifactId = parse(ArtifactId)(recorded.resultRef);
+                } catch {
+                  return {
+                    _tag: "OutcomeUnknown" as const,
+                    reconciliationRefs: [String(intent.invocationId)],
+                  };
+                }
+                const bytes = yield* tx
+                  .transact(artifactService.value.load(artifactId))
+                  .pipe(
+                    Effect.mapError(
+                      operationalFailure(
+                        "SettlementJournal",
+                        String(intent.invocationId),
+                      ),
+                    ),
+                  );
+                if (Option.isSome(bytes)) {
+                  return {
+                    _tag: "Success" as const,
+                    observation: bounded(new TextDecoder().decode(bytes.value)),
+                    resultRef: recorded.resultRef,
+                  };
+                }
+              }
+              return {
+                _tag: "OutcomeUnknown" as const,
+                reconciliationRefs: [String(intent.invocationId)],
+              };
+            }
+            if (
+              recorded.sideEffectSemantics !== "ReadOnly" &&
+              recorded.sideEffectSemantics !== "Idempotent"
+            ) {
+              return {
+                _tag: "OutcomeUnknown" as const,
+                reconciliationRefs: [String(intent.invocationId)],
+              };
+            }
+          } else {
+            yield* tx
+              .transact(
+                store.recordIntent({
+                  invocationId: intent.invocationId,
+                  executionId: context.executionId,
+                  workspaceId: context.workspaceId,
+                  toolName: intent.toolName,
+                  toolVersion: intent.toolVersion,
+                  sideEffectSemantics: definition.sideEffectSemantics,
+                  argumentsJson: intent.argumentsJson,
+                  resolvedRegions: regions,
+                  approvalId: intent.approvalId,
+                  intentAt: now,
+                }),
+              )
+              .pipe(
+                Effect.mapError(
+                  operationalFailure(
+                    "IntentJournal",
+                    String(intent.invocationId),
+                  ),
+                ),
+              );
+            if (options.qualificationProbe !== undefined) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH7AfterToolIntentCommit",
+                    executionId: context.executionId,
+                    invocationId: intent.invocationId,
+                    callRef: intent.callRef,
+                  }) ?? Promise.resolve(),
+              );
+            }
+          }
+          if (
+            needsApproval &&
+            intent.approvalId !== null &&
+            !approvalAlreadyConsumedBySelf
+          ) {
             const consumed = yield* tx
               .transact(
                 store.consumeApproval(intent.approvalId, intent.invocationId),
@@ -488,6 +620,17 @@ export const ToolRuntimeLive = (
                 ),
               ),
             );
+          if (options.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "AH7AfterToolSettlementCommit",
+                  executionId: context.executionId,
+                  invocationId: intent.invocationId,
+                  callRef: intent.callRef,
+                }) ?? Promise.resolve(),
+            );
+          }
 
           const observation: CanonicalToolObservation = (() => {
             switch (outcome.settlement._tag) {

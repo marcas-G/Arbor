@@ -151,6 +151,7 @@ import {
   ToolCatalogPortLive,
   ToolDefinitionStoreLive,
   ToolRuntimeLive,
+  type ToolRuntimeQualificationProbe,
 } from "@arbor/tool-runtime";
 import { WorkerDispatchPortLive } from "@arbor/worker-local";
 import { Effect, Layer } from "effect";
@@ -290,6 +291,7 @@ export interface SingleWorkspaceConfig {
   /** Explicit test-only in-process fault probe; never loaded from env or a
    * public request. Production startup leaves this absent. */
   readonly qualificationProbe?: AgentLoopQualificationProbe;
+  readonly toolQualificationProbe?: ToolRuntimeQualificationProbe;
   readonly providerQualificationProbe?: ProviderRuntimeConfig["qualificationProbe"];
 }
 
@@ -555,7 +557,11 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(repos, infra),
   );
   const toolRuntime = Layer.provide(
-    ToolRuntimeLive(BUILTIN_EXECUTORS),
+    ToolRuntimeLive(BUILTIN_EXECUTORS, {
+      ...(config.toolQualificationProbe === undefined
+        ? {}
+        : { qualificationProbe: config.toolQualificationProbe }),
+    }),
     Layer.mergeAll(
       repos,
       admission,
@@ -593,7 +599,7 @@ export const buildSingleWorkspaceLayer = (
   );
   const executableInvocation = Layer.provide(
     ExecutableToolHandlerLive,
-    Layer.mergeAll(toolRuntime, infra, toolCatalog),
+    Layer.mergeAll(toolRuntime, infra, toolCatalog, repos),
   );
   const turnProfiles = Layer.provide(
     TurnProfileResolverLive,

@@ -2423,6 +2423,7 @@ describe("p12-acceptance story 12 — real provider adapter + non-minimal tool",
         settle: () => Effect.void,
         consumeApproval: () => Effect.succeed(true),
         findApproval: () => Effect.succeed(Option.none()),
+        findById: () => Effect.succeed(Option.none()),
         findUnsettled: () => Effect.succeed([]),
       } as never),
       Layer.succeed(ProjectEnvironmentPort, {

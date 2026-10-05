@@ -24,17 +24,28 @@ describe("SCRC executable outcome taxonomy", () => {
     ],
     [{ _tag: "Denied" as const, reason: "policy" }, "Denied"],
     [{ _tag: "Interrupted" as const }, "Interrupted"],
-    [
-      {
-        _tag: "OutcomeUnknown" as const,
-        reconciliationRefs: ["tin_unknown"],
-      },
-      "OutcomeUnknown",
-    ],
     [{ _tag: "RuntimeFailure" as const, cause: "defect" }, "Failed"],
   ])("maps %s to typed status %s", (input, status) => {
     const outcome = toExecutableOutcome(input);
     expect(outcome).toMatchObject({ _tag: "Observation", status });
+  });
+
+  it("keeps a ToolRuntime OutcomeUnknown as reconciliation settlement, not an applied observation", () => {
+    expect(
+      toExecutableOutcome({
+        _tag: "OutcomeUnknown",
+        reconciliationRefs: ["tin_unknown"],
+      }),
+    ).toEqual({
+      _tag: "Settle",
+      settlement: {
+        _tag: "OutcomeUnknown",
+        reconciliation: {
+          _tag: "ReconciliationRequired",
+          invocationRefs: ["tin_unknown"],
+        },
+      },
+    });
   });
 
   it("keeps the complete result reference when the model observation is bounded", () => {

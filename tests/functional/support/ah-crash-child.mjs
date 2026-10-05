@@ -14,15 +14,20 @@ if (
   targetBoundary !== "AH4RepairAfterSettlementProposal" &&
   targetBoundary !== "AH56AfterOutputAcceptedCommit" &&
   targetBoundary !== "AH12BeforeSuccessCommit" &&
-  targetBoundary !== "AH12AfterSuccessCommit"
+  targetBoundary !== "AH12AfterSuccessCommit" &&
+  targetBoundary !== "AH7AfterActionIntentCommit" &&
+  targetBoundary !== "AH7AfterActionResultCommit" &&
+  targetBoundary !== "AH7AfterToolIntentCommit" &&
+  targetBoundary !== "AH7AfterToolSettlementCommit"
 ) {
   throw new Error("AH test child needs an exact boundary");
 }
 
-const pauseAtBoundary = async ({ boundary, providerTurnId }) => {
+const pauseAtBoundary = async (event) => {
+  const { boundary, providerTurnId } = event;
   if (boundary !== targetBoundary) return;
   process.stdout.write(
-    `${JSON.stringify({ tag: "AH_PROBE", boundary, providerTurnId })}\n`,
+    `${JSON.stringify({ tag: "AH_PROBE", ...event, providerTurnId })}\n`,
   );
   await new Promise(() => {});
 };
@@ -36,6 +41,7 @@ const config = {
   },
   qualificationProbe: pauseAtBoundary,
   providerQualificationProbe: pauseAtBoundary,
+  toolQualificationProbe: pauseAtBoundary,
 };
 
 await Effect.runPromise(
