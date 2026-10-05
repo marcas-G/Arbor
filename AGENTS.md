@@ -231,10 +231,14 @@ AH5–AH6 sourced Session output / OutputAccepted now have two-sided process
 crash evidence; see `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.
 AH7–AH14 remain open and MUST NOT be inferred from AH1–AH6/F16.
 AH7 has PARTIAL process-crash evidence (ReadOnly action/P4 intent/settlement/
-Observation four sides and Reconcilable intent fail-closed), not phase closure;
+Observation four sides and Reconcilable intent/effect-before-settlement
+fail-closed), not phase closure;
 see `planning/results/AH7-partial-crash-qualification.result.md`. Its
-effect-after/before-settlement, approval atomicity, non-Success observation
+active reconciliation, approval atomicity, non-Success observation
 replay, concurrency and multi-action cases remain open.
+The non-Success replay gap is `AH7-DG-01` with an isolated failing test and
+draft governance proposal. At `26f80f2`, `pnpm test:functional` passes
+(public process 29, browser 2); this does not include the pending gap test.
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,

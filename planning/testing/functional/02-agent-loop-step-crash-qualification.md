@@ -18,7 +18,7 @@ adoption、持久 Provider failure 后无重复调用，以及 action reconcilia
 | 3 | Turn settled → Step ProviderResultAvailable | 真实进程两侧 kill/restart 已 PASS；`planning/results/AH3-process-crash-qualification.result.md` | 两侧已证明同一 Step/ProviderTurn、单回复、单请求 |
 | 4 | terminal failure/repair exhausted → SettlementProposed | 401 终态失败与修复耗尽各两侧真实进程 kill/restart 已 PASS；`planning/results/AH4-terminal-failure-repair-crash.result.md` | ProviderTurn/Step 同事务闭合；不重复推理或伪造答复 |
 | 5–6 | pinned decode → sourced ModelOutput → OutputAccepted | 一笔原子事务前/后真实进程 kill/restart 已 PASS；`planning/results/AH5-AH6-sourced-output-atomic-crash.result.md` | Session source 与 Step 同时落盘，重启后单输出、单答复、单 Provider 请求 |
-| 7 | action intent/effect/settlement/Observation/cursor 各过渡 | ReadOnly 四个提交点 + Reconcilable intent 安全停止真实进程 PASS；`planning/results/AH7-partial-crash-qualification.result.md` | **PARTIAL**：effect-after/before-settlement、非 Success 观察恢复、approval 原子性、并发与两动作仍缺证据 |
+| 7 | action intent/effect/settlement/Observation/cursor 各过渡 | ReadOnly 四个提交点 + Reconcilable intent/实际 effect→settlement 两侧安全停止真实进程 PASS；`planning/results/AH7-partial-crash-qualification.result.md` | **PARTIAL**：主动 reconciliation、非 Success 观察恢复、approval 原子性、并发与两动作仍缺证据 |
 | 8 | action A 已提交，B 前 ControlBasis 变旧 | P3 driver stale 分支 | 崩溃后 B 不以旧授权执行 |
 | 9 | settlement proposal → remaining actions Skipped | P3 driver early settlement | 崩溃后余下 action 不执行 |
 | 10 | old-generation FencingRejected → new takeover | P3/P9 lease tests | 新 generation 仅在证据允许时换 CommandId；旧写拒绝 |
