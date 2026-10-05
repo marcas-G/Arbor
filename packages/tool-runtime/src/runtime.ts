@@ -48,6 +48,7 @@ export interface ToolExecutor {
 export interface ToolRuntimeQualificationEvent {
   readonly boundary:
     | "AH7AfterToolIntentCommit"
+    | "AH7AfterToolEffectBeforeSettlement"
     | "AH7AfterToolSettlementCommit";
   readonly executionId: string;
   readonly invocationId: string;
@@ -573,6 +574,17 @@ export const ToolRuntimeLive = (
             });
           }
           const outcome = executed.value;
+          if (options.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "AH7AfterToolEffectBeforeSettlement",
+                  executionId: context.executionId,
+                  invocationId: intent.invocationId,
+                  callRef: intent.callRef,
+                }) ?? Promise.resolve(),
+            );
+          }
 
           const resultRef =
             outcome.settlement._tag === "Success" &&

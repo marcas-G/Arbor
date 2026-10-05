@@ -4,7 +4,8 @@
 
 状态：**F01–F20 的限定判定通过；F21–F23 为独立红灯；不宣称发布就绪。**
 
-`b4c0fd6` 上 `pnpm test:functional` 通过：公开进程 24/24（含 AH1–AH6）、
+`26f80f2` 上 `pnpm test:functional` 通过：公开进程 29/29（含 AH1–AH6 与
+AH7 ReadOnly/Reconcilable 部分资格）、
 Playwright 2/2、零重试。F02 的 Human/Assistant 两条权威转录断言已包含在
 本批次。默认 `pnpm check` 同提交全绿：
 架构 155、核心 1677 + 3 skipped、Web 216。F21–F23 在单独 pending 配置中
@@ -41,7 +42,8 @@ Playwright 2/2、零重试。F02 的 Human/Assistant 两条权威转录断言已
 F15/F18 的 PASS 代替 F22。F16 不证明 Provider 成功已经落盘后的特定故障窗口；
 功能旅程只证明用户可见去重与有界重试。`docs/design/implementation/P9/07-agent-loop-step-recovery.md`
 还要求 AH1–AH14 每个实际提交边界两侧的 crash injection。AH1–AH6 现已
-真实进程资格 PASS，但 AH7–AH14 仍未闭合；不能用 F16 或 AH1–AH6 绿灯抵销。
+真实进程资格 PASS；AH7 只有部分路径 PASS，AH7-DG-01 是隔离红灯；AH8–AH14
+仍未闭合。不能用 F16 或部分 AH7 绿灯抵销。
 
 剩余动作：等待三份固定治理提案分别被人工接受，按所属文档落地，再让 F21–F23
 从 pending 迁入正式门禁并全量复测；并按既有授权补齐其余 AH crash 矩阵。

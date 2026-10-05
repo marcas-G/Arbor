@@ -55,6 +55,8 @@ CLOSED   — disposed by a later phase / governance ruling (see file)
 | FT-DG-01 | UI-created Project has no trusted resource admission | System Design / DID / P12 / P13 | F21 | OPEN |
 | FT-DG-02 | Completed Work cannot be inspected by its original link | System Design / DID / P10 / P13 | F05 terminal oracle / F22 | OPEN |
 | FT-DG-03 | External Command payloads can persist malformed typed identities | System Design / DID / P12 transport / Application | F23 and all public command shells | OPEN |
+| AH7-DG-01 | Settled ToolInvocation lacks replayable bounded Observation | System Design / DID / P3 / P4 / P9 | AH7 settlement→Observation crash seam | OPEN |
+| AH7-DG-02 | Reconcilable shell lacks an executable reality-proof contract | System Design / DID / P4 / P9 | AH7 effect→settlement crash seam | OPEN |
 
 All six gaps were resolved by the System Design v1.3 / DID v1.4 governance
 patch. Resolution authority is recorded in each gap file.

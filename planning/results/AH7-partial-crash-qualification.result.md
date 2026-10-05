@@ -15,9 +15,11 @@ ToolInvocationId 保持稳定；P4 已结算后复用原 Artifact，未再产生
 ToolResult 恰一份，Provider 首次工具决策没有重放。
 
 `tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts`
-在 Reconcilable `shell` intent 已落盘、executor 尚未进入时杀进程。重启不盲执行
-shell；原 action 是 `ReconciliationPending`，Execution 是 `OutcomeUnknown`，临时
-工作目录没有效应文件。此用例只证明安全停止，不宣称完成外部现实 reconciliation。
+分别在 Reconcilable `shell` intent 已落盘但 executor 尚未进入，以及 shell
+外部效应已发生、P4 settlement 尚未提交时杀进程。首侧效应文件始终不存在；
+后侧文件仅有一次追加的 marker，重启后内容不变。两侧均不盲执行 shell；原
+action 是 `ReconciliationPending`，Execution 是 `OutcomeUnknown`。这些用例
+只证明安全停止，不宣称完成外部现实 reconciliation。
 
 测试发现并修复了三条实现缺陷：
 
@@ -38,8 +40,8 @@ shell；原 action 是 `ReconciliationPending`，Execution 是 `OutcomeUnknown`�
 
 ## 尚未通过 / 不能宣称关闭
 
-- Reconcilable 工具在 effect 已发生、P4 settlement 未提交时，仍需真实外部状态
-  核对测试；当前 OutcomeUnknown 仅证明不盲重放。
+- Reconcilable 工具在 effect 已发生、P4 settlement 未提交时，已证明不盲重放；
+  仍缺**主动核对外部现实并收敛**的测试与实现。
 - 已结算的非 Success（例如 ExpectedFailure）没有持久的 bounded Observation，
   resultRef 又可为空。P4 record 仅有 settlement/resultRef，不能精确重建原模型
   观察；需要设计归属确认和红灯反例，不能伪造成功或把已知失败说成外部效应未知。
@@ -49,4 +51,7 @@ shell；原 action 是 `ReconciliationPending`，Execution 是 `OutcomeUnknown`�
   AH7 子边界仍缺进程资格。
 
 本批 `pnpm check` PASS：架构 155、核心 1680 + 3 skipped、Web 216。
-完整发布功能批次需从包含本批改动的提交复测。AH8–AH14 仍 OPEN。
+`26f80f2` 上 `pnpm test:functional` PASS：公开进程 29/29、浏览器 2/2，
+包含从该提交的干净检出测试，零重试。隔离 AH7-DG-01 红灯仍失败，不计入
+正式 PASS。治理审阅见 `planning/results/AH7-DG-01-governance-readiness.review.md`。
+AH8–AH14 仍 OPEN。
