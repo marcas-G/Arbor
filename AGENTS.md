@@ -257,7 +257,11 @@ crash evidence in `planning/results/AH12-settlement-command-process-crash.result
 AH13 Execution settled → P17 ResponseJob/Attempt convergence has two-sided
 real-process crash evidence and one public reply in
 `planning/results/AH13-conversation-response-convergence-process-crash.result.md`;
-AH14 remains open.
+AH14 positive equivalent legacy adoption has two-sided real-process crash
+evidence, but remains PARTIAL: ambiguous legacy action evidence lacks durable
+public Attention (`AH14-DG-01`, pending red test); see
+`planning/results/AH14-legacy-adoption-partial.result.md`. AH7/AH10/AH14
+are not closed.
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,

@@ -913,6 +913,19 @@ export const runModelDecision = (
           }
           if (loopStep.state === "Prepared") {
             const preparedStep = loopStep;
+            if (
+              settled.evidenceVersion === "legacy-success-v1" &&
+              options.qualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH14BeforeLegacyAdoptionCommit",
+                    providerTurnId: settled.turn.providerTurnId,
+                    executionId: input.execution.executionId,
+                  }) ?? Promise.resolve(),
+              );
+            }
             loopStep = yield* tx
               .transact(
                 Effect.gen(function* () {
@@ -951,6 +964,19 @@ export const runModelDecision = (
                 }),
               )
               .pipe(Effect.mapError(failure));
+            if (
+              settled.evidenceVersion === "legacy-success-v1" &&
+              options.qualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH14AfterLegacyAdoptionCommit",
+                    providerTurnId: settled.turn.providerTurnId,
+                    executionId: input.execution.executionId,
+                  }) ?? Promise.resolve(),
+              );
+            }
           }
           if (decoded.ok) {
             return {
