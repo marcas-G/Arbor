@@ -14,7 +14,9 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH7AfterActionIntentCommit"
     | "AH7AfterActionResultCommit"
     | "AH9BeforeTerminalActionCommit"
-    | "AH9AfterTerminalActionCommit";
+    | "AH9AfterTerminalActionCommit"
+    | "AH11BeforeStepEffectsCommit"
+    | "AH11AfterStepEffectsCommit";
   readonly providerTurnId: string;
   readonly executionId?: string;
   readonly logicalActionId?: string;

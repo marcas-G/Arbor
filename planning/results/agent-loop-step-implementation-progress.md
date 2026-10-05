@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN PROGRESS — core handoff path implemented; AH1–AH6, AH8–AH9 process-crash
+**IN PROGRESS — core handoff path implemented; AH1–AH6, AH8–AH9, AH11 process-crash
 qualification PASS; full AH1–AH14 closure pending.**
 
 ## Implemented
@@ -53,7 +53,7 @@ qualification PASS; full AH1–AH14 closure pending.**
 
 ## Remaining before closure
 
-- AH7 and AH10–AH14 still need the remaining kill-before/kill-after matrix
+- AH7, AH10 and AH12–AH14 still need the remaining kill-before/kill-after matrix
   as individually named evidence.
 - AH7 has PARTIAL real-process evidence for four ReadOnly action/tool/Observation
   boundaries and Reconcilable intent fail-closed. See
@@ -71,6 +71,10 @@ qualification PASS; full AH1–AH14 closure pending.**
   converges a prior Committed receipt without a second gateway submission.
   Other controls and process-crash qualification remain. See
   `planning/results/AH10-generation-command-takeover-gap.result.md`.
+- AH11 has two-sided real-process crash evidence at the independent
+  `ActionsInProgress → StepEffectsCommitted` transition. The Observation,
+  action result and P4 invocation remain single after restart; see
+  `planning/results/AH11-observation-step-effects-process-crash.result.md`.
 - AH5–AH6 share the sourced Session append / OutputAccepted atomic commit;
   its two-sided real-process evidence is in
   `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.

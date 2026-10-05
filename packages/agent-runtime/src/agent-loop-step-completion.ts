@@ -16,6 +16,7 @@ import type {
 } from "@arbor/ports";
 import { Effect } from "effect";
 import { MAX_TURNS, sessionFence } from "./agent-loop-policy.js";
+import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
 export interface AgentLoopStepCompletionDependencies {
   readonly input: {
@@ -36,6 +37,7 @@ export interface AgentLoopStepCompletionDependencies {
   readonly sessions: SessionRepositoryService;
   readonly failure: (cause: unknown) => ExecutionDriverError;
   readonly now: () => Effect.Effect<string>;
+  readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
 
 export type AgentLoopStepCompletion =
@@ -62,6 +64,7 @@ export const completeAgentLoopStep = (
     sessions,
     failure,
     now,
+    qualificationProbe,
   } = dependencies;
 
   return Effect.gen(function* () {
@@ -88,6 +91,15 @@ export const completeAgentLoopStep = (
       currentLoopStep.nextActionIndex >= decodedOutput.toolInvocations.length
     ) {
       const actionsCompleteStep = currentLoopStep;
+      if (qualificationProbe !== undefined) {
+        yield* Effect.promise(() =>
+          qualificationProbe({
+            boundary: "AH11BeforeStepEffectsCommit",
+            providerTurnId: actionsCompleteStep.providerTurnId,
+            executionId: input.execution.executionId,
+          }),
+        );
+      }
       currentLoopStep = yield* tx
         .transact(
           loopSteps.transition(
@@ -106,6 +118,15 @@ export const completeAgentLoopStep = (
           ),
         )
         .pipe(Effect.mapError(failure));
+      if (qualificationProbe !== undefined) {
+        yield* Effect.promise(() =>
+          qualificationProbe({
+            boundary: "AH11AfterStepEffectsCommit",
+            providerTurnId: actionsCompleteStep.providerTurnId,
+            executionId: input.execution.executionId,
+          }),
+        );
+      }
     }
 
     // A claimed human message settles on its first text-only answer: one
