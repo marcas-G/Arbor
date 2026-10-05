@@ -2,7 +2,7 @@
 
 日期：2026-10-05
 
-状态：**两侧定向真实进程测试与 `pnpm check` PASS；完整功能批次待复测。**
+状态：**两侧定向真实进程测试、`pnpm check` 与完整功能批次 PASS。**
 
 `tests/functional/process/agent-loop-ah9-terminal-action-recovery.functional.test.ts`
 使用生产 daemon、隔离 SQLite 和 HTTP Provider。单个 ProviderTurn 同时返回
@@ -26,3 +26,7 @@ Composition，不通过用户环境变量开启，也不修改生产持久化语
 定向测试 2/2 PASS；`pnpm check` 架构 155、核心 1680 + 3 skipped、
 Web 216，全部 PASS。该证据只关闭 AH9；AH7 的未证边界以及 AH10–AH14
 仍不能由此推定通过。
+
+提交 `3e339ae` 的完整 `pnpm test:functional`：公开进程 33/33、浏览器
+2/2 PASS，含 F20 干净检出安装、构建和公开黑盒启动。没有把尚未通过治理的
+F21/F22/F23 pending 用例计入此数字。
