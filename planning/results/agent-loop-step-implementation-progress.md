@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN PROGRESS — core handoff path implemented; AH1–AH6 process-crash
+**IN PROGRESS — core handoff path implemented; AH1–AH6, AH8–AH9 process-crash
 qualification PASS; full AH1–AH14 closure pending.**
 
 ## Implemented
@@ -53,7 +53,8 @@ qualification PASS; full AH1–AH14 closure pending.**
 
 ## Remaining before closure
 
-- AH7–AH14 kill-before/kill-after matrix as individually named evidence.
+- AH7 and AH10–AH14 still need the remaining kill-before/kill-after matrix
+  as individually named evidence.
 - AH7 has PARTIAL real-process evidence for four ReadOnly action/tool/Observation
   boundaries and Reconcilable intent fail-closed. See
   `planning/results/AH7-partial-crash-qualification.result.md`; remaining
@@ -61,6 +62,10 @@ qualification PASS; full AH1–AH14 closure pending.**
 - AH8 now has real-process A Applied → public SteerWork changes Strong
   ControlBasis → kill/restart → B SkippedStale + unique successor evidence in
   `planning/results/AH8-action-b-stale-process-crash.result.md`.
+- AH9 has real-process terminal-action transaction before/after evidence:
+  A `wait` is Applied, B `assign_work` is SkippedEarlySettlement, and the
+  proposal is durable before Execution settlement. See
+  `planning/results/AH9-terminal-action-process-crash.result.md`.
 - AH5–AH6 share the sourced Session append / OutputAccepted atomic commit;
   its two-sided real-process evidence is in
   `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.

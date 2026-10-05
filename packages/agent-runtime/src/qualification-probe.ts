@@ -12,7 +12,9 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH4RepairAfterSettlementProposal"
     | "AH56AfterOutputAcceptedCommit"
     | "AH7AfterActionIntentCommit"
-    | "AH7AfterActionResultCommit";
+    | "AH7AfterActionResultCommit"
+    | "AH9BeforeTerminalActionCommit"
+    | "AH9AfterTerminalActionCommit";
   readonly providerTurnId: string;
   readonly executionId?: string;
   readonly logicalActionId?: string;
