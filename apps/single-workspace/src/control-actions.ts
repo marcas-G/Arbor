@@ -36,12 +36,14 @@ import {
   type ChildWorkspaceProposal,
   CommandId,
   type CommandId as CommandIdType,
+  type CommandSubmissionContext,
   DeliverableId,
   type DeliverableKind,
   DependencyId,
   DependencyRevision,
   EvidenceId,
   executionEpisode,
+  type LeaseGeneration,
   type MessageId,
   MessageId as MessageIdSchema,
   type OutboundMessage,
@@ -57,6 +59,8 @@ import {
   type BlobStorePortService,
   Clock,
   type ClockService,
+  CommandStore,
+  type CommandStoreService,
   DecisionRequestStore,
   type DecisionRequestStoreService,
   DeliverableRepository,
@@ -121,6 +125,7 @@ export interface ClaimCompletionDependencies {
 
 export interface AssignWorkDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
   readonly workspaces: WorkspaceRepositoryService;
   readonly clock: ClockService;
   readonly tx: TransactionPortService;
@@ -230,6 +235,17 @@ const actionOperationalFailure =
           cause,
         };
 
+const assignWorkCommandId = (
+  occurrence: string,
+  context: CommandSubmissionContext,
+): CommandIdType => {
+  const seed =
+    context._tag === "ExecutionOrigin" && context.fencingGeneration !== 0
+      ? `${occurrence}:generation:${context.fencingGeneration}`
+      : occurrence;
+  return parse(CommandId)(`cmd_${newUuid7("assign-work-command", seed)}`);
+};
+
 /** DID v1.26 VDC-5: model authors bounded Work semantics and the readable
  * provenance reason. Runtime binds target, identities, revisions,
  * predecessor and authority. */
@@ -329,9 +345,78 @@ export const assignWorkHandler = (
         },
         revision: parse(WorkRevision)(0),
       };
-      const commandId = parse(CommandId)(
-        `cmd_${newUuid7("assign-work-command", occurrence)}`,
-      );
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        if (dependencies.commandReceipts === undefined) {
+          return yield* Effect.fail(
+            actionOperationalFailure("AssignWork.receiptLookup")(
+              "receipt lookup is required for generation takeover",
+            ),
+          );
+        }
+        for (
+          let priorGeneration = 0;
+          priorGeneration < context.fencingGeneration;
+          priorGeneration += 1
+        ) {
+          const priorCommandId = assignWorkCommandId(occurrence, {
+            ...context,
+            fencingGeneration: priorGeneration as LeaseGeneration,
+          });
+          const prior = yield* dependencies.tx.transact(
+            dependencies.commandReceipts.findResolution(priorCommandId),
+          );
+          if (Option.isNone(prior)) continue;
+          if (prior.value.projectId !== execution.projectId) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AssignWork.priorReceipt")(
+                "prior Command receipt belongs to another Project",
+              ),
+            );
+          }
+          if (prior.value.resolution._tag === "Committed") {
+            const result = prior.value.resolution.result;
+            if (
+              typeof result !== "object" ||
+              result === null ||
+              !("workId" in result) ||
+              result.workId !== payload.workId ||
+              !("workspaceId" in result) ||
+              result.workspaceId !== targetWorkspaceId
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("AssignWork.priorReceipt")(
+                  "prior Committed result does not match the pinned action",
+                ),
+              );
+            }
+            return {
+              _tag: "Observation" as const,
+              source: "Runtime" as const,
+              observation: {
+                text: `WorkAssigned(${payload.workId}, ${targetWorkspaceId})`,
+                truncated: false,
+              },
+            };
+          }
+          const rejection = prior.value.resolution.error;
+          if (
+            typeof rejection === "object" &&
+            rejection !== null &&
+            "_tag" in rejection &&
+            rejection._tag === "FencingRejected"
+          ) {
+            continue;
+          }
+          return yield* Effect.fail(
+            actionError(
+              "earlier command was terminally rejected",
+              "action/canonical-rejected",
+              "WaitForStateChange",
+            ),
+          );
+        }
+      }
+      const commandId = assignWorkCommandId(occurrence, context);
       const receipt = yield* dependencies.gateway.execute<
         AssignWorkPayload,
         AssignWorkResult
@@ -1761,6 +1846,7 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
   SingleWorkspaceControlActionHandlers,
   never,
   | CommandGateway
+  | CommandStore
   | BlobStorePort
   | Clock
   | FormationProposalStore
@@ -1782,6 +1868,7 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
   SingleWorkspaceControlActionHandlers,
   Effect.gen(function* () {
     const gateway = yield* CommandGateway;
+    const commandReceipts = yield* CommandStore;
     const blobs = yield* BlobStorePort;
     const clock = yield* Clock;
     const messages = yield* MessageStore;
@@ -1803,6 +1890,7 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
     return SingleWorkspaceControlActionHandlers.of(
       makeSingleWorkspaceControlActionHandlers({
         gateway,
+        commandReceipts,
         blobs,
         clock,
         messages,
