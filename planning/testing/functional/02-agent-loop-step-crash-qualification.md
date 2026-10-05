@@ -21,7 +21,7 @@ adoption、持久 Provider failure 后无重复调用，以及 action reconcilia
 | 7 | action intent/effect/settlement/Observation/cursor 各过渡 | ReadOnly 四个提交点 + Reconcilable intent/实际 effect→settlement 两侧安全停止真实进程 PASS；`planning/results/AH7-partial-crash-qualification.result.md` | **PARTIAL**：主动 reconciliation、非 Success 观察恢复、approval 原子性、并发与两动作仍缺证据 |
 | 8 | action A 已提交，B 前 ControlBasis 变旧 | 真实进程 A 提交后 SteerWork→kill/restart，B SkippedStale、唯一后继、无额外 Work PASS；`planning/results/AH8-action-b-stale-process-crash.result.md` | 已证明 B 不以旧授权执行 |
 | 9 | terminal action → remaining actions Skipped + settlement proposal | 提交前/后真实进程 kill/restart 2/2 PASS；`planning/results/AH9-terminal-action-process-crash.result.md` | 余下动作不执行、不产生第二个 Work；proposal 与跳过记录原子持久化 |
-| 10 | old-generation FencingRejected → new takeover | P3/P9 lease tests | 新 generation 仅在证据允许时换 CommandId；旧写拒绝 |
+| 10 | old-generation FencingRejected → new takeover | 两个确定性红测已复现跨代复用旧拒绝与盲换 ID 重复提交；`planning/results/AH10-generation-command-takeover-gap.result.md` | **OPEN**：先收敛旧回执，再在证据允许时换 CommandId；仍需两侧真实进程资格 |
 | 11 | Observation append → StepEffectsCommitted | P3 driver action replay | 崩溃后不丢 Observation、不重复 effect |
 | 12 | SettlementProposed → SettleExecution | P2/P3 settle tests | 一次权威 settlement、无重复 Provider 请求 |
 | 13 | Execution settled → HumanMessage convergence | F06/F16 用户可见去重 | 窗口两侧只产生一条有界答复 |

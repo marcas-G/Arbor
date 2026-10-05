@@ -66,6 +66,11 @@ qualification PASS; full AH1–AH14 closure pending.**
   A `wait` is Applied, B `assign_work` is SkippedEarlySettlement, and the
   proposal is durable before Execution settlement. See
   `planning/results/AH9-terminal-action-process-crash.result.md`.
+- AH10 remains OPEN. Two isolated deterministic red tests show both directions
+  of the receipt-first takeover problem: reusing an old FencingRejected
+  CommandId blocks the current owner, while blindly deriving a new CommandId
+  after an old Committed receipt risks duplicate effect. See
+  `planning/results/AH10-generation-command-takeover-gap.result.md`.
 - AH5–AH6 share the sourced Session append / OutputAccepted atomic commit;
   its two-sided real-process evidence is in
   `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.
