@@ -38,7 +38,10 @@ export interface ProductionFixture {
   readonly providerCalls: ReadonlyArray<CapturedProviderCall>;
   readonly daemonErrors: ReadonlyArray<string>;
   readonly crash: () => Promise<void>;
-  readonly restart: () => Promise<void>;
+  readonly restart: (options?: {
+    readonly entry?: string;
+    readonly daemonEnvironment?: Readonly<Record<string, string>>;
+  }) => Promise<void>;
   readonly stop: () => Promise<void>;
 }
 
@@ -308,7 +311,10 @@ export const startProductionFixture = async (input: {
   let stopped = false;
   let daemonStarts = 0;
 
-  const startDaemon = async () => {
+  const startDaemon = async (override?: {
+    readonly entry?: string;
+    readonly daemonEnvironment?: Readonly<Record<string, string>>;
+  }) => {
     const daemonEnv: NodeJS.ProcessEnv = {
       ...process.env,
       ARBOR_DB: databaseFile,
@@ -322,6 +328,7 @@ export const startProductionFixture = async (input: {
       ARBOR_FUNCTIONAL_TEST_KEY: "test-only",
       ARBOR_CONFIG: join(directory, "no-provider-config.json"),
       ...input.daemonEnvironment,
+      ...override?.daemonEnvironment,
     };
     if (input.admitWorkspaceDirectory === true) {
       daemonEnv.ARBOR_PROJECT_ROOT = workspaceDirectory;
@@ -331,9 +338,10 @@ export const startProductionFixture = async (input: {
     delete daemonEnv.FORCE_COLOR;
     delete daemonEnv.NO_COLOR;
     const entry =
-      daemonStarts === 0 && input.firstDaemonEntry !== undefined
+      override?.entry ??
+      (daemonStarts === 0 && input.firstDaemonEntry !== undefined
         ? input.firstDaemonEntry
-        : DAEMON_ENTRY;
+        : DAEMON_ENTRY);
     daemonStarts += 1;
     daemon = spawn(process.execPath, [entry], {
       cwd: directory,
@@ -377,9 +385,9 @@ export const startProductionFixture = async (input: {
     providerCalls: provider.calls,
     daemonErrors,
     crash: () => stopChild(daemon),
-    restart: async () => {
+    restart: async (override) => {
       await stopChild(daemon);
-      await startDaemon();
+      await startDaemon(override);
     },
     stop: async () => {
       if (stopped) return;

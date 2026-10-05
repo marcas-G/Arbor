@@ -27,7 +27,9 @@ if (
   targetBoundary !== "AH12BeforeSettleCommandCommit" &&
   targetBoundary !== "AH12AfterSettleCommandCommit" &&
   targetBoundary !== "AH13BeforeResponseSweepCommit" &&
-  targetBoundary !== "AH13AfterResponseSweepCommit"
+  targetBoundary !== "AH13AfterResponseSweepCommit" &&
+  targetBoundary !== "AH14BeforeLegacyAdoptionCommit" &&
+  targetBoundary !== "AH14AfterLegacyAdoptionCommit"
 ) {
   throw new Error("AH test child needs an exact boundary");
 }
