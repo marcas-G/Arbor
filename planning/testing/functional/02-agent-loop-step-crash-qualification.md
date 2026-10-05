@@ -24,7 +24,7 @@ adoption、持久 Provider failure 后无重复调用，以及 action reconcilia
 | 10 | old-generation FencingRejected → new takeover | `AssignWork` 两个确定性反例已转绿；`planning/results/AH10-generation-command-takeover-gap.result.md` | **PARTIAL**：其他控制动作与两侧真实进程资格仍需证明 |
 | 11 | Observation append → StepEffectsCommitted | 提交前/后真实进程 kill/restart 2/2 PASS；`planning/results/AH11-observation-step-effects-process-crash.result.md` | 已证明不丢 Observation、不重复 effect、后继唯一 |
 | 12 | SettlementProposed → SettleExecution | 提交前/后真实进程 kill/restart 2/2 PASS；`planning/results/AH12-settlement-command-process-crash.result.md` | 已证明一次权威 settlement、无重复 Provider 请求 |
-| 13 | Execution settled → HumanMessage convergence | F06/F16 用户可见去重 | 窗口两侧只产生一条有界答复 |
+| 13 | Execution settled → ResponseJob/Attempt convergence（P17 supersession） | 提交前/后真实进程 kill/restart 2/2 PASS；`planning/results/AH13-conversation-response-convergence-process-crash.result.md` | 窗口两侧只有一条公开答复、一次 Provider 请求 |
 | 14 | legacy adoption 首次 → 第二次 | P3 driver legacy adoption | 重启后同一 adoption/Attention，证据不足失败关闭 |
 
 ## 建议测试机制

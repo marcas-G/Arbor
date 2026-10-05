@@ -208,6 +208,15 @@ export class ProductionDaemonService extends Context.Service<
   ProductionDaemonServiceShape<ProductionDaemonServices>
 >()("arbor/ProductionDaemonService") {}
 
+/** Test-only process-local pause seam; regular daemon startup leaves it absent. */
+export type ConversationResponseQualificationProbe = (event: {
+  readonly boundary:
+    | "AH13BeforeResponseSweepCommit"
+    | "AH13AfterResponseSweepCommit";
+  readonly messageId: string;
+  readonly executionId: string;
+}) => Promise<void>;
+
 export interface ProductionDaemonConfig {
   readonly projectId?: ProjectId;
   readonly principal: Principal;
@@ -215,6 +224,7 @@ export interface ProductionDaemonConfig {
   readonly bindingFingerprint: string;
   readonly configurationRevision: string;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
+  readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
 }
 
 export type ProductionDaemonServices =
@@ -619,7 +629,30 @@ export const ProductionDaemonServiceLive = (
           // FIFO-oldest pending message when idle.
           const activeProjects = yield* tx.transact(jobs.projectsWithWork());
           for (const projectId of activeProjects) {
-            yield* tx.transact(
+            const sweepTarget =
+              config.conversationResponseQualificationProbe === undefined
+                ? undefined
+                : (yield* sql.unsafe<{
+                    message_id: string;
+                    active_execution_id: string;
+                  }>(
+                    "SELECT j.message_id, j.active_execution_id FROM conversation_response_jobs j JOIN executions e ON e.execution_id = j.active_execution_id WHERE j.project_id = ? AND j.state = 'Running' AND e.settled_at IS NOT NULL ORDER BY j.created_at LIMIT 1",
+                    [projectId],
+                  ))[0];
+            if (
+              sweepTarget !== undefined &&
+              config.conversationResponseQualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  config.conversationResponseQualificationProbe?.({
+                    boundary: "AH13BeforeResponseSweepCommit",
+                    messageId: sweepTarget.message_id,
+                    executionId: sweepTarget.active_execution_id,
+                  }) ?? Promise.resolve(),
+              );
+            }
+            const sweepRecords = yield* tx.transact(
               runConversationResponseSettlementSweep(
                 {
                   jobs,
@@ -634,6 +667,20 @@ export const ProductionDaemonServiceLive = (
                 projectId,
               ),
             );
+            if (
+              sweepTarget !== undefined &&
+              sweepRecords.includes(`answered:${sweepTarget.message_id}`) &&
+              config.conversationResponseQualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  config.conversationResponseQualificationProbe?.({
+                    boundary: "AH13AfterResponseSweepCommit",
+                    messageId: sweepTarget.message_id,
+                    executionId: sweepTarget.active_execution_id,
+                  }) ?? Promise.resolve(),
+              );
+            }
             yield* runConversationResponseTrigger(
               {
                 gateway,

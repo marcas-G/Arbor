@@ -171,6 +171,7 @@ import {
   T1RecoveryStateLive,
 } from "./health.js";
 import {
+  type ConversationResponseQualificationProbe,
   type ProductionDaemonService,
   ProductionDaemonServiceLive,
   type ProductionDaemonServices,
@@ -293,6 +294,7 @@ export interface SingleWorkspaceConfig {
    * public request. Production startup leaves this absent. */
   readonly qualificationProbe?: AgentLoopQualificationProbe;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
+  readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
   readonly toolQualificationProbe?: ToolRuntimeQualificationProbe;
   readonly providerQualificationProbe?: ProviderRuntimeConfig["qualificationProbe"];
 }
@@ -767,6 +769,12 @@ export const buildSingleWorkspaceLayer = (
         : {
             executionSettlementQualificationProbe:
               config.executionSettlementQualificationProbe,
+          }),
+      ...(config.conversationResponseQualificationProbe === undefined
+        ? {}
+        : {
+            conversationResponseQualificationProbe:
+              config.conversationResponseQualificationProbe,
           }),
     }),
     Layer.mergeAll(coreAll, t1Recovery, recordEnvironmentChange),

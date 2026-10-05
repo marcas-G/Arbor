@@ -25,7 +25,9 @@ if (
   targetBoundary !== "AH11BeforeStepEffectsCommit" &&
   targetBoundary !== "AH11AfterStepEffectsCommit" &&
   targetBoundary !== "AH12BeforeSettleCommandCommit" &&
-  targetBoundary !== "AH12AfterSettleCommandCommit"
+  targetBoundary !== "AH12AfterSettleCommandCommit" &&
+  targetBoundary !== "AH13BeforeResponseSweepCommit" &&
+  targetBoundary !== "AH13AfterResponseSweepCommit"
 ) {
   throw new Error("AH test child needs an exact boundary");
 }
@@ -50,6 +52,7 @@ const config = {
   providerQualificationProbe: pauseAtBoundary,
   toolQualificationProbe: pauseAtBoundary,
   executionSettlementQualificationProbe: pauseAtBoundary,
+  conversationResponseQualificationProbe: pauseAtBoundary,
 };
 
 await Effect.runPromise(
