@@ -31,3 +31,32 @@ Provider 只请求一次，Attempt 为 Success、ProviderTurn 为 Stop 且二者
 skipped、Web 216；构建、lint 和类型检查均通过。完整
 `pnpm test:functional` 仍未在此提交运行，不能把 F20 + 本项 2/2
 写成整个功能批次通过。
+
+## 集成负载复核与当前证据（2026-10-08）
+
+在包含 AH10 扩展但尚未修正本测试 oracle 的提交 `47e9249` 上，首次完整
+`pnpm test:functional` 的 Vitest 结果为 **21/22 files、52/53 tests**；唯一失败
+是本测试在首次观察到 lease renewal 时采到 `framesConsumed=481`，低于既有
+冻结资格阈值 `>512`。该次 Vitest 失败后 Playwright 阶段未启动。这个失败被
+保留为负证据，没有写成 PASS。相同提交下 P9 定向测试连续两次 1/1 PASS
+（test 约 10.82s、10.91s），说明差异出现在完整套件负载下，而非续租本身
+没有提交。
+
+诊断确认 `framesConsumed` 是 fetch wrapper 在 `controller.enqueue` 前计数，不能
+单独声称 Runtime 已持久化这些事件；旧 oracle 也只检查首次 `expires_at` 前移的
+单一采样。测试修正在 `101e009` 与 `3ffb17a` 分两步落地，未改生产代码、30s
+lease 或 `>512` 阈值：每个采样都要求当前真实 lease row 的 generation 不变且
+`expires_at` 相对上一条已观察的真实 row 增长；同一采样点要求 SSE response 活跃、
+写出/消费帧均 `>512`，并从 SQLite `provider_attempts.canonical_event_prefix_json`
+计数持久 `TextDelta >512`。若首次 renewal 快照不足，测试继续等待下一次真实
+TTL/3 renewal，等待上限 35s、stream idle 40s、turn/test 上限 45s；没有降低阈值或
+增加用于凑帧的固定等待。最终版本定向测试 2/2 PASS（test 约 10.734s、10.747s），
+TypeScript test typecheck 与单文件 Biome PASS。
+
+在最终提交 `3ffb17ac1f1daf74096a028f79f6a24c5842d1df` 上：F20 committed clean
+checkout 1/1 PASS（66.36s）；完整 `pnpm test:functional` PASS，Vitest **22/22
+files、53/53 tests**（1501.85s），Playwright **2/2**（44.1s）。P9 在整套中
+11.104s 通过，执行同一采样的持久 TextDelta 阈值、真实 TTL/3 lease 前移、活跃
+SSE 与 Provider/Attempt/Turn 单次成功断言。此前 `pnpm check` 在 `47e9249`
+通过（core 1708 + 3 skipped、architecture 155、Web 216）；P9 测试后续变更仅
+额外运行了 test typecheck 和单文件 Biome，本最终提交未重跑完整 `pnpm check`。
