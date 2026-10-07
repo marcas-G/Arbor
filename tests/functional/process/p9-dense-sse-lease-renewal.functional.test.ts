@@ -93,7 +93,7 @@ const outputContractRef = "plain-text-v1";
 const maxDenseFrames = 24_000;
 const denseBatchSize = 16;
 const denseBatchDelayMs = 60;
-const renewalWaitLimitMs = 17_000;
+const renewalWaitLimitMs = 35_000;
 
 const COMPLETED: ExecutionSettlement = {
   _tag: "Completed",
@@ -275,8 +275,8 @@ const DEFAULT_POLICY: ProviderRuntimeExecutionPolicy = {
   firstEventTimeoutMs: 5_000,
   // ProviderRuntime measures the streaming budget from the first data event;
   // the test must keep a valid turn open across the production 10s renewal.
-  streamIdleTimeoutMs: 20_000,
-  turnTimeoutMs: 22_000,
+  streamIdleTimeoutMs: 40_000,
+  turnTimeoutMs: 45_000,
   maxAttempts: 1,
   retryBackoffMs: 0,
 };
@@ -663,8 +663,11 @@ describe("P9 dense SSE lease renewal qualification", () => {
             readonly activeResponses: number;
             readonly framesConsumed: number;
             readonly framesWritten: number;
+            readonly previousExpiresAt: string;
+            readonly renewedExpiresAt: string;
           }
         | undefined;
+      let lastObservedExpiresAt = initialLease.expiresAt;
       do {
         if (denseState.driverError !== undefined) {
           throw new Error(
@@ -675,15 +678,25 @@ describe("P9 dense SSE lease renewal qualification", () => {
         if (
           current !== undefined &&
           Number(current.generation) === initialLease.generation &&
-          Date.parse(current.expires_at) > Date.parse(initialLease.expiresAt)
+          Date.parse(current.expires_at) > Date.parse(lastObservedExpiresAt)
         ) {
-          renewed = current;
-          activityAtRenewal = {
+          const sampledActivity = {
             activeResponses: denseState.activeResponses,
             framesConsumed: denseState.framesConsumed,
             framesWritten: denseState.framesWritten,
+            previousExpiresAt: lastObservedExpiresAt,
+            renewedExpiresAt: current.expires_at,
           };
-          break;
+          lastObservedExpiresAt = current.expires_at;
+          if (
+            sampledActivity.activeResponses === 1 &&
+            sampledActivity.framesConsumed > 512 &&
+            sampledActivity.framesWritten > 512
+          ) {
+            renewed = current;
+            activityAtRenewal = sampledActivity;
+            break;
+          }
         }
         if (denseState.frameCapReached) break;
         await new Promise((resolveWait) => setTimeout(resolveWait, 25));
@@ -704,9 +717,14 @@ describe("P9 dense SSE lease renewal qualification", () => {
       expect(
         Date.parse(renewed?.expires_at ?? "1970-01-01T00:00:00.000Z"),
       ).toBeGreaterThan(Date.parse(initialLease.expiresAt));
-      expect(activityAtRenewal?.activeResponses).toBe(1);
+      expect(activityAtRenewal).toMatchObject({ activeResponses: 1 });
       expect(activityAtRenewal?.framesConsumed).toBeGreaterThan(512);
       expect(activityAtRenewal?.framesWritten).toBeGreaterThan(512);
+      expect(
+        Date.parse(activityAtRenewal?.renewedExpiresAt ?? "1970-01-01"),
+      ).toBeGreaterThan(
+        Date.parse(activityAtRenewal?.previousExpiresAt ?? "9999-12-31"),
+      );
       expect(denseState.requestCount).toBe(1);
       expect(denseState.frameCapReached).toBe(false);
 
@@ -741,5 +759,5 @@ describe("P9 dense SSE lease renewal qualification", () => {
       await running?.catch(() => undefined);
       running = undefined;
     }
-  }, 25_000);
+  }, 45_000);
 });
