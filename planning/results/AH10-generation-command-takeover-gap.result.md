@@ -436,8 +436,7 @@ passed
 本主文件增量未改共享 process helper 或 `docs/design/**`。同批还包括
 `SelectCurrentWork` 已提交回执恢复的窄 pinned-replay 实现与守卫负测，详见
 `planning/results/AH10-select-current-work-takeover.result.md`。以下是本次独立
-集成复核结果；这不是完整 `pnpm test:functional`，也不关闭 AH10 其余控制动作
-与状态边界。
+集成复核结果；主文件定向运行本身不关闭 AH10 其余控制动作与状态边界。
 
 ```text
 pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts
@@ -446,4 +445,8 @@ pnpm exec vitest run --config vitest.functional.config.ts tests/functional/proce
 pnpm check
 PASS: Biome 947 files; architecture 155; core 316 files / 1711 passed + 3 skipped;
 Web 31 files / 216 passed; TypeScript, Web typecheck and build passed.
+
+Committed `4558ec65280ee25eb5817ce15fdf1f8df84209e0` follow-up validation:
+F20 clean checkout 1/1 PASS (46.94s); full `pnpm test:functional` PASS
+(Vitest 25/25 files, 64/64 tests; Playwright 2/2). This is not AH10 closure.
 ```

@@ -207,6 +207,8 @@ pnpm exec vitest run packages/agent-runtime/test/model-decision-pinned-replay.te
 pnpm check: PASS (Biome 947 files; architecture 155; core 316 files / 1711 passed + 3 skipped; Web 31 files / 216 passed; TypeScript, Web typecheck and build passed)
 ```
 
-The AH10 main real-process file independently passed 9/9 in 336.69s. These are
-focused/integration and repository-check results, not a full
-`pnpm test:functional` run or overall AH10 closure.
+The AH10 main real-process file independently passed 9/9 in 336.69s. On
+committed HEAD `4558ec65280ee25eb5817ce15fdf1f8df84209e0`, the F20 clean
+checkout test passed 1/1 (46.94s), and the complete `pnpm test:functional`
+passed: Vitest 25/25 files, 64/64 tests; Playwright 2/2. This broad green batch
+does not close AH10 or its open governance/state-combination gaps.
