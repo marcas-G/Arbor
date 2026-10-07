@@ -11,8 +11,8 @@
 | AssignWork | CommandGateway | handler 红转绿：FencingRejected、Committed 收敛、非 fencing 拒绝 | 持久 Work 完整字段核对；真实进程提交两侧 |
 | ProduceDeliverable | CommandGateway | handler 分支 + 真双 daemon 旧拒绝回执事务前/后杀旧进程、新命令提交后 Action Pending 杀进程，三案均唯一产物/Provider | 其余控制动作的相同进程矩阵；持久 Deliverable/artifact 全事实核对 |
 | DeclareDependency | CommandGateway | handler FencingRejected、Committed、拒绝和缺 canonical row；真双 daemon 旧 FencingRejected receipt 提交前/后杀进程 2/2 PASS，gen1 同 LogicalAction 接管，唯一 Dependency/Observation/Provider | 已演化状态组合与其他命令分支 |
-| AcceptResult | CommandGateway | handler FencingRejected、Committed、拒绝和缺 Acceptance row；真双 daemon 旧 FencingRejected receipt 提交后杀进程，Parent 经 list_workspaces 取真实 resultRef，新代唯一 Acceptance/Child Work Completed 1/1 PASS | 旧拒绝提交前边界及更多已演化状态组合 |
-| SendMessage | CommandGateway | handler Query/Reply 回执、Message 行与关闭 correlation | 真实进程资格、Report/DecisionRequest 扩展 |
+| AcceptResult | CommandGateway | handler FencingRejected、Committed、拒绝和缺 Acceptance row；真双 daemon 旧 FencingRejected receipt 提交前/后各杀旧进程，新代经 `list_workspaces` 取得真实 resultRef 后唯一 Acceptance/Child Work Completed；当前主文件该动作 2/2 PASS | 更多已演化状态组合；其他命令分支 |
+| SendMessage | CommandGateway | handler Query/Reply 回执、Message 行与关闭 correlation；真双 daemon Query 在旧 FencingRejected receipt 提交后接管 1/1 PASS，唯一 Message、Inbox/correlation、Observation 与 Provider 调用 | 提交前边界、Committed/非 fencing 分支、Report/DecisionRequest 扩展 |
 | SelectCurrentWork | CommandGateway | handler FencingRejected、Committed 后 DecisionRequest Pending/Submitted、非 fencing 拒绝与历史 gen0 ID 定向测试 PASS | 仍需公开进程跨代资格及冲突状态组合 |
 | RecordVerificationEvidence | CommandGateway | pending 红测：同 ID 重试因 `recordedAt` 变化出现不同请求指纹 | 先裁决时间来源并保持同 ID 同指纹，再做 receipt-first + Evidence criterion/source/execution 精确核对 |
 | ConcludeVerification | CommandGateway | pending 红测：已提交结论读不回 P8 冻结的逐 criterion 快照 | 先补已冻结快照并裁决旧行迁移，再做 receipt-first + Verification 最终状态/summaryRef/verdict/criteriaResults 核对 |
