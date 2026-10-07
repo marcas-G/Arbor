@@ -1,12 +1,11 @@
 # AH10 SelectCurrentWork cross-generation takeover — qualification result
 
-Date: 2026-10-07
+Date: 2026-10-08
 
-Status: **RED / setup qualifies a genuine Scheduler DecisionEpisode, but the
-new daemon did not acquire its expired lease; no FencingRejected receipt or
-takeover assertion was reached. Do not count this as AH10 PASS.**
+Status: **PASS for DecisionEpisode expired-lease redispatch and the tested
+SelectCurrentWork receipt boundaries; AH10 remains PARTIAL overall.**
 
-Test: `tests/functional/pending/ah10-select-current-work-takeover.functional.test.ts`
+Test: `tests/functional/process/agent-loop-ah10-select-current-work-takeover.functional.test.ts`
 
 ## Public setup and durable precondition
 
@@ -19,50 +18,67 @@ IDs and admits a `DecisionEpisode` at request revision 0. The provider returns
 `select_current_work` for one of those candidates. The existing child-only
 `AH10_GATE_ACTION_KIND` probe pauses at that action's committed intent.
 
-The failure snapshot contained exactly the expected two Workspace executions:
-the settled waiting Work Episode and the target DecisionEpisode. The target
-DecisionRequest remained Pending/revision 0, the target action remained
-Pending with no Observation, and `workspace.current_work_id` remained the
-waiting Work. There was no SelectCurrentWork Command receipt. No InboxEpisode
-or other execution had acquired a lease.
+Before takeover the durable state contains the settled waiting Work Episode
+and one active DecisionEpisode bound to the exact Pending
+WorkSelectionDecisionRequest. The two candidate Works are the only runnable
+alternatives; the selected target is taken from the actual DecisionEpisode
+context. No test code writes a DecisionRequest, lease, receipt or command.
 
-## Failure boundary
+## Gen0 fencing receipt boundaries
 
-After observing the target gen0 lease expire under the real 30-second TTL, the
-test started a second production daemon against the same DB. During its
-45-second bounded wait, the child emitted no `AH10AfterLeaseAcquired` event for
-the target or another execution. The final read-only snapshot showed target
-lease generation 0 still expired, no gen1 lease, no old or new Command, and no
-Workspace/DecisionRequest mutation. The old Work Episode lease was also expired
-and had already received its `SettleExecution` Command; its durable Manual wait
-remained registered.
+Both variants use two production daemons, the same durable database, the
+existing action-kind-filtered test probe and the real 30-second lease. Gen0
+pauses after the exact `select_current_work` ActionIntent; gen1 acquires the
+same DecisionEpisode under generation 1 and pauses at the same intent. The two
+owners retain the same ExecutionId, DecisionRequest, ProviderTurnId,
+LogicalActionId and callRef.
 
-Thus this run never reached the old-owner FencingRejected boundary. The
-observable gap is that an expired active `DecisionEpisode` was not redispatched
-by the second daemon in this setup. Treat this as a potential recovery/dispatch
-implementation or design gap and review the owning frozen recovery/episode
-contracts before changing product code. No production code or frozen design
-was changed and no semantic resolution is proposed here.
+For the **before-commit** case, the Gateway probe holds the old
+FencingRejected receipt inside its transaction. An independent read-only
+connection cannot see it; killing gen0 rolls it back. Gen1 then commits one
+SelectCurrentWork command.
+
+For the **after-commit** case, the old FencingRejected receipt is visible before
+gen0 is killed. Gen1 reads that exact old receipt, uses its generation-scoped
+CommandId and commits one canonical selection. Both cases finish with one
+Submitted DecisionRequest at revision 1, the chosen candidate as
+`workspace.current_work_id`, one `CurrentWorkChanged` for that candidate, one
+Applied SelectCurrentWork action and its Observation, and the public
+`current-work` view returning that candidate. The Decision Provider profile is
+requested once; no second decision is generated. The old waiting Work remains
+durably settled and unchanged.
+
+## Contract disposition
+
+The initial RED was an implementation gap in the existing tick/resume path,
+not an unresolved AH10 semantic choice. Scheduler Noop still blocks a second
+Main Execution; after that, the daemon now resumes the existing active
+Workspace Execution for any exact episode binding, subject to the existing
+pre-dispatch lease predicate, pending-approval gate and `runExecution` fencing.
+The same DecisionEpisode/AgentLoopStep is resumed. No Scheduler decision,
+Execution identity, command semantics or frozen contract changed.
 
 ## Validation
 
-Independent revalidation on 2026-10-07:
-
 ```text
-pnpm exec vitest run --config vitest.pending-functional.config.ts tests/functional/pending/ah10-select-current-work-takeover.functional.test.ts -t before
-1 failed / 1 skipped; test 82.54s (Vitest total 83.46s)
-Failure: gen1 did not acquire DecisionEpisode lease. No FencingRejected receipt,
-new Command, or selection mutation was observed. The after-commit variant is
-skipped because the same takeover precondition has not been met.
-
-pnpm lint          PASS (Biome 944 files)
-pnpm typecheck     PASS
-pnpm architecture PASS (30 files / 155 tests)
-pnpm check         PASS (core 315 files / 1708 passed + 3 skipped;
-                    Web 31 files / 216 tests; typecheck/build PASS)
+pnpm build
+PASS
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-select-current-work-takeover.functional.test.ts
+2 passed / 2; before-commit and after-commit receipt boundaries
+pnpm typecheck
+PASS
+pnpm architecture
+30 files / 155 tests PASS
+pnpm exec vitest run apps/single-workspace/test/ah10-generation-command-takeover.test.ts
+1 file / 22 tests PASS
+pnpm exec biome check apps/single-workspace/src/main.ts tests/functional/process/agent-loop-ah10-select-current-work-takeover.functional.test.ts
+2 files PASS
+pnpm check
+PASS (Biome 944 files, architecture 155, core 1708 passed + 3 skipped,
+Web 216 tests; typecheck and Web build passed)
 ```
 
-The default `vitest.config.ts` excludes `tests/functional/**`; the isolated
-pending red therefore does not enter `pnpm check` or `pnpm test:functional`.
-The earlier concurrent SendMessage type diagnostic in this file's history is
-superseded by the current successful typecheck; it was not a current failure.
+The full release functional suite was not run in this worktree. This result
+closes only the SelectCurrentWork DecisionEpisode dispatch seam; other AH10
+control actions/state combinations, AH10-DG-01 Deliver and VCS-DG-01 remain
+open. No `docs/design/**` changes were made.

@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { inspect } from "node:util";
-import { Principal, parse, WorkspaceId, workEpisode } from "@arbor/domain";
+import { Principal, parse, WorkspaceId } from "@arbor/domain";
 import {
   consumeWorkspaceWake,
   preDispatchCheck,
@@ -228,16 +228,14 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
     // are skipped defensively — they predate the id schema and must not
     // crash the loop.
     const schedulerTick = Effect.gen(function* () {
-      const resumeActiveWork = (workspaceId: WorkspaceId) =>
+      const resumeActiveExecution = (workspaceId: WorkspaceId) =>
         Effect.gen(function* () {
           const tx = yield* TransactionPort;
           const executions = yield* ExecutionRepository;
           const active = yield* tx.transact(
             executions.findActiveMainByWorkspace(workspaceId),
           );
-          if (Option.isNone(active) || workEpisode(active.value) === null) {
-            return;
-          }
+          if (Option.isNone(active)) return;
           const executionId = active.value.executionId;
           if (!(yield* preDispatchCheck(executionId))) {
             return;
@@ -266,7 +264,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
         yield* evaluateAndSelect(config.workspaceId, principal, {
           _tag: "Recovery",
         });
-        yield* resumeActiveWork(config.workspaceId);
+        yield* resumeActiveExecution(config.workspaceId);
         return;
       }
       const sql = yield* SqlClient;
@@ -292,7 +290,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           config.executionSettlementQualificationProbe,
           config.executionLeaseQualificationProbe,
         );
-        yield* resumeActiveWork(workspaceId);
+        yield* resumeActiveExecution(workspaceId);
       }
     });
     yield* deployment.daemon.start;

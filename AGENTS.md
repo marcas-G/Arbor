@@ -345,14 +345,14 @@ core 1708 + 3 skipped、Web 216）。结果分别见
 提交前/后接管（2/2），以及 Query Inbox 已消费且 correlation 已关闭后，Reply
 Committed/Action Pending/无 Observation 的 kill/restart receipt-first 收敛
 （1/1）；最新 SendMessage 文件定向 3/3 PASS。`SelectCurrentWork` 的真实
-Scheduler DecisionEpisode 进程红测停在旧 gen0 lease 过期后 gen1 不获取 lease，
-未触及 FencingRejected 或新代 Command；隔离证据与拟议 AH10-DG-02 见
+Scheduler DecisionEpisode 双 daemon 提交前/后 receipt takeover 2/2 PASS，修复
+了 `main.ts` 仅恢复 WorkEpisode 的实现缺口；按 P2-06 §4A/P9/EGP 现有合同处置，
+无新设计语义或 `docs/design/**` 改动。原 pending RED、实现依据与结果见
 `planning/results/AH10-select-current-work-takeover.result.md` 和
-`planning/proposals/AH10-decision-episode-takeover-dispatch-gap-draft.md`，不计
-AH10 PASS，等待治理审阅。该 pending 测试由独立 config 执行；默认 Vitest
-排除 `tests/functional/**`。本次完整 `pnpm check` PASS（Biome 944 files、
-architecture 155、core 1708 + 3 skipped、Web 216）；SelectCurrentWork pending
-red 未纳入门禁。AH10 仍 PARTIAL。
+`planning/proposals/AH10-decision-episode-takeover-dispatch-gap-draft.md`（现为
+implementation disposition）。本次 `pnpm check` PASS（Biome 944 files、
+architecture 155、core 1708 + 3 skipped、Web 216）；AH10 仍 PARTIAL，其他控制
+动作/状态组合及 Deliver/验证控制治理缺口仍开放。
 P9 集成复核：`47e9249` 上完整 `pnpm test:functional` 首次为 Vitest 21/22
 files、52/53 tests；唯一失败是 P9 首次 lease-renewal snapshot 的
 `framesConsumed=481` 未达既有 `>512` 阈值，Playwright 因 Vitest 失败未运行。
