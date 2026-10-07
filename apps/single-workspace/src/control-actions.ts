@@ -112,6 +112,7 @@ export class SingleWorkspaceControlActionHandlers extends Context.Service<
 
 export interface SendMessageDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
   readonly blobs: BlobStorePortService;
   readonly clock: ClockService;
   readonly messages: MessageStoreService;
@@ -915,19 +916,14 @@ const resolveTarget = (
     }
   });
 
-const deterministicIds = (
+const deterministicMessageId = (
   providerTurnId: string,
   outputPosition: number,
-): { readonly messageId: MessageId; readonly commandId: CommandIdType } => {
+): MessageId => {
   const occurrence = `${providerTurnId}:${outputPosition}`;
-  return {
-    messageId: parse(MessageIdSchema)(
-      `msg_${newUuid7("send-message-message", occurrence)}`,
-    ),
-    commandId: parse(CommandId)(
-      `cmd_${newUuid7("send-message-command", occurrence)}`,
-    ),
-  };
+  return parse(MessageIdSchema)(
+    `msg_${newUuid7("send-message-message", occurrence)}`,
+  );
 };
 
 const sendMessageHandler = (
@@ -943,34 +939,212 @@ const sendMessageHandler = (
           ),
         );
       }
-      const target = yield* resolveTarget(dependencies, action, execution);
       const bytes = new TextEncoder().encode(action.body);
-      const bodyRef = yield* dependencies.blobs.put(bytes);
-      const resolvedBytes = yield* dependencies.blobs.get(bodyRef);
-      if (
-        resolvedBytes.length !== bytes.length ||
-        resolvedBytes.some((byte, index) => byte !== bytes[index])
-      ) {
-        return yield* Effect.fail(
-          actionOperationalFailure("SendMessage.blobRoundTrip")(
-            "persisted message body did not resolve to submitted bytes",
-          ),
-        );
-      }
-
-      const occurrenceIds = deterministicIds(
+      const persistBody = () =>
+        Effect.gen(function* () {
+          const bodyRef = yield* dependencies.blobs.put(bytes);
+          const resolvedBytes = yield* dependencies.blobs.get(bodyRef);
+          if (
+            resolvedBytes.length !== bytes.length ||
+            resolvedBytes.some((byte, index) => byte !== bytes[index])
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SendMessage.blobRoundTrip")(
+                "persisted message body did not resolve to submitted bytes",
+              ),
+            );
+          }
+          return bodyRef;
+        });
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const messageId = deterministicMessageId(
         invocation.providerTurnId,
         invocation.outputPosition,
       );
-      const correlationId =
+      const queryCorrelationId =
         action.kind === "Query"
-          ? `cor_${newUuid7(
-              "send-message-correlation",
-              `${invocation.providerTurnId}:${invocation.outputPosition}`,
-            )}`
-          : "correlationId" in target
-            ? target.correlationId
-            : undefined;
+          ? `cor_${newUuid7("send-message-correlation", occurrence)}`
+          : undefined;
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const commandReceipts = dependencies.commandReceipts;
+        if (commandReceipts === undefined) {
+          return yield* Effect.fail(
+            actionOperationalFailure("SendMessage.receiptLookup")(
+              "receipt lookup is required for generation takeover",
+            ),
+          );
+        }
+        for (
+          let priorGeneration = 0;
+          priorGeneration < context.fencingGeneration;
+          priorGeneration += 1
+        ) {
+          const priorCommandId = generationScopedCommandId(
+            "send-message-command",
+            occurrence,
+            {
+              ...context,
+              fencingGeneration: priorGeneration as LeaseGeneration,
+            },
+          );
+          const prior = yield* dependencies.tx.transact(
+            commandReceipts.findResolution(priorCommandId),
+          );
+          if (Option.isNone(prior)) continue;
+          if (
+            prior.value.commandId !== priorCommandId ||
+            prior.value.projectId !== execution.projectId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SendMessage.priorReceipt")(
+                "prior Command receipt has a mismatched identity",
+              ),
+            );
+          }
+          if (prior.value.resolution._tag === "Committed") {
+            const result = prior.value.resolution.result;
+            if (
+              typeof result !== "object" ||
+              result === null ||
+              !("messageId" in result) ||
+              result.messageId !== messageId ||
+              !("admitted" in result) ||
+              result.admitted !== true
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SendMessage.priorReceipt")(
+                  "prior Committed result does not match the pinned message",
+                ),
+              );
+            }
+            const bodyRef = yield* persistBody();
+            const record = yield* dependencies.tx.transact(
+              dependencies.messages.findById(messageId),
+            );
+            if (
+              Option.isNone(record) ||
+              record.value.messageId !== messageId ||
+              record.value.senderWorkspaceId !== execution.workspaceId ||
+              record.value.message.kind !== action.kind ||
+              record.value.message.bodyRef !== bodyRef ||
+              record.value.message.urgency !== "Normal" ||
+              record.value.message.causationId !== undefined
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SendMessage.priorReceipt")(
+                  "Committed receipt has no exact matching canonical Message row",
+                ),
+              );
+            }
+            const sender = yield* dependencies.tx.transact(
+              dependencies.workspaces.findById(execution.workspaceId),
+            );
+            const recipient = yield* dependencies.tx.transact(
+              dependencies.workspaces.findById(
+                record.value.message.recipientWorkspaceId,
+              ),
+            );
+            if (
+              Option.isNone(sender) ||
+              sender.value.projectId !== execution.projectId ||
+              Option.isNone(recipient) ||
+              recipient.value.projectId !== execution.projectId
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SendMessage.priorReceipt")(
+                  "canonical Message sender or recipient is missing or belongs to another Project",
+                ),
+              );
+            }
+            if (action.kind === "Query") {
+              if (
+                record.value.message.recipientWorkspaceId !==
+                  action.recipientWorkspaceId ||
+                record.value.message.correlationId !== queryCorrelationId
+              ) {
+                return yield* Effect.fail(
+                  actionOperationalFailure("SendMessage.priorReceipt")(
+                    "Committed Query does not match its pinned recipient or correlationId",
+                  ),
+                );
+              }
+            } else if (
+              action.kind === "Report" ||
+              action.kind === "DecisionRequest"
+            ) {
+              if (
+                sender.value.parentWorkspaceId === null ||
+                record.value.message.recipientWorkspaceId !==
+                  sender.value.parentWorkspaceId ||
+                record.value.message.correlationId !== undefined
+              ) {
+                return yield* Effect.fail(
+                  actionOperationalFailure("SendMessage.priorReceipt")(
+                    "Committed upward Message does not match its pinned Workspace route",
+                  ),
+                );
+              }
+            } else {
+              const correlationId = record.value.message.correlationId;
+              if (correlationId === undefined) {
+                return yield* Effect.fail(
+                  actionOperationalFailure("SendMessage.priorReceipt")(
+                    "Committed Reply has no correlationId",
+                  ),
+                );
+              }
+              const incoming = yield* dependencies.tx.transact(
+                dependencies.messages.listByRecipient(execution.workspaceId),
+              );
+              const matchingQueries = incoming.filter(
+                (candidate) =>
+                  candidate.message.kind === "Query" &&
+                  candidate.message.correlationId === correlationId &&
+                  candidate.message.recipientWorkspaceId ===
+                    execution.workspaceId &&
+                  candidate.senderWorkspaceId ===
+                    record.value.message.recipientWorkspaceId,
+              );
+              if (
+                matchingQueries.length !== 1 ||
+                (action.queryMessageId !== undefined &&
+                  matchingQueries[0]?.messageId !== action.queryMessageId) ||
+                !(yield* dependencies.tx.transact(
+                  dependencies.messages.isCorrelationClosed(correlationId),
+                ))
+              ) {
+                return yield* Effect.fail(
+                  actionOperationalFailure("SendMessage.priorReceipt")(
+                    "Committed Reply has no exact matching closed Query correlation",
+                  ),
+                );
+              }
+            }
+            return {
+              _tag: "Observation" as const,
+              source: "Runtime" as const,
+              observation: {
+                text: `MessageDelivered(${messageId})`,
+                truncated: false,
+              },
+            };
+          }
+          if (isFencingRejectedReceipt(prior.value.resolution)) continue;
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `SendMessage rejected: ${JSON.stringify(prior.value.resolution.error)}`,
+              truncated: false,
+            },
+          };
+        }
+      }
+      const target = yield* resolveTarget(dependencies, action, execution);
+      const bodyRef = yield* persistBody();
+      const correlationId =
+        queryCorrelationId ??
+        ("correlationId" in target ? target.correlationId : undefined);
       const message: OutboundMessage = {
         kind: action.kind,
         recipientWorkspaceId: target.recipientWorkspaceId,
@@ -979,8 +1153,14 @@ const sendMessageHandler = (
         ...(correlationId !== undefined ? { correlationId } : {}),
       };
 
+      const commandId = generationScopedCommandId(
+        "send-message-command",
+        occurrence,
+        context,
+      );
       const plan = sendMessagePlan({
-        ...occurrenceIds,
+        messageId,
+        commandId,
         projectId: execution.projectId,
         senderWorkspaceId: execution.workspaceId,
         principal: context.principal,
@@ -993,7 +1173,7 @@ const sendMessageHandler = (
       >(
         {
           commandType: "SendMessage",
-          commandId: occurrenceIds.commandId,
+          commandId,
           projectId: execution.projectId,
           actor: context.principal as never,
           issuedAt: yield* dependencies.clock.now(),
