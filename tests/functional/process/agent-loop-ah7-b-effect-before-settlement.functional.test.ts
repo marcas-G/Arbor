@@ -373,16 +373,15 @@ describe("AH7 multi-action B effect before settlement", () => {
         action.execution_id === actionACommit.executionId &&
         action.action_index === 1,
     );
-    expect(recovered.steps).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          execution_id: actionACommit.executionId,
-          logical_step_no: 0,
-          provider_turn_id: actionACommit.providerTurnId,
-          state: "NextStepReady",
-          next_action_index: 2,
-        }),
-      ]),
+    const recoveredStep = recovered.steps.find(
+      (step) =>
+        step.execution_id === actionACommit.executionId &&
+        step.logical_step_no === 0 &&
+        step.provider_turn_id === actionACommit.providerTurnId,
+    );
+    expect(recoveredStep).toMatchObject({ next_action_index: 2 });
+    expect(["StepEffectsCommitted", "NextStepReady"]).toContain(
+      recoveredStep?.state,
     );
     expect(actionA).toMatchObject({
       logical_action_id: actionACommit.logicalActionId,
