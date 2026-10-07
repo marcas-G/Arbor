@@ -243,3 +243,27 @@ PASS。仍未在本增量运行完整 `pnpm check` / `pnpm test:functional`。
 skipped、Web 216；构建、lint 和类型检查均通过。本提交仍未重跑
 完整 `pnpm test:functional`，不能把 AH10 3/3 与 F20 1/1 定向结果
 扩展为全功能批次。
+
+## 2026-10-07 进程资格增量：DeclareDependency
+
+新增 `DeclareDependency` 真实双 daemon 跨代接管用例：gen0 先在
+`AH7AfterActionIntentCommit` 暂停，并在续租边界保持暂停；测试只读观察
+真实 30 秒 lease 到期后启动同库 gen1。gen1 停在同一 pinned ActionIntent，
+再放行旧 owner，使旧代经 CommandGateway 实际写入并提交
+`TerminalRejected(FencingRejected)` receipt。确认 receipt 落盘后立即杀旧
+daemon，再放行 gen1。最终验证 gen0/gen1 CommandId 不同，LogicalActionId、
+ProviderTurnId、callRef 相同；只有一条 Committed DeclareDependency，唯一
+Dependency 行绑定同一 consumer Work、AnyProducer 和精确期望 Deliverable，
+revision 0 / Unsatisfied；AgentLoop Action Applied、Observation 唯一，Provider
+请求一次。测试不直接 SQL 写 lease/receipt，不修改共享 fixture。
+
+先新增测试后以真实双进程定向运行：DeclareDependency 用例 1/1 PASS，
+37.62s（同文件其余 3 案按 `-t` 跳过）。`pnpm exec tsc -p
+tsconfig.test.json --noEmit --pretty false` 与专属测试 Biome 检查 PASS。
+主 Agent 在同一工作树独立复跑该定向用例 1/1 PASS（36.81s），
+并复核唯一 Dependency、Observation、旧拒绝/新提交 CommandId 和单次 Provider
+请求断言。
+本增量只补 handler 已有接管实现的进程资格，不闭合其他动作的 AH10 矩阵，
+AH10 整体仍为 PARTIAL。随后完整 `pnpm check` PASS：lint、类型检查、
+架构 155、核心 1705 + 3 skipped、Web 216；未运行完整
+`pnpm test:functional`，不得把定向进程 1/1 扩展为全部功能批次。
