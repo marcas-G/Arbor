@@ -221,3 +221,20 @@ Action 最终 Applied、Observation 和 Deliverable 各一，Provider 未重跑�
 仍缺旧 FencingRejected receipt **事务提交前**精确杀停，以及其他控制
 动作的两侧进程资格。该前态需另审 Gateway 事务内 test-only 注入边界；
 本批没有改 Gateway 核心事务，也不据此关闭 AH10。
+
+## 2026-10-07 进程杀停增量：旧围栏回执提交前
+
+在同一 AH10 双 daemon 测试中新增提交前分支。仅由测试子进程显式装配
+`CommandGatewayQualificationProbe`，在旧代 `FencingRejected` 行与 attempt
+写入**当前事务内**、`TransactionPort.transact` 尚未提交时暂停。独立只读
+SQLite 连接看不到该回执；杀旧进程后事务回滚，新代从同一 DB 接管并
+唯一提交一个 Deliverable。不会通过直接 SQL 写入或短 TTL 伪造状态。
+
+该分支缺 probe 时先按预期红在精确边界；接入后主 Agent 单独复跑 1/1，
+再与提交后杀旧进程、已提交新命令但 Action Pending 时杀进程两案合跑
+3/3 PASS。三案均保持同一 ProviderTurn/LogicalAction，Provider 只请求
+一次；提交前分支最终**没有**旧拒绝回执，只有新代 Committed 回执。
+
+`pnpm typecheck`、`pnpm lint`、Gateway/worker 26 项测试和架构 155 项
+PASS。仍未在本增量运行完整 `pnpm check` / `pnpm test:functional`。
+其他控制动作的对应进程矩阵和已公开的治理红测仍独立开放，AH10 不关闭。
