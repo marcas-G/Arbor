@@ -612,10 +612,30 @@ Evidence: `planning/results/AH10-generation-command-takeover-gap.result.md`,
 runs: AH10 main process 9/9, SelectCurrentWork process 3/3, guard/core 57/57;
 `pnpm check` passes (Biome 947 files, architecture 155, core 1711 + 3 skipped,
 Web 216). AH10 remains PARTIAL; Deliver and verification-control governance
-gaps and other action/state combinations remain open. Follow-up: mismatched
-replay guard rejection is predicate-tested, but its daemon-level
-`proposeSettlement(Failed)` convergence from an existing ActionsInProgress Step
-is not yet qualified (potential P2, not confirmed as a defect). On committed
+gaps and other action/state combinations remain open. Follow-up: an isolated
+pending corruption fixture now exercises the mismatched replay guard on a real
+gen1 daemon lease using valid foreign Workspace and Manifest rows. Both cases
+remain intentionally RED: the Execution settles Failed while the original
+Step remains ActionsInProgress and its Action Pending, without a target
+Observation or new Provider/effect. The exact terminal/Attention disposition
+remains awaiting manual governance in
+`planning/proposals/agent-loop-submitted-binding-rejection-terminalization-draft.md`;
+the pending test is excluded from default gates and is not a PASS. On committed
 `4558ec65280ee25eb5817ce15fdf1f8df84209e0`, F20 passed 1/1 and full
 `pnpm test:functional` passed (Vitest 25/25 files, 64/64 tests; Playwright
 2/2). AH10 remains PARTIAL despite the green broad batch.
+
+AH7 adds real-process Idempotent action-B P4 intent-before-effect evidence:
+after A is Applied and cursor is 1, B's committed ToolInvocation intent is
+observed before effect, the daemon is killed, and a normal restart resolves the
+same invocation with one effect/ToolResult/Artifact/Observation. Independent
+targeted rerun passed 1/1 (64.61s). See
+`planning/results/AH7-B-intent-before-effect.result.md`; AH7 remains PARTIAL.
+
+Independent integration validation on the pending additions: AH7 target 1/1
+PASS (64.61s); AH10 submitted-binding corruption target 2/2 expected RED
+(92.73s; excluded from default functional tests); test TypeScript and Biome
+PASS; full `pnpm check` PASS (Biome 949 files, architecture 155, root 1711
+passed + 3 skipped, Web 216). The P12 restore-drill JSON drift caused by the
+check was restored to its committed timestamp/hash. This validation does not
+turn the pending corruption test into release coverage or close AH7/AH10.
