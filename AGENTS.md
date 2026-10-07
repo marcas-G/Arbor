@@ -313,11 +313,13 @@ Deliver/验证控制的开放缺口仍使 AH10 保持 PARTIAL。
 `f6ae77f` 上完整 `pnpm check` PASS（架构 155、核心 1705 + 3 skipped、
 Web 216）；未在该提交重跑完整 `pnpm test:functional`。
 AH10 `DeclareDependency` 新增真双 daemon 旧 `FencingRejected` receipt
-提交后杀进程接管 1/1 PASS：同一 LogicalAction、新代 CommandId、唯一
+提交前/后杀进程接管 2/2 PASS：前态独立 SQLite 读不到未提交旧回执，
+杀进程后回滚；后态 gen1 查询已提交旧回执。同一 LogicalAction、新代
+CommandId、唯一
 Unsatisfied Dependency 与 Observation、Provider 一次。见
-`planning/results/AH10-generation-command-takeover-gap.result.md`；提交前边界
-及其他动作仍开放，AH10 PARTIAL。此增量完整 `pnpm check` PASS（架构
-155、核心 1705 + 3 skipped、Web 216）；完整 `pnpm test:functional` 未重跑。
+`planning/results/AH10-generation-command-takeover-gap.result.md`；其他动作
+仍开放，AH10 PARTIAL。`29b9ce2` 上完整 `pnpm check` PASS（架构 155、
+核心 1705 + 3 skipped、Web 216）；参数化增量未重跑完整门禁或功能批次。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见
