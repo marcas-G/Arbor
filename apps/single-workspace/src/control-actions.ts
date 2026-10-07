@@ -47,6 +47,7 @@ import {
   type MessageId,
   MessageId as MessageIdSchema,
   type OutboundMessage,
+  type ProjectId,
   parse,
   Revision,
   ToolInvocationId,
@@ -87,6 +88,7 @@ import {
   type MessageStoreService,
   SessionRepository,
   type SessionRepositoryService,
+  type StoredCommandReceipt,
   sha256Hex,
   ToolInvocationStore,
   type ToolInvocationStoreService,
@@ -253,17 +255,6 @@ const actionOperationalFailure =
           cause,
         };
 
-const assignWorkCommandId = (
-  occurrence: string,
-  context: CommandSubmissionContext,
-): CommandIdType => {
-  const seed =
-    context._tag === "ExecutionOrigin" && context.fencingGeneration !== 0
-      ? `${occurrence}:generation:${context.fencingGeneration}`
-      : occurrence;
-  return parse(CommandId)(`cmd_${newUuid7("assign-work-command", seed)}`);
-};
-
 const generationScopedCommandId = (
   namespace: string,
   occurrence: string,
@@ -286,6 +277,102 @@ const isFencingRejectedReceipt = (resolution: unknown): boolean =>
   resolution.error !== null &&
   "_tag" in resolution.error &&
   resolution.error._tag === "FencingRejected";
+
+type PriorCommittedCommandReceipt = Omit<StoredCommandReceipt, "resolution"> & {
+  readonly resolution: Extract<
+    StoredCommandReceipt["resolution"],
+    { readonly _tag: "Committed" }
+  >;
+};
+
+type PriorRejectedCommandReceipt = Omit<StoredCommandReceipt, "resolution"> & {
+  readonly resolution: Extract<
+    StoredCommandReceipt["resolution"],
+    { readonly _tag: "TerminalRejected" }
+  >;
+};
+
+type PriorCommandReceipt =
+  | { readonly _tag: "None" }
+  | {
+      readonly _tag: "Committed";
+      readonly receipt: PriorCommittedCommandReceipt;
+    }
+  | {
+      readonly _tag: "TerminalRejected";
+      readonly receipt: PriorRejectedCommandReceipt;
+    };
+
+/** Shared receipt-first boundary. The caller retains command identity and all
+ * canonical-result/error-algebra decisions; this function only reads older
+ * generation receipts, validates their envelope identity, and skips fences. */
+const findPriorCommandReceipt = (input: {
+  readonly context: Extract<
+    CommandSubmissionContext,
+    { readonly _tag: "ExecutionOrigin" }
+  >;
+  readonly namespace: string;
+  readonly occurrence: string;
+  readonly commandReceipts:
+    | Pick<CommandStoreService, "findResolution">
+    | undefined;
+  readonly tx: TransactionPortService;
+  readonly projectId: ProjectId;
+  readonly operation: string;
+  readonly errorOperation: string;
+  readonly lookupOperation?: string;
+  readonly identityErrorMessage?: string;
+}): Effect.Effect<PriorCommandReceipt, AgentActionError> =>
+  Effect.gen(function* () {
+    if (input.commandReceipts === undefined) {
+      return yield* Effect.fail(
+        actionOperationalFailure(input.lookupOperation ?? input.operation)(
+          "receipt lookup is required for generation takeover",
+        ),
+      );
+    }
+    for (
+      let priorGeneration = 0;
+      priorGeneration < input.context.fencingGeneration;
+      priorGeneration += 1
+    ) {
+      const priorCommandId = generationScopedCommandId(
+        input.namespace,
+        input.occurrence,
+        {
+          ...input.context,
+          fencingGeneration: priorGeneration as LeaseGeneration,
+        },
+      );
+      const prior = yield* input.tx.transact(
+        input.commandReceipts.findResolution(priorCommandId),
+      );
+      if (Option.isNone(prior)) continue;
+      if (
+        prior.value.commandId !== priorCommandId ||
+        prior.value.projectId !== input.projectId
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure(input.operation)(
+            input.identityErrorMessage ??
+              "prior Command receipt has a mismatched identity",
+          ),
+        );
+      }
+      if (prior.value.resolution._tag === "Committed") {
+        return {
+          _tag: "Committed" as const,
+          receipt: prior.value as PriorCommittedCommandReceipt,
+        };
+      }
+      if (isFencingRejectedReceipt(prior.value.resolution)) continue;
+      return {
+        _tag: "TerminalRejected" as const,
+        receipt: prior.value as PriorRejectedCommandReceipt,
+      };
+    }
+    return { _tag: "None" as const };
+  }).pipe(Effect.mapError(actionOperationalFailure(input.errorOperation)));
 
 /** DID v1.26 VDC-5: model authors bounded Work semantics and the readable
  * provenance reason. Runtime binds target, identities, revisions,
@@ -387,72 +474,45 @@ export const assignWorkHandler = (
         revision: parse(WorkRevision)(0),
       };
       if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
-        const commandReceipts = dependencies.commandReceipts;
-        const tx = dependencies.tx;
-        if (commandReceipts === undefined || tx === undefined) {
-          return yield* Effect.fail(
-            actionOperationalFailure("AssignWork.receiptLookup")(
-              "receipt lookup is required for generation takeover",
-            ),
-          );
-        }
-        for (
-          let priorGeneration = 0;
-          priorGeneration < context.fencingGeneration;
-          priorGeneration += 1
-        ) {
-          const priorCommandId = assignWorkCommandId(occurrence, {
-            ...context,
-            fencingGeneration: priorGeneration as LeaseGeneration,
-          });
-          const prior = yield* tx.transact(
-            commandReceipts.findResolution(priorCommandId),
-          );
-          if (Option.isNone(prior)) continue;
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "assign-work-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "AssignWork.priorReceipt",
+          errorOperation: "AssignWork",
+          lookupOperation: "AssignWork.receiptLookup",
+          identityErrorMessage:
+            "prior Command receipt belongs to another Project",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
           if (
-            prior.value.commandId !== priorCommandId ||
-            prior.value.projectId !== execution.projectId
+            typeof result !== "object" ||
+            result === null ||
+            !("workId" in result) ||
+            result.workId !== payload.workId ||
+            !("workspaceId" in result) ||
+            result.workspaceId !== targetWorkspaceId
           ) {
             return yield* Effect.fail(
               actionOperationalFailure("AssignWork.priorReceipt")(
-                "prior Command receipt belongs to another Project",
+                "prior Committed result does not match the pinned action",
               ),
             );
           }
-          if (prior.value.resolution._tag === "Committed") {
-            const result = prior.value.resolution.result;
-            if (
-              typeof result !== "object" ||
-              result === null ||
-              !("workId" in result) ||
-              result.workId !== payload.workId ||
-              !("workspaceId" in result) ||
-              result.workspaceId !== targetWorkspaceId
-            ) {
-              return yield* Effect.fail(
-                actionOperationalFailure("AssignWork.priorReceipt")(
-                  "prior Committed result does not match the pinned action",
-                ),
-              );
-            }
-            return {
-              _tag: "Observation" as const,
-              source: "Runtime" as const,
-              observation: {
-                text: `WorkAssigned(${payload.workId}, ${targetWorkspaceId})`,
-                truncated: false,
-              },
-            };
-          }
-          const rejection = prior.value.resolution.error;
-          if (
-            typeof rejection === "object" &&
-            rejection !== null &&
-            "_tag" in rejection &&
-            rejection._tag === "FencingRejected"
-          ) {
-            continue;
-          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `WorkAssigned(${payload.workId}, ${targetWorkspaceId})`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
           return yield* Effect.fail(
             actionError(
               "earlier command was terminally rejected",
@@ -462,7 +522,11 @@ export const assignWorkHandler = (
           );
         }
       }
-      const commandId = assignWorkCommandId(occurrence, context);
+      const commandId = generationScopedCommandId(
+        "assign-work-command",
+        occurrence,
+        context,
+      );
       const receipt = yield* dependencies.gateway.execute<
         AssignWorkPayload,
         AssignWorkResult
@@ -597,147 +661,121 @@ export const acceptResultHandler = (
         `acc_${newUuid7("accept-child-result", occurrence)}`,
       );
       if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
-        const commandReceipts = dependencies.commandReceipts;
-        if (commandReceipts === undefined) {
-          return yield* Effect.fail(
-            actionOperationalFailure("AcceptResult.receiptLookup")(
-              "receipt lookup is required for generation takeover",
-            ),
-          );
-        }
-        for (
-          let priorGeneration = 0;
-          priorGeneration < context.fencingGeneration;
-          priorGeneration += 1
-        ) {
-          const priorCommandId = generationScopedCommandId(
-            "accept-child-result-command",
-            occurrence,
-            {
-              ...context,
-              fencingGeneration: priorGeneration as LeaseGeneration,
-            },
-          );
-          const prior = yield* dependencies.tx.transact(
-            commandReceipts.findResolution(priorCommandId),
-          );
-          if (Option.isNone(prior)) continue;
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "accept-child-result-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "AcceptResult.priorReceipt",
+          errorOperation: "AcceptResult",
+          lookupOperation: "AcceptResult.receiptLookup",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
           if (
-            prior.value.commandId !== priorCommandId ||
-            prior.value.projectId !== execution.projectId
+            typeof result !== "object" ||
+            result === null ||
+            !("acceptanceId" in result) ||
+            result.acceptanceId !== acceptanceId ||
+            !("workId" in result) ||
+            typeof result.workId !== "string" ||
+            !("targetWorkRevision" in result) ||
+            typeof result.targetWorkRevision !== "number" ||
+            !Number.isInteger(result.targetWorkRevision) ||
+            result.targetWorkRevision < 0 ||
+            !("verificationId" in result) ||
+            typeof result.verificationId !== "string"
           ) {
             return yield* Effect.fail(
               actionOperationalFailure("AcceptResult.priorReceipt")(
-                "prior Command receipt has a mismatched identity",
+                "prior Committed result does not match the pinned action",
               ),
             );
           }
-          if (prior.value.resolution._tag === "Committed") {
-            const result = prior.value.resolution.result;
-            if (
-              typeof result !== "object" ||
-              result === null ||
-              !("acceptanceId" in result) ||
-              result.acceptanceId !== acceptanceId ||
-              !("workId" in result) ||
-              typeof result.workId !== "string" ||
-              !("targetWorkRevision" in result) ||
-              typeof result.targetWorkRevision !== "number" ||
-              !Number.isInteger(result.targetWorkRevision) ||
-              result.targetWorkRevision < 0 ||
-              !("verificationId" in result) ||
-              typeof result.verificationId !== "string"
-            ) {
-              return yield* Effect.fail(
-                actionOperationalFailure("AcceptResult.priorReceipt")(
-                  "prior Committed result does not match the pinned action",
-                ),
-              );
-            }
-            let receiptWorkId: WorkId;
-            let receiptVerificationId: VerificationId;
-            let targetWorkRevision: WorkRevision;
-            try {
-              receiptWorkId = parse(WorkId)(result.workId);
-              receiptVerificationId = parse(VerificationId)(
-                result.verificationId,
-              );
-              targetWorkRevision = parse(WorkRevision)(
-                result.targetWorkRevision,
-              );
-            } catch {
-              return yield* Effect.fail(
-                actionOperationalFailure("AcceptResult.priorReceipt")(
-                  "prior Committed result contains malformed identity",
-                ),
-              );
-            }
-            const work = yield* dependencies.tx.transact(
-              dependencies.works.findById(receiptWorkId),
+          let receiptWorkId: WorkId;
+          let receiptVerificationId: VerificationId;
+          let targetWorkRevision: WorkRevision;
+          try {
+            receiptWorkId = parse(WorkId)(result.workId);
+            receiptVerificationId = parse(VerificationId)(
+              result.verificationId,
             );
-            if (
-              Option.isNone(work) ||
-              work.value.projectId !== execution.projectId
-            ) {
-              return yield* Effect.fail(
-                actionOperationalFailure("AcceptResult.priorReceipt")(
-                  "prior accepted Work is missing or belongs to another Project",
-                ),
-              );
-            }
-            const expectedResultRef = `rref_${sha256Hex(
-              JSON.stringify({
-                parentWorkspaceId: execution.workspaceId,
-                childWorkspaceId: work.value.workspaceId,
-                workId: receiptWorkId,
-                workRevision: Number(targetWorkRevision),
-                verificationId: receiptVerificationId,
-              }),
-            )}`;
-            if (action.resultRef !== expectedResultRef) {
-              return yield* Effect.fail(
-                actionOperationalFailure("AcceptResult.priorReceipt")(
-                  "prior Committed result does not match the pinned resultRef",
-                ),
-              );
-            }
-            const acceptances = dependencies.acceptances;
-            if (acceptances === undefined) {
-              return yield* Effect.fail(
-                actionOperationalFailure("AcceptResult.priorReceipt")(
-                  "Acceptance repository lookup is required to converge a Committed receipt",
-                ),
-              );
-            }
-            const accepted = yield* dependencies.tx.transact(
-              acceptances.findByWorkRevision(
-                receiptWorkId,
-                Number(targetWorkRevision),
+            targetWorkRevision = parse(WorkRevision)(result.targetWorkRevision);
+          } catch {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "prior Committed result contains malformed identity",
               ),
             );
-            if (
-              Option.isNone(accepted) ||
-              accepted.value.acceptanceId !== acceptanceId ||
-              accepted.value.workId !== receiptWorkId ||
-              accepted.value.targetWorkRevision !== targetWorkRevision ||
-              accepted.value.verificationId !== receiptVerificationId
-            ) {
-              return yield* Effect.fail(
-                actionOperationalFailure("AcceptResult.priorReceipt")(
-                  "Committed receipt has no exact matching canonical Acceptance row",
-                ),
-              );
-            }
-            return {
-              _tag: "Observation" as const,
-              source: "Runtime" as const,
-              observation: {
-                text: `WorkOutcomeAccepted(${receiptWorkId}, ${receiptVerificationId})`,
-                truncated: false,
-              },
-            };
           }
-          if (isFencingRejectedReceipt(prior.value.resolution)) continue;
+          const work = yield* dependencies.tx.transact(
+            dependencies.works.findById(receiptWorkId),
+          );
+          if (
+            Option.isNone(work) ||
+            work.value.projectId !== execution.projectId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "prior accepted Work is missing or belongs to another Project",
+              ),
+            );
+          }
+          const expectedResultRef = `rref_${sha256Hex(
+            JSON.stringify({
+              parentWorkspaceId: execution.workspaceId,
+              childWorkspaceId: work.value.workspaceId,
+              workId: receiptWorkId,
+              workRevision: Number(targetWorkRevision),
+              verificationId: receiptVerificationId,
+            }),
+          )}`;
+          if (action.resultRef !== expectedResultRef) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "prior Committed result does not match the pinned resultRef",
+              ),
+            );
+          }
+          const acceptances = dependencies.acceptances;
+          if (acceptances === undefined) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "Acceptance repository lookup is required to converge a Committed receipt",
+              ),
+            );
+          }
+          const accepted = yield* dependencies.tx.transact(
+            acceptances.findByWorkRevision(
+              receiptWorkId,
+              Number(targetWorkRevision),
+            ),
+          );
+          if (
+            Option.isNone(accepted) ||
+            accepted.value.acceptanceId !== acceptanceId ||
+            accepted.value.workId !== receiptWorkId ||
+            accepted.value.targetWorkRevision !== targetWorkRevision ||
+            accepted.value.verificationId !== receiptVerificationId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "Committed receipt has no exact matching canonical Acceptance row",
+              ),
+            );
+          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `WorkOutcomeAccepted(${receiptWorkId}, ${receiptVerificationId})`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
           return yield* Effect.fail(
             actionError(
               "earlier command was terminally rejected",
@@ -966,175 +1004,151 @@ const sendMessageHandler = (
           ? `cor_${newUuid7("send-message-correlation", occurrence)}`
           : undefined;
       if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
-        const commandReceipts = dependencies.commandReceipts;
-        if (commandReceipts === undefined) {
-          return yield* Effect.fail(
-            actionOperationalFailure("SendMessage.receiptLookup")(
-              "receipt lookup is required for generation takeover",
-            ),
-          );
-        }
-        for (
-          let priorGeneration = 0;
-          priorGeneration < context.fencingGeneration;
-          priorGeneration += 1
-        ) {
-          const priorCommandId = generationScopedCommandId(
-            "send-message-command",
-            occurrence,
-            {
-              ...context,
-              fencingGeneration: priorGeneration as LeaseGeneration,
-            },
-          );
-          const prior = yield* dependencies.tx.transact(
-            commandReceipts.findResolution(priorCommandId),
-          );
-          if (Option.isNone(prior)) continue;
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "send-message-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "SendMessage.priorReceipt",
+          errorOperation: "SendMessage",
+          lookupOperation: "SendMessage.receiptLookup",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
           if (
-            prior.value.commandId !== priorCommandId ||
-            prior.value.projectId !== execution.projectId
+            typeof result !== "object" ||
+            result === null ||
+            !("messageId" in result) ||
+            result.messageId !== messageId ||
+            !("admitted" in result) ||
+            result.admitted !== true
           ) {
             return yield* Effect.fail(
               actionOperationalFailure("SendMessage.priorReceipt")(
-                "prior Command receipt has a mismatched identity",
+                "prior Committed result does not match the pinned message",
               ),
             );
           }
-          if (prior.value.resolution._tag === "Committed") {
-            const result = prior.value.resolution.result;
-            if (
-              typeof result !== "object" ||
-              result === null ||
-              !("messageId" in result) ||
-              result.messageId !== messageId ||
-              !("admitted" in result) ||
-              result.admitted !== true
-            ) {
-              return yield* Effect.fail(
-                actionOperationalFailure("SendMessage.priorReceipt")(
-                  "prior Committed result does not match the pinned message",
-                ),
-              );
-            }
-            const bodyRef = yield* persistBody();
-            const record = yield* dependencies.tx.transact(
-              dependencies.messages.findById(messageId),
-            );
-            if (
-              Option.isNone(record) ||
-              record.value.messageId !== messageId ||
-              record.value.senderWorkspaceId !== execution.workspaceId ||
-              record.value.message.kind !== action.kind ||
-              record.value.message.bodyRef !== bodyRef ||
-              record.value.message.urgency !== "Normal" ||
-              record.value.message.causationId !== undefined
-            ) {
-              return yield* Effect.fail(
-                actionOperationalFailure("SendMessage.priorReceipt")(
-                  "Committed receipt has no exact matching canonical Message row",
-                ),
-              );
-            }
-            const sender = yield* dependencies.tx.transact(
-              dependencies.workspaces.findById(execution.workspaceId),
-            );
-            const recipient = yield* dependencies.tx.transact(
-              dependencies.workspaces.findById(
-                record.value.message.recipientWorkspaceId,
+          const bodyRef = yield* persistBody();
+          const record = yield* dependencies.tx.transact(
+            dependencies.messages.findById(messageId),
+          );
+          if (
+            Option.isNone(record) ||
+            record.value.messageId !== messageId ||
+            record.value.senderWorkspaceId !== execution.workspaceId ||
+            record.value.message.kind !== action.kind ||
+            record.value.message.bodyRef !== bodyRef ||
+            record.value.message.urgency !== "Normal" ||
+            record.value.message.causationId !== undefined
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SendMessage.priorReceipt")(
+                "Committed receipt has no exact matching canonical Message row",
               ),
             );
+          }
+          const sender = yield* dependencies.tx.transact(
+            dependencies.workspaces.findById(execution.workspaceId),
+          );
+          const recipient = yield* dependencies.tx.transact(
+            dependencies.workspaces.findById(
+              record.value.message.recipientWorkspaceId,
+            ),
+          );
+          if (
+            Option.isNone(sender) ||
+            sender.value.projectId !== execution.projectId ||
+            Option.isNone(recipient) ||
+            recipient.value.projectId !== execution.projectId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SendMessage.priorReceipt")(
+                "canonical Message sender or recipient is missing or belongs to another Project",
+              ),
+            );
+          }
+          if (action.kind === "Query") {
             if (
-              Option.isNone(sender) ||
-              sender.value.projectId !== execution.projectId ||
-              Option.isNone(recipient) ||
-              recipient.value.projectId !== execution.projectId
+              record.value.message.recipientWorkspaceId !==
+                action.recipientWorkspaceId ||
+              record.value.message.correlationId !== queryCorrelationId
             ) {
               return yield* Effect.fail(
                 actionOperationalFailure("SendMessage.priorReceipt")(
-                  "canonical Message sender or recipient is missing or belongs to another Project",
+                  "Committed Query does not match its pinned recipient or correlationId",
                 ),
               );
             }
-            if (action.kind === "Query") {
-              if (
-                record.value.message.recipientWorkspaceId !==
-                  action.recipientWorkspaceId ||
-                record.value.message.correlationId !== queryCorrelationId
-              ) {
-                return yield* Effect.fail(
-                  actionOperationalFailure("SendMessage.priorReceipt")(
-                    "Committed Query does not match its pinned recipient or correlationId",
-                  ),
-                );
-              }
-            } else if (
-              action.kind === "Report" ||
-              action.kind === "DecisionRequest"
+          } else if (
+            action.kind === "Report" ||
+            action.kind === "DecisionRequest"
+          ) {
+            if (
+              sender.value.parentWorkspaceId === null ||
+              record.value.message.recipientWorkspaceId !==
+                sender.value.parentWorkspaceId ||
+              record.value.message.correlationId !== undefined
             ) {
-              if (
-                sender.value.parentWorkspaceId === null ||
-                record.value.message.recipientWorkspaceId !==
-                  sender.value.parentWorkspaceId ||
-                record.value.message.correlationId !== undefined
-              ) {
-                return yield* Effect.fail(
-                  actionOperationalFailure("SendMessage.priorReceipt")(
-                    "Committed upward Message does not match its pinned Workspace route",
-                  ),
-                );
-              }
-            } else {
-              const correlationId = record.value.message.correlationId;
-              if (correlationId === undefined) {
-                return yield* Effect.fail(
-                  actionOperationalFailure("SendMessage.priorReceipt")(
-                    "Committed Reply has no correlationId",
-                  ),
-                );
-              }
-              const incoming = yield* dependencies.tx.transact(
-                dependencies.messages.listByRecipient(execution.workspaceId),
+              return yield* Effect.fail(
+                actionOperationalFailure("SendMessage.priorReceipt")(
+                  "Committed upward Message does not match its pinned Workspace route",
+                ),
               );
-              const matchingQueries = incoming.filter(
-                (candidate) =>
-                  candidate.message.kind === "Query" &&
-                  candidate.message.correlationId === correlationId &&
-                  candidate.message.recipientWorkspaceId ===
-                    execution.workspaceId &&
-                  candidate.senderWorkspaceId ===
-                    record.value.message.recipientWorkspaceId,
-              );
-              if (
-                matchingQueries.length !== 1 ||
-                (action.queryMessageId !== undefined &&
-                  matchingQueries[0]?.messageId !== action.queryMessageId) ||
-                !(yield* dependencies.tx.transact(
-                  dependencies.messages.isCorrelationClosed(correlationId),
-                ))
-              ) {
-                return yield* Effect.fail(
-                  actionOperationalFailure("SendMessage.priorReceipt")(
-                    "Committed Reply has no exact matching closed Query correlation",
-                  ),
-                );
-              }
             }
-            return {
-              _tag: "Observation" as const,
-              source: "Runtime" as const,
-              observation: {
-                text: `MessageDelivered(${messageId})`,
-                truncated: false,
-              },
-            };
+          } else {
+            const correlationId = record.value.message.correlationId;
+            if (correlationId === undefined) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SendMessage.priorReceipt")(
+                  "Committed Reply has no correlationId",
+                ),
+              );
+            }
+            const incoming = yield* dependencies.tx.transact(
+              dependencies.messages.listByRecipient(execution.workspaceId),
+            );
+            const matchingQueries = incoming.filter(
+              (candidate) =>
+                candidate.message.kind === "Query" &&
+                candidate.message.correlationId === correlationId &&
+                candidate.message.recipientWorkspaceId ===
+                  execution.workspaceId &&
+                candidate.senderWorkspaceId ===
+                  record.value.message.recipientWorkspaceId,
+            );
+            if (
+              matchingQueries.length !== 1 ||
+              (action.queryMessageId !== undefined &&
+                matchingQueries[0]?.messageId !== action.queryMessageId) ||
+              !(yield* dependencies.tx.transact(
+                dependencies.messages.isCorrelationClosed(correlationId),
+              ))
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SendMessage.priorReceipt")(
+                  "Committed Reply has no exact matching closed Query correlation",
+                ),
+              );
+            }
           }
-          if (isFencingRejectedReceipt(prior.value.resolution)) continue;
           return {
             _tag: "Observation" as const,
             source: "Runtime" as const,
             observation: {
-              text: `SendMessage rejected: ${JSON.stringify(prior.value.resolution.error)}`,
+              text: `MessageDelivered(${messageId})`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `SendMessage rejected: ${JSON.stringify(prior.receipt.resolution.error)}`,
               truncated: false,
             },
           };
@@ -1595,116 +1609,99 @@ const declareDependencyHandler = (
         `dep_${newUuid7("declare-dependency", occurrence)}`,
       );
       if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
-        const commandReceipts = dependencies.commandReceipts;
         const dependencyRecords = dependencies.dependencyRecords;
-        if (commandReceipts === undefined || dependencyRecords === undefined) {
+        if (dependencyRecords === undefined) {
           return yield* Effect.fail(
             actionOperationalFailure("DeclareDependency.receiptLookup")(
               "receipt and canonical Dependency lookup are required for generation takeover",
             ),
           );
         }
-        for (
-          let priorGeneration = 0;
-          priorGeneration < context.fencingGeneration;
-          priorGeneration += 1
-        ) {
-          const priorCommandId = generationScopedCommandId(
-            "declare-dependency-command",
-            occurrence,
-            {
-              ...context,
-              fencingGeneration: priorGeneration as LeaseGeneration,
-            },
-          );
-          const prior = yield* dependencies.tx.transact(
-            commandReceipts.findResolution(priorCommandId),
-          );
-          if (Option.isNone(prior)) continue;
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "declare-dependency-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "DeclareDependency.priorReceipt",
+          errorOperation: "DeclareDependency",
+          lookupOperation: "DeclareDependency.receiptLookup",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
           if (
-            prior.value.commandId !== priorCommandId ||
-            prior.value.projectId !== execution.projectId
+            typeof result !== "object" ||
+            result === null ||
+            !("dependencyId" in result) ||
+            result.dependencyId !== dependencyId ||
+            !("consumerWorkId" in result) ||
+            result.consumerWorkId !== workId ||
+            !("state" in result) ||
+            result.state !== "Unsatisfied" ||
+            !("revision" in result) ||
+            result.revision !== 0
           ) {
             return yield* Effect.fail(
               actionOperationalFailure("DeclareDependency.priorReceipt")(
-                "prior Command receipt has a mismatched identity",
+                "prior Committed result does not match the pinned action",
               ),
             );
           }
-          if (prior.value.resolution._tag === "Committed") {
-            const result = prior.value.resolution.result;
-            if (
-              typeof result !== "object" ||
-              result === null ||
-              !("dependencyId" in result) ||
-              result.dependencyId !== dependencyId ||
-              !("consumerWorkId" in result) ||
-              result.consumerWorkId !== workId ||
-              !("state" in result) ||
-              result.state !== "Unsatisfied" ||
-              !("revision" in result) ||
-              result.revision !== 0
-            ) {
-              return yield* Effect.fail(
-                actionOperationalFailure("DeclareDependency.priorReceipt")(
-                  "prior Committed result does not match the pinned action",
-                ),
-              );
-            }
-            const dependency = yield* dependencies.tx.transact(
-              dependencyRecords.findById(dependencyId),
+          const dependency = yield* dependencies.tx.transact(
+            dependencyRecords.findById(dependencyId),
+          );
+          const consumerWork = yield* dependencies.tx.transact(
+            dependencies.works.findById(workId),
+          );
+          const expectedRoles = [
+            ...action.expectedDeliverable.requiredArtifactRoles,
+          ].sort();
+          if (
+            Option.isNone(dependency) ||
+            Option.isNone(consumerWork) ||
+            consumerWork.value.projectId !== execution.projectId ||
+            dependency.value.dependencyId !== dependencyId ||
+            dependency.value.consumerWorkId !== workId ||
+            dependency.value.producerBinding._tag !==
+              action.producerBinding._tag ||
+            (action.producerBinding._tag === "WorkspaceBound" &&
+              dependency.value.producerBinding._tag === "WorkspaceBound" &&
+              dependency.value.producerBinding.workspaceId !==
+                action.producerBinding.workspaceId) ||
+            (action.producerBinding._tag === "WorkBound" &&
+              dependency.value.producerBinding._tag === "WorkBound" &&
+              dependency.value.producerBinding.workId !==
+                action.producerBinding.workId) ||
+            dependency.value.expectedDeliverable.kind !==
+              action.expectedDeliverable.kind ||
+            JSON.stringify(
+              [
+                ...dependency.value.expectedDeliverable.requiredArtifactRoles,
+              ].sort(),
+            ) !== JSON.stringify(expectedRoles)
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("DeclareDependency.priorReceipt")(
+                "Committed receipt has no exact matching canonical Dependency row",
+              ),
             );
-            const consumerWork = yield* dependencies.tx.transact(
-              dependencies.works.findById(workId),
-            );
-            const expectedRoles = [
-              ...action.expectedDeliverable.requiredArtifactRoles,
-            ].sort();
-            if (
-              Option.isNone(dependency) ||
-              Option.isNone(consumerWork) ||
-              consumerWork.value.projectId !== execution.projectId ||
-              dependency.value.dependencyId !== dependencyId ||
-              dependency.value.consumerWorkId !== workId ||
-              dependency.value.producerBinding._tag !==
-                action.producerBinding._tag ||
-              (action.producerBinding._tag === "WorkspaceBound" &&
-                dependency.value.producerBinding._tag === "WorkspaceBound" &&
-                dependency.value.producerBinding.workspaceId !==
-                  action.producerBinding.workspaceId) ||
-              (action.producerBinding._tag === "WorkBound" &&
-                dependency.value.producerBinding._tag === "WorkBound" &&
-                dependency.value.producerBinding.workId !==
-                  action.producerBinding.workId) ||
-              dependency.value.expectedDeliverable.kind !==
-                action.expectedDeliverable.kind ||
-              JSON.stringify(
-                [
-                  ...dependency.value.expectedDeliverable.requiredArtifactRoles,
-                ].sort(),
-              ) !== JSON.stringify(expectedRoles)
-            ) {
-              return yield* Effect.fail(
-                actionOperationalFailure("DeclareDependency.priorReceipt")(
-                  "Committed receipt has no exact matching canonical Dependency row",
-                ),
-              );
-            }
-            return {
-              _tag: "Observation" as const,
-              source: "Runtime" as const,
-              observation: {
-                text: `DependencyDeclared(${dependencyId}, Unsatisfied)`,
-                truncated: false,
-              },
-            };
           }
-          if (isFencingRejectedReceipt(prior.value.resolution)) continue;
           return {
             _tag: "Observation" as const,
             source: "Runtime" as const,
             observation: {
-              text: `DeclareDependency rejected: ${JSON.stringify(prior.value.resolution.error)}`,
+              text: `DependencyDeclared(${dependencyId}, Unsatisfied)`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `DeclareDependency rejected: ${JSON.stringify(prior.receipt.resolution.error)}`,
               truncated: false,
             },
           };
@@ -1823,72 +1820,52 @@ export const produceDeliverableHandler = (
         })),
       };
       if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
-        const commandReceipts = dependencies.commandReceipts;
-        const tx = dependencies.tx;
-        for (
-          let priorGeneration = 0;
-          priorGeneration < context.fencingGeneration;
-          priorGeneration += 1
-        ) {
-          const priorCommandId = generationScopedCommandId(
-            "produce-deliverable-command",
-            occurrence,
-            {
-              ...context,
-              fencingGeneration: priorGeneration as LeaseGeneration,
-            },
-          );
-          const prior = yield* tx.transact(
-            commandReceipts.findResolution(priorCommandId),
-          );
-          if (Option.isNone(prior)) continue;
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "produce-deliverable-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "ProduceDeliverable.priorReceipt",
+          errorOperation: "ProduceDeliverable",
+          identityErrorMessage:
+            "prior Command receipt belongs to another Project",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
           if (
-            prior.value.commandId !== priorCommandId ||
-            prior.value.projectId !== execution.projectId
+            typeof result !== "object" ||
+            result === null ||
+            !("deliverableId" in result) ||
+            result.deliverableId !== payload.deliverableId ||
+            !("sourceWorkId" in result) ||
+            result.sourceWorkId !== payload.sourceWorkId ||
+            !("sourceWorkRevision" in result) ||
+            result.sourceWorkRevision !== payload.observedSourceWorkRevision ||
+            !("kind" in result) ||
+            result.kind !== payload.kind ||
+            !("artifactRoles" in result) ||
+            !Array.isArray(result.artifactRoles) ||
+            JSON.stringify([...result.artifactRoles].sort()) !==
+              JSON.stringify(payload.artifacts.map((item) => item.role).sort())
           ) {
             return yield* Effect.fail(
               actionOperationalFailure("ProduceDeliverable.priorReceipt")(
-                "prior Command receipt belongs to another Project",
+                "prior Committed result does not match the pinned action",
               ),
             );
           }
-          if (prior.value.resolution._tag === "Committed") {
-            const result = prior.value.resolution.result;
-            if (
-              typeof result !== "object" ||
-              result === null ||
-              !("deliverableId" in result) ||
-              result.deliverableId !== payload.deliverableId ||
-              !("sourceWorkId" in result) ||
-              result.sourceWorkId !== payload.sourceWorkId ||
-              !("sourceWorkRevision" in result) ||
-              result.sourceWorkRevision !==
-                payload.observedSourceWorkRevision ||
-              !("kind" in result) ||
-              result.kind !== payload.kind ||
-              !("artifactRoles" in result) ||
-              !Array.isArray(result.artifactRoles) ||
-              JSON.stringify([...result.artifactRoles].sort()) !==
-                JSON.stringify(
-                  payload.artifacts.map((item) => item.role).sort(),
-                )
-            ) {
-              return yield* Effect.fail(
-                actionOperationalFailure("ProduceDeliverable.priorReceipt")(
-                  "prior Committed result does not match the pinned action",
-                ),
-              );
-            }
-            return {
-              _tag: "Observation" as const,
-              source: "Runtime" as const,
-              observation: {
-                text: `DeliverableProduced(${payload.deliverableId}, ${action.kind})`,
-                truncated: false,
-              },
-            };
-          }
-          if (isFencingRejectedReceipt(prior.value.resolution)) continue;
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `DeliverableProduced(${payload.deliverableId}, ${action.kind})`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
           return yield* Effect.fail(
             actionError(
               "earlier command was terminally rejected",
