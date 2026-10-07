@@ -378,3 +378,9 @@ pnpm typecheck
 passed + 3 skipped，Web typecheck/build PASS，Web 31 files/216 tests PASS。
 门禁曾改写 `planning/results/P12.restore-drill.json` 的演练 timestamp/hash/RTO；
 已按门禁前保存的原字段恢复，因此该既有结果文件不属于本批变更。AH10 仍 PARTIAL。
+
+`d5dca49` 推送至 `origin/codex/functional-tests` 后，F20 干净检出定向
+1/1 PASS（44.37s）。随后完整 `pnpm test:functional` 在同一提交 PASS：
+功能 Vitest 22 files/51 tests（1427.87s），Playwright 2/2（22.9s）。该批次
+包含新 AcceptResult 提交前/后和 SendMessage Query 场景，但不能关闭 AH10 其他
+控制动作或待治理缺口。

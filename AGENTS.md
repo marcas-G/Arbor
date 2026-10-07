@@ -338,6 +338,9 @@ core 1708 + 3 skipped、Web 216）。结果分别见
 `planning/results/AH10-generation-command-takeover-gap.result.md` 和
 `planning/results/AH10-send-message-process-takeover.result.md`。AH10 仍 PARTIAL：
 其余控制动作、SendMessage 其他边界，以及 Deliver/验证控制治理缺口仍开放。
+`d5dca49` 推送后 F20 干净检出 1/1 PASS（44.37s），完整
+`pnpm test:functional` PASS（Vitest 22 files/51 tests、Playwright 2/2）；
+这些广义绿色结果不消除 AH10 的剩余控制动作和治理缺口。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见
