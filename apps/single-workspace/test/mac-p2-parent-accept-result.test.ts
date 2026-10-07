@@ -11,7 +11,13 @@ import {
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
-import { Clock, WorkspacePlacementPort } from "@arbor/ports";
+import {
+  AcceptanceRepository,
+  Clock,
+  TransactionPort,
+  WorkRepository,
+  WorkspacePlacementPort,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
@@ -108,6 +114,12 @@ describe("MAC-P2 Parent Agent acceptance", () => {
           }
           const handler = acceptResultHandler({
             gateway: yield* CommandGateway,
+            commandReceipts: {
+              findResolution: () => Effect.succeed(Option.none()),
+            } as never,
+            acceptances: yield* AcceptanceRepository,
+            works: yield* WorkRepository,
+            tx: yield* TransactionPort,
             placement,
             clock: yield* Clock,
           });
