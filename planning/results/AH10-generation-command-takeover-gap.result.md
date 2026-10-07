@@ -190,3 +190,4 @@ AH10 完整关闭。
 同一工作树随后 `pnpm check` PASS：架构 155、核心 1705 + 3 skipped、
 Web 216；pending Deliver 红测仍按预期独立失败。完整
 `pnpm test:functional` 尚未在此增量提交运行。
+提交 `02e42ac` 上 F20 干净检出安装、构建与公开黑盒 1/1 PASS。

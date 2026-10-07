@@ -278,6 +278,11 @@ settlement 同事务的冲突是拟议 AH7-DG-03，隔离红测见
 `32ae550` 上 `pnpm check` PASS（架构 155、核心 1701 + 3 skipped、Web
 216），AH10 双 daemon 与 F20 干净检出定向各 1/1 PASS；未重跑完整
 `pnpm test:functional`。AH7/AH10/AH14 和 F21–F23 仍未关闭。
+`02e42ac` 增补 AH10 `SelectCurrentWork` handler 级跨代资格，保留 gen0
+DecisionId CommandId；`pnpm check` PASS（架构 155、核心 1705 + 3 skipped、
+Web 216），F20 干净检出 1/1 PASS。`Deliver` 过期代仍可写 Message/Event/Inbox，
+拟议 AH10-DG-01 的隔离红测与治理稿已提交；AH10 仍 PARTIAL，不能把以上
+定向/单测当作两侧完整进程崩溃资格。
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
