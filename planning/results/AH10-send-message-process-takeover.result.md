@@ -62,3 +62,9 @@ The AH10 primary process file and this SendMessage file were rerun together:
 files; TypeScript build and test typecheck; architecture 155 tests; core 1708
 passed and 3 skipped; Web typecheck/build; Web 216 tests. AH10 remains PARTIAL;
 this local run is not a full functional suite or phase-closure claim.
+
+After commit `d5dca49` was pushed to `origin/codex/functional-tests`, the F20
+clean-checkout test passed 1/1 (44.37s), followed by the complete
+`pnpm test:functional`: Vitest 22 files / 51 tests passed (1427.87s) and
+Playwright 2/2 passed (22.9s). These results include this Query case but do not
+close AH10 or cover the remaining SendMessage kinds/boundaries.
