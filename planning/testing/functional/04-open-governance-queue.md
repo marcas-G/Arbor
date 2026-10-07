@@ -14,6 +14,7 @@
 | AH7-DG-02 | generic shell 标记 Reconcilable 却无 reality-proof port；`planning/proposals/reconcilable-shell-reality-proof-decision-draft.md` | 审阅可提交，未接受 | 阻挡 AH7 主动外部现实核对资格 |
 | 拟议 AH7-DG-03 | P4 `02` 执行前消费 Approval 与 P4 `06` 同 settlement 事务冲突；`planning/proposals/AH7-approval-settlement-atomicity-governance-draft.md` | 精准红测与审阅齐备，未接受 | 先裁决审批消费/预留语义，再补两侧 crash 资格 |
 | AH14-DG-01 | 旧证据含动作时公开 Attention 缺失；`planning/proposals/AH14-legacy-adoption-attention-decision-draft.md` | 负向红测齐备，提案尚需固定严重度、事实身份与写入窗口 | 不得以正向 AH14 2/2 代替负向证据 |
+| 拟议 AH10-DG-01（Deliver） | 过期 generation 的 Deliver 仍提交 Message/Event/Inbox；`planning/proposals/AH10-deliver-generation-fence-governance-draft.md` | 真实 SQLite handler 红测与审阅齐备，未接受 | P7 Message handover 与 P1 fenced logical action 的所有权需裁决；不能仅凭 MessageId 唯一键视为接管完成 |
 
 当前仍可不等治理继续的工作：AH10 其他 canonical 控制动作的 receipt-first
 接管与两侧进程资格；AH7 单连接以外的并发/多动作独立测试。所有分支的最终
