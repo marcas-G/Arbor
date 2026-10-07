@@ -10,6 +10,7 @@ import { newUuid7 } from "@arbor/application";
 import {
   ExecutionId,
   type LeaseGeneration,
+  MessageId,
   Principal,
   ProjectId,
   parse,
@@ -169,6 +170,32 @@ const dependencyInvocation = {
 const childWorkspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a2",
 );
+const sendAction = {
+  _tag: "SendMessage" as const,
+  kind: "Query" as const,
+  body: "AH10 pinned message body",
+  recipientWorkspaceId: childWorkspaceId,
+};
+const sendInvocation = {
+  ...invocation,
+  toolName: "send_message",
+  argumentsJson: JSON.stringify(sendAction),
+};
+const queryMessageId = parse(MessageId)(
+  "msg_018f2b3c-4d5e-7abc-8def-0123456789a5",
+);
+const replyCorrelationId = "cor_018f2b3c-4d5e-7abc-8def-0123456789a6";
+const replyAction = {
+  _tag: "SendMessage" as const,
+  kind: "Reply" as const,
+  body: "AH10 reply to the pinned query",
+  queryMessageId,
+};
+const replyInvocation = {
+  ...invocation,
+  toolName: "send_message",
+  argumentsJson: JSON.stringify(replyAction),
+};
 const acceptanceWork = {
   workId: parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a4"),
   projectId,
@@ -205,7 +232,7 @@ const acceptInvocation = {
 };
 
 const actionHandlerFromRegistry = (
-  action: "AcceptResult" | "DeclareDependency",
+  action: "AcceptResult" | "DeclareDependency" | "SendMessage",
   gateway: CommandGatewayService,
   receipts: ReadonlyMap<string, unknown>,
   dependencyRows: ReadonlyMap<string, unknown> = new Map(),
@@ -222,7 +249,10 @@ const actionHandlerFromRegistry = (
       verificationId,
     }),
   acceptanceRows: ReadonlyMap<string, unknown> = new Map(),
+  messageRows: ReadonlyMap<string, unknown> = new Map(),
+  closedCorrelations: ReadonlySet<string> = new Set(),
 ) => {
+  const blobBytes = new Map<string, Uint8Array>();
   const handlers = makeSingleWorkspaceControlActionHandlers({
     gateway,
     commandReceipts: receiptLookup(receipts),
@@ -250,8 +280,34 @@ const actionHandlerFromRegistry = (
           Option.fromNullishOr(acceptanceRows.get(`${workId}:${workRevision}`)),
         ),
     },
-    messages: {},
-    blobs: {},
+    messages: {
+      findById: (messageId: MessageId) =>
+        Effect.succeed(
+          Option.fromNullishOr(messageRows.get(String(messageId))),
+        ),
+      listByRecipient: (recipientWorkspaceId: WorkspaceId) =>
+        Effect.succeed(
+          [...messageRows.values()].filter(
+            (record) =>
+              (
+                record as {
+                  readonly message?: { readonly recipientWorkspaceId?: string };
+                }
+              ).message?.recipientWorkspaceId === recipientWorkspaceId,
+          ) as never,
+        ),
+      isCorrelationClosed: (correlationId: string) =>
+        Effect.succeed(closedCorrelations.has(correlationId)),
+    },
+    blobs: {
+      put: (bytes: Uint8Array) => {
+        const ref = `blob_${sha256Hex(new TextDecoder().decode(bytes))}`;
+        blobBytes.set(ref, bytes);
+        return Effect.succeed(ref as never);
+      },
+      get: (ref: string) =>
+        Effect.succeed(blobBytes.get(String(ref)) ?? new Uint8Array()),
+    },
     proposals: {},
     inbox: {},
     decisions: undefined,
@@ -265,6 +321,19 @@ const actionHandlerFromRegistry = (
       resolveChildRef: () => Effect.succeed(Option.some(childWorkspaceId)),
       list: () => Effect.succeed({} as never),
       read: () => Effect.succeed(Option.none()),
+    },
+    workspaces: {
+      findById: (workspaceId: WorkspaceId) =>
+        Effect.succeed(
+          Option.some({
+            workspaceId,
+            projectId,
+            parentWorkspaceId:
+              workspaceId === childWorkspaceId ? workspaceId : null,
+            lifecycle: "Active",
+          } as never),
+        ),
+      listActiveChildren: () => Effect.succeed([]),
     },
   } as never);
   const handler = handlers.find((candidate) => candidate.action === action);
@@ -1073,6 +1142,282 @@ describe("AH10 receipt-first AcceptResult takeover", () => {
 
     await runControlHandler(handler, acceptAction, 0, acceptInvocation);
     await runControlHandler(handler, acceptAction, 1, acceptInvocation);
+
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("AH10 receipt-first SendMessage takeover", () => {
+  it("uses a new CommandId after gen0 FencingRejected while keeping message and correlation ids", async () => {
+    const receipts = new Map<string, unknown>();
+    const messageRows = new Map<string, unknown>();
+    const calls: Array<{
+      readonly commandId: string;
+      readonly generation: number;
+      readonly messageId: string;
+      readonly correlationId: string | undefined;
+    }> = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>, context: unknown) => {
+        const commandId = String(envelope.commandId);
+        const generation = Number(
+          (context as { readonly fencingGeneration: number }).fencingGeneration,
+        );
+        const payload = envelope.payload as {
+          readonly messageId: string;
+          readonly senderWorkspaceId: WorkspaceId;
+          readonly message: {
+            readonly kind: string;
+            readonly recipientWorkspaceId: WorkspaceId;
+            readonly bodyRef: string;
+            readonly urgency: string;
+            readonly correlationId?: string;
+          };
+        };
+        calls.push({
+          commandId,
+          generation,
+          messageId: payload.messageId,
+          correlationId: payload.message.correlationId,
+        });
+        const prior = receipts.get(commandId);
+        if (prior !== undefined) return Effect.succeed(prior);
+        if (generation === 0) {
+          const rejected = {
+            resolution: {
+              _tag: "TerminalRejected" as const,
+              error: { _tag: "FencingRejected" as const },
+            },
+          };
+          receipts.set(commandId, rejected);
+          return Effect.succeed(rejected);
+        }
+        messageRows.set(payload.messageId, {
+          messageId: payload.messageId,
+          senderWorkspaceId: payload.senderWorkspaceId,
+          message: payload.message,
+          sentAt: "2026-10-05T00:00:00.000Z",
+        });
+        const committed = {
+          resolution: {
+            _tag: "Committed" as const,
+            result: { messageId: payload.messageId, admitted: true },
+          },
+        };
+        receipts.set(commandId, committed);
+        return Effect.succeed(committed);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = actionHandlerFromRegistry(
+      "SendMessage",
+      gateway,
+      receipts,
+      new Map(),
+      undefined,
+      new Map(),
+      messageRows,
+    );
+
+    await runControlHandler(handler, sendAction, 0, sendInvocation);
+    const currentOwner = await runControlHandler(
+      handler,
+      sendAction,
+      1,
+      sendInvocation,
+    );
+
+    expect(currentOwner._tag).toBe("Accepted");
+    expect(calls.map((call) => call.generation)).toEqual([0, 1]);
+    expect(calls[0]?.commandId).not.toBe(calls[1]?.commandId);
+    expect(calls[0]?.messageId).toBe(calls[1]?.messageId);
+    expect(calls[0]?.correlationId).toBe(calls[1]?.correlationId);
+    expect(calls[0]?.commandId).toBe(
+      `cmd_${newUuid7(
+        "send-message-command",
+        `${sendInvocation.providerTurnId}:${sendInvocation.outputPosition}`,
+      )}`,
+    );
+  });
+
+  it("converges a prior Committed message using the canonical MessageStore row", async () => {
+    const receipts = new Map<string, unknown>();
+    const messageRows = new Map<string, unknown>();
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const payload = envelope.payload as {
+          readonly messageId: string;
+          readonly senderWorkspaceId: WorkspaceId;
+          readonly message: unknown;
+        };
+        messageRows.set(payload.messageId, {
+          messageId: payload.messageId,
+          senderWorkspaceId: payload.senderWorkspaceId,
+          message: payload.message,
+          sentAt: "2026-10-05T00:00:00.000Z",
+        });
+        const committed = {
+          resolution: {
+            _tag: "Committed" as const,
+            result: { messageId: payload.messageId, admitted: true },
+          },
+        };
+        receipts.set(commandId, committed);
+        return Effect.succeed(committed);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = actionHandlerFromRegistry(
+      "SendMessage",
+      gateway,
+      receipts,
+      new Map(),
+      undefined,
+      new Map(),
+      messageRows,
+    );
+
+    await runControlHandler(handler, sendAction, 0, sendInvocation);
+    const converged = await runControlHandler(
+      handler,
+      sendAction,
+      1,
+      sendInvocation,
+    );
+
+    expect(converged).toMatchObject({
+      _tag: "Accepted",
+      outcome: { _tag: "Observation" },
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("converges a prior Committed Reply after its Query correlation is closed", async () => {
+    const receipts = new Map<string, unknown>();
+    const messageRows = new Map<string, unknown>([
+      [
+        String(queryMessageId),
+        {
+          messageId: queryMessageId,
+          senderWorkspaceId: childWorkspaceId,
+          message: {
+            kind: "Query",
+            recipientWorkspaceId: workspaceId,
+            bodyRef: "blob_query",
+            correlationId: replyCorrelationId,
+            urgency: "Normal",
+          },
+          sentAt: "2026-10-05T00:00:00.000Z",
+        },
+      ],
+    ]);
+    const closedCorrelations = new Set<string>();
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const payload = envelope.payload as {
+          readonly messageId: string;
+          readonly senderWorkspaceId: WorkspaceId;
+          readonly message: { readonly correlationId?: string };
+        };
+        messageRows.set(payload.messageId, {
+          messageId: payload.messageId,
+          senderWorkspaceId: payload.senderWorkspaceId,
+          message: payload.message,
+          sentAt: "2026-10-05T00:00:00.000Z",
+        });
+        if (payload.message.correlationId !== undefined) {
+          closedCorrelations.add(payload.message.correlationId);
+        }
+        const committed = {
+          resolution: {
+            _tag: "Committed" as const,
+            result: { messageId: payload.messageId, admitted: true },
+          },
+        };
+        receipts.set(commandId, committed);
+        return Effect.succeed(committed);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = actionHandlerFromRegistry(
+      "SendMessage",
+      gateway,
+      receipts,
+      new Map(),
+      undefined,
+      new Map(),
+      messageRows,
+      closedCorrelations,
+    );
+
+    await runControlHandler(handler, replyAction, 0, replyInvocation);
+    const converged = await runControlHandler(
+      handler,
+      replyAction,
+      1,
+      replyInvocation,
+    );
+
+    expect(converged._tag).toBe("Accepted");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("fails closed when a Committed receipt has no canonical MessageStore row", async () => {
+    const receipts = new Map<string, unknown>();
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const payload = envelope.payload as { readonly messageId: string };
+        const committed = {
+          resolution: {
+            _tag: "Committed" as const,
+            result: { messageId: payload.messageId, admitted: true },
+          },
+        };
+        receipts.set(commandId, committed);
+        return Effect.succeed(committed);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = actionHandlerFromRegistry("SendMessage", gateway, receipts);
+
+    await runControlHandler(handler, sendAction, 0, sendInvocation);
+    const takeover = await runControlHandler(
+      handler,
+      sendAction,
+      1,
+      sendInvocation,
+    );
+
+    expect(takeover._tag).toBe("Rejected");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not resend an older non-fencing terminal rejection", async () => {
+    const receipts = new Map<string, unknown>();
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const rejected = {
+          resolution: {
+            _tag: "TerminalRejected" as const,
+            error: { _tag: "AuthorityDenied" as const, reason: "old denial" },
+          },
+        };
+        receipts.set(commandId, rejected);
+        return Effect.succeed(rejected);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = actionHandlerFromRegistry("SendMessage", gateway, receipts);
+
+    await runControlHandler(handler, sendAction, 0, sendInvocation);
+    await runControlHandler(handler, sendAction, 1, sendInvocation);
 
     expect(calls).toHaveLength(1);
   });

@@ -130,3 +130,19 @@ CommandId/ProjectId、pinned 动作与实际持久行。已提交 Dependency 即
 **AH10 仍为 PARTIAL**：这两类新增的是 handler 级证据，不是双 daemon
 进程资格；其余 canonical 控制动作、跨代提交前/后 kill/restart、旧成功
 回执和已演化 canonical 状态的更多组合仍需逐项证明。
+
+## 2026-10-07 第三批：SendMessage
+
+`SendMessage` 新增同一 pinned 调用的跨代 FencingRejected→新 CommandId、
+旧 Committed→从持久 Message 事实收敛且不重发、旧非 fencing 拒绝不重发、
+缺 Message 行失败关闭，以及 Reply 在原 Query correlation 已关闭后仍可
+按精确 Query/Reply 事实收敛。gen0 CommandId、messageId、Query correlationId
+保留历史稳定编码。旧成功收敛时核对项目、sender/recipient、消息种类、
+content-addressed bodyRef、correlation、urgency 和已有 canonical Message。
+
+该批三个合同红测最初 3/3 失败；修复后主 Agent 独立复跑 AH10 与 I0
+SendMessage 两个定向文件 20/20 PASS，`pnpm typecheck` PASS；F18 与
+F19 两种依赖交付公开进程场景 3/3 PASS。仍有 `SelectCurrentWork`、
+`Deliver`、`RecordVerificationEvidence`、`ConcludeVerification` 使用非
+generation-scoped CommandId；正在先审查可复用的内部接管边界，避免
+继续逐 handler 复制恢复逻辑。AH10 整体保持 PARTIAL。
