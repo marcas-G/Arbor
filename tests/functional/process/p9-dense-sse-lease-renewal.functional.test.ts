@@ -573,6 +573,23 @@ const readProviderState = () => {
   }
 };
 
+const countPersistedTextDeltas = (prefix: string | undefined): number => {
+  if (prefix === undefined) return 0;
+  try {
+    const parsed: unknown = JSON.parse(prefix);
+    if (!Array.isArray(parsed)) return 0;
+    return parsed.filter(
+      (event: unknown) =>
+        typeof event === "object" &&
+        event !== null &&
+        "_tag" in event &&
+        event._tag === "TextDelta",
+    ).length;
+  } catch {
+    return 0;
+  }
+};
+
 const waitFor = async <A>(
   read: () => A,
   accept: (value: A) => boolean,
@@ -663,6 +680,7 @@ describe("P9 dense SSE lease renewal qualification", () => {
             readonly activeResponses: number;
             readonly framesConsumed: number;
             readonly framesWritten: number;
+            readonly persistedTextDeltas: number;
             readonly previousExpiresAt: string;
             readonly renewedExpiresAt: string;
           }
@@ -684,6 +702,9 @@ describe("P9 dense SSE lease renewal qualification", () => {
             activeResponses: denseState.activeResponses,
             framesConsumed: denseState.framesConsumed,
             framesWritten: denseState.framesWritten,
+            persistedTextDeltas: countPersistedTextDeltas(
+              readProviderState().attempt?.canonical_event_prefix_json,
+            ),
             previousExpiresAt: lastObservedExpiresAt,
             renewedExpiresAt: current.expires_at,
           };
@@ -691,7 +712,8 @@ describe("P9 dense SSE lease renewal qualification", () => {
           if (
             sampledActivity.activeResponses === 1 &&
             sampledActivity.framesConsumed > 512 &&
-            sampledActivity.framesWritten > 512
+            sampledActivity.framesWritten > 512 &&
+            sampledActivity.persistedTextDeltas > 512
           ) {
             renewed = current;
             activityAtRenewal = sampledActivity;
@@ -720,6 +742,7 @@ describe("P9 dense SSE lease renewal qualification", () => {
       expect(activityAtRenewal).toMatchObject({ activeResponses: 1 });
       expect(activityAtRenewal?.framesConsumed).toBeGreaterThan(512);
       expect(activityAtRenewal?.framesWritten).toBeGreaterThan(512);
+      expect(activityAtRenewal?.persistedTextDeltas).toBeGreaterThan(512);
       expect(
         Date.parse(activityAtRenewal?.renewedExpiresAt ?? "1970-01-01"),
       ).toBeGreaterThan(
