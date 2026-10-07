@@ -167,6 +167,7 @@ export interface UpdatePlanDependencies {
 
 export interface SelectCurrentWorkDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
   readonly decisions: DecisionRequestStoreService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly tx: TransactionPortService;
@@ -267,6 +268,22 @@ const generationScopedCommandId = (
   return parse(CommandId)(`cmd_${newUuid7(namespace, seed)}`);
 };
 
+const legacySelectCurrentWorkCommandId = (decisionId: string): CommandIdType =>
+  parse(CommandId)(`cmd_${decisionId.slice("dec_".length)}`);
+
+const selectCurrentWorkCommandId = (
+  decisionId: string,
+  occurrence: string,
+  context: CommandSubmissionContext,
+): CommandIdType =>
+  context._tag === "ExecutionOrigin" && context.fencingGeneration > 0
+    ? generationScopedCommandId(
+        "select-current-work-command",
+        occurrence,
+        context,
+      )
+    : legacySelectCurrentWorkCommandId(decisionId);
+
 const isFencingRejectedReceipt = (resolution: unknown): boolean =>
   typeof resolution === "object" &&
   resolution !== null &&
@@ -313,6 +330,7 @@ const findPriorCommandReceipt = (input: {
   >;
   readonly namespace: string;
   readonly occurrence: string;
+  readonly legacyCommandId?: CommandIdType;
   readonly commandReceipts:
     | Pick<CommandStoreService, "findResolution">
     | undefined;
@@ -336,14 +354,13 @@ const findPriorCommandReceipt = (input: {
       priorGeneration < input.context.fencingGeneration;
       priorGeneration += 1
     ) {
-      const priorCommandId = generationScopedCommandId(
-        input.namespace,
-        input.occurrence,
-        {
-          ...input.context,
-          fencingGeneration: priorGeneration as LeaseGeneration,
-        },
-      );
+      const priorCommandId =
+        priorGeneration === 0 && input.legacyCommandId !== undefined
+          ? input.legacyCommandId
+          : generationScopedCommandId(input.namespace, input.occurrence, {
+              ...input.context,
+              fencingGeneration: priorGeneration as LeaseGeneration,
+            });
       const prior = yield* input.tx.transact(
         input.commandReceipts.findResolution(priorCommandId),
       );
@@ -1307,7 +1324,7 @@ export const selectCurrentWorkHandler = (
   dependencies: SelectCurrentWorkDependencies,
 ): AgentActionHandler => ({
   action: "SelectCurrentWork",
-  handle: ({ action, execution, context }) =>
+  handle: ({ action, invocation, execution, context }) =>
     Effect.gen(function* () {
       if (action._tag !== "SelectCurrentWork") {
         return yield* Effect.fail(
@@ -1322,6 +1339,116 @@ export const selectCurrentWorkHandler = (
             "action/not-applicable",
           ),
         );
+      }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "select-current-work-command",
+          occurrence,
+          legacyCommandId: legacySelectCurrentWorkCommandId(episode.decisionId),
+          commandReceipts: dependencies.commandReceipts,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "SelectCurrentWork.priorReceipt",
+          lookupOperation: "SelectCurrentWork.receiptLookup",
+          errorOperation: "SelectCurrentWork",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("workspaceId" in result) ||
+            result.workspaceId !== execution.workspaceId ||
+            !("workId" in result) ||
+            result.workId !== action.workId ||
+            !("revision" in result) ||
+            typeof result.revision !== "number" ||
+            !Number.isInteger(result.revision)
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SelectCurrentWork.priorReceipt")(
+                "prior Committed result does not match the pinned DecisionRequest selection",
+              ),
+            );
+          }
+          const request = yield* dependencies.tx.transact(
+            dependencies.decisions.findById(episode.decisionId),
+          );
+          if (
+            Option.isNone(request) ||
+            request.value.workspaceId !== execution.workspaceId ||
+            !request.value.candidateWorkIds.includes(action.workId) ||
+            request.value.workspaceRevision + 1 !== result.revision
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SelectCurrentWork.priorReceipt")(
+                "Committed receipt has no matching durable DecisionRequest",
+              ),
+            );
+          }
+          if (request.value.state._tag === "Pending") {
+            if (request.value.revision !== episode.requestRevision) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SelectCurrentWork.priorReceipt")(
+                  "Pending DecisionRequest revision conflicts with the pinned episode",
+                ),
+              );
+            }
+            const workspace = yield* dependencies.tx.transact(
+              dependencies.workspaces.findById(execution.workspaceId),
+            );
+            if (
+              Option.isNone(workspace) ||
+              workspace.value.projectId !== execution.projectId ||
+              workspace.value.currentWorkId !== action.workId ||
+              Number(workspace.value.revision) !== result.revision
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SelectCurrentWork.priorReceipt")(
+                  "Committed selection conflicts with the current Workspace row while DecisionRequest is Pending",
+                ),
+              );
+            }
+            yield* dependencies.tx.transact(
+              dependencies.decisions.submit({
+                decisionId: episode.decisionId,
+                expectedRevision: request.value.revision,
+                selectedWorkId: action.workId,
+                updatedAt: yield* dependencies.clock.now(),
+              }),
+            );
+          } else if (
+            request.value.state.selectedWorkId !== action.workId ||
+            request.value.revision !== episode.requestRevision + 1
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SelectCurrentWork.priorReceipt")(
+                "Submitted DecisionRequest conflicts with the Committed selection",
+              ),
+            );
+          }
+          return {
+            _tag: "Settle" as const,
+            settlement: {
+              _tag: "Completed" as const,
+              result: {
+                _tag: "DecisionSubmitted" as const,
+                decisionId: episode.decisionId,
+              },
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return yield* Effect.fail(
+            actionError(
+              "canonical Work selection was rejected",
+              "action/canonical-rejected",
+              "WaitForStateChange",
+            ),
+          );
+        }
       }
       const request = yield* dependencies.tx.transact(
         dependencies.decisions.findById(episode.decisionId),
@@ -1340,8 +1467,10 @@ export const selectCurrentWorkHandler = (
           ),
         );
       }
-      const commandId = parse(CommandId)(
-        `cmd_${String(episode.decisionId).slice("dec_".length)}`,
+      const commandId = selectCurrentWorkCommandId(
+        episode.decisionId,
+        occurrence,
+        context,
       );
       const payload = {
         workspaceId: execution.workspaceId,

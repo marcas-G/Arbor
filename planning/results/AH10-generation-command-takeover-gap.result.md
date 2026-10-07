@@ -173,3 +173,20 @@ MessageId 重入虽因唯一键回滚、没有重复事实，却不能收敛为�
 该动作不走 CommandGateway，拟议 AH10-DG-01 先裁决 P1/P7 的 fencing
 与 receipt 所有权；见
 `planning/results/AH10-deliver-generation-fence.review.md`。
+
+## 2026-10-07 第四批：SelectCurrentWork
+
+`SelectCurrentWork` 的旧 gen0 CommandId 继续从 DecisionId 派生；gen1
+只在旧 FencingRejected 时派生新 ID。旧 Committed 回执在 DecisionRequest
+仍 Pending 时，先核对候选、revision、Workspace 当前选择与回执结果，
+再补交 `DecisionRequest.submit`；若请求已 Submitted 且选择相同，直接
+收敛，不重复提交。持久事实冲突失败关闭，旧非 fencing 拒绝不重发。
+
+AH10 专属测试先出现四项合同红灯，修复后主 Agent 复跑 AH10/I0/MAC-P2/
+MAC-P3 四文件 26/26 PASS，`pnpm typecheck` PASS。当前尚无
+SelectCurrentWork 的公开进程跨代资格；不能把这些 handler 测试外推为
+AH10 完整关闭。
+
+同一工作树随后 `pnpm check` PASS：架构 155、核心 1705 + 3 skipped、
+Web 216；pending Deliver 红测仍按预期独立失败。完整
+`pnpm test:functional` 尚未在此增量提交运行。
