@@ -35,9 +35,10 @@ ToolInvocation, ToolResult, Artifact and Observation. The A file remains
 unchanged; the B file contains its unique marker exactly once. The original
 pinned ProviderTurn keeps one sourced ModelOutput/decoded-output hash and one
 successful ProviderAttempt; its two Action callRefs and B ToolInvocation
-identity remain unique. A distinct successor ProviderTurn may make a legitimate
-Text-only Provider call after the action batch; that is not replay of the
-original decision.
+identity remain unique. A distinct successor ProviderTurn emits one
+`wait(Manual)` action after the A/B batch; this records the WorkWait and yields
+the Execution as Completed, rather than leaving a nonterminal Text-only Work
+loop. This successor turn is distinct from the original Provider decision.
 
 This qualifies the T2 Idempotent pre-effect side only. It does not cover
 NonIdempotent effect reconciliation, non-Success Observation replay
@@ -75,21 +76,22 @@ it does not change AH7's PARTIAL status or the scope limitations above.
 The full `pnpm test:functional` run on `69ce796` reached 25/26 files and
 64/65 tests before reporting one failure in this new test: a work-wide
 `targetProviderCalls === 1` assertion observed 2 after the pinned actions had
-completed. All original-turn, A/B identity, effect, ToolResult, Artifact,
-Observation and cursor assertions passed. A follow-up Text response for a
-separate successor ProviderTurn is legal; the oracle needed to be narrowed to
-the pinned ProviderTurn/ModelOutput/action-batch identities rather than a
-work-wide HTTP-call total. In the same run, F20 passed 1/1 (45.55s) and the
-P9 dense SSE lease-renewal test passed 1/1 (10.73s); Playwright did not run
-because the Vitest phase returned failure.
+completed. The original ProviderTurn Attempt and all A/B identity/effect/
+ToolResult/Artifact/Observation/cursor assertions had passed; the extra call
+was a distinct successor ProviderTurn. The old Text-only successor response
+also left the WorkEpisode without a terminal disposition. In the same run, F20
+passed 1/1 (45.55s) and P9 dense SSE lease renewal passed 1/1 (10.73s);
+Playwright did not run because the Vitest phase returned failure.
 
 The test-local oracle has now been corrected: it reads the pinned ProviderTurn's
 typed `AssistantMessage`/legacy ModelOutput and sourced ProviderTurnCall rows,
 asserting one durable output, exactly the two patch callRefs for A/B, a stable
 `decoded_output_hash`, and one successful Attempt for the original ProviderTurn.
-It no longer treats a legitimate successor-turn Text call as replay. The P4
-intent boundary, action/call/invocation uniqueness and one B effect remain
-asserted.
+The legal successor turn now returns `wait(Manual)` and is independently
+observed by its distinct ProviderTurnId, persisted WorkWait and Completed
+Execution. It no longer treats a legitimate successor-turn call as replay or
+lets the WorkEpisode continue nonterminally. The P4 intent boundary,
+action/call/invocation uniqueness and one B effect remain asserted.
 
 ```text
 pnpm exec tsc -p tsconfig.test.json --noEmit --pretty false
@@ -99,6 +101,6 @@ pnpm exec biome check tests/functional/process/agent-loop-ah7-b-intent-before-ef
 PASS
 
 pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah7-b-intent-before-effect.functional.test.ts
-1/1 PASS (64.70s)
-1/1 PASS (63.76s)
+1/1 PASS (65.00s)
+1/1 PASS (64.98s)
 ```

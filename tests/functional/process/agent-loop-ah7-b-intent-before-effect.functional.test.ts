@@ -120,6 +120,21 @@ const readActionObservations = (databaseFile: string) => {
   }
 };
 
+const readWorkWait = (databaseFile: string, workId: string) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        "SELECT work_id, wait_mode, conditions_json FROM work_waits WHERE work_id = ?",
+      )
+      .get(workId) as
+      | { work_id: string; wait_mode: string; conditions_json: string }
+      | undefined;
+  } finally {
+    db.close();
+  }
+};
+
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
@@ -132,6 +147,7 @@ describe("AH7 action B intent before effect", () => {
     let targetProviderCalls = 0;
     let actionBatchSent = false;
     let providerActionBatches = 0;
+    let successorWaitCalls = 0;
     const fileA = "proof.txt";
     const fileB = `ah7-b-intent-${marker}.txt`;
     const valueA = `ACTION_A_${marker}`;
@@ -142,13 +158,13 @@ describe("AH7 action B intent before effect", () => {
         if (JSON.stringify(call.messages).includes(marker)) {
           targetProviderCalls += 1;
         }
+        const available = new Set(
+          call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        );
         if (!actionBatchSent) {
           actionBatchSent = true;
-          const available = new Set(
-            call.tools
-              .map((tool) => tool.function?.name)
-              .filter((name): name is string => name !== undefined),
-          );
           if (!available.has("patch")) {
             return { _tag: "HttpError", status: 422 };
           }
@@ -171,6 +187,20 @@ describe("AH7 action B intent before effect", () => {
                 },
               },
             ],
+          };
+        }
+        if (available.has("wait")) {
+          successorWaitCalls += 1;
+          return {
+            _tag: "ToolCall",
+            name: "wait",
+            arguments: {
+              reason: `wait after both ordered patches for ${marker}`,
+              waitSpec: {
+                mode: "Any",
+                conditions: [{ _tag: "Manual" }],
+              },
+            },
           };
         }
         return {
@@ -204,8 +234,9 @@ describe("AH7 action B intent before effect", () => {
       target: project.rootWorkspaceId,
       expiresAt: null,
     });
+    const workId = functionalId("wrk");
     await client.command(project.projectId, "AssignWork", {
-      workId: functionalId("wrk"),
+      workId,
       workspaceId: project.rootWorkspaceId,
       expectedWorkspaceRevision: 0,
       objective: `Apply two ordered patches for ${marker}.`,
@@ -454,7 +485,7 @@ describe("AH7 action B intent before effect", () => {
     ).toThrow();
 
     await fixture.restart();
-    const recovered = await waitForPublic(
+    await waitForPublic(
       async () => durableSnapshot(fixture.databaseFile),
       (snapshot) =>
         snapshot.actions.some(
@@ -482,9 +513,28 @@ describe("AH7 action B intent before effect", () => {
         `AH7 B intent recovery absent: ${error instanceof Error ? error.message : String(error)}; snapshot=${JSON.stringify(durableSnapshot(fixture.databaseFile))}; daemon=${fixture.daemonErrors.join(" | ")}; output=${daemonOutput.slice(-8).join(" | ")}`,
       );
     });
+    await waitForPublic(
+      async () => ({
+        execution: durableSnapshot(fixture.databaseFile).executions.find(
+          (candidate) => candidate.execution_id === executionId,
+        ),
+        workWait: readWorkWait(fixture.databaseFile, workId),
+      }),
+      ({ execution, workWait }) =>
+        execution?.settlement_kind === "Completed" && workWait !== undefined,
+      30_000,
+    ).catch((error: unknown) => {
+      throw new Error(
+        `AH7 successor Wait did not settle the WorkEpisode: ${error instanceof Error ? error.message : String(error)}; snapshot=${JSON.stringify(durableSnapshot(fixture.databaseFile))}; workWait=${JSON.stringify(readWorkWait(fixture.databaseFile, workId))}; providerCalls=${JSON.stringify(fixture.providerCalls.slice(-3))}; daemon=${fixture.daemonErrors.join(" | ")}`,
+      );
+    });
+    const recovered = durableSnapshot(fixture.databaseFile);
 
     const actions = recovered.actions.filter(
-      (action) => action.execution_id === executionId,
+      (action) =>
+        action.execution_id === executionId &&
+        action.logical_step_no === 0 &&
+        action.repair_attempt === 0,
     );
     expect(actions).toHaveLength(2);
     expect(actions).toEqual(
@@ -522,6 +572,24 @@ describe("AH7 action B intent before effect", () => {
       originalTurnAfterRecovery.calls.map((call) => call.callRef).sort(),
     ).toEqual([actionACallRef, expectedBCallRef].sort());
     expect(["StepEffectsCommitted", "NextStepReady"]).toContain(step?.state);
+    const successorStep = recovered.steps.find(
+      (candidate) =>
+        candidate.execution_id === executionId &&
+        candidate.logical_step_no !== null &&
+        candidate.logical_step_no !== undefined &&
+        Number(candidate.logical_step_no) > 0,
+    );
+    expect(successorStep).toBeDefined();
+    expect(successorStep?.provider_turn_id).not.toBe(providerTurnId);
+    const execution = recovered.executions.find(
+      (candidate) => candidate.execution_id === executionId,
+    );
+    expect(execution?.settlement_kind).toBe("Completed");
+    const wait = readWorkWait(fixture.databaseFile, workId);
+    expect(wait).toMatchObject({ work_id: workId, wait_mode: "Any" });
+    expect(JSON.parse(wait?.conditions_json ?? "[]")).toEqual([
+      { _tag: "Manual" },
+    ]);
     const invocations = recovered.toolInvocations.filter(
       (invocation) => invocation.execution_id === executionId,
     );
@@ -554,15 +622,17 @@ describe("AH7 action B intent before effect", () => {
       ),
     ).toHaveLength(1);
     const observations = readActionObservations(fixture.databaseFile);
-    expect(observations).toHaveLength(2);
+    const pinnedActionObservations = observations
+      .map(
+        (observation) =>
+          JSON.parse(observation.payload_json) as { callRef?: string },
+      )
+      .filter((observation) =>
+        [actionACallRef, bIntent.callRef].includes(observation.callRef ?? ""),
+      );
+    expect(pinnedActionObservations).toHaveLength(2);
     expect(
-      observations
-        .map(
-          (observation) =>
-            (JSON.parse(observation.payload_json) as { callRef?: string })
-              .callRef,
-        )
-        .sort(),
+      pinnedActionObservations.map((observation) => observation.callRef).sort(),
     ).toEqual([actionACallRef, bIntent.callRef].sort());
     expect(readFileSync(join(fixture.workspaceDirectory, fileA), "utf8")).toBe(
       valueA,
@@ -583,6 +653,7 @@ describe("AH7 action B intent before effect", () => {
       ),
     ).toHaveLength(1);
     expect(providerActionBatches).toBe(1);
+    expect(successorWaitCalls).toBe(1);
     expect(fixture.daemonErrors).toEqual([]);
     await fixture.crash();
   }, 120_000);
