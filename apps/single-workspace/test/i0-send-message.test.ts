@@ -16,6 +16,7 @@ import {
 import type {
   BlobStorePortService,
   ClockService,
+  CommandStoreService,
   FormationProposalStoreService,
   MessageStoreService,
   TransactionPortService,
@@ -97,6 +98,9 @@ describe("I0 SendMessage control action", () => {
     };
     const dependencies = {
       gateway,
+      commandReceipts: {
+        findResolution: () => Effect.succeed(Option.none()),
+      } as Pick<CommandStoreService, "findResolution">,
       blobs,
       clock,
       messages: {} as MessageStoreService,
@@ -169,6 +173,9 @@ describe("I0 SendMessage control action", () => {
           return Effect.die("Gateway must not receive an invalid root Report");
         },
       } as unknown as CommandGatewayService,
+      commandReceipts: {
+        findResolution: () => Effect.succeed(Option.none()),
+      } as Pick<CommandStoreService, "findResolution">,
       blobs: {
         put: () => {
           blobWrites += 1;

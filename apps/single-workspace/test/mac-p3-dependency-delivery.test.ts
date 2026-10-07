@@ -18,6 +18,7 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  type CommandStoreService,
   DeliverableRepository,
   DomainEventJournal,
   IdGenerator,
@@ -27,7 +28,7 @@ import {
   WorkRepository,
   WorkspaceRepository,
 } from "@arbor/ports";
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -190,7 +191,11 @@ describe("MAC-P3 cross-Work deliverable closure", () => {
           };
           const produced = yield* produceDeliverableHandler({
             gateway,
+            commandReceipts: {
+              findResolution: () => Effect.succeed(Option.none()),
+            } as Pick<CommandStoreService, "findResolution">,
             clock: yield* Clock,
+            tx: yield* TransactionPort,
           }).handle({
             action: {
               _tag: "ProduceDeliverable",

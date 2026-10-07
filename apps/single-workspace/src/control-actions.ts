@@ -175,6 +175,8 @@ export interface DeclareDependencyDependencies {
 
 export interface ProduceDeliverableDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandReceipts: Pick<CommandStoreService, "findResolution">;
+  readonly tx: TransactionPortService;
   readonly clock: ClockService;
 }
 
@@ -245,6 +247,29 @@ const assignWorkCommandId = (
       : occurrence;
   return parse(CommandId)(`cmd_${newUuid7("assign-work-command", seed)}`);
 };
+
+const generationScopedCommandId = (
+  namespace: string,
+  occurrence: string,
+  context: CommandSubmissionContext,
+): CommandIdType => {
+  const seed =
+    context._tag === "ExecutionOrigin" && context.fencingGeneration !== 0
+      ? `${occurrence}:generation:${context.fencingGeneration}`
+      : occurrence;
+  return parse(CommandId)(`cmd_${newUuid7(namespace, seed)}`);
+};
+
+const isFencingRejectedReceipt = (resolution: unknown): boolean =>
+  typeof resolution === "object" &&
+  resolution !== null &&
+  "_tag" in resolution &&
+  resolution._tag === "TerminalRejected" &&
+  "error" in resolution &&
+  typeof resolution.error === "object" &&
+  resolution.error !== null &&
+  "_tag" in resolution.error &&
+  resolution.error._tag === "FencingRejected";
 
 /** DID v1.26 VDC-5: model authors bounded Work semantics and the readable
  * provenance reason. Runtime binds target, identities, revisions,
@@ -346,7 +371,9 @@ export const assignWorkHandler = (
         revision: parse(WorkRevision)(0),
       };
       if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
-        if (dependencies.commandReceipts === undefined) {
+        const commandReceipts = dependencies.commandReceipts;
+        const tx = dependencies.tx;
+        if (commandReceipts === undefined || tx === undefined) {
           return yield* Effect.fail(
             actionOperationalFailure("AssignWork.receiptLookup")(
               "receipt lookup is required for generation takeover",
@@ -362,11 +389,14 @@ export const assignWorkHandler = (
             ...context,
             fencingGeneration: priorGeneration as LeaseGeneration,
           });
-          const prior = yield* dependencies.tx.transact(
-            dependencies.commandReceipts.findResolution(priorCommandId),
+          const prior = yield* tx.transact(
+            commandReceipts.findResolution(priorCommandId),
           );
           if (Option.isNone(prior)) continue;
-          if (prior.value.projectId !== execution.projectId) {
+          if (
+            prior.value.commandId !== priorCommandId ||
+            prior.value.projectId !== execution.projectId
+          ) {
             return yield* Effect.fail(
               actionOperationalFailure("AssignWork.priorReceipt")(
                 "prior Command receipt belongs to another Project",
@@ -1324,8 +1354,86 @@ export const produceDeliverableHandler = (
           artifactId: artifact.artifactId,
         })),
       };
-      const commandId = parse(CommandId)(
-        `cmd_${newUuid7("produce-deliverable-command", occurrence)}`,
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const commandReceipts = dependencies.commandReceipts;
+        const tx = dependencies.tx;
+        for (
+          let priorGeneration = 0;
+          priorGeneration < context.fencingGeneration;
+          priorGeneration += 1
+        ) {
+          const priorCommandId = generationScopedCommandId(
+            "produce-deliverable-command",
+            occurrence,
+            {
+              ...context,
+              fencingGeneration: priorGeneration as LeaseGeneration,
+            },
+          );
+          const prior = yield* tx.transact(
+            commandReceipts.findResolution(priorCommandId),
+          );
+          if (Option.isNone(prior)) continue;
+          if (
+            prior.value.commandId !== priorCommandId ||
+            prior.value.projectId !== execution.projectId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("ProduceDeliverable.priorReceipt")(
+                "prior Command receipt belongs to another Project",
+              ),
+            );
+          }
+          if (prior.value.resolution._tag === "Committed") {
+            const result = prior.value.resolution.result;
+            if (
+              typeof result !== "object" ||
+              result === null ||
+              !("deliverableId" in result) ||
+              result.deliverableId !== payload.deliverableId ||
+              !("sourceWorkId" in result) ||
+              result.sourceWorkId !== payload.sourceWorkId ||
+              !("sourceWorkRevision" in result) ||
+              result.sourceWorkRevision !==
+                payload.observedSourceWorkRevision ||
+              !("kind" in result) ||
+              result.kind !== payload.kind ||
+              !("artifactRoles" in result) ||
+              !Array.isArray(result.artifactRoles) ||
+              JSON.stringify([...result.artifactRoles].sort()) !==
+                JSON.stringify(
+                  payload.artifacts.map((item) => item.role).sort(),
+                )
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("ProduceDeliverable.priorReceipt")(
+                  "prior Committed result does not match the pinned action",
+                ),
+              );
+            }
+            return {
+              _tag: "Observation" as const,
+              source: "Runtime" as const,
+              observation: {
+                text: `DeliverableProduced(${payload.deliverableId}, ${action.kind})`,
+                truncated: false,
+              },
+            };
+          }
+          if (isFencingRejectedReceipt(prior.value.resolution)) continue;
+          return yield* Effect.fail(
+            actionError(
+              "earlier command was terminally rejected",
+              "action/canonical-rejected",
+              "WaitForStateChange",
+            ),
+          );
+        }
+      }
+      const commandId = generationScopedCommandId(
+        "produce-deliverable-command",
+        occurrence,
+        context,
       );
       const actor = context.principal as never;
       const receipt = yield* dependencies.gateway.execute<

@@ -42,6 +42,16 @@ export interface ProductionFixture {
     readonly entry?: string;
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
   }) => Promise<void>;
+  readonly startAdditionalDaemon: (options: {
+    readonly entry: string;
+    readonly daemonEnvironment?: Readonly<Record<string, string>>;
+    readonly onStdout?: (line: string) => void;
+  }) => Promise<{
+    readonly baseUrl: string;
+    readonly httpPort: number;
+    readonly daemonErrors: ReadonlyArray<string>;
+    readonly crash: () => Promise<void>;
+  }>;
   readonly stop: () => Promise<void>;
 }
 
@@ -307,6 +317,7 @@ export const startProductionFixture = async (input: {
   const httpPort = await freePort();
   const baseUrl = `http://127.0.0.1:${httpPort}`;
   const daemonErrors: string[] = [];
+  const additionalDaemons: ChildProcess[] = [];
   let daemon: ChildProcess | undefined;
   let stopped = false;
   let daemonStarts = 0;
@@ -389,10 +400,82 @@ export const startProductionFixture = async (input: {
       await stopChild(daemon);
       await startDaemon(override);
     },
+    startAdditionalDaemon: async (options) => {
+      const additionalPort = await freePort();
+      const additionalBaseUrl = `http://127.0.0.1:${additionalPort}`;
+      const additionalErrors: string[] = [];
+      const daemonEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        ARBOR_DB: databaseFile,
+        ARBOR_HTTP_PORT: String(additionalPort),
+        ARBOR_HTTP_HOST: "127.0.0.1",
+        ARBOR_WEB_DIST: WEB_DIST,
+        ARBOR_AUTH_TOKENS: "",
+        ARBOR_MODEL_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
+        ARBOR_MODEL_NAME: "functional-model",
+        ARBOR_MODEL_API_KEY_VAR: "ARBOR_FUNCTIONAL_TEST_KEY",
+        ARBOR_FUNCTIONAL_TEST_KEY: "test-only",
+        ARBOR_CONFIG: join(directory, "no-provider-config.json"),
+        ...input.daemonEnvironment,
+        ...options.daemonEnvironment,
+      };
+      if (input.admitWorkspaceDirectory === true) {
+        daemonEnv.ARBOR_PROJECT_ROOT = workspaceDirectory;
+      } else {
+        delete daemonEnv.ARBOR_PROJECT_ROOT;
+      }
+      delete daemonEnv.FORCE_COLOR;
+      delete daemonEnv.NO_COLOR;
+      const child = spawn(process.execPath, [options.entry], {
+        cwd: directory,
+        env: daemonEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      additionalDaemons.push(child);
+      let stdoutBuffer = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        stdoutBuffer += chunk.toString("utf8");
+        let newline = stdoutBuffer.indexOf("\n");
+        while (newline >= 0) {
+          const line = stdoutBuffer.slice(0, newline).trim();
+          stdoutBuffer = stdoutBuffer.slice(newline + 1);
+          if (line.length > 0) options.onStdout?.(line);
+          newline = stdoutBuffer.indexOf("\n");
+        }
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        const text = chunk.toString("utf8").trim();
+        if (text.length > 0 && !text.includes("ExperimentalWarning")) {
+          additionalErrors.push(text);
+        }
+      });
+      child.on("error", (error) => {
+        additionalErrors.push(`spawn error=${error.message}`);
+      });
+      try {
+        await waitFor(
+          () => fetch(additionalBaseUrl),
+          (response) => response.ok,
+          60_000,
+        );
+      } catch (error) {
+        await stopChild(child);
+        throw new Error(
+          `additional daemon failed to start: ${error instanceof Error ? error.message : String(error)}; stderr=${additionalErrors.join(" | ")}`,
+        );
+      }
+      return {
+        baseUrl: additionalBaseUrl,
+        httpPort: additionalPort,
+        daemonErrors: additionalErrors,
+        crash: () => stopChild(child),
+      };
+    },
     stop: async () => {
       if (stopped) return;
       stopped = true;
       await stopChild(daemon);
+      for (const child of additionalDaemons) await stopChild(child);
       await new Promise<void>((resolveClose) =>
         provider.server.close(() => resolveClose()),
       );
