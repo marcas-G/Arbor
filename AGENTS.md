@@ -312,6 +312,12 @@ Action Pending 三案合跑 3/3 PASS。提交前独立 DB 读不到旧回执，
 Deliver/验证控制的开放缺口仍使 AH10 保持 PARTIAL。
 `f6ae77f` 上完整 `pnpm check` PASS（架构 155、核心 1705 + 3 skipped、
 Web 216）；未在该提交重跑完整 `pnpm test:functional`。
+AH10 `DeclareDependency` 新增真双 daemon 旧 `FencingRejected` receipt
+提交后杀进程接管 1/1 PASS：同一 LogicalAction、新代 CommandId、唯一
+Unsatisfied Dependency 与 Observation、Provider 一次。见
+`planning/results/AH10-generation-command-takeover-gap.result.md`；提交前边界
+及其他动作仍开放，AH10 PARTIAL。此增量完整 `pnpm check` PASS（架构
+155、核心 1705 + 3 skipped、Web 216）；完整 `pnpm test:functional` 未重跑。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见
