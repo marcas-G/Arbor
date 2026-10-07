@@ -238,3 +238,4 @@ SQLite 连接看不到该回执；杀旧进程后事务回滚，新代从同一 
 `pnpm typecheck`、`pnpm lint`、Gateway/worker 26 项测试和架构 155 项
 PASS。仍未在本增量运行完整 `pnpm check` / `pnpm test:functional`。
 其他控制动作的对应进程矩阵和已公开的治理红测仍独立开放，AH10 不关闭。
+提交 `f98fddb` 上 F20 干净检出安装、构建及公开黑盒 1/1 PASS。
