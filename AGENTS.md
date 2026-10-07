@@ -374,6 +374,15 @@ EGP 合同归类为已修复实现缺陷，不涉及 `docs/design/**`。SelectCu
 `5e389e8` 完整功能 PASS（Vitest 23 files/55 tests、Playwright 2/2）。AH10 其他
 控制动作/状态组合及 Deliver/验证治理缺口仍开放。本次 cherry-pick 推送尝试遭
 GitHub Remote Internal Server Error，远端同步状态须另行确认。
+2026-10-08 增量：AH10 current-Workspace `AssignWork` 新增双 daemon receipt
+提交前/后和 Committed-but-Pending 三案，独立定向 3/3 PASS；使用 exact
+Workspace CAPA GrantPermission，不覆盖 direct-child placement。AH7 新增 A 已
+Applied 后 B Idempotent patch effect 已发生、settlement 前杀 daemon，重启按同一
+ToolInvocation/Action identity 收敛，定向 1/1 PASS；不宣称 executor 单次调用。
+见 `planning/results/AH10-assign-work-process-takeover.result.md` 与
+`planning/results/AH7-B-idempotent-effect-before-settlement.result.md`。该增量
+完整 `pnpm check` PASS（Biome 946 files、architecture 155、core 1708 + 3 skipped、
+Web 216）；AH7/AH10 仍 PARTIAL。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见
