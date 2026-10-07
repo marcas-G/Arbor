@@ -37,3 +37,5 @@ effect-after-crash reconciliation，也不覆盖 AH7-DG-01/02/03、审批原子�
 并发或 AH7 全部提交边界；不能据此宣布 AH7 闭合。未运行全量 `pnpm check` 或完整
 功能批次。
 `pnpm typecheck`、lint 和架构 155/155 在本测试加入后 PASS。
+提交 `971d4cb` 上 F20 干净检出安装、构建和公开黑盒 1/1 PASS；
+本增量未重跑完整 `pnpm check` 或完整功能批次。
