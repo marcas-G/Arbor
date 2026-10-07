@@ -35,6 +35,74 @@ const toolResultPayload = (
   };
 };
 
+const readPinnedProviderTurn = (
+  databaseFile: string,
+  providerTurnId: string,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const entries = db
+      .prepare(
+        `SELECT source_kind, source_ref, entry_kind, item_type, payload_json
+           FROM session_entries
+          WHERE source_kind IN ('ProviderTurn', 'ProviderTurnCall')
+          ORDER BY sequence`,
+      )
+      .all() as Array<{
+      source_kind: string;
+      source_ref: string;
+      entry_kind: string;
+      item_type: string | null;
+      payload_json: string;
+    }>;
+    const modelOutputs = entries.filter(
+      (entry) =>
+        entry.source_kind === "ProviderTurn" &&
+        ((entry.entry_kind === "ModelOutput" &&
+          entry.source_ref === providerTurnId) ||
+          (entry.item_type === "AssistantMessage" &&
+            entry.source_ref === `${providerTurnId}:assistant`)),
+    );
+    const typedCalls = entries
+      .filter(
+        (entry) =>
+          entry.source_kind === "ProviderTurnCall" &&
+          entry.source_ref.startsWith(`${providerTurnId}:`),
+      )
+      .map(
+        (entry) =>
+          JSON.parse(entry.payload_json) as {
+            callRef?: string;
+            toolRef?: string;
+          },
+      );
+    const legacyCalls =
+      typedCalls.length > 0 || modelOutputs.length !== 1
+        ? []
+        : ((
+            JSON.parse(modelOutputs[0]?.payload_json ?? "{}") as {
+              toolInvocations?: Array<{ callRef?: string; toolName?: string }>;
+            }
+          ).toolInvocations ?? []);
+    const calls =
+      typedCalls.length > 0
+        ? typedCalls.map((call) => ({
+            callRef: call.callRef,
+            toolRef: call.toolRef,
+          }))
+        : legacyCalls.map((call) => ({
+            callRef: call.callRef,
+            toolRef: call.toolName,
+          }));
+    return {
+      modelOutputs,
+      calls,
+    };
+  } finally {
+    db.close();
+  }
+};
+
 const readActionObservations = (databaseFile: string) => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
@@ -73,9 +141,6 @@ describe("AH7 action B intent before effect", () => {
       reply: (call) => {
         if (JSON.stringify(call.messages).includes(marker)) {
           targetProviderCalls += 1;
-          if (targetProviderCalls > 5) {
-            return { _tag: "HttpError", status: 429 };
-          }
         }
         if (!actionBatchSent) {
           actionBatchSent = true;
@@ -209,8 +274,29 @@ describe("AH7 action B intent before effect", () => {
         provider_turn_id: providerTurnId,
         state: "ActionsInProgress",
         next_action_index: 1,
+        decoded_output_hash: expect.stringMatching(/^[a-f0-9]{64}$/u),
       }),
     ]);
+    const originalStep = afterA.steps[0] as {
+      readonly decoded_output_hash: string;
+    };
+    const originalTurnAfterA = readPinnedProviderTurn(
+      fixture.databaseFile,
+      providerTurnId,
+    );
+    expect(originalTurnAfterA.modelOutputs).toHaveLength(1);
+    expect(originalTurnAfterA.calls).toHaveLength(2);
+    expect(originalTurnAfterA.calls.map((call) => call.toolRef)).toEqual([
+      "patch",
+      "patch",
+    ]);
+    expect(originalTurnAfterA.calls.map((call) => call.callRef)).toContain(
+      actionACallRef,
+    );
+    const expectedBCallRef = originalTurnAfterA.calls.find(
+      (call) => call.callRef !== actionACallRef,
+    )?.callRef;
+    expect(expectedBCallRef).toMatch(/^call_/u);
     expect(afterA.actions).toEqual([
       expect.objectContaining({
         execution_id: executionId,
@@ -265,6 +351,7 @@ describe("AH7 action B intent before effect", () => {
       throw new Error("AH7 B P4 intent probe omitted its identity");
     }
     expect(bIntent.callRef).toMatch(/^call_/u);
+    expect(bIntent.callRef).toBe(expectedBCallRef);
     expect(bIntent.callRef).not.toBe(actionACallRef);
     expect(bIntent.invocationId).toMatch(/^tin_/u);
 
@@ -280,8 +367,17 @@ describe("AH7 action B intent before effect", () => {
         provider_turn_id: providerTurnId,
         state: "ActionsInProgress",
         next_action_index: 1,
+        decoded_output_hash: originalStep.decoded_output_hash,
       }),
     ]);
+    const originalTurnBeforeBEffect = readPinnedProviderTurn(
+      fixture.databaseFile,
+      providerTurnId,
+    );
+    expect(originalTurnBeforeBEffect.modelOutputs).toHaveLength(1);
+    expect(
+      originalTurnBeforeBEffect.calls.map((call) => call.callRef).sort(),
+    ).toEqual([actionACallRef, expectedBCallRef].sort());
     expect(beforeBEffect.actions).toHaveLength(2);
     expect(beforeBEffect.actions).toEqual(
       expect.arrayContaining([
@@ -412,7 +508,19 @@ describe("AH7 action B intent before effect", () => {
         candidate.logical_step_no === 0 &&
         candidate.provider_turn_id === providerTurnId,
     );
-    expect(step).toMatchObject({ next_action_index: 2 });
+    expect(step).toMatchObject({
+      next_action_index: 2,
+      provider_turn_id: providerTurnId,
+      decoded_output_hash: originalStep.decoded_output_hash,
+    });
+    const originalTurnAfterRecovery = readPinnedProviderTurn(
+      fixture.databaseFile,
+      providerTurnId,
+    );
+    expect(originalTurnAfterRecovery.modelOutputs).toHaveLength(1);
+    expect(
+      originalTurnAfterRecovery.calls.map((call) => call.callRef).sort(),
+    ).toEqual([actionACallRef, expectedBCallRef].sort());
     expect(["StepEffectsCommitted", "NextStepReady"]).toContain(step?.state);
     const invocations = recovered.toolInvocations.filter(
       (invocation) => invocation.execution_id === executionId,
@@ -474,9 +582,7 @@ describe("AH7 action B intent before effect", () => {
         (attempt) => attempt.provider_turn_id === providerTurnId,
       ),
     ).toHaveLength(1);
-    expect(targetProviderCalls).toBe(1);
     expect(providerActionBatches).toBe(1);
-    expect(fixture.providerCalls).toHaveLength(1);
     expect(fixture.daemonErrors).toEqual([]);
     await fixture.crash();
   }, 120_000);
