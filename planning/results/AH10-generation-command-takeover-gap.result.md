@@ -239,3 +239,7 @@ SQLite 连接看不到该回执；杀旧进程后事务回滚，新代从同一 
 PASS。仍未在本增量运行完整 `pnpm check` / `pnpm test:functional`。
 其他控制动作的对应进程矩阵和已公开的治理红测仍独立开放，AH10 不关闭。
 提交 `f98fddb` 上 F20 干净检出安装、构建及公开黑盒 1/1 PASS。
+后续 `f6ae77f` 上完整 `pnpm check` PASS：架构 155、核心 1705 + 3
+skipped、Web 216；构建、lint 和类型检查均通过。本提交仍未重跑
+完整 `pnpm test:functional`，不能把 AH10 3/3 与 F20 1/1 定向结果
+扩展为全功能批次。
