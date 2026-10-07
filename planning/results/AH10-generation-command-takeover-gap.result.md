@@ -336,4 +336,6 @@ AH10 专属真实进程文件联跑：6/6 PASS（230.81s）
 该证据只补旧拒绝回执提交后 AcceptResult 的跨代接管，不覆盖其提交前
 边界、其他控制动作或更多已演化状态组合，AH10 仍为 PARTIAL。随后完整
 `pnpm check` PASS：架构 155、核心 1705 + 3 skipped、Web 216；本增量
-尚未运行完整 `pnpm test:functional`。
+随后在已提交 `2320d24` 上完整 `pnpm test:functional` PASS：真实进程/
+公开 API 21 文件、49/49，Playwright 浏览器 2/2，含 AH10 专属六场景
+与 F20 干净检出。绿色功能批次不覆盖 AH10 其余控制动作/治理缺口。
