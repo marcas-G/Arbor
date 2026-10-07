@@ -328,7 +328,8 @@ AH10 `AcceptResult` 新增 Parent `list_workspaces` 取真实 resultRef 后的
 同一 LogicalAction/ProviderTurn，AH10 专属真实进程文件 6/6 PASS。见
 `planning/results/AH10-generation-command-takeover-gap.result.md`；提交前
 边界与其他控制动作仍开放。本增量完整 `pnpm check` PASS（架构 155、
-核心 1705 + 3 skipped、Web 216）；完整 `pnpm test:functional` 未重跑。
+核心 1705 + 3 skipped、Web 216）；`2320d24` 上完整
+`pnpm test:functional` PASS（公开进程 21 文件、49/49，浏览器 2/2）。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见
