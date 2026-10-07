@@ -341,6 +341,18 @@ core 1708 + 3 skipped、Web 216）。结果分别见
 `d5dca49` 推送后 F20 干净检出 1/1 PASS（44.37s），完整
 `pnpm test:functional` PASS（Vitest 22 files/51 tests、Playwright 2/2）；
 这些广义绿色结果不消除 AH10 的剩余控制动作和治理缺口。
+后续 `SendMessage` 真双 daemon 覆盖 Query 的旧 FencingRejected receipt
+提交前/后接管（2/2），以及 Query Inbox 已消费且 correlation 已关闭后，Reply
+Committed/Action Pending/无 Observation 的 kill/restart receipt-first 收敛
+（1/1）；最新 SendMessage 文件定向 3/3 PASS。`SelectCurrentWork` 的真实
+Scheduler DecisionEpisode 进程红测停在旧 gen0 lease 过期后 gen1 不获取 lease，
+未触及 FencingRejected 或新代 Command；隔离证据与拟议 AH10-DG-02 见
+`planning/results/AH10-select-current-work-takeover.result.md` 和
+`planning/proposals/AH10-decision-episode-takeover-dispatch-gap-draft.md`，不计
+AH10 PASS，等待治理审阅。该 pending 测试由独立 config 执行；默认 Vitest
+排除 `tests/functional/**`。本次完整 `pnpm check` PASS（Biome 944 files、
+architecture 155、core 1708 + 3 skipped、Web 216）；SelectCurrentWork pending
+red 未纳入门禁。AH10 仍 PARTIAL。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见
