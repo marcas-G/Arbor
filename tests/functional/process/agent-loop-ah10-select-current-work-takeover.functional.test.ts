@@ -452,6 +452,7 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
         },
         onStdout: (line) => pushProbe(events, line),
       });
+      const newClient = makePublicClient(newDaemon.baseUrl);
       const newLease = await waitForPublic(
         async () =>
           events.find(
@@ -643,7 +644,7 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
         ),
       ).toHaveLength(1);
 
-      const publicCurrentWork = await client.view<{
+      const publicCurrentWork = await newClient.view<{
         workId?: string;
         objective?: string;
       } | null>("current-work", { workspaceId: project.rootWorkspaceId });
