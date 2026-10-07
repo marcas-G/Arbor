@@ -50,11 +50,14 @@ import {
   parse,
   Revision,
   ToolInvocationId,
+  VerificationId,
   WorkId,
   WorkRevision,
   workEpisode,
 } from "@arbor/domain";
 import {
+  AcceptanceRepository,
+  type AcceptanceRepositoryService,
   BlobStorePort,
   type BlobStorePortService,
   Clock,
@@ -65,6 +68,8 @@ import {
   type DecisionRequestStoreService,
   DeliverableRepository,
   type DeliverableRepositoryService,
+  DependencyRepository,
+  type DependencyRepositoryService,
   DomainEventJournal,
   type DomainEventJournalService,
   FormationFulfillmentStore,
@@ -82,6 +87,7 @@ import {
   type MessageStoreService,
   SessionRepository,
   type SessionRepositoryService,
+  sha256Hex,
   ToolInvocationStore,
   type ToolInvocationStoreService,
   TransactionPort,
@@ -138,6 +144,13 @@ export interface WorkspacePlacementDependencies {
 
 export interface AcceptResultDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
+  readonly acceptances?: Pick<
+    AcceptanceRepositoryService,
+    "findByWorkRevision"
+  >;
+  readonly works: WorkRepositoryService;
+  readonly tx: TransactionPortService;
   readonly placement: WorkspacePlacementPortService;
   readonly clock: ClockService;
 }
@@ -168,6 +181,8 @@ export interface ProposeChildDependencies {
 
 export interface DeclareDependencyDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
+  readonly dependencyRecords?: Pick<DependencyRepositoryService, "findById">;
   readonly works: WorkRepositoryService;
   readonly clock: ClockService;
   readonly tx: TransactionPortService;
@@ -576,6 +591,161 @@ export const acceptResultHandler = (
           ),
         );
       }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const acceptanceId = parse(AcceptanceId)(
+        `acc_${newUuid7("accept-child-result", occurrence)}`,
+      );
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const commandReceipts = dependencies.commandReceipts;
+        if (commandReceipts === undefined) {
+          return yield* Effect.fail(
+            actionOperationalFailure("AcceptResult.receiptLookup")(
+              "receipt lookup is required for generation takeover",
+            ),
+          );
+        }
+        for (
+          let priorGeneration = 0;
+          priorGeneration < context.fencingGeneration;
+          priorGeneration += 1
+        ) {
+          const priorCommandId = generationScopedCommandId(
+            "accept-child-result-command",
+            occurrence,
+            {
+              ...context,
+              fencingGeneration: priorGeneration as LeaseGeneration,
+            },
+          );
+          const prior = yield* dependencies.tx.transact(
+            commandReceipts.findResolution(priorCommandId),
+          );
+          if (Option.isNone(prior)) continue;
+          if (
+            prior.value.commandId !== priorCommandId ||
+            prior.value.projectId !== execution.projectId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "prior Command receipt has a mismatched identity",
+              ),
+            );
+          }
+          if (prior.value.resolution._tag === "Committed") {
+            const result = prior.value.resolution.result;
+            if (
+              typeof result !== "object" ||
+              result === null ||
+              !("acceptanceId" in result) ||
+              result.acceptanceId !== acceptanceId ||
+              !("workId" in result) ||
+              typeof result.workId !== "string" ||
+              !("targetWorkRevision" in result) ||
+              typeof result.targetWorkRevision !== "number" ||
+              !Number.isInteger(result.targetWorkRevision) ||
+              result.targetWorkRevision < 0 ||
+              !("verificationId" in result) ||
+              typeof result.verificationId !== "string"
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("AcceptResult.priorReceipt")(
+                  "prior Committed result does not match the pinned action",
+                ),
+              );
+            }
+            let receiptWorkId: WorkId;
+            let receiptVerificationId: VerificationId;
+            let targetWorkRevision: WorkRevision;
+            try {
+              receiptWorkId = parse(WorkId)(result.workId);
+              receiptVerificationId = parse(VerificationId)(
+                result.verificationId,
+              );
+              targetWorkRevision = parse(WorkRevision)(
+                result.targetWorkRevision,
+              );
+            } catch {
+              return yield* Effect.fail(
+                actionOperationalFailure("AcceptResult.priorReceipt")(
+                  "prior Committed result contains malformed identity",
+                ),
+              );
+            }
+            const work = yield* dependencies.tx.transact(
+              dependencies.works.findById(receiptWorkId),
+            );
+            if (
+              Option.isNone(work) ||
+              work.value.projectId !== execution.projectId
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("AcceptResult.priorReceipt")(
+                  "prior accepted Work is missing or belongs to another Project",
+                ),
+              );
+            }
+            const expectedResultRef = `rref_${sha256Hex(
+              JSON.stringify({
+                parentWorkspaceId: execution.workspaceId,
+                childWorkspaceId: work.value.workspaceId,
+                workId: receiptWorkId,
+                workRevision: Number(targetWorkRevision),
+                verificationId: receiptVerificationId,
+              }),
+            )}`;
+            if (action.resultRef !== expectedResultRef) {
+              return yield* Effect.fail(
+                actionOperationalFailure("AcceptResult.priorReceipt")(
+                  "prior Committed result does not match the pinned resultRef",
+                ),
+              );
+            }
+            const acceptances = dependencies.acceptances;
+            if (acceptances === undefined) {
+              return yield* Effect.fail(
+                actionOperationalFailure("AcceptResult.priorReceipt")(
+                  "Acceptance repository lookup is required to converge a Committed receipt",
+                ),
+              );
+            }
+            const accepted = yield* dependencies.tx.transact(
+              acceptances.findByWorkRevision(
+                receiptWorkId,
+                Number(targetWorkRevision),
+              ),
+            );
+            if (
+              Option.isNone(accepted) ||
+              accepted.value.acceptanceId !== acceptanceId ||
+              accepted.value.workId !== receiptWorkId ||
+              accepted.value.targetWorkRevision !== targetWorkRevision ||
+              accepted.value.verificationId !== receiptVerificationId
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("AcceptResult.priorReceipt")(
+                  "Committed receipt has no exact matching canonical Acceptance row",
+                ),
+              );
+            }
+            return {
+              _tag: "Observation" as const,
+              source: "Runtime" as const,
+              observation: {
+                text: `WorkOutcomeAccepted(${receiptWorkId}, ${receiptVerificationId})`,
+                truncated: false,
+              },
+            };
+          }
+          if (isFencingRejectedReceipt(prior.value.resolution)) continue;
+          return yield* Effect.fail(
+            actionError(
+              "earlier command was terminally rejected",
+              "action/canonical-rejected",
+              "WaitForStateChange",
+            ),
+          );
+        }
+      }
       const resolved = yield* dependencies.placement.resolveResultRef(
         execution.workspaceId,
         action.resultRef,
@@ -589,17 +759,16 @@ export const acceptResultHandler = (
           ),
         );
       }
-      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
       const payload: AcceptWorkOutcomePayload = {
-        acceptanceId: parse(AcceptanceId)(
-          `acc_${newUuid7("accept-child-result", occurrence)}`,
-        ),
+        acceptanceId,
         workId: resolved.value.workId,
         targetWorkRevision: resolved.value.workRevision,
         verificationId: resolved.value.verificationId,
       };
-      const commandId = parse(CommandId)(
-        `cmd_${newUuid7("accept-child-result-command", occurrence)}`,
+      const commandId = generationScopedCommandId(
+        "accept-child-result-command",
+        occurrence,
+        context,
       );
       const actor = context.principal as never;
       const receipt = yield* dependencies.gateway.execute<
@@ -1241,17 +1410,134 @@ const declareDependencyHandler = (
         );
       }
       const workId = boundWork.workId;
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const dependencyId = parse(DependencyId)(
+        `dep_${newUuid7("declare-dependency", occurrence)}`,
+      );
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const commandReceipts = dependencies.commandReceipts;
+        const dependencyRecords = dependencies.dependencyRecords;
+        if (commandReceipts === undefined || dependencyRecords === undefined) {
+          return yield* Effect.fail(
+            actionOperationalFailure("DeclareDependency.receiptLookup")(
+              "receipt and canonical Dependency lookup are required for generation takeover",
+            ),
+          );
+        }
+        for (
+          let priorGeneration = 0;
+          priorGeneration < context.fencingGeneration;
+          priorGeneration += 1
+        ) {
+          const priorCommandId = generationScopedCommandId(
+            "declare-dependency-command",
+            occurrence,
+            {
+              ...context,
+              fencingGeneration: priorGeneration as LeaseGeneration,
+            },
+          );
+          const prior = yield* dependencies.tx.transact(
+            commandReceipts.findResolution(priorCommandId),
+          );
+          if (Option.isNone(prior)) continue;
+          if (
+            prior.value.commandId !== priorCommandId ||
+            prior.value.projectId !== execution.projectId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("DeclareDependency.priorReceipt")(
+                "prior Command receipt has a mismatched identity",
+              ),
+            );
+          }
+          if (prior.value.resolution._tag === "Committed") {
+            const result = prior.value.resolution.result;
+            if (
+              typeof result !== "object" ||
+              result === null ||
+              !("dependencyId" in result) ||
+              result.dependencyId !== dependencyId ||
+              !("consumerWorkId" in result) ||
+              result.consumerWorkId !== workId ||
+              !("state" in result) ||
+              result.state !== "Unsatisfied" ||
+              !("revision" in result) ||
+              result.revision !== 0
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.priorReceipt")(
+                  "prior Committed result does not match the pinned action",
+                ),
+              );
+            }
+            const dependency = yield* dependencies.tx.transact(
+              dependencyRecords.findById(dependencyId),
+            );
+            const consumerWork = yield* dependencies.tx.transact(
+              dependencies.works.findById(workId),
+            );
+            const expectedRoles = [
+              ...action.expectedDeliverable.requiredArtifactRoles,
+            ].sort();
+            if (
+              Option.isNone(dependency) ||
+              Option.isNone(consumerWork) ||
+              consumerWork.value.projectId !== execution.projectId ||
+              dependency.value.dependencyId !== dependencyId ||
+              dependency.value.consumerWorkId !== workId ||
+              dependency.value.producerBinding._tag !==
+                action.producerBinding._tag ||
+              (action.producerBinding._tag === "WorkspaceBound" &&
+                dependency.value.producerBinding._tag === "WorkspaceBound" &&
+                dependency.value.producerBinding.workspaceId !==
+                  action.producerBinding.workspaceId) ||
+              (action.producerBinding._tag === "WorkBound" &&
+                dependency.value.producerBinding._tag === "WorkBound" &&
+                dependency.value.producerBinding.workId !==
+                  action.producerBinding.workId) ||
+              dependency.value.expectedDeliverable.kind !==
+                action.expectedDeliverable.kind ||
+              JSON.stringify(
+                [
+                  ...dependency.value.expectedDeliverable.requiredArtifactRoles,
+                ].sort(),
+              ) !== JSON.stringify(expectedRoles)
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.priorReceipt")(
+                  "Committed receipt has no exact matching canonical Dependency row",
+                ),
+              );
+            }
+            return {
+              _tag: "Observation" as const,
+              source: "Runtime" as const,
+              observation: {
+                text: `DependencyDeclared(${dependencyId}, Unsatisfied)`,
+                truncated: false,
+              },
+            };
+          }
+          if (isFencingRejectedReceipt(prior.value.resolution)) continue;
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `DeclareDependency rejected: ${JSON.stringify(prior.value.resolution.error)}`,
+              truncated: false,
+            },
+          };
+        }
+      }
       const work = yield* dependencies.tx.transact(
         dependencies.works.findById(workId),
       );
       if (Option.isNone(work)) {
         return yield* Effect.fail(actionError("consuming Work is missing"));
       }
-      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
       const payload = {
-        dependencyId: parse(DependencyId)(
-          `dep_${newUuid7("declare-dependency", occurrence)}`,
-        ),
+        dependencyId,
         consumerWorkId: workId,
         producerBinding: action.producerBinding,
         expectedDeliverable: {
@@ -1262,8 +1548,10 @@ const declareDependencyHandler = (
         expectedConsumerWorkRevision: work.value.revision,
         revision: parse(DependencyRevision)(0),
       };
-      const commandId = parse(CommandId)(
-        `cmd_${newUuid7("declare-dependency-command", occurrence)}`,
+      const commandId = generationScopedCommandId(
+        "declare-dependency-command",
+        occurrence,
+        context,
       );
       const receipt = yield* dependencies.gateway.execute<
         DeclareDependencyPayload,
@@ -1866,6 +2154,7 @@ export const makeSingleWorkspaceControlActionHandlers = (
     Partial<Pick<UpdatePlanDependencies, "plans">> &
     Partial<Pick<SelectCurrentWorkDependencies, "decisions">> &
     Partial<WorkspacePlacementDependencies> &
+    Partial<Pick<AcceptResultDependencies, "acceptances">> &
     Partial<
       Pick<DeliverActionDependencies, "deliverables" | "journal" | "ids">
     > &
@@ -1902,6 +2191,14 @@ export const makeSingleWorkspaceControlActionHandlers = (
       acceptResultHandler({
         placement,
         gateway: dependencies.gateway,
+        ...(dependencies.commandReceipts === undefined
+          ? {}
+          : { commandReceipts: dependencies.commandReceipts }),
+        ...(dependencies.acceptances === undefined
+          ? {}
+          : { acceptances: dependencies.acceptances }),
+        works: dependencies.works,
+        tx: dependencies.tx,
         clock: dependencies.clock,
       }),
     );
@@ -1955,6 +2252,8 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
   never,
   | CommandGateway
   | CommandStore
+  | DependencyRepository
+  | AcceptanceRepository
   | BlobStorePort
   | Clock
   | FormationProposalStore
@@ -1977,6 +2276,8 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
   Effect.gen(function* () {
     const gateway = yield* CommandGateway;
     const commandReceipts = yield* CommandStore;
+    const dependencyRecords = yield* DependencyRepository;
+    const acceptances = yield* AcceptanceRepository;
     const blobs = yield* BlobStorePort;
     const clock = yield* Clock;
     const messages = yield* MessageStore;
@@ -1999,6 +2300,8 @@ export const SingleWorkspaceControlActionHandlersLive: Layer.Layer<
       makeSingleWorkspaceControlActionHandlers({
         gateway,
         commandReceipts,
+        dependencyRecords,
+        acceptances,
         blobs,
         clock,
         messages,

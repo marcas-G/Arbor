@@ -111,3 +111,22 @@ Web 216；构建、lint、类型检查均通过。该批次不包含隔离的治
 整体仍为 **PARTIAL**：目前真实进程资格覆盖 ProduceDeliverable 单一 canonical
 控制动作，尚无其余 canonical handler 的进程级覆盖，也没有该边界两侧的
 kill/restart 注入矩阵；不据此宣布 AH10 关闭。
+
+## 2026-10-07 第二批：Dependency 与 Parent Result Acceptance
+
+`apps/single-workspace/test/ah10-generation-command-takeover.test.ts`
+新增 `DeclareDependency` 和 `AcceptResult` 的 gen0 FencingRejected→gen1
+新 CommandId、旧 Committed receipt→零新命令、旧非 fencing 终态拒绝→不得
+跨代重试，以及旧 Committed 缺准确 canonical Dependency/Acceptance 行时
+失败关闭。两个 handler 保留 gen0 历史 ID 编码；新代读取旧回执并核对
+CommandId/ProjectId、pinned 动作与实际持久行。已提交 Dependency 即使后来
+被交付满足，恢复时的模型观察仍使用原命令结果 `Unsatisfied`，不把当前
+状态伪装成原结果。
+
+首轮定向红测有 5 个合同断言失败；修复与测试夹具校正后，主 Agent 复跑
+`ah10-generation-command-takeover`、`mac-p2-parent-accept-result`、
+`mac-p3-dependency-delivery` 三个文件共 15/15 PASS，`pnpm typecheck` PASS。
+
+**AH10 仍为 PARTIAL**：这两类新增的是 handler 级证据，不是双 daemon
+进程资格；其余 canonical 控制动作、跨代提交前/后 kill/restart、旧成功
+回执和已演化 canonical 状态的更多组合仍需逐项证明。

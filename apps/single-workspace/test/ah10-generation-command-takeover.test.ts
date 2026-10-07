@@ -1,8 +1,12 @@
-import type { AgentActionHandlerInput } from "@arbor/agent-runtime";
+import type {
+  AgentActionHandler,
+  AgentActionHandlerInput,
+} from "@arbor/agent-runtime";
 import type {
   CommandGatewayService,
   GatewayEnvelope,
 } from "@arbor/application";
+import { newUuid7 } from "@arbor/application";
 import {
   ExecutionId,
   type LeaseGeneration,
@@ -10,7 +14,9 @@ import {
   ProjectId,
   parse,
   SessionId,
+  VerificationId,
   WorkId,
+  WorkRevision,
   WorkspaceId,
 } from "@arbor/domain";
 import type {
@@ -19,10 +25,12 @@ import type {
   TransactionPortService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
+import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   assignWorkHandler,
+  makeSingleWorkspaceControlActionHandlers,
   produceDeliverableHandler,
 } from "../src/control-actions.js";
 
@@ -94,6 +102,175 @@ const generationContext = (generation: number) =>
 const transaction = {
   transact: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
 } as TransactionPortService;
+
+const receiptLookup = (receipts: ReadonlyMap<string, unknown>) =>
+  ({
+    findResolution: (commandId: string) => {
+      const receipt = receipts.get(String(commandId));
+      return Effect.succeed(
+        receipt === undefined
+          ? Option.none()
+          : Option.some({
+              commandId,
+              projectId,
+              ...(receipt as object),
+            } as never),
+      );
+    },
+  }) as Pick<CommandStoreService, "findResolution">;
+
+const runControlHandler = (
+  handler: AgentActionHandler,
+  handlerAction: unknown,
+  generation: number,
+  handlerInvocation = invocation,
+) =>
+  Effect.runPromise(
+    Effect.match(
+      handler.handle({
+        action: handlerAction,
+        invocation: handlerInvocation,
+        execution,
+        context: generationContext(generation),
+      } as AgentActionHandlerInput),
+      {
+        onFailure: (cause) => ({ _tag: "Rejected" as const, cause }),
+        onSuccess: (outcome) => ({ _tag: "Accepted" as const, outcome }),
+      },
+    ),
+  );
+
+const consumerWork = {
+  workId: parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a3"),
+  projectId,
+  workspaceId,
+  lifecycle: "Open",
+  revision: parse(WorkRevision)(0),
+} as {
+  readonly workId: WorkId;
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly lifecycle: "Open";
+  readonly revision: WorkRevision;
+};
+
+const dependencyAction = {
+  _tag: "DeclareDependency" as const,
+  producerBinding: { _tag: "AnyProducer" as const },
+  expectedDeliverable: { kind: "report", requiredArtifactRoles: [] },
+};
+
+const dependencyInvocation = {
+  ...invocation,
+  toolName: "declare_dependency",
+  argumentsJson: JSON.stringify(dependencyAction),
+};
+
+const childWorkspaceId = parse(WorkspaceId)(
+  "ws_018f2b3c-4d5e-7abc-8def-0123456789a2",
+);
+const acceptanceWork = {
+  workId: parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a4"),
+  projectId,
+  workspaceId: childWorkspaceId,
+  lifecycle: "Open",
+  revision: parse(WorkRevision)(0),
+} as {
+  readonly workId: WorkId;
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly lifecycle: "Open";
+  readonly revision: WorkRevision;
+};
+const acceptanceWorkId = acceptanceWork.workId as WorkId;
+const verificationId = parse(VerificationId)(
+  "ver_018f2b3c-4d5e-7abc-8def-0123456789a3",
+);
+const acceptAction = {
+  _tag: "AcceptResult" as const,
+  resultRef: `rref_${sha256Hex(
+    JSON.stringify({
+      parentWorkspaceId: workspaceId,
+      childWorkspaceId,
+      workId: acceptanceWorkId,
+      workRevision: 0,
+      verificationId,
+    }),
+  )}`,
+};
+const acceptInvocation = {
+  ...invocation,
+  toolName: "accept_result",
+  argumentsJson: JSON.stringify(acceptAction),
+};
+
+const actionHandlerFromRegistry = (
+  action: "AcceptResult" | "DeclareDependency",
+  gateway: CommandGatewayService,
+  receipts: ReadonlyMap<string, unknown>,
+  dependencyRows: ReadonlyMap<string, unknown> = new Map(),
+  resolveResult: () => Option.Option<{
+    readonly childWorkspaceId: WorkspaceId;
+    readonly workId: WorkId;
+    readonly workRevision: WorkRevision;
+    readonly verificationId: VerificationId;
+  }> = () =>
+    Option.some({
+      childWorkspaceId,
+      workId: acceptanceWorkId,
+      workRevision: parse(WorkRevision)(0),
+      verificationId,
+    }),
+  acceptanceRows: ReadonlyMap<string, unknown> = new Map(),
+) => {
+  const handlers = makeSingleWorkspaceControlActionHandlers({
+    gateway,
+    commandReceipts: receiptLookup(receipts),
+    tx: transaction,
+    clock: {
+      now: () => Effect.succeed("2026-10-05T00:00:00.000Z"),
+    },
+    works: {
+      findById: (workId: WorkId) =>
+        Effect.succeed(
+          Option.some(
+            workId === acceptanceWorkId ? acceptanceWork : consumerWork,
+          ),
+        ),
+    },
+    dependencyRecords: {
+      findById: (dependencyId: string) =>
+        Effect.succeed(
+          Option.fromNullishOr(dependencyRows.get(String(dependencyId))),
+        ),
+    },
+    acceptances: {
+      findByWorkRevision: (workId: WorkId, workRevision: number) =>
+        Effect.succeed(
+          Option.fromNullishOr(acceptanceRows.get(`${workId}:${workRevision}`)),
+        ),
+    },
+    messages: {},
+    blobs: {},
+    proposals: {},
+    inbox: {},
+    decisions: undefined,
+    plans: undefined,
+    waits: undefined,
+    deliverables: undefined,
+    journal: undefined,
+    ids: undefined,
+    placement: {
+      resolveResultRef: () => Effect.succeed(resolveResult()),
+      resolveChildRef: () => Effect.succeed(Option.some(childWorkspaceId)),
+      list: () => Effect.succeed({} as never),
+      read: () => Effect.succeed(Option.none()),
+    },
+  } as never);
+  const handler = handlers.find((candidate) => candidate.action === action);
+  if (handler === undefined) throw new Error(`missing ${action} handler`);
+  return handler;
+};
 
 const runHandler = (
   handler: ReturnType<typeof assignWorkHandler>,
@@ -472,6 +649,431 @@ describe("AH10 takeover for another canonical control action", () => {
 
     expect(await run(0)).toMatchObject({ _tag: "Accepted" });
     expect(await run(1)).toMatchObject({ _tag: "Accepted" });
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("AH10 receipt-first DeclareDependency takeover", () => {
+  const makeDependencyHandler = (
+    gateway: CommandGatewayService,
+    receipts: ReadonlyMap<string, unknown>,
+    dependencyRows: ReadonlyMap<string, unknown>,
+  ) =>
+    actionHandlerFromRegistry(
+      "DeclareDependency",
+      gateway,
+      receipts,
+      dependencyRows,
+    );
+
+  it("uses a new CommandId after gen0 FencingRejected", async () => {
+    const receipts = new Map<string, unknown>();
+    const dependencyRows = new Map<string, unknown>();
+    const calls: Array<{
+      readonly commandId: string;
+      readonly generation: number;
+    }> = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>, context: unknown) => {
+        const commandId = String(envelope.commandId);
+        const generation = Number(
+          (context as { readonly fencingGeneration: number }).fencingGeneration,
+        );
+        calls.push({ commandId, generation });
+        const prior = receipts.get(commandId);
+        if (prior !== undefined) return Effect.succeed(prior);
+        if (generation === 0) {
+          const rejected = {
+            resolution: {
+              _tag: "TerminalRejected" as const,
+              error: { _tag: "FencingRejected" as const },
+            },
+          };
+          receipts.set(commandId, rejected);
+          return Effect.succeed(rejected);
+        }
+        const payload = envelope.payload as {
+          readonly dependencyId: string;
+          readonly consumerWorkId: string;
+          readonly producerBinding: unknown;
+          readonly expectedDeliverable: unknown;
+          readonly revision: number;
+        };
+        dependencyRows.set(payload.dependencyId, {
+          dependencyId: payload.dependencyId,
+          consumerWorkId: payload.consumerWorkId,
+          producerBinding: payload.producerBinding,
+          expectedDeliverable: payload.expectedDeliverable,
+          revision: payload.revision,
+          state: "Unsatisfied",
+          satisfiedByDeliverableId: null,
+          satisfiedAtDependencyRevision: null,
+        });
+        const committed = {
+          resolution: {
+            _tag: "Committed" as const,
+            result: {
+              dependencyId: payload.dependencyId,
+              consumerWorkId: payload.consumerWorkId,
+              state: "Unsatisfied" as const,
+              revision: payload.revision,
+            },
+          },
+        };
+        receipts.set(commandId, committed);
+        return Effect.succeed(committed);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = makeDependencyHandler(gateway, receipts, dependencyRows);
+
+    await runControlHandler(handler, dependencyAction, 0, dependencyInvocation);
+    const currentOwner = await runControlHandler(
+      handler,
+      dependencyAction,
+      1,
+      dependencyInvocation,
+    );
+
+    expect(currentOwner._tag).toBe("Accepted");
+    expect(calls.map((call) => call.generation)).toEqual([0, 1]);
+    expect(calls[0]?.commandId).not.toBe(calls[1]?.commandId);
+    expect(calls[0]?.commandId).toBe(
+      `cmd_${newUuid7(
+        "declare-dependency-command",
+        `${dependencyInvocation.providerTurnId}:${dependencyInvocation.outputPosition}`,
+      )}`,
+    );
+  });
+
+  it("converges a prior Committed dependency row without sending another command", async () => {
+    const receipts = new Map<string, unknown>();
+    const dependencyRows = new Map<string, unknown>();
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const payload = envelope.payload as {
+          readonly dependencyId: string;
+          readonly consumerWorkId: string;
+          readonly producerBinding: unknown;
+          readonly expectedDeliverable: unknown;
+          readonly revision: number;
+        };
+        dependencyRows.set(payload.dependencyId, {
+          dependencyId: payload.dependencyId,
+          consumerWorkId: payload.consumerWorkId,
+          producerBinding: payload.producerBinding,
+          expectedDeliverable: payload.expectedDeliverable,
+          revision: payload.revision,
+          state: "Unsatisfied",
+          satisfiedByDeliverableId: null,
+          satisfiedAtDependencyRevision: null,
+        });
+        const committed = {
+          resolution: {
+            _tag: "Committed" as const,
+            result: {
+              dependencyId: payload.dependencyId,
+              consumerWorkId: payload.consumerWorkId,
+              state: "Unsatisfied" as const,
+              revision: payload.revision,
+            },
+          },
+        };
+        receipts.set(commandId, committed);
+        return Effect.succeed(committed);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = makeDependencyHandler(gateway, receipts, dependencyRows);
+
+    await runControlHandler(handler, dependencyAction, 0, dependencyInvocation);
+    const dependencyId = [...dependencyRows.keys()][0];
+    if (dependencyId === undefined)
+      throw new Error("missing committed Dependency");
+    dependencyRows.set(dependencyId, {
+      ...(dependencyRows.get(dependencyId) as object),
+      state: "Satisfied",
+    });
+    const converged = await runControlHandler(
+      handler,
+      dependencyAction,
+      1,
+      dependencyInvocation,
+    );
+
+    expect(converged).toMatchObject({
+      _tag: "Accepted",
+      outcome: {
+        _tag: "Observation",
+        observation: {
+          text: `DependencyDeclared(${dependencyId}, Unsatisfied)`,
+        },
+      },
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("fails closed when a Committed receipt has no canonical Dependency row", async () => {
+    const receipts = new Map<string, unknown>();
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const payload = envelope.payload as {
+          readonly dependencyId: string;
+          readonly consumerWorkId: string;
+          readonly revision: number;
+        };
+        const committed = {
+          resolution: {
+            _tag: "Committed" as const,
+            result: {
+              dependencyId: payload.dependencyId,
+              consumerWorkId: payload.consumerWorkId,
+              state: "Unsatisfied" as const,
+              revision: payload.revision,
+            },
+          },
+        };
+        receipts.set(commandId, committed);
+        return Effect.succeed(committed);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = makeDependencyHandler(gateway, receipts, new Map());
+
+    await runControlHandler(handler, dependencyAction, 0, dependencyInvocation);
+    const takeover = await runControlHandler(
+      handler,
+      dependencyAction,
+      1,
+      dependencyInvocation,
+    );
+
+    expect(takeover._tag).toBe("Rejected");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not retry an older non-fencing terminal rejection", async () => {
+    const receipts = new Map<string, unknown>();
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const rejected = {
+          resolution: {
+            _tag: "TerminalRejected" as const,
+            error: { _tag: "RevisionConflict" as const },
+          },
+        };
+        receipts.set(commandId, rejected);
+        return Effect.succeed(rejected);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = makeDependencyHandler(gateway, receipts, new Map());
+
+    await runControlHandler(handler, dependencyAction, 0, dependencyInvocation);
+    await runControlHandler(handler, dependencyAction, 1, dependencyInvocation);
+
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("AH10 receipt-first AcceptResult takeover", () => {
+  it("uses a new CommandId after gen0 FencingRejected", async () => {
+    const receipts = new Map<string, unknown>();
+    const calls: Array<{
+      readonly commandId: string;
+      readonly generation: number;
+    }> = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>, context: unknown) => {
+        const commandId = String(envelope.commandId);
+        const generation = Number(
+          (context as { readonly fencingGeneration: number }).fencingGeneration,
+        );
+        calls.push({ commandId, generation });
+        const prior = receipts.get(commandId);
+        if (prior !== undefined) return Effect.succeed(prior);
+        const resolution =
+          generation === 0
+            ? {
+                _tag: "TerminalRejected" as const,
+                error: { _tag: "FencingRejected" as const },
+              }
+            : {
+                _tag: "Committed" as const,
+                result: envelope.payload,
+              };
+        const receipt = { resolution };
+        receipts.set(commandId, receipt);
+        return Effect.succeed(receipt);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = actionHandlerFromRegistry(
+      "AcceptResult",
+      gateway,
+      receipts,
+    );
+
+    await runControlHandler(handler, acceptAction, 0, acceptInvocation);
+    const currentOwner = await runControlHandler(
+      handler,
+      acceptAction,
+      1,
+      acceptInvocation,
+    );
+
+    expect(currentOwner._tag).toBe("Accepted");
+    expect(calls.map((call) => call.generation)).toEqual([0, 1]);
+    expect(calls[0]?.commandId).not.toBe(calls[1]?.commandId);
+    expect(calls[0]?.commandId).toBe(
+      `cmd_${newUuid7(
+        "accept-child-result-command",
+        `${acceptInvocation.providerTurnId}:${acceptInvocation.outputPosition}`,
+      )}`,
+    );
+  });
+
+  it("converges a prior Committed acceptance after the result ref is no longer ready", async () => {
+    const receipts = new Map<string, unknown>();
+    const acceptanceRows = new Map<string, unknown>();
+    const calls: string[] = [];
+    let resolved = true;
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const committed = {
+          resolution: {
+            _tag: "Committed" as const,
+            result: envelope.payload,
+          },
+        };
+        const result = envelope.payload as {
+          readonly acceptanceId: string;
+          readonly workId: string;
+          readonly targetWorkRevision: number;
+          readonly verificationId: string;
+        };
+        acceptanceRows.set(`${result.workId}:${result.targetWorkRevision}`, {
+          ...result,
+          actor: "worker:ah10",
+          acceptedAt: "2026-10-05T00:00:00.000Z",
+        });
+        receipts.set(commandId, committed);
+        resolved = false;
+        return Effect.succeed(committed);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = actionHandlerFromRegistry(
+      "AcceptResult",
+      gateway,
+      receipts,
+      new Map(),
+      () =>
+        resolved
+          ? Option.some({
+              childWorkspaceId,
+              workId: acceptanceWorkId,
+              workRevision: parse(WorkRevision)(0),
+              verificationId,
+            })
+          : Option.none(),
+      acceptanceRows,
+    );
+
+    await runControlHandler(handler, acceptAction, 0, acceptInvocation);
+    const converged = await runControlHandler(
+      handler,
+      acceptAction,
+      1,
+      acceptInvocation,
+    );
+
+    expect(converged).toMatchObject({
+      _tag: "Accepted",
+      outcome: { _tag: "Observation" },
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("fails closed when a Committed receipt has no canonical Acceptance row", async () => {
+    const receipts = new Map<string, unknown>();
+    const calls: string[] = [];
+    let resolved = true;
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const committed = {
+          resolution: {
+            _tag: "Committed" as const,
+            result: envelope.payload,
+          },
+        };
+        receipts.set(commandId, committed);
+        resolved = false;
+        return Effect.succeed(committed);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = actionHandlerFromRegistry(
+      "AcceptResult",
+      gateway,
+      receipts,
+      new Map(),
+      () =>
+        resolved
+          ? Option.some({
+              childWorkspaceId,
+              workId: acceptanceWorkId,
+              workRevision: parse(WorkRevision)(0),
+              verificationId,
+            })
+          : Option.none(),
+      new Map(),
+    );
+
+    await runControlHandler(handler, acceptAction, 0, acceptInvocation);
+    const takeover = await runControlHandler(
+      handler,
+      acceptAction,
+      1,
+      acceptInvocation,
+    );
+
+    expect(takeover._tag).toBe("Rejected");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("does not retry an older non-fencing terminal rejection", async () => {
+    const receipts = new Map<string, unknown>();
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const rejected = {
+          resolution: {
+            _tag: "TerminalRejected" as const,
+            error: { _tag: "VerificationAcceptanceMismatch" as const },
+          },
+        };
+        receipts.set(commandId, rejected);
+        return Effect.succeed(rejected);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = actionHandlerFromRegistry(
+      "AcceptResult",
+      gateway,
+      receipts,
+    );
+
+    await runControlHandler(handler, acceptAction, 0, acceptInvocation);
+    await runControlHandler(handler, acceptAction, 1, acceptInvocation);
+
     expect(calls).toHaveLength(1);
   });
 });
