@@ -16,7 +16,7 @@
 | SelectCurrentWork | CommandGateway | 未有 AH10 专项 | receipt-first + Workspace 当前选择/DecisionRequest 收敛；保留 gen0 DecisionId 编码 |
 | RecordVerificationEvidence | CommandGateway | 未有 AH10 专项 | receipt-first + Evidence 行的 criterion/source/execution 精确核对 |
 | ConcludeVerification | CommandGateway | 未有 AH10 专项 | receipt-first + Verification 最终状态/summaryRef/verdict/criteriaResults 核对 |
-| Deliver | `submitDeliver` 组合 Message handover，非 CommandGateway | 无 AH10 同类 receipt | 独立测试同 MessageId 重入不重复 Message/Inbox/wake；旧代写 fencing 的归属先澄清，不强塞 Gateway |
+| Deliver | `submitDeliver` 组合 Message handover，非 CommandGateway | pending SQLite 红测：旧代越过新 lease 写 Message/Event/Inbox；同 MessageId 重入无重复但失败；`planning/results/AH10-deliver-generation-fence.review.md` | 拟议 AH10-DG-01 先裁决写入 fencing/receipt 所有权；不强塞 Gateway，也不能把唯一键失败叫成功收敛 |
 
 五类 Gateway handler 中相同的旧回执查询机械流程已收敛成内部 helper；
 每类 Committed receipt 的 canonical fact 校验、非 fencing 拒绝的原有错误代数

@@ -166,3 +166,10 @@ helper 重排后的 HEAD 重跑；计划以 AH10 双 daemon 和 F20 干净检出
 F20 从该提交干净检出、冻结安装、构建与公开黑盒 1/1 PASS。未在
 `32ae550` 重跑完整 42 项进程 + 2 项浏览器批次；最近完整功能批次
 仍是更早的 `4720f65`，不能混称为本提交的全量证据。
+
+`Deliver` 另有隔离 SQLite 红测：lease 已到新 generation 时旧 owner
+仍能通过 `submitDeliver` 直接写 Message、MessageSent 与 Inbox；同
+MessageId 重入虽因唯一键回滚、没有重复事实，却不能收敛为成功交付。
+该动作不走 CommandGateway，拟议 AH10-DG-01 先裁决 P1/P7 的 fencing
+与 receipt 所有权；见
+`planning/results/AH10-deliver-generation-fence.review.md`。
