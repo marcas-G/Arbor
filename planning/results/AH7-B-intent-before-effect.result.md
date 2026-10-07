@@ -33,7 +33,11 @@ Execution/AgentLoopStep/ProviderTurn/`callRef`/`ToolInvocationId`. The durable
 Step reaches cursor 2; A and B each have one Applied action, Success
 ToolInvocation, ToolResult, Artifact and Observation. The A file remains
 unchanged; the B file contains its unique marker exactly once. The original
-Provider action batch, provider request and ProviderAttempt each occur once.
+pinned ProviderTurn keeps one sourced ModelOutput/decoded-output hash and one
+successful ProviderAttempt; its two Action callRefs and B ToolInvocation
+identity remain unique. A distinct successor ProviderTurn may make a legitimate
+Text-only Provider call after the action batch; that is not replay of the
+original decision.
 
 This qualifies the T2 Idempotent pre-effect side only. It does not cover
 NonIdempotent effect reconciliation, non-Success Observation replay
@@ -67,3 +71,34 @@ pnpm exec vitest run --config vitest.functional.config.ts tests/functional/proce
 
 This independent rerun confirms the same Idempotent B pre-effect process boundary;
 it does not change AH7's PARTIAL status or the scope limitations above.
+
+The full `pnpm test:functional` run on `69ce796` reached 25/26 files and
+64/65 tests before reporting one failure in this new test: a work-wide
+`targetProviderCalls === 1` assertion observed 2 after the pinned actions had
+completed. All original-turn, A/B identity, effect, ToolResult, Artifact,
+Observation and cursor assertions passed. A follow-up Text response for a
+separate successor ProviderTurn is legal; the oracle needed to be narrowed to
+the pinned ProviderTurn/ModelOutput/action-batch identities rather than a
+work-wide HTTP-call total. In the same run, F20 passed 1/1 (45.55s) and the
+P9 dense SSE lease-renewal test passed 1/1 (10.73s); Playwright did not run
+because the Vitest phase returned failure.
+
+The test-local oracle has now been corrected: it reads the pinned ProviderTurn's
+typed `AssistantMessage`/legacy ModelOutput and sourced ProviderTurnCall rows,
+asserting one durable output, exactly the two patch callRefs for A/B, a stable
+`decoded_output_hash`, and one successful Attempt for the original ProviderTurn.
+It no longer treats a legitimate successor-turn Text call as replay. The P4
+intent boundary, action/call/invocation uniqueness and one B effect remain
+asserted.
+
+```text
+pnpm exec tsc -p tsconfig.test.json --noEmit --pretty false
+PASS
+
+pnpm exec biome check tests/functional/process/agent-loop-ah7-b-intent-before-effect.functional.test.ts
+PASS
+
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah7-b-intent-before-effect.functional.test.ts
+1/1 PASS (64.70s)
+1/1 PASS (63.76s)
+```
