@@ -69,6 +69,18 @@ const qualificationProbe = async (event) => {
     }
   }
   if (
+    role === "old" &&
+    event.boundary === "AH9BeforeTerminalActionCommit" &&
+    event.actionIndex === 0 &&
+    process.env.ARBOR_AH10_PAUSE_BEFORE_TERMINAL_ACTION === "1"
+  ) {
+    const actionKind = readActionKind(event.logicalActionId);
+    if (actionKind === process.env.ARBOR_AH10_GATE_ACTION_KIND) {
+      emit({ ...event, actionKind });
+      await waitForGate("terminal-action", event);
+    }
+  }
+  if (
     role === "new" &&
     event.boundary === "AH7AfterActionResultCommit" &&
     event.actionIndex === 0

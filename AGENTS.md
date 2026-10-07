@@ -598,3 +598,22 @@ Execution  = recoverable execution episode (one active main per Workspace)
 Agent      = runtime execution role, not a long-term entity (no AgentId)
 Verification PASS != Parent Acceptance != Work Completed
 ```
+
+2026-10-08 AH10 committed-receipt recovery increment: `DeclareDependency` and
+`AcceptResult` now each have a real two-daemon Committed-receipt/Action-Pending
+kill/restart case in addition to their earlier FencingRejected cases. The
+`SelectCurrentWork` DecisionEpisode recovery now resumes only the exact pinned
+successful ProviderTurn for its matching submitted DecisionRequest; it
+converges the original Execution to `Completed(DecisionSubmitted)`, the
+AgentLoopStep to `SettlementProposed`, and the original Action/Observation
+without another model request. Negative replay-binding guards are covered.
+Evidence: `planning/results/AH10-generation-command-takeover-gap.result.md`,
+`planning/results/AH10-select-current-work-takeover.result.md`. Current focused
+runs: AH10 main process 9/9, SelectCurrentWork process 3/3, guard/core 57/57;
+`pnpm check` passes (Biome 947 files, architecture 155, core 1711 + 3 skipped,
+Web 216). AH10 remains PARTIAL; Deliver and verification-control governance
+gaps and other action/state combinations remain open. Follow-up: mismatched
+replay guard rejection is predicate-tested, but its daemon-level
+`proposeSettlement(Failed)` convergence from an existing ActionsInProgress Step
+is not yet qualified (potential P2, not confirmed as a defect). This increment
+is not a full `pnpm test:functional` result.

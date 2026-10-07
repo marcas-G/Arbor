@@ -2,8 +2,9 @@
 
 Date: 2026-10-08
 
-Status: **PASS for DecisionEpisode expired-lease redispatch and the tested
-SelectCurrentWork receipt boundaries; AH10 remains PARTIAL overall.**
+Status: **PASS for DecisionEpisode expired-lease redispatch, both
+`FencingRejected` receipt boundaries, and Committed-receipt pre-Observation
+recovery; AH10 remains PARTIAL overall.**
 
 Test: `tests/functional/process/agent-loop-ah10-select-current-work-takeover.functional.test.ts`
 
@@ -111,3 +112,101 @@ These runs include both SelectCurrentWork receipt sides and the P9 durable
 TextDelta renewal qualification. They do not close AH10: other control
 actions, additional state combinations and independent Deliver/VCS governance
 gaps remain open.
+
+## Committed receipt before Action settlement — PASS (2026-10-08)
+
+The isolated third case uses the existing `AH9BeforeTerminalActionCommit`
+qualification boundary. At the old-generation probe, the SelectCurrentWork
+Command receipt is Committed, the same DecisionRequest is `Submitted` for B at
+revision 1, and the Workspace current Work is B at the corresponding new
+revision. The target action remains Pending with no Observation; its original
+Step is `ActionsInProgress` at cursor 0, before `SettlementProposed`. After
+killing gen0, these facts remain durable while the real generation-0 lease
+expires.
+
+Gen1 acquires the same DecisionEpisode Execution at generation 1 and resumes
+the pinned SelectCurrentWork action. The old Committed receipt is reused under
+its original CommandId; there is no second Command or CurrentWorkChanged event.
+The one DecisionRequest remains Submitted(B) at revision 1, the Workspace
+remains selected on B at the same revision, and the original Action advances
+Pending→Applied with one Observation. The Provider decision is not requested
+again. The narrowly guarded recovery path accepts a Submitted request only
+when the same Step is `ActionsInProgress`, its pinned ProviderTurn has settled
+success, its next action is the exact Pending `select_current_work`, and the
+Submitted request belongs to the Execution Workspace, its selected candidate
+matches the canonical Workspace selection/revision, and the settled Provider
+result's `manifestId` exactly matches the Step's pinned Manifest. New or
+unproven DecisionEpisodes still fail closed unless Pending at the pinned
+request revision.
+
+The first red run supplied the counterexample: gen1 acquired generation 1 but
+returned `DecisionRequestMissingOrSettled` before re-entering the action,
+leaving Step cursor 0 and Action Pending. This exposed an implementation-order
+defect against the existing P9 `07` §2 pinned-action replay contract, not a new
+semantic choice. The fix reorders only the proof needed for recovery; no
+`docs/design/**` changes or new fencing/approval exceptions were introduced.
+
+Validation:
+
+```text
+pnpm --filter @arbor/single-workspace build: PASS
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-select-current-work-takeover.functional.test.ts -t "reuses the Committed SelectCurrentWork receipt": 1/1 PASS (47.47s)
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-select-current-work-takeover.functional.test.ts: 3/3 PASS (126.51s)
+pnpm typecheck: PASS
+pnpm architecture: 30 files / 155 tests PASS
+pnpm exec vitest run tests/p3-driver.test.ts tests/p3-integration.test.ts tests/p11-controlbasis.test.ts apps/single-workspace/test/ah10-generation-command-takeover.test.ts: 54/54 PASS
+```
+
+The committed third case remains in the formal process file and does not add a
+pending failure to the default functional gate. The integration run below
+subsequently executed the complete `pnpm check`; full `pnpm test:functional`
+has not yet run on this change.
+
+## Submitted replay binding regressions (2026-10-08)
+
+Added `packages/agent-runtime/test/model-decision-pinned-replay.test.ts` for
+the guard's exact Workspace and Manifest bindings. The first red run passed the
+valid pinned replay case but failed both negative cases: a Submitted
+DecisionRequest from another Workspace and a settled Provider result whose
+Manifest differed from the AgentLoopStep were incorrectly accepted by the
+replay guard. The guard now requires
+`request.workspaceId === execution.workspaceId` and
+`providerResult.manifestId === step.manifestId`; all three cases pass. The
+helper remains a module-internal export and is not re-exported from the
+`@arbor/agent-runtime` package root. The downstream SelectCurrentWork handler
+also validates the old receipt's Workspace binding; the manifest-to-Step
+binding was not present in the generic replay comparison.
+
+Additional validation:
+
+```text
+pnpm exec vitest run packages/agent-runtime/test/model-decision-pinned-replay.test.ts: 3/3 PASS
+pnpm exec vitest run packages/agent-runtime/test/model-decision-pinned-replay.test.ts tests/p3-driver.test.ts tests/p3-integration.test.ts tests/p11-controlbasis.test.ts apps/single-workspace/test/ah10-generation-command-takeover.test.ts: 57/57 PASS
+pnpm typecheck: PASS
+pnpm architecture: 30 files / 155 tests PASS
+Biome on model-decision, focused test, SelectCurrentWork process test and AH10 child: PASS
+git diff --check: PASS
+```
+
+Follow-up risk (not exercised by this batch): the negative guard tests prove
+the replay predicate rejects a mismatched Workspace/Manifest, but do not run a
+daemon-level recovery from that malformed `ActionsInProgress` state through
+`proposeSettlement(Failed)`. Because that path may leave the pending Step/action
+without a terminal Step transition, record a focused fail-closed settlement
+test before treating mismatched-replay recovery as covered. This does not affect
+the valid Committed-receipt recovery case above and is not asserted here as a
+confirmed production defect.
+
+## Integration verification (2026-10-08)
+
+Independent integration reruns on the working tree:
+
+```text
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-select-current-work-takeover.functional.test.ts: 1 file / 3 tests PASS (122.88s)
+pnpm exec vitest run packages/agent-runtime/test/model-decision-pinned-replay.test.ts tests/p3-driver.test.ts tests/p3-integration.test.ts tests/p11-controlbasis.test.ts apps/single-workspace/test/ah10-generation-command-takeover.test.ts: 5 files / 57 tests PASS
+pnpm check: PASS (Biome 947 files; architecture 155; core 316 files / 1711 passed + 3 skipped; Web 31 files / 216 passed; TypeScript, Web typecheck and build passed)
+```
+
+The AH10 main real-process file independently passed 9/9 in 336.69s. These are
+focused/integration and repository-check results, not a full
+`pnpm test:functional` run or overall AH10 closure.

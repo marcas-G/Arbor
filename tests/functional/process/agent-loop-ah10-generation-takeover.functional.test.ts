@@ -1,5 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -167,6 +167,18 @@ const readAh10Rows = (databaseFile: string) => {
         call_ref: string;
         action_kind: string;
         state: string;
+      }>,
+      domainEvents: db
+        .prepare(
+          "SELECT sequence, project_id, event_type, aggregate_ref, caused_by_command_id, payload_json FROM domain_events ORDER BY sequence",
+        )
+        .all() as Array<{
+        sequence: number;
+        project_id: string;
+        event_type: string;
+        aggregate_ref: string;
+        caused_by_command_id: string | null;
+        payload_json: string;
       }>,
       actionObservations: db
         .prepare(
@@ -654,6 +666,290 @@ describe("AH10 real daemon generation takeover", () => {
     releaseGate(fixture, "new", "action-result");
     await recoveryDaemon.crash();
   }, 90_000);
+
+  it("recovers a committed DeclareDependency receipt while its Action is Pending", async () => {
+    const marker = `AH10-dependency-pending-${crypto.randomUUID().slice(0, 8)}`;
+    const dependencyKind = `ah10-pending-${marker}`;
+    const events: Ah10Probe[] = [];
+    let declarationProviderCalls = 0;
+    const fixture = await startProductionFixture({
+      reply: (call) => {
+        const available = new Set(
+          call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        );
+        if (
+          declarationProviderCalls === 0 &&
+          available.has("declare_dependency") &&
+          JSON.stringify(call.messages).includes(marker)
+        ) {
+          declarationProviderCalls += 1;
+          return {
+            _tag: "ToolCall",
+            name: "declare_dependency",
+            arguments: {
+              producerBinding: { _tag: "AnyProducer" },
+              expectedDeliverable: {
+                kind: dependencyKind,
+                requiredArtifactRoles: [],
+              },
+            },
+          };
+        }
+        return { _tag: "Text", text: `Declared dependency for ${marker}.` };
+      },
+      firstDaemonEntry: ah10Child,
+      daemonEnvironment: {
+        ARBOR_AH10_ROLE: "old",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
+        ARBOR_AH10_GATE_ACTION_KIND: "declare_dependency",
+      },
+      onDaemonStdout: (line) => pushProbe(events, line),
+    });
+    fixtures.push(fixture);
+    mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
+    const client = makePublicClient(fixture.baseUrl);
+    const project = await createFunctionalProject(
+      client,
+      fixture.workspaceDirectory,
+      "AH10 committed DeclareDependency receipt recovery",
+    );
+    const consumerWorkId = functionalId("wrk");
+    await client.command(project.projectId, "AssignWork", {
+      workId: consumerWorkId,
+      workspaceId: project.rootWorkspaceId,
+      expectedWorkspaceRevision: 0,
+      objective: `Declare one dependency ${marker}.`,
+      why: "qualify committed dependency receipt recovery before Observation",
+      constraints: [],
+      completionExpectation: "one exact dependency is durably declared",
+      verificationMission: {
+        goal: `Verify dependency declaration ${marker}`,
+        criteria: [
+          {
+            criterionId: "ah10-dependency-pending-recovery",
+            requirement: "one dependency is durably declared",
+            required: true,
+          },
+        ],
+        riskRequirements: [],
+      },
+      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
+      revision: 0,
+    });
+
+    const oldAction = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.actionKind === "declare_dependency" &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      30_000,
+    );
+    if (oldAction === undefined) {
+      throw new Error("AH10 committed DeclareDependency ActionIntent absent");
+    }
+    expect(oldAction.providerTurnId).toMatch(/^ptn_/u);
+    expect(oldAction.logicalActionId).toMatch(/^lac_/u);
+    expect(oldAction.callRef).toMatch(/^call_/u);
+    releaseGate(fixture, "old", "action-intent");
+    const oldControlReturn = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary ===
+              "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
+            event.executionId === oldAction.executionId &&
+            event.logicalActionId === oldAction.logicalActionId,
+        ),
+      (event) => event !== undefined,
+      15_000,
+    );
+    expect(oldControlReturn).toBeDefined();
+
+    const beforeCrash = readAh10Rows(fixture.databaseFile);
+    const dependencyReceipt = beforeCrash.commands.filter((command) => {
+      if (command.resolution !== "Committed" || command.result_json === null) {
+        return false;
+      }
+      const result = JSON.parse(command.result_json) as {
+        dependencyId?: string;
+        consumerWorkId?: string;
+        state?: string;
+        revision?: number;
+      };
+      return (
+        result.consumerWorkId === consumerWorkId &&
+        result.state === "Unsatisfied"
+      );
+    });
+    expect(dependencyReceipt).toHaveLength(1);
+    const resultBeforeCrash = JSON.parse(
+      dependencyReceipt[0]?.result_json ?? "{}",
+    ) as { dependencyId?: string };
+    expect(resultBeforeCrash.dependencyId).toMatch(/^dep_/u);
+    expect(beforeCrash.dependencies).toEqual([
+      expect.objectContaining({
+        dependency_id: resultBeforeCrash.dependencyId,
+        project_id: project.projectId,
+        consumer_work_id: consumerWorkId,
+        state: "Unsatisfied",
+        revision: 0,
+      }),
+    ]);
+    const declarationEvents = beforeCrash.domainEvents.filter(
+      (event) =>
+        event.project_id === project.projectId &&
+        event.event_type === "DependencyDeclared" &&
+        event.aggregate_ref === resultBeforeCrash.dependencyId,
+    );
+    expect(declarationEvents).toHaveLength(1);
+    expect(declarationEvents[0]?.caused_by_command_id).toBe(
+      dependencyReceipt[0]?.command_id,
+    );
+    expect(beforeCrash.actions).toContainEqual(
+      expect.objectContaining({
+        execution_id: oldAction.executionId,
+        provider_turn_id: oldAction.providerTurnId,
+        logical_action_id: oldAction.logicalActionId,
+        call_ref: oldAction.callRef,
+        action_kind: "declare_dependency",
+        state: "Pending",
+      }),
+    );
+    expect(beforeCrash.actionObservations).toHaveLength(0);
+    expect(
+      beforeCrash.providerAttempts.filter(
+        (attempt) => attempt.provider_turn_id === oldAction.providerTurnId,
+      ),
+    ).toEqual([expect.objectContaining({ outcome: "Success" })]);
+    expect(declarationProviderCalls).toBe(1);
+
+    await fixture.crash();
+    await waitForPublic(
+      async () =>
+        readAh10Rows(fixture.databaseFile).leases.find(
+          (lease) => lease.execution_id === oldAction.executionId,
+        ),
+      (lease) =>
+        lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
+      35_000,
+    );
+    const recoveryDaemon = await fixture.startAdditionalDaemon({
+      entry: ah10Child,
+      daemonEnvironment: {
+        ARBOR_AH10_ROLE: "new",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
+        ARBOR_AH10_GATE_ACTION_KIND: "declare_dependency",
+      },
+      onStdout: (line) => pushProbe(events, line),
+    });
+    const recoveredLease = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH10AfterLeaseAcquired" &&
+            event.executionId === oldAction.executionId,
+        ),
+      (event) => event !== undefined,
+      45_000,
+    );
+    expect(recoveredLease?.fencingGeneration).toBe(1);
+    const recoveredIntent = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.executionId === oldAction.executionId &&
+            event.actionKind === "declare_dependency" &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      30_000,
+    );
+    expect(recoveredIntent?.providerTurnId).toBe(oldAction.providerTurnId);
+    expect(recoveredIntent?.logicalActionId).toBe(oldAction.logicalActionId);
+    expect(recoveredIntent?.callRef).toBe(oldAction.callRef);
+    releaseGate(fixture, "new", "action-intent");
+    await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH7AfterActionResultCommit" &&
+            event.executionId === oldAction.executionId &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      30_000,
+    );
+
+    const recovered = readAh10Rows(fixture.databaseFile);
+    const recoveredReceipts = recovered.commands.filter((command) => {
+      if (command.resolution !== "Committed" || command.result_json === null) {
+        return false;
+      }
+      const result = JSON.parse(command.result_json) as {
+        dependencyId?: string;
+        consumerWorkId?: string;
+      };
+      return (
+        result.dependencyId === resultBeforeCrash.dependencyId &&
+        result.consumerWorkId === consumerWorkId
+      );
+    });
+    expect(recoveredReceipts).toHaveLength(1);
+    expect(recoveredReceipts[0]?.command_id).toBe(
+      dependencyReceipt[0]?.command_id,
+    );
+    expect(recovered.dependencies).toEqual(beforeCrash.dependencies);
+    expect(
+      recovered.domainEvents.filter(
+        (event) =>
+          event.project_id === project.projectId &&
+          event.event_type === "DependencyDeclared" &&
+          event.aggregate_ref === resultBeforeCrash.dependencyId,
+      ),
+    ).toHaveLength(1);
+    expect(recovered.actions).toContainEqual(
+      expect.objectContaining({
+        execution_id: oldAction.executionId,
+        provider_turn_id: oldAction.providerTurnId,
+        logical_action_id: oldAction.logicalActionId,
+        call_ref: oldAction.callRef,
+        action_kind: "declare_dependency",
+        state: "Applied",
+      }),
+    );
+    const actionObservation = recovered.actions.find(
+      (action) =>
+        action.execution_id === oldAction.executionId &&
+        action.logical_action_id === oldAction.logicalActionId,
+    )?.observation_source_ref;
+    expect(actionObservation).toMatch(/^observation_/u);
+    expect(
+      recovered.actionObservations.filter(
+        (observation) => observation.source_ref === actionObservation,
+      ),
+    ).toHaveLength(1);
+    expect(
+      recovered.providerAttempts.filter(
+        (attempt) => attempt.provider_turn_id === oldAction.providerTurnId,
+      ),
+    ).toEqual([expect.objectContaining({ outcome: "Success" })]);
+    expect(declarationProviderCalls).toBe(1);
+    expect(recoveryDaemon.daemonErrors).toEqual([]);
+    releaseGate(fixture, "new", "action-result");
+    await recoveryDaemon.crash();
+  }, 150_000);
 
   it.each(["before", "after"] as const)(
     "takes over DeclareDependency after killing the old owner %s its FencingRejected receipt commits",
@@ -1386,4 +1682,508 @@ describe("AH10 real daemon generation takeover", () => {
     },
     120_000,
   );
+
+  it("recovers a committed AcceptResult receipt while its Action is Pending", async () => {
+    const childMarker = `AH10-accept-committed-child-${crypto.randomUUID().slice(0, 8)}`;
+    const parentMarker = `AH10-accept-committed-parent-${crypto.randomUUID().slice(0, 8)}`;
+    const events: Ah10Probe[] = [];
+    const acceptResultCalls: Array<{
+      readonly providerCallIndex: number;
+      readonly resultRef: string;
+    }> = [];
+    const listWorkspaceCalls: number[] = [];
+    const providerTrace: Array<{
+      readonly index: number;
+      readonly tools: ReadonlyArray<string | undefined>;
+      readonly tail: string;
+    }> = [];
+    const childWorkProvider = makeWorkProvider({
+      marker: childMarker,
+      verdict: "Pass",
+    });
+    const fixture = await startProductionFixture({
+      reply: (call, index) => {
+        const context = JSON.stringify(call.messages);
+        providerTrace.push({
+          index,
+          tools: call.tools.map((tool) => tool.function?.name),
+          tail: context.slice(-1_200),
+        });
+        const available = new Set(
+          call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        );
+        if (context.includes(parentMarker) && available.has("accept_result")) {
+          if (acceptResultCalls.length > 0) {
+            return {
+              _tag: "Text",
+              text: `Accepted the child result ${parentMarker}.`,
+            };
+          }
+          const resultRef = /rref_[a-f0-9]{64}/u.exec(context)?.[0];
+          if (
+            resultRef === undefined &&
+            context.includes("Child result ready")
+          ) {
+            listWorkspaceCalls.push(index);
+            return {
+              _tag: "ToolCall",
+              name: "list_workspaces",
+              arguments: { query: childMarker },
+            };
+          }
+          if (resultRef === undefined) {
+            return { _tag: "HttpError", status: 422 };
+          }
+          acceptResultCalls.push({ providerCallIndex: index, resultRef });
+          return {
+            _tag: "ToolCall",
+            name: "accept_result",
+            arguments: { resultRef },
+          };
+        }
+        if (context.includes(childMarker)) return childWorkProvider(call);
+        return { _tag: "Text", text: "Acceptance qualification setup." };
+      },
+      onDaemonStdout: (line) => pushProbe(events, line),
+    });
+    fixtures.push(fixture);
+    const client = makePublicClient(fixture.baseUrl);
+    const project = await createFunctionalProject(
+      client,
+      fixture.workspaceDirectory,
+      "AH10 committed AcceptResult receipt recovery",
+    );
+    const childWorkspaceId = functionalId("ws");
+    const childSessionId = functionalId("ses");
+    const childWorkId = functionalId("wrk");
+    const childDirectory = resolve(fixture.directory, `child-${childMarker}`);
+    mkdirSync(childDirectory, { recursive: true });
+    writeFileSync(
+      resolve(childDirectory, "proof.txt"),
+      `FUNCTIONAL_VERIFIED for ${childMarker}`,
+    );
+    await client.command(project.projectId, "CreateChildWorkspace", {
+      parentWorkspaceId: project.rootWorkspaceId,
+      workspaceId: childWorkspaceId,
+      primarySession: { sessionId: childSessionId, contextEpoch: 0 },
+      name: `child-${childMarker}`,
+      responsibilityDefinition: {
+        purpose: `produce a verified result for ${childMarker}`,
+        ownedResponsibilities: [childMarker],
+        obligations: ["produce independently verified evidence"],
+        includes: [],
+        excludes: [],
+        interfaces: [],
+      },
+      responsibilityRevision: 0,
+      resourceBoundary: {
+        basisResponsibilityRevision: 0,
+        addresses: [{ _tag: "FileTree", path: childDirectory }],
+      },
+      resourceBoundaryRevision: 0,
+      agentBinding: {
+        _tag: "ResponsibilityBoundAgentBinding",
+        workspaceId: childWorkspaceId,
+      },
+      workspacePolicy: {},
+      workspacePolicyRevision: 0,
+      revision: 0,
+    });
+    await client.command(project.projectId, "AssignWork", {
+      workId: childWorkId,
+      workspaceId: childWorkspaceId,
+      expectedWorkspaceRevision: 0,
+      objective: `Complete ${childMarker}.`,
+      why: "prepare a verified child result before the parent execution starts",
+      constraints: ["do not perform external side effects"],
+      completionExpectation: "independently verified child result",
+      verificationMission: {
+        goal: `Verify ${childMarker}`,
+        criteria: [
+          {
+            criterionId: "functional-criterion",
+            requirement: `proof.txt contains FUNCTIONAL_VERIFIED for ${childMarker}`,
+            required: true,
+          },
+        ],
+        riskRequirements: ["read-only verification"],
+      },
+      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
+      revision: 0,
+    });
+    const childVerification = await waitForPublic(
+      () =>
+        client.view<{
+          verificationId?: string;
+          targetWorkRevision?: number;
+          verdict?: string;
+          acceptance?: { acceptanceId: string };
+        }>("verification", { workId: childWorkId }),
+      (view) => view.verdict === "Pass" && view.verificationId !== undefined,
+      20_000,
+    );
+    const childCurrentWork = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision?: number;
+          status?: string;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", { workspaceId: childWorkspaceId }),
+      (view) =>
+        view?.workId === childWorkId &&
+        view.status === "Open" &&
+        view.activeExecution === undefined,
+      30_000,
+    );
+    expect(childVerification.verdict).toBe("Pass");
+    expect(childVerification.acceptance).toBeUndefined();
+    expect(childCurrentWork).toMatchObject({
+      workId: childWorkId,
+      status: "Open",
+    });
+    expect(readAh10Rows(fixture.databaseFile).acceptances).toHaveLength(0);
+
+    await fixture.restart({
+      entry: ah10Child,
+      daemonEnvironment: {
+        ARBOR_AH10_ROLE: "old",
+        ARBOR_AH10_GATE_ACTION_KIND: "accept_result",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
+      },
+    });
+    mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
+    const parentWorkId = functionalId("wrk");
+    await client.command(project.projectId, "AssignWork", {
+      workId: parentWorkId,
+      workspaceId: project.rootWorkspaceId,
+      expectedWorkspaceRevision: 0,
+      objective: `Accept the ready child result ${parentMarker}.`,
+      why: "qualify committed Parent acceptance recovery before Observation",
+      constraints: [],
+      completionExpectation: "the exact verified child result is accepted",
+      verificationMission: {
+        goal: `Verify Parent acceptance ${parentMarker}`,
+        criteria: [
+          {
+            criterionId: "ah10-parent-acceptance-committed-recovery",
+            requirement: "the exact child PASS result is accepted once",
+            required: true,
+          },
+        ],
+        riskRequirements: [],
+      },
+      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
+      revision: 0,
+    });
+    const listActionIntent = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.actionKind === "list_workspaces" &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      30_000,
+    );
+    if (listActionIntent === undefined) {
+      throw new Error(
+        "AH10 AcceptResult prerequisite list_workspaces intent absent",
+      );
+    }
+    const listControlReturn = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary ===
+              "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
+            event.executionId === listActionIntent.executionId &&
+            event.logicalActionId === listActionIntent.logicalActionId,
+        ),
+      (event) => event !== undefined,
+      15_000,
+    );
+    expect(listControlReturn).toBeDefined();
+    releaseGate(fixture, "old", "control-return");
+    await waitForPublic(
+      async () =>
+        readAh10Rows(fixture.databaseFile).actions.find(
+          (action) =>
+            action.execution_id === listActionIntent.executionId &&
+            action.logical_action_id === listActionIntent.logicalActionId,
+        ),
+      (action) =>
+        action?.action_kind === "list_workspaces" &&
+        action.state === "Applied" &&
+        action.observation_source_ref !== null,
+      15_000,
+    );
+    // Remove only this test fixture's temporary release marker after the
+    // public list_workspaces Observation is durable. The next control return
+    // is now the target AcceptResult handler boundary.
+    const controlReturnReleasePath = resolve(
+      fixture.directory,
+      "ah10-gates",
+      "old-control-return.release",
+    );
+    expect(relative(resolve(fixture.directory), controlReturnReleasePath)).toBe(
+      join("ah10-gates", "old-control-return.release"),
+    );
+    expect(existsSync(controlReturnReleasePath)).toBe(true);
+    unlinkSync(controlReturnReleasePath);
+    const oldAction = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.actionKind === "accept_result" &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      30_000,
+    ).catch((error: unknown) => {
+      throw new Error(
+        `committed AcceptResult ActionIntent absent: ${error instanceof Error ? error.message : String(error)}; providerTrace=${JSON.stringify(providerTrace)}; listWorkspaceCalls=${JSON.stringify(listWorkspaceCalls)}; acceptResultCalls=${JSON.stringify(acceptResultCalls)}; events=${JSON.stringify(events)}; oldDaemon=${fixture.daemonErrors.join(" | ")}`,
+      );
+    });
+    if (oldAction === undefined) {
+      throw new Error("AH10 committed AcceptResult ActionIntent absent");
+    }
+    expect(listWorkspaceCalls).toHaveLength(1);
+    expect(acceptResultCalls).toHaveLength(1);
+    expect(acceptResultCalls[0]?.resultRef).toMatch(/^rref_[a-f0-9]{64}$/u);
+    releaseGate(fixture, "old", "action-intent");
+    const oldControlReturn = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary ===
+              "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
+            event.executionId === oldAction.executionId &&
+            event.logicalActionId === oldAction.logicalActionId,
+        ),
+      (event) => event !== undefined,
+      15_000,
+    );
+    expect(oldControlReturn).toBeDefined();
+
+    const beforeCrash = readAh10Rows(fixture.databaseFile);
+    const acceptanceEvents = beforeCrash.domainEvents.filter(
+      (event) =>
+        event.project_id === project.projectId &&
+        event.event_type === "WorkOutcomeAccepted" &&
+        event.aggregate_ref === childWorkId,
+    );
+    expect(acceptanceEvents).toHaveLength(1);
+    const acceptanceReceipt = beforeCrash.commands.filter((command) => {
+      return (
+        command.resolution === "Committed" &&
+        command.result_json !== null &&
+        command.command_id === acceptanceEvents[0]?.caused_by_command_id
+      );
+    });
+    expect(acceptanceReceipt).toHaveLength(1);
+    const acceptanceResult = JSON.parse(
+      acceptanceReceipt[0]?.result_json ?? "{}",
+    ) as { acceptanceId?: string; workId?: string };
+    expect(acceptanceResult.acceptanceId).toMatch(/^acc_/u);
+    expect(beforeCrash.acceptances).toEqual([
+      expect.objectContaining({
+        acceptance_id: acceptanceResult.acceptanceId,
+        project_id: project.projectId,
+        work_id: childWorkId,
+        target_work_revision: childVerification.targetWorkRevision,
+        verification_id: childVerification.verificationId,
+      }),
+    ]);
+    expect(acceptanceResult).toMatchObject({
+      workId: childWorkId,
+      targetWorkRevision: childVerification.targetWorkRevision,
+      verificationId: childVerification.verificationId,
+    });
+    expect(acceptanceEvents[0]?.caused_by_command_id).toBe(
+      acceptanceReceipt[0]?.command_id,
+    );
+    expect(
+      beforeCrash.works.find((work) => work.work_id === childWorkId)?.lifecycle,
+    ).toBe("Open");
+    expect(beforeCrash.actions).toContainEqual(
+      expect.objectContaining({
+        execution_id: oldAction.executionId,
+        provider_turn_id: oldAction.providerTurnId,
+        logical_action_id: oldAction.logicalActionId,
+        call_ref: oldAction.callRef,
+        action_kind: "accept_result",
+        state: "Pending",
+      }),
+    );
+    const acceptObservationRef = beforeCrash.actions.find(
+      (action) =>
+        action.execution_id === oldAction.executionId &&
+        action.logical_action_id === oldAction.logicalActionId,
+    )?.observation_source_ref;
+    expect(acceptObservationRef).toBeNull();
+    const parentExecutionObservations = beforeCrash.actionObservations.filter(
+      (observation) =>
+        observation.source_ref.startsWith(
+          `observation_${oldAction.executionId}_`,
+        ),
+    );
+    expect(parentExecutionObservations).toHaveLength(1);
+    expect(parentExecutionObservations[0]?.source_ref).toBe(
+      beforeCrash.actions.find(
+        (action) =>
+          action.execution_id === listActionIntent.executionId &&
+          action.logical_action_id === listActionIntent.logicalActionId,
+      )?.observation_source_ref,
+    );
+    expect(acceptResultCalls).toHaveLength(1);
+    expect(
+      beforeCrash.providerAttempts.filter(
+        (attempt) => attempt.provider_turn_id === oldAction.providerTurnId,
+      ),
+    ).toEqual([expect.objectContaining({ outcome: "Success" })]);
+
+    const oldLease = beforeCrash.leases.find(
+      (lease) => lease.execution_id === oldAction.executionId,
+    );
+    expect(oldLease?.generation).toBe(0);
+    expect(Date.parse(oldLease?.expires_at ?? "") - Date.now()).toBeGreaterThan(
+      0,
+    );
+    await fixture.crash();
+    await waitForPublic(
+      async () =>
+        readAh10Rows(fixture.databaseFile).leases.find(
+          (lease) => lease.execution_id === oldAction.executionId,
+        ),
+      (lease) =>
+        lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
+      35_000,
+    );
+    const recoveryDaemon = await fixture.startAdditionalDaemon({
+      entry: ah10Child,
+      daemonEnvironment: {
+        ARBOR_AH10_ROLE: "new",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
+        ARBOR_AH10_GATE_ACTION_KIND: "accept_result",
+      },
+      onStdout: (line) => pushProbe(events, line),
+    });
+    const recoveredLease = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH10AfterLeaseAcquired" &&
+            event.executionId === oldAction.executionId,
+        ),
+      (event) => event !== undefined,
+      45_000,
+    );
+    expect(recoveredLease?.fencingGeneration).toBe(1);
+    const recoveredIntent = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.actionKind === "accept_result" &&
+            event.executionId === oldAction.executionId &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      30_000,
+    );
+    expect(recoveredIntent?.providerTurnId).toBe(oldAction.providerTurnId);
+    expect(recoveredIntent?.logicalActionId).toBe(oldAction.logicalActionId);
+    expect(recoveredIntent?.callRef).toBe(oldAction.callRef);
+    releaseGate(fixture, "new", "action-intent");
+    await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH7AfterActionResultCommit" &&
+            event.executionId === oldAction.executionId &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      30_000,
+    );
+    releaseGate(fixture, "new", "action-result");
+    await waitForPublic(
+      async () =>
+        readAh10Rows(fixture.databaseFile).works.find(
+          (work) => work.work_id === childWorkId,
+        ),
+      (work) => work?.lifecycle === "Completed",
+      30_000,
+    );
+
+    const recovered = readAh10Rows(fixture.databaseFile);
+    const recoveredReceipts = recovered.commands.filter((command) => {
+      if (command.resolution !== "Committed" || command.result_json === null) {
+        return false;
+      }
+      const result = JSON.parse(command.result_json) as {
+        acceptanceId?: string;
+        workId?: string;
+      };
+      return (
+        command.command_id === acceptanceReceipt[0]?.command_id &&
+        result.acceptanceId === acceptanceResult.acceptanceId &&
+        result.workId === childWorkId
+      );
+    });
+    expect(recoveredReceipts).toHaveLength(1);
+    expect(recoveredReceipts[0]?.command_id).toBe(
+      acceptanceReceipt[0]?.command_id,
+    );
+    expect(recovered.acceptances).toEqual(beforeCrash.acceptances);
+    expect(
+      recovered.domainEvents.filter(
+        (event) =>
+          event.project_id === project.projectId &&
+          event.event_type === "WorkOutcomeAccepted" &&
+          event.aggregate_ref === childWorkId,
+      ),
+    ).toHaveLength(1);
+    expect(
+      recovered.works.find((work) => work.work_id === childWorkId)?.lifecycle,
+    ).toBe("Completed");
+    const appliedAction = recovered.actions.find(
+      (action) =>
+        action.execution_id === oldAction.executionId &&
+        action.logical_action_id === oldAction.logicalActionId &&
+        action.action_kind === "accept_result",
+    );
+    expect(appliedAction).toMatchObject({
+      provider_turn_id: oldAction.providerTurnId,
+      call_ref: oldAction.callRef,
+      state: "Applied",
+      observation_source_ref: expect.any(String),
+    });
+    expect(
+      recovered.actionObservations.filter(
+        (observation) =>
+          observation.source_ref === appliedAction?.observation_source_ref,
+      ),
+    ).toHaveLength(1);
+    expect(
+      recovered.providerAttempts.filter(
+        (attempt) => attempt.provider_turn_id === oldAction.providerTurnId,
+      ),
+    ).toEqual([expect.objectContaining({ outcome: "Success" })]);
+    expect(acceptResultCalls).toHaveLength(1);
+    expect(recoveryDaemon.daemonErrors).toEqual([]);
+    await recoveryDaemon.crash();
+  }, 180_000);
 });
