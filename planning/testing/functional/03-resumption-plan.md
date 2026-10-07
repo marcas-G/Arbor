@@ -20,6 +20,11 @@ skipped、Web 216），相关公开场景 7/7、AH10 双 daemon 1/1、F20
 干净检出 1/1 PASS。完整功能批次没有在 `32ae550` 重跑；不得把旧
 `4720f65` 的完整批次记为本提交证据。AH10 仍 PARTIAL。
 
+第三批：`02e42ac` 补 `SelectCurrentWork` 的旧回执→DecisionRequest
+Pending/Submitted 收敛，`pnpm check` PASS（架构 155、核心 1705 + 3
+skipped、Web 216），F20 干净检出 1/1 PASS；没有运行该动作的公开进程
+跨代场景，也没有在此提交完整重跑 `pnpm test:functional`。
+
 ## 本批并行边界
 
 | 工作流 | 负责人 | 允许的改动 | 验收证据 |
