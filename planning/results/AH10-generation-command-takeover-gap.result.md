@@ -339,3 +339,42 @@ AH10 专属真实进程文件联跑：6/6 PASS（230.81s）
 随后在已提交 `2320d24` 上完整 `pnpm test:functional` PASS：真实进程/
 公开 API 21 文件、49/49，Playwright 浏览器 2/2，含 AH10 专属六场景
 与 F20 干净检出。绿色功能批次不覆盖 AH10 其余控制动作/治理缺口。
+
+## 2026-10-07 AcceptResult 旧拒绝回执提交前崩溃资格
+
+AcceptResult 真实双 daemon 场景现在参数化覆盖旧 gen0
+`FencingRejected` receipt 提交前与提交后两种中断点。提交前分支复用
+AH10 子进程现有的 Gateway 事务内 test-only probe：gen1 已持有 generation 1
+lease 并停在同一 AcceptResult ActionIntent 后，放行 gen0；Gateway probe 在
+旧拒绝 receipt 尚未提交时暂停。独立只读 SQLite 连接确认该 receipt 不可见，
+杀掉旧 daemon 后再次读取仍不可见，证明未提交事务随进程退出回滚。
+
+gen1 随后 receipt-first 使用新 CommandId，唯一提交与 Child PASS 结果绑定的
+Acceptance；Child Work 唯一转为 Completed。两分支均断言同一 ProviderTurn、
+LogicalActionId 和 callRef，只有一条成功 ProviderAttempt，唯一 Acceptance，
+AcceptResult 调用一次，且该动作 Observation 只有一条。没有修改生产代码、
+共享 fixture 或 Gateway 实现。
+
+```text
+pnpm build                                      PASS
+pnpm --filter @arbor/web build                 PASS
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts -t AcceptResult
+  2 passed, 5 skipped (92.28s)
+pnpm exec biome check tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts
+  PASS
+pnpm typecheck
+  BLOCKED by concurrent SendMessage test edits: TS18048 oldAction/oldLeasePause/newLease/newAction
+  possibly undefined in tests/functional/process/agent-loop-ah10-send-message-takeover.functional.test.ts
+```
+
+该增量补齐 AcceptResult 的旧拒绝回执提交前回滚边界；AH10 仍因其他控制动作
+和治理缺口保持 PARTIAL。
+
+### 集成复核（2026-10-07）
+
+两个相关功能文件联跑最终 8/8 PASS（AH10 主文件 7 场景，SendMessage Query
+1 场景；301.41s）。完整 `pnpm check` PASS：Biome 943 files，TypeScript build
+与 test typecheck PASS，architecture 30 files/155 tests，core 315 files/1708
+passed + 3 skipped，Web typecheck/build PASS，Web 31 files/216 tests PASS。
+门禁曾改写 `planning/results/P12.restore-drill.json` 的演练 timestamp/hash/RTO；
+已按门禁前保存的原字段恢复，因此该既有结果文件不属于本批变更。AH10 仍 PARTIAL。

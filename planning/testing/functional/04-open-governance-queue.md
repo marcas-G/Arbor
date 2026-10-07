@@ -18,6 +18,8 @@
 | 拟议 VCS-DG-01（验证命令重放/快照） | 同 CommandId 因 `recordedAt` 漂移产生 `IdempotencyConflict`；已结论 Verification 丢失 P8 冻结的 `criteriaResults`；`planning/proposals/verification-evidence-replay-and-snapshot-governance-draft.md` | 两条真实 Gateway/SQLite 隔离红测和审阅齐备，未接受 | P8 的快照目标不重裁；需决定稳定时间来源与历史已结论行处置，之后才能闭合两类验证控制动作的 AH10 |
 
 当前仍可不等治理继续的工作：AH10 其他 canonical 控制动作的 receipt-first
-接管与两侧进程资格；AH7 单连接以外的并发/多动作独立测试。所有分支的最终
+接管与两侧进程资格；AH7 更多失败/多动作交错的崩溃恢复矩阵。AH7 的普通 A→B
+双动作真实进程场景和同 ToolInvocationId 的双连接/双 OS 进程同步竞争已有局部
+PASS，但不替代进程崩溃/重启资格，也不关闭 DG-01/02/03。所有分支的最终
 声明还须回到 `01-functional-journey-catalog.md` F01–F23 与
 `02-agent-loop-step-crash-qualification.md` AH1–AH14 逐项审核。

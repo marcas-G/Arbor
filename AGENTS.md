@@ -233,9 +233,13 @@ AH7, AH10 and AH14 remain open and MUST NOT be inferred from AH1–AH6/F16.
 AH7 has PARTIAL process-crash evidence (ReadOnly action/P4 intent/settlement/
 Observation four sides and Reconcilable intent/effect-before-settlement
 fail-closed), not phase closure;
-see `planning/results/AH7-partial-crash-qualification.result.md`. Its
-active reconciliation, approval atomicity, non-Success observation
-replay, concurrency and multi-action cases remain open.
+see `planning/results/AH7-partial-crash-qualification.result.md`. Ordinary
+successful A→B multi-action restart and same-ToolInvocationId SQLite two-
+connection/two-OS-process synchronized competition now have focused PASS
+evidence (`planning/results/AH7-two-action-interleaving.result.md`,
+`planning/results/AH7-cross-connection-concurrency.result.md`). They do not
+prove crash/restart concurrency or close active reconciliation, approval
+atomicity, or non-Success observation replay.
 The non-Success replay gap is `AH7-DG-01` with an isolated failing test and
 draft governance proposal. At `26f80f2`, `pnpm test:functional` passes
 (public process 29, browser 2); this does not include the pending gap test.
@@ -323,13 +327,17 @@ Unsatisfied Dependency 与 Observation、Provider 一次。见
 `afe8a20` 上完整 `pnpm test:functional` PASS（真实进程/公开 API 21 文件、
 48/48；Playwright 2/2），含 AH10 五场景和 F20 干净检出。此结果不关闭
 AH10 其他动作及治理缺口。
-AH10 `AcceptResult` 新增 Parent `list_workspaces` 取真实 resultRef 后的
-真双 daemon 旧拒绝回执提交后接管：唯一 Acceptance、Child Work Completed、
-同一 LogicalAction/ProviderTurn，AH10 专属真实进程文件 6/6 PASS。见
-`planning/results/AH10-generation-command-takeover-gap.result.md`；提交前
-边界与其他控制动作仍开放。本增量完整 `pnpm check` PASS（架构 155、
-核心 1705 + 3 skipped、Web 216）；`2320d24` 上完整
-`pnpm test:functional` PASS（公开进程 21 文件、49/49，浏览器 2/2）。
+AH10 `AcceptResult` 真双 daemon takeover 现覆盖旧 FencingRejected receipt
+提交前与提交后两个 kill/restart 边界：提交前独立 SQLite 看不到回执且旧进程
+退出回滚，新代通过 Parent `list_workspaces` 取得真实 resultRef 后唯一
+Acceptance、Child Work Completed；两支保留同一 LogicalAction/ProviderTurn。
+`SendMessage` Query 另覆盖旧拒绝 receipt 提交后 takeover，唯一 Message、Inbox/
+correlation、Observation 与 Provider 调用。当前本地复跑 AH10 主文件与 SendMessage
+文件共 8/8 PASS，完整 `pnpm check` PASS（Biome 943 files、architecture 155、
+core 1708 + 3 skipped、Web 216）。结果分别见
+`planning/results/AH10-generation-command-takeover-gap.result.md` 和
+`planning/results/AH10-send-message-process-takeover.result.md`。AH10 仍 PARTIAL：
+其余控制动作、SendMessage 其他边界，以及 Deliver/验证控制治理缺口仍开放。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见
