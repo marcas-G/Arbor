@@ -305,6 +305,11 @@ Action Pending、Observation 未写时杀进程，新代从旧 Committed receipt
 收敛。两案定向 2/2 PASS，见
 `planning/results/AH10-generation-command-takeover-gap.result.md`；
 旧拒绝 receipt 事务提交前与其他动作的两侧矩阵仍未通过，AH10 PARTIAL。
+AH10 后续在仅测试子进程显式装配的 Gateway 事务内探针处，补了旧
+`FencingRejected` 回执**提交前**杀进程；提交前/后及已提交新命令但
+Action Pending 三案合跑 3/3 PASS。提交前独立 DB 读不到旧回执，
+杀进程回滚后新代唯一提交。见同一 AH10 结果文件；其他动作及
+Deliver/验证控制的开放缺口仍使 AH10 保持 PARTIAL。
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,

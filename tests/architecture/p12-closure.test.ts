@@ -172,8 +172,13 @@ describe("p12-closure", () => {
   it("the production composition has one command gateway and no legacy directive graph", () => {
     const composition = sourceOf("apps/single-workspace/src/composition.ts");
     expect(composition).not.toContain("SliceDirectiveHandlers");
+    // The same single Gateway layer may use the no-probe legacy export or the
+    // explicit process-local qualification factory; neither adds a second
+    // command route.
     expect(
-      composition.match(/Layer\.provide\(\s*CommandGatewayLive/gu) ?? [],
+      composition.match(
+        /Layer\.provide\(\s*(?:CommandGatewayLive|makeCommandGatewayLive\(config\.gatewayQualificationProbe\))/gu,
+      ) ?? [],
     ).toHaveLength(1);
   });
 

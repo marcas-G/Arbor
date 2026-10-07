@@ -67,6 +67,16 @@ const executionLeaseQualificationProbe = async (event) => {
   }
 };
 
+const gatewayQualificationProbe = async (event) => {
+  if (role !== "old" || event.boundary !== "AH10BeforeFencedReceiptCommit") {
+    return;
+  }
+  emit(event);
+  if (process.env.ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT === "1") {
+    await waitForGate("fenced-receipt", event);
+  }
+};
+
 const port = Number(process.env.ARBOR_HTTP_PORT);
 const config = {
   tickIntervalMs: 25,
@@ -77,6 +87,7 @@ const config = {
   },
   qualificationProbe,
   executionLeaseQualificationProbe,
+  gatewayQualificationProbe,
 };
 
 await Effect.runPromise(

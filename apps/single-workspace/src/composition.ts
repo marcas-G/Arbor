@@ -9,10 +9,11 @@ import {
   type AuthorityResolverPort,
   AuthorityResolverPortLive,
   type CommandGateway,
-  CommandGatewayLive,
+  type CommandGatewayQualificationProbe,
   type CommandHandlerRegistry,
   type InputPromotionService,
   InputPromotionServiceLive,
+  makeCommandGatewayLive,
   type ParentUserGovernanceFacts,
   type RemoteWorkerMediationPort,
   RemoteWorkerMediationPortLive,
@@ -294,6 +295,7 @@ export interface SingleWorkspaceConfig {
   /** Explicit test-only in-process fault probe; never loaded from env or a
    * public request. Production startup leaves this absent. */
   readonly qualificationProbe?: AgentLoopQualificationProbe;
+  readonly gatewayQualificationProbe?: CommandGatewayQualificationProbe;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
@@ -583,7 +585,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(repos, infra),
   );
   const gateway = Layer.provide(
-    CommandGatewayLive,
+    makeCommandGatewayLive(config.gatewayQualificationProbe),
     Layer.mergeAll(infra, registry, repos, fence),
   );
   const controlActionHandlers = Layer.provide(
