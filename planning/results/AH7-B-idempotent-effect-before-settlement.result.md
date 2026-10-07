@@ -68,13 +68,26 @@ settlement; `NextStepReady` is a later transition. The effect, settlement,
 unique ToolResult/Artifact/Observation and file assertions all held. This was
 an over-specific test-state expectation, not a production defect.
 
-The test now pins the same Execution/Step/ProviderTurn and cursor 2, and accepts
-only the two frozen valid progression states `StepEffectsCommitted` or
-`NextStepReady`. All effect/result uniqueness assertions remain unchanged.
-The corrected test passed twice in isolation (64.13s and 64.66s); test
-typecheck and single-file Biome passed.
+The `9157e9c` assertion now pins the same Execution/Step/ProviderTurn and
+cursor 2, accepting only the two frozen valid progression states
+`StepEffectsCommitted` or `NextStepReady`. The full run on `905c566` still
+failed **24/25 files, 60/61 tests**: `durableSnapshot()` used multiple SELECTs
+without a read transaction, so it could read Step cursor 1 before the recovery
+commit and later read B Applied/P4 result facts after that commit. This was an
+inconsistent cross-query observation, not a coherent database state or a
+production failure. Playwright did not run after Vitest failed.
 
-On committed `9157e9c`, F20 clean checkout passed 1/1 (50.44s). Full
-`pnpm test:functional` passed: Vitest **25/25 files, 59/59 tests** (1701.69s)
-and Playwright **2/2** (21.5s). This includes the corrected AH7 B case and P9
-dense SSE qualification; AH7 remains PARTIAL / OPEN.
+The final correction on `84fec08` adds a test-local read-only
+`BEGIN DEFERRED` snapshot for the matching Execution/Step/repair/ProviderTurn,
+B Action, P4 invocation, ToolResult, Artifact, Observation and ProviderAttempt.
+The bounded wait requires one coherent snapshot with cursor 2 and B's unique
+Success/observation/result facts. After this change the isolated test passed
+twice (64.67s and 63.69s), with test typecheck and single-file Biome passing.
+
+On committed `84fec08`, F20 clean checkout (session 52737) passed 1/1
+(44.37s). The full `pnpm test:functional` run (session 50143) passed:
+Vitest **25/25 files, 61/61 tests** (1767.41s), Playwright **2/2** (22.6s),
+and P9 dense SSE also passed (10.662s). The earlier `pnpm check` passed on
+`905c566` (Biome 946, architecture 155, core 1708 + 3 skipped, Web 216); after
+the final test-only snapshot change, test typecheck and single-file Biome were
+rerun, but the full `pnpm check` was not rerun. AH7 remains PARTIAL / OPEN.

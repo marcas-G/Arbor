@@ -387,14 +387,23 @@ Web 216）；AH7/AH10 仍 PARTIAL。
 case只因 snapshot 合法停留在 `StepEffectsCommitted/cursor2`，而测试过度要求后续
 `NextStepReady`。按 P9 冻结状态机修正状态断言为同一 Step/cursor2 且仅接受这两个
 合法阶段，唯一 ToolInvocation/Result/Artifact/Observation、文件 effect、Provider
-一次断言均保留。修后单测 2/2 PASS；`9157e9c` 上 F20 1/1 PASS，完整
-`pnpm test:functional` PASS（Vitest 25/25 files、59/59 tests，Playwright 2/2）。
-该增量仍不关闭 AH7/AH10。
+一次断言均保留。后续全功能复跑仍在 `durableSnapshot()` 多SELECT无事务中读到
+cursor1与后续B事实的混合快照；`84fec08` 改为test-local BEGIN只读事务，要求同一
+快照内同Execution/Step cursor2、B Applied及P4/Observation唯一事实。
+修后定向2/2 PASS，typecheck/Biome PASS；`84fec08` 上F20 1/1、完整
+`pnpm test:functional` Vitest25/25 files/61/61 tests、Playwright2/2均PASS。
+该增量仍不关闭AH7/AH10。
 后续 `SendMessage` 增 DecisionRequest 旧 FencingRejected receipt 提交前/后双 daemon
 两案：同一ProviderTurn持久ToolCall顺序为send_message→wait；ActionResult gate前
 workflow-signals offset落后是预期暂停，释放后child WorkEpisode settle、offset推进且
 唯一Parent InboxEpisode入账。当前 SendMessage文件5/5（Query2、Reply1、DecisionRequest2），
 `pnpm check` PASS（Biome946、architecture155、core1708+3 skipped、Web216）；AH10仍PARTIAL。
+`905c566` 首次完整功能批次Vitest为24/25 files、60/61 tests，唯一失败为AH7 B的
+非事务snapshot混合cursor/Action事实；该提交SendMessage五案全部通过，但Vitest失败
+后Playwright未运行。`84fec08`一致性快照修正后F20 clean checkout 1/1、完整
+`pnpm test:functional` Vitest25/25 files/61/61 tests、Playwright2/2；P9 dense SSE
+同批PASS。gate前offset不前进是预期暂停，release后workflow-signals与Parent InboxEpisode
+收敛，不是consumer缺陷。详见`planning/results/AH10-send-message-process-takeover.result.md`。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见

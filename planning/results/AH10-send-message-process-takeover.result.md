@@ -165,5 +165,48 @@ pnpm exec biome check tests/functional/process/agent-loop-ah10-send-message-take
 passed
 ```
 
-This is dedicated-file and test-typecheck/Biome evidence only; it is not a full
-`pnpm check` or full functional-suite run.
+That was dedicated-file and test-typecheck/Biome evidence at the targeted
+checkpoint. Later integrated gates are recorded below.
+
+## Integrated validation and test-oracle history (2026-10-08)
+
+On committed `905c566`, this SendMessage file passed all 5/5 cases; the full
+`pnpm check` passed (Biome 946 files, TypeScript/build, architecture 155, core
+1708 + 3 skipped, Web 216). The first full `pnpm test:functional` run on that
+commit failed only in AH7 B-effect: **24/25 Vitest files, 60/61 tests**. Its
+ActionResult recovery oracle combined non-transactional `durableSnapshot()`
+SELECTs and observed cursor 1 alongside later-committed B action/result data;
+that is not a coherent durable state. SendMessage's five cases all passed in
+the full run. Vitest failure prevented Playwright from running in that attempt.
+
+AH7's test-only oracle was corrected in `84fec08` to read the Step, B Action,
+P4 invocation/result, Observation, Artifact and Attempt through one explicit
+read-only SQLite transaction; it requires cursor 2 and the unique B facts in
+that same snapshot. On that commit F20 clean checkout (session 52737) passed
+1/1 (44.37s), and the full functional run (session 50143) passed Vitest
+25/25 files, 61/61 tests (1767.41s) plus Playwright 2/2 (22.6s). The full run
+included SendMessage Query receipt pre/post, Committed Reply, and DecisionRequest
+receipt pre/post cases; P9 dense SSE also passed. The DecisionRequest gate
+intentionally holds before Wait, so its pre-release workflow offset lag is an
+expected pause; after gate release, the same ProviderTurn's Wait settles the
+child and the consumer admits the Parent InboxEpisode. AH10 remains PARTIAL.
+
+## Targeted validation on `905c566` (2026-10-08)
+
+On committed `905c566`, this entire SendMessage file independently passed 5/5
+(185.60s). Complete `pnpm check` passed: Biome 946 files, typecheck/build,
+architecture 30 files/155 tests, core 315 files/1708 passed + 3 skipped, and
+Web typecheck/build plus 31 files/216 tests. The F20 committed clean-checkout
+test passed 1/1 (45.02s). The full functional run on this same commit is the
+24/25 files, 60/61 tests failure documented above; it stopped before
+Playwright because of the unrelated AH7 B snapshot race.
+
+The corrected AH7 oracle and final full functional pass are documented above
+for `84fec08`: Vitest 25/25 files, 61/61 tests plus Playwright 2/2. The
+DecisionRequest ActionResult gate intentionally holds the child before its Wait
+action, so the project workflow-signals offset being behind `MessageSent` at
+that point is expected. After gate release, the same ProviderTurn's persisted
+Wait settles the child WorkEpisode, the offset advances through the target
+event, and the unique Parent InboxEpisode is present. AH10 remains PARTIAL;
+other message kinds/control actions and remaining governance gaps are not
+covered.
