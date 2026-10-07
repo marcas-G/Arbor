@@ -13,6 +13,7 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH56AfterOutputAcceptedCommit"
     | "AH7AfterActionIntentCommit"
     | "AH7AfterActionResultCommit"
+    | "AH10AfterControlHandlerReturnBeforeObservationCommit"
     | "AH9BeforeTerminalActionCommit"
     | "AH9AfterTerminalActionCommit"
     | "AH11BeforeStepEffectsCommit"

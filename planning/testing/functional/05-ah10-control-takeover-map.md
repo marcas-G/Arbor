@@ -9,7 +9,7 @@
 | 动作 | Command 路径 | 现有跨代证据 | 下一退出门 |
 |---|---|---|---|
 | AssignWork | CommandGateway | handler 红转绿：FencingRejected、Committed 收敛、非 fencing 拒绝 | 持久 Work 完整字段核对；真实进程提交两侧 |
-| ProduceDeliverable | CommandGateway | handler 分支 + 真双 daemon 旧拒绝→新代唯一产物 | 持久 Deliverable/artifact 事实核对；两侧 kill/restart |
+| ProduceDeliverable | CommandGateway | handler 分支 + 真双 daemon 旧拒绝落盘后杀旧进程、新命令提交后 Action Pending 杀进程，均唯一产物/Provider | 旧拒绝 receipt 事务提交前精确杀停；持久 Deliverable/artifact 全事实核对 |
 | DeclareDependency | CommandGateway | handler FencingRejected、Committed、拒绝和缺 canonical row | 真实进程资格与已演化状态组合 |
 | AcceptResult | CommandGateway | handler FencingRejected、Committed、拒绝和缺 Acceptance row | 真实进程资格及已完成 Work 恢复 |
 | SendMessage | CommandGateway | handler Query/Reply 回执、Message 行与关闭 correlation | 真实进程资格、Report/DecisionRequest 扩展 |

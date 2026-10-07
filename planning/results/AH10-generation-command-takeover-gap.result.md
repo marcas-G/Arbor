@@ -199,3 +199,24 @@ Web 216；pending Deliver 红测仍按预期独立失败。完整
 criterion 快照。两者的时间来源与历史行处置见
 `planning/results/verification-evidence-replay-and-snapshot-governance.review.md`；
 不能仅因绿色功能批次通过就推定 AH10/P8 闭合。
+
+## 2026-10-07 进程杀停增量：旧拒绝提交后与新命令提交后
+
+`tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts`
+现有双 daemon 用例在旧 gen0 `FencingRejected` receipt 真实落盘后立即
+杀旧进程，再放行 gen1。同一 LogicalActionId/ProviderTurn/callRef 保持，
+最终一条旧拒绝、一条新提交、一个 Deliverable、Provider 请求一次。
+
+新增第二案通过只在测试子进程装配的
+`AH10AfterControlHandlerReturnBeforeObservationCommit` probe，在
+ProduceDeliverable canonical Command/Deliverable 已提交，而 AgentLoop
+Action 仍 Pending、Observation 为零时杀进程。待真实 30 秒 lease
+到期，gen1 同库接管并收敛旧 Committed receipt；CommandId 不变，
+Action 最终 Applied、Observation 和 Deliverable 各一，Provider 未重跑。
+主 Agent 独立复跑两案 2/2 PASS；子 Agent 的两案定向亦 PASS。
+`pnpm architecture` 155/155、`pnpm lint` 与 `pnpm typecheck` PASS；
+本次增量尚未运行完整 `pnpm check` 或全部功能批次。
+
+仍缺旧 FencingRejected receipt **事务提交前**精确杀停，以及其他控制
+动作的两侧进程资格。该前态需另审 Gateway 事务内 test-only 注入边界；
+本批没有改 Gateway 核心事务，也不据此关闭 AH10。

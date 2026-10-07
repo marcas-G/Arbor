@@ -20,6 +20,7 @@ interface Ah10Probe {
   readonly executionId: string;
   readonly fencingGeneration?: number;
   readonly providerTurnId?: string;
+  readonly logicalActionId?: string;
   readonly callRef?: string;
   readonly actionIndex?: number;
 }
@@ -92,7 +93,8 @@ const readAh10Rows = (databaseFile: string) => {
         .all() as unknown as Ah10DeliverableRow[],
       actions: db
         .prepare(
-          `SELECT a.execution_id, s.provider_turn_id, a.action_index,
+          `SELECT a.execution_id, s.provider_turn_id, a.logical_action_id,
+                  a.action_index,
                   a.call_ref, a.action_kind, a.state
              FROM agent_loop_step_actions a
              JOIN agent_loop_steps s
@@ -104,10 +106,25 @@ const readAh10Rows = (databaseFile: string) => {
         .all() as Array<{
         execution_id: string;
         provider_turn_id: string;
+        logical_action_id: string;
         action_index: number;
         call_ref: string;
         action_kind: string;
         state: string;
+      }>,
+      actionObservations: db
+        .prepare(
+          `SELECT se.entry_kind, se.source_kind, se.source_ref, se.payload_json
+             FROM session_entries se
+            WHERE se.source_kind = 'AgentLoopAction'
+              AND se.entry_kind = 'Observation'
+            ORDER BY se.sequence`,
+        )
+        .all() as Array<{
+        entry_kind: string;
+        source_kind: string;
+        source_ref: string;
+        payload_json: string;
       }>,
     };
   } finally {
@@ -217,7 +234,10 @@ describe("AH10 real daemon generation takeover", () => {
 
     const newDaemon = await fixture.startAdditionalDaemon({
       entry: ah10Child,
-      daemonEnvironment: { ARBOR_AH10_ROLE: "new" },
+      daemonEnvironment: {
+        ARBOR_AH10_ROLE: "new",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
+      },
       onStdout: (line) => pushProbe(events, line),
     });
     const newLease = await waitForPublic(
@@ -246,6 +266,7 @@ describe("AH10 real daemon generation takeover", () => {
     );
     expect(newAction?.providerTurnId).toBe(oldAction.providerTurnId);
     expect(newAction?.callRef).toBe(oldAction.callRef);
+    expect(newAction?.logicalActionId).toBe(oldAction.logicalActionId);
 
     // Let the still-live generation-0 process attempt its actual canonical
     // command only after the DB lease has advanced to generation 1.
@@ -266,6 +287,7 @@ describe("AH10 real daemon generation takeover", () => {
     });
     expect(fencedReceipt).toHaveLength(1);
     expect(readAh10Rows(fixture.databaseFile).works).toHaveLength(1);
+    await fixture.crash();
 
     // The gen-1 handler must see the persisted gen-0 FencingRejected receipt
     // before it sends its generation-scoped command.
@@ -327,4 +349,217 @@ describe("AH10 real daemon generation takeover", () => {
     releaseGate(fixture, "new", "action-result");
     await newDaemon.crash();
   }, 120_000);
+
+  it("recovers a committed Deliverable receipt when its Action is still Pending", async () => {
+    const marker = `AH10-pending-${crypto.randomUUID().slice(0, 8)}`;
+    const events: Ah10Probe[] = [];
+    const fixture = await startProductionFixture({
+      reply: (call) => {
+        if (JSON.stringify(call.messages).includes(marker)) {
+          const available = new Set(
+            call.tools
+              .map((tool) => tool.function?.name)
+              .filter((name): name is string => name !== undefined),
+          );
+          return available.has("produce_deliverable")
+            ? {
+                _tag: "ToolCall",
+                name: "produce_deliverable",
+                arguments: { kind: "report", artifacts: [] },
+              }
+            : { _tag: "HttpError", status: 422 };
+        }
+        return { _tag: "HttpError", status: 422 };
+      },
+      firstDaemonEntry: ah10Child,
+      daemonEnvironment: {
+        ARBOR_AH10_ROLE: "old",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
+      },
+      onDaemonStdout: (line) => pushProbe(events, line),
+    });
+    fixtures.push(fixture);
+    mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
+    const client = makePublicClient(fixture.baseUrl);
+    const project = await createFunctionalProject(
+      client,
+      fixture.workspaceDirectory,
+      "AH10 committed receipt pending-action recovery",
+    );
+    const sourceWorkId = functionalId("wrk");
+    await client.command(project.projectId, "AssignWork", {
+      workId: sourceWorkId,
+      workspaceId: project.rootWorkspaceId,
+      expectedWorkspaceRevision: 0,
+      objective: `Exercise pending action takeover ${marker}.`,
+      why: "qualify canonical receipt recovery before Action result commit",
+      constraints: [],
+      completionExpectation: "the pinned action commits one Deliverable",
+      verificationMission: {
+        goal: `Verify AH10 pending Action ${marker}`,
+        criteria: [
+          {
+            criterionId: "ah10-pending-action",
+            requirement: "the source Work remains open during takeover",
+            required: true,
+          },
+        ],
+        riskRequirements: [],
+      },
+      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
+      revision: 0,
+    });
+    const actionIntent = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      30_000,
+    );
+    if (actionIntent === undefined) {
+      throw new Error("AH10 initial Action intent probe was absent");
+    }
+    releaseGate(fixture, "old", "action-intent");
+
+    const afterControlReturn = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary ===
+              "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
+            event.executionId === actionIntent.executionId &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      5_000,
+    );
+    if (afterControlReturn === undefined) {
+      throw new Error("AH10 post-control-return probe was absent");
+    }
+    const beforeCrash = readAh10Rows(fixture.databaseFile);
+    const committedBeforeCrash = beforeCrash.commands.filter((command) => {
+      if (command.resolution !== "Committed" || command.result_json === null) {
+        return false;
+      }
+      const result = JSON.parse(command.result_json) as {
+        readonly sourceWorkId?: string;
+        readonly kind?: string;
+      };
+      return result.sourceWorkId === sourceWorkId && result.kind === "report";
+    });
+    expect(committedBeforeCrash).toHaveLength(1);
+    expect(beforeCrash.deliverables).toHaveLength(1);
+    expect(beforeCrash.actions).toContainEqual(
+      expect.objectContaining({
+        execution_id: actionIntent.executionId,
+        provider_turn_id: actionIntent.providerTurnId,
+        logical_action_id: actionIntent.logicalActionId,
+        call_ref: actionIntent.callRef,
+        action_kind: "produce_deliverable",
+        state: "Pending",
+      }),
+    );
+    expect(beforeCrash.actionObservations).toHaveLength(0);
+    expect(fixture.providerCalls).toHaveLength(1);
+
+    await fixture.crash();
+    await waitForPublic(
+      async () =>
+        readAh10Rows(fixture.databaseFile).leases.find(
+          (lease) => lease.execution_id === actionIntent.executionId,
+        ),
+      (lease) =>
+        lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
+      35_000,
+    );
+    const recoveryDaemon = await fixture.startAdditionalDaemon({
+      entry: ah10Child,
+      daemonEnvironment: {
+        ARBOR_AH10_ROLE: "new",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
+      },
+      onStdout: (line) => pushProbe(events, line),
+    });
+    const recoveredLease = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH10AfterLeaseAcquired" &&
+            event.executionId === actionIntent.executionId,
+        ),
+      (event) => event !== undefined,
+      45_000,
+    );
+    expect(recoveredLease?.fencingGeneration).toBe(1);
+    const recoveredIntent = await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.executionId === actionIntent.executionId &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      30_000,
+    );
+    expect(recoveredIntent?.providerTurnId).toBe(actionIntent.providerTurnId);
+    expect(recoveredIntent?.callRef).toBe(actionIntent.callRef);
+    expect(recoveredIntent?.logicalActionId).toBe(actionIntent.logicalActionId);
+    releaseGate(fixture, "new", "action-intent");
+    await waitForPublic(
+      async () =>
+        events.find(
+          (event) =>
+            event.role === "new" &&
+            event.boundary === "AH7AfterActionResultCommit" &&
+            event.executionId === actionIntent.executionId &&
+            event.actionIndex === 0,
+        ),
+      (event) => event !== undefined,
+      30_000,
+    ).catch((error: unknown) => {
+      throw new Error(
+        `AH10 gen-1 action result did not commit: ${error instanceof Error ? error.message : String(error)}; events=${JSON.stringify(events)}; rows=${JSON.stringify(readAh10Rows(fixture.databaseFile))}; providerCalls=${fixture.providerCalls.length}; daemonErrors=${recoveryDaemon.daemonErrors.join(" | ")}`,
+      );
+    });
+
+    const recovered = readAh10Rows(fixture.databaseFile);
+    const committedAfterRecovery = recovered.commands.filter((command) => {
+      if (command.resolution !== "Committed" || command.result_json === null) {
+        return false;
+      }
+      const result = JSON.parse(command.result_json) as {
+        readonly sourceWorkId?: string;
+        readonly kind?: string;
+      };
+      return result.sourceWorkId === sourceWorkId && result.kind === "report";
+    });
+    expect(committedAfterRecovery).toHaveLength(1);
+    expect(committedAfterRecovery[0]?.command_id).toBe(
+      committedBeforeCrash[0]?.command_id,
+    );
+    expect(recovered.deliverables).toHaveLength(1);
+    expect(recovered.actions).toContainEqual(
+      expect.objectContaining({
+        execution_id: actionIntent.executionId,
+        provider_turn_id: actionIntent.providerTurnId,
+        logical_action_id: actionIntent.logicalActionId,
+        call_ref: actionIntent.callRef,
+        action_kind: "produce_deliverable",
+        state: "Applied",
+      }),
+    );
+    expect(recovered.actionObservations).toHaveLength(1);
+    expect(fixture.providerCalls).toHaveLength(1);
+    expect(recoveryDaemon.daemonErrors).toEqual([]);
+    releaseGate(fixture, "new", "action-result");
+    await recoveryDaemon.crash();
+  }, 90_000);
 });
