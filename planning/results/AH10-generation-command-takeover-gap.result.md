@@ -384,3 +384,66 @@ passed + 3 skipped，Web typecheck/build PASS，Web 31 files/216 tests PASS。
 功能 Vitest 22 files/51 tests（1427.87s），Playwright 2/2（22.9s）。该批次
 包含新 AcceptResult 提交前/后和 SendMessage Query 场景，但不能关闭 AH10 其他
 控制动作或待治理缺口。
+
+## 2026-10-08：DeclareDependency 与 AcceptResult Committed receipt / Pending Action 恢复
+
+主 AH10 process 文件新增两项真实 daemon 恢复资格，旧的 FencingRejected
+提交前/后用例未改。两项都在 `AH10AfterControlHandlerReturnBeforeObservationCommit`
+测试 gate 上硬杀 gen0：canonical Command receipt 与领域效果/Event 已提交，
+但目标 Agent Action 仍 Pending 且其 Observation 未落盘。杀进程后等待持久
+gen0 lease 的真实 30 秒 TTL 到期，再启动 gen1 恢复相同 Execution。
+
+DeclareDependency 使用公开 Project/AssignWork setup 和 Provider 控制调用。
+gate 前只读 SQLite 证明唯一 Committed DeclareDependency receipt、唯一
+DependencyDeclared event 和同一 Dependency 已持久，同时目标 Action 为 Pending、
+Observation 数为 0。gen1 保留 ProviderTurnId/LogicalActionId/callRef，读取并
+重用原 Command receipt（CommandId 不变），最终唯一 Dependency/Event，Action
+Applied 且对应 Observation 恰一条；原 ProviderTurn 只有一个成功 Attempt。
+
+AcceptResult 使用公开 child Workspace/Work setup，等待独立 Verification PASS，
+再公开创建 Parent Work。Parent 先调用 `list_workspaces`，从真实工具返回的
+直接子 Workspace ready 结果取得 opaque `resultRef`，随后再调用 AcceptResult。
+共享 test helper 的 control-return gate 会先见到该前置 list action，因此测试
+只在该 ListWorkspaces Observation 已持久后，验证精确的 fixture-local 绝对
+release-marker 路径和文件存在，再移除该临时 marker；随后 AcceptResult 的
+handler-return 才进入待杀 gate。没有数据库写入或合成 `resultRef`。
+
+AcceptResult gate 前只读核对唯一原 Committed receipt、Acceptance 行及唯一
+WorkOutcomeAccepted event；目标 Action 仍 Pending 且其 observation ref 为 null，
+Child Work 仍 Open。gen0 lease 尚有效时杀旧 daemon，再等 TTL 到期。gen1 恢复
+同一 ProviderTurn/LogicalActionId/callRef 并复用相同 CommandId；最终 Acceptance
+和 WorkOutcomeAccepted 仍唯一，AcceptResult Action Applied、其 Observation 恰一条，
+workflow completion 将 child Work 唯一推进为 Completed，原 ProviderTurn 只有一个
+成功 Attempt，Provider 未再次发出 AcceptResult。
+
+```text
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts -t "recovers a committed DeclareDependency"
+1 passed (35.73s)
+
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts -t "recovers a committed AcceptResult"
+1 passed (40.46s)
+
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts
+1 file / 9 tests passed (338.45s)
+
+pnpm exec tsc -p tsconfig.test.json --noEmit --pretty false
+passed
+
+pnpm exec biome check tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts
+passed
+```
+
+本主文件增量未改共享 process helper 或 `docs/design/**`。同批还包括
+`SelectCurrentWork` 已提交回执恢复的窄 pinned-replay 实现与守卫负测，详见
+`planning/results/AH10-select-current-work-takeover.result.md`。以下是本次独立
+集成复核结果；这不是完整 `pnpm test:functional`，也不关闭 AH10 其余控制动作
+与状态边界。
+
+```text
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts
+1 file / 9 tests PASS (336.69s)
+
+pnpm check
+PASS: Biome 947 files; architecture 155; core 316 files / 1711 passed + 3 skipped;
+Web 31 files / 216 passed; TypeScript, Web typecheck and build passed.
+```

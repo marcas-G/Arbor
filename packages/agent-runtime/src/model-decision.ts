@@ -23,6 +23,7 @@ import {
   type TurnProfileResolverService,
 } from "@arbor/model-context";
 import type {
+  AgentLoopStepActionRecord,
   AgentLoopStepFence,
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
@@ -121,6 +122,89 @@ export interface ModelDecisionDependencies {
   readonly now: () => Effect.Effect<string>;
   readonly leaseGeneration?: LeaseGeneration;
 }
+
+interface SubmittedDecisionReplayInput {
+  readonly executionWorkspaceId: string;
+  readonly episode: {
+    readonly decisionId: string;
+    readonly requestRevision: number;
+  };
+  readonly request: {
+    readonly workspaceId: string;
+    readonly candidateWorkIds: ReadonlyArray<string>;
+    readonly workspaceRevision: number;
+    readonly revision: number;
+    readonly state:
+      | { readonly _tag: "Pending" }
+      | { readonly _tag: "Submitted"; readonly selectedWorkId: string };
+  };
+  readonly workspace:
+    | {
+        readonly currentWorkId: string | null;
+        readonly revision: number;
+      }
+    | undefined;
+  readonly step:
+    | (Omit<
+        Pick<
+          AgentLoopStepRecord,
+          | "providerTurnId"
+          | "state"
+          | "nextActionIndex"
+          | "manifestId"
+          | "decodedOutputHash"
+          | "modelOutputSessionSequence"
+        >,
+        "providerTurnId"
+      > & { readonly providerTurnId: string })
+    | undefined;
+  readonly pendingAction:
+    | Pick<
+        AgentLoopStepActionRecord,
+        "actionIndex" | "routeKind" | "actionKind" | "state"
+      >
+    | undefined;
+  readonly providerTurnId: string;
+  readonly providerResult:
+    | { readonly _tag: "SettledSuccess"; readonly manifestId: string }
+    | undefined;
+}
+
+/** A terminal DecisionRequest may be reused only to recover this exact
+ * already-pinned SelectCurrentWork action. All new or otherwise ambiguous
+ * DecisionEpisodes remain Pending-only. */
+export const isPinnedSubmittedDecisionReplay = (
+  input: SubmittedDecisionReplayInput,
+): boolean => {
+  const { request, episode, workspace, step, pendingAction, providerResult } =
+    input;
+  const selectedWorkId =
+    request.state._tag === "Submitted"
+      ? request.state.selectedWorkId
+      : undefined;
+  return (
+    request.state._tag === "Submitted" &&
+    request.workspaceId === input.executionWorkspaceId &&
+    request.revision === episode.requestRevision + 1 &&
+    selectedWorkId !== undefined &&
+    request.candidateWorkIds.includes(selectedWorkId) &&
+    workspace?.currentWorkId === selectedWorkId &&
+    workspace.revision === request.workspaceRevision + 1 &&
+    step !== undefined &&
+    step.providerTurnId === input.providerTurnId &&
+    step.state === "ActionsInProgress" &&
+    step.manifestId !== undefined &&
+    step.decodedOutputHash !== undefined &&
+    step.modelOutputSessionSequence !== undefined &&
+    pendingAction !== undefined &&
+    pendingAction.actionIndex === step.nextActionIndex &&
+    pendingAction.routeKind === "Control" &&
+    pendingAction.actionKind === "select_current_work" &&
+    pendingAction.state === "Pending" &&
+    providerResult?._tag === "SettledSuccess" &&
+    providerResult.manifestId === step.manifestId
+  );
+};
 
 /** Root conversation shares the Workspace primary Session with Work episodes.
  * Only timeline items causally written by the exact conversation execution may
@@ -699,7 +783,7 @@ export const runModelDecision = (
         const request = yield* tx
           .transact(decisionRequests.findById(boundEpisode.decisionId))
           .pipe(Effect.mapError(failure));
-        if (Option.isNone(request) || request.value.state._tag !== "Pending") {
+        if (Option.isNone(request)) {
           return yield* proposeSettlement({
             _tag: "Failed",
             failure: {
@@ -708,10 +792,72 @@ export const runModelDecision = (
             },
           });
         }
+        let requestContextRevision = request.value.revision;
+        if (request.value.state._tag !== "Pending") {
+          const pinnedActions =
+            loopStep !== undefined && loopSteps !== undefined
+              ? yield* tx
+                  .transact(loopSteps.listActions(loopStep.identity))
+                  .pipe(Effect.mapError(failure))
+              : [];
+          const pendingSelectionAction = pinnedActions.find(
+            (action) =>
+              action.actionIndex === loopStep?.nextActionIndex &&
+              action.routeKind === "Control" &&
+              action.actionKind === "select_current_work" &&
+              action.state === "Pending",
+          );
+          const pinnedProviderResult =
+            loopStep !== undefined && providerTurns !== undefined
+              ? yield* tx
+                  .transact(
+                    providerTurns.findSettledResult(loopStep.providerTurnId),
+                  )
+                  .pipe(Effect.mapError(failure))
+              : undefined;
+          const replayingPinnedSelection = isPinnedSubmittedDecisionReplay({
+            executionWorkspaceId: String(input.execution.workspaceId),
+            episode: boundEpisode,
+            request: request.value,
+            workspace: Option.isSome(workspace)
+              ? {
+                  currentWorkId:
+                    workspace.value.currentWorkId === null
+                      ? null
+                      : String(workspace.value.currentWorkId),
+                  revision: Number(workspace.value.revision),
+                }
+              : undefined,
+            step: loopStep,
+            pendingAction: pendingSelectionAction,
+            providerTurnId: String(providerTurnId),
+            providerResult:
+              pinnedProviderResult?._tag === "SettledSuccess"
+                ? {
+                    _tag: "SettledSuccess",
+                    manifestId: String(pinnedProviderResult.manifestId),
+                  }
+                : undefined,
+          });
+          if (!replayingPinnedSelection) {
+            return yield* proposeSettlement({
+              _tag: "Failed",
+              failure: {
+                _tag: "ExecutionFailure",
+                reason: "DecisionRequestMissingOrSettled",
+              },
+            });
+          }
+          // The submitted canonical request is the result of this exact
+          // pinned SelectCurrentWork Action. Rebuild its original decision
+          // context only long enough to replay the settled Provider result;
+          // no new Provider request or action is admitted from this snapshot.
+          requestContextRevision = boundEpisode.requestRevision;
+        }
         inputItems.push({
           _tag: "ContextUpdate",
           sourceRef: `decision-request:${boundEpisode.decisionId}`,
-          revision: request.value.revision,
+          revision: requestContextRevision,
           updateKind: "Full",
           text: JSON.stringify({
             decisionKind: "SelectCurrentWork",
@@ -720,7 +866,7 @@ export const runModelDecision = (
           }),
         });
         messageContextRefs.push(
-          `decision-request:${boundEpisode.decisionId}:${String(request.value.revision)}`,
+          `decision-request:${boundEpisode.decisionId}:${String(requestContextRevision)}`,
         );
       }
       const turnProfile = yield* turnProfileResolver
