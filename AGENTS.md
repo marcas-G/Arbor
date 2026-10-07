@@ -336,10 +336,13 @@ ToolResult/Artifact，原 Provider 决策只一次；见
 `planning/results/AH7-two-action-interleaving.result.md`。它不关闭
 AH7-DG-01/02/03 或其他多动作失败/并发分支。
 AH7 同一 NonIdempotent ToolInvocationId 的真实 SQLite 双独立连接竞争
-定向 2/2 PASS：唯一主键 intent、唯一 Success settlement、外部 effect
-仅一次；见 `planning/results/AH7-cross-connection-concurrency.result.md`。
+扩至两个独立 OS 进程同步竞争，定向 3/3 PASS：唯一主键 intent、唯一
+Success settlement、外部 effect 仅一次；见
+`planning/results/AH7-cross-connection-concurrency.result.md`。
 完整 `pnpm check` PASS（架构 155、核心 1707 + 3 skipped、Web 216）。
-该证据不替代多进程或 crash/restart 资格，AH7 仍 PARTIAL。
+该次门禁仅包含前两项双连接测试；第三项加入后完整 `pnpm check` 再次
+PASS（架构 155、核心 1708 + 3 skipped、Web 216）。并发证据不替代
+多进程 crash/restart 资格，AH7 仍 PARTIAL。
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,

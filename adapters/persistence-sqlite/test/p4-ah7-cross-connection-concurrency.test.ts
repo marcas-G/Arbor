@@ -1,6 +1,8 @@
+import { type ChildProcess, fork } from "node:child_process";
 import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   Actor,
   ExecutionId,
@@ -53,6 +55,7 @@ const invocationId = parse(ToolInvocationId)(
 const principal = parse(Principal)("worker:ah7-cross-connection");
 const actor = parse(Actor)("worker:ah7-cross-connection");
 const marker = "AH7_NONIDEMPOTENT_CROSS_CONNECTION_EFFECT";
+const processEffectMarker = "AH7_NONIDEMPOTENT_CROSS_PROCESS_EFFECT";
 
 const definition: ToolDefinition = {
   name: "write_once",
@@ -99,7 +102,19 @@ const context: ToolExecutionContext = {
 };
 
 const directories: string[] = [];
-afterEach(() => {
+const children: ChildProcess[] = [];
+afterEach(async () => {
+  for (const child of children.splice(0)) {
+    if (child.exitCode === null && child.signalCode === null) {
+      await withTimeout(
+        new Promise<void>((resolveExit) => {
+          child.once("exit", () => resolveExit());
+          child.kill();
+        }),
+        "AH7 child cleanup exit",
+      );
+    }
+  }
   for (const directory of directories.splice(0)) {
     const target = resolve(directory);
     if (
@@ -111,6 +126,25 @@ afterEach(() => {
     rmSync(target, { recursive: true, force: true });
   }
 });
+
+interface CrossProcessMessage {
+  readonly type: "ready" | "result" | "error";
+  readonly worker?: string;
+  readonly pid?: number;
+  readonly result?: {
+    readonly outcome: string;
+    readonly errorTag: string | null;
+    readonly stage: string | null;
+  };
+  readonly error?: string;
+}
+
+const childEntry = fileURLToPath(
+  new URL(
+    "./fixtures/ah7-cross-process-tool-runtime-child.mjs",
+    import.meta.url,
+  ),
+);
 
 type StoreLayer = Layer.Layer<
   SqlClient | SqliteClient.SqliteClient | TransactionPort | ToolInvocationStore,
@@ -349,6 +383,125 @@ const connectionIdentity = (app: StoreLayer) =>
     ),
   );
 
+const withTimeout = <A>(promise: Promise<A>, label: string): Promise<A> =>
+  new Promise<A>((resolveResult, rejectResult) => {
+    const timer = setTimeout(
+      () => rejectResult(new Error(`Timed out waiting for ${label}`)),
+      20_000,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolveResult(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        rejectResult(error);
+      },
+    );
+  });
+
+const runCrossProcessRace = async (
+  databaseFile: string,
+  effectLogPath: string,
+): Promise<ReadonlyArray<CrossProcessMessage>> => {
+  const ready = new Map<string, CrossProcessMessage>();
+  const results = new Map<string, CrossProcessMessage>();
+  const stderr = new Map<string, string>();
+  let resolveReady: (() => void) | undefined;
+  let resolveResults: (() => void) | undefined;
+  let rejectRace: ((error: Error) => void) | undefined;
+  const bothReady = new Promise<void>((resolveBarrier) => {
+    resolveReady = resolveBarrier;
+  });
+  const bothFinished = new Promise<void>((resolveBarrier) => {
+    resolveResults = resolveBarrier;
+  });
+  const raceFailure = new Promise<never>((_resolve, reject) => {
+    rejectRace = reject;
+  });
+
+  const spawnWorker = (worker: string): ChildProcess => {
+    const child = fork(childEntry, [], {
+      cwd: process.cwd(),
+      execArgv: [],
+      env: {
+        ...process.env,
+        ARBOR_AH7_DB: databaseFile,
+        ARBOR_AH7_EFFECT_LOG: effectLogPath,
+        ARBOR_AH7_WORKER: worker,
+      },
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
+    });
+    children.push(child);
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr.set(
+        worker,
+        `${stderr.get(worker) ?? ""}${chunk.toString("utf8")}`,
+      );
+    });
+    child.on("message", (raw: unknown) => {
+      const message = raw as CrossProcessMessage;
+      if (message.type === "ready") {
+        ready.set(worker, message);
+        if (ready.size === 2) resolveReady?.();
+      } else if (message.type === "result") {
+        results.set(worker, message);
+        if (results.size === 2) resolveResults?.();
+      } else if (message.type === "error") {
+        rejectRace?.(
+          new Error(
+            `${worker} child error: ${message.error ?? "unknown"}; stderr=${stderr.get(worker) ?? ""}`,
+          ),
+        );
+      }
+    });
+    child.on("error", (error) => rejectRace?.(error));
+    child.on("exit", (code, signal) => {
+      if (!results.has(worker) && code !== 0) {
+        rejectRace?.(
+          new Error(
+            `${worker} exited before result (code=${String(code)}, signal=${String(signal)}); stderr=${stderr.get(worker) ?? ""}`,
+          ),
+        );
+      }
+    });
+    return child;
+  };
+
+  const workers = [spawnWorker("worker-a"), spawnWorker("worker-b")];
+  await withTimeout(
+    Promise.race([bothReady, raceFailure]),
+    "both child barriers",
+  );
+  expect(ready.get("worker-a")?.pid).toBeDefined();
+  expect(ready.get("worker-b")?.pid).toBeDefined();
+  expect(ready.get("worker-a")?.pid).not.toBe(ready.get("worker-b")?.pid);
+
+  // Both processes have reached ToolDefinitionStore.definition and are blocked
+  // there; release both through IPC only after observing both ready messages.
+  for (const child of workers) child.send({ type: "go" });
+  await withTimeout(
+    Promise.race([bothFinished, raceFailure]),
+    "both child results",
+  );
+  await withTimeout(
+    Promise.all(
+      workers.map((child) =>
+        child.exitCode !== null || child.signalCode !== null
+          ? Promise.resolve()
+          : new Promise<void>((resolveExit) =>
+              child.once("exit", () => resolveExit()),
+            ),
+      ),
+    ),
+    "AH7 child exits",
+  );
+  return [results.get("worker-a"), results.get("worker-b")].filter(
+    (result): result is CrossProcessMessage => result !== undefined,
+  );
+};
+
 describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () => {
   it("uses the durable invocation key and admits exactly one external effect across connections", async () => {
     const directory = mkdtempSync(
@@ -483,5 +636,48 @@ describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () =
         stage: "IntentJournal",
       });
     }
+  });
+
+  it("releases two OS processes from the same pre-invocation barrier and commits one NonIdempotent effect", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "arbor-ah7-cross-process-"));
+    directories.push(directory);
+    const databaseFile = join(directory, "shared.db");
+    const effectLogPath = join(directory, "external-effects.log");
+    const infrastructure = makeInfrastructure(databaseFile);
+    await Effect.runPromise(
+      Effect.scoped(Effect.provide(seedDatabase, infrastructure)),
+    );
+
+    const readyResults = await runCrossProcessRace(databaseFile, effectLogPath);
+    expect(readyResults).toHaveLength(2);
+    expect(readyResults.map((result) => result.type)).toEqual([
+      "result",
+      "result",
+    ]);
+    const outcomes = readyResults.map((result) => result.result);
+    expect(
+      outcomes.filter((result) => result?.outcome === "Success"),
+    ).toHaveLength(1);
+    const nonSuccess = outcomes.filter(
+      (result) => result?.outcome !== "Success",
+    );
+    expect(nonSuccess).toHaveLength(1);
+    const loser = nonSuccess[0];
+    expect(loser).toBeDefined();
+    expect(
+      loser?.outcome === "OutcomeUnknown" ||
+        (loser?.outcome === "Rejected" && loser.stage === "IntentJournal"),
+    ).toBe(true);
+
+    const effects = readFileSync(effectLogPath, "utf8")
+      .split(/\r?\n/u)
+      .filter((line) => line.length > 0);
+    expect(effects).toEqual([processEffectMarker]);
+    const rows = await durableCounts(infrastructure);
+    expect(rows[0]).toMatchObject({
+      intents: 1,
+      settled: 1,
+      settlement_kind: "Success",
+    });
   });
 });
