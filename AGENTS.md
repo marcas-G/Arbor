@@ -270,6 +270,14 @@ are not closed.
 `planning/results/AH10-generation-command-takeover-gap.result.md`。
 `4720f65` 上 `pnpm check` PASS（架构 155、核心 1687 + 3 skipped、Web
 216），`pnpm test:functional` PASS（公开进程 42、浏览器 2，含 F20）。
+后续 `a22a4a5`/`d7e5782` 将 AH10 handler 级覆盖扩至 DeclareDependency、
+AcceptResult、SendMessage；`32ae550` 统一五类 Gateway handler 的旧
+receipt 查询。AH7 单连接真实 SQLite 并发 1/1 PASS，但审批消费与 P4
+settlement 同事务的冲突是拟议 AH7-DG-03，隔离红测见
+`tests/functional/pending/ah7-approval-settlement-atomicity.functional.test.ts`。
+`32ae550` 上 `pnpm check` PASS（架构 155、核心 1701 + 3 skipped、Web
+216），AH10 双 daemon 与 F20 干净检出定向各 1/1 PASS；未重跑完整
+`pnpm test:functional`。AH7/AH10/AH14 和 F21–F23 仍未关闭。
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,

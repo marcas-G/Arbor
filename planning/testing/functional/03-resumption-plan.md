@@ -13,6 +13,13 @@
 负责把同 invocation 并发验证提升到真实 SQLite 适配器。两项都不得将
 单元/适配器测试外推为真实进程崩溃矩阵；主 Agent 复核后再决定提交与全量门禁。
 
+第二批后续：`a22a4a5` 补 `DeclareDependency`/`AcceptResult`，`d7e5782`
+补 `SendMessage`；`32ae550` 将五类 Gateway 动作的旧回执机械查询收敛成
+一个内部 helper。该提交 `pnpm check` PASS（架构 155、核心 1701 + 3
+skipped、Web 216），相关公开场景 7/7、AH10 双 daemon 1/1、F20
+干净检出 1/1 PASS。完整功能批次没有在 `32ae550` 重跑；不得把旧
+`4720f65` 的完整批次记为本提交证据。AH10 仍 PARTIAL。
+
 ## 本批并行边界
 
 | 工作流 | 负责人 | 允许的改动 | 验收证据 |
