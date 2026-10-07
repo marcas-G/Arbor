@@ -353,6 +353,18 @@ AH10 PASS，等待治理审阅。该 pending 测试由独立 config 执行；默
 排除 `tests/functional/**`。本次完整 `pnpm check` PASS（Biome 944 files、
 architecture 155、core 1708 + 3 skipped、Web 216）；SelectCurrentWork pending
 red 未纳入门禁。AH10 仍 PARTIAL。
+P9 集成复核：`47e9249` 上完整 `pnpm test:functional` 首次为 Vitest 21/22
+files、52/53 tests；唯一失败是 P9 首次 lease-renewal snapshot 的
+`framesConsumed=481` 未达既有 `>512` 阈值，Playwright 因 Vitest 失败未运行。
+定向诊断确认两次孤立 P9 在该提交均通过，问题是高负载下只采首次续租且网络
+enqueue 前计数不代表持久观察。`101e009`/`3ffb17a` 的 P9 专属测试修复在同一
+真实续租采样核对同代 lease row expiry 增长、活跃 SSE、网络写/读帧及 SQLite
+canonical TextDelta 持久数均 `>512`，并在首轮不足时等待下一次有界真实续租；
+未改生产代码或降低阈值。最终 `3ffb17a` 上 F20 1/1 PASS（66.36s），完整
+`pnpm test:functional` PASS（Vitest 22/22 files、53/53 tests；Playwright 2/2）。
+此前 `pnpm check` 在 `47e9249` 上 PASS（Biome 944、architecture 155、core
+1708 + 3 skipped、Web 216）；P9 后续测试专属变更的 test typecheck/Biome PASS，
+但未在 `3ffb17a` 重跑完整 `pnpm check`。AH10/AH7 仍未闭合。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见
