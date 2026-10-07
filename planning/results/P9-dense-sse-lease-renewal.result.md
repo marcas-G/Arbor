@@ -1,0 +1,23 @@
+# P9 密集 SSE 期间实际续租提交资格
+
+日期：2026-10-07
+
+状态：**定向功能进程测试 PASS；完整门禁待复测。**
+
+`tests/functional/process/p9-dense-sse-lease-renewal.functional.test.ts`
+使用真实 `runExecution`、
+ProviderRuntime、OpenAI-compatible SSE Adapter、本地 HTTP 服务与 SQLite
+LeaseService。保持生产经验值 TTL=30 秒、续租间隔 TTL/3=10 秒，不缩短
+租约或人工改写 lease 行。流按批写入立即可用的小帧，批间有界让出事件循环；
+续租前已消费/写出各超过 512 帧。
+
+测试在 SSE 响应仍活跃时只读查询 `execution_leases`，比较同一 generation
+的初始与后续 `expires_at`，证明续租事务实际提交；随后结束 SSE，并断言
+Provider 只请求一次，Attempt 为 Success、ProviderTurn 为 Stop 且二者
+均已结算，持久 canonical events 含终结文本。总测试上限 25 秒、续租
+等待上限 17 秒、帧数和 HTTP 背压有界。
+
+子 Agent 定向 1/1 PASS；主 Agent 在原位置复跑两次、移至符合 P12 架构
+边界的功能测试目录后再复跑一次，均 1/1 PASS，`pnpm typecheck`
+与单文件 Biome PASS。该证据补 P9 `07` §4 的 dense SSE/TTL/3 实际
+续租要求，不是 AH1–AH14 任一提交边界的进程崩溃注入，也不关闭 AH7/AH10。
