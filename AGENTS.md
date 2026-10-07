@@ -383,6 +383,13 @@ ToolInvocation/Action identity 收敛，定向 1/1 PASS；不宣称 executor 单
 `planning/results/AH7-B-idempotent-effect-before-settlement.result.md`。该增量
 完整 `pnpm check` PASS（Biome 946 files、architecture 155、core 1708 + 3 skipped、
 Web 216）；AH7/AH10 仍 PARTIAL。
+`7f71058` 首次完整功能批次出现 24/25 Vitest files、58/59 tests：AH7 B effect
+case只因 snapshot 合法停留在 `StepEffectsCommitted/cursor2`，而测试过度要求后续
+`NextStepReady`。按 P9 冻结状态机修正状态断言为同一 Step/cursor2 且仅接受这两个
+合法阶段，唯一 ToolInvocation/Result/Artifact/Observation、文件 effect、Provider
+一次断言均保留。修后单测 2/2 PASS；`9157e9c` 上 F20 1/1 PASS，完整
+`pnpm test:functional` PASS（Vitest 25/25 files、59/59 tests，Playwright 2/2）。
+该增量仍不关闭 AH7/AH10。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见
