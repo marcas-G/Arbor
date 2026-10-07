@@ -296,6 +296,9 @@ P9 `07` §4 的密集 SSE/TTL/3 实际续租资格新增
 前移，ProviderAttempt/Turn 最终成功且请求只一次；见
 `planning/results/P9-dense-sse-lease-renewal.result.md`。它不是 AH7/AH10
 进程崩溃矩阵的替代证据。
+`c39004f` 上 `pnpm check` PASS（架构 155、核心 1705 + 3 skipped、
+Web 216）；F20 + P9 密集 SSE 定向 2/2 PASS。此提交未重跑完整
+`pnpm test:functional`，不能把定向验证扩大成全功能批次。
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
