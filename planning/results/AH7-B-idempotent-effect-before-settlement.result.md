@@ -55,3 +55,26 @@ typecheck/build, architecture 30 files/155 tests, core 315 files/1708 passed
 + 3 skipped, and Web typecheck/build plus 31 files/216 tests. The F20 clean
 checkout and full release functional batch are to be rerun after this
 test/documentation commit; AH7 remains PARTIAL.
+
+## Full functional run and state-boundary correction (2026-10-08)
+
+On commit `7f71058`, the first full `pnpm test:functional` run produced
+**24/25 Vitest files and 58/59 tests**; Playwright did not run because Vitest
+failed. This test's sole failing assertion expected `NextStepReady`, while the
+read immediately after B became Applied observed the durable
+`StepEffectsCommitted` state at `next_action_index=2` (revision 6). P9's frozen
+state table permits `StepEffectsCommitted` to persist either a successor or a
+settlement; `NextStepReady` is a later transition. The effect, settlement,
+unique ToolResult/Artifact/Observation and file assertions all held. This was
+an over-specific test-state expectation, not a production defect.
+
+The test now pins the same Execution/Step/ProviderTurn and cursor 2, and accepts
+only the two frozen valid progression states `StepEffectsCommitted` or
+`NextStepReady`. All effect/result uniqueness assertions remain unchanged.
+The corrected test passed twice in isolation (64.13s and 64.66s); test
+typecheck and single-file Biome passed.
+
+On committed `9157e9c`, F20 clean checkout passed 1/1 (50.44s). Full
+`pnpm test:functional` passed: Vitest **25/25 files, 59/59 tests** (1701.69s)
+and Playwright **2/2** (21.5s). This includes the corrected AH7 B case and P9
+dense SSE qualification; AH7 remains PARTIAL / OPEN.

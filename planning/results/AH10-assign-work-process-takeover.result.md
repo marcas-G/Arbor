@@ -97,3 +97,8 @@ typecheck/build, architecture 30 files/155 tests, core 315 files/1708 passed
 + 3 skipped, and Web typecheck/build plus 31 files/216 tests. The full release
 functional batch and F20 are to be rerun after this test/documentation commit;
 AH10 remains PARTIAL.
+
+On committed `9157e9c`, all three AssignWork cases passed within the full
+`pnpm test:functional` run (Vitest 25/25 files, 59/59 tests; Playwright 2/2).
+F20 clean checkout passed 1/1 (50.44s). This broader run does not qualify
+direct-child AssignWork or close AH10's remaining control-action matrix.
