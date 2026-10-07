@@ -52,6 +52,124 @@ const readActionObservations = (databaseFile: string) => {
   }
 };
 
+const readConsistentRecoverySnapshot = (
+  databaseFile: string,
+  executionId: string,
+  providerTurnId: string,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    db.exec("BEGIN DEFERRED TRANSACTION");
+    const snapshot = {
+      steps: db
+        .prepare(
+          `SELECT execution_id, logical_step_no, provider_turn_id,
+                  repair_attempt, state, revision, next_action_index
+             FROM agent_loop_steps WHERE execution_id = ?
+            ORDER BY logical_step_no, repair_attempt`,
+        )
+        .all(executionId) as Array<{
+        execution_id: string;
+        logical_step_no: number;
+        provider_turn_id: string;
+        repair_attempt: number;
+        state: string;
+        revision: number;
+        next_action_index: number;
+      }>,
+      actions: db
+        .prepare(
+          `SELECT execution_id, logical_step_no, repair_attempt, action_index,
+                  logical_action_id, call_ref, action_kind, state,
+                  observation_source_ref
+             FROM agent_loop_step_actions WHERE execution_id = ?
+            ORDER BY logical_step_no, repair_attempt, action_index`,
+        )
+        .all(executionId) as Array<{
+        execution_id: string;
+        logical_step_no: number;
+        repair_attempt: number;
+        action_index: number;
+        logical_action_id: string;
+        call_ref: string;
+        action_kind: string;
+        state: string;
+        observation_source_ref: string | null;
+      }>,
+      toolInvocations: db
+        .prepare(
+          `SELECT invocation_id, execution_id, tool_name,
+                  side_effect_semantics, settled_at, settlement_kind, result_ref
+             FROM tool_invocations WHERE execution_id = ? ORDER BY invocation_id`,
+        )
+        .all(executionId) as Array<{
+        invocation_id: string;
+        execution_id: string;
+        tool_name: string;
+        side_effect_semantics: string;
+        settled_at: string | null;
+        settlement_kind: string | null;
+        result_ref: string | null;
+      }>,
+      toolResults: db
+        .prepare(
+          `SELECT sequence, payload_json, source_kind, source_ref
+             FROM session_entries WHERE item_type = 'ToolResult'
+            ORDER BY sequence`,
+        )
+        .all() as Array<{
+        sequence: number;
+        payload_json: string;
+        source_kind: string;
+        source_ref: string;
+      }>,
+      artifacts: db
+        .prepare(
+          `SELECT a.artifact_id, a.invocation_id, a.content_hash
+             FROM artifacts a JOIN tool_invocations ti
+               ON ti.invocation_id = a.invocation_id
+            WHERE ti.execution_id = ? ORDER BY a.artifact_id`,
+        )
+        .all(executionId) as Array<{
+        artifact_id: string;
+        invocation_id: string;
+        content_hash: string;
+      }>,
+      observations: db
+        .prepare(
+          `SELECT source_ref, payload_json FROM session_entries
+            WHERE source_kind = 'AgentLoopAction'
+              AND entry_kind = 'Observation' ORDER BY sequence`,
+        )
+        .all() as Array<{ source_ref: string; payload_json: string }>,
+      attempts: db
+        .prepare(
+          `SELECT provider_turn_id, attempt_no, outcome, settled_at,
+                  success_evidence_version FROM provider_attempts
+            WHERE provider_turn_id = ? ORDER BY attempt_no`,
+        )
+        .all(providerTurnId) as Array<{
+        provider_turn_id: string;
+        attempt_no: number;
+        outcome: string;
+        settled_at: string | null;
+        success_evidence_version: number | null;
+      }>,
+    };
+    db.exec("COMMIT");
+    return snapshot;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // The read transaction may already have closed after a commit failure.
+    }
+    throw error;
+  } finally {
+    db.close();
+  }
+};
+
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
@@ -188,6 +306,13 @@ describe("AH7 multi-action B effect before settlement", () => {
     expect(actionACommit.providerTurnId).toMatch(/^ptn_/u);
     expect(actionACommit.logicalActionId).toMatch(/^lac_/u);
     expect(actionACommit.callRef).toMatch(/^call_/u);
+    const providerTurnId = actionACommit.providerTurnId;
+    const executionId = actionACommit.executionId;
+    if (providerTurnId === undefined || executionId === undefined) {
+      throw new Error(
+        "AH7 action A omitted its pinned execution/ProviderTurn id",
+      );
+    }
     expect(actionBatchSent).toBe(true);
     expect(providerActionBatches).toBe(1);
     expect(targetProviderCalls).toBe(1);
@@ -341,21 +466,49 @@ describe("AH7 multi-action B effect before settlement", () => {
 
     await fixture.restart();
     const recovered = await waitForPublic(
-      async () => durableSnapshot(fixture.databaseFile),
-      (snapshot) =>
-        snapshot.actions.some(
-          (action) =>
-            action.execution_id === actionACommit.executionId &&
-            action.call_ref === actionBEffect.callRef &&
-            action.action_index === 1 &&
-            action.state === "Applied",
-        ) &&
-        snapshot.toolInvocations.some(
-          (invocation) =>
-            invocation.invocation_id === actionBEffect.invocationId &&
-            invocation.settled_at !== null,
-        ) &&
-        snapshot.toolResults.length === 2,
+      async () =>
+        readConsistentRecoverySnapshot(
+          fixture.databaseFile,
+          executionId,
+          providerTurnId,
+        ),
+      (snapshot) => {
+        const step = snapshot.steps.find(
+          (candidate) =>
+            candidate.execution_id === actionACommit.executionId &&
+            candidate.logical_step_no === 0 &&
+            candidate.repair_attempt === 0 &&
+            candidate.provider_turn_id === actionACommit.providerTurnId,
+        );
+        return (
+          step !== undefined &&
+          step.next_action_index === 2 &&
+          ["StepEffectsCommitted", "NextStepReady"].includes(step.state) &&
+          snapshot.actions.some(
+            (action) =>
+              action.execution_id === actionACommit.executionId &&
+              action.logical_step_no === 0 &&
+              action.repair_attempt === 0 &&
+              action.call_ref === actionBEffect.callRef &&
+              action.action_index === 1 &&
+              action.state === "Applied",
+          ) &&
+          snapshot.toolInvocations.some(
+            (invocation) =>
+              invocation.invocation_id === actionBEffect.invocationId &&
+              invocation.settled_at !== null &&
+              invocation.settlement_kind === "Success",
+          ) &&
+          snapshot.toolResults.length === 2 &&
+          snapshot.artifacts.length === 2 &&
+          snapshot.observations.filter((observation) =>
+            observation.source_ref.startsWith(
+              `observation_${actionACommit.executionId}_`,
+            ),
+          ).length === 2 &&
+          snapshot.attempts.length === 1
+        );
+      },
       45_000,
     ).catch((error: unknown) => {
       throw new Error(
@@ -426,8 +579,11 @@ describe("AH7 multi-action B effect before settlement", () => {
         (artifact) => artifact.invocation_id === actionBEffect.invocationId,
       ),
     ).toHaveLength(1);
-    const observationsAfterRecovery = readActionObservations(
-      fixture.databaseFile,
+    const observationsAfterRecovery = recovered.observations.filter(
+      (observation) =>
+        observation.source_ref.startsWith(
+          `observation_${actionACommit.executionId}_`,
+        ),
     );
     expect(observationsAfterRecovery).toHaveLength(2);
     const observedCallRefs = observationsAfterRecovery.map(
