@@ -319,7 +319,10 @@ CommandId、唯一
 Unsatisfied Dependency 与 Observation、Provider 一次。见
 `planning/results/AH10-generation-command-takeover-gap.result.md`；其他动作
 仍开放，AH10 PARTIAL。`29b9ce2` 上完整 `pnpm check` PASS（架构 155、
-核心 1705 + 3 skipped、Web 216）；参数化增量未重跑完整门禁或功能批次。
+核心 1705 + 3 skipped、Web 216）；参数化增量未重跑完整 `pnpm check`。
+`afe8a20` 上完整 `pnpm test:functional` PASS（真实进程/公开 API 21 文件、
+48/48；Playwright 2/2），含 AH10 五场景和 F20 干净检出。此结果不关闭
+AH10 其他动作及治理缺口。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见

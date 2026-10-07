@@ -298,3 +298,9 @@ passed
 PARTIAL。主 Agent 在同一工作树独立复跑两侧 2/2 PASS（72.87s）。本次
 参数化增量未重跑完整 `pnpm check` / `pnpm test:functional`；上一提交
 `29b9ce2` 的完整 `pnpm check` 不能冒称为本增量的全量结果。
+
+随后在已提交的 `afe8a20` 上运行完整 `pnpm test:functional`，构建通过，
+真实进程/公开 API 测试 21 文件、48/48 PASS，Playwright 浏览器 2/2 PASS；
+其中 AH10 本文件五个场景全部通过，F20 从该提交干净检出、安装、构建和
+公开黑盒启动通过。该结果证明本增量没有破坏现有功能批次，不解决
+AH10 尚未覆盖的其他控制动作、已演化状态组合或开放治理缺口。
