@@ -283,6 +283,13 @@ DecisionId CommandId；`pnpm check` PASS（架构 155、核心 1705 + 3 skipped�
 Web 216），F20 干净检出 1/1 PASS。`Deliver` 过期代仍可写 Message/Event/Inbox，
 拟议 AH10-DG-01 的隔离红测与治理稿已提交；AH10 仍 PARTIAL，不能把以上
 定向/单测当作两侧完整进程崩溃资格。
+`02e42ac` 上完整 `pnpm test:functional` 亦 PASS（公开进程 42、浏览器 2）。
+验证控制动作新增两条隔离红测：RecordVerificationEvidence 同 ID 重试的
+`recordedAt` 指纹漂移，以及 ConcludeVerification 缺 P8 已冻结的
+`criteriaResults` 持久快照；拟议 VCS-DG-01 见
+`planning/results/verification-evidence-replay-and-snapshot-governance.review.md`。
+时间来源和历史结论行处置未获人工治理，不能凭绿色功能批次宣布验证
+命令重放或 AH10 闭合。
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,

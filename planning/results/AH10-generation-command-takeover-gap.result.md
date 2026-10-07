@@ -191,3 +191,11 @@ AH10 完整关闭。
 Web 216；pending Deliver 红测仍按预期独立失败。完整
 `pnpm test:functional` 尚未在此增量提交运行。
 提交 `02e42ac` 上 F20 干净检出安装、构建与公开黑盒 1/1 PASS。
+同提交完整 `pnpm test:functional` 公开进程 42/42、浏览器 2/2 PASS。
+
+验证控制动作另有两条独立隔离红测：`record_verification_evidence`
+同 CommandId 重试时 `recordedAt` 变化导致指纹冲突；已提交的
+`conclude_verification` 无法从 Verification 行读回 P8 冻结的逐
+criterion 快照。两者的时间来源与历史行处置见
+`planning/results/verification-evidence-replay-and-snapshot-governance.review.md`；
+不能仅因绿色功能批次通过就推定 AH10/P8 闭合。
