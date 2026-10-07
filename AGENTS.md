@@ -390,6 +390,11 @@ case只因 snapshot 合法停留在 `StepEffectsCommitted/cursor2`，而测试�
 一次断言均保留。修后单测 2/2 PASS；`9157e9c` 上 F20 1/1 PASS，完整
 `pnpm test:functional` PASS（Vitest 25/25 files、59/59 tests，Playwright 2/2）。
 该增量仍不关闭 AH7/AH10。
+后续 `SendMessage` 增 DecisionRequest 旧 FencingRejected receipt 提交前/后双 daemon
+两案：同一ProviderTurn持久ToolCall顺序为send_message→wait；ActionResult gate前
+workflow-signals offset落后是预期暂停，释放后child WorkEpisode settle、offset推进且
+唯一Parent InboxEpisode入账。当前 SendMessage文件5/5（Query2、Reply1、DecisionRequest2），
+`pnpm check` PASS（Biome946、architecture155、core1708+3 skipped、Web216）；AH10仍PARTIAL。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见

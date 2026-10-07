@@ -75,6 +75,36 @@ closed correlation, Action Pending/zero Observation before the crash and
 Applied/one Observation after recovery. The Reply ProviderTurn has one
 successful Attempt and the real Provider is not asked to recompute that turn.
 
+## DecisionRequest takeover and workflow-signal settlement (2026-10-08)
+
+The dedicated process test now also covers `SendMessage(kind=DecisionRequest)`
+with the old generation's `FencingRejected` receipt killed on both sides of
+its transaction commit. Setup is through public Project creation, direct child
+Workspace creation and public child Work assignment. The child Provider emits
+one ProviderTurn containing two sourced model calls: `send_message` with a
+DecisionRequest body and no recipient, followed by a Manual `wait`. Runtime
+derives the direct Parent recipient. Both generations retain the same pinned
+ProviderTurn, LogicalActionId and callRef; only the command generation changes.
+
+At the new daemon's ActionResult test gate, the canonical DecisionRequest,
+`MessageSent`, Parent Message Inbox entry, Applied Action and Observation are
+durable while the same project's workflow-signals offset is still behind the
+MessageSent sequence. The test releases that explicit test-only gate, allowing
+the same ProviderTurn's second Wait call to run and the child WorkEpisode to
+settle. It then observes the same-project offset advance through MessageSent
+and exactly one Parent InboxEpisode for `msg:<messageId>`. An earlier
+diagnostic run that left the test gate closed only showed the expected
+pre-poll offset; after release, the consumer and Parent admission both
+progressed, so this is not evidence of a production consumer gap.
+
+Assertions also cover one Message, one MessageSent event, one Parent Inbox
+entry, null correlation, the committed result's
+`promotion={closesCorrelation:null,triggersReevaluation:true}`, the new
+generation's unique Committed receipt, one Action Observation, one successful
+Provider attempt, exactly the two sourced calls (`send_message`, then `wait`),
+and no workflow-signal dead letter through the target sequence. The Wait is
+persisted as mode `Any` with conditions `[{'_tag':'Manual'}]`.
+
 ## Verification
 
 ```text
@@ -118,3 +148,22 @@ clean-checkout test passed 1/1 (44.37s), followed by the complete
 `pnpm test:functional`: Vitest 22 files / 51 tests passed (1427.87s) and
 Playwright 2/2 passed (22.9s). These results include this Query case but do not
 close AH10 or cover the remaining SendMessage kinds/boundaries.
+
+After the DecisionRequest extension, targeted validation passed:
+
+```text
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-send-message-takeover.functional.test.ts
+1 file / 5 tests passed (184.89s)
+
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-send-message-takeover.functional.test.ts -t "takes over a DecisionRequest after killing gen0"
+2 passed, 3 skipped (72.74s)
+
+pnpm exec tsc -p tsconfig.test.json --noEmit --pretty false
+passed
+
+pnpm exec biome check tests/functional/process/agent-loop-ah10-send-message-takeover.functional.test.ts
+passed
+```
+
+This is dedicated-file and test-typecheck/Biome evidence only; it is not a full
+`pnpm check` or full functional-suite run.
