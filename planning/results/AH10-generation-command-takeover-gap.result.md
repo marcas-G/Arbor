@@ -146,3 +146,18 @@ F19 两种依赖交付公开进程场景 3/3 PASS。仍有 `SelectCurrentWork`�
 `Deliver`、`RecordVerificationEvidence`、`ConcludeVerification` 使用非
 generation-scoped CommandId；正在先审查可复用的内部接管边界，避免
 继续逐 handler 复制恢复逻辑。AH10 整体保持 PARTIAL。
+
+## 2026-10-07 共用查询边界
+
+五类 Gateway-backed handler 的“按旧 generation 查 receipt、核对
+CommandId/ProjectId、跳过 FencingRejected”已收敛为
+`findPriorCommandReceipt`。返回值只区分 None/Committed/其他终态拒绝；
+旧 Committed 的 canonical fact 校验和各 handler 原有错误/Observation
+代数仍各自负责。没有新增 DDL 或持久字段，gen0 CommandId 保持历史编码；
+现有 pinned action 的 `attemptOrdinal` 仍隐含为 0，未擅自发明可写 ordinal。
+
+主 Agent 独立复跑 5 个控制测试文件 32/32 PASS、`pnpm typecheck` PASS；
+S1–S4 与 F18/F19 相关公开进程 7/7 PASS。随后完整 `pnpm check`
+PASS：架构 155、核心 1701 + 3 skipped、Web 216。完整功能批次尚未对
+helper 重排后的 HEAD 重跑；计划以 AH10 双 daemon 和 F20 干净检出
+定向复测，并保留这个验证边界。AH10 不关闭。
