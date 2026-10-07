@@ -103,6 +103,11 @@ Provider 总请求数、Work 总数及旧成功回执的完整结果绑定断言
 同一工作树的一次完整 `pnpm check` PASS：架构 155、核心 1687 + 3 skipped、
 Web 216；构建、lint、类型检查均通过。该批次不包含隔离的治理红测。
 
+提交 `4720f65` 上完整 `pnpm test:functional` PASS：公开进程 42/42、
+浏览器 2/2，包含 F20 从该提交干净检出安装/构建/公开黑盒启动，以及本 AH10
+双 daemon 接管测试。该结果不包括 pending 的 AH7/FT/AH14 治理红测，
+也不把 AH10 的剩余控制动作和提交两侧杀进程矩阵推定为通过。
+
 整体仍为 **PARTIAL**：目前真实进程资格覆盖 ProduceDeliverable 单一 canonical
 控制动作，尚无其余 canonical handler 的进程级覆盖，也没有该边界两侧的
 kill/restart 注入矩阵；不据此宣布 AH10 关闭。

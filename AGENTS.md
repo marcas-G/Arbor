@@ -262,6 +262,14 @@ evidence, but remains PARTIAL: ambiguous legacy action evidence lacks durable
 public Attention (`AH14-DG-01`, pending red test); see
 `planning/results/AH14-legacy-adoption-partial.result.md`. AH7/AH10/AH14
 are not closed.
+2026-10-07 增量：AH7 新增 approval 前效应重入与模拟唯一约束并发单测，
+不构成真实进程资格；AH10 新增 `ProduceDeliverable` receipt-first 路径和
+真实双 daemon 30s lease takeover，仍缺其他控制动作及提交两侧 kill/restart。
+证据分别见 `planning/results/AH7-approval-pre-effect-reentry.result.md`、
+`planning/results/AH7-concurrent-invocation.result.md`、
+`planning/results/AH10-generation-command-takeover-gap.result.md`。
+`4720f65` 上 `pnpm check` PASS（架构 155、核心 1687 + 3 skipped、Web
+216），`pnpm test:functional` PASS（公开进程 42、浏览器 2，含 F20）。
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
