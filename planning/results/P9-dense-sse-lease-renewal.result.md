@@ -2,7 +2,7 @@
 
 日期：2026-10-07
 
-状态：**定向功能进程测试及 F20 干净检出 PASS；完整门禁待复测。**
+状态：**定向功能进程测试、F20 干净检出与 `pnpm check` PASS。**
 
 `tests/functional/process/p9-dense-sse-lease-renewal.functional.test.ts`
 使用真实 `runExecution`、
@@ -24,5 +24,10 @@ Provider 只请求一次，Attempt 为 Success、ProviderTurn 为 Stop 且二者
 
 提交 `5708e1e` 上，两条定向功能测试（本项 + F20 干净检出）2/2 PASS。
 移至符合 P12 运输边界的功能测试目录后，`pnpm architecture` 155/155、
-`pnpm typecheck` 与 `pnpm lint` PASS。尚未在此提交重跑完整核心/Web
-及全部功能批次，不能把上述定向结果写成完整 `pnpm check`。
+`pnpm typecheck` 与 `pnpm lint` PASS。首次定向复测时尚未运行完整
+核心/Web 及全部功能批次，不能把上述定向结果写成完整门禁通过。
+
+后续在 `c39004f` 上完整 `pnpm check` PASS：架构 155、核心 1705 + 3
+skipped、Web 216；构建、lint 和类型检查均通过。完整
+`pnpm test:functional` 仍未在此提交运行，不能把 F20 + 本项 2/2
+写成整个功能批次通过。
