@@ -1,0 +1,21 @@
+# 功能测试补齐：未决治理队列
+
+日期：2026-10-07
+
+此表是排程，不是人工接受或实现授权。隔离红测必须保持真实失败；
+`docs/design/**` 只在固定提案获人工明确接受后，按既有委托落地完全一致的合同。
+
+| 缺口 | 失败证据 / 决策材料 | 当前门 | 排程关系 |
+|---|---|---|---|
+| FT-DG-01 | F21 浏览器资源挂载与未登记路径旁路；`planning/proposals/ui-project-resource-admission-decision-draft.md` | 审阅可提交，未接受 | 与 FT-DG-03 共用 CreateProject 认证/收据边界，须联合核对 |
+| FT-DG-03 | F23 非法 MessageId/AcceptanceId 可 Committed；`planning/proposals/external-command-runtime-codec-decision-draft.md` | 审阅可提交，未接受 | 与 FT-DG-01 联合核对；先固定 codec/旧收据规则再实施 |
+| FT-DG-02 | F22 已完成 Work 链接不可读取；`planning/proposals/completed-work-public-view-decision-draft.md` | 审阅可提交，未接受 | 独立于 F21/F23，但不能靠 CurrentWork=null 代替终态 View |
+| AH7-DG-01 | 非 Success 结算缺可重放 bounded Observation；`planning/proposals/tool-settlement-observation-replay-decision-draft.md` | 审阅可提交，未接受 | 阻挡 AH7 非成功观察恢复资格 |
+| AH7-DG-02 | generic shell 标记 Reconcilable 却无 reality-proof port；`planning/proposals/reconcilable-shell-reality-proof-decision-draft.md` | 审阅可提交，未接受 | 阻挡 AH7 主动外部现实核对资格 |
+| 拟议 AH7-DG-03 | P4 `02` 执行前消费 Approval 与 P4 `06` 同 settlement 事务冲突；`planning/proposals/AH7-approval-settlement-atomicity-governance-draft.md` | 精准红测与审阅齐备，未接受 | 先裁决审批消费/预留语义，再补两侧 crash 资格 |
+| AH14-DG-01 | 旧证据含动作时公开 Attention 缺失；`planning/proposals/AH14-legacy-adoption-attention-decision-draft.md` | 负向红测齐备，提案尚需固定严重度、事实身份与写入窗口 | 不得以正向 AH14 2/2 代替负向证据 |
+
+当前仍可不等治理继续的工作：AH10 其他 canonical 控制动作的 receipt-first
+接管与两侧进程资格；AH7 单连接以外的并发/多动作独立测试。所有分支的最终
+声明还须回到 `01-functional-journey-catalog.md` F01–F23 与
+`02-agent-loop-step-crash-qualification.md` AH1–AH14 逐项审核。
