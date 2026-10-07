@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import {
   main,
@@ -33,6 +34,20 @@ const emit = (event) =>
     `${JSON.stringify({ tag: "AH10_PROBE", role, ...event })}\n`,
   );
 
+const readActionKind = (logicalActionId) => {
+  if (logicalActionId === undefined) return undefined;
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        "SELECT action_kind FROM agent_loop_step_actions WHERE logical_action_id = ?",
+      )
+      .get(logicalActionId)?.action_kind;
+  } finally {
+    db.close();
+  }
+};
+
 const qualificationProbe = async (event) => {
   if (
     event.boundary === "AH10AfterControlHandlerReturnBeforeObservationCommit"
@@ -46,8 +61,12 @@ const qualificationProbe = async (event) => {
     event.boundary === "AH7AfterActionIntentCommit" &&
     event.actionIndex === 0
   ) {
-    emit(event);
-    await waitForGate("action-intent", event);
+    const actionKind = readActionKind(event.logicalActionId);
+    emit({ ...event, actionKind });
+    const gateActionKind = process.env.ARBOR_AH10_GATE_ACTION_KIND;
+    if (gateActionKind === undefined || actionKind === gateActionKind) {
+      await waitForGate("action-intent", event);
+    }
   }
   if (
     role === "new" &&

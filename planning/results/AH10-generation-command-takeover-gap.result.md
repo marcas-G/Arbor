@@ -304,3 +304,36 @@ PARTIAL。主 Agent 在同一工作树独立复跑两侧 2/2 PASS（72.87s）。
 其中 AH10 本文件五个场景全部通过，F20 从该提交干净检出、安装、构建和
 公开黑盒启动通过。该结果证明本增量没有破坏现有功能批次，不解决
 AH10 尚未覆盖的其他控制动作、已演化状态组合或开放治理缺口。
+
+## 2026-10-07 AcceptResult 进程资格增量：list_workspaces 后接管
+
+初始红测假设 Parent Work Context 直接含 `rref_...`，但 WorkEpisode 只收到
+`Child result ready for Work … revision …` 信号。按 F18 正式流程，Provider
+先调用 `list_workspaces`，再从真实工具结果取得 opaque `resultRef` 并调用
+`accept_result`；没有从 SQL 计算或伪造引用。测试专属 AH10 子进程在
+ActionIntent 持久后只读查询该 LogicalActionId 的 `action_kind`，仅对显式
+`ARBOR_AH10_GATE_ACTION_KIND=accept_result` 等待 gate，避免误停在前一步
+列表调用。没有改 Agent Runtime、Gateway、生产代码或共享 fixture。
+
+同库公开进程先形成 Child Verification PASS、Work Open，再创建 Parent Work。
+旧 gen0 在 AcceptResult intent 与续租暂停期间等待真实 lease 到期；gen1
+获得 lease、停在同一 AcceptResult intent。放行旧命令，确认旧
+`FencingRejected` receipt 落盘后杀旧 daemon；gen1 receipt-first 用新
+CommandId 唯一提交 AcceptWorkOutcome。唯一 Acceptance 行的 Work/revision/
+Verification 身份与回执精确一致，completion consumer 将 Child Work 完成；
+两代 ProviderTurn/LogicalActionId/callRef 相同，该 ProviderTurn 仅一次成功
+Attempt，AcceptResult 决策与绑定其 ledger source ref 的 Observation 各一次。
+
+测试构造期间的红灯分别来自 Child criterionId 与现有脚本不匹配、先于
+ActionResult gate 放行就断言 Work 完成，以及将合法的列表 Observation
+误计为 AcceptResult 的重复 Observation；均按真实合同修正。
+
+```text
+AcceptResult 定向：1/1 PASS（42.43s）；主 Agent 独立复跑 1/1 PASS（42.38s）
+AH10 专属真实进程文件联跑：6/6 PASS（230.81s）
+```
+
+该证据只补旧拒绝回执提交后 AcceptResult 的跨代接管，不覆盖其提交前
+边界、其他控制动作或更多已演化状态组合，AH10 仍为 PARTIAL。随后完整
+`pnpm check` PASS：架构 155、核心 1705 + 3 skipped、Web 216；本增量
+尚未运行完整 `pnpm test:functional`。
