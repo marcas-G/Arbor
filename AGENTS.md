@@ -615,5 +615,7 @@ Web 216). AH10 remains PARTIAL; Deliver and verification-control governance
 gaps and other action/state combinations remain open. Follow-up: mismatched
 replay guard rejection is predicate-tested, but its daemon-level
 `proposeSettlement(Failed)` convergence from an existing ActionsInProgress Step
-is not yet qualified (potential P2, not confirmed as a defect). This increment
-is not a full `pnpm test:functional` result.
+is not yet qualified (potential P2, not confirmed as a defect). On committed
+`4558ec65280ee25eb5817ce15fdf1f8df84209e0`, F20 passed 1/1 and full
+`pnpm test:functional` passed (Vitest 25/25 files, 64/64 tests; Playwright
+2/2). AH10 remains PARTIAL despite the green broad batch.
