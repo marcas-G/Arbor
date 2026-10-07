@@ -8,6 +8,8 @@ import type {
 } from "@arbor/application";
 import { newUuid7 } from "@arbor/application";
 import {
+  CommandId,
+  DecisionId,
   ExecutionId,
   type LeaseGeneration,
   MessageId,
@@ -23,6 +25,7 @@ import {
 import type {
   ClockService,
   CommandStoreService,
+  DecisionRequestStoreService,
   TransactionPortService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
@@ -33,6 +36,7 @@ import {
   assignWorkHandler,
   makeSingleWorkspaceControlActionHandlers,
   produceDeliverableHandler,
+  selectCurrentWorkHandler,
 } from "../src/control-actions.js";
 
 const executionId = parse(ExecutionId)(
@@ -63,6 +67,127 @@ const execution = {
   stopRequestedAt: null,
   state: { status: "Active" as const, settlement: null },
 } as never;
+
+const decisionId = parse(DecisionId)(
+  "dec_018f2b3c-4d5e-7abc-8def-0123456789a7",
+);
+const decisionWorkId = parse(WorkId)(
+  "wrk_018f2b3c-4d5e-7abc-8def-0123456789a8",
+);
+const decisionExecution = {
+  executionId,
+  projectId,
+  workspaceId,
+  sessionId,
+  admittedAt: "2026-10-05T00:00:00.000Z",
+  stopRequestedAt: null,
+  state: { status: "Active", settlement: null },
+  binding: {
+    _tag: "WorkspaceExecution" as const,
+    workspaceId,
+    episode: {
+      _tag: "DecisionEpisode" as const,
+      decisionId,
+      decisionKind: "SelectCurrentWork" as const,
+      requestRevision: 0,
+    },
+  },
+} as never;
+const decisionAction = {
+  _tag: "SelectCurrentWork" as const,
+  workId: decisionWorkId,
+};
+const decisionInvocation = {
+  providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789b1" as never,
+  outputPosition: 0,
+  callRef: "call-ah10-select-current-work",
+  toolName: "select_current_work",
+  argumentsJson: JSON.stringify(decisionAction),
+};
+const legacySelectCommandId = parse(CommandId)(
+  `cmd_${String(decisionId).slice("dec_".length)}`,
+);
+
+interface DecisionHarnessState {
+  request: {
+    readonly decisionId: typeof decisionId;
+    readonly workspaceId: typeof workspaceId;
+    readonly candidateWorkIds: ReadonlyArray<WorkId>;
+    readonly workspaceRevision: number;
+    readonly state:
+      | { readonly _tag: "Pending" }
+      | { readonly _tag: "Submitted"; readonly selectedWorkId: WorkId };
+    readonly revision: number;
+    readonly createdAt: string;
+    readonly updatedAt: string;
+  };
+  currentWorkId: WorkId | null;
+  workspaceRevision: number;
+  submitCalls: number;
+}
+
+const makeDecisionHarnessState = (
+  state: DecisionHarnessState["request"]["state"] = { _tag: "Pending" },
+  workspaceRevision = 5,
+): DecisionHarnessState => ({
+  request: {
+    decisionId,
+    workspaceId,
+    candidateWorkIds: [decisionWorkId],
+    workspaceRevision,
+    state,
+    revision: state._tag === "Submitted" ? 1 : 0,
+    createdAt: "2026-10-05T00:00:00.000Z",
+    updatedAt: "2026-10-05T00:00:00.000Z",
+  },
+  currentWorkId: null,
+  workspaceRevision,
+  submitCalls: 0,
+});
+
+const makeSelectCurrentWorkHandler = (
+  gateway: CommandGatewayService,
+  receipts: ReadonlyMap<string, unknown>,
+  state: DecisionHarnessState,
+) =>
+  selectCurrentWorkHandler({
+    gateway,
+    commandReceipts: receiptLookup(receipts),
+    decisions: {
+      findById: () => Effect.succeed(Option.some(state.request)),
+      submit: (input: Parameters<DecisionRequestStoreService["submit"]>[0]) => {
+        state.submitCalls += 1;
+        if (
+          state.request.state._tag === "Pending" &&
+          state.request.revision === input.expectedRevision
+        ) {
+          state.request = {
+            ...state.request,
+            state: { _tag: "Submitted", selectedWorkId: input.selectedWorkId },
+            revision: state.request.revision + 1,
+            updatedAt: input.updatedAt,
+          };
+        }
+        return Effect.void;
+      },
+    } as unknown as DecisionRequestStoreService,
+    workspaces: {
+      findById: () =>
+        Effect.succeed(
+          Option.some({
+            workspaceId,
+            projectId,
+            currentWorkId: state.currentWorkId,
+            revision: state.workspaceRevision,
+            lifecycle: "Active",
+          } as never),
+        ),
+    } as unknown as WorkspaceRepositoryService,
+    tx: transaction,
+    clock: {
+      now: () => Effect.succeed("2026-10-05T00:00:00.000Z"),
+    } as ClockService,
+  } as never);
 
 const action = {
   _tag: "AssignWork" as const,
@@ -125,13 +250,14 @@ const runControlHandler = (
   handlerAction: unknown,
   generation: number,
   handlerInvocation = invocation,
+  handlerExecution: unknown = execution,
 ) =>
   Effect.runPromise(
     Effect.match(
       handler.handle({
         action: handlerAction,
         invocation: handlerInvocation,
-        execution,
+        execution: handlerExecution,
         context: generationContext(generation),
       } as AgentActionHandlerInput),
       {
@@ -1420,5 +1546,202 @@ describe("AH10 receipt-first SendMessage takeover", () => {
     await runControlHandler(handler, sendAction, 1, sendInvocation);
 
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("AH10 receipt-first SelectCurrentWork takeover", () => {
+  it("uses a new generation CommandId after gen0 FencingRejected and retains the legacy gen0 ID", async () => {
+    const receipts = new Map<string, unknown>();
+    const state = makeDecisionHarnessState();
+    const calls: Array<{
+      readonly commandId: string;
+      readonly generation: number;
+    }> = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>, context: unknown) => {
+        const commandId = String(envelope.commandId);
+        const generation = Number(
+          (context as { readonly fencingGeneration: number }).fencingGeneration,
+        );
+        calls.push({ commandId, generation });
+        const prior = receipts.get(commandId);
+        if (prior !== undefined) return Effect.succeed(prior);
+        if (generation === 0) {
+          const rejected = {
+            resolution: {
+              _tag: "TerminalRejected" as const,
+              error: { _tag: "FencingRejected" as const },
+            },
+          };
+          receipts.set(commandId, rejected);
+          return Effect.succeed(rejected);
+        }
+        const result = {
+          workspaceId,
+          workId: decisionWorkId,
+          revision: state.workspaceRevision + 1,
+        };
+        state.currentWorkId = decisionWorkId;
+        state.workspaceRevision = result.revision;
+        const committed = {
+          resolution: { _tag: "Committed" as const, result },
+        };
+        receipts.set(commandId, committed);
+        return Effect.succeed(committed);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = makeSelectCurrentWorkHandler(gateway, receipts, state);
+
+    expect(
+      await runControlHandler(
+        handler,
+        decisionAction,
+        0,
+        decisionInvocation,
+        decisionExecution,
+      ),
+    ).toMatchObject({ _tag: "Rejected" });
+    const currentOwner = await runControlHandler(
+      handler,
+      decisionAction,
+      1,
+      decisionInvocation,
+      decisionExecution,
+    );
+
+    expect(currentOwner._tag).toBe("Accepted");
+    expect(calls.map((call) => call.generation)).toEqual([0, 1]);
+    expect(calls[0]?.commandId).toBe(legacySelectCommandId);
+    expect(calls[1]?.commandId).not.toBe(calls[0]?.commandId);
+    expect(state.currentWorkId).toBe(decisionWorkId);
+    expect(state.submitCalls).toBe(1);
+  });
+
+  it("converges a Committed receipt before DecisionRequest.submit without resending the command", async () => {
+    const receipts = new Map<string, unknown>([
+      [
+        String(legacySelectCommandId),
+        {
+          resolution: {
+            _tag: "Committed" as const,
+            result: {
+              workspaceId,
+              workId: decisionWorkId,
+              revision: 6,
+            },
+          },
+        },
+      ],
+    ]);
+    const state = makeDecisionHarnessState();
+    state.currentWorkId = decisionWorkId;
+    state.workspaceRevision = 6;
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        calls.push(String(envelope.commandId));
+        return Effect.succeed(receipts.get(String(envelope.commandId)));
+      },
+    } as unknown as CommandGatewayService;
+    const handler = makeSelectCurrentWorkHandler(gateway, receipts, state);
+
+    const converged = await runControlHandler(
+      handler,
+      decisionAction,
+      1,
+      decisionInvocation,
+      decisionExecution,
+    );
+
+    expect(converged._tag).toBe("Accepted");
+    expect(calls).toHaveLength(0);
+    expect(state.submitCalls).toBe(1);
+    expect(state.request.state).toEqual({
+      _tag: "Submitted",
+      selectedWorkId: decisionWorkId,
+    });
+  });
+
+  it("converges after DecisionRequest.submit without repeating either effect", async () => {
+    const receipts = new Map<string, unknown>([
+      [
+        String(legacySelectCommandId),
+        {
+          resolution: {
+            _tag: "Committed" as const,
+            result: {
+              workspaceId,
+              workId: decisionWorkId,
+              revision: 6,
+            },
+          },
+        },
+      ],
+    ]);
+    const state = makeDecisionHarnessState({
+      _tag: "Submitted",
+      selectedWorkId: decisionWorkId,
+    });
+    state.currentWorkId = decisionWorkId;
+    state.workspaceRevision = 6;
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        calls.push(String(envelope.commandId));
+        return Effect.succeed(receipts.get(String(envelope.commandId)));
+      },
+    } as unknown as CommandGatewayService;
+    const handler = makeSelectCurrentWorkHandler(gateway, receipts, state);
+
+    const converged = await runControlHandler(
+      handler,
+      decisionAction,
+      1,
+      decisionInvocation,
+      decisionExecution,
+    );
+
+    expect(converged._tag).toBe("Accepted");
+    expect(calls).toHaveLength(0);
+    expect(state.submitCalls).toBe(0);
+  });
+
+  it("does not resend an older non-fencing terminal rejection", async () => {
+    const receipts = new Map<string, unknown>();
+    const state = makeDecisionHarnessState();
+    const calls: string[] = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        const commandId = String(envelope.commandId);
+        calls.push(commandId);
+        const rejected = {
+          resolution: {
+            _tag: "TerminalRejected" as const,
+            error: { _tag: "RevisionConflict" as const },
+          },
+        };
+        receipts.set(commandId, rejected);
+        return Effect.succeed(rejected);
+      },
+    } as unknown as CommandGatewayService;
+    const handler = makeSelectCurrentWorkHandler(gateway, receipts, state);
+
+    await runControlHandler(
+      handler,
+      decisionAction,
+      0,
+      decisionInvocation,
+      decisionExecution,
+    );
+    const replay = await runControlHandler(
+      handler,
+      decisionAction,
+      1,
+      decisionInvocation,
+      decisionExecution,
+    );
+
+    expect(replay._tag).toBe("Rejected");
+    expect(calls).toEqual([String(legacySelectCommandId)]);
   });
 });

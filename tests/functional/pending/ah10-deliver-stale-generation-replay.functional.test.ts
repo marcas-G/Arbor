@@ -272,6 +272,7 @@ const makeInput = (generation: number): AgentActionHandlerInput =>
     context: {
       _tag: "ExecutionOrigin",
       principal,
+      executionId,
       fencingGeneration: generation as LeaseGeneration,
     },
   }) as AgentActionHandlerInput;
