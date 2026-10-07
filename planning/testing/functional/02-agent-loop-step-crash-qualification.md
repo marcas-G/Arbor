@@ -50,3 +50,11 @@ ReconciliationPending/Attention，不可盲重放。随后运行 `pnpm check` �
 功能测试，并更新 `planning/results/agent-loop-step-implementation-progress.md`。
 
 AH15–AH19 另有 SCRC-008 结果，不得挪用其 PASS 代替 AH1–AH14。
+
+P9 `07` §4 另要求密集立即可用 SSE 期间证明实际 TTL/3 lease renewal
+提交。`tests/functional/process/p9-dense-sse-lease-renewal.functional.test.ts`
+已在真实 SQLite 上读到
+同 generation 的 `expires_at` 前移、SSE 当时仍活跃且已消费超过 512 帧，
+最终 Provider 请求一次、Attempt/Turn 成功；见
+`planning/results/P9-dense-sse-lease-renewal.result.md`。这是独立续租资格，
+不能替代 AH7/AH10 的崩溃矩阵。

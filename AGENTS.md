@@ -290,6 +290,12 @@ Web 216），F20 干净检出 1/1 PASS。`Deliver` 过期代仍可写 Message/Ev
 `planning/results/verification-evidence-replay-and-snapshot-governance.review.md`。
 时间来源和历史结论行处置未获人工治理，不能凭绿色功能批次宣布验证
 命令重放或 AH10 闭合。
+P9 `07` §4 的密集 SSE/TTL/3 实际续租资格新增
+`tests/functional/process/p9-dense-sse-lease-renewal.functional.test.ts`：
+真实 SQLite 同 generation `expires_at` 在活跃 SSE（已消费 >512 帧）期间
+前移，ProviderAttempt/Turn 最终成功且请求只一次；见
+`planning/results/P9-dense-sse-lease-renewal.result.md`。它不是 AH7/AH10
+进程崩溃矩阵的替代证据。
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
