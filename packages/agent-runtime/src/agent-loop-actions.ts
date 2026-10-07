@@ -1062,6 +1062,24 @@ export const executeAgentLoopActions = (
           settlement: handled.outcome.settlement,
         };
       }
+      if (
+        route._tag === "Control" &&
+        loopAction !== undefined &&
+        dependencies.qualificationProbe !== undefined
+      ) {
+        const pendingAction = loopAction;
+        yield* Effect.promise(
+          () =>
+            dependencies.qualificationProbe?.({
+              boundary: "AH10AfterControlHandlerReturnBeforeObservationCommit",
+              providerTurnId: preparedTurn.manifest.providerTurnId,
+              executionId: input.execution.executionId,
+              logicalActionId: pendingAction.logicalActionId,
+              callRef: invocation.callRef,
+              actionIndex,
+            }) ?? Promise.resolve(),
+        );
+      }
       const persisted = yield* persistActionObservation(
         handled.outcome.source,
         handled.outcome.observation,

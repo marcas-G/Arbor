@@ -35,6 +35,14 @@ const emit = (event) =>
 
 const qualificationProbe = async (event) => {
   if (
+    event.boundary === "AH10AfterControlHandlerReturnBeforeObservationCommit"
+  ) {
+    emit(event);
+    if (process.env.ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN === "1") {
+      await waitForGate("control-return", event);
+    }
+  }
+  if (
     event.boundary === "AH7AfterActionIntentCommit" &&
     event.actionIndex === 0
   ) {

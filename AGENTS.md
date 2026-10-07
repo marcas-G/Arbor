@@ -299,6 +299,12 @@ P9 `07` §4 的密集 SSE/TTL/3 实际续租资格新增
 `c39004f` 上 `pnpm check` PASS（架构 155、核心 1705 + 3 skipped、
 Web 216）；F20 + P9 密集 SSE 定向 2/2 PASS。此提交未重跑完整
 `pnpm test:functional`，不能把定向验证扩大成全功能批次。
+AH10 后续真实进程补测：旧 gen0 FencingRejected receipt 落盘后杀旧
+daemon，新代唯一提交；以及旧 canonical Command/Deliverable 已提交而
+Action Pending、Observation 未写时杀进程，新代从旧 Committed receipt
+收敛。两案定向 2/2 PASS，见
+`planning/results/AH10-generation-command-takeover-gap.result.md`；
+旧拒绝 receipt 事务提交前与其他动作的两侧矩阵仍未通过，AH10 PARTIAL。
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
