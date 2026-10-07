@@ -10,7 +10,7 @@
 |---|---|---|---|
 | AssignWork | CommandGateway | handler 红转绿：FencingRejected、Committed 收敛、非 fencing 拒绝 | 持久 Work 完整字段核对；真实进程提交两侧 |
 | ProduceDeliverable | CommandGateway | handler 分支 + 真双 daemon 旧拒绝回执事务前/后杀旧进程、新命令提交后 Action Pending 杀进程，三案均唯一产物/Provider | 其余控制动作的相同进程矩阵；持久 Deliverable/artifact 全事实核对 |
-| DeclareDependency | CommandGateway | handler FencingRejected、Committed、拒绝和缺 canonical row；真双 daemon 旧 FencingRejected receipt 提交后杀进程、gen1 同 LogicalAction 接管，唯一 Dependency/Observation/Provider PASS | 提交前边界和已演化状态组合 |
+| DeclareDependency | CommandGateway | handler FencingRejected、Committed、拒绝和缺 canonical row；真双 daemon 旧 FencingRejected receipt 提交前/后杀进程 2/2 PASS，gen1 同 LogicalAction 接管，唯一 Dependency/Observation/Provider | 已演化状态组合与其他命令分支 |
 | AcceptResult | CommandGateway | handler FencingRejected、Committed、拒绝和缺 Acceptance row | 真实进程资格及已完成 Work 恢复 |
 | SendMessage | CommandGateway | handler Query/Reply 回执、Message 行与关闭 correlation | 真实进程资格、Report/DecisionRequest 扩展 |
 | SelectCurrentWork | CommandGateway | handler FencingRejected、Committed 后 DecisionRequest Pending/Submitted、非 fencing 拒绝与历史 gen0 ID 定向测试 PASS | 仍需公开进程跨代资格及冲突状态组合 |

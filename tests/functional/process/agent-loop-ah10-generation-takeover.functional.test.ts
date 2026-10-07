@@ -617,232 +617,277 @@ describe("AH10 real daemon generation takeover", () => {
     await recoveryDaemon.crash();
   }, 90_000);
 
-  it("takes over DeclareDependency after the old FencingRejected receipt commits", async () => {
-    const marker = `AH10-dependency-${crypto.randomUUID().slice(0, 8)}`;
-    const dependencyKind = `ah10-dependency-${marker}`;
-    const events: Ah10Probe[] = [];
-    const providerMarkerCalls: string[] = [];
-    const fixture = await startProductionFixture({
-      reply: (call, index) => {
-        if (!JSON.stringify(call.messages).includes(marker)) {
-          return { _tag: "HttpError", status: 422 };
-        }
-        providerMarkerCalls.push(`provider-call-${index}`);
-        const available = new Set(
-          call.tools
-            .map((tool) => tool.function?.name)
-            .filter((name): name is string => name !== undefined),
-        );
-        if (!available.has("declare_dependency")) {
-          return { _tag: "HttpError", status: 422 };
-        }
-        return {
-          _tag: "ToolCall",
-          name: "declare_dependency",
-          arguments: {
-            producerBinding: { _tag: "AnyProducer" },
-            expectedDeliverable: {
-              kind: dependencyKind,
-              requiredArtifactRoles: [],
+  it.each(["before", "after"] as const)(
+    "takes over DeclareDependency after killing the old owner %s its FencingRejected receipt commits",
+    async (crashSide) => {
+      const marker = `AH10-dependency-${crypto.randomUUID().slice(0, 8)}`;
+      const dependencyKind = `ah10-dependency-${marker}`;
+      const events: Ah10Probe[] = [];
+      const providerMarkerCalls: string[] = [];
+      const fixture = await startProductionFixture({
+        reply: (call, index) => {
+          if (!JSON.stringify(call.messages).includes(marker)) {
+            return { _tag: "HttpError", status: 422 };
+          }
+          providerMarkerCalls.push(`provider-call-${index}`);
+          const available = new Set(
+            call.tools
+              .map((tool) => tool.function?.name)
+              .filter((name): name is string => name !== undefined),
+          );
+          if (!available.has("declare_dependency")) {
+            return { _tag: "HttpError", status: 422 };
+          }
+          return {
+            _tag: "ToolCall",
+            name: "declare_dependency",
+            arguments: {
+              producerBinding: { _tag: "AnyProducer" },
+              expectedDeliverable: {
+                kind: dependencyKind,
+                requiredArtifactRoles: [],
+              },
             },
-          },
-        };
-      },
-      firstDaemonEntry: ah10Child,
-      daemonEnvironment: { ARBOR_AH10_ROLE: "old" },
-      onDaemonStdout: (line) => pushProbe(events, line),
-    });
-    fixtures.push(fixture);
-    mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
-    const client = makePublicClient(fixture.baseUrl);
-    const project = await createFunctionalProject(
-      client,
-      fixture.workspaceDirectory,
-      "AH10 DeclareDependency generation takeover",
-    );
-    const consumerWorkId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
-      workId: consumerWorkId,
-      workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Declare dependency ${marker}.`,
-      why: "qualify generation-scoped dependency command takeover",
-      constraints: [],
-      completionExpectation: "one exact dependency is durably declared",
-      verificationMission: {
-        goal: `Verify dependency declaration ${marker}`,
-        criteria: [
-          {
-            criterionId: "ah10-dependency-declared",
-            requirement: "the dependency is durable and initially unsatisfied",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-      revision: 0,
-    });
-
-    const oldAction = await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "old" &&
-            event.boundary === "AH7AfterActionIntentCommit" &&
-            event.actionIndex === 0,
-        ),
-      (event) => event !== undefined,
-      30_000,
-    );
-    if (oldAction === undefined) {
-      throw new Error("AH10 old DeclareDependency intent probe was absent");
-    }
-    expect(oldAction.callRef).toMatch(/^call_/u);
-    await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "old" &&
-            event.boundary === "AH10BeforeLeaseRenewal" &&
-            event.executionId === oldAction.executionId,
-        ),
-      (event) => event !== undefined,
-      20_000,
-    );
-    await waitForPublic(
-      async () =>
-        readAh10Rows(fixture.databaseFile).leases.find(
-          (lease) => lease.execution_id === oldAction.executionId,
-        ),
-      (lease) =>
-        lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-      35_000,
-    );
-
-    const newDaemon = await fixture.startAdditionalDaemon({
-      entry: ah10Child,
-      daemonEnvironment: {
-        ARBOR_AH10_ROLE: "new",
-        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
-      },
-      onStdout: (line) => pushProbe(events, line),
-    });
-    const newLease = await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "new" &&
-            event.boundary === "AH10AfterLeaseAcquired" &&
-            event.executionId === oldAction.executionId,
-        ),
-      (event) => event !== undefined,
-      45_000,
-    );
-    expect(newLease?.fencingGeneration).toBe(1);
-    const newAction = await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "new" &&
-            event.boundary === "AH7AfterActionIntentCommit" &&
-            event.executionId === oldAction.executionId &&
-            event.actionIndex === 0,
-        ),
-      (event) => event !== undefined,
-      30_000,
-    );
-    expect(newAction?.providerTurnId).toBe(oldAction.providerTurnId);
-    expect(newAction?.callRef).toBe(oldAction.callRef);
-    expect(newAction?.logicalActionId).toBe(oldAction.logicalActionId);
-
-    releaseGate(fixture, "old", "action-intent");
-    const fenced = await waitForPublic(
-      async () =>
-        readAh10Rows(fixture.databaseFile).commands.filter(
-          (command) =>
-            command.resolution === "TerminalRejected" &&
-            command.terminal_error_json?.includes("FencingRejected"),
-        ),
-      (rows) => rows.length === 1,
-      15_000,
-    );
-    expect(fenced).toHaveLength(1);
-    expect(readAh10Rows(fixture.databaseFile).dependencies).toHaveLength(0);
-    await fixture.crash();
-
-    releaseGate(fixture, "new", "action-intent");
-    await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "new" &&
-            event.boundary === "AH7AfterActionResultCommit" &&
-            event.executionId === oldAction.executionId &&
-            event.actionIndex === 0,
-        ),
-      (event) => event !== undefined,
-      30_000,
-    );
-
-    const final = readAh10Rows(fixture.databaseFile);
-    const rejected = final.commands.filter(
-      (command) =>
-        command.resolution === "TerminalRejected" &&
-        command.terminal_error_json?.includes("FencingRejected"),
-    );
-    const committed = final.commands.filter((command) => {
-      if (command.resolution !== "Committed" || command.result_json === null) {
-        return false;
-      }
-      const result = JSON.parse(command.result_json) as {
-        readonly dependencyId?: string;
-        readonly consumerWorkId?: string;
-        readonly state?: string;
-        readonly revision?: number;
-      };
-      return (
-        result.consumerWorkId === consumerWorkId &&
-        result.state === "Unsatisfied" &&
-        result.revision === 0
+          };
+        },
+        firstDaemonEntry: ah10Child,
+        daemonEnvironment: {
+          ARBOR_AH10_ROLE: "old",
+          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
+            crashSide === "before" ? "1" : "0",
+        },
+        onDaemonStdout: (line) => pushProbe(events, line),
+      });
+      fixtures.push(fixture);
+      mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
+      const client = makePublicClient(fixture.baseUrl);
+      const project = await createFunctionalProject(
+        client,
+        fixture.workspaceDirectory,
+        "AH10 DeclareDependency generation takeover",
       );
-    });
-    expect(rejected).toHaveLength(1);
-    expect(committed).toHaveLength(1);
-    expect(rejected[0]?.command_id).not.toBe(committed[0]?.command_id);
-    expect(final.dependencies).toHaveLength(1);
-    expect(final.dependencies[0]).toMatchObject({
-      dependency_id: (
-        JSON.parse(committed[0]?.result_json ?? "{}") as {
-          dependencyId?: string;
+      const consumerWorkId = functionalId("wrk");
+      await client.command(project.projectId, "AssignWork", {
+        workId: consumerWorkId,
+        workspaceId: project.rootWorkspaceId,
+        expectedWorkspaceRevision: 0,
+        objective: `Declare dependency ${marker}.`,
+        why: "qualify generation-scoped dependency command takeover",
+        constraints: [],
+        completionExpectation: "one exact dependency is durably declared",
+        verificationMission: {
+          goal: `Verify dependency declaration ${marker}`,
+          criteria: [
+            {
+              criterionId: "ah10-dependency-declared",
+              requirement:
+                "the dependency is durable and initially unsatisfied",
+              required: true,
+            },
+          ],
+          riskRequirements: [],
+        },
+        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
+        revision: 0,
+      });
+
+      const oldAction = await waitForPublic(
+        async () =>
+          events.find(
+            (event) =>
+              event.role === "old" &&
+              event.boundary === "AH7AfterActionIntentCommit" &&
+              event.actionIndex === 0,
+          ),
+        (event) => event !== undefined,
+        30_000,
+      );
+      if (oldAction === undefined) {
+        throw new Error("AH10 old DeclareDependency intent probe was absent");
+      }
+      expect(oldAction.callRef).toMatch(/^call_/u);
+      await waitForPublic(
+        async () =>
+          events.find(
+            (event) =>
+              event.role === "old" &&
+              event.boundary === "AH10BeforeLeaseRenewal" &&
+              event.executionId === oldAction.executionId,
+          ),
+        (event) => event !== undefined,
+        20_000,
+      );
+      await waitForPublic(
+        async () =>
+          readAh10Rows(fixture.databaseFile).leases.find(
+            (lease) => lease.execution_id === oldAction.executionId,
+          ),
+        (lease) =>
+          lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
+        35_000,
+      );
+
+      const newDaemon = await fixture.startAdditionalDaemon({
+        entry: ah10Child,
+        daemonEnvironment: {
+          ARBOR_AH10_ROLE: "new",
+          ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
+        },
+        onStdout: (line) => pushProbe(events, line),
+      });
+      const newLease = await waitForPublic(
+        async () =>
+          events.find(
+            (event) =>
+              event.role === "new" &&
+              event.boundary === "AH10AfterLeaseAcquired" &&
+              event.executionId === oldAction.executionId,
+          ),
+        (event) => event !== undefined,
+        45_000,
+      );
+      expect(newLease?.fencingGeneration).toBe(1);
+      const newAction = await waitForPublic(
+        async () =>
+          events.find(
+            (event) =>
+              event.role === "new" &&
+              event.boundary === "AH7AfterActionIntentCommit" &&
+              event.executionId === oldAction.executionId &&
+              event.actionIndex === 0,
+          ),
+        (event) => event !== undefined,
+        30_000,
+      );
+      expect(newAction?.providerTurnId).toBe(oldAction.providerTurnId);
+      expect(newAction?.callRef).toBe(oldAction.callRef);
+      expect(newAction?.logicalActionId).toBe(oldAction.logicalActionId);
+
+      releaseGate(fixture, "old", "action-intent");
+      if (crashSide === "before") {
+        const beforeCommit = await waitForPublic(
+          async () =>
+            events.find(
+              (event) =>
+                event.role === "old" &&
+                event.boundary === "AH10BeforeFencedReceiptCommit" &&
+                event.executionId === oldAction.executionId,
+            ),
+          (event) => event !== undefined,
+          15_000,
+        );
+        expect(beforeCommit?.commandId).toMatch(/^cmd_/u);
+        expect(
+          readAh10Rows(fixture.databaseFile).commands.filter(
+            (command) =>
+              command.resolution === "TerminalRejected" &&
+              command.terminal_error_json?.includes("FencingRejected"),
+          ),
+        ).toHaveLength(0);
+      } else {
+        const fenced = await waitForPublic(
+          async () =>
+            readAh10Rows(fixture.databaseFile).commands.filter(
+              (command) =>
+                command.resolution === "TerminalRejected" &&
+                command.terminal_error_json?.includes("FencingRejected"),
+            ),
+          (rows) => rows.length === 1,
+          15_000,
+        );
+        expect(fenced).toHaveLength(1);
+      }
+      expect(readAh10Rows(fixture.databaseFile).dependencies).toHaveLength(0);
+      await fixture.crash();
+      if (crashSide === "before") {
+        expect(
+          readAh10Rows(fixture.databaseFile).commands.filter(
+            (command) =>
+              command.resolution === "TerminalRejected" &&
+              command.terminal_error_json?.includes("FencingRejected"),
+          ),
+        ).toHaveLength(0);
+      }
+
+      releaseGate(fixture, "new", "action-intent");
+      await waitForPublic(
+        async () =>
+          events.find(
+            (event) =>
+              event.role === "new" &&
+              event.boundary === "AH7AfterActionResultCommit" &&
+              event.executionId === oldAction.executionId &&
+              event.actionIndex === 0,
+          ),
+        (event) => event !== undefined,
+        30_000,
+      );
+
+      const final = readAh10Rows(fixture.databaseFile);
+      const rejected = final.commands.filter(
+        (command) =>
+          command.resolution === "TerminalRejected" &&
+          command.terminal_error_json?.includes("FencingRejected"),
+      );
+      const committed = final.commands.filter((command) => {
+        if (
+          command.resolution !== "Committed" ||
+          command.result_json === null
+        ) {
+          return false;
         }
-      ).dependencyId,
-      project_id: project.projectId,
-      consumer_work_id: consumerWorkId,
-      producer_binding: JSON.stringify({ _tag: "AnyProducer" }),
-      expected_deliverable: JSON.stringify({
-        kind: dependencyKind,
-        requiredArtifactRoles: [],
-      }),
-      revision: 0,
-      state: "Unsatisfied",
-    });
-    expect(final.actions).toContainEqual(
-      expect.objectContaining({
-        execution_id: oldAction.executionId,
-        provider_turn_id: oldAction.providerTurnId,
-        logical_action_id: oldAction.logicalActionId,
-        call_ref: oldAction.callRef,
-        action_kind: "declare_dependency",
-        state: "Applied",
-      }),
-    );
-    expect(final.actionObservations).toHaveLength(1);
-    expect(providerMarkerCalls).toHaveLength(1);
-    expect(fixture.providerCalls).toHaveLength(1);
-    expect(newDaemon.daemonErrors).toEqual([]);
-    expect(fixture.daemonErrors).toEqual([]);
-    releaseGate(fixture, "new", "action-result");
-    await newDaemon.crash();
-  }, 120_000);
+        const result = JSON.parse(command.result_json) as {
+          readonly dependencyId?: string;
+          readonly consumerWorkId?: string;
+          readonly state?: string;
+          readonly revision?: number;
+        };
+        return (
+          result.consumerWorkId === consumerWorkId &&
+          result.state === "Unsatisfied" &&
+          result.revision === 0
+        );
+      });
+      expect(rejected).toHaveLength(crashSide === "before" ? 0 : 1);
+      expect(committed).toHaveLength(1);
+      if (crashSide === "after") {
+        expect(rejected[0]?.command_id).not.toBe(committed[0]?.command_id);
+      }
+      expect(final.dependencies).toHaveLength(1);
+      expect(final.dependencies[0]).toMatchObject({
+        dependency_id: (
+          JSON.parse(committed[0]?.result_json ?? "{}") as {
+            dependencyId?: string;
+          }
+        ).dependencyId,
+        project_id: project.projectId,
+        consumer_work_id: consumerWorkId,
+        producer_binding: JSON.stringify({ _tag: "AnyProducer" }),
+        expected_deliverable: JSON.stringify({
+          kind: dependencyKind,
+          requiredArtifactRoles: [],
+        }),
+        revision: 0,
+        state: "Unsatisfied",
+      });
+      expect(final.actions).toContainEqual(
+        expect.objectContaining({
+          execution_id: oldAction.executionId,
+          provider_turn_id: oldAction.providerTurnId,
+          logical_action_id: oldAction.logicalActionId,
+          call_ref: oldAction.callRef,
+          action_kind: "declare_dependency",
+          state: "Applied",
+        }),
+      );
+      expect(final.actionObservations).toHaveLength(1);
+      expect(providerMarkerCalls).toHaveLength(1);
+      expect(fixture.providerCalls).toHaveLength(1);
+      expect(newDaemon.daemonErrors).toEqual([]);
+      expect(fixture.daemonErrors).toEqual([]);
+      releaseGate(fixture, "new", "action-result");
+      await newDaemon.crash();
+    },
+    120_000,
+  );
 });

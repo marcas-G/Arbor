@@ -267,3 +267,34 @@ tsconfig.test.json --noEmit --pretty false` 与专属测试 Biome 检查 PASS。
 AH10 整体仍为 PARTIAL。随后完整 `pnpm check` PASS：lint、类型检查、
 架构 155、核心 1705 + 3 skipped、Web 216；未运行完整
 `pnpm test:functional`，不得把定向进程 1/1 扩展为全部功能批次。
+
+## 2026-10-07 进程资格增量：DeclareDependency receipt 提交两侧
+
+将 DeclareDependency 进程用例参数化覆盖 receipt 事务提交前/后杀停，复用
+现有测试子进程 `AH10BeforeFencedReceiptCommit` Gateway probe，不改 Gateway
+或共享 fixture。提交前分支在 fence rejection 已写入当前未提交事务时停住；
+独立只读 SQLite 连接确认 FencingRejected receipt 不可见，杀 gen0 后再次
+确认 receipt 行不存在（事务回滚），gen1 仍可唯一提交 Dependency。提交后
+分支先观察到真实旧 receipt，再杀 gen0，由 gen1 receipt-first 接管。两案均
+保持 30 秒生产 TTL、不直接写 lease/receipt；最终依赖行唯一、Unsatisfied /
+revision 0、Action Applied、Observation 唯一且 Provider 请求一次。提交后
+分支有一条旧 FencingRejected 和一条新 Committed Command；提交前分支只有
+新代 Committed Command。
+
+验证：
+
+```text
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts -t "takes over DeclareDependency"
+2 passed; 3 skipped; 73.06s
+pnpm exec tsc -p tsconfig.test.json --noEmit --pretty false
+passed
+pnpm --filter @arbor/single-workspace build
+passed
+pnpm exec biome check tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts
+passed
+```
+
+该进程证据仅覆盖 DeclareDependency，不扩展为 AH10 整体闭合；AH10 仍为
+PARTIAL。主 Agent 在同一工作树独立复跑两侧 2/2 PASS（72.87s）。本次
+参数化增量未重跑完整 `pnpm check` / `pnpm test:functional`；上一提交
+`29b9ce2` 的完整 `pnpm check` 不能冒称为本增量的全量结果。
