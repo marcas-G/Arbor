@@ -78,7 +78,36 @@ PASS (Biome 944 files, architecture 155, core 1708 passed + 3 skipped,
 Web 216 tests; typecheck and Web build passed)
 ```
 
-The full release functional suite was not run in this worktree. This result
+At the initial RED checkpoint the full release functional suite had not run;
+see Integrated validation below for later local-source results. This result
 closes only the SelectCurrentWork DecisionEpisode dispatch seam; other AH10
 control actions/state combinations, AH10-DG-01 Deliver and VCS-DG-01 remain
 open. No `docs/design/**` changes were made.
+
+## Integrated validation on `5e389e8` (2026-10-08)
+
+After a fresh `pnpm build` generated the daemon child entrypoint from the
+current source, the isolated process test passed 2/2 (72.96s). The first
+pre-build attempt had loaded the previous ignored `apps/single-workspace/dist`
+artifact and timed out both cases; it is recorded as an invalid stale-build
+attempt, not as evidence against the source change.
+
+Additional gates on the same source/commit:
+
+```text
+AH10 primary process + SendMessage process files: 2 files / 10 tests PASS (370.93s)
+pnpm check: PASS
+  Biome 944 files; typecheck/build PASS
+  architecture 30 files / 155 tests
+  core 315 files / 1708 passed + 3 skipped
+  Web typecheck/build; 31 files / 216 tests
+F20 committed clean checkout: 1/1 PASS (51.97s)
+pnpm test:functional: PASS
+  Vitest 23 files / 55 tests (1524.14s)
+  Playwright 2/2 (21.7s)
+```
+
+These runs include both SelectCurrentWork receipt sides and the P9 durable
+TextDelta renewal qualification. They do not close AH10: other control
+actions, additional state combinations and independent Deliver/VCS governance
+gaps remain open.

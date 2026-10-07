@@ -365,6 +365,15 @@ canonical TextDelta 持久数均 `>512`，并在首轮不足时等待下一次�
 此前 `pnpm check` 在 `47e9249` 上 PASS（Biome 944、architecture 155、core
 1708 + 3 skipped、Web 216）；P9 后续测试专属变更的 test typecheck/Biome PASS，
 但未在 `3ffb17a` 重跑完整 `pnpm check`。AH10/AH7 仍未闭合。
+AH10 DecisionEpisode 续发实现修复位于本地提交 `5e389e8`：daemon 恢复同一
+active Workspace Execution 时不再仅筛 WorkEpisode，既有 pre-dispatch、Pending
+approval 与 fencing/runExecution 路径保持不变；拟议 AH10-DG-02 按现有 P2-06/P9/
+EGP 合同归类为已修复实现缺陷，不涉及 `docs/design/**`。SelectCurrentWork 提交前/
+后 receipt 双 daemon 2/2，AH10 主文件+SendMessage 10/10，完整 `pnpm check` PASS
+（Biome 944、architecture 155、core 1708 + 3 skipped、Web 216），F20 1/1；本地
+`5e389e8` 完整功能 PASS（Vitest 23 files/55 tests、Playwright 2/2）。AH10 其他
+控制动作/状态组合及 Deliver/验证治理缺口仍开放。本次 cherry-pick 推送尝试遭
+GitHub Remote Internal Server Error，远端同步状态须另行确认。
 AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
 Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
 ToolResult/Artifact，原 Provider 决策只一次；见
