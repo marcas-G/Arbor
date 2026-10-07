@@ -216,6 +216,7 @@ Action 最终 Applied、Observation 和 Deliverable 各一，Provider 未重跑�
 主 Agent 独立复跑两案 2/2 PASS；子 Agent 的两案定向亦 PASS。
 `pnpm architecture` 155/155、`pnpm lint` 与 `pnpm typecheck` PASS；
 本次增量尚未运行完整 `pnpm check` 或全部功能批次。
+提交 `9d4ce1e` 上 F20 干净检出安装、构建及公开黑盒 1/1 PASS。
 
 仍缺旧 FencingRejected receipt **事务提交前**精确杀停，以及其他控制
 动作的两侧进程资格。该前态需另审 Gateway 事务内 test-only 注入边界；
