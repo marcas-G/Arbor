@@ -310,6 +310,8 @@ AH10 后续在仅测试子进程显式装配的 Gateway 事务内探针处，补
 Action Pending 三案合跑 3/3 PASS。提交前独立 DB 读不到旧回执，
 杀进程回滚后新代唯一提交。见同一 AH10 结果文件；其他动作及
 Deliver/验证控制的开放缺口仍使 AH10 保持 PARTIAL。
+`f6ae77f` 上完整 `pnpm check` PASS（架构 155、核心 1705 + 3 skipped、
+Web 216）；未在该提交重跑完整 `pnpm test:functional`。
 At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
 Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
 At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
