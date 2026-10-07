@@ -41,6 +41,14 @@ export type ExecutionSettlementQualificationProbe = (event: {
   readonly commandId: string;
 }) => Promise<void>;
 
+/** Test-child-only seam for proving real lease takeover without editing the
+ * durable lease. Production Composition leaves this probe absent. */
+export type ExecutionLeaseQualificationProbe = (event: {
+  readonly boundary: "AH10BeforeLeaseRenewal" | "AH10AfterLeaseAcquired";
+  readonly executionId: ExecutionId;
+  readonly fencingGeneration: LeaseGeneration;
+}) => Promise<void>;
+
 const WORKER_ID = "worker:local";
 /** P12 `06` §2: the in-process worker incarnation. A daemon restart mints a
  * new incarnation so an old process cannot be mistaken for the current one. */
@@ -99,6 +107,7 @@ export const leaseRenewalLoop = (
   workerIncarnationId: string,
   generation: LeaseGeneration,
   intervalMs: number = LEASE_RENEW_INTERVAL_MS,
+  qualificationProbe?: ExecutionLeaseQualificationProbe,
 ): Effect.Effect<
   never,
   LeaseLost | ExecutionRepositoryError | TransactionOperationalFailure,
@@ -107,6 +116,15 @@ export const leaseRenewalLoop = (
   Effect.forever(
     Effect.gen(function* () {
       yield* Effect.sleep(intervalMs);
+      if (qualificationProbe !== undefined) {
+        yield* Effect.promise(() =>
+          qualificationProbe({
+            boundary: "AH10BeforeLeaseRenewal",
+            executionId,
+            fencingGeneration: generation,
+          }),
+        );
+      }
       yield* renewLeaseOnce(
         executionId,
         workerId,
@@ -127,6 +145,7 @@ export const runExecution = (
   principal: Principal,
   renewIntervalMs: number = LEASE_RENEW_INTERVAL_MS,
   qualificationProbe?: ExecutionSettlementQualificationProbe,
+  leaseQualificationProbe?: ExecutionLeaseQualificationProbe,
 ) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
@@ -151,6 +170,15 @@ export const runExecution = (
     const lease = yield* tx.transact(
       leases.acquire(executionId, WORKER_ID, WORKER_INCARNATION_ID),
     );
+    if (leaseQualificationProbe !== undefined) {
+      yield* Effect.promise(() =>
+        leaseQualificationProbe({
+          boundary: "AH10AfterLeaseAcquired",
+          executionId,
+          fencingGeneration: lease.generation,
+        }),
+      );
+    }
     const state = yield* tx.transact(states.find(executionId));
     const stateUpdatedAt = yield* clock.now();
     const episode =
@@ -192,6 +220,7 @@ export const runExecution = (
         lease.workerIncarnationId,
         lease.generation,
         renewIntervalMs,
+        leaseQualificationProbe,
       ),
     );
 

@@ -31,6 +31,7 @@ import {
   type WakeReason,
 } from "@arbor/domain";
 import {
+  type ExecutionLeaseQualificationProbe,
   type ExecutionSettlementQualificationProbe,
   preDispatchCheck,
   runExecution,
@@ -224,6 +225,7 @@ export interface ProductionDaemonConfig {
   readonly bindingFingerprint: string;
   readonly configurationRevision: string;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
+  readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
 }
 
@@ -615,6 +617,7 @@ export const ProductionDaemonServiceLive = (
                 config.principal,
                 undefined,
                 config.executionSettlementQualificationProbe,
+                config.executionLeaseQualificationProbe,
               ).pipe(
                 Effect.catchTag("LeaseFencingRejected", () =>
                   Effect.succeed(null),

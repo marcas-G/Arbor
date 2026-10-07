@@ -25,6 +25,7 @@ import {
 import { Effect, Option } from "effect";
 import type { AdmitExecutionPayload } from "./commands/admit-execution.js";
 import {
+  type ExecutionLeaseQualificationProbe,
   type ExecutionSettlementQualificationProbe,
   runExecution,
 } from "./execution-runtime.js";
@@ -49,6 +50,7 @@ export const consumeWorkspaceWake = (
   wakeReason: WakeReason,
   principal: Principal,
   qualificationProbe?: ExecutionSettlementQualificationProbe,
+  leaseQualificationProbe?: ExecutionLeaseQualificationProbe,
 ) =>
   Effect.gen(function* () {
     const scheduler = yield* ExecutionScheduler;
@@ -240,6 +242,7 @@ export const consumeWorkspaceWake = (
         principal,
         undefined,
         qualificationProbe,
+        leaseQualificationProbe,
       );
       return;
     }

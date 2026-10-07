@@ -2,7 +2,7 @@
 
 日期：2026-10-05
 
-状态：**PARTIAL / 两个确定性反例已修复并纳入核心测试；真实进程资格与其他控制动作仍未完成。**
+状态：**PARTIAL / 两类控制动作的定向反例和一个真实双 daemon 跨代资格已通过；其他控制动作及 crash-side qualification 仍未完成。**
 
 冻结合同：`docs/design/implementation/P1/07-agent-loop-step-command-identity.md`
 §1–§3 和 `docs/design/implementation/P9/07-agent-loop-step-recovery.md` AH10。
@@ -37,3 +37,72 @@ CommandId 会使第一例转绿、第二例转红，故未采纳半修复。当�
 均 PASS。AH10 的退出仍需要：其他 canonical 控制动作的跨代 receipt-first
 收敛、两侧真实进程 kill/restart、旧代写拒绝、新代最多一次 canonical effect
 与 Provider 不重跑的证据。不得把这份单 handler 测试称为 AH10 通过。
+
+## 2026-10-07 补充：第二个 canonical handler
+
+为验证接管不是 AssignWork 特例，AH10 专属测试新增 `ProduceDeliverable`
+覆盖：gen0 `FencingRejected` 后 gen1 使用不同 CommandId；gen0 已有匹配的
+Committed receipt 时 gen1 在再次执行前完成收敛；gen0 的普通 domain rejection
+不允许作为接管资格。实现只扩展到该 handler：新代按 generation 派生
+CommandId，通过事务查询旧代 receipt，并校验 receipt 的 CommandId、ProjectId
+及 Committed 结果中的 DeliverableId、来源 Work/revision、类型和 artifact roles；
+FencingRejected 才继续到新代命令。Receipt 查询与事务能力是 handler 的必需
+依赖；生产 composition 提供真实端口，原有仅测其他控制动作的测试提供明确空查询。
+
+额外的既有直接 handler 调用点
+`apps/single-workspace/test/mac-p3-dependency-delivery.test.ts` 显式提供事务与空回执查询，
+确保原有 `System` 控制路径仍在正确事务能力下运行。
+
+定向证据：
+
+```text
+pnpm exec vitest run apps/single-workspace/test/ah10-generation-command-takeover.test.ts apps/single-workspace/test/verification-control-actions.test.ts apps/single-workspace/test/mac-p3-dependency-delivery.test.ts
+3 test files passed; 16 tests passed
+pnpm exec tsc -b apps/single-workspace/tsconfig.json --pretty false
+passed
+```
+
+在这次单 handler 补充完成时，整体仍为 **PARTIAL**：当时尚未取得真实 daemon
+跨代证据，且单 handler 测试本身不能证明旧 owner 写拒绝或 Provider 不重跑。
+后续进程证据见下节。
+
+## 2026-10-07 补充：真实双 daemon generation takeover
+
+新增独立进程资格
+`tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts`。
+它启动两个独立 production daemon，共用同一临时 SQLite 数据库和同一个
+Provider 服务，HTTP 端口不同。测试只读检查 lease/command/deliverable/action
+状态，不直接 SQL 写入 receipt 或 lease。
+
+资格顺序由 probe 事件和只读 lease expiry 观测控制，保持生产 30 秒 TTL：
+generation 0 在持久 ActionIntent 后暂停，并在首次 renew 前暂停续租；测试等
+lease 实际过期后启动第二 daemon。generation 1 获得 lease 且停在同一个 pinned
+ActionIntent 后，释放旧 owner，使真实 CommandGateway 写入 TerminalRejected
+FencingRejected receipt；随后释放新 owner。最终断言确认：两个 generation 使用
+不同 CommandId；旧 owner 的 canonical Deliverable effect 被拒绝；新 owner 读旧
+receipt 后只提交一个 Deliverable；同一 ProviderTurn/callRef 的 Provider 请求
+计数为 1。
+
+测试专用续租 probe 仅由 `ah10-process-child.mjs` 显式装配；普通 production
+entrypoint 不提供该 probe。第二 daemon 由 production fixture API 启动在独立
+HTTP 端口，并由 fixture.stop 清理；gate 文件位于该 fixture 的临时目录。
+
+定向证据：
+
+```text
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-generation-takeover.functional.test.ts
+1 test passed; duration 36.04s
+pnpm exec tsc -p tsconfig.test.json --noEmit --pretty false
+passed
+```
+
+主 Agent 又从当前工作树复跑上述真实进程用例两次（均 1/1 PASS），并增强了
+Provider 总请求数、Work 总数及旧成功回执的完整结果绑定断言；相关 5 个
+定向测试文件合计 19/19 PASS，`pnpm typecheck` PASS。
+
+同一工作树的一次完整 `pnpm check` PASS：架构 155、核心 1687 + 3 skipped、
+Web 216；构建、lint、类型检查均通过。该批次不包含隔离的治理红测。
+
+整体仍为 **PARTIAL**：目前真实进程资格覆盖 ProduceDeliverable 单一 canonical
+控制动作，尚无其余 canonical handler 的进程级覆盖，也没有该边界两侧的
+kill/restart 注入矩阵；不据此宣布 AH10 关闭。

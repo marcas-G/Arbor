@@ -21,6 +21,7 @@ import {
 import type {
   BlobStorePortService,
   ClockService,
+  CommandStoreService,
   FormationProposalStoreService,
   MessageStoreService,
   SessionRepositoryService,
@@ -161,6 +162,9 @@ const setup = (
   } as TransactionPortService;
   const dependencies = {
     gateway,
+    commandReceipts: {
+      findResolution: () => Effect.succeed(Option.none()),
+    } as Pick<CommandStoreService, "findResolution">,
     blobs,
     clock: {
       now: () => Effect.succeed("2026-10-02T00:00:00.000Z"),

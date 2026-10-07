@@ -26,6 +26,7 @@ import {
   ProjectEnvironmentPortFromResolverLive,
 } from "@arbor/environment-resolver-local";
 import {
+  type ExecutionLeaseQualificationProbe,
   ExecutionSchedulerLive,
   type ExecutionSettlementQualificationProbe,
   FenceStopCheckLive,
@@ -294,6 +295,7 @@ export interface SingleWorkspaceConfig {
    * public request. Production startup leaves this absent. */
   readonly qualificationProbe?: AgentLoopQualificationProbe;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
+  readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
   readonly toolQualificationProbe?: ToolRuntimeQualificationProbe;
   readonly providerQualificationProbe?: ProviderRuntimeConfig["qualificationProbe"];
@@ -769,6 +771,12 @@ export const buildSingleWorkspaceLayer = (
         : {
             executionSettlementQualificationProbe:
               config.executionSettlementQualificationProbe,
+          }),
+      ...(config.executionLeaseQualificationProbe === undefined
+        ? {}
+        : {
+            executionLeaseQualificationProbe:
+              config.executionLeaseQualificationProbe,
           }),
       ...(config.conversationResponseQualificationProbe === undefined
         ? {}
