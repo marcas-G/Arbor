@@ -639,3 +639,14 @@ PASS; full `pnpm check` PASS (Biome 949 files, architecture 155, root 1711
 passed + 3 skipped, Web 216). The P12 restore-drill JSON drift caused by the
 check was restored to its committed timestamp/hash. This validation does not
 turn the pending corruption test into release coverage or close AH7/AH10.
+
+Final AH7 Provider-call-oracle correction is on committed/pushed
+`9791914`: the test now proves the original Step's single sourced
+ModelOutput/hash and exactly two A/B ToolCalls, then explicitly settles a
+different successor ProviderTurn with `wait(Manual)` instead of counting a
+legal successor call as replay. Focused target passed twice (65.00s, 64.98s).
+On `9791914`, F20 passed 1/1 (43.77s) and full `pnpm test:functional` exited 0:
+Vitest 26/26 files, 65/65 tests (2062.17s); Playwright 2/2 (24.5s). The pending
+AH10 binding-corruption RED remains excluded from this green batch. The full
+`pnpm check` had passed on `69ce796` before this final test-only amendment;
+after the amendment, test TypeScript/Biome and the full functional batch passed.

@@ -104,3 +104,23 @@ pnpm exec vitest run --config vitest.functional.config.ts tests/functional/proce
 1/1 PASS (65.00s)
 1/1 PASS (64.98s)
 ```
+
+## Committed release-functional verification (2026-10-08)
+
+The final test-only correction was committed as `9791914` and pushed before
+the clean-checkout and full functional runs.
+
+```text
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/package/clean-checkout.functional.test.ts
+1 file / 1 test PASS (43.77s)
+
+pnpm test:functional
+exit 0
+Vitest: 26/26 files, 65/65 tests PASS (2062.17s)
+Playwright: 2/2 tests PASS (24.5s)
+```
+
+The full run includes the corrected AH7 B intent-before-effect case and the P9
+dense SSE lease-renewal case. The pending AH10 binding-corruption RED is not
+part of `vitest.functional.config.ts` and remains separate governance evidence;
+it is not counted as a passing test here.
