@@ -325,6 +325,83 @@ const corruptNativeManifestLogicalStepNo = (
   }
 };
 
+const corruptOrdinaryNativeSourceIdentity = (
+  databaseFile: string,
+  providerTurnId: string,
+  field:
+    | "logicalStepNo"
+    | "repairAttempt"
+    | "providerTurnId"
+    | "executionId"
+    | "bindingFingerprint",
+) => {
+  const db = new DatabaseSync(databaseFile);
+  try {
+    const row = db
+      .prepare(
+        `SELECT manifest_id, manifest_json
+           FROM model_context_manifests
+          WHERE provider_turn_id = ?`,
+      )
+      .get(providerTurnId) as
+      | { manifest_id: string; manifest_json: string }
+      | undefined;
+    if (row === undefined)
+      throw new Error("ordinary AH19 Native manifest missing");
+    const manifest = JSON.parse(row.manifest_json) as Record<string, unknown>;
+    const identity = manifest.sourceAgentLoopStep as Record<string, unknown>;
+    if (typeof identity !== "object" || identity === null) {
+      throw new Error("ordinary AH19 Native source identity missing");
+    }
+    if (field === "bindingFingerprint") {
+      manifest.resolvedModelBindingFingerprint =
+        "p16fp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    } else if (field === "logicalStepNo" || field === "repairAttempt") {
+      identity[field] = Number(identity[field]) + 1;
+    } else {
+      identity[field] = `${String(identity[field])}-wrong`;
+    }
+    const result = db
+      .prepare(
+        `UPDATE model_context_manifests
+            SET manifest_json = ?
+          WHERE manifest_id = ?`,
+      )
+      .run(JSON.stringify(manifest), row.manifest_id);
+    if (Number(result.changes) !== 1) {
+      throw new Error(
+        `ordinary AH19 Native identity corruption missed ${field}`,
+      );
+    }
+  } finally {
+    db.close();
+  }
+};
+
+const markStepNextReadyWithoutSuccessor = (
+  databaseFile: string,
+  executionId: string,
+  logicalStepNo: number,
+  repairAttempt: number,
+) => {
+  const db = new DatabaseSync(databaseFile);
+  try {
+    const result = db
+      .prepare(
+        `UPDATE agent_loop_steps
+            SET state = 'NextStepReady'
+          WHERE execution_id = ? AND logical_step_no = ? AND repair_attempt = ?
+            AND successor_json IS NULL`,
+      )
+      .run(executionId, logicalStepNo, repairAttempt);
+    if (Number(result.changes) !== 1) {
+      throw new Error("AH19 NextStepReady no-successor mutation missed");
+    }
+  } finally {
+    db.close();
+  }
+};
+
 const corruptCompiledInferenceRequestHash = (
   databaseFile: string,
   providerTurnId: string,
@@ -666,8 +743,36 @@ const startAtCheckpointBoundary = async (
     (entry) => entry !== undefined,
     60_000,
   ).catch((error: unknown) => {
+    const latestNativeRequest = providerRequests
+      .filter((event) => event.operationKind === "CompactionNative")
+      .at(-1);
+    const boundarySnapshot =
+      latestNativeRequest === undefined
+        ? undefined
+        : readSnapshot(fixture.databaseFile, {
+            sessionId: project.rootSessionId,
+            executionId: readExecutionIdForProviderTurn(
+              fixture.databaseFile,
+              latestNativeRequest.providerTurnId,
+            ),
+            workId,
+          });
+    const latestNativeRow = boundarySnapshot?.providerTurns.find(
+      (row) => row.provider_turn_id === latestNativeRequest?.providerTurnId,
+    );
+    let latestNativeIdentity: unknown;
+    try {
+      latestNativeIdentity = (
+        JSON.parse(latestNativeRow?.manifest_json ?? "{}") as Record<
+          string,
+          unknown
+        >
+      ).sourceAgentLoopStep;
+    } catch {
+      latestNativeIdentity = "invalid";
+    }
     throw new Error(
-      `AH19 checkpoint boundary missing ${boundary}: ${error instanceof Error ? error.message : String(error)}; child=${childOutput.join(" | ")}; providerRequests=${JSON.stringify(providerRequests)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+      `AH19 checkpoint boundary missing ${boundary}: ${error instanceof Error ? error.message : String(error)}; child=${childOutput.join(" | ")}; providerRequests=${JSON.stringify(providerRequests)}; nativeSourceIdentity=${JSON.stringify(latestNativeIdentity)}; session=${JSON.stringify(boundarySnapshot?.session)}; checkpoints=${JSON.stringify(boundarySnapshot?.checkpoints)}; steps=${JSON.stringify(boundarySnapshot?.steps)}; daemon=${fixture.daemonErrors.join(" | ")}`,
     );
   });
   if (probe === undefined) throw new Error("AH19 checkpoint probe missing");
@@ -682,6 +787,119 @@ const startAtCheckpointBoundary = async (
     reportUrl,
     childOutput,
   };
+};
+
+const startOrdinaryNativeAtCheckpointBoundary = async (
+  boundary:
+    | "AH17BeforeCheckpointEpochCommit"
+    | "AH17AfterCheckpointEpochCommit",
+) => {
+  probes.length = 0;
+  providerRequests.length = 0;
+  const reportUrl = await startReportServer();
+  const childOutput: string[] = [];
+  const fixture = await startProductionFixture({
+    reply: () => ({ _tag: "HttpError", status: 500 }),
+    firstDaemonEntry: childEntry,
+    daemonEnvironment: {
+      ARBOR_AH19_BOUNDARY: boundary,
+      ARBOR_AH19_BINDING_VARIANT: "A",
+      ARBOR_AH19_ORDINARY_WORK: "1",
+      ARBOR_AH19_CONTEXT_WINDOW: "16384",
+      ARBOR_AH19_REPORT_URL: reportUrl,
+    },
+    onDaemonStdout: (line) => {
+      childOutput.push(line);
+      try {
+        const event = JSON.parse(line) as Ah19Probe;
+        if (event.tag === "AH19_PROBE") probes.push(event);
+      } catch {
+        // Preserve other daemon output in fixture diagnostics.
+      }
+    },
+  });
+  fixtures.push(fixture);
+  const client = makePublicClient(fixture.baseUrl);
+  const project = await createFunctionalProject(
+    client,
+    fixture.workspaceDirectory,
+    `AH19 ordinary Native recovery ${boundary}`,
+  );
+  const workId = functionalId("wrk");
+  await client.command(project.projectId, "AssignWork", {
+    workId,
+    workspaceId: project.rootWorkspaceId,
+    expectedWorkspaceRevision: 0,
+    objective: "Build public Work history for ordinary Native recovery.",
+    why: "qualify ordinary Native checkpoint recovery",
+    constraints: [],
+    completionExpectation: "continue the same logical step after compaction",
+    verificationMission: {
+      goal: "qualify ordinary Native recovery",
+      criteria: [
+        {
+          criterionId: "ordinary-native-recovery",
+          requirement: "resume from the exact persisted source step",
+          required: true,
+        },
+      ],
+      riskRequirements: [],
+    },
+    provenance: { predecessorWorkId: null, reason: "AH19 ordinary fixture" },
+    revision: 0,
+  });
+  for (let index = 0; index < 10; index += 1) {
+    const observed = await waitForPublic(
+      async () => ({
+        native: providerRequests.find(
+          (request) => request.operationKind === "CompactionNative",
+        ),
+        current: await client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      }),
+      (state) => state.native !== undefined || state.current?.status === "Open",
+      60_000,
+    );
+    if (observed.native !== undefined) break;
+    if (observed.current?.workId !== workId)
+      throw new Error("ordinary Work ceased to be current");
+    const beforeSteer = providerRequests.length;
+    await client.command(project.projectId, "SteerWork", {
+      workId,
+      workspaceId: project.rootWorkspaceId,
+      expectedWorkRevision: observed.current.revision,
+      steer: {
+        severity: "Normal",
+        guidance: `AH19 ordinary recovery history ${index}`,
+      },
+      provenance: { source: "HumanInput" },
+    });
+    await waitForPublic(
+      async () => ({
+        count: providerRequests.length,
+        native: providerRequests.find(
+          (request) => request.operationKind === "CompactionNative",
+        ),
+      }),
+      (state) => state.count >= beforeSteer + 2 || state.native !== undefined,
+      60_000,
+    );
+  }
+  const probe = await waitForPublic(
+    async () => probes.find((event) => event.boundary === boundary),
+    (event) => event !== undefined,
+    60_000,
+  );
+  if (probe === undefined)
+    throw new Error(`ordinary Native boundary missing: ${boundary}`);
+  const native = providerRequests.find(
+    (request) => request.operationKind === "CompactionNative",
+  );
+  if (native === undefined) throw new Error("ordinary Native request missing");
+  return { fixture, project, workId, probe, native, reportUrl, childOutput };
 };
 
 const waitForLeaseExpiry = async (
@@ -862,6 +1080,26 @@ describe("AH19 ProviderNative binding recovery", () => {
     expect(
       snapshot.providerLinks.some((link) => link.role === "OverflowCompaction"),
     ).toBe(false);
+    const nativeTurn = snapshot.providerTurns.find(
+      (turn) => turn.provider_turn_id === ordinaryNative?.providerTurnId,
+    );
+    const nativeManifest = JSON.parse(nativeTurn?.manifest_json ?? "{}") as {
+      sourceAgentLoopStep?: {
+        executionId?: string;
+        logicalStepNo?: number;
+        repairAttempt?: number;
+        providerTurnId?: string;
+      };
+    };
+    const sourceStep = snapshot.steps.find(
+      (step) => step.logical_step_no === 1 && step.repair_attempt === 0,
+    );
+    expect(nativeManifest.sourceAgentLoopStep).toEqual({
+      executionId,
+      logicalStepNo: 1,
+      repairAttempt: 0,
+      providerTurnId: sourceStep?.provider_turn_id,
+    });
 
     const replacementInferenceId = ordinaryNative?.providerTurnId.replace(
       "_native_compact_0",
@@ -996,6 +1234,583 @@ describe("AH19 ProviderNative binding recovery", () => {
 });
 
 describe("AH19 restart binding qualification", () => {
+  it.each([
+    "AH17BeforeCheckpointEpochCommit",
+    "AH17AfterCheckpointEpochCommit",
+  ] as const)(
+    "recovers ordinary Native source identity at %s without replaying the ProviderTurn",
+    async (boundary) => {
+      const scenario = await startOrdinaryNativeAtCheckpointBoundary(boundary);
+      const { fixture, project, workId, native, childOutput } = scenario;
+      const executionId = scenario.probe.executionId;
+      const nativeTurnId = native.providerTurnId;
+      const ids = { sessionId: project.rootSessionId, executionId, workId };
+      const beforeRestart = readSnapshot(fixture.databaseFile, ids);
+      const nativeRow = beforeRestart.providerTurns.find(
+        (turn) => turn.provider_turn_id === nativeTurnId,
+      );
+      const manifest = JSON.parse(nativeRow?.manifest_json ?? "{}") as {
+        sourceAgentLoopStep?: {
+          executionId: string;
+          logicalStepNo: number;
+          repairAttempt: number;
+          providerTurnId: string;
+        };
+        inputFrontier?: {
+          firstSequence: number | null;
+          lastSequence: number | null;
+        };
+      };
+      const sourceStep = beforeRestart.steps.find(
+        (step) =>
+          step.logical_step_no ===
+            manifest.sourceAgentLoopStep?.logicalStepNo &&
+          step.repair_attempt === manifest.sourceAgentLoopStep?.repairAttempt,
+      );
+      expect(manifest.sourceAgentLoopStep).toEqual({
+        executionId,
+        logicalStepNo: sourceStep?.logical_step_no,
+        repairAttempt: sourceStep?.repair_attempt,
+        providerTurnId: sourceStep?.provider_turn_id,
+      });
+      expect(beforeRestart.session?.context_epoch).toBe(
+        boundary === "AH17BeforeCheckpointEpochCommit" ? 0 : 1,
+      );
+      expect(beforeRestart.checkpoints).toHaveLength(
+        boundary === "AH17BeforeCheckpointEpochCommit" ? 0 : 1,
+      );
+      const providerRequestCount = providerRequests.length;
+      const nativeCount = providerRequests.filter(
+        (request) => request.providerTurnId === nativeTurnId,
+      ).length;
+      await fixture.crash();
+      await waitForLeaseExpiry(
+        fixture,
+        project.rootSessionId,
+        executionId,
+        workId,
+      );
+      await fixture
+        .restart({
+          entry: childEntry,
+          daemonEnvironment: {
+            ARBOR_AH19_BOUNDARY: "none",
+            ARBOR_AH19_BINDING_VARIANT: "A",
+            ARBOR_AH19_CAPTURE_EXIT: "1",
+          },
+        })
+        .catch((error: unknown) => {
+          throw new Error(
+            `ordinary Native daemon restart failed: ${error instanceof Error ? error.message : String(error)} stderr=${JSON.stringify(fixture.daemonErrors)} stdout=${JSON.stringify(childOutput.filter((line) => line.includes("AH19_CHILD_ERROR") || line.includes("AH19_CHILD_EXIT") || line.includes("AH19_CHILD_START")))} lease=${JSON.stringify(readSnapshot(fixture.databaseFile, ids).leases)} turns=${JSON.stringify(
+              readSnapshot(fixture.databaseFile, ids).providerTurns.map(
+                ({
+                  provider_turn_id,
+                  context_epoch,
+                  settled_at,
+                  finish_reason,
+                  output_contract_ref,
+                  manifest_json,
+                }) => ({
+                  provider_turn_id,
+                  context_epoch,
+                  settled_at,
+                  finish_reason,
+                  output_contract_ref,
+                  sourceAgentLoopStep: (() => {
+                    try {
+                      return (
+                        JSON.parse(manifest_json ?? "{}") as Record<
+                          string,
+                          unknown
+                        >
+                      ).sourceAgentLoopStep;
+                    } catch {
+                      return "invalid";
+                    }
+                  })(),
+                }),
+              ),
+            )} session=${JSON.stringify(readSnapshot(fixture.databaseFile, ids).session)} steps=${JSON.stringify(readSnapshot(fixture.databaseFile, ids).steps)}`,
+          );
+        });
+
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 5_000));
+      const resumedSnapshot = readSnapshot(fixture.databaseFile, ids);
+      if (providerRequests.length <= providerRequestCount) {
+        throw new Error(
+          `ordinary Native restart stalled: requests=${JSON.stringify(providerRequests.map(({ operationKind, providerTurnId, bindingVariant }) => ({ operationKind, providerTurnId, bindingVariant })))} daemonErrors=${JSON.stringify(fixture.daemonErrors)} probes=${JSON.stringify(childOutput.filter((line) => line.includes("AH19NativeCheckpointRecovery") || line.includes("AH19_CHILD_ERROR")))} sessionEpoch=${resumedSnapshot.session?.context_epoch} lease=${JSON.stringify(resumedSnapshot.leases)}`,
+        );
+      }
+      const resumedInference = providerRequests.find(
+        (request) =>
+          request.operationKind === "Inference" &&
+          request.providerTurnId ===
+            manifest.sourceAgentLoopStep?.providerTurnId,
+      );
+      expect(resumedSnapshot.checkpoints).toHaveLength(1);
+      expect(
+        resumedInference,
+        `expected source inference ${manifest.sourceAgentLoopStep?.providerTurnId}; requests=${JSON.stringify(providerRequests.map(({ operationKind, providerTurnId }) => ({ operationKind, providerTurnId })))}`,
+      ).toBeDefined();
+      expect(resumedInference?.items ?? []).toContainEqual(
+        expect.objectContaining({
+          _tag: "CompactionCheckpoint",
+          implementation: "ProviderNative",
+          opaqueItemRef: `ah19-opaque:${nativeTurnId}`,
+        }),
+      );
+      expect(
+        providerRequests.filter(
+          (request) => request.operationKind === "CompactionNative",
+        ),
+      ).toHaveLength(1);
+      expect(
+        providerRequests.filter(
+          (request) => request.providerTurnId === nativeTurnId,
+        ),
+      ).toHaveLength(nativeCount);
+      expect(providerRequests.length).toBeGreaterThanOrEqual(
+        providerRequestCount,
+      );
+      expect(resumedSnapshot.steps).toContainEqual(
+        expect.objectContaining({
+          logical_step_no: manifest.sourceAgentLoopStep?.logicalStepNo,
+          repair_attempt: manifest.sourceAgentLoopStep?.repairAttempt,
+          provider_turn_id: manifest.sourceAgentLoopStep?.providerTurnId,
+        }),
+      );
+      expect(resumedSnapshot.checkpoints[0]?.source_ref).toBe(nativeTurnId);
+      expect(
+        resumedSnapshot.providerLinks.some(
+          (link) =>
+            link.provider_turn_id === nativeTurnId &&
+            link.role === "OverflowCompaction",
+        ),
+      ).toBe(false);
+      expect(fixture.daemonErrors).toEqual([]);
+      expect(manifest.inputFrontier).toMatchObject({
+        firstSequence: expect.any(Number),
+        lastSequence: expect.any(Number),
+      });
+    },
+    120_000,
+  );
+
+  it("rebases ordinary Native recovery from binding A to B through its portable frontier", async () => {
+    const scenario = await startOrdinaryNativeAtCheckpointBoundary(
+      "AH17AfterCheckpointEpochCommit",
+    );
+    const { fixture, project, workId, native, probe, childOutput } = scenario;
+    const executionId = probe.executionId;
+    const nativeTurnId = native.providerTurnId;
+    const ids = { sessionId: project.rootSessionId, executionId, workId };
+    const beforeRestart = readSnapshot(fixture.databaseFile, ids);
+    const nativeRow = beforeRestart.providerTurns.find(
+      (turn) => turn.provider_turn_id === nativeTurnId,
+    );
+    const nativeManifest = JSON.parse(nativeRow?.manifest_json ?? "{}") as {
+      inputFrontier?: {
+        firstSequence: number | null;
+        lastSequence: number | null;
+      };
+      contextRefs?: ReadonlyArray<string>;
+      sourceAgentLoopStep?: {
+        providerTurnId: string;
+        logicalStepNo: number;
+        repairAttempt: number;
+      };
+    };
+    expect(nativeRow).toBeDefined();
+    expect(beforeRestart.session?.context_epoch).toBe(1);
+    await fixture.crash();
+    await waitForLeaseExpiry(
+      fixture,
+      project.rootSessionId,
+      executionId,
+      workId,
+    );
+    const requestsBeforeRestart = providerRequests.length;
+    await fixture.restart({
+      entry: childEntry,
+      daemonEnvironment: {
+        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_BINDING_VARIANT: "B",
+        ARBOR_AH19_ORDINARY_WORK: "1",
+        ARBOR_AH19_CAPTURE_EXIT: "1",
+      },
+    });
+    await waitForPublic(
+      async () => ({
+        summary: providerRequests.find(
+          (request) =>
+            request.operationKind === "CompactionSummary" &&
+            request.bindingVariant === "B" &&
+            providerRequests.indexOf(request) >= requestsBeforeRestart,
+        ),
+        inference: providerRequests.find(
+          (request) =>
+            request.operationKind === "Inference" &&
+            request.bindingVariant === "B" &&
+            request.providerTurnId ===
+              nativeManifest.sourceAgentLoopStep?.providerTurnId,
+        ),
+      }),
+      (state) => state.summary !== undefined && state.inference !== undefined,
+      60_000,
+    ).catch((error: unknown) => {
+      const after = readSnapshot(fixture.databaseFile, ids);
+      throw new Error(
+        `ordinary Native B rebase failed: ${error instanceof Error ? error.message : String(error)} requests=${JSON.stringify(providerRequests.slice(requestsBeforeRestart).map(({ operationKind, providerTurnId, bindingVariant, items }) => ({ operationKind, providerTurnId, bindingVariant, items })))} stderr=${JSON.stringify(fixture.daemonErrors)} stdout=${JSON.stringify(childOutput.filter((line) => line.includes("AH19_CHILD_ERROR") || line.includes("AH19_CHILD_EXIT") || line.includes("AH19NativeCheckpointRecovery")))} session=${JSON.stringify(after.session)} checkpoints=${JSON.stringify(after.checkpoints)} steps=${JSON.stringify(after.steps)}`,
+      );
+    });
+    const after = readSnapshot(fixture.databaseFile, ids);
+    const summaryRow = after.providerTurns.find(
+      (turn) =>
+        turn.output_contract_ref === "compaction-result-v1" &&
+        turn.provider_turn_id !== nativeTurnId,
+    );
+    const summaryManifest = JSON.parse(summaryRow?.manifest_json ?? "{}") as {
+      operationKind?: string;
+      resolvedModelBindingFingerprint?: string;
+      inputFrontier?: {
+        firstSequence: number | null;
+        lastSequence: number | null;
+      };
+      contextRefs?: ReadonlyArray<string>;
+      sourceAgentLoopStep?: unknown;
+    };
+    expect(summaryManifest.operationKind).toBe("CompactionSummary");
+    expect(summaryManifest.inputFrontier).toEqual(nativeManifest.inputFrontier);
+    expect(summaryManifest.contextRefs).toEqual(nativeManifest.contextRefs);
+    expect(summaryManifest.sourceAgentLoopStep).toEqual(
+      expect.objectContaining({
+        logicalStepNo: nativeManifest.sourceAgentLoopStep?.logicalStepNo,
+        repairAttempt: nativeManifest.sourceAgentLoopStep?.repairAttempt,
+        providerTurnId: nativeManifest.sourceAgentLoopStep?.providerTurnId,
+      }),
+    );
+    const bRequests = providerRequests
+      .slice(requestsBeforeRestart)
+      .filter((request) => request.bindingVariant === "B");
+    expect(
+      bRequests.some((request) => request.operationKind === "CompactionNative"),
+    ).toBe(false);
+    expect(
+      bRequests.every((request) =>
+        request.items.every(
+          (item) =>
+            item._tag !== "CompactionCheckpoint" ||
+            item.implementation !== "ProviderNative",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      bRequests.filter((request) => request.providerTurnId === nativeTurnId),
+    ).toHaveLength(0);
+    expect(
+      providerRequests.filter(
+        (request) => request.providerTurnId === nativeTurnId,
+      ),
+    ).toHaveLength(1);
+    expect(after.checkpoints).toHaveLength(2);
+    expect(after.checkpoints[0]?.source_ref).toBe(nativeTurnId);
+    expect(fixture.daemonErrors).toEqual([]);
+  }, 120_000);
+
+  it.each(["WorkStartup", "ConversationCommon"] as const)(
+    "fails closed at %s when the checkpoint owner is NextStepReady without a successor",
+    async (route) => {
+      const scenario =
+        route === "WorkStartup"
+          ? await startOrdinaryNativeAtCheckpointBoundary(
+              "AH17AfterCheckpointEpochCommit",
+            )
+          : await startAtCheckpointBoundary(
+              "AH17AfterCheckpointEpochCommit",
+              {},
+              "ConversationResponse",
+            );
+      const { fixture, project, workId, childOutput } = scenario;
+      const executionId = scenario.probe.executionId;
+      const nativeTurnId =
+        "native" in scenario
+          ? scenario.native.providerTurnId
+          : scenario.probe.providerTurnId;
+      const ids = { sessionId: project.rootSessionId, executionId, workId };
+      const before = readSnapshot(fixture.databaseFile, ids);
+      const nativeRow = before.providerTurns.find(
+        (turn) => turn.provider_turn_id === nativeTurnId,
+      );
+      const manifest = JSON.parse(nativeRow?.manifest_json ?? "{}") as {
+        sourceAgentLoopStep?: { logicalStepNo: number; repairAttempt: number };
+      };
+      const source = manifest.sourceAgentLoopStep;
+      expect(source).toBeDefined();
+      await fixture.crash();
+      await waitForLeaseExpiry(
+        fixture,
+        project.rootSessionId,
+        executionId,
+        workId,
+      );
+      markStepNextReadyWithoutSuccessor(
+        fixture.databaseFile,
+        executionId,
+        source?.logicalStepNo ?? -1,
+        source?.repairAttempt ?? -1,
+      );
+      const requestsBeforeRestart = providerRequests.length;
+      await fixture
+        .restart({
+          entry: childEntry,
+          daemonEnvironment: {
+            ARBOR_AH19_BOUNDARY: "none",
+            ARBOR_AH19_BINDING_VARIANT: "A",
+            ...(route === "WorkStartup"
+              ? { ARBOR_AH19_ORDINARY_WORK: "1" }
+              : {}),
+            ARBOR_AH19_CAPTURE_EXIT: "1",
+            ...(scenario.reportUrl === undefined
+              ? {}
+              : { ARBOR_AH19_REPORT_URL: scenario.reportUrl }),
+          },
+        })
+        .catch(() => undefined);
+      const outcome = await waitForPublic(
+        async () => {
+          const childError = childOutput
+            .map((line) => {
+              try {
+                return JSON.parse(line) as {
+                  tag?: string;
+                  error?: { reason?: string };
+                };
+              } catch {
+                return undefined;
+              }
+            })
+            .find((event) => event?.tag === "AH19_CHILD_ERROR");
+          return {
+            childError,
+            requests: providerRequests.length - requestsBeforeRestart,
+          };
+        },
+        (state) => state.childError !== undefined || state.requests > 0,
+        20_000,
+      );
+      expect(outcome.childError?.error?.reason).toBe(
+        "AgentLoopStepReplayBindingMismatch",
+      );
+      expect(outcome.requests).toBe(0);
+      const after = readSnapshot(fixture.databaseFile, ids);
+      expect(after.session?.context_epoch).toBe(1);
+      expect(after.checkpoints).toEqual(before.checkpoints);
+      expect(after.execution?.settled_at).toBeNull();
+      expect(after.steps).toContainEqual(
+        expect.objectContaining({
+          logical_step_no: source?.logicalStepNo,
+          repair_attempt: source?.repairAttempt,
+          state: "NextStepReady",
+          successor_json: null,
+        }),
+      );
+    },
+    150_000,
+  );
+
+  it("routes an overflow-linked Native receipt through P20 before a changed-binding rebase", async () => {
+    const scenario = await startAtCheckpointBoundary(
+      "AH17BeforeCheckpointEpochCommit",
+    );
+    const { fixture, project, workId, probe, reportUrl, childOutput } =
+      scenario;
+    const executionId = probe.executionId;
+    const nativeTurnId = probe.providerTurnId;
+    const ids = { sessionId: project.rootSessionId, executionId, workId };
+    const beforeKill = readSnapshot(fixture.databaseFile, ids);
+    const nativeLink = beforeKill.providerLinks.find(
+      (link) => link.provider_turn_id === nativeTurnId,
+    );
+    expect(nativeLink).toMatchObject({
+      logical_step_no: 1,
+      repair_attempt: 0,
+      role: "OverflowCompaction",
+      overflow_ordinal: 0,
+    });
+    expect(
+      beforeKill.providerTurns.find(
+        (turn) => turn.provider_turn_id === nativeTurnId,
+      ),
+    ).toMatchObject({
+      settled_at: expect.any(String),
+      finish_reason: "Stop",
+      output_contract_ref: "provider-native-compaction-v1",
+    });
+    expect(
+      beforeKill.providerAttempts.filter(
+        (attempt) => attempt.provider_turn_id === nativeTurnId,
+      ),
+    ).toEqual([expect.objectContaining({ attempt_no: 0, outcome: "Success" })]);
+    expect(beforeKill.session?.context_epoch).toBe(0);
+    expect(beforeKill.checkpoints).toHaveLength(0);
+    await fixture.crash();
+    await waitForLeaseExpiry(
+      fixture,
+      project.rootSessionId,
+      executionId,
+      workId,
+    );
+    const requestCountBeforeRestart = providerRequests.length;
+    await fixture.restart({
+      entry: childEntry,
+      daemonEnvironment: {
+        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_BINDING_VARIANT: "B",
+        ARBOR_AH19_REPORT_URL: reportUrl,
+        ARBOR_AH19_CAPTURE_EXIT: "1",
+      },
+    });
+    const resumed = await waitForPublic(
+      async () => readSnapshot(fixture.databaseFile, ids),
+      (snapshot) =>
+        snapshot.session?.context_epoch === 1 &&
+        snapshot.checkpoints.length === 1 &&
+        snapshot.workWait !== undefined,
+      60_000,
+    ).catch((error: unknown) => {
+      const snapshot = readSnapshot(fixture.databaseFile, ids);
+      throw new Error(
+        `P20 Native source was not recovered before portable rebase: ${error instanceof Error ? error.message : String(error)} requests=${JSON.stringify(providerRequests.slice(requestCountBeforeRestart).map(({ operationKind, providerTurnId, bindingVariant, items }) => ({ operationKind, providerTurnId, bindingVariant, items })))} stderr=${JSON.stringify(fixture.daemonErrors)} stdout=${JSON.stringify(childOutput.filter((line) => line.includes("AH19_CHILD_ERROR") || line.includes("AH19NativeCheckpointRecovery")))} session=${JSON.stringify(snapshot.session)} checkpoints=${JSON.stringify(snapshot.checkpoints)} links=${JSON.stringify(snapshot.providerLinks)} steps=${JSON.stringify(snapshot.steps)}`,
+      );
+    });
+    expect(resumed.checkpoints).toHaveLength(1);
+    expect(resumed.providerLinks).toContainEqual(nativeLink);
+    expect(resumed.providerLinks).toContainEqual(
+      expect.objectContaining({
+        logical_step_no: nativeLink?.logical_step_no,
+        repair_attempt: nativeLink?.repair_attempt,
+        role: "OverflowReplacement",
+        predecessor_provider_turn_id: nativeTurnId,
+        context_epoch: 1,
+      }),
+    );
+    expect(resumed.checkpoints[0]?.source_ref).not.toBe(nativeTurnId);
+    expect(
+      providerRequests.filter(
+        (request) => request.providerTurnId === nativeTurnId,
+      ),
+    ).toHaveLength(1);
+    const bindingBRequests = providerRequests
+      .slice(requestCountBeforeRestart)
+      .filter((request) => request.bindingVariant === "B");
+    expect(
+      bindingBRequests.some(
+        (request) => request.operationKind === "CompactionNative",
+      ),
+    ).toBe(false);
+    expect(
+      bindingBRequests.every((request) =>
+        request.items.every(
+          (item) =>
+            item._tag !== "CompactionCheckpoint" ||
+            item.implementation !== "ProviderNative",
+        ),
+      ),
+    ).toBe(true);
+    expect(fixture.daemonErrors).toEqual([]);
+  }, 150_000);
+
+  it.each([
+    "logicalStepNo",
+    "repairAttempt",
+    "providerTurnId",
+    "executionId",
+    "bindingFingerprint",
+  ] as const)(
+    "fails closed on an ordinary Native manifest with corrupted %s evidence",
+    async (field) => {
+      const scenario = await startOrdinaryNativeAtCheckpointBoundary(
+        "AH17AfterCheckpointEpochCommit",
+      );
+      const { fixture, project, workId, native, probe, childOutput } = scenario;
+      const executionId = probe.executionId;
+      const ids = { sessionId: project.rootSessionId, executionId, workId };
+      const beforeKill = readSnapshot(fixture.databaseFile, ids);
+      const originalNativeRow = beforeKill.providerTurns.find(
+        (turn) => turn.provider_turn_id === native.providerTurnId,
+      );
+      expect(beforeKill.session?.context_epoch).toBe(1);
+      expect(beforeKill.checkpoints).toHaveLength(1);
+      expect(
+        beforeKill.providerLinks.some(
+          (link) =>
+            link.provider_turn_id === native.providerTurnId &&
+            link.role === "OverflowCompaction",
+        ),
+      ).toBe(false);
+      await fixture.crash();
+      await waitForLeaseExpiry(
+        fixture,
+        project.rootSessionId,
+        executionId,
+        workId,
+      );
+      corruptOrdinaryNativeSourceIdentity(
+        fixture.databaseFile,
+        native.providerTurnId,
+        field,
+      );
+      await fixture
+        .restart({
+          entry: childEntry,
+          daemonEnvironment: {
+            ARBOR_AH19_BOUNDARY: "none",
+            ARBOR_AH19_BINDING_VARIANT: "B",
+            ARBOR_AH19_CAPTURE_EXIT: "1",
+          },
+        })
+        .catch(() => undefined);
+      const childError = await waitForPublic(
+        async () =>
+          childOutput
+            .map((line) => {
+              try {
+                return JSON.parse(line) as {
+                  tag?: string;
+                  error?: { reason?: string };
+                };
+              } catch {
+                return undefined;
+              }
+            })
+            .find((event) => event?.tag === "AH19_CHILD_ERROR"),
+        (event) => event !== undefined,
+        20_000,
+      );
+      expect(childError?.error?.reason).toBe(
+        "AgentLoopStepReplayBindingMismatch",
+      );
+      const rejected = readSnapshot(fixture.databaseFile, ids);
+      expect(rejected.session?.context_epoch).toBe(1);
+      expect(rejected.checkpoints).toEqual(beforeKill.checkpoints);
+      expect(
+        rejected.providerTurns.find(
+          (turn) => turn.provider_turn_id === native.providerTurnId,
+        ),
+      ).toMatchObject({
+        manifest_id: originalNativeRow?.manifest_id,
+        settled_at: originalNativeRow?.settled_at,
+      });
+      expect(rejected.execution?.settled_at).toBeNull();
+      expect(rejected.leases.at(-1)?.generation).toBe(1);
+      expect(
+        providerRequests.filter((request) => request.bindingVariant === "B"),
+      ).toHaveLength(0);
+      expect(fixture.daemonErrors).toEqual([]);
+    },
+    120_000,
+  );
+
   it("fails closed rather than sending an older Native opaque checkpoint to a changed binding", async () => {
     const scenario = await startAtCheckpointBoundary(
       "AH17BeforeCheckpointEpochCommit",
@@ -1080,7 +1895,7 @@ describe("AH19 restart binding qualification", () => {
       executionId,
       workId,
     );
-    await fixture
+    const restartFailure = await fixture
       .restart({
         entry: childEntry,
         daemonEnvironment: {
@@ -1091,68 +1906,35 @@ describe("AH19 restart binding qualification", () => {
           ARBOR_AH19_REPORT_URL: reportUrl,
         },
       })
-      .catch((error: unknown) => {
-        const childDiagnostics = childOutput.flatMap((line) => {
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    if (restartFailure !== null) {
+      const childError = childOutput
+        .map((line) => {
           try {
-            const event = JSON.parse(line) as Record<string, unknown>;
-            if (
-              event.tag === "AH19_PROBE" &&
-              event.boundary === "AH19NativeCheckpointRecovery"
-            ) {
-              return [`${String(event.stage)}:${String(event.providerTurnId)}`];
-            }
-            if (
-              event.tag === "AH19_CHILD_START" ||
-              event.tag === "AH19_CHILD_BINDING" ||
-              event.tag === "AH19_CHILD_ERROR" ||
-              event.tag === "AH19_CHILD_EXIT"
-            ) {
-              return [JSON.stringify(event)];
-            }
-            return [];
+            return JSON.parse(line) as {
+              tag?: string;
+              error?: { reason?: string };
+            };
           } catch {
-            return [];
+            return undefined;
           }
-        });
-        const snapshot = readSnapshot(fixture.databaseFile, ids);
-        throw new Error(
-          `AH19 nested no-leak restart health failure: ${error instanceof Error ? error.message : String(error)}; child=${childDiagnostics.join(" | ")}; daemonStderr=${JSON.stringify(fixture.daemonErrors)}; snapshot=${JSON.stringify(
-            {
-              session: snapshot.session,
-              checkpoints: snapshot.checkpoints.map((row) => ({
-                sequence: row.sequence,
-                source: row.source_ref,
-                payload: row.payload_json,
-              })),
-              turns: snapshot.providerTurns.map((row) => ({
-                id: row.provider_turn_id,
-                epoch: row.context_epoch,
-                settled: row.settled_at,
-                finish: row.finish_reason,
-              })),
-              attempts: snapshot.providerAttempts.map((row) => ({
-                id: row.provider_turn_id,
-                no: row.attempt_no,
-                outcome: row.outcome,
-                error: row.provider_error_kind,
-              })),
-              steps: snapshot.steps.map((row) => ({
-                step: row.logical_step_no,
-                repair: row.repair_attempt,
-                state: row.state,
-                successor: row.successor_json,
-              })),
-              links: snapshot.providerLinks,
-              execution: snapshot.execution,
-              leases: snapshot.leases,
-            },
-          )}; BRequests=${JSON.stringify(
-            providerRequests.filter(
-              (request) => request.bindingVariant === "B",
-            ),
-          )}`,
-        );
-      });
+        })
+        .find((event) => event?.tag === "AH19_CHILD_ERROR");
+      expect(
+        childError?.error?.reason,
+        `unexpected nested restart failure: ${restartFailure instanceof Error ? restartFailure.message : String(restartFailure)}; child=${childOutput.join(" | ")}`,
+      ).toBe("AgentLoopStepReplayBindingMismatch");
+      expect(
+        providerRequests.some(
+          (request) =>
+            request.bindingVariant === "B" &&
+            request.items.some((item) => item.opaqueItemRef === olderOpaqueRef),
+        ),
+      ).toBe(false);
+    }
     const recovery = await waitForPublic(
       async () => ({
         resumedSuccessor: childOutput.some((line) => {

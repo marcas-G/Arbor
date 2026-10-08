@@ -1,7 +1,10 @@
 import type {
+  ContextEpochNumber,
   ProviderFailure,
+  ProviderTurnId,
   ProviderTurnRecord,
   ProviderTurnStoreService,
+  SessionId,
 } from "@arbor/ports";
 import { TransactionScope } from "@arbor/ports";
 import { Effect } from "effect";
@@ -14,7 +17,10 @@ export const makeProviderTurnIntentStore = (
   dependencies: ProviderTurnStoreDependencies,
 ): Pick<
   ProviderTurnStoreService,
-  "startTurnWithManifest" | "findManifestByTurn" | "startTurn"
+  | "startTurnWithManifest"
+  | "findManifestByTurn"
+  | "findNativeCompactionsBySessionEpoch"
+  | "startTurn"
 > => {
   const { sql, run } = dependencies;
   return {
@@ -132,6 +138,64 @@ export const makeProviderTurnIntentStore = (
               manifestJson: row.manifest_json,
               portableRequestJson: row.portable_request_json,
             };
+      }),
+    findNativeCompactionsBySessionEpoch: (input) =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        const rows = yield* run(
+          sql.unsafe<{
+            provider_turn_id: string;
+            manifest_id: string;
+            execution_id: string;
+            session_id: string;
+            context_epoch: number;
+            model_ref: string;
+            output_contract_ref: string;
+            manifest_json: string;
+            portable_request_json: string | null;
+            owning_provider_turn_id: string | null;
+          }>(
+            `SELECT m.provider_turn_id, m.manifest_id, m.execution_id,
+                    m.session_id, m.context_epoch, m.model_ref,
+                    t.output_contract_ref, m.manifest_json,
+                    m.portable_request_json,
+                    t.provider_turn_id AS owning_provider_turn_id
+               FROM model_context_manifests m
+               JOIN provider_turns t
+                 ON t.provider_turn_id = m.provider_turn_id
+                AND t.manifest_id = m.manifest_id
+              WHERE m.session_id = ?
+                AND m.context_epoch = ?
+                AND json_extract(m.manifest_json, '$.operationKind') = 'CompactionNative'
+              ORDER BY m.created_at, m.provider_turn_id`,
+            [input.sessionId, input.contextEpoch],
+          ),
+        );
+        if (
+          rows.some(
+            (row) =>
+              row.owning_provider_turn_id !== row.provider_turn_id ||
+              row.portable_request_json === null,
+          )
+        ) {
+          return yield* Effect.fail<ProviderFailure>({
+            _tag: "ProviderFailure",
+            kind: "ProtocolViolation",
+            taxonomyVersion: "phase1-v2",
+            safeDiagnostic: "native-source-manifest-orphaned-or-incomplete",
+          });
+        }
+        return rows.map((row) => ({
+          providerTurnId: row.provider_turn_id as ProviderTurnId,
+          manifestId: row.manifest_id,
+          executionId: row.execution_id,
+          sessionId: row.session_id as SessionId,
+          contextEpoch: row.context_epoch as ContextEpochNumber,
+          modelRef: row.model_ref,
+          outputContractRef: row.output_contract_ref,
+          manifestJson: row.manifest_json,
+          portableRequestJson: row.portable_request_json as string,
+        }));
       }),
     startTurn: (record: ProviderTurnRecord, startedAt: string) =>
       Effect.gen(function* () {
