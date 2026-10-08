@@ -51,5 +51,8 @@ Final integrated `pnpm check` passes: Biome 953 files, typecheck, architecture
 216 tests. P12 restore-drill generated-field drift from the check was restored
 to the committed timestamp and hash.
 
+Committed F20 and full functional-suite results are recorded in
+`planning/results/AH15-AH17-direct-child-release-validation.result.md`.
+
 This result covers the actual atomic boundary and its before/after process
 recovery; it does not establish all AH15–AH19 qualification or SCRC closure.

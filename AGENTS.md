@@ -696,3 +696,10 @@ core 316 files / 1723 passed / 3 skipped, Web typecheck/build and 31 files /
 216 tests. The P12 restore-drill JSON's generated timestamp/hash drift was
 restored to the committed values. This batch does not close AH10, AH18, AH19 or
 SCRC-008.
+
+Committed release validation for `cacbf94` is in
+`planning/results/AH15-AH17-direct-child-release-validation.result.md`: F20
+clean committed checkout 1/1 PASS (50.65s), then `pnpm test:functional`
+Vitest 29 files / 71 tests PASS and Playwright 2/2 PASS. The full suite includes
+AH15 2/2, AH17 Summary 2/2, and Direct-child AH10 2/2; AH10 remains PARTIAL,
+and AH18/AH19 remain open.
