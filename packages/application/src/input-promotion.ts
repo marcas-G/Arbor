@@ -49,75 +49,129 @@ export interface InputPromotionServiceShape {
   >;
 }
 
+export interface InputPromotionQualificationProbeEvent {
+  readonly boundary:
+    | "AH15BeforeInboxPromotionCommit"
+    | "AH15AfterInboxPromotionCommit";
+  readonly executionId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly sessionId: SessionId;
+  readonly entryKey: string;
+}
+
+export type InputPromotionQualificationProbe = (
+  event: InputPromotionQualificationProbeEvent,
+) => Promise<void>;
+
 export class InputPromotionService extends Context.Service<
   InputPromotionService,
   InputPromotionServiceShape
 >()("arbor/InputPromotionService") {}
 
-export const InputPromotionServiceLive: Layer.Layer<
+const makeInputPromotionServiceLive = (
+  qualificationProbe?: InputPromotionQualificationProbe,
+): Layer.Layer<
   InputPromotionService,
   never,
   TransactionPort | SessionRepository | InboxProjectionStore
-> = Layer.effect(
-  InputPromotionService,
-  Effect.gen(function* () {
-    const tx = yield* TransactionPort;
-    const sessions = yield* SessionRepository;
-    const inbox = yield* InboxProjectionStore;
-    return InputPromotionService.of({
-      promoteInbox: (input) =>
-        tx.transact(
+> =>
+  Layer.effect(
+    InputPromotionService,
+    Effect.gen(function* () {
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      const inbox = yield* InboxProjectionStore;
+      return InputPromotionService.of({
+        promoteInbox: (input) =>
           Effect.gen(function* () {
-            const entry = yield* inbox.findByKey(
-              input.workspaceId,
-              input.entryKey,
-            );
-            if (Option.isNone(entry)) {
-              return yield* Effect.fail({
-                _tag: "InboxEntryNotFound" as const,
-                workspaceId: input.workspaceId,
-                entryKey: input.entryKey,
-              });
-            }
-            const session = yield* sessions.findById(input.targetSessionId);
-            if (
-              Option.isNone(session) ||
-              session.value.binding._tag !== "WorkspacePrimary" ||
-              session.value.binding.workspaceId !== input.workspaceId
-            ) {
-              return yield* Effect.fail({
-                _tag: "InputPromotionTargetMismatch" as const,
-                workspaceId: input.workspaceId,
-                sessionId: input.targetSessionId,
-              });
-            }
-            const item = {
-              _tag: "UserMessage" as const,
-              source: {
-                _tag: "InboxEntry" as const,
-                workspaceId: input.workspaceId,
-                entryKey: entry.value.entryKey,
-                kind: entry.value.kind,
-              },
-              contentRef: `inbox:${entry.value.entryKey}`,
-              text: entry.value.summary,
-              trust: "DataOnly" as const,
-              delivery: input.delivery,
+            const event = {
+              executionId: input.fence.executionId,
+              workspaceId: input.workspaceId,
+              sessionId: input.targetSessionId,
+              entryKey: input.entryKey,
             };
-            const receipt = yield* sessions.appendItemIdempotent(
-              input.targetSessionId,
-              {
-                item,
-                contextEpoch: session.value.contextEpoch,
-                source: { kind: "InboxEntry", ref: entry.value.entryKey },
-                contentHash: sha256Hex(JSON.stringify(item)),
-              },
-              input.fence,
+            const receipt = yield* tx.transact(
+              Effect.gen(function* () {
+                const entry = yield* inbox.findByKey(
+                  input.workspaceId,
+                  input.entryKey,
+                );
+                if (Option.isNone(entry)) {
+                  return yield* Effect.fail({
+                    _tag: "InboxEntryNotFound" as const,
+                    workspaceId: input.workspaceId,
+                    entryKey: input.entryKey,
+                  });
+                }
+                const session = yield* sessions.findById(input.targetSessionId);
+                if (
+                  Option.isNone(session) ||
+                  session.value.binding._tag !== "WorkspacePrimary" ||
+                  session.value.binding.workspaceId !== input.workspaceId
+                ) {
+                  return yield* Effect.fail({
+                    _tag: "InputPromotionTargetMismatch" as const,
+                    workspaceId: input.workspaceId,
+                    sessionId: input.targetSessionId,
+                  });
+                }
+                const item = {
+                  _tag: "UserMessage" as const,
+                  source: {
+                    _tag: "InboxEntry" as const,
+                    workspaceId: input.workspaceId,
+                    entryKey: entry.value.entryKey,
+                    kind: entry.value.kind,
+                  },
+                  contentRef: `inbox:${entry.value.entryKey}`,
+                  text: entry.value.summary,
+                  trust: "DataOnly" as const,
+                  delivery: input.delivery,
+                };
+                const receipt = yield* sessions.appendItemIdempotent(
+                  input.targetSessionId,
+                  {
+                    item,
+                    contextEpoch: session.value.contextEpoch,
+                    source: { kind: "InboxEntry", ref: entry.value.entryKey },
+                    contentHash: sha256Hex(JSON.stringify(item)),
+                  },
+                  input.fence,
+                );
+                yield* inbox.markConsumed(input.workspaceId, input.entryKey);
+                if (qualificationProbe !== undefined) {
+                  yield* Effect.promise(() =>
+                    qualificationProbe({
+                      boundary: "AH15BeforeInboxPromotionCommit",
+                      ...event,
+                    }),
+                  );
+                }
+                return receipt;
+              }),
             );
-            yield* inbox.markConsumed(input.workspaceId, input.entryKey);
+            if (qualificationProbe !== undefined) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "AH15AfterInboxPromotionCommit",
+                  ...event,
+                }),
+              );
+            }
             return receipt;
           }),
-        ),
-    });
-  }),
-);
+      });
+    }),
+  );
+
+export const InputPromotionServiceLive = makeInputPromotionServiceLive();
+
+/** Explicit process-local qualification seam; production composition leaves
+ * this absent. */
+export const InputPromotionServiceWithQualificationProbe = (
+  qualificationProbe: InputPromotionQualificationProbe,
+): Layer.Layer<
+  InputPromotionService,
+  never,
+  TransactionPort | SessionRepository | InboxProjectionStore
+> => makeInputPromotionServiceLive(qualificationProbe);

@@ -11,8 +11,10 @@ import {
   type CommandGateway,
   type CommandGatewayQualificationProbe,
   type CommandHandlerRegistry,
+  type InputPromotionQualificationProbe,
   type InputPromotionService,
   InputPromotionServiceLive,
+  InputPromotionServiceWithQualificationProbe,
   makeCommandGatewayLive,
   type ParentUserGovernanceFacts,
   type RemoteWorkerMediationPort,
@@ -295,6 +297,9 @@ export interface SingleWorkspaceConfig {
   /** Explicit test-only in-process fault probe; never loaded from env or a
    * public request. Production startup leaves this absent. */
   readonly qualificationProbe?: AgentLoopQualificationProbe;
+  /** Explicit process-local Inbox promotion crash qualification seam; absent
+   * in ordinary production startup and never model/public-request supplied. */
+  readonly inputPromotionQualificationProbe?: InputPromotionQualificationProbe;
   readonly gatewayQualificationProbe?: CommandGatewayQualificationProbe;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
@@ -552,7 +557,14 @@ export const buildSingleWorkspaceLayer = (
   const workspaceKnowledge = Layer.provide(WorkspaceKnowledgePortLive, repos);
   const workspacePlacement = Layer.provide(WorkspacePlacementPortLive, repos);
   const ownershipWrite = Layer.provide(OwnershipWriteServiceLive, repos);
-  const inputPromotion = Layer.provide(InputPromotionServiceLive, repos);
+  const inputPromotion = Layer.provide(
+    config.inputPromotionQualificationProbe === undefined
+      ? InputPromotionServiceLive
+      : InputPromotionServiceWithQualificationProbe(
+          config.inputPromotionQualificationProbe,
+        ),
+    repos,
+  );
   const authorityResolver = AuthorityResolverPortLive;
   const toolAuthority = Layer.provide(
     ToolAuthorityResolverLive(

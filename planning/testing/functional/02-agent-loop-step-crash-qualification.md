@@ -51,6 +51,28 @@ ReconciliationPending/Attention，不可盲重放。随后运行 `pnpm check` �
 
 AH15–AH19 另有 SCRC-008 结果，不得挪用其 PASS 代替 AH1–AH14。
 
+AH15 / AH17 的真实进程边界资格增量（2026-10-08）：AH15 Inbox
+Session-append/consumption 在同一事务提交前/后 kill/restart 2/2 PASS；两侧
+独立快照均证明 Provider 请求发生在 promotion boundary 之后，重启后同一
+InboxEpisode/MessageId 唯一收敛。AH17 Summary CompactionCheckpoint/ContextEpoch
+同一事务提交前/后 kill/restart 2/2 PASS；从已成功的原 Summary receipt 恢复，
+不重复 inference 或 summary Provider 请求，并保持三个 ordinal-0 chain link 的
+predecessor / epoch / Step 绑定以及唯一 replacement。结果分别见
+`planning/results/AH15-inbox-input-promotion-crash.result.md` 与
+`planning/results/AH17-checkpoint-epoch-crash.result.md`。AH18 repeated-overflow
+与 AH19 native binding qualification 仍未闭合；本增量不构成 SCRC-008 阶段闭合。
+
+AH18 尚有一个独立硬缺口：ordinal-0 `OverflowCompaction` link 已提交、但
+Summary ProviderTurn 尚未创建或仍为 Unsettled 时，恢复当前 fail-closed，而非以
+link 内稳定 turn ID 启动/恢复同一 Summary turn。该场景不属于 AH17 checkpoint
+事务两侧资格；P3 确定性测试覆盖的“P20空链 + 已持久 ContextLimit terminal
+attempt”也不是该窗口的进程崩溃证据。真实第二次 overflow / second terminal
+overflow 两侧崩溃资格也仍未完成。AH18 保持开放。
+
+AH19 ProviderNative match/mismatch portable rebuild、Native checkpoint recovery
+尚未在真实进程中资格；Summary 的 AH17 两侧结果不可代替 Native 路径，也不关闭
+AH19。
+
 P9 `07` §4 另要求密集立即可用 SSE 期间证明实际 TTL/3 lease renewal
 提交。`tests/functional/process/p9-dense-sse-lease-renewal.functional.test.ts`
 已在真实 SQLite 上读到

@@ -8,7 +8,7 @@
 
 | 动作 | Command 路径 | 现有跨代证据 | 下一退出门 |
 |---|---|---|---|
-| AssignWork | CommandGateway | handler 红转绿：FencingRejected、Committed 收敛、非 fencing 拒绝；真双 daemon current-Workspace exact CAPA grant：旧 FencingRejected receipt 提交前/后 kill/restart + Committed receipt/Action Pending 三案 3/3 PASS，唯一 Work/WorkAssigned/Observation，Provider decision 一次 | Direct-child placement 的授权/目标路径及更多状态组合 |
+| AssignWork | CommandGateway | handler 红转绿：FencingRejected、Committed 收敛、非 fencing 拒绝；真双 daemon current-Workspace exact CAPA grant：旧 FencingRejected receipt 提交前/后 kill/restart + Committed receipt/Action Pending 三案 3/3 PASS；新增 Direct-child exact CAPA grant：public `list_workspaces` 返回的真实 `wref` 作为目标，旧拒绝 receipt 提交前/后双 daemon kill/restart 2/2 PASS（集成重跑75.01s），唯一 Work/WorkAssigned/Observation，Provider decision 一次；见 `planning/results/AH10-direct-child-assign-work-takeover.result.md` | Direct-child 其他 receipt/action 状态组合；其余控制动作及验证控制缺口 |
 | ProduceDeliverable | CommandGateway | handler 分支 + 真双 daemon 旧拒绝回执事务前/后杀旧进程、新命令提交后 Action Pending 杀进程，三案均唯一产物/Provider | 其余控制动作的相同进程矩阵；持久 Deliverable/artifact 全事实核对 |
 | DeclareDependency | CommandGateway | handler FencingRejected、Committed、拒绝和缺 canonical row；真双 daemon 旧 FencingRejected receipt 提交前/后杀进程 2/2 PASS，gen1 同 LogicalAction 接管，唯一 Dependency/Observation/Provider；新增 Committed receipt/Action Pending 后杀 gen0，gen1复用原receipt收敛唯一Dependency/Event/Observation | 已演化状态组合与其他命令分支 |
 | AcceptResult | CommandGateway | handler FencingRejected、Committed、拒绝和缺 Acceptance row；真双 daemon旧 FencingRejected receipt提交前/后2/2，新代经`list_workspaces`取得真实resultRef后唯一Acceptance/Child Work Completed；新增 Committed receipt/Action Pending 后杀gen0，gen1复用原receipt收敛唯一Acceptance/Event/Observation并完成Child Work | 更多已演化状态组合；其他命令分支 |

@@ -7,30 +7,87 @@ import {
 import type {
   PortableInputItem,
   ProviderRuntimeService,
+  SecretRef,
+  SessionCompactionCommit,
   SessionRepositoryService,
   SessionWriteFence,
   TransactionPortService,
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
+import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
 export interface SummaryCompactionInput {
   readonly execution: Execution;
   readonly logicalStepNo: number;
   readonly currentEpoch: ContextEpochNumber;
   readonly modelRef: string;
+  readonly secretRef?: SecretRef;
   readonly bindingFingerprint: string;
   readonly inputItems: ReadonlyArray<PortableInputItem>;
   readonly fence: SessionWriteFence;
 }
 
+interface CompactionDependencies {
+  readonly providerRuntime: ProviderRuntimeService;
+  readonly sessions: SessionRepositoryService;
+  readonly tx: TransactionPortService;
+  /** Explicit test-only crash boundary; absent in production. */
+  readonly qualificationProbe?: AgentLoopQualificationProbe;
+}
+
+const commitCheckpointEpoch = (
+  input: {
+    readonly execution: Execution;
+    readonly providerTurnId: ProviderTurnId;
+    readonly expectedEpoch: ContextEpochNumber;
+    readonly nextEpoch: ContextEpochNumber;
+    readonly checkpoint: SessionCompactionCommit["checkpoint"];
+    readonly fence: SessionWriteFence;
+  },
+  deps: Pick<CompactionDependencies, "sessions" | "tx" | "qualificationProbe">,
+) =>
+  Effect.gen(function* () {
+    const probe = deps.qualificationProbe;
+    const probeIdentity = {
+      executionId: String(input.execution.executionId),
+      providerTurnId: String(input.providerTurnId),
+    };
+    if (probe !== undefined) {
+      yield* Effect.promise(() =>
+        probe({
+          boundary: "AH17BeforeCheckpointEpochCommit",
+          ...probeIdentity,
+        }),
+      );
+    }
+    const committed = yield* deps.tx.transact(
+      deps.sessions.commitCompaction(
+        input.execution.sessionId,
+        {
+          expectedEpoch: input.expectedEpoch,
+          nextEpoch: input.nextEpoch,
+          checkpoint: input.checkpoint,
+          source: { kind: "CompactionTurn", ref: input.providerTurnId },
+          contentHash: sha256Hex(JSON.stringify(input.checkpoint)),
+        },
+        input.fence,
+      ),
+    );
+    if (probe !== undefined) {
+      yield* Effect.promise(() =>
+        probe({
+          boundary: "AH17AfterCheckpointEpochCommit",
+          ...probeIdentity,
+        }),
+      );
+    }
+    return committed;
+  });
+
 export const runSummaryCompaction = (
   input: SummaryCompactionInput,
-  deps: {
-    readonly providerRuntime: ProviderRuntimeService;
-    readonly sessions: SessionRepositoryService;
-    readonly tx: TransactionPortService;
-  },
+  deps: CompactionDependencies,
 ) =>
   Effect.gen(function* () {
     const providerTurnId =
@@ -71,6 +128,7 @@ export const runSummaryCompaction = (
       sessionId: input.execution.sessionId,
       contextEpoch: input.currentEpoch,
       modelRef: input.modelRef,
+      ...(input.secretRef === undefined ? {} : { secretRef: input.secretRef }),
       outputContractRef: "compaction-result-v1",
       manifestJson: JSON.stringify(manifest),
       request,
@@ -95,29 +153,23 @@ export const runSummaryCompaction = (
       summaryText: summary,
       bindingFingerprint: null,
     };
-    yield* deps.tx.transact(
-      deps.sessions.commitCompaction(
-        input.execution.sessionId,
-        {
-          expectedEpoch: input.currentEpoch,
-          nextEpoch,
-          checkpoint,
-          source: { kind: "CompactionTurn", ref: providerTurnId },
-          contentHash: sha256Hex(JSON.stringify(checkpoint)),
-        },
-        input.fence,
-      ),
+    yield* commitCheckpointEpoch(
+      {
+        execution: input.execution,
+        providerTurnId,
+        expectedEpoch: input.currentEpoch,
+        nextEpoch,
+        checkpoint,
+        fence: input.fence,
+      },
+      deps,
     );
     return { newEpoch: nextEpoch, providerTurnId, summary };
   });
 
 export const runNativeCompaction = (
   input: SummaryCompactionInput,
-  deps: {
-    readonly providerRuntime: ProviderRuntimeService;
-    readonly sessions: SessionRepositoryService;
-    readonly tx: TransactionPortService;
-  },
+  deps: CompactionDependencies,
 ) =>
   Effect.gen(function* () {
     const providerTurnId =
@@ -152,6 +204,7 @@ export const runNativeCompaction = (
       sessionId: input.execution.sessionId,
       contextEpoch: input.currentEpoch,
       modelRef: input.modelRef,
+      ...(input.secretRef === undefined ? {} : { secretRef: input.secretRef }),
       outputContractRef: request.outputContractRef,
       manifestJson: JSON.stringify(manifest),
       request,
@@ -174,20 +227,69 @@ export const runNativeCompaction = (
       opaqueItemRef,
       bindingFingerprint: input.bindingFingerprint,
     };
-    yield* deps.tx.transact(
-      deps.sessions.commitCompaction(
-        input.execution.sessionId,
-        {
-          expectedEpoch: input.currentEpoch,
-          nextEpoch,
-          checkpoint,
-          source: { kind: "CompactionTurn", ref: providerTurnId },
-          contentHash: sha256Hex(JSON.stringify(checkpoint)),
-        },
-        input.fence,
-      ),
+    yield* commitCheckpointEpoch(
+      {
+        execution: input.execution,
+        providerTurnId,
+        expectedEpoch: input.currentEpoch,
+        nextEpoch,
+        checkpoint,
+        fence: input.fence,
+      },
+      deps,
     );
     return { newEpoch: nextEpoch, providerTurnId, opaqueItemRef };
+  });
+
+export interface RecoveredSummaryCompactionInput {
+  readonly execution: Execution;
+  readonly providerTurnId: ProviderTurnId;
+  readonly expectedEpoch: ContextEpochNumber;
+  readonly bindingFingerprint: string;
+  readonly summary: string;
+  readonly fence: SessionWriteFence;
+}
+
+/** Commit a summary already durably returned by the same compaction ProviderTurn.
+ * Recovery uses this after validating the persisted ProviderTurn manifest and
+ * success receipt; it never issues another provider request. */
+export const commitRecoveredSummaryCompaction = (
+  input: RecoveredSummaryCompactionInput,
+  deps: Pick<CompactionDependencies, "sessions" | "tx" | "qualificationProbe">,
+) =>
+  Effect.gen(function* () {
+    const summary = input.summary.trim();
+    if (summary.length === 0) {
+      return yield* Effect.fail({
+        _tag: "SummaryCompactionInvalid" as const,
+        reason: "persisted provider receipt contained no summary",
+      });
+    }
+    const nextEpoch = parse(ContextEpochNumber)(
+      Number(input.expectedEpoch) + 1,
+    );
+    const checkpoint = {
+      _tag: "CompactionCheckpoint" as const,
+      implementation: "Summary" as const,
+      fromEpoch: input.expectedEpoch,
+      toEpoch: nextEpoch,
+      retainedFrontierRef: `frontier:${input.execution.sessionId}:${input.expectedEpoch}`,
+      summaryRef: `summary:${sha256Hex(summary)}`,
+      summaryText: summary,
+      bindingFingerprint: null,
+    };
+    yield* commitCheckpointEpoch(
+      {
+        execution: input.execution,
+        providerTurnId: input.providerTurnId,
+        expectedEpoch: input.expectedEpoch,
+        nextEpoch,
+        checkpoint,
+        fence: input.fence,
+      },
+      deps,
+    );
+    return { newEpoch: nextEpoch, providerTurnId: input.providerTurnId };
   });
 
 export const runCompaction = (
