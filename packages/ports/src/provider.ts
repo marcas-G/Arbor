@@ -699,6 +699,27 @@ export interface ProviderTurnStoreService {
     ProviderFailure,
     TransactionScope
   >;
+  /** Find explicit Native compaction turns durably bound to one source
+   * AgentLoopStep. Multiple rows are returned so the Runtime can fail closed
+   * on duplicate history instead of selecting by id text or recency. */
+  readonly findNativeCompactionsBySessionEpoch: (input: {
+    readonly sessionId: SessionId;
+    readonly contextEpoch: ContextEpochNumber;
+  }) => Effect.Effect<
+    ReadonlyArray<{
+      readonly providerTurnId: ProviderTurnId;
+      readonly manifestId: string;
+      readonly executionId: string;
+      readonly sessionId: SessionId;
+      readonly contextEpoch: ContextEpochNumber;
+      readonly modelRef: string;
+      readonly outputContractRef: string;
+      readonly manifestJson: string;
+      readonly portableRequestJson: string;
+    }>,
+    ProviderFailure,
+    TransactionScope
+  >;
   readonly startAttempt: (
     providerTurnId: ProviderTurnId,
     attemptNo: number,

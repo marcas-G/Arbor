@@ -21,6 +21,13 @@ import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 export interface SummaryCompactionInput {
   readonly execution: Execution;
   readonly logicalStepNo: number;
+  /** Durable AgentLoopStep that owns this explicit compaction ProviderTurn. */
+  readonly sourceAgentLoopStep?: {
+    readonly executionId: string;
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly providerTurnId: string;
+  };
   readonly currentEpoch: ContextEpochNumber;
   readonly modelRef: string;
   readonly secretRef?: SecretRef;
@@ -133,6 +140,9 @@ export const runSummaryCompaction = (
       compiledRequestHash: sha256Hex(JSON.stringify(request)),
       operationKind: "CompactionSummary",
       logicalStepNo: input.logicalStepNo,
+      ...(input.sourceAgentLoopStep === undefined
+        ? {}
+        : { sourceAgentLoopStep: input.sourceAgentLoopStep }),
       resolvedModelBindingFingerprint: input.bindingFingerprint,
       ...(input.inputFrontier === undefined
         ? {}
@@ -215,6 +225,9 @@ export const runNativeCompaction = (
       compiledRequestHash: sha256Hex(JSON.stringify(request)),
       operationKind: request.operationKind,
       logicalStepNo: input.logicalStepNo,
+      ...(input.sourceAgentLoopStep === undefined
+        ? {}
+        : { sourceAgentLoopStep: input.sourceAgentLoopStep }),
       resolvedModelBindingFingerprint: input.bindingFingerprint,
       ...(input.inputFrontier === undefined
         ? {}

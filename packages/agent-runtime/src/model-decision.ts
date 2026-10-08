@@ -290,8 +290,8 @@ interface NativePortableFrontier {
   readonly manifest: Record<string, unknown>;
   readonly request: PortableModelRequestV2;
   readonly inputFrontier: {
-    readonly firstSequence: number;
-    readonly lastSequence: number;
+    readonly firstSequence: number | null;
+    readonly lastSequence: number | null;
   };
   readonly contextRefs: ReadonlyArray<string>;
   readonly inputItems: ReadonlyArray<PortableInputItem>;
@@ -378,13 +378,16 @@ const decodeUniqueNativePortableFrontier = (
     const frontier = frontierValue as Record<string, unknown>;
     const firstSequence = frontier.firstSequence;
     const lastSequence = frontier.lastSequence;
+    const emptyFrontier = firstSequence === null && lastSequence === null;
+    const validNonEmptyFrontier =
+      typeof firstSequence === "number" &&
+      Number.isSafeInteger(firstSequence) &&
+      firstSequence >= 0 &&
+      typeof lastSequence === "number" &&
+      Number.isSafeInteger(lastSequence) &&
+      lastSequence >= firstSequence;
     if (
-      typeof firstSequence !== "number" ||
-      !Number.isSafeInteger(firstSequence) ||
-      firstSequence < 0 ||
-      typeof lastSequence !== "number" ||
-      !Number.isSafeInteger(lastSequence) ||
-      lastSequence < firstSequence ||
+      (!emptyFrontier && !validNonEmptyFrontier) ||
       request.requestVersion !== 2 ||
       request.operationKind !== "CompactionNative" ||
       request.outputContractRef !== "provider-native-compaction-v1" ||
@@ -396,7 +399,12 @@ const decodeUniqueNativePortableFrontier = (
     return {
       manifest,
       request: request as unknown as PortableModelRequestV2,
-      inputFrontier: { firstSequence, lastSequence },
+      inputFrontier: emptyFrontier
+        ? { firstSequence: null, lastSequence: null }
+        : {
+            firstSequence: firstSequence as number,
+            lastSequence: lastSequence as number,
+          },
       contextRefs: contextRefsValue,
       inputItems: inputItemsValue as ReadonlyArray<PortableInputItem>,
     };
@@ -487,6 +495,398 @@ export const runModelDecision = (
       | import("@arbor/domain").ProviderTurnId
       | undefined;
     let repairFragments: ReadonlyArray<InstructionFragment> = [];
+    // A Work checkpoint may have been committed after the process-local loop
+    // cursor was last observed. Resolve its durable source before creating a
+    // fresh Prepared step so restart cannot accidentally create/replay step 0.
+    if (
+      executionEpisode(input.execution)?._tag === "WorkEpisode" &&
+      providerTurns !== undefined &&
+      loopSteps !== undefined
+    ) {
+      const startupTimeline = yield* tx
+        .transact(
+          sessions.listRecentEntries(
+            input.execution.sessionId,
+            SESSION_TIMELINE_ENTRY_LIMIT,
+          ),
+        )
+        .pipe(Effect.mapError(failure));
+      const startupProjection = projectSessionTimeline(
+        startupTimeline,
+        currentBindingFingerprint,
+        providerNativeSupported,
+      );
+      const startupCheckpoint = startupProjection.nativeCheckpoint;
+      const startupSession = yield* tx
+        .transact(sessions.findById(input.execution.sessionId))
+        .pipe(Effect.mapError(failure));
+      if (
+        startupCheckpoint === undefined &&
+        Option.isSome(startupSession) &&
+        loopStepFence !== undefined
+      ) {
+        const pendingNative = yield* tx
+          .transact(
+            providerTurns.findNativeCompactionsBySessionEpoch({
+              sessionId: input.execution.sessionId,
+              contextEpoch: startupSession.value.contextEpoch,
+            }),
+          )
+          .pipe(Effect.mapError(failure));
+        if (pendingNative.length > 1) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const candidate = pendingNative[0];
+        const candidateSourceLinkOption =
+          candidate === undefined
+            ? Option.none()
+            : yield* tx
+                .transact(
+                  loopSteps.findProviderTurnLinkByProviderTurnId(
+                    candidate.providerTurnId,
+                  ),
+                )
+                .pipe(Effect.mapError(failure));
+        if (
+          Option.isSome(candidateSourceLinkOption) &&
+          candidateSourceLinkOption.value.role !== "OverflowCompaction"
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        // P20 owns every Native ProviderTurn with an OverflowCompaction link.
+        // Only unlinked ordinary compactions may use this Session/epoch scan.
+        if (
+          candidate !== undefined &&
+          !Option.isSome(candidateSourceLinkOption)
+        ) {
+          const frontier = decodeUniqueNativePortableFrontier(
+            candidate.manifestJson,
+            candidate.portableRequestJson,
+          );
+          const manifest = frontier?.manifest;
+          const sourceValue = manifest?.sourceAgentLoopStep;
+          if (
+            frontier === null ||
+            manifest === undefined ||
+            typeof sourceValue !== "object" ||
+            sourceValue === null ||
+            Array.isArray(sourceValue)
+          ) {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
+          const sourceRecord = sourceValue as Record<string, unknown>;
+          if (
+            sourceRecord.executionId !== input.execution.executionId ||
+            !Number.isSafeInteger(sourceRecord.logicalStepNo) ||
+            !Number.isSafeInteger(sourceRecord.repairAttempt) ||
+            typeof sourceRecord.providerTurnId !== "string" ||
+            candidate.executionId !== input.execution.executionId ||
+            candidate.sessionId !== input.execution.sessionId ||
+            Number(candidate.contextEpoch) !==
+              Number(startupSession.value.contextEpoch) ||
+            candidate.modelRef !== capability.modelRef ||
+            candidate.outputContractRef !== "provider-native-compaction-v1" ||
+            manifest.providerTurnId !== candidate.providerTurnId ||
+            manifest.executionId !== input.execution.executionId ||
+            manifest.sessionId !== input.execution.sessionId ||
+            manifest.contextEpoch !== candidate.contextEpoch ||
+            manifest.logicalStepNo !== sourceRecord.logicalStepNo ||
+            manifest.operationKind !== "CompactionNative" ||
+            manifest.outputContractRef !== "provider-native-compaction-v1" ||
+            manifest.compiledRequestHash !==
+              sha256Hex(candidate.portableRequestJson)
+          ) {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
+          const sourceIdentity = {
+            executionId: input.execution.executionId,
+            logicalStepNo: Number(sourceRecord.logicalStepNo),
+            repairAttempt: Number(sourceRecord.repairAttempt),
+          };
+          const sourceStepOption = yield* tx
+            .transact(loopSteps.find(sourceIdentity))
+            .pipe(Effect.mapError(failure));
+          if (
+            !Option.isSome(sourceStepOption) ||
+            sourceStepOption.value.providerTurnId !==
+              sourceRecord.providerTurnId
+          ) {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
+          const sourceStep = sourceStepOption.value;
+          if (
+            sourceStep.state === "Prepared" ||
+            sourceStep.state === "ProviderResultAvailable" ||
+            sourceStep.state === "OutputRejected" ||
+            sourceStep.state === "OutputAccepted" ||
+            sourceStep.state === "ActionsInProgress"
+          ) {
+            turn = sourceIdentity.logicalStepNo;
+            repairAttempt = sourceIdentity.repairAttempt;
+          } else if (
+            (sourceStep.state === "StepEffectsCommitted" ||
+              sourceStep.state === "NextStepReady") &&
+            sourceStep.successor !== undefined
+          ) {
+            turn = sourceStep.successor.logicalStepNo;
+            repairAttempt = sourceStep.successor.repairAttempt;
+          } else {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
+          const priorReceipt = yield* tx
+            .transact(providerTurns.findSettledResult(candidate.providerTurnId))
+            .pipe(Effect.mapError(failure));
+          const sourceAgentLoopStep = {
+            executionId: String(sourceIdentity.executionId),
+            logicalStepNo: sourceIdentity.logicalStepNo,
+            repairAttempt: sourceIdentity.repairAttempt,
+            providerTurnId: String(sourceStep.providerTurnId),
+          };
+          if (
+            manifest.resolvedModelBindingFingerprint ===
+              currentBindingFingerprint &&
+            priorReceipt._tag === "SettledSuccess"
+          ) {
+            const continuationEvents = priorReceipt.canonicalEvents.filter(
+              (event) => event._tag === "ContinuationState",
+            );
+            if (
+              priorReceipt.evidenceVersion !== "provider-success-v1" ||
+              priorReceipt.finishReason !== "Stop" ||
+              priorReceipt.manifestJson !== candidate.manifestJson ||
+              priorReceipt.turn.providerTurnId !== candidate.providerTurnId ||
+              priorReceipt.turn.manifestId !== candidate.manifestId ||
+              priorReceipt.turn.executionId !== input.execution.executionId ||
+              priorReceipt.turn.sessionId !== input.execution.sessionId ||
+              priorReceipt.turn.contextEpoch !== candidate.contextEpoch ||
+              priorReceipt.turn.modelRef !== capability.modelRef ||
+              priorReceipt.turn.outputContractRef !==
+                "provider-native-compaction-v1" ||
+              continuationEvents.length !== 1 ||
+              continuationEvents[0]?._tag !== "ContinuationState" ||
+              continuationEvents[0].stateRef.length === 0
+            ) {
+              return yield* Effect.fail(
+                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+              );
+            }
+            yield* commitRecoveredNativeCompaction(
+              {
+                execution: input.execution,
+                providerTurnId: candidate.providerTurnId,
+                expectedEpoch: startupSession.value.contextEpoch,
+                bindingFingerprint: currentBindingFingerprint,
+                opaqueItemRef: continuationEvents[0].stateRef,
+                fence: loopStepFence,
+              },
+              { sessions, tx },
+            ).pipe(Effect.mapError(failure));
+          } else if (
+            manifest.resolvedModelBindingFingerprint ===
+              currentBindingFingerprint &&
+            priorReceipt._tag === "Unsettled"
+          ) {
+            yield* runCompaction(
+              {
+                execution: input.execution,
+                logicalStepNo: sourceIdentity.logicalStepNo,
+                sourceAgentLoopStep,
+                currentEpoch: startupSession.value.contextEpoch,
+                modelRef: capability.modelRef,
+                ...(options.secretRef === undefined
+                  ? {}
+                  : { secretRef: options.secretRef }),
+                bindingFingerprint: currentBindingFingerprint,
+                inputFrontier: frontier.inputFrontier,
+                contextRefs: frontier.contextRefs,
+                inputItems: frontier.inputItems,
+                fence: loopStepFence,
+                nativeSupported: true,
+                nativeRecovery: {
+                  manifestJson: candidate.manifestJson,
+                  request: frontier.request,
+                },
+              },
+              { providerRuntime, sessions, tx },
+            ).pipe(Effect.mapError(failure));
+          } else if (
+            priorReceipt._tag === "SettledFailure" ||
+            priorReceipt._tag === "SettledSuccess" ||
+            priorReceipt._tag === "Unsettled"
+          ) {
+            yield* runSummaryCompaction(
+              {
+                execution: input.execution,
+                logicalStepNo: sourceIdentity.logicalStepNo,
+                sourceAgentLoopStep,
+                currentEpoch: startupSession.value.contextEpoch,
+                modelRef: capability.modelRef,
+                ...(options.secretRef === undefined
+                  ? {}
+                  : { secretRef: options.secretRef }),
+                bindingFingerprint: currentBindingFingerprint,
+                inputFrontier: frontier.inputFrontier,
+                contextRefs: frontier.contextRefs,
+                inputItems: frontier.inputItems,
+                fence: loopStepFence,
+              },
+              { providerRuntime, sessions, tx },
+            ).pipe(Effect.mapError(failure));
+          } else {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
+        }
+      }
+      if (
+        startupCheckpoint?.providerTurnId !== undefined &&
+        startupCheckpoint.fromEpoch !== undefined &&
+        Option.isSome(startupSession) &&
+        startupCheckpoint.toEpoch === Number(startupSession.value.contextEpoch)
+      ) {
+        const startupNativeTurnId = nativeCompactionProviderTurnId(
+          startupCheckpoint.providerTurnId,
+        );
+        if (startupNativeTurnId === null) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const startupManifest = yield* tx
+          .transact(providerTurns.findManifestByTurn(startupNativeTurnId))
+          .pipe(Effect.mapError(failure));
+        if (startupManifest === null) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        let startupManifestValue: Record<string, unknown>;
+        try {
+          const parsed = JSON.parse(startupManifest.manifestJson) as unknown;
+          if (
+            typeof parsed !== "object" ||
+            parsed === null ||
+            Array.isArray(parsed)
+          ) {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
+          startupManifestValue = parsed as Record<string, unknown>;
+        } catch {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const startupSource = startupManifestValue.sourceAgentLoopStep;
+        if (
+          typeof startupSource !== "object" ||
+          startupSource === null ||
+          Array.isArray(startupSource)
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const startupSourceRecord = startupSource as Record<string, unknown>;
+        if (
+          startupSourceRecord.executionId !== input.execution.executionId ||
+          !Number.isSafeInteger(startupSourceRecord.logicalStepNo) ||
+          !Number.isSafeInteger(startupSourceRecord.repairAttempt) ||
+          typeof startupSourceRecord.providerTurnId !== "string" ||
+          startupManifestValue.providerTurnId !== startupNativeTurnId ||
+          startupManifestValue.executionId !== input.execution.executionId ||
+          startupManifestValue.sessionId !== input.execution.sessionId ||
+          startupManifestValue.contextEpoch !== startupCheckpoint.fromEpoch ||
+          startupManifestValue.operationKind !== "CompactionNative" ||
+          startupManifestValue.resolvedModelBindingFingerprint !==
+            startupCheckpoint.bindingFingerprint ||
+          startupManifestValue.compiledRequestHash !==
+            sha256Hex(startupManifest.portableRequestJson)
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const startupIdentity = {
+          executionId: input.execution.executionId,
+          logicalStepNo: Number(startupSourceRecord.logicalStepNo),
+          repairAttempt: Number(startupSourceRecord.repairAttempt),
+        };
+        const startupStepOption = yield* tx
+          .transact(loopSteps.find(startupIdentity))
+          .pipe(Effect.mapError(failure));
+        if (!Option.isSome(startupStepOption)) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const startupStep = startupStepOption.value;
+        if (startupStep.providerTurnId !== startupSourceRecord.providerTurnId) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        if (
+          startupStep.state === "NextStepReady" &&
+          startupStep.successor === undefined
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        if (
+          startupStep.state === "Prepared" ||
+          startupStep.state === "ProviderResultAvailable" ||
+          startupStep.state === "OutputRejected" ||
+          startupStep.state === "OutputAccepted" ||
+          startupStep.state === "ActionsInProgress"
+        ) {
+          turn = startupIdentity.logicalStepNo;
+          repairAttempt = startupIdentity.repairAttempt;
+        } else if (
+          startupStep.state === "StepEffectsCommitted" ||
+          startupStep.state === "NextStepReady"
+        ) {
+          if (
+            !startupCheckpoint.bindingMatches ||
+            startupStep.successor === undefined
+          ) {
+            // Rebase must settle the persisted checkpoint owner before its
+            // successor can inspect the old Native frontier.
+            turn = startupIdentity.logicalStepNo;
+            repairAttempt = startupIdentity.repairAttempt;
+          } else {
+            turn = startupStep.successor.logicalStepNo;
+            repairAttempt = startupStep.successor.repairAttempt;
+          }
+        }
+        if (options.qualificationProbe !== undefined) {
+          yield* Effect.promise(
+            () =>
+              options.qualificationProbe?.({
+                boundary: "AH19NativeCheckpointRecovery",
+                stage: `StartupCheckpointCursor:bindingMatches=${startupCheckpoint.bindingMatches}:source=${startupIdentity.logicalStepNo}:repair=${startupIdentity.repairAttempt}:state=${startupStep.state}:successor=${startupStep.successor?.providerTurnId ?? "none"}:cursor=${turn}`,
+                executionId: String(input.execution.executionId),
+                providerTurnId: startupCheckpoint.providerTurnId ?? "unknown",
+              }) ?? Promise.resolve(),
+          );
+        }
+      }
+    }
     while (true) {
       const controlBasis = yield* currentControlBasis();
       const providerTurnId =
@@ -978,7 +1378,17 @@ export const runModelDecision = (
                     const compacted = yield* runSummaryCompaction(
                       {
                         execution: input.execution,
-                        logicalStepNo: turn,
+                        logicalStepNo: compactionLink.identity.logicalStepNo,
+                        sourceAgentLoopStep: {
+                          executionId: String(
+                            compactionLink.identity.executionId,
+                          ),
+                          logicalStepNo: compactionLink.identity.logicalStepNo,
+                          repairAttempt: compactionLink.identity.repairAttempt,
+                          providerTurnId: String(
+                            compactionLink.predecessorProviderTurnId,
+                          ),
+                        },
                         currentEpoch: compactionLink.contextEpoch,
                         modelRef: capability.modelRef,
                         ...(options.secretRef === undefined
@@ -1651,12 +2061,238 @@ export const runModelDecision = (
       ];
       const nativeCheckpoint = sessionProjection.nativeCheckpoint;
       if (nativeCheckpoint !== undefined) {
+        if (options.qualificationProbe !== undefined) {
+          yield* Effect.promise(
+            () =>
+              options.qualificationProbe?.({
+                boundary: "AH19NativeCheckpointRecovery",
+                stage: `NativeCheckpointRecoveryEntered:bindingMatches=${nativeCheckpoint.bindingMatches}:source=${nativeCheckpoint.providerTurnId ?? "unknown"}:cursor=${turn}/${repairAttempt}:from=${nativeCheckpoint.fromEpoch ?? "missing"}:to=${nativeCheckpoint.toEpoch ?? "missing"}:sessionEpoch=${sessionRecord.value.contextEpoch}`,
+                executionId: String(input.execution.executionId),
+                providerTurnId: nativeCheckpoint.providerTurnId ?? "unknown",
+              }) ?? Promise.resolve(),
+          );
+        }
         if (
           nativeCheckpoint.toEpoch === undefined ||
           nativeCheckpoint.toEpoch !== Number(sessionRecord.value.contextEpoch)
         ) {
           return yield* Effect.fail(
             failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        // A checkpoint can outlive the in-memory model-loop cursor. Bind it to
+        // the persisted AgentLoopStep in every binding branch, including an
+        // exact-binding restart; never derive the step from ProviderTurn text.
+        if (
+          nativeCheckpoint.providerTurnId === undefined ||
+          nativeCheckpoint.fromEpoch === undefined ||
+          nativeCheckpoint.opaqueItemRef === undefined ||
+          nativeCheckpoint.bindingFingerprint === undefined ||
+          providerTurns === undefined ||
+          loopSteps === undefined
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const checkpointNativeProviderTurnId = nativeCompactionProviderTurnId(
+          nativeCheckpoint.providerTurnId,
+        );
+        if (checkpointNativeProviderTurnId === null) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        if (options.qualificationProbe !== undefined) {
+          yield* Effect.promise(
+            () =>
+              options.qualificationProbe?.({
+                boundary: "AH19NativeCheckpointRecovery",
+                stage: "NativeCheckpointProviderTurnParsed",
+                executionId: String(input.execution.executionId),
+                providerTurnId: checkpointNativeProviderTurnId,
+              }) ?? Promise.resolve(),
+          );
+        }
+        const [checkpointManifest, checkpointReceipt] = yield* Effect.all(
+          [
+            tx.transact(
+              providerTurns.findManifestByTurn(checkpointNativeProviderTurnId),
+            ),
+            tx.transact(
+              providerTurns.findSettledResult(checkpointNativeProviderTurnId),
+            ),
+          ],
+          { concurrency: 1 },
+        ).pipe(Effect.mapError(failure));
+        if (options.qualificationProbe !== undefined) {
+          yield* Effect.promise(
+            () =>
+              options.qualificationProbe?.({
+                boundary: "AH19NativeCheckpointRecovery",
+                stage: `NativeCheckpointManifestReceiptRead:manifest=${checkpointManifest !== null}:receipt=${checkpointReceipt._tag}:sameManifest=${checkpointReceipt._tag === "SettledSuccess" && checkpointReceipt.manifestJson === checkpointManifest?.manifestJson}`,
+                executionId: String(input.execution.executionId),
+                providerTurnId: checkpointNativeProviderTurnId,
+              }) ?? Promise.resolve(),
+          );
+        }
+        const checkpointFrontier =
+          checkpointManifest === null
+            ? null
+            : decodeUniqueNativePortableFrontier(
+                checkpointManifest.manifestJson,
+                checkpointManifest.portableRequestJson,
+              );
+        const checkpointManifestJson = checkpointFrontier?.manifest;
+        const checkpointSource = checkpointManifestJson?.sourceAgentLoopStep;
+        const checkpointSourceIdentity =
+          typeof checkpointSource === "object" &&
+          checkpointSource !== null &&
+          !Array.isArray(checkpointSource) &&
+          (checkpointSource as Record<string, unknown>).executionId ===
+            input.execution.executionId &&
+          Number.isSafeInteger(
+            (checkpointSource as Record<string, unknown>).logicalStepNo,
+          ) &&
+          Number((checkpointSource as Record<string, unknown>).logicalStepNo) >=
+            0 &&
+          Number.isSafeInteger(
+            (checkpointSource as Record<string, unknown>).repairAttempt,
+          ) &&
+          Number((checkpointSource as Record<string, unknown>).repairAttempt) >=
+            0 &&
+          typeof (checkpointSource as Record<string, unknown>)
+            .providerTurnId === "string"
+            ? {
+                executionId: input.execution.executionId,
+                logicalStepNo: Number(
+                  (checkpointSource as Record<string, unknown>).logicalStepNo,
+                ),
+                repairAttempt: Number(
+                  (checkpointSource as Record<string, unknown>).repairAttempt,
+                ),
+              }
+            : undefined;
+        if (options.qualificationProbe !== undefined) {
+          yield* Effect.promise(
+            () =>
+              options.qualificationProbe?.({
+                boundary: "AH19NativeCheckpointRecovery",
+                stage: `NativeCheckpointEvidence:frontier=${checkpointFrontier !== null}:source=${checkpointSourceIdentity !== undefined}:receipt=${checkpointReceipt._tag}:manifestTurn=${checkpointManifestJson?.providerTurnId === checkpointNativeProviderTurnId}:requestEpoch=${checkpointManifestJson?.contextEpoch === nativeCheckpoint.fromEpoch}`,
+                executionId: String(input.execution.executionId),
+                providerTurnId: checkpointNativeProviderTurnId,
+              }) ?? Promise.resolve(),
+          );
+        }
+        if (
+          checkpointManifest === null ||
+          checkpointFrontier === null ||
+          checkpointManifestJson === undefined ||
+          checkpointSourceIdentity === undefined ||
+          checkpointReceipt._tag !== "SettledSuccess" ||
+          checkpointReceipt.evidenceVersion !== "provider-success-v1" ||
+          checkpointReceipt.finishReason !== "Stop" ||
+          checkpointReceipt.turn.providerTurnId !==
+            checkpointNativeProviderTurnId ||
+          checkpointReceipt.turn.manifestId !== checkpointManifest.manifestId ||
+          checkpointReceipt.turn.executionId !== input.execution.executionId ||
+          checkpointReceipt.turn.sessionId !== input.execution.sessionId ||
+          checkpointReceipt.turn.contextEpoch !== nativeCheckpoint.fromEpoch ||
+          checkpointReceipt.turn.outputContractRef !==
+            "provider-native-compaction-v1" ||
+          checkpointReceipt.manifestJson !== checkpointManifest.manifestJson ||
+          checkpointManifestJson.providerTurnId !==
+            checkpointNativeProviderTurnId ||
+          checkpointManifestJson.executionId !== input.execution.executionId ||
+          checkpointManifestJson.sessionId !== input.execution.sessionId ||
+          checkpointManifestJson.contextEpoch !== nativeCheckpoint.fromEpoch ||
+          checkpointManifestJson.operationKind !== "CompactionNative" ||
+          checkpointManifestJson.outputContractRef !==
+            "provider-native-compaction-v1" ||
+          checkpointManifestJson.resolvedModelBindingFingerprint !==
+            nativeCheckpoint.bindingFingerprint ||
+          checkpointManifestJson.compiledRequestHash !==
+            sha256Hex(checkpointManifest.portableRequestJson) ||
+          checkpointFrontier.request.modelRef !==
+            checkpointManifestJson.modelRef ||
+          checkpointReceipt.turn.modelRef !== checkpointManifestJson.modelRef ||
+          checkpointFrontier.request.operationKind !== "CompactionNative" ||
+          checkpointFrontier.request.outputContractRef !==
+            "provider-native-compaction-v1" ||
+          checkpointReceipt.canonicalEvents.filter(
+            (event) =>
+              event._tag === "ContinuationState" &&
+              event.stateRef === nativeCheckpoint.opaqueItemRef,
+          ).length !== 1
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const checkpointSourceStepOption = yield* tx
+          .transact(loopSteps.find(checkpointSourceIdentity))
+          .pipe(Effect.mapError(failure));
+        if (!Option.isSome(checkpointSourceStepOption)) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const checkpointSourceStep = checkpointSourceStepOption.value;
+        if (
+          checkpointSourceStep.identity.executionId !==
+            input.execution.executionId ||
+          checkpointSourceStep.identity.logicalStepNo !==
+            checkpointSourceIdentity.logicalStepNo ||
+          checkpointSourceStep.identity.repairAttempt !==
+            checkpointSourceIdentity.repairAttempt ||
+          checkpointSourceStep.providerTurnId !==
+            (checkpointSource as Record<string, unknown>).providerTurnId
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        if (
+          checkpointSourceStep.state === "NextStepReady" &&
+          checkpointSourceStep.successor === undefined
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        if (
+          checkpointSourceStep.state === "Prepared" ||
+          checkpointSourceStep.state === "ProviderResultAvailable" ||
+          checkpointSourceStep.state === "OutputRejected" ||
+          checkpointSourceStep.state === "OutputAccepted" ||
+          checkpointSourceStep.state === "ActionsInProgress"
+        ) {
+          turn = checkpointSourceIdentity.logicalStepNo;
+          repairAttempt = checkpointSourceIdentity.repairAttempt;
+        } else if (
+          checkpointSourceStep.state === "StepEffectsCommitted" ||
+          checkpointSourceStep.state === "NextStepReady"
+        ) {
+          if (
+            !nativeCheckpoint.bindingMatches ||
+            checkpointSourceStep.successor === undefined
+          ) {
+            turn = checkpointSourceIdentity.logicalStepNo;
+            repairAttempt = checkpointSourceIdentity.repairAttempt;
+          } else {
+            turn = checkpointSourceStep.successor.logicalStepNo;
+            repairAttempt = checkpointSourceStep.successor.repairAttempt;
+          }
+        }
+        if (options.qualificationProbe !== undefined) {
+          yield* Effect.promise(
+            () =>
+              options.qualificationProbe?.({
+                boundary: "AH19NativeCheckpointRecovery",
+                stage: `NativeCheckpointSourceValidated:state=${checkpointSourceStep.state}:source=${checkpointSourceStep.providerTurnId}:cursor=${turn}/${repairAttempt}:bindingMatches=${nativeCheckpoint.bindingMatches}`,
+                executionId: String(input.execution.executionId),
+                providerTurnId: nativeCheckpoint.providerTurnId ?? "unknown",
+              }) ?? Promise.resolve(),
           );
         }
         if (!nativeCheckpoint.bindingMatches) {
@@ -1736,26 +2372,94 @@ export const runModelDecision = (
               ),
             )
             .pipe(Effect.mapError(failure));
-          if (!Option.isSome(sourceLinkOption)) {
+          const nativeManifest = yield* tx
+            .transact(providerTurns.findManifestByTurn(nativeProviderTurnId))
+            .pipe(Effect.mapError(failure));
+          if (nativeManifest === null) {
             return yield* Effect.fail(
               failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
             );
           }
-          const sourceLink = sourceLinkOption.value;
+          let nativeManifestValue: Record<string, unknown>;
+          try {
+            const parsed = JSON.parse(nativeManifest.manifestJson) as unknown;
+            if (
+              typeof parsed !== "object" ||
+              parsed === null ||
+              Array.isArray(parsed)
+            ) {
+              return yield* Effect.fail(
+                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+              );
+            }
+            nativeManifestValue = parsed as Record<string, unknown>;
+          } catch {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
+          const sourceIdentityValue = nativeManifestValue.sourceAgentLoopStep;
+          const sourceIdentity =
+            typeof sourceIdentityValue === "object" &&
+            sourceIdentityValue !== null &&
+            !Array.isArray(sourceIdentityValue)
+              ? (sourceIdentityValue as Record<string, unknown>)
+              : undefined;
+          if (options.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "AH19NativeCheckpointRecovery",
+                  stage: `NativeCheckpointEvidence:frontier=${checkpointFrontier !== null}:source=${checkpointSourceIdentity !== undefined}:receipt=${checkpointReceipt._tag}:manifestTurn=${checkpointManifestJson?.providerTurnId === checkpointNativeProviderTurnId}:requestEpoch=${checkpointManifestJson?.contextEpoch === nativeCheckpoint.fromEpoch}`,
+                  executionId: String(input.execution.executionId),
+                  providerTurnId: checkpointNativeProviderTurnId,
+                }) ?? Promise.resolve(),
+            );
+          }
+          const sourceLink = Option.isSome(sourceLinkOption)
+            ? sourceLinkOption.value
+            : undefined;
+          const sourceStepIdentity =
+            sourceLink?.identity ??
+            (sourceIdentity !== undefined &&
+            sourceIdentity.executionId === input.execution.executionId &&
+            Number.isSafeInteger(sourceIdentity.logicalStepNo) &&
+            Number(sourceIdentity.logicalStepNo) >= 0 &&
+            Number.isSafeInteger(sourceIdentity.repairAttempt) &&
+            Number(sourceIdentity.repairAttempt) >= 0
+              ? {
+                  executionId: input.execution.executionId,
+                  logicalStepNo: Number(sourceIdentity.logicalStepNo),
+                  repairAttempt: Number(sourceIdentity.repairAttempt),
+                }
+              : undefined);
           if (
-            sourceLink.providerTurnId !== nativeProviderTurnId ||
-            sourceLink.identity.executionId !== input.execution.executionId ||
-            sourceLink.role !== "OverflowCompaction" ||
-            sourceLink.overflowOrdinal !== 0 ||
-            sourceLink.contextEpoch !== nativeCheckpoint.fromEpoch ||
-            sourceLink.predecessorProviderTurnId === undefined
+            sourceStepIdentity === undefined ||
+            (sourceLink !== undefined &&
+              (sourceLink.providerTurnId !== nativeProviderTurnId ||
+                sourceLink.identity.executionId !==
+                  input.execution.executionId ||
+                sourceLink.role !== "OverflowCompaction" ||
+                sourceLink.overflowOrdinal !== 0 ||
+                sourceLink.contextEpoch !== nativeCheckpoint.fromEpoch ||
+                sourceLink.predecessorProviderTurnId === undefined)) ||
+            sourceIdentity?.providerTurnId === undefined
+          ) {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
+          if (
+            sourceIdentity.executionId !== sourceStepIdentity.executionId ||
+            sourceIdentity.logicalStepNo !== sourceStepIdentity.logicalStepNo ||
+            sourceIdentity.repairAttempt !== sourceStepIdentity.repairAttempt
           ) {
             return yield* Effect.fail(
               failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
             );
           }
           const sourceStepOption = yield* tx
-            .transact(loopSteps.find(sourceLink.identity))
+            .transact(loopSteps.find(sourceStepIdentity))
             .pipe(Effect.mapError(failure));
           if (!Option.isSome(sourceStepOption)) {
             return yield* Effect.fail(
@@ -1764,7 +2468,7 @@ export const runModelDecision = (
           }
           const sourceStep = sourceStepOption.value;
           const sourceStepLinks = yield* tx
-            .transact(loopSteps.listProviderTurnLinks(sourceLink.identity))
+            .transact(loopSteps.listProviderTurnLinks(sourceStepIdentity))
             .pipe(Effect.mapError(failure));
           const inferenceLinks = sourceStepLinks.filter(
             (link) => link.role === "Inference",
@@ -1773,54 +2477,65 @@ export const runModelDecision = (
             (link) => link.role === "OverflowCompaction",
           );
           const sourceInferenceLink = inferenceLinks[0];
+          const hasOverflowSource = sourceLink !== undefined;
           if (
             sourceStep.identity.executionId !== input.execution.executionId ||
-            sourceStep.providerTurnId !==
-              sourceLink.predecessorProviderTurnId ||
-            inferenceLinks.length !== 1 ||
-            compactionLinks.length !== 1 ||
-            compactionLinks[0]?.providerTurnId !== nativeProviderTurnId ||
-            sourceInferenceLink === undefined ||
-            sourceInferenceLink.providerTurnId !==
-              sourceLink.predecessorProviderTurnId ||
-            sourceInferenceLink.contextEpoch !== sourceLink.contextEpoch
+            sourceStep.providerTurnId !== sourceIdentity.providerTurnId ||
+            (hasOverflowSource
+              ? sourceStep.providerTurnId !==
+                  sourceLink.predecessorProviderTurnId ||
+                inferenceLinks.length !== 1 ||
+                compactionLinks.length !== 1 ||
+                compactionLinks[0]?.providerTurnId !== nativeProviderTurnId ||
+                sourceInferenceLink === undefined ||
+                sourceInferenceLink.providerTurnId !==
+                  sourceLink.predecessorProviderTurnId ||
+                sourceInferenceLink.contextEpoch !== sourceLink.contextEpoch
+              : compactionLinks.length !== 0 ||
+                inferenceLinks.length > 1 ||
+                (sourceInferenceLink !== undefined &&
+                  sourceInferenceLink.providerTurnId !==
+                    sourceStep.providerTurnId))
           ) {
             return yield* Effect.fail(
               failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
             );
           }
-          const sourceInferenceResult = yield* tx
-            .transact(
-              providerTurns.findSettledResult(
-                sourceInferenceLink.providerTurnId,
-              ),
-            )
-            .pipe(Effect.mapError(failure));
-          if (
-            sourceInferenceResult._tag !== "SettledFailure" ||
-            sourceInferenceResult.turn.providerTurnId !==
-              sourceInferenceLink.providerTurnId ||
-            sourceInferenceResult.failureKind !== "ContextLimitExceeded" ||
-            sourceInferenceResult.turn.executionId !==
-              input.execution.executionId ||
-            sourceInferenceResult.turn.sessionId !==
-              input.execution.sessionId ||
-            sourceInferenceResult.turn.contextEpoch !== sourceLink.contextEpoch
-          ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+          if (sourceLink !== undefined && sourceInferenceLink !== undefined) {
+            const sourceInferenceResult = yield* tx
+              .transact(
+                providerTurns.findSettledResult(
+                  sourceInferenceLink.providerTurnId,
+                ),
+              )
+              .pipe(Effect.mapError(failure));
+            if (
+              sourceInferenceResult._tag !== "SettledFailure" ||
+              sourceInferenceResult.turn.providerTurnId !==
+                sourceInferenceLink.providerTurnId ||
+              sourceInferenceResult.failureKind !== "ContextLimitExceeded" ||
+              sourceInferenceResult.turn.executionId !==
+                input.execution.executionId ||
+              sourceInferenceResult.turn.sessionId !==
+                input.execution.sessionId ||
+              sourceInferenceResult.turn.contextEpoch !==
+                sourceLink.contextEpoch
+            ) {
+              return yield* Effect.fail(
+                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+              );
+            }
           }
-          // Resume the durable source step, not the loop's initial cursor.
-          // The reverse-indexed P20 link is the authority for this identity.
-          turn = sourceLink.identity.logicalStepNo;
-          repairAttempt = sourceLink.identity.repairAttempt;
+          // The Native Manifest carries the exact source identity for ordinary
+          // compaction; an overflow link, when present, must agree with it.
+          turn = sourceStepIdentity.logicalStepNo;
+          repairAttempt = sourceStepIdentity.repairAttempt;
           if (options.qualificationProbe !== undefined) {
             yield* Effect.promise(
               () =>
                 options.qualificationProbe?.({
                   boundary: "AH19NativeCheckpointRecovery",
-                  stage: `NativeProviderTurnIdParsed:sourceStep=${sourceLink.identity.logicalStepNo}:repair=${sourceLink.identity.repairAttempt}:role=${sourceLink.role}:ordinal=${sourceLink.overflowOrdinal}:predecessor=${sourceLink.predecessorProviderTurnId}:state=${sourceStep.state}:successor=${sourceStep.successor?.providerTurnId ?? "none"}`,
+                  stage: `NativeSourceIdentity:step=${sourceStepIdentity.logicalStepNo}:repair=${sourceStepIdentity.repairAttempt}:sourceProviderTurn=${sourceStep.providerTurnId}:overflow=${hasOverflowSource}:state=${sourceStep.state}:successor=${sourceStep.successor?.providerTurnId ?? "none"}`,
                   executionId: String(input.execution.executionId),
                   providerTurnId: nativeProviderTurnId,
                 }) ?? Promise.resolve(),
@@ -1837,9 +2552,6 @@ export const runModelDecision = (
                 }) ?? Promise.resolve(),
             );
           }
-          const nativeManifest = yield* tx
-            .transact(providerTurns.findManifestByTurn(nativeProviderTurnId))
-            .pipe(Effect.mapError(failure));
           if (options.qualificationProbe !== undefined) {
             yield* Effect.promise(
               () =>
@@ -1948,6 +2660,19 @@ export const runModelDecision = (
             nativeInputFrontier.lastSequence < nativeCheckpoint.sequence;
           const validNativeFrontier =
             emptyNativeFrontier || nonEmptyNativeFrontier;
+          const manifestSourceIdentity = nativeManifestJson.sourceAgentLoopStep;
+          const sourceAgentLoopStepMatches =
+            typeof manifestSourceIdentity === "object" &&
+            manifestSourceIdentity !== null &&
+            !Array.isArray(manifestSourceIdentity) &&
+            (manifestSourceIdentity as Record<string, unknown>).executionId ===
+              sourceStepIdentity.executionId &&
+            (manifestSourceIdentity as Record<string, unknown>)
+              .logicalStepNo === sourceStepIdentity.logicalStepNo &&
+            (manifestSourceIdentity as Record<string, unknown>)
+              .repairAttempt === sourceStepIdentity.repairAttempt &&
+            (manifestSourceIdentity as Record<string, unknown>)
+              .providerTurnId === sourceStep.providerTurnId;
           if (options.qualificationProbe !== undefined) {
             const checks = {
               providerTurn:
@@ -1963,7 +2688,8 @@ export const runModelDecision = (
                 nativeManifestJson.operationKind === "CompactionNative",
               step:
                 nativeManifestJson.logicalStepNo ===
-                sourceLink.identity.logicalStepNo,
+                sourceStepIdentity.logicalStepNo,
+              sourceAgentLoopStep: sourceAgentLoopStepMatches,
               fingerprint:
                 nativeManifestJson.resolvedModelBindingFingerprint ===
                 nativeCheckpoint.bindingFingerprint,
@@ -2018,7 +2744,8 @@ export const runModelDecision = (
             nativeManifestJson.contextEpoch !== nativeCheckpoint.fromEpoch ||
             nativeManifestJson.operationKind !== "CompactionNative" ||
             nativeManifestJson.logicalStepNo !==
-              sourceLink.identity.logicalStepNo ||
+              sourceStepIdentity.logicalStepNo ||
+            !sourceAgentLoopStepMatches ||
             nativeManifestJson.resolvedModelBindingFingerprint !==
               nativeCheckpoint.bindingFingerprint ||
             nativeManifestJson.compiledRequestHash !==
@@ -2220,7 +2947,13 @@ export const runModelDecision = (
           const rebuilt = yield* runSummaryCompaction(
             {
               execution: input.execution,
-              logicalStepNo: turn,
+              logicalStepNo: sourceStepIdentity.logicalStepNo,
+              sourceAgentLoopStep: {
+                executionId: String(sourceStepIdentity.executionId),
+                logicalStepNo: sourceStepIdentity.logicalStepNo,
+                repairAttempt: sourceStepIdentity.repairAttempt,
+                providerTurnId: String(sourceStep.providerTurnId),
+              },
               currentEpoch: sessionRecord.value.contextEpoch,
               modelRef: capability.modelRef,
               ...(options.secretRef === undefined
@@ -2695,20 +3428,20 @@ export const runModelDecision = (
                 successorIdentity.executionId === input.execution.executionId,
               exactNextStep:
                 successorIdentity.logicalStepNo ===
-                sourceLink.identity.logicalStepNo + 1,
+                sourceStepIdentity.logicalStepNo + 1,
               initialRepair: successorIdentity.repairAttempt === 0,
               providerTurn:
                 successorRecord?.providerTurnId ===
                 sourceSuccessor.providerTurnId,
               predecessorExecution:
                 successorRecord?.predecessor?.executionId ===
-                sourceLink.identity.executionId,
+                sourceStepIdentity.executionId,
               predecessorStep:
                 successorRecord?.predecessor?.logicalStepNo ===
-                sourceLink.identity.logicalStepNo,
+                sourceStepIdentity.logicalStepNo,
               predecessorRepair:
                 successorRecord?.predecessor?.repairAttempt ===
-                sourceLink.identity.repairAttempt,
+                sourceStepIdentity.repairAttempt,
             };
             if (options.qualificationProbe !== undefined) {
               yield* Effect.promise(
@@ -2735,7 +3468,7 @@ export const runModelDecision = (
                 () =>
                   options.qualificationProbe?.({
                     boundary: "AH19NativeCheckpointRecovery",
-                    stage: `NativeRebaseResumesPersistedSuccessor:from=${sourceLink.identity.logicalStepNo}:to=${successorIdentity.logicalStepNo}:providerTurn=${sourceSuccessor.providerTurnId}`,
+                    stage: `NativeRebaseResumesPersistedSuccessor:from=${sourceStepIdentity.logicalStepNo}:to=${successorIdentity.logicalStepNo}:providerTurn=${sourceSuccessor.providerTurnId}`,
                     executionId: String(input.execution.executionId),
                     providerTurnId: nativeCheckpointProviderTurnId,
                   }) ?? Promise.resolve(),
@@ -2765,7 +3498,7 @@ export const runModelDecision = (
               );
             }
             const replacementProviderTurnId =
-              `ptn_${input.execution.executionId}_${sourceLink.identity.logicalStepNo}_overflow_0` as never;
+              `ptn_${input.execution.executionId}_${sourceStepIdentity.logicalStepNo}_overflow_0` as never;
             const existingReplacement = stepProviderLinks.filter(
               (link) => link.role === "OverflowReplacement",
             );
@@ -2781,7 +3514,7 @@ export const runModelDecision = (
                   () =>
                     options.qualificationProbe?.({
                       boundary: "AH19NativeCheckpointRecovery",
-                      stage: `ExistingOverflowReplacement:sourceStep=${sourceLink.identity.logicalStepNo}:state=${sourceStep.state}:successor=${sourceStep.successor?.providerTurnId ?? "none"}:linkEpoch=${Number(priorReplacement.contextEpoch)}:rebuiltEpoch=${Number(rebuilt.newEpoch)}`,
+                      stage: `ExistingOverflowReplacement:sourceStep=${sourceStepIdentity.logicalStepNo}:state=${sourceStep.state}:successor=${sourceStep.successor?.providerTurnId ?? "none"}:linkEpoch=${Number(priorReplacement.contextEpoch)}:rebuiltEpoch=${Number(rebuilt.newEpoch)}`,
                       executionId: String(input.execution.executionId),
                       providerTurnId: nativeCheckpointProviderTurnId,
                     }) ?? Promise.resolve(),
@@ -2991,8 +3724,9 @@ export const runModelDecision = (
               nativeStateRefs.length !== 1 ||
               nativeStateRefs[0]?._tag !== "ContinuationState" ||
               nativeStateRefs[0].stateRef !== nativeCheckpoint.opaqueItemRef ||
-              nativeFrontier.inputFrontier.lastSequence >=
-                nativeCheckpoint.sequence ||
+              (nativeFrontier.inputFrontier.lastSequence !== null &&
+                nativeFrontier.inputFrontier.lastSequence >=
+                  nativeCheckpoint.sequence) ||
               nativeFrontier.inputItems.some(
                 (item) =>
                   item._tag === "CompactionCheckpoint" &&
@@ -3035,7 +3769,11 @@ export const runModelDecision = (
                   ? postCheckpointProjection.frontier.lastSequence
                   : nativeFrontier.inputFrontier.lastSequence,
             };
-            if (rebuiltFrontier.lastSequence < rebuiltFrontier.firstSequence) {
+            if (
+              rebuiltFrontier.firstSequence !== null &&
+              rebuiltFrontier.lastSequence !== null &&
+              rebuiltFrontier.lastSequence < rebuiltFrontier.firstSequence
+            ) {
               return yield* Effect.fail(
                 failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
               );
@@ -3065,10 +3803,21 @@ export const runModelDecision = (
               ...nativeFrontier.inputItems,
               ...postCheckpointProjection.inputItems,
             ];
+            if (loopStep === undefined) {
+              return yield* Effect.fail(
+                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+              );
+            }
             const rebuilt = yield* runSummaryCompaction(
               {
                 execution: input.execution,
-                logicalStepNo: turn,
+                logicalStepNo: loopStepIdentity.logicalStepNo,
+                sourceAgentLoopStep: {
+                  executionId: String(loopStepIdentity.executionId),
+                  logicalStepNo: loopStepIdentity.logicalStepNo,
+                  repairAttempt: loopStepIdentity.repairAttempt,
+                  providerTurnId: String(loopStep.providerTurnId),
+                },
                 currentEpoch: sourceSession.value.contextEpoch,
                 modelRef: capability.modelRef,
                 ...(options.secretRef === undefined
@@ -3292,7 +4041,17 @@ export const runModelDecision = (
         const compacted = yield* runCompaction(
           {
             execution: input.execution,
-            logicalStepNo: turn,
+            logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
+            ...(loopStep === undefined
+              ? {}
+              : {
+                  sourceAgentLoopStep: {
+                    executionId: String(loopStep.identity.executionId),
+                    logicalStepNo: loopStep.identity.logicalStepNo,
+                    repairAttempt: loopStep.identity.repairAttempt,
+                    providerTurnId: String(loopStep.providerTurnId),
+                  },
+                }),
             currentEpoch: stepContext.contextEpoch,
             modelRef: capability.modelRef,
             ...(options.secretRef === undefined
@@ -3435,10 +4194,24 @@ export const runModelDecision = (
           return yield* proposeSettlement(safetyStop("CompactionNoGain"));
         }
         compactionAttempts += 1;
+        const nativeSupported =
+          capability.portableRequestCompatibility?.operationKinds.includes(
+            "CompactionNative",
+          ) === true;
         yield* runCompaction(
           {
             execution: input.execution,
-            logicalStepNo: turn,
+            logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
+            ...(loopStep === undefined
+              ? {}
+              : {
+                  sourceAgentLoopStep: {
+                    executionId: String(loopStep.identity.executionId),
+                    logicalStepNo: loopStep.identity.logicalStepNo,
+                    repairAttempt: loopStep.identity.repairAttempt,
+                    providerTurnId: String(loopStep.providerTurnId),
+                  },
+                }),
             currentEpoch: stepContext.contextEpoch,
             modelRef: capability.modelRef,
             ...(options.secretRef === undefined
@@ -3449,10 +4222,7 @@ export const runModelDecision = (
             contextRefs: messageContextRefs,
             inputItems,
             fence: loopStepFence,
-            nativeSupported:
-              capability.portableRequestCompatibility?.operationKinds.includes(
-                "CompactionNative",
-              ) === true,
+            nativeSupported,
           },
           {
             providerRuntime,
@@ -3831,7 +4601,17 @@ export const runModelDecision = (
           const compacted = yield* runCompaction(
             {
               execution: input.execution,
-              logicalStepNo: turn,
+              logicalStepNo: loopStep?.identity.logicalStepNo ?? turn,
+              ...(loopStep === undefined
+                ? {}
+                : {
+                    sourceAgentLoopStep: {
+                      executionId: String(loopStep.identity.executionId),
+                      logicalStepNo: loopStep.identity.logicalStepNo,
+                      repairAttempt: loopStep.identity.repairAttempt,
+                      providerTurnId: String(loopStep.providerTurnId),
+                    },
+                  }),
               currentEpoch: stepContext.contextEpoch,
               modelRef: capability.modelRef,
               ...(options.secretRef === undefined
