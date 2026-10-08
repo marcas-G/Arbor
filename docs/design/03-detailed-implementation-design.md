@@ -1,14 +1,41 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.31\
+**Version:** 1.32\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.30\
-**Date:** 2026-10-03\
-**Depends on:** `Arbor System Design Specification v1.9`
+**Supersedes:** v1.31\
+**Date:** 2026-10-08\
+**Depends on:** `Arbor System Design Specification v1.10`
 
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
 **Scope:** 将已冻结的系统级设计落实为可实现且可测试的契约。v1.4 是 governance patch：闭合 P0 planning 审阅发现的 DG-01…DG-06，不改变 C1–C10 / X1–X11 的语义结论；v1.5 闭合 P1 pre-implementation 审阅发现的 P1-DG-01…05 与 P1-DG-10，P1+ 的 exact DDL、逐 Command payload/signature、Prompt 正文与经验参数仍按 phase-scoped closure 管理。
+
+**Governance changes (v1.31 → v1.32): FT-DG-02 — Completed Work public view**
+
+- P10 owns an additive, read-only `work-detail` View over the exact
+  `{ projectId, workspaceId, workId }` identity, with typed request/response,
+  canonical-source binding, and a shared typed NotFound/404 for absent and
+  cross-project/workspace targets.
+- P13 renders the added frozen view; the current inventory and rendering
+  count is ten. Historical v1.13/v1.15 nine-view statements remain governance
+  history and are superseded for the current contract by this amendment.
+- Verification/Acceptance/Work lifecycle ownership is unchanged. No command,
+  event, DDL, migration, transport route, authority, or package-DAG change.
+- Accepted proposal SHA-256:
+  `6E9D25F8EFCAB0722456A750F002D88297B21E7B41E4E08AD5D51E6187842BB8`;
+  supplemental decision date 2026-10-08; landing package SHA-256:
+  `266884FC5B8858CA631DC87EFA1EA29B6BFD7265FB93C324F0A5F65FF8C68433`.
+  Decision/landing audit:
+  `planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
+
+### FT-DG-02 current P10/P13 view contract
+
+The current P10 view inventory includes the read-only `work-detail` view in
+addition to the previously documented views. The current P13 frozen view
+rendering count is ten. This current count supersedes nine-view counts in the
+historical v1.13/v1.15 governance entries below; those entries remain history.
+P10 `01`/`05`/`07` and P13 `00`/`03`/`06` own the exact inventory, DTO,
+binding, rendering, and acceptance details.
 
 **Governance changes (v1.30 → v1.31): Minimal Architecture Convergence**
 
@@ -748,7 +775,7 @@ records and are not a second frozen design source.
 **Governance changes (v1.12 → v1.13):**（P10 design-closure 治理裁决 GQ1–GQ7）
 
 - G1 (GQ1): **视图清单权威归 System Design §12/§13.9 全量 inventory**；本设计 §11 P10
-  九词仅为不完整摘要。Search / Workspace Summary / Project Overview / Inbox 视图
+  旧九词仅为不完整摘要（当前清单见本文件上方 FT-DG-02 amendment）。Search / Workspace Summary / Project Overview / Inbox 视图
   均归 P10；`WorkspaceStatus` 标签映射表按 SD 原有 labels 冻结（P10 契约落地），
   不发明新标签。
 - G2 (GQ2): **`EffectiveFacts` 是唯一的 shared canonical-state-derived
@@ -4941,6 +4968,7 @@ locally before transport retry eligibility.
 Responsibility Tree
 Attention
 Workspace Detail
+Work Detail
 Current Work
 Verification
 Dependency View
@@ -5016,7 +5044,7 @@ P12 completion blockers（v1.14 G1–G8；与文件头 P12 completion blockers �
 ```text
 浏览器瘦客户端（apps/web：Vite + React，TypeScript/ESM）
 角色冻结：Projection Renderer + Command Initiator
-  - 渲染 9 个 frozen view DTO（api-contracts），不重解释 view 语义
+  - 渲染 10 个 frozen view DTO（api-contracts），不重解释 view 语义
   - Human-actionable governance commands 表单化，经 /commands 提交
   - WS 仅用于 invalidation → refetch；无第二套 canonical/projection state
   - Problem DTO typed failures 的明确 UI 呈现

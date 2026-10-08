@@ -1,7 +1,7 @@
 # P13 — 06 Acceptance
 
 **Owns:** P13 验收标准与 completion 定义
-**Baseline:** DID v1.15 G1–G4 · DID v1.17 TR-WPU-A visual successor · contracts `00`–`05`
+**Baseline:** DID v1.15 G1–G4 · DID v1.17 TR-WPU-A visual successor · contracts `00`–`05` · FT-DG-02 additive amendment
 
 ## 1. End-to-end acceptance story
 
@@ -15,13 +15,25 @@ StopExecution 紧急停止控件（显式确认）中止 → 全程未见 Select
 选择控件与任何 chat 输入框；拔掉 token 后所有命令得到 `unauthenticated`
 Problem 呈现。
 
+### F22 — completed Work remains publicly inspectable
+
+After a Work receives its exact Parent Acceptance and `CompleteWork` commits,
+open the same `/p/:projectId/workspace/:workspaceId/work/:workId` URL and
+render its canonical Completed lifecycle, objective, and the accepted
+same-revision PASS Verification/Acceptance details. Repeat after daemon
+restart. Also verify `Open + acceptedResult` remains “已验收、待完成”,
+Cancelled remains canonical Cancelled, and absent versus foreign target
+identities produce the same typed `projection/work-not-found` / HTTP 404
+presentation with no target facts. WorkPage consumes P10 Work Detail; it does
+not reconstruct lifecycle from `workspace-detail.currentWork/pendingWorks`.
+
 ## 2. Exit criteria matrix
 
 | # | Criterion | Evidence（机械化） |
 |---|---|---|
 | EC-1 | `pnpm check` 全绿（含 web build + web tests 并入根编排） | root `pnpm check` exit 0 |
 | EC-2 | `apps/web` 零禁依赖（硬要求 1） | architecture test：按 `@arbor/*` 白名单实现——`@arbor/api-contracts` 唯一允许；禁止 `@arbor/domain` / `@arbor/application` / `@arbor/projection-runtime` / `@arbor/adapters/*` / `@arbor/ports` / 其余一切 `@arbor/*` 与 `apps/*` 源码引用 |
-| EC-3 | 9 个 frozen view 均有 fixture/render coverage（硬要求 2） | render tests：9 view × (typical / minimal / unknown-enum) |
+| EC-3 | 10 个 frozen view 均有 fixture/render coverage（硬要求 2） | render tests：10 view × (typical / minimal / unknown-enum) |
 | EC-4 | Problem DTO 主要 typed failures 明确 UI rendering（硬要求 3） | render tests：六 category（unauthenticated/forbidden/not-found/invalid-request/stale/其他503）+ `TerminalRejected` 内联态 |
 | EC-5 | WS invalidation → server refetch，不自行 replay（硬要求 4） | 单测：帧处理只触发 refetch、cache 无事件性写入；e2e：invalidation 后数据来自 server 响应 |
 | EC-6 | 命令一律经 `/commands`，暴露集合 == `02` Human-actionable 七项（硬要求 5） | UI command catalog 常量 + 机械测试：表单可达命令集合相等；architecture test：写路径白名单（`01` I3） |

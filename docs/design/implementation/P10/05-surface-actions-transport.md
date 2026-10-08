@@ -3,6 +3,13 @@
 **Authority:** DID v1.13 G4/G6, §7.2 (ProjectionQueryPort), §10.4.1 (projection-runtime deps domain+ports; api-contracts deps domain), §10.5 (Problem DTO); SD v1.3 §12.5, §13.10; P8 `05` (P14 consume-only); P6 `04` (Steer), P2 `01` (Stop).
 **Status:** FROZEN — DID v1.17 D-1 additive read-model successor (TR-WPU-B/C/D).
 
+**FT-DG-02 additive contract amendment (2026-10-08):** `work-detail` is added
+as a read-only view. It does not reopen P10 or alter P12 transport ownership.
+Audit references: accepted proposal SHA-256
+`6E9D25F8EFCAB0722456A750F002D88297B21E7B41E4E08AD5D51E6187842BB8`; landing
+package SHA-256
+`266884FC5B8858CA631DC87EFA1EA29B6BFD7265FB93C324F0A5F65FF8C68433`.
+
 ## 1. ProjectionQueryPort (signature freeze)
 
 ```ts
@@ -28,7 +35,27 @@ DependencyReq      = { projectId | workspaceId }               → rows[{depende
 TranscriptReq      = { workspaceId, sessionId?, cursor?, limit } → { entries[{kind, summaryRef, at}], nextCursor? }   // first production read path over session_entries
 UsageReq           = { projectId, groupBy: "workspace"|"subtree"|"project" } → rows[{workspaceId, tokens, cost, turns }]
 InboxViewReq       = { workspaceId }                           → { unconsumed[{entryKey, kind, summary, watermark}] }
+WorkDetailReq      = { projectId, workspaceId, workId }        → { workId, projectId, workspaceId, objective, why, completionExpectation, lifecycle, revision, acceptedResult? }
 ```
+
+`acceptedResult` is exactly `{ acceptanceId, verificationId, targetWorkRevision,
+verdict: Pass, actor, acceptedAt }`. It is present only when a canonical
+Acceptance is bound to that Work revision and its exact concluded PASS
+Verification. For `Completed`, absent or inconsistent binding is a typed
+projection-integrity failure. `Open` with a bound accepted result remains
+Open; `Cancelled` remains canonical Cancelled and preserves Acceptance only as
+history. The Work Detail view does not change `current-work` or
+`workspace-detail.pendingWorks`.
+
+For `VerificationReq`, when an Acceptance exists for the current Work revision,
+select only its bound Verification; otherwise retain the existing selection
+rule. `WorkDetailReq` for an absent Work or a Work outside the requested
+project/workspace returns a `ProjectionQueryError` branch with code
+`projection/work-not-found`, category `not-found`, and non-retryable
+disposition. Both cases use identical safe details, containing no target
+identity or existence signal; the public response is HTTP 404 for either case.
+Malformed request shapes remain `projection/invalid-request`. These are
+read-model semantics under P10; P12 continues to own and forward the transport.
 
 Every response carries `{ watermark, lag }` (§1 signature). Shapes are the contract; row limits/cursors beyond Transcript's are transport concerns (P12).
 

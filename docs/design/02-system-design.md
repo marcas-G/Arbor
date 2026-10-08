@@ -1,17 +1,33 @@
 # Arbor System Design Specification
 
-**Version:** 1.9
+**Version:** 1.10
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.8
+**Supersedes:** v1.9
 
-**Date:** 2026-10-03
+**Date:** 2026-10-08
 
 **Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.3`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量  
 **Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型  
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
+
+**Governance changes (v1.9 → v1.10): FT-DG-02 — Completed Work public view**
+
+- Add a distinct read-only Work Detail inspection surface. It reads canonical
+  Work, Acceptance, and the Acceptance-bound PASS Verification; it does not
+  redefine Work lifecycle, Current Work, or Workspace Detail.
+- Absent and out-of-project/workspace Work identities share the same typed
+  NotFound/404 result and reveal no target existence or contents.
+- Accepted proposal: `ACCEPT_COMPLETED_WORK_PUBLIC_VIEW`, SHA-256
+  `6E9D25F8EFCAB0722456A750F002D88297B21E7B41E4E08AD5D51E6187842BB8`.
+  Supplemental 2026-10-08 decision selects the shared NotFound/404 behavior.
+  Exact landing package SHA-256:
+  `266884FC5B8858CA631DC87EFA1EA29B6BFD7265FB93C324F0A5F65FF8C68433`;
+  audit: `planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
+- This additive view does not change scenarios, lifecycle ownership, commands,
+  events, persistence, authorization, or transport.
 
 **Governance changes (v1.8 → v1.9): Minimal Architecture Convergence
 (`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`)**
@@ -1548,6 +1564,16 @@ UI 可根据事实投影：正在执行、等待、可执行但未 admission、�
 6. Decisions / Memory / Artifact / Audit Timeline。
 
 Transcript 作为按需调试视图，不作为 Workspace 首页。
+
+**Work Detail** 是单独的只读检查面，使用精确的 Project / Workspace / Work
+身份读取 canonical Work。它展示 `Open`、`Completed` 或 `Cancelled` 的规范生命周期、
+Work 目标与 revision；只有同一 Work/revision 的 canonical Acceptance 及其精确绑定的
+已结论 PASS Verification 才能作为 accepted result 展示。Acceptance 本身不代表
+Work 已 Completed；accepted-but-open 仍显示为 `Open`。Work Detail 不改变
+Workspace Detail 的 Current/Pending Work，也不改变 Current Work view。
+
+不存在的 Work 与不属于请求 project/workspace 的 Work 返回同一 typed
+NotFound/404，不泄漏目标是否存在或其任何 Work、Acceptance、Verification 内容。
 
 ## 12.5 User actions
 
