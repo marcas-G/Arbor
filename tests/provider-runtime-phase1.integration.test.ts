@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect, Exit, Fiber, Layer } from "effect";
+import { Effect, Clock as EffectClock, Exit, Fiber, Layer } from "effect";
+import { TestClock } from "effect/testing";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -33,9 +34,11 @@ import type { ProviderExecutionContext } from "../packages/ports/dist/provider.j
 import {
   type CanonicalProviderEvent,
   type ProviderFailure,
+  type ProviderRunInput,
   ProviderRuntime,
   type ProviderRuntimeExecutionPolicy,
   ProviderTurnStore,
+  RuntimeClock,
   TransactionPort,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
@@ -136,12 +139,32 @@ const waitForSignal = (signal: AbortSignal): Promise<void> =>
     signal.addEventListener("abort", () => resolve(), { once: true });
   });
 
-const deferred = () => {
-  let resolve!: () => void;
-  const promise = new Promise<void>((res) => {
+const deferred = <A = void>() => {
+  let resolve!: (value: A) => void;
+  const promise = new Promise<A>((res) => {
     resolve = res;
   });
   return { promise, resolve };
+};
+
+const withWatchdog = async <A>(
+  promise: Promise<A>,
+  label: string,
+): Promise<A> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Timed out waiting for ${label}`)),
+          5_000,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 };
 
 const seed = Effect.gen(function* () {
@@ -183,15 +206,53 @@ const seed = Effect.gen(function* () {
 const makeHarness = (
   client: OpenAISdkClient,
   policy: ProviderRuntimeExecutionPolicy = DEFAULT_POLICY,
+  options: {
+    readonly controlledClock?: boolean;
+    readonly onClockSleep?: () => void;
+  } = {},
 ) => {
   const root = mkdtempSync(join(tmpdir(), "provider-runtime-phase1-"));
   const databaseFile = join(root, "provider.db");
   const base = layer({ filename: databaseFile });
+  const controlledClock = options.controlledClock
+    ? Layer.provideMerge(
+        Layer.effect(
+          EffectClock.Clock,
+          Effect.gen(function* () {
+            const clock = yield* EffectClock.Clock;
+            return {
+              ...clock,
+              sleep: (duration: Parameters<typeof clock.sleep>[0]) => {
+                options.onClockSleep?.();
+                return clock.sleep(duration);
+              },
+            };
+          }),
+        ),
+        TestClock.layer({ warningDelay: "10 seconds" }),
+      )
+    : undefined;
+  const controlledRuntimeClock =
+    controlledClock === undefined
+      ? undefined
+      : Layer.effect(
+          RuntimeClock,
+          Effect.gen(function* () {
+            const clock = yield* EffectClock.Clock;
+            return RuntimeClock.of({
+              epochMillis: () => clock.currentTimeMillisUnsafe(),
+              monotonicMillis: () =>
+                Number(clock.monotonicTimeNanosUnsafe()) / 1_000_000,
+            });
+          }),
+        ).pipe(Layer.provideMerge(controlledClock));
   const infra = Layer.mergeAll(
     base,
     ClockLive,
-    RuntimeClockLive,
     IdGeneratorLive,
+    ...(controlledRuntimeClock === undefined
+      ? [RuntimeClockLive]
+      : [controlledRuntimeClock]),
   );
   const transaction = Layer.provide(TransactionPortLive, infra);
   const turnStore = Layer.provide(ProviderTurnStoreLive, infra);
@@ -256,6 +317,7 @@ const runtimeEffect = (
   signal?: AbortSignal,
   policyOverrides?: Partial<ProviderRuntimeExecutionPolicy>,
   turnId = providerTurnId,
+  onProgress?: ProviderRunInput["onProgress"],
 ) =>
   Effect.gen(function* () {
     const runtime = yield* ProviderRuntime;
@@ -272,6 +334,7 @@ const runtimeEffect = (
       ...(policyOverrides === undefined
         ? {}
         : { executionPolicyOverrides: policyOverrides }),
+      ...(onProgress === undefined ? {} : { onProgress }),
     });
   });
 
@@ -1329,7 +1392,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
   ] as const)(
     "%s timeout aborts the Adapter and has a distinct durable terminal outcome",
     async (_label, mode, phase) => {
-      const connected = deferred();
+      const adapterStarted = deferred<AbortSignal>();
+      let adapterCalls = 0;
       const policy: ProviderRuntimeExecutionPolicy = {
         connectTimeoutMs: mode === "connect" ? 35 : 400,
         firstEventTimeoutMs: mode === "first-event" ? 35 : 400,
@@ -1340,31 +1404,70 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       };
       const harness = makeHarness(
         client({
+          onCall: () => {
+            adapterCalls += 1;
+          },
           stream: async function* ({ context }) {
             if (mode !== "connect") yield { type: "response_started" };
             if (mode === "stream-idle") {
               yield { type: "text", text: "first data" };
             }
-            connected.resolve();
+            adapterStarted.resolve(context.cancellationSignal as AbortSignal);
             await waitForSignal(context.cancellationSignal as AbortSignal);
           },
         }),
         policy,
+        { controlledClock: mode === "turn-deadline" },
       );
       try {
-        await initialize(harness);
-        const failure = (await harness.run(
-          Effect.flip(runtimeEffect()) as never,
-        )) as { readonly _tag: string; readonly phase?: string };
-        expect(failure).toMatchObject({
+        const failure = (await (mode === "turn-deadline"
+          ? harness.run(
+              Effect.gen(function* () {
+                yield* runMigrations(P16_MIGRATIONS);
+                yield* seed;
+                yield* TestClock.setTime(Date.now());
+                const fiber = yield* Effect.forkChild(
+                  Effect.flip(runtimeEffect()),
+                );
+                const adapterSignal = yield* Effect.promise(() =>
+                  withWatchdog(
+                    adapterStarted.promise,
+                    "provider adapter start",
+                  ),
+                );
+                expect(readAttempt(harness.databaseFile)).toMatchObject({
+                  outcome: "InProgress",
+                });
+                yield* TestClock.adjust(policy.turnTimeoutMs + 1);
+                return { result: yield* Fiber.join(fiber), adapterSignal };
+              }),
+            )
+          : (async () => {
+              await initialize(harness);
+              const result = await harness.run(
+                Effect.flip(runtimeEffect()) as never,
+              );
+              return { result, adapterSignal: undefined };
+            })())) as {
+          readonly result: { readonly _tag: string; readonly phase?: string };
+          readonly adapterSignal: AbortSignal | undefined;
+        };
+        const timeout = failure.result;
+        expect(timeout).toMatchObject({
           _tag: "ProviderExecutionTimeout",
           phase,
         });
-        await connected.promise;
+        if (mode === "turn-deadline") {
+          expect(failure.adapterSignal?.aborted).toBe(true);
+          expect(adapterCalls).toBe(1);
+        } else {
+          await withWatchdog(adapterStarted.promise, "provider adapter start");
+        }
         const attempt = readAttempt(harness.databaseFile);
         expect(attempt?.outcome).toBe("TimedOut");
         expect(attempt?.retry_decision).toBe("Stop");
         expect(attempt?.retry_reason).toContain(`Timeout(${phase})`);
+        expect(readAttempt(harness.databaseFile, 1)).toBeUndefined();
         expect(readTurn(harness.databaseFile)?.finish_reason).toBe(phase);
       } finally {
         rmSync(harness.root, { recursive: true, force: true });
@@ -1429,9 +1532,19 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
   });
 
   it("turn deadline covers retry backoff and prevents a later attempt", async () => {
+    const attemptStarted = deferred();
+    const adapterStarted = deferred();
+    const attemptFailed = deferred();
+    const backoffRegistered = deferred();
+    let failureObserved = false;
     let calls = 0;
+    let adapterCalls = 0;
     const harness = makeHarness(
       client({
+        onCall: () => {
+          adapterCalls += 1;
+          adapterStarted.resolve();
+        },
         stream: async function* () {
           calls += 1;
           if (calls === 1) {
@@ -1450,17 +1563,58 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
         maxAttempts: 3,
         retryBackoffMs: 500,
       },
+      {
+        controlledClock: true,
+        onClockSleep: () => {
+          if (failureObserved) backoffRegistered.resolve();
+        },
+      },
     );
     try {
-      await initialize(harness);
       const failure = (await harness.run(
-        Effect.flip(runtimeEffect()) as never,
+        Effect.gen(function* () {
+          yield* runMigrations(P16_MIGRATIONS);
+          yield* seed;
+          yield* TestClock.setTime(Date.now());
+          const fiber = yield* Effect.forkChild(
+            Effect.flip(
+              runtimeEffect(undefined, undefined, providerTurnId, (event) => {
+                if (event._tag === "AttemptStarted" && event.attemptNo === 0) {
+                  attemptStarted.resolve();
+                }
+                if (event._tag === "AttemptFailed" && event.attemptNo === 0) {
+                  failureObserved = true;
+                  attemptFailed.resolve();
+                }
+              }),
+            ),
+          );
+          yield* Effect.promise(() =>
+            withWatchdog(attemptStarted.promise, "Attempt 0 start"),
+          );
+          yield* Effect.promise(() =>
+            withWatchdog(adapterStarted.promise, "Adapter call"),
+          );
+          yield* Effect.promise(() =>
+            withWatchdog(attemptFailed.promise, "Attempt 0 durable failure"),
+          );
+          expect(readAttempt(harness.databaseFile, 0)).toMatchObject({
+            outcome: "RetryableFailure",
+            retry_decision: "Retry",
+          });
+          yield* Effect.promise(() =>
+            withWatchdog(backoffRegistered.promise, "retry backoff sleep"),
+          );
+          yield* TestClock.adjust(121);
+          return yield* Fiber.join(fiber);
+        }),
       )) as { readonly _tag: string; readonly phase?: string };
       expect(failure).toMatchObject({
         _tag: "ProviderExecutionTimeout",
         phase: "TurnDeadline",
       });
       expect(calls).toBe(1);
+      expect(adapterCalls).toBe(1);
       expect(readAttempt(harness.databaseFile, 0)).toMatchObject({
         outcome: "RetryableFailure",
         retry_decision: "Retry",
