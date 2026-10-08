@@ -82,6 +82,9 @@ export const ModelCapabilityPortLive = (
   /** Full Composition-Root ResolvedModelBinding fingerprint. Without this
    * complete identity ProviderNative compatibility is withheld fail-closed. */
   bindingFingerprint?: string,
+  /** The selected ProtocolAdapter's declaration. A catalog cannot claim
+   * ProviderNative when the bound adapter does not declare continuation. */
+  providerSupportsContinuation = false,
 ): Layer.Layer<ModelCapabilityPort> =>
   Layer.succeed(ModelCapabilityPort, {
     resolve: ({ requiredCapabilities }) => {
@@ -104,10 +107,12 @@ export const ModelCapabilityPortLive = (
       }
       const completeBindingFingerprint =
         isCompleteBindingFingerprint(bindingFingerprint);
+      const nativeBindingAllowed =
+        completeBindingFingerprint && providerSupportsContinuation;
       const declaredCompatibility =
         chosen.capability.portableRequestCompatibility;
       const portableRequestCompatibility =
-        !completeBindingFingerprint && declaredCompatibility !== undefined
+        !nativeBindingAllowed && declaredCompatibility !== undefined
           ? {
               ...declaredCompatibility,
               operationKinds: declaredCompatibility.operationKinds.filter(

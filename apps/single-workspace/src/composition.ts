@@ -494,6 +494,8 @@ export const buildSingleWorkspaceLayer = (
     catalog,
     deploymentBinding?.deployment.modelRef,
     deploymentFingerprint,
+    deploymentBinding?.adapter.profile.capabilityFlags.supportsContinuation ??
+      false,
   );
   // P3 `02` §7: an empty-but-valid registry. No skill is available, so
   // `load` fails through the typed `SkillRegistryError` channel (never a

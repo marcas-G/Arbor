@@ -17,6 +17,15 @@ export interface SessionTimelineProjection {
     readonly firstSequence: number | null;
     readonly lastSequence: number | null;
   };
+  readonly nativeCheckpoint?: {
+    readonly sequence: number;
+    readonly providerTurnId?: string;
+    readonly fromEpoch?: number;
+    readonly toEpoch?: number;
+    readonly opaqueItemRef?: string;
+    readonly bindingFingerprint?: string;
+    readonly bindingMatches: boolean;
+  };
   readonly instructionFragments: ReadonlyArray<InstructionFragment>;
 }
 
@@ -33,6 +42,9 @@ export type SessionProjectionDecision =
       readonly callRefs: ReadonlyArray<string>;
       readonly closedFrontier: SessionFrontier;
     };
+
+const isFullBindingFingerprint = (value: unknown): value is string =>
+  typeof value === "string" && /^p16fp_[0-9a-f]{64}$/.test(value);
 
 const statusOf = (value: unknown): PortableToolResultStatus => {
   switch (value) {
@@ -54,10 +66,24 @@ const refOf = (entry: SessionEntryRecord): string =>
 
 export const projectSessionTimeline = (
   entries: ReadonlyArray<SessionEntryRecord>,
+  bindingFingerprint?: string,
+  nativeSupported = false,
 ): SessionTimelineProjection => {
   const inputItems: PortableInputItem[] = [];
   const contextRefs: string[] = [];
   const callRefs = new Set<string>();
+  const latestCheckpoint = entries
+    .filter((entry) => {
+      if (typeof entry.payload !== "object" || entry.payload === null) {
+        return false;
+      }
+      return (
+        (entry.payload as Record<string, unknown>)._tag ===
+        "CompactionCheckpoint"
+      );
+    })
+    .at(-1);
+  let nativeCheckpoint: SessionTimelineProjection["nativeCheckpoint"];
   for (const entry of entries) {
     if (typeof entry.payload !== "object" || entry.payload === null) continue;
     const payload = entry.payload as Record<string, unknown>;
@@ -134,7 +160,76 @@ export const projectSessionTimeline = (
         contextRefs.push(refOf(entry));
         break;
       case "CompactionCheckpoint":
-        if (typeof payload.summaryText !== "string") break;
+        if (entry.sequence !== latestCheckpoint?.sequence) break;
+        if (payload.implementation === "ProviderNative") {
+          const source = entry.source;
+          const providerTurnId =
+            source?.kind === "CompactionTurn" && source.ref.length > 0
+              ? source.ref
+              : undefined;
+          const fromEpoch =
+            typeof payload.fromEpoch === "number" &&
+            Number.isSafeInteger(payload.fromEpoch) &&
+            payload.fromEpoch >= 0
+              ? payload.fromEpoch
+              : undefined;
+          const toEpoch =
+            typeof payload.toEpoch === "number" &&
+            Number.isSafeInteger(payload.toEpoch) &&
+            payload.toEpoch >= 0
+              ? payload.toEpoch
+              : undefined;
+          const opaqueItemRef =
+            typeof payload.opaqueItemRef === "string" &&
+            payload.opaqueItemRef.length > 0
+              ? payload.opaqueItemRef
+              : undefined;
+          const checkpointBindingFingerprint = isFullBindingFingerprint(
+            payload.bindingFingerprint,
+          )
+            ? payload.bindingFingerprint
+            : undefined;
+          const bindingMatches =
+            providerTurnId !== undefined &&
+            fromEpoch !== undefined &&
+            toEpoch !== undefined &&
+            toEpoch === fromEpoch + 1 &&
+            opaqueItemRef !== undefined &&
+            checkpointBindingFingerprint !== undefined &&
+            nativeSupported &&
+            isFullBindingFingerprint(bindingFingerprint) &&
+            checkpointBindingFingerprint === bindingFingerprint;
+          nativeCheckpoint = {
+            sequence: entry.sequence,
+            ...(providerTurnId === undefined ? {} : { providerTurnId }),
+            ...(fromEpoch === undefined ? {} : { fromEpoch }),
+            ...(toEpoch === undefined ? {} : { toEpoch }),
+            ...(opaqueItemRef === undefined ? {} : { opaqueItemRef }),
+            ...(checkpointBindingFingerprint === undefined
+              ? {}
+              : { bindingFingerprint: checkpointBindingFingerprint }),
+            bindingMatches,
+          };
+          if (bindingMatches) {
+            inputItems.push({
+              _tag: "CompactionCheckpoint",
+              implementation: "ProviderNative",
+              fromEpoch: fromEpoch as never,
+              toEpoch: toEpoch as never,
+              retainedFrontierRef: String(payload.retainedFrontierRef ?? ""),
+              opaqueItemRef: opaqueItemRef as string,
+              bindingFingerprint: checkpointBindingFingerprint as string,
+            });
+            contextRefs.push(refOf(entry));
+          }
+          break;
+        }
+        if (
+          payload.implementation !== "Summary" ||
+          typeof payload.summaryText !== "string"
+        ) {
+          break;
+        }
         inputItems.push({
           _tag: "Message",
           role: "system",
@@ -165,6 +260,7 @@ export const projectSessionTimeline = (
       firstSequence: entries[0]?.sequence ?? null,
       lastSequence: entries.at(-1)?.sequence ?? null,
     },
+    ...(nativeCheckpoint === undefined ? {} : { nativeCheckpoint }),
     // Projected Session data is always data-only. Canonical instructions are
     // assembled by their owning source and cannot emerge from Timeline text.
     instructionFragments: [],
@@ -194,6 +290,8 @@ const closedFrontierBefore = (
  * is the stable callRef, never adjacency or text inference. */
 export const decideSessionProjection = (
   entries: ReadonlyArray<SessionEntryRecord>,
+  bindingFingerprint?: string,
+  nativeSupported = false,
 ): SessionProjectionDecision => {
   const calls = new Map<
     string,
@@ -261,5 +359,12 @@ export const decideSessionProjection = (
       closedFrontier: closedFrontierBefore(entries, first[1].sequence),
     };
   }
-  return { _tag: "Ready", projection: projectSessionTimeline(entries) };
+  return {
+    _tag: "Ready",
+    projection: projectSessionTimeline(
+      entries,
+      bindingFingerprint,
+      nativeSupported,
+    ),
+  };
 };

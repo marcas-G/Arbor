@@ -23,6 +23,7 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH18BeforeOverflowLinksCommit"
     | "AH18AfterOverflowLinksCommit"
     | "AH18BeforeInferenceFailTurnCommit"
+    | "AH19NativeCheckpointRecovery"
     | "AH14BeforeLegacyAdoptionCommit"
     | "AH14AfterLegacyAdoptionCommit";
   readonly providerTurnId: string;
@@ -30,6 +31,7 @@ export interface AgentLoopQualificationProbeEvent {
   readonly logicalActionId?: string;
   readonly callRef?: string;
   readonly actionIndex?: number;
+  readonly stage?: string;
 }
 
 export type AgentLoopQualificationProbe = (

@@ -10,6 +10,7 @@ const boundaries = new Set([
   "AH18BeforeInferenceFailTurnCommit",
   "AH18BeforeSummaryTurnCommit",
   "AH18AfterSummaryTurnCommit",
+  "AH18AfterSummaryRetryableFailureCommit",
 ]);
 const targetBoundary = process.env.ARBOR_AH18_BOUNDARY;
 if (!boundaries.has(targetBoundary)) {
