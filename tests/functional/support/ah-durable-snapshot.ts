@@ -9,7 +9,7 @@ export const durableSnapshot = (databaseFile: string) => {
     return {
       executions: db
         .prepare(
-          "SELECT execution_id, stop_requested_at, settled_at, settlement_kind FROM executions",
+          "SELECT execution_id, stop_requested_at, settled_at, settlement_kind, settlement_json FROM executions",
         )
         .all(),
       leases: db
@@ -34,7 +34,7 @@ export const durableSnapshot = (databaseFile: string) => {
         .all(),
       toolInvocations: db
         .prepare(
-          "SELECT invocation_id, execution_id, tool_name, side_effect_semantics, settled_at, settlement_kind, result_ref FROM tool_invocations ORDER BY invocation_id",
+          "SELECT invocation_id, execution_id, tool_name, side_effect_semantics, settled_at, settlement_kind, settlement_json, result_ref FROM tool_invocations ORDER BY invocation_id",
         )
         .all(),
       toolResults: db
