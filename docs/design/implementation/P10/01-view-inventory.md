@@ -3,13 +3,14 @@
 **Authority:** SD v1.3 §12.1/§12.2/§12.4/§13.9/§10.1 D (full inventory); DID v1.13 G1; S2.4.1–S2.4.3; P9 `05` §3.2 (Inbox as P10 surface).
 **Status:** DRAFT.
 
-## 1. Authoritative view list (SD inventory wins over the DID nine-word summary)
+## 1. Authoritative view list (SD inventory wins over the DID view summary)
 
 | View | SD source | P10 disposition | Primary derive inputs |
 |---|---|---|---|
 | Responsibility Tree (Agent Tree) | §12.1, §13.9 | must | workspaces (parent chain) + works.current + dependencies + verifications + attention read-model + usage summary |
 | Attention view | §12.3, §13.9 | must | `02` read-model (six fact sources) |
 | Workspace Detail | §12.4 ①–⑤/⑥ | must (⑥ = audit timeline from domain_events; Memory/Decisions store deferred) | workspaces/works/executions/dependencies+messages+inbox/verification+evidence/journal |
+| Work Detail | SD §12.4; FT-DG-02 | must — separate read-only view addressed by exact Project/Workspace/Work identity | canonical Work + same Work/revision Acceptance + its exact concluded PASS Verification and Evidence |
 | Current Work | §12.1 | must | workspaces.current_work_id + works + active main execution |
 | Verification view | §12.4 ⑤ | must | verifications + evidence + acceptances |
 | Dependency View | §12.1/§13.9 | must | dependencies + deliverables + work_waits |

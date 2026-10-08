@@ -3,13 +3,24 @@
 **Phase:** P13 · **Baseline:** DID v1.15 (G1–G4), visual successor DID v1.17 TR-WPU-A · **Status:** FROZEN — independent review round 1 (Blocking=3) fixed, round 2 (Blocking=2) fixed; D-1 adopts a presentation-only successor without reopening P13
 **Position:** post-core product-surface phase（P0–P12 SYSTEM IMPLEMENTATION COMPLETE 不作废）
 
+## FT-DG-02 additive contract amendment (2026-10-08)
+
+P13 renders the P10-owned read-only Work Detail view; the current frozen view
+count is ten. This amendment does not reopen P13 or authorize implementation.
+Absent and cross-project/workspace Work targets render the same P10-owned
+NotFound/404 response. Audit references: accepted proposal SHA-256
+`6E9D25F8EFCAB0722456A750F002D88297B21E7B41E4E08AD5D51E6187842BB8`; landing
+package SHA-256
+`266884FC5B8858CA631DC87EFA1EA29B6BFD7265FB93C324F0A5F65FF8C68433`;
+decision record `planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
+
 ## Doc map
 
 | Doc | Owns |
 |---|---|
 | `01-client-boundary-role.md` | `apps/web` 边界、角色冻结（Projection Renderer + Command Initiator）、状态纪律、依赖 DAG 规则 |
 | `02-command-exposure-matrix.md` | `Command → UI exposure policy` 矩阵（Human-actionable / System-internal / Agent-originated / Recovery-only）；`SelectCurrentWork` / `SendMessage` 特殊约束 |
-| `03-view-rendering.md` | 9 个 frozen view 的呈现契约、fixture/render coverage、Problem DTO typed-failure 呈现 |
+| `03-view-rendering.md` | 10 个 frozen view 的呈现契约、fixture/render coverage、Problem DTO typed-failure 呈现 |
 | `04-design-tokens.md` | TR-WPU-A design token system（modern light surfaces / Arbor Green / sans UI / semantic status / spacing-radius-density） |
 | `05-transport-build.md` | 开发态 proxy、生产态 static dist 同源托管、WS invalidation 协议（TR-W1/W2）、前端构建基线与 exact pin |
 | `06-acceptance.md` | 验收标准、六条硬要求、end-to-end acceptance story |

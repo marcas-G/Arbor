@@ -3,6 +3,18 @@
 **Authority:** DID v1.13 §11 P10 (G1–G8), §5.4, §6.1/§6.2 (L6), §10.4/§10.4.1 (projection-runtime; api-contracts), §7.2 (ProjectionQueryPort); SD v1.3 §7.4/§7.5, §10.1 D, §12 全章, §13.9/§13.10, §14 No.37/38/40/45/56; S1/S2/S4; P1 `05`/`06`, P2 `01`/`06`, P3 `04`, P4 `07`, P6 `00`/`04`/`05`, P7 `00`/`05`, P8 `00`/`05`, P9 `00`/`05`; `planning/gaps/P7-GAP-01.md`; GQ1–GQ7 裁决（2026-09-22，本轮会话）.
 **Status:** FROZEN — DID v1.17 D-1 additive read-model successor adopted (TR-WPU-B/C/D; no P10 phase reopen).
 
+## FT-DG-02 additive contract amendment (2026-10-08)
+
+The accepted `work-detail` read-only View is added to P10's authoritative
+inventory and query contract. Absent and cross-project/workspace target
+identities share `projection/work-not-found` / `not-found` without revealing
+existence. This does not reopen P10 or authorize implementation. Audit:
+accepted proposal SHA-256
+`6E9D25F8EFCAB0722456A750F002D88297B21E7B41E4E08AD5D51E6187842BB8`, landing
+package SHA-256
+`266884FC5B8858CA631DC87EFA1EA29B6BFD7265FB93C324F0A5F65FF8C68433`;
+decision record `planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
+
 ## DID v1.17 successor record — D-1 Product UI Contract Closure
 
 TR-WPU-B/C/D evolve only the public read-model surface in `05`: Tree nodes carry the canonical

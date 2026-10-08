@@ -1,7 +1,11 @@
 # P13 — 03 View Rendering & Problem Presentation
 
-**Owns:** 9 个 frozen view DTO 的呈现契约、fixture/render coverage、Problem 呈现
+**Owns:** 10 个 frozen view DTO 的呈现契约、fixture/render coverage、Problem 呈现
 **Does not own:** view 语义/形状（P10 `05` / api-contracts，frozen）
+
+**FT-DG-02 additive rendering amendment (2026-10-08):** render the
+P10-owned `work-detail` DTO; this does not reopen P13 or alter command,
+transport, or canonical lifecycle semantics.
 
 ## 1. 通用规则
 
@@ -14,13 +18,14 @@
    零值或 false。
 4. 时间戳（ISO string）本地化呈现 + 原始值可查（title/展开）。
 
-## 2. 九视图呈现契约
+## 2. 十视图呈现契约
 
 | ViewId | 主呈现 | 关键组件语义 |
 |---|---|---|
 | `responsibility-tree` | 缩进树（root 顶部；depth 参数控件）；节点卡 = name + `WorkspaceStatusLabel` 徽章 + `subtreeAttention`（attention/actionRequired 计数，>0 高亮）+ `currentWork.objective` 摘要 + `usageSummary`（tokens/cost；cost=`Unknown` 原样呈现 "unknown"，≠0） | 节点点击 → `workspace-detail` 下钻（本文件 §4 导航） |
 | `attention` | 按 severity 分组列表（ActionRequired 在前）；行 = source 徽章 + summaryRef + occurredAt + target 链接 | 行点击 → 目标 workspace 下钻；`AttentionSeverity`/`AttentionSource` 未知值原样（I5） |
 | `workspace-detail` | 单 workspace 全景：responsibility 摘要、boundary、currentWork、pendingWorks 列表、executionSummary、dependencies 表（state 徽章 + satisfiedBy 链接）、inboxUnconsumed 计数列表、verification（criteriaResults 表：required 标记 + verdict 徽章 + evidenceRefs；acceptance 块）、auditTimeline（sequence + eventType + at，mono） | 各 ID 链接跳转对应下钻；`pendingWorks` 行**不是**选择控件（`02` §4）；activeExecution 卡带"停止该执行"紧急控件（`02` §2 StopExecution，显式确认） |
+| `work-detail` | 精确 `{projectId, workspaceId, workId}` 的只读 Work 页面：objective/why/completionExpectation、revision、canonical lifecycle；有精确绑定时呈现 Acceptance 与 PASS Verification 摘要 | `Open + acceptedResult` 呈现“已验收、待完成”；`Completed` 呈现“已完成”；`Cancelled` 呈现已取消；证据明细仍由 Verification view 提供；不从 Workspace/Session 推断生命周期 |
 | `current-work` | 单卡：objective + status + activeExecution（executionId + admittedAt）；`null` → 空态"无当前工作" | 空态不得提供"去选择"动作（`02` §4） |
 | `verification` | criteriaResults 全表 + evidenceRefs + acceptance 状态块 | verdict 徽章三态 + 未知值原样 |
 | `dependency-view` | 依赖行表：consumer → binding → state → satisfiedBy；project 范围与 workspace 范围两个查询形态（DTO req 二选一） | state 徽章；行内无任何变更动作（变更走 `02` 矩阵，v1 无 dependency 类 Human-actionable） |
@@ -49,7 +54,7 @@
 顶栏：brand + project 切换（projectId 输入/记忆）+ token 状态
 主导航：Tree · Attention · Usage
 下钻：tree/detail/attention → workspace-detail；detail 内 ID 链接
-      → verification / transcript / dependency-view / inbox-view
+      → work-detail / verification / transcript / dependency-view / inbox-view
 命令区：detail/attention 上下文中的 governance 动作
       （RecordDecision / SteerWork / AcceptWorkOutcome / StopExecution /
        Grant|RevokePermission；`02` §2）
@@ -82,5 +87,5 @@
 
 ## 7. Verification
 
-`06` EC-3（9×3 fixtures render coverage）、EC-4（六 category Problem
+`06` EC-3（10×3 fixtures render coverage）、EC-4（六 category Problem
 render tests + TerminalRejected 内联态）。
