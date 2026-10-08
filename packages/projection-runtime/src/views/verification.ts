@@ -72,11 +72,21 @@ export const deriveVerificationView = (
       return yield* Effect.fail(projectionReadError(`no work ${workId}`));
     }
     const rows = yield* deps.listVerificationsByWork(workId);
+    const accepted = yield* deps.findAcceptanceByWorkRevision(
+      workId,
+      work.value.revision,
+    );
+    const acceptedVerification = Option.isSome(accepted)
+      ? rows.find((row) => row.verificationId === accepted.value.verificationId)
+      : undefined;
     const open = rows.find((row) => row.state.status === "Open");
     const selected =
-      open ??
-      rankConcluded(rows, work.value.revision) ??
-      (rows.length > 0 ? rows[0] : undefined);
+      acceptedVerification ??
+      (Option.isSome(accepted)
+        ? undefined
+        : (open ??
+          rankConcluded(rows, work.value.revision) ??
+          (rows.length > 0 ? rows[0] : undefined)));
 
     if (selected === undefined) {
       return {
@@ -91,10 +101,14 @@ export const deriveVerificationView = (
     const evidence = yield* deps.listEvidenceByVerification(
       selected.verificationId,
     );
-    const acceptance = yield* deps.findAcceptanceByWorkRevision(
-      selected.workId,
-      selected.targetWorkRevision,
-    );
+    const acceptance =
+      Option.isSome(accepted) &&
+      accepted.value.verificationId === selected.verificationId
+        ? accepted
+        : yield* deps.findAcceptanceByWorkRevision(
+            selected.workId,
+            selected.targetWorkRevision,
+          );
 
     return {
       ...verificationIdentityView(selected),

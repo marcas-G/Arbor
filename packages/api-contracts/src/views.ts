@@ -188,6 +188,33 @@ export interface WorkspaceDetailRes {
   readonly auditTimeline: ReadonlyArray<AuditTimelineEntry>;
 }
 
+export interface AcceptedWorkResult {
+  readonly acceptanceId: AcceptanceId;
+  readonly verificationId: VerificationId;
+  readonly targetWorkRevision: WorkRevision;
+  readonly verdict: "Pass";
+  readonly actor: Actor;
+  readonly acceptedAt: string;
+}
+
+export interface WorkDetailReq {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly workId: WorkId;
+}
+
+export interface WorkDetailRes {
+  readonly workId: WorkId;
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly objective: string;
+  readonly why: string;
+  readonly completionExpectation: string;
+  readonly lifecycle: WorkLifecycle;
+  readonly revision: WorkRevision;
+  readonly acceptedResult?: AcceptedWorkResult | undefined;
+}
+
 export interface CurrentWorkReq {
   readonly workspaceId: WorkspaceId;
 }
@@ -313,6 +340,7 @@ export interface ViewRequestMap {
   readonly "responsibility-tree": TreeViewReq;
   readonly attention: AttentionReq;
   readonly "workspace-detail": WorkspaceDetailReq;
+  readonly "work-detail": WorkDetailReq;
   readonly "current-work": CurrentWorkReq;
   readonly verification: VerificationReq;
   readonly "dependency-view": DependencyReq;
@@ -325,6 +353,7 @@ export interface ViewResponseMap {
   readonly "responsibility-tree": TreeViewRes;
   readonly attention: AttentionRes;
   readonly "workspace-detail": WorkspaceDetailRes;
+  readonly "work-detail": WorkDetailRes;
   readonly "current-work": CurrentWorkRes;
   readonly verification: VerificationRes;
   readonly "dependency-view": DependencyRes;

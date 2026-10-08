@@ -196,13 +196,15 @@ supplemental shared NotFound/404 decision for absent and foreign Work targets;
 the accepted Work Detail contract is landed as SD v1.10 / DID v1.32 with an
 independent post-landing review at Blocking = 0. See
 `planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
-Implementation remains unauthorized, so F22 remains a pending browser
-acceptance story and must not be treated as implementation closure.
+The Work Detail implementation and formal default-suite F22 qualification are
+complete (`planning/results/FT-DG-02-work-detail-implementation.result.md`).
+FT-DG-02 is closed; its former pending red reproduction is retained as a
+skipped historical case and is not counted as an open journey.
 F19 now also proves the reverse order (Dependency wait before child Delivery),
 which exposed and fixed numeric `wait` revision decoding; full `pnpm check`
 and `pnpm test:functional` pass. F21 and F23 remain open governance gaps;
-FT-DG-02 design governance is closed, while its implementation and F22
-qualification remain pending.
+FT-DG-02 design and implementation are closed, with F22 in the default browser
+qualification suite.
 Later F22 test strengthening exposed a Web AcceptanceId prefix mismatch
 (`acp_` versus frozen `acc_`), fixed with a Web regression test. A separate
 public-process F23 test proves malformed typed `MessageId` can still be
@@ -724,5 +726,5 @@ files / 1723 passed / 3 skipped, Web 31 files / 216 tests). Preserve both full
 run outcomes; this evidence does not establish a product deadline defect or
 erase the first-run test-harness failure. The deterministic deadline test
 oracle repair is tracked separately. This batch does not close AH7, AH10,
-AH18, AH19, F21, F23, or SCRC-008; FT-DG-02 design is landed, but its
-implementation/F22 browser qualification is unauthorized and pending.
+AH18, AH19, F21, F23, or SCRC-008; FT-DG-02 implementation and F22 browser
+qualification are tracked separately and now complete.

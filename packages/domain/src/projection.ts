@@ -5,6 +5,7 @@ export type ViewId =
   | "responsibility-tree"
   | "attention"
   | "workspace-detail"
+  | "work-detail"
   | "current-work"
   | "verification"
   | "dependency-view"
@@ -16,6 +17,7 @@ export const VIEW_IDS: ReadonlyArray<ViewId> = [
   "responsibility-tree",
   "attention",
   "workspace-detail",
+  "work-detail",
   "current-work",
   "verification",
   "dependency-view",

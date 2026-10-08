@@ -43,6 +43,7 @@ import type {
   TreeViewDeps,
   UsageDeps,
   VerificationViewDeps,
+  WorkDetailDeps,
   WorkspaceDetailDeps,
 } from "@arbor/projection-runtime";
 import {
@@ -390,6 +391,14 @@ export const ProjectionQueryPortLive: Layer.Layer<
         inTx(acceptances.findByWorkRevision(workId, targetWorkRevision)),
     };
 
+    const workDetail: WorkDetailDeps = {
+      findWork: (workId) => inTx(works.findById(workId)),
+      findAcceptanceByWorkRevision: (workId, revision) =>
+        inTx(acceptances.findByWorkRevision(workId, revision)),
+      findVerification: (verificationId) =>
+        inTx(verifications.findById(verificationId)),
+    };
+
     const dependencyView: DependencyViewDeps = {
       listDependenciesByProject: (projectId) =>
         inTx(dependencies.listByProject(projectId)),
@@ -706,6 +715,7 @@ export const ProjectionQueryPortLive: Layer.Layer<
       tree,
       attention,
       workspaceDetail,
+      workDetail,
       currentWork,
       verification: verificationView,
       dependency: dependencyView,

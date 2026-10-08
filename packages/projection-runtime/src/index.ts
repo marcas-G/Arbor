@@ -17,4 +17,5 @@ export * from "./views/current-work.js";
 export * from "./views/dependency.js";
 export * from "./views/shared.js";
 export * from "./views/verification.js";
+export * from "./views/work-detail.js";
 export * from "./views/workspace-detail.js";

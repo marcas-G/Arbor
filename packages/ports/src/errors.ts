@@ -280,6 +280,7 @@ export const PROJECTION_QUERY_ERROR_CODES = [
   "projection/stale",
   "projection/unavailable",
   "projection/invalid-request",
+  "projection/work-not-found",
 ] as const;
 
 export type ProjectionQueryErrorCode =
@@ -313,7 +314,28 @@ export interface ProjectionInvalidRequest {
   readonly safeDetails: Readonly<Record<string, unknown>>;
 }
 
+export interface ProjectionNotFound {
+  readonly _tag: "ProjectionNotFound";
+  readonly code: "projection/work-not-found";
+  readonly category: "not-found";
+  readonly correlationId: string | null;
+  readonly retryDisposition: "non-retryable";
+  readonly safeDetails: Readonly<Record<string, unknown>>;
+}
+
+/** Canonical rows contradict an integrity condition required by a read view. */
+export interface ProjectionIntegrityFailure {
+  readonly _tag: "ProjectionIntegrityFailure";
+  readonly code: "projection/unavailable";
+  readonly category: "unavailable";
+  readonly correlationId: string | null;
+  readonly retryDisposition: "non-retryable";
+  readonly safeDetails: Readonly<Record<string, unknown>>;
+}
+
 export type ProjectionQueryError =
   | ProjectionStale
   | ProjectionUnavailable
-  | ProjectionInvalidRequest;
+  | ProjectionInvalidRequest
+  | ProjectionNotFound
+  | ProjectionIntegrityFailure;

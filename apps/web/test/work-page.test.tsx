@@ -19,6 +19,9 @@ import {
   WORK_CURRENT,
   WORK_PENDING,
   WS,
+  workDetailCompleted,
+  workDetailCurrent,
+  workDetailPending,
 } from "../src/pages/work/fixtures.js";
 import { WorkPage } from "../src/pages/work/WorkPage.js";
 import {
@@ -37,6 +40,7 @@ const problemBody = (problem: Problem): string =>
 
 const defaultHandlers: Record<string, ViewHandler> = {
   "workspace-detail": () => ({ dto: detailCurrentWork }),
+  "work-detail": () => ({ dto: workDetailCurrent }),
   verification: () => ({ dto: verificationFull }),
 };
 
@@ -105,39 +109,55 @@ afterEach(() => {
 });
 
 describe("W-06 Work Detail 页", () => {
-  it("头部：workId（Mono）+ objective（currentWork 匹配）+ 返回工作区导航", async () => {
+  it("工作详情来自 exact Work Detail view + 返回工作区导航", async () => {
     installViews();
     renderWork(WORK_CURRENT);
     await waitFor(() => expect(screen.getByText("当前工作目标")).toBeTruthy());
-    expect(screen.getByText(WORK_CURRENT)).toBeTruthy();
+    expect(screen.getByText("测试当前工作详情")).toBeTruthy();
+    expect(screen.getByText(WORK_CURRENT).closest("details")?.open).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "返回工作区" }));
     expect(window.location.pathname).toBe(`/p/prj_1/workspace/${WS}`);
   });
 
-  it("头部：objective 来自 pendingWorks 匹配分支", async () => {
+  it("历史 Work 的 objective 来自 Work Detail view", async () => {
     installViews({
       ...defaultHandlers,
       "workspace-detail": () => ({ dto: detailPendingOnly }),
+      "work-detail": () => ({ dto: workDetailPending }),
     });
     renderWork(WORK_PENDING);
     await waitFor(() => expect(screen.getByText("待办工作目标")).toBeTruthy());
     expect(screen.getByText(WORK_PENDING)).toBeTruthy();
   });
 
-  it("未找到匹配 workId → Empty 未找到该工作（且不发 verification 查询）", async () => {
-    const urls = installViews();
+  it("目标不存在由 Work Detail 的 not-found Problem 呈现", async () => {
+    const urls = installViews({
+      ...defaultHandlers,
+      "work-detail": () => ({
+        problem: {
+          code: "projection/work-not-found",
+          category: "not-found",
+          message: "projection/work-not-found",
+          correlationId: null,
+          retryDisposition: "non-retryable",
+          safeDetails: {},
+        },
+      }),
+    });
     renderWork("wrk_missing");
-    await waitFor(() => expect(screen.getByText("未找到该工作")).toBeTruthy());
-    expect(urls.every((url) => !url.includes("/views/verification"))).toBe(
-      true,
+    await waitFor(() => expect(screen.getByText("对象不存在")).toBeTruthy());
+    expect(urls.some((url) => url.includes("/views/work-detail"))).toBe(true);
+    expect(urls.some((url) => url.includes("/views/workspace-detail"))).toBe(
+      false,
     );
+    expect(urls.some((url) => url.includes("/views/verification"))).toBe(false);
   });
 
   it("验证与验收区：verdict 徽章 / criteria 行 / evidence / acceptance", async () => {
     installViews();
     renderWork(WORK_CURRENT);
     await waitFor(() => expect(screen.getByText("crit-render")).toBeTruthy());
-    expect(screen.getByText("9 视图 ×3 fixture 全部可渲染")).toBeTruthy();
+    expect(screen.getByText("10 视图 ×3 fixture 全部可渲染")).toBeTruthy();
     expect(screen.getByText("crit-problem")).toBeTruthy();
     expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/human:root/)).toBeTruthy();
@@ -203,5 +223,47 @@ describe("W-06 Work Detail 页", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
     expect(screen.getByText("服务不可用")).toBeTruthy();
     expect(screen.getByText(/view\/verification-unavailable/)).toBeTruthy();
+  });
+
+  it("Completed Work shows accepted result and has no governance commands", async () => {
+    const urls = installViews({
+      ...defaultHandlers,
+      "work-detail": () => ({ dto: workDetailCompleted }),
+    });
+    renderWork(WORK_CURRENT);
+    await waitFor(() => expect(screen.getByText("已完成")).toBeTruthy());
+    expect(screen.getByText("验收记录")).toBeTruthy();
+    expect(screen.getByText("acc_1")).toBeTruthy();
+    expect(screen.queryByText("治理动作")).toBeNull();
+    expect(urls.some((url) => url.includes("/views/work-detail"))).toBe(true);
+  });
+
+  it("Accepted but Open stays Open on the route", async () => {
+    installViews({
+      ...defaultHandlers,
+      "work-detail": () => ({
+        dto: { ...workDetailCompleted, lifecycle: "Open" },
+      }),
+    });
+    renderWork(WORK_CURRENT);
+    await waitFor(() =>
+      expect(screen.getByText("已验收、待完成")).toBeTruthy(),
+    );
+    expect(screen.queryByText("已完成")).toBeNull();
+    expect(screen.getByText("验收结果")).toBeTruthy();
+    expect(screen.getByText("acc_1")).toBeTruthy();
+  });
+
+  it("Cancelled Work keeps its lifecycle and has no governance commands", async () => {
+    installViews({
+      ...defaultHandlers,
+      "work-detail": () => ({
+        dto: { ...workDetailCompleted, lifecycle: "Cancelled" },
+      }),
+    });
+    renderWork(WORK_CURRENT);
+    await waitFor(() => expect(screen.getByText("已取消")).toBeTruthy());
+    expect(screen.getByText("历史验收")).toBeTruthy();
+    expect(screen.queryByText("治理动作")).toBeNull();
   });
 });

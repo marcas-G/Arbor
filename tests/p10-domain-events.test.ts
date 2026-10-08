@@ -44,6 +44,7 @@ describe("P10-001 projection vocabulary", () => {
       "responsibility-tree",
       "attention",
       "workspace-detail",
+      "work-detail",
       "current-work",
       "verification",
       "dependency-view",
@@ -56,6 +57,7 @@ describe("P10-001 projection vocabulary", () => {
         case "responsibility-tree":
         case "attention":
         case "workspace-detail":
+        case "work-detail":
         case "current-work":
         case "verification":
         case "dependency-view":

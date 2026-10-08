@@ -62,6 +62,7 @@ import type {
   TreeViewDeps,
   UsageDeps,
   VerificationViewDeps,
+  WorkDetailDeps,
   WorkspaceDetailDeps,
 } from "../../packages/projection-runtime/src/index.js";
 import {
@@ -130,6 +131,7 @@ export interface P10FixtureDeps {
   readonly tree: TreeViewDeps;
   readonly attention: AttentionReadDeps;
   readonly workspaceDetail: WorkspaceDetailDeps;
+  readonly workDetail: WorkDetailDeps;
   readonly currentWork: CurrentWorkDeps;
   readonly verificationView: VerificationViewDeps;
   readonly dependencyView: DependencyViewDeps;
@@ -412,6 +414,14 @@ export const makeP10Deps = (): Effect.Effect<
         inTx(acceptances.findByWorkRevision(workId, targetWorkRevision)),
     };
 
+    const workDetail: WorkDetailDeps = {
+      findWork: (workId) => inTx(works.findById(workId)),
+      findAcceptanceByWorkRevision: (workId, revision) =>
+        inTx(acceptances.findByWorkRevision(workId, revision)),
+      findVerification: (verificationId) =>
+        inTx(verifications.findById(verificationId as never)),
+    };
+
     const dependencyView: DependencyViewDeps = {
       listDependenciesByProject: (projectId) =>
         inTx(dependencies.listByProject(projectId)),
@@ -543,6 +553,7 @@ export const makeP10Deps = (): Effect.Effect<
       tree,
       attention,
       workspaceDetail,
+      workDetail,
       currentWork,
       verificationView,
       dependencyView,
