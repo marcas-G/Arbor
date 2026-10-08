@@ -425,6 +425,14 @@ export const buildSingleWorkspaceLayer = (
       );
     }
   }
+  // P16's complete deployment identity is the binding used by AgentStepContext
+  // and Native compaction eligibility. It deliberately excludes SecretRef and
+  // resolved SecretMaterial; only the stable non-secret binding fingerprint
+  // crosses into model capability metadata.
+  const deploymentFingerprint =
+    deploymentBinding === undefined
+      ? undefined
+      : resolvedModelBindingFingerprint(deploymentBinding);
   const provider =
     deploymentBinding !== undefined
       ? deploymentBinding.adapter.layerFor({
@@ -458,7 +466,7 @@ export const buildSingleWorkspaceLayer = (
       ...(config.providerQualificationProbe !== undefined
         ? { qualificationProbe: config.providerQualificationProbe }
         : {}),
-      ...(deploymentBinding !== undefined
+      ...(deploymentBinding !== undefined && deploymentFingerprint !== undefined
         ? {
             adapterUsageConstraints: {
               reportsCacheTokens:
@@ -467,8 +475,7 @@ export const buildSingleWorkspaceLayer = (
             },
             continuationBinding: {
               adapterId: deploymentBinding.adapter.adapterId,
-              bindingFingerprint:
-                resolvedModelBindingFingerprint(deploymentBinding),
+              bindingFingerprint: deploymentFingerprint,
             },
           }
         : {}),
@@ -486,6 +493,7 @@ export const buildSingleWorkspaceLayer = (
   const capability = ModelCapabilityPortLive(
     catalog,
     deploymentBinding?.deployment.modelRef,
+    deploymentFingerprint,
   );
   // P3 `02` §7: an empty-but-valid registry. No skill is available, so
   // `load` fails through the typed `SkillRegistryError` channel (never a
@@ -772,11 +780,11 @@ export const buildSingleWorkspaceLayer = (
       bindingFingerprint:
         deploymentBinding === undefined
           ? `legacy:${modelRef}`
-          : resolvedModelBindingFingerprint(deploymentBinding),
+          : (deploymentFingerprint ?? `legacy:${modelRef}`),
       configurationRevision:
         deploymentBinding === undefined
           ? `legacy:${modelRef}`
-          : resolvedModelBindingFingerprint(deploymentBinding),
+          : (deploymentFingerprint ?? `legacy:${modelRef}`),
       ...(config.consumerBatchSize !== undefined
         ? { batchSize: config.consumerBatchSize }
         : {}),
