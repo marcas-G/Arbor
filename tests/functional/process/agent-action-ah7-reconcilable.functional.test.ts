@@ -25,11 +25,22 @@ afterEach(async () => {
 });
 
 describe("AH7 Reconcilable tool intent after process crash", () => {
-  for (const boundary of [
-    "AH7AfterToolIntentCommit",
-    "AH7AfterToolEffectBeforeSettlement",
+  for (const scenario of [
+    {
+      boundary: "AH7AfterToolIntentCommit",
+      semantics: "Reconcilable",
+    },
+    {
+      boundary: "AH7AfterToolEffectBeforeSettlement",
+      semantics: "Reconcilable",
+    },
+    {
+      boundary: "AH7AfterToolEffectBeforeSettlement",
+      semantics: "NonIdempotent",
+    },
   ] as const) {
-    it(`does not replay an ambiguous shell effect after ${boundary}`, async () => {
+    const { boundary, semantics } = scenario;
+    it(`does not replay an ambiguous ${semantics} shell effect after ${boundary}`, async () => {
       const marker = `AH7-SHELL-${crypto.randomUUID().slice(0, 8)}`;
       const effectFile = `ah7-effect-${marker}.txt`;
       const command =
@@ -66,7 +77,12 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             : { _tag: "Text", text: `Waiting ${marker}` };
         },
         firstDaemonEntry: crashChild,
-        daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
+        daemonEnvironment: {
+          ARBOR_AH_BOUNDARY: boundary,
+          ...(semantics === "NonIdempotent"
+            ? { ARBOR_AH_NON_IDEMPOTENT: "1" }
+            : {}),
+        },
         onDaemonStdout: (line) => recordAhProbeLine(hits, line),
       });
       fixtures.push(fixture);
@@ -138,7 +154,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       expect(crashed.toolInvocations).toEqual([
         expect.objectContaining({
           invocation_id: hit?.invocationId,
-          side_effect_semantics: "Reconcilable",
+          side_effect_semantics: semantics,
           settled_at: null,
         }),
       ]);
@@ -156,7 +172,17 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         expect(contentBefore.trim()).toBe(marker);
       }
 
-      await fixture.restart();
+      if (semantics === "NonIdempotent") {
+        await fixture.restart({
+          entry: crashChild,
+          daemonEnvironment: {
+            ARBOR_AH_BOUNDARY: "disabled",
+            ARBOR_AH_NON_IDEMPOTENT: "1",
+          },
+        });
+      } else {
+        await fixture.restart();
+      }
       const recovered = await waitForPublic(
         async () => durableSnapshot(fixture.databaseFile),
         (value) =>
@@ -169,9 +195,45 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         45_000,
       );
       expect(recovered.toolInvocations).toHaveLength(1);
+      const settledInvocation = recovered.toolInvocations[0];
+      expect(settledInvocation).toMatchObject({
+        invocation_id: hit?.invocationId,
+        side_effect_semantics: semantics,
+      });
+      if (semantics === "NonIdempotent") {
+        expect(settledInvocation?.settled_at).not.toBeNull();
+        expect(settledInvocation?.settlement_kind).toBe("OutcomeUnknown");
+        expect(JSON.parse(String(settledInvocation?.settlement_json))).toEqual({
+          _tag: "OutcomeUnknown",
+          reconciliationRefs: [hit?.invocationId],
+        });
+      } else {
+        expect(settledInvocation?.settled_at).toBeNull();
+        expect(settledInvocation?.settlement_kind).toBeNull();
+        expect(settledInvocation?.settlement_json).toBeNull();
+      }
       expect(recovered.actions).toEqual([
-        expect.objectContaining({ state: "ReconciliationPending" }),
+        expect.objectContaining({
+          logical_action_id: crashed.actions[0]?.logical_action_id,
+          state: "ReconciliationPending",
+        }),
       ]);
+      const recoveredExecution = recovered.executions.find(
+        (execution) =>
+          execution.execution_id === crashed.executions[0]?.execution_id,
+      );
+      expect(recoveredExecution).toMatchObject({
+        settlement_kind: "OutcomeUnknown",
+      });
+      expect(JSON.parse(String(recoveredExecution?.settlement_json))).toEqual({
+        _tag: "OutcomeUnknown",
+        reconciliation: {
+          _tag: "ReconciliationRequired",
+          invocationRefs: [hit?.invocationId],
+        },
+      });
+      expect(recovered.providerTurns).toEqual(crashed.providerTurns);
+      expect(targetProviderCalls).toBe(1);
       const contentAfter = existsSync(effectPath)
         ? readFileSync(effectPath, "utf8")
         : null;

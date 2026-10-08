@@ -435,12 +435,36 @@ export const ToolRuntimeLive = (
               };
             }
             if (
-              recorded.sideEffectSemantics !== "ReadOnly" &&
-              recorded.sideEffectSemantics !== "Idempotent"
+              recorded.sideEffectSemantics === "NonIdempotent" ||
+              recorded.sideEffectSemantics === "Reconcilable"
             ) {
+              const reconciliationRefs = [String(intent.invocationId)];
+              if (recorded.sideEffectSemantics === "NonIdempotent") {
+                const settledAt = yield* clock.now();
+                yield* tx
+                  .transact(
+                    store.settle(
+                      intent.invocationId,
+                      {
+                        _tag: "OutcomeUnknown",
+                        reconciliationRefs,
+                      },
+                      null,
+                      settledAt,
+                    ),
+                  )
+                  .pipe(
+                    Effect.mapError(
+                      operationalFailure(
+                        "SettlementJournal",
+                        String(intent.invocationId),
+                      ),
+                    ),
+                  );
+              }
               return {
                 _tag: "OutcomeUnknown" as const,
-                reconciliationRefs: [String(intent.invocationId)],
+                reconciliationRefs,
               };
             }
           } else {

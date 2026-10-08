@@ -3,6 +3,7 @@ import {
   main,
   runDaemonForever,
 } from "../../../apps/single-workspace/dist/main.js";
+import { SHELL_DEFINITION } from "../../../packages/tool-runtime/dist/catalog.js";
 
 const targetBoundary = process.env.ARBOR_AH_BOUNDARY;
 if (
@@ -20,6 +21,7 @@ if (
   targetBoundary !== "AH7AfterToolIntentCommit" &&
   targetBoundary !== "AH7AfterToolEffectBeforeSettlement" &&
   targetBoundary !== "AH7AfterToolSettlementCommit" &&
+  targetBoundary !== "disabled" &&
   targetBoundary !== "AH9BeforeTerminalActionCommit" &&
   targetBoundary !== "AH9AfterTerminalActionCommit" &&
   targetBoundary !== "AH11BeforeStepEffectsCommit" &&
@@ -59,6 +61,11 @@ const config = {
   executionSettlementQualificationProbe: pauseAtBoundary,
   conversationResponseQualificationProbe: pauseAtBoundary,
 };
+
+if (process.env.ARBOR_AH_NON_IDEMPOTENT === "1") {
+  SHELL_DEFINITION.hash = "shell-v2-ah7-non-idempotent-qualification";
+  SHELL_DEFINITION.sideEffectSemantics = "NonIdempotent";
+}
 
 await Effect.runPromise(
   Effect.provide(Effect.scoped(runDaemonForever(config)), main(config)),
