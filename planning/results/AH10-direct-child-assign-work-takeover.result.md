@@ -87,3 +87,6 @@ Final integrated `pnpm check` passes: Biome 953 files, typecheck, architecture
 155, core 316 files / 1723 passed / 3 skipped, Web typecheck/build and 31 files /
 216 tests. P12 restore-drill generated-field drift from the check was restored
 to the committed timestamp and hash.
+
+Committed F20 and full functional-suite results are recorded in
+`planning/results/AH15-AH17-direct-child-release-validation.result.md`.
