@@ -296,6 +296,9 @@ export const runModelDecision = (
     let compactionAttempts = 0;
     let overflowRecoveryAttempt = 0;
     let replayPersistedContextLimit = false;
+    let resumeOverflowCompactionProviderTurnId:
+      | import("@arbor/domain").ProviderTurnId
+      | undefined;
     let overflowReplacementProviderTurnId:
       | import("@arbor/domain").ProviderTurnId
       | undefined;
@@ -481,184 +484,239 @@ export const runModelDecision = (
                 ).pipe(Effect.mapError(failure));
                 if (
                   inferenceReceipt._tag !== "SettledFailure" ||
+                  inferenceReceipt.failureKind !== "ContextLimitExceeded" ||
                   inferenceReceipt.turn.executionId !==
                     input.execution.executionId ||
                   inferenceReceipt.turn.sessionId !==
                     input.execution.sessionId ||
                   inferenceReceipt.turn.contextEpoch !==
-                    inferenceLink.contextEpoch ||
-                  compactionReceipt._tag !== "SettledSuccess" ||
-                  compactionReceipt.evidenceVersion !== "provider-success-v1" ||
-                  compactionReceipt.finishReason !== "Stop" ||
-                  compactionReceipt.turn.providerTurnId !==
-                    compactionLink.providerTurnId ||
-                  compactionReceipt.turn.executionId !==
-                    input.execution.executionId ||
-                  compactionReceipt.turn.sessionId !==
-                    input.execution.sessionId ||
-                  compactionReceipt.turn.contextEpoch !==
-                    compactionLink.contextEpoch ||
-                  compactionReceipt.turn.modelRef !== capability.modelRef ||
-                  compactionReceipt.turn.outputContractRef !==
-                    "compaction-result-v1" ||
-                  compactionManifest === null ||
-                  compactionManifest.manifestJson !==
-                    compactionReceipt.manifestJson
+                    inferenceLink.contextEpoch
                 ) {
                   return yield* Effect.fail(
                     failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
                   );
                 }
-                let persistedManifest: Record<string, unknown>;
-                let persistedRequest: Record<string, unknown>;
-                try {
-                  const manifest = JSON.parse(
-                    compactionManifest.manifestJson,
-                  ) as unknown;
-                  const request = JSON.parse(
-                    compactionManifest.portableRequestJson,
-                  ) as unknown;
-                  if (
-                    typeof manifest !== "object" ||
-                    manifest === null ||
-                    Array.isArray(manifest) ||
-                    typeof request !== "object" ||
-                    request === null ||
-                    Array.isArray(request)
-                  ) {
-                    return yield* Effect.fail(
-                      failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-                    );
-                  }
-                  persistedManifest = manifest as Record<string, unknown>;
-                  persistedRequest = request as Record<string, unknown>;
-                } catch {
-                  return yield* Effect.fail(
-                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-                  );
-                }
-                const recoveryBindingFingerprint =
-                  capability.bindingFingerprint ??
-                  `legacy:${capability.providerRef ?? options.providerRef ?? "provider"}:${capability.modelRef}`;
                 if (
-                  persistedManifest.providerTurnId !==
-                    compactionLink.providerTurnId ||
-                  persistedManifest.executionId !==
-                    input.execution.executionId ||
-                  persistedManifest.sessionId !== input.execution.sessionId ||
-                  persistedManifest.contextEpoch !==
-                    compactionLink.contextEpoch ||
-                  persistedManifest.modelRef !== capability.modelRef ||
-                  persistedManifest.outputContractRef !==
-                    "compaction-result-v1" ||
-                  persistedManifest.operationKind !== "CompactionSummary" ||
-                  persistedManifest.logicalStepNo !== turn ||
-                  persistedManifest.resolvedModelBindingFingerprint !==
-                    recoveryBindingFingerprint ||
-                  persistedManifest.compiledRequestHash !==
-                    sha256Hex(compactionManifest.portableRequestJson) ||
-                  persistedRequest.operationKind !== "CompactionSummary" ||
-                  persistedRequest.modelRef !== capability.modelRef ||
-                  persistedRequest.outputContractRef !== "compaction-result-v1"
+                  compactionReceipt._tag === "NotFound" ||
+                  compactionReceipt._tag === "Unsettled"
                 ) {
-                  return yield* Effect.fail(
-                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-                  );
-                }
-                const summary = compactionReceipt.canonicalEvents
-                  .flatMap((event) =>
-                    event._tag === "TextDelta" ? [event.text] : [],
-                  )
-                  .join("")
-                  .trim();
-                if (summary.length === 0) {
-                  return yield* Effect.fail(
-                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-                  );
-                }
-                const currentSession = yield* tx
-                  .transact(sessions.findById(input.execution.sessionId))
-                  .pipe(Effect.mapError(failure));
-                if (
-                  Option.isNone(currentSession) ||
-                  (currentSession.value.contextEpoch !==
-                    compactionLink.contextEpoch &&
-                    Number(currentSession.value.contextEpoch) !==
-                      Number(compactionLink.contextEpoch) + 1)
-                ) {
-                  return yield* Effect.fail(
-                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-                  );
-                }
-                yield* commitRecoveredSummaryCompaction(
-                  {
-                    execution: input.execution,
-                    providerTurnId: compactionLink.providerTurnId,
-                    expectedEpoch: compactionLink.contextEpoch,
-                    bindingFingerprint: recoveryBindingFingerprint,
-                    summary,
-                    fence: loopStepFence,
-                  },
-                  {
-                    sessions,
-                    tx,
-                    ...(options.qualificationProbe === undefined
-                      ? {}
-                      : { qualificationProbe: options.qualificationProbe }),
-                  },
-                ).pipe(Effect.mapError(failure));
-                const replacementLinks = providerTurnLinks.filter(
-                  (link) => link.role === "OverflowReplacement",
-                );
-                const replacementProviderTurnId =
-                  `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
-                if (replacementLinks.length > 1) {
-                  return yield* Effect.fail(
-                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-                  );
-                }
-                const existingReplacement = replacementLinks[0];
-                if (existingReplacement !== undefined) {
-                  if (
-                    existingReplacement.providerTurnId !==
-                      replacementProviderTurnId ||
-                    existingReplacement.predecessorProviderTurnId !==
-                      compactionLink.providerTurnId ||
-                    Number(existingReplacement.contextEpoch) !==
-                      Number(compactionLink.contextEpoch) + 1
-                  ) {
-                    return yield* Effect.fail(
-                      failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-                    );
-                  }
-                } else {
-                  yield* tx
-                    .transact(
-                      loopSteps.ensureProviderTurnLink(
-                        {
-                          identity: loopStepIdentity,
-                          overflowOrdinal: 0,
-                          role: "OverflowReplacement",
-                          providerTurnId: replacementProviderTurnId,
-                          predecessorProviderTurnId:
-                            compactionLink.providerTurnId,
-                          contextEpoch: parse(ContextEpochNumber)(
-                            Number(compactionLink.contextEpoch) + 1,
-                          ),
-                          state: "Prepared",
-                          createdAt: yield* now(),
-                        },
-                        loopStepFence,
-                      ),
-                    )
+                  const existingCompactionTurn =
+                    compactionReceipt._tag === "Unsettled"
+                      ? compactionReceipt.turn
+                      : undefined;
+                  const currentSession = yield* tx
+                    .transact(sessions.findById(input.execution.sessionId))
                     .pipe(Effect.mapError(failure));
+                  if (
+                    (compactionReceipt._tag === "NotFound" &&
+                      compactionManifest !== null) ||
+                    (existingCompactionTurn !== undefined &&
+                      (existingCompactionTurn.providerTurnId !==
+                        compactionLink.providerTurnId ||
+                        existingCompactionTurn.executionId !==
+                          input.execution.executionId ||
+                        existingCompactionTurn.sessionId !==
+                          input.execution.sessionId ||
+                        existingCompactionTurn.contextEpoch !==
+                          compactionLink.contextEpoch ||
+                        existingCompactionTurn.modelRef !==
+                          capability.modelRef ||
+                        existingCompactionTurn.outputContractRef !==
+                          "compaction-result-v1" ||
+                        compactionManifest === null)) ||
+                    Option.isNone(currentSession) ||
+                    Number(currentSession.value.contextEpoch) !==
+                      Number(compactionLink.contextEpoch)
+                  ) {
+                    return yield* Effect.fail(
+                      failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                    );
+                  }
+                  // The committed link pins the exact Summary ProviderTurn.
+                  // Rebuild the same canonical input later in this model
+                  // decision, after the projection and step context exist.
+                  resumeOverflowCompactionProviderTurnId =
+                    compactionLink.providerTurnId;
+                } else if (compactionReceipt._tag === "SettledSuccess") {
+                  if (
+                    compactionReceipt.evidenceVersion !==
+                      "provider-success-v1" ||
+                    compactionReceipt.finishReason !== "Stop" ||
+                    compactionReceipt.turn.providerTurnId !==
+                      compactionLink.providerTurnId ||
+                    compactionReceipt.turn.executionId !==
+                      input.execution.executionId ||
+                    compactionReceipt.turn.sessionId !==
+                      input.execution.sessionId ||
+                    compactionReceipt.turn.contextEpoch !==
+                      compactionLink.contextEpoch ||
+                    compactionReceipt.turn.modelRef !== capability.modelRef ||
+                    compactionReceipt.turn.outputContractRef !==
+                      "compaction-result-v1" ||
+                    compactionManifest === null ||
+                    compactionManifest.manifestJson !==
+                      compactionReceipt.manifestJson
+                  ) {
+                    return yield* Effect.fail(
+                      failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                    );
+                  }
+                  let persistedManifest: Record<string, unknown>;
+                  let persistedRequest: Record<string, unknown>;
+                  try {
+                    const manifest = JSON.parse(
+                      compactionManifest.manifestJson,
+                    ) as unknown;
+                    const request = JSON.parse(
+                      compactionManifest.portableRequestJson,
+                    ) as unknown;
+                    if (
+                      typeof manifest !== "object" ||
+                      manifest === null ||
+                      Array.isArray(manifest) ||
+                      typeof request !== "object" ||
+                      request === null ||
+                      Array.isArray(request)
+                    ) {
+                      return yield* Effect.fail(
+                        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                      );
+                    }
+                    persistedManifest = manifest as Record<string, unknown>;
+                    persistedRequest = request as Record<string, unknown>;
+                  } catch {
+                    return yield* Effect.fail(
+                      failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                    );
+                  }
+                  const recoveryBindingFingerprint =
+                    capability.bindingFingerprint ??
+                    `legacy:${capability.providerRef ?? options.providerRef ?? "provider"}:${capability.modelRef}`;
+                  if (
+                    persistedManifest.providerTurnId !==
+                      compactionLink.providerTurnId ||
+                    persistedManifest.executionId !==
+                      input.execution.executionId ||
+                    persistedManifest.sessionId !== input.execution.sessionId ||
+                    persistedManifest.contextEpoch !==
+                      compactionLink.contextEpoch ||
+                    persistedManifest.modelRef !== capability.modelRef ||
+                    persistedManifest.outputContractRef !==
+                      "compaction-result-v1" ||
+                    persistedManifest.operationKind !== "CompactionSummary" ||
+                    persistedManifest.logicalStepNo !== turn ||
+                    persistedManifest.resolvedModelBindingFingerprint !==
+                      recoveryBindingFingerprint ||
+                    persistedManifest.compiledRequestHash !==
+                      sha256Hex(compactionManifest.portableRequestJson) ||
+                    persistedRequest.operationKind !== "CompactionSummary" ||
+                    persistedRequest.modelRef !== capability.modelRef ||
+                    persistedRequest.outputContractRef !==
+                      "compaction-result-v1"
+                  ) {
+                    return yield* Effect.fail(
+                      failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                    );
+                  }
+                  const summary = compactionReceipt.canonicalEvents
+                    .flatMap((event) =>
+                      event._tag === "TextDelta" ? [event.text] : [],
+                    )
+                    .join("")
+                    .trim();
+                  if (summary.length === 0) {
+                    return yield* Effect.fail(
+                      failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                    );
+                  }
+                  const currentSession = yield* tx
+                    .transact(sessions.findById(input.execution.sessionId))
+                    .pipe(Effect.mapError(failure));
+                  if (
+                    Option.isNone(currentSession) ||
+                    (currentSession.value.contextEpoch !==
+                      compactionLink.contextEpoch &&
+                      Number(currentSession.value.contextEpoch) !==
+                        Number(compactionLink.contextEpoch) + 1)
+                  ) {
+                    return yield* Effect.fail(
+                      failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                    );
+                  }
+                  yield* commitRecoveredSummaryCompaction(
+                    {
+                      execution: input.execution,
+                      providerTurnId: compactionLink.providerTurnId,
+                      expectedEpoch: compactionLink.contextEpoch,
+                      bindingFingerprint: recoveryBindingFingerprint,
+                      summary,
+                      fence: loopStepFence,
+                    },
+                    {
+                      sessions,
+                      tx,
+                      ...(options.qualificationProbe === undefined
+                        ? {}
+                        : { qualificationProbe: options.qualificationProbe }),
+                    },
+                  ).pipe(Effect.mapError(failure));
+                  const replacementLinks = providerTurnLinks.filter(
+                    (link) => link.role === "OverflowReplacement",
+                  );
+                  const replacementProviderTurnId =
+                    `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+                  if (replacementLinks.length > 1) {
+                    return yield* Effect.fail(
+                      failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                    );
+                  }
+                  const existingReplacement = replacementLinks[0];
+                  if (existingReplacement !== undefined) {
+                    if (
+                      existingReplacement.providerTurnId !==
+                        replacementProviderTurnId ||
+                      existingReplacement.predecessorProviderTurnId !==
+                        compactionLink.providerTurnId ||
+                      Number(existingReplacement.contextEpoch) !==
+                        Number(compactionLink.contextEpoch) + 1
+                    ) {
+                      return yield* Effect.fail(
+                        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                      );
+                    }
+                  } else {
+                    yield* tx
+                      .transact(
+                        loopSteps.ensureProviderTurnLink(
+                          {
+                            identity: loopStepIdentity,
+                            overflowOrdinal: 0,
+                            role: "OverflowReplacement",
+                            providerTurnId: replacementProviderTurnId,
+                            predecessorProviderTurnId:
+                              compactionLink.providerTurnId,
+                            contextEpoch: parse(ContextEpochNumber)(
+                              Number(compactionLink.contextEpoch) + 1,
+                            ),
+                            state: "Prepared",
+                            createdAt: yield* now(),
+                          },
+                          loopStepFence,
+                        ),
+                      )
+                      .pipe(Effect.mapError(failure));
+                  }
+                  // The settled Summary receipt has been promoted to the exact
+                  // replacement checkpoint. The next loop iteration is pinned
+                  // to that replacement ProviderTurn, not the failed Inference.
+                  overflowRecoveryAttempt = 1;
+                  overflowReplacementProviderTurnId = replacementProviderTurnId;
+                  continue;
+                } else {
+                  return yield* Effect.fail(
+                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                  );
                 }
-                // The settled Summary receipt has been promoted to the exact
-                // replacement checkpoint. The next loop iteration is pinned
-                // to that replacement ProviderTurn, not the failed Inference.
-                overflowRecoveryAttempt = 1;
-                overflowReplacementProviderTurnId = replacementProviderTurnId;
-                continue;
               }
             }
           }
@@ -1231,6 +1289,84 @@ export const runModelDecision = (
           `decision-request:${boundEpisode.decisionId}:${String(requestContextRevision)}`,
         );
       }
+      if (resumeOverflowCompactionProviderTurnId !== undefined) {
+        if (
+          loopStep === undefined ||
+          loopSteps === undefined ||
+          loopStepFence === undefined
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const expectedCompactionProviderTurnId = `ptn_${input.execution.executionId}_${turn}_compact_${stepContext.contextEpoch}`;
+        if (
+          resumeOverflowCompactionProviderTurnId !==
+          expectedCompactionProviderTurnId
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const compacted = yield* runCompaction(
+          {
+            execution: input.execution,
+            logicalStepNo: turn,
+            currentEpoch: stepContext.contextEpoch,
+            modelRef: capability.modelRef,
+            ...(options.secretRef === undefined
+              ? {}
+              : { secretRef: options.secretRef }),
+            bindingFingerprint: stepContext.bindingFingerprint,
+            inputItems,
+            fence: loopStepFence,
+            nativeSupported: false,
+          },
+          {
+            providerRuntime,
+            sessions,
+            tx,
+            ...(options.qualificationProbe === undefined
+              ? {}
+              : { qualificationProbe: options.qualificationProbe }),
+          },
+        ).pipe(Effect.mapError(failure));
+        if (
+          compacted.providerTurnId !== resumeOverflowCompactionProviderTurnId ||
+          Number(compacted.newEpoch) !== Number(stepContext.contextEpoch) + 1
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        const replacementProviderTurnId =
+          `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
+        yield* tx
+          .transact(
+            loopSteps.ensureProviderTurnLink(
+              {
+                identity: loopStepIdentity,
+                overflowOrdinal: 0,
+                role: "OverflowReplacement",
+                providerTurnId: replacementProviderTurnId,
+                predecessorProviderTurnId:
+                  resumeOverflowCompactionProviderTurnId,
+                contextEpoch: parse(ContextEpochNumber)(
+                  Number(stepContext.contextEpoch) + 1,
+                ),
+                state: "Prepared",
+                createdAt: yield* now(),
+              },
+              loopStepFence,
+            ),
+          )
+          .pipe(Effect.mapError(failure));
+        overflowRecoveryAttempt = 1;
+        overflowReplacementProviderTurnId = replacementProviderTurnId;
+        replayPersistedContextLimit = false;
+        resumeOverflowCompactionProviderTurnId = undefined;
+        continue;
+      }
       const turnProfile = yield* turnProfileResolver
         .resolve({
           execution: input.execution,
@@ -1622,7 +1758,20 @@ export const runModelDecision = (
               .pipe(Effect.mapError(failure));
             if (existingTurn !== null) {
               yield* tx
-                .transact(providerTurns.failTurn(providerTurnId, observedAt))
+                .transact(
+                  Effect.gen(function* () {
+                    yield* providerTurns.failTurn(providerTurnId, observedAt);
+                    if (options.qualificationProbe !== undefined) {
+                      yield* Effect.promise(async () => {
+                        await options.qualificationProbe?.({
+                          boundary: "AH18BeforeInferenceFailTurnCommit",
+                          executionId: String(input.execution.executionId),
+                          providerTurnId: String(providerTurnId),
+                        });
+                      });
+                    }
+                  }),
+                )
                 .pipe(Effect.mapError(failure));
             }
           }
@@ -1633,6 +1782,11 @@ export const runModelDecision = (
           const compactTurnId =
             `${input.execution.executionId}_${turn}_${nativeSupported ? "native_" : ""}compact_${stepContext.contextEpoch}` as never;
           if (!replayPersistedContextLimit) {
+            const compactionProviderTurnId = `ptn_${compactTurnId}` as never;
+            const linkProbeIdentity = {
+              executionId: String(input.execution.executionId),
+              providerTurnId: String(compactionProviderTurnId),
+            };
             yield* tx
               .transact(
                 Effect.gen(function* () {
@@ -1661,9 +1815,25 @@ export const runModelDecision = (
                     },
                     overflowFence,
                   );
+                  if (options.qualificationProbe !== undefined) {
+                    yield* Effect.promise(async () => {
+                      await options.qualificationProbe?.({
+                        boundary: "AH18BeforeOverflowLinksCommit",
+                        ...linkProbeIdentity,
+                      });
+                    });
+                  }
                 }),
               )
               .pipe(Effect.mapError(failure));
+            if (options.qualificationProbe !== undefined) {
+              yield* Effect.promise(async () => {
+                await options.qualificationProbe?.({
+                  boundary: "AH18AfterOverflowLinksCommit",
+                  ...linkProbeIdentity,
+                });
+              });
+            }
           }
           const compacted = yield* runCompaction(
             {
