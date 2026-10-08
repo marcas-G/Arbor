@@ -6,6 +6,7 @@ import {
 } from "@arbor/domain";
 import type {
   PortableInputItem,
+  PortableModelRequestV2,
   ProviderRuntimeService,
   SecretRef,
   SessionCompactionCommit,
@@ -24,7 +25,19 @@ export interface SummaryCompactionInput {
   readonly modelRef: string;
   readonly secretRef?: SecretRef;
   readonly bindingFingerprint: string;
+  /** Exact portable Session frontier which produced this compaction request. */
+  readonly inputFrontier?: {
+    readonly firstSequence: number | null;
+    readonly lastSequence: number | null;
+  };
+  /** Exact source refs for the portable Session input items. */
+  readonly contextRefs?: ReadonlyArray<string>;
   readonly inputItems: ReadonlyArray<PortableInputItem>;
+  /** Exact durable Native request when P9 is retrying its pinned Turn. */
+  readonly nativeRecovery?: {
+    readonly manifestJson: string;
+    readonly request: PortableModelRequestV2;
+  };
   readonly fence: SessionWriteFence;
 }
 
@@ -121,6 +134,12 @@ export const runSummaryCompaction = (
       operationKind: "CompactionSummary",
       logicalStepNo: input.logicalStepNo,
       resolvedModelBindingFingerprint: input.bindingFingerprint,
+      ...(input.inputFrontier === undefined
+        ? {}
+        : { inputFrontier: input.inputFrontier }),
+      ...(input.contextRefs === undefined
+        ? {}
+        : { contextRefs: input.contextRefs }),
     };
     const result = yield* deps.providerRuntime.runTurn({
       providerTurnId,
@@ -175,7 +194,7 @@ export const runNativeCompaction = (
     const providerTurnId =
       `ptn_${input.execution.executionId}_${input.logicalStepNo}_native_compact_${input.currentEpoch}` as ProviderTurnId;
     const nextEpoch = parse(ContextEpochNumber)(Number(input.currentEpoch) + 1);
-    const request = {
+    const request = input.nativeRecovery?.request ?? {
       requestVersion: 2 as const,
       operationKind: "CompactionNative" as const,
       modelRef: input.modelRef,
@@ -197,6 +216,12 @@ export const runNativeCompaction = (
       operationKind: request.operationKind,
       logicalStepNo: input.logicalStepNo,
       resolvedModelBindingFingerprint: input.bindingFingerprint,
+      ...(input.inputFrontier === undefined
+        ? {}
+        : { inputFrontier: input.inputFrontier }),
+      ...(input.contextRefs === undefined
+        ? {}
+        : { contextRefs: input.contextRefs }),
     };
     const result = yield* deps.providerRuntime.runTurn({
       providerTurnId,
@@ -206,7 +231,8 @@ export const runNativeCompaction = (
       modelRef: input.modelRef,
       ...(input.secretRef === undefined ? {} : { secretRef: input.secretRef }),
       outputContractRef: request.outputContractRef,
-      manifestJson: JSON.stringify(manifest),
+      manifestJson:
+        input.nativeRecovery?.manifestJson ?? JSON.stringify(manifest),
       request,
     });
     const opaqueItemRef = result.events.find(
@@ -268,6 +294,7 @@ export const commitRecoveredSummaryCompaction = (
     const nextEpoch = parse(ContextEpochNumber)(
       Number(input.expectedEpoch) + 1,
     );
+
     const checkpoint = {
       _tag: "CompactionCheckpoint" as const,
       implementation: "Summary" as const,
@@ -277,6 +304,58 @@ export const commitRecoveredSummaryCompaction = (
       summaryRef: `summary:${sha256Hex(summary)}`,
       summaryText: summary,
       bindingFingerprint: null,
+    };
+    yield* commitCheckpointEpoch(
+      {
+        execution: input.execution,
+        providerTurnId: input.providerTurnId,
+        expectedEpoch: input.expectedEpoch,
+        nextEpoch,
+        checkpoint,
+        fence: input.fence,
+      },
+      deps,
+    );
+    return { newEpoch: nextEpoch, providerTurnId: input.providerTurnId };
+  });
+
+export interface RecoveredNativeCompactionInput {
+  readonly execution: Execution;
+  readonly providerTurnId: ProviderTurnId;
+  readonly expectedEpoch: ContextEpochNumber;
+  readonly bindingFingerprint: string;
+  readonly opaqueItemRef: string;
+  readonly fence: SessionWriteFence;
+}
+
+/** Commit an already-settled, exact-binding Native receipt without asking the
+ * provider again. The caller must validate the pinned receipt/Manifest before
+ * using this recovery path. */
+export const commitRecoveredNativeCompaction = (
+  input: RecoveredNativeCompactionInput,
+  deps: Pick<CompactionDependencies, "sessions" | "tx" | "qualificationProbe">,
+) =>
+  Effect.gen(function* () {
+    if (
+      input.opaqueItemRef.length === 0 ||
+      !/^p16fp_[0-9a-f]{64}$/.test(input.bindingFingerprint)
+    ) {
+      return yield* Effect.fail({
+        _tag: "NativeCompactionInvalid" as const,
+        reason: "persisted Native checkpoint binding is incomplete",
+      });
+    }
+    const nextEpoch = parse(ContextEpochNumber)(
+      Number(input.expectedEpoch) + 1,
+    );
+    const checkpoint = {
+      _tag: "CompactionCheckpoint" as const,
+      implementation: "ProviderNative" as const,
+      fromEpoch: input.expectedEpoch,
+      toEpoch: nextEpoch,
+      retainedFrontierRef: `frontier:${input.execution.sessionId}:${input.expectedEpoch}`,
+      opaqueItemRef: input.opaqueItemRef,
+      bindingFingerprint: input.bindingFingerprint,
     };
     yield* commitCheckpointEpoch(
       {

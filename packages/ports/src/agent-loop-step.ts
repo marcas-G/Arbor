@@ -188,6 +188,13 @@ export interface AgentLoopStepStoreService {
     AgentLoopStepStoreError,
     TransactionScope
   >;
+  readonly findProviderTurnLinkByProviderTurnId: (
+    providerTurnId: ProviderTurnId,
+  ) => Effect.Effect<
+    Option.Option<AgentLoopStepProviderTurnLink>,
+    AgentLoopStepStoreError,
+    TransactionScope
+  >;
 }
 
 export class AgentLoopStepStore extends Context.Service<

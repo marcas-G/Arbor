@@ -21,6 +21,7 @@ import {
   ExecutionRepositoryLive,
   layer,
   P17_MIGRATIONS,
+  P20_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
 } from "../src/index.js";
@@ -127,7 +128,7 @@ const prepared = {
   updatedAt: "t1",
 };
 
-describe("P17 AgentLoopStepStore", () => {
+describe("P17/P20 AgentLoopStepStore", () => {
   it("creates idempotently and advances by fenced state/revision CAS", async () => {
     const program = Effect.gen(function* () {
       yield* runMigrations(P17_MIGRATIONS);
@@ -251,5 +252,53 @@ describe("P17 AgentLoopStepStore", () => {
     expect(result.applied.state).toBe("Applied");
     expect(result.actions).toHaveLength(1);
     expect(result.actions[0]?.observationSourceRef).toBe("obs-1");
+  });
+
+  it("finds the unique P20 ProviderTurn link by its durable identity", async () => {
+    const nativeTurnId = parse(ProviderTurnId)(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789a2",
+    );
+    const link = {
+      identity: prepared.identity,
+      overflowOrdinal: 0 as const,
+      role: "OverflowCompaction" as const,
+      providerTurnId: nativeTurnId,
+      predecessorProviderTurnId: providerTurnId,
+      contextEpoch: 0 as never,
+      state: "SettledSuccess" as const,
+      createdAt: "t2",
+    };
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P20_MIGRATIONS);
+      yield* seed;
+      const tx = yield* TransactionPort;
+      const executions = yield* ExecutionRepository;
+      const steps = yield* AgentLoopStepStore;
+      yield* tx.transact(executions.tryAdmitMainExecution(execution));
+      yield* tx.transact(
+        executions.tryAcquireLease(
+          executionId,
+          fence.workerId,
+          fence.workerIncarnationId,
+          "2999-01-01T00:00:00.000Z",
+        ),
+      );
+      yield* tx.transact(steps.createPrepared(prepared, fence));
+      yield* tx.transact(steps.ensureProviderTurnLink(link, fence));
+      const found = yield* tx.transact(
+        steps.findProviderTurnLinkByProviderTurnId(nativeTurnId),
+      );
+      const missing = yield* tx.transact(
+        steps.findProviderTurnLinkByProviderTurnId(
+          parse(ProviderTurnId)("ptn_018f2b3c-4d5e-7abc-8def-0123456789a3"),
+        ),
+      );
+      return { found, missing };
+    });
+
+    const result = await Effect.runPromise(Effect.provide(program, makeApp()));
+    expect(Option.isSome(result.found)).toBe(true);
+    if (Option.isSome(result.found)) expect(result.found.value).toEqual(link);
+    expect(Option.isNone(result.missing)).toBe(true);
   });
 });

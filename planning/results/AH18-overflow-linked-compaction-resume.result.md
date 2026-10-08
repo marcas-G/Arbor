@@ -2,8 +2,8 @@
 
 Date: 2026-10-08
 
-Status: **PASS for the linked Summary bootstrap and tested second-overflow
-terminal boundaries; AH18/P9 qualification is not declared closed.**
+Status: **AH18 overflow-chain process boundaries PASS (12/12); this is not a
+claim that the broader P9 or SCRC-008 qualification is closed.**
 
 Process test:
 `tests/functional/process/ah18-overflow-linked-compaction-resume.functional.test.ts`
@@ -26,6 +26,26 @@ ProviderTurn+Manifest transaction:
 | `AH18BeforeSummaryTurnCommit` | Links are committed; Summary ProviderTurn/Manifest writes are uncommitted and externally absent. |
 | `AH18AfterSummaryTurnCommit` | Links are committed; the same Summary ProviderTurn/Manifest is durable but has no Attempt yet. |
 
+Two additional hard-kill cases now cover the previously missing Summary Attempt
+states after the link and Summary Turn/Manifest commits:
+
+| Summary Attempt state before kill | Evidence |
+|---|---|
+| `InProgress` | The local provider receives the Summary request and holds the HTTP response open; an independent SQLite snapshot reads Attempt 0 `InProgress`, the committed Summary Turn/Manifest, and the ordinal-0 links before the old daemon is killed. |
+| `RetryableFailure` | A pre-response socket reset produces `TransportFailed` with `SafeReplay` / `Retry`. The test-only `AH18AfterSummaryRetryableFailureCommit` probe pauses only after the Attempt transaction commits; the snapshot confirms Attempt 1 does not exist before kill. |
+
+After lease expiry, both branches resume the exact link-pinned Summary
+ProviderTurn/Manifest as Attempt 1, then commit one Summary checkpoint, advance
+epoch 0→1, and produce one replacement on the original `(logicalStepNo=0,
+repairAttempt=0)` Step. The InProgress branch records Attempt 0 as a
+ProcessLost `RetryableFailure`; the transport-failure branch preserves
+Attempt 0's `TransportFailed` classification. Each branch has two Summary
+HTTP requests because the P9-safe replay is allowed; original Inference is
+requested once, replacement once, and the ordinal-0 chain/checkpoint remains
+unique. No Work-level retry policy is changed. The probe is test-only, receives
+only turn/execution/attempt/failure-kind identity, and is absent from ordinary
+production Composition.
+
 For `AH18AfterSummaryTurnCommit`, the persisted Summary `manifest_id`,
 `manifest_json`, and `portable_request_json` are now compared byte-for-byte
 across the pre-kill snapshot, post-kill snapshot, and recovered settled Turn.
@@ -42,6 +62,11 @@ replacement, one logical Step at `repairAttempt=0`, and exactly three
 ordinal-0 link roles. The original Inference Manifest remains byte-identical.
 The Summary success and replacement identity are retained, with no duplicate
 checkpoint or additional overflow ordinal.
+
+The separate second-overflow crash case hard-kills at both AH4
+`SettlementProposed` boundaries after the replacement's terminal
+ContextLimit; recovery retains the exact ordinal-0 links and does not create
+another chain or request.
 
 The RED showed gen1 failing `AgentLoopStepReplayBindingMismatch` when durable
 links existed but the Summary receipt was NotFound. Recovery now validates the
@@ -104,10 +129,19 @@ Second overflow terminal proposal:
   same file -t "terminalizes a second ContextLimit"
   2/2 PASS
 
+Summary Attempt 0 hard-kill/recovery:
+  same file -t "resumes the link-pinned Summary ProviderTurn"
+  2/2 PASS
+
+Complete AH18 process file after adding the two Summary Attempt branches:
+  pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/ah18-overflow-linked-compaction-resume.functional.test.ts --reporter=dot
+  12/12 PASS (602.95s)
+
 pnpm typecheck: PASS
 pnpm build: PASS
 Biome on changed files: PASS
-Core regressions (p3-driver, p3-provider, provider-turn-project-store): 43/43 PASS
+Related core regressions (`p3-driver`, `p9-provider-disconnect`, and
+`provider-runtime-phase1`): 69/69 PASS
 ```
 
 No full `pnpm check` or full `pnpm test:functional` was run for this batch.
@@ -156,3 +190,20 @@ the tested rollback case. The original `failTurn` transaction's pre-commit side
 is now process-qualified by `AH18BeforeInferenceFailTurnCommit`; the terminal
 Attempt is a separate prior commit, so the test does not conflate Attempt
 settlement with ProviderTurn settlement.
+
+## Final pre-commit integration verification
+
+On the integrated working tree based on `042931a9a7f7c485726694c268c84cb04e21fe8d`
+(AH18/AH19 changes still uncommitted), the complete AH18 process file passed
+12/12 in 611.18s. The final `pnpm check` passed: Biome checked 963 files with
+one `noNonNullAssertion` warning in `model-decision.ts`; typecheck passed;
+architecture passed 158/158; core Vitest passed 1738 with 3 skipped; Web
+typecheck/build passed; Web Vitest passed 223/223. The complete
+`pnpm test:functional` passed with Vitest 31 files / 102 tests and Playwright
+3/3, including AH18 12/12 and AH19 19/19.
+
+F20 also passed inside the complete functional batch. Its clean checkout clones
+local `HEAD`, so before these changes are committed that subtest qualifies the
+base commit, not the uncommitted AH18/AH19 diff. A separate pre-commit F20 run
+passed 1/1 for the same base-commit reason. These results do not close all
+AH18/P9 boundaries or AH15–AH19 as a whole.

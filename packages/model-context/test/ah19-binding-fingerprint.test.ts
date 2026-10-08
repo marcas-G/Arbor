@@ -109,7 +109,10 @@ const resolveBinding = (
   return resolved;
 };
 
-const resolveCapability = (bindingFingerprint?: string) =>
+const resolveCapability = (
+  bindingFingerprint?: string,
+  providerSupportsContinuation = true,
+) =>
   Effect.runPromise(
     Effect.gen(function* () {
       const capabilityPort = yield* ModelCapabilityPort;
@@ -124,6 +127,7 @@ const resolveCapability = (bindingFingerprint?: string) =>
           nativeCatalog,
           "model-ah19",
           bindingFingerprint,
+          providerSupportsContinuation,
         ),
       ),
     ),
@@ -208,6 +212,12 @@ describe("AH19 full binding fingerprint propagation", () => {
     expect(incomplete.bindingFingerprint).toBeUndefined();
     expect(
       incomplete.portableRequestCompatibility?.operationKinds,
+    ).not.toContain("CompactionNative");
+
+    const providerIncompatible = await resolveCapability(fingerprint, false);
+    expect(providerIncompatible.bindingFingerprint).toBe(fingerprint);
+    expect(
+      providerIncompatible.portableRequestCompatibility?.operationKinds,
     ).not.toContain("CompactionNative");
   });
 

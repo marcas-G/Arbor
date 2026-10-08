@@ -536,6 +536,19 @@ export const AgentLoopStepStoreLive: Layer.Layer<
           );
           return rows.map(toProviderTurnLink);
         }),
+      findProviderTurnLinkByProviderTurnId: (providerTurnId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<ProviderTurnLinkRow>(
+              "SELECT * FROM agent_loop_step_provider_turns WHERE provider_turn_id=?",
+              [providerTurnId],
+            ),
+          );
+          return rows[0] === undefined
+            ? Option.none<AgentLoopStepProviderTurnLink>()
+            : Option.some(toProviderTurnLink(rows[0]));
+        }),
     });
   }),
 );
