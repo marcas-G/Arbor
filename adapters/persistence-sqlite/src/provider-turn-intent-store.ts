@@ -99,13 +99,33 @@ export const makeProviderTurnIntentStore = (
             manifest_id: string;
             manifest_json: string;
             portable_request_json: string | null;
+            owning_provider_turn_id: string | null;
           }>(
-            "SELECT m.manifest_id, m.manifest_json, m.portable_request_json FROM provider_turns t JOIN model_context_manifests m ON m.provider_turn_id = t.provider_turn_id AND m.manifest_id = t.manifest_id WHERE t.provider_turn_id = ?",
+            `SELECT m.manifest_id, m.manifest_json, m.portable_request_json,
+                    t.provider_turn_id AS owning_provider_turn_id
+               FROM model_context_manifests m
+               LEFT JOIN provider_turns t
+                 ON t.provider_turn_id = m.provider_turn_id
+                AND t.manifest_id = m.manifest_id
+              WHERE m.provider_turn_id = ?
+              ORDER BY m.manifest_id`,
             [providerTurnId],
           ),
         );
         const row = rows[0];
-        return row === undefined || row.portable_request_json === null
+        if (row === undefined) return null;
+        if (
+          rows.length !== 1 ||
+          row.owning_provider_turn_id !== providerTurnId
+        ) {
+          return yield* Effect.fail<ProviderFailure>({
+            _tag: "ProviderFailure",
+            kind: "ProtocolViolation",
+            taxonomyVersion: "phase1-v2",
+            safeDiagnostic: "provider-turn-manifest-orphaned-or-ambiguous",
+          });
+        }
+        return row.portable_request_json === null
           ? null
           : {
               manifestId: row.manifest_id,

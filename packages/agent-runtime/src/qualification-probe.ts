@@ -20,6 +20,9 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH11AfterStepEffectsCommit"
     | "AH17BeforeCheckpointEpochCommit"
     | "AH17AfterCheckpointEpochCommit"
+    | "AH18BeforeOverflowLinksCommit"
+    | "AH18AfterOverflowLinksCommit"
+    | "AH18BeforeInferenceFailTurnCommit"
     | "AH14BeforeLegacyAdoptionCommit"
     | "AH14AfterLegacyAdoptionCommit";
   readonly providerTurnId: string;

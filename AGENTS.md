@@ -190,13 +190,19 @@ Functional-oracle audit (2026-10-04): F07 now proves that a public SteerWork
 advances the Work revision and reaches a later Agent turn. F05 now explicitly
 proves PASS keeps Work Open before Acceptance and that Acceptance clears the
 current selection. It cannot prove that the terminal Work is user-inspectable:
-F22 shows the old Work link renders “未找到该工作” after completion. This is the
-separate open `FT-DG-02` design gap with a pending browser test and draft
-public Work-detail proposal; see
-`planning/results/FT-functional-oracle-audit.result.md`.
+F22 shows the old Work link renders “未找到该工作” after completion. The
+`FT-DG-02` governance proposal was accepted on 2026-10-08, including the
+supplemental shared NotFound/404 decision for absent and foreign Work targets;
+the accepted Work Detail contract is landed as SD v1.10 / DID v1.32 with an
+independent post-landing review at Blocking = 0. See
+`planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
+Implementation remains unauthorized, so F22 remains a pending browser
+acceptance story and must not be treated as implementation closure.
 F19 now also proves the reverse order (Dependency wait before child Delivery),
 which exposed and fixed numeric `wait` revision decoding; full `pnpm check`
-and `pnpm test:functional` pass. F21/F22 remain open governance gaps.
+and `pnpm test:functional` pass. F21 and F23 remain open governance gaps;
+FT-DG-02 design governance is closed, while its implementation and F22
+qualification remain pending.
 Later F22 test strengthening exposed a Web AcceptanceId prefix mismatch
 (`acp_` versus frozen `acc_`), fixed with a Web regression test. A separate
 public-process F23 test proves malformed typed `MessageId` can still be
@@ -675,10 +681,11 @@ then replacement path continues. P3 driver suite passes 37/37, including
 P17 ordinary Prepared, P19 ordinary failure, latest-terminal-attempt selection,
 missing/legacy classification rejection, P19 ContextLimit/missing-P20-table
 fail-closed, and P20 empty-chain reconstruction. This is not AH18 process-crash
-closure. A hard AH18 gap remains when an OverflowCompaction link is durable but
-its Summary ProviderTurn is NotFound or Unsettled: recovery currently fails
-closed instead of starting/resuming that same deterministic turn. AH18 and AH19
-remain open; AH10 remains PARTIAL.
+closure. The 2026-10-08 AH18 linked-overflow batch below now process-qualifies
+the durable OverflowCompaction-link / Summary ProviderTurn NotFound and
+Unsettled recovery path, the original Inference failTurn pre-commit boundary,
+and second ContextLimit terminalization. AH18 remains open because this is not
+the full P9/AH18 crash matrix; AH19 remains open and AH10 remains PARTIAL.
 
 Integration regression history is retained: the first full Vitest run before
 that gate fix had 25 failures among 27 `tests/p3-driver.test.ts` cases because
@@ -703,3 +710,19 @@ clean committed checkout 1/1 PASS (50.65s), then `pnpm test:functional`
 Vitest 29 files / 71 tests PASS and Playwright 2/2 PASS. The full suite includes
 AH15 2/2, AH17 Summary 2/2, and Direct-child AH10 2/2; AH10 remains PARTIAL,
 and AH18/AH19 remain open.
+
+2026-10-08 linked overflow integration: `planning/results/AH18-overflow-linked-
+compaction-resume.result.md` records 10/10 process tests PASS after `pnpm build`
+and 37/37 P3 driver tests PASS. The full `pnpm check` first completed with two
+failures in the existing `tests/provider-runtime-phase1.integration.test.ts`
+deadline harness under the 316-worker core run: the whole-turn case reached
+Vitest's 30s test timeout while awaiting `connected`, and the retry-backoff
+case expected `calls=1` but observed 0 after the `TurnDeadline` expectation
+passed. A focused diagnostic run then passed both cases 2/2 in 4.29s, and a
+second full `pnpm check` passed (Biome 955 files, architecture 155, core 316
+files / 1723 passed / 3 skipped, Web 31 files / 216 tests). Preserve both full
+run outcomes; this evidence does not establish a product deadline defect or
+erase the first-run test-harness failure. The deterministic deadline test
+oracle repair is tracked separately. This batch does not close AH7, AH10,
+AH18, AH19, F21, F23, or SCRC-008; FT-DG-02 design is landed, but its
+implementation/F22 browser qualification is unauthorized and pending.

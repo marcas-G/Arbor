@@ -62,11 +62,23 @@ export interface ProviderRuntimeConfig {
   };
   /** Explicit process-local crash qualification seam. Production Composition
    * leaves it absent; it is never sourced from a request or env var. */
-  readonly qualificationProbe?: (event: {
-    readonly boundary: "AH12BeforeSuccessCommit" | "AH12AfterSuccessCommit";
-    readonly providerTurnId: string;
-    readonly attemptNo: number;
-  }) => Promise<void>;
+  readonly qualificationProbe?: (
+    event:
+      | {
+          readonly boundary:
+            | "AH12BeforeSuccessCommit"
+            | "AH12AfterSuccessCommit";
+          readonly providerTurnId: string;
+          readonly attemptNo: number;
+        }
+      | {
+          readonly boundary:
+            | "AH18BeforeSummaryTurnCommit"
+            | "AH18AfterSummaryTurnCommit";
+          readonly providerTurnId: string;
+          readonly executionId: string;
+        },
+  ) => Promise<void>;
 }
 
 type AttemptResult =
@@ -981,6 +993,13 @@ export const ProviderRuntimeLive = (
             } else {
               manifestId = `mft_${yield* ids.generate<string>("provider-manifest")}`;
               const startedAt = yield* clock.now();
+              const isSummaryCompaction =
+                input.request.requestVersion === 2 &&
+                input.request.operationKind === "CompactionSummary";
+              const summaryProbeIdentity = {
+                providerTurnId: String(input.providerTurnId),
+                executionId: String(input.executionId),
+              };
               const turnRecord = {
                 providerTurnId: input.providerTurnId,
                 executionId: input.executionId,
@@ -993,12 +1012,26 @@ export const ProviderRuntimeLive = (
                 turnDeadlineAt,
               };
               const receipt = yield* tx.transact(
-                store.startTurnWithManifest(
-                  turnRecord,
-                  input.manifestJson,
-                  JSON.stringify(input.request),
-                  startedAt,
-                ),
+                Effect.gen(function* () {
+                  const started = yield* store.startTurnWithManifest(
+                    turnRecord,
+                    input.manifestJson,
+                    JSON.stringify(input.request),
+                    startedAt,
+                  );
+                  if (
+                    isSummaryCompaction &&
+                    config.qualificationProbe !== undefined
+                  ) {
+                    yield* Effect.promise(async () => {
+                      await config.qualificationProbe?.({
+                        boundary: "AH18BeforeSummaryTurnCommit",
+                        ...summaryProbeIdentity,
+                      });
+                    });
+                  }
+                  return started;
+                }),
               );
               if (
                 receipt.providerTurnId !== input.providerTurnId ||
@@ -1007,6 +1040,17 @@ export const ProviderRuntimeLive = (
                 return yield* Effect.fail(
                   unknownFailure("manifest-receipt-mismatch"),
                 );
+              }
+              if (
+                isSummaryCompaction &&
+                config.qualificationProbe !== undefined
+              ) {
+                yield* Effect.promise(async () => {
+                  await config.qualificationProbe?.({
+                    boundary: "AH18AfterSummaryTurnCommit",
+                    ...summaryProbeIdentity,
+                  });
+                });
               }
               turnStarted = true;
             }
