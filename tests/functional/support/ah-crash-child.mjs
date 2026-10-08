@@ -29,7 +29,9 @@ if (
   targetBoundary !== "AH13BeforeResponseSweepCommit" &&
   targetBoundary !== "AH13AfterResponseSweepCommit" &&
   targetBoundary !== "AH14BeforeLegacyAdoptionCommit" &&
-  targetBoundary !== "AH14AfterLegacyAdoptionCommit"
+  targetBoundary !== "AH14AfterLegacyAdoptionCommit" &&
+  targetBoundary !== "AH15BeforeInboxPromotionCommit" &&
+  targetBoundary !== "AH15AfterInboxPromotionCommit"
 ) {
   throw new Error("AH test child needs an exact boundary");
 }
@@ -51,6 +53,7 @@ const config = {
     host: "127.0.0.1",
   },
   qualificationProbe: pauseAtBoundary,
+  inputPromotionQualificationProbe: pauseAtBoundary,
   providerQualificationProbe: pauseAtBoundary,
   toolQualificationProbe: pauseAtBoundary,
   executionSettlementQualificationProbe: pauseAtBoundary,

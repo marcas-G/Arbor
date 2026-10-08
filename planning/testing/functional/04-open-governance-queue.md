@@ -27,3 +27,18 @@ control actions and AH7 failure/multi-action crash-recovery cases. AH7 的普通
 PASS，但不替代进程崩溃/重启资格，也不关闭 DG-01/02/03。所有分支的最终
 声明还须回到 `01-functional-journey-catalog.md` F01–F23 与
 `02-agent-loop-step-crash-qualification.md` AH1–AH14 逐项审核。
+
+2026-10-08 资格增量：AH15 Inbox promotion 与 AH17 checkpoint/epoch 边界均已在
+集成构建产物上完成真实进程提交前/后 kill/restart 2/2；证据分别见
+`planning/results/AH15-inbox-input-promotion-crash.result.md` 与
+`planning/results/AH17-checkpoint-epoch-crash.result.md`。这是局部边界资格，
+AH18 repeated overflow、AH19 ProviderNative binding 和 SCRC-008 整体仍开放；
+此队列中的 AH7/AH10/FT 项状态不因上述结果改变。
+
+AH18 另有待补的实现/进程资格窗口：ordinal-0 OverflowCompaction link 已持久化，
+但 Summary ProviderTurn 为 NotFound/Unsettled 时，恢复目前 fail-closed，尚未对
+同一稳定 ProviderTurn ID 创建或接管 Summary。P3 的 P20 空链确定性回归只验证
+原 ContextLimit receipt 足以事务性建链并继续同一调用，不覆盖上述 kill/restart
+窗口；真实 second terminal overflow 崩溃矩阵也未完成；不得据此宣布 AH18 关闭。
+AH19 仍开放 ProviderNative match/mismatch portable rebuild 与 Native checkpoint
+recovery；Summary AH17 两侧资格不覆盖该 profile。

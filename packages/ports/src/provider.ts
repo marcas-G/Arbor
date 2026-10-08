@@ -660,6 +660,9 @@ export type SettledProviderTurnResult =
       readonly _tag: "SettledFailure";
       readonly turn: ProviderTurnRecord;
       readonly finishReason: string;
+      readonly failureKind?: ProviderFailureKind;
+      readonly failureAttemptNo?: number;
+      readonly failureTaxonomyVersion?: ProviderFailureTaxonomyVersion;
     }
   | {
       readonly _tag: "SettledEvidenceInvalid";

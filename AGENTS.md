@@ -650,3 +650,49 @@ Vitest 26/26 files, 65/65 tests (2062.17s); Playwright 2/2 (24.5s). The pending
 AH10 binding-corruption RED remains excluded from this green batch. The full
 `pnpm check` had passed on `69ce796` before this final test-only amendment;
 after the amendment, test TypeScript/Biome and the full functional batch passed.
+
+2026-10-08 integration qualification on `021b6bf` plus the pending AH15/AH17/
+Direct-child AH10 batch: after `pnpm build`, the three dedicated real-process
+files pass on the integrated dist: AH15 Inbox promotion 2/2 (69.64s), AH17
+checkpoint/epoch 2/2 (74.99s), and Direct-child AssignWork old FencingRejected
+receipt before/after commit 2/2 (latest 75.01s). The Direct-child model target is the
+exact `wref` returned by public `list_workspaces`; its permission is the exact
+Parent/root WorkspaceAgent CAPA grant. AH15 probes are opt-in process-local
+seams and production composition leaves them absent. AH17 process qualification
+is for Summary compaction only. Unit tests verify Summary and ProviderNative
+compaction receive only the separate opaque `SecretRef`; request/manifest
+builders do not include it or SecretMaterial. Native match/mismatch and Native
+checkpoint recovery remain unqualified under AH19.
+
+AH17 recovery now requires the highest persisted terminal ProviderAttempt with
+recognized failure kind and exact `phase1-v2` taxonomy. Missing/unsupported
+classification follows the existing `SettledEvidenceInvalid` /
+`SettledProviderEvidenceInvalid` ProviderReplay fail-closed path. A P20
+empty-ordinal-0-chain deterministic recovery test verifies the durable terminal
+ContextLimit inference identity is retained while its original Inference and
+OverflowCompaction links are recreated transactionally and the same compaction
+then replacement path continues. P3 driver suite passes 37/37, including
+P17 ordinary Prepared, P19 ordinary failure, latest-terminal-attempt selection,
+missing/legacy classification rejection, P19 ContextLimit/missing-P20-table
+fail-closed, and P20 empty-chain reconstruction. This is not AH18 process-crash
+closure. A hard AH18 gap remains when an OverflowCompaction link is durable but
+its Summary ProviderTurn is NotFound or Unsettled: recovery currently fails
+closed instead of starting/resuming that same deterministic turn. AH18 and AH19
+remain open; AH10 remains PARTIAL.
+
+Integration regression history is retained: the first full Vitest run before
+that gate fix had 25 failures among 27 `tests/p3-driver.test.ts` cases because
+ordinary Prepared steps queried the absent P20 chain table; a named P17
+regression captured the RED, and the final suite is 37/37. The initial AH17
+process attempt also failed before either boundary with
+`AuthenticationFailed, invalid_api_key` because SecretRef was omitted from the
+compaction ProviderRunInput; Summary and Native coordinator tests then failed
+red before the separate-reference propagation fix. Direct-child AssignWork's
+original author run used old `dist`; the recorded 75.86s integrated rerun used
+post-build production code.
+
+Integrated `pnpm check` passes: Biome 953 files, typecheck, architecture 155,
+core 316 files / 1723 passed / 3 skipped, Web typecheck/build and 31 files /
+216 tests. The P12 restore-drill JSON's generated timestamp/hash drift was
+restored to the committed values. This batch does not close AH10, AH18, AH19 or
+SCRC-008.

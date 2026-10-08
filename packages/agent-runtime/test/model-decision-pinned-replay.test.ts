@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { isPinnedSubmittedDecisionReplay } from "../src/model-decision.js";
+import {
+  isPinnedSubmittedDecisionReplay,
+  isValidOverflowCompactionLinkPair,
+} from "../src/model-decision.js";
 
 const input = () => ({
   executionWorkspaceId: "ws_owner",
@@ -56,6 +59,80 @@ describe("pinned Submitted DecisionRequest replay guard", () => {
           manifestId: "manifest_other",
         },
       }),
+    ).toBe(false);
+  });
+});
+
+describe("overflow compaction recovery link guard", () => {
+  it("accepts a compaction link that names the failed inference as predecessor", () => {
+    const identity = {
+      executionId: "exe_recovery" as never,
+      logicalStepNo: 0,
+      repairAttempt: 0,
+    };
+    const links = [
+      {
+        identity,
+        overflowOrdinal: 0 as const,
+        role: "Inference" as const,
+        providerTurnId: "ptn_inference" as never,
+        contextEpoch: 0 as never,
+        state: "SettledFailure" as const,
+        createdAt: "t0",
+      },
+      {
+        identity,
+        overflowOrdinal: 0 as const,
+        role: "OverflowCompaction" as const,
+        providerTurnId: "ptn_compaction" as never,
+        predecessorProviderTurnId: "ptn_inference" as never,
+        contextEpoch: 0 as never,
+        state: "Prepared" as const,
+        createdAt: "t1",
+      },
+    ];
+    expect(
+      isValidOverflowCompactionLinkPair(
+        links,
+        "ptn_inference",
+        "ptn_compaction",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects an OverflowCompaction link whose predecessor is not the failed inference", () => {
+    const identity = {
+      executionId: "exe_recovery" as never,
+      logicalStepNo: 0,
+      repairAttempt: 0,
+    };
+    const links = [
+      {
+        identity,
+        overflowOrdinal: 0 as const,
+        role: "Inference" as const,
+        providerTurnId: "ptn_inference" as never,
+        contextEpoch: 0 as never,
+        state: "SettledFailure" as const,
+        createdAt: "t0",
+      },
+      {
+        identity,
+        overflowOrdinal: 0 as const,
+        role: "OverflowCompaction" as const,
+        providerTurnId: "ptn_compaction" as never,
+        predecessorProviderTurnId: "ptn_wrong-inference" as never,
+        contextEpoch: 0 as never,
+        state: "Prepared" as const,
+        createdAt: "t1",
+      },
+    ];
+    expect(
+      isValidOverflowCompactionLinkPair(
+        links,
+        "ptn_inference",
+        "ptn_compaction",
+      ),
     ).toBe(false);
   });
 });

@@ -1,9 +1,11 @@
 import type {
   ProviderAttemptObservation,
   ProviderFailure,
+  ProviderFailureKind,
+  ProviderFailureTaxonomyVersion,
   ProviderTurnStoreService,
 } from "@arbor/ports";
-import { TransactionScope } from "@arbor/ports";
+import { PROVIDER_FAILURE_KINDS, TransactionScope } from "@arbor/ports";
 import { Effect } from "effect";
 import {
   decodeJson,
@@ -176,6 +178,58 @@ export const makeProviderTurnSettlementStore = (
           : [];
         const attempt = attempts[0];
         if (attempt === undefined) {
+          const failureRows = yield* run(
+            sql.unsafe<{
+              attempt_no: number;
+              outcome: string;
+              provider_error_kind: string | null;
+              failure_taxonomy_version: string | null;
+            }>(
+              "SELECT attempt_no, outcome, provider_error_kind, failure_taxonomy_version FROM provider_attempts WHERE provider_turn_id = ? ORDER BY attempt_no DESC LIMIT 1",
+              [providerTurnId],
+            ),
+          );
+          const terminalAttempt = failureRows[0];
+          if (terminalAttempt !== undefined) {
+            const failureKind = terminalAttempt.provider_error_kind;
+            const taxonomyVersion = terminalAttempt.failure_taxonomy_version;
+            const knownFailureKind =
+              failureKind !== null &&
+              failureKind !== undefined &&
+              PROVIDER_FAILURE_KINDS.includes(
+                failureKind as ProviderFailureKind,
+              );
+            const supportedTaxonomy = taxonomyVersion === "phase1-v2";
+            if (
+              row.finish_reason === "Failed" &&
+              !(
+                (terminalAttempt.outcome === "TerminalFailure" ||
+                  terminalAttempt.outcome === "RetryableFailure") &&
+                supportedTaxonomy &&
+                knownFailureKind
+              )
+            ) {
+              return {
+                _tag: "SettledEvidenceInvalid" as const,
+                turn,
+                reason:
+                  "terminal ProviderTurn failure has no supported terminal Attempt classification",
+              };
+            }
+            return {
+              _tag: "SettledFailure" as const,
+              turn,
+              finishReason: row.finish_reason,
+              ...(supportedTaxonomy && knownFailureKind
+                ? {
+                    failureKind: failureKind as ProviderFailureKind,
+                    failureAttemptNo: Number(terminalAttempt.attempt_no),
+                    failureTaxonomyVersion:
+                      taxonomyVersion as ProviderFailureTaxonomyVersion,
+                  }
+                : {}),
+            };
+          }
           return {
             _tag: "SettledFailure" as const,
             turn,

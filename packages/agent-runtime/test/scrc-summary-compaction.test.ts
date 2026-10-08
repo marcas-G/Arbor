@@ -12,7 +12,7 @@ import type {
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
-import { TransactionScope } from "@arbor/ports";
+import { secretRef, TransactionScope } from "@arbor/ports";
 import { Effect, Result } from "effect";
 import { describe, expect, it } from "vitest";
 import {
@@ -51,6 +51,7 @@ describe("SCRC Summary Compaction Coordinator", () => {
   it("runs an explicit compaction turn then commits checkpoint + next epoch", async () => {
     let observed: ProviderRunInput | undefined;
     let committed: unknown;
+    const sourceSecretRef = secretRef("secret://deployment/model-a");
     const providerRuntime = {
       runTurn: (input: ProviderRunInput) => {
         observed = input;
@@ -80,6 +81,7 @@ describe("SCRC Summary Compaction Coordinator", () => {
           currentEpoch: parse(ContextEpochNumber)(0),
           modelRef: "model-a",
           bindingFingerprint: "binding-a",
+          secretRef: sourceSecretRef,
           inputItems: [{ _tag: "Message", role: "user", text: "long work" }],
           fence: {
             executionId,
@@ -95,6 +97,7 @@ describe("SCRC Summary Compaction Coordinator", () => {
       requestVersion: 2,
       operationKind: "CompactionSummary",
     });
+    expect(observed?.secretRef).toBe(sourceSecretRef);
     expect(committed).toMatchObject({
       expectedEpoch: 0,
       nextEpoch: 1,
@@ -157,6 +160,8 @@ describe("SCRC Summary Compaction Coordinator", () => {
 
   it("binds a provider-native opaque checkpoint to the resolved binding", async () => {
     let committed: unknown;
+    let observed: ProviderRunInput | undefined;
+    const sourceSecretRef = secretRef("secret://deployment/model-a");
     const result = await Effect.runPromise(
       runNativeCompaction(
         {
@@ -166,6 +171,7 @@ describe("SCRC Summary Compaction Coordinator", () => {
           modelRef: "model-a",
           bindingFingerprint: "binding-a",
           inputItems: [],
+          secretRef: sourceSecretRef,
           fence: {
             executionId,
             workerId: "worker",
@@ -175,8 +181,9 @@ describe("SCRC Summary Compaction Coordinator", () => {
         },
         {
           providerRuntime: {
-            runTurn: () =>
-              Effect.succeed({
+            runTurn: (input) => {
+              observed = input;
+              return Effect.succeed({
                 attemptNo: 0,
                 retryDecisions: [],
                 events: [
@@ -186,7 +193,8 @@ describe("SCRC Summary Compaction Coordinator", () => {
                     finishReason: "Stop" as const,
                   },
                 ],
-              }),
+              });
+            },
           },
           sessions: {
             commitCompaction: (_sessionId: unknown, input: unknown) =>
@@ -200,6 +208,7 @@ describe("SCRC Summary Compaction Coordinator", () => {
       ),
     );
     expect(result.opaqueItemRef).toBe("opaque:1");
+    expect(observed?.secretRef).toBe(sourceSecretRef);
     expect(committed).toMatchObject({
       checkpoint: {
         implementation: "ProviderNative",

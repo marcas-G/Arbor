@@ -54,6 +54,7 @@ import {
   type ModelFacingToolDefinition,
   type PortableModelRequest,
   type ProviderExecutionPolicyOverrides,
+  type ProviderFailureKind,
   type ProviderRunInput,
   ProviderRuntime,
   portableInputItems,
@@ -136,6 +137,7 @@ const makeApp = (
     readonly failFirstOutputAcceptedTransition?: boolean;
     readonly turnProfileResolver?: TurnProfileResolverService;
     readonly modelCapability?: ModelCapability;
+    readonly providerFailures?: ReadonlyArray<ProviderFailureKind>;
   } = {},
 ) => {
   const base = layer({ filename: ":memory:" });
@@ -145,7 +147,12 @@ const makeApp = (
     RuntimeClockLive,
     IdGeneratorLive,
   );
-  const provider = FakeProviderLive({ turns });
+  const provider = FakeProviderLive({
+    turns,
+    ...(options.providerFailures === undefined
+      ? {}
+      : { failures: options.providerFailures }),
+  });
   const capabilityLayer =
     options.modelCapability === undefined
       ? capability
@@ -517,6 +524,262 @@ const proposeWorkspaceTurn = [
 ];
 
 describe("P3-013 agent driver", () => {
+  it("runs an ordinary Prepared step against the P17 schema without reading overflow links", async () => {
+    const app = makeApp([textTurn]);
+    const settlement = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P17_MIGRATIONS);
+        yield* seed;
+        return yield* drive(allowGate);
+      }),
+      app,
+    );
+
+    expect(settlement._tag).toBe("Completed");
+  });
+
+  it("uses the terminal attempt classification for an ordinary failure under P19", async () => {
+    const app = makeApp([], { providerFailures: ["RequestRejected"] });
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const settlement = yield* Effect.exit(drive(allowGate));
+        const sql = yield* SqlClient;
+        const steps = yield* sql.unsafe<{ state: string }>(
+          "SELECT state FROM agent_loop_steps WHERE execution_id = ?",
+          [executionId],
+        );
+        return { settlement, step: steps[0] };
+      }),
+      app,
+    );
+
+    expect(result.settlement).toMatchObject({
+      _tag: "Success",
+      value: {
+        _tag: "Failed",
+        failure: {
+          _tag: "ExecutionFailure",
+          reason: "ProviderFailure:RequestRejected",
+        },
+      },
+    });
+    expect(result.step?.state).toBe("SettlementProposed");
+  });
+
+  it("reads classification from the highest terminal attempt, not an earlier attempt", async () => {
+    const app = makeApp([]);
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const sql = yield* SqlClient;
+        const inferenceProviderTurnId = `ptn_${executionId}_0`;
+        yield* sql.unsafe(
+          "INSERT INTO provider_turns (provider_turn_id, execution_id, session_id, context_epoch, model_ref, output_contract_ref, manifest_id, started_at, settled_at, finish_reason, usage_json, created_at, execution_policy_json, turn_deadline_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+          [
+            inferenceProviderTurnId,
+            executionId,
+            sessionId,
+            0,
+            "model-a",
+            "tool-invocation-v1",
+            "mft_mixed_failure",
+            "t",
+            "t2",
+            "Failed",
+            "{}",
+            "t",
+          ],
+        );
+        yield* sql.unsafe(
+          "INSERT INTO provider_attempts (provider_turn_id, attempt_no, started_at, settled_at, outcome, provider_error_kind, failure_taxonomy_version) VALUES (?,?,?,?,?,?,?)",
+          [
+            inferenceProviderTurnId,
+            0,
+            "t",
+            "t2",
+            "RetryableFailure",
+            "ContextLimitExceeded",
+            "phase1-v2",
+          ],
+        );
+        yield* sql.unsafe(
+          "INSERT INTO provider_attempts (provider_turn_id, attempt_no, started_at, settled_at, outcome, provider_error_kind, failure_taxonomy_version) VALUES (?,?,?,?,?,?,?)",
+          [
+            inferenceProviderTurnId,
+            1,
+            "t2",
+            "t3",
+            "TerminalFailure",
+            "RequestRejected",
+            "phase1-v2",
+          ],
+        );
+        return yield* Effect.exit(drive(allowGate));
+      }),
+      app,
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Success",
+      value: {
+        _tag: "Failed",
+        failure: {
+          _tag: "ExecutionFailure",
+          reason: "ProviderTurnSettled:Failed",
+        },
+      },
+    });
+  });
+
+  it.each([
+    { label: "missing kind", failureKind: null, taxonomy: "phase1-v2" },
+    {
+      label: "unsupported legacy taxonomy",
+      failureKind: "ContextLimitExceeded",
+      taxonomy: "legacy-v1",
+    },
+  ])("fails closed for a terminal attempt with $label", async (input) => {
+    const app = makeApp([]);
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const sql = yield* SqlClient;
+        const inferenceProviderTurnId = `ptn_${executionId}_0`;
+        yield* sql.unsafe(
+          "INSERT INTO provider_turns (provider_turn_id, execution_id, session_id, context_epoch, model_ref, output_contract_ref, manifest_id, started_at, settled_at, finish_reason, usage_json, created_at, execution_policy_json, turn_deadline_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+          [
+            inferenceProviderTurnId,
+            executionId,
+            sessionId,
+            0,
+            "model-a",
+            "tool-invocation-v1",
+            "mft_unclassified_failure",
+            "t",
+            "t2",
+            "Failed",
+            "{}",
+            "t",
+          ],
+        );
+        yield* sql.unsafe(
+          "INSERT INTO provider_attempts (provider_turn_id, attempt_no, started_at, settled_at, outcome, provider_error_kind, failure_taxonomy_version) VALUES (?,?,?,?,?,?,?)",
+          [
+            inferenceProviderTurnId,
+            0,
+            "t",
+            "t2",
+            "TerminalFailure",
+            input.failureKind,
+            input.taxonomy,
+          ],
+        );
+        return yield* Effect.exit(drive(allowGate));
+      }),
+      app,
+    );
+
+    expect(result._tag).toBe("Failure");
+    expect(JSON.stringify(result)).toContain('"stage":"ProviderReplay"');
+  });
+
+  it.each([
+    {
+      label: "retry-budget-exhausted RetryableFailure",
+      finishReason: "Failed",
+      outcome: "RetryableFailure",
+      failureKind: "RateLimited",
+      taxonomy: "phase1-v2",
+      expectedReason: "ProviderTurnSettled:Failed",
+    },
+    {
+      label: "Cancelled attempt",
+      finishReason: "Cancelled",
+      outcome: "Cancelled",
+      failureKind: "Cancelled",
+      taxonomy: "phase1-v2",
+      expectedReason: "ProviderTurnSettled:Cancelled",
+    },
+    {
+      label: "TimedOut attempt without provider error kind",
+      finishReason: "TurnDeadline",
+      outcome: "TimedOut",
+      failureKind: null,
+      taxonomy: "phase1-v2",
+      expectedReason: "ProviderTurnSettled:TurnDeadline",
+    },
+  ])("preserves settled ProviderTurn semantics for $label", async (input) => {
+    const app = makeApp([], {
+      providerRuntime: Layer.succeed(ProviderRuntime, {
+        runTurn: () => Effect.die("a settled ProviderTurn must not be called"),
+      }),
+    });
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        const sql = yield* SqlClient;
+        const providerTurnId = `ptn_${executionId}_0`;
+        yield* sql.unsafe(
+          "INSERT INTO provider_turns (provider_turn_id, execution_id, session_id, context_epoch, model_ref, output_contract_ref, manifest_id, started_at, settled_at, finish_reason, usage_json, created_at, execution_policy_json, turn_deadline_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+          [
+            providerTurnId,
+            executionId,
+            sessionId,
+            0,
+            "model-a",
+            "tool-invocation-v1",
+            "mft_terminal_attempt",
+            "t",
+            "t2",
+            input.finishReason,
+            "{}",
+            "t",
+          ],
+        );
+        yield* sql.unsafe(
+          "INSERT INTO provider_attempts (provider_turn_id, attempt_no, started_at, settled_at, outcome, provider_error_kind, failure_taxonomy_version) VALUES (?,?,?,?,?,?,?)",
+          [
+            providerTurnId,
+            0,
+            "t",
+            "t2",
+            input.outcome,
+            input.failureKind,
+            input.taxonomy,
+          ],
+        );
+        return yield* Effect.exit(drive(allowGate));
+      }),
+      app,
+    );
+
+    expect(result._tag).toBe("Success");
+    expect(JSON.stringify(result)).toContain(input.expectedReason);
+  });
+
+  it("fails closed when explicit overflow evidence has no P20 chain table", async () => {
+    const app = makeApp([], { providerFailures: ["ContextLimitExceeded"] });
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P19_MIGRATIONS);
+        yield* seed;
+        return yield* Effect.exit(drive(allowGate));
+      }),
+      app,
+    );
+
+    expect(result._tag).toBe("Failure");
+    expect(JSON.stringify(result)).toContain('"stage":"LoopStepStore"');
+    expect(JSON.stringify(result)).toContain(
+      '"sourceTag":"PersistenceUnavailable"',
+    );
+  });
+
   it("carries a conversation-safe control result into the next turn before answering", async () => {
     const requests: PortableModelRequest[] = [];
     const observationMarker = "ProposalRecorded(fpr_test); awaiting approval";
@@ -668,6 +931,115 @@ describe("P3-013 agent driver", () => {
     expect(result.links.every((link) => link.overflow_ordinal === 0)).toBe(
       true,
     );
+  });
+
+  it("reconstructs an empty ordinal-0 chain from durable ContextLimit evidence", async () => {
+    const app = makeApp([
+      [
+        { _tag: "TextDelta", text: "recovered compact state" },
+        { _tag: "TurnCompleted", finishReason: "Stop" },
+      ],
+      sendMessageTurn("replacement complete"),
+    ]);
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P20_MIGRATIONS);
+        yield* seed;
+        const sql = yield* SqlClient;
+        const inferenceProviderTurnId = `ptn_${executionId}_0`;
+        yield* sql.unsafe(
+          "INSERT INTO provider_turns (provider_turn_id, execution_id, session_id, context_epoch, model_ref, output_contract_ref, manifest_id, started_at, settled_at, finish_reason, usage_json, created_at, execution_policy_json, turn_deadline_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL)",
+          [
+            inferenceProviderTurnId,
+            executionId,
+            sessionId,
+            0,
+            "model-a",
+            "tool-invocation-v1",
+            "mft_context_overflow",
+            "t",
+            "t2",
+            "Failed",
+            "{}",
+            "t",
+          ],
+        );
+        yield* sql.unsafe(
+          "INSERT INTO provider_attempts (provider_turn_id, attempt_no, started_at, settled_at, outcome, provider_error_kind, failure_taxonomy_version) VALUES (?,?,?,?,?,?,?)",
+          [
+            inferenceProviderTurnId,
+            0,
+            "t",
+            "t2",
+            "TerminalFailure",
+            "ContextLimitExceeded",
+            "phase1-v2",
+          ],
+        );
+        const settlement = yield* Effect.exit(drive(allowGate));
+        const links = yield* sql.unsafe<{
+          role: string;
+          overflow_ordinal: number;
+          provider_turn_id: string;
+          predecessor_provider_turn_id: string | null;
+          context_epoch: number;
+        }>(
+          "SELECT role, overflow_ordinal, provider_turn_id, predecessor_provider_turn_id, context_epoch FROM agent_loop_step_provider_turns WHERE execution_id = ? ORDER BY CASE role WHEN 'Inference' THEN 0 WHEN 'OverflowCompaction' THEN 1 ELSE 2 END",
+          [executionId],
+        );
+        const turns = yield* sql.unsafe<{
+          provider_turn_id: string;
+        }>(
+          "SELECT provider_turn_id FROM provider_turns WHERE execution_id = ? ORDER BY provider_turn_id",
+          [executionId],
+        );
+        const attempts = yield* sql.unsafe<{
+          attempt_no: number;
+        }>(
+          "SELECT attempt_no FROM provider_attempts WHERE provider_turn_id = ? ORDER BY attempt_no",
+          [inferenceProviderTurnId],
+        );
+        return { settlement, links, turns, attempts };
+      }),
+      app,
+    );
+
+    const inferenceProviderTurnId = `ptn_${executionId}_0`;
+    const compactionProviderTurnId = `ptn_${executionId}_0_compact_0`;
+    const replacementProviderTurnId = `ptn_${executionId}_0_overflow_0`;
+    expect(result.settlement._tag).toBe("Success");
+    expect(JSON.stringify(result.settlement)).toContain(
+      '"_tag":"CoordinationCompleted"',
+    );
+    expect(result.links).toEqual([
+      {
+        role: "Inference",
+        overflow_ordinal: 0,
+        provider_turn_id: inferenceProviderTurnId,
+        predecessor_provider_turn_id: null,
+        context_epoch: 0,
+      },
+      {
+        role: "OverflowCompaction",
+        overflow_ordinal: 0,
+        provider_turn_id: compactionProviderTurnId,
+        predecessor_provider_turn_id: inferenceProviderTurnId,
+        context_epoch: 0,
+      },
+      {
+        role: "OverflowReplacement",
+        overflow_ordinal: 0,
+        provider_turn_id: replacementProviderTurnId,
+        predecessor_provider_turn_id: compactionProviderTurnId,
+        context_epoch: 1,
+      },
+    ]);
+    expect(result.turns.map((turn) => turn.provider_turn_id)).toEqual([
+      inferenceProviderTurnId,
+      compactionProviderTurnId,
+      replacementProviderTurnId,
+    ]);
+    expect(result.attempts).toEqual([{ attempt_no: 0 }]);
   });
 
   it("persists a control settlement in the action ledger before returning", async () => {
