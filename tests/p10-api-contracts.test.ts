@@ -26,6 +26,8 @@ import {
   type UsageRes,
   type VerificationReq,
   type VerificationRes,
+  type WorkDetailReq,
+  type WorkDetailRes,
   type WorkspaceDetailReq,
   type WorkspaceDetailRes,
 } from "../packages/api-contracts/src/index.js";
@@ -47,6 +49,7 @@ import { VIEW_IDS } from "../packages/domain/src/projection.js";
 import {
   PROJECTION_QUERY_ERROR_CODES,
   type ProjectionInvalidRequest,
+  type ProjectionNotFound,
   type ProjectionStale,
   type ProjectionUnavailable,
 } from "../packages/ports/src/errors.js";
@@ -81,6 +84,7 @@ const REQUEST_CONTRACTS: Record<ViewId, string> = {
   "responsibility-tree": "TreeViewReq",
   attention: "AttentionReq",
   "workspace-detail": "WorkspaceDetailReq",
+  "work-detail": "WorkDetailReq",
   "current-work": "CurrentWorkReq",
   verification: "VerificationReq",
   "dependency-view": "DependencyReq",
@@ -93,6 +97,7 @@ const RESPONSE_CONTRACTS: Record<ViewId, string> = {
   "responsibility-tree": "TreeViewRes",
   attention: "AttentionRes",
   "workspace-detail": "WorkspaceDetailRes",
+  "work-detail": "WorkDetailRes",
   "current-work": "CurrentWorkRes",
   verification: "VerificationRes",
   "dependency-view": "DependencyRes",
@@ -124,7 +129,7 @@ describe("P10-002 api-contracts ViewId pairing", () => {
   });
 
   it("request/response contract tables cover exactly VIEW_IDS", () => {
-    expect(VIEW_IDS).toHaveLength(9);
+    expect(VIEW_IDS).toHaveLength(10);
     expect([...VIEW_IDS].sort()).toEqual(Object.keys(REQUEST_CONTRACTS).sort());
     expect([...VIEW_IDS].sort()).toEqual(
       Object.keys(RESPONSE_CONTRACTS).sort(),
@@ -204,6 +209,7 @@ describe("P10-002 Problem DTO vocabulary (DID 10.5)", () => {
       "projection/stale",
       "projection/unavailable",
       "projection/invalid-request",
+      "projection/work-not-found",
     ]);
   });
 
@@ -232,7 +238,15 @@ describe("P10-002 Problem DTO vocabulary (DID 10.5)", () => {
       retryDisposition: "non-retryable",
       safeDetails: { view: "transcript" },
     };
-    for (const error of [stale, unavailable, invalidRequest]) {
+    const notFound: ProjectionNotFound = {
+      _tag: "ProjectionNotFound",
+      code: "projection/work-not-found",
+      category: "not-found",
+      correlationId: null,
+      retryDisposition: "non-retryable",
+      safeDetails: {},
+    };
+    for (const error of [stale, unavailable, invalidRequest, notFound]) {
       expect(keys(error)).toEqual([
         "_tag",
         "category",
@@ -363,6 +377,31 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
     ]);
     const roundTrip = JSON.parse(JSON.stringify(res)) as WorkspaceDetailRes;
     expect(roundTrip).toEqual(res);
+  });
+
+  it("WorkDetail exact identity and accepted result preserve canonical revision binding", () => {
+    const req: WorkDetailReq = { projectId, workspaceId, workId };
+    expect(keys(req)).toEqual(["projectId", "workId", "workspaceId"]);
+    const res: WorkDetailRes = {
+      workId,
+      projectId,
+      workspaceId,
+      objective: "complete the accepted goal",
+      why: "release qualification",
+      completionExpectation: "all checks pass",
+      lifecycle: "Open",
+      revision: workRevision,
+      acceptedResult: {
+        acceptanceId: "acc_00000000-0000-7000-8000-000000000001" as never,
+        verificationId,
+        targetWorkRevision: workRevision,
+        verdict: "Pass",
+        actor: "human:test" as never,
+        acceptedAt: "2026-10-08T00:00:00.000Z",
+      },
+    };
+    expect(res.lifecycle).toBe("Open");
+    expect(res.acceptedResult?.targetWorkRevision).toBe(res.revision);
   });
 
   it("CurrentWork request/response cores (null when no current work)", () => {

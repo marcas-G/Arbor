@@ -129,8 +129,8 @@ pnpm exec playwright install chromium
 - F21 is blocked by an open product-design gap: UI CreateProject currently
   creates an empty ResourceBoundary, so a newly created project can chat but
   cannot perform evidence-producing file tools.
-- F22 is blocked by a separate read-model gap: Completed Work disappears from
-  its original Work page, so the user cannot inspect the terminal lifecycle.
+- F22 is implemented and qualified in the default browser suite; see
+  `planning/results/FT-DG-02-work-detail-implementation.result.md`.
 - F23 is blocked by an external-command runtime validation gap: malformed
   branded IDs can be committed despite the TypeScript Domain schema. Its
   public-process negative case is isolated under the pending Vitest config.

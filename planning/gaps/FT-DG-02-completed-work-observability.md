@@ -1,8 +1,12 @@
-# FT-DG-02 — 完成后的 Work 无法继续查看
+# FT-DG-02 — 完成后的 Work 无法继续查看（已解决）
 
 ## 状态
 
-**OPEN / 需人工治理**。影响功能测试 F05 的终态判定与 F22 浏览器旅程。
+**CLOSED**。治理合同已接受并落地为 System Design v1.10 / DID v1.32；
+Work Detail 投影和页面实现完成，正式 F22 浏览器旅程已通过。实现证据：
+`planning/results/FT-DG-02-work-detail-implementation.result.md`。
+
+下文记录的是治理前失败场景与定位，保留作历史证据；它不表示当前仍有此产品缺口。
 
 ## 用户可见场景
 

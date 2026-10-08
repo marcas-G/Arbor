@@ -24,13 +24,13 @@
 | F18 | child Workspace proposal/approval/result | public HTTP | child initial Work PASS is parent-accepted and no longer current; terminal lifecycle needs F22 |
 | F19 | Dependency/Deliverable workflow in both event orders | public HTTP | existing delivery is matched on declaration; dependency-first Work stays asleep until later child delivery, then exact Dependency becomes Satisfied and consumer receives that delivery |
 | F20 | fresh packaged checkout | clean local clone | frozen install, build and public black-box pass from committed HEAD |
+| F22 | completed Work remains inspectable | Playwright | after Acceptance and hard restart, the original Work page shows objective, Completed lifecycle, Acceptance and its exact Verification; absent and foreign targets share a non-disclosing 404 |
 
 ## Next release-blocking journeys
 
 | ID | User journey | Required oracle |
 |---|---|---|
 | F21 | UI-created Project receives an executable boundary | independent evidence-based PASS and browser Acceptance without hidden API setup; unregistered raw client paths fail closed; terminal Work visibility belongs to F22 |
-| F22 | completed Work remains inspectable | objective, terminal lifecycle and acceptance remain visible on the same Work page after completion |
 | F23 | external commands reject malformed typed payloads | an invalid `MessageId`/`AcceptanceId` is rejected before persistence through the public process; valid commands and exact receipt replay remain intact |
 
 ## Definition of done for each journey

@@ -9,6 +9,9 @@ import {
 } from "../support/public-client.js";
 import { makeWorkProvider } from "../support/work-provider.js";
 
+// Historical pre-fix reproduction retained for audit. F22's active browser
+// qualification now lives in the default functional UI suite.
+
 let fixture: ProductionFixture;
 let projectId: string;
 const marker = `F22-COMPLETED-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
@@ -32,6 +35,10 @@ test.afterAll(async () => {
 test("F22 a completed Work remains visible from its original page", async ({
   page,
 }) => {
+  test.skip(
+    true,
+    "Historical pre-FT-DG-02 red reproduction; active F22 is in the default UI suite.",
+  );
   await page.goto(`${fixture.baseUrl}/p/${projectId}`);
   await page
     .getByLabel("消息")
@@ -79,7 +86,7 @@ test("F22 a completed Work remains visible from its original page", async ({
     timeout: 15_000,
   });
   await expect(page.getByText(`Complete ${marker}.`)).toBeVisible();
-  await expect(page.getByText("acceptance", { exact: true })).toBeVisible();
+  await expect(page.getByText("验收记录", { exact: true })).toBeVisible();
   await expect(page.getByText(acceptanceId)).toBeVisible();
   await expect(page.getByText(verificationId)).toBeVisible();
   expect(fixture.daemonErrors).toEqual([]);

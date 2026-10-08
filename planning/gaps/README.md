@@ -53,7 +53,7 @@ CLOSED   — disposed by a later phase / governance ruling (see file)
 | SDO-DG-01 | ExecutionBound Specialist lacks usable subagent orchestration | System Design v1.9 / DID v1.31 / MAC-P4 | Runtime subagent context, tools, collaboration, result delivery, limits | CLOSED (optional capability disabled; legacy replay-only) |
 | MAC-DG-01 | System complexity exceeds the closed user-value path | Problem v1.3 / Scenarios v1.3 / System Design v1.9 / DID v1.31 / MAC | Vocabulary, golden path, cognition, actions, fulfillment, legacy isolation | RESOLVED |
 | FT-DG-01 | UI-created Project has no trusted resource admission | System Design / DID / P12 / P13 | F21 | OPEN |
-| FT-DG-02 | Completed Work cannot be inspected by its original link | System Design / DID / P10 / P13 | F05 terminal oracle / F22 | OPEN |
+| FT-DG-02 | Completed Work cannot be inspected by its original link | System Design / DID / P10 / P13 | F05 terminal oracle / F22 | CLOSED — accepted contract implemented and F22 qualified; see `planning/results/FT-DG-02-work-detail-implementation.result.md` |
 | FT-DG-03 | External Command payloads can persist malformed typed identities | System Design / DID / P12 transport / Application | F23 and all public command shells | OPEN |
 | AH7-DG-01 | Settled ToolInvocation lacks replayable bounded Observation | System Design / DID / P3 / P4 / P9 | AH7 settlement→Observation crash seam | OPEN |
 | AH7-DG-02 | Reconcilable shell lacks an executable reality-proof contract | System Design / DID / P4 / P9 | AH7 effect→settlement crash seam | OPEN |

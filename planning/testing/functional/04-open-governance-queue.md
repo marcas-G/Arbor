@@ -9,7 +9,6 @@
 |---|---|---|---|
 | FT-DG-01 | F21 浏览器资源挂载与未登记路径旁路；`planning/proposals/ui-project-resource-admission-decision-draft.md` | 审阅可提交，未接受 | 与 FT-DG-03 共用 CreateProject 认证/收据边界，须联合核对 |
 | FT-DG-03 | F23 非法 MessageId/AcceptanceId 可 Committed；`planning/proposals/external-command-runtime-codec-decision-draft.md` | 审阅可提交，未接受 | 与 FT-DG-01 联合核对；先固定 codec/旧收据规则再实施 |
-| FT-DG-02 | F22 已完成 Work 链接不可读取；`planning/proposals/completed-work-public-view-decision-draft.md` | 审阅可提交，未接受 | 独立于 F21/F23，但不能靠 CurrentWork=null 代替终态 View |
 | AH7-DG-01 | 非 Success 结算缺可重放 bounded Observation；`planning/proposals/tool-settlement-observation-replay-decision-draft.md` | 审阅可提交，未接受 | 阻挡 AH7 非成功观察恢复资格 |
 | AH7-DG-02 | generic shell 标记 Reconcilable 却无 reality-proof port；`planning/proposals/reconcilable-shell-reality-proof-decision-draft.md` | 审阅可提交，未接受 | 阻挡 AH7 主动外部现实核对资格 |
 | 拟议 AH7-DG-03 | P4 `02` 执行前消费 Approval 与 P4 `06` 同 settlement 事务冲突；`planning/proposals/AH7-approval-settlement-atomicity-governance-draft.md` | 精准红测与审阅齐备，未接受 | 先裁决审批消费/预留语义，再补两侧 crash 资格 |
@@ -27,6 +26,12 @@ control actions and AH7 failure/multi-action crash-recovery cases. AH7 的普通
 PASS，但不替代进程崩溃/重启资格，也不关闭 DG-01/02/03。所有分支的最终
 声明还须回到 `01-functional-journey-catalog.md` F01–F23 与
 `02-agent-loop-step-crash-qualification.md` AH1–AH14 逐项审核。
+
+FT-DG-02 was accepted and landed in System Design v1.10 / DID v1.32, then
+implemented and qualified by the default F22 browser journey. It is closed;
+F21 and F23 remain separate open governance gaps. The old pending F22 file is
+retained only as a skipped pre-fix reproduction and is not part of active
+release qualification.
 
 2026-10-08 资格增量：AH15 Inbox promotion 与 AH17 checkpoint/epoch 边界均已在
 集成构建产物上完成真实进程提交前/后 kill/restart 2/2；证据分别见

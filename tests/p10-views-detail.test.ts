@@ -4,15 +4,23 @@ import type {
   CurrentWorkRes,
   DependencyRes,
   VerificationRes,
+  WorkDetailReq,
+  WorkDetailRes,
   WorkspaceDetailRes,
 } from "../packages/api-contracts/src/index.js";
-import { parse, WorkId, WorkRevision } from "../packages/domain/dist/index.js";
+import {
+  parse,
+  type Verification,
+  WorkId,
+  WorkRevision,
+} from "../packages/domain/dist/index.js";
 import {
   AUDIT_TIMELINE_EVENT_TYPES,
   deriveAuditTimeline,
   deriveCurrentWork,
   deriveDependencyRows,
   deriveVerificationView,
+  deriveWorkDetail,
   deriveWorkspaceDetail,
   makeProjectionQueryService,
 } from "../packages/projection-runtime/src/index.js";
@@ -45,6 +53,7 @@ const W_ROOT = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000d1");
 const W_PEND = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000d2");
 const W_DONE = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000d3");
 const W_CHILD = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000d4");
+const W_CANCEL = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000d5");
 const EXE_ROOT = "exe_00000000-0000-7000-8000-0000000000d1";
 
 const seedDetail = seedCanonical(
@@ -520,8 +529,8 @@ describe("P10-006 Verification view (01 §1 ⑤)", () => {
             Effect.succeed(Option.some(mismatchedAcceptance)),
         });
 
-        expect(verification.verificationId).toBe("ver_d1");
-        expect(verification.targetWorkRevision).toBe(7);
+        expect(verification.verificationId).toBeUndefined();
+        expect(verification.targetWorkRevision).toBeUndefined();
         expect(verification.acceptance).toBeUndefined();
         expect(detail.verification?.verificationId).toBe("ver_d1");
         expect(detail.verification?.targetWorkRevision).toBe(7);
@@ -639,6 +648,7 @@ describe("P10-006 ProjectionQueryPort bindings (05 §1: envelope + typed errors)
           tree: deps.tree,
           attention: deps.attention,
           workspaceDetail: deps.workspaceDetail,
+          workDetail: deps.workDetail,
           currentWork: deps.currentWork,
           verification: deps.verificationView,
           dependency: deps.dependencyView,
@@ -673,6 +683,245 @@ describe("P10-006 ProjectionQueryPort bindings (05 §1: envelope + typed errors)
         );
         expect(missing._tag).toBe("ProjectionUnavailable");
         expect(missing.code).toBe("projection/unavailable");
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("work-detail is exact, read-only and binds Completed to the same revision's accepted PASS", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        yield* insertWorkRow(
+          {
+            workId: W_CANCEL,
+            workspaceId: p10Root,
+            objective: "cancelled history",
+            lifecycle: "Cancelled",
+          },
+          p10Project,
+        );
+        const deps = yield* makeP10Deps();
+        const service = makeProjectionQueryService({
+          journalLastSequence: deps.journalLastSequence,
+          projectIdOfWorkspace: deps.projectIdOfWorkspace,
+          tree: deps.tree,
+          attention: deps.attention,
+          workspaceDetail: deps.workspaceDetail,
+          workDetail: deps.workDetail,
+          currentWork: deps.currentWork,
+          verification: deps.verificationView,
+          dependency: deps.dependencyView,
+          transcript: deps.transcript,
+          usage: deps.usage,
+          inboxView: deps.inboxView,
+          effectiveFacts: deps.effectiveFacts,
+          inboxReconcile: deps.inboxReconcile,
+        });
+        const missingCompletionBinding = yield* Effect.flip(
+          service.query("work-detail", {
+            projectId: p10Project,
+            workspaceId: p10Root,
+            workId: W_DONE,
+          }),
+        );
+        expect(missingCompletionBinding).toMatchObject({
+          _tag: "ProjectionIntegrityFailure",
+          code: "projection/unavailable",
+          retryDisposition: "non-retryable",
+          safeDetails: {
+            sourceTag: "ProjectionIntegrityFailure",
+            view: "work-detail",
+          },
+        });
+        yield* insertVerificationRow({
+          verificationId: "ver_d2",
+          workId: W_DONE,
+          targetWorkRevision: 0,
+          ownerWorkspaceId: p10Root,
+          executionIds: [],
+          state: "Concluded",
+          verdict: "Pass",
+        });
+        yield* insertAcceptanceRow({
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000d2",
+          workId: W_DONE,
+          targetWorkRevision: 0,
+          verificationId: "ver_d2",
+          actor: "user:gov",
+          acceptedAt: "t5",
+        });
+        yield* insertVerificationRow({
+          verificationId: "ver_d3",
+          workId: W_PEND,
+          targetWorkRevision: 0,
+          ownerWorkspaceId: p10Root,
+          executionIds: [],
+          state: "Concluded",
+          verdict: "Pass",
+        });
+        yield* insertAcceptanceRow({
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000d3",
+          workId: W_PEND,
+          targetWorkRevision: 0,
+          verificationId: "ver_d3",
+          actor: "user:gov",
+          acceptedAt: "t6",
+        });
+        yield* insertVerificationRow({
+          verificationId: "ver_d4",
+          workId: W_CANCEL,
+          targetWorkRevision: 0,
+          ownerWorkspaceId: p10Root,
+          executionIds: [],
+          state: "Concluded",
+          verdict: "Pass",
+        });
+        yield* insertAcceptanceRow({
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000d4",
+          workId: W_CANCEL,
+          targetWorkRevision: 0,
+          verificationId: "ver_d4",
+          actor: "user:gov",
+          acceptedAt: "t7",
+        });
+        const detail = yield* service.query("work-detail", {
+          projectId: p10Project,
+          workspaceId: p10Root,
+          workId: W_DONE,
+        });
+        expect(detail.value).toMatchObject({
+          workId: W_DONE,
+          lifecycle: "Completed",
+          revision: 0,
+          acceptedResult: {
+            verificationId: "ver_d2",
+            targetWorkRevision: 0,
+            verdict: "Pass",
+          },
+        });
+        const validAcceptance = {
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000d2" as never,
+          workId: W_DONE,
+          targetWorkRevision: 0 as never,
+          verificationId: "ver_d2" as never,
+          actor: "user:gov" as never,
+          acceptedAt: "t5",
+        };
+        const validVerification = {
+          verificationId: "ver_d2" as never,
+          workId: W_DONE,
+          targetWorkRevision: 0 as never,
+          state: { status: "Concluded", verdict: "Pass" },
+        } as unknown as Verification;
+        const badBindings = [
+          {
+            acceptance: { ...validAcceptance, workId: W_PEND },
+            verification: validVerification,
+          },
+          {
+            acceptance: { ...validAcceptance, targetWorkRevision: 1 as never },
+            verification: validVerification,
+          },
+          {
+            acceptance: {
+              ...validAcceptance,
+              verificationId: "ver_other" as never,
+            },
+            verification: validVerification,
+          },
+          {
+            acceptance: validAcceptance,
+            verification: {
+              ...validVerification,
+              state: { status: "Concluded", verdict: "Fail" },
+            },
+          },
+        ];
+        for (const binding of badBindings) {
+          const failure = yield* Effect.flip(
+            deriveWorkDetail(
+              {
+                projectId: p10Project,
+                workspaceId: p10Root,
+                workId: W_DONE,
+              },
+              {
+                ...deps.workDetail,
+                findAcceptanceByWorkRevision: () =>
+                  Effect.succeed(Option.some(binding.acceptance as never)),
+                findVerification: () =>
+                  Effect.succeed(Option.some(binding.verification as never)),
+              },
+            ),
+          );
+          expect(failure._tag).toBe("ProjectionIntegrityFailure");
+        }
+
+        const foreign = yield* Effect.flip(
+          service.query("work-detail", {
+            projectId: p10Project,
+            workspaceId: p10Child,
+            workId: W_DONE,
+          }),
+        );
+        expect(foreign).toMatchObject({
+          _tag: "ProjectionNotFound",
+          code: "projection/work-not-found",
+          category: "not-found",
+          safeDetails: {},
+        });
+
+        const missing = yield* Effect.flip(
+          service.query("work-detail", {
+            projectId: p10Project,
+            workspaceId: p10Root,
+            workId: "wrk_00000000-0000-7000-8000-0000000000ff" as never,
+          }),
+        );
+        expect(missing).toEqual(foreign);
+
+        const acceptedOpen = yield* service.query<WorkDetailReq, WorkDetailRes>(
+          "work-detail",
+          {
+            projectId: p10Project,
+            workspaceId: p10Root,
+            workId: W_PEND,
+          },
+        );
+        expect(acceptedOpen.value.lifecycle).toBe("Open");
+        expect(acceptedOpen.value.acceptedResult).toMatchObject({
+          verificationId: "ver_d3",
+          targetWorkRevision: 0,
+          verdict: "Pass",
+        });
+        const acceptedVerification = yield* deriveVerificationView(
+          W_PEND,
+          deps.verificationView,
+        );
+        expect(acceptedVerification).toMatchObject({
+          verificationId: "ver_d3",
+          targetWorkRevision: 0,
+          verdict: "Pass",
+          acceptance: {
+            acceptanceId: "acc_00000000-0000-7000-8000-0000000000d3",
+          },
+        });
+        const cancelled = yield* service.query<WorkDetailReq, WorkDetailRes>(
+          "work-detail",
+          {
+            projectId: p10Project,
+            workspaceId: p10Root,
+            workId: W_CANCEL,
+          },
+        );
+        expect(cancelled.value.lifecycle).toBe("Cancelled");
+        expect(cancelled.value.acceptedResult).toMatchObject({
+          verificationId: "ver_d4",
+          targetWorkRevision: 0,
+          verdict: "Pass",
+        });
       }),
       makeP10App(),
     );

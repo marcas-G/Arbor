@@ -62,3 +62,15 @@ pnpm exec playwright test --config playwright.pending-functional.config.ts --gre
 
 该缺口已记录为 `planning/gaps/FT-DG-02-completed-work-observability.md`。
 在 F22 通过前，不再用 F05 的当前 Work 清空推论用户能查看 Completed Work。
+
+## 2026-10-08 FT-DG-02 closure update
+
+The RED result above is historical evidence from before Work Detail was
+implemented. FT-DG-02 was accepted and landed as System Design v1.10 / DID
+v1.32; the default F22 browser test now proves the original Work remains
+inspectable after Acceptance and restart, including Completed lifecycle and
+its exact Acceptance/Verification. It also probes real foreign Project and
+Workspace identities and proves failed deep links make no ancillary
+`workspace-detail` or `verification` request. See
+`planning/results/FT-DG-02-work-detail-implementation.result.md`. F21 and F23
+remain separate open gaps.

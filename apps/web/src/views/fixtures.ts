@@ -1,5 +1,5 @@
 /**
- * P13-004 fixtures: 9 views × 3 (typical / minimal / unknown-enum) — pure
+ * P13-004 fixtures: 10 views × 3 (typical / minimal / unknown-enum) — pure
  * data for render tests and story reuse (`03` §2 hard requirement 2).
  * Branded IDs/revisions are cast through `id()` (`as never`); unknown-enum
  * values exercise the verbatim + muted rendering contract (`01` I5).
@@ -16,6 +16,7 @@ import type {
   UsageRes,
   VerificationRes,
   ViewResponseMap,
+  WorkDetailRes,
   WorkspaceDetailRes,
 } from "@arbor/api-contracts";
 
@@ -256,7 +257,7 @@ export const detailTypical: WorkspaceDetailRes = {
     criteriaResults: [
       {
         criterionId: "crit-render",
-        requirement: "9 视图 ×3 fixture 全部可渲染",
+        requirement: "10 视图 ×3 fixture 全部可渲染",
         required: true,
         verdict: "Pass",
       },
@@ -375,7 +376,7 @@ export const verificationTypical: VerificationRes = {
   criteriaResults: [
     {
       criterionId: "crit-render",
-      requirement: "9 视图 ×3 fixture 全部可渲染",
+      requirement: "10 视图 ×3 fixture 全部可渲染",
       required: true,
       verdict: "Pass",
     },
@@ -542,6 +543,37 @@ export const inboxUnknownEnum: InboxViewRes = {
   ],
 };
 
+export const workDetailTypical: WorkDetailRes = {
+  workId: id("wrk_018f6a2e-0000-7000-8000-0000000000f1"),
+  projectId: id("prj_018f6a2e-0000-7000-8000-000000000001"),
+  workspaceId: id("ws_018f6a2e-0000-7000-8000-000000000001"),
+  objective: "让完成后的工作仍可查看",
+  why: "用户需要复查目标与结论",
+  completionExpectation: "目标、修订版本和验收结果可核对",
+  lifecycle: "Completed",
+  revision: workRevision(3),
+  acceptedResult: {
+    acceptanceId: id("acc_018f6a2e-0000-7000-8000-0000000000a1"),
+    verificationId: id("ver_018f6a2e-0000-7000-8000-0000000000a1"),
+    targetWorkRevision: workRevision(3),
+    verdict: "Pass",
+    actor: "human:root" as never,
+    acceptedAt: "2026-10-08T00:00:00.000Z",
+  },
+};
+export const workDetailMinimal: WorkDetailRes = {
+  ...workDetailTypical,
+  why: "",
+  completionExpectation: "",
+  lifecycle: "Open",
+  revision: workRevision(0),
+  acceptedResult: undefined,
+};
+export const workDetailUnknownEnum: WorkDetailRes = {
+  ...workDetailTypical,
+  lifecycle: "Paused" as never,
+};
+
 type D0ViewFixtureMatrix = {
   readonly [ViewId in keyof ViewResponseMap]: {
     readonly typical: ViewResponseMap[ViewId];
@@ -566,6 +598,11 @@ export const D0_VIEW_FIXTURES = {
     typical: detailTypical,
     minimal: detailMinimal,
     unknown: detailUnknownEnum,
+  },
+  "work-detail": {
+    typical: workDetailTypical,
+    minimal: workDetailMinimal,
+    unknown: workDetailUnknownEnum,
   },
   "current-work": {
     typical: currentWorkTypical,

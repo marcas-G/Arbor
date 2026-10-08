@@ -179,6 +179,7 @@ const makeQueryService = (deps: P10FixtureDeps) =>
     tree: deps.tree,
     attention: deps.attention,
     workspaceDetail: deps.workspaceDetail,
+    workDetail: deps.workDetail,
     currentWork: deps.currentWork,
     verification: deps.verificationView,
     dependency: deps.dependencyView,
@@ -203,6 +204,7 @@ const runtimeDepsOf = (
   tree: deps.tree,
   attention: deps.attention,
   workspaceDetail: deps.workspaceDetail,
+  workDetail: deps.workDetail,
   currentWork: deps.currentWork,
   verification: deps.verificationView,
   dependency: deps.dependencyView,
@@ -2586,6 +2588,7 @@ describe("p10-acceptance mechanical assertion list (07 Mechanical)", () => {
       "responsibility-tree",
       "attention",
       "workspace-detail",
+      "work-detail",
       "current-work",
       "verification",
       "dependency-view",
@@ -2598,6 +2601,7 @@ describe("p10-acceptance mechanical assertion list (07 Mechanical)", () => {
         case "responsibility-tree":
         case "attention":
         case "workspace-detail":
+        case "work-detail":
         case "current-work":
         case "verification":
         case "dependency-view":
