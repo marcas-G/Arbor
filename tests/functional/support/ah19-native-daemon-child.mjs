@@ -53,6 +53,7 @@ const gateTurnSuffix = process.env.ARBOR_AH19_GATE_TURN_SUFFIX;
 const nestedNativeMode = process.env.ARBOR_AH19_NESTED_NATIVE === "1";
 const terminalConversationMode =
   process.env.ARBOR_AH19_TERMINAL_CONVERSATION === "1";
+const ordinaryWorkMode = process.env.ARBOR_AH19_ORDINARY_WORK === "1";
 let ah11AfterEffectsCount = 0;
 const boundaries = new Set([
   "AH17BeforeCheckpointEpochCommit",
@@ -119,6 +120,18 @@ const nativeAdapter = {
             operationKind,
             providerTurnId: context.providerTurnId,
             bindingVariant: variant,
+            hasPublicWorkInput: request.inputItems.some(
+              (item) =>
+                item._tag === "Message" &&
+                item.role === "user" &&
+                item.text.includes("AH19 public Work history turn"),
+            ),
+            workActionHistoryCount: request.inputItems.filter(
+              (item) =>
+                item._tag === "ToolCall" ||
+                item._tag === "ToolResult" ||
+                item._tag === "ControlResult",
+            ).length,
             items: request.inputItems.map((item) =>
               item._tag === "CompactionCheckpoint"
                 ? {
@@ -149,6 +162,52 @@ const nativeAdapter = {
                   event: {
                     _tag: "TurnCompleted",
                     finishReason: "Stop",
+                  },
+                },
+              ]),
+            );
+          }
+          if (ordinaryWorkMode && operationKind === "Inference") {
+            const isFirstStep = /_0$/u.test(providerTurnId);
+            const callRef = `call_ah19_work_${providerTurnId.replaceAll(/[^a-zA-Z0-9]/gu, "_")}`;
+            return Stream.flatMap(beforeStream, () =>
+              Stream.fromIterable([
+                ...started(request, context),
+                {
+                  _tag: "Canonical",
+                  event: isFirstStep
+                    ? {
+                        _tag: "ToolCallProposed",
+                        callRef,
+                        toolName: "update_plan",
+                        argumentsJson: JSON.stringify({
+                          items: [
+                            {
+                              itemId: "ah19-history",
+                              text: `AH19 public Work history ${"durable observation ".repeat(250)}`,
+                              status: "Pending",
+                            },
+                          ],
+                        }),
+                      }
+                    : {
+                        _tag: "ToolCallProposed",
+                        callRef,
+                        toolName: "wait",
+                        argumentsJson: JSON.stringify({
+                          reason: "retain public Work history",
+                          waitSpec: {
+                            mode: "Any",
+                            conditions: [{ _tag: "Manual" }],
+                          },
+                        }),
+                      },
+                },
+                {
+                  _tag: "Canonical",
+                  event: {
+                    _tag: "TurnCompleted",
+                    finishReason: "ToolCalls",
                   },
                 },
               ]),
@@ -356,7 +415,7 @@ const modelCatalog = {
       capability: {
         modelRef,
         family: "ah19-native-test",
-        contextWindow: 16_384,
+        contextWindow: Number(process.env.ARBOR_AH19_CONTEXT_WINDOW ?? "16384"),
         outputCeiling: 1_024,
         toolProtocol: "json",
         capabilities: ["text", "tools"],
@@ -366,7 +425,14 @@ const modelCatalog = {
             "CompactionSummary",
             "CompactionNative",
           ],
-          inputItemKinds: ["Message", "ToolCall", "CompactionCheckpoint"],
+          inputItemKinds: [
+            "Message",
+            "ToolCall",
+            "ToolResult",
+            "ControlResult",
+            "ContextUpdate",
+            "CompactionCheckpoint",
+          ],
         },
       },
     },

@@ -26,6 +26,8 @@ interface Ah19ProviderRequest {
   readonly operationKind: string;
   readonly providerTurnId: string;
   readonly bindingVariant: string;
+  readonly hasPublicWorkInput?: boolean;
+  readonly workActionHistoryCount?: number;
   readonly items: ReadonlyArray<{
     readonly _tag: string;
     readonly implementation?: string;
@@ -711,6 +713,201 @@ afterEach(async () => {
 });
 
 describe("AH19 ProviderNative binding recovery", () => {
+  it("enters ordinary Native compaction from public Work Session history", async () => {
+    probes.length = 0;
+    providerRequests.length = 0;
+    const reportUrl = await startReportServer();
+    const fixture = await startProductionFixture({
+      reply: () => ({ _tag: "HttpError", status: 500 }),
+      firstDaemonEntry: childEntry,
+      daemonEnvironment: {
+        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_ORDINARY_WORK: "1",
+        ARBOR_AH19_CONTEXT_WINDOW: "16384",
+        ARBOR_AH19_REPORT_URL: reportUrl,
+      },
+      onDaemonStdout: (line) => {
+        try {
+          const event = JSON.parse(line) as Ah19Probe;
+          if (event.tag === "AH19_PROBE") probes.push(event);
+        } catch {
+          // Preserve other daemon output in fixture diagnostics.
+        }
+      },
+    });
+    fixtures.push(fixture);
+    const client = makePublicClient(fixture.baseUrl);
+    const project = await createFunctionalProject(
+      client,
+      fixture.workspaceDirectory,
+      "AH19 ordinary Work history",
+    );
+    const workId = functionalId("wrk");
+    await client.command(project.projectId, "AssignWork", {
+      workId,
+      workspaceId: project.rootWorkspaceId,
+      expectedWorkspaceRevision: 0,
+      objective:
+        "Build real Workspace Session history through public Work input.",
+      why: "qualify ordinary Native compaction after repeated Work turns",
+      constraints: [],
+      completionExpectation: "history is projected into the next Agent turn",
+      verificationMission: {
+        goal: "observe ordinary Work history compaction",
+        criteria: [
+          {
+            criterionId: "history-compaction",
+            requirement: "older Session history reaches context planning",
+            required: true,
+          },
+        ],
+        riskRequirements: [],
+      },
+      provenance: {
+        predecessorWorkId: null,
+        reason: "AH19 ordinary Work fixture",
+      },
+      revision: 0,
+    });
+
+    await waitForPublic(
+      async () => ({
+        count: providerRequests.length,
+        native: providerRequests.find(
+          (request) => request.operationKind === "CompactionNative",
+        ),
+      }),
+      (state) => state.count >= 2 || state.native !== undefined,
+      60_000,
+    );
+
+    for (let index = 0; index < 10; index += 1) {
+      const observed = await waitForPublic(
+        async () => ({
+          native: providerRequests.find(
+            (request) => request.operationKind === "CompactionNative",
+          ),
+          current: await client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+          } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+        }),
+        (state) =>
+          state.native !== undefined ||
+          (state.current?.workId === workId && state.current.status === "Open"),
+        60_000,
+      );
+      if (observed.native !== undefined) break;
+      if (observed.current?.workId !== workId) {
+        throw new Error(
+          "public Work stopped being current during history fixture",
+        );
+      }
+      const before = providerRequests.length;
+      await client.command(project.projectId, "SteerWork", {
+        workId,
+        workspaceId: project.rootWorkspaceId,
+        expectedWorkRevision: observed.current.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `AH19 public Work history turn ${index}`,
+        },
+        provenance: { source: "HumanInput" },
+      });
+      await waitForPublic(
+        async () => ({
+          count: providerRequests.length,
+          native: providerRequests.find(
+            (request) => request.operationKind === "CompactionNative",
+          ),
+        }),
+        (state) => state.count >= before + 2 || state.native !== undefined,
+        60_000,
+      );
+      if (
+        providerRequests.some(
+          (request) => request.operationKind === "CompactionNative",
+        )
+      ) {
+        break;
+      }
+    }
+
+    const ordinaryNative = providerRequests.find(
+      (request) => request.operationKind === "CompactionNative",
+    );
+    expect(
+      providerRequests.some((request) => request.operationKind === "Inference"),
+    ).toBe(true);
+    expect(ordinaryNative).toBeDefined();
+    expect(ordinaryNative?.providerTurnId).toMatch(/_native_compact_0$/u);
+    expect(ordinaryNative?.providerTurnId).not.toContain("_overflow_");
+    expect(ordinaryNative?.hasPublicWorkInput).toBe(true);
+    expect(ordinaryNative?.workActionHistoryCount).toBeGreaterThan(0);
+    const executionId = readExecutionIdForProviderTurn(
+      fixture.databaseFile,
+      ordinaryNative?.providerTurnId ?? "",
+    );
+    const snapshot = readSnapshot(fixture.databaseFile, {
+      sessionId: project.rootSessionId,
+      executionId,
+      workId,
+    });
+    expect(
+      snapshot.sessionEntries.some((entry) =>
+        entry.payload_json.includes("AH19 public Work history"),
+      ),
+    ).toBe(true);
+    expect(
+      snapshot.providerLinks.some((link) => link.role === "OverflowCompaction"),
+    ).toBe(false);
+
+    const replacementInferenceId = ordinaryNative?.providerTurnId.replace(
+      "_native_compact_0",
+      "",
+    );
+    const resumedInference = await waitForPublic(
+      async () =>
+        providerRequests.find(
+          (request) =>
+            request.operationKind === "Inference" &&
+            request.providerTurnId === replacementInferenceId &&
+            request.items.some(
+              (item) =>
+                item._tag === "CompactionCheckpoint" &&
+                item.implementation === "ProviderNative",
+            ),
+        ),
+      (request) => request !== undefined,
+      45_000,
+    );
+    expect(resumedInference?.workActionHistoryCount).toBe(0);
+    expect(resumedInference?.items).toContainEqual(
+      expect.objectContaining({
+        _tag: "CompactionCheckpoint",
+        implementation: "ProviderNative",
+        opaqueItemRef: `ah19-opaque:${ordinaryNative?.providerTurnId}`,
+      }),
+    );
+    await waitForPublic(
+      async () =>
+        providerRequests.find(
+          (request) =>
+            request.operationKind === "Inference" &&
+            request.providerTurnId === `ptn_${executionId}_1`,
+        ),
+      (request) => request !== undefined,
+      45_000,
+    );
+    expect(
+      providerRequests.filter(
+        (request) => request.operationKind === "CompactionNative",
+      ),
+    ).toHaveLength(1);
+    expect(fixture.daemonErrors).toEqual([]);
+  }, 120_000);
+
   it.each([
     "AH17BeforeCheckpointEpochCommit",
     "AH17AfterCheckpointEpochCommit",

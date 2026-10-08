@@ -4,6 +4,7 @@ export * from "./compiler.js";
 export * from "./context.js";
 export * from "./decode.js";
 export * from "./eval.js";
+export * from "./history-context.js";
 export * from "./model-catalog.js";
 export * from "./prepare-turn.js";
 export * from "./projector.js";

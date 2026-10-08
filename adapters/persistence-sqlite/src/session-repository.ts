@@ -9,6 +9,7 @@ import {
   Clock,
   type LeaseFencingRejected,
   type SessionEntryKind,
+  type SessionEntryRecord,
   type SessionEpochConflict,
   type SessionItemRecord,
   type SessionItemWrite,
@@ -544,13 +545,50 @@ export const SessionRepositoryLive: Layer.Layer<
                 ))[0]?.sequence ?? -1,
               )
             : -1;
-          const rows = yield* run(
-            sql.unsafe<SessionEntryRow>(
-              `SELECT ${selection} FROM session_entries WHERE session_id = ? AND sequence >= ? ORDER BY sequence DESC LIMIT ?`,
-              [sessionId, checkpointFloor, limit],
-            ),
-          );
-          const recent = [...rows].reverse().map(toSessionEntry);
+          const checkpointRows =
+            checkpointFloor < 0
+              ? []
+              : yield* run(
+                  sql.unsafe<SessionEntryRow>(
+                    `SELECT ${selection} FROM session_entries WHERE session_id = ? AND sequence = ? LIMIT 1`,
+                    [sessionId, checkpointFloor],
+                  ),
+                );
+          const checkpointEntry =
+            checkpointRows[0] === undefined
+              ? undefined
+              : toSessionEntry(checkpointRows[0]);
+          if (checkpointEntry === undefined && limit <= 0) {
+            return [];
+          }
+          // A checkpoint summarizes the timeline through its sequence. Every
+          // later row is still unsummarized, so retain the complete active
+          // frontier for ModelContext budget planning; limiting this branch
+          // would silently lose entries that the checkpoint cannot represent.
+          const rows =
+            checkpointEntry === undefined
+              ? yield* run(
+                  sql.unsafe<SessionEntryRow>(
+                    `SELECT ${selection} FROM session_entries WHERE session_id = ? AND sequence >= ? ORDER BY sequence DESC LIMIT ?`,
+                    [sessionId, checkpointFloor, limit],
+                  ),
+                )
+              : yield* run(
+                  sql.unsafe<SessionEntryRow>(
+                    `SELECT ${selection} FROM session_entries WHERE session_id = ? AND sequence > ? ORDER BY sequence`,
+                    [sessionId, checkpointFloor],
+                  ),
+                );
+          const recent = (
+            checkpointEntry === undefined ? [...rows].reverse() : rows
+          ).map(toSessionEntry);
+          const withCheckpoint = (
+            frontier: ReadonlyArray<SessionEntryRecord>,
+          ): ReadonlyArray<SessionEntryRecord> =>
+            checkpointEntry === undefined
+              ? frontier
+              : [checkpointEntry, ...frontier];
+          if (recent.length === 0) return withCheckpoint(recent);
           let causalFloor = recent[0]?.sequence ?? checkpointFloor;
           let closed = recent;
           while (closed.length > 0) {
@@ -576,7 +614,7 @@ export const SessionRepositoryLive: Layer.Layer<
             for (const callRef of new Set(resultRefs)) {
               const callRows = yield* run(
                 sql.unsafe<{ sequence: number }>(
-                  "SELECT sequence FROM session_entries WHERE session_id = ? AND sequence >= ? AND item_type = 'ToolCall' AND json_extract(payload_json, '$.callRef') = ? ORDER BY sequence DESC LIMIT 1",
+                  `SELECT sequence FROM session_entries WHERE session_id = ? AND sequence ${checkpointEntry === undefined ? ">=" : ">"} ? AND item_type = 'ToolCall' AND json_extract(payload_json, '$.callRef') = ? ORDER BY sequence DESC LIMIT 1`,
                   [sessionId, checkpointFloor, callRef],
                 ),
               );
@@ -585,7 +623,7 @@ export const SessionRepositoryLive: Layer.Layer<
                 expandedFloor = Math.min(expandedFloor, Number(callSequence));
               }
             }
-            if (expandedFloor >= causalFloor) return closed;
+            if (expandedFloor >= causalFloor) return withCheckpoint(closed);
             causalFloor = expandedFloor;
             const closedRows = yield* run(
               sql.unsafe<SessionEntryRow>(
@@ -595,7 +633,7 @@ export const SessionRepositoryLive: Layer.Layer<
             );
             closed = closedRows.map(toSessionEntry);
           }
-          return closed;
+          return withCheckpoint(closed);
         }),
       listSessionsByWorkspace: (workspaceId) =>
         Effect.gen(function* () {
