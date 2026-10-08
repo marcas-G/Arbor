@@ -287,6 +287,69 @@ describe("P2 Session appendEntry + AgentExecutionState", () => {
     expect(entries.map((entry) => entry.sequence)).toContain(64);
   });
 
+  it("keeps the latest checkpoint and every unsummarized post-checkpoint entry", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P21_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      const insert = (
+        sequence: number,
+        entryKind: string,
+        itemType: string,
+        payload: unknown,
+      ) =>
+        sql.unsafe(
+          "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,2,0,?,'t','test',?,?)",
+          [
+            sessionId,
+            sequence,
+            entryKind,
+            itemType,
+            JSON.stringify(payload),
+            `ref-${sequence}`,
+            `hash-${sequence}`,
+          ],
+        );
+      for (let sequence = 0; sequence < 4; sequence += 1) {
+        yield* insert(sequence, "Input", "UserMessage", {
+          _tag: "UserMessage",
+          text: `pre-checkpoint-${sequence}`,
+        });
+      }
+      yield* insert(4, "CheckpointReference", "CompactionCheckpoint", {
+        _tag: "CompactionCheckpoint",
+        implementation: "Summary",
+        fromEpoch: 0,
+        toEpoch: 1,
+        summaryText: "checkpoint summary",
+      });
+      for (let sequence = 5; sequence <= 70; sequence += 1) {
+        yield* insert(sequence, "Input", "UserMessage", {
+          _tag: "UserMessage",
+          text: `post-checkpoint-${sequence}`,
+        });
+      }
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      return yield* tx.transact(sessions.listRecentEntries(sessionId, 4));
+    });
+
+    const entries = await Effect.runPromise(Effect.provide(program, app));
+    expect(entries.map((entry) => entry.sequence)).toEqual(
+      Array.from({ length: 67 }, (_, index) => index + 4),
+    );
+    expect(entries[0]?.payload).toMatchObject({
+      _tag: "CompactionCheckpoint",
+      summaryText: "checkpoint summary",
+    });
+    expect(
+      entries.some((entry) =>
+        JSON.stringify(entry.payload).includes("pre-checkpoint"),
+      ),
+    ).toBe(false);
+  });
+
   it("rejects a fenced append with a stale generation without writing", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {

@@ -54,6 +54,10 @@ export interface PrepareTurnInput {
   readonly program: PromptProgram;
   readonly fragments: ReadonlyArray<InstructionFragment>;
   readonly contextFragments: ReadonlyArray<ContextFragment>;
+  /** Portable input items whose cost is represented exactly once by C3
+   * Compressible ContextFragments. The items remain in a compaction request;
+   * this only assigns their budget ownership to context planning. */
+  readonly compressibleInputItemIndexes?: ReadonlyArray<number>;
   readonly budget: ContextBudget;
   readonly controlBasis: ControlBasis;
   readonly maxOutputTokens: number;
@@ -151,6 +155,11 @@ export const ModelContextLive: Layer.Layer<
             : { instructionContents: input.instructionContents }),
           messages,
           inputItems,
+          ...(input.compressibleInputItemIndexes === undefined
+            ? {}
+            : {
+                excludedInputItemIndexes: input.compressibleInputItemIndexes,
+              }),
           tools,
           controlTools,
         });

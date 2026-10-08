@@ -19,7 +19,9 @@ import {
   decodeTurn,
   GENERIC_COGNITION_PROGRAM,
   type InstructionFragment,
+  latestSessionInputIndex,
   type ModelContextService,
+  projectCompressibleHistory,
   projectSessionTimeline,
   SESSION_TIMELINE_ENTRY_LIMIT,
   type SessionTimelineProjection,
@@ -1608,6 +1610,41 @@ export const runModelDecision = (
         })),
         ...sessionProjection.inputItems,
       ];
+      const historySourceRefs = [
+        ...conversationMessages.map(
+          (_, index) => `conversation-input:${index}`,
+        ),
+        ...sessionProjection.inputItems.map(
+          (_, index) =>
+            sessionProjection.contextRefs[index] ??
+            `session:${input.execution.sessionId}:${index}`,
+        ),
+      ];
+      const compressibleHistoryIndexes: number[] = [];
+      const sessionInputOffset = conversationMessages.length;
+      // HumanConversation has no cross-response checkpoint owner yet. Keep its
+      // complete HumanMessage history in fixed-input accounting until that
+      // continuity contract is governed; only Work's bound Session frontier
+      // participates in this C3 history projection.
+      if (!conversationExecution) {
+        const latestInputIndex = latestSessionInputIndex(
+          sessionProjection.inputItems,
+        );
+        for (
+          let index = 0;
+          index < sessionProjection.inputItems.length;
+          index += 1
+        ) {
+          if (index !== latestInputIndex) {
+            compressibleHistoryIndexes.push(sessionInputOffset + index);
+          }
+        }
+      }
+      const historyContext = projectCompressibleHistory({
+        inputItems,
+        sourceRefs: historySourceRefs,
+        compressibleIndexes: compressibleHistoryIndexes,
+      });
       const messageContextRefs = [
         ...conversationContextRefs,
         ...sessionProjection.contextRefs,
@@ -3342,7 +3379,9 @@ export const runModelDecision = (
             ...conversationActionFragments,
             ...repairFragments,
           ],
-          contextFragments: [],
+          contextFragments: historyContext.contextFragments,
+          compressibleInputItemIndexes:
+            historyContext.compressibleInputItemIndexes,
           budget: {
             modelWindow: capability.contextWindow,
             outputReserve: capability.outputCeiling,
