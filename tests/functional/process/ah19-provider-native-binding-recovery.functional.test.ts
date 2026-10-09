@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -373,6 +374,65 @@ const corruptOrdinaryNativeSourceIdentity = (
         `ordinary AH19 Native identity corruption missed ${field}`,
       );
     }
+  } finally {
+    db.close();
+  }
+};
+
+const corruptOrdinaryNativeManifestField = (
+  databaseFile: string,
+  providerTurnId: string,
+  field: "compiledRequestHash" | "contextEpoch",
+) => {
+  const db = new DatabaseSync(databaseFile);
+  try {
+    const row = db
+      .prepare(
+        `SELECT manifest_id, manifest_json, portable_request_json
+           FROM model_context_manifests
+          WHERE provider_turn_id = ?`,
+      )
+      .get(providerTurnId) as
+      | {
+          manifest_id: string;
+          manifest_json: string;
+          portable_request_json: string;
+        }
+      | undefined;
+    if (row === undefined) {
+      throw new Error("ordinary AH19 Native manifest/request missing");
+    }
+    const manifest = JSON.parse(row.manifest_json) as Record<string, unknown>;
+    const originalValue = manifest[field];
+    if (field === "compiledRequestHash") {
+      const persistedRequestHash = createHash("sha256")
+        .update(row.portable_request_json)
+        .digest("hex");
+      if (originalValue !== persistedRequestHash) {
+        throw new Error("ordinary AH19 Native request hash was not canonical");
+      }
+      manifest.compiledRequestHash = "0".repeat(64);
+    } else {
+      if (!Number.isSafeInteger(originalValue)) {
+        throw new Error("ordinary AH19 Native manifest epoch was not integral");
+      }
+      manifest.contextEpoch = Number(originalValue) + 1;
+    }
+    const result = db
+      .prepare(
+        `UPDATE model_context_manifests
+            SET manifest_json = ?
+          WHERE manifest_id = ?`,
+      )
+      .run(JSON.stringify(manifest), row.manifest_id);
+    if (Number(result.changes) !== 1 || manifest[field] === originalValue) {
+      throw new Error(`ordinary AH19 Native corruption missed ${field}`);
+    }
+    return {
+      originalValue,
+      corruptedValue: manifest[field],
+      portableRequestJson: row.portable_request_json,
+    };
   } finally {
     db.close();
   }
@@ -2087,6 +2147,195 @@ describe("AH19 restart binding qualification", () => {
       expect(fixture.daemonErrors).toEqual([]);
     },
     120_000,
+  );
+
+  it.each(["compiledRequestHash", "contextEpoch"] as const)(
+    "rejects ordinary Native recovery at the manifest %s check after process loss",
+    async (field) => {
+      const scenario = await startOrdinaryNativeAtCheckpointBoundary(
+        "AH17AfterCheckpointEpochCommit",
+      );
+      const {
+        fixture,
+        project,
+        workId,
+        native,
+        probe,
+        childOutput,
+        reportUrl,
+      } = scenario;
+      const executionId = probe.executionId;
+      const nativeTurnId = native.providerTurnId;
+      const ids = { sessionId: project.rootSessionId, executionId, workId };
+      const beforeKill = readSnapshot(fixture.databaseFile, ids);
+      const nativeBeforeKill = beforeKill.providerTurns.find(
+        (turn) => turn.provider_turn_id === nativeTurnId,
+      );
+      const nativeManifestBeforeKill = JSON.parse(
+        nativeBeforeKill?.manifest_json ?? "{}",
+      ) as Record<string, unknown>;
+      const nativeCheckpointBeforeKill = JSON.parse(
+        beforeKill.checkpoints[0]?.payload_json ?? "{}",
+      ) as Record<string, unknown>;
+      const portableRequestBeforeKill =
+        nativeBeforeKill?.portable_request_json ?? "";
+      expect(beforeKill.session?.context_epoch).toBe(1);
+      expect(beforeKill.checkpoints).toHaveLength(1);
+      expect(beforeKill.checkpoints[0]?.source_ref).toBe(nativeTurnId);
+      expect(nativeManifestBeforeKill.contextEpoch).toBe(
+        nativeCheckpointBeforeKill.fromEpoch,
+      );
+      expect(nativeManifestBeforeKill.compiledRequestHash).toBe(
+        createHash("sha256").update(portableRequestBeforeKill).digest("hex"),
+      );
+      expect(nativeBeforeKill).toMatchObject({
+        context_epoch: 0,
+        output_contract_ref: "provider-native-compaction-v1",
+        settled_at: expect.any(String),
+        finish_reason: "Stop",
+      });
+      expect(
+        beforeKill.providerAttempts.filter(
+          (attempt) => attempt.provider_turn_id === nativeTurnId,
+        ),
+      ).toEqual([
+        expect.objectContaining({ attempt_no: 0, outcome: "Success" }),
+      ]);
+      expect(
+        beforeKill.providerLinks.some(
+          (link) => link.provider_turn_id === nativeTurnId,
+        ),
+      ).toBe(false);
+      const nativeRequestCount = providerRequests.filter(
+        (request) => request.providerTurnId === nativeTurnId,
+      ).length;
+      expect(nativeRequestCount).toBe(1);
+
+      await fixture.crash();
+      await waitForLeaseExpiry(
+        fixture,
+        project.rootSessionId,
+        executionId,
+        workId,
+      );
+      const corruption = corruptOrdinaryNativeManifestField(
+        fixture.databaseFile,
+        nativeTurnId,
+        field,
+      );
+      const corruptedSnapshot = readSnapshot(fixture.databaseFile, ids);
+      const corruptedNative = corruptedSnapshot.providerTurns.find(
+        (turn) => turn.provider_turn_id === nativeTurnId,
+      );
+      expect(corruptedNative?.portable_request_json).toBe(
+        corruption.portableRequestJson,
+      );
+      expect(JSON.parse(corruptedNative?.manifest_json ?? "{}")[field]).toBe(
+        corruption.corruptedValue,
+      );
+      const corruptedNativeManifest = JSON.parse(
+        corruptedNative?.manifest_json ?? "{}",
+      ) as Record<string, unknown>;
+      expect({
+        ...corruptedNativeManifest,
+        [field]: nativeManifestBeforeKill[field],
+      }).toEqual(nativeManifestBeforeKill);
+      expect(corruptedSnapshot.session?.context_epoch).toBe(1);
+      expect(corruptedSnapshot.checkpoints).toEqual(beforeKill.checkpoints);
+
+      const requestsBeforeRestart = providerRequests.length;
+      await fixture
+        .restart({
+          entry: childEntry,
+          daemonEnvironment: {
+            ARBOR_AH19_BOUNDARY: "none",
+            ARBOR_AH19_BINDING_VARIANT: "A",
+            ARBOR_AH19_ORDINARY_WORK: "1",
+            ARBOR_AH19_REPORT_URL: reportUrl,
+            ARBOR_AH19_CAPTURE_EXIT: "1",
+          },
+        })
+        .catch(() => undefined);
+
+      const rejection = await waitForPublic(
+        async () => {
+          const stageLine = childOutput.find((line) =>
+            line.includes("NativeStartupManifestChecks:"),
+          );
+          const childError = childOutput
+            .map((line) => {
+              try {
+                return JSON.parse(line) as {
+                  tag?: string;
+                  error?: { reason?: string };
+                };
+              } catch {
+                return undefined;
+              }
+            })
+            .find((event) => event?.tag === "AH19_CHILD_ERROR");
+          return { stageLine, childError };
+        },
+        (state) =>
+          state.stageLine !== undefined && state.childError !== undefined,
+        30_000,
+      );
+      const diagnostic = JSON.parse(rejection.stageLine ?? "{}") as {
+        stage?: string;
+      };
+      const checkValues = Object.fromEntries(
+        (diagnostic.stage ?? "")
+          .slice("NativeStartupManifestChecks:".length)
+          .split(",")
+          .map((check) => check.split("=")),
+      );
+      expect(checkValues).toEqual({
+        checkpoint: "true",
+        providerTurn: "true",
+        execution: "true",
+        session: "true",
+        source: "true",
+        step: "true",
+        sourceProviderTurn: "true",
+        stepState: "true",
+        sourceLinkAbsent: "true",
+        frontier: "true",
+        receipt: "true",
+        operation: "true",
+        bindingFingerprint: "true",
+        contextEpoch: field === "contextEpoch" ? "false" : "true",
+        compiledRequestHash: field === "compiledRequestHash" ? "false" : "true",
+      });
+      expect(rejection.childError?.error?.reason).toBe(
+        "AgentLoopStepReplayBindingMismatch",
+      );
+
+      const rejected = readSnapshot(fixture.databaseFile, ids);
+      expect(rejected.leases.at(-1)?.generation).toBe(1);
+      expect(rejected.session?.context_epoch).toBe(1);
+      expect(rejected.checkpoints).toEqual(beforeKill.checkpoints);
+      expect(rejected.steps).toEqual(beforeKill.steps);
+      expect(rejected.execution).toEqual(beforeKill.execution);
+      expect(
+        rejected.providerTurns.filter(
+          (turn) => turn.provider_turn_id === nativeTurnId,
+        ),
+      ).toHaveLength(1);
+      expect(
+        rejected.providerAttempts.filter(
+          (attempt) => attempt.provider_turn_id === nativeTurnId,
+        ),
+      ).toEqual([
+        expect.objectContaining({ attempt_no: 0, outcome: "Success" }),
+      ]);
+      expect(providerRequests).toHaveLength(requestsBeforeRestart);
+      expect(
+        providerRequests.filter(
+          (request) => request.providerTurnId === nativeTurnId,
+        ),
+      ).toHaveLength(nativeRequestCount);
+    },
+    150_000,
   );
 
   it("fails closed rather than sending an older Native opaque checkpoint to a changed binding", async () => {

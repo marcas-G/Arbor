@@ -813,6 +813,159 @@ export const runModelDecision = (
           );
         }
         const startupSourceRecord = startupSource as Record<string, unknown>;
+        if (options.qualificationProbe !== undefined) {
+          const sourceIdentityValid =
+            startupSourceRecord.executionId === input.execution.executionId &&
+            Number.isSafeInteger(startupSourceRecord.logicalStepNo) &&
+            Number(startupSourceRecord.logicalStepNo) >= 0 &&
+            Number.isSafeInteger(startupSourceRecord.repairAttempt) &&
+            Number(startupSourceRecord.repairAttempt) >= 0 &&
+            typeof startupSourceRecord.providerTurnId === "string";
+          const sourceStepOption = sourceIdentityValid
+            ? yield* tx
+                .transact(
+                  loopSteps.find({
+                    executionId: input.execution.executionId,
+                    logicalStepNo: Number(startupSourceRecord.logicalStepNo),
+                    repairAttempt: Number(startupSourceRecord.repairAttempt),
+                  }),
+                )
+                .pipe(Effect.mapError(failure))
+            : Option.none();
+          const sourceStep = Option.isSome(sourceStepOption)
+            ? sourceStepOption.value
+            : undefined;
+          const sourceLinkOption = yield* tx
+            .transact(
+              loopSteps.findProviderTurnLinkByProviderTurnId(
+                startupNativeTurnId,
+              ),
+            )
+            .pipe(Effect.mapError(failure));
+          const startupReceipt = yield* tx
+            .transact(providerTurns.findSettledResult(startupNativeTurnId))
+            .pipe(Effect.mapError(failure));
+          let startupRequestValue: Record<string, unknown> | undefined;
+          try {
+            const parsed = JSON.parse(
+              startupManifest.portableRequestJson,
+            ) as unknown;
+            if (
+              typeof parsed === "object" &&
+              parsed !== null &&
+              !Array.isArray(parsed)
+            ) {
+              startupRequestValue = parsed as Record<string, unknown>;
+            }
+          } catch {
+            startupRequestValue = undefined;
+          }
+          const frontierValue = startupManifestValue.inputFrontier;
+          const frontierRecord =
+            typeof frontierValue === "object" &&
+            frontierValue !== null &&
+            !Array.isArray(frontierValue)
+              ? (frontierValue as Record<string, unknown>)
+              : undefined;
+          const firstSequence = frontierRecord?.firstSequence;
+          const lastSequence = frontierRecord?.lastSequence;
+          const contextRefs = startupManifestValue.contextRefs;
+          const inputItems = startupRequestValue?.inputItems;
+          const frontierValid =
+            typeof firstSequence === "number" &&
+            Number.isSafeInteger(firstSequence) &&
+            firstSequence >= 0 &&
+            typeof lastSequence === "number" &&
+            Number.isSafeInteger(lastSequence) &&
+            lastSequence >= firstSequence &&
+            lastSequence < startupCheckpoint.sequence &&
+            Array.isArray(contextRefs) &&
+            contextRefs.length > 0 &&
+            contextRefs.every(
+              (ref): ref is string => typeof ref === "string" && ref.length > 0,
+            ) &&
+            new Set(contextRefs).size === contextRefs.length &&
+            Array.isArray(inputItems) &&
+            inputItems.length > 0 &&
+            !containsNativeCheckpointInput(inputItems);
+          const receiptValid =
+            startupReceipt._tag === "SettledSuccess" &&
+            startupReceipt.evidenceVersion === "provider-success-v1" &&
+            startupReceipt.finishReason === "Stop" &&
+            startupReceipt.manifestId === startupManifest.manifestId &&
+            startupReceipt.manifestJson === startupManifest.manifestJson &&
+            startupReceipt.turn.providerTurnId === startupNativeTurnId &&
+            startupReceipt.turn.executionId === input.execution.executionId &&
+            startupReceipt.turn.sessionId === input.execution.sessionId &&
+            startupReceipt.turn.contextEpoch === startupCheckpoint.fromEpoch &&
+            startupReceipt.turn.modelRef === capability.modelRef &&
+            startupReceipt.turn.outputContractRef ===
+              "provider-native-compaction-v1" &&
+            startupReceipt.canonicalEvents.filter(
+              (event) =>
+                event._tag === "ContinuationState" &&
+                event.stateRef === startupCheckpoint.opaqueItemRef,
+            ).length === 1;
+          const startupChecks = {
+            checkpoint:
+              startupCheckpoint.providerTurnId === startupNativeTurnId &&
+              startupCheckpoint.fromEpoch !== undefined &&
+              startupCheckpoint.toEpoch === startupCheckpoint.fromEpoch + 1 &&
+              startupCheckpoint.toEpoch ===
+                Number(startupSession.value.contextEpoch) &&
+              startupCheckpoint.opaqueItemRef !== undefined &&
+              startupCheckpoint.bindingFingerprint !== undefined &&
+              startupCheckpoint.bindingMatches,
+            providerTurn:
+              startupManifestValue.providerTurnId === startupNativeTurnId,
+            execution:
+              startupManifestValue.executionId === input.execution.executionId,
+            session:
+              startupManifestValue.sessionId === input.execution.sessionId,
+            source: sourceIdentityValid,
+            step: sourceStep !== undefined,
+            sourceProviderTurn:
+              sourceStep?.providerTurnId === startupSourceRecord.providerTurnId,
+            stepState:
+              sourceStep !== undefined &&
+              (sourceStep.state === "Prepared" ||
+                sourceStep.state === "ProviderResultAvailable" ||
+                sourceStep.state === "OutputRejected" ||
+                sourceStep.state === "OutputAccepted" ||
+                sourceStep.state === "ActionsInProgress" ||
+                sourceStep.state === "StepEffectsCommitted" ||
+                (sourceStep.state === "NextStepReady" &&
+                  sourceStep.successor !== undefined)),
+            sourceLinkAbsent: !Option.isSome(sourceLinkOption),
+            frontier: frontierValid,
+            receipt: receiptValid,
+            operation:
+              startupManifestValue.operationKind === "CompactionNative" &&
+              startupManifestValue.outputContractRef ===
+                "provider-native-compaction-v1",
+            bindingFingerprint:
+              startupManifestValue.resolvedModelBindingFingerprint ===
+              startupCheckpoint.bindingFingerprint,
+            contextEpoch:
+              startupManifestValue.contextEpoch === startupCheckpoint.fromEpoch,
+            compiledRequestHash:
+              startupManifestValue.compiledRequestHash ===
+              sha256Hex(startupManifest.portableRequestJson),
+          };
+          yield* Effect.promise(
+            () =>
+              options.qualificationProbe?.({
+                boundary: "AH19NativeCheckpointRecovery",
+                stage: `NativeStartupManifestChecks:${Object.entries(
+                  startupChecks,
+                )
+                  .map(([key, value]) => `${key}=${String(value)}`)
+                  .join(",")}`,
+                executionId: String(input.execution.executionId),
+                providerTurnId: startupNativeTurnId,
+              }) ?? Promise.resolve(),
+          );
+        }
         if (
           startupSourceRecord.executionId !== input.execution.executionId ||
           !Number.isSafeInteger(startupSourceRecord.logicalStepNo) ||
