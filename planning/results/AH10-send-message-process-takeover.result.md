@@ -210,3 +210,85 @@ Wait settles the child WorkEpisode, the offset advances through the target
 event, and the unique Parent InboxEpisode is present. AH10 remains PARTIAL;
 other message kinds/control actions and remaining governance gaps are not
 covered.
+
+## Reply FencingRejected receipt takeover (2026-10-09)
+
+The existing Reply fixture now also qualifies the old generation's
+FencingRejected receipt on both sides of the Gateway transaction. It first
+creates a real Query, waits until its Inbox entry has been consumed, and
+confirms the Query has an open correlation. A Parent Work then produces one
+Reply action. Gen0 is held at its persisted ActionIntent until its lease
+expires; gen1 takes the same Execution and reaches the same pinned
+ProviderTurn/LogicalAction/callRef. Releasing gen0 submits its stale Reply
+against the real CommandGateway.
+
+For the pre-commit branch, a separate read-only SQLite connection observes no
+FencingRejected receipt and no Reply message/event/Inbox effect while gen0 is
+paused at `AH10BeforeFencedReceiptCommit`. SIGKILL rolls the transaction back;
+the post-kill snapshot still has no rejected receipt or Reply effect. For the
+post-commit branch, the exact single FencingRejected receipt is visible before
+SIGKILL. Neither branch changes the Query or closes its correlation before
+gen1 resumes.
+
+After takeover, gen1 uses a new generation-scoped CommandId and commits exactly
+one Reply, one MessageSent event and one recipient Inbox entry. The Reply
+closes the original Query correlation. The pinned action becomes Applied with
+one Observation; the original Provider decision runs once. The prior rejected
+CommandId is absent after the pre-commit kill and present exactly once after
+the post-commit kill.
+
+Targeted validation on the rebuilt production daemon:
+
+```text
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-loop-ah10-send-message-takeover.functional.test.ts -t "recovers a Reply after gen0"
+3 Reply cases PASS (124.95s on the rebuilt daemon): FencingRejected before commit, FencingRejected after commit, and existing Committed receipt / Action-Pending recovery
+```
+
+The first oracle draft required a physical open-correlation row. The store only
+records a row when the correlation is closed, so the correct pre-Reply oracle
+is absence of a closed record; the Query message/correlation id remains the
+durable open reference. This was a test-oracle correction, not a runtime
+change. AH10 remains PARTIAL; this does not cover every SendMessage state,
+other control actions, Deliver, or verification-control governance gaps.
+
+## Final integrated review and gates (2026-10-09)
+
+Independent integration review: **PASS; Blocking = 0 for this scoped batch.**
+The review checked the process-gate assertions and recovery identity bindings,
+the test-only probe changes, the receipt-first Reply assertions, and the
+result/proposal boundary. Production
+`apps/single-workspace/src/control-actions.ts` has no diff; `docs/design/**`
+and the P12 phase/task files have no diff. The neighboring direct-child stale
+reference reproduction remains an isolated Design Gap, not a passing case or
+an implementation change.
+
+Final integrated gates on the frozen working tree:
+
+```text
+pnpm check: PASS
+  Biome: 965 files; one existing noNonNullAssertion warning
+  TypeScript build + test typecheck: PASS
+  Architecture: 31 files / 158 tests PASS
+  Core: 319 files / 1746 passed / 3 skipped
+  Web typecheck + build: PASS (existing chunk-size warning)
+  Web tests: 31 files / 223 tests PASS
+
+pnpm test:functional: PASS
+  Vitest: 31 files / 123 tests PASS (5822.34s)
+  Playwright: 3/3 PASS (42.8s)
+  P9 dense SSE: PASS
+  SendMessage Query: 2/2 PASS
+  SendMessage Reply: 3/3 PASS
+  SendMessage DecisionRequest: 2/2 PASS
+```
+
+The check regenerated `planning/results/P12.restore-drill.json`'s timestamp
+and hash. Both fields were compared with their pre-check committed values and
+restored exactly; the final P12 result file is clean. The F20 clean-checkout
+case passed inside this full run, but clones the uncommitted `HEAD`, so it is
+baseline-only evidence and does not validate this working-tree diff.
+
+This integration does not close AH10. Other controls and state combinations,
+Deliver, verification-control governance gaps, and the direct-child committed
+receipt exact-target Design Gap remain open; no `docs/design/**` semantics or
+implementation authorization were added.

@@ -2,8 +2,9 @@
 
 Date: 2026-10-08
 
-Status: **PASS for the two tested Direct-child AssignWork FencingRejected
-receipt boundaries; AH10 remains PARTIAL.**
+Status: **PASS for the two Direct-child AssignWork FencingRejected receipt
+boundaries. Committed receipt / Action-Pending recovery after a placement ref
+becomes stale is OPEN as a Design Gap; AH10 remains PARTIAL.**
 
 Test: `tests/functional/process/agent-loop-ah10-direct-child-assign-work-takeover.functional.test.ts`
 
@@ -90,3 +91,77 @@ to the committed timestamp and hash.
 
 Committed F20 and full functional-suite results are recorded in
 `planning/results/AH15-AH17-direct-child-release-validation.result.md`.
+
+## Committed-receipt Action-Pending exact target gap (2026-10-09)
+
+An isolated real-process case is retained at
+`tests/functional/pending/ah10-direct-child-assign-work-committed-receipt-stale-ref.functional.test.ts`.
+It pauses gen0 after the direct-child AssignWork handler returns and before
+Observation commit. The pre-crash snapshot proves one committed AssignWork
+receipt, one target Child Work and WorkAssigned event, while the pinned Action
+is Pending with no Observation. After SIGKILL and lease takeover, gen1 replays
+the same ProviderTurn/LogicalAction/callRef, but the committed AssignWork has
+changed the placement revision and made the pinned `wref` stale. The prior
+implementation returns `action/target-unavailable`; it does not create a
+second Work or rerun the Provider, but it cannot mark the Action Applied or
+append its Observation.
+
+An early receipt-first bypass was explored and withdrawn. Canonical Work plus
+the receipt proves the effect's WorkspaceId and Parent provenance, but there
+is no durable mapping from the stale pinned `wref` to that WorkspaceId. A
+same-Project direct-child check could accept child B while the action and CAPA
+grant name child A. The current deterministic hash formula could support
+historical-revision enumeration, but neither that algorithm nor its bounds
+and assumptions are frozen. The P1 receipt-first rule and MAC-P2 / CAPA
+exact-target rule need a manually governed resolution before a safe
+successful replay can be implemented. Proposal:
+`planning/proposals/AH10-direct-child-committed-receipt-target-binding-draft.md`.
+
+The Design Gap case is excluded from default functional gates. Existing
+FencingRejected before/after commit tests remain the only PASS cases in this
+file. No `docs/design/**` changes or implementation authorization were made.
+AH10 remains PARTIAL; other control actions, state combinations, Deliver, and
+verification-control governance gaps also remain open.
+
+## Final integrated review and gates (2026-10-09)
+
+Independent integration review: **PASS; Blocking = 0 for the scoped batch.**
+The review verified the direct-child test's model-facing `wref` provenance,
+exact CAPA grant target, pinned ProviderTurn/LogicalAction/callRef continuity,
+real lease expiry, receipt transaction boundaries, and unique Work/event/
+Observation assertions. Production
+`apps/single-workspace/src/control-actions.ts` has no diff; `docs/design/**`
+and P12 phase/task files have no diff. The separate stale-reference pending
+test is excluded from default functional discovery and remains an open Design
+Gap; it is not counted as passing evidence.
+
+Final integrated gates on the frozen working tree:
+
+```text
+pnpm check: PASS
+  Biome: 965 files; one existing noNonNullAssertion warning
+  TypeScript build + test typecheck: PASS
+  Architecture: 31 files / 158 tests PASS
+  Core: 319 files / 1746 passed / 3 skipped
+  Web typecheck + build: PASS (existing chunk-size warning)
+  Web tests: 31 files / 223 tests PASS
+
+pnpm test:functional: PASS
+  Vitest: 31 files / 123 tests PASS (5822.34s)
+  Playwright: 3/3 PASS (42.8s)
+  Direct-child FencingRejected receipt: 2/2 PASS
+
+Author's targeted pre-integration evidence also passed: direct-child process
+cases 2/2, AH10 handler suite 23/23, test typecheck, and targeted Biome.
+```
+
+The check regenerated `planning/results/P12.restore-drill.json`'s timestamp
+and hash. Both fields were compared with their pre-check committed values and
+restored exactly; the final P12 result file is clean. F20 also passed inside
+the functional run, but its clean checkout is from the uncommitted `HEAD` and
+is baseline-only evidence, not qualification of this working-tree diff.
+
+AH10 remains PARTIAL. The direct-child Committed-receipt / Action-Pending
+stale-reference outcome still requires manual governance of exact target
+binding before implementation; the open proposal remains unaccepted, and no
+design semantics or implementation authorization were added.

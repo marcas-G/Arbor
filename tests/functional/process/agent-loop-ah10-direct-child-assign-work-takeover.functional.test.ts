@@ -149,6 +149,13 @@ const readRows = (databaseFile: string) => {
         action_kind: string;
         state: string;
       }>,
+      observations: db
+        .prepare(
+          `SELECT source_ref FROM session_entries
+            WHERE source_kind = 'AgentLoopAction'
+              AND entry_kind = 'Observation' ORDER BY sequence`,
+        )
+        .all() as Array<{ source_ref: string }>,
       controlResults: db
         .prepare(
           `SELECT source_ref, payload_json
@@ -226,8 +233,9 @@ const parseWorkspacesResult = (row: { payload_json: string }) => {
 
 describe("AH10 direct-child AssignWork generation takeover", () => {
   it.each(["before", "after"] as const)(
-    "assigns to a model-listed direct child after killing gen0 %s its FencingRejected receipt commits",
-    async (crashSide) => {
+    "takes over direct-child AssignWork after gen0 %s its command boundary",
+    async (rawCrashSide) => {
+      const crashSide = rawCrashSide as "before" | "after" | "committed";
       const marker = `AH10-direct-child-${crypto.randomUUID().slice(0, 8)}`;
       const childName = `child-${marker}`;
       const sourceObjective = `Assign a bounded outcome to ${childName}.`;
@@ -312,6 +320,9 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
           ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
             crashSide === "before" ? "1" : "0",
+          ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN:
+            crashSide === "committed" ? "1" : "0",
+          ARBOR_AH10_PAUSE_AFTER_CONTROL_KIND: "assign_work",
         },
         onDaemonStdout: (line) => pushProbe(events, line),
       });
@@ -486,21 +497,105 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         targetWorks(readRows(fixture.databaseFile), targetObjective),
       ).toHaveLength(0);
 
-      const oldLeasePause = await waitForPublic(
-        async () =>
-          events.find(
-            (event) =>
-              event.role === "old" &&
-              event.boundary === "AH10BeforeLeaseRenewal" &&
-              event.executionId === oldAction.executionId,
+      let priorCommittedCommandId: string | undefined;
+      if (crashSide === "committed") {
+        releaseGate(fixture, "old", "action-intent");
+        const controlReturned = await waitForPublic(
+          async () =>
+            events.find(
+              (event) =>
+                event.role === "old" &&
+                event.boundary ===
+                  "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
+                event.executionId === oldAction.executionId &&
+                event.logicalActionId === logicalActionId &&
+                event.callRef === callRef,
+            ),
+          (event) => event !== undefined,
+          15_000,
+        );
+        if (controlReturned === undefined) {
+          throw new Error("Direct-child AssignWork post-handler probe absent");
+        }
+        const beforeCrash = readRows(fixture.databaseFile);
+        const assigned = targetWorks(beforeCrash, targetObjective);
+        expect(assigned).toHaveLength(1);
+        const priorReceipt = beforeCrash.commands.filter((command) => {
+          if (
+            command.resolution !== "Committed" ||
+            command.result_json === null
+          )
+            return false;
+          try {
+            const result = JSON.parse(command.result_json) as {
+              workId?: string;
+              workspaceId?: string;
+              lifecycle?: string;
+              revision?: number;
+            };
+            return (
+              result.workId === assigned[0]?.work_id &&
+              result.workspaceId === childWorkspaceId &&
+              result.lifecycle === "Open" &&
+              result.revision === 0
+            );
+          } catch {
+            return false;
+          }
+        });
+        expect(priorReceipt).toHaveLength(1);
+        priorCommittedCommandId = priorReceipt[0]?.command_id;
+        expect(priorCommittedCommandId).toMatch(/^cmd_/u);
+        expect(
+          beforeCrash.workAssignedEvents.filter((event) => {
+            try {
+              return (
+                (JSON.parse(event.payload_json) as { workId?: string })
+                  .workId === assigned[0]?.work_id
+              );
+            } catch {
+              return false;
+            }
+          }),
+        ).toHaveLength(1);
+        expect(beforeCrash.actions).toContainEqual(
+          expect.objectContaining({
+            execution_id: oldAction.executionId,
+            provider_turn_id: providerTurnId,
+            logical_action_id: logicalActionId,
+            call_ref: callRef,
+            action_kind: "assign_work",
+            state: "Pending",
+            observation_source_ref: null,
+          }),
+        );
+        expect(beforeCrash.observations).toHaveLength(1);
+        expect(
+          beforeCrash.providerAttempts.filter(
+            (row) => row.provider_turn_id === providerTurnId,
           ),
-        (event) => event !== undefined,
-        20_000,
-      );
-      if (oldLeasePause === undefined) {
-        throw new Error("Direct-child AssignWork old lease probe was absent");
+        ).toEqual([
+          expect.objectContaining({ attempt_no: 0, outcome: "Success" }),
+        ]);
+        expect(assignWorkCalls).toHaveLength(1);
+        await fixture.crash();
+      } else {
+        const oldLeasePause = await waitForPublic(
+          async () =>
+            events.find(
+              (event) =>
+                event.role === "old" &&
+                event.boundary === "AH10BeforeLeaseRenewal" &&
+                event.executionId === oldAction.executionId,
+            ),
+          (event) => event !== undefined,
+          20_000,
+        );
+        if (oldLeasePause === undefined) {
+          throw new Error("Direct-child AssignWork old lease probe was absent");
+        }
+        expect(oldLeasePause.fencingGeneration).toBe(0);
       }
-      expect(oldLeasePause.fencingGeneration).toBe(0);
       await waitForPublic(
         async () =>
           readRows(fixture.databaseFile).leases.find(
@@ -560,8 +655,12 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       expect(newAction.callRef).toBe(callRef);
       expect(assignWorkCalls).toHaveLength(1);
 
-      releaseGate(fixture, "old", "action-intent");
-      let oldRejectedCommandId: string;
+      let oldRejectedCommandId = "";
+      if (crashSide === "committed") {
+        oldRejectedCommandId = "";
+      } else {
+        releaseGate(fixture, "old", "action-intent");
+      }
       if (crashSide === "before") {
         const beforeCommit = await waitForPublic(
           async () =>
@@ -585,7 +684,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         expect(
           targetWorks(readRows(fixture.databaseFile), targetObjective),
         ).toHaveLength(0);
-      } else {
+      } else if (crashSide === "after") {
         const rejected = await waitForPublic(
           async () => fencedReceipts(readRows(fixture.databaseFile)),
           (rows) => rows.length === 1,
@@ -598,7 +697,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         ).toHaveLength(0);
       }
 
-      await fixture.crash();
+      if (crashSide !== "committed") await fixture.crash();
       if (crashSide === "before") {
         const afterKill = readRows(fixture.databaseFile);
         expect(fencedReceipts(afterKill)).toHaveLength(0);
@@ -676,22 +775,30 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           const result = JSON.parse(command.result_json) as {
             workId?: string;
             workspaceId?: string;
+            lifecycle?: string;
+            revision?: number;
           };
           return (
             result.workId === assigned.work_id &&
-            result.workspaceId === childWorkspaceId
+            result.workspaceId === childWorkspaceId &&
+            result.lifecycle === "Open" &&
+            result.revision === 0
           );
         } catch {
           return false;
         }
       });
-      expect(committed).toHaveLength(1);
-      expect(committed[0]?.command_id).not.toBe(oldRejectedCommandId);
+      expect(committed, JSON.stringify(committed)).toHaveLength(1);
+      if (crashSide === "committed") {
+        expect(committed[0]?.command_id).toBe(priorCommittedCommandId);
+      } else {
+        expect(committed[0]?.command_id).not.toBe(oldRejectedCommandId);
+      }
       expect(assignedEvents[0]?.caused_by_command_id).toBe(
         committed[0]?.command_id,
       );
       expect(fencedReceipts(completed)).toHaveLength(
-        crashSide === "before" ? 0 : 1,
+        crashSide === "before" ? 0 : crashSide === "after" ? 1 : 0,
       );
 
       const actionRows = completed.actions.filter(
@@ -758,7 +865,9 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             result.actionKind === "assign_work" && result.callRef === callRef,
         );
       expect(observation).toHaveLength(1);
-      expect(observation[0]?.status).toBe("Succeeded");
+      expect(observation[0]?.status, JSON.stringify(observation[0])).toBe(
+        "Succeeded",
+      );
       expect(
         completed.providerAttempts.filter(
           (attempt) => attempt.provider_turn_id === providerTurnId,

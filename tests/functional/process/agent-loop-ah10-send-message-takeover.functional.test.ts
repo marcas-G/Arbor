@@ -595,478 +595,200 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
     90_000,
   );
 
-  it("recovers a Committed Reply receipt after its Query correlation closes", async () => {
-    const queryMarker = `AH10-reply-query-${crypto.randomUUID().slice(0, 8)}`;
-    const replyMarker = `AH10-reply-work-${crypto.randomUUID().slice(0, 8)}`;
-    const events: Ah10Probe[] = [];
-    const queryProviderCalls: number[] = [];
-    const replyProviderCalls: number[] = [];
-    const fixture = await startProductionFixture({
-      onDaemonStdout: (line) => pushProbe(events, line),
-      reply: (call, index) => {
-        const context = JSON.stringify(call.messages);
-        const available = new Set(
-          call.tools
-            .map((tool) => tool.function?.name)
-            .filter((name): name is string => name !== undefined),
-        );
-        const isWorkEpisode = available.has("claim_completion");
+  it.each(["before", "after", "committed"] as const)(
+    "recovers a Reply after gen0 %s its Gateway transaction",
+    async (crashSide) => {
+      const queryMarker = `AH10-reply-query-${crypto.randomUUID().slice(0, 8)}`;
+      const replyMarker = `AH10-reply-work-${crypto.randomUUID().slice(0, 8)}`;
+      const events: Ah10Probe[] = [];
+      const queryProviderCalls: number[] = [];
+      const replyProviderCalls: number[] = [];
+      const fixture = await startProductionFixture({
+        onDaemonStdout: (line) => pushProbe(events, line),
+        reply: (call, index) => {
+          const context = JSON.stringify(call.messages);
+          const available = new Set(
+            call.tools
+              .map((tool) => tool.function?.name)
+              .filter((name): name is string => name !== undefined),
+          );
+          const isWorkEpisode = available.has("claim_completion");
 
-        if (
-          isWorkEpisode &&
-          available.has("send_message") &&
-          context.includes(queryMarker)
-        ) {
-          if (context.includes("MessageDelivered(")) {
+          if (
+            isWorkEpisode &&
+            available.has("send_message") &&
+            context.includes(queryMarker)
+          ) {
+            if (context.includes("MessageDelivered(")) {
+              return {
+                _tag: "ToolCall",
+                name: "wait",
+                arguments: {
+                  reason: "the status Query has been sent",
+                  waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+                },
+              };
+            }
+            queryProviderCalls.push(index);
             return {
               _tag: "ToolCall",
-              name: "wait",
+              name: "send_message",
               arguments: {
-                reason: "the status Query has been sent",
-                waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+                kind: "Query",
+                body: `Please send a status reply for ${queryMarker}.`,
+                recipientWorkspaceId: project.rootWorkspaceId,
               },
             };
           }
-          queryProviderCalls.push(index);
-          return {
-            _tag: "ToolCall",
-            name: "send_message",
-            arguments: {
-              kind: "Query",
-              body: `Please send a status reply for ${queryMarker}.`,
-              recipientWorkspaceId: project.rootWorkspaceId,
-            },
-          };
-        }
 
-        if (!isWorkEpisode && available.has("send_message")) {
-          return {
-            _tag: "Text",
-            text: `Received status Query ${queryMarker}.`,
-          };
-        }
+          if (!isWorkEpisode && available.has("send_message")) {
+            return {
+              _tag: "Text",
+              text: `Received status Query ${queryMarker}.`,
+            };
+          }
 
-        if (
-          isWorkEpisode &&
-          available.has("send_message") &&
-          context.includes(replyMarker)
-        ) {
-          if (context.includes("MessageDelivered(")) {
+          if (
+            isWorkEpisode &&
+            available.has("send_message") &&
+            context.includes(replyMarker)
+          ) {
+            if (context.includes("MessageDelivered(")) {
+              return {
+                _tag: "ToolCall",
+                name: "wait",
+                arguments: {
+                  reason: "the pending Query has been answered",
+                  waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+                },
+              };
+            }
+            replyProviderCalls.push(index);
             return {
               _tag: "ToolCall",
-              name: "wait",
+              name: "send_message",
               arguments: {
-                reason: "the pending Query has been answered",
-                waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+                kind: "Reply",
+                body: `The requested status for ${queryMarker} is ready.`,
               },
             };
           }
-          replyProviderCalls.push(index);
-          return {
-            _tag: "ToolCall",
-            name: "send_message",
-            arguments: {
-              kind: "Reply",
-              body: `The requested status for ${queryMarker} is ready.`,
-            },
-          };
-        }
 
-        return { _tag: "Text", text: "No additional AH10 message action." };
-      },
-    });
-    fixtures.push(fixture);
+          return { _tag: "Text", text: "No additional AH10 message action." };
+        },
+      });
+      fixtures.push(fixture);
 
-    const client = makePublicClient(fixture.baseUrl);
-    const project = await createFunctionalProject(
-      client,
-      fixture.workspaceDirectory,
-      "AH10 SendMessage Reply recovery",
-    );
-    const childWorkspaceId = functionalId("ws");
-    const childSessionId = functionalId("ses");
-    const childWorkId = functionalId("wrk");
-    const childDirectory = resolve(fixture.directory, `child-${queryMarker}`);
-    mkdirSync(childDirectory, { recursive: true });
-    await client.command(project.projectId, "CreateChildWorkspace", {
-      parentWorkspaceId: project.rootWorkspaceId,
-      workspaceId: childWorkspaceId,
-      primarySession: { sessionId: childSessionId, contextEpoch: 0 },
-      name: `child-${queryMarker}`,
-      responsibilityDefinition: {
-        purpose: `ask the root for status ${queryMarker}`,
-        ownedResponsibilities: [queryMarker],
-        obligations: ["send one Query to the root Workspace"],
-        includes: [],
-        excludes: [],
-        interfaces: [],
-      },
-      responsibilityRevision: 0,
-      resourceBoundary: {
-        basisResponsibilityRevision: 0,
-        addresses: [{ _tag: "FileTree", path: childDirectory }],
-      },
-      resourceBoundaryRevision: 0,
-      agentBinding: {
-        _tag: "ResponsibilityBoundAgentBinding",
+      const client = makePublicClient(fixture.baseUrl);
+      const project = await createFunctionalProject(
+        client,
+        fixture.workspaceDirectory,
+        "AH10 SendMessage Reply recovery",
+      );
+      const childWorkspaceId = functionalId("ws");
+      const childSessionId = functionalId("ses");
+      const childWorkId = functionalId("wrk");
+      const childDirectory = resolve(fixture.directory, `child-${queryMarker}`);
+      mkdirSync(childDirectory, { recursive: true });
+      await client.command(project.projectId, "CreateChildWorkspace", {
+        parentWorkspaceId: project.rootWorkspaceId,
         workspaceId: childWorkspaceId,
-      },
-      workspacePolicy: {},
-      workspacePolicyRevision: 0,
-      revision: 0,
-    });
-    await client.command(project.projectId, "AssignWork", {
-      workId: childWorkId,
-      workspaceId: childWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Ask the root for status ${queryMarker}.`,
-      why: "create an exact open Query for Reply recovery qualification",
-      constraints: ["send only one Query to the parent"],
-      completionExpectation: "the exact Query is admitted to the root Inbox",
-      verificationMission: {
-        goal: `Verify Query admission ${queryMarker}`,
-        criteria: [
-          {
-            criterionId: "ah10-reply-query-admitted",
-            requirement: "one Query is admitted to the root Inbox",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-      revision: 0,
-    });
+        primarySession: { sessionId: childSessionId, contextEpoch: 0 },
+        name: `child-${queryMarker}`,
+        responsibilityDefinition: {
+          purpose: `ask the root for status ${queryMarker}`,
+          ownedResponsibilities: [queryMarker],
+          obligations: ["send one Query to the root Workspace"],
+          includes: [],
+          excludes: [],
+          interfaces: [],
+        },
+        responsibilityRevision: 0,
+        resourceBoundary: {
+          basisResponsibilityRevision: 0,
+          addresses: [{ _tag: "FileTree", path: childDirectory }],
+        },
+        resourceBoundaryRevision: 0,
+        agentBinding: {
+          _tag: "ResponsibilityBoundAgentBinding",
+          workspaceId: childWorkspaceId,
+        },
+        workspacePolicy: {},
+        workspacePolicyRevision: 0,
+        revision: 0,
+      });
+      await client.command(project.projectId, "AssignWork", {
+        workId: childWorkId,
+        workspaceId: childWorkspaceId,
+        expectedWorkspaceRevision: 0,
+        objective: `Ask the root for status ${queryMarker}.`,
+        why: "create an exact open Query for Reply recovery qualification",
+        constraints: ["send only one Query to the parent"],
+        completionExpectation: "the exact Query is admitted to the root Inbox",
+        verificationMission: {
+          goal: `Verify Query admission ${queryMarker}`,
+          criteria: [
+            {
+              criterionId: "ah10-reply-query-admitted",
+              requirement: "one Query is admitted to the root Inbox",
+              required: true,
+            },
+          ],
+          riskRequirements: [],
+        },
+        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
+        revision: 0,
+      });
 
-    const queryReady = await waitForPublic(
-      async () => readRows(fixture.databaseFile),
-      (rows) => {
-        const query = rows.messages.find(
-          (message) =>
-            message.kind === "Query" &&
-            message.sender_workspace_id === childWorkspaceId &&
-            message.recipient_workspace_id === project.rootWorkspaceId,
+      const queryReady = await waitForPublic(
+        async () => readRows(fixture.databaseFile),
+        (rows) => {
+          const query = rows.messages.find(
+            (message) =>
+              message.kind === "Query" &&
+              message.sender_workspace_id === childWorkspaceId &&
+              message.recipient_workspace_id === project.rootWorkspaceId,
+          );
+          if (query === undefined) return false;
+          const entryKey = `msg:${query.message_id}`;
+          const inbox = rows.inbox.find(
+            (entry) =>
+              entry.workspace_id === project.rootWorkspaceId &&
+              entry.entry_key === entryKey,
+          );
+          const inputExecution = rows.inboxExecutions.find(
+            (execution) => execution.episode_ref === entryKey,
+          );
+          return (
+            inbox?.consumed_at !== null &&
+            inbox?.consumed_at !== undefined &&
+            inputExecution?.settled_at !== null &&
+            inputExecution?.settled_at !== undefined
+          );
+        },
+        45_000,
+      );
+      const query = queryReady.messages.find(
+        (message) =>
+          message.kind === "Query" &&
+          message.sender_workspace_id === childWorkspaceId &&
+          message.recipient_workspace_id === project.rootWorkspaceId,
+      );
+      if (query === undefined || query.correlation_id === null) {
+        throw new Error(
+          "the public Query setup did not persist its correlation",
         );
-        if (query === undefined) return false;
-        const entryKey = `msg:${query.message_id}`;
-        const inbox = rows.inbox.find(
-          (entry) =>
-            entry.workspace_id === project.rootWorkspaceId &&
-            entry.entry_key === entryKey,
-        );
-        const inputExecution = rows.inboxExecutions.find(
-          (execution) => execution.episode_ref === entryKey,
-        );
-        return (
-          inbox?.consumed_at !== null &&
-          inbox?.consumed_at !== undefined &&
-          inputExecution?.settled_at !== null &&
-          inputExecution?.settled_at !== undefined
-        );
-      },
-      45_000,
-    );
-    const query = queryReady.messages.find(
-      (message) =>
-        message.kind === "Query" &&
-        message.sender_workspace_id === childWorkspaceId &&
-        message.recipient_workspace_id === project.rootWorkspaceId,
-    );
-    if (query === undefined || query.correlation_id === null) {
-      throw new Error("the public Query setup did not persist its correlation");
-    }
-    expect(queryProviderCalls).toHaveLength(1);
-    expect(queryReady.messages).toEqual([query]);
-    expect(queryReady.inbox).toHaveLength(1);
-    expect(queryReady.correlations).not.toContainEqual(
-      expect.objectContaining({
-        correlation_id: query.correlation_id,
-        closed_at: expect.any(String),
-      }),
-    );
-    const queryReceipt = queryReady.commands.filter((command) => {
-      if (command.resolution !== "Committed" || command.result_json === null) {
-        return false;
       }
-      try {
-        return (
-          (JSON.parse(command.result_json) as { messageId?: string })
-            .messageId === query.message_id
-        );
-      } catch {
-        return false;
-      }
-    });
-    expect(queryReceipt).toHaveLength(1);
-    const queryEvents = queryReady.messageEvents.filter(
-      (event) => event.aggregate_ref === query.message_id,
-    );
-    expect(queryEvents).toHaveLength(1);
-    expect(queryEvents[0]).toMatchObject({
-      event_type: "MessageSent",
-      caused_by_command_id: queryReceipt[0]?.command_id,
-      correlation_ref: query.correlation_id,
-    });
-    expect(queryReady.inbox).toContainEqual(
-      expect.objectContaining({
-        workspace_id: project.rootWorkspaceId,
-        entry_key: `msg:${query.message_id}`,
-        kind: "Message",
-        correlation_id: query.correlation_id,
-      }),
-    );
-
-    await fixture.crash();
-    await fixture.restart({
-      entry: ah10Child,
-      daemonEnvironment: {
-        ARBOR_AH10_ROLE: "old",
-        ARBOR_AH10_GATE_ACTION_KIND: "send_message",
-        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
-      },
-    });
-    mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
-
-    const parentWorkId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
-      workId: parentWorkId,
-      workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Reply to the pending status Query ${replyMarker}.`,
-      why: "qualify receipt-first recovery of a committed Reply",
-      constraints: ["reply to the unique open Query exactly once"],
-      completionExpectation: "send one Reply bound to the pending Query",
-      verificationMission: {
-        goal: `Verify Reply recovery ${replyMarker}`,
-        criteria: [
-          {
-            criterionId: "ah10-reply-committed",
-            requirement: "one Reply is committed for the open Query",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-      revision: 0,
-    });
-
-    const oldAction = await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "old" &&
-            event.boundary === "AH7AfterActionIntentCommit" &&
-            event.actionKind === "send_message" &&
-            event.actionIndex === 0,
-        ),
-      (event) => event !== undefined,
-      30_000,
-    );
-    if (oldAction === undefined) {
-      throw new Error("AH10 old Reply ActionIntent probe was absent");
-    }
-    const providerTurnId = oldAction.providerTurnId;
-    const logicalActionId = oldAction.logicalActionId;
-    const callRef = oldAction.callRef;
-    if (
-      providerTurnId === undefined ||
-      logicalActionId === undefined ||
-      callRef === undefined
-    ) {
-      throw new Error("AH10 Reply ActionIntent omitted its pinned identity");
-    }
-    expect(replyProviderCalls).toHaveLength(1);
-    const oldLeaseAtIntent = readRows(fixture.databaseFile).leases.find(
-      (lease) => lease.execution_id === oldAction.executionId,
-    );
-    expect(oldLeaseAtIntent?.generation).toBe(0);
-    expect(
-      Date.parse(oldLeaseAtIntent?.expires_at ?? "1970-01-01"),
-    ).toBeGreaterThan(Date.now());
-    releaseGate(fixture, "old", "action-intent");
-    const handlerReturned = await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "old" &&
-            event.boundary ===
-              "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
-            event.executionId === oldAction.executionId &&
-            event.logicalActionId === logicalActionId &&
-            event.callRef === callRef &&
-            event.actionIndex === 0,
-        ),
-      (event) => event !== undefined,
-      15_000,
-    );
-    if (handlerReturned === undefined) {
-      throw new Error("AH10 post-Reply handler probe was absent");
-    }
-
-    const beforeCrash = readRows(fixture.databaseFile);
-    const reply = beforeCrash.messages.find(
-      (message) =>
-        message.kind === "Reply" &&
-        message.sender_workspace_id === project.rootWorkspaceId &&
-        message.recipient_workspace_id === childWorkspaceId,
-    );
-    expect(reply).toBeDefined();
-    expect(reply?.correlation_id).toBe(query.correlation_id);
-    expect(beforeCrash.messages).toHaveLength(2);
-    expect(beforeCrash.messages).toContainEqual(query);
-    const closedCorrelation = beforeCrash.correlations.filter(
-      (correlation) =>
-        correlation.correlation_id === query.correlation_id &&
-        correlation.closed_at !== null,
-    );
-    expect(closedCorrelation).toHaveLength(1);
-    const replyReceipt = beforeCrash.commands.filter((command) => {
-      if (command.resolution !== "Committed" || command.result_json === null) {
-        return false;
-      }
-      try {
-        return (
-          (JSON.parse(command.result_json) as { messageId?: string })
-            .messageId === reply?.message_id
-        );
-      } catch {
-        return false;
-      }
-    });
-    expect(replyReceipt).toHaveLength(1);
-    const replyEvents = beforeCrash.messageEvents.filter(
-      (event) => event.aggregate_ref === reply?.message_id,
-    );
-    expect(replyEvents).toHaveLength(1);
-    expect(beforeCrash.messageEvents).toHaveLength(2);
-    expect(replyEvents[0]).toMatchObject({
-      event_type: "MessageSent",
-      caused_by_command_id: replyReceipt[0]?.command_id,
-      correlation_ref: query.correlation_id,
-    });
-    expect(beforeCrash.inbox).toHaveLength(2);
-    expect(beforeCrash.inbox).toEqual(
-      expect.arrayContaining([
+      expect(queryProviderCalls).toHaveLength(1);
+      expect(queryReady.messages).toEqual([query]);
+      expect(queryReady.inbox).toHaveLength(1);
+      expect(queryReady.correlations).not.toContainEqual(
         expect.objectContaining({
-          workspace_id: project.rootWorkspaceId,
-          entry_key: `msg:${query.message_id}`,
           correlation_id: query.correlation_id,
+          closed_at: expect.any(String),
         }),
-        expect.objectContaining({
-          workspace_id: childWorkspaceId,
-          entry_key: `msg:${reply?.message_id}`,
-          correlation_id: query.correlation_id,
-        }),
-      ]),
-    );
-    expect(beforeCrash.actions).toContainEqual(
-      expect.objectContaining({
-        execution_id: oldAction.executionId,
-        provider_turn_id: providerTurnId,
-        logical_action_id: logicalActionId,
-        call_ref: callRef,
-        action_kind: "send_message",
-        state: "Pending",
-        observation_source_ref: null,
-      }),
-    );
-    expect(
-      beforeCrash.observations.filter((observation) =>
-        observation.source_ref.startsWith(
-          `observation_${oldAction.executionId}_`,
-        ),
-      ),
-    ).toHaveLength(0);
-    expect(
-      beforeCrash.providerAttempts.filter(
-        (attempt) => attempt.provider_turn_id === providerTurnId,
-      ),
-    ).toEqual([expect.objectContaining({ outcome: "Success", attempt_no: 0 })]);
-    expect(replyProviderCalls).toHaveLength(1);
-
-    await fixture.crash();
-    await waitForPublic(
-      async () =>
-        readRows(fixture.databaseFile).leases.find(
-          (lease) => lease.execution_id === oldAction.executionId,
-        ),
-      (lease) =>
-        lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
-      35_000,
-    );
-    const newDaemon = await fixture.startAdditionalDaemon({
-      entry: ah10Child,
-      daemonEnvironment: {
-        ARBOR_AH10_ROLE: "new",
-        ARBOR_AH10_GATE_ACTION_KIND: "send_message",
-        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
-      },
-      onStdout: (line) => pushProbe(events, line),
-    });
-    const newLease = await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "new" &&
-            event.boundary === "AH10AfterLeaseAcquired" &&
-            event.executionId === oldAction.executionId,
-        ),
-      (event) => event !== undefined,
-      45_000,
-    );
-    if (newLease === undefined) {
-      throw new Error("AH10 new Reply owner did not acquire the lease");
-    }
-    expect(newLease.fencingGeneration).toBe(1);
-    const newAction = await waitForPublic(
-      async () =>
-        events.find(
-          (event) =>
-            event.role === "new" &&
-            event.boundary === "AH7AfterActionIntentCommit" &&
-            event.actionKind === "send_message" &&
-            event.executionId === oldAction.executionId &&
-            event.actionIndex === 0,
-        ),
-      (event) => event !== undefined,
-      30_000,
-    );
-    if (newAction === undefined) {
-      throw new Error("AH10 new Reply ActionIntent probe was absent");
-    }
-    expect(newAction.providerTurnId).toBe(providerTurnId);
-    expect(newAction.callRef).toBe(callRef);
-    expect(newAction.logicalActionId).toBe(logicalActionId);
-    releaseGate(fixture, "new", "action-intent");
-    const recovered = await waitForPublic(
-      async () => readRows(fixture.databaseFile),
-      (rows) =>
-        rows.actions.some(
-          (action) =>
-            action.execution_id === oldAction.executionId &&
-            action.logical_action_id === logicalActionId &&
-            action.state === "Applied",
-        ),
-      30_000,
-    );
-    const recoveredReply = recovered.messages.filter(
-      (message) =>
-        message.kind === "Reply" &&
-        message.sender_workspace_id === project.rootWorkspaceId &&
-        message.recipient_workspace_id === childWorkspaceId,
-    );
-    expect(recovered.messages).toHaveLength(2);
-    expect(recoveredReply).toEqual([reply]);
-    expect(recovered.inbox).toHaveLength(2);
-    expect(recovered.messageEvents).toHaveLength(2);
-    expect(
-      recovered.messageEvents.filter(
-        (event) => event.aggregate_ref === reply?.message_id,
-      ),
-    ).toHaveLength(1);
-    expect(
-      recovered.commands.filter((command) => {
+      );
+      const queryReceipt = queryReady.commands.filter((command) => {
         if (
           command.resolution !== "Committed" ||
           command.result_json === null
@@ -1076,46 +798,473 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         try {
           return (
             (JSON.parse(command.result_json) as { messageId?: string })
-              .messageId === reply?.message_id
+              .messageId === query.message_id
           );
         } catch {
           return false;
         }
-      }),
-    ).toEqual(replyReceipt);
-    expect(
-      recovered.correlations.filter(
-        (correlation) =>
-          correlation.correlation_id === query.correlation_id &&
-          correlation.closed_at !== null,
-      ),
-    ).toHaveLength(1);
-    const recoveredReplyAction = recovered.actions.find(
-      (action) =>
-        action.execution_id === oldAction.executionId &&
-        action.logical_action_id === logicalActionId,
-    );
-    expect(recoveredReplyAction).toMatchObject({
-      provider_turn_id: providerTurnId,
-      call_ref: callRef,
-      action_kind: "send_message",
-      state: "Applied",
-    });
-    expect(
-      recovered.observations.filter(
-        (observation) =>
-          observation.source_ref ===
-          recoveredReplyAction?.observation_source_ref,
-      ),
-    ).toHaveLength(1);
-    expect(
-      recovered.providerAttempts.filter(
-        (attempt) => attempt.provider_turn_id === providerTurnId,
-      ),
-    ).toEqual([expect.objectContaining({ outcome: "Success", attempt_no: 0 })]);
-    expect(replyProviderCalls).toHaveLength(1);
-    expect(newDaemon.daemonErrors).toEqual([]);
-  }, 150_000);
+      });
+      expect(queryReceipt).toHaveLength(1);
+      const queryEvents = queryReady.messageEvents.filter(
+        (event) => event.aggregate_ref === query.message_id,
+      );
+      expect(queryEvents).toHaveLength(1);
+      expect(queryEvents[0]).toMatchObject({
+        event_type: "MessageSent",
+        caused_by_command_id: queryReceipt[0]?.command_id,
+        correlation_ref: query.correlation_id,
+      });
+      expect(queryReady.inbox).toContainEqual(
+        expect.objectContaining({
+          workspace_id: project.rootWorkspaceId,
+          entry_key: `msg:${query.message_id}`,
+          kind: "Message",
+          correlation_id: query.correlation_id,
+        }),
+      );
+
+      await fixture.crash();
+      await fixture.restart({
+        entry: ah10Child,
+        daemonEnvironment: {
+          ARBOR_AH10_ROLE: "old",
+          ARBOR_AH10_GATE_ACTION_KIND: "send_message",
+          ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN:
+            crashSide === "committed" ? "1" : "0",
+          ARBOR_AH10_PAUSE_AFTER_CONTROL_KIND: "send_message",
+          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
+            crashSide === "before" ? "1" : "0",
+        },
+      });
+      mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
+
+      const parentWorkId = functionalId("wrk");
+      await client.command(project.projectId, "AssignWork", {
+        workId: parentWorkId,
+        workspaceId: project.rootWorkspaceId,
+        expectedWorkspaceRevision: 0,
+        objective: `Reply to the pending status Query ${replyMarker}.`,
+        why: "qualify receipt-first recovery of a committed Reply",
+        constraints: ["reply to the unique open Query exactly once"],
+        completionExpectation: "send one Reply bound to the pending Query",
+        verificationMission: {
+          goal: `Verify Reply recovery ${replyMarker}`,
+          criteria: [
+            {
+              criterionId: "ah10-reply-committed",
+              requirement: "one Reply is committed for the open Query",
+              required: true,
+            },
+          ],
+          riskRequirements: [],
+        },
+        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
+        revision: 0,
+      });
+
+      const oldAction = await waitForPublic(
+        async () =>
+          events.find(
+            (event) =>
+              event.role === "old" &&
+              event.boundary === "AH7AfterActionIntentCommit" &&
+              event.actionKind === "send_message" &&
+              event.actionIndex === 0,
+          ),
+        (event) => event !== undefined,
+        30_000,
+      );
+      if (oldAction === undefined) {
+        throw new Error("AH10 old Reply ActionIntent probe was absent");
+      }
+      const providerTurnId = oldAction.providerTurnId;
+      const logicalActionId = oldAction.logicalActionId;
+      const callRef = oldAction.callRef;
+      if (
+        providerTurnId === undefined ||
+        logicalActionId === undefined ||
+        callRef === undefined
+      ) {
+        throw new Error("AH10 Reply ActionIntent omitted its pinned identity");
+      }
+      expect(replyProviderCalls).toHaveLength(1);
+      const oldLeaseAtIntent = readRows(fixture.databaseFile).leases.find(
+        (lease) => lease.execution_id === oldAction.executionId,
+      );
+      expect(oldLeaseAtIntent?.generation).toBe(0);
+      expect(
+        Date.parse(oldLeaseAtIntent?.expires_at ?? "1970-01-01"),
+      ).toBeGreaterThan(Date.now());
+      let newDaemon:
+        | Awaited<ReturnType<typeof fixture.startAdditionalDaemon>>
+        | undefined;
+      let oldRejectedCommandId: string | undefined;
+      let beforeCrash: ReturnType<typeof readRows>;
+      if (crashSide === "committed") {
+        releaseGate(fixture, "old", "action-intent");
+        const handlerReturned = await waitForPublic(
+          async () =>
+            events.find(
+              (event) =>
+                event.role === "old" &&
+                event.boundary ===
+                  "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
+                event.executionId === oldAction.executionId &&
+                event.logicalActionId === logicalActionId &&
+                event.callRef === callRef &&
+                event.actionIndex === 0,
+            ),
+          (event) => event !== undefined,
+          15_000,
+        );
+        if (handlerReturned === undefined)
+          throw new Error("AH10 post-Reply handler probe was absent");
+        beforeCrash = readRows(fixture.databaseFile);
+        const committedReply = beforeCrash.messages.find(
+          (message) =>
+            message.kind === "Reply" &&
+            message.sender_workspace_id === project.rootWorkspaceId &&
+            message.recipient_workspace_id === childWorkspaceId,
+        );
+        expect(committedReply).toBeDefined();
+        expect(committedReply?.correlation_id).toBe(query.correlation_id);
+        expect(beforeCrash.messages).toHaveLength(2);
+        expect(
+          beforeCrash.correlations.filter(
+            (row) =>
+              row.correlation_id === query.correlation_id &&
+              row.closed_at !== null,
+          ),
+        ).toHaveLength(1);
+        expect(
+          beforeCrash.messageEvents.filter(
+            (row) => row.aggregate_ref === committedReply?.message_id,
+          ),
+        ).toHaveLength(1);
+        expect(beforeCrash.inbox).toHaveLength(2);
+        expect(beforeCrash.actions).toContainEqual(
+          expect.objectContaining({
+            execution_id: oldAction.executionId,
+            provider_turn_id: providerTurnId,
+            logical_action_id: logicalActionId,
+            call_ref: callRef,
+            action_kind: "send_message",
+            state: "Pending",
+            observation_source_ref: null,
+          }),
+        );
+        expect(
+          beforeCrash.observations.filter((row) =>
+            row.source_ref.startsWith(`observation_${oldAction.executionId}_`),
+          ),
+        ).toHaveLength(0);
+        expect(
+          beforeCrash.providerAttempts.filter(
+            (row) => row.provider_turn_id === providerTurnId,
+          ),
+        ).toEqual([
+          expect.objectContaining({ outcome: "Success", attempt_no: 0 }),
+        ]);
+        expect(replyProviderCalls).toHaveLength(1);
+        await fixture.crash();
+        await waitForPublic(
+          async () =>
+            readRows(fixture.databaseFile).leases.find(
+              (lease) => lease.execution_id === oldAction.executionId,
+            ),
+          (lease) =>
+            lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
+          35_000,
+        );
+      } else {
+        const oldLeasePause = await waitForPublic(
+          async () =>
+            events.find(
+              (event) =>
+                event.role === "old" &&
+                event.boundary === "AH10BeforeLeaseRenewal" &&
+                event.executionId === oldAction.executionId,
+            ),
+          (event) => event !== undefined,
+          20_000,
+        );
+        if (oldLeasePause === undefined)
+          throw new Error(
+            "AH10 old Reply lease renewal pause probe was absent",
+          );
+        expect(oldLeasePause.fencingGeneration).toBe(0);
+        await waitForPublic(
+          async () =>
+            readRows(fixture.databaseFile).leases.find(
+              (lease) => lease.execution_id === oldAction.executionId,
+            ),
+          (lease) =>
+            lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
+          35_000,
+        );
+        newDaemon = await fixture.startAdditionalDaemon({
+          entry: ah10Child,
+          daemonEnvironment: {
+            ARBOR_AH10_ROLE: "new",
+            ARBOR_AH10_GATE_ACTION_KIND: "send_message",
+            ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
+          },
+          onStdout: (line) => pushProbe(events, line),
+        });
+        const newLeaseProbe = await waitForPublic(
+          async () =>
+            events.find(
+              (event) =>
+                event.role === "new" &&
+                event.boundary === "AH10AfterLeaseAcquired" &&
+                event.executionId === oldAction.executionId,
+            ),
+          (event) => event !== undefined,
+          45_000,
+        );
+        expect(newLeaseProbe?.fencingGeneration).toBe(1);
+        const newIntent = await waitForPublic(
+          async () =>
+            events.find(
+              (event) =>
+                event.role === "new" &&
+                event.boundary === "AH7AfterActionIntentCommit" &&
+                event.actionKind === "send_message" &&
+                event.executionId === oldAction.executionId &&
+                event.actionIndex === 0,
+            ),
+          (event) => event !== undefined,
+          30_000,
+        );
+        expect(newIntent?.providerTurnId).toBe(providerTurnId);
+        expect(newIntent?.logicalActionId).toBe(logicalActionId);
+        expect(newIntent?.callRef).toBe(callRef);
+        releaseGate(fixture, "old", "action-intent");
+        if (crashSide === "before") {
+          const precommit = await waitForPublic(
+            async () =>
+              events.find(
+                (event) =>
+                  event.role === "old" &&
+                  event.boundary === "AH10BeforeFencedReceiptCommit" &&
+                  event.executionId === oldAction.executionId,
+              ),
+            (event) => event !== undefined,
+            15_000,
+          );
+          expect(precommit?.commandId).toMatch(/^cmd_/u);
+          oldRejectedCommandId = precommit?.commandId;
+          const independentRead = readRows(fixture.databaseFile);
+          expect(fencedReceipts(independentRead)).toHaveLength(0);
+          expect(independentRead.messages).toEqual([query]);
+          expect(independentRead.messageEvents).toHaveLength(1);
+          expect(independentRead.inbox).toHaveLength(1);
+        } else {
+          const rejected = await waitForPublic(
+            async () => fencedReceipts(readRows(fixture.databaseFile)),
+            (rows) => rows.length === 1,
+            15_000,
+          );
+          oldRejectedCommandId = rejected[0]?.command_id;
+          expect(oldRejectedCommandId).toMatch(/^cmd_/u);
+        }
+        await fixture.crash();
+        beforeCrash = readRows(fixture.databaseFile);
+        expect(fencedReceipts(beforeCrash)).toHaveLength(
+          crashSide === "before" ? 0 : 1,
+        );
+        if (crashSide === "before") {
+          expect(
+            beforeCrash.commands.some(
+              (row) => row.command_id === oldRejectedCommandId,
+            ),
+          ).toBe(false);
+        }
+        expect(beforeCrash.messages).toEqual([query]);
+        expect(beforeCrash.messageEvents).toHaveLength(1);
+        expect(beforeCrash.inbox).toHaveLength(1);
+        expect(
+          beforeCrash.correlations.filter(
+            (row) =>
+              row.correlation_id === query.correlation_id &&
+              row.closed_at !== null,
+          ),
+        ).toHaveLength(0);
+        expect(beforeCrash.actions).toContainEqual(
+          expect.objectContaining({
+            execution_id: oldAction.executionId,
+            provider_turn_id: providerTurnId,
+            logical_action_id: logicalActionId,
+            call_ref: callRef,
+            action_kind: "send_message",
+            state: "Pending",
+            observation_source_ref: null,
+          }),
+        );
+        expect(
+          beforeCrash.observations.filter((row) =>
+            row.source_ref.startsWith(`observation_${oldAction.executionId}_`),
+          ),
+        ).toHaveLength(0);
+        expect(replyProviderCalls).toHaveLength(1);
+      }
+      if (newDaemon === undefined) {
+        newDaemon = await fixture.startAdditionalDaemon({
+          entry: ah10Child,
+          daemonEnvironment: {
+            ARBOR_AH10_ROLE: "new",
+            ARBOR_AH10_GATE_ACTION_KIND: "send_message",
+            ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
+          },
+          onStdout: (line) => pushProbe(events, line),
+        });
+      }
+      const newLease = await waitForPublic(
+        async () =>
+          events.find(
+            (event) =>
+              event.role === "new" &&
+              event.boundary === "AH10AfterLeaseAcquired" &&
+              event.executionId === oldAction.executionId,
+          ),
+        (event) => event !== undefined,
+        45_000,
+      );
+      if (newLease === undefined) {
+        throw new Error("AH10 new Reply owner did not acquire the lease");
+      }
+      expect(newLease.fencingGeneration).toBe(1);
+      const newAction = await waitForPublic(
+        async () =>
+          events.find(
+            (event) =>
+              event.role === "new" &&
+              event.boundary === "AH7AfterActionIntentCommit" &&
+              event.actionKind === "send_message" &&
+              event.executionId === oldAction.executionId &&
+              event.actionIndex === 0,
+          ),
+        (event) => event !== undefined,
+        30_000,
+      );
+      if (newAction === undefined) {
+        throw new Error("AH10 new Reply ActionIntent probe was absent");
+      }
+      expect(newAction.providerTurnId).toBe(providerTurnId);
+      expect(newAction.callRef).toBe(callRef);
+      expect(newAction.logicalActionId).toBe(logicalActionId);
+      releaseGate(fixture, "new", "action-intent");
+      const recovered = await waitForPublic(
+        async () => readRows(fixture.databaseFile),
+        (rows) =>
+          rows.actions.some(
+            (action) =>
+              action.execution_id === oldAction.executionId &&
+              action.logical_action_id === logicalActionId &&
+              action.state === "Applied",
+          ),
+        30_000,
+      );
+      const recoveredReply = recovered.messages.filter(
+        (message) =>
+          message.kind === "Reply" &&
+          message.sender_workspace_id === project.rootWorkspaceId &&
+          message.recipient_workspace_id === childWorkspaceId,
+      );
+      expect(recovered.messages).toHaveLength(2);
+      expect(recoveredReply).toHaveLength(1);
+      const reply = recoveredReply[0];
+      expect(reply?.correlation_id).toBe(query.correlation_id);
+      expect(recovered.inbox).toHaveLength(2);
+      expect(recovered.messageEvents).toHaveLength(2);
+      const replyEvents = recovered.messageEvents.filter(
+        (event) => event.aggregate_ref === reply?.message_id,
+      );
+      expect(replyEvents).toHaveLength(1);
+      expect(replyEvents[0]).toMatchObject({
+        event_type: "MessageSent",
+        correlation_ref: query.correlation_id,
+      });
+      expect(
+        recovered.commands.filter((command) => {
+          if (
+            command.resolution !== "Committed" ||
+            command.result_json === null
+          ) {
+            return false;
+          }
+          try {
+            return (
+              (JSON.parse(command.result_json) as { messageId?: string })
+                .messageId === reply?.message_id
+            );
+          } catch {
+            return false;
+          }
+        }),
+      ).toHaveLength(1);
+      const committedReplyReceipt = recovered.commands.find(
+        (command) =>
+          command.resolution === "Committed" &&
+          command.result_json !== null &&
+          (JSON.parse(command.result_json) as { messageId?: string })
+            .messageId === reply?.message_id,
+      );
+      expect(replyEvents[0]?.caused_by_command_id).toBe(
+        committedReplyReceipt?.command_id,
+      );
+      if (crashSide === "committed") {
+        expect(
+          beforeCrash.commands.find(
+            (command) =>
+              command.command_id === committedReplyReceipt?.command_id,
+          ),
+        ).toMatchObject({ resolution: "Committed" });
+      } else {
+        expect(committedReplyReceipt?.command_id).not.toBe(
+          oldRejectedCommandId,
+        );
+        expect(fencedReceipts(recovered)).toHaveLength(
+          crashSide === "before" ? 0 : 1,
+        );
+      }
+      expect(
+        recovered.correlations.filter(
+          (correlation) =>
+            correlation.correlation_id === query.correlation_id &&
+            correlation.closed_at !== null,
+        ),
+      ).toHaveLength(1);
+      const recoveredReplyAction = recovered.actions.find(
+        (action) =>
+          action.execution_id === oldAction.executionId &&
+          action.logical_action_id === logicalActionId,
+      );
+      expect(recoveredReplyAction).toMatchObject({
+        provider_turn_id: providerTurnId,
+        call_ref: callRef,
+        action_kind: "send_message",
+        state: "Applied",
+      });
+      expect(
+        recovered.observations.filter(
+          (observation) =>
+            observation.source_ref ===
+            recoveredReplyAction?.observation_source_ref,
+        ),
+      ).toHaveLength(1);
+      expect(
+        recovered.providerAttempts.filter(
+          (attempt) => attempt.provider_turn_id === providerTurnId,
+        ),
+      ).toEqual([
+        expect.objectContaining({ outcome: "Success", attempt_no: 0 }),
+      ]);
+      expect(replyProviderCalls).toHaveLength(1);
+      expect(newDaemon.daemonErrors).toEqual([]);
+    },
+    180_000,
+  );
 
   it.each(["before", "after"] as const)(
     "takes over a DecisionRequest after killing gen0 %s its FencingRejected receipt commits",
