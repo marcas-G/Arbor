@@ -70,6 +70,10 @@ change its receipt/recovery exception. F21 and FT-DG-01 remain isolated.
 
 ## Landing self-check and authorization boundary
 
+- Design landing commit: `712b383b51fb3dee4c5aa16aba48d9f8ecd50aab`. The commit
+  contains exactly the 21 accepted owner files, fixed
+  proposal, readiness review, acceptance record, and the two independent
+  landing reviews (26 files total).
 - The fixed accepted package was applied only to the owner set named above;
   this record is the F23 planning acceptance/landing artifact.
 - `git diff --check -- docs/design` passes. No test, migration, production
@@ -91,3 +95,13 @@ change its receipt/recovery exception. F21 and FT-DG-01 remain isolated.
 - The reviews do not authorize runtime implementation. **Runtime
   implementation remains NOT AUTHORIZED**; separate implementation
   authorization is required.
+
+## Final landing audit
+
+- Landing commit: `712b383b51fb3dee4c5aa16aba48d9f8ecd50aab`.
+- Accepted proposal SHA-256: `DD24C9550BFE253D94DE7236255E5E8E710A7E612A57607E474E8A90653529FC`.
+- All 21 owner-file SHA-256 digests match this record; the staged landing
+  manifest contained exactly 26 expected files and no source, test, or
+  migration paths. `git diff --cached --check` passed before commit.
+- Both independent reviews report **Blocking = 0**. No implementation tests
+  were run. Runtime implementation remains **NOT AUTHORIZED**.
