@@ -232,7 +232,7 @@ const parseWorkspacesResult = (row: { payload_json: string }) => {
 };
 
 describe("AH10 direct-child AssignWork generation takeover", () => {
-  it.each(["before", "after"] as const)(
+  it.each(["committed"] as const)(
     "takes over direct-child AssignWork after gen0 %s its command boundary",
     async (rawCrashSide) => {
       const crashSide = rawCrashSide as "before" | "after" | "committed";

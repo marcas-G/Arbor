@@ -649,6 +649,43 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
     expect(committedWorkEffects).toBe(1);
   });
 
+  it("fails closed when a prior Committed receipt points to another Workspace", async () => {
+    const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+    const priorCommandId = parse(CommandId)(
+      `cmd_${newUuid7("assign-work-command", occurrence)}`,
+    );
+    const workId = parse(WorkId)(`wrk_${newUuid7("assign-work", occurrence)}`);
+    const wrongWorkspaceId = parse(WorkspaceId)(
+      "ws_018f2b3c-4d5e-7abc-8def-0123456789a9",
+    );
+    const receipts = new Map<string, unknown>([
+      [
+        String(priorCommandId),
+        {
+          resolution: {
+            _tag: "Committed",
+            result: { workId, workspaceId: wrongWorkspaceId },
+          },
+        },
+      ],
+    ]);
+    let gatewayCalls = 0;
+    const gateway = {
+      execute: () => {
+        gatewayCalls += 1;
+        return Effect.die("receipt mismatch must not submit another command");
+      },
+    } as unknown as CommandGatewayService;
+
+    const result = await runHandler(makeHandler(gateway, receipts), 1);
+
+    expect(result).toMatchObject({
+      _tag: "Rejected",
+      cause: { _tag: "AgentActionOperationalFailure" },
+    });
+    expect(gatewayCalls).toBe(0);
+  });
+
   it("does not treat an older domain rejection as takeover eligibility", async () => {
     const receipts = new Map<string, unknown>();
     const calls: string[] = [];

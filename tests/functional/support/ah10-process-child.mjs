@@ -52,8 +52,13 @@ const qualificationProbe = async (event) => {
   if (
     event.boundary === "AH10AfterControlHandlerReturnBeforeObservationCommit"
   ) {
-    emit(event);
-    if (process.env.ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN === "1") {
+    const actionKind = readActionKind(event.logicalActionId);
+    const gateActionKind = process.env.ARBOR_AH10_PAUSE_AFTER_CONTROL_KIND;
+    if (
+      process.env.ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN === "1" &&
+      (gateActionKind === undefined || actionKind === gateActionKind)
+    ) {
+      emit({ ...event, actionKind });
       await waitForGate("control-return", event);
     }
   }
