@@ -451,13 +451,22 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
         async () => recoverySnapshot(fixture.databaseFile),
         (value) => {
           if (value.verifications.length !== 1) return false;
+          const verification = value.verifications[0];
           const verifierExecutionId = JSON.parse(
-            String(value.verifications[0]?.verification_execution_ids ?? "[]"),
+            String(verification?.verification_execution_ids ?? "[]"),
           )[0];
-          return value.executions.some(
-            (execution) =>
-              execution.execution_id === verifierExecutionId &&
-              execution.settled_at === null,
+          return (
+            typeof verifierExecutionId === "string" &&
+            value.executions.some(
+              (execution) =>
+                execution.execution_id === verifierExecutionId &&
+                execution.settled_at === null,
+            ) &&
+            value.verificationExecutions.some(
+              (binding) =>
+                binding.verification_id === verification?.verification_id &&
+                binding.execution_id === verifierExecutionId,
+            )
           );
         },
         45_000,

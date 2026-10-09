@@ -165,3 +165,32 @@ AH10 remains PARTIAL. The direct-child Committed-receipt / Action-Pending
 stale-reference outcome still requires manual governance of exact target
 binding before implementation; the open proposal remains unaccepted, and no
 design semantics or implementation authorization were added.
+
+## 2026-10-09 authorization and qualification-suite promotion
+
+The user subsequently authorized implementation with the UI reply
+“授权实施（推荐）” in response to a question that explicitly covered migration
+0033, atomic opaque-ref-to-Workspace binding, durable Attention for unproven
+old Committed receipts, and A/B real-daemon commit-boundary cases. The
+authorization is recorded in
+`planning/results/AH10-direct-child-assign-work-target-binding-governance.md`;
+the normalized marker there is not literal user input. The prior paragraphs
+above describe the state before that separate authorization.
+
+The already-green direct-child receipt-binding and P10 Attention materialization
+process qualifications were moved out of `tests/functional/pending/` into
+`tests/functional/process/` and added to the default functional include through
+`vitest.functional.config.ts`. Their dedicated focused config is now
+`vitest.ah10-qualification.config.ts`. The focused 21/21 result and required
+local checks are recorded in the follow-up section of
+`AH10-direct-child-target-binding-implementation.result.md`.
+
+The integrating agent's final gates passed after this promotion:
+`pnpm check` PASS and `pnpm test:functional` PASS with Vitest 33/33 files /
+144/144 tests plus Playwright 3/3. Both promoted suites were included in the
+default run and contributed 21/21 passing tests. F20 ran from repository
+`HEAD` only and is baseline-only for the modified worktree. AH10 remains
+PARTIAL beyond this scoped matrix. P32 evidence remains limited to the
+schema-compared equivalent fixture, not a database emitted by an old binary;
+raw-ID FencingRejected actions without accepted opaque-ref binding evidence
+remain fail-closed.

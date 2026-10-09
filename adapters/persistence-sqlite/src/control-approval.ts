@@ -26,6 +26,8 @@ interface Row {
   readonly decided_by: string | null;
   readonly decision_reason: string | null;
   readonly consumed_at: string | null;
+  readonly consumed_by?: string | null;
+  readonly binding_proven?: number;
 }
 
 const toRecord = (row: Row): ControlApprovalRecord => ({
@@ -46,6 +48,10 @@ const toRecord = (row: Row): ControlApprovalRecord => ({
   decidedBy: row.decided_by,
   decisionReason: row.decision_reason,
   consumedAt: row.consumed_at,
+  ...(row.binding_proven === undefined
+    ? {}
+    : { bindingProven: Number(row.binding_proven) === 1 }),
+  ...(row.consumed_by === undefined ? {} : { consumedBy: row.consumed_by }),
 });
 
 const params = (record: ControlApprovalRecord): ReadonlyArray<unknown> => [
@@ -141,7 +147,7 @@ export const ControlApprovalStoreLive: Layer.Layer<
           const rows = yield* run(
             sql.unsafe<Row>(
               unified
-                ? "SELECT approval_id, project_id, workspace_id, execution_id, stable_action_id, action_digest, arguments_json, target_ref, control_basis_digest, state, revision, requested_at, expires_at, decided_at, decided_by, decision_reason, consumed_at FROM action_approvals WHERE approval_id = ? AND route_kind = 'Control'"
+                ? "SELECT approval_id, project_id, workspace_id, execution_id, stable_action_id, action_digest, arguments_json, target_ref, control_basis_digest, state, revision, requested_at, expires_at, decided_at, decided_by, decision_reason, consumed_at, consumed_by, binding_proven FROM action_approvals WHERE approval_id = ? AND route_kind = 'Control'"
                 : "SELECT * FROM control_action_approvals WHERE approval_id = ?",
               [approvalId],
             ),
@@ -178,15 +184,27 @@ export const ControlApprovalStoreLive: Layer.Layer<
           const unified = yield* hasUnifiedLedger;
           const rows = yield* run(
             sql.unsafe<Row>(
-              `UPDATE ${unified ? "action_approvals" : "control_action_approvals"} SET state = 'Consumed', revision = revision + 1, consumed_at = ? WHERE approval_id = ? AND revision = ? AND state = 'Approved' AND action_digest = ? AND control_basis_digest = ? AND expires_at > ? RETURNING approval_id, project_id, workspace_id, execution_id, stable_action_id, action_digest, arguments_json, target_ref, control_basis_digest, state, revision, requested_at, expires_at, decided_at, decided_by, decision_reason, consumed_at`,
-              [
-                input.consumedAt,
-                input.approvalId,
-                input.expectedRevision,
-                input.actionDigest,
-                input.controlBasisDigest,
-                input.consumedAt,
-              ],
+              unified
+                ? "UPDATE action_approvals SET state = 'Consumed', revision = revision + 1, consumed_at = ?, consumed_by = ? WHERE approval_id = ? AND route_kind = 'Control' AND binding_proven = 1 AND revision = ? AND state = 'Approved' AND action_digest = ? AND control_basis_digest = ? AND expires_at > ? RETURNING approval_id, project_id, workspace_id, execution_id, stable_action_id, action_digest, arguments_json, target_ref, control_basis_digest, state, revision, requested_at, expires_at, decided_at, decided_by, decision_reason, consumed_at, consumed_by, binding_proven"
+                : "UPDATE control_action_approvals SET state = 'Consumed', revision = revision + 1, consumed_at = ? WHERE approval_id = ? AND revision = ? AND state = 'Approved' AND action_digest = ? AND control_basis_digest = ? AND expires_at > ? RETURNING approval_id, project_id, workspace_id, execution_id, stable_action_id, action_digest, arguments_json, target_ref, control_basis_digest, state, revision, requested_at, expires_at, decided_at, decided_by, decision_reason, consumed_at",
+              unified
+                ? [
+                    input.consumedAt,
+                    input.consumedBy ?? null,
+                    input.approvalId,
+                    input.expectedRevision,
+                    input.actionDigest,
+                    input.controlBasisDigest,
+                    input.consumedAt,
+                  ]
+                : [
+                    input.consumedAt,
+                    input.approvalId,
+                    input.expectedRevision,
+                    input.actionDigest,
+                    input.controlBasisDigest,
+                    input.consumedAt,
+                  ],
             ),
           );
           return rows[0] === undefined

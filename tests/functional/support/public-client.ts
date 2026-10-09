@@ -99,6 +99,9 @@ export const createFunctionalProject = async (
   client: PublicClient,
   workspaceDirectory: string,
   name: string,
+  options: {
+    readonly rootWorkspacePolicy?: Readonly<Record<string, unknown>>;
+  } = {},
 ): Promise<FunctionalProject> => {
   const projectId = functionalId("prj");
   const rootWorkspaceId = functionalId("ws");
@@ -136,7 +139,10 @@ export const createFunctionalProject = async (
         _tag: "ResponsibilityBoundAgentBinding",
         workspaceId: rootWorkspaceId,
       },
-      workspacePolicy: { delegationCeiling: 1 },
+      workspacePolicy: {
+        delegationCeiling: 1,
+        ...options.rootWorkspacePolicy,
+      },
       workspacePolicyRevision: 0,
       revision: 0,
     },

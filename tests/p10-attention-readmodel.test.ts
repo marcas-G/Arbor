@@ -216,6 +216,43 @@ describe("P10-004 Attention read-model — six sources / severity / target / ded
     expect(rows).toHaveLength(7);
   });
 
+  it("AssignWork binding failures map to Action Required at the Parent with fact-id dedup", () => {
+    const attentionFactId = `att_${"a".repeat(64)}`;
+    const rows = deriveAttentionRows({
+      ...sixSourceFacts,
+      assignWorkBindingFailureEvents: [
+        {
+          attentionFactId,
+          executionId: "exe_assign_work_binding",
+          targetWorkspaceId: WS_A,
+          logicalActionId: "lac_assign_work_binding",
+          committedCommandId: "cmd_assign_work_binding",
+          failureCode: "ReceiptMismatch",
+          occurredAt: "t6",
+        },
+        {
+          attentionFactId,
+          executionId: "exe_assign_work_binding",
+          targetWorkspaceId: WS_A,
+          logicalActionId: "lac_assign_work_binding",
+          committedCommandId: "cmd_assign_work_binding",
+          failureCode: "ReceiptMismatch",
+          occurredAt: "t6",
+        },
+      ],
+    });
+    expect(rowsOf("AssignWorkTargetBindingFailure", rows)).toEqual([
+      {
+        source: "AssignWorkTargetBindingFailure",
+        severity: "ActionRequired",
+        targetWorkspaceId: WS_A,
+        dedupKey: attentionFactId,
+        summary: expect.stringContaining("ReceiptMismatch"),
+        occurredAt: "t6",
+      },
+    ]);
+  });
+
   it("GAP-01 predicate edge: active producer WITH Open Work does not report", () => {
     const rows = deriveAttentionRows({
       ...sixSourceFacts,

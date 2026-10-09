@@ -1,4 +1,8 @@
 import {
+  type AssignWorkTargetBindingRepositoryService,
+  Clock,
+  type ClockService,
+  type ControlApprovalStoreService,
   type ConversationResponseJobStoreService,
   type ExecutionRepositoryService,
   type InboxProjectionStoreService,
@@ -27,10 +31,18 @@ import { makeRegisterProjectToolHandler } from "./register-project-tool.js";
 import { makeRevokePermissionHandler } from "./revoke-permission.js";
 
 export interface P1CommandDependencies {
+  readonly clock?: Pick<ClockService, "now">;
   readonly projects: ProjectRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
   readonly works: WorkRepositoryService;
+  readonly executions?: Pick<ExecutionRepositoryService, "findById">;
+  readonly bindings?: Pick<AssignWorkTargetBindingRepositoryService, "insert">;
+  readonly grants?: Pick<PermissionGrantRepositoryService, "findById">;
+  readonly approvals?: Pick<
+    ControlApprovalStoreService,
+    "findById" | "consumeApproved"
+  >;
 }
 
 export const makeP1CommandHandlers = (
@@ -85,7 +97,9 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
     const workspaces = yield* WorkspaceRepository;
     const sessions = yield* SessionRepository;
     const works = yield* WorkRepository;
+    const clock = yield* Effect.serviceOption(Clock);
     const handlers = makeP1CommandHandlers({
+      ...(Option.isSome(clock) ? { clock: clock.value } : {}),
       projects,
       workspaces,
       sessions,
