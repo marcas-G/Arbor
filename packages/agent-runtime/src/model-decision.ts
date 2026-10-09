@@ -534,6 +534,17 @@ export const runModelDecision = (
           )
           .pipe(Effect.mapError(failure));
         if (pendingNative.length > 1) {
+          if (options.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "AH19NativeCheckpointRecovery",
+                  stage: `NativeCompactionCandidateAmbiguity:count=${pendingNative.length}`,
+                  executionId: String(input.execution.executionId),
+                  providerTurnId: pendingNative[0]?.providerTurnId ?? "unknown",
+                }) ?? Promise.resolve(),
+            );
+          }
           return yield* Effect.fail(
             failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
           );
@@ -2173,12 +2184,41 @@ export const runModelDecision = (
                 ),
               }
             : undefined;
+        let checkpointRawSourceIsValid = false;
+        if (checkpointManifest !== null) {
+          try {
+            const rawManifest = JSON.parse(
+              checkpointManifest.manifestJson,
+            ) as Record<string, unknown>;
+            const rawSource = rawManifest.sourceAgentLoopStep;
+            checkpointRawSourceIsValid =
+              typeof rawSource === "object" &&
+              rawSource !== null &&
+              !Array.isArray(rawSource) &&
+              (rawSource as Record<string, unknown>).executionId ===
+                input.execution.executionId &&
+              Number.isSafeInteger(
+                (rawSource as Record<string, unknown>).logicalStepNo,
+              ) &&
+              Number((rawSource as Record<string, unknown>).logicalStepNo) >=
+                0 &&
+              Number.isSafeInteger(
+                (rawSource as Record<string, unknown>).repairAttempt,
+              ) &&
+              Number((rawSource as Record<string, unknown>).repairAttempt) >=
+                0 &&
+              typeof (rawSource as Record<string, unknown>).providerTurnId ===
+                "string";
+          } catch {
+            checkpointRawSourceIsValid = false;
+          }
+        }
         if (options.qualificationProbe !== undefined) {
           yield* Effect.promise(
             () =>
               options.qualificationProbe?.({
                 boundary: "AH19NativeCheckpointRecovery",
-                stage: `NativeCheckpointEvidence:frontier=${checkpointFrontier !== null}:source=${checkpointSourceIdentity !== undefined}:receipt=${checkpointReceipt._tag}:manifestTurn=${checkpointManifestJson?.providerTurnId === checkpointNativeProviderTurnId}:requestEpoch=${checkpointManifestJson?.contextEpoch === nativeCheckpoint.fromEpoch}`,
+                stage: `NativeCheckpointEvidence:frontier=${checkpointFrontier !== null}:source=${checkpointRawSourceIsValid}:receipt=${checkpointReceipt._tag}:manifestTurn=${checkpointManifestJson?.providerTurnId === checkpointNativeProviderTurnId}:requestEpoch=${checkpointManifestJson?.contextEpoch === nativeCheckpoint.fromEpoch}`,
                 executionId: String(input.execution.executionId),
                 providerTurnId: checkpointNativeProviderTurnId,
               }) ?? Promise.resolve(),

@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   type ProductionFixture,
@@ -373,6 +373,129 @@ const corruptOrdinaryNativeSourceIdentity = (
         `ordinary AH19 Native identity corruption missed ${field}`,
       );
     }
+  } finally {
+    db.close();
+  }
+};
+
+const appendSecondOrdinaryNativeCandidate = (
+  databaseFile: string,
+  providerTurnId: string,
+) => {
+  const db = new DatabaseSync(databaseFile);
+  try {
+    const turn = db
+      .prepare("SELECT * FROM provider_turns WHERE provider_turn_id = ?")
+      .get(providerTurnId) as Record<string, SQLInputValue> | undefined;
+    const manifest = db
+      .prepare(
+        "SELECT * FROM model_context_manifests WHERE provider_turn_id = ?",
+      )
+      .get(providerTurnId) as Record<string, SQLInputValue> | undefined;
+    if (turn === undefined || manifest === undefined) {
+      throw new Error("AH19 source Native candidate rows missing");
+    }
+    const secondTurnId = `${providerTurnId}_ambiguous`;
+    const secondManifestId = `${String(manifest.manifest_id)}_ambiguous`;
+    const secondManifestJson = JSON.parse(
+      String(manifest.manifest_json),
+    ) as Record<string, unknown>;
+    secondManifestJson.providerTurnId = secondTurnId;
+    const turnCopy = {
+      ...turn,
+      provider_turn_id: secondTurnId,
+      manifest_id: secondManifestId,
+    };
+    const manifestCopy = {
+      ...manifest,
+      manifest_id: secondManifestId,
+      provider_turn_id: secondTurnId,
+      manifest_json: JSON.stringify(secondManifestJson),
+    };
+    const insertRow = (table: string, row: Record<string, SQLInputValue>) => {
+      const columns = Object.keys(row);
+      db.prepare(
+        `INSERT INTO ${table} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+      ).run(...columns.map((column) => row[column] ?? null));
+    };
+    insertRow("provider_turns", turnCopy);
+    insertRow("model_context_manifests", manifestCopy);
+    const candidates = db
+      .prepare(
+        `SELECT m.provider_turn_id, m.session_id, m.context_epoch,
+                m.manifest_json, m.portable_request_json,
+                t.output_contract_ref
+           FROM model_context_manifests m
+           JOIN provider_turns t
+             ON t.provider_turn_id = m.provider_turn_id
+            AND t.manifest_id = m.manifest_id
+          WHERE m.session_id = ? AND m.context_epoch = ?
+            AND json_extract(m.manifest_json, '$.operationKind') = 'CompactionNative'`,
+      )
+      .all(
+        String(manifest.session_id),
+        Number(manifest.context_epoch),
+      ) as Array<{
+      provider_turn_id: string;
+      session_id: string;
+      context_epoch: number;
+      manifest_json: string;
+      portable_request_json: string;
+      output_contract_ref: string;
+    }>;
+    if (
+      candidates.length !== 2 ||
+      candidates.some(
+        (candidate) =>
+          candidate.session_id !== manifest.session_id ||
+          candidate.context_epoch !== manifest.context_epoch ||
+          candidate.output_contract_ref !== "provider-native-compaction-v1" ||
+          candidate.portable_request_json !== manifest.portable_request_json ||
+          JSON.parse(candidate.manifest_json).operationKind !==
+            "CompactionNative",
+      )
+    ) {
+      throw new Error(
+        "AH19 second Native candidate was not a valid same-epoch row",
+      );
+    }
+    return { secondTurnId, candidateCount: candidates.length };
+  } finally {
+    db.close();
+  }
+};
+
+const corruptNativeManifestFrontierHalfNull = (
+  databaseFile: string,
+  providerTurnId: string,
+  nullSide: "firstSequence" | "lastSequence",
+) => {
+  const db = new DatabaseSync(databaseFile);
+  try {
+    const row = db
+      .prepare(
+        `SELECT manifest_id, manifest_json FROM model_context_manifests
+          WHERE provider_turn_id = ?`,
+      )
+      .get(providerTurnId) as
+      | { manifest_id: string; manifest_json: string }
+      | undefined;
+    if (row === undefined) throw new Error("AH19 Native manifest missing");
+    const manifest = JSON.parse(row.manifest_json) as Record<string, unknown>;
+    const frontier = manifest.inputFrontier as
+      | Record<string, unknown>
+      | undefined;
+    if (
+      frontier === undefined ||
+      typeof frontier.firstSequence !== "number" ||
+      typeof frontier.lastSequence !== "number"
+    ) {
+      throw new Error("AH19 fixture did not form a non-empty Native frontier");
+    }
+    frontier[nullSide] = null;
+    db.prepare(
+      "UPDATE model_context_manifests SET manifest_json = ? WHERE manifest_id = ?",
+    ).run(JSON.stringify(manifest), row.manifest_id);
   } finally {
     db.close();
   }
@@ -1516,6 +1639,161 @@ describe("AH19 restart binding qualification", () => {
     expect(after.checkpoints[0]?.source_ref).toBe(nativeTurnId);
     expect(fixture.daemonErrors).toEqual([]);
   }, 120_000);
+
+  it("fails closed when ordinary Native startup has two same-epoch candidates", async () => {
+    const scenario = await startOrdinaryNativeAtCheckpointBoundary(
+      "AH17BeforeCheckpointEpochCommit",
+    );
+    const { fixture, project, workId, native, probe, childOutput } = scenario;
+    const ids = {
+      sessionId: project.rootSessionId,
+      executionId: probe.executionId,
+      workId,
+    };
+    const beforeKill = readSnapshot(fixture.databaseFile, ids);
+    expect(beforeKill.session?.context_epoch).toBe(0);
+    expect(beforeKill.checkpoints).toHaveLength(0);
+    expect(
+      beforeKill.providerTurns.find(
+        (turn) => turn.provider_turn_id === native.providerTurnId,
+      ),
+    ).toMatchObject({
+      settled_at: expect.any(String),
+      finish_reason: "Stop",
+      output_contract_ref: "provider-native-compaction-v1",
+    });
+    expect(
+      beforeKill.providerAttempts.filter(
+        (attempt) => attempt.provider_turn_id === native.providerTurnId,
+      ),
+    ).toEqual([expect.objectContaining({ outcome: "Success" })]);
+    await fixture.crash();
+    await waitForLeaseExpiry(
+      fixture,
+      project.rootSessionId,
+      probe.executionId,
+      workId,
+    );
+    const appended = appendSecondOrdinaryNativeCandidate(
+      fixture.databaseFile,
+      native.providerTurnId,
+    );
+    expect(appended.candidateCount).toBe(2);
+    const beforeRestart = readSnapshot(fixture.databaseFile, ids);
+    const requestsBeforeRestart = providerRequests.length;
+    await fixture
+      .restart({
+        entry: childEntry,
+        daemonEnvironment: {
+          ARBOR_AH19_BOUNDARY: "none",
+          ARBOR_AH19_BINDING_VARIANT: "A",
+          ARBOR_AH19_ORDINARY_WORK: "1",
+          ARBOR_AH19_CAPTURE_EXIT: "1",
+        },
+      })
+      .catch(() => undefined);
+    const outcome = await waitForPublic(
+      async () => ({
+        stage: childOutput.find((line) =>
+          line.includes("NativeCompactionCandidateAmbiguity:count=2"),
+        ),
+        snapshot: readSnapshot(fixture.databaseFile, ids),
+      }),
+      (state) => state.stage !== undefined,
+      30_000,
+    );
+    expect(outcome.stage).toContain(
+      "NativeCompactionCandidateAmbiguity:count=2",
+    );
+    expect(outcome.snapshot.session?.context_epoch).toBe(0);
+    expect(outcome.snapshot.checkpoints).toEqual(beforeRestart.checkpoints);
+    expect(outcome.snapshot.steps).toEqual(beforeRestart.steps);
+    expect(outcome.snapshot.execution?.settled_at).toBeNull();
+    expect(providerRequests).toHaveLength(requestsBeforeRestart);
+    expect(
+      providerRequests.filter(
+        (request) => request.providerTurnId === native.providerTurnId,
+      ),
+    ).toHaveLength(1);
+  }, 150_000);
+
+  it.each(["firstSequence", "lastSequence"] as const)(
+    "fails closed after restart when an ordinary Native frontier has only %s null",
+    async (nullSide) => {
+      const scenario = await startOrdinaryNativeAtCheckpointBoundary(
+        "AH17AfterCheckpointEpochCommit",
+      );
+      const { fixture, project, workId, native, probe, childOutput } = scenario;
+      const ids = {
+        sessionId: project.rootSessionId,
+        executionId: probe.executionId,
+        workId,
+      };
+      const beforeKill = readSnapshot(fixture.databaseFile, ids);
+      expect(beforeKill.session?.context_epoch).toBe(1);
+      expect(beforeKill.checkpoints).toHaveLength(1);
+      await fixture.crash();
+      await waitForLeaseExpiry(
+        fixture,
+        project.rootSessionId,
+        probe.executionId,
+        workId,
+      );
+      corruptNativeManifestFrontierHalfNull(
+        fixture.databaseFile,
+        native.providerTurnId,
+        nullSide,
+      );
+      const corrupted = readSnapshot(fixture.databaseFile, ids);
+      const changedTurn = corrupted.providerTurns.find(
+        (turn) => turn.provider_turn_id === native.providerTurnId,
+      );
+      const frontier = JSON.parse(changedTurn?.manifest_json ?? "{}")
+        .inputFrontier as {
+        firstSequence: number | null;
+        lastSequence: number | null;
+      };
+      expect(frontier[nullSide]).toBeNull();
+      expect(
+        frontier[
+          nullSide === "firstSequence" ? "lastSequence" : "firstSequence"
+        ],
+      ).toEqual(expect.any(Number));
+      const requestsBeforeRestart = providerRequests.length;
+      await fixture
+        .restart({
+          entry: childEntry,
+          daemonEnvironment: {
+            ARBOR_AH19_BOUNDARY: "none",
+            ARBOR_AH19_BINDING_VARIANT: "A",
+            ARBOR_AH19_ORDINARY_WORK: "1",
+            ARBOR_AH19_CAPTURE_EXIT: "1",
+          },
+        })
+        .catch(() => undefined);
+      const outcome = await waitForPublic(
+        async () => ({
+          stage: childOutput.find((line) =>
+            line.includes(
+              "NativeCheckpointEvidence:frontier=false:source=true",
+            ),
+          ),
+          snapshot: readSnapshot(fixture.databaseFile, ids),
+        }),
+        (state) => state.stage !== undefined,
+        30_000,
+      );
+      expect(outcome.stage).toContain(
+        "NativeCheckpointEvidence:frontier=false:source=true",
+      );
+      expect(outcome.snapshot.session?.context_epoch).toBe(1);
+      expect(outcome.snapshot.checkpoints).toEqual(beforeKill.checkpoints);
+      expect(outcome.snapshot.steps).toEqual(beforeKill.steps);
+      expect(outcome.snapshot.execution?.settled_at).toBeNull();
+      expect(providerRequests).toHaveLength(requestsBeforeRestart);
+    },
+    150_000,
+  );
 
   it.each(["WorkStartup", "ConversationCommon"] as const)(
     "fails closed at %s when the checkpoint owner is NextStepReady without a successor",
