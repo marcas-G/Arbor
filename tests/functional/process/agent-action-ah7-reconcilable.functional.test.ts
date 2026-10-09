@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
 import {
@@ -19,6 +20,38 @@ import {
 
 const fixtures: ProductionFixture[] = [];
 const crashChild = resolve("tests/functional/support/ah-crash-child.mjs");
+const readExecutionProviderTurns = (
+  databaseFile: string,
+  executionId: string,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const execution = db
+      .prepare(
+        "SELECT execution_id, episode_kind, episode_ref FROM executions WHERE execution_id = ?",
+      )
+      .get(executionId) as
+      | {
+          execution_id: string;
+          episode_kind: string;
+          episode_ref: string;
+        }
+      | undefined;
+    const providerTurns = db
+      .prepare(
+        "SELECT provider_turn_id, execution_id, settled_at, finish_reason FROM provider_turns WHERE execution_id = ? ORDER BY provider_turn_id",
+      )
+      .all(executionId) as Array<{
+      provider_turn_id: string;
+      execution_id: string;
+      settled_at: string | null;
+      finish_reason: string | null;
+    }>;
+    return { execution, providerTurns };
+  } finally {
+    db.close();
+  }
+};
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
@@ -151,15 +184,43 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       }
       await fixture.crash();
       const crashed = durableSnapshot(fixture.databaseFile);
+      if (hit?.executionId === undefined || hit.invocationId === undefined) {
+        throw new Error("AH7 shell probe lacks exact execution/tool identity");
+      }
+      const targetExecutionId = hit.executionId;
+      const crashedAction = crashed.actions[0];
+      if (
+        crashedAction?.logical_action_id === undefined ||
+        crashedAction.call_ref === undefined
+      ) {
+        throw new Error("AH7 crash snapshot lacks exact action identity");
+      }
+      expect(crashedAction.call_ref).toBe(hit.callRef);
+      const crashedTarget = readExecutionProviderTurns(
+        fixture.databaseFile,
+        targetExecutionId,
+      );
+      expect(crashedTarget.execution).toEqual({
+        execution_id: targetExecutionId,
+        episode_kind: "WorkEpisode",
+        episode_ref: workId,
+      });
       expect(crashed.toolInvocations).toEqual([
         expect.objectContaining({
-          invocation_id: hit?.invocationId,
+          invocation_id: hit.invocationId,
+          execution_id: targetExecutionId,
           side_effect_semantics: semantics,
           settled_at: null,
         }),
       ]);
       expect(crashed.actions).toEqual([
-        expect.objectContaining({ state: "Pending", action_kind: "shell" }),
+        expect.objectContaining({
+          execution_id: targetExecutionId,
+          logical_action_id: crashedAction.logical_action_id,
+          call_ref: crashedAction.call_ref,
+          state: "Pending",
+          action_kind: "shell",
+        }),
       ]);
       const effectPath = join(fixture.workspaceDirectory, effectFile);
       expect(existsSync(effectPath)).toBe(
@@ -194,10 +255,16 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           ),
         45_000,
       );
+      const recoveredTarget = readExecutionProviderTurns(
+        fixture.databaseFile,
+        targetExecutionId,
+      );
+      expect(recoveredTarget.execution).toEqual(crashedTarget.execution);
       expect(recovered.toolInvocations).toHaveLength(1);
       const settledInvocation = recovered.toolInvocations[0];
       expect(settledInvocation).toMatchObject({
-        invocation_id: hit?.invocationId,
+        invocation_id: hit.invocationId,
+        execution_id: targetExecutionId,
         side_effect_semantics: semantics,
       });
       if (semantics === "NonIdempotent") {
@@ -214,14 +281,18 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       }
       expect(recovered.actions).toEqual([
         expect.objectContaining({
-          logical_action_id: crashed.actions[0]?.logical_action_id,
+          execution_id: targetExecutionId,
+          logical_action_id: crashedAction.logical_action_id,
+          call_ref: crashedAction.call_ref,
           state: "ReconciliationPending",
         }),
       ]);
       const recoveredExecution = recovered.executions.find(
-        (execution) =>
-          execution.execution_id === crashed.executions[0]?.execution_id,
+        (execution) => execution.execution_id === targetExecutionId,
       );
+      const contentAfter = existsSync(effectPath)
+        ? readFileSync(effectPath, "utf8")
+        : null;
       expect(recoveredExecution).toMatchObject({
         settlement_kind: "OutcomeUnknown",
       });
@@ -232,11 +303,10 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           invocationRefs: [hit?.invocationId],
         },
       });
-      expect(recovered.providerTurns).toEqual(crashed.providerTurns);
+      expect(recoveredTarget.providerTurns).toEqual(
+        crashedTarget.providerTurns,
+      );
       expect(targetProviderCalls).toBe(1);
-      const contentAfter = existsSync(effectPath)
-        ? readFileSync(effectPath, "utf8")
-        : null;
       expect(contentAfter).toBe(contentBefore);
       expect(fixture.daemonErrors).toEqual([]);
     }, 90_000);

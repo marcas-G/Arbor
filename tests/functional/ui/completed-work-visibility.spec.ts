@@ -155,15 +155,29 @@ test("F22 a completed Work remains visible from its original page", async ({
     id: string,
   ) =>
     `${fixture.baseUrl}/p/${routeProject}/workspace/${routeWorkspace}/work/${id}`;
-  for (const route of [
-    workRoute(projectId, foreignRootWorkspaceId, workId),
-    workRoute(foreignProjectId, foreignRootWorkspaceId, workId),
-    workRoute(projectId, rootWorkspaceId, `wrk_${crypto.randomUUID()}`),
+  for (const target of [
+    { projectId, workspaceId: foreignRootWorkspaceId, workId },
+    {
+      projectId: foreignProjectId,
+      workspaceId: foreignRootWorkspaceId,
+      workId,
+    },
+    {
+      projectId,
+      workspaceId: rootWorkspaceId,
+      workId: `wrk_${crypto.randomUUID()}`,
+    },
   ]) {
     viewRequests.length = 0;
-    await privacyPage.goto(route);
+    await privacyPage.goto(
+      workRoute(target.projectId, target.workspaceId, target.workId),
+    );
     await expect(privacyPage.getByText("对象不存在")).toBeVisible();
-    expect(viewRequests.map(({ view }) => view)).toEqual(["work-detail"]);
+    expect(viewRequests.length).toBeGreaterThan(0);
+    for (const { view, request } of viewRequests) {
+      expect(view).toBe("work-detail");
+      expect(request).toEqual(target);
+    }
     await expect(privacyPage.getByText(`Complete ${marker}.`)).toHaveCount(0);
   }
   await privacyPage.close();
