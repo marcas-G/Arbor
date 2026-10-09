@@ -1,7 +1,7 @@
 # AH10 Direct-child AssignWork Target Binding — Governance Acceptance and Landing
 
 Date: 2026-10-09
-Decision: **Accepted exact fixed package; independent consistency review PASS (Blocking = 0); design landing prepared and not yet committed.**
+Decision: **Accepted exact fixed package; design landing committed; independent consistency review PASS (Blocking = 0).**
 Implementation: **Not authorized.**
 Proposal: `planning/proposals/AH10-direct-child-committed-receipt-target-binding-draft.md`
 Accepted SHA-256: `E71285B4908DE221D10A3AA7720DEB74ABDFBD99992640AD6152F534666B0DD9`
@@ -16,7 +16,7 @@ Acceptance does not authorize implementation. Migration 0033 is recorded as a de
 
 ## Baseline and landed owners
 
-Landing began at `HEAD = 868c940e66c51fb43784b83d80d0c8c2b0188200`, matching the proposal base. The current working-tree landing is intentionally uncommitted; therefore there is no landing commit SHA yet. Owning revisions are:
+Landing began at `HEAD = 868c940e66c51fb43784b83d80d0c8c2b0188200`, matching the proposal base. The exact nine-file design landing was committed as `932bfcd00884318e186aa60b547c6ffbbbb79f04` (`docs: land accepted AH10 target binding contract`). The independent review's seven owner hashes match the committed files, and the accepted proposal SHA was rechecked after the landing commit. Owning revisions are:
 
 | Owner | Baseline | Landed revision | Contract added |
 |---|---:|---:|---|
@@ -51,8 +51,8 @@ SHA-256 of the seven landed owner files at this uncommitted landing:
 
 **Pass (independent review; Blocking = 0):** `planning/results/AH10-target-binding-design-landing.review.md` independently verified the accepted proposal against the seven owner files, including SQL/FK completeness, authority-field binding, commit-side crash behavior, P10 projection atomicity, and the adversarial qualification requirements. It recomputed the accepted proposal SHA and all seven owner hashes; all match this record. SD §4.11 is the only semantic owner; DID/P1/P9 refer back to it. P9 owns the fact/event and P10 owns the projection. Failure severity, Parent Workspace target, stable dedup identity, subtree behavior, fixed summary, and absence of dismiss/repair are consistent between accepted proposal, P9/DID, and P10. Typed Grant and ActionApproval evidence flow from ControlAction through the Command boundary; ActionApproval consumption is CommandId-bound and atomic, while replay does not consume again. New effects require Active lifecycle and exact current placement; post-commit retirement permits only proof-complete convergence. Historical Committed receipts receive no inferred binding or backfill. Migration 0033 is additive and forward-only and was not executed.
 
-The independent review reports **Blocking = 0** for design content and cross-document consistency. The accepted design landing remains uncommitted at this decision-record revision; record its commit SHA here after the landing commit, then record the resulting audit-record commit SHA in the final audit chain. This governance acceptance and review do not authorize implementation. A separate explicit token `AUTHORIZE_AH10_ASSIGN_WORK_TARGET_BINDING_IMPLEMENTATION` is required before implementation.
+The independent review reports **Blocking = 0** for design content and cross-document consistency. The design landing commit is `932bfcd00884318e186aa60b547c6ffbbbb79f04`; this record update is the separate audit-chain follow-up commit. Its own commit SHA is reported externally to avoid a self-referential commit record. This governance acceptance and review do not authorize implementation. A separate explicit token `AUTHORIZE_AH10_ASSIGN_WORK_TARGET_BINDING_IMPLEMENTATION` is required before implementation.
 
 ## Scope and repository state
 
-The only intended files in the design landing commit are the seven owning documents above, this decision record, and the independent review record. The proposal, F23 materials, implementation/test files, untracked P12 material, and the preserved dogfood database remain outside this landing. Existing unrelated working-tree changes were preserved. No files were staged or committed at the time this record was first prepared.
+The design landing commit contains exactly the seven owning documents above, this decision record, and the independent review record. The proposal, F23 materials, implementation/test files, untracked P12 material, and the preserved dogfood database remain outside the landing commit. Existing unrelated working-tree changes remain unstaged and uncommitted. This follow-up changes only this governance record; no implementation or migration was performed.
