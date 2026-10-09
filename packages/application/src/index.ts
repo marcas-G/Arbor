@@ -10,6 +10,7 @@ export * from "./conversation-response-runtime.js";
 export * from "./dependency-coordinator.js";
 export * from "./durability.js";
 export * from "./environment-drift.js";
+export * from "./external-command-codec.js";
 export * from "./fingerprint.js";
 export * from "./formation-consumer.js";
 export * from "./formation-plan.js";
