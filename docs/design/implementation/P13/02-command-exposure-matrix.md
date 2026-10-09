@@ -5,9 +5,11 @@
 
 ## 1. Policy（frozen）
 
-每个 wire 级 commandType 归入四类之一，**分类只约束 UI 主动暴露，不改变
-服务器对任意 envelope 的接收与裁决**（Authority Resolver 仍是唯一
-enforcement；`02` 分类不是权限系统）：
+每个 wire 级 commandType 归入四类之一，**分类只约束 UI 主动暴露**；该
+矩阵不是服务端 codec 或 authority 注册表。服务端外部接收还要求
+DID §4.1B / P12 `10` §3 的认证、当前 `RegisteredCommandType` 严格 wire-v1
+codec 和原有起源政策；通过 codec 不授予权限，Authority Resolver 与
+Command Gateway 仍执行各自的 authority gate。
 
 | 类别 | 定义 | UI 政策 |
 |---|---|---|
@@ -17,6 +19,66 @@ enforcement；`02` 分类不是权限系统）：
 | **Recovery-only** | recovery / ops 通道专用 | 不暴露；CLI/ops 面拥有 |
 
 ## 2. Matrix（wire 级 commandType 全集）
+
+UI 暴露矩阵与外部 codec 注册是两个独立集合。当前外部 codec descriptor
+coverage 与 origin policy 由下表登记；本节既有矩阵仍只拥有 UI 暴露类别。
+Factory-only commands 不进入 `RegisteredCommandType` 或当前 codec 集合。
+Future composition registration 需先更新并接受 codec/origin scope，不会
+因存在 handler factory 而自动变为 UI 可见。
+
+### 2.1 当前 production 外部 codec 注册（DID §4.1B）
+
+下表与当前 `apps/single-workspace/src/registry.ts` 实际组合的 26 个
+commandType 一一对应。Codec owner 列指向 semantic payload 的唯一权威
+契约；codec 只做严格结构验证。External policy 重述 owning phase 的起源
+政策，不新增授权。无 External 入口的类型仍须有 typed 内部 semantic
+validator。
+
+| commandType | Payload / codec owner | External origin policy |
+|---|---|---|
+| `CreateProject` | P1 `01` §5 | human/bootstrap |
+| `CreateChildWorkspace` | P1 `01` §6 | reject external |
+| `AssignWork` | P1 `01` §7 | reject external; agent-originated |
+| `RenameProject` | P15 project-management `01` | reject external |
+| `CloseProject` | P15 project-management `01` | reject external |
+| `SelectCurrentWork` | P5 `01` §3.1 / owning handler contract | reject external; scheduler-originated |
+| `AdmitExecution` | P2 `01` §5 | reject external under P13 U-3 |
+| `StopExecution` | P2 `01` §6 | external human/parent path allowed; runtime path remains typed internal |
+| `SettleExecution` | P2 `01` §7 | reject external; ExecutionOrigin/RecoveryController |
+| `SendMessage` | P6 `02` §3 | reject external; Agent-originated |
+| `DeclareDependency` | P7 `01` §2 | reject external; producer Agent |
+| `SatisfyDependency` | P7 `01` §4 | reject external; dependency coordinator |
+| `ProduceDeliverable` | P7 `01` §3 | reject external; producer Agent |
+| `RecordDecision` | P6 `01` §4 | external human governance path |
+| `ResolveControlApproval` | DID §4.2 / P4/P12 approval-decision contract | external human approval path |
+| `SteerWork` | P6 `04` §2 | external human path |
+| `AcceptWorkOutcome` | P8 `01` §4 | external root-parent/human path; parent-agent path remains typed internal |
+| `CompleteWork` | P8 `01` §5 | reject external; completion consumer |
+| `StartVerification` | P8 `01` §1 | reject external; Verification consumer/runtime |
+| `RecordVerificationEvidence` | P8 `01` §2 | reject external; verifier runtime |
+| `ConcludeVerification` | P8 `01` §3 | reject external; Verification consumer/runtime |
+| `GrantPermission` | P12 `02` §5 | external only when P12 authority resolves the principal |
+| `RevokePermission` | P12 `02` §5 | external only when P12 authority resolves the principal |
+| `SubmitHumanMessage` | P14 `01` §1 | external authenticated human path |
+| `ResumeConversationResponse` | P17 `05` §1 | reject external unless P17 explicitly establishes that route |
+| `CancelConversationResponse` | P17 `05` §2 | reject external unless P17 explicitly establishes that route |
+
+The following handler factories are not composed into the current production
+registry. They have no current descriptor, are not `RegisteredCommandType`
+members, and are excluded from the current F23 qualification matrix:
+
+| Factory command | Payload owner | Current status |
+|---|---|---|
+| `ReviseDependencyContract` | P7 `01` §7 | factory only; separate accepted registration/codec scope update required before reachability |
+| `WithdrawDependency` | P7 `01` §5 | factory only; separate accepted registration/codec scope update required before reachability |
+| `MarkDependencyUnfulfillable` | P7 `01` §6 | factory only; separate accepted registration/codec scope update required before reachability |
+| `RegisterProjectTool` | P12 `01` §5 | factory only; separate accepted registration/codec scope update required before reachability |
+| `CreateWorktree` | P11 `09` | factory only; separate accepted registration/codec scope update required before reachability |
+| `RetireWorktree` | P11 `09` | factory only; separate accepted registration/codec scope update required before reachability |
+
+These six names do not add or remove any UI exposure classification. In
+particular, the three P7 dependency factories keep their existing P7 semantics
+but remain outside this production registry and codec set.
 
 来源：`packages/application/src/commands/**` 注册表 + P2 runtime 路径。
 

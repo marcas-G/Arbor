@@ -244,6 +244,31 @@ Attempt recording:
 `result_json` / `terminal_error_json` are JSON keyed by the row's
 `schema_version`; `terminal_error_json` decodes to a `CommandRejection`.
 
+For FT-DG-03, `commands.schema_version` is the registered Handler's semantic
+Command/receipt schema version and result/error decoding key. It is not an
+external wire version. `fingerprint_algorithm_version` identifies the P1
+canonical serialization/hash algorithm; the current algorithm is 1
+(SHA-256). External codec version 1 is server-selected and is not stored.
+The existing tuple `(semantic_request_fingerprint, schema_version,
+fingerprint_algorithm_version)` remains the only replay comparison:
+
+| Stored row / current authenticated candidate | Receipt behavior | Persistence disposition |
+|---|---|---|
+| Current Handler schema and algorithm 1; exact current-valid semantic tuple; Resolver succeeds | Return the stored receipt without handler re-execution | No row change |
+| Current Handler schema and algorithm 1; changed valid semantic payload; Resolver succeeds | Return `IdempotencyConflict`; do not disclose the prior result | Row unchanged |
+| Historical Handler schema or algorithm (including P0 FNV if present); candidate passes current codec and Resolver | Existing exact tuple rule returns `IdempotencyConflict`; no historical comparator | Row unchanged; no guessing or upgrade |
+| Exact tuple row whose result/error JSON cannot be decoded | Non-disclosing receipt-integrity Problem/Attention | Row unchanged; no repair |
+| Stored receipt exists, but the current payload or CommandId fails the codec | Return `InvalidCommandPayload` before Resolver/Gateway; do not look up or disclose the receipt | Historical row preserved read-only; non-replayable |
+| No stored row and malformed CommandId or payload | Return `InvalidCommandPayload`; no Resolver/Gateway or durable write | No receipt, attempt, Event, or canonical mutation |
+
+No raw payload column, external wire-version column, compatibility table, or
+F23 migration is added. The required read-only historical receipt inventory
+before implementation authorization classifies rows by Handler schema,
+fingerprint algorithm, resolution/result/error decodability, and known
+deployment era/producer; it records counts and representative IDs/fields
+without sensitive payloads. Migration 0033 and its AH10 AssignWork binding
+contracts remain unchanged (DID §6A.16/§9.3/§9.9 and SD §4.11).
+
 ### 3.5 domain_events / sequence / offsets / dead letters (DID §5.2, §9.9)
 
 ```sql

@@ -113,6 +113,15 @@ AssignWork           additionally: authority.targetWorkspaceId == payload.worksp
 
 ## 3. Generic command pipeline
 
+For an External submission, authentication, strict bounded wire-v1 decoding,
+CommandId/ProjectId/Actor and payload-ID validation, Handler schema/fingerprint
+derivation, exact declared-Actor-to-authenticated-Principal binding, and the
+P12 Authority Resolver visibility check all complete in the
+Application/Composition boundary **before** `CommandGateway.execute` is
+invoked. No receipt is read or disclosed before that Resolver succeeds. See
+DID §4.1B and P12 `10` §3 / `02` §2. The Command Gateway remains the shared
+mutation and receipt boundary for every origin.
+
 ```text
 CommandGateway.execute(envelope, submissionContext, verifiedCommandAuthority)
   1. compute semanticRequestFingerprint + schemaVersion + algorithmVersion
@@ -132,6 +141,17 @@ CommandGateway.execute(envelope, submissionContext, verifiedCommandAuthority)
 
 Step a **precedes** step c: an already-authoritative resolution is replayed
 without re-running the authority predicate.
+
+For External requests, the preceding Composition Resolver is a visibility
+gate, not a replacement for this in-transaction order: after Resolver success,
+the Gateway still reads/replays the exact receipt tuple at step a before its
+final exact authority check at step c. The Gateway's `BEGIN IMMEDIATE`
+transaction remains the only receipt lookup/linearization point. A codec
+failure returns the transport-only `InvalidCommandPayload` Problem before
+Resolver/Gateway and is not part of `CommandRejection`, `CommandResolution`,
+or receipt vocabulary. This external boundary does not widen P1 `07`'s sole
+old-Committed direct-child AssignWork recovery exception; that exception still
+requires the accepted AH10 binding proof.
 
 > **P2 evolution:** the `authority` parameter is generalized to
 > `CommandAuthorityFact`; `CommandHandler` declares an explicit `stopAdmission`

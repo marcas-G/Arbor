@@ -119,6 +119,11 @@ CreateChildWorkspace（P1 §6 全契约；CommandId = deterministic f(proposalId
 - human gate 的裁决不跳过任何 P1 precondition；裁决不是 authority 豁免。
 - 裁决结果（含 reject）作为 Observation 回到发起 Execution 的 Workspace Inbox。
 
+FT-DG-03: `RecordDecision`'s strict registered codec and typed internal
+validator are derived from the exact payload/closed outcome union owned here;
+the codec does not change the human-only authority or deterministic
+`CreateChildWorkspace` consumer path (DID §4.1B; P13 `02`).
+
 ### 4.3 深层链路（无 gate）
 
 ```text

@@ -85,6 +85,12 @@ if decision is Admit(focus):
 - P6/P7 own the broader governance around current-Work selection and reuse the
   same Application handler.
 
+FT-DG-03 input validation reference: `SelectCurrentWork` retains the exact
+payload shape shown at the Application call above. Its composed handler gets
+the registered P1 semantic validator for typed internal submissions; it is
+not made externally actionable by codec registration and remains System /
+scheduler-origin under P13 `02`.
+
 ## 4. Provider (G6)
 
 - The composition root wires the deterministic `provider-fake`; CI and P5

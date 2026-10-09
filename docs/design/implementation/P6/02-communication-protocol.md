@@ -50,6 +50,12 @@ DID §4.2 Coordination 组命令、§12.10 表行：`SendMessage → MessageSent
 }
 ```
 
+FT-DG-03: the registered semantic validator uses this exact closed payload
+and the owning `OutboundMessage` contract (including nested message kinds,
+recipient, correlation, and ID schemas). `SendMessage` remains
+Agent-originated and externally denied; codec registration adds no UI or
+human-chat route (DID §4.1B; P13 `02`).
+
 ### Preconditions / rejections
 
 | Condition | Rejection |

@@ -72,6 +72,18 @@ InvocationDecisionInput = {
 }
 ```
 
+For External command resolution, `envelope` is already a typed semantic
+envelope produced by the registered strict wire-v1 codec; the resolver never
+receives raw JSON or caller-supplied wire-version data. Before `resolve`, the
+Application binds `envelope.actor` to the authenticated `principal` by exact
+string equality and supplies the derived Handler schema and P1 semantic
+fingerprint. Resolver visibility is evaluated for that exact principal,
+External origin, project, target, current canonical facts, active Grants, and
+policy before the Command Gateway can reveal any receipt or conflict. The
+Resolver itself does not read receipts or mutate state. The Gateway's
+in-transaction exact receipt replay and final authority/precondition checks
+remain authoritative (DID §4.1B; P1 `01` §3; `03` §3.1).
+
 `semanticRequestFingerprint` is **computed by the Application** (P1 `01` §4); the resolver never computes or re-derives it. `canonicalFacts` / `grants` are **declared input snapshots**, not live I/O ports.
 
 ## 2A. Resolver port (entry point, E-05)
@@ -222,6 +234,11 @@ PermissionGrant { permissionGrantId; scope: string; issuer: Principal;
   is not taken.
 - `GrantPermission` / `RevokePermission` are governance Commands producing
   `PermissionChanged`; the resolver reads active grants.
+- Under FT-DG-03, their registered closed descriptors follow the exact P12
+  command contracts: GrantPermission's grant ID, scope, issuer, lifetime, and
+  state rules; RevokePermission's PermissionGrantId and target binding. The
+  descriptor validates data only; P12 still resolves the authenticated
+  principal and current authority, and the Gateway remains the sole writer.
 - Temporary grants default **non-delegable** (no privilege amplification, SD §8.4).
 - Approval of one intent must not authorize a different intent (Exact-Intent, P4).
 

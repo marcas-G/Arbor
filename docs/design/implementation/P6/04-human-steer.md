@@ -34,6 +34,10 @@ DID §12.10 表行：`RefineWork / semantic SteerWork → WorkRefined / WorkStee
 }
 ```
 
+FT-DG-03: the registered semantic validator is derived from this exact closed
+payload and its `Provenance` / `ContentRef` contracts; it does not change the
+existing human-origin authority or UI exposure (DID §4.1B; P13 `02`).
+
 ### Preconditions / rejections
 
 | Condition | Rejection |

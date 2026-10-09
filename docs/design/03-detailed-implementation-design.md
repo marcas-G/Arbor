@@ -1,10 +1,10 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.33\
+**Version:** 1.34\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.32\
+**Supersedes:** v1.33\
 **Date:** 2026-10-09\
-**Depends on:** `Arbor System Design Specification v1.11`
+**Depends on:** `Arbor System Design Specification v1.12`
 
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
@@ -45,6 +45,26 @@
   `E71285B4908DE221D10A3AA7720DEB74ABDFBD99992640AD6152F534666B0DD9`.
   Decision and landing file audit:
   `planning/results/AH10-direct-child-assign-work-target-binding-governance.md`.
+
+**Governance changes (v1.33 → v1.34): FT-DG-03 external command runtime codec**
+
+- DID §4.1B freezes strict external wire v1 decoding, the authenticated
+  Actor/Principal and Resolver visibility gate before Gateway entry, and the
+  separation between codec version, Handler receipt schema, and fingerprint
+  algorithm version.
+- External codec failures use a non-reflecting `InvalidCommandPayload`
+  transport Problem and never enter CommandRejection, a receipt, or an Event.
+  Typed internal submissions use the same registered semantic validator.
+- The P1 Gateway receipt tuple comparison remains inside `BEGIN IMMEDIATE`
+  and receipt-first relative to its final exact authority check. No new SQL,
+  raw-payload storage, or F23 migration is introduced.
+- Accepted proposal `ACCEPT_EXTERNAL_COMMAND_RUNTIME_CODEC`, SHA-256
+  `DD24C9550BFE253D94DE7236255E5E8E710A7E612A57607E474E8A90653529FC`;
+  decision and landing record:
+  `planning/results/FT-DG-03-governance-acceptance-and-landing.md`.
+- Design acceptance and landing do not authorize runtime implementation.
+  AH10 §6A.16, migration 0033, §9.9, and P1 `07`'s sole direct-child
+  AssignWork exception remain unchanged.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -2254,6 +2274,131 @@ ResourceBoundary.basisResponsibilityRevision == Workspace.responsibilityRevision
 ```
 
 禁止依赖“先改 Responsibility、下一条命令再改 Boundary”的危险中间状态。
+
+## 4.1B External Command Decode and Receipt Ordering
+
+External HTTP, WebSocket, CLI, and future external submissions share one
+Application/Composition boundary. The shell authenticates the caller and hands
+the Composition root the raw bounded JSON envelope, authenticated `Principal`,
+submission context, and correlation information. A shell never casts JSON to a
+trusted `CommandEnvelope` and never performs a receipt lookup.
+
+The first external wire contract is fixed at v1 and carries no caller-supplied
+wire version field. Keep these values separate:
+
+| Contract value | Owner and use | Persistence |
+|---|---|---|
+| `externalWireCodecVersion = 1` | Server-selected strict codec for the registered `commandType` | Not in envelope, fingerprint, or SQL |
+| `CommandHandler.schemaVersion` / `commands.schema_version` | Registered Handler's semantic Command/receipt schema and JSON decode key | Existing receipt column and P1 fingerprint input |
+| `fingerprint_algorithm_version = 1` | P1 canonical serialization and SHA-256 algorithm version | Existing receipt column |
+
+Internal schema implementation changes alone do not alter the wire-v1
+semantic receipt identity. A change to semantic payload or result/error
+contract follows the existing Handler schema-version and receipt compatibility
+rules; it is not inferred from the wire codec version.
+
+The external path is ordered as follows:
+
+```text
+authenticate Principal and establish External submission context
+  → bounded strict wire-v1 envelope + registered closed payload codec
+  → validate CommandId / ProjectId / declared Actor syntax and payload IDs
+  → derive registered Handler.schemaVersion and current P1 semantic fingerprint
+  → require external declared Actor == authenticated Principal exactly
+  → Composition loads current canonical facts / active Grants and runs P12 Resolver
+      denied: return the existing authority Problem; disclose no receipt
+  → CommandGateway begins its existing BEGIN IMMEDIATE transaction
+      → read receipt by CommandId
+      → exact (fingerprint, Handler schemaVersion, algorithm version): return it
+      → any tuple mismatch: IdempotencyConflict; preserve the stored receipt
+      → if absent: current fence/stop/authority/precondition/handler/write path
+```
+
+There is no receipt read outside the Gateway transaction. External Resolver
+visibility is required even for a retry; the Gateway's receipt lookup remains
+first inside its transaction and before its final exact authority check, per
+P1 `01` §3 and `03` §3.1. `BEGIN IMMEDIATE` remains the only receipt
+linearization point. A same-tuple concurrent loser returns the committed
+winner; a different tuple cannot overwrite it. Canonical preconditions and
+the Gateway's final exact-authority check remain authoritative for mutation.
+
+The Application owns `ExternalCommandDecoder` and
+`CommandInputContractRegistry`: the decoder accepts bounded raw JSON plus a
+`commandType` and returns a typed semantic envelope or safe codec issues; the
+registry contains exactly one closed input descriptor and origin policy per
+command in the current 26-command production registry. Shells retain raw
+`unknown` only until decoding and do not cast to a trusted envelope or use Web
+form schemas as a server guarantee. Codec validity grants no authority; P13's
+UI exposure classification remains separate. Handler factories for
+`ReviseDependencyContract`, `WithdrawDependency`,
+`MarkDependencyUnfulfillable`, `RegisterProjectTool`, `CreateWorktree`, and
+`RetireWorktree` are factory-only and are not current `RegisteredCommandType`
+members or codec descriptors. A future composition registration requires an
+accepted registry/codec scope update before reachability. A descriptor cannot
+construct or accept AH10 `AssignWorkCommandEvidence` or
+`AssignWorkControlAuthorizationEvidence`.
+
+All codecs reject unknown fields at every object depth and enforce the owning
+payload's primitive, finite/integer/range, enum/tag, array-member, and branded
+ID rules. Shared Domain `ID_SCHEMAS` may be reused after the runtime boundary
+has decoded the value. A registered descriptor also validates typed
+System/ExecutionOrigin/Recovery-origin submissions before Resolver/Gateway;
+an internal validator failure is a typed contract defect/Attention with no
+receipt or domain write.
+
+External decode failure returns the transport-only `Problem` DTO:
+
+```ts
+{
+  code: "InvalidCommandPayload",
+  category: "validation",
+  message: "Command payload is invalid",
+  correlationId: string | null,
+  retryDisposition: "non-retryable",
+  safeDetails: {
+    commandType?: RegisteredCommandType,
+    issues: ReadonlyArray<{
+      path: ReadonlyArray<KnownFieldPathSegment | "<unknown-field>">,
+      rule: "required" | "type" | "format" | "range" | "enum"
+          | "unknown-field" | "unsupported-command"
+    }>
+  }
+}
+```
+
+Only a server-owned registered command name may appear in
+`safeDetails.commandType`. Unknown command values use a static
+`["commandType"]` path and do not appear in the response or diagnostics.
+Unknown property paths end with the fixed `"<unknown-field>"` marker; caller
+property names and values, body fragments, credentials, paths, artifact
+content, and exception text are never reflected. Issue ordering is stable.
+The existing transport Problem adapter maps malformed/unsupported input to
+HTTP 400. This DTO is not a `CommandRejection`, `TerminalRejected`, receipt,
+Event, or retryable attempt.
+
+No raw request body, wire version, new receipt comparator, or FT-DG-03 SQL
+migration is introduced. Historical malformed CommandIds are preserved
+read-only and are non-replayable; reject them before receipt lookup. A
+historical receipt whose payload fails the current codec is likewise not
+looked up or disclosed. With a valid current payload, stored Handler schema or
+fingerprint algorithm mismatch uses the existing exact P1 tuple rule and
+returns `IdempotencyConflict`; no historical comparator or row rewrite is
+added. Undecodable receipt result/error data fails closed with a
+non-disclosing receipt-integrity Problem/Attention and no repair.
+
+This contract does not alter the accepted AH10 direct-child AssignWork
+exception: its internal Control route remains external-origin denied; trusted
+target/Grant-or-ActionApproval evidence cannot be constructed from JSON. The
+binding, same-transaction approval consumption, Work/Event/receipt atomicity,
+migration 0033, and P1 `07` proof-complete recovery exception remain governed
+by SD §4.11, DID §6A.16/§9.3/§9.9, P4 `03`, and P9/P10 owners. F23 adds no
+bypass, codec-generated authority, receipt pre-read, SQL, or alternate
+AssignWork recovery path.
+
+For `CreateProject`, the codec validates only the existing P1 `01` §5
+payload, IDs, and revision contracts. It does not create a trusted
+resource-admission flow or resolve FT-DG-01; F21 and its qualification remain
+isolated and pending their own governance.
 
 ## 4.2 Public / Governance Commands
 

@@ -10,6 +10,12 @@ execution-originated mutation classes.
 
 `AdmitExecution`, `StopExecution`, `SettleExecution` (DID §4.3).
 
+FT-DG-03 codec/validation contract (DID §4.1B): the exact typed payloads and
+origin distinctions below remain P2-owned. The current composed registry has
+one descriptor per P2 handler; wire-v1 decoding and typed internal semantic
+validation use these payload contracts without widening P2 origins or
+authority facts. External `AdmitExecution` remains unexposed under P13 U-3.
+
 `RecordEnvironmentChange` is **P11** (DID v1.7 G2). P2 does not implement it
 and does not own its DDL; P2 only consumes `environment_revisions` facts
 through the P1 `EnvironmentRevisionStore` / `ProjectEnvironmentPort`.
