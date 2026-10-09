@@ -65,40 +65,46 @@ export const DomainEventJournalLive: Layer.Layer<
     const failure = repositoryFailure("DomainEventJournal", "event-journal");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
+    const appendReturningIds = (drafts: ReadonlyArray<PendingDomainEvent>) =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        const eventIds: Array<EventId> = [];
+        for (const draft of drafts) {
+          const eventId = yield* ids.generate<EventId>("Event");
+          const sequenceRows = yield* run(
+            sql.unsafe<{ last_sequence: number }>(
+              "INSERT INTO project_event_sequences (project_id, last_sequence) VALUES (?, 1) ON CONFLICT(project_id) DO UPDATE SET last_sequence = last_sequence + 1 RETURNING last_sequence",
+              [draft.projectId],
+            ),
+          );
+          const sequence = Number(sequenceRows[0]?.last_sequence ?? 0);
+          yield* run(
+            sql.unsafe(
+              "INSERT INTO domain_events (event_id, project_id, sequence, event_type, event_version, occurred_at, aggregate_ref, actor, caused_by_command_id, caused_by_event_id, correlation_ref, payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+              [
+                eventId,
+                draft.projectId,
+                sequence,
+                draft.eventType,
+                draft.eventVersion,
+                draft.occurredAt,
+                draft.aggregateRef,
+                draft.actor,
+                draft.causedByCommandId ?? null,
+                draft.causedByEventId ?? null,
+                draft.correlationRef ?? null,
+                JSON.stringify(draft.payload),
+              ],
+            ),
+          );
+          eventIds.push(eventId);
+        }
+        return eventIds;
+      });
     return DomainEventJournal.of({
       append: (drafts: ReadonlyArray<PendingDomainEvent>) =>
-        Effect.gen(function* () {
-          yield* TransactionScope;
-          for (const draft of drafts) {
-            const eventId = yield* ids.generate<string>("Event");
-            const sequenceRows = yield* run(
-              sql.unsafe<{ last_sequence: number }>(
-                "INSERT INTO project_event_sequences (project_id, last_sequence) VALUES (?, 1) ON CONFLICT(project_id) DO UPDATE SET last_sequence = last_sequence + 1 RETURNING last_sequence",
-                [draft.projectId],
-              ),
-            );
-            const sequence = Number(sequenceRows[0]?.last_sequence ?? 0);
-            yield* run(
-              sql.unsafe(
-                "INSERT INTO domain_events (event_id, project_id, sequence, event_type, event_version, occurred_at, aggregate_ref, actor, caused_by_command_id, caused_by_event_id, correlation_ref, payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                [
-                  eventId,
-                  draft.projectId,
-                  sequence,
-                  draft.eventType,
-                  draft.eventVersion,
-                  draft.occurredAt,
-                  draft.aggregateRef,
-                  draft.actor,
-                  draft.causedByCommandId ?? null,
-                  draft.causedByEventId ?? null,
-                  draft.correlationRef ?? null,
-                  JSON.stringify(draft.payload),
-                ],
-              ),
-            );
-          }
-        }),
+        Effect.as(appendReturningIds(drafts), undefined),
+      appendReturningIds,
       readAfter: (projectId, sequence, limit) =>
         Effect.gen(function* () {
           yield* TransactionScope;

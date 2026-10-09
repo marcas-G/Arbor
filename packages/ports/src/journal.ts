@@ -32,6 +32,13 @@ export interface DomainEventJournalService {
     DomainEventJournalError,
     TransactionScope | IdGenerator
   >;
+  readonly appendReturningIds: (
+    drafts: ReadonlyArray<PendingDomainEvent>,
+  ) => Effect.Effect<
+    ReadonlyArray<EventId>,
+    DomainEventJournalError,
+    TransactionScope | IdGenerator
+  >;
   readonly readAfter: (
     projectId: ProjectId,
     sequence: number,

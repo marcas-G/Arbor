@@ -9,8 +9,13 @@ import type {
   Workspace,
   WorkspaceId,
 } from "@arbor/domain";
+import type {
+  AssignWorkBindingAttentionFact,
+  AssignWorkBindingAttentionProjectionRow,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
+  type AssignWorkBindingFailureEventFact,
   type AttentionFacts,
   type AttentionRow,
   type DeadlockEventFact,
@@ -64,6 +69,20 @@ export interface AttentionReadDeps {
   readonly readEvents: (
     projectId: ProjectId,
   ) => Effect.Effect<ReadonlyArray<DomainEvent<unknown>>, ProjectionReadError>;
+  readonly findAssignWorkBindingFailure?: (
+    attentionFactId: string,
+  ) => Effect.Effect<
+    Option.Option<AssignWorkBindingAttentionFact>,
+    ProjectionReadError
+  >;
+  /** Production P10 materialization. Other historical Attention sources
+   * continue to use their existing read derivation. */
+  readonly listProjectedAssignWorkBindingFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<AssignWorkBindingAttentionProjectionRow>,
+    ProjectionReadError
+  >;
 }
 
 const asRecord = (payload: unknown): Record<string, unknown> =>
@@ -116,6 +135,8 @@ export const loadAttentionFacts = (
     const unfulfillableEvents: Array<UnfulfillableEventFact> = [];
     const deadlockEvents: Array<DeadlockEventFact> = [];
     const escalationEvents: Array<EscalationEventFact> = [];
+    const assignWorkBindingFailureEvents: Array<AssignWorkBindingFailureEventFact> =
+      [];
     for (const event of events) {
       if (event.eventType === "DependencyMarkedUnfulfillable") {
         const payload = asRecord(event.payload);
@@ -157,6 +178,36 @@ export const loadAttentionFacts = (
             occurredAt: event.occurredAt,
           });
         }
+      } else if (event.eventType === "AssignWorkTargetBindingEscalated") {
+        if (deps.findAssignWorkBindingFailure === undefined) continue;
+        const payload = asRecord(event.payload);
+        const attentionFactId = String(payload.attentionFactId ?? "");
+        if (attentionFactId.length === 0) continue;
+        const source =
+          yield* deps.findAssignWorkBindingFailure(attentionFactId);
+        if (Option.isNone(source)) continue;
+        const fact = source.value;
+        if (
+          fact.eventId !== event.eventId ||
+          fact.projectId !== projectId ||
+          fact.executionId !== String(payload.executionId ?? "") ||
+          fact.targetWorkspaceId !== String(payload.targetWorkspaceId ?? "") ||
+          fact.logicalActionId !== String(payload.logicalActionId ?? "") ||
+          fact.committedCommandId !==
+            String(payload.committedCommandId ?? "") ||
+          fact.failureCode !== String(payload.failureCode ?? "")
+        ) {
+          continue;
+        }
+        assignWorkBindingFailureEvents.push({
+          attentionFactId: fact.attentionFactId,
+          executionId: fact.executionId,
+          targetWorkspaceId: fact.targetWorkspaceId,
+          logicalActionId: fact.logicalActionId,
+          committedCommandId: fact.committedCommandId,
+          failureCode: fact.failureCode,
+          occurredAt: event.occurredAt,
+        });
       }
     }
 
@@ -211,6 +262,7 @@ export const loadAttentionFacts = (
       deadlockEvents,
       safetyStopSettlements,
       reconciliationEscalatedEvents: escalationEvents,
+      assignWorkBindingFailureEvents,
       openVerifications: openVerificationFacts,
       executionSettlements,
       vacantProducerCandidates,
@@ -226,4 +278,27 @@ export const deriveProjectAttention = (
   projectId: ProjectId,
   deps: AttentionReadDeps,
 ): Effect.Effect<ReadonlyArray<AttentionRow>, ProjectionReadError> =>
-  Effect.map(loadAttentionFacts(projectId, deps), deriveAttentionRows);
+  Effect.gen(function* () {
+    const derived = deriveAttentionRows(
+      yield* loadAttentionFacts(projectId, deps),
+    );
+    if (deps.listProjectedAssignWorkBindingFailures === undefined) {
+      return derived;
+    }
+    const materialized =
+      yield* deps.listProjectedAssignWorkBindingFailures(projectId);
+    const nonMaterializedSources = derived.filter(
+      (row) => row.source !== "AssignWorkTargetBindingFailure",
+    );
+    return [
+      ...nonMaterializedSources,
+      ...materialized.map((row) => ({
+        source: row.source,
+        severity: row.severity,
+        targetWorkspaceId: row.targetWorkspaceId,
+        dedupKey: row.dedupKey,
+        summary: row.summary,
+        occurredAt: row.occurredAt,
+      })),
+    ];
+  });

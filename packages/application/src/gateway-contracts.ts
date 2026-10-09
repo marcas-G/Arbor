@@ -7,6 +7,8 @@ import type {
 } from "@arbor/domain";
 import type {
   AcceptanceRepositoryError,
+  AssignWorkCommandEvidence,
+  AssignWorkTargetBindingStoreError,
   CommandStoreError,
   ControlApprovalStoreError,
   ConversationJobStoreError,
@@ -55,11 +57,19 @@ export interface GatewayEnvelope<C> {
   readonly causationRef?: string;
   readonly correlationRef?: string;
   readonly payload: C;
+  /** Trusted in-process ControlAction evidence; never part of model output. */
+  readonly assignWorkEvidence?: AssignWorkCommandEvidence;
 }
 
 export interface CommandOutcome<R> {
   readonly result: R;
   readonly events: ReadonlyArray<PendingDomainEvent>;
+  /** Runs after receipt insertion, still within the owning Command transaction. */
+  readonly afterReceipt?: Effect.Effect<
+    void,
+    AssignWorkTargetBindingStoreError,
+    TransactionScope
+  >;
 }
 
 /** Every typed failure that an in-transaction command handler may expose.
@@ -91,7 +101,8 @@ export type CommandHandlerError =
   | DeliverableRepositoryError
   | VerificationRepositoryError
   | AcceptanceRepositoryError
-  | EvidenceRepositoryError;
+  | EvidenceRepositoryError
+  | AssignWorkTargetBindingStoreError;
 
 export interface CommandHandler<C, R> {
   readonly commandType: string;

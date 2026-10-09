@@ -525,6 +525,70 @@ const makeHandler = (
   });
 
 describe("AH10 receipt-first generation takeover for a pinned AssignWork", () => {
+  it("rejects a model-authored raw direct-child WorkspaceId instead of committing without a P33 binding", async () => {
+    const child = childWorkspaceId;
+    const gatewayCalls: Array<GatewayEnvelope<unknown>> = [];
+    const gateway = {
+      execute: (envelope: GatewayEnvelope<unknown>) => {
+        gatewayCalls.push(envelope);
+        const payload = envelope.payload as {
+          readonly workId: string;
+          readonly workspaceId: string;
+        };
+        return Effect.succeed({
+          resolution: {
+            _tag: "Committed" as const,
+            result: {
+              workId: parse(WorkId)(payload.workId),
+              workspaceId: parse(WorkspaceId)(payload.workspaceId),
+            },
+          },
+        });
+      },
+    } as unknown as CommandGatewayService;
+    const handler = assignWorkHandler({
+      gateway,
+      workspaces: {
+        findById: (id: WorkspaceId) =>
+          Effect.succeed(
+            Option.some({
+              workspaceId: id,
+              projectId,
+              parentWorkspaceId: id === child ? workspaceId : null,
+              lifecycle: "Active",
+              revision: 3,
+            } as never),
+          ),
+      } as unknown as WorkspaceRepositoryService,
+      clock: {
+        now: () => Effect.succeed("2026-10-05T00:00:00.000Z"),
+      } as ClockService,
+      tx: transaction,
+    });
+    const result = await runControlHandler(
+      handler,
+      { ...action, targetWorkspaceId: child },
+      0,
+      {
+        ...invocation,
+        providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789b5" as never,
+      },
+    );
+    expect(result._tag).toBe("Rejected");
+    expect(gatewayCalls).toHaveLength(0);
+    const currentWorkspaceResult = await runControlHandler(
+      handler,
+      { ...action, targetWorkspaceId: workspaceId },
+      0,
+      {
+        ...invocation,
+        providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789b6" as never,
+      },
+    );
+    expect(currentWorkspaceResult._tag).toBe("Accepted");
+    expect(gatewayCalls).toHaveLength(1);
+  });
+
   it("uses a new CommandId after gen0 FencingRejected so gen1 can commit the same LogicalAction", async () => {
     const receipts = new Map<
       string,

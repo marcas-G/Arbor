@@ -3,7 +3,7 @@ import type {
   PermissionGrantId,
   ProjectId,
 } from "@arbor/domain";
-import { Context, type Effect } from "effect";
+import { Context, type Effect, type Option } from "effect";
 import type { RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
 
@@ -32,6 +32,15 @@ export interface PermissionGrantRepositoryService {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<PermissionGrant>,
+    PermissionGrantRepositoryError,
+    TransactionScope
+  >;
+  /** Exact lookup used by the AssignWork command transaction to revalidate
+   * the same trusted Grant basis returned by the ControlAction authorizer. */
+  readonly findById: (
+    permissionGrantId: PermissionGrantId,
+  ) => Effect.Effect<
+    Option.Option<PermissionGrant>,
     PermissionGrantRepositoryError,
     TransactionScope
   >;

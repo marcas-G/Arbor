@@ -129,13 +129,14 @@ describe("p10-architecture (projection-runtime)", () => {
     }
   });
 
-  it("the frozen six-source map and dedup identities are present verbatim (P10 `02` §1/§2; GAP-01 non-descopement)", () => {
+  it("the frozen source map and dedup identities are present verbatim (P10 `02` §1/§2; GAP-01 non-descopement)", () => {
     const attention = sourceOf("packages/projection-runtime/src/attention.ts");
     for (const sourceLabel of [
       '"DependencyUnfulfillable"',
       '"Deadlock"',
       '"RuntimeSafetyEnvelope"',
       '"ReconciliationEscalated"',
+      '"AssignWorkTargetBindingFailure"',
       '"VerifierOrphan"',
       '"WaitingOnVacantProducer"',
     ]) {

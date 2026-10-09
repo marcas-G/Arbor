@@ -12,6 +12,7 @@ import {
   ensureVerifierSpawned,
   type ParentUserGovernanceFacts,
   planSnapshotRetention,
+  pollOnce,
   pruneSnapshots,
   type RetentionPolicy,
   runConversationResponseSettlementSweep,
@@ -38,10 +39,16 @@ import {
   startupRecovery,
   sweepRecovery,
 } from "@arbor/execution-runtime";
-import { P32_MIGRATIONS, runMigrations } from "@arbor/persistence-sqlite";
+import {
+  makeProjectAttentionProjectionStore,
+  P10_ATTENTION_CONSUMER_ID,
+  P34_MIGRATIONS,
+  runMigrations,
+} from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   type AgentExecutionStateStore,
+  AttentionProjectionStore,
   BlobStorePort,
   Clock,
   ConsumerDeadLetterStore,
@@ -71,6 +78,7 @@ import {
   ProviderDeploymentBreaker,
   type ReconciliationSource,
   RecordEnvironmentChange,
+  RecoveryAttentionFactStore,
   type ResourceOwnershipRepository,
   type RuntimeSafetyGate,
   type SchedulerTimerStore,
@@ -237,6 +245,8 @@ export type ProductionDaemonServices =
   | DomainEventJournal
   | ConsumerOffsetStore
   | ConsumerDeadLetterStore
+  | AttentionProjectionStore
+  | RecoveryAttentionFactStore
   | ProjectionStore
   | ExecutionRepository
   | LeaseService
@@ -284,6 +294,8 @@ export const ProductionDaemonServiceLive = (
       const offsets = yield* ConsumerOffsetStore;
       const deadLetters = yield* ConsumerDeadLetterStore;
       const projection = yield* ProjectionStore;
+      const attentionProjection = yield* AttentionProjectionStore;
+      const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
       const verifications = yield* VerificationRepository;
       const acceptances = yield* AcceptanceRepository;
       const dependencies = yield* DependencyRepository;
@@ -444,6 +456,25 @@ export const ProductionDaemonServiceLive = (
             continue;
           }
           dynamicConsumers.push(
+            {
+              consumerId: P10_ATTENTION_CONSUMER_ID,
+              projectId,
+              batchSize: config.batchSize ?? 50,
+              poll: pollOnce(
+                P10_ATTENTION_CONSUMER_ID,
+                projectId,
+                config.batchSize ?? 50,
+                {
+                  ...stores,
+                  projection: makeProjectAttentionProjectionStore(
+                    projectId,
+                    recoveryAttentionFacts,
+                    attentionProjection,
+                  ),
+                  handlers: () => Effect.succeed([]),
+                },
+              ),
+            },
             dependencyCoordinatorDaemon({
               consumerId: "dependency-coordinator",
               projectId,
@@ -786,7 +817,7 @@ export const ProductionDaemonServiceLive = (
       );
 
       const daemon = makeProductionDaemon({
-        migrate: runMigrations(P32_MIGRATIONS),
+        migrate: runMigrations(P34_MIGRATIONS),
         recovery,
         consumers,
         conversationTick,

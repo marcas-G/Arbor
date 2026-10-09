@@ -28,14 +28,31 @@ describe("P5 composition root", () => {
           const version = yield* sql.unsafe<{ user_version: number }>(
             "PRAGMA user_version",
           );
+          const attentionTable = yield* sql.unsafe<{ name: string }>(
+            `SELECT name FROM sqlite_master
+              WHERE type = 'table' AND name = 'attention_projection_rows'`,
+          );
           yield* CommandGateway;
           yield* ExecutionScheduler;
           yield* RunnableWorkSource;
-          return Number(version[0]?.user_version);
+          return {
+            version: Number(version[0]?.user_version),
+            attentionTable: attentionTable[0]?.name,
+          };
         }),
         app,
-      ) as Effect.Effect<number, unknown, never>,
+      ) as Effect.Effect<
+        {
+          readonly version: number;
+          readonly attentionTable: string | undefined;
+        },
+        unknown,
+        never
+      >,
     );
-    expect(result).toBe(32);
+    expect(result).toEqual({
+      version: 34,
+      attentionTable: "attention_projection_rows",
+    });
   });
 });

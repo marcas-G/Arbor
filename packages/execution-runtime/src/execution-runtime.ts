@@ -235,7 +235,10 @@ export const runExecution = (
       lease.workerIncarnationId,
       lease.generation,
     );
-    if (outcome._tag === "ApprovalRequired") {
+    if (
+      outcome._tag === "ApprovalRequired" ||
+      outcome._tag === "RecoveryBlocked"
+    ) {
       yield* tx
         .transact(
           leases.release(

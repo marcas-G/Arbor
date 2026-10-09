@@ -1,6 +1,6 @@
 import {
   HealthPort,
-  P32_MIGRATION_BASELINE,
+  P34_MIGRATION_BASELINE,
   PersistenceHealthProbe,
   type PersistenceHealthProbeService,
   type ReadinessState,
@@ -68,7 +68,7 @@ export const PersistenceHealthProbeSqliteLive: Layer.Layer<
             },
           );
           const dbOpen = userVersion !== null;
-          const migrationBaseline = userVersion === P32_MIGRATION_BASELINE;
+          const migrationBaseline = userVersion === P34_MIGRATION_BASELINE;
           const t1RecoveryComplete = yield* recovery.complete;
           return {
             dbOpen,

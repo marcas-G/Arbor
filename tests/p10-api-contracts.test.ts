@@ -265,12 +265,13 @@ describe("P10-002 Problem DTO vocabulary (DID 10.5)", () => {
 });
 
 describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
-  it("attention fact sources are the frozen six (02 §1)", () => {
+  it("attention fact sources include the accepted AssignWork binding failure source (02 §1)", () => {
     expect([...ATTENTION_SOURCES]).toEqual([
       "DependencyUnfulfillable",
       "Deadlock",
       "RuntimeSafetyEnvelope",
       "RecoveryEscalation",
+      "AssignWorkTargetBindingFailure",
       "VerifierOrphan",
       "VacantProducer",
     ]);

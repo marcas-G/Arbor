@@ -207,6 +207,7 @@ export interface ExecutionDriverPortService {
 
 export type ExecutionDriveOutcome =
   | ExecutionSettlement
+  | { readonly _tag: "RecoveryBlocked" }
   | {
       readonly _tag: "ApprovalRequired";
       readonly approvalId: string;

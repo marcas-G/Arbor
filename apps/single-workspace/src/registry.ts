@@ -28,6 +28,9 @@ import { repositoryFailure } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   type AcceptanceRepositoryService,
+  AssignWorkTargetBindingRepository,
+  type AssignWorkTargetBindingRepositoryService,
+  Clock,
   ControlApprovalStore,
   type ControlApprovalStoreService,
   ConversationResponseJobStore,
@@ -98,6 +101,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const workspaces = yield* WorkspaceRepository;
     const sessions = yield* SessionRepository;
     const works = yield* WorkRepository;
+    const clock = yield* Effect.serviceOption(Clock);
     const executions = yield* ExecutionRepository;
     const workWaits = yield* WorkWaitStore;
     const proposals = yield* FormationProposalStore;
@@ -107,6 +111,9 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const verifications = yield* VerificationRepository;
     const acceptances = yield* AcceptanceRepository;
     const grants = yield* PermissionGrantRepository;
+    const assignWorkBindings = yield* Effect.serviceOption(
+      AssignWorkTargetBindingRepository,
+    );
     const humanMessages = yield* HumanMessageStore;
     const responseJobs = yield* ConversationResponseJobStore;
     const controlApprovals = yield* Effect.serviceOption(ControlApprovalStore);
@@ -117,10 +124,24 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const sql = yield* SqlClient;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
       ...makeP1CommandHandlers({
+        ...(Option.isSome(clock) ? { clock: clock.value } : {}),
         projects,
         workspaces,
         sessions,
         works,
+        executions,
+        ...(Option.isSome(assignWorkBindings)
+          ? {
+              bindings: assignWorkBindings.value as Pick<
+                AssignWorkTargetBindingRepositoryService,
+                "insert"
+              >,
+            }
+          : {}),
+        grants,
+        ...(Option.isSome(controlApprovals)
+          ? { approvals: controlApprovals.value }
+          : {}),
       }),
       ...makeP15CommandHandlers({
         projects,

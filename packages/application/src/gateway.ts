@@ -45,6 +45,7 @@ export * from "./project-admission.js";
 export type CommandGatewayQualificationProbe = (event: {
   readonly boundary:
     | "AH10BeforeFencedReceiptCommit"
+    | "AH10BeforeAssignWorkBindingCommit"
     | "AH12BeforeSettleExecutionCommit";
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
@@ -301,6 +302,25 @@ export const makeCommandGatewayLive = (
               FINGERPRINT_ALGORITHM_VERSION,
               JSON.stringify(outcome.value.result),
             );
+            if (outcome.value.afterReceipt !== undefined) {
+              yield* outcome.value.afterReceipt;
+            }
+            if (
+              qualificationProbe !== undefined &&
+              envelope.commandType === "AssignWork" &&
+              envelope.assignWorkEvidence !== undefined &&
+              context._tag === "ExecutionOrigin"
+            ) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "AH10BeforeAssignWorkBindingCommit",
+                  commandId: envelope.commandId,
+                  projectId: envelope.projectId,
+                  executionId: context.executionId,
+                  fencingGeneration: context.fencingGeneration,
+                }),
+              );
+            }
             yield* store.recordResolvingAttempt(
               envelope.commandId,
               "Committed",

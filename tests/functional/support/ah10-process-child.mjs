@@ -50,6 +50,14 @@ const readActionKind = (logicalActionId) => {
 
 const qualificationProbe = async (event) => {
   if (
+    event.boundary === "AH10AfterAssignWorkAuthorizedBeforeCommandSubmission"
+  ) {
+    const pauseRequested =
+      process.env.ARBOR_AH10_PAUSE_AFTER_ASSIGN_WORK_AUTHORIZED === "1";
+    emit({ ...event, pauseRequested });
+    if (pauseRequested) await waitForGate("assign-work-authorized", event);
+  }
+  if (
     event.boundary === "AH10AfterControlHandlerReturnBeforeObservationCommit"
   ) {
     const actionKind = readActionKind(event.logicalActionId);
@@ -104,6 +112,15 @@ const executionLeaseQualificationProbe = async (event) => {
 };
 
 const gatewayQualificationProbe = async (event) => {
+  if (
+    role === "old" &&
+    event.boundary === "AH10BeforeAssignWorkBindingCommit" &&
+    process.env.ARBOR_AH10_PAUSE_BEFORE_ASSIGN_WORK_BINDING_COMMIT === "1"
+  ) {
+    emit(event);
+    await waitForGate("assign-work-binding-commit", event);
+    return;
+  }
   if (role !== "old" || event.boundary !== "AH10BeforeFencedReceiptCommit") {
     return;
   }
@@ -111,6 +128,19 @@ const gatewayQualificationProbe = async (event) => {
   if (process.env.ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT === "1") {
     await waitForGate("fenced-receipt", event);
   }
+};
+
+const pauseAttentionBoundary = async (event) => {
+  const requested = process.env.ARBOR_AH10_BINDING_ATTENTION_BOUNDARY;
+  const side =
+    event.boundary === "AH10BeforeAssignWorkBindingAttentionCommit"
+      ? "before"
+      : event.boundary === "AH10AfterAssignWorkBindingAttentionCommit"
+        ? "after"
+        : undefined;
+  if (role !== "new" || side === undefined || requested !== side) return;
+  emit(event);
+  await waitForGate("binding-attention", event);
 };
 
 const port = Number(process.env.ARBOR_HTTP_PORT);
@@ -122,8 +152,11 @@ const config = {
     host: "127.0.0.1",
   },
   qualificationProbe,
+  assignWorkAuthorizedBeforeCommandProbe: qualificationProbe,
   executionLeaseQualificationProbe,
   gatewayQualificationProbe,
+  recoveryAttentionFactQualificationProbe: pauseAttentionBoundary,
+  assignWorkBindingAttentionQualificationProbe: pauseAttentionBoundary,
 };
 
 await Effect.runPromise(

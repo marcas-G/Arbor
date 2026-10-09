@@ -5,6 +5,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
+import type { ResolvedChildPlacementRef } from "./assign-work-target-binding.js";
 import type {
   WorkRepositoryError,
   WorkspaceRepositoryError,
@@ -70,7 +71,10 @@ export interface WorkspacePlacementPortService {
   readonly resolveChildRef: (
     rootWorkspaceId: WorkspaceId,
     ref: string,
-  ) => Effect.Effect<Option.Option<WorkspaceId>, WorkspacePlacementReadError>;
+  ) => Effect.Effect<
+    Option.Option<ResolvedChildPlacementRef>,
+    WorkspacePlacementReadError
+  >;
   readonly read: (
     rootWorkspaceId: WorkspaceId,
     ref: string,
