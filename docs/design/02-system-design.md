@@ -1,10 +1,10 @@
 # Arbor System Design Specification
 
-**Version:** 1.10
+**Version:** 1.11
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.9
+**Supersedes:** v1.10
 
 **Date:** 2026-10-08
 
@@ -28,6 +28,26 @@
   audit: `planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
 - This additive view does not change scenarios, lifecycle ownership, commands,
   events, persistence, authorization, or transport.
+
+**Governance changes (v1.10 → v1.11): AH10 direct-child AssignWork receipt binding**
+
+- System Design §4.11 is the sole semantic owner for exact-target binding,
+  lifecycle-at-commit, and recovery disposition for a direct-child AssignWork
+  whose Command committed before its Action/Observation handoff completed.
+- A proof-complete immutable binding permits receipt-first convergence of the
+  same action without re-resolving a now-stale opaque selector. Missing or
+  inconsistent evidence fails closed and cannot select a sibling, issue a new
+  Command, or append an Observation.
+- Active lifecycle is required at the original effect boundary. Later
+  retirement does not invalidate a proven committed effect; a target already
+  Retired before commit is rejected.
+- Exact CAPA PermissionGrant or ActionApproval evidence is checked at commit;
+  recovery validates the stored evidence without re-authorizing or consuming
+  approval again. CAPA scope and resource boundaries are unchanged.
+- Accepted proposal SHA-256:
+  `E71285B4908DE221D10A3AA7720DEB74ABDFBD99992640AD6152F534666B0DD9`.
+  Landing decision and file audit:
+  `planning/results/AH10-direct-child-assign-work-target-binding-governance.md`.
 
 **Governance changes (v1.8 → v1.9): Minimal Architecture Convergence
 (`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`)**
@@ -733,6 +753,48 @@ Parent 不重复执行已经委托给 Child 的工作，不持续微观监督；
 - Parent Acceptance。
 
 治理只作用于 Direct Children；Observability 可以覆盖整个 subtree。
+
+## 4.11 Opaque placement target evidence for AssignWork recovery
+
+For a direct-child `AssignWork`, the opaque `targetWorkspaceRef` is a selector
+resolved by Runtime through the current PlacementContext; it is not a canonical
+Workspace identity. At the first effect boundary, Runtime and the Command
+transaction bind that exact selector to the canonical target Workspace and
+revision, current Execution Parent Workspace and Parent Work, project, Work
+identity/provenance, complete pinned action identity, and exact CAPA
+authorization evidence. The successful Work mutation, `WorkAssigned` event,
+Committed Command receipt, and one immutable binding are committed atomically.
+This binding is the only durable proof of which Workspace the selector named;
+recovery must not recompute or enumerate historical `wref_` digests.
+
+When recovering the same pinned `LogicalActionId` with an earlier Committed
+AssignWork receipt, recovery validates the binding against the exact action,
+Command, receipt, Work/provenance, event, project, direct-parent edge, and
+authority facts. A complete match converges that same Action and Observation
+without resolving the now-stale selector again, selecting another child, or
+submitting a new Command. An earlier `TerminalRejected(FencingRejected)` is
+not a successful effect and continues under the existing takeover rules.
+
+Missing, duplicate, malformed, conflicting, foreign, or mismatched evidence,
+including a pre-binding Committed receipt, fails closed: the Action remains
+Pending, no Observation or new Command is produced, and no canonical repair or
+Provider request occurs. P9 records the immutable failure fact and event;
+P10 projects it as `Action Required` at the Execution's owning Parent Workspace
+using the accepted deduplication and subtree-summary behavior. P9/P10 define
+the durable fact and projection details; they do not alter the semantic rule
+owned here.
+
+The target Workspace must be Active in the original Command transaction. A
+later transition to Retired does not invalidate a binding that proves Active
+at commit, so recovery may converge its original Action and Observation.
+A target already Retired at initial commit is rejected before canonical Work
+mutation. All project, direct-parent, Work, provenance, source-action, event,
+and exact-authority checks remain mandatory during replay.
+
+The stored PermissionGrant or ActionApproval proves the exact CAPA
+authorization used for the committed effect; it does not grant or widen
+authority. Receipt replay does not call the authorizer or consume approval
+again. No legacy binding is inferred or backfilled.
 
 ---
 

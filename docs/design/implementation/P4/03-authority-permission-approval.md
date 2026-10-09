@@ -75,6 +75,27 @@ interface InvocationApproval {
 - Producing an approval is the deferred resolver's job; P4 owns the record and
   the atomic consumption semantics.
 
+### Control ActionApproval consumption for AssignWork (DID v1.33)
+
+For the AssignWork Control route, the P4-owned `ControlApprovalStore` exposes
+`consumeApproved(approvalId, consumedBy: CommandId)` within
+the caller's existing `TransactionScope`. It succeeds only for the exact
+Approved ActionApproval revision already validated against project,
+workspace, execution, stable action, action digest, target, ControlBasis, and
+expiry by the Command Gateway. Its SQL changes state to `Consumed`, increments
+the approval revision exactly once, and sets `consumed_by` to that same
+generation's Committed CommandId in the transaction that commits the canonical
+AssignWork Work, event, receipt, and target binding.
+
+The Command Gateway owns this call for direct-child AssignWork. Do not consume
+after Gateway commit through a standalone ControlActionAuthorizer operation.
+A pre-handler FencingRejected or ExecutionStopping result does not consume the
+approval. Receipt replay verifies the immutable approval evidence and the
+original `consumed_by` CommandId/revision, without re-authorizing or consuming
+again. This is a route-specific atomicity contract; it does not widen
+PermissionGrant, ActionApproval, or ResourceBoundary authority. See DID §6A.16
+and System Design §4.11.
+
 ## 5. Rejection projection
 
 - All authority/permission/approval failures → `Denied` observation (`02` §3),

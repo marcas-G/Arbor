@@ -1,10 +1,10 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.32\
+**Version:** 1.33\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.31\
-**Date:** 2026-10-08\
-**Depends on:** `Arbor System Design Specification v1.10`
+**Supersedes:** v1.32\
+**Date:** 2026-10-09\
+**Depends on:** `Arbor System Design Specification v1.11`
 
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
@@ -27,6 +27,24 @@
   `266884FC5B8858CA631DC87EFA1EA29B6BFD7265FB93C324F0A5F65FF8C68433`.
   Decision/landing audit:
   `planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
+
+**Governance changes (v1.32 → v1.33): AH10 direct-child AssignWork receipt binding**
+
+- DID §6A.16 freezes the typed target/authority evidence and receipt-first
+  recovery contract for direct-child AssignWork. System Design §4.11 remains
+  the single semantic owner.
+- §5.3 adds `AssignWorkTargetBindingEscalated`; §7.2 adds the scoped placement,
+  binding, and recovery-attention ports. §9.3/§9.9 freeze additive migration
+  0033 and the same-transaction binding, exact authority validation, optional
+  ActionApproval consumption, and durable failure-fact/event contracts.
+- P1 `07` owns the narrowly scoped old-Committed receipt exception; P9 `07`
+  owns the immutable failure fact and recovery order; P10 `02`/`07` own the
+  accepted projection and qualification. P4 `03` owns the Command-boundary
+  approval-consumption adapter contract.
+- Accepted proposal SHA-256:
+  `E71285B4908DE221D10A3AA7720DEB74ABDFBD99992640AD6152F534666B0DD9`.
+  Decision and landing file audit:
+  `planning/results/AH10-direct-child-assign-work-target-binding-governance.md`.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -2435,6 +2453,7 @@ ExecutionSettled
 PermissionChanged
 DecisionRecorded
 ReconciliationEscalated
+AssignWorkTargetBindingEscalated
 EnvironmentChanged
 HumanInterventionApplied        # v1.13 G7: {actor, targetWorkspaceId, summaryRef, occurredAt, kind}
 ```
@@ -2914,6 +2933,142 @@ P0 的 `CommandResolution<R>`（`TerminalRejected(DomainError)`）是 v1.5 前�
 artifact，已被本节的参数化 `CommandResolution<Result, Rejection>` 取代；
 P1 负责演进该 artifact。
 
+## 6A.16 AssignWork target binding and committed-receipt recovery
+
+For a new direct-child AssignWork, Runtime resolves the exact opaque
+`targetWorkspaceRef` from current PlacementContext and carries the typed
+resolution plus exact CAPA authorization evidence unchanged through the
+ControlAction handler into the Command Gateway. In one `TransactionScope`, the
+Gateway re-reads and validates the current Parent Workspace/Work and target,
+project and direct-parent edge, Active target lifecycle, resolved target
+revision, pinned source-action identity, and the exact PermissionGrant or
+ActionApproval row. A stale selector/revision, retired or foreign target,
+revoked/expired/mismatched Grant, stale/mismatched approval, or source-action
+mismatch is rejected before canonical Work mutation.
+
+Successful resolution writes the child Work, `WorkAssigned` event, Committed
+Command receipt, and exactly one immutable `AssignWorkTargetBinding` in that
+same transaction. The binding carries the original opaque selector and
+encoding version, canonical target and observed revisions, project and Parent
+identities, Work and provenance, typed authority snapshot, and exact
+`ExecutionId`, `ProviderTurnId`, `LogicalActionId`, and `callRef`. The target
+must match the receipt, Work row, and event. The binding is trusted resolution
+evidence and is excluded from `semanticRequestFingerprint`; it is never
+constructed from model arguments except for retaining the exact selector.
+
+For a prior Committed receipt belonging to the same pinned AssignWork
+LogicalAction, recovery requires the binding keyed by that exact CommandId and
+validates it against the action, authority, receipt, Work/provenance, event,
+project, and direct-parent relation. It does not re-resolve the selector,
+re-authorize, consume approval again, issue a new Command, or repeat Provider
+inference. A fully matching binding converges the existing Action and its
+single sourced Observation. A missing, duplicate, malformed, conflicting,
+foreign, or mismatched binding/effect (including an old unbound Committed
+receipt) leaves the Action Pending and emits no Observation; P9 records its
+durable immutable failure fact/event and stops recovery. No backfill, inferred
+child, or canonical repair is permitted. The failure projects through the P10
+owner contract. This is the only exception to P1 `07`'s generic prior-
+Committed receipt convergence rule; FencingRejected takeover remains
+unchanged.
+
+The exact typed authority variant is either the commit-checked
+PermissionGrant evidence or the exact Approved ActionApproval evidence.
+ActionApproval validation and single consumption are atomic with canonical
+handler resolution; a pre-handler FencingRejected/ExecutionStopping result
+does not consume it. On replay an ActionApproval must be Consumed by the
+original CommandId at exactly the next revision and retain its exact immutable
+action/target/ControlBasis facts. Grant revocation/expiry after commit does not
+retarget or invalidate the effect. CAPA and ResourceBoundary authority are not
+widened.
+
+The target Workspace must be Active at initial Command commit. A later Retired
+lifecycle preserves proof-complete replay; a target already Retired at commit
+is rejected. The binding is not a stable-reference hash contract; replay must
+not enumerate historical `wref_` revisions.
+
+The process-local trusted evidence is ports-owned and is passed unchanged
+through ControlAction → AssignWork handler → Command Gateway:
+
+```ts
+type AssignWorkControlAuthorizationEvidence =
+  | {
+      readonly _tag: "PermissionGrant";
+      readonly permissionGrantId: PermissionGrantId;
+      readonly permissionGrantRevision: number;
+      readonly projectId: ProjectId;
+      readonly subjectKind: "WorkspaceAgent" | "Execution";
+      readonly subjectRef: string;
+      readonly capability: "core.control.assign-work";
+      readonly targetRef: WorkspaceRef;
+      readonly validFrom: Instant;
+      readonly expiresAt: Instant | null;
+      readonly actionDigest: Sha256;
+      readonly controlBasisDigest: Sha256;
+    }
+  | {
+      readonly _tag: "ActionApproval";
+      readonly approvalId: ActionApprovalId;
+      readonly approvalRevision: number;
+      readonly projectId: ProjectId;
+      readonly workspaceId: WorkspaceId;
+      readonly executionId: ExecutionId;
+      readonly stableActionId: "core.control.assign-work";
+      readonly actionDigest: Sha256;
+      readonly targetRef: WorkspaceRef;
+      readonly controlBasisDigest: Sha256;
+      readonly expiresAt: Instant;
+    };
+
+type AssignWorkTargetBinding = {
+  readonly schemaVersion: 1;
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly executionId: ExecutionId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly logicalActionId: LogicalActionId;
+  readonly callRef: CallRef;
+  readonly parentWorkspaceId: WorkspaceId;
+  readonly parentWorkId: WorkId;
+  readonly parentWorkRevisionAtCommand: number;
+  readonly targetWorkspaceRef: WorkspaceRef;
+  readonly targetRefEncodingVersion: number;
+  readonly parentWorkspaceRevisionAtCommand: number;
+  readonly targetWorkspaceRevisionAtResolution: number;
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly targetLifecycleAtCommit: "Active";
+  readonly workId: WorkId;
+  readonly predecessorWorkId: WorkId;
+  readonly workProvenanceJson: string;
+  readonly authority: AssignWorkControlAuthorizationEvidence;
+  readonly authorityCheckedAt: Instant;
+};
+
+type ResolvedChildPlacementRef = {
+  readonly _tag: "ResolvedChildPlacementRef";
+  readonly projectId: ProjectId;
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly targetWorkspaceRevision: number;
+  readonly refEncodingVersion: 1;
+};
+```
+
+`WorkspacePlacementPort.resolveChildRef(rootWorkspaceId, ref)` returns
+`Option<ResolvedChildPlacementRef>`; the port alone constructs the typed
+result. `rootWorkspaceId` is the current Execution Workspace and direct Parent,
+which may be non-root in the Project tree. The handler retains the exact
+original selector and passes it plus the resolved value, Parent/current-Work
+identities, and typed authorization as trusted `AssignWorkCommandEvidence`.
+The gateway re-reads the parent, its current Work, and target in the Command
+transaction, checks direct-parent/project/lifecycle/revision, and captures
+Parent and Work revisions at that boundary.
+
+`AssignWorkTargetBindingRepository.findByCommandId(commandId)` and
+`insert(binding)` require the existing `TransactionScope`. `RecoveryAttentionFactStore`
+provides `recordAssignWorkBindingFailure(fact)` and
+`findAssignWorkBindingFailure(attentionFactId)` under the same scope; record
+atomically appends the dedicated event and immutable P9 fact, and returns an
+existing row only for the exact same identity tuple.
+
 ---
 
 # 7. DID-7 — Ports / Runtime Interfaces
@@ -2944,6 +3099,9 @@ DeliverableRepository
 AcceptanceRepository
 DecisionRepository
 PermissionGrantRepository
+ControlApprovalStore
+AssignWorkTargetBindingRepository
+RecoveryAttentionFactStore
 ResourceOwnershipRepository
 ArtifactMetadataRepository
 MessageStore
@@ -2968,6 +3126,7 @@ ProjectionQueryPort
 ModelCapabilityPort
 AgentContextSourcePort
 ToolCatalogPort
+WorkspacePlacementPort
 SecretStorePort
 HealthPort
 Clock
@@ -4162,6 +4321,120 @@ model_context_manifests
 tool_invocations
 ```
 
+Migration `0033_assign_work_target_bindings` (`PRAGMA user_version = 33`) is
+additive and forward-only. It creates the following exact evidence tables and
+indexes; it creates no binding for historical rows:
+
+```sql
+CREATE UNIQUE INDEX commands_id_project ON commands(command_id, project_id);
+CREATE UNIQUE INDEX executions_id_project_workspace
+  ON executions(execution_id, project_id, workspace_id);
+CREATE UNIQUE INDEX workspaces_id_project_parent
+  ON workspaces(workspace_id, project_id, parent_workspace_id);
+CREATE UNIQUE INDEX works_id_project ON works(work_id, project_id);
+CREATE UNIQUE INDEX permission_grants_id_project
+  ON permission_grants(permission_grant_id, project_id);
+CREATE UNIQUE INDEX action_approvals_id_project
+  ON action_approvals(approval_id, project_id);
+
+CREATE TABLE assign_work_target_bindings (
+  command_id                    TEXT PRIMARY KEY,
+  schema_version                INTEGER NOT NULL CHECK (schema_version = 1),
+  project_id                    TEXT NOT NULL,
+  execution_id                  TEXT NOT NULL,
+  provider_turn_id              TEXT NOT NULL,
+  logical_action_id             TEXT NOT NULL,
+  call_ref                      TEXT NOT NULL,
+  parent_workspace_id           TEXT NOT NULL,
+  parent_work_id                TEXT NOT NULL,
+  parent_work_revision_at_command INTEGER NOT NULL CHECK (parent_work_revision_at_command >= 0),
+  target_workspace_ref          TEXT NOT NULL,
+  target_ref_encoding_version   INTEGER NOT NULL CHECK (target_ref_encoding_version = 1),
+  parent_workspace_revision_at_command INTEGER NOT NULL CHECK (parent_workspace_revision_at_command >= 0),
+  target_workspace_revision_at_resolution INTEGER NOT NULL CHECK (target_workspace_revision_at_resolution >= 0),
+  target_workspace_id           TEXT NOT NULL,
+  target_lifecycle_at_commit    TEXT NOT NULL CHECK (target_lifecycle_at_commit = 'Active'),
+  work_id                       TEXT NOT NULL,
+  predecessor_work_id           TEXT NOT NULL,
+  work_provenance_json          TEXT NOT NULL,
+  authority_kind                TEXT NOT NULL CHECK (authority_kind IN ('PermissionGrant','ActionApproval')),
+  permission_grant_id           TEXT,
+  action_approval_id            TEXT,
+  authority_evidence_json       TEXT NOT NULL,
+  authority_checked_at          TEXT NOT NULL,
+  created_at                    TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id),
+  UNIQUE (work_id),
+  FOREIGN KEY (command_id, project_id)
+    REFERENCES commands(command_id, project_id),
+  FOREIGN KEY (execution_id, project_id, parent_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id),
+  FOREIGN KEY (parent_workspace_id, project_id)
+    REFERENCES workspaces(workspace_id, project_id),
+  FOREIGN KEY (target_workspace_id, project_id, parent_workspace_id)
+    REFERENCES workspaces(workspace_id, project_id, parent_workspace_id),
+  FOREIGN KEY (parent_work_id, project_id)
+    REFERENCES works(work_id, project_id),
+  FOREIGN KEY (work_id, project_id)
+    REFERENCES works(work_id, project_id),
+  FOREIGN KEY (predecessor_work_id, project_id)
+    REFERENCES works(work_id, project_id),
+  FOREIGN KEY (permission_grant_id, project_id)
+    REFERENCES permission_grants(permission_grant_id, project_id),
+  FOREIGN KEY (action_approval_id, project_id)
+    REFERENCES action_approvals(approval_id, project_id),
+  CHECK (
+    (authority_kind = 'PermissionGrant' AND permission_grant_id IS NOT NULL AND action_approval_id IS NULL)
+    OR
+    (authority_kind = 'ActionApproval' AND permission_grant_id IS NULL AND action_approval_id IS NOT NULL)
+  )
+);
+
+CREATE INDEX assign_work_target_bindings_target
+  ON assign_work_target_bindings(project_id, target_workspace_id, target_workspace_ref);
+CREATE INDEX assign_work_target_bindings_parent_work
+  ON assign_work_target_bindings(project_id, parent_work_id, created_at);
+
+CREATE TABLE assign_work_binding_attention_facts (
+  attention_fact_id       TEXT PRIMARY KEY,
+  event_id                TEXT NOT NULL UNIQUE REFERENCES domain_events(event_id),
+  project_id              TEXT NOT NULL,
+  execution_id            TEXT NOT NULL,
+  target_workspace_id     TEXT NOT NULL,
+  logical_action_id       TEXT NOT NULL,
+  committed_command_id    TEXT NOT NULL,
+  failure_code            TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyUnbound','MissingBinding','DuplicateBinding','MalformedBinding',
+    'RefMismatch','AuthorityMismatch','ForeignTarget','PlacementMismatch',
+    'SourceActionMismatch','ReceiptMismatch','WorkMismatch',
+    'ProvenanceMismatch','EventMismatch','CommitLifecycleMismatch'
+  )),
+  first_detected_at       TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id, committed_command_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id),
+  FOREIGN KEY (committed_command_id, project_id)
+    REFERENCES commands(command_id, project_id)
+);
+
+CREATE INDEX assign_work_binding_attention_target
+  ON assign_work_binding_attention_facts(project_id, target_workspace_id, first_detected_at);
+```
+
+`authority_evidence_json` is the versioned full typed union snapshot. Its
+variant check and composite foreign keys enforce project consistency and the
+same-project direct-child target→Parent edge. Transactional validation checks
+the mutable Grant or ActionApproval values. `work_provenance_json` is the exact
+serialized value written to the Work row; replay checks the parsed typed fields
+and stored serialization, including `predecessorWorkId == parentWorkId` and
+the pinned bounded reason. No hash algorithm or lossy projection is used.
+
+The fact id is `att_` plus lowercase hex of the versioned SHA-256 tuple
+`(executionId, logicalActionId, committedCommandId)`. The fact is immutable;
+the first detected failure code is retained. Event and row are atomic. No
+resolution command, dismissal state, automatic deletion, legacy backfill, or
+schema downgrade is added. Older binaries refuse `user_version > 32`.
+
 ## 9.4 Relational vs JSON Rule
 
 必须关系化：
@@ -4386,6 +4659,41 @@ PRIMARY KEY(command_id, attempt_no)
 - `FencingRejected` / `ExecutionStopping` 对 Execution-originated Command terminal。
 
 `domain_events` 同时承担 durable outbox；多 Consumer 通过 `consumer_offsets` 分别推进，不额外维护单一 outbox delivery flag。
+
+Direct-child AssignWork extends the single-transaction command path with the
+typed `AssignWorkCommandEvidence` and `AssignWorkControlAuthorizationEvidence`
+from §6A.16. Gateway validates every Grant field against the current durable
+row (Active state, exact revision, subject, capability, target, and validity
+window), or every ActionApproval field (Approved state/revision,
+`binding_proven = 1`, Control route, project/workspace/execution, stable action,
+action digest, target, ControlBasis, and expiry). It validates the existing
+command evidence and source action, then writes the Work, `WorkAssigned`
+event, Command receipt, and binding together. The binding is excluded from
+`semanticRequestFingerprint`.
+
+For ActionApproval, Gateway calls the P4-owned `ControlApprovalStore` inside
+the same `TransactionScope` with `consumedBy: CommandId`. Consumption sets
+`state = 'Consumed'`, increments revision once, and records the original
+CommandId after the handler attempt and before transaction commit. A
+FencingRejected or ExecutionStopping pre-handler result does not consume it.
+Do not call a standalone post-commit approval consumer for AssignWork. Before
+commit, rollback leaves no binding, Work, event, authoritative receipt, or
+approval consumption (only the existing non-authoritative CommandAttempt may
+remain). After commit, all canonical facts are visible together. Uniqueness
+conflicts are handled by reading in a fresh transaction; exact existing
+evidence may converge, conflicting evidence never overwrites or uses
+`INSERT OR REPLACE`.
+
+The P9 failure event payload is exactly
+`{attentionFactId, executionId, targetWorkspaceId, logicalActionId,
+committedCommandId, failureCode}`. Its `aggregate_ref` is the Execution's
+owning Workspace, `correlation_ref` is the LogicalActionId, and
+`caused_by_command_id` is the committed AssignWork Command. The new immutable
+`assign_work_binding_attention_facts` row and event are appended in one
+transaction by `RecoveryAttentionFactStore`. A duplicate identity tuple returns
+the existing fact without another event; a deterministic fact/event conflict
+with different payload is a typed invariant error. P10 consumes the event and
+reads the P9 fact in its same projection transaction.
 
 
 ## 9.10 Provider Turn / Model Context
