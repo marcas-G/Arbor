@@ -300,6 +300,8 @@ export interface SingleWorkspaceConfig {
   /** Explicit process-local Inbox promotion crash qualification seam; absent
    * in ordinary production startup and never model/public-request supplied. */
   readonly inputPromotionQualificationProbe?: InputPromotionQualificationProbe;
+  /** Test-only process-local Gateway transaction probe; production startup
+   * leaves this absent. It is not configured from environment or HTTP. */
   readonly gatewayQualificationProbe?: CommandGatewayQualificationProbe;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;

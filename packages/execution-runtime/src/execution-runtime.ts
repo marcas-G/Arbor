@@ -34,7 +34,7 @@ export const LEASE_RENEW_INTERVAL_MS = LEASE_TTL_MS / 3;
 /** Test-only process-local seam. Production composition leaves it absent. */
 export type ExecutionSettlementQualificationProbe = (event: {
   readonly boundary:
-    | "AH12BeforeSettleCommandCommit"
+    | "AH12BeforeSettleGatewaySubmission"
     | "AH12AfterSettleCommandCommit";
   readonly executionId: ExecutionId;
   readonly fencingGeneration: LeaseGeneration;
@@ -285,7 +285,7 @@ export const runExecution = (
     if (qualificationProbe !== undefined) {
       yield* Effect.promise(() =>
         qualificationProbe({
-          boundary: "AH12BeforeSettleCommandCommit",
+          boundary: "AH12BeforeSettleGatewaySubmission",
           executionId,
           fencingGeneration: lease.generation,
           commandId,
