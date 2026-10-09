@@ -12,12 +12,14 @@ import {
 } from "@arbor/domain";
 import {
   AcceptanceRepository,
+  AttentionProjectionStore,
   DependencyRepository,
   DomainEventJournal,
   EvidenceRepository,
   ExecutionRepository,
   MessageStore,
   ProjectionQueryPort,
+  RecoveryAttentionFactStore,
   RunnableWorkSource,
   TransactionPort,
   type TransactionScope,
@@ -133,6 +135,8 @@ export type ProjectionQueryWiringServices =
   | EvidenceRepository
   | AcceptanceRepository
   | DomainEventJournal
+  | RecoveryAttentionFactStore
+  | AttentionProjectionStore
   | MessageStore
   | RunnableWorkSource;
 
@@ -154,6 +158,8 @@ export const ProjectionQueryPortLive: Layer.Layer<
     const evidence = yield* EvidenceRepository;
     const acceptances = yield* AcceptanceRepository;
     const journal = yield* DomainEventJournal;
+    const bindingAttention = yield* RecoveryAttentionFactStore;
+    const attentionProjection = yield* AttentionProjectionStore;
     const messages = yield* MessageStore;
     const source = yield* RunnableWorkSource;
 
@@ -296,6 +302,10 @@ export const ProjectionQueryPortLive: Layer.Layer<
       findDependency: (dependencyId) =>
         inTx(dependencies.findById(dependencyId as never)),
       readEvents,
+      findAssignWorkBindingFailure: (attentionFactId) =>
+        inTx(bindingAttention.findAssignWorkBindingFailure(attentionFactId)),
+      listProjectedAssignWorkBindingFailures: (projectId) =>
+        inTx(attentionProjection.listAssignWorkBindingFailures(projectId)),
     };
 
     const tree: TreeViewDeps = {

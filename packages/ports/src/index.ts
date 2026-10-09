@@ -1,4 +1,6 @@
 export * from "./agent-loop-step.js";
+export * from "./assign-work-target-binding.js";
+export * from "./attention-projection.js";
 export * from "./command.js";
 export * from "./consumer.js";
 export * from "./control-approval.js";

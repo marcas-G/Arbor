@@ -193,6 +193,7 @@ const buildApp = (
       Effect.sync(() => {
         state.appended.push(...drafts);
       }),
+    appendReturningIds: () => Effect.succeed([]),
     readAfter: () => Effect.succeed([]),
     lastSequence: () => Effect.succeed(0),
   };

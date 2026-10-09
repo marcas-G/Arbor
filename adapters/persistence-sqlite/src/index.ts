@@ -1,6 +1,8 @@
 export * from "./agent-loop-steps.js";
 export * from "./agent-state.js";
 export * from "./artifacts.js";
+export * from "./assign-work-target-binding.js";
+export * from "./attention-projection.js";
 export * from "./client.js";
 export * from "./command-store.js";
 export * from "./communication.js";
@@ -24,6 +26,7 @@ export * from "./permission-grant-repository.js";
 export * from "./project-directory.js";
 export * from "./project-tool-registry.js";
 export * from "./provider-turns.js";
+export * from "./recovery-attention-fact-store.js";
 export * from "./repositories.js";
 export * from "./repository-error.js";
 export * from "./runtime.js";

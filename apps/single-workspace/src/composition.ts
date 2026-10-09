@@ -50,6 +50,8 @@ import {
   AgentExecutionStateStoreLive,
   AgentLoopStepStoreLive,
   ArtifactMetadataRepositoryLive,
+  AssignWorkTargetBindingRepositoryLive,
+  type AttentionProjectionQualificationProbe,
   ClockLive,
   CommandStoreLive,
   ConsumerDeadLetterStoreLive,
@@ -73,6 +75,8 @@ import {
   LocalPlanStoreLive,
   layer,
   MessageStoreLive,
+  makeAttentionProjectionStoreLive,
+  makeRecoveryAttentionFactStoreLive,
   OwnershipWriteServiceLive,
   P12_MIGRATIONS,
   P16_MIGRATIONS,
@@ -80,7 +84,7 @@ import {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P32_MIGRATIONS,
+  P34_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -89,6 +93,7 @@ import {
   ProviderDeploymentBreakerLive,
   ProviderTurnStoreLive,
   RecordEnvironmentChangeLive,
+  type RecoveryAttentionFactQualificationProbe,
   ResourceOwnershipRepositoryLive,
   RuntimeClockLive,
   runMigrations,
@@ -162,8 +167,10 @@ import { WorkerDispatchPortLive } from "@arbor/worker-local";
 import { Effect, Layer } from "effect";
 import { ControlActionAuthorizerLive } from "./control-action-authorizer.js";
 import {
+  type AssignWorkBindingAttentionQualificationProbe,
   SingleWorkspaceControlActionHandlers,
   SingleWorkspaceControlActionHandlersLive,
+  SingleWorkspaceControlActionHandlersWithQualificationProbes,
 } from "./control-actions.js";
 import {
   ExecutableToolHandler,
@@ -297,12 +304,17 @@ export interface SingleWorkspaceConfig {
   /** Explicit test-only in-process fault probe; never loaded from env or a
    * public request. Production startup leaves this absent. */
   readonly qualificationProbe?: AgentLoopQualificationProbe;
+  readonly assignWorkAuthorizedBeforeCommandProbe?: AgentLoopQualificationProbe;
   /** Explicit process-local Inbox promotion crash qualification seam; absent
    * in ordinary production startup and never model/public-request supplied. */
   readonly inputPromotionQualificationProbe?: InputPromotionQualificationProbe;
   /** Test-only process-local Gateway transaction probe; production startup
    * leaves this absent. It is not configured from environment or HTTP. */
   readonly gatewayQualificationProbe?: CommandGatewayQualificationProbe;
+  readonly assignWorkBindingAttentionQualificationProbe?: AssignWorkBindingAttentionQualificationProbe;
+  readonly recoveryAttentionFactQualificationProbe?: RecoveryAttentionFactQualificationProbe;
+  /** Test-only P10 consumer pause point after row write but before commit. */
+  readonly attentionProjectionQualificationProbe?: AttentionProjectionQualificationProbe;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
@@ -550,10 +562,23 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(HumanMessageStoreLive, infra),
     Layer.provide(ConversationResponseJobStoreLive, infra),
     Layer.provide(ControlApprovalStoreLive, infra),
+    Layer.provide(AssignWorkTargetBindingRepositoryLive, infra),
+    Layer.provide(
+      makeRecoveryAttentionFactStoreLive(
+        config.recoveryAttentionFactQualificationProbe,
+      ),
+      Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
+    ),
     Layer.provide(ConversationAttemptStoreLive, infra),
     Layer.provide(ProviderDeploymentBreakerLive, infra),
     Layer.provide(ConsumerOffsetStoreLive, infra),
     Layer.provide(ConsumerDeadLetterStoreLive, infra),
+    Layer.provide(
+      makeAttentionProjectionStoreLive(
+        config.attentionProjectionQualificationProbe,
+      ),
+      infra,
+    ),
     Layer.provide(ProjectionStoreLive, infra),
     repo,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
@@ -613,7 +638,24 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(infra, registry, repos, fence),
   );
   const controlActionHandlers = Layer.provide(
-    SingleWorkspaceControlActionHandlersLive,
+    config.assignWorkBindingAttentionQualificationProbe === undefined &&
+      config.qualificationProbe === undefined &&
+      config.assignWorkAuthorizedBeforeCommandProbe === undefined
+      ? SingleWorkspaceControlActionHandlersLive
+      : SingleWorkspaceControlActionHandlersWithQualificationProbes({
+          ...(config.assignWorkBindingAttentionQualificationProbe === undefined
+            ? {}
+            : {
+                bindingAttention:
+                  config.assignWorkBindingAttentionQualificationProbe,
+              }),
+          ...(config.assignWorkAuthorizedBeforeCommandProbe === undefined
+            ? {}
+            : {
+                assignWorkAuthorizedBeforeCommand:
+                  config.assignWorkAuthorizedBeforeCommandProbe,
+              }),
+        }),
     Layer.mergeAll(repos, infra, gateway, workspacePlacement),
   );
   const controlRegistry = Layer.provide(
@@ -844,6 +886,6 @@ export {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P32_MIGRATIONS as CURRENT_MIGRATIONS,
+  P34_MIGRATIONS as CURRENT_MIGRATIONS,
   runMigrations,
 };

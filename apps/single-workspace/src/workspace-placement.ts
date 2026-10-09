@@ -226,7 +226,13 @@ export const WorkspacePlacementPortLive: Layer.Layer<
             );
             return match === undefined
               ? Option.none()
-              : Option.some(match.workspaceId);
+              : Option.some({
+                  _tag: "ResolvedChildPlacementRef" as const,
+                  projectId: match.projectId,
+                  targetWorkspaceId: match.workspaceId,
+                  targetWorkspaceRevision: Number(match.revision),
+                  refEncodingVersion: 1 as const,
+                });
           }),
         ),
       read: (rootWorkspaceId, ref) =>

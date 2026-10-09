@@ -24,6 +24,8 @@ export interface ConsumerRunResult {
   readonly quarantined: number;
 }
 
+export const P10_ATTENTION_CONSUMER_ID = "p10-rebuild:attention";
+
 export type ConsumerRunError =
   | DomainEventJournalError
   | ConsumerOffsetStoreError

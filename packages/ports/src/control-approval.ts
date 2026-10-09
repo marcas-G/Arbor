@@ -28,6 +28,9 @@ export interface ControlApprovalRecord {
   readonly decidedBy: string | null;
   readonly decisionReason: string | null;
   readonly consumedAt: string | null;
+  /** CAPA v2 exact-subject evidence; absent on historical compatibility rows. */
+  readonly bindingProven?: boolean;
+  readonly consumedBy?: string | null;
 }
 
 export type ControlApprovalStoreError =
@@ -62,6 +65,7 @@ export interface ControlApprovalStoreService {
     readonly actionDigest: string;
     readonly controlBasisDigest: string;
     readonly consumedAt: string;
+    readonly consumedBy?: string;
   }) => Effect.Effect<
     Option.Option<ControlApprovalRecord>,
     ControlApprovalStoreError,

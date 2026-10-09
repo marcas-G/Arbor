@@ -4,9 +4,12 @@ import {
   type ControlActionAuthorizerService,
   permissionGrantMatchesExecution,
 } from "@arbor/agent-runtime";
-import type { WorkspacePolicy } from "@arbor/domain";
+import { newUuid7 } from "@arbor/application";
+import type { CommandId, WorkspacePolicy } from "@arbor/domain";
 import {
+  type AssignWorkControlAuthorizationEvidence,
   Clock,
+  CommandStore,
   ControlApprovalStore,
   InboxProjectionStore,
   PermissionGrantRepository,
@@ -125,6 +128,7 @@ export const ControlActionAuthorizerLive: Layer.Layer<
   never,
   | Clock
   | ControlApprovalStore
+  | CommandStore
   | InboxProjectionStore
   | PermissionGrantRepository
   | TransactionPort
@@ -134,6 +138,7 @@ export const ControlActionAuthorizerLive: Layer.Layer<
   Effect.gen(function* () {
     const clock = yield* Clock;
     const approvals = yield* ControlApprovalStore;
+    const commands = yield* CommandStore;
     const inbox = yield* InboxProjectionStore;
     const grants = yield* PermissionGrantRepository;
     const tx = yield* TransactionPort;
@@ -150,6 +155,59 @@ export const ControlActionAuthorizerLive: Layer.Layer<
         const controlBasisDigest = sha256Hex(
           JSON.stringify(input.controlBasis),
         );
+        if (
+          input.action._tag === "AssignWork" &&
+          ((input.action.targetWorkspaceRef !== undefined &&
+            input.action.targetWorkspaceRef !== "current") ||
+            (input.action.targetWorkspaceId !== undefined &&
+              input.action.targetWorkspaceId !==
+                input.execution.workspaceId)) &&
+          input.context._tag === "ExecutionOrigin" &&
+          input.context.fencingGeneration > 0 &&
+          input.logicalActionId !== undefined
+        ) {
+          const occurrence = `${input.invocation.providerTurnId}:${input.invocation.outputPosition}`;
+          for (
+            let generation = 0;
+            generation < input.context.fencingGeneration;
+            generation += 1
+          ) {
+            const seed =
+              generation === 0
+                ? occurrence
+                : `${occurrence}:generation:${generation}`;
+            const priorCommandId =
+              `cmd_${newUuid7("assign-work-command", seed)}` as CommandId;
+            const prior = yield* tx.transact(
+              commands.findResolution(priorCommandId),
+            );
+            if (
+              Option.isSome(prior) &&
+              prior.value.commandId === priorCommandId &&
+              prior.value.projectId === input.execution.projectId &&
+              prior.value.resolution._tag === "Committed"
+            ) {
+              return {
+                _tag: "Authorized" as const,
+                authorityRef: "receipt-first:assign-work",
+                actionDigest,
+                controlBasisDigest,
+                assignWorkReplay: true,
+              };
+            }
+          }
+        }
+        if (
+          input.action._tag === "AssignWork" &&
+          input.action.targetWorkspaceId !== undefined &&
+          input.action.targetWorkspaceId !== input.execution.workspaceId
+        ) {
+          return {
+            _tag: "Denied" as const,
+            reason:
+              "AssignWork direct-child targets require an opaque targetWorkspaceRef",
+          };
+        }
         const approvalId = `cap_${sha256Hex(
           JSON.stringify({
             executionId: input.execution.executionId,
@@ -185,14 +243,21 @@ export const ControlActionAuthorizerLive: Layer.Layer<
         if (mode === "Deny") {
           return { _tag: "Denied" as const, reason: "policy denied action" };
         }
-        const grant = snapshot.activeGrants.find((candidate) =>
-          permissionGrantMatchesExecution(candidate, {
-            execution: input.execution,
-            principal: input.context.principal,
-            capability: stableActionId,
-            targetRef,
-            now,
-          }),
+        const grant = snapshot.activeGrants.find(
+          (candidate) =>
+            permissionGrantMatchesExecution(candidate, {
+              execution: input.execution,
+              principal: input.context.principal,
+              capability: stableActionId,
+              targetRef,
+              now,
+            }) &&
+            (input.action._tag !== "AssignWork" ||
+              (candidate.target === targetRef &&
+                candidate.capability === stableActionId &&
+                candidate.revision !== undefined &&
+                candidate.subject?._tag !== undefined &&
+                candidate.subject._tag !== "HumanPrincipal")),
         );
         if (grant !== undefined) {
           return {
@@ -200,6 +265,33 @@ export const ControlActionAuthorizerLive: Layer.Layer<
             authorityRef: `grant:${grant.permissionGrantId}`,
             actionDigest,
             controlBasisDigest,
+            ...(input.action._tag === "AssignWork" &&
+            (grant.subject?._tag === "WorkspaceAgent" ||
+              grant.subject?._tag === "Execution") &&
+            grant.capability === stableActionId &&
+            grant.target === targetRef &&
+            grant.validFrom !== undefined &&
+            grant.revision !== undefined
+              ? {
+                  assignWorkEvidence: {
+                    _tag: "PermissionGrant" as const,
+                    permissionGrantId: grant.permissionGrantId,
+                    permissionGrantRevision: grant.revision,
+                    projectId: input.execution.projectId,
+                    subjectKind: grant.subject._tag,
+                    subjectRef:
+                      grant.subject._tag === "WorkspaceAgent"
+                        ? grant.subject.workspaceId
+                        : grant.subject.executionId,
+                    capability: stableActionId as "core.control.assign-work",
+                    targetRef,
+                    validFrom: grant.validFrom,
+                    expiresAt: grant.expiresAt ?? null,
+                    actionDigest,
+                    controlBasisDigest,
+                  } satisfies AssignWorkControlAuthorizationEvidence,
+                }
+              : {}),
           };
         }
         if (mode === "AllowWithinGrant") {
@@ -222,6 +314,16 @@ export const ControlActionAuthorizerLive: Layer.Layer<
             };
           }
           if (approval.state === "Approved" || approval.state === "Consumed") {
+            if (
+              input.action._tag === "AssignWork" &&
+              (approval.state !== "Approved" || approval.bindingProven !== true)
+            ) {
+              return {
+                _tag: "Denied" as const,
+                reason:
+                  "AssignWork approval lacks exact durable binding evidence",
+              };
+            }
             return {
               _tag: "Authorized" as const,
               authorityRef: `approval:${approval.approvalId}`,
@@ -229,6 +331,25 @@ export const ControlActionAuthorizerLive: Layer.Layer<
               approvalRevision: approval.revision,
               actionDigest,
               controlBasisDigest,
+              ...(input.action._tag === "AssignWork" &&
+              approval.state === "Approved" &&
+              approval.bindingProven === true
+                ? {
+                    assignWorkEvidence: {
+                      _tag: "ActionApproval" as const,
+                      approvalId: approval.approvalId,
+                      approvalRevision: approval.revision,
+                      projectId: approval.projectId,
+                      workspaceId: approval.workspaceId,
+                      executionId: approval.executionId,
+                      stableActionId: "core.control.assign-work" as const,
+                      actionDigest,
+                      targetRef,
+                      controlBasisDigest,
+                      expiresAt: approval.expiresAt,
+                    } satisfies AssignWorkControlAuthorizationEvidence,
+                  }
+                : {}),
             };
           }
           if (approval.state === "Rejected") {
