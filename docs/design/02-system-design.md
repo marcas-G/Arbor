@@ -1,12 +1,12 @@
 # Arbor System Design Specification
 
-**Version:** 1.11
+**Version:** 1.12
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.10
+**Supersedes:** v1.11
 
-**Date:** 2026-10-08
+**Date:** 2026-10-09
 
 **Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.3`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量  
@@ -48,6 +48,21 @@
   `E71285B4908DE221D10A3AA7720DEB74ABDFBD99992640AD6152F534666B0DD9`.
   Landing decision and file audit:
   `planning/results/AH10-direct-child-assign-work-target-binding-governance.md`.
+
+**Governance changes (v1.11 → v1.12): FT-DG-03 external command input trust**
+
+- System Design §8A.1 establishes that externally supplied command data must
+  pass the strict registered wire-v1 codec before it can be considered by the
+  Authority Resolver or Command Gateway. Malformed input is a data-format
+  failure, not a business rejection, and codec validity grants no authority.
+- Historical malformed branded IDs remain unchanged and do not become valid
+  through replay, reinterpretation, or migration.
+- Accepted proposal `ACCEPT_EXTERNAL_COMMAND_RUNTIME_CODEC`, SHA-256
+  `DD24C9550BFE253D94DE7236255E5E8E710A7E612A57607E474E8A90653529FC`;
+  decision and landing record:
+  `planning/results/FT-DG-03-governance-acceptance-and-landing.md`.
+- This acceptance and landing authorize design only. Runtime implementation
+  requires separate authorization. AH10 §4.11 is unchanged.
 
 **Governance changes (v1.8 → v1.9): Minimal Architecture Convergence
 (`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`)**
@@ -1259,6 +1274,27 @@ Model-derived claim != established fact
 ```
 
 Memory promotion 必须保留 Provenance，并经过独立的 persistence eligibility / merge policy；不可信内容不能通过“让模型记住我”来自行获得长期 Persistence。
+
+## 8A.1 External Command Input Trust
+
+An externally supplied command envelope is untrusted data until the
+authenticated transport boundary and the registered strict external wire v1
+codec have accepted it. Malformed or unsupported input is a data-format
+failure; it is not a domain/business rejection and creates no command
+resolution. Codec acceptance establishes only that the request has the
+registered shape. It does not establish Actor identity, permission, target
+visibility, Grant scope, or any other authority.
+
+External declared `Actor` is bound exactly to the authenticated `Principal`
+before the Authority Resolver is run. The Resolver must authorize the typed
+request against current canonical facts and policy before the Command Gateway
+can reveal a receipt. The Gateway remains the final in-transaction authority,
+precondition, and mutation boundary.
+
+Previously persisted malformed branded identifiers remain byte-for-byte
+historical data. They do not become valid through a current decoder, receipt
+replay, or inferred migration. This rule does not alter the direct-child
+AssignWork recovery contract in §4.11.
 
 ---
 

@@ -16,6 +16,16 @@ Dependency  = unmet result requirement     (this doc — six state commands)
 - Orthogonality (G2, incorporating ex-GQ5): satisfaction is structural matching only. **No Verification PASS, no CompletionClaim, no Acceptance is a precondition of any command here.** Quality gates live in P8's Verification → Acceptance chain (SD §3.7; DID v1.9 G4). A structurally matched but unverified Deliverable satisfies.
 - All six commands are Project-scoped via `CommandEnvelope.projectId` (P1); cross-Project targets are rejected (see per-command rows).
 
+FT-DG-03 current registration scope (DID §4.1B): the strict codec and typed
+internal semantic validators cover only the P7 handlers composed in the
+current production registry: `DeclareDependency`, `ProduceDeliverable`, and
+`SatisfyDependency`, using the exact closed payloads below. The existing
+factories for `ReviseDependencyContract`, `WithdrawDependency`, and
+`MarkDependencyUnfulfillable` remain factory-only: they are not current
+`RegisteredCommandType` members or codec descriptors. Composing any of them
+requires a separately accepted registry/codec scope update; this note does
+not change their P7 command semantics.
+
 ## 2. `DeclareDependency`
 
 Discharges the last `DirectiveUnsupported` row of P5 `03` §2 (DID §11 P7).

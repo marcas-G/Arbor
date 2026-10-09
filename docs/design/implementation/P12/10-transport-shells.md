@@ -48,6 +48,22 @@ daemons : recovery pass driver (`P9/00`), verification/completion consumer loops
 ## 3. Authentication → Authority Resolver
 
 - External human/parent requests are authenticated at the transport boundary.
+- Authentication completes before command-body decoding. The HTTP, WebSocket,
+  CLI, and future external shells pass the same bounded raw JSON envelope,
+  authenticated `Principal`, submission context, and correlation information
+  into Application/Composition; they do not cast JSON to
+  `ExternalCommandEnvelope` or perform receipt reads.
+- Application/Composition applies the single registered strict external
+  wire-v1 codec, derives the Handler schema/fingerprint, binds declared Actor
+  exactly to the authenticated Principal, and only then calls the P12 Resolver.
+  The wire contains no caller-supplied version field. These gates precede
+  CommandGateway receipt visibility; the Gateway retains its own in-transaction
+  receipt-first replay and final authority check (DID §4.1B; P1 `01` §3,
+  `03` §3.1).
+- Codec failures use the DID §4.1B non-reflecting `InvalidCommandPayload`
+  Problem, mapped to HTTP 400 for malformed/unsupported input. Rejected values,
+  unknown property names, raw body fragments, and untrusted exception text are
+  not reflected in responses or surfaced diagnostics.
 - The authenticated principal + submission context feed the Authority Resolver (`02`),
   which produces the trusted authority fact; transport never asserts authority.
 - **Composition root — not the transport — loads `canonicalFacts` / `grants` and invokes

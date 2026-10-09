@@ -69,6 +69,12 @@ RegisterProjectTool (governance Command)
            (pluginId, pluginVersion, contentHash) → ReadonlyArray<ToolDefinition>
 ```
 
+FT-DG-03 registry status (DID §4.1B): `RegisterProjectTool` has a handler
+factory and this owning payload/trust contract, but it is not composed in the
+current production CommandHandlerRegistry. It is therefore not a current
+`RegisteredCommandType` or codec descriptor. Future registration requires an
+accepted registry/codec scope update before reachability.
+
 - **content/version-bound trust**: the registration binds the exact
   `ToolDefinition` content hash + `PluginVersion`; any content/version change requires a new registration.
 - **multi-definition registration** (cross-contract completeness correction,

@@ -17,6 +17,11 @@ interface SubmitHumanMessagePayload {
 }
 ```
 
+FT-DG-03: the registered strict codec and typed internal semantic validator
+use this exact closed payload; `messageId` must pass the frozen `msg_` +
+UUIDv7 schema at runtime. The codec does not alter the root-only authenticated
+human authority or P14 message lifecycle (DID §4.1B; P12 `10` §3).
+
 - **sender 由谁决定**：human principal 来自 authenticated External
   submission context（P12 `10` §3 transport 边界证明）；**payload 不自报
   sender**——resolver 从 principal 产 fact。

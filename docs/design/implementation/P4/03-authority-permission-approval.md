@@ -9,6 +9,14 @@ P4 does **not** resolve PermissionGrant / Parent / User governance (G1). The
 Authority Resolver stays deferred. P4 receives trusted facts and performs
 deterministic exact-match plus capability-ceiling checks.
 
+For the externally routed `ResolveControlApproval` command, strict payload
+decoding follows the P4/P12 approval-decision contract (including the exact
+`ApprovalId` and Approve/Reject decision fields) before the resolver and
+Gateway. The codec cannot construct or accept any process-local
+`AssignWorkCommandEvidence` or `AssignWorkControlAuthorizationEvidence`; this
+section continues to own only the typed approval record and its atomic
+consumption contract (DID §4.1B).
+
 ## 2. Trusted `InvocationAuthority` fact
 
 ```ts
@@ -95,6 +103,12 @@ original `consumed_by` CommandId/revision, without re-authorizing or consuming
 again. This is a route-specific atomicity contract; it does not widen
 PermissionGrant, ActionApproval, or ResourceBoundary authority. See DID §6A.16
 and System Design §4.11.
+
+FT-DG-03 validation follows DID §4.1B and the owning P1/P12 command contracts.
+The External codec cannot construct or accept the process-local
+`AssignWorkCommandEvidence` or `AssignWorkControlAuthorizationEvidence` used by
+the direct-child Control route. It does not alter the existing exact
+CommandId-bound approval consumption, replay evidence, or transaction boundary.
 
 ## 5. Rejection projection
 

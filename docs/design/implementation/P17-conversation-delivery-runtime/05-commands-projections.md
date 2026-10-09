@@ -23,6 +23,12 @@ interface CancelConversationResponsePayload {
 }
 ```
 
+FT-DG-03: the registered strict codecs and typed internal semantic validators
+derive their closed fields and ID/revision rules from these exact payloads.
+Both commands remain external-origin denied unless the owning P17 contract
+explicitly establishes a route; codec registration does not create one (DID
+§4.1B).
+
 - Queued/RetryScheduled/NeedsAttention → Cancelled atomically.
 - Running → submits the existing StopExecution path and records cancel intent;
   final Job convergence occurs from the authoritative settlement.

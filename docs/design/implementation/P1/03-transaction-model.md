@@ -64,6 +64,16 @@ Rules:
 
 ### 3.1 Successful / replay / conflict (single transaction)
 
+For an External request, transport authentication, strict wire-v1 codec,
+Handler schema/fingerprint derivation, exact Actor/Principal binding, and the
+P12 Resolver visibility check complete in Application/Composition **before**
+`TransactionPort.transact` begins. This boundary performs no receipt read.
+Once the Gateway opens the transaction, the existing receipt-first sequence
+below remains intact: `BEGIN IMMEDIATE` reads and compares the exact receipt
+tuple before the final in-transaction authority check. It is the sole receipt
+linearization point. The direct-child AssignWork Command/Work/Event/binding/
+ActionApproval atomic transaction under DID §6A.16/§9.9 is unchanged.
+
 ```text
 transact {
   load commands row by command_id

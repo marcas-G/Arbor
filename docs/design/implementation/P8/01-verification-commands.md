@@ -3,6 +3,11 @@
 **Authority:** DID v1.10 §3.5/§3.6/§4.2/§5.3/§12.10/§12.11 (Work + Verification truth tables), §12.8 C7; SD v1.3 §9.1/§9.6/§9.7; 不变量 22/23/49; P0 domain（verification.ts/work.ts/dependency.ts Acceptance 冻结实现）。
 **Status:** FROZEN — DID v1.27 VDC + Verifier Execution Settlement addenda.
 
+FT-DG-03: registered strict codecs and typed internal semantic validators
+derive their closed field/ID/union rules from the exact command payloads in
+this document and EvidenceRecord/Mission contracts in `04`. This does not
+change P8 verdict, authority, Acceptance, or consumer semantics (DID §4.1B).
+
 ## DID v1.27 addendum — conclusion action settlement
 
 The model-facing `arbor_conclude_verification` action executes the following

@@ -8,6 +8,11 @@ Payload: { name: string; expectedRevision: Revision }. Target is envelope.projec
 
 Payload: { expectedRevision: Revision; confirmed: true }. CommandGateway requires Project Open. The handler CASes Open → Closed, requests cooperative stop for every unsettled project execution, and performs the conversation terminalization described in `03`. Same CommandId replays its receipt; a distinct later Close rejects because Closed is terminal.
 
+FT-DG-03: `RenameProject` and `CloseProject` use strict registered descriptors
+derived from these exact closed payloads. Codec validation does not alter P15
+project lifecycle admission, governance authority, or UI exposure (DID §4.1B;
+P13 `02`).
+
 ## Gateway admission
 
 The default for every unknown/new command is OpenRequired. The only current exceptions are:

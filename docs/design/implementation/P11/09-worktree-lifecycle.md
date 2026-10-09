@@ -10,6 +10,12 @@ CreateWorktree  { projectId, workspaceId, worktreeId, address: GitWorktree{path,
 RetireWorktree  { worktreeId, expectedState }
 ```
 
+FT-DG-03 registry status (DID §4.1B): these command handler factories are not
+in the current production CommandHandlerRegistry and are not members of the
+current `RegisteredCommandType` or codec descriptor set. A future production
+registration requires its own accepted registry/codec scope update; the
+payload and lifecycle contract below remains P11-owned.
+
 States: `Active → Retired` (terminal). Events: `WorktreeCreated`, `WorktreeRetired`.
 
 ## 2. Payload completion (UD-1 closure)
