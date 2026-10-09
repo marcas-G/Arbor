@@ -2,6 +2,7 @@ export interface AhProbeHit {
   readonly boundary: string;
   readonly providerTurnId?: string;
   readonly executionId?: string;
+  readonly commandId?: string;
   readonly messageId?: string;
   readonly invocationId?: string;
   readonly logicalActionId?: string;
@@ -34,6 +35,9 @@ export const recordAhProbeLine = (hits: AhProbeHit[], line: string): void => {
       : {}),
     ...("executionId" in parsed && typeof parsed.executionId === "string"
       ? { executionId: parsed.executionId }
+      : {}),
+    ...("commandId" in parsed && typeof parsed.commandId === "string"
+      ? { commandId: parsed.commandId }
       : {}),
     ...("messageId" in parsed && typeof parsed.messageId === "string"
       ? { messageId: parsed.messageId }

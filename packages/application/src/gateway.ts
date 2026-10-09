@@ -43,7 +43,9 @@ export * from "./project-admission.js";
 /** Process-local crash qualification seam. Product composition leaves it
  * absent; only an explicitly injected test child can pause this transaction. */
 export type CommandGatewayQualificationProbe = (event: {
-  readonly boundary: "AH10BeforeFencedReceiptCommit";
+  readonly boundary:
+    | "AH10BeforeFencedReceiptCommit"
+    | "AH12BeforeSettleExecutionCommit";
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
   readonly executionId: ExecutionId;
@@ -305,6 +307,21 @@ export const makeCommandGatewayLive = (
               startedAt,
               settledAt,
             );
+            if (
+              qualificationProbe !== undefined &&
+              envelope.commandType === "SettleExecution" &&
+              context._tag === "ExecutionOrigin"
+            ) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "AH12BeforeSettleExecutionCommit",
+                  commandId: envelope.commandId,
+                  projectId: envelope.projectId,
+                  executionId: context.executionId,
+                  fencingGeneration: context.fencingGeneration,
+                }),
+              );
+            }
             return makeCommandReceipt<R>(
               envelope.commandId,
               envelope.projectId,

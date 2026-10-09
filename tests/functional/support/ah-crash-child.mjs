@@ -26,7 +26,8 @@ if (
   targetBoundary !== "AH9AfterTerminalActionCommit" &&
   targetBoundary !== "AH11BeforeStepEffectsCommit" &&
   targetBoundary !== "AH11AfterStepEffectsCommit" &&
-  targetBoundary !== "AH12BeforeSettleCommandCommit" &&
+  targetBoundary !== "AH12BeforeSettleGatewaySubmission" &&
+  targetBoundary !== "AH12BeforeSettleExecutionCommit" &&
   targetBoundary !== "AH12AfterSettleCommandCommit" &&
   targetBoundary !== "AH13BeforeResponseSweepCommit" &&
   targetBoundary !== "AH13AfterResponseSweepCommit" &&
@@ -59,6 +60,7 @@ const config = {
   providerQualificationProbe: pauseAtBoundary,
   toolQualificationProbe: pauseAtBoundary,
   executionSettlementQualificationProbe: pauseAtBoundary,
+  gatewayQualificationProbe: pauseAtBoundary,
   conversationResponseQualificationProbe: pauseAtBoundary,
 };
 
