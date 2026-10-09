@@ -147,67 +147,76 @@ describe("MAC-P2 WorkspacePlacementContext", () => {
             tx: yield* TransactionPort,
             placement,
           });
-          const assigned = yield* handler.handle({
-            action: {
-              _tag: "AssignWork",
-              targetWorkspaceRef: staleRef,
-              objective: "bounded child outcome",
-              why: "the existing child owns this responsibility",
-              constraints: ["read only"],
-              completionExpectation: "verified child report",
-              verificationMission: {
-                goal: "verify child report",
-                criteria: [
-                  {
-                    criterionId: "report",
-                    requirement: "report exists",
-                    required: true,
-                  },
-                ],
-                riskRequirements: [],
-              },
-              reason: "assign to existing responsibility",
-            },
-            invocation: {
-              providerTurnId: "ptn_child_assign" as never,
-              outputPosition: 0,
-              callRef: "child-assign",
-              toolName: "assign_work",
-              argumentsJson: JSON.stringify({ targetWorkspaceRef: staleRef }),
-            },
-            execution: {
-              executionId: parse(ExecutionId)(
-                "exe_018f2b3c-4d5e-7abc-8def-012345678a01",
-              ),
-              projectId,
-              workspaceId: rootWorkspaceId,
-              binding: {
-                _tag: "WorkspaceExecution",
-                workspaceId: rootWorkspaceId,
-                episode: {
-                  _tag: "ConversationResponseEpisode",
-                  messageId:
-                    "msg_018f2b3c-4d5e-7abc-8def-012345678a01" as never,
-                  responseJobRevision: 0,
+          const assigned = yield* Effect.match(
+            handler.handle({
+              action: {
+                _tag: "AssignWork",
+                targetWorkspaceRef: staleRef,
+                objective: "bounded child outcome",
+                why: "the existing child owns this responsibility",
+                constraints: ["read only"],
+                completionExpectation: "verified child report",
+                verificationMission: {
+                  goal: "verify child report",
+                  criteria: [
+                    {
+                      criterionId: "report",
+                      requirement: "report exists",
+                      required: true,
+                    },
+                  ],
+                  riskRequirements: [],
                 },
+                reason: "assign to existing responsibility",
               },
-              sessionId: parse(SessionId)(
-                "ses_018f2b3c-4d5e-7abc-8def-012345678a01",
-              ),
-              admittedAt: "t",
-              stopRequestedAt: null,
-              state: { status: "Active", settlement: null },
+              invocation: {
+                providerTurnId: "ptn_child_assign" as never,
+                outputPosition: 0,
+                callRef: "child-assign",
+                toolName: "assign_work",
+                argumentsJson: JSON.stringify({ targetWorkspaceRef: staleRef }),
+              },
+              execution: {
+                executionId: parse(ExecutionId)(
+                  "exe_018f2b3c-4d5e-7abc-8def-012345678a01",
+                ),
+                projectId,
+                workspaceId: rootWorkspaceId,
+                binding: {
+                  _tag: "WorkspaceExecution",
+                  workspaceId: rootWorkspaceId,
+                  episode: {
+                    _tag: "ConversationResponseEpisode",
+                    messageId:
+                      "msg_018f2b3c-4d5e-7abc-8def-012345678a01" as never,
+                    responseJobRevision: 0,
+                  },
+                },
+                sessionId: parse(SessionId)(
+                  "ses_018f2b3c-4d5e-7abc-8def-012345678a01",
+                ),
+                admittedAt: "t",
+                stopRequestedAt: null,
+                state: { status: "Active", settlement: null },
+              },
+              context: {
+                _tag: "System",
+                principal: parse(Principal)("runtime:placement-test"),
+                causationRef: "placement-test",
+              },
+            }),
+            {
+              onFailure: (cause) => ({ _tag: "Rejected" as const, cause }),
+              onSuccess: (outcome) => outcome,
             },
-            context: {
-              _tag: "System",
-              principal: parse(Principal)("runtime:placement-test"),
-              causationRef: "placement-test",
-            },
-          });
+          );
           const assignedRows = yield* sql.unsafe<{
             workspace_id: string;
             objective: string;
           }>("SELECT workspace_id, objective FROM works");
+          const bindingCount = yield* sql.unsafe<{ n: number }>(
+            "SELECT count(*) AS n FROM assign_work_target_bindings",
+          );
           yield* sql.unsafe(
             "UPDATE workspaces SET revision = revision + 1 WHERE workspace_id = ?",
             [childId(21)],
@@ -222,6 +231,7 @@ describe("MAC-P2 WorkspacePlacementContext", () => {
             queried,
             assigned,
             assignedRows,
+            bindingCount: Number(bindingCount[0]?.n ?? -1),
             resolvedAfterRevision,
           };
         }),
@@ -241,10 +251,15 @@ describe("MAC-P2 WorkspacePlacementContext", () => {
     expect(result.queried.directChildren[0]?.name).toBe("child-21");
     expect(result.queried.directChildren[0]?.ref).toMatch(/^wref_/);
     expect(String(result.queried.directChildren[0]?.ref)).not.toContain("ws_");
-    expect(result.assigned._tag).toBe("Observation");
-    expect(result.assignedRows).toEqual([
-      { workspace_id: childId(21), objective: "bounded child outcome" },
-    ]);
+    expect(result.assigned).toMatchObject({
+      _tag: "Rejected",
+      cause: {
+        _tag: "AgentActionRejected",
+        safeMessage: expect.stringContaining("trusted target"),
+      },
+    });
+    expect(result.assignedRows).toHaveLength(0);
+    expect(result.bindingCount).toBe(0);
     expect(result.first.inFlightFormations).toEqual([
       expect.objectContaining({
         proposedName: "pending-research",

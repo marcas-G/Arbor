@@ -401,6 +401,9 @@ export const AgentLoopDriverLive = (
             if (actionProgression._tag === "DecisionStale") {
               continue;
             }
+            if (actionProgression._tag === "RecoveryBlocked") {
+              return { _tag: "RecoveryBlocked" };
+            }
             if (actionProgression._tag === "ApprovalRequired") {
               return actionProgression;
             }

@@ -4,6 +4,7 @@ import type {
   PermissionGrant,
 } from "@arbor/domain";
 import type { ControlBasis, ToolInvocation } from "@arbor/model-context";
+import type { AssignWorkControlAuthorizationEvidence } from "@arbor/ports";
 import { Context, type Effect } from "effect";
 import type { AgentAction } from "./control-types.js";
 
@@ -15,6 +16,8 @@ export type ControlAuthorizationDecision =
       readonly approvalRevision?: number;
       readonly actionDigest: string;
       readonly controlBasisDigest: string;
+      readonly assignWorkEvidence?: AssignWorkControlAuthorizationEvidence;
+      readonly assignWorkReplay?: boolean;
     }
   | {
       readonly _tag: "ApprovalRequired";
@@ -27,6 +30,7 @@ export interface ControlActionAuthorizerService {
   readonly authorize: (input: {
     readonly action: AgentAction;
     readonly invocation: ToolInvocation;
+    readonly logicalActionId?: string;
     readonly execution: Execution;
     readonly context: CommandSubmissionContext;
     readonly controlBasis: ControlBasis;

@@ -53,12 +53,13 @@ export interface UsageSummary {
   readonly turns: number;
 }
 
-/** The six frozen attention fact sources (P10 `02` §1). */
+/** The frozen attention fact sources (P10 `02` §1). */
 export type AttentionSource =
   | "DependencyUnfulfillable"
   | "Deadlock"
   | "RuntimeSafetyEnvelope"
   | "RecoveryEscalation"
+  | "AssignWorkTargetBindingFailure"
   | "VerifierOrphan"
   | "VacantProducer";
 
@@ -67,6 +68,7 @@ export const ATTENTION_SOURCES: ReadonlyArray<AttentionSource> = [
   "Deadlock",
   "RuntimeSafetyEnvelope",
   "RecoveryEscalation",
+  "AssignWorkTargetBindingFailure",
   "VerifierOrphan",
   "VacantProducer",
 ];

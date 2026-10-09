@@ -140,6 +140,7 @@ let running:
           readonly approvalId: string;
           readonly revision: number;
         }
+      | { readonly _tag: "RecoveryBlocked" }
     >
   | undefined;
 

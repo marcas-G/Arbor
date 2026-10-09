@@ -23,6 +23,7 @@ const EXPECTED_EVENTS = [
   "WorkspaceRetired",
   "WorkspaceLineageRecorded",
   "PrimarySessionReplaced",
+  "AssignWorkTargetBindingEscalated",
   "WorkAssigned",
   "CurrentWorkChanged",
   "WorkRefined",

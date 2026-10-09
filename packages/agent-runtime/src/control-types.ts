@@ -202,6 +202,11 @@ export interface AgentActionHandlerInput {
   readonly invocation: ToolInvocation;
   readonly execution: Execution;
   readonly context: CommandSubmissionContext;
+  /** Durable AgentLoopStep identity for this pinned control action. */
+  readonly logicalActionId?: string;
+  /** Exact process-local authorization evidence from the trusted authorizer. */
+  readonly assignWorkEvidence?: import("@arbor/ports").AssignWorkControlAuthorizationEvidence;
+  readonly assignWorkReplay?: boolean;
 }
 
 export interface AgentActionHandler {
@@ -238,9 +243,16 @@ export interface AgentActionOperationalFailure {
   readonly cause: unknown;
 }
 
+export interface AgentActionRecoveryBlocked {
+  readonly _tag: "AgentActionRecoveryBlocked";
+  readonly executionId: import("@arbor/domain").ExecutionId;
+  readonly logicalActionId: string;
+}
+
 export type AgentActionError =
   | AgentActionRejected
-  | AgentActionOperationalFailure;
+  | AgentActionOperationalFailure
+  | AgentActionRecoveryBlocked;
 
 export type ExecutableInvocationOutcome =
   | {

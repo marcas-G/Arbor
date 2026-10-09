@@ -96,6 +96,17 @@ export const ReconciliationEscalated = Schema.TaggedStruct(
     refs: Schema.Array(Schema.Unknown),
   },
 );
+export const AssignWorkTargetBindingEscalated = Schema.TaggedStruct(
+  "AssignWorkTargetBindingEscalated",
+  {
+    attentionFactId: Schema.String,
+    executionId: Schema.String,
+    targetWorkspaceId: Schema.String,
+    logicalActionId: Schema.String,
+    committedCommandId: Schema.String,
+    failureCode: Schema.String,
+  },
+);
 export const DeadlockAttentionRequested = Schema.TaggedStruct(
   "DeadlockAttentionRequested",
   {
@@ -237,6 +248,7 @@ export const DomainEventPayload = Schema.Union([
   DependencyContractRevised,
   DeadlockAttentionRequested,
   ReconciliationEscalated,
+  AssignWorkTargetBindingEscalated,
   DependencyWithdrawn,
   DependencyMarkedUnfulfillable,
   DeliverableProduced,
@@ -287,6 +299,7 @@ export const EVENT_CATALOG = {
   DependencyMarkedUnfulfillable,
   DeadlockAttentionRequested,
   ReconciliationEscalated,
+  AssignWorkTargetBindingEscalated,
   DeliverableProduced,
   MessageSent,
   VerificationStarted,

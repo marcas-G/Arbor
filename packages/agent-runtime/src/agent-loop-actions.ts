@@ -85,6 +85,7 @@ export type AgentLoopActionOutcome =
       readonly durableProgress: boolean;
     }
   | { readonly _tag: "DecisionStale" }
+  | { readonly _tag: "RecoveryBlocked" }
   | {
       readonly _tag: "ApprovalRequired";
       readonly approvalId: string;
@@ -974,6 +975,9 @@ export const executeAgentLoopActions = (
           : yield* controlAuthorizer.authorize({
               action: decodedAction.value.action,
               invocation,
+              ...(loopAction === undefined
+                ? {}
+                : { logicalActionId: loopAction.logicalActionId }),
               execution: input.execution,
               context: input.context,
               controlBasis: current,
@@ -1010,6 +1014,15 @@ export const executeAgentLoopActions = (
           invocation,
           execution: input.execution,
           context: input.context,
+          ...(loopAction === undefined
+            ? {}
+            : { logicalActionId: loopAction.logicalActionId }),
+          ...(authorization.assignWorkEvidence === undefined
+            ? {}
+            : { assignWorkEvidence: authorization.assignWorkEvidence }),
+          ...(authorization.assignWorkReplay === true
+            ? { assignWorkReplay: true }
+            : {}),
         }),
         {
           onFailure: (cause) => ({ ok: false as const, cause }),
@@ -1017,6 +1030,9 @@ export const executeAgentLoopActions = (
         },
       );
       if (!handled.ok) {
+        if (handled.cause._tag === "AgentActionRecoveryBlocked") {
+          return { _tag: "RecoveryBlocked" };
+        }
         if (handled.cause._tag === "AgentActionRejected") {
           const disposition = `ModelUsable:${handled.cause.code}`;
           const observation = actionRejectionObservation(handled.cause);

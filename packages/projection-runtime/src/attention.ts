@@ -13,6 +13,7 @@ export type AttentionSource =
   | "Deadlock"
   | "RuntimeSafetyEnvelope"
   | "ReconciliationEscalated"
+  | "AssignWorkTargetBindingFailure"
   | "VerifierOrphan"
   | "WaitingOnVacantProducer";
 
@@ -63,6 +64,16 @@ export interface EscalationEventFact {
   readonly occurredAt: string;
 }
 
+export interface AssignWorkBindingFailureEventFact {
+  readonly attentionFactId: string;
+  readonly executionId: string;
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly logicalActionId: string;
+  readonly committedCommandId: string;
+  readonly failureCode: string;
+  readonly occurredAt: string;
+}
+
 /** Open verification fact (owner workspace = owning workspace of the
  * target Work, P8 `02` §3). */
 export interface OpenVerificationFact {
@@ -104,6 +115,7 @@ export interface AttentionFacts {
   readonly deadlockEvents: ReadonlyArray<DeadlockEventFact>;
   readonly safetyStopSettlements: ReadonlyArray<SafetyStopFact>;
   readonly reconciliationEscalatedEvents: ReadonlyArray<EscalationEventFact>;
+  readonly assignWorkBindingFailureEvents?: ReadonlyArray<AssignWorkBindingFailureEventFact>;
   readonly openVerifications: ReadonlyArray<OpenVerificationFact>;
   readonly executionSettlements: ReadonlyArray<ExecutionSettlementFact>;
   readonly vacantProducerCandidates: ReadonlyArray<VacantProducerCandidateFact>;
@@ -246,6 +258,17 @@ export const deriveAttentionRows = (
       targetWorkspaceId: fact.workspaceId,
       dedupKey: escalationDedupKey(fact),
       summary: `unreconcilable side effect: execution ${fact.executionId} escalated (${fact.invocationRefsFingerprint})`,
+      occurredAt: fact.occurredAt,
+    });
+  }
+
+  for (const fact of facts.assignWorkBindingFailureEvents ?? []) {
+    rows.push({
+      source: "AssignWorkTargetBindingFailure",
+      severity: "ActionRequired",
+      targetWorkspaceId: fact.targetWorkspaceId,
+      dedupKey: fact.attentionFactId,
+      summary: `A committed AssignWork could not be proven to match its exact target; recovery is paused. (${fact.failureCode})`,
       occurredAt: fact.occurredAt,
     });
   }

@@ -8,7 +8,7 @@ import {
   type PermissionGrantRepositoryError,
   TransactionScope,
 } from "@arbor/ports";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import { repositoryFailure } from "./repository-error.js";
@@ -109,6 +109,22 @@ export const PermissionGrantRepositoryLive: Layer.Layer<
             ),
           );
           return rows.map(toPermissionGrant);
+        }),
+      findById: (permissionGrantId: PermissionGrantId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<PermissionGrantRow>(
+              `SELECT permission_grant_id, scope, issuer, lifetime, state,
+                      subject_kind, subject_ref, capability, target,
+                      valid_from, expires_at, revision
+                 FROM permission_grants WHERE permission_grant_id = ?`,
+              [permissionGrantId],
+            ),
+          );
+          return rows[0] === undefined
+            ? Option.none()
+            : Option.some(toPermissionGrant(rows[0]));
         }),
       put: (grant: PermissionGrant, projectId: ProjectId) =>
         Effect.gen(function* () {

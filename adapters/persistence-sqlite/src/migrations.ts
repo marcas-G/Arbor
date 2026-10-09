@@ -1728,3 +1728,133 @@ export const P32_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P32_ACTION_APPROVALS_DDL,
   },
 ];
+
+export const P33_ASSIGN_WORK_TARGET_BINDINGS_DDL = `
+CREATE UNIQUE INDEX commands_id_project ON commands(command_id, project_id);
+CREATE UNIQUE INDEX executions_id_project_workspace
+  ON executions(execution_id, project_id, workspace_id);
+CREATE UNIQUE INDEX workspaces_id_project_parent
+  ON workspaces(workspace_id, project_id, parent_workspace_id);
+CREATE UNIQUE INDEX works_id_project ON works(work_id, project_id);
+CREATE UNIQUE INDEX permission_grants_id_project
+  ON permission_grants(permission_grant_id, project_id);
+CREATE UNIQUE INDEX action_approvals_id_project
+  ON action_approvals(approval_id, project_id);
+
+CREATE TABLE assign_work_target_bindings (
+  command_id TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  project_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  provider_turn_id TEXT NOT NULL,
+  logical_action_id TEXT NOT NULL,
+  call_ref TEXT NOT NULL,
+  parent_workspace_id TEXT NOT NULL,
+  parent_work_id TEXT NOT NULL,
+  parent_work_revision_at_command INTEGER NOT NULL CHECK (parent_work_revision_at_command >= 0),
+  target_workspace_ref TEXT NOT NULL,
+  target_ref_encoding_version INTEGER NOT NULL CHECK (target_ref_encoding_version = 1),
+  parent_workspace_revision_at_command INTEGER NOT NULL CHECK (parent_workspace_revision_at_command >= 0),
+  target_workspace_revision_at_resolution INTEGER NOT NULL CHECK (target_workspace_revision_at_resolution >= 0),
+  target_workspace_id TEXT NOT NULL,
+  target_lifecycle_at_commit TEXT NOT NULL CHECK (target_lifecycle_at_commit = 'Active'),
+  work_id TEXT NOT NULL,
+  predecessor_work_id TEXT NOT NULL,
+  work_provenance_json TEXT NOT NULL,
+  authority_kind TEXT NOT NULL CHECK (authority_kind IN ('PermissionGrant','ActionApproval')),
+  permission_grant_id TEXT,
+  action_approval_id TEXT,
+  authority_evidence_json TEXT NOT NULL,
+  authority_checked_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id),
+  UNIQUE (work_id),
+  FOREIGN KEY (command_id, project_id) REFERENCES commands(command_id, project_id),
+  FOREIGN KEY (execution_id, project_id, parent_workspace_id) REFERENCES executions(execution_id, project_id, workspace_id),
+  FOREIGN KEY (parent_workspace_id, project_id) REFERENCES workspaces(workspace_id, project_id),
+  FOREIGN KEY (target_workspace_id, project_id, parent_workspace_id) REFERENCES workspaces(workspace_id, project_id, parent_workspace_id),
+  FOREIGN KEY (parent_work_id, project_id) REFERENCES works(work_id, project_id),
+  FOREIGN KEY (work_id, project_id) REFERENCES works(work_id, project_id),
+  FOREIGN KEY (predecessor_work_id, project_id) REFERENCES works(work_id, project_id),
+  FOREIGN KEY (permission_grant_id, project_id) REFERENCES permission_grants(permission_grant_id, project_id),
+  FOREIGN KEY (action_approval_id, project_id) REFERENCES action_approvals(approval_id, project_id),
+  CHECK (
+    (authority_kind = 'PermissionGrant' AND permission_grant_id IS NOT NULL AND action_approval_id IS NULL)
+    OR
+    (authority_kind = 'ActionApproval' AND permission_grant_id IS NULL AND action_approval_id IS NOT NULL)
+  )
+);
+CREATE INDEX assign_work_target_bindings_target
+  ON assign_work_target_bindings(project_id, target_workspace_id, target_workspace_ref);
+CREATE INDEX assign_work_target_bindings_parent_work
+  ON assign_work_target_bindings(project_id, parent_work_id, created_at);
+
+CREATE TABLE assign_work_binding_attention_facts (
+  attention_fact_id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE REFERENCES domain_events(event_id),
+  project_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  target_workspace_id TEXT NOT NULL,
+  logical_action_id TEXT NOT NULL,
+  committed_command_id TEXT NOT NULL,
+  failure_code TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyUnbound','MissingBinding','DuplicateBinding','MalformedBinding',
+    'RefMismatch','AuthorityMismatch','ForeignTarget','PlacementMismatch',
+    'SourceActionMismatch','ReceiptMismatch','WorkMismatch',
+    'ProvenanceMismatch','EventMismatch','CommitLifecycleMismatch'
+  )),
+  first_detected_at TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id, committed_command_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id),
+  FOREIGN KEY (committed_command_id, project_id)
+    REFERENCES commands(command_id, project_id)
+);
+CREATE INDEX assign_work_binding_attention_target
+  ON assign_work_binding_attention_facts(project_id, target_workspace_id, first_detected_at);
+`;
+
+export const P33_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P32_MIGRATIONS,
+  {
+    id: 33,
+    name: "assign_work_target_bindings",
+    sql: P33_ASSIGN_WORK_TARGET_BINDINGS_DDL,
+  },
+];
+
+export const P34_ATTENTION_PROJECTION_DDL = `
+CREATE TABLE attention_projection_rows (
+  project_id TEXT NOT NULL,
+  dedup_key TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source = 'AssignWorkTargetBindingFailure'),
+  severity TEXT NOT NULL CHECK (severity = 'ActionRequired'),
+  target_workspace_id TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  failure_code TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyUnbound','MissingBinding','DuplicateBinding','MalformedBinding',
+    'RefMismatch','AuthorityMismatch','ForeignTarget','PlacementMismatch',
+    'SourceActionMismatch','ReceiptMismatch','WorkMismatch',
+    'ProvenanceMismatch','EventMismatch','CommitLifecycleMismatch'
+  )),
+  occurred_at TEXT NOT NULL,
+  source_event_id TEXT NOT NULL REFERENCES domain_events(event_id),
+  source_fact_id TEXT NOT NULL REFERENCES assign_work_binding_attention_facts(attention_fact_id),
+  PRIMARY KEY (project_id, dedup_key),
+  UNIQUE (project_id, source_event_id),
+  FOREIGN KEY (target_workspace_id, project_id)
+    REFERENCES workspaces(workspace_id, project_id)
+);
+CREATE INDEX attention_projection_target
+  ON attention_projection_rows(project_id, target_workspace_id, occurred_at);
+`;
+
+/** P10 durable Attention business rows; user_version 34. */
+export const P34_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P33_MIGRATIONS,
+  {
+    id: 34,
+    name: "p10_attention_projection",
+    sql: P34_ATTENTION_PROJECTION_DDL,
+  },
+];

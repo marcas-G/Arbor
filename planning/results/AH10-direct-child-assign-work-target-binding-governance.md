@@ -2,7 +2,7 @@
 
 Date: 2026-10-09
 Decision: **Accepted exact fixed package; design landing committed; independent consistency review PASS (Blocking = 0).**
-Implementation: **Not authorized.**
+Implementation: **Not authorized at design acceptance; separately authorized by the human governor on 2026-10-09 (see dated authorization record below).**
 Proposal: `planning/proposals/AH10-direct-child-committed-receipt-target-binding-draft.md`
 Accepted SHA-256: `E71285B4908DE221D10A3AA7720DEB74ABDFBD99992640AD6152F534666B0DD9`
 
@@ -55,4 +55,28 @@ The independent review reports **Blocking = 0** for design content and cross-doc
 
 ## Scope and repository state
 
-The design landing commit contains exactly the seven owning documents above, this decision record, and the independent review record. The proposal, F23 materials, implementation/test files, untracked P12 material, and the preserved dogfood database remain outside the landing commit. Existing unrelated working-tree changes remain unstaged and uncommitted. This follow-up changes only this governance record; no implementation or migration was performed.
+The design landing commit contains exactly the seven owning documents above, this decision record, and the independent review record. The proposal, F23 materials, implementation/test files, untracked P12 material, and the preserved dogfood database remain outside the landing commit. Existing unrelated working-tree changes remain unstaged and uncommitted. This follow-up changes only this governance record; no implementation or migration was performed at that time.
+
+## Separate implementation authorization (2026-10-09)
+
+After the accepted design landing and independent review, the user was shown an
+implementation authorization question whose stated scope included migration
+0033, atomic binding from the accepted opaque target ref to its resolved
+Workspace, durable Attention for an old/unprovable Committed receipt, and the
+before/after-commit two-daemon qualification cases. The user's complete UI
+reply was: **“授权实施（推荐）”**. This is direct human authorization for
+that described implementation scope; it is not inferred from the earlier
+design acceptance. The question and reply were presented on 2026-10-09.
+
+The reply maps to the normalized implementation authorization marker
+`AUTHORIZE_AH10_ASSIGN_WORK_TARGET_BINDING_IMPLEMENTATION`; that marker is a
+recording/normalization label and was **not** text typed by the user. The scope
+is limited to the accepted AH10 direct-child target-binding package and its
+specified P9/P10 Attention outcome, including migration 0033 and the A/B
+real-daemon commit-boundary cases. It does not authorize unrelated AH10
+controls or claim AH10 closure. P32 compatibility evidence remains limited to
+the schema-compared equivalent P32 fixture; this authorization does not imply
+an old-binary P32 fixture exists or was tested.
+
+The accepted proposal SHA-256 above and all frozen `docs/design/**` contents
+remain unchanged by this authorization entry.
