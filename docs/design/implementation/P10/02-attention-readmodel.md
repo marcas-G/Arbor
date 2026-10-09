@@ -11,6 +11,7 @@
 | Deadlock | DeadlockAttentionRequested event | Attention — emitted only under the No.42 project-idle gate (P7 `05` §2), so by frozen semantics every emitted deadlock fact is already Action Required; the read-model renders it as such (no conditional branch exists) | each cycle-member workspace |
 | Runtime Safety Envelope | safety-stop record / Interrupted(RuntimeSafetyStop) settlement fact | Attention | execution workspace |
 | Recovery escalation | ReconciliationEscalated event | Action Required (unreconcilable side effect — SD §12.3 explicit) | execution workspace |
+| AssignWork binding failure | `AssignWorkTargetBindingEscalated` + P9 `assign_work_binding_attention_facts` row | Action Required | affected Execution's owning/Parent Workspace (`executions.workspace_id`) |
 | Verifier orphan | Open verification × settled executions (derived condition, P8 `02` §3) | Attention | owner workspace |
 | Vacant producer (P7-GAP-01) | derived: dependencies(Unsatisfied ∧ WorkspaceBound) × works(无 Open Work ∧ ¬Retired) | Attention | consumer workspace (view label `WaitingOnVacantProducer`) |
 
@@ -21,6 +22,22 @@
 
 - A workspace's subtree-attention summary = aggregated counts by severity over descendants; **context is never copied upward** (SD §12.3). The Tree view renders the summary; drilling in resolves detail.
 - Dedup on read: keyed by the fact source's frozen dedup identity (ReconciliationEscalated: executionId+invocationRefsFingerprint; Deadlock: cycle fingerprint; derived views: their natural join key). Bubbling aggregates deduplicated facts, not raw events.
+- AssignWork binding failure deduplication uses P9's immutable
+  `attentionFactId`, derived from `(executionId, logicalActionId,
+  committedCommandId)`. The row targets the Execution's owning Parent
+  Workspace; existing subtree-summary aggregation counts it once and copies
+  no context upward. Detail uses the fixed summary “A committed AssignWork
+  could not be proven to match its exact target; recovery is paused.” plus the
+  typed `failure_code`; opaque refs and raw authority material are not
+  projected. The view does not repair or mutate canonical state, and v1 adds
+  no dismiss or repair action. The source semantics are owned by SD §4.11;
+  P9 owns the source fact/event.
+
+For this projection, the DTO uses `source =
+AssignWorkTargetBindingFailure`, `targetWorkspaceId = executions.workspace_id`,
+and `dedupKey = attentionFactId`. The existing apply-then-advance consumer
+loads the P9-owned fact and projects the Attention row in one transaction;
+P10 writes only its read-model row and consumer offset, never the source fact.
 
 ## 3. Read-model contract
 

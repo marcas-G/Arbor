@@ -42,6 +42,39 @@ settlement and cannot execute Agent actions.
 | `SettlementProposed` + Active Execution | new-generation SettleExecution Command | forbidden |
 | settled Execution | converge linked runtime/message state only | forbidden |
 
+### Direct-child AssignWork Committed receipt failure fact (AH10)
+
+For the exact exception owned semantically by System Design §4.11 and
+executable under DID §6A.16, recovery validates the pinned
+`LogicalActionId`'s prior Committed Command receipt and its immutable
+`AssignWorkTargetBinding` before it marks the Action Applied or appends an
+Observation. A proven binding converges that same Action/Observation without
+re-resolving the opaque selector. Missing, duplicate, malformed, conflicting,
+foreign, or mismatched binding/effect evidence—including a historical
+Committed AssignWork without a binding—leaves the Action Pending and stops
+recovery before Observation, new Command, canonical repair, or Provider
+request. Existing FencingRejected takeover is unchanged.
+
+The P9-owned `assign_work_binding_attention_facts` row records one immutable
+failure for `(executionId, logicalActionId, committedCommandId)`. Its
+`attention_fact_id` is `att_` plus lowercase hex of the versioned SHA-256
+tuple; its `failure_code` records the first typed condition and is not
+rewritten. Do not store the opaque selector, model text, or raw database
+errors. `RecoveryAttentionFactStore.recordAssignWorkBindingFailure` appends
+the `AssignWorkTargetBindingEscalated` event and fact atomically in the same
+`TransactionScope`; a repeated exact tuple returns the existing row without
+another event, while conflicting payload is a typed invariant failure.
+
+The event payload is exactly
+`{attentionFactId, executionId, targetWorkspaceId, logicalActionId,
+committedCommandId, failureCode}`; `aggregate_ref` is the Execution's owning
+Workspace, `correlation_ref` is the LogicalActionId, and
+`caused_by_command_id` is the committed AssignWork Command. Event and fact
+commit before recovery returns blocked. A pre-commit crash retries the same
+deterministic pair; a post-commit crash reads that pair. P10 `02` owns the
+Action Required projection and P10 `07` owns its qualification; this recovery
+contract does not define projection semantics.
+
 ## 3. Legacy adoption
 
 Migration `0017_agent_loop_step_handoff` is forward-only and additive. Its adoption

@@ -54,6 +54,22 @@ The new Command's payload and semantic fingerprint use the current generation-
 appropriate preconditions. Authority remains trusted context and is not added
 to the fingerprint. Existing `commands` rows and receipts are never overwritten.
 
+**Direct-child AssignWork exception (AH10 binding contract).** The prior
+`Committed` lookup remains first. For a direct-child AssignWork only, recovery
+may converge the same logical action only when the exact CommandId has one
+proof-complete `AssignWorkTargetBinding` and matching receipt, Work/provenance,
+`WorkAssigned` event, Parent edge, source action, and authority evidence as
+defined by System Design §4.11 and DID §6A.16. Recovery does not resolve the
+stale opaque selector again. Missing, malformed, duplicate, or mismatched
+evidence records the P9 `AssignWorkBindingAttentionFact`, leaves the Action
+Pending, emits no Observation, and cannot fall through to a new-generation
+Command. This is the sole exception to item 1; it does not change Command
+resolution or reinterpret a receipt as FencingRejected. Existing
+`FencingRejected` takeover eligibility is unchanged. Historical Committed
+receipts have no fabricated binding and are handled by the same fail-closed
+exception. See P9 `07` for durable fact/recovery order and P10 `02`/`07` for
+projection/qualification.
+
 ## 3. Settlement
 
 `SettlementProposed` persists one `LogicalSettlementId` and settlement hash.
