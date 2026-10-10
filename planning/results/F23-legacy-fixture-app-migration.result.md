@@ -36,8 +36,14 @@ AdmitExecution payload or a new-write compatibility path.
   and `SettleExecution` (superseded result enum), plus the P12 external
   `CreateProject` failure from Actor/Principal mismatch.
 - `pnpm build` — PASS before the targeted fixture run.
-- Targeted Vitest run for all 15 `tests/p12-*.test.ts` files and the six named
-  app tests — **PASS, 21 files / 172 passed / 2 skipped / 0 failed**.
+- Targeted Vitest run for all 15 `tests/p12-*.test.ts` files and these six app
+  tests — **PASS, 21 files / 172 passed / 2 skipped / 0 failed**:
+  - `apps/single-workspace/test/wave2-claim-completion.test.ts`
+  - `apps/single-workspace/test/p14-real-provider-conversation.test.ts`
+  - `apps/single-workspace/test/p5-slice-acceptance.test.ts`
+  - `apps/single-workspace/test/i0-send-message-durable.test.ts`
+  - `apps/single-workspace/test/p5-yield-wake.test.ts`
+  - `apps/single-workspace/test/p5-completion-claim.test.ts`
 - `pnpm typecheck` — PASS.
 - Biome check on the 21 targeted test files — PASS.
 - No full `pnpm check` or `pnpm test:functional` was run.
