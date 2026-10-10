@@ -282,6 +282,14 @@ export const makeExternalSubmission = (
           authorityDeniedProblem("principal/actor-mismatch"),
         );
       }
+      const inputContract = CommandInputContractRegistry.lookup(
+        envelope.commandType,
+      );
+      if (inputContract === undefined || !inputContract.externalOriginAllowed) {
+        return failureResponse(
+          authorityDeniedProblem(`UnsupportedOrigin:${envelope.commandType}`),
+        );
+      }
       const inputs = yield* deps.loadInputs(envelope);
       const decision: AuthorityDecisionInput = {
         principal,
