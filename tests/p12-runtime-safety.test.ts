@@ -1,6 +1,6 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -613,6 +613,17 @@ const runScenario = async (
   if (profile === undefined || !profile.available) {
     throw new Error("P12 runtime-safety Project Profile must be available");
   }
+  const resolvedProfile = Effect.runSync(
+    projectResourceProfiles.resolve(
+      profile.resourceProfileRef,
+      profile.version,
+    ),
+  );
+  if (Option.isNone(resolvedProfile)) {
+    throw new Error("P12 runtime-safety Project Profile did not resolve");
+  }
+  const canonicalRoot = resolvedProfile.value.canonicalAddress.path;
+  expect(canonicalRoot).toBe(realpathSync(dir));
   const selectedProjectPayload = projectPayload({
     _tag: "Profile",
     resourceProfileRef: profile.resourceProfileRef,
@@ -652,9 +663,12 @@ const runScenario = async (
             workspaceId,
             region: {
               resourceSpaceId: "filesystem",
-              normalizedRegion: { kind: "FileTree", path: resolve(dir) },
+              normalizedRegion: { kind: "FileTree", path: canonicalRoot },
             },
-            sourceAddressSnapshot: { _tag: "FileTree", path: dir },
+            sourceAddressSnapshot: {
+              _tag: "FileTree",
+              path: canonicalRoot,
+            },
             resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
             resolvedAtEnvironmentRevision: "local",
             createdAt: "t",
