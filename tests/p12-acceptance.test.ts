@@ -35,6 +35,7 @@ import {
   P11_MIGRATIONS,
   P12_MIGRATIONS,
   P26_MIGRATIONS,
+  P35_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
@@ -1698,7 +1699,7 @@ const runSafetyScenario = async (
   return Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P26_MIGRATIONS);
+        yield* runMigrations(P35_MIGRATIONS);
         const gateway = yield* CommandGateway;
         const created = yield* gateway.execute(
           safetyEnvelope("CreateProject", selectedSafetyProjectPayload, "1"),
