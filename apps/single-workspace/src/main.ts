@@ -11,6 +11,7 @@ import {
   ExecutionRepository,
   type ModelDeployment,
   ProjectDirectory,
+  ProjectResourceProfilePort,
   type ProviderExecutionPolicyOverrides,
   secretRef,
   TransactionPort,
@@ -26,6 +27,10 @@ import {
 } from "./composition.js";
 import { evaluateAndSelect } from "./loop.js";
 import { ProductionDaemonService, TransportBoundary } from "./production.js";
+import {
+  makeProjectResourceProfilePort,
+  projectResourceProfilesFromEnvironment,
+} from "./project-resource-profiles.js";
 import {
   findArborConfigFile,
   providerDeploymentOfConfig,
@@ -301,6 +306,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
       const boundary = yield* TransportBoundary;
       const sql = yield* SqlClient;
       const projectDirectory = yield* ProjectDirectory;
+      const projectResourceProfiles = yield* ProjectResourceProfilePort;
       const handle = yield* Effect.promise(() =>
         startWebTransport({
           http: boundary.http,
@@ -308,6 +314,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           authenticator: boundary.authenticator,
           sql,
           projectDirectory,
+          projectResourceProfiles,
           ...(config.webTransport?.staticRoot !== undefined
             ? { staticRoot: config.webTransport.staticRoot }
             : {}),
@@ -408,6 +415,9 @@ if (
   const webPort = process.env.ARBOR_HTTP_PORT;
   const webHost = process.env.ARBOR_HTTP_HOST;
   const config: ProductionDaemonRunConfig = {
+    projectResourceProfiles: makeProjectResourceProfilePort(
+      projectResourceProfilesFromEnvironment(),
+    ),
     ...(workspaceId !== undefined
       ? { workspaceId: parse(WorkspaceId)(workspaceId) }
       : {}),

@@ -3,7 +3,10 @@ import { createServer } from "node:http";
 import type { Duplex } from "node:stream";
 import type { ConversationStreamFrame } from "@arbor/api-contracts";
 import type { Principal } from "@arbor/domain";
-import type { ProjectDirectoryService } from "@arbor/ports";
+import type {
+  ProjectDirectoryService,
+  ProjectResourceProfilePortService,
+} from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -39,6 +42,8 @@ export interface WebTransportConfig {
   /** Journal-tail watermark source (SqlClient-backed). */
   readonly sql: SqlClient;
   readonly projectDirectory: ProjectDirectoryService;
+  /** P12 host-owned immutable Profile snapshot; absent means an empty catalog. */
+  readonly projectResourceProfiles?: ProjectResourceProfilePortService;
   /** Vite build output; absent disables static hosting. */
   readonly staticRoot?: string | undefined;
   readonly host?: string | undefined;
@@ -63,6 +68,7 @@ const isStaticCandidate = (method: string, path: string): boolean =>
 const isApiPath = (path: string): boolean =>
   path === "/commands" ||
   path === "/projects" ||
+  path === "/project-resources" ||
   path.startsWith("/views/") ||
   path === "/views" ||
   path.startsWith("/conversation-progress/");
@@ -266,6 +272,52 @@ const readLocalProjectDirectory = async (
   });
 };
 
+/** P12 `10` §9: authenticated, path-free host Profile catalog. Like the
+ * local project directory this cross-project bootstrap surface is restricted
+ * to the configured local principal until a multi-principal visibility
+ * contract exists. */
+const readLocalProjectResourceProfiles = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: WebTransportConfig,
+): Promise<void> => {
+  const token = bearerToken(request.headers.authorization);
+  const principal =
+    config.authenticator === undefined
+      ? (LOCAL_PRINCIPAL as unknown as Principal)
+      : await Effect.runPromise(
+          config.authenticator.authenticate(token === null ? null : { token }),
+        ).catch(() => null);
+  if (principal === null) {
+    sendJson(response, 401, {
+      ok: false,
+      problem: { code: "auth/unauthenticated" },
+    });
+    return;
+  }
+  if (String(principal) !== LOCAL_PRINCIPAL) {
+    sendJson(response, 503, {
+      ok: false,
+      problem: {
+        code: "project-resource-profiles/visibility-resolver-required",
+      },
+    });
+    return;
+  }
+  const profiles =
+    config.projectResourceProfiles === undefined
+      ? []
+      : await Effect.runPromise(config.projectResourceProfiles.list());
+  sendJson(response, 200, {
+    ok: true,
+    status: 200,
+    body: {
+      profiles,
+      conversationOnlySupported: true,
+    },
+  });
+};
+
 export const startWebTransport = async (
   config: WebTransportConfig,
 ): Promise<WebTransportHandle> => {
@@ -291,6 +343,11 @@ export const startWebTransport = async (
 
       if (path === "/projects" && method === "GET") {
         await readLocalProjectDirectory(request, response, config);
+        return;
+      }
+
+      if (path === "/project-resources" && method === "GET") {
+        await readLocalProjectResourceProfiles(request, response, config);
         return;
       }
 
