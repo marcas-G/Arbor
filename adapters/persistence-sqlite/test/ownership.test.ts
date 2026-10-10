@@ -452,7 +452,9 @@ describe("ownership write service", () => {
       const ownership = yield* OwnershipWriteService;
       const repository = yield* ResourceOwnershipRepository;
       const tx = yield* TransactionPort;
+      const revisions = yield* EnvironmentRevisionStore;
       const sql = yield* SqlClient;
+      const anchorBefore = yield* tx.transact(revisions.current(projectId));
       const failure = yield* ownership
         .activatePendingWorkspaceResource(
           projectId,
@@ -471,6 +473,7 @@ describe("ownership write service", () => {
       const claims = yield* tx.transact(
         repository.listActiveByWorkspace(workspaceId),
       );
+      const anchorAfter = yield* tx.transact(revisions.current(projectId));
       const events = yield* sql.unsafe<{ count: number }>(
         `SELECT COUNT(*) AS count FROM domain_events
           WHERE event_type = 'WorkspaceResourceActivationChanged'`,
@@ -479,6 +482,8 @@ describe("ownership write service", () => {
         failure,
         intent,
         claims,
+        anchorBefore,
+        anchorAfter,
         eventCount: Number(events[0]?.count ?? 0),
       };
     });
@@ -491,6 +496,8 @@ describe("ownership write service", () => {
     });
     expect(resolveCalls).toBe(0);
     expect(result.claims).toEqual([]);
+    expect(Option.isNone(result.anchorBefore)).toBe(true);
+    expect(Option.isNone(result.anchorAfter)).toBe(true);
     expect(result.eventCount).toBe(0);
     expect(Option.isSome(result.intent)).toBe(true);
     if (Option.isSome(result.intent)) {
@@ -586,7 +593,9 @@ describe("ownership write service", () => {
       const intents = yield* WorkspaceResourceActivationStore;
       const repository = yield* ResourceOwnershipRepository;
       const tx = yield* TransactionPort;
+      const revisions = yield* EnvironmentRevisionStore;
       const sql = yield* SqlClient;
+      const anchorBefore = yield* tx.transact(revisions.current(projectId));
       const failure = yield* ownership
         .activatePendingWorkspaceResource(
           projectId,
@@ -605,6 +614,7 @@ describe("ownership write service", () => {
       const claims = yield* tx.transact(
         repository.listActiveByWorkspace(workspaceId),
       );
+      const anchorAfter = yield* tx.transact(revisions.current(projectId));
       const events = yield* sql.unsafe<{ count: number }>(
         `SELECT COUNT(*) AS count FROM domain_events
           WHERE event_type = 'WorkspaceResourceActivationChanged'`,
@@ -613,6 +623,8 @@ describe("ownership write service", () => {
         failure,
         intent,
         claims,
+        anchorBefore,
+        anchorAfter,
         eventCount: Number(events[0]?.count ?? 0),
       };
     });
@@ -626,6 +638,8 @@ describe("ownership write service", () => {
       expect(result.intent.value.activatedAt).toBeNull();
     }
     expect(result.claims).toEqual([]);
+    expect(Option.isNone(result.anchorBefore)).toBe(true);
+    expect(Option.isNone(result.anchorAfter)).toBe(true);
     expect(result.eventCount).toBe(0);
   });
 });
