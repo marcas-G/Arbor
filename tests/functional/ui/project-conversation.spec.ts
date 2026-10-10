@@ -29,7 +29,14 @@ test("a user creates a project, chats, and sees the answer after restart", async
   await expect(
     page.getByRole("heading", { name: "把复杂目标，变成持续推进的工作" }),
   ).toBeVisible();
+  const conversationOnly = page.getByRole("radio", { name: "仅对话" });
+  await expect(conversationOnly).toBeVisible();
+  await expect(conversationOnly).not.toBeChecked();
+  await expect(
+    page.getByText(/不能使用文件工具，也不能完成需要文件证据的 Work/u),
+  ).toBeVisible();
   await page.getByLabel("项目名称").fill("功能测试项目");
+  await conversationOnly.click();
   await page.getByRole("button", { name: "创建项目" }).click();
 
   await expect(page).toHaveURL(/\/p\/prj_[A-Za-z0-9-]+$/u);
