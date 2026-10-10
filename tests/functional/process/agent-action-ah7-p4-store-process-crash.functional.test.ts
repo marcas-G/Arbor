@@ -242,12 +242,16 @@ const startStoreChild = (input: {
           mode?: string;
           boundary?: string;
           invocationId?: string;
+          pid?: number;
+          childAlive?: boolean;
         };
         if (
           event.tag === "AH7_P4_STORE_BOUNDARY" &&
           event.mode === input.mode &&
           event.boundary === input.boundary &&
-          event.invocationId === input.invocationId
+          event.invocationId === input.invocationId &&
+          event.childAlive === true &&
+          Number.isInteger(event.pid)
         ) {
           sawBoundary = true;
           resolveBoundary();
@@ -289,10 +293,12 @@ const startStoreChild = (input: {
 };
 
 const killStoreChild = async (handle: StoreChildHandle) => {
-  if (handle.child.exitCode === null && handle.child.signalCode === null) {
-    handle.child.kill("SIGKILL");
-  }
-  return await handle.closed;
+  expect(handle.child.exitCode).toBeNull();
+  expect(handle.child.signalCode).toBeNull();
+  expect(handle.child.kill("SIGKILL")).toBe(true);
+  const exit = await handle.closed;
+  expect(exit).toEqual({ code: null, signal: "SIGKILL" });
+  return exit;
 };
 
 const runStoreChild = async (input: {

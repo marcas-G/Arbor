@@ -52,6 +52,10 @@ const app = Layer.mergeAll(
 );
 
 const pause = async () => {
+  // Keep the OS process alive after the probe message. An unresolved Promise
+  // alone does not keep Node's event loop open, so without this referenced
+  // timer the child could exit naturally before the parent sends SIGKILL.
+  setInterval(() => {}, 1_000);
   process.stdout.write(
     `${JSON.stringify({
       tag: "AH7_P4_STORE_BOUNDARY",
@@ -60,6 +64,7 @@ const pause = async () => {
       invocationId,
       executionId,
       pid: process.pid,
+      childAlive: true,
     })}\n`,
   );
   await new Promise(() => {});
