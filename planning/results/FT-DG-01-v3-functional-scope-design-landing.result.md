@@ -29,7 +29,7 @@ working-tree hash and the Git object ID.
 | docs/design/implementation/P1/02-port-contracts.md | immutable ProjectResourceProfilePort and transaction/I/O boundary | E492490F5F96486D68849E91CCCCE763595123E85F106E555E4CCE62636C567A |
 | docs/design/implementation/P12/00-contract-index.md | TR-12 cross-phase host catalog/transport entry | 0BBE343457A9F6F5E9E5231CBAFB20364EAE79CF812D236347C3EDEA5753D9B8 |
 | docs/design/implementation/P12/10-transport-shells.md | authenticated, path-free GET /project-resources and host Profile configuration | AAADC65B7A359F3875B4B017F2B4F66D5D287D9FB42AD260D2CBC910D093CF38 |
-| docs/design/implementation/P13/02-command-exposure-matrix.md | CreateProject remains human/bootstrap; form selects Profile or ConversationOnly | F83BE71554FDB7BFC9BC6364DE6EE9AD650070BF463F3686750F27A9B63DF9C2 |
+| docs/design/implementation/P13/02-command-exposure-matrix.md | CreateProject remains human/bootstrap; form selects Profile or ConversationOnly; §3 specifies one-available auto-selection and explicit ConversationOnly when none are available | C0544A12A7E55B209A2F427E4DD0E99EDE43455CB2FB81FD47BF84D9491EB688 |
 | docs/design/implementation/MAC/03-golden-paths-and-fulfillment.md | bootstrap boundary precondition; MAC Work/Verification/Acceptance semantics unchanged | BDCD4BEA0F0AECA967393A0BA350C908EB3FCF7EE1CAD60AC0424D7588E7C607 |
 
 ## Consistency and scope boundary
@@ -62,3 +62,14 @@ working-tree hash and the Git object ID.
 Only the documents in the table and this landing result are intended for the
 landing commit. No tests were run. The full functional suite on C:\Arbor was
 not accessed, stopped, or modified.
+
+## Follow-up review correction
+
+The independent review found that P13 §3 did not spell out two UI behaviors
+already required by v3 §3. The follow-up adds those exact rules: preselect the
+sole available Profile, and when none are available, explain ConversationOnly
+limitations and require an explicit user selection rather than silently
+creating an empty boundary. Unavailable Profiles are never auto-selected or
+silently converted to ConversationOnly. This is a P13 presentation-policy
+clarification only; it does not change command, authority, receipt, or resource
+semantics and does not close any OPEN item.

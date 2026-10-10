@@ -142,6 +142,21 @@ the exact commandId and selection; changing the selection starts a new logical
 request and requires a new commandId. The UI displays a friendly Profile name
 and availability but never renders the host path.
 
+The bootstrap form follows the catalog state without silently widening or
+changing the user's resource choice:
+
+- If exactly one catalog entry is available, the form preselects that exact
+  Profile ref/version. The displayed friendly name makes the selection visible;
+  submitting the form uses that selected Profile.
+- If there are no available Profiles, the form MUST NOT infer an empty
+  ResourceBoundary or submit CreateProject by default. It explains that a
+  ConversationOnly Project cannot use file tools or complete Work requiring
+  file evidence, and requires the user to explicitly select ConversationOnly
+  before submission.
+- Unavailable catalog entries are not auto-selected. The form does not
+  reinterpret a stale/unavailable Profile selection as ConversationOnly; the
+  user must make an explicit valid selection.
+
 ## 4. 特殊约束：`SelectCurrentWork`
 
 **不得做成普通人工选择控件。** 冻结语义（P5 `01` §3.1）：selection
