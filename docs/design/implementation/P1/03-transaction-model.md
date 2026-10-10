@@ -105,6 +105,16 @@ The existing-receipt branch precedes the authority check: an authoritative
 resolution is replayed **without** re-running the authority predicate
 (P1-DG-11). Authority is not part of `semanticRequestFingerprint`.
 
+For the exact-tuple existing-receipt branch, the Application decoder specified
+by `01-command-contracts.md` §3A runs inside this same transaction, after the
+tuple comparison. If its result/error JSON or DTO shape fails, the transaction
+rolls back and returns the non-command
+`PersistenceCorruption<"CommandStore">` failure; the existing row is
+unchanged, no handler/canonical/event/receipt write occurs, and no
+`recordRetryableAttempt` is written. This failure is not a retryable
+`TransactionOperationalFailure` and cannot become a receipt or
+`TerminalRejected`. No data repair is attempted.
+
 Atomic: canonical state + Committed receipt + events.
 
 ### 3.2 Terminal semantic rejection (single transaction)
@@ -139,6 +149,11 @@ receipt. The attempt trace write uses its own connection/transaction; it is
 non-authoritative and may be lost on crash (see `06-recovery-matrix.md`).
 Failure of that best-effort trace must not replace, defect, or otherwise mask
 the original typed `TransactionOperationalFailure`.
+
+Only the frozen `TransactionOperationalFailure` class follows this §3.3
+retryable-attempt path. A receipt JSON/schema `PersistenceCorruption` is a
+non-retryable integrity failure and must not be relabeled as this class or
+recorded by `recordRetryableAttempt`.
 
 ### 3.4 Concurrent duplicate attempt (commit-conflict protocol)
 

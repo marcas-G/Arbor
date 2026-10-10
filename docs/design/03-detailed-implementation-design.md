@@ -1,16 +1,25 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.35\
+**Version:** 1.36\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.34\
+**Supersedes:** v1.35\
 **Date:** 2026-10-10\
 **Depends on:** `Arbor System Design Specification v1.13`
+
+**Integration reconciliation (2026-10-10):** This version combines two separately
+accepted owner amendments that each landed from DID v1.34 as v1.35 in isolated
+trees: FT-DG-01 functional resource admission and F23 exact-tuple receipt
+integrity. Their clauses below are additive and retain their accepted semantics;
+the reconciliation changes no selector, receipt precedence, schema, persistence,
+or recovery rule. The isolated landing digests describe their original owner
+blobs, not this integrated blob; the combined digest is recorded in
+`planning/results/F21-F23-isolated-integration.result.md`.
 
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
 **Scope:** 将已冻结的系统级设计落实为可实现且可测试的契约。v1.4 是 governance patch：闭合 P0 planning 审阅发现的 DG-01…DG-06，不改变 C1–C10 / X1–X11 的语义结论；v1.5 闭合 P1 pre-implementation 审阅发现的 P1-DG-01…05 与 P1-DG-10，P1+ 的 exact DDL、逐 Command payload/signature、Prompt 正文与经验参数仍按 phase-scoped closure 管理。
 
-**Governance changes (v1.34 → v1.35): FT-DG-01 functional resource admission**
+**Accepted owner amendment (source DID v1.34 → v1.35): FT-DG-01 functional resource admission**
 
 - CreateProject's external Handler schema is v2 while the server-selected
   external wire codec remains v1. Root resource input is the closed
@@ -87,6 +96,44 @@
 - Design acceptance and landing do not authorize runtime implementation.
   AH10 §6A.16, migration 0033, §9.9, and P1 `07`'s sole direct-child
   AssignWork exception remain unchanged.
+
+**Accepted owner amendment (source DID v1.34 → v1.35): F23 exact-tuple receipt integrity and
+receipt-first prior-consumer decode**
+
+- P1 `01`/`02`/`03` now freeze strict Committed-result and
+  `CommandRejection` runtime decoding only after the existing in-transaction
+  `(fingerprint, Handler.schemaVersion, fingerprint algorithm version)` tuple
+  exactly matches. A mismatch remains `IdempotencyConflict` before reading or
+  disclosing either JSON field. Missing decoder/schema, invalid JSON or
+  wrong-shape data is `PersistenceCorruption<"CommandStore">`: no receipt
+  repair, handler, canonical/Event write, `CommandAttempt` or semantic
+  rejection; rollback remains in the existing `BEGIN IMMEDIATE` transaction.
+  External transport uses its existing safe, non-retryable
+  `persistence/corruption` Problem. No tuple, SQL, DDL or migration change.
+- P1 `07` specifies trusted CommandType/Handler-schema decoder selection for
+  direct prior-receipt consumers without claiming Gateway tuple comparison.
+  The exact direct-child AssignWork exception continues to require the full
+  accepted binding proof and never replays a handler.
+- P9 `07` owns the specific corruption disposition inside that direct-child
+  proof: raw JSON syntax corruption retains an internal corruption
+  classification and records the existing `ReceiptMismatch` durable fact/event
+  before returning `AgentActionRecoveryBlocked`; parseable wrong-shape results
+  and structural binding/effect mismatches retain the existing P9 failure-code
+  paths. Ordinary non-direct-child prior-consumer corruption remains an
+  operational failure and does not create an AssignWork binding fact. P9's
+  existing fact identity, atomic write, deduplication and crash recovery are
+  unchanged.
+- No generic P10 Attention source or observable diagnostic/logging port is
+  added. Existing AH10 P9→P10 `Action Required` projection is unchanged.
+- Landing basis: fixed candidate proposal SHA-256
+  `70D55E2AD117D28522297B7BF55EC8AD479CA1BFEEF4025AEA7F1901793DD1A7`;
+  independent proposal review Blocking = 0; user standing authorization for
+  high-confidence design landing. Audit and owner file hashes:
+  `planning/results/F23-exact-tuple-receipt-integrity-design-landing.md`.
+- This owner-document landing is not implementation/crash qualification.
+  The real CommandStore writer transaction and P9 pre/post-commit crash matrix,
+  an operator-visible diagnostic sink, and cross-schema-version prior replay
+  remain explicit OPEN qualifications.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -2405,8 +2452,38 @@ historical receipt whose payload fails the current codec is likewise not
 looked up or disclosed. With a valid current payload, stored Handler schema or
 fingerprint algorithm mismatch uses the existing exact P1 tuple rule and
 returns `IdempotencyConflict`; no historical comparator or row rewrite is
-added. Undecodable receipt result/error data fails closed with a
-non-disclosing receipt-integrity Problem/Attention and no repair.
+added. Only an exact tuple is decoded through the Application-owned strict
+receipt decoder registered for the exact current `(commandType,
+Handler.schemaVersion)`. Every current one of the 26 registered command
+handlers must have a Committed-result decoder; TerminalRejected uses the
+exhaustive Application `CommandRejection` decoder. Missing version/descriptor,
+invalid JSON, wrong shape or unknown rejection member fails as the existing
+non-retryable `PersistenceCorruption<"CommandStore">`, never as a semantic
+rejection. The result decoder follows the owning result DTO, not a DomainEvent
+schema or TypeScript cast. Raw JSON is not reflected or repaired; the existing
+Gateway transaction rolls back and writes no Command/attempt/Event or canonical
+effect. P1 `01` §3A/`03` §3.1 define the strict shape and rollback contract;
+the existing external transport maps it to the safe non-retryable
+`persistence/corruption` Problem. No new generic P10 Attention source is
+implied.
+
+Recovery's direct prior-receipt consumers are a separate Application route,
+not a second Gateway or a candidate-tuple comparison. They select a decoder
+from the trusted runtime action CommandType and registered Handler schema,
+after prior CommandId/Project identity validation. The direct-child AssignWork
+route still requires the full P1 `07`/SD §4.11 binding proof. For a syntax-
+corrupt direct-child prior Committed receipt, P9 `07` records the existing
+`ReceiptMismatch` failure fact/event and returns
+`AgentActionRecoveryBlocked`, retaining only an internal safe
+`PersistenceCorruption` classification; no handler replay, new Command, row
+repair, Observation or Applied transition is allowed. A2 result-shape failure
+and B binding/effect mismatch retain the existing P9 failure-code path.
+Non-direct-child prior-consumer corruption remains an operational failure and
+does not create a P9 AssignWork fact. `AgentActionRecoveryBlocked` carries no
+decoder cause. This clause asserts no current observable logging/diagnostic
+sink; a new operator-visible sink remains independently open. The existing P9
+fact identity/atomic transaction/crash behavior and P10 AH10 projection remain
+unchanged.
 
 This contract does not alter the accepted AH10 direct-child AssignWork
 exception: its internal Control route remains external-origin denied; trusted
