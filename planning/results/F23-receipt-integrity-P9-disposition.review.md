@@ -62,10 +62,12 @@
 后续独立 P9 审阅给出如下 direct-child prior Committed 裁决建议，现已并入 F23 固定候选草案
 （本 review 上述结论是裁决前的只读状态快照，不再表示 A1 完全无方向）：
 
-- A1 raw `result_json` JSON syntax corruption：保留内部非披露
-  `PersistenceCorruption<"CommandStore">` diagnostic，同时进入 direct-child 既有 P9
-  `ReceiptMismatch` fact/event transaction，最后 `AgentActionRecoveryBlocked`。不把 decoder
-  corruption 原样返回成 `AgentActionOperationalFailure` / `ControlActionHandlerRejected`。
+- A1 raw `result_json` JSON syntax corruption：在 decoder/control boundary内分类为非披露
+  `PersistenceCorruption<"CommandStore">`，同时进入 direct-child 既有 P9 `ReceiptMismatch`
+  fact/event transaction，最后 `AgentActionRecoveryBlocked`。该 ADT不携带 cause，P9 fact也不存
+  corruption cause；当前无可观察 log/diagnostic sink，不声称已有。若要求operator-visible诊断，
+  diagnostic-port/logger另为OPEN。不得把 decoder corruption原样返回成
+  `AgentActionOperationalFailure` / `ControlActionHandlerRejected`。
 - A2 可解析坏 shape 与 B 结构合法但 receipt/ref/authority/effect mismatch：保留 existing
   P9 `ReceiptMismatch` 或具体 failure code / fact/event。
 - 普通非-direct-child prior consumer corruption：仅 operational failure，不创建 P9 fact。
