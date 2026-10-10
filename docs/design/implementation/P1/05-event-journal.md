@@ -61,6 +61,37 @@ DomainEventJournal.append(drafts)
 
 `domain_events` is the durable outbox (DID §9.9); no separate delivery flag.
 
+### FT-DG-01 OPEN-3 activation status event (EventVersion 1)
+
+`WorkspaceResourceActivationChanged` is a new event type whose first and
+current EventVersion is 1. Its closed tagged payload is:
+
+```ts
+{
+  _tag: "WorkspaceResourceActivationChanged";
+  workspaceId: WorkspaceId;
+  resourceBoundaryRevision: ResourceBoundaryRevision;
+  status: "Pending" | "Active";
+}
+```
+
+The event envelope's `projectId` and `aggregateRef=workspaceId` bind the
+payload to the canonical root Workspace. A non-empty Profile CreateProject
+appends `Pending` after its existing ProjectCreated(v1) → WorkspaceCreated(v1)
+events in the Gateway transaction that also inserts the activation intent and
+Committed receipt. ConversationOnly emits no activation event. P11 appends
+`Active` only in the same transaction as the exact intent CAS and complete
+ownership claim-set commit. The recovery event uses the fixed runtime actor
+`system:workspace-resource-activation`; it is not a human, Profile, or authority
+identity.
+
+This event carries only workspace/revision/status identifiers. It contains no
+path, Profile ref/version, filesystem diagnostic, or user/model text. The new
+type is added to the DomainEvent payload/catalog and the P10 consumer's
+registered handler; an unregistered type is a projection defect, not a
+successful no-op. Existing event types/payloads and reader ceilings remain
+unchanged; no EventVersion=2 or upcast is introduced.
+
 ## 3. `eventVersion` policy (frozen)
 
 ```text

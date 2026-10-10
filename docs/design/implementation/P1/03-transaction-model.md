@@ -117,6 +117,17 @@ unchanged, no handler/canonical/event/receipt write occurs, and no
 
 Atomic: canonical state + Committed receipt + events.
 
+**FT-DG-01 OPEN-3 operational successor:** a non-empty Profile CreateProject
+also writes its `WorkspaceResourceActivationIntent(Pending)` and
+`WorkspaceResourceActivationChanged(Pending)` in this same command scope, in
+addition to the unchanged ProjectCreated/WorkspaceCreated v1 events. These
+remain committed together; later activation failure is post-commit and cannot
+roll back this command or manufacture a second receipt. The separate P11
+activation operation resolves the persisted boundary before opening its write
+scope, then commits the claim set + Pending→Active CAS + Active event in one
+`BEGIN IMMEDIATE` transaction. It does not nest the existing self-transactional
+`OwnershipWriteService.resolveAndWrite` call.
+
 ### 3.2 Terminal semantic rejection (single transaction)
 
 ```text

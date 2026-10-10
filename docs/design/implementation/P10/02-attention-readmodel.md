@@ -12,6 +12,7 @@
 | Runtime Safety Envelope | safety-stop record / Interrupted(RuntimeSafetyStop) settlement fact | Attention | execution workspace |
 | Recovery escalation | ReconciliationEscalated event | Action Required (unreconcilable side effect — SD §12.3 explicit) | execution workspace |
 | AssignWork binding failure | `AssignWorkTargetBindingEscalated` + P9 `assign_work_binding_attention_facts` row | Action Required | affected Execution's owning/Parent Workspace (`executions.workspace_id`) |
+| Workspace resource activation pending | P1 `WorkspaceResourceActivationIntent(Pending)` + `WorkspaceResourceActivationChanged` v1 | Action Required | the exact root Workspace in the intent |
 | Verifier orphan | Open verification × settled executions (derived condition, P8 `02` §3) | Attention | owner workspace |
 | Vacant producer (P7-GAP-01) | derived: dependencies(Unsatisfied ∧ WorkspaceBound) × works(无 Open Work ∧ ¬Retired) | Attention | consumer workspace (view label `WaitingOnVacantProducer`) |
 
@@ -38,6 +39,29 @@ AssignWorkTargetBindingFailure`, `targetWorkspaceId = executions.workspace_id`,
 and `dedupKey = attentionFactId`. The existing apply-then-advance consumer
 loads the P9-owned fact and projects the Attention row in one transaction;
 P10 writes only its read-model row and consumer offset, never the source fact.
+
+### FT-DG-01 OPEN-3 Workspace resource activation
+
+The source is the P1 intent row, not the Profile catalog or an inferred
+non-empty-boundary/no-claim predicate. The P1 status event is the incremental
+trigger; the intent table is the authoritative level-triggered source for P10
+rebuild. For `Pending`, P10 upserts exactly one row with
+`source=WorkspaceResourceActivationPending`, `severity=ActionRequired`,
+`targetWorkspaceId=workspaceId`, and
+`dedupKey=(projectId,workspaceId,resourceBoundaryRevision)`. Its fixed summary
+is “Project resource activation is pending; file actions are unavailable.”
+and its timestamp is the intent's `createdAt`. No path, Profile ref/version,
+failure text, or OS error is returned. The same key is deleted only when that
+same intent is `Active`; a changed Workspace boundary revision does not clear
+an older pending intent.
+
+`WorkspaceResourceActivationChanged(Pending|Active)` is applied by P10 in the
+generic `(projectId, sequence)` apply-then-advance transaction. Source-key
+upsert/delete makes re-delivery idempotent; the transaction-local P10 offset
+prevents two daemons from consuming the same sequence independently. P10 only
+changes its own Attention projection, never the P1 intent, Workspace, claims,
+or receipt. A pending intent is visible after consumer catch-up; ordinary
+freshness watermark/barrier rules remain in force.
 
 ## 3. Read-model contract
 

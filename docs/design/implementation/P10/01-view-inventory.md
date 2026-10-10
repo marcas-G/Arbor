@@ -8,7 +8,7 @@
 | View | SD source | P10 disposition | Primary derive inputs |
 |---|---|---|---|
 | Responsibility Tree (Agent Tree) | §12.1, §13.9 | must | workspaces (parent chain) + works.current + dependencies + verifications + attention read-model + usage summary |
-| Attention view | §12.3, §13.9 | must | `02` read-model (six fact sources) |
+| Attention view | §12.3, §13.9 | must | `02` read-model (frozen event/canonical-state fact sources) |
 | Workspace Detail | §12.4 ①–⑤/⑥ | must (⑥ = audit timeline from domain_events; Memory/Decisions store deferred) | workspaces/works/executions/dependencies+messages+inbox/verification+evidence/journal |
 | Work Detail | SD §12.4; FT-DG-02 | must — separate read-only view addressed by exact Project/Workspace/Work identity | canonical Work + same Work/revision Acceptance + its exact concluded PASS Verification and Evidence |
 | Current Work | §12.1 | must | workspaces.current_work_id + works + active main execution |

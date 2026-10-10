@@ -38,6 +38,23 @@ InboxViewReq       = { workspaceId }                           → { unconsumed[
 WorkDetailReq      = { projectId, workspaceId, workId }        → { workId, projectId, workspaceId, objective, why, completionExpectation, lifecycle, revision, acceptedResult? }
 ```
 
+The additive `AttentionSource` literal `WorkspaceResourceActivationPending`
+is owned by P10 `02` and is the only new wire-vocabulary member in this
+landing. It adds no request/response fields, ViewId, or transport endpoint.
+Its row is `ActionRequired`, targets the root Workspace, and uses the
+deterministic key
+`resource-activation:${projectId}:${workspaceId}:${resourceBoundaryRevision}`.
+`summaryRef` is the fixed path-free text “Project resource activation is
+pending; file actions are unavailable.” `occurredAt` is the source intent's
+`createdAt`, stable across event redelivery and rebuild.
+
+P10's source-specific activation Attention projection store atomically
+upserts/deletes this key from the P1 status event, lists/replaces the project's
+Pending rows during rebuild, and resets this source for the project. These
+writes share the P1 `TransactionScope` with Attention projection rows and the
+consumer offset. P10 reads only P1 intent identity/status/timestamps, never
+boundary addresses, Profile ref/version, or activation failure details.
+
 `acceptedResult` is exactly `{ acceptanceId, verificationId, targetWorkRevision,
 verdict: Pass, actor, acceptedAt }`. It is present only when a canonical
 Acceptance is bound to that Work revision and its exact concluded PASS

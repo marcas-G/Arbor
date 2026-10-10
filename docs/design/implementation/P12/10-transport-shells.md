@@ -152,6 +152,8 @@ human/parent ⇄ shells         : owned here — resolver-gated; no canonical wr
 production daemon                     : the long-running composition process (P8 `00` defers it)
 recovery daemon / composition surface : startup recovery pass driver + periodic/event sweeps
                                         (P9 `00` "Explicitly out of P9")
+F21 resource activation recovery       : startup-only scan of P1 Pending activation intents;
+                                        uses the P11 same-boundary activation service
 consumer-loop daemon wiring           : verification + completion chain consumers are
                                         offset-driven; single-command-face preserved
                                         (`P8.result.md` Notes for downstream phases)
@@ -251,3 +253,40 @@ existing ownership/environment ports. A path disappearance or canonical
 region change fails closed without selecting a replacement Profile. This is
 post-commit convergence of the exact CreateProject fact, not a new resource
 mutation route.
+
+### FT-DG-01 OPEN-3 startup activation recovery
+
+After the ordered SQLite migrations and the existing P2/P12 startup recovery
+pass, the production composition scans only P1
+`WorkspaceResourceActivationIntent(Pending)` rows. For each row it reads the
+current persisted Workspace and delegates to the P11
+`activatePendingWorkspaceResource` operation. P11 verifies the pinned
+boundary revision and resolves that persisted canonical boundary; P12 never
+submits a path, queries the current Profile registry for a replacement, or
+reads a CommandReceipt outside the Gateway. The scan is a startup recovery
+source, not a public view or new command.
+
+An unavailable path or other operational activation failure leaves the intent
+Pending and does not undo the Committed command; the startup pass continues to
+other intents and readiness/recovery orchestration remains able to run. P10
+publishes the corresponding path-free Attention through its registered v1
+event projection and level-triggered rebuild source. P12 does not create or
+clear Attention itself.
+
+This release has no periodic retry loop. If the same canonical path is
+restored while the daemon remains running, retry requires an exact current-v2
+CreateProject replay after Gateway tuple validation or a daemon restart. Both
+routes use only the persisted Workspace boundary. If the boundary's pinned
+revision no longer matches, recovery fails closed and leaves the old intent
+visible; only a separately authorized ownership/boundary operation may define
+what supersedes it. A permanently unavailable path remains Pending and
+visible. No automatic Profile fallback, rebind, or browser free-path repair is
+provided.
+
+The additive intent migration does not backfill pre-intent records. A
+pre-migration committed v2 CreateProject with no activation intent is not
+treated as a startup work item by guessing from a non-empty boundary or a
+missing claim; its existing exact-v2 post-commit replay behavior remains the
+only retry path, and continuing failure remains outside this automatic
+Attention guarantee. Historical v1 rows remain preserve-only and are never
+replayed or backfilled under this contract.
