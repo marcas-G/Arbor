@@ -39,7 +39,7 @@
 ### 旧代拒绝与新代接管
 
 1. 每次 Gateway mutation 都在 effect/receipt/Event 同一事务内核对 lease holder、incarnation、generation、未过期和 Execution 未 settled。外置 lease 预检只能快速失败，不能替代事务内 fence。
-2. gen0 lease 已被 gen1 替代后，gen0 的 SendMessage command 必须提交 `TerminalRejected(FencingRejected)`，且无 Message、MessageSent、Inbox 或 Command receipt Committed effect；MessageSent consumer 不会收到 wake source；旧 Worker 停止该 Execution-origin write。
+2. gen0 lease 已被 gen1 替代后，gen0 的 DeliverMessage command 必须提交 `TerminalRejected(FencingRejected)`，且无 Message、MessageSent、Inbox 或 Command receipt Committed effect；MessageSent consumer 不会收到 wake source；旧 Worker 停止该 Execution-origin write。
 3. gen1 在提交新 Command 前按 P1 查所有较早 generation 的精确 SendMessage receipt：
    - 旧 Committed：严格校验 receipt envelope/result，重用其 MessageId/结果，不发新 Command、不新增 handover。
    - 旧 `TerminalRejected(FencingRejected)`：只有 LogicalAction 仍 Pending、当前 freshness/authority 仍通过、且无 unresolved effect，才以 gen1 CommandId 和相同稳定 MessageId 重试。
@@ -50,19 +50,39 @@
 
 ### 既存直接写入的兼容边界
 
-当前旧实现可以在 Action 仍 Pending 时已直接提交 handover，却没有 Command receipt。该事实不能伪造为 Committed receipt。对这种既存状态，提案要求 P9 恢复先做只读 exact-proof：稳定 MessageId 对应唯一 Message 与唯一 MessageSent，且 sender、direct-parent recipient、Deliverable、bounded summary/body ref 与 pinned Action 输入一致；MessageSent 与 Message 是 P7 同事务事实，因此 Inbox 曾在提交时 admission 即使之后已消费也不要求当前仍有 Inbox row。精确匹配时只收敛原 LogicalAction/Observation，不提交新 Command 或再次 admission；缺失、重复或冲突时 fail closed 并产生 durable Action Required，不修复事实、不发新 handover、不请求 Provider。
+当前旧实现可以在 Action 仍 Pending 时已直接提交 handover，却没有 Command receipt。该事实不能伪造为 Committed receipt。取证顺序固定为：
 
-legacy exact-proof 规则固定如下：
+1. 先按 LogicalAction 的可信 DeliverMessage route 查较早 generation receipt（gen0 用精确 `legacyDeliverCommandId(providerTurnId,outputPosition) = cmd_${newUuid7("deliver-command", "${providerTurnId}:${outputPosition}")}`；gen1+ 用 P1 generation-scoped ids）。已找到的 receipt 必须先严格验证 CommandType=`DeliverMessage`、schemaVersion=`1`、精确 CommandId、ProjectId 与 typed resolution，再按下表处置；绝不先从 Message 推断并跳过已存在 receipt。
+2. 仅当候选旧 DeliverMessage receipt **不存在**时，查询升级前 direct-write 的 canonical Message/Event/Inbox exact-proof。exact proof成立就收敛原 Action；三处 effect facts 全不存在就可按 P1 eligibility 发当前代新 command；部分/冲突证据进入 P9 fact。
+3. Committed receipt 必须再与唯一 canonical Message 和 MessageSent event 精确绑定：同一 MessageId、Deliverable、sender、direct-parent recipient、bodyRef、correlation/causation；event envelope 的 projectId、aggregateRef、eventType=`MessageSent`、eventVersion=1 与 payload 按下方 exact-proof 字段逐项匹配，且 causedByCommandId=`receipt.commandId`（升级前 direct-write 则必须等于 legacyDeliverCommandId）。Inbox 缺失或仍存在时的精确字段规则与下方相同。receipt 单独不证明其 handover effect 完整。
+4. FencingRejected receipt 正常情况下证明对应 command effect 未提交。若它与任何稳定 MessageId 对应的 Message/Event/Inbox effect 同时存在，即形成 `RejectedReceiptEffectConflict`：不按旧 effect 自动成功，也不重新发送，必须 Action Required。无 effect 才可按 P1 eligibility takeover。OperationalFailure 保留原 CommandId 重试；若此时却发现 handover fact，按同一 conflict 路径 fail closed。旧 domain rejection/ExecutionStopping 遵循原 error algebra，不换代重试。
 
-- 若该稳定 MessageId 下 Message、MessageSent、Inbox key 全部不存在，属于未执行；满足 P1 takeover 条件后可提交当前代 Gateway command。
-- 若唯一 Message 与唯一 MessageSent 完全匹配 pinned action（kind、MessageId、sender、direct-parent recipient、deliverableId、bodyRef、correlationId、causationId），且不存在矛盾的 Inbox row，则视作旧同事务 effect 已完成；Inbox 当前缺行允许（可能已消费）。不补写 receipt、不重做 Inbox admission，仅收敛 Action Observation。
-- 若 Message/Event 仅存在其一、重复、字段不匹配、或有 Inbox row 却无完整 Message/Event proof，则不发 Gateway command、不请求 Provider、不改任何现存事实。由下列 P9/P10 fact 阻断恢复。
+| Receipt lookup (优先检查) | Message/Event/Inbox evidence | 唯一处置 |
+|---|---|---|
+| Committed DeliverMessage/1 | Message 与 MessageSent 精确绑定 receipt；Inbox 缺失或现存行精确匹配 | 收敛此 receipt；不发命令、不重写 facts；只完成原 Action Observation |
+| Committed DeliverMessage/1 | Message/Event 缺失、重复、或与 receipt/action 不符；或 Inbox 现存行字段不符 | `PriorReceiptResultMismatch` → P9/P10 Action Required；不 replay、不 Observation |
+| FencingRejected | 对稳定 MessageId 完全无 Message/Event/Inbox 行 | 满足 P1 freshness/eligibility 后允许新 generation CommandId 接管 |
+| FencingRejected | 任一 Message/Event/Inbox effect 行存在 | `RejectedReceiptEffectConflict` → Action Required；不把它当已提交 success，也不重发 |
+| OperationalFailure | 无 handover evidence | 按原 CommandId 和 fingerprint 重试 |
+| OperationalFailure 或非-FencingRejected TerminalRejected | handover evidence 存在 | `PriorReceiptEffectConflict` → Action Required；不换 CommandId、不把拒绝伪装成 success |
+| 非-FencingRejected TerminalRejected | 无 handover evidence | 按原 P1/Command error algebra 终止 LogicalAction；不因 generation 变化而重试 |
+| 无 prior DeliverMessage receipt | legacy Message/Event exact-proof 通过；Inbox 缺失或现存行精确匹配 | 采用旧 effect；不合成 receipt、不重做写入，仅收敛 Action Observation |
+| 无 prior DeliverMessage receipt | Message/Event/Inbox 全不存在 | 满足 P1 eligibility 后以当前 generation CommandId 执行新 route |
+| 无 prior DeliverMessage receipt | 任一 legacy evidence 部分存在、重复或字段冲突 | 对应 Legacy* failure code → P9/P10 Action Required；不写、不重放 |
+
+升级前 exact proof 必须匹配所有以下条件：
+
+- 唯一 Message 行的 `messageId` 是稳定 action MessageId，`senderWorkspaceId` 是 Execution Workspace，Message `kind=Deliver`、`recipientWorkspaceId` 是其当前绑定的直接 Parent、`deliverableId`/`bodyRef`/correlation/causation 与 pinned Deliver Action 一致，`sentAt` 与事件 `occurredAt` 相同。
+- 唯一 MessageSent event 的 `projectId=execution.projectId`、`aggregateRef=messageId`、`eventType=MessageSent`、`eventVersion=1`、`causedByCommandId=legacyDeliverCommandId(providerTurnId,outputPosition)`；payload 必须精确匹配 `{messageId, kind:"Deliver", sender, recipient, deliverableId, correlationId:null, causationId:null}`。读取时须证明同一项目/aggregate/type/version 的 event 恰一条；缺失、多条或任一 envelope/payload/source identity 不同都是 `LegacyMessageBindingMismatch`，不能仅按 eventType 或 payload 中的 ID 做包含判断。
+- Inbox 在 handover 事务时按 `workspaceId=recipientWorkspaceId`, `entryKey=messageEntryKey(messageId)`, `kind="Message"`, `summary="Deliver <deliverableId> from <senderWorkspaceId>"`, `correlationId=null`, `admittedAt=event.occurredAt` upsert。若 `findByKey` 仍返回该行（包含已消费但保留的 row），以上字段必须逐项相同；若行已不存在（包括消费/投影清理后无行），允许通过，因为 P7 的 Message+MessageSent 与 Inbox admission 原子提交。Inbox 单独存在而 Message/Event proof 不完整或不匹配时为 `LegacyInboxConflict`。
+
+exact proof 成立时只收敛原 LogicalAction/Observation，不补写 receipt、不提交新 Command、不再次 admission。不完整/冲突证据不修复现存事实、不发新 handover、不请求 Provider，并由下列 P9/P10 fact 阻断恢复。
 
 ### Legacy evidence 不足的 P9 fact 与 P10 Attention
 
 定义一个且仅一个 Deliver 恢复失败源：`DeliverReplayEscalated` event + P9-owned `deliver_replay_attention_facts` row。该源仅用于上述 pre-Gateway legacy proof 缺失/矛盾及 Deliver route 的 prior committed receipt 不能严格解码/绑定的情况；不扩展为通用 CommandStore Attention。
 
-P9 fact 字段固定为 `{attentionFactId, eventId, projectId, executionId, targetWorkspaceId, logicalActionId, messageId, failureCode, firstDetectedAt}`。`failureCode` 是 closed enum：`LegacyMessageMissingEvent | LegacyEventMissingMessage | LegacyMessageBindingMismatch | LegacyInboxConflict | PriorReceiptDecodeMismatch | PriorReceiptResultMismatch`；不得写 body、summary、raw JSON、parser/database error 或 authority material。`targetWorkspaceId` 固定为执行 Deliver 的 Workspace (`executions.workspace_id`)；`projectId` 取其 Execution。Fact identity/dedup 精确为 `att_` + lowercase SHA-256 hex of UTF-8 `JSON.stringify({version:1,executionId,logicalActionId,messageId})`；DB 同时设 `(execution_id,logical_action_id,message_id)` unique。首次 failureCode/时间不可覆写；同 tuple 重复返回原 fact，任何目标/Project/identity 冲突为 invariant failure。
+P9 fact 字段固定为 `{attentionFactId, eventId, projectId, executionId, targetWorkspaceId, logicalActionId, messageId, failureCode, firstDetectedAt}`。`failureCode` 是 closed enum：`LegacyMessageMissingEvent | LegacyEventMissingMessage | LegacyMessageBindingMismatch | LegacyInboxConflict | PriorReceiptDecodeMismatch | PriorReceiptResultMismatch | RejectedReceiptEffectConflict | PriorReceiptEffectConflict`；不得写 body、summary、raw JSON、parser/database error 或 authority material。`targetWorkspaceId` 固定为执行 Deliver 的 Workspace (`executions.workspace_id`)；`projectId` 取其 Execution。Fact identity/dedup 精确为 `att_` + lowercase SHA-256 hex of UTF-8 `JSON.stringify({version:1,executionId,logicalActionId,messageId})`；DB 同时设 `(execution_id,logical_action_id,message_id)` unique。首次 failureCode/时间不可覆写；同 tuple 重复返回原 fact，任何目标/Project/identity 冲突为 invariant failure。
 
 Fact 和 `DeliverReplayEscalated` v1 event 在同一 P9 `TransactionScope` 原子提交。Event payload 精确 `{attentionFactId,executionId,targetWorkspaceId,logicalActionId,messageId,failureCode}`；`aggregate_ref=targetWorkspaceId`、`correlation_ref=logicalActionId`、`caused_by_command_id` 仅在存在 prior Command receipt 时绑定该确切 CommandId，legacy 无 receipt 时省略；`occurred_at=firstDetectedAt`，actor=`system:recovery`。Fact event commit 前 crash 无 event/fact；commit 后 crash 由相同 tuple 读回，不追加第二 event。若该事务失败，恢复依旧 fail closed 且不得生成 Action Observation。
 
