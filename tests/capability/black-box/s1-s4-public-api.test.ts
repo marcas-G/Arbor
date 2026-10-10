@@ -412,7 +412,6 @@ afterAll(async () => {
 describe("S1-S4 public-process black-box", () => {
   it("S1/S3 creates a project and a visible first-layer responsibility tree", async () => {
     await command(projectId, "CreateProject", {
-      projectId,
       name: "Scenario black-box",
       revision: 0,
       projectPolicy: { delegationCeiling: 1 },

@@ -6,14 +6,18 @@ import type {
   CommandGatewayService,
   CommandHandlerRegistryService,
   CommandRejection,
+  DecodedExternalCommandEnvelope,
   GatewayEnvelope,
   ParentUserGovernanceFacts,
+  RegisteredCommandType,
 } from "@arbor/application";
 import {
   AuthorityResolverPort,
   activateWorkspaceBoundary,
   CommandGateway,
   CommandHandlerRegistry,
+  CommandInputContractRegistry,
+  decodeExternalCommand,
   semanticRequestFingerprint,
 } from "@arbor/application";
 import type {
@@ -50,14 +54,13 @@ import {
 import { Effect, Option } from "effect";
 import type {
   CommandReceiptView,
-  ExternalCommandEnvelope,
   ExternalSubmissionPort,
   ViewQueryFace,
 } from "./contracts.js";
 import {
   authorityDeniedProblem,
   failureResponse,
-  invalidCommandProblem,
+  invalidCommandPayloadProblem,
   problemFromCommandFailure,
   problemFromUnknownFailure,
 } from "./errors.js";
@@ -113,7 +116,9 @@ export type AuthorityInputsServices =
 export const makeRepositoryInputsLoader = (
   governance: ParentUserGovernanceFacts,
 ): Effect.Effect<
-  (envelope: ExternalCommandEnvelope) => Effect.Effect<AuthorityInputs, never>,
+  (
+    envelope: DecodedExternalCommandEnvelope,
+  ) => Effect.Effect<AuthorityInputs, never>,
   never,
   AuthorityInputsServices
 > =>
@@ -125,7 +130,7 @@ export const makeRepositoryInputsLoader = (
     const works = yield* WorkRepository;
     const grants = yield* PermissionGrantRepository;
 
-    return (envelope) =>
+    return (envelope: DecodedExternalCommandEnvelope) =>
       Effect.gen(function* () {
         const projectId = envelope.projectId;
         const payload = envelope.payload;
@@ -203,10 +208,10 @@ export interface ExternalSubmissionDeps {
   readonly gateway: CommandGatewayService;
   readonly registry: CommandHandlerRegistryService;
   readonly loadInputs: (
-    envelope: ExternalCommandEnvelope,
+    envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<AuthorityInputs, never>;
   readonly afterCommitted?: (
-    envelope: ExternalCommandEnvelope,
+    envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<void, unknown>;
 }
 
@@ -228,12 +233,33 @@ const receiptToView = (
 export const makeExternalSubmission = (
   deps: ExternalSubmissionDeps,
 ): ExternalSubmissionPort => ({
-  submit: (principal: Principal, submissionContext, envelope) =>
+  submit: (principal: Principal, submissionContext, rawEnvelope) =>
     Effect.gen(function* () {
+      const decoded = decodeExternalCommand(rawEnvelope);
+      if (!decoded.ok) {
+        const rawCommandType = payloadString(rawEnvelope, "commandType");
+        const safeCommandType =
+          rawCommandType !== null &&
+          CommandInputContractRegistry.lookup(rawCommandType) !== undefined
+            ? (rawCommandType as RegisteredCommandType)
+            : undefined;
+        return failureResponse(
+          invalidCommandPayloadProblem({
+            ...(safeCommandType !== undefined
+              ? { commandType: safeCommandType }
+              : {}),
+            issues: decoded.issues,
+          }),
+        );
+      }
+      const envelope = decoded.value;
       const handler = deps.registry.lookup(envelope.commandType);
       if (Option.isNone(handler)) {
         return failureResponse(
-          invalidCommandProblem(`unsupported command ${envelope.commandType}`),
+          invalidCommandPayloadProblem({
+            commandType: envelope.commandType,
+            issues: [{ path: ["commandType"], rule: "unsupported-command" }],
+          }),
         );
       }
       const gatewayEnvelope: GatewayEnvelope<unknown> = {
@@ -251,6 +277,11 @@ export const makeExternalSubmission = (
         schemaVersion: handler.value.schemaVersion,
         payload: envelope.payload,
       });
+      if (String(envelope.actor) !== String(principal)) {
+        return failureResponse(
+          authorityDeniedProblem("principal/actor-mismatch"),
+        );
+      }
       const inputs = yield* deps.loadInputs(envelope);
       const decision: AuthorityDecisionInput = {
         principal,
@@ -361,7 +392,7 @@ export const makeExternalSubmissionFromServices = (
     const ids = idsOption.value;
     const scheduler = schedulerOption.value;
     const activateIfMissing = (input: {
-      readonly projectId: ExternalCommandEnvelope["projectId"];
+      readonly projectId: DecodedExternalCommandEnvelope["projectId"];
       readonly workspaceId: WorkspaceId;
       readonly resourceBoundaryRevision: number;
       readonly resourceBoundary: {
@@ -386,7 +417,7 @@ export const makeExternalSubmissionFromServices = (
           { environment, ownershipWrite, clock, ids },
         );
       });
-    const afterCommitted = (envelope: ExternalCommandEnvelope) => {
+    const afterCommitted = (envelope: DecodedExternalCommandEnvelope) => {
       const payload = payloadRecord(envelope.payload);
       if (envelope.commandType === "CreateProject") {
         const root = payloadRecord(payload.rootWorkspace);

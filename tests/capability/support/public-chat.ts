@@ -84,6 +84,11 @@ export interface PublicProject {
   };
 }
 
+export const publicProjectPayload = (project: PublicProject) => {
+  const { projectId: _envelopeProjectId, ...payload } = project;
+  return payload;
+};
+
 export interface CapturedProviderCall {
   readonly request: Record<string, unknown>;
   readonly response?: string;
@@ -417,7 +422,11 @@ export const runPublicConversation = async (input: {
   }> = [];
   await withPublicConversationApp(input, async (handle) => {
     const createProject = await handle.postCommand(
-      commandEnvelope(input.project.projectId, "CreateProject", input.project),
+      commandEnvelope(
+        input.project.projectId,
+        "CreateProject",
+        publicProjectPayload(input.project),
+      ),
     );
     if (
       createProject.status !== 200 ||

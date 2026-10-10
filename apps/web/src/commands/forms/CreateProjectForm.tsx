@@ -59,7 +59,6 @@ export function CreateProjectForm({
       };
       idsRef.current = ids;
       void submit("CreateProject", ids.projectId, {
-        projectId: ids.projectId,
         name: values.name,
         revision: 0,
         projectPolicy: {},

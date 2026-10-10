@@ -9,7 +9,6 @@ import {
 } from "./auth.js";
 import type {
   CommandReceiptView,
-  ExternalCommandEnvelope,
   ExternalSubmissionPort,
   TransportResponse,
   ViewQueryFace,
@@ -40,7 +39,7 @@ export interface TransportCore {
   ) => Effect.Effect<TransportResponse<QueryResult<ViewResponseMap[V]>>>;
   readonly submitCommand: (
     credential: TransportCredential | null,
-    envelope: ExternalCommandEnvelope,
+    rawEnvelope: unknown,
   ) => Effect.Effect<TransportResponse<CommandReceiptView>>;
 }
 
@@ -53,11 +52,15 @@ export const makeTransportCore = (deps: TransportCoreDeps): TransportCore => ({
       onFailure: (error) => failureResponse(problemFromProjectionError(error)),
       onSuccess: (body) => ({ ok: true as const, status: 200, body }),
     })) as TransportCore["queryView"],
-  submitCommand: (credential, envelope) =>
+  submitCommand: (credential, rawEnvelope) =>
     Effect.matchEffect(deps.authenticator.authenticate(credential), {
       onFailure: () =>
         Effect.succeed(failureResponse(unauthenticatedProblem())),
       onSuccess: (principal) =>
-        deps.submission.submit(principal, externalContext(principal), envelope),
+        deps.submission.submit(
+          principal,
+          externalContext(principal),
+          rawEnvelope,
+        ),
     }),
 });

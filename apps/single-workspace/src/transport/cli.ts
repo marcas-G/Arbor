@@ -2,10 +2,7 @@ import type { ViewRequestMap } from "@arbor/api-contracts";
 import type { ViewId } from "@arbor/domain";
 import { Effect } from "effect";
 import type { TransportCredential } from "./auth.js";
-import type {
-  ExternalCommandEnvelope,
-  TransportResponse,
-} from "./contracts.js";
+import type { TransportResponse } from "./contracts.js";
 import { isViewId, type TransportCore } from "./core.js";
 import {
   failureResponse,
@@ -79,28 +76,11 @@ export const makeCliShell = (core: TransportCore): CliShell => ({
     }
     if (command === "command") {
       const [envelopeJson] = positional(rest);
-      if (envelopeJson === undefined) {
-        return Effect.succeed(
-          failureResponse(
-            invalidCommandProblem("command envelope JSON required"),
-          ),
-        );
-      }
-      const envelope = parseJson(envelopeJson);
-      if (
-        envelope === undefined ||
-        typeof envelope !== "object" ||
-        envelope === null
-      ) {
-        return Effect.succeed(
-          failureResponse(
-            invalidCommandProblem("command envelope JSON invalid"),
-          ),
-        );
-      }
+      const envelope =
+        envelopeJson === undefined ? undefined : parseJson(envelopeJson);
       return core.submitCommand(
         credentialOf(readFlag(rest, "--token")),
-        envelope as ExternalCommandEnvelope,
+        envelope,
       );
     }
     return Effect.succeed(

@@ -107,7 +107,6 @@ export const createFunctionalProject = async (
   const rootWorkspaceId = functionalId("ws");
   const rootSessionId = functionalId("ses");
   await client.command(projectId, "CreateProject", {
-    projectId,
     name,
     revision: 0,
     projectPolicy: { delegationCeiling: 1 },
