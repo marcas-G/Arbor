@@ -110,3 +110,50 @@ Integrated follow-up evidence at the temporary security/port/P4/OPEN3 stack:
 No full `pnpm check`, full `pnpm test:functional`, or Playwright run was made.
 This qualification remains local and does not by itself close the complete
 F21 governance/release gates.
+
+## P10 architecture-gate follow-up at integration candidate `6fcbc17`
+
+The first full `pnpm check` at the integration candidate had one failure in
+Architecture (157 passed, 1 failed, 158 total); Core/Web did not run. The
+failing test was `tests/architecture/p10-architecture.test.ts`'s
+`zero canonical mutation` case. Its minimal reproduction was:
+
+```text
+pnpm exec vitest run tests/architecture/p10-architecture.test.ts -t "zero canonical mutation"
+```
+
+The sole reported violation was `transaction scope` in
+`packages/projection-runtime/src/activation-attention-reconciliation.ts`.
+This was a static-rule false positive, not a canonical write. P10 `02` §3
+requires `reconcileProjectActivationAttention` to reread P1 intent state and
+replace only the activation source's P10 rows in one transaction; P10 `04`
+§3 requires the Attention reset/snapshot work to use a transaction boundary.
+The function's typed dependency surface is limited to `TransactionPort.transact`,
+`WorkspaceResourceActivationStore.listAll` and
+`AttentionProjectionStore.reconcileWorkspaceResourceActivation`. The SQLite
+adapter reads the canonical `workspace_resource_activation_intents` table and
+only upserts/deletes `workspace_resource_activation_attention_rows`; it does
+not alter intents, Workspaces, claims, receipts, or the P1 offset.
+
+The correction is confined to `tests/architecture/p10-architecture.test.ts`:
+transaction scope is no longer classified as a canonical write face, while
+the rule still checks actual mutation calls and explicitly includes P1
+activation intent `insertPending` and `compareAndSetActive` operations. No
+production code or owner semantics changed. The exact architecture + P10
+reconciliation unit command now passes 2 files / 9 tests.
+
+Process regression evidence:
+
+- P11/P12 activation-recovery: 6/6 PASS.
+- P10 Story L: an initial combined rerun timed out waiting for the test-only
+  SQLite lock probe to emit its contention marker; the platform connection
+  could wait instead of returning immediately. The child now sets
+  `PRAGMA busy_timeout = 0` before `BEGIN IMMEDIATE`, preserving the actual
+  ordering proof (contention observed, P10 killed, same P11 child acquires the
+  writer lock, then activation commits). Standalone P10 Story L rerun: 2/2
+  PASS. This is test-fixture-only; other SQLite I/O errors remain failures.
+
+Typecheck and Biome for the changed architecture/fixture files pass. No full
+`pnpm check` or full `pnpm test:functional` was rerun after the fix; the initial
+full-check Architecture red remains recorded above and is not represented as a
+green full gate.
