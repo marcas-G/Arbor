@@ -5,7 +5,8 @@ import {
   P8_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { Principal, parse } from "../packages/domain/dist/index.js";
+import { newUuid7 } from "../packages/application/src/index.js";
+import { CommandId, Principal, parse } from "../packages/domain/dist/index.js";
 import {
   preDispatchCheck,
   runRecovery,
@@ -20,6 +21,11 @@ import {
 } from "./support/p7-app.js";
 
 const principal = parse(Principal)("user:gov");
+const recoveryCommandId = (
+  executionId: string,
+  branch: "completion" | "stop",
+) =>
+  parse(CommandId)(`cmd_${newUuid7("recovery", `${executionId}:${branch}`)}`);
 
 const ROOT_WS = "ws_018f2b3c-4d5e-7abc-8def-0123456789c1";
 const EXE_B2 = "exe_00000000-0000-7000-8000-0000000000b2";
@@ -142,10 +148,12 @@ describe("P9-003 completion-fact settle + recovery drive (B-2, T1, T4)", () => {
         const row = yield* executionRow(EXE_B2);
         expect(row.kind).toBe("Completed");
         expect(row.settlement).toEqual(fact);
-        const commands = yield* countCommands(
-          `cmd_recovery_completion_${EXE_B2}`,
+        const commandId = recoveryCommandId(EXE_B2, "completion");
+        expect(commandId).toMatch(
+          /^cmd_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
         );
-        expect(commands).toBe(1);
+        expect(yield* countCommands(commandId)).toBe(1);
+        expect(yield* countEvents(EXE_B2, "ExecutionSettled")).toBe(2);
       }),
       makeP7App(),
     );
@@ -168,9 +176,11 @@ describe("P9-003 completion-fact settle + recovery drive (B-2, T1, T4)", () => {
         expect(row.kind).toBe("Completed");
         // One seeded fact + one settle event — never two settles.
         expect(yield* countEvents(EXE_T1, "ExecutionSettled")).toBe(2);
-        expect(yield* countCommands(`cmd_recovery_completion_${EXE_T1}`)).toBe(
-          1,
+        const commandId = recoveryCommandId(EXE_T1, "completion");
+        expect(commandId).toMatch(
+          /^cmd_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
         );
+        expect(yield* countCommands(commandId)).toBe(1);
       }),
       makeP7App(),
     );

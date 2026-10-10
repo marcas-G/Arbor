@@ -44,6 +44,7 @@ import {
   CommandHandlerRegistry,
   FenceStopCheckInertLive,
   makeSelectCurrentWorkHandler,
+  newUuid7,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
   type VerifiedRuntimeCommandAuthority,
@@ -2061,16 +2062,25 @@ describe("p9-acceptance", () => {
         expect(calls).toEqual([
           { workspaceId: p7RootWorkspace, wakeReasonTag: "Recovery" },
         ]);
+        const recoveryCompletionCommandId = parse(CommandId)(
+          `cmd_${newUuid7("recovery", `${EXE_SB_FACT}:completion`)}`,
+        );
+        const recoveryStopCommandId = parse(CommandId)(
+          `cmd_${newUuid7("recovery", `${EXE_SB_CLEAN}:stop`)}`,
+        );
         expect(
           yield* sqlCount(
-            `SELECT COUNT(*) AS count FROM commands WHERE command_id = 'cmd_recovery_completion_${EXE_SB_FACT}'`,
+            "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+            [recoveryCompletionCommandId],
           ),
         ).toBe(1);
         expect(
           yield* sqlCount(
-            `SELECT COUNT(*) AS count FROM commands WHERE command_id = 'cmd_recovery_settle_${EXE_SB_CLEAN}'`,
+            "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+            [recoveryStopCommandId],
           ),
         ).toBe(1);
+        expect(yield* countEventsFor(EXE_SB_FACT, "ExecutionSettled")).toBe(2);
         // Crash during/after T1 → restart re-runs T1: idempotent re-entry.
         const commandsAfterFirst = yield* sqlCount(
           "SELECT COUNT(*) AS count FROM commands",
