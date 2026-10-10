@@ -1,8 +1,8 @@
 # F21/F23 integration legacy fixture migration
 
-Status: P1 and P6 fixture migrations pass. P11 factory-only exact receipt
-replay is intentionally left RED because no registered F23 decoder exists for
-that internal command type; no production or design change was made.
+Status: P1/P6 fixture migrations and the P11 factory-only fail-closed replay
+case pass. Production same-ID replay support for unregistered factory-only P11
+commands remains OPEN; no production or design change was made.
 
 ## Scope
 
@@ -13,9 +13,9 @@ Changed tests:
 - `tests/p1-idempotency.test.ts`
 - `packages/application/test/p1-gateway.test.ts`
 - `tests/p6-acceptance.test.ts`
+- `tests/p11-worktree.test.ts`
 
-`tests/p11-worktree.test.ts` remains unchanged. No production code,
-`docs/design/**`, Web code, or other test files changed.
+No production code, `docs/design/**`, Web code, or other test files changed.
 
 ## RED evidence and fixture decisions
 
@@ -44,29 +44,34 @@ no v2 `resourceSelection`; CreateProject v2 reached `undefined._tag`.
   retains its file-capability ceiling semantics rather than substituting an
   empty ConversationOnly boundary.
 
-## P11 factory-only replay remains open
+## P11 factory-only exact-replay disposition
 
 `CreateWorktree` / `RetireWorktree` are P11 factory-only/internal handlers,
 not members of the current production Handler registry or F23's 26-command
 registered decoder map. The test-local Gateway registry can commit the first
 `CreateWorktree` receipt, but an exact same-CommandId replay fails closed as
 `PersistenceCorruption<CommandStore>` because there is no trusted
-`(CommandType, schemaVersion)` result decoder. The original P11 Worktree
-creation/uniqueness and idempotency assertion is preserved; it was not changed
-to expect success without evidence, skipped, or replaced with F21 Profile / a
-FileTree address. Decoder support/registration is outside this test-only
-scope, so P11 exact replay is not claimed qualified.
+`(CommandType, schemaVersion)` result decoder. The test now asserts that exact
+fail-closed result, byte-stable stored receipt, one Active Worktree and one
+`WorktreeCreated` event; a different CommandId still receives the original
+typed `WorktreeAlreadyExists` rejection. No second Worktree effect occurs.
+The former test-local successful replay claim is not carried forward as
+production qualification: P11 factory registration plus decoder support is
+outside this test-only scope. No generic fallback is added, and the P11 command
+is not replaced with F21 Profile/FileTree behavior.
 
 Focused evidence:
 
 - Before migration: `pnpm exec vitest run tests/p1-idempotency.test.ts packages/application/test/p1-gateway.test.ts tests/p6-acceptance.test.ts`
   — 3 files, 10 failed as described.
-- P11 representative RED:
+- P11 representative RED before migration:
   `pnpm exec vitest run tests/p11-worktree.test.ts -t "duplicate worktreeId"`
   — selected same-ID replay failed with the strict decoder corruption; five
   other cases were filtered/skipped.
-- After migration: the P1/P6 command above — 3 files, 31/31 PASS.
+- P11 after migration: the same selected case — 1/1 PASS, with five unrelated
+  cases filtered/skipped.
+- After migration: P1/P1 Gateway/P6/P11 targeted files — 4 files, 37/37 PASS.
 - `pnpm typecheck` — PASS.
-- Targeted Biome on the three changed test files — PASS.
+- Targeted Biome on the four changed test files — PASS.
 - `git diff --check` — PASS.
 - Full `pnpm check` and functional suites were not run.
