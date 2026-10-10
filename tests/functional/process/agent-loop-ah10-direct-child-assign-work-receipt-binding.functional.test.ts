@@ -15,8 +15,13 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
+  type FunctionalProject,
   functionalId,
   makePublicClient,
+  type PublicClient,
+  proposeAndApproveChildWithInitialWork,
+  proposeAndApproveChildWithoutWork,
+  submitHumanMessage,
   waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
@@ -127,6 +132,85 @@ const pushProbe = (events: Probe[], line: string) => {
   } catch {
     // Retain daemon output in the fixture for failure diagnostics.
   }
+};
+
+const approveWorkspaceFormation = async (
+  client: PublicClient,
+  project: FunctionalProject,
+  parentWorkspaceId: string,
+  marker: string,
+  childName: string,
+): Promise<{ readonly workspaceId: string; readonly name: string }> => {
+  const inbox = await waitForPublic(
+    () =>
+      client.view<{
+        unconsumed: Array<{ entryKey: string; kind: string; summary: string }>;
+      }>("inbox-view", { workspaceId: parentWorkspaceId }),
+    (value) =>
+      value.unconsumed.some(
+        (entry) =>
+          entry.kind === "Governance" &&
+          entry.summary.includes(marker) &&
+          /^gov:fpr_[^:]+:\d+$/u.test(entry.entryKey),
+      ),
+  );
+  const entry = inbox.unconsumed.find(
+    (candidate) =>
+      candidate.kind === "Governance" &&
+      candidate.summary.includes(marker) &&
+      /^gov:fpr_[^:]+:\d+$/u.test(candidate.entryKey),
+  );
+  const formation =
+    entry === undefined
+      ? null
+      : /^gov:(fpr_[^:]+):(\d+)$/u.exec(entry.entryKey);
+  if (formation === null) {
+    throw new Error(
+      `Parent Inbox exposed no exact FormationProposal for ${marker}`,
+    );
+  }
+  const before = await client.view<{
+    nodes: Array<{ parentWorkspaceId: string | null; name: string }>;
+  }>("responsibility-tree", { projectId: project.projectId });
+  expect(
+    before.nodes.some(
+      (node) =>
+        node.parentWorkspaceId === parentWorkspaceId && node.name === childName,
+    ),
+  ).toBe(false);
+  await client.command(project.projectId, "RecordDecision", {
+    proposalId: formation[1],
+    expectedProposalRevision: Number(formation[2]),
+    outcome: { _tag: "Approve" },
+  });
+  const tree = await waitForPublic(
+    () =>
+      client.view<{
+        nodes: Array<{
+          workspaceId: string;
+          parentWorkspaceId: string | null;
+          name: string;
+          currentWork?: { workId?: string };
+        }>;
+      }>("responsibility-tree", { projectId: project.projectId }),
+    (value) =>
+      value.nodes.some(
+        (node) =>
+          node.parentWorkspaceId === parentWorkspaceId &&
+          node.name === childName &&
+          node.currentWork === undefined,
+      ),
+  );
+  const child = tree.nodes.find(
+    (node) =>
+      node.parentWorkspaceId === parentWorkspaceId && node.name === childName,
+  );
+  if (child === undefined || child.currentWork !== undefined) {
+    throw new Error(
+      `approved Formation unexpectedly lacks empty child ${childName}`,
+    );
+  }
+  return { workspaceId: child.workspaceId, name: child.name };
 };
 
 const releaseGate = (
@@ -514,6 +598,9 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         | "attention-after";
       const marker = `AH10-direct-child-${crypto.randomUUID().slice(0, 8)}`;
       const childName = `child-${marker}`;
+      const siblingName = `sibling-${crypto.randomUUID().slice(0, 8)}`;
+      const nonRootParent = crashSide === "non-root-parent";
+      const parentName = `parent-${marker}`;
       const sourceObjective = `Assign a bounded outcome to ${childName}.`;
       const targetObjective = `Direct-child Work for ${marker}.`;
       const targetWhy = `The existing child owns the responsibility for ${marker}.`;
@@ -539,6 +626,11 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       const providerTrace: Array<{ index: number; tail: string }> = [];
       let listRequested = false;
       let targetWorkspaceRef: string | undefined;
+      let parentSeedWaitIssued = false;
+      let targetProposalIssued = false;
+      let targetProposalApproved = false;
+      let siblingProposalIssued = false;
+      let siblingProposalApproved = false;
 
       const fixture = await startProductionFixture({
         reply: (call, index) => {
@@ -552,7 +644,206 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
               .map((tool) => tool.function?.name)
               .filter((name): name is string => name !== undefined),
           );
-          if (context.includes("WorkAssigned(")) {
+          const latestUserIndex = call.messages.findLastIndex(
+            (message) => message.role === "user",
+          );
+          const latestUser =
+            latestUserIndex < 0
+              ? undefined
+              : call.messages[latestUserIndex]?.content;
+          const proposalRecordedForLatestUser =
+            latestUserIndex >= 0 &&
+            call.messages
+              .slice(latestUserIndex + 1)
+              .some(
+                (message) =>
+                  message.role === "tool" &&
+                  message.content?.includes("ProposalRecorded(") === true,
+              );
+          const proposalFor = (
+            name: string,
+            purpose: string,
+            initialWork?: Readonly<Record<string, unknown>>,
+          ) => ({
+            _tag: "ToolCall" as const,
+            name: "propose_workspace",
+            arguments: {
+              name,
+              rationale: `formation fixture for ${marker}`,
+              responsibilityDraft: {
+                purpose,
+                ownedResponsibilities: [marker],
+                obligations: ["accept precisely scoped Work from the Parent"],
+                includes: ["the named child outcome"],
+                excludes: ["Parent Workspace files and external side effects"],
+                interfaces: [
+                  "Parent assigns Work through a scoped direct-child ref",
+                ],
+              },
+              resourceBoundaryDraft: {
+                addresses: [
+                  { _tag: "FileTree", path: fixture.workspaceDirectory },
+                ],
+              },
+              ...(initialWork === undefined ? {} : { initialWork }),
+            },
+          });
+
+          if (
+            available.has("propose_workspace") &&
+            !available.has("claim_completion") &&
+            latestUser?.includes(`Propose ${childName} for ${marker}`) === true
+          ) {
+            return proposalRecordedForLatestUser
+              ? { _tag: "Text", text: `Proposed ${childName}` }
+              : proposalFor(
+                  childName,
+                  `own the bounded responsibility for ${marker}`,
+                );
+          }
+          if (
+            available.has("propose_workspace") &&
+            !available.has("claim_completion") &&
+            latestUser?.includes(`Propose ${siblingName} for ${marker}`) ===
+              true
+          ) {
+            return proposalRecordedForLatestUser
+              ? { _tag: "Text", text: `Proposed ${siblingName}` }
+              : proposalFor(
+                  siblingName,
+                  `own a separate sibling responsibility for ${marker}`,
+                );
+          }
+          if (
+            available.has("propose_workspace") &&
+            !available.has("claim_completion") &&
+            latestUser?.includes(`Propose ${parentName} for ${marker}`) === true
+          ) {
+            return proposalRecordedForLatestUser
+              ? { _tag: "Text", text: `Proposed ${parentName}` }
+              : proposalFor(parentName, `parent responsibility for ${marker}`, {
+                  objective: sourceObjective,
+                  why: "host the Parent WorkEpisode for direct-child assignment qualification",
+                  constraints: [
+                    "the resulting Work must target the listed direct child",
+                  ],
+                  completionExpectation:
+                    "one exact child Work is assigned under the Parent",
+                  verificationMission: {
+                    goal: `Verify assignment to the existing child ${marker}`,
+                    criteria: [
+                      {
+                        criterionId: "parent-assigned-child",
+                        requirement:
+                          "the Work is assigned to the exact listed child Workspace",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                });
+          }
+          if (
+            available.has("claim_completion") &&
+            nonRootParent &&
+            context.includes(sourceObjective)
+          ) {
+            if (!targetProposalApproved) {
+              if (!targetProposalIssued) {
+                targetProposalIssued = true;
+                return proposalFor(
+                  childName,
+                  `own the bounded responsibility for ${marker}`,
+                );
+              }
+              return {
+                _tag: "ToolCall",
+                name: "wait",
+                arguments: {
+                  reason: `await exact Parent approval for ${childName}`,
+                  waitSpec: {
+                    mode: "Any",
+                    conditions: [{ _tag: "Manual" }],
+                  },
+                },
+              };
+            }
+            if (!siblingProposalApproved) {
+              if (!siblingProposalIssued) {
+                siblingProposalIssued = true;
+                return proposalFor(
+                  siblingName,
+                  `own a separate sibling responsibility for ${marker}`,
+                );
+              }
+              return {
+                _tag: "ToolCall",
+                name: "wait",
+                arguments: {
+                  reason: `await exact Parent approval for ${siblingName}`,
+                  waitSpec: {
+                    mode: "Any",
+                    conditions: [{ _tag: "Manual" }],
+                  },
+                },
+              };
+            }
+          }
+          if (
+            available.has("claim_completion") &&
+            context.includes(sourceObjective) &&
+            !parentSeedWaitIssued
+          ) {
+            parentSeedWaitIssued = true;
+            return {
+              _tag: "ToolCall",
+              name: "wait",
+              arguments: {
+                reason:
+                  "hold the seeded Parent Work until AH10 probes are enabled",
+                waitSpec: {
+                  mode: "Any",
+                  conditions: [{ _tag: "Manual" }],
+                },
+              },
+            };
+          }
+          if (
+            !available.has("claim_completion") &&
+            !nonRootParent &&
+            latestUser?.includes(`Create Parent Work ${sourceObjective}`) ===
+              true
+          ) {
+            return context.includes("WorkAssigned(")
+              ? { _tag: "Text", text: `Parent Work assigned for ${marker}` }
+              : {
+                  _tag: "ToolCall",
+                  name: "assign_work",
+                  arguments: {
+                    objective: sourceObjective,
+                    why: "host the Parent WorkEpisode for direct-child assignment qualification",
+                    constraints: [
+                      "the resulting Work must target the listed direct child",
+                    ],
+                    completionExpectation:
+                      "one exact child Work is assigned under the Parent",
+                    verificationMission: {
+                      goal: `Verify assignment to the existing child ${marker}`,
+                      criteria: [
+                        {
+                          criterionId: "parent-assigned-child",
+                          requirement:
+                            "the Work is assigned to the exact listed child Workspace",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH10 process fixture",
+                  },
+                };
+          }
+          if (assignWorkCalls.length > 0 && context.includes("WorkAssigned(")) {
             return {
               _tag: "Text",
               text: `The child Work is assigned for ${marker}.`,
@@ -590,7 +881,266 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             },
           };
         },
-        firstDaemonEntry: ah10Child,
+        onDaemonStdout: (line) => pushProbe(events, line),
+      });
+      fixtures.push(fixture);
+      let recoveryDatabaseFile = fixture.databaseFile;
+      mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
+
+      const client = makePublicClient(fixture.baseUrl);
+      const project = await createFunctionalProject(
+        client,
+        fixture.workspaceDirectory,
+        `AH10 direct-child AssignWork ${marker}`,
+        {
+          rootWorkspacePolicy: {
+            controlApprovalPolicy: {
+              "core.control.assign-work": "Ask",
+            },
+          },
+        },
+      );
+      let assignmentParentWorkspaceId = project.rootWorkspaceId;
+      let childWorkspaceId = "";
+      let siblingWorkspaceId = "";
+      let parentWorkId = "";
+      const childDirectory = fixture.workspaceDirectory;
+      if (nonRootParent) {
+        const parent = await proposeAndApproveChildWithInitialWork(
+          client,
+          project,
+          marker,
+          `Propose ${parentName} for ${marker}`,
+          {
+            name: parentName,
+            rationale:
+              "form the Parent responsibility for nested direct-child qualification",
+            responsibilityDraft: {
+              purpose: `parent responsibility for ${marker}`,
+              ownedResponsibilities: [`parent-${marker}`],
+              obligations: ["assign bounded child Work"],
+              includes: ["the direct child assignment fixture"],
+              excludes: ["unrelated root responsibilities"],
+              interfaces: [
+                "one direct child is assigned through PlacementContext",
+              ],
+            },
+            resourceBoundaryDraft: {
+              addresses: [
+                { _tag: "FileTree", path: fixture.workspaceDirectory },
+              ],
+            },
+            initialWork: {
+              objective: sourceObjective,
+              why: "host the Parent WorkEpisode for direct-child assignment qualification",
+              constraints: [
+                "the resulting Work must target the listed direct child",
+              ],
+              completionExpectation:
+                "one exact child Work is assigned under the Parent",
+              verificationMission: {
+                goal: `Verify assignment to the existing child ${marker}`,
+                criteria: [
+                  {
+                    criterionId: "parent-assigned-child",
+                    requirement:
+                      "the Work is assigned to the exact listed child Workspace",
+                    required: true,
+                  },
+                ],
+                riskRequirements: [],
+              },
+            },
+          },
+        );
+        assignmentParentWorkspaceId = parent.workspaceId;
+        parentWorkId = parent.currentWork.workId;
+        expect(parent.currentWork.objective).toBe(sourceObjective);
+      } else {
+        const child = await proposeAndApproveChildWithoutWork(
+          client,
+          project,
+          marker,
+          `Propose ${childName} for ${marker}`,
+          {
+            name: childName,
+            rationale: "form the target responsibility for AH10 qualification",
+            responsibilityDraft: {
+              purpose: `own the bounded responsibility for ${marker}`,
+              ownedResponsibilities: [marker],
+              obligations: ["accept precisely scoped Work from the Parent"],
+              includes: ["the named child outcome"],
+              excludes: ["Parent Workspace files and external side effects"],
+              interfaces: [
+                "Parent assigns Work through a scoped direct-child ref",
+              ],
+            },
+            resourceBoundaryDraft: {
+              addresses: [{ _tag: "FileTree", path: childDirectory }],
+            },
+          },
+        );
+        childWorkspaceId = child.workspaceId;
+        const sibling = await proposeAndApproveChildWithoutWork(
+          client,
+          project,
+          siblingName,
+          `Propose ${siblingName} for ${marker}`,
+          {
+            name: siblingName,
+            rationale:
+              "form a distinct sibling for target binding qualification",
+            responsibilityDraft: {
+              purpose: `own a separate sibling responsibility for ${marker}`,
+              ownedResponsibilities: [`sibling-${marker}`],
+              obligations: ["remain distinct from the assigned child"],
+              includes: ["sibling-only scope"],
+              excludes: ["the assigned child responsibility"],
+              interfaces: ["Parent may assign Work independently"],
+            },
+            resourceBoundaryDraft: {
+              addresses: [{ _tag: "FileTree", path: childDirectory }],
+            },
+          },
+        );
+        siblingWorkspaceId = sibling.workspaceId;
+      }
+
+      if (!nonRootParent) {
+        await submitHumanMessage(
+          client,
+          project,
+          `Create Parent Work ${sourceObjective}`,
+        );
+        const parentApproval = await waitForApproval(client, project, marker);
+        await client.command(project.projectId, "ResolveControlApproval", {
+          approvalId: parentApproval.approvalId,
+          expectedRevision: parentApproval.revision,
+          decision: "Approve",
+          reason: "AH10 Root Parent Work seed approval",
+        });
+        const parentWork = await waitForPublic(
+          () =>
+            client.view<{
+              workId?: string;
+              objective?: string;
+              revision: number;
+            } | null>("current-work", {
+              workspaceId: assignmentParentWorkspaceId,
+            }),
+          (work) =>
+            work?.objective === sourceObjective && work.workId !== undefined,
+        );
+        const rootParentWorkId = parentWork?.workId;
+        if (parentWork === null || rootParentWorkId === undefined) {
+          throw new Error("Root assign_work did not expose the Parent WorkId");
+        }
+        parentWorkId = rootParentWorkId;
+      }
+
+      if (nonRootParent) {
+        const target = await approveWorkspaceFormation(
+          client,
+          project,
+          assignmentParentWorkspaceId,
+          marker,
+          childName,
+        );
+        childWorkspaceId = target.workspaceId;
+        targetProposalApproved = true;
+        const afterTargetProposal = await client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", {
+          workspaceId: assignmentParentWorkspaceId,
+        });
+        expect(afterTargetProposal).toMatchObject({
+          workId: parentWorkId,
+          revision: 0,
+          status: "Open",
+        });
+        await client.command(project.projectId, "SteerWork", {
+          workId: parentWorkId,
+          workspaceId: assignmentParentWorkspaceId,
+          expectedWorkRevision: 0,
+          steer: {
+            severity: "Normal",
+            guidance: `Continue Parent formation seed ${marker}.`,
+          },
+          provenance: { source: "HumanInput" },
+        });
+        const sibling = await approveWorkspaceFormation(
+          client,
+          project,
+          assignmentParentWorkspaceId,
+          siblingName,
+          siblingName,
+        );
+        siblingWorkspaceId = sibling.workspaceId;
+        siblingProposalApproved = true;
+        const afterSiblingProposal = await client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", {
+          workspaceId: assignmentParentWorkspaceId,
+        });
+        expect(afterSiblingProposal).toMatchObject({
+          workId: parentWorkId,
+          revision: 1,
+          status: "Open",
+        });
+        await client.command(project.projectId, "SteerWork", {
+          workId: parentWorkId,
+          workspaceId: assignmentParentWorkspaceId,
+          expectedWorkRevision: 1,
+          steer: {
+            severity: "Normal",
+            guidance: `Continue Parent formation seed ${marker}.`,
+          },
+          provenance: { source: "HumanInput" },
+        });
+      }
+
+      const seedParentWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            objective?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", {
+            workspaceId: assignmentParentWorkspaceId,
+          }),
+        (work) =>
+          parentSeedWaitIssued &&
+          work?.workId === parentWorkId &&
+          work.objective === sourceObjective &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+      );
+      if (seedParentWork === null || seedParentWork.workId !== parentWorkId) {
+        throw new Error("Parent Work did not reach the expected seed wait");
+      }
+      const seededRevision = nonRootParent ? 2 : 0;
+      expect(seedParentWork.revision).toBe(seededRevision);
+      if (nonRootParent) {
+        const childDetail = await client.view<{
+          boundary?: {
+            addresses?: ReadonlyArray<{ _tag: string; path?: string }>;
+          };
+        }>("workspace-detail", { workspaceId: childWorkspaceId });
+        expect(childDetail.boundary?.addresses).toContainEqual({
+          _tag: "FileTree",
+          path: childDirectory,
+        });
+      }
+
+      await fixture.crash();
+      await fixture.restart({
+        entry: ah10Child,
         daemonEnvironment: {
           ARBOR_AH10_ROLE: "old",
           ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
@@ -615,171 +1165,36 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           ARBOR_AH10_PAUSE_AFTER_ASSIGN_WORK_AUTHORIZED:
             crashSide === "approval-fencing-before" ? "1" : "0",
         },
-        onDaemonStdout: (line) => pushProbe(events, line),
       });
-      fixtures.push(fixture);
-      let recoveryDatabaseFile = fixture.databaseFile;
-      mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
-
-      const client = makePublicClient(fixture.baseUrl);
-      const project = await createFunctionalProject(
-        client,
-        fixture.workspaceDirectory,
-        `AH10 direct-child AssignWork ${marker}`,
-        crashSide === "approval-committed" ||
-          crashSide === "legacy-p32-upgrade" ||
-          crashSide === "approval-fencing-before"
-          ? {
-              rootWorkspacePolicy: {
-                controlApprovalPolicy: {
-                  "core.control.assign-work": "Ask",
-                },
-              },
-            }
-          : {},
-      );
-      const assignmentParentWorkspaceId =
-        crashSide === "non-root-parent"
-          ? functionalId("ws")
-          : project.rootWorkspaceId;
-      if (crashSide === "non-root-parent") {
-        const parentName = `parent-${marker}`;
-        const parentDirectory = resolve(fixture.directory, parentName);
-        mkdirSync(parentDirectory, { recursive: true });
-        await client.command(project.projectId, "CreateChildWorkspace", {
-          parentWorkspaceId: project.rootWorkspaceId,
-          workspaceId: assignmentParentWorkspaceId,
-          primarySession: {
-            sessionId: functionalId("ses"),
-            contextEpoch: 0,
-          },
-          name: parentName,
-          responsibilityDefinition: {
-            purpose: `parent responsibility for ${marker}`,
-            ownedResponsibilities: [`parent-${marker}`],
-            obligations: ["assign bounded child Work"],
-            includes: ["the direct child assignment fixture"],
-            excludes: ["unrelated root responsibilities"],
-            interfaces: [
-              "one direct child is assigned through PlacementContext",
-            ],
-          },
-          responsibilityRevision: 0,
-          resourceBoundary: {
-            basisResponsibilityRevision: 0,
-            addresses: [{ _tag: "FileTree", path: parentDirectory }],
-          },
-          resourceBoundaryRevision: 0,
-          agentBinding: {
-            _tag: "ResponsibilityBoundAgentBinding",
-            workspaceId: assignmentParentWorkspaceId,
-          },
-          workspacePolicy: {},
-          workspacePolicyRevision: 0,
-          revision: 0,
-        });
-      }
-      const childWorkspaceId = functionalId("ws");
-      const childDirectory = resolve(fixture.directory, childName);
-      mkdirSync(childDirectory, { recursive: true });
-      await client.command(project.projectId, "CreateChildWorkspace", {
-        parentWorkspaceId: assignmentParentWorkspaceId,
-        workspaceId: childWorkspaceId,
-        primarySession: {
-          sessionId: functionalId("ses"),
-          contextEpoch: 0,
-        },
-        name: childName,
-        responsibilityDefinition: {
-          purpose: `own the bounded responsibility for ${marker}`,
-          ownedResponsibilities: [marker],
-          obligations: ["accept precisely scoped Work from the Parent"],
-          includes: ["the named child outcome"],
-          excludes: ["Parent Workspace files and external side effects"],
-          interfaces: ["Parent assigns Work through a scoped direct-child ref"],
-        },
-        responsibilityRevision: 0,
-        resourceBoundary: {
-          basisResponsibilityRevision: 0,
-          addresses: [{ _tag: "FileTree", path: childDirectory }],
-        },
-        resourceBoundaryRevision: 0,
-        agentBinding: {
-          _tag: "ResponsibilityBoundAgentBinding",
-          workspaceId: childWorkspaceId,
-        },
-        workspacePolicy: {},
-        workspacePolicyRevision: 0,
-        revision: 0,
-      });
-      const childDetail = await client.view<{
-        boundary?: {
-          addresses?: ReadonlyArray<{ _tag: string; path?: string }>;
-        };
-      }>("workspace-detail", { workspaceId: childWorkspaceId });
-      expect(childDetail.boundary?.addresses).toContainEqual({
-        _tag: "FileTree",
-        path: childDirectory,
-      });
-      const siblingWorkspaceId = functionalId("ws");
-      const siblingName = `sibling-${crypto.randomUUID().slice(0, 8)}`;
-      const siblingDirectory = resolve(fixture.directory, siblingName);
-      mkdirSync(siblingDirectory, { recursive: true });
-      await client.command(project.projectId, "CreateChildWorkspace", {
-        parentWorkspaceId: assignmentParentWorkspaceId,
-        workspaceId: siblingWorkspaceId,
-        primarySession: {
-          sessionId: functionalId("ses"),
-          contextEpoch: 0,
-        },
-        name: siblingName,
-        responsibilityDefinition: {
-          purpose: `own a separate sibling responsibility ${crypto.randomUUID()}`,
-          ownedResponsibilities: [`sibling-${crypto.randomUUID()}`],
-          obligations: ["remain distinct from the assigned child"],
-          includes: ["sibling-only scope"],
-          excludes: ["the assigned child responsibility"],
-          interfaces: ["Parent may assign Work independently"],
-        },
-        responsibilityRevision: 0,
-        resourceBoundary: {
-          basisResponsibilityRevision: 0,
-          addresses: [{ _tag: "FileTree", path: siblingDirectory }],
-        },
-        resourceBoundaryRevision: 0,
-        agentBinding: {
-          _tag: "ResponsibilityBoundAgentBinding",
-          workspaceId: siblingWorkspaceId,
-        },
-        workspacePolicy: {},
-        workspacePolicyRevision: 0,
-        revision: 0,
-      });
-
-      const parentWorkId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
+      await client.command(project.projectId, "SteerWork", {
         workId: parentWorkId,
         workspaceId: assignmentParentWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: sourceObjective,
-        why: "host the Parent WorkEpisode for direct-child assignment qualification",
-        constraints: ["the resulting Work must target the listed direct child"],
-        completionExpectation:
-          "one exact child Work is assigned under the Parent",
-        verificationMission: {
-          goal: `Verify assignment to the existing child ${marker}`,
-          criteria: [
-            {
-              criterionId: "parent-assigned-child",
-              requirement:
-                "the Work is assigned to the exact listed child Workspace",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: seedParentWork.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `Resume AH10 direct-child assignment qualification ${marker}.`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
+      });
+      const resumedParentWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            objective?: string;
+            revision: number;
+            status: string;
+          } | null>("current-work", {
+            workspaceId: assignmentParentWorkspaceId,
+          }),
+        (work) =>
+          work?.workId === parentWorkId &&
+          work.revision === seedParentWork.revision + 1,
+      );
+      expect(resumedParentWork).toMatchObject({
+        workId: parentWorkId,
+        objective: sourceObjective,
+        revision: seedParentWork.revision + 1,
+        status: "Open",
       });
 
       const oldAction = await waitForPublic(
@@ -1032,7 +1447,13 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             observation_source_ref: null,
           }),
         );
-        expect(beforeCrash.observations).toHaveLength(1);
+        expect(
+          beforeCrash.observations.filter((observation) =>
+            observation.source_ref.startsWith(
+              `observation_${oldAction.executionId}_`,
+            ),
+          ),
+        ).toHaveLength(1);
         expect(
           beforeCrash.providerAttempts.filter(
             (row) => row.provider_turn_id === providerTurnId,
@@ -1409,8 +1830,11 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             }
           }),
         ).toHaveLength(0);
-        expect(beforeRetry.approvals).toHaveLength(1);
-        expect(beforeRetry.approvals[0]).toMatchObject({
+        const targetApprovals = beforeRetry.approvals.filter(
+          (approval) => approval.target_ref === targetWorkspaceRef,
+        );
+        expect(targetApprovals).toHaveLength(1);
+        expect(targetApprovals[0]).toMatchObject({
           target_ref: targetWorkspaceRef,
           state: "Approved",
           revision: 1,
