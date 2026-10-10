@@ -14,6 +14,11 @@ fingerprintAlgorithmVersion)`；任一不同即走现有
 `TerminalRejected(IdempotencyConflict)`，不解释或披露 result/error JSON，行不变。
 只有 exact tuple 才能进入本稿建议固定的结果/拒绝解码。
 
+本稿同时记录一个**相邻但独立**的调用点子合同：P1 `07` / AH10
+generation-takeover 的 receipt-first consumer 会直接读取旧 Command receipt，不经过
+Gateway，也不比较候选请求 tuple。它可复用同一 command-result decoder，但不是 exact-tuple
+资格，也不改变 Gateway 的 tuple-first 顺序。本文 RED 明确区分这两条路径。
+
 本稿建议将 exact-tuple 解码定义为按已注册 `commandType` 与该 Handler 的
 `schemaVersion` 选择的严格 runtime decoder：
 
@@ -36,6 +41,61 @@ ID 安全非重放或历史行。Schema/algorithm 不同仍先得到 Idempotency
 猜测旧结构、降级成当前 decoder、改写或修复旧行。P1 `07` AH10 direct-child
 AssignWork receipt-first recovery 仍需 its exact binding / authority evidence；本稿不以
 新 decoder 取代这些证明。
+
+## 独立子合同：AH10 receipt-first prior consumers（非 Gateway tuple）
+
+`apps/single-workspace/src/control-actions.ts::findPriorCommandReceipt` 通过派生的 prior
+CommandId 调 `CommandStore.findResolution`，当前先对 raw receipt 调
+`decodeCommandReceipt<unknown>`，然后才检查 stored `commandId` / `projectId`。它没有候选
+Gateway tuple，不比较 fingerprint/schema/algorithm tuple，也不通过 Gateway。第三条 pending
+RED 正是这一独立路径：当前 `AssignWork` generation takeover 只检查结果中的 `workId` 与
+`workspaceId`，合法 JSON 缺少 `AssignWorkResult.lifecycle/revision` 仍可产生 Observation。
+其 fixture fingerprint 与候选命令 tuple 的关系不构成证明；这个 case 不声称 exact tuple。
+
+要安全解码 prior result，consumer 必须用**可信调用点命令类型**和可信 handler schema
+版本选择 decoder，不能仅以存储行的 `schemaVersion` 自选 decoder，也不能只靠 `namespace`
+字符串隐式猜命令类型。当前静态调用点给出可信类型：
+
+| Runtime action/caller | Expected registered CommandType | Current handler source |
+|---|---|---|
+| `AssignWork`（两处 generation/prior 路径） | `AssignWork` | `packages/application/src/commands/assign-work.ts` |
+| `AcceptResult` | `AcceptWorkOutcome` | `packages/application/src/commands/accept-complete.ts` |
+| `SendMessage` | `SendMessage` | `packages/application/src/commands/send-message.ts` |
+| `SelectCurrentWork`（含 legacy CommandId 形态） | `SelectCurrentWork` | `packages/application/src/commands/select-current-work.ts` |
+| `DeclareDependency` | `DeclareDependency` | `packages/application/src/commands/declare-dependency.ts` |
+| `ProduceDeliverable` | `ProduceDeliverable` | `packages/application/src/commands/produce-deliverable.ts` |
+
+这些 handler 当前 schemaVersion 均为 `"1"`。后续 consumer 合同应由 caller 显式提供
+expected CommandType；expected schemaVersion 应来自 Composition/handler registry 所拥有的
+decoder descriptor（或同一可信注册源），不得来自 corrupt receipt 本身。读取旧行后先核对 raw
+row `commandId` 与 prior ID、`projectId` 与当前 execution Project；不匹配时在 parse 前
+operational fail closed。再以可信 `(expected CommandType, expected schemaVersion)` 选择
+decoder，并要求 stored schemaVersion 有此 descriptor 明确支持；不支持版本 operational
+fail closed，不 fallback 到其他 command/version。若治理要求跨部署 schema 升级后仍解码旧
+prior receipt，须增加显式 version compatibility decision/decoder registry；本稿不推定历史
+schema 兼容性。
+
+解码成功后，consumer 继续执行该 action 专属的 canonical/effect checks，不能重放 prior
+handler，也不能为该 Committed receipt 调 Gateway。对于 AH10 direct-child AssignWork，解码不是
+成功授权：CommandId/Project 身份先验证；随后仍须完成 accepted 的唯一精确
+`AssignWorkTargetBinding` 与 Work/provenance、`WorkAssigned` Event、Parent edge、source-action、
+Grant/ActionApproval 证据核验；只有 proof complete 才可 Observation / Applied。需要 result
+字段与 binding/work/event 比较的验证在严格 decode 之后做；Observation 必须晚于完整 binding
+proof。错误 identity、坏 result 或缺失/冲突 binding 均不得 Observation、产生新 Command 或
+重放 handler。普通 prior-consumer 路径的坏 result 必须成为
+`AgentActionOperationalFailure`，而非 `AgentActionRejected`。对于 direct-child AH10：若 receipt
+result 无法与 exact binding/effect proof 相符，必须保留已接受的 P9 `ReceiptMismatch`/其他
+适用 binding-failure fact/event 与 recovery-blocked 路径；不能让通用 decoder failure 越过或
+抹掉既有 P9 事实。是否将特定 JSON/type decode fault 映射为 P9 `ReceiptMismatch`，仅限于它
+确实表示已接受合同中的 receipt/effect mismatch，实施前应与 P9 owner 对齐；不得将一般
+CommandStore corruption 一概伪装成 binding failure。不得新增 P10 source。
+
+该子合同由 P1 `07-agent-loop-step-command-identity.md` 与 P9
+`07-agent-loop-step-recovery.md` owning clause 补充；Application decoder/handler registry 与
+`apps/single-workspace/src/control-actions.ts` 是实现 owner。它不改变 `CommandStore` raw
+Port、Gateway exact-tuple 比较、transaction 线性化点、权限或 Direct-child receipt binding
+语义。当前 caller 有可信的静态 CommandType 来源且 handlers 当前为 v1；consumer 尚未显式
+传入这些键是实现缺口，不是缺少设计所需身份事实。跨版本 prior receipt 支持仍保持 OPEN。
 
 ## 已有能力与需治理的边界
 
@@ -155,14 +215,16 @@ fixture，绝不是正常 writer 产物。现有 tuple-ordering 测试已覆盖�
 |---|---|---|---|
 | Exact Committed shape | 当前 `SubmitHumanMessage` v1，stored result 为合法 JSON `{}`，候选 tuple exact；HTTP `/commands` | 当前会将 `{}` 当 Committed result 返回 | 非重试安全 `persistence/corruption` Problem；不包含行/JSON/sentinel；原 tuple/result bytes 不变，无 receipt 写、attempt、Event、handler/domain write |
 | Exact TerminalRejected shape | 同命令 v1，stored terminal error 为合法 JSON `{ "_tag": "AuthorityDenied" }`（缺 required `reason`），候选 tuple exact | 当前会将错误 cast 为 `CommandRejection` 并作为 TerminalRejected 返回 | 同上 typed corruption Problem；不得成为 `AuthorityDenied` 拒绝，原 error bytes 不变，无 attempt/Event/write |
-| AH10 prior Committed result | `assignWorkHandler` generation takeover：generation-0 prior receipt 精确 command id / project，合法 JSON 但缺 `lifecycle`/`revision`；generation-1 运行同 pinned action | 当前 receipt-first 路径只检查 prior result 的 `workId` 和 `workspaceId`，可据不完整结果返回 Observation(success) | decoder 失败为 `AgentActionOperationalFailure`；不得 Observation、不得调用新 handler/Command、不得改旧 receipt/产生 event/attempt；保留现有 exact target/binding/Grant/Approval proof requirements |
+| AH10 prior consumer（不经 Gateway、不比 candidate tuple） | `assignWorkHandler` generation takeover：generation-0 prior receipt 的派生 CommandId/Project 匹配；fingerprint 是原始 prior 行 metadata，不是当前候选 tuple 判定；合法 JSON 缺 `lifecycle`/`revision`；generation-1 运行同 pinned action | 当前 receipt-first 路径只检查 prior result 的 `workId` 和 `workspaceId`，可据不完整结果返回 Observation(success) | 按 trusted expected `AssignWork`/handler schema descriptor decode；失败为 `AgentActionOperationalFailure`；不得 Observation/新 Gateway Command/handler replay；仍验证既有 direct-child binding proofs，不改旧 receipt/event/attempt |
 | Tuple precedence control | 现有 `tests/functional/process/f23-receipt-tuple-ordering.functional.test.ts` | 已由 tuple-first landing 覆盖；不是本次 RED | schema/fingerprint/algorithm 每个 mismatch 即使 JSON shape/syntax 错，仍 IdempotencyConflict，不解码/不披露，不改历史行 |
 | Decoder parity | current 26 registered command handler registry | 当前缺 26 runtime result schemas 与 complete rejection validator | 每一 current `(commandType, schemaVersion)` 有 positive valid receipt fixture 与 wrong-shape/missing-field/tag/ID/enum tests；unknown version/registration fails closed |
 | Future history | older schema/algorithm tuple | 当前 tuple comparator已覆盖 mismatch | 先 mismatch；只 exact tuple选择该版本 decoder。无该旧版 decoder必须 operational fail-closed，不repair、不fallback至 current DTO |
 
-外部两个 RED 仅断言 public result、Problem 不泄露和 receipt side-effect postconditions；AH10
-RED 经现有 `assignWorkHandler` 的公开 runtime action handler 调用，断言不产生 success
-Observation；不通过 P1 Gateway 去绕过 Recovery 证明。测试不应断言新增 P10 Attention。
+前两个 RED 是 Gateway exact-tuple decode；只断言 public Problem 不泄露和 receipt side-effect
+postconditions。第三个 RED 是 P1 `07`/AH10 prior-consumer shape validation，使用
+`assignWorkHandler` 现有 runtime action handler，不经 Gateway、不比较 candidate tuple，也不把
+fixture fingerprint 伪造成 tuple match；它只断言 prior corrupt result 不产生 success
+Observation。三条测试合同与结果分类分开。测试不应断言新增 P10 Attention。
 
 ## Owner、顺序和停工条件
 
@@ -174,6 +236,13 @@ Observation；不通过 P1 Gateway 去绕过 Recovery 证明。测试不应断�
   与 no-parse Port；corruption mapping/error type 的 Port 边界。
 - `docs/design/implementation/P1/03-transaction-model.md`：exact tuple decode 在原事务；
   失败不走 receipt/domain/event/attempt 写入及旧行修复。原有线性化点不变。
+- `docs/design/implementation/P1/07-agent-loop-step-command-identity.md` 与
+  `docs/design/implementation/P9/07-agent-loop-step-recovery.md`：独立 prior-consumer 子合同；
+  typed CommandType/schema decoder 来源、identity-before-decode、result-dependent binding proof
+  after-decode/before-Observation 与 operational failure；不得把此路径描述成 Gateway tuple。
+- `apps/single-workspace/src/control-actions.ts::findPriorCommandReceipt`：当前 Application
+  consumer 缺口；未来由 trusted caller/Composition descriptor 传入 type/version decoder，不从
+  stored row 猜类型或兼容版本。
 - `packages/application/src/command-receipt.ts` 与 `packages/application/src/gateway.ts`：
   之后实现 decoder registry、typed decode failure；不属于本稿的生产修改。
 - `apps/single-workspace/src/transport/errors.ts`：沿用既有错误映射并测试非重试/安全输出。
