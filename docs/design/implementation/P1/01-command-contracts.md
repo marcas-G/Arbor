@@ -39,10 +39,14 @@ CommandResolution<Result, Rejection> =
 
 `CommandResolution<Result, Rejection>` and `CommandReceipt<Result, Rejection>`
 are **domain-owned generic** types (parameterized; no concrete rejection).
-`CommandRejection` is Application-owned. `ports.CommandStore.findResolution`
-returns `CommandReceipt<unknown, unknown>` (opaque stored resolution); the
-Application layer decodes it into `CommandReceipt<R, CommandRejection>`
-(avoids a forbidden `ports → application` edge).
+`CommandRejection` is Application-owned. `CommandReceipt<Result, Rejection>`
+is the typed, decoded receipt view. `ports.CommandStore.findResolution`
+returns the P1 `StoredCommandResolution` representation defined in
+`02-port-contracts.md`: tuple metadata plus raw, unparsed result/error JSON.
+The Application compares the stored tuple before decoding that JSON; only an
+exact tuple match may proceed to construct the existing typed
+`CommandReceipt<R, CommandRejection>` (avoids a forbidden `ports →
+application` edge).
 
 P1 `CommandReceipt<Result, Rejection>` view of the `commands` row (frozen):
 
@@ -126,11 +130,14 @@ mutation and receipt boundary for every origin.
 CommandGateway.execute(envelope, submissionContext, verifiedCommandAuthority)
   1. compute semanticRequestFingerprint + schemaVersion + algorithmVersion
   2. transact (03-transaction-model.md):
-     a. read commands row by command_id
-         - exists: same (fingerprint, schemaVersion, algorithmVersion)
-               -> return existing Receipt (Committed or TerminalRejected)
-           different -> TerminalRejected(IdempotencyConflict) (deterministic replay response; existing row unchanged)
+     a. read stored resolution metadata and raw result/error JSON by command_id
          - absent -> continue
+         - exists: compare (fingerprint, schemaVersion, algorithmVersion)
+           before interpreting either raw JSON field
+             - any tuple field differs -> TerminalRejected(IdempotencyConflict);
+               do not decode or disclose result/error JSON; stored row unchanged
+             - exact tuple match -> decode the stored resolution and return the
+               existing typed Receipt (Committed or TerminalRejected)
      b. if ExecutionOrigin: fence check, then stop check (03 §4)
      c. authority exact-match (§2A); mismatch -> TerminalRejected(AuthorityDenied)
      d. domain transition (P0 pure functions)
@@ -141,6 +148,17 @@ CommandGateway.execute(envelope, submissionContext, verifiedCommandAuthority)
 
 Step a **precedes** step c: an already-authoritative resolution is replayed
 without re-running the authority predicate.
+
+For an existing row, the stored tuple comparison is the first receipt
+interpretation decision. In particular, a fingerprint, schema-version, or
+fingerprint-algorithm mismatch takes the existing `IdempotencyConflict`
+branch even when the row's raw result/error JSON is malformed: the mismatched
+branch does not parse, validate, or disclose that JSON. Only an exact tuple
+match reaches the existing Application receipt decoder. This amendment fixes
+that ordering and does not define the exact-tuple decoder's result/error shape
+rules, corruption failure type, or transport mapping; those remain subject to
+the separately governed receipt-decoding contract and its accepted
+fail-closed requirement.
 
 For External requests, the preceding Composition Resolver is a visibility
 gate, not a replacement for this in-transaction order: after Resolver success,
@@ -345,7 +363,7 @@ WorkAssigned
 
 ```text
 same commandId + same (fingerprint, schema, algorithm)  -> existing Receipt
-same commandId + different fingerprint                  -> IdempotencyConflict
+same commandId + any tuple field differs                -> IdempotencyConflict
 absent                                                  -> execute
 ```
 

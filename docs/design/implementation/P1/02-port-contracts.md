@@ -108,11 +108,41 @@ P1 `ResourceOwnershipClaim` record (matches the DDL columns;
 
 | Method | Semantics |
 |---|---|
-| `findResolution(commandId): Effect<Option<CommandReceipt<unknown, unknown>>, CommandStoreError>` | opaque stored resolution; Application decodes to `CommandRejection` |
+| `findResolution(commandId): Effect<Option<StoredCommandResolution>, CommandStoreError>` | returns tuple metadata and the stored result/error JSON as raw text; does not decode the receipt |
 | `insertCommitted(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, resultJson)` | authoritative |
 | `insertTerminalRejected(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, terminalErrorJson)` | authoritative, no event |
 | `recordResolvingAttempt(commandId, outcome, startedAt, settledAt)` | resolving attempt (Committed / TerminalRejected); written in the **command transaction** (03 §3.1/§3.2) |
 | `recordRetryableAttempt(commandId, failureKind, startedAt, settledAt)` | non-authoritative trace; written in a **separate** short transaction after rollback (03 §3.3) |
+
+`StoredCommandResolution` is the ports-owned pre-decode representation of an
+existing `commands` row:
+
+```ts
+interface StoredCommandResolution {
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+  readonly schemaVersion: string;
+  readonly fingerprintAlgorithmVersion: number;
+  readonly resolution: "Committed" | "TerminalRejected";
+  readonly resultJson: string | null;
+  readonly terminalErrorJson: string | null;
+  readonly createdAt: string;
+  readonly settledAt: string;
+}
+```
+
+`resultJson` and `terminalErrorJson` are the stored column text, not parsed
+JSON values; `findResolution` MUST NOT parse, validate, or otherwise interpret
+either field. Within the existing command transaction, the Application
+compares `(semanticRequestFingerprint, schemaVersion,
+fingerprintAlgorithmVersion)` from this representation with the current
+request first. A mismatch follows P1 `01`'s existing `IdempotencyConflict`
+branch without decoding or disclosing either raw field. Only an exact tuple
+match may proceed to the existing Application receipt decoding and produce a
+typed P1 `CommandReceipt`. This port contract does not define exact-tuple
+result/error shape rules or decoding failures; it adds no corruption error
+type, failure mapping, or receipt repair behavior.
 
 `CommandStore` allocates the next free `attempt_no` for a `command_id`
 (serialized by `BEGIN IMMEDIATE`); callers do not supply it.
