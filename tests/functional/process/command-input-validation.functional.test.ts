@@ -217,14 +217,94 @@ describe("F23 external command input validation", () => {
       45_000,
     );
 
-    await expect(
-      client.command(project.projectId, "AcceptWorkOutcome", {
-        acceptanceId: functionalId("acp"),
-        workId: work.workId,
-        targetWorkRevision: verification.targetWorkRevision,
-        verificationId: verification.verificationId,
+    if (
+      verification.targetWorkRevision === undefined ||
+      verification.verificationId === undefined
+    ) {
+      throw new Error("passing Verification bindings missing");
+    }
+    const commandId = functionalId("cmd");
+    const acceptanceId = functionalId("acp");
+    const response = await fetch(`${fixture.baseUrl}/commands`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer local",
+      },
+      body: JSON.stringify({
+        commandType: "AcceptWorkOutcome",
+        commandId,
+        projectId: project.projectId,
+        actor: "user:local",
+        issuedAt: new Date().toISOString(),
+        payload: {
+          acceptanceId,
+          workId: work.workId,
+          targetWorkRevision: verification.targetWorkRevision,
+          verificationId: verification.verificationId,
+        },
       }),
-    ).rejects.toThrow();
+    });
+    const result = (await response.json()) as {
+      readonly ok: boolean;
+      readonly status: number;
+      readonly problem: {
+        readonly code: string;
+        readonly category: string;
+        readonly message: string;
+        readonly correlationId: string | null;
+        readonly retryDisposition: string;
+        readonly safeDetails: Readonly<Record<string, unknown>>;
+      };
+    };
+    expect(response.status).toBe(400);
+    expect(result).toEqual({
+      ok: false,
+      status: 400,
+      problem: {
+        code: "InvalidCommandPayload",
+        category: "validation",
+        message: "Command payload is invalid",
+        correlationId: null,
+        retryDisposition: "non-retryable",
+        safeDetails: {
+          commandType: "AcceptWorkOutcome",
+          issues: [{ path: ["payload", "acceptanceId"], rule: "format" }],
+        },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(acceptanceId);
+    const db = new DatabaseSync(fixture.databaseFile, { readOnly: true });
+    try {
+      expect(
+        db
+          .prepare("SELECT command_id FROM commands WHERE command_id = ?")
+          .all(commandId),
+      ).toEqual([]);
+      expect(
+        db
+          .prepare(
+            "SELECT command_id FROM command_attempts WHERE command_id = ?",
+          )
+          .all(commandId),
+      ).toEqual([]);
+      expect(
+        db
+          .prepare(
+            "SELECT event_id FROM domain_events WHERE caused_by_command_id = ?",
+          )
+          .all(commandId),
+      ).toEqual([]);
+      expect(
+        db
+          .prepare(
+            "SELECT acceptance_id FROM work_acceptances WHERE acceptance_id = ?",
+          )
+          .all(acceptanceId),
+      ).toEqual([]);
+    } finally {
+      db.close();
+    }
     const unchanged = await client.view<{
       acceptance?: { acceptanceId: string };
     }>("verification", { workId: work.workId });
@@ -328,9 +408,15 @@ describe("F23 external command input validation", () => {
       );
       const invalidCommandResult = (await invalidCommandResponse.json()) as {
         readonly ok: boolean;
+        readonly status: number;
         readonly problem?: {
           readonly code: string;
+          readonly category: string;
+          readonly message: string;
+          readonly correlationId: string | null;
+          readonly retryDisposition: string;
           readonly safeDetails: {
+            readonly commandType?: string;
             readonly issues: ReadonlyArray<{
               readonly path: ReadonlyArray<string | number>;
               readonly rule: string;
@@ -339,17 +425,37 @@ describe("F23 external command input validation", () => {
         };
       };
       expect(invalidCommandResponse.status).toBe(400);
-      expect(invalidCommandResult).toMatchObject({
+      expect(invalidCommandResult).toEqual({
         ok: false,
+        status: 400,
         problem: {
           code: "InvalidCommandPayload",
+          category: "validation",
+          message: "Command payload is invalid",
+          correlationId: null,
+          retryDisposition: "non-retryable",
           safeDetails: {
+            commandType: "SubmitHumanMessage",
             issues: [{ path: ["commandId"], rule: "format" }],
           },
         },
       });
       expect(JSON.stringify(invalidCommandResult)).not.toContain(
         invalidCommandId,
+      );
+      const invalidCommandReceipt = receiptBefore.get(invalidCommandId) as {
+        readonly semantic_request_fingerprint: string;
+        readonly result_json: string;
+      };
+      expect(JSON.stringify(invalidCommandResult)).not.toContain(
+        invalidCommandReceipt.semantic_request_fingerprint,
+      );
+      expect(JSON.stringify(invalidCommandResult)).not.toContain(
+        invalidCommandReceipt.result_json,
+      );
+      expect(JSON.stringify(invalidCommandResult)).not.toContain(
+        (JSON.parse(invalidCommandReceipt.result_json) as { messageId: string })
+          .messageId,
       );
 
       const malformedPayloadResponse = await fetch(
@@ -373,9 +479,15 @@ describe("F23 external command input validation", () => {
       const malformedPayloadResult =
         (await malformedPayloadResponse.json()) as {
           readonly ok: boolean;
+          readonly status: number;
           readonly problem?: {
             readonly code: string;
+            readonly category: string;
+            readonly message: string;
+            readonly correlationId: string | null;
+            readonly retryDisposition: string;
             readonly safeDetails: {
+              readonly commandType?: string;
               readonly issues: ReadonlyArray<{
                 readonly path: ReadonlyArray<string | number>;
                 readonly rule: string;
@@ -384,17 +496,42 @@ describe("F23 external command input validation", () => {
           };
         };
       expect(malformedPayloadResponse.status).toBe(400);
-      expect(malformedPayloadResult).toMatchObject({
+      expect(malformedPayloadResult).toEqual({
         ok: false,
+        status: 400,
         problem: {
           code: "InvalidCommandPayload",
+          category: "validation",
+          message: "Command payload is invalid",
+          correlationId: null,
+          retryDisposition: "non-retryable",
           safeDetails: {
+            commandType: "SubmitHumanMessage",
             issues: [{ path: ["payload", "messageId"], rule: "format" }],
           },
         },
       });
       expect(JSON.stringify(malformedPayloadResult)).not.toContain(
         "msg_not-a-uuid-v7",
+      );
+      const malformedPayloadReceipt = receiptBefore.get(
+        malformedPayloadCommandId,
+      ) as {
+        readonly semantic_request_fingerprint: string;
+        readonly result_json: string;
+      };
+      expect(JSON.stringify(malformedPayloadResult)).not.toContain(
+        malformedPayloadReceipt.semantic_request_fingerprint,
+      );
+      expect(JSON.stringify(malformedPayloadResult)).not.toContain(
+        malformedPayloadReceipt.result_json,
+      );
+      expect(JSON.stringify(malformedPayloadResult)).not.toContain(
+        (
+          JSON.parse(malformedPayloadReceipt.result_json) as {
+            messageId: string;
+          }
+        ).messageId,
       );
 
       expect(

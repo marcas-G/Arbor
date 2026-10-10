@@ -33,6 +33,18 @@ hex encodings of the persisted text columns, and confirms byte-identical row
 content. It also confirms no `command_attempts` row or Event is added for
 either ID. The public response assertions determine the outward behavior;
 SQLite reads are supplementary checks of the preserve-only invariant.
+Each response is compared to the exact non-reflecting Problem DTO. Neither the
+old fingerprint nor the legal result JSON/result `MessageId` appears in the
+response body or `safeDetails`.
+
+## Invalid AcceptanceId
+
+The public `AcceptWorkOutcome` case now asserts the exact HTTP 400
+`InvalidCommandPayload` DTO and the schema-authored
+`["payload", "acceptanceId"]` / `format` issue. The rejected `acp_` value is
+absent from the response, and read-only checks find no command receipt,
+attempt, Event, or Acceptance. Public Verification and Current Work views
+still show no Acceptance and an Open Work.
 
 ## Shell-face boundary
 
@@ -41,6 +53,10 @@ The shell contract test submits authenticated malformed input through
 400 with the same non-reflecting Problem and no call to facts loading, Resolver,
 or Gateway. A separate unauthenticated malformed-input case continues to
 return 401 through all three shell faces without calling the submission port.
+The CLI shell parses argv JSON before entering the authenticated core; a parse
+failure is passed as an undefined envelope and does not produce an early 400.
+The test qualifies the observed 401/no-submission behavior and does not claim
+that CLI JSON syntax parsing occurs after authentication.
 
 This qualifies the shell adapters directly. It does not claim a real network
 WebSocket command journey or a standalone production CLI process journey; the
