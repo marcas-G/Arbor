@@ -112,6 +112,7 @@ describe("F23 Gateway receipt tuple comparison before stored JSON decode", () =>
   it("returns IdempotencyConflict for a tuple mismatch before parsing corrupt historical JSON", async () => {
     const sentinel = `F23-CORRUPT-RECEIPT-${crypto.randomUUID()}`;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: () => ({ _tag: "HttpError", status: 500 }),
     });
     fixtures.push(fixture);
@@ -195,6 +196,7 @@ describe("F23 Gateway receipt tuple comparison before stored JSON decode", () =>
   it("fails closed for an exact tuple with corrupt stored JSON without changing the receipt", async () => {
     const sentinel = `F23-EXACT-TUPLE-CORRUPT-${crypto.randomUUID()}`;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: () => ({ _tag: "HttpError", status: 500 }),
     });
     fixtures.push(fixture);
