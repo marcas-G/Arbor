@@ -175,6 +175,18 @@ export const makeExecutableToolHandler = (
         actor: context.principal as never,
         authenticatedPrincipal: context.principal,
         controlBasisDigest,
+        ...(context._tag === "ExecutionOrigin" &&
+        context.workerId !== undefined &&
+        context.workerIncarnationId !== undefined
+          ? {
+              executionFence: {
+                executionId: execution.executionId,
+                workerId: context.workerId,
+                workerIncarnationId: context.workerIncarnationId,
+                fencingGeneration: context.fencingGeneration,
+              },
+            }
+          : {}),
         delegationDepth:
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,
@@ -184,7 +196,10 @@ export const makeExecutableToolHandler = (
         onSuccess: (value) => ({ ok: true as const, value }),
       });
       if (!invoked.ok) {
-        if (invoked.cause.effectDisposition === "OutcomeUncertain") {
+        if (
+          "effectDisposition" in invoked.cause &&
+          invoked.cause.effectDisposition === "OutcomeUncertain"
+        ) {
           return {
             _tag: "Settle" as const,
             settlement: {
@@ -195,6 +210,13 @@ export const makeExecutableToolHandler = (
               },
             },
           };
+        }
+        if (invoked.cause._tag === "LeaseFencingRejected") {
+          return yield* Effect.fail({
+            _tag: "AgentActionOperationalFailure" as const,
+            operation: "ToolRuntime.LeaseFencingRejected",
+            cause: invoked.cause,
+          });
         }
         return yield* Effect.fail({
           _tag: "AgentActionOperationalFailure" as const,

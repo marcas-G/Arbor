@@ -184,7 +184,7 @@ describe("P4 exact approval recovery for the same ToolInvocationId", () => {
         settle: (id: ToolInvocationRecord["invocationId"]) => {
           expect(id).toBe(invocationId);
           settlementWrites += 1;
-          return Effect.void;
+          return Effect.succeed(true);
         },
         consumeApproval: (
           _id: string,

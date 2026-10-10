@@ -6,6 +6,7 @@ import type {
 } from "@arbor/domain";
 import {
   type InvocationApproval,
+  type LeaseFencingRejected,
   type ToolInvocationIntent,
   type ToolInvocationRecord,
   type ToolInvocationSettlement,
@@ -122,12 +123,50 @@ export const ToolInvocationStoreLive: Layer.Layer<
             ),
           );
         }),
-      settle: (invocationId, settlement, resultRef, settledAt) =>
+      settle: (
+        invocationId,
+        settlement,
+        resultRef,
+        settledAt,
+        executionFence,
+      ) =>
         Effect.gen(function* () {
           yield* TransactionScope;
-          yield* run(
+          if (executionFence !== undefined) {
+            const fenced = yield* run(
+              sql.unsafe<{ readonly ok: number }>(
+                `SELECT 1 AS ok
+                   FROM tool_invocations i
+                   JOIN executions e ON e.execution_id = i.execution_id
+                   JOIN execution_leases l ON l.execution_id = e.execution_id
+                  WHERE i.invocation_id = ?
+                    AND i.execution_id = ?
+                    AND e.settled_at IS NULL
+                    AND l.worker_id = ?
+                    AND l.worker_incarnation_id = ?
+                    AND l.generation = ?
+                    AND l.expires_at > ?`,
+                [
+                  invocationId,
+                  executionFence.executionId,
+                  executionFence.workerId,
+                  executionFence.workerIncarnationId,
+                  executionFence.fencingGeneration,
+                  settledAt,
+                ],
+              ),
+            );
+            if (fenced.length === 0) {
+              return yield* Effect.fail<LeaseFencingRejected>({
+                _tag: "LeaseFencingRejected",
+                executionId: executionFence.executionId,
+                generation: executionFence.fencingGeneration,
+              });
+            }
+          }
+          const rows = yield* run(
             sql.unsafe(
-              "UPDATE tool_invocations SET settled_at = ?, settlement_kind = ?, settlement_json = ?, result_ref = ? WHERE invocation_id = ? AND settled_at IS NULL",
+              "UPDATE tool_invocations SET settled_at = ?, settlement_kind = ?, settlement_json = ?, result_ref = ? WHERE invocation_id = ? AND settled_at IS NULL RETURNING invocation_id",
               [
                 settledAt,
                 settlement._tag,
@@ -137,6 +176,7 @@ export const ToolInvocationStoreLive: Layer.Layer<
               ],
             ),
           );
+          return rows.length > 0;
         }),
       consumeApproval: (approvalId, invocationId) =>
         Effect.gen(function* () {

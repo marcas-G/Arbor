@@ -191,7 +191,7 @@ describe("AH7 exact approval reentry before the tool effect", () => {
             settlement,
             resultRef,
           };
-          return Effect.void;
+          return Effect.succeed(true);
         },
         consumeApproval: (id: string, consumer: ToolInvocationId) => {
           expect(id).toBe(approvalId);

@@ -447,7 +447,7 @@ const makeToolApp = (root: string) => {
     } as never),
     Layer.succeed(ToolInvocationStore, {
       recordIntent: () => Effect.void,
-      settle: () => Effect.void,
+      settle: () => Effect.succeed(true),
       consumeApproval: () => Effect.succeed(true),
       findApproval: () => Effect.succeed(Option.none()),
       findById: () => Effect.succeed(Option.none()),

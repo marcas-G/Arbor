@@ -391,6 +391,18 @@ export const LegacyLegacyDirectiveHandlersLive: Layer.Layer<
               delegationDepth: 0,
             },
             controlBasisDigest: "slice",
+            ...(context._tag === "ExecutionOrigin" &&
+            context.workerId !== undefined &&
+            context.workerIncarnationId !== undefined
+              ? {
+                  executionFence: {
+                    executionId: execution.executionId,
+                    workerId: context.workerId,
+                    workerIncarnationId: context.workerIncarnationId,
+                    fencingGeneration: context.fencingGeneration,
+                  },
+                }
+              : {}),
             requestedAt,
           };
           const result = yield* tools.invoke(intent, toolContext);

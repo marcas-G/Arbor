@@ -3,6 +3,7 @@ import type {
   ArtifactId,
   CanonicalResourceRegion,
   ExecutionId,
+  LeaseGeneration,
   Principal,
   ProjectId,
   ResourceAddress,
@@ -75,6 +76,14 @@ export interface ToolExecutionContext {
   readonly authority?: InvocationAuthority;
   readonly controlBasisDigest: string;
   readonly delegationDepth?: number;
+  /** P2 authoritative Worker holder used only for P4 durable settlement.
+   * Production ExecutionOrigin callers always provide the complete triple. */
+  readonly executionFence?: {
+    readonly executionId: ExecutionId;
+    readonly workerId: string;
+    readonly workerIncarnationId: string;
+    readonly fencingGeneration: LeaseGeneration;
+  };
   readonly requestedAt: string;
 }
 
@@ -260,7 +269,8 @@ export interface ToolInvocationStoreService {
     settlement: ToolInvocationSettlement,
     resultRef: string | null,
     settledAt: string,
-  ) => Effect.Effect<void, ToolInvocationStoreError, TransactionScope>;
+    executionFence?: ToolExecutionContext["executionFence"],
+  ) => Effect.Effect<boolean, ToolInvocationStoreError, TransactionScope>;
   readonly consumeApproval: (
     approvalId: string,
     invocationId: ToolInvocationId,

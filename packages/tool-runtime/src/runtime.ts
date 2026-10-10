@@ -5,6 +5,7 @@ import {
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
+  type LeaseFencingRejected,
   ProjectEnvironmentPort,
   ResourceAdmission,
   type SandboxHandle,
@@ -49,7 +50,8 @@ export interface ToolRuntimeQualificationEvent {
   readonly boundary:
     | "AH7AfterToolIntentCommit"
     | "AH7AfterToolEffectBeforeSettlement"
-    | "AH7AfterToolSettlementCommit";
+    | "AH7AfterToolSettlementCommit"
+    | "AH7ToolSettlementFenceRejected";
   readonly executionId: string;
   readonly invocationId: string;
   readonly callRef: string;
@@ -122,6 +124,14 @@ const denied = (reason: string): CanonicalToolObservation => ({
   _tag: "Denied",
   reason,
 });
+
+const isLeaseFencingRejected = (
+  cause: unknown,
+): cause is LeaseFencingRejected =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "_tag" in cause &&
+  cause._tag === "LeaseFencingRejected";
 
 export const ToolRuntimeLive = (
   executors: ReadonlyArray<ToolExecutor>,
@@ -441,26 +451,66 @@ export const ToolRuntimeLive = (
               const reconciliationRefs = [String(intent.invocationId)];
               if (recorded.sideEffectSemantics === "NonIdempotent") {
                 const settledAt = yield* clock.now();
-                yield* tx
-                  .transact(
-                    store.settle(
-                      intent.invocationId,
-                      {
-                        _tag: "OutcomeUnknown",
-                        reconciliationRefs,
-                      },
-                      null,
-                      settledAt,
-                    ),
-                  )
-                  .pipe(
-                    Effect.mapError(
-                      operationalFailure(
-                        "SettlementJournal",
-                        String(intent.invocationId),
-                      ),
-                    ),
+                const unknownWrite = yield* Effect.match(
+                  tx.transact(
+                    Effect.gen(function* () {
+                      const applied = yield* store.settle(
+                        intent.invocationId,
+                        { _tag: "OutcomeUnknown", reconciliationRefs },
+                        null,
+                        settledAt,
+                        context.executionFence,
+                      );
+                      return {
+                        applied,
+                        current: applied
+                          ? Option.none()
+                          : yield* store.findById(intent.invocationId),
+                      };
+                    }),
+                  ),
+                  {
+                    onFailure: (cause) => ({ ok: false as const, cause }),
+                    onSuccess: (value) => ({ ok: true as const, value }),
+                  },
+                );
+                if (!unknownWrite.ok) {
+                  if (
+                    isLeaseFencingRejected(unknownWrite.cause) &&
+                    options.qualificationProbe !== undefined
+                  ) {
+                    yield* Effect.promise(
+                      () =>
+                        options.qualificationProbe?.({
+                          boundary: "AH7ToolSettlementFenceRejected",
+                          executionId: context.executionId,
+                          invocationId: intent.invocationId,
+                          callRef: intent.callRef,
+                        }) ?? Promise.resolve(),
+                    );
+                  }
+                  return yield* Effect.fail<ToolRuntimeError>(
+                    isLeaseFencingRejected(unknownWrite.cause)
+                      ? unknownWrite.cause
+                      : operationalFailure(
+                          "SettlementJournal",
+                          String(intent.invocationId),
+                        )(unknownWrite.cause),
                   );
+                }
+                if (!unknownWrite.value.applied) {
+                  const canonical = unknownWrite.value.current;
+                  if (
+                    Option.isSome(canonical) &&
+                    canonical.value.settlement?._tag === "OutcomeUnknown"
+                  ) {
+                    return {
+                      _tag: "OutcomeUnknown" as const,
+                      reconciliationRefs:
+                        canonical.value.settlement.reconciliationRefs,
+                    };
+                  }
+                }
               }
               return {
                 _tag: "OutcomeUnknown" as const,
@@ -639,23 +689,77 @@ export const ToolRuntimeLive = (
               : outcome.resultRef;
 
           const settledAt = yield* clock.now();
-          yield* tx
-            .transact(
-              store.settle(
-                intent.invocationId,
-                outcome.settlement,
-                resultRef,
-                settledAt,
-              ),
-            )
-            .pipe(
-              Effect.mapError(
-                operationalFailure(
-                  "SettlementJournal",
-                  String(intent.invocationId),
-                ),
-              ),
+          const settlementWrite = yield* Effect.match(
+            tx.transact(
+              Effect.gen(function* () {
+                const applied = yield* store.settle(
+                  intent.invocationId,
+                  outcome.settlement,
+                  resultRef,
+                  settledAt,
+                  context.executionFence,
+                );
+                return {
+                  applied,
+                  current: applied
+                    ? Option.none()
+                    : yield* store.findById(intent.invocationId),
+                };
+              }),
+            ),
+            {
+              onFailure: (cause) => ({ ok: false as const, cause }),
+              onSuccess: (value) => ({ ok: true as const, value }),
+            },
+          );
+          if (!settlementWrite.ok) {
+            if (
+              isLeaseFencingRejected(settlementWrite.cause) &&
+              options.qualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH7ToolSettlementFenceRejected",
+                    executionId: context.executionId,
+                    invocationId: intent.invocationId,
+                    callRef: intent.callRef,
+                  }) ?? Promise.resolve(),
+              );
+            }
+            return yield* Effect.fail<ToolRuntimeError>(
+              isLeaseFencingRejected(settlementWrite.cause)
+                ? settlementWrite.cause
+                : operationalFailure(
+                    "SettlementJournal",
+                    String(intent.invocationId),
+                  )(settlementWrite.cause),
             );
+          }
+          if (!settlementWrite.value.applied) {
+            const canonical = settlementWrite.value.current;
+            if (
+              Option.isSome(canonical) &&
+              canonical.value.settlement?._tag === "OutcomeUnknown"
+            ) {
+              return {
+                _tag: "OutcomeUnknown" as const,
+                reconciliationRefs:
+                  canonical.value.settlement.reconciliationRefs,
+              };
+            }
+            return yield* Effect.fail<ToolRuntimeError>(
+              operationalFailure(
+                "SettlementJournal",
+                String(intent.invocationId),
+              )({
+                _tag: "ToolInvocationSettlementNotApplied",
+                canonicalSettlement: Option.isSome(canonical)
+                  ? (canonical.value.settlement?._tag ?? "Unsettled")
+                  : "Missing",
+              }),
+            );
+          }
           if (options.qualificationProbe !== undefined) {
             yield* Effect.promise(
               () =>

@@ -2465,7 +2465,7 @@ describe("p12-acceptance story 12 — real provider adapter + non-minimal tool",
       } as never),
       Layer.succeed(ToolInvocationStore, {
         recordIntent: () => Effect.void,
-        settle: () => Effect.void,
+        settle: () => Effect.succeed(true),
         consumeApproval: () => Effect.succeed(true),
         findApproval: () => Effect.succeed(Option.none()),
         findById: () => Effect.succeed(Option.none()),

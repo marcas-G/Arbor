@@ -1,7 +1,7 @@
 # AH7 / P4–P2 invocation settlement seam — revised draft
 
-Status: **Design/implementation disposition candidate; not accepted and not
-implemented**
+Status: **Historical diagnostic candidate; the frozen P2/P9 stale-generation
+requirement is implemented. Direct unleased P4 projection remains pending.**
 
 Scope: the seam between P4 `ToolRuntime` invocation idempotency and P2/P9
 execution-lease ownership, especially same-key re-entry, stale-generation
@@ -130,16 +130,22 @@ canonical row.
 
 - **Not a new P2 lease semantic:** P2 already prohibits same-generation
   multi-holder and requires stale-generation fencing.
-- **Implementation gap under existing P2/P9 contract:** the P4 Worker call
-  path has no fencing data in `ToolExecutionContext` / `ToolInvocationStore`,
-  although P9 R4 requires the settlement boundary to fence.
+- **Former implementation gap under existing P2/P9 contract:** the P4 Worker
+  call path lacked fencing data in `ToolExecutionContext` /
+  `ToolInvocationStore`, although P9 R4 requires the settlement boundary to
+  fence. The authorized implementation now threads the current Worker triple,
+  checks it inside the SQLite settlement transaction, and reports the result
+  in `planning/results/P4-AH7-tool-settlement-lease-fence.result.md`.
 - **Direct-P4 RED classification remains narrow:** it proves that an
   unleased P4 duplicate can persist `OutcomeUnknown` over a live caller's
   success; whether P4 must make that re-entry non-terminal is an owner-contract
   clarification, not proof that production dispatch violates P2.
-- **No production change is authorized by this proposal.** The proposed port
-  data-flow/CAS shape needs independent review before implementation; no
-  `docs/design/**` was changed.
+- The direct-unleased P4 projection remains deliberately quarantined as a
+  pending diagnostic. It is not production lease reachability evidence and
+  does not authorize a permanent intent-owner rule. Its original assertion is
+  retained, not relaxed, in the skipped case in
+  `adapters/persistence-sqlite/test/p4-ah7-cross-connection-concurrency.test.ts`.
+- No `docs/design/**` change or new RecoveryController behavior was introduced.
 
 ## Required qualification after ruling
 
@@ -161,3 +167,9 @@ contract that proves:
 No assertion should be weakened to accept either `Success` or
 `OutcomeUnknown` without identifying the lease generation, actual effect
 owner, canonical DB row, and recovery disposition.
+
+The required stale-generation production qualification is now evidenced by
+`tests/functional/process/p4-ah7-tool-settlement-lease-fencing.functional.test.ts`.
+The direct-unleased P4 case remains skipped/pending until the P4 owner decides
+whether that lower-layer projection is a supported contract; its assertion is
+still present verbatim in the diagnostic test body.
