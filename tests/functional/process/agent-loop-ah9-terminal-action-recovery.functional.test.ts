@@ -11,8 +11,9 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
-  functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -42,6 +43,11 @@ const durableSnapshot = (databaseFile: string) => {
       actions: db
         .prepare(
           "SELECT execution_id, logical_step_no, action_index, logical_action_id, call_ref, action_kind, state, settlement_ref, disposition_json FROM agent_loop_step_actions ORDER BY logical_step_no, action_index",
+        )
+        .all(),
+      toolInvocations: db
+        .prepare(
+          "SELECT invocation_id, execution_id, tool_name, settled_at FROM tool_invocations ORDER BY invocation_id",
         )
         .all(),
       controlResults: db
@@ -77,67 +83,115 @@ describe("AH9 terminal action and early-skip transaction", () => {
       const marker = `AH9-${crypto.randomUUID().slice(0, 8)}`;
       const hits: AhProbeHit[] = [];
       const daemonOutput: string[] = [];
+      let probeArmed = false;
+      let seedWorkProviderCalls = 0;
       let targetProviderCalls = 0;
       let actionBatchSent = false;
       const fixture = await startProductionFixture({
         reply: (call) => {
-          if (JSON.stringify(call.messages).includes(marker)) {
-            targetProviderCalls += 1;
-            if (targetProviderCalls > 5) {
-              return { _tag: "HttpError", status: 429 };
-            }
-          }
-          if (actionBatchSent) {
-            return { _tag: "HttpError", status: 429 };
-          }
-          actionBatchSent = true;
+          const context = JSON.stringify(call.messages);
           const available = new Set(
             call.tools
               .map((tool) => tool.function?.name)
               .filter((name): name is string => name !== undefined),
           );
-          if (!available.has("wait") || !available.has("assign_work")) {
-            return { _tag: "HttpError", status: 422 };
+          if (
+            context.includes(marker) &&
+            available.has("assign_work") &&
+            !available.has("wait")
+          ) {
+            return context.includes("WorkAssigned(")
+              ? { _tag: "Text", text: `Work admitted for ${marker}` }
+              : {
+                  _tag: "ToolCall",
+                  name: "assign_work",
+                  arguments: {
+                    objective: `Exercise AH9 terminal handoff ${marker}.`,
+                    why: "qualify action settlement and early skip recovery",
+                    constraints: [],
+                    completionExpectation: "later calls are skipped after Wait",
+                    verificationMission: {
+                      goal: `Verify AH9 ${marker}`,
+                      criteria: [
+                        {
+                          criterionId: "ah9-terminal-step",
+                          requirement:
+                            "Wait settles the execution before later calls",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH9 process test",
+                  },
+                };
           }
-          return {
-            _tag: "ToolCalls",
-            calls: [
-              {
+          if (
+            context.includes(marker) &&
+            available.has("wait") &&
+            available.has("assign_work")
+          ) {
+            if (!probeArmed) {
+              seedWorkProviderCalls += 1;
+              return {
+                _tag: "ToolCall",
                 name: "wait",
                 arguments: {
-                  reason: `settle AH9 ${marker}`,
+                  reason: `AH9 setup waits for probe ${marker}`,
                   waitSpec: {
                     mode: "Any",
                     conditions: [{ _tag: "Manual" }],
                   },
                 },
-              },
-              {
-                name: "assign_work",
-                arguments: {
-                  objective: `Must be skipped after terminal action ${marker}`,
-                  why: "AH9 early-settlement qualification",
-                  constraints: [],
-                  completionExpectation: "the later call is not applied",
-                  verificationMission: {
-                    goal: `Verify AH9 ${marker}`,
-                    criteria: [
-                      {
-                        criterionId: "ah9-no-later-work",
-                        requirement: "no Work is created by the skipped call",
-                        required: true,
-                      },
-                    ],
-                    riskRequirements: [],
+              };
+            }
+            targetProviderCalls += 1;
+            if (targetProviderCalls > 5) {
+              return { _tag: "HttpError", status: 429 };
+            }
+            if (actionBatchSent) {
+              return { _tag: "HttpError", status: 429 };
+            }
+            actionBatchSent = true;
+            return {
+              _tag: "ToolCalls",
+              calls: [
+                {
+                  name: "wait",
+                  arguments: {
+                    reason: `settle AH9 ${marker}`,
+                    waitSpec: {
+                      mode: "Any",
+                      conditions: [{ _tag: "Manual" }],
+                    },
                   },
-                  reason: "AH9 second action should be skipped",
                 },
-              },
-            ],
-          };
+                {
+                  name: "assign_work",
+                  arguments: {
+                    objective: `Must be skipped after terminal action ${marker}`,
+                    why: "AH9 early-settlement qualification",
+                    constraints: [],
+                    completionExpectation: "the later call is not applied",
+                    verificationMission: {
+                      goal: `Verify AH9 ${marker}`,
+                      criteria: [
+                        {
+                          criterionId: "ah9-no-later-work",
+                          requirement: "no Work is created by the skipped call",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH9 second action should be skipped",
+                  },
+                },
+              ],
+            };
+          }
+          return { _tag: "Text", text: `Waiting for AH9 ${marker}` };
         },
-        firstDaemonEntry: crashChild,
-        daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
         onDaemonStdout: (line) => {
           daemonOutput.push(line);
           recordAhProbeLine(hits, line);
@@ -151,35 +205,95 @@ describe("AH9 terminal action and early-skip transaction", () => {
         fixture.workspaceDirectory,
         `AH9 terminal settlement ${marker}`,
       );
-      const workId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
+      await submitHumanMessage(
+        client,
+        project,
+        `请创建并执行 AH9 终端动作恢复目标 ${marker}`,
+      );
+      const approval = await waitForApproval(client, project, marker);
+      expect(
+        await client.view("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      ).toBeNull();
+      await client.command(project.projectId, "ResolveControlApproval", {
+        approvalId: approval.approvalId,
+        expectedRevision: approval.revision,
+        decision: "Approve",
+        reason: "AH9 public Work admission",
+      });
+      const currentWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            objective?: string;
+            revision: number;
+            status: string;
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (work) => work?.workId !== undefined,
+      );
+      const workId = currentWork?.workId;
+      if (workId === undefined) throw new Error("AH9 public Work absent");
+      expect(currentWork).toMatchObject({
+        objective: expect.stringContaining(marker),
+        revision: 0,
+        status: "Open",
+      });
+      await waitForPublic(
+        async () => seedWorkProviderCalls,
+        (count) => count >= 1,
+      );
+      await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (work) =>
+          work?.workId === workId &&
+          work.revision === 0 &&
+          work.activeExecution === undefined,
+      );
+      const seedSnapshot = durableSnapshot(fixture.databaseFile);
+      const seedExecutionIds = new Set(
+        seedSnapshot.executions.map((execution) => execution.execution_id),
+      );
+      expect(
+        seedSnapshot.executions.every(
+          (execution) => execution.settlement_kind !== "Failed",
+        ),
+      ).toBe(true);
+
+      // The seed Work only enters a legal Manual wait. Install the terminal
+      // action crash probe before public SteerWork starts the measured turn.
+      await fixture.crash();
+      probeArmed = true;
+      await fixture.restart({
+        entry: crashChild,
+        daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
+      });
+      await client.command(project.projectId, "SteerWork", {
         workId,
         workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Exercise AH9 terminal handoff ${marker}.`,
-        why: "qualify action settlement and early skip recovery",
-        constraints: [],
-        completionExpectation: "later calls are skipped after Wait",
-        verificationMission: {
-          goal: `Verify AH9 ${marker}`,
-          criteria: [
-            {
-              criterionId: "ah9-terminal-step",
-              requirement: "Wait settles the execution before later calls",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: 0,
+        steer: {
+          severity: "Normal",
+          guidance: `AH9 terminal probe ${marker}`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH9 process test" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
       });
 
       const atBoundary = await waitForPublic(
-        async () => ({ hits, providerCalls: fixture.providerCalls.length }),
+        async () => ({ hits, targetProviderCalls }),
         (value) =>
           value.hits.some((hit) => hit.boundary === boundary) ||
-          value.providerCalls >= 5,
+          value.targetProviderCalls >= 5,
         30_000,
       ).catch((error: unknown) => {
         throw new Error(
@@ -200,11 +314,22 @@ describe("AH9 terminal action and early-skip transaction", () => {
       expect(hit.actionIndex).toBe(0);
       expect(hit.callRef).toMatch(/^call_/u);
       expect(actionBatchSent).toBe(true);
+      expect(seedExecutionIds.has(hit.executionId)).toBe(false);
 
       await fixture.crash();
       const killed = durableSnapshot(fixture.databaseFile);
+      const killedTargetControlResults = killed.controlResults.filter(
+        (result) =>
+          JSON.stringify(result).includes(`observation_${hit.executionId}_`),
+      );
+      const killedTargetInvocations = killed.toolInvocations.filter(
+        (invocation) => invocation.execution_id === hit.executionId,
+      );
+      expect(killedTargetInvocations).toEqual([]);
       if (boundary === "AH9BeforeTerminalActionCommit") {
-        expect(killed.steps).toEqual([
+        expect(
+          killed.steps.filter((step) => step.execution_id === hit.executionId),
+        ).toEqual([
           expect.objectContaining({
             execution_id: hit.executionId,
             logical_step_no: 0,
@@ -213,7 +338,11 @@ describe("AH9 terminal action and early-skip transaction", () => {
             settlement_json: null,
           }),
         ]);
-        expect(killed.actions).toEqual([
+        expect(
+          killed.actions.filter(
+            (action) => action.execution_id === hit.executionId,
+          ),
+        ).toEqual([
           expect.objectContaining({
             action_index: 0,
             call_ref: hit.callRef,
@@ -221,12 +350,16 @@ describe("AH9 terminal action and early-skip transaction", () => {
             state: "Pending",
           }),
         ]);
-        expect(killed.controlResults).toEqual([]);
-        expect(killed.executions).toEqual([
-          expect.objectContaining({ settled_at: null }),
-        ]);
+        expect(
+          killed.executions.filter(
+            (execution) => execution.execution_id === hit.executionId,
+          ),
+        ).toEqual([expect.objectContaining({ settled_at: null })]);
+        expect(killedTargetControlResults).toEqual([]);
       } else {
-        expect(killed.steps).toEqual([
+        expect(
+          killed.steps.filter((step) => step.execution_id === hit.executionId),
+        ).toEqual([
           expect.objectContaining({
             execution_id: hit.executionId,
             logical_step_no: 0,
@@ -235,7 +368,11 @@ describe("AH9 terminal action and early-skip transaction", () => {
             settlement_json: expect.stringContaining("Yielded"),
           }),
         ]);
-        expect(killed.actions).toEqual([
+        expect(
+          killed.actions.filter(
+            (action) => action.execution_id === hit.executionId,
+          ),
+        ).toEqual([
           expect.objectContaining({
             action_index: 0,
             call_ref: hit.callRef,
@@ -250,10 +387,12 @@ describe("AH9 terminal action and early-skip transaction", () => {
             disposition_json: expect.stringContaining("SkippedEarlySettlement"),
           }),
         ]);
-        expect(killed.controlResults).toHaveLength(2);
-        expect(killed.executions).toEqual([
-          expect.objectContaining({ settled_at: null }),
-        ]);
+        expect(killedTargetControlResults).toHaveLength(2);
+        expect(
+          killed.executions.filter(
+            (execution) => execution.execution_id === hit.executionId,
+          ),
+        ).toEqual([expect.objectContaining({ settled_at: null })]);
       }
 
       await fixture.restart();
@@ -287,14 +426,20 @@ describe("AH9 terminal action and early-skip transaction", () => {
         );
       }
 
-      expect(recovered.executions).toEqual([
+      expect(
+        recovered.executions.filter(
+          (execution) => execution.execution_id === hit.executionId,
+        ),
+      ).toEqual([
         expect.objectContaining({
           execution_id: hit.executionId,
           settled_at: expect.any(String),
           settlement_kind: "Completed",
         }),
       ]);
-      expect(recovered.steps).toEqual([
+      expect(
+        recovered.steps.filter((step) => step.execution_id === hit.executionId),
+      ).toEqual([
         expect.objectContaining({
           execution_id: hit.executionId,
           logical_step_no: 0,
@@ -303,7 +448,11 @@ describe("AH9 terminal action and early-skip transaction", () => {
           settlement_json: expect.stringContaining("Yielded"),
         }),
       ]);
-      expect(recovered.actions).toEqual([
+      expect(
+        recovered.actions.filter(
+          (action) => action.execution_id === hit.executionId,
+        ),
+      ).toEqual([
         expect.objectContaining({
           action_index: 0,
           call_ref: hit.callRef,
@@ -318,17 +467,26 @@ describe("AH9 terminal action and early-skip transaction", () => {
           disposition_json: expect.stringContaining("SkippedEarlySettlement"),
         }),
       ]);
-      expect(recovered.controlResults).toHaveLength(2);
+      expect(
+        recovered.toolInvocations.filter(
+          (invocation) => invocation.execution_id === hit.executionId,
+        ),
+      ).toEqual([]);
+      expect(
+        recovered.controlResults.filter((result) =>
+          JSON.stringify(result).includes(`observation_${hit.executionId}_`),
+        ),
+      ).toHaveLength(2);
       expect(recovered.workWaits).toEqual([
         expect.objectContaining({ work_id: workId }),
       ]);
       expect(recovered.works).toEqual([
-        expect.objectContaining({ work_id: workId, revision: 0 }),
+        expect.objectContaining({ work_id: workId, revision: 1 }),
       ]);
       expect(
         recovered.events.filter((event) => event.event_type === "WorkAssigned"),
       ).toHaveLength(1);
-      expect(fixture.providerCalls).toHaveLength(1);
+      expect(targetProviderCalls).toBe(1);
       expect(fixture.daemonErrors).toEqual([]);
     },
   );
