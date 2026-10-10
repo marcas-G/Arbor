@@ -30,6 +30,11 @@ export type ScriptedProviderResponse =
     }
   | { readonly _tag: "HttpError"; readonly status: number };
 
+export type ProviderResponseGate = (
+  call: CapturedProviderCall,
+  index: number,
+) => Promise<"respond" | "abort" | undefined>;
+
 export interface ProductionFixture {
   readonly baseUrl: string;
   readonly directory: string;
@@ -186,6 +191,7 @@ const startProvider = (
     index: number,
   ) => ScriptedProviderResponse,
   onResponseSent?: (call: CapturedProviderCall, index: number) => void,
+  beforeResponse?: ProviderResponseGate,
 ) =>
   new Promise<{
     readonly server: Server;
@@ -213,45 +219,56 @@ const startProvider = (
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => chunks.push(chunk));
       request.on("end", () => {
-        const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
-          messages?: CapturedProviderCall["messages"];
-          tools?: CapturedProviderCall["tools"];
-        };
-        const call = {
-          messages: body.messages ?? [],
-          tools: body.tools ?? [],
-        } satisfies CapturedProviderCall;
-        calls.push(call);
-        const responseIndex = calls.length - 1;
-        const scripted = reply(call, responseIndex);
-        if (typeof scripted === "string") {
-          sendTextResponse(response, scripted);
-          onResponseSent?.(call, responseIndex);
-          return;
-        }
-        switch (scripted._tag) {
-          case "Text":
-            sendTextResponse(response, scripted.text);
+        void (async () => {
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+            messages?: CapturedProviderCall["messages"];
+            tools?: CapturedProviderCall["tools"];
+          };
+          const call = {
+            messages: body.messages ?? [],
+            tools: body.tools ?? [],
+          } satisfies CapturedProviderCall;
+          calls.push(call);
+          const responseIndex = calls.length - 1;
+          const scripted = reply(call, responseIndex);
+          const gateResult = await beforeResponse?.(call, responseIndex);
+          if (gateResult === "abort" || response.destroyed) {
+            response.destroy();
+            return;
+          }
+          if (typeof scripted === "string") {
+            sendTextResponse(response, scripted);
             onResponseSent?.(call, responseIndex);
             return;
-          case "ToolCall":
-            sendToolResponse(response, scripted.name, scripted.arguments);
-            onResponseSent?.(call, responseIndex);
-            return;
-          case "ToolCalls":
-            sendToolCallsResponse(response, scripted.calls);
-            onResponseSent?.(call, responseIndex);
-            return;
-          case "HttpError":
-            response.writeHead(scripted.status, {
-              "content-type": "application/json",
-            });
-            response.end(
-              JSON.stringify({ error: { message: "scripted unavailable" } }),
-            );
-            onResponseSent?.(call, responseIndex);
-            return;
-        }
+          }
+          switch (scripted._tag) {
+            case "Text":
+              sendTextResponse(response, scripted.text);
+              onResponseSent?.(call, responseIndex);
+              return;
+            case "ToolCall":
+              sendToolResponse(response, scripted.name, scripted.arguments);
+              onResponseSent?.(call, responseIndex);
+              return;
+            case "ToolCalls":
+              sendToolCallsResponse(response, scripted.calls);
+              onResponseSent?.(call, responseIndex);
+              return;
+            case "HttpError":
+              response.writeHead(scripted.status, {
+                "content-type": "application/json",
+              });
+              response.end(
+                JSON.stringify({ error: { message: "scripted unavailable" } }),
+              );
+              onResponseSent?.(call, responseIndex);
+              return;
+          }
+        })().catch((error: unknown) => {
+          response.destroy(
+            error instanceof Error ? error : new Error(String(error)),
+          );
+        });
       });
     });
     server.listen(0, "127.0.0.1", () => {
@@ -300,6 +317,10 @@ export const startProductionFixture = async (input: {
     index: number,
   ) => ScriptedProviderResponse;
   readonly onResponseSent?: (call: CapturedProviderCall, index: number) => void;
+  /** Test-only gate after a complete provider request arrives but before any
+   * response headers or bytes are written. Returning `abort` closes the
+   * held connection without producing a provider response. */
+  readonly beforeResponse?: ProviderResponseGate;
   /** Host-side resource admission for the pending F21 browser contract. */
   readonly admitWorkspaceDirectory?: boolean;
   /** Test-only entrypoint for the first daemon incarnation. Restarts use the
@@ -313,7 +334,11 @@ export const startProductionFixture = async (input: {
   mkdirSync(workspaceDirectory, { recursive: true });
   writeFileSync(join(workspaceDirectory, "proof.txt"), "FUNCTIONAL_VERIFIED");
   const databaseFile = join(directory, "arbor-functional.db");
-  const provider = await startProvider(input.reply, input.onResponseSent);
+  const provider = await startProvider(
+    input.reply,
+    input.onResponseSent,
+    input.beforeResponse,
+  );
   const httpPort = await freePort();
   const baseUrl = `http://127.0.0.1:${httpPort}`;
   const daemonErrors: string[] = [];

@@ -4,7 +4,10 @@ import { resolve } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  type CapturedProviderCall,
   type ProductionFixture,
+  type ProviderResponseGate,
+  type ScriptedProviderResponse,
   startProductionFixture,
 } from "../support/production-fixture.js";
 import {
@@ -12,6 +15,7 @@ import {
   functionalId,
   makePublicClient,
   submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -169,6 +173,276 @@ const startReportServer = async () => {
   return `http://127.0.0.1:${address.port}/requests`;
 };
 
+interface ApprovedWorkSeed {
+  readonly objective: string;
+  readonly why: string;
+  readonly constraints: ReadonlyArray<string>;
+  readonly completionExpectation: string;
+  readonly verificationMission: {
+    readonly goal: string;
+    readonly criteria: ReadonlyArray<{
+      readonly criterionId: string;
+      readonly requirement: string;
+      readonly required: boolean;
+    }>;
+    readonly riskRequirements: ReadonlyArray<string>;
+  };
+}
+
+const approvedRootWorkReply =
+  (
+    marker: string,
+    work: ApprovedWorkSeed,
+  ): ((call: CapturedProviderCall) => ScriptedProviderResponse) =>
+  (call) => {
+    const available = new Set(
+      call.tools
+        .map((tool) => tool.function?.name)
+        .filter((name): name is string => name !== undefined),
+    );
+    const context = JSON.stringify(call.messages);
+    if (
+      available.has("assign_work") &&
+      !available.has("claim_completion") &&
+      context.includes(marker)
+    ) {
+      return context.includes("WorkAssigned(")
+        ? { _tag: "Text", text: `AH19 Work seed approved: ${marker}` }
+        : {
+            _tag: "ToolCall",
+            name: "assign_work",
+            arguments: {
+              ...work,
+              reason: "AH19 public Work seed under RootConversation",
+            },
+          };
+    }
+    return { _tag: "HttpError", status: 500 };
+  };
+
+const seedRootWorkViaPublicApproval = async (
+  fixture: ProductionFixture,
+  client: ReturnType<typeof makePublicClient>,
+  project: Awaited<ReturnType<typeof createFunctionalProject>>,
+  marker: string,
+  work: ApprovedWorkSeed,
+  daemonEnvironment: Readonly<Record<string, string>>,
+  heldRequest?: HeldProviderRequest,
+): Promise<string> => {
+  await submitHumanMessage(client, project, `请创建并开始目标 ${marker}。`);
+  const approval = await waitForApproval(client, project, marker).catch(
+    (error: unknown) => {
+      const providerSummary = fixture.providerCalls.map((call) => ({
+        tools: call.tools
+          .map((tool) => tool.function?.name)
+          .filter((name): name is string => name !== undefined),
+        messages: call.messages.slice(-4),
+        hasMarker: JSON.stringify(call.messages).includes(marker),
+      }));
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; marker=${marker}; provider=${JSON.stringify(providerSummary)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+      );
+    },
+  );
+  await client.command(project.projectId, "ResolveControlApproval", {
+    approvalId: approval.approvalId,
+    expectedRevision: approval.revision,
+    decision: "Approve",
+    reason: "AH19 checkpoint Work seed",
+  });
+  const current = await waitForPublic(
+    () =>
+      client.view<{
+        workId?: string;
+        objective: string;
+        revision: number;
+        status: string;
+      } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+    (value) =>
+      value?.objective === work.objective && value.workId !== undefined,
+  ).catch(async (error: unknown) => {
+    const [currentWork, inbox, tree, transcript] = await Promise.all([
+      client.view("current-work", { workspaceId: project.rootWorkspaceId }),
+      client.view("inbox-view", { workspaceId: project.rootWorkspaceId }),
+      client.view("responsibility-tree", { projectId: project.projectId }),
+      client.view("transcript", {
+        workspaceId: project.rootWorkspaceId,
+        conversationOnly: false,
+        limit: 30,
+      }),
+    ]);
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; resolved public state=${JSON.stringify({ currentWork, inbox, tree, transcript })}; daemon=${fixture.daemonErrors.join(" | ")}`,
+    );
+  });
+  if (current?.workId === undefined) {
+    throw new Error(`AH19 approved Work is not current: ${marker}`);
+  }
+  const workId = current.workId;
+  expect(current).toMatchObject({ revision: 0, status: "Open" });
+
+  const firstWorkCall =
+    heldRequest === undefined
+      ? await waitForPublic(
+          async () =>
+            fixture.providerCalls.find((call) => {
+              const tools = new Set(
+                call.tools
+                  .map((tool) => tool.function?.name)
+                  .filter((name): name is string => name !== undefined),
+              );
+              return (
+                tools.has("claim_completion") &&
+                JSON.stringify(call.messages).includes(work.objective)
+              );
+            }),
+          (call) => call !== undefined,
+        )
+      : (await heldRequest.waitUntilEntered()).call;
+  if (firstWorkCall === undefined) {
+    throw new Error(`AH19 first Work provider attempt missing: ${marker}`);
+  }
+  const workExecutionId = await waitForPublic(
+    async () => readWorkExecutionId(fixture.databaseFile, project, workId),
+    (executionId) => executionId !== undefined,
+  );
+  if (workExecutionId === undefined) {
+    throw new Error(`AH19 WorkEpisode Execution is not active: ${workId}`);
+  }
+  const preNative =
+    heldRequest === undefined
+      ? await waitForPublic(
+          async () =>
+            readSnapshot(fixture.databaseFile, {
+              sessionId: project.rootSessionId,
+              executionId: workExecutionId,
+              workId,
+            }),
+          (snapshot) =>
+            snapshot.providerAttempts.some(
+              (attempt) => attempt.outcome === "RetryableFailure",
+            ),
+        )
+      : readSnapshot(fixture.databaseFile, {
+          sessionId: project.rootSessionId,
+          executionId: workExecutionId,
+          workId,
+        });
+  expect(preNative.checkpoints).toEqual([]);
+  expect(preNative.actions).toEqual([]);
+  if (heldRequest !== undefined) {
+    expect(preNative.providerAttempts.length).toBeGreaterThan(0);
+    for (const attempt of preNative.providerAttempts) {
+      expect(attempt.outcome).toBe("InProgress");
+      expect(attempt.continuation_checkpoint_json).toBeNull();
+      expect(
+        (
+          JSON.parse(attempt.canonical_event_prefix_json) as Array<{
+            _tag?: string;
+          }>
+        ).every((event) => event._tag === "TurnStarted"),
+      ).toBe(true);
+      expect(
+        JSON.parse(attempt.observation_json) as Record<string, unknown>,
+      ).toMatchObject({
+        responseStarted: false,
+        canonicalEventEmitted: false,
+        consumerVisibleOutput: false,
+        toolCallProposed: false,
+        continuationAvailable: false,
+        externalEffectPossible: false,
+      });
+    }
+  }
+  expect(providerRequests).toEqual([]);
+  expect(probes).toEqual([]);
+
+  // For the pre-checkpoint PoC, the provider has received the complete request
+  // but has not emitted response headers or bytes. Kill the ordinary daemon,
+  // then explicitly abort the held connection before AH19 recovery starts.
+  if (heldRequest !== undefined) {
+    await fixture.crash();
+    await heldRequest.abort();
+  }
+  await fixture.restart({ entry: childEntry, daemonEnvironment });
+  return workId;
+};
+
+interface HeldProviderRequest {
+  readonly beforeResponse: ProviderResponseGate;
+  readonly waitUntilEntered: () => Promise<{
+    call: CapturedProviderCall;
+    index: number;
+  }>;
+  readonly abort: () => Promise<void>;
+}
+
+const holdProviderRequest = (
+  predicate: (call: CapturedProviderCall) => boolean,
+): HeldProviderRequest => {
+  let enteredResolve!: (value: {
+    call: CapturedProviderCall;
+    index: number;
+  }) => void;
+  const entered = new Promise<{
+    call: CapturedProviderCall;
+    index: number;
+  }>((resolveEntered) => {
+    enteredResolve = resolveEntered;
+  });
+  let releaseResolve!: (value: "abort") => void;
+  const release = new Promise<"abort">((resolveRelease) => {
+    releaseResolve = resolveRelease;
+  });
+  let completedResolve!: () => void;
+  const completed = new Promise<void>((resolveCompleted) => {
+    completedResolve = resolveCompleted;
+  });
+  let enteredOnce = false;
+  return {
+    beforeResponse: async (call, index) => {
+      if (!enteredOnce && predicate(call)) {
+        enteredOnce = true;
+        enteredResolve({ call, index });
+        try {
+          return await release;
+        } finally {
+          completedResolve();
+        }
+      }
+      return "respond";
+    },
+    waitUntilEntered: () => entered,
+    abort: async () => {
+      releaseResolve("abort");
+      await completed;
+    },
+  };
+};
+
+const ah19WorkSeed = (
+  objective: string,
+  marker: string,
+  why: string,
+  constraints: ReadonlyArray<string> = [],
+): ApprovedWorkSeed => ({
+  objective: `${objective} ${marker}`,
+  why,
+  constraints,
+  completionExpectation: "continue the same logical step after compaction",
+  verificationMission: {
+    goal: `Verify one ProviderNative binding checkpoint ${marker}`,
+    criteria: [
+      {
+        criterionId: "ah19-native-binding",
+        requirement: "checkpoint continuation is deployment-bound",
+        required: true,
+      },
+    ],
+    riskRequirements: [],
+  },
+});
+
 const readSnapshot = (
   databaseFile: string,
   input: { sessionId: string; executionId: string; workId: string },
@@ -274,6 +548,26 @@ const readSnapshot = (
           input.executionId,
         ) as Ah19Snapshot["responseJobs"],
     };
+  } finally {
+    db.close();
+  }
+};
+
+const readWorkExecutionId = (
+  databaseFile: string,
+  project: Awaited<ReturnType<typeof createFunctionalProject>>,
+  workId: string,
+): string | undefined => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const row = db
+      .prepare(
+        "SELECT execution_id FROM executions WHERE workspace_id = ? AND episode_kind = 'WorkEpisode' AND episode_ref = ? AND settled_at IS NULL ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(project.rootWorkspaceId, workId) as
+      | { execution_id: string }
+      | undefined;
+    return row?.execution_id;
   } finally {
     db.close();
   }
@@ -782,23 +1076,41 @@ const startAtCheckpointBoundary = async (
     | "AH11AfterStepEffectsCommit",
   extraDaemonEnvironment: Readonly<Record<string, string>> = {},
   episode: "Work" | "ConversationResponse" = "Work",
+  holdFirstWorkRequest = false,
 ) => {
   probes.length = 0;
   providerRequests.length = 0;
   const reportUrl = await startReportServer();
+  const workMarker = `AH19-CHECKPOINT-${crypto.randomUUID()}`;
+  const workSeed = ah19WorkSeed(
+    "Qualify a deployment-bound ProviderNative checkpoint.",
+    workMarker,
+    "exercise AH19 Native binding qualification",
+    ["never reuse opaque continuation across deployments"],
+  );
+  const heldWorkRequest =
+    episode === "Work" && holdFirstWorkRequest
+      ? holdProviderRequest((call) => {
+          const tools = new Set(
+            call.tools
+              .map((tool) => tool.function?.name)
+              .filter((name): name is string => name !== undefined),
+          );
+          return (
+            tools.has("claim_completion") &&
+            JSON.stringify(call.messages).includes(workSeed.objective)
+          );
+        })
+      : undefined;
   const childOutput: string[] = [];
   const fixture = await startProductionFixture({
-    reply: () => ({ _tag: "HttpError", status: 500 }),
-    firstDaemonEntry: childEntry,
-    daemonEnvironment: {
-      ARBOR_AH19_BOUNDARY: boundary,
-      ARBOR_AH19_BINDING_VARIANT: "A",
-      ARBOR_AH19_REPORT_URL: reportUrl,
-      ...(episode === "ConversationResponse"
-        ? { ARBOR_AH19_TERMINAL_CONVERSATION: "1" }
-        : {}),
-      ...extraDaemonEnvironment,
-    },
+    reply:
+      episode === "Work"
+        ? approvedRootWorkReply(workMarker, workSeed)
+        : () => ({ _tag: "HttpError", status: 500 }),
+    ...(heldWorkRequest === undefined
+      ? {}
+      : { beforeResponse: heldWorkRequest.beforeResponse }),
     onDaemonStdout: (line) => {
       childOutput.push(line);
       try {
@@ -820,31 +1132,32 @@ const startAtCheckpointBoundary = async (
     fixture.workspaceDirectory,
     `AH19 ProviderNative binding ${boundary}`,
   );
-  const workId = functionalId("wrk");
+  const ah19DaemonEnvironment = {
+    ARBOR_AH19_BOUNDARY: boundary,
+    ARBOR_AH19_BINDING_VARIANT: "A",
+    ARBOR_AH19_REPORT_URL: reportUrl,
+    ...(episode === "ConversationResponse"
+      ? { ARBOR_AH19_TERMINAL_CONVERSATION: "1" }
+      : {}),
+    ...extraDaemonEnvironment,
+  };
+  let workId: string;
   if (episode === "Work") {
-    await client.command(project.projectId, "AssignWork", {
-      workId,
-      workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: "Qualify a deployment-bound ProviderNative checkpoint.",
-      why: "exercise AH19 Native binding qualification",
-      constraints: ["never reuse opaque continuation across deployments"],
-      completionExpectation: "continue the same logical step after compaction",
-      verificationMission: {
-        goal: "Verify one ProviderNative binding checkpoint",
-        criteria: [
-          {
-            criterionId: "ah19-native-binding",
-            requirement: "checkpoint continuation is deployment-bound",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      provenance: { predecessorWorkId: null, reason: "AH19 process fixture" },
-      revision: 0,
-    });
+    workId = await seedRootWorkViaPublicApproval(
+      fixture,
+      client,
+      project,
+      workMarker,
+      workSeed,
+      ah19DaemonEnvironment,
+      heldWorkRequest,
+    );
   } else {
+    workId = functionalId("wrk");
+    await fixture.restart({
+      entry: childEntry,
+      daemonEnvironment: ah19DaemonEnvironment,
+    });
     await submitHumanMessage(
       client,
       project,
@@ -980,17 +1293,15 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
   probes.length = 0;
   providerRequests.length = 0;
   const reportUrl = await startReportServer();
+  const workMarker = `AH19-ORDINARY-${crypto.randomUUID()}`;
+  const workSeed = ah19WorkSeed(
+    "Build public Work history for ordinary Native recovery.",
+    workMarker,
+    "qualify ordinary Native checkpoint recovery",
+  );
   const childOutput: string[] = [];
   const fixture = await startProductionFixture({
-    reply: () => ({ _tag: "HttpError", status: 500 }),
-    firstDaemonEntry: childEntry,
-    daemonEnvironment: {
-      ARBOR_AH19_BOUNDARY: boundary,
-      ARBOR_AH19_BINDING_VARIANT: "A",
-      ARBOR_AH19_ORDINARY_WORK: "1",
-      ARBOR_AH19_CONTEXT_WINDOW: "16384",
-      ARBOR_AH19_REPORT_URL: reportUrl,
-    },
+    reply: approvedRootWorkReply(workMarker, workSeed),
     onDaemonStdout: (line) => {
       childOutput.push(line);
       try {
@@ -1008,29 +1319,20 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
     fixture.workspaceDirectory,
     `AH19 ordinary Native recovery ${boundary}`,
   );
-  const workId = functionalId("wrk");
-  await client.command(project.projectId, "AssignWork", {
-    workId,
-    workspaceId: project.rootWorkspaceId,
-    expectedWorkspaceRevision: 0,
-    objective: "Build public Work history for ordinary Native recovery.",
-    why: "qualify ordinary Native checkpoint recovery",
-    constraints: [],
-    completionExpectation: "continue the same logical step after compaction",
-    verificationMission: {
-      goal: "qualify ordinary Native recovery",
-      criteria: [
-        {
-          criterionId: "ordinary-native-recovery",
-          requirement: "resume from the exact persisted source step",
-          required: true,
-        },
-      ],
-      riskRequirements: [],
+  const workId = await seedRootWorkViaPublicApproval(
+    fixture,
+    client,
+    project,
+    workMarker,
+    workSeed,
+    {
+      ARBOR_AH19_BOUNDARY: boundary,
+      ARBOR_AH19_BINDING_VARIANT: "A",
+      ARBOR_AH19_ORDINARY_WORK: "1",
+      ARBOR_AH19_CONTEXT_WINDOW: "16384",
+      ARBOR_AH19_REPORT_URL: reportUrl,
     },
-    provenance: { predecessorWorkId: null, reason: "AH19 ordinary fixture" },
-    revision: 0,
-  });
+  );
   for (let index = 0; index < 10; index += 1) {
     const observed = await waitForPublic(
       async () => ({
@@ -1118,15 +1420,26 @@ describe("AH19 ProviderNative binding recovery", () => {
     probes.length = 0;
     providerRequests.length = 0;
     const reportUrl = await startReportServer();
-    const fixture = await startProductionFixture({
-      reply: () => ({ _tag: "HttpError", status: 500 }),
-      firstDaemonEntry: childEntry,
-      daemonEnvironment: {
-        ARBOR_AH19_BOUNDARY: "none",
-        ARBOR_AH19_ORDINARY_WORK: "1",
-        ARBOR_AH19_CONTEXT_WINDOW: "16384",
-        ARBOR_AH19_REPORT_URL: reportUrl,
+    const seedMarker = `AH19-WORK-HISTORY-${crypto.randomUUID()}`;
+    const workSeed: ApprovedWorkSeed = {
+      objective: `Build real Workspace Session history through public Work input. ${seedMarker}`,
+      why: "qualify ordinary Native compaction after repeated Work turns",
+      constraints: [],
+      completionExpectation: "history is projected into the next Agent turn",
+      verificationMission: {
+        goal: "observe ordinary Work history compaction",
+        criteria: [
+          {
+            criterionId: "history-compaction",
+            requirement: "older Session history reaches context planning",
+            required: true,
+          },
+        ],
+        riskRequirements: [],
       },
+    };
+    const fixture = await startProductionFixture({
+      reply: approvedRootWorkReply(seedMarker, workSeed),
       onDaemonStdout: (line) => {
         try {
           const event = JSON.parse(line) as Ah19Probe;
@@ -1143,33 +1456,19 @@ describe("AH19 ProviderNative binding recovery", () => {
       fixture.workspaceDirectory,
       "AH19 ordinary Work history",
     );
-    const workId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
-      workId,
-      workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective:
-        "Build real Workspace Session history through public Work input.",
-      why: "qualify ordinary Native compaction after repeated Work turns",
-      constraints: [],
-      completionExpectation: "history is projected into the next Agent turn",
-      verificationMission: {
-        goal: "observe ordinary Work history compaction",
-        criteria: [
-          {
-            criterionId: "history-compaction",
-            requirement: "older Session history reaches context planning",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
+    const workId = await seedRootWorkViaPublicApproval(
+      fixture,
+      client,
+      project,
+      seedMarker,
+      workSeed,
+      {
+        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_ORDINARY_WORK: "1",
+        ARBOR_AH19_CONTEXT_WINDOW: "16384",
+        ARBOR_AH19_REPORT_URL: reportUrl,
       },
-      provenance: {
-        predecessorWorkId: null,
-        reason: "AH19 ordinary Work fixture",
-      },
-      revision: 0,
-    });
+    );
 
     await waitForPublic(
       async () => ({
@@ -1335,7 +1634,12 @@ describe("AH19 ProviderNative binding recovery", () => {
   ] as const)(
     "persists one real ProviderNative checkpoint at %s",
     async (boundary) => {
-      const scenario = await startAtCheckpointBoundary(boundary);
+      const scenario = await startAtCheckpointBoundary(
+        boundary,
+        {},
+        "Work",
+        boundary === "AH17BeforeCheckpointEpochCommit",
+      );
       const { fixture, project, workId, probe } = scenario;
       const executionId = probe.executionId;
       const nativeTurnId = `ptn_${executionId}_1_native_compact_0`;
