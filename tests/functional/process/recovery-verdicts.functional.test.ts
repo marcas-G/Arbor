@@ -165,6 +165,7 @@ describe("release-functional recovery and negative verdicts", () => {
   it("F10 rejection creates no Work and returns a visible correction", async () => {
     const marker = `F10-REJECT-${crypto.randomUUID().slice(0, 8)}`;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: (call) => {
         const context = serialized(call);
         if (context.includes(marker) && tools(call).has("assign_work")) {
@@ -218,6 +219,7 @@ describe("release-functional recovery and negative verdicts", () => {
     const marker = `F11-RECOVER-${crypto.randomUUID().slice(0, 8)}`;
     let unavailable = true;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: (call) => {
         if (serialized(call).includes(marker) && unavailable) {
           unavailable = false;
@@ -254,6 +256,7 @@ describe("release-functional recovery and negative verdicts", () => {
     it(`F${verdict === "Fail" ? "12" : "13"} Verification ${verdict} keeps Work Open`, async () => {
       const marker = `F${verdict === "Fail" ? "12-FAIL" : "13-UNKNOWN"}-${crypto.randomUUID().slice(0, 8)}`;
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
         reply: verdictProvider(marker, verdict),
       });
@@ -324,7 +327,10 @@ describe("release-functional recovery and negative verdicts", () => {
     const responseSent = new Promise<void>((resolveSent) => {
       signalResponseSent = resolveSent;
     });
+    const daemonOutput: string[] = [];
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
+      onDaemonStdout: (line) => daemonOutput.push(line),
       reply: (call) => {
         const context = serialized(call);
         return {
@@ -337,6 +343,7 @@ describe("release-functional recovery and negative verdicts", () => {
       },
     });
     fixtures.push(fixture);
+    const baseUrlBeforeRestart = fixture.baseUrl;
     const client = makePublicClient(fixture.baseUrl);
     const project = await createFunctionalProject(
       client,
@@ -347,8 +354,11 @@ describe("release-functional recovery and negative verdicts", () => {
     await submitHumanMessage(client, project, `请回复 ${marker}`);
     await responseSent;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+    // crash() waits for the spawned child to exit before the restart binds the
+    // same fixture port under a fresh process identity.
     await fixture.crash();
     await fixture.restart();
+    expect(fixture.baseUrl).toBe(baseUrlBeforeRestart);
 
     const page = await waitForPublic(
       () => transcript(client, project.rootWorkspaceId),
@@ -369,12 +379,51 @@ describe("release-functional recovery and negative verdicts", () => {
     expect(
       stable.entries.filter((entry) => entry.body === `RECOVERED ${marker}`),
     ).toHaveLength(1);
+    const startupReports = daemonOutput
+      .map((line) => {
+        try {
+          return JSON.parse(line) as {
+            readonly tag?: string;
+            readonly nonce?: string;
+            readonly pid?: number;
+            readonly port?: number;
+          };
+        } catch {
+          return undefined;
+        }
+      })
+      .filter(
+        (report) =>
+          report?.tag === "FUNCTIONAL_DAEMON_STARTED" ||
+          report?.tag === "FUNCTIONAL_DAEMON_LISTENING",
+      );
+    const started = startupReports.filter(
+      (report) => report?.tag === "FUNCTIONAL_DAEMON_STARTED",
+    );
+    const listening = startupReports.filter(
+      (report) => report?.tag === "FUNCTIONAL_DAEMON_LISTENING",
+    );
+    expect(started).toHaveLength(2);
+    expect(listening).toHaveLength(2);
+    expect(started[1]?.nonce).not.toBe(started[0]?.nonce);
+    expect(started[1]?.pid).not.toBe(started[0]?.pid);
+    expect(listening.map((report) => report?.nonce)).toEqual(
+      started.map((report) => report?.nonce),
+    );
+    expect(listening.map((report) => report?.pid)).toEqual(
+      started.map((report) => report?.pid),
+    );
+    expect(listening.map((report) => report?.port)).toEqual([
+      Number(new URL(baseUrlBeforeRestart).port),
+      Number(new URL(baseUrlBeforeRestart).port),
+    ]);
     expect(fixture.daemonErrors).toEqual([]);
   }, 60_000);
 
   it("F17 reaches a third conversation page without duplicates", async () => {
     const prefix = `F17-PAGE-${crypto.randomUUID().slice(0, 8)}`;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: (call) => {
         const matches = [
           ...serialized(call).matchAll(/F17-PAGE-[A-Za-z0-9-]+-M\d/gu),
