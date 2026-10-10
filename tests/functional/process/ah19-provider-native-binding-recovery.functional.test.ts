@@ -420,6 +420,19 @@ const holdProviderRequest = (
   };
 };
 
+const holdFirstWorkProviderRequest = (work: ApprovedWorkSeed) =>
+  holdProviderRequest((call) => {
+    const tools = new Set(
+      call.tools
+        .map((tool) => tool.function?.name)
+        .filter((name): name is string => name !== undefined),
+    );
+    return (
+      tools.has("claim_completion") &&
+      JSON.stringify(call.messages).includes(work.objective)
+    );
+  });
+
 const ah19WorkSeed = (
   objective: string,
   marker: string,
@@ -1076,7 +1089,6 @@ const startAtCheckpointBoundary = async (
     | "AH11AfterStepEffectsCommit",
   extraDaemonEnvironment: Readonly<Record<string, string>> = {},
   episode: "Work" | "ConversationResponse" = "Work",
-  holdFirstWorkRequest = false,
 ) => {
   probes.length = 0;
   providerRequests.length = 0;
@@ -1089,19 +1101,7 @@ const startAtCheckpointBoundary = async (
     ["never reuse opaque continuation across deployments"],
   );
   const heldWorkRequest =
-    episode === "Work" && holdFirstWorkRequest
-      ? holdProviderRequest((call) => {
-          const tools = new Set(
-            call.tools
-              .map((tool) => tool.function?.name)
-              .filter((name): name is string => name !== undefined),
-          );
-          return (
-            tools.has("claim_completion") &&
-            JSON.stringify(call.messages).includes(workSeed.objective)
-          );
-        })
-      : undefined;
+    episode === "Work" ? holdFirstWorkProviderRequest(workSeed) : undefined;
   const childOutput: string[] = [];
   const fixture = await startProductionFixture({
     reply:
@@ -1111,6 +1111,7 @@ const startAtCheckpointBoundary = async (
     ...(heldWorkRequest === undefined
       ? {}
       : { beforeResponse: heldWorkRequest.beforeResponse }),
+    daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
     onDaemonStdout: (line) => {
       childOutput.push(line);
       try {
@@ -1299,9 +1300,12 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
     workMarker,
     "qualify ordinary Native checkpoint recovery",
   );
+  const heldWorkRequest = holdFirstWorkProviderRequest(workSeed);
   const childOutput: string[] = [];
   const fixture = await startProductionFixture({
     reply: approvedRootWorkReply(workMarker, workSeed),
+    beforeResponse: heldWorkRequest.beforeResponse,
+    daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
     onDaemonStdout: (line) => {
       childOutput.push(line);
       try {
@@ -1332,6 +1336,7 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
       ARBOR_AH19_CONTEXT_WINDOW: "16384",
       ARBOR_AH19_REPORT_URL: reportUrl,
     },
+    heldWorkRequest,
   );
   for (let index = 0; index < 10; index += 1) {
     const observed = await waitForPublic(
@@ -1438,8 +1443,11 @@ describe("AH19 ProviderNative binding recovery", () => {
         riskRequirements: [],
       },
     };
+    const heldWorkRequest = holdFirstWorkProviderRequest(workSeed);
     const fixture = await startProductionFixture({
       reply: approvedRootWorkReply(seedMarker, workSeed),
+      beforeResponse: heldWorkRequest.beforeResponse,
+      daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
       onDaemonStdout: (line) => {
         try {
           const event = JSON.parse(line) as Ah19Probe;
@@ -1468,6 +1476,7 @@ describe("AH19 ProviderNative binding recovery", () => {
         ARBOR_AH19_CONTEXT_WINDOW: "16384",
         ARBOR_AH19_REPORT_URL: reportUrl,
       },
+      heldWorkRequest,
     );
 
     await waitForPublic(
@@ -1634,12 +1643,7 @@ describe("AH19 ProviderNative binding recovery", () => {
   ] as const)(
     "persists one real ProviderNative checkpoint at %s",
     async (boundary) => {
-      const scenario = await startAtCheckpointBoundary(
-        boundary,
-        {},
-        "Work",
-        boundary === "AH17BeforeCheckpointEpochCommit",
-      );
+      const scenario = await startAtCheckpointBoundary(boundary);
       const { fixture, project, workId, probe } = scenario;
       const executionId = probe.executionId;
       const nativeTurnId = `ptn_${executionId}_1_native_compact_0`;
@@ -1728,7 +1732,8 @@ describe("AH19 restart binding qualification", () => {
     "recovers ordinary Native source identity at %s without replaying the ProviderTurn",
     async (boundary) => {
       const scenario = await startOrdinaryNativeAtCheckpointBoundary(boundary);
-      const { fixture, project, workId, native, childOutput } = scenario;
+      const { fixture, project, workId, native, reportUrl, childOutput } =
+        scenario;
       const executionId = scenario.probe.executionId;
       const nativeTurnId = native.providerTurnId;
       const ids = { sessionId: project.rootSessionId, executionId, workId };
@@ -1783,6 +1788,7 @@ describe("AH19 restart binding qualification", () => {
           daemonEnvironment: {
             ARBOR_AH19_BOUNDARY: "none",
             ARBOR_AH19_BINDING_VARIANT: "A",
+            ARBOR_AH19_REPORT_URL: reportUrl,
             ARBOR_AH19_CAPTURE_EXIT: "1",
           },
         })
@@ -1887,7 +1893,8 @@ describe("AH19 restart binding qualification", () => {
     const scenario = await startOrdinaryNativeAtCheckpointBoundary(
       "AH17AfterCheckpointEpochCommit",
     );
-    const { fixture, project, workId, native, probe, childOutput } = scenario;
+    const { fixture, project, workId, native, probe, reportUrl, childOutput } =
+      scenario;
     const executionId = probe.executionId;
     const nativeTurnId = native.providerTurnId;
     const ids = { sessionId: project.rootSessionId, executionId, workId };
@@ -1924,6 +1931,7 @@ describe("AH19 restart binding qualification", () => {
         ARBOR_AH19_BINDING_VARIANT: "B",
         ARBOR_AH19_ORDINARY_WORK: "1",
         ARBOR_AH19_CAPTURE_EXIT: "1",
+        ARBOR_AH19_REPORT_URL: reportUrl,
       },
     });
     await waitForPublic(
@@ -2450,7 +2458,7 @@ describe("AH19 restart binding qualification", () => {
       ).toHaveLength(0);
       expect(fixture.daemonErrors).toEqual([]);
     },
-    120_000,
+    160_000,
   );
 
   it.each(["compiledRequestHash", "contextEpoch"] as const)(
