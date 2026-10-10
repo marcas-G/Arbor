@@ -9,8 +9,11 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
+  type FunctionalProject,
   functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -33,6 +36,12 @@ interface ProviderRequest {
   readonly kind: "initial-inference" | "summary" | "replacement-inference";
   readonly messages: ReadonlyArray<{ role?: string; content?: string }>;
   readonly tools: ReadonlyArray<{ function?: { name?: string } }>;
+}
+
+interface SeedProviderRequest {
+  readonly kind: "root" | "work";
+  readonly messages: ProviderRequest["messages"];
+  readonly tools: ProviderRequest["tools"];
 }
 
 interface Ah18Snapshot {
@@ -251,14 +260,89 @@ const sendManualWait = (response: import("node:http").ServerResponse) => {
   response.end("data: [DONE]\n\n");
 };
 
+const sendRootAssignWork = (
+  response: import("node:http").ServerResponse,
+  marker: string,
+  objective: string,
+) => {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  response.write(
+    `data: ${JSON.stringify({
+      id: `chatcmpl-ah18-${crypto.randomUUID()}`,
+      object: "chat.completion.chunk",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            role: "assistant",
+            tool_calls: [
+              {
+                index: 0,
+                id: `call_${crypto.randomUUID().replaceAll("-", "")}`,
+                type: "function",
+                function: {
+                  name: "assign_work",
+                  arguments: JSON.stringify({
+                    objective,
+                    why: `create the publicly approved AH18 Work for ${marker}`,
+                    constraints: [],
+                    completionExpectation:
+                      "the overflow recovery completes the same logical step",
+                    verificationMission: {
+                      goal: `Verify the AH18 overflow journey for ${marker}`,
+                      criteria: [
+                        {
+                          criterionId: "ah18-public-work",
+                          requirement:
+                            "the approved Work reaches the requested AH18 journey",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH18 public functional seed",
+                  }),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+      usage: null,
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      id: `chatcmpl-ah18-${crypto.randomUUID()}`,
+      object: "chat.completion.chunk",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+    })}\n\n`,
+  );
+  response.end("data: [DONE]\n\n");
+};
+
+const ah18WorkObjective = (marker: string) =>
+  `Recover one AH18 overflow chain for ${marker}.`;
+
+const ah18SteerGuidance = (marker: string) =>
+  `AH18 target overflow provider turn ${marker}`;
+
 const startOverflowProvider = async (
   marker: string,
   replacementOutcome: "manual-wait" | "context-limit" = "manual-wait",
   summaryFirstAttempt: "hold" | "transport-failure" | undefined = undefined,
 ) => {
   const requests: ProviderRequest[] = [];
+  const seedRequests: SeedProviderRequest[] = [];
   let inferenceCalls = 0;
   let summaryCalls = 0;
+  let overflowArmed = false;
   const server = createServer((request, response) => {
     if (request.method === "GET" && request.url?.endsWith("/models")) {
       response.writeHead(200, { "content-type": "application/json" });
@@ -288,6 +372,11 @@ const startOverflowProvider = async (
         .map((message) => message.content ?? "")
         .join("\n");
       const tools = body.tools ?? [];
+      const toolNames = new Set(
+        tools
+          .map((tool) => tool.function?.name)
+          .filter((name): name is string => name !== undefined),
+      );
       if (
         !messageText.includes(marker) &&
         !messageText.includes("Produce a compact continuation summary")
@@ -295,6 +384,35 @@ const startOverflowProvider = async (
         response.writeHead(422, { "content-type": "application/json" });
         response.end(
           JSON.stringify({ error: { message: "unrelated AH18 request" } }),
+        );
+        return;
+      }
+      if (messageText.includes(ah18SteerGuidance(marker))) {
+        overflowArmed = true;
+      }
+      if (!overflowArmed && messageText.includes(marker)) {
+        if (
+          toolNames.has("assign_work") &&
+          !toolNames.has("claim_completion")
+        ) {
+          seedRequests.push({ kind: "root", messages, tools });
+          if (messageText.includes("WorkAssigned(")) {
+            sendText(response, `AH18 Work admitted for ${marker}.`);
+          } else {
+            sendRootAssignWork(response, marker, ah18WorkObjective(marker));
+          }
+          return;
+        }
+        if (toolNames.has("wait")) {
+          seedRequests.push({ kind: "work", messages, tools });
+          sendManualWait(response);
+          return;
+        }
+        response.writeHead(422, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: { message: "AH18 public seed stage gated" },
+          }),
         );
         return;
       }
@@ -351,6 +469,7 @@ const startOverflowProvider = async (
     server,
     baseUrl: `http://127.0.0.1:${address.port}/v1`,
     requests,
+    seedRequests,
   };
 };
 
@@ -484,12 +603,174 @@ const readWorkExecutionId = (databaseFile: string, workId: string) => {
     return db
       .prepare(
         `SELECT execution_id FROM executions
-          WHERE episode_kind = 'WorkEpisode' AND episode_ref = ?`,
+          WHERE episode_kind = 'WorkEpisode' AND episode_ref = ?
+          ORDER BY admitted_at DESC LIMIT 1`,
       )
       .get(workId)?.execution_id as string | undefined;
   } finally {
     db.close();
   }
+};
+
+const admitAh18PublicWork = async (
+  client: ReturnType<typeof makePublicClient>,
+  project: FunctionalProject,
+  marker: string,
+) => {
+  const objective = ah18WorkObjective(marker);
+  await submitHumanMessage(
+    client,
+    project,
+    `Please create an AH18 overflow-recovery Work ${marker}: ${objective}`,
+  );
+  const approval = await waitForApproval(client, project, marker);
+  expect(
+    await client.view("current-work", {
+      workspaceId: project.rootWorkspaceId,
+    }),
+  ).toBeNull();
+  await client.command(project.projectId, "ResolveControlApproval", {
+    approvalId: approval.approvalId,
+    expectedRevision: approval.revision,
+    decision: "Approve",
+    reason: "AH18 public Work admission",
+  });
+  const currentWork = await waitForPublic(
+    () =>
+      client.view<{
+        workId?: string;
+        objective?: string;
+        revision: number;
+        status: string;
+      } | null>("current-work", {
+        workspaceId: project.rootWorkspaceId,
+      }),
+    (work) => work?.workId !== undefined && work.objective === objective,
+  );
+  const workId = currentWork?.workId;
+  if (currentWork === null || workId === undefined) {
+    throw new Error("AH18 public Root approval did not expose the Open Work");
+  }
+  expect(currentWork).toMatchObject({ objective, revision: 0, status: "Open" });
+  return { workId, revision: currentWork.revision };
+};
+
+const waitForAh18ManualSeed = async (input: {
+  readonly client: ReturnType<typeof makePublicClient>;
+  readonly fixture: ProductionFixture;
+  readonly project: FunctionalProject;
+  readonly provider: Awaited<ReturnType<typeof startOverflowProvider>>;
+  readonly workId: string;
+}) => {
+  await waitForPublic(
+    async () =>
+      input.provider.seedRequests.filter((request) => request.kind === "work")
+        .length,
+    (count) => count === 1,
+  );
+  await waitForPublic(
+    () =>
+      input.client.view<{
+        workId?: string;
+        revision: number;
+        status: string;
+        activeExecution?: { executionId: string };
+      } | null>("current-work", {
+        workspaceId: input.project.rootWorkspaceId,
+      }),
+    (work) =>
+      work?.workId === input.workId &&
+      work.revision === 0 &&
+      work.status === "Open" &&
+      work.activeExecution === undefined,
+  );
+  const seedExecutionId = await waitForPublic(
+    async () => readWorkExecutionId(input.fixture.databaseFile, input.workId),
+    (id) => id !== undefined,
+  );
+  if (seedExecutionId === undefined) {
+    throw new Error("AH18 Manual-wait seed WorkEpisode was not admitted");
+  }
+  const seedSnapshot = readSnapshot(input.fixture.databaseFile, {
+    sessionId: input.project.rootSessionId,
+    executionId: seedExecutionId,
+    workId: input.workId,
+  });
+  expect(seedSnapshot.session).toEqual({
+    session_id: input.project.rootSessionId,
+    context_epoch: 0,
+  });
+  expect(seedSnapshot.checkpoints).toEqual([]);
+  expect(seedSnapshot.providerTurns).toHaveLength(1);
+  expect(seedSnapshot.providerAttempts).toHaveLength(1);
+  expect(seedSnapshot.providerAttempts[0]).toMatchObject({
+    outcome: "Success",
+    provider_error_kind: null,
+  });
+  expect(seedSnapshot.execution?.settlement_kind).not.toBe("Failed");
+  expect(seedSnapshot.workWait).toMatchObject({
+    work_id: input.workId,
+    wait_mode: "Any",
+  });
+  expect(JSON.parse(seedSnapshot.workWait?.conditions_json ?? "[]")).toEqual([
+    { _tag: "Manual" },
+  ]);
+  expect(
+    input.provider.seedRequests.some((request) => request.kind === "root"),
+  ).toBe(true);
+  expect(input.provider.requests).toEqual([]);
+  return { seedExecutionId, seedSnapshot };
+};
+
+const startAh18MeasuredWork = async (input: {
+  readonly client: ReturnType<typeof makePublicClient>;
+  readonly fixture: ProductionFixture;
+  readonly project: FunctionalProject;
+  readonly provider: Awaited<ReturnType<typeof startOverflowProvider>>;
+  readonly marker: string;
+  readonly restartOptions?: Parameters<ProductionFixture["restart"]>[0];
+}) => {
+  const sourceWork = await admitAh18PublicWork(
+    input.client,
+    input.project,
+    input.marker,
+  );
+  const seed = await waitForAh18ManualSeed({
+    client: input.client,
+    fixture: input.fixture,
+    project: input.project,
+    provider: input.provider,
+    workId: sourceWork.workId,
+  });
+  await input.fixture.crash();
+  await input.fixture.restart(input.restartOptions);
+  await input.client.command(input.project.projectId, "SteerWork", {
+    workId: sourceWork.workId,
+    workspaceId: input.project.rootWorkspaceId,
+    expectedWorkRevision: sourceWork.revision,
+    steer: {
+      severity: "Normal",
+      guidance: ah18SteerGuidance(input.marker),
+    },
+    provenance: { source: "HumanInput" },
+  });
+  const executionId = await waitForPublic(
+    async () =>
+      readWorkExecutionId(input.fixture.databaseFile, sourceWork.workId),
+    (id) => id !== undefined && id !== seed.seedExecutionId,
+  );
+  if (executionId === undefined) {
+    throw new Error("AH18 measured WorkEpisode did not follow its Manual seed");
+  }
+  expect(executionId).not.toBe(seed.seedExecutionId);
+  expect(
+    input.provider.seedRequests.filter((request) => request.kind === "work"),
+  ).toHaveLength(1);
+  return {
+    workId: sourceWork.workId,
+    seedExecutionId: seed.seedExecutionId,
+    executionId,
+  };
 };
 
 const startAtBoundary = async (boundary: Ah18CrashBoundary) => {
@@ -499,9 +780,7 @@ const startAtBoundary = async (boundary: Ah18CrashBoundary) => {
   providerServers.push(provider.server);
   const fixture = await startProductionFixture({
     reply: () => ({ _tag: "HttpError", status: 500 }),
-    firstDaemonEntry: ah18Child,
     daemonEnvironment: {
-      ARBOR_AH18_BOUNDARY: boundary,
       ARBOR_MODEL_BASE_URL: provider.baseUrl,
     },
     onDaemonStdout: (line) => {
@@ -520,30 +799,22 @@ const startAtBoundary = async (boundary: Ah18CrashBoundary) => {
     fixture.workspaceDirectory,
     `AH18 linked overflow recovery ${marker}`,
   );
-  const workId = functionalId("wrk");
-  await client.command(project.projectId, "AssignWork", {
-    workId,
-    workspaceId: project.rootWorkspaceId,
-    expectedWorkspaceRevision: 0,
-    objective: `Recover one overflow compaction chain for ${marker}.`,
-    why: "qualify resumable ordinal-0 overflow links",
-    constraints: ["do not repeat the failed inference"],
-    completionExpectation: "resume the same logical step after compaction",
-    verificationMission: {
-      goal: `Verify one overflow recovery for ${marker}`,
-      criteria: [
-        {
-          criterionId: "ah18-single-overflow-chain",
-          requirement:
-            "one ContextLimit inference resumes through Summary and one replacement",
-          required: true,
-        },
-      ],
-      riskRequirements: [],
+  const measured = await startAh18MeasuredWork({
+    client,
+    fixture,
+    project,
+    provider,
+    marker,
+    restartOptions: {
+      entry: ah18Child,
+      daemonEnvironment: {
+        ARBOR_AH18_BOUNDARY: boundary,
+        ARBOR_MODEL_BASE_URL: provider.baseUrl,
+      },
     },
-    provenance: { predecessorWorkId: null, reason: "AH18 process fixture" },
-    revision: 0,
   });
+  const { workId, seedExecutionId, executionId } = measured;
+  expect(executionId).not.toBe(seedExecutionId);
   const boundaryProbe = await waitForPublic(
     async () => probes.find((probe) => probe.boundary === boundary),
     (probe) => probe !== undefined,
@@ -556,7 +827,19 @@ const startAtBoundary = async (boundary: Ah18CrashBoundary) => {
   if (boundaryProbe === undefined) {
     throw new Error(`AH18 probe missing at ${boundary}`);
   }
-  return { marker, provider, fixture, project, workId, boundaryProbe };
+  expect(boundaryProbe.executionId).toBe(executionId);
+  expect(provider.requests.map((request) => request.kind)).toEqual([
+    "initial-inference",
+  ]);
+  return {
+    marker,
+    provider,
+    fixture,
+    project,
+    workId,
+    seedExecutionId,
+    boundaryProbe,
+  };
 };
 
 const waitForExpiredLease = async (
@@ -1175,34 +1458,22 @@ describe("AH18 linked overflow compaction recovery", () => {
       const summaryFailureProbes: Ah18Probe[] = [];
       const fixture = await startProductionFixture({
         reply: () => ({ _tag: "HttpError", status: 500 }),
-        ...(summaryAttemptState === "retryable-failure"
-          ? { firstDaemonEntry: ah18Child }
-          : {}),
         daemonEnvironment: {
           ARBOR_MODEL_BASE_URL: provider.baseUrl,
-          ...(summaryAttemptState === "retryable-failure"
-            ? {
-                ARBOR_AH18_BOUNDARY: "AH18AfterSummaryRetryableFailureCommit",
-              }
-            : {}),
         },
-        ...(summaryAttemptState === "retryable-failure"
-          ? {
-              onDaemonStdout: (line: string) => {
-                try {
-                  const probe = JSON.parse(line) as Ah18Probe;
-                  if (
-                    probe.tag === "AH18_PROBE" &&
-                    probe.boundary === "AH18AfterSummaryRetryableFailureCommit"
-                  ) {
-                    summaryFailureProbes.push(probe);
-                  }
-                } catch {
-                  // Preserve non-probe diagnostics from the real daemon.
-                }
-              },
+        onDaemonStdout: (line: string) => {
+          try {
+            const probe = JSON.parse(line) as Ah18Probe;
+            if (
+              probe.tag === "AH18_PROBE" &&
+              probe.boundary === "AH18AfterSummaryRetryableFailureCommit"
+            ) {
+              summaryFailureProbes.push(probe);
             }
-          : {}),
+          } catch {
+            // Preserve non-probe diagnostics from the real daemon.
+          }
+        },
       });
       fixtures.push(fixture);
       const client = makePublicClient(fixture.baseUrl);
@@ -1211,40 +1482,25 @@ describe("AH18 linked overflow compaction recovery", () => {
         fixture.workspaceDirectory,
         `AH18 Summary Attempt recovery ${marker}`,
       );
-      const workId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
-        workId,
-        workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Recover Summary Attempt ${marker}`,
-        why: "exercise same-Turn compaction recovery after process loss",
-        constraints: ["do not repeat the original Inference"],
-        completionExpectation:
-          "one compaction resumes the existing logical step",
-        verificationMission: {
-          goal: `Verify Summary Attempt recovery ${marker}`,
-          criteria: [
-            {
-              criterionId: "ah18-summary-attempt-resume",
-              requirement:
-                "resume the link-pinned Summary ProviderTurn after daemon loss",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
-        },
-        provenance: { predecessorWorkId: null, reason: "AH18 process fixture" },
-        revision: 0,
+      const measured = await startAh18MeasuredWork({
+        client,
+        fixture,
+        project,
+        provider,
+        marker,
+        ...(summaryAttemptState === "retryable-failure"
+          ? {
+              restartOptions: {
+                entry: ah18Child,
+                daemonEnvironment: {
+                  ARBOR_AH18_BOUNDARY: "AH18AfterSummaryRetryableFailureCommit",
+                  ARBOR_MODEL_BASE_URL: provider.baseUrl,
+                },
+              },
+            }
+          : {}),
       });
-
-      const executionId = await waitForPublic(
-        async () => readWorkExecutionId(fixture.databaseFile, workId),
-        (id) => id !== undefined,
-        45_000,
-      );
-      if (executionId === undefined) {
-        throw new Error("AH18 WorkEpisode was not admitted");
-      }
+      const { workId, executionId } = measured;
       const inferenceId = `ptn_${executionId}_0`;
       const compactionId = `ptn_${executionId}_0_compact_0`;
       const replacementId = `ptn_${executionId}_0_overflow_0`;
@@ -1690,9 +1946,7 @@ describe("AH18 linked overflow compaction recovery", () => {
       const probes: Ah4Probe[] = [];
       const fixture = await startProductionFixture({
         reply: () => ({ _tag: "HttpError", status: 500 }),
-        firstDaemonEntry: ahCrashChild,
         daemonEnvironment: {
-          ARBOR_AH_BOUNDARY: boundary,
           ARBOR_MODEL_BASE_URL: provider.baseUrl,
         },
         onDaemonStdout: (line) => {
@@ -1711,33 +1965,21 @@ describe("AH18 linked overflow compaction recovery", () => {
         fixture.workspaceDirectory,
         `AH18 terminal replacement ${marker}`,
       );
-      const workId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
-        workId,
-        workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Reach a terminal second ContextLimit for ${marker}.`,
-        why: "qualify the one-overflow recovery bound",
-        constraints: ["do not produce actions or effects before recovery"],
-        completionExpectation: "the second overflow fails this Work episode",
-        verificationMission: {
-          goal: `Verify terminal overflow for ${marker}`,
-          criteria: [
-            {
-              criterionId: "ah18-second-overflow-terminal",
-              requirement:
-                "the replacement ContextLimit terminalizes without a second chain",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+      const measured = await startAh18MeasuredWork({
+        client,
+        fixture,
+        project,
+        provider,
+        marker,
+        restartOptions: {
+          entry: ahCrashChild,
+          daemonEnvironment: {
+            ARBOR_AH_BOUNDARY: boundary,
+            ARBOR_MODEL_BASE_URL: provider.baseUrl,
+          },
         },
-        provenance: {
-          predecessorWorkId: null,
-          reason: "AH18 terminal fixture",
-        },
-        revision: 0,
       });
+      const { workId, executionId } = measured;
 
       const terminalProbe = await waitForPublic(
         async () => probes.find((probe) => probe.boundary === boundary),
@@ -1750,10 +1992,6 @@ describe("AH18 linked overflow compaction recovery", () => {
       });
       if (terminalProbe?.providerTurnId === undefined) {
         throw new Error("AH18 terminal overflow probe omitted ProviderTurnId");
-      }
-      const executionId = readWorkExecutionId(fixture.databaseFile, workId);
-      if (executionId === undefined) {
-        throw new Error("AH18 WorkEpisode was not durably admitted");
       }
       const initialInferenceId = `ptn_${executionId}_0`;
       const compactionId = `ptn_${executionId}_0_compact_0`;
@@ -1839,7 +2077,13 @@ describe("AH18 linked overflow compaction recovery", () => {
       ]);
       expect(beforeKill.execution?.settled_at).toBeNull();
       expect(beforeKill.actions).toEqual([]);
-      expect(beforeKill.durableOutputs).toEqual([]);
+      expect(
+        beforeKill.durableOutputs.filter(
+          (item) =>
+            item.source_ref?.startsWith(`ptn_${executionId}_`) === true ||
+            item.source_ref?.startsWith(`observation_${executionId}_`) === true,
+        ),
+      ).toEqual([]);
 
       await fixture.crash();
       const afterOldKill = readSnapshot(fixture.databaseFile, ids);
@@ -1878,7 +2122,13 @@ describe("AH18 linked overflow compaction recovery", () => {
       expect(terminal.providerTurns).toHaveLength(3);
       expect(terminal.providerAttempts).toHaveLength(3);
       expect(terminal.actions).toEqual([]);
-      expect(terminal.durableOutputs).toEqual([]);
+      expect(
+        terminal.durableOutputs.filter(
+          (item) =>
+            item.source_ref?.startsWith(`ptn_${executionId}_`) === true ||
+            item.source_ref?.startsWith(`observation_${executionId}_`) === true,
+        ),
+      ).toEqual([]);
       expect(provider.requests.map((request) => request.kind)).toEqual([
         "initial-inference",
         "summary",
