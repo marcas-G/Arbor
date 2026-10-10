@@ -12,11 +12,13 @@ import {
   type AssignWorkResult,
   CommandGateway,
   type CommandGatewayService,
+  CommandHandlerRegistry,
+  type CommandHandlerRegistryService,
   type ConcludeVerificationPayload,
   type ConcludeVerificationResult,
   type DeclareDependencyPayload,
   type DeclareDependencyResult,
-  decodeCommandReceipt,
+  decodeRegisteredCommandReceipt,
   deriveFormationIds,
   isChildWorkspaceProposal,
   makeSendMessageHandler,
@@ -26,6 +28,7 @@ import {
   type ProduceDeliverableResult,
   type RecordVerificationEvidencePayload,
   type RecordVerificationEvidenceResult,
+  type RegisteredCommandType,
   semanticRequestFingerprint,
   sendMessagePlan,
   submitDeliver,
@@ -72,6 +75,7 @@ import {
   Clock,
   type ClockService,
   CommandStore,
+  type CommandStoreError,
   type CommandStoreService,
   ControlApprovalStore,
   type ControlApprovalStoreService,
@@ -138,6 +142,7 @@ export class SingleWorkspaceControlActionHandlers extends Context.Service<
 
 export interface SendMessageDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
   readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
   readonly blobs: BlobStorePortService;
   readonly clock: ClockService;
@@ -158,6 +163,7 @@ export interface ClaimCompletionDependencies {
 
 export interface AssignWorkDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
   readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
   readonly workspaces: WorkspaceRepositoryService;
   readonly clock: ClockService;
@@ -185,6 +191,7 @@ export interface WorkspacePlacementDependencies {
 
 export interface AcceptResultDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
   readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
   readonly acceptances?: Pick<
     AcceptanceRepositoryService,
@@ -205,6 +212,7 @@ export interface UpdatePlanDependencies {
 
 export interface SelectCurrentWorkDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
   readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
   readonly decisions: DecisionRequestStoreService;
   readonly workspaces: WorkspaceRepositoryService;
@@ -223,6 +231,7 @@ export interface ProposeChildDependencies {
 
 export interface DeclareDependencyDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
   readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
   readonly dependencyRecords?: Pick<DependencyRepositoryService, "findById">;
   readonly works: WorkRepositoryService;
@@ -232,6 +241,7 @@ export interface DeclareDependencyDependencies {
 
 export interface ProduceDeliverableDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
   readonly commandReceipts: Pick<CommandStoreService, "findResolution">;
   readonly tx: TransactionPortService;
   readonly clock: ClockService;
@@ -381,6 +391,11 @@ const findPriorCommandReceipt = (input: {
     | undefined;
   readonly tx: TransactionPortService;
   readonly projectId: ProjectId;
+  readonly commandType: RegisteredCommandType;
+  readonly commandHandlerRegistry: CommandHandlerRegistryService | undefined;
+  readonly onCommittedDecodeFailure?: (
+    commandId: CommandIdType,
+  ) => Effect.Effect<never, AgentActionError>;
   readonly operation: string;
   readonly errorOperation: string;
   readonly lookupOperation?: string;
@@ -410,10 +425,9 @@ const findPriorCommandReceipt = (input: {
         input.commandReceipts.findResolution(priorCommandId),
       );
       if (Option.isNone(prior)) continue;
-      const decodedPrior = decodeCommandReceipt<unknown>(prior.value);
       if (
-        decodedPrior.commandId !== priorCommandId ||
-        decodedPrior.projectId !== input.projectId
+        prior.value.commandId !== priorCommandId ||
+        prior.value.projectId !== input.projectId
       ) {
         return yield* Effect.fail(
           actionOperationalFailure(input.operation)(
@@ -422,6 +436,40 @@ const findPriorCommandReceipt = (input: {
           ),
         );
       }
+      if (input.commandHandlerRegistry === undefined) {
+        return yield* Effect.fail(
+          actionOperationalFailure(input.operation)(
+            "trusted command handler registry is required to decode a prior receipt",
+          ),
+        );
+      }
+      const handler = input.commandHandlerRegistry.lookup(input.commandType);
+      if (
+        Option.isNone(handler) ||
+        handler.value.commandType !== input.commandType
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure(input.operation)(
+            "trusted prior receipt command handler is not registered",
+          ),
+        );
+      }
+      const decodedPrior = yield* decodeRegisteredCommandReceipt<unknown>(
+        prior.value,
+        input.commandType,
+        handler.value.schemaVersion,
+      ).pipe(
+        Effect.catch(
+          (
+            failure: CommandStoreError,
+          ): Effect.Effect<never, AgentActionError | CommandStoreError> =>
+            failure._tag === "PersistenceCorruption" &&
+            prior.value.resolution === "Committed" &&
+            input.onCommittedDecodeFailure !== undefined
+              ? input.onCommittedDecodeFailure(priorCommandId)
+              : Effect.fail(failure),
+        ),
+      );
       if (decodedPrior.resolution._tag === "Committed") {
         return {
           _tag: "Committed" as const,
@@ -690,27 +738,10 @@ export const assignWorkHandler = (
             ),
           );
         }
-        const prior = yield* findPriorCommandReceipt({
-          context,
-          namespace: "assign-work-command",
-          occurrence,
-          commandReceipts: dependencies.commandReceipts,
-          tx: dependencies.tx,
-          projectId: execution.projectId,
-          operation: "AssignWork.priorReceipt",
-          errorOperation: "AssignWork",
-          lookupOperation: "AssignWork.receiptLookup",
-          identityErrorMessage:
-            "prior Command receipt belongs to another Project",
-        });
-        if (prior._tag !== "Committed") {
-          return yield* Effect.fail(
-            actionOperationalFailure("AssignWork.receiptFirst")(
-              "authorizer observed a prior Committed receipt which receipt-first lookup could not reproduce",
-            ),
-          );
-        }
-        const block = (failureCode: AssignWorkBindingFailureCode) =>
+        const block = (
+          committedCommandId: CommandIdType,
+          failureCode: AssignWorkBindingFailureCode,
+        ) =>
           Effect.gen(function* () {
             if (dependencies.bindingAttention === undefined) {
               return yield* Effect.fail<AgentActionError>(
@@ -725,7 +756,7 @@ export const assignWorkHandler = (
                 executionId: execution.executionId,
                 targetWorkspaceId: execution.workspaceId,
                 logicalActionId,
-                committedCommandId: prior.receipt.commandId,
+                committedCommandId,
                 failureCode,
                 firstDetectedAt: yield* dependencies.clock.now(),
               }),
@@ -737,7 +768,7 @@ export const assignWorkHandler = (
                     boundary: "AH10AfterAssignWorkBindingAttentionCommit",
                     executionId: execution.executionId,
                     logicalActionId,
-                    committedCommandId: prior.receipt.commandId,
+                    committedCommandId,
                   }) ?? Promise.resolve(),
               );
             }
@@ -751,6 +782,30 @@ export const assignWorkHandler = (
               actionOperationalFailure("AssignWork.bindingAttention"),
             ),
           );
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "assign-work-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          commandType: "AssignWork",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          onCommittedDecodeFailure: (commandId) =>
+            block(commandId, "ReceiptMismatch"),
+          operation: "AssignWork.priorReceipt",
+          errorOperation: "AssignWork",
+          lookupOperation: "AssignWork.receiptLookup",
+          identityErrorMessage:
+            "prior Command receipt belongs to another Project",
+        });
+        if (prior._tag !== "Committed") {
+          return yield* Effect.fail(
+            actionOperationalFailure("AssignWork.receiptFirst")(
+              "authorizer observed a prior Committed receipt which receipt-first lookup could not reproduce",
+            ),
+          );
+        }
         if (
           dependencies.bindings === undefined ||
           dependencies.works === undefined ||
@@ -778,12 +833,15 @@ export const assignWorkHandler = (
               ),
             ),
           );
-        if (rows === null) return yield* block("MalformedBinding");
-        if (rows.length > 1) return yield* block("DuplicateBinding");
+        if (rows === null)
+          return yield* block(prior.receipt.commandId, "MalformedBinding");
+        if (rows.length > 1)
+          return yield* block(prior.receipt.commandId, "DuplicateBinding");
         const binding = rows[0];
-        if (binding === undefined) return yield* block("LegacyUnbound");
+        if (binding === undefined)
+          return yield* block(prior.receipt.commandId, "LegacyUnbound");
         if (binding.commandId !== prior.receipt.commandId) {
-          return yield* block("SourceActionMismatch");
+          return yield* block(prior.receipt.commandId, "SourceActionMismatch");
         }
         const exact = yield* dependencies.tx
           .transact(
@@ -794,7 +852,8 @@ export const assignWorkHandler = (
               Effect.succeed(Option.none<AssignWorkTargetBinding>()),
             ),
           );
-        if (Option.isNone(exact)) return yield* block("MalformedBinding");
+        if (Option.isNone(exact))
+          return yield* block(prior.receipt.commandId, "MalformedBinding");
         const validation = yield* validateAssignWorkReceiptBinding({
           binding,
           prior: prior.receipt,
@@ -809,7 +868,8 @@ export const assignWorkHandler = (
           grants: dependencies.grants,
           approvals: dependencies.approvals,
         });
-        if (validation !== null) return yield* block(validation);
+        if (validation !== null)
+          return yield* block(prior.receipt.commandId, validation);
         return {
           _tag: "Observation" as const,
           source: "Runtime" as const,
@@ -909,6 +969,8 @@ export const assignWorkHandler = (
           namespace: "assign-work-command",
           occurrence,
           commandReceipts: dependencies.commandReceipts,
+          commandType: "AssignWork",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "AssignWork.priorReceipt",
@@ -1155,6 +1217,8 @@ export const acceptResultHandler = (
           namespace: "accept-child-result-command",
           occurrence,
           commandReceipts: dependencies.commandReceipts,
+          commandType: "AcceptWorkOutcome",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "AcceptResult.priorReceipt",
@@ -1498,6 +1562,8 @@ const sendMessageHandler = (
           namespace: "send-message-command",
           occurrence,
           commandReceipts: dependencies.commandReceipts,
+          commandType: "SendMessage",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "SendMessage.priorReceipt",
@@ -1820,6 +1886,8 @@ export const selectCurrentWorkHandler = (
           occurrence,
           legacyCommandId: legacySelectCurrentWorkCommandId(episode.decisionId),
           commandReceipts: dependencies.commandReceipts,
+          commandType: "SelectCurrentWork",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "SelectCurrentWork.priorReceipt",
@@ -2223,6 +2291,8 @@ const declareDependencyHandler = (
           namespace: "declare-dependency-command",
           occurrence,
           commandReceipts: dependencies.commandReceipts,
+          commandType: "DeclareDependency",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "DeclareDependency.priorReceipt",
@@ -2426,6 +2496,8 @@ export const produceDeliverableHandler = (
           namespace: "produce-deliverable-command",
           occurrence,
           commandReceipts: dependencies.commandReceipts,
+          commandType: "ProduceDeliverable",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "ProduceDeliverable.priorReceipt",
@@ -2949,6 +3021,9 @@ export const makeSingleWorkspaceControlActionHandlers = (
       acceptResultHandler({
         placement,
         gateway: dependencies.gateway,
+        ...(dependencies.commandHandlerRegistry === undefined
+          ? {}
+          : { commandHandlerRegistry: dependencies.commandHandlerRegistry }),
         ...(dependencies.commandReceipts === undefined
           ? {}
           : { commandReceipts: dependencies.commandReceipts }),
@@ -3016,6 +3091,7 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
   SingleWorkspaceControlActionHandlers,
   never,
   | CommandGateway
+  | CommandHandlerRegistry
   | CommandStore
   | DependencyRepository
   | AcceptanceRepository
@@ -3041,6 +3117,7 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
     SingleWorkspaceControlActionHandlers,
     Effect.gen(function* () {
       const gateway = yield* CommandGateway;
+      const commandHandlerRegistry = yield* CommandHandlerRegistry;
       const commandReceipts = yield* CommandStore;
       const dependencyRecords = yield* DependencyRepository;
       const acceptances = yield* AcceptanceRepository;
@@ -3078,6 +3155,7 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
       return SingleWorkspaceControlActionHandlers.of(
         makeSingleWorkspaceControlActionHandlers({
           gateway,
+          commandHandlerRegistry,
           commandReceipts,
           dependencyRecords,
           acceptances,

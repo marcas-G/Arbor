@@ -680,7 +680,7 @@ export const buildSingleWorkspaceLayer = (
                   config.assignWorkAuthorizedBeforeCommandProbe,
               }),
         }),
-    Layer.mergeAll(repos, infra, gateway, workspacePlacement),
+    Layer.mergeAll(repos, infra, gateway, registry, workspacePlacement),
   );
   const controlRegistry = Layer.provide(
     Layer.unwrap(

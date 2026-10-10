@@ -578,6 +578,9 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
     "non-root-parent",
     "attention-before",
     "attention-after",
+    "corrupt-result-before",
+    "corrupt-result-after",
+    "wrong-shape-result",
   ] as const)(
     "takes over direct-child AssignWork after gen0 %s its command boundary",
     async (rawCrashSide) => {
@@ -595,11 +598,23 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         | "grant-revoked-after-commit"
         | "non-root-parent"
         | "attention-before"
-        | "attention-after";
+        | "attention-after"
+        | "corrupt-result-before"
+        | "corrupt-result-after"
+        | "wrong-shape-result";
       const marker = `AH10-direct-child-${crypto.randomUUID().slice(0, 8)}`;
       const childName = `child-${marker}`;
       const siblingName = `sibling-${crypto.randomUUID().slice(0, 8)}`;
       const nonRootParent = crashSide === "non-root-parent";
+      const corruptResult =
+        crashSide === "corrupt-result-before" ||
+        crashSide === "corrupt-result-after" ||
+        crashSide === "wrong-shape-result";
+      const attentionBefore =
+        crashSide === "attention-before" ||
+        crashSide === "corrupt-result-before";
+      const attentionAfter =
+        crashSide === "attention-after" || crashSide === "corrupt-result-after";
       const parentName = `parent-${marker}`;
       const sourceObjective = `Assign a bounded outcome to ${childName}.`;
       const targetObjective = `Direct-child Work for ${marker}.`;
@@ -1158,7 +1173,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             crashSide === "grant-revoked-after-commit" ||
             crashSide === "non-root-parent" ||
             crashSide === "attention-before" ||
-            crashSide === "attention-after"
+            crashSide === "attention-after" ||
+            corruptResult
               ? "1"
               : "0",
           ARBOR_AH10_PAUSE_AFTER_CONTROL_KIND: "assign_work",
@@ -1305,6 +1321,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       ).toHaveLength(0);
 
       let priorCommittedCommandId: string | undefined;
+      let corruptedResultJson: string | undefined;
       if (
         crashSide === "committed" ||
         crashSide === "corrupt-sibling" ||
@@ -1315,7 +1332,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         crashSide === "grant-revoked-after-commit" ||
         crashSide === "non-root-parent" ||
         crashSide === "attention-before" ||
-        crashSide === "attention-after"
+        crashSide === "attention-after" ||
+        corruptResult
       ) {
         releaseGate(fixture, "old", "action-intent");
         if (crashSide === "approval-committed") {
@@ -1478,6 +1496,36 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             readRows(recoveryDatabaseFile).assignWorkTargetBindings[0]
               ?.target_workspace_id,
           ).toBe(siblingWorkspaceId);
+        } else if (corruptResult) {
+          const commandId = priorCommittedCommandId;
+          if (commandId === undefined) {
+            throw new Error("Committed AssignWork receipt has no CommandId");
+          }
+          const rawCorruptResult =
+            crashSide === "wrong-shape-result"
+              ? JSON.stringify({ private_marker: marker })
+              : `{"private_marker_${marker}":`;
+          corruptedResultJson = rawCorruptResult;
+          const corruptDb = new DatabaseSync(recoveryDatabaseFile);
+          try {
+            const changed = corruptDb
+              .prepare(
+                "UPDATE commands SET result_json = ? WHERE command_id = ? AND resolution = 'Committed'",
+              )
+              .run(rawCorruptResult, commandId);
+            expect(Number(changed.changes)).toBe(1);
+            expect(
+              (
+                corruptDb
+                  .prepare(
+                    "SELECT result_json FROM commands WHERE command_id = ?",
+                  )
+                  .get(commandId) as { result_json: string }
+              ).result_json,
+            ).toBe(rawCorruptResult);
+          } finally {
+            corruptDb.close();
+          }
         } else if (crashSide === "legacy-unbound") {
           removeBindingForLegacyFixture(
             recoveryDatabaseFile,
@@ -1668,11 +1716,11 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
           ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
           ARBOR_AH10_PAUSE_AFTER_ASSIGN_WORK_AUTHORIZED: "0",
-          ...(crashSide === "attention-before" ||
-          crashSide === "attention-after"
+          ...(attentionBefore || attentionAfter
             ? {
-                ARBOR_AH10_BINDING_ATTENTION_BOUNDARY:
-                  crashSide === "attention-before" ? "before" : "after",
+                ARBOR_AH10_BINDING_ATTENTION_BOUNDARY: attentionBefore
+                  ? "before"
+                  : "after",
               }
             : {}),
         },
@@ -1734,12 +1782,11 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       expect(assignWorkCalls).toHaveLength(1);
 
       let resultDaemon = newDaemon;
-      if (crashSide === "attention-before" || crashSide === "attention-after") {
+      if (attentionBefore || attentionAfter) {
         releaseGate(fixture, "new", "action-intent");
-        const expectedBoundary =
-          crashSide === "attention-before"
-            ? "AH10BeforeAssignWorkBindingAttentionCommit"
-            : "AH10AfterAssignWorkBindingAttentionCommit";
+        const expectedBoundary = attentionBefore
+          ? "AH10BeforeAssignWorkBindingAttentionCommit"
+          : "AH10AfterAssignWorkBindingAttentionCommit";
         const attentionBoundary = await waitForPublic(
           async () =>
             events.find(
@@ -1757,7 +1804,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           throw new Error(`missing ${expectedBoundary} probe`);
         }
         const atBoundary = readRows(recoveryDatabaseFile);
-        const expectedFactCount = crashSide === "attention-after" ? 1 : 0;
+        const expectedFactCount = attentionAfter ? 1 : 0;
         expect(atBoundary.bindingAttentionFacts).toHaveLength(
           expectedFactCount,
         );
@@ -1901,6 +1948,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         crashSide !== "non-root-parent" &&
         crashSide !== "attention-before" &&
         crashSide !== "attention-after" &&
+        !corruptResult &&
         crashSide !== "binding-before"
       ) {
         await fixture.crash();
@@ -1924,7 +1972,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             crashSide === "legacy-unbound" ||
             crashSide === "legacy-p32-upgrade" ||
             crashSide === "attention-before" ||
-            crashSide === "attention-after"
+            crashSide === "attention-after" ||
+            corruptResult
           ) {
             return (
               rows.bindingAttentionFacts.length === 1 &&
@@ -2022,7 +2071,9 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           return false;
         }
       });
-      expect(committed, JSON.stringify(committed)).toHaveLength(1);
+      expect(committed, JSON.stringify(committed)).toHaveLength(
+        corruptResult ? 0 : 1,
+      );
       const highestObservedGeneration = Math.max(
         newLease.fencingGeneration ?? 0,
         ...completed.leases
@@ -2054,7 +2105,22 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       expect(
         actionReceipts.filter((command) => command.resolution === "Committed"),
       ).toHaveLength(1);
-      expect(actionReceipts).toContainEqual(committed[0]);
+      if (corruptResult) {
+        expect(actionReceipts).toHaveLength(1);
+        expect(actionReceipts[0]).toMatchObject({
+          command_id: priorCommittedCommandId,
+          resolution: "Committed",
+          result_json: corruptedResultJson,
+        });
+        expect(JSON.stringify(completed.bindingAttentionFacts)).not.toContain(
+          marker,
+        );
+        expect(JSON.stringify(completed.bindingAttentionEvents)).not.toContain(
+          marker,
+        );
+      } else {
+        expect(actionReceipts).toContainEqual(committed[0]);
+      }
       if (oldRejectedCommandId.length > 0) {
         expect(actionReceiptIds.has(oldRejectedCommandId)).toBe(true);
         const rejectedReceipt = actionReceipts.find(
@@ -2077,13 +2143,15 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         crashSide === "non-root-parent"
       ) {
         expect(committed[0]?.command_id).toBe(priorCommittedCommandId);
+      } else if (corruptResult) {
+        expect(actionReceipts[0]?.command_id).toBe(priorCommittedCommandId);
       } else if (crashSide === "binding-before") {
         expect(committed[0]?.command_id).not.toBe(priorCommittedCommandId);
       } else {
         expect(committed[0]?.command_id).not.toBe(oldRejectedCommandId);
       }
       expect(assignedEvents[0]?.caused_by_command_id).toBe(
-        committed[0]?.command_id,
+        corruptResult ? priorCommittedCommandId : committed[0]?.command_id,
       );
       expect(fencedReceipts(completed)).toHaveLength(
         crashSide === "before"
@@ -2114,7 +2182,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             crashSide === "legacy-unbound" ||
             crashSide === "legacy-p32-upgrade" ||
             crashSide === "attention-before" ||
-            crashSide === "attention-after"
+            crashSide === "attention-after" ||
+            corruptResult
               ? "Pending"
               : "Applied",
           observation_source_ref:
@@ -2122,7 +2191,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             crashSide === "legacy-unbound" ||
             crashSide === "legacy-p32-upgrade" ||
             crashSide === "attention-before" ||
-            crashSide === "attention-after"
+            crashSide === "attention-after" ||
+            corruptResult
               ? null
               : expect.any(String),
         }),
@@ -2175,7 +2245,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         crashSide === "legacy-unbound" ||
         crashSide === "legacy-p32-upgrade" ||
         crashSide === "attention-before" ||
-        crashSide === "attention-after"
+        crashSide === "attention-after" ||
+        corruptResult
       ) {
         expect(observation).toHaveLength(0);
         expect(completed.bindingAttentionFacts).toHaveLength(1);

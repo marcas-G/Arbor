@@ -50,6 +50,10 @@ const workspaceId = parse(WorkspaceId)(
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const principal = parse(Principal)("worker:ah10");
+const commandHandlerRegistry = {
+  lookup: (commandType: string) =>
+    Option.some({ commandType, schemaVersion: "1" } as never),
+} as never;
 
 type FakeReceipt =
   | {
@@ -219,6 +223,7 @@ const makeSelectCurrentWorkHandler = (
 ) =>
   selectCurrentWorkHandler({
     gateway,
+    commandHandlerRegistry,
     commandReceipts: receiptLookup(receipts),
     decisions: {
       findById: () => Effect.succeed(Option.some(state.request)),
@@ -445,6 +450,7 @@ const actionHandlerFromRegistry = (
   const blobBytes = new Map<string, Uint8Array>();
   const handlers = makeSingleWorkspaceControlActionHandlers({
     gateway,
+    commandHandlerRegistry,
     commandReceipts: receiptLookup(receipts),
     tx: transaction,
     clock: {
@@ -556,6 +562,7 @@ const makeHandler = (
 ) =>
   assignWorkHandler({
     gateway,
+    commandHandlerRegistry,
     commandReceipts: receiptLookup(receipts),
     workspaces: {
       findById: () =>
@@ -686,6 +693,8 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
             result: {
               workId: parse(WorkId)(payload.workId),
               workspaceId,
+              lifecycle: "Open",
+              revision: 0,
             },
           },
         };
@@ -746,7 +755,12 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
         const committed = {
           resolution: {
             _tag: "Committed" as const,
-            result: { workId: payload.workId, workspaceId },
+            result: {
+              workId: payload.workId,
+              workspaceId,
+              lifecycle: "Open",
+              revision: 0,
+            },
           },
         };
         receipts.set(commandId, committed);
@@ -877,6 +891,7 @@ describe("AH10 takeover for another canonical control action", () => {
     } as unknown as CommandGatewayService;
     const handler = produceDeliverableHandler({
       gateway,
+      commandHandlerRegistry,
       tx: transaction,
       commandReceipts: receiptLookup(receipts),
       clock: {
@@ -941,6 +956,7 @@ describe("AH10 takeover for another canonical control action", () => {
     } as unknown as CommandGatewayService;
     const handler = produceDeliverableHandler({
       gateway,
+      commandHandlerRegistry,
       tx: transaction,
       commandReceipts: receiptLookup(receipts),
       clock: {
@@ -1246,7 +1262,6 @@ describe("AH10 receipt-first AcceptResult takeover", () => {
       1,
       acceptInvocation,
     );
-
     expect(currentOwner._tag).toBe("Accepted");
     expect(calls.map((call) => call.generation)).toEqual([0, 1]);
     expect(calls[0]?.commandId).not.toBe(calls[1]?.commandId);
@@ -1453,7 +1468,14 @@ describe("AH10 receipt-first SendMessage takeover", () => {
         const committed = {
           resolution: {
             _tag: "Committed" as const,
-            result: { messageId: payload.messageId, admitted: true },
+            result: {
+              messageId: payload.messageId,
+              admitted: true,
+              promotion: {
+                closesCorrelation: null,
+                triggersReevaluation: false,
+              },
+            },
           },
         };
         receipts.set(commandId, committed);
@@ -1513,7 +1535,14 @@ describe("AH10 receipt-first SendMessage takeover", () => {
         const committed = {
           resolution: {
             _tag: "Committed" as const,
-            result: { messageId: payload.messageId, admitted: true },
+            result: {
+              messageId: payload.messageId,
+              admitted: true,
+              promotion: {
+                closesCorrelation: null,
+                triggersReevaluation: false,
+              },
+            },
           },
         };
         receipts.set(commandId, committed);
@@ -1587,7 +1616,14 @@ describe("AH10 receipt-first SendMessage takeover", () => {
         const committed = {
           resolution: {
             _tag: "Committed" as const,
-            result: { messageId: payload.messageId, admitted: true },
+            result: {
+              messageId: payload.messageId,
+              admitted: true,
+              promotion: {
+                closesCorrelation: null,
+                triggersReevaluation: false,
+              },
+            },
           },
         };
         receipts.set(commandId, committed);
@@ -1628,7 +1664,14 @@ describe("AH10 receipt-first SendMessage takeover", () => {
         const committed = {
           resolution: {
             _tag: "Committed" as const,
-            result: { messageId: payload.messageId, admitted: true },
+            result: {
+              messageId: payload.messageId,
+              admitted: true,
+              promotion: {
+                closesCorrelation: null,
+                triggersReevaluation: false,
+              },
+            },
           },
         };
         receipts.set(commandId, committed);
