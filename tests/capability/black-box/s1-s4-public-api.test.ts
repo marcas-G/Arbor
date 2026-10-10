@@ -468,10 +468,8 @@ const command = async (
   commandType: string,
   payload: unknown,
 ) => {
-  const response = await post(
-    "/commands",
-    commandEnvelope(projectId, commandType, payload),
-  );
+  const envelope = commandEnvelope(projectId, commandType, payload);
+  const response = await post("/commands", envelope);
   expect((response.body as { resolution?: string }).resolution).toBe(
     "Committed",
   );
@@ -1087,7 +1085,8 @@ describe("S1-S4 public-process black-box", () => {
           status: string;
         } | null>("current-work", { workspaceId: rootWorkspaceId }),
       (value) =>
-        value?.workId === assignedWork.workId &&
+        value !== null &&
+        value.workId === assignedWork.workId &&
         value.revision === assignedWork.revision + 1,
     );
     expect(revisedWork?.status).toBe("Open");
