@@ -9,6 +9,14 @@ rebuildable read-model row below are accepted under proposal SHA-256
 `75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`.
 Existing Attention sources and transport/repair boundaries are unchanged.
 
+**Accepted storage correction (DID v1.38):** Deliver uses the separate P10
+`deliver_replay_attention_rows` marker relation FK-bound to the immutable P9
+fact. The AssignWork-specific projection table, its source/failure/FK contract
+and existing rows are unchanged. This storage correction is accepted under
+SHA-256 `040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`;
+runtime implementation remains separately gated, and migration 0037 depends
+on P36 integration.
+
 ## 1. Fact sources → severity → target (frozen mapping)
 
 | Source | Fact carrier | Severity (SD §12.3) | Target |
@@ -18,7 +26,7 @@ Existing Attention sources and transport/repair boundaries are unchanged.
 | Runtime Safety Envelope | safety-stop record / Interrupted(RuntimeSafetyStop) settlement fact | Attention | execution workspace |
 | Recovery escalation | ReconciliationEscalated event | Action Required (unreconcilable side effect — SD §12.3 explicit) | execution workspace |
 | AssignWork binding failure | `AssignWorkTargetBindingEscalated` + P9 `assign_work_binding_attention_facts` row | Action Required | affected Execution's owning/Parent Workspace (`executions.workspace_id`) |
-| Deliver replay failure | `DeliverReplayEscalated` + P9 `deliver_replay_attention_facts` row | Action Required | Deliver Execution Workspace (`targetWorkspaceId=executions.workspace_id`) |
+| Deliver replay failure | P10 `deliver_replay_attention_rows` marker joined to P9 `deliver_replay_attention_facts`; P9 emits `DeliverReplayEscalated` | Action Required | Deliver Execution Workspace (`targetWorkspaceId=executions.workspace_id`) |
 | Workspace resource activation pending | P1 `WorkspaceResourceActivationIntent(Pending)` + `WorkspaceResourceActivationChanged` v1 | Action Required | the exact root Workspace in the intent |
 | Verifier orphan | Open verification × settled executions (derived condition, P8 `02` §3) | Attention | owner workspace |
 | Vacant producer (P7-GAP-01) | derived: dependencies(Unsatisfied ∧ WorkspaceBound) × works(无 Open Work ∧ ¬Retired) | Attention | consumer workspace (view label `WaitingOnVacantProducer`) |
@@ -57,13 +65,34 @@ not projected. Subtree aggregation deduplicates on `attentionFactId` and
 never copies context upward. v1 has no dismiss, repair, or automatic-clear
 command for this source.
 
-The event consumer loads the P9-owned fact and applies the Attention row while
-advancing its own project/event offset in the same transaction. P10 writes
-only the read model and its offset; it never mutates the fact, canonical
-Message, Command receipt, Execution or Action. Project-scoped rebuild reads
-the P9 fact rows and reproduces the same `DeliverReplayFailure` row; it does
-not reset or reuse the P1 offset. Restart/replay preserves one Attention row
-for the immutable `attentionFactId`.
+The P10 DTO query unions this source with the existing AssignWork-specific
+source, F21 activation source and derived sources before project/workspace
+filtering, severity counts and subtree aggregation. Its Deliver branch is:
+
+```sql
+SELECT
+  'DeliverReplayFailure' AS source,
+  'ActionRequired' AS severity,
+  fact.target_workspace_id AS target_workspace_id,
+  fact.attention_fact_id AS dedup_key,
+  fact.failure_code AS failure_code,
+  fact.first_detected_at AS occurred_at
+FROM deliver_replay_attention_rows AS projected
+JOIN deliver_replay_attention_facts AS fact
+  ON fact.attention_fact_id = projected.attention_fact_id
+WHERE fact.project_id = ?;
+```
+
+The marker's primary key is `attentionFactId`, so one P9 fact yields at most
+one Deliver row; the foreign key forbids a marker without its source fact.
+Target, failure code and time are read from the P9 fact and are not copied
+into the P10 marker. The event consumer inserts the marker and advances its
+own project/event offset in one transaction. P10 writes only its projection
+and offset; it never mutates the P9 fact, canonical Message, Command receipt,
+Execution or Action. An authorized full rebuild seeds markers from the P9 fact
+snapshot and rewinds the P1 Attention offset atomically as specified in `04`;
+retained-event replay is idempotent. Restart/replay preserves one Attention
+row for the immutable `attentionFactId`.
 
 ### FT-DG-01 OPEN-3 Workspace resource activation
 

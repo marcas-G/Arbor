@@ -3,6 +3,17 @@
 **Authority:** DID v1.13 §11 P10 (G1–G8), §5.4, §6.1/§6.2 (L6), §10.4/§10.4.1 (projection-runtime; api-contracts), §7.2 (ProjectionQueryPort); SD v1.3 §7.4/§7.5, §10.1 D, §12 全章, §13.9/§13.10, §14 No.37/38/40/45/56; S1/S2/S4; P1 `05`/`06`, P2 `01`/`06`, P3 `04`, P4 `07`, P6 `00`/`04`/`05`, P7 `00`/`05`, P8 `00`/`05`, P9 `00`/`05`; `planning/gaps/P7-GAP-01.md`; GQ1–GQ7 裁决（2026-09-22，本轮会话）.
 **Status:** FROZEN — DID v1.17 D-1 additive read-model successor adopted (TR-WPU-B/C/D; no P10 phase reopen).
 
+## AH10 Deliver P10 storage addendum (DID v1.38)
+
+Accepted addendum SHA-256:
+`040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
+Deliver replay Attention uses the source-specific marker/FK and P9-fact query
+union in `02`, with atomic fact-snapshot/marker-seed/P1-offset rebuild in `04`
+and qualification in `07`. Existing AssignWork projection storage and rows,
+F21 rebuild-refusal semantics, and accepted AH7/P36 rules are unchanged.
+Proposed migration 0037 requires P36 integration; it is not independently
+implementable/releasable.
+
 ## FT-DG-02 additive contract amendment (2026-10-08)
 
 The accepted `work-detail` read-only View is added to P10's authoritative
@@ -45,12 +56,12 @@ ordered/list consumers remain compatible by ignoring additive fields.
 | Doc | Owns |
 |---|---|
 | `01-view-inventory.md` | Authoritative view list (SD full inventory), per-view derive inputs & query shapes, WorkspaceStatus exhaustive label map |
-| `02-attention-readmodel.md` | Attention source→severity→target→bubbling→dedup→read-model contract; accepted `DeliverReplayFailure`, FT-DG-01 OPEN-3, and GAP-01 view |
+| `02-attention-readmodel.md` | Attention source→severity→target→bubbling→dedup→read-model contract; accepted Deliver-specific marker/FK/query union, FT-DG-01 OPEN-3, and GAP-01 view |
 | `03-effectivefacts-freshness.md` | EffectiveFacts shared projection (def/materialization/query); freshness watermark/lag/barrier contract |
-| `04-rebuild-atscale.md` | Business-projection at-scale rebuild (GQ2 handover from P9): checkpoints, projection-side retention (P1 `04` horizon untouched), orchestration, query correctness |
+| `04-rebuild-atscale.md` | Business-projection at-scale rebuild (GQ2 handover from P9): checkpoints, projection-side retention (P1 `04` horizon untouched), orchestration, Deliver fact-snapshot/marker/offset atomicity and query correctness |
 | `05-surface-actions-transport.md` | ProjectionQueryPort/api-contracts DTOs; Query(P14 consume)/Steer/Stop/Governance-Change surfaces; P12 transport boundary |
 | `06-humanintervention-fact.md` | HumanInterventionApplied payload, emission points, WorkSteered back-fill (inherited evolution) |
-| `07-acceptance.md` | Stories + mechanical assertions, including DeliverReplayFailure source/fact projection, rebuild and restart |
+| `07-acceptance.md` | Stories + mechanical assertions, including DeliverReplayFailure source-specific projection, migration ordering, rebuild and restart |
 
 ## Implementation baseline (from scope extraction)
 

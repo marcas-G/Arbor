@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.37\
+**Version:** 1.38\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.36\
+**Supersedes:** v1.37\
 **Date:** 2026-10-11\
 **Depends on:** `Arbor System Design Specification v1.13`
 
@@ -154,9 +154,11 @@ generation fence and legacy replay**
   DeliverMessage receipt-absent exact-proof exception. P9 `07` owns the
   immutable `DeliverReplayEscalated` fact/event, exact legacy/receipt mismatch
   priority, and RecoveryBlocked behavior. P10 `02`/`07` own the
-  ActionRequired projection and qualification. Migration 0034 adds only the
-  P9 failure-fact row; MessageSent EventVersion remains 1 and the generic
-  SendMessage receipt schema remains unchanged.
+  ActionRequired projection and qualification. The v1.37 migration statement
+  is superseded by the accepted v1.38 storage correction below: Deliver fact
+  and source-specific Attention marker are assigned to proposed migration
+  0037 after P36 integration. MessageSent EventVersion remains 1 and the
+  generic SendMessage receipt schema remains unchanged.
 - Accepted proposal SHA-256:
   `75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`.
   The user delegated governance authority; independent proposal review
@@ -168,6 +170,34 @@ generation fence and legacy replay**
   strict Command/receipt unit seam, P9/P10 failure/rebuild behavior, and real
   two-daemon crash/restart matrix remain implementation qualifications before
   AH10 can close.
+
+**Accepted owner addendum (DID v1.37 → v1.38): AH10 Deliver P10 source storage and migration order**
+
+- Deliver replay failure remains a P9 immutable fact/event projected by P10 as
+  `DeliverReplayFailure`; its visible fields, summary, target and
+  `attentionFactId` identity are unchanged. P10 now owns a separate
+  `deliver_replay_attention_rows` marker relation FK-bound to the P9 fact;
+  AssignWork's existing source/failure/FK projection table and rows remain
+  unchanged.
+- The accepted/planned migration prefix is 0034 P10 Attention, 0035 F21,
+  0036 AH7/P36, then proposed 0037 Deliver P9 fact + P10 marker. The integrated
+  tree currently ends at P35/user_version 35. P36 is accepted and L1-qualified
+  in the isolated AH7 tree but is not yet integrated. P37 is conditional on
+  P36 integration and MUST NOT be implemented, installed or released
+  independently; v35 upgrades must apply integrated P36 before P37.
+- P10's project/event consumer inserts the Deliver marker with its own P1
+  event offset in one transaction. Its full rebuild atomically resets P10
+  source rows, snapshots and seeds current P9 Deliver facts, and rewinds the
+  P1 offset, then replays retained events. No MessageSent/Event v1, ordinary
+  SendMessage, P1/P2/P7 behavior, F21 refusal semantics, or P36 contract
+  changes.
+- Accepted addendum SHA-256:
+  `040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`;
+  separate acceptance record:
+  `planning/results/AH10-deliver-p10-storage-addendum-governance-decision.md`.
+  This is a design landing only; runtime implementation remains separately
+  gated. Owner hashes are recorded in
+  `planning/results/AH10-deliver-p10-storage-addendum-design-landing.md`.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -2445,6 +2475,11 @@ accepted registry/codec scope update before reachability. A descriptor cannot
 construct or accept AH10 `AssignWorkCommandEvidence` or
 `AssignWorkControlAuthorizationEvidence`.
 
+The accepted AH10 Deliver P10 storage amendment adds only the source-specific
+P10 projection relation described in §9.3. It does not alter the
+CommandGateway receipt tuple/order, external wire codec, DeliverMessage
+Handler schema, `MessageSent(v1)`, or ordinary `SendMessage` receipt semantics.
+
 All codecs reject unknown fields at every object depth and enforce the owning
 payload's primitive, finite/integer/range, enum/tag, array-member, and branded
 ID rules. Shared Domain `ID_SCHEMAS` may be reused after the runtime boundary
@@ -3503,6 +3538,10 @@ HealthPort
 Clock
 IdGenerator
 ```
+
+The accepted AH10 Deliver P10 marker is a source-specific P10 projection
+relation over P9-owned facts, not a new generic port. Existing transaction,
+event-consumer, projection-query and rebuild boundaries remain in force.
 
 `InputPromotionService` 是 Application/Runtime orchestration service，不是
 infrastructure Port。它使用 `TransactionPort + SessionRepository +
@@ -4691,6 +4730,7 @@ provider_attempts
 model_context_manifests
 tool_invocations
 deliver_replay_attention_facts
+deliver_replay_attention_rows
 ```
 
 Migration `0033_assign_work_target_bindings` (`PRAGMA user_version = 33`) is
@@ -4807,10 +4847,25 @@ the first detected failure code is retained. Event and row are atomic. No
 resolution command, dismissal state, automatic deletion, legacy backfill, or
 schema downgrade is added. Older binaries refuse `user_version > 32`.
 
-Migration `0034_deliver_replay_attention_facts` (`PRAGMA user_version = 34`)
+The accepted/planned migration prefix is append-only: `0034` is the accepted
+P10 Attention materialization, `0035` is the accepted F21 resource activation
+Attention source, `0036` is the accepted AH7/P36 schema, and `0037` is the
+proposed AH10 Deliver P9 fact plus P10 projection marker. The integrated AH10
+and mainline trees currently register through P35/user_version 35. P36's owner
+design is accepted and its migration has isolated L1 evidence, but P36 is not
+yet integrated; see the AH7 acceptance/landing and L1 records cited by the
+v1.38 governance decision. Migration `0037` is conditional on integrating
+`0036` and MUST NOT be implemented, installed, or released independently. An
+existing v35 deployment must first receive integrated P36, then P37. The
+target upgrade paths are v33→34→35→36→37, v35→36→37, and v36→37 after P36
+integration. No body, checksum, numbering, or contract of migrations 0034,
+0035, or 0036 is changed by this amendment.
+
+Migration `0037_ah10_deliver_replay_attention_rows` (`PRAGMA user_version = 37`)
 is additive and forward-only. It creates no fact rows for historical
-Deliver/Message events; the P9 recovery route creates a row only when the
-accepted exact-proof boundary detects incomplete/conflicting effect evidence.
+Deliver/Message events; P9 creates a source fact only when the accepted exact-
+proof boundary detects incomplete/conflicting effect evidence. It adds the
+P10 source-specific marker relation after the P9 fact relation:
 
 ```sql
 CREATE TABLE deliver_replay_attention_facts (
@@ -4835,6 +4890,11 @@ CREATE TABLE deliver_replay_attention_facts (
 
 CREATE INDEX deliver_replay_attention_target
   ON deliver_replay_attention_facts(project_id, target_workspace_id, first_detected_at);
+
+CREATE TABLE deliver_replay_attention_rows (
+  attention_fact_id TEXT PRIMARY KEY
+    REFERENCES deliver_replay_attention_facts(attention_fact_id)
+);
 ```
 
 There is deliberately no Message/Event/Command FK from `message_id` or
@@ -4842,8 +4902,13 @@ There is deliberately no Message/Event/Command FK from `message_id` or
 canonical rows are missing. Its ID is `att_` plus lowercase SHA-256 hex of
 UTF-8 `JSON.stringify({version:1,executionId,logicalActionId,messageId})`.
 No canonical message repair, receipt synthesis, clear/dismiss state, or
-legacy backfill is performed by the migration. Binaries whose schema ceiling
-is v33 refuse `user_version > 33`.
+legacy backfill is performed by the migration. The marker primary key is the
+projection dedup identity and its FK requires a P9-owned fact. The marker does
+not duplicate target, failure code, timestamp, or summary; P10 joins the fact
+for display and can seed the marker after journal pruning. Ordinary
+`MessageSent(v1)` and `SendMessage` remain unchanged. Binaries whose schema
+ceiling is v33 refuse `user_version > 33`; P37 must follow the ordered P36
+upgrade and no P37-only v35 release is valid.
 
 ## 9.4 Relational vs JSON Rule
 
@@ -6040,6 +6105,7 @@ normalizedRegion
 | Deliverable | ProduceDeliverable | DeliverableProduced | DeliverableRepository | application | source Work revision fixed |
 | Message | SendMessage | MessageSent(v1) | MessageStore | application / communication | Message is durable communication, not a canonical Work/Deliverable mutation; External denied |
 | Deliver handover | DeliverMessage/1 | MessageSent(v1) | MessageStore + InboxProjection | Application/communication | existing Deliverable only; Gateway envelope supplies P1 generation fence/receipt; MessageSent is sole ChildDelivered wake source |
+| Deliver replay Attention | — (projection) | DeliverReplayEscalated(v1) | P9 `deliver_replay_attention_facts` + P10 `deliver_replay_attention_rows` | P10 projection consumer | one marker per P9 fact; P9 fact remains source; no canonical mutation |
 | Verification | Start / RecordEvidence / Conclude | VerificationStarted / VerificationConcluded | VerificationRepository | verification + application | verdict immutable; version-bound |
 | Acceptance | AcceptWorkOutcome | WorkOutcomeAccepted | AcceptanceRepository | application | target revision + Verification fixed |
 | Permission | Grant / Revoke | PermissionChanged | PermissionGrantRepository | application | cannot exceed policy/ownership ceiling |
