@@ -63,8 +63,11 @@ const executionContext: CommandSubmissionContext = {
   fencingGeneration: parse(LeaseGeneration)(1),
 };
 
-const envelope = (payload: unknown): GatewayEnvelope<unknown> => ({
-  commandType: "TestCommand",
+const envelope = (
+  payload: unknown,
+  commandType = "TestCommand",
+): GatewayEnvelope<unknown> => ({
+  commandType,
   commandId,
   projectId,
   actor,
@@ -72,9 +75,9 @@ const envelope = (payload: unknown): GatewayEnvelope<unknown> => ({
   payload,
 });
 
-const fpFor = (payload: unknown) =>
+const fpFor = (payload: unknown, commandType = "TestCommand") =>
   semanticRequestFingerprint({
-    commandType: "TestCommand",
+    commandType,
     projectId,
     actor,
     schemaVersion: "1",
@@ -89,11 +92,12 @@ type CreateProjectAuthority = Extract<
 const authorityFor = (
   payload: unknown,
   overrides: Partial<CreateProjectAuthority> = {},
+  commandType = "TestCommand",
 ): VerifiedCommandAuthority => ({
   _tag: "CreateProjectAuthority",
   principal,
   commandId,
-  semanticRequestFingerprint: fpFor(payload),
+  semanticRequestFingerprint: fpFor(payload, commandType),
   projectId,
   ...overrides,
 });
@@ -235,8 +239,9 @@ const handler = (
     tag: "CreateProjectAuthority",
     targetMatches: () => true,
   },
+  commandType = "TestCommand",
 ): CommandHandler<unknown, { readonly ok: boolean }> => ({
-  commandType: "TestCommand",
+  commandType,
   schemaVersion: "1",
   authority,
   stopAdmission: { _tag: "Unclassified" },
@@ -279,6 +284,118 @@ describe("semantic request fingerprint", () => {
     expect(semanticRequestFingerprint(base)).not.toBe(
       semanticRequestFingerprint({ ...base, actor: "user:other" }),
     );
+  });
+});
+
+describe("typed internal command input validation", () => {
+  it.each<CommandSubmissionContext>([
+    { _tag: "System", principal, causationRef: "test" },
+    executionContext,
+    { _tag: "RecoveryController", principal, causationRef: "test" },
+  ])(
+    "rejects malformed internal payloads before Gateway effects (%s)",
+    async (context) => {
+      let transactionCalls = 0;
+      let fenceCalls = 0;
+      let handlerCalls = 0;
+      const transaction = Layer.succeed(TransactionPort, {
+        transact: (body) =>
+          Effect.suspend(() => {
+            transactionCalls++;
+            return Effect.provideService(body, TransactionScope, {
+              session: { id: "tx" },
+            });
+          }),
+      });
+      const app = buildApp(
+        [
+          handler(
+            () => ok({ result: { ok: true }, events: [] }),
+            () => handlerCalls++,
+            undefined,
+            "SubmitHumanMessage",
+          ),
+        ],
+        Layer.succeed(FenceStopCheck, {
+          check: () =>
+            Effect.sync(() => {
+              fenceCalls++;
+              return "Pass";
+            }),
+        }),
+        transaction,
+      );
+      const malformed = {
+        messageId: undefined,
+        targetWorkspaceId: "ws_018f1f62-7b3c-7abc-8def-0123456789ab",
+        bodyRef: "body-ref",
+      };
+
+      const result = await run(
+        Effect.match(
+          Effect.gen(function* () {
+            const gateway = yield* CommandGateway;
+            return yield* gateway.execute(
+              envelope(malformed, "SubmitHumanMessage"),
+              context,
+              authorityFor(malformed, {}, "SubmitHumanMessage"),
+            );
+          }),
+          {
+            onFailure: (error) => ({ _tag: "Left" as const, error }),
+            onSuccess: (value) => ({ _tag: "Right" as const, value }),
+          },
+        ),
+        app.app,
+      );
+
+      expect(result._tag).toBe("Left");
+      if (result._tag === "Left") {
+        expect(result.error).toMatchObject({
+          _tag: "InternalCommandContractDefect",
+          commandType: "SubmitHumanMessage",
+          issues: [{ path: ["messageId"], rule: "type" }],
+        });
+      }
+      expect(transactionCalls).toBe(0);
+      expect(fenceCalls).toBe(0);
+      expect(handlerCalls).toBe(0);
+      expect(app.state.rows.size).toBe(0);
+      expect(app.state.attempts).toEqual([]);
+      expect(app.state.appended).toEqual([]);
+    },
+  );
+
+  it("continues a valid typed internal payload through the Gateway", async () => {
+    let handlerCalls = 0;
+    const payload = {
+      messageId: "msg_018f1f62-7b3c-7abc-8def-0123456789ab",
+      targetWorkspaceId: "ws_018f1f62-7b3c-7abc-8def-0123456789ab",
+      bodyRef: "body-ref",
+    };
+    const app = buildApp([
+      handler(
+        () => ok({ result: { ok: true }, events: [] }),
+        () => handlerCalls++,
+        undefined,
+        "SubmitHumanMessage",
+      ),
+    ]);
+
+    const result = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway.execute(
+          envelope(payload, "SubmitHumanMessage"),
+          { _tag: "System", principal, causationRef: "test" },
+          authorityFor(payload, {}, "SubmitHumanMessage"),
+        );
+      }),
+      app.app,
+    );
+
+    expect(result.resolution._tag).toBe("Committed");
+    expect(handlerCalls).toBe(1);
   });
 });
 

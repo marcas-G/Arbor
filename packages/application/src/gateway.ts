@@ -21,6 +21,7 @@ import {
 } from "./authority.js";
 import { CommandHandlerRegistry } from "./command-handler-registry.js";
 import { decodeCommandReceipt, makeCommandReceipt } from "./command-receipt.js";
+import { CommandInputContractRegistry } from "./external-command-codec.js";
 import { FenceStopCheck } from "./fence-stop.js";
 import {
   FINGERPRINT_ALGORITHM_VERSION,
@@ -94,6 +95,23 @@ export const makeCommandGatewayLive = (
             );
           }
           const handler = handlerOption.value;
+
+          if (context._tag !== "External") {
+            const inputContract = CommandInputContractRegistry.lookup(
+              envelope.commandType,
+            );
+            if (inputContract !== undefined) {
+              const validated = inputContract.decodePayload(envelope.payload);
+              if (!validated.ok) {
+                return yield* Effect.fail({
+                  _tag: "InternalCommandContractDefect" as const,
+                  commandType: envelope.commandType,
+                  issues: validated.issues,
+                });
+              }
+            }
+          }
+
           const schemaVersion = handler.schemaVersion;
           const fingerprint = semanticRequestFingerprint({
             commandType: envelope.commandType,
