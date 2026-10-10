@@ -55,6 +55,42 @@ Committed AssignWork without a binding—leaves the Action Pending and stops
 recovery before Observation, new Command, canonical repair, or Provider
 request. Existing FencingRejected takeover is unchanged.
 
+#### Stored Committed receipt decode failure (F23)
+
+For this direct-child proof gate only, recovery selects the `AssignWork` v1
+receipt decoder from the trusted action route/Handler registry after it has
+validated the prior CommandId and Project identity. A syntax-invalid raw
+`result_json` (A1) is internally classified as
+`PersistenceCorruption<"CommandStore">` but is also proof-incomplete Committed
+effect evidence: recovery records the existing `ReceiptMismatch` failure fact
+and `AssignWorkTargetBindingEscalated` event using the fact store's existing
+atomic transaction, then returns `AgentActionRecoveryBlocked`. It must not
+return this decoder failure as a generic `AgentActionOperationalFailure` that
+becomes `ControlActionHandlerRejected`, nor expose the raw JSON/parser text,
+invoke the old/new handler, issue a Gateway Command, write/repair a receipt,
+or produce Observation/Applied.
+
+A JSON-parseable result with a wrong v1 shape (A2) remains the same existing
+`ReceiptMismatch` proof-failure path; a structurally valid result with a
+binding/ref/Work/provenance/authority/event mismatch (B) retains its existing
+specific `failure_code`. These are not new failure codes, events, schema
+versions, SQL changes or P10 sources. The P9 fact keeps the existing
+`(executionId, logicalActionId, committedCommandId)` identity, atomic fact/event
+commit, deduplication and before/after-commit crash behavior. If that fact
+transaction fails, recovery remains fail-closed: no action advancement,
+Observation or new Command, and the failure is not represented as a committed
+fact.
+
+This disposition applies only when an old Committed receipt is part of the
+direct-child AssignWork proof. Other prior-receipt consumers use their trusted
+action-route CommandType and Handler schema decoder; corruption there remains
+a non-retryable operational failure and does not create an AssignWork binding
+fact. `AgentActionRecoveryBlocked` carries only execution/action identity and
+does not carry the corruption cause. This contract does not assert an existing
+observable logger/diagnostic sink; any operator-visible diagnostic requires a
+separate port decision. P10's existing AH10 projection is unchanged, and no
+generic CommandStore corruption Attention source is added.
+
 The P9-owned `assign_work_binding_attention_facts` row records one immutable
 failure for `(executionId, logicalActionId, committedCommandId)`. Its
 `attention_fact_id` is `att_` plus lowercase hex of the versioned SHA-256

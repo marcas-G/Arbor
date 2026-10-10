@@ -164,10 +164,50 @@ fingerprint-algorithm mismatch takes the existing `IdempotencyConflict`
 branch even when the row's raw result/error JSON is malformed: the mismatched
 branch does not parse, validate, or disclose that JSON. Only an exact tuple
 match reaches the existing Application receipt decoder. This amendment fixes
-that ordering and does not define the exact-tuple decoder's result/error shape
-rules, corruption failure type, or transport mapping; those remain subject to
-the separately governed receipt-decoding contract and its accepted
-fail-closed requirement.
+that ordering. The exact-tuple decoder's result/error schemas, corruption
+failure type, and non-retryable Problem mapping are fixed in §3A; this clause
+does not change the comparator or allow prior-receipt consumers outside the
+Gateway to claim a candidate tuple comparison.
+
+### 3A. Exact-tuple receipt result and rejection decoding
+
+After an exact tuple match, the Application selects a strict runtime decoder
+by the exact registered `(commandType, CommandHandler.schemaVersion)` pair.
+The descriptor is server-owned and must exist for every reachable registered
+command/version. The command-specific Committed result schema is owned by that
+Command's contract (P1 or its owning P-phase); it is not inferred from a
+DomainEvent schema, the incoming payload codec, the stored row, or TypeScript
+casts. The TerminalRejected value is checked against the exhaustive current
+Application `CommandRejection` union and every member's required fields. Both
+decoders validate JSON syntax, object/union shape, owned fields, branded IDs,
+primitive/range/enum values and nested result values; unexpected members and
+missing required members fail closed.
+
+The current 26 registered command handlers all use schema version `"1"`.
+That current registration set must have a corresponding result decoder plus
+the shared rejection decoder. A missing descriptor, unsupported schema
+version, invalid JSON, wrong shape, missing required resolution JSON, or
+unknown rejection tag is a non-command stored-state corruption, never a
+`TerminalRejected` or model-correctable rejection. Use the existing
+`PersistenceCorruption<"CommandStore">` boundary with a fixed safe reason;
+never include raw JSON, parser exception text, row contents or caller data.
+
+The decoder implements the persisted JSON representation of the owning result
+contract. In particular, `ConcludeVerificationResult.conclusionReason` is a
+TypeScript field typed `ConclusionReason | undefined`; `JSON.stringify`
+omits it when undefined. The v1 decoder therefore accepts the field as absent
+and reconstructs `conclusionReason: undefined`, while validating any present
+value against `ConclusionReason`. This is serialization round-tripping of the
+existing DTO, not a new domain outcome. Unknown fields remain invalid.
+
+This failure changes no receipt resolution and does not repair or rewrite the
+row. It is not `CommandRejection`, does not insert a Command/attempt/Event or
+invoke a handler, and is not a retryable model rejection. Gateway propagation
+and the same-transaction rollback/no-attempt behavior are owned by
+`03-transaction-model.md` §3.1/§3.3; external safe Problem mapping is owned by
+DID §4.1B / the existing transport adapter. Historical tuple/schema mismatch
+continues to take precedence and is never sent to a historical decoder unless
+that exact schema version is explicitly registered.
 
 For External requests, the preceding Composition Resolver is a visibility
 gate, not a replacement for this in-transaction order: after Resolver success,

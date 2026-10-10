@@ -70,6 +70,60 @@ receipts have no fabricated binding and are handled by the same fail-closed
 exception. See P9 `07` for durable fact/recovery order and P10 `02`/`07` for
 projection/qualification.
 
+### Prior-generation receipt decoding
+
+The Application receipt-first consumers used by generation takeover (for
+example AssignWork, AcceptResult, SendMessage, SelectCurrentWork,
+DeclareDependency, and ProduceDeliverable) read the prior immutable CommandId
+directly; they are not Gateway submissions and do not compare a candidate
+fingerprint/schema/algorithm tuple. Before decoding raw receipt JSON, the
+consumer validates the prior row's exact CommandId and expected ProjectId.
+It then selects the strict Committed result or TerminalRejected decoder using
+the trusted command type of that runtime action route and the corresponding
+Handler schema version from the Composition-owned handler/decoder registry.
+Stored `schemaVersion` is checked against that trusted descriptor and cannot
+choose an arbitrary decoder. An unsupported historical schema fails closed;
+there is no fallback to another command's schema or an inferred legacy shape.
+
+Current action-route binding (schema versions are read from the registered
+Handler, currently `"1"` for each row):
+
+| AgentAction route | Registered CommandType |
+|---|---|
+| AssignWork | `AssignWork` |
+| AcceptResult | `AcceptWorkOutcome` |
+| SendMessage | `SendMessage` |
+| SelectCurrentWork | `SelectCurrentWork` |
+| DeclareDependency | `DeclareDependency` |
+| ProduceDeliverable | `ProduceDeliverable` |
+
+For a non-direct-child prior receipt, invalid JSON/shape is a
+`PersistenceCorruption<"CommandStore">` operational failure, not
+`AgentActionRejected`; it produces no successful Observation, no replayed
+handler/Gateway Command, and no row repair. It does not create the special P9
+AssignWork binding fact.
+
+For the direct-child AssignWork exception, a Committed receipt is a component
+of the proof-complete effect binding, not sufficient evidence by itself.
+Identity is checked before decode; every proof component must be verified
+before Applied/Observation. A raw JSON syntax failure retains an internal
+`PersistenceCorruption<"CommandStore">` classification but is routed through
+the existing P9 `ReceiptMismatch` fact/event transaction and finishes as
+`AgentActionRecoveryBlocked`, not `AgentActionOperationalFailure` or
+`ControlActionHandlerRejected`. A JSON-parseable wrong result shape (A2) and
+structurally valid receipt/binding/effect mismatch (B) remain the existing
+P9 `ReceiptMismatch` or other exact failure-code path. None may replay the
+handler, create a new Command, repair the old row, append an Observation, or
+mark the Action Applied. P9's fact/event transaction, dedup identity and
+before/after-commit crash convergence remain unchanged.
+
+`AgentActionRecoveryBlocked` carries only `executionId` and `logicalActionId`;
+it does not carry the decoder cause. The P9 fact stores only its fixed
+`failureCode` and identity, never raw receipt JSON or parser text. No existing
+observable logging/diagnostic sink is implied by this contract. A separately
+operator-visible diagnostic requires an independently governed port and is
+not part of P1 `07`.
+
 ## 3. Settlement
 
 `SettlementProposed` persists one `LogicalSettlementId` and settlement hash.

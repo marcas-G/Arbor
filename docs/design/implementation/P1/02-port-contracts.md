@@ -144,6 +144,15 @@ typed P1 `CommandReceipt`. This port contract does not define exact-tuple
 result/error shape rules or decoding failures; it adds no corruption error
 type, failure mapping, or receipt repair behavior.
 
+The exact-tuple Application decoder and its `PersistenceCorruption<"CommandStore">`
+classification are defined in `01-command-contracts.md` §3A. The Port remains
+raw and version-neutral: it does not select a command result schema, convert
+`result_json` / `terminal_error_json` to a typed value, or make a corruption
+disposition. Gateway/Recovery call sites own the trusted command type and
+schema selection after the appropriate identity/tuple checks; adapter JSON
+parsing before those boundaries is forbidden. This clarification changes no
+`StoredCommandResolution` field, SQL, DDL, migration, or transaction owner.
+
 `CommandStore` allocates the next free `attempt_no` for a `command_id`
 (serialized by `BEGIN IMMEDIATE`); callers do not supply it.
 
