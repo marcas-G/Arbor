@@ -7,6 +7,39 @@
   gap: var(--arbor-space-3);
 }
 
+.arbor-project-resource-selection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--arbor-space-2);
+  margin: 0;
+  padding: var(--arbor-space-3);
+  border: 1px solid var(--arbor-line);
+  border-radius: var(--arbor-radius);
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+
+.arbor-project-resource-selection legend {
+  padding: 0 var(--arbor-space-1);
+  color: var(--arbor-ink);
+  font-weight: 600;
+}
+
+.arbor-project-resource-selection label {
+  display: flex;
+  align-items: center;
+  gap: var(--arbor-space-2);
+}
+
+.arbor-project-resource-selection input[type="radio"] {
+  accent-color: var(--arbor-leaf);
+}
+
+.arbor-project-resource-selection p {
+  margin: 0;
+  color: var(--arbor-muted);
+}
+
 .arbor-conversation-composer {
   gap: var(--arbor-space-2);
 }
