@@ -189,35 +189,68 @@ interface ApprovedWorkSeed {
   };
 }
 
+interface RootSeedProviderDecision {
+  readonly index: number;
+  readonly request: CapturedProviderCall;
+  readonly selector: {
+    readonly availableTools: ReadonlyArray<string>;
+    readonly hasAssignWork: boolean;
+    readonly hasClaimCompletion: boolean;
+    readonly hasMarker: boolean;
+    readonly hasWorkAssigned: boolean;
+  };
+  readonly response: ScriptedProviderResponse;
+}
+
+interface RootSeedDiagnostics {
+  readonly providerDecisions: ReadonlyArray<RootSeedProviderDecision>;
+  readonly responsesSent: ReadonlyArray<{
+    readonly index: number;
+    readonly request: CapturedProviderCall;
+  }>;
+  readonly daemonStdout: ReadonlyArray<string>;
+}
+
 const approvedRootWorkReply =
   (
     marker: string,
     work: ApprovedWorkSeed,
-  ): ((call: CapturedProviderCall) => ScriptedProviderResponse) =>
-  (call) => {
+    onDecision?: (decision: RootSeedProviderDecision) => void,
+  ): ((
+    call: CapturedProviderCall,
+    index: number,
+  ) => ScriptedProviderResponse) =>
+  (call, index) => {
     const available = new Set(
       call.tools
         .map((tool) => tool.function?.name)
         .filter((name): name is string => name !== undefined),
     );
     const context = JSON.stringify(call.messages);
-    if (
-      available.has("assign_work") &&
-      !available.has("claim_completion") &&
-      context.includes(marker)
-    ) {
-      return context.includes("WorkAssigned(")
-        ? { _tag: "Text", text: `AH19 Work seed approved: ${marker}` }
-        : {
-            _tag: "ToolCall",
-            name: "assign_work",
-            arguments: {
-              ...work,
-              reason: "AH19 public Work seed under RootConversation",
-            },
-          };
-    }
-    return { _tag: "HttpError", status: 500 };
+    const selector = {
+      availableTools: [...available].sort(),
+      hasAssignWork: available.has("assign_work"),
+      hasClaimCompletion: available.has("claim_completion"),
+      hasMarker: context.includes(marker),
+      hasWorkAssigned: context.includes("WorkAssigned("),
+    };
+    const response: ScriptedProviderResponse =
+      selector.hasAssignWork &&
+      !selector.hasClaimCompletion &&
+      selector.hasMarker
+        ? selector.hasWorkAssigned
+          ? { _tag: "Text", text: `AH19 Work seed approved: ${marker}` }
+          : {
+              _tag: "ToolCall",
+              name: "assign_work",
+              arguments: {
+                ...work,
+                reason: "AH19 public Work seed under RootConversation",
+              },
+            }
+        : { _tag: "HttpError", status: 500 };
+    onDecision?.({ index, request: call, selector, response });
+    return response;
   };
 
 const seedRootWorkViaPublicApproval = async (
@@ -228,28 +261,40 @@ const seedRootWorkViaPublicApproval = async (
   work: ApprovedWorkSeed,
   daemonEnvironment: Readonly<Record<string, string>>,
   heldRequest?: HeldProviderRequest,
+  diagnostics?: RootSeedDiagnostics,
 ): Promise<string> => {
   await submitHumanMessage(client, project, `请创建并开始目标 ${marker}。`);
   const approval = await waitForApproval(client, project, marker).catch(
     (error: unknown) => {
-      const providerSummary = fixture.providerCalls.map((call) => ({
-        tools: call.tools
-          .map((tool) => tool.function?.name)
-          .filter((name): name is string => name !== undefined),
-        messages: call.messages.slice(-4),
-        hasMarker: JSON.stringify(call.messages).includes(marker),
-      }));
+      let databaseSnapshot: unknown;
+      try {
+        databaseSnapshot = readRootSeedDiagnosticSnapshot(
+          fixture.databaseFile,
+          project,
+        );
+      } catch (snapshotError) {
+        databaseSnapshot = {
+          snapshotError:
+            snapshotError instanceof Error
+              ? (snapshotError.stack ?? snapshotError.message)
+              : String(snapshotError),
+        };
+      }
       throw new Error(
-        `${error instanceof Error ? error.message : String(error)}; marker=${marker}; provider=${JSON.stringify(providerSummary)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        `${error instanceof Error ? error.message : String(error)}; marker=${marker}; providerCalls=${JSON.stringify(fixture.providerCalls)}; providerDecisions=${JSON.stringify(diagnostics?.providerDecisions ?? [])}; responsesSent=${JSON.stringify(diagnostics?.responsesSent ?? [])}; dbSnapshot=${JSON.stringify(databaseSnapshot)}; daemonStdout=${JSON.stringify(diagnostics?.daemonStdout ?? [])}; daemonStderr=${JSON.stringify(fixture.daemonErrors)}`,
       );
     },
   );
-  await client.command(project.projectId, "ResolveControlApproval", {
-    approvalId: approval.approvalId,
-    expectedRevision: approval.revision,
-    decision: "Approve",
-    reason: "AH19 checkpoint Work seed",
-  });
+  const approvalResolution = await client.command(
+    project.projectId,
+    "ResolveControlApproval",
+    {
+      approvalId: approval.approvalId,
+      expectedRevision: approval.revision,
+      decision: "Approve",
+      reason: "AH19 checkpoint Work seed",
+    },
+  );
   const current = await waitForPublic(
     () =>
       client.view<{
@@ -271,8 +316,22 @@ const seedRootWorkViaPublicApproval = async (
         limit: 30,
       }),
     ]);
+    let databaseSnapshot: unknown;
+    try {
+      databaseSnapshot = readRootSeedDiagnosticSnapshot(
+        fixture.databaseFile,
+        project,
+      );
+    } catch (snapshotError) {
+      databaseSnapshot = {
+        snapshotError:
+          snapshotError instanceof Error
+            ? (snapshotError.stack ?? snapshotError.message)
+            : String(snapshotError),
+      };
+    }
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)}; resolved public state=${JSON.stringify({ currentWork, inbox, tree, transcript })}; daemon=${fixture.daemonErrors.join(" | ")}`,
+      `${error instanceof Error ? error.message : String(error)}; marker=${marker}; approval=${JSON.stringify(approval)}; approvalResolution=${JSON.stringify(approvalResolution)}; providerCalls=${JSON.stringify(fixture.providerCalls)}; providerDecisions=${JSON.stringify(diagnostics?.providerDecisions ?? [])}; responsesSent=${JSON.stringify(diagnostics?.responsesSent ?? [])}; resolved public state=${JSON.stringify({ currentWork, inbox, tree, transcript })}; dbSnapshot=${JSON.stringify(databaseSnapshot)}; daemonStdout=${JSON.stringify(diagnostics?.daemonStdout ?? [])}; daemonStderr=${JSON.stringify(fixture.daemonErrors)}`,
     );
   });
   if (current?.workId === undefined) {
@@ -560,6 +619,189 @@ const readSnapshot = (
           input.executionId,
           input.executionId,
         ) as Ah19Snapshot["responseJobs"],
+    };
+  } finally {
+    db.close();
+  }
+};
+
+/** One coherent, read-only snapshot used only if AH19's public Root Work seed
+ * times out. It distinguishes provider/approval admission from later Work,
+ * lease, Inbox, and durable workflow-signal progress. */
+const readRootSeedDiagnosticSnapshot = (
+  databaseFile: string,
+  project: Awaited<ReturnType<typeof createFunctionalProject>>,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    db.exec("BEGIN DEFERRED");
+    const projectId = project.projectId;
+    const workspaceId = project.rootWorkspaceId;
+    const sessionId = project.rootSessionId;
+    return {
+      project: db
+        .prepare(
+          `SELECT project_id, root_workspace_id, lifecycle, revision
+             FROM projects WHERE project_id = ?`,
+        )
+        .get(projectId),
+      workspace: db
+        .prepare(
+          `SELECT workspace_id, parent_workspace_id, current_work_id,
+                  primary_session_id, lifecycle, revision
+             FROM workspaces WHERE workspace_id = ?`,
+        )
+        .get(workspaceId),
+      works: db
+        .prepare(
+          `SELECT work_id, workspace_id, objective, lifecycle, revision,
+                  created_at, updated_at
+             FROM works WHERE project_id = ? ORDER BY created_at, work_id`,
+        )
+        .all(projectId),
+      executions: db
+        .prepare(
+          `SELECT execution_id, episode_kind, episode_ref, workspace_id,
+                  session_id, admitted_at, settled_at, settlement_kind
+             FROM executions WHERE project_id = ?
+            ORDER BY admitted_at, execution_id`,
+        )
+        .all(projectId),
+      agentExecutionState: db
+        .prepare(
+          `SELECT state.execution_id, state.episode_json, state.wake_reason,
+                  state.current_mode, state.turn_no, state.updated_at
+             FROM agent_execution_state AS state
+             JOIN executions AS execution
+               ON execution.execution_id = state.execution_id
+            WHERE execution.project_id = ?
+            ORDER BY execution.admitted_at, state.execution_id`,
+        )
+        .all(projectId),
+      leases: db
+        .prepare(
+          `SELECT lease.execution_id, lease.worker_id,
+                  lease.generation, lease.expires_at
+             FROM execution_leases AS lease
+             JOIN executions AS execution
+               ON execution.execution_id = lease.execution_id
+            WHERE execution.project_id = ?
+            ORDER BY lease.execution_id`,
+        )
+        .all(projectId),
+      workWaits: db
+        .prepare(
+          `SELECT wait.work_id, wait.wait_mode, wait.conditions_json,
+                  wait.registered_at, wait.updated_at
+             FROM work_waits AS wait
+             JOIN works AS work ON work.work_id = wait.work_id
+            WHERE work.project_id = ? ORDER BY wait.registered_at, wait.work_id`,
+        )
+        .all(projectId),
+      schedulerTimers: db
+        .prepare(
+          `SELECT timer_id, workspace_id, work_id, kind, fire_at, created_at
+             FROM scheduler_timers WHERE workspace_id = ?
+            ORDER BY fire_at, timer_id`,
+        )
+        .all(workspaceId),
+      approvals: db
+        .prepare(
+          `SELECT approval_id, route_kind, project_id, workspace_id,
+                  execution_id, stable_action_id, state, revision,
+                  requested_at, expires_at, decided_at, consumed_at,
+                  binding_proven, source_state
+             FROM action_approvals WHERE project_id = ?
+            ORDER BY requested_at, approval_id`,
+        )
+        .all(projectId),
+      commandReceipts: db
+        .prepare(
+          `SELECT command_id, resolution, result_json, terminal_error_json,
+                  created_at, settled_at
+             FROM commands WHERE project_id = ?
+            ORDER BY created_at DESC, command_id DESC LIMIT 40`,
+        )
+        .all(projectId),
+      commandAttempts: db
+        .prepare(
+          `SELECT attempt.command_id, attempt.attempt_no, attempt.outcome,
+                  attempt.failure_kind, attempt.started_at,
+                  attempt.settled_at
+             FROM command_attempts AS attempt
+             JOIN commands AS command
+               ON command.command_id = attempt.command_id
+            WHERE command.project_id = ?
+            ORDER BY command.created_at DESC, attempt.attempt_no DESC
+            LIMIT 40`,
+        )
+        .all(projectId),
+      inbox: db
+        .prepare(
+          `SELECT workspace_id, entry_key, kind, summary, correlation_id,
+                  admitted_at, consumed_at
+             FROM inbox_entries WHERE workspace_id = ?
+            ORDER BY admitted_at, entry_key`,
+        )
+        .all(workspaceId),
+      consumerOffsets: db
+        .prepare(
+          `SELECT consumer_id, project_id, last_sequence, updated_at
+             FROM consumer_offsets WHERE project_id = ?
+            ORDER BY consumer_id`,
+        )
+        .all(projectId),
+      workflowSignals: {
+        consumerOffset: db
+          .prepare(
+            `SELECT consumer_id, project_id, last_sequence, updated_at
+               FROM consumer_offsets
+              WHERE consumer_id = 'workflow-signals' AND project_id = ?`,
+          )
+          .get(projectId),
+        events: db
+          .prepare(
+            `SELECT event_id, sequence, event_type, aggregate_ref,
+                    caused_by_command_id, correlation_ref, occurred_at,
+                    payload_json
+               FROM domain_events
+              WHERE project_id = ? AND event_type IN (
+                'DependencyDeclared', 'DependencySatisfied',
+                'VerificationConcluded', 'MessageSent', 'ExecutionSettled'
+              )
+              ORDER BY sequence DESC LIMIT 40`,
+          )
+          .all(projectId),
+      },
+      latestDomainEvents: db
+        .prepare(
+          `SELECT event_id, sequence, event_type, aggregate_ref,
+                  caused_by_command_id, correlation_ref, occurred_at,
+                  payload_json
+             FROM domain_events WHERE project_id = ?
+            ORDER BY sequence DESC LIMIT 40`,
+        )
+        .all(projectId),
+      eventSequence: db
+        .prepare(
+          `SELECT project_id, last_sequence FROM project_event_sequences
+            WHERE project_id = ?`,
+        )
+        .get(projectId),
+      session: db
+        .prepare(
+          `SELECT session_id, binding_kind, workspace_id, execution_id,
+                  context_epoch, created_at
+             FROM sessions WHERE session_id = ?`,
+        )
+        .get(sessionId),
+      sessionEntries: db
+        .prepare(
+          `SELECT sequence, entry_kind, item_type, source_ref, payload_json
+             FROM session_entries WHERE session_id = ?
+            ORDER BY sequence DESC LIMIT 40`,
+        )
+        .all(sessionId),
     };
   } finally {
     db.close();
@@ -1302,9 +1544,15 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
   );
   const heldWorkRequest = holdFirstWorkProviderRequest(workSeed);
   const childOutput: string[] = [];
+  const providerDecisions: RootSeedProviderDecision[] = [];
+  const responsesSent: Array<RootSeedDiagnostics["responsesSent"][number]> = [];
   const fixture = await startProductionFixture({
-    reply: approvedRootWorkReply(workMarker, workSeed),
+    reply: approvedRootWorkReply(workMarker, workSeed, (decision) =>
+      providerDecisions.push(decision),
+    ),
     beforeResponse: heldWorkRequest.beforeResponse,
+    onResponseSent: (call, index) =>
+      responsesSent.push({ index, request: call }),
     daemonEnvironment: { ARBOR_AH19_REPORT_URL: reportUrl },
     onDaemonStdout: (line) => {
       childOutput.push(line);
@@ -1337,6 +1585,11 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
       ARBOR_AH19_REPORT_URL: reportUrl,
     },
     heldWorkRequest,
+    {
+      providerDecisions,
+      responsesSent,
+      daemonStdout: childOutput,
+    },
   );
   for (let index = 0; index < 10; index += 1) {
     const observed = await waitForPublic(
