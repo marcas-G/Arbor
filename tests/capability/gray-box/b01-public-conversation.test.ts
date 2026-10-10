@@ -30,7 +30,7 @@ import {
 } from "../support/public-chat.js";
 
 const TOKEN = "tok_capability_b01";
-const HUMAN = parse(Principal)("user:capability-test");
+const HUMAN = parse(Principal)("user:local");
 const modelRef = "capability-recording-model";
 const assistantResponse = "CAPABILITY_B01_FORMAL_ASSISTANT_RESPONSE";
 
@@ -128,7 +128,7 @@ describe("B01 L2 — public Human Input to durable transcript", () => {
                   commandType: "CreateProject",
                   commandId: newCapabilityId("cmd"),
                   projectId: project.projectId,
-                  actor: "user:capability-test",
+                  actor: "user:local",
                   issuedAt: new Date().toISOString(),
                   payload: publicProjectPayload(project),
                 });
@@ -142,7 +142,7 @@ describe("B01 L2 — public Human Input to durable transcript", () => {
                   commandType: "SubmitHumanMessage",
                   commandId,
                   projectId: project.projectId,
-                  actor: "user:capability-test",
+                  actor: "user:local",
                   issuedAt: new Date().toISOString(),
                   payload: {
                     messageId,

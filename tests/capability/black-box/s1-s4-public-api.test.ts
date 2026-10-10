@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
 const WEB_DIST = resolve("apps/web/dist");
 const TOKEN = "scenario-black-box-token";
-const CATALOG_TOKEN = "scenario-local-catalog-token";
+const LOCAL_READ_TOKEN = "scenario-local-read-token";
 const HUMAN = "user:scenario-black-box";
 
 const uuidV7 = () => {
@@ -409,7 +409,7 @@ const startDaemon = () => {
       ARBOR_HTTP_PORT: String(httpPort),
       ARBOR_HTTP_HOST: "127.0.0.1",
       ARBOR_WEB_DIST: WEB_DIST,
-      ARBOR_AUTH_TOKENS: `${TOKEN}=${HUMAN},${CATALOG_TOKEN}=user:local`,
+      ARBOR_AUTH_TOKENS: `${TOKEN}=${HUMAN},${LOCAL_READ_TOKEN}=user:local`,
       ARBOR_PROJECT_ROOT: join(directory, "workspace"),
       ARBOR_MODEL_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
       ARBOR_MODEL_NAME: "scenario-black-box",
@@ -435,6 +435,11 @@ const headers = () => ({
   authorization: `Bearer ${TOKEN}`,
 });
 
+const localViewHeaders = () => ({
+  "content-type": "application/json",
+  authorization: `Bearer ${LOCAL_READ_TOKEN}`,
+});
+
 const post = async (path: string, body: unknown) => {
   const response = await fetch(`${base}${path}`, {
     method: "POST",
@@ -456,7 +461,7 @@ const readProjectProfileSelection = async () => {
   const response = await fetch(`${base}/project-resources`, {
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${CATALOG_TOKEN}`,
+      authorization: `Bearer ${LOCAL_READ_TOKEN}`,
     },
   });
   const result = (await response.json()) as {
@@ -539,8 +544,22 @@ const expectExternalOriginDenied = async (
 };
 
 const view = async <A>(name: string, request: unknown): Promise<A> => {
-  const response = await post(`/views/${name}`, request);
-  return (response.body as { value: A }).value;
+  const response = await fetch(`${base}/views/${name}`, {
+    method: "POST",
+    headers: localViewHeaders(),
+    body: JSON.stringify(request),
+  });
+  const text = await response.text();
+  if (text.length === 0) {
+    throw new Error(`/views/${name} ${response.status}: empty response body`);
+  }
+  const payload = JSON.parse(text) as Record<string, unknown>;
+  if (!response.ok) {
+    throw new Error(
+      `/views/${name} ${response.status}: ${JSON.stringify(payload)}`,
+    );
+  }
+  return (payload.body as { value: A }).value;
 };
 
 interface DaemonReadinessProbe {
@@ -551,7 +570,11 @@ interface DaemonReadinessProbe {
 
 const readDaemonReadiness = async (): Promise<DaemonReadinessProbe> => {
   try {
-    const response = await fetch(`${base}/views/readiness-probe`);
+    const response = await fetch(`${base}/views/readiness-probe`, {
+      method: "POST",
+      headers: localViewHeaders(),
+      body: "{}",
+    });
     let problemCode: string | null = null;
     try {
       const payload = (await response.json()) as {
