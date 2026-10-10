@@ -1,9 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Principal, parse } from "@arbor/domain";
 import { Effect } from "effect";
 import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { AuthenticatorService } from "../src/transport/auth.js";
 import {
   type ConversationProgressHub,
   createConversationProgressHub,
@@ -71,7 +73,7 @@ const fakeSubmission = {
     Effect.succeed({
       ok: true as const,
       status: 200,
-      body: { commandId: "cmd_1", resolution: "Committed" },
+      body: { commandId: "cmd_1", resolution: "Committed" as const },
     }),
 };
 
@@ -212,6 +214,89 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     expect(payload.ok).toBe(true);
     expect(payload.status).toBe(200);
     ws.close();
+  });
+
+  it("does not query or retain a socket closed while first-view authentication is pending", async () => {
+    let authenticationCalls = 0;
+    let viewCalls = 0;
+    let signalAuthenticationStarted!: () => void;
+    let resolveAuthentication!: (principal: Principal) => void;
+    const authenticationStarted = new Promise<void>((resolve) => {
+      signalAuthenticationStarted = resolve;
+    });
+    const authenticationResult = new Promise<Principal>((resolve) => {
+      resolveAuthentication = resolve;
+    });
+    const delayedAuthenticator: AuthenticatorService = {
+      authenticate: () => {
+        authenticationCalls += 1;
+        signalAuthenticationStarted();
+        return Effect.promise(() => authenticationResult);
+      },
+    };
+    const delayedCore = makeTransportCore({
+      views: {
+        query: () => {
+          viewCalls += 1;
+          return Effect.succeed({
+            data: { rows: [] },
+            watermark: 9,
+            freshness: "Fresh" as const,
+          });
+        },
+      } as never,
+      authenticator: delayedAuthenticator,
+      submission: fakeSubmission,
+    });
+    const delayedHandle = await startWebTransport({
+      http: makeHttpShell(delayedCore),
+      webSocket: makeWebSocketShell(delayedCore),
+      authenticator: delayedAuthenticator,
+      authenticatorConfigured: true,
+      sql: fakeSql,
+      projectDirectory: { list: () => Effect.succeed([]) },
+      host: "127.0.0.1",
+      port: 0,
+      pollIntervalMs: 60_000,
+    });
+
+    try {
+      const socket = new WebSocket(
+        `ws://127.0.0.1:${String(delayedHandle.port)}/ws`,
+      );
+      await new Promise<void>((resolveOpen, rejectOpen) => {
+        socket.onopen = () => resolveOpen();
+        socket.onerror = () =>
+          rejectOpen(new Error("websocket failed to open"));
+      });
+      const closed = new Promise<void>((resolveClose) => {
+        socket.onclose = () => resolveClose();
+      });
+      const frame = JSON.stringify({
+        kind: "view",
+        token: "slow-local-token",
+        view: "attention",
+        request: { projectId: "prj_1" },
+      });
+      socket.send(frame);
+      socket.send(frame);
+      await authenticationStarted;
+      expect(authenticationCalls).toBe(1);
+      expect(viewCalls).toBe(0);
+      expect(delayedHandle.webSocketSubscriberCount()).toBe(0);
+
+      socket.close();
+      await closed;
+      resolveAuthentication(parse(Principal)("user:local"));
+      await new Promise((resolveTick) => setTimeout(resolveTick, 0));
+
+      delayedHandle.fanout.publishWatermark(10);
+      expect(viewCalls).toBe(0);
+      expect(delayedHandle.webSocketSubscriberCount()).toBe(0);
+      expect(socket.readyState).toBe(WebSocket.CLOSED);
+    } finally {
+      await delayedHandle.close();
+    }
   });
 
   it("pushes invalidation frames (view + watermark, no payload) on watermark advance", async () => {

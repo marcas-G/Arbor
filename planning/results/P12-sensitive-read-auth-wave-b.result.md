@@ -62,13 +62,30 @@ not credential or Project/Workspace values.
 
 The Wave A + Wave B pending file passes 2/2 tests.
 
+## Late-authenticator close race
+
+WebSocket admission now tracks per-connection closure and a single in-flight
+first-view authentication. Duplicate first-view frames while authentication is
+pending do not start parallel authentication/query paths. After the await, the
+server rechecks both the close state and `ws.readyState` before query or
+broadcast admission. A close callback removes the socket immediately; a late
+successful auth result cannot reinsert it. `WebTransportHandle` exposes only
+an in-process subscriber count for deterministic qualification (no network
+route).
+
+A delayed-authenticator regression in
+`apps/single-workspace/test/p13-web-transport.test.ts` sends two first-view
+frames, waits for auth to block, closes the client, then resolves auth as
+`user:local`. It asserts one auth call, zero ProjectionQuery calls, zero
+broadcast subscribers, and no post-close frame. The focused case passes 1/1.
+
 Web-client and targeted regression evidence:
 
 - `pnpm --filter @arbor/web typecheck` — PASS.
 - `pnpm --filter @arbor/web test -- ws-invalidation-query.test.tsx invalidation-channel.test.ts` — PASS, 7/7.
 - Targeted P12/P13 set (`tests/p12-transport.test.ts`,
   `tests/external-command-boundary.test.ts`, `tests/p12-acceptance.test.ts`,
-  and three single-workspace P13 transport/e2e/catalog files) — PASS, 54/54.
+  and three single-workspace P13 transport/e2e/catalog files) — PASS, 55/55.
 - Root `pnpm typecheck` — PASS.
 - Biome on all touched code/test files — PASS.
 - No full `pnpm check`, functional suite, or separate Playwright browser

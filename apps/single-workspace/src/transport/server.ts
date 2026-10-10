@@ -57,6 +57,8 @@ export interface WebTransportConfig {
 export interface WebTransportHandle {
   readonly port: number;
   readonly fanout: InvalidationFanout;
+  /** Current count of local sockets admitted to the invalidation fanout. */
+  readonly webSocketSubscriberCount: () => number;
   /** Force one watermark poll (test hook). */
   readonly pollNow: () => Promise<void>;
   readonly close: () => Promise<void>;
@@ -525,8 +527,11 @@ export const startWebTransport = async (
     }
     wss.handleUpgrade(request, socket, head, (ws) => {
       let viewAuthenticated = !config.authenticatorConfigured;
+      let connectionClosed = false;
+      let firstViewAuthenticationInFlight = false;
       if (viewAuthenticated) sockets.add(ws);
       ws.on("close", () => {
+        connectionClosed = true;
         sockets.delete(ws);
       });
       ws.on("message", (data) => {
@@ -550,9 +555,13 @@ export const startWebTransport = async (
           let response: TransportResponse<unknown>;
           if (frame.kind === "view") {
             if (!viewAuthenticated) {
+              if (firstViewAuthenticationInFlight) return;
+              firstViewAuthenticationInFlight = true;
               const authorizationFailure = await Effect.runPromise(
                 config.webSocket.authorizeViewFrame(frame),
               );
+              firstViewAuthenticationInFlight = false;
+              if (connectionClosed || ws.readyState !== ws.OPEN) return;
               if (authorizationFailure !== null) {
                 ws.close(1008, "view authentication required");
                 return;
@@ -621,6 +630,7 @@ export const startWebTransport = async (
   return {
     port,
     fanout,
+    webSocketSubscriberCount: () => sockets.size,
     pollNow: pollOnce,
     close: async () => {
       clearInterval(timer);
