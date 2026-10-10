@@ -12,6 +12,7 @@ import type { ViewId } from "@arbor/api-contracts";
 import {
   QueryClient,
   QueryClientProvider,
+  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import {
@@ -19,8 +20,11 @@ import {
   type ReactNode,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
+import { parseRoute } from "../api/router.js";
+import { fetchProjectDirectory } from "../api/transport.js";
 import { connectInvalidation } from "../data/invalidation.js";
 import { ErrorBoundary } from "../ErrorBoundary.js";
 import { SessionProvider, useSession } from "../session/SessionContext.js";
@@ -59,10 +63,73 @@ function WSInvalidationProvider({
 }) {
   const client = useQueryClient();
   const session = useSession();
+  const path = usePath();
+  const routeProjectId = parseRoute(path)?.projectId ?? null;
+  const routeSelection = useRef<string | null>(null);
+  const projectDirectory = useQuery({
+    queryKey: ["project-directory"],
+    queryFn: ({ signal }) =>
+      fetchProjectDirectory({
+        token: session.token,
+        signal,
+        onUnauthenticated: session.reportUnauthenticated,
+      }),
+    enabled:
+      session.token !== null &&
+      routeProjectId !== null &&
+      routeProjectId !== session.projectId,
+  });
   const [freshness, setFreshness] = useState<FreshnessValue>({
     state: "offline",
     lastWatermark: null,
   });
+
+  // The route is the project identity. Mirror a verified route into the
+  // Session's recent-project memory so the invalidation socket follows direct
+  // links, refreshes, and popstate navigation. ProjectDirectory is only a
+  // local existence check; page requests continue to use the URL route.
+  useEffect(() => {
+    if (path === "/" || path === "") {
+      routeSelection.current = null;
+      return;
+    }
+    if (session.token === null || routeProjectId === null) {
+      routeSelection.current = null;
+      session.setProjectId(null);
+      return;
+    }
+    if (routeSelection.current === routeProjectId) return;
+    routeSelection.current = routeProjectId;
+    if (session.projectId === routeProjectId) return;
+
+    // Disconnect any prior project's invalidation stream while the route is
+    // checked against the canonical local directory.
+    session.setProjectId(null);
+    void projectDirectory
+      .refetch()
+      .then(({ data }) => {
+        if (routeSelection.current !== routeProjectId) return;
+        const routeExists =
+          data?.ok === true &&
+          data.dto.projects.some(
+            (project) => project.projectId === routeProjectId,
+          );
+        session.setProjectId(routeExists ? routeProjectId : null);
+      })
+      .catch(() => {
+        if (routeSelection.current === routeProjectId) {
+          session.setProjectId(null);
+        }
+      });
+  }, [
+    path,
+    projectDirectory.refetch,
+    routeProjectId,
+    session.projectId,
+    session.setProjectId,
+    session.token,
+  ]);
+
   useEffect(() => {
     if (session.token === null || session.projectId === null) {
       setFreshness({ state: "offline", lastWatermark: null });
