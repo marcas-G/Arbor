@@ -1,14 +1,18 @@
 # AH7-DG-03 L4 P4 store-process qualification
 
-Status: **targeted store-process batch PASS; L4 remains OPEN**.
+Status: **test harness hardened after review; fresh process requalification
+pending; L4 remains OPEN**.
 
 The test uses a file-backed SQLite database seeded by the parent test process,
 independent Node child processes running the production SQLite
 `ToolInvocationStoreLive` and `TransactionPortLive`, and a separate read-only
 SQLite connection for assertions. Each child parks either inside the store
-transaction before COMMIT or directly after COMMIT; the parent sends SIGKILL,
-checks durable state, and launches a fresh child with the same invocation
-identity to retry or replay.
+transaction before COMMIT or directly after COMMIT. The child now holds a
+referenced keepalive timer and emits an explicit alive probe; the parent checks
+the child has no exit code/signal before sending SIGKILL, asserts `kill()` was
+accepted, and requires exit `{ code: null, signal: "SIGKILL" }`. It then checks
+durable state and launches a fresh child with the same invocation identity to
+retry or replay.
 
 ## Evidence
 
@@ -33,9 +37,14 @@ identity to retry or replay.
 - `node --check tests/functional/support/ah7-p4-store-crash-child.mjs`: PASS.
 - `pnpm exec biome check --write` on the two L4 test/helper files: PASS, no
   formatting changes required.
-- Target command:
+- The pre-hardening target run:
   `pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/agent-action-ah7-p4-store-process-crash.functional.test.ts --testTimeout 120000`
-  — **1/1 test PASS**, 19.65s total, 16.063s test time.
+  — **1/1 test PASS**, 19.65s total, 16.063s test time. Independent review
+  found that the old child pause used only an unresolved Promise, which does not
+  keep Node alive, and the test did not assert the observed kill signal. This
+  run is retained as historical evidence only; it does not yet qualify actual
+  SIGKILL. The hardened version has not been rerun because the shared host's
+  unified-candidate core check is active.
 - The first two target attempts failed before reaching a crash probe because
   fixture rows were seeded as approval suffixes `001`–`006`, while the six
   scenarios requested `101`–`106`; the child correctly rejected the missing
@@ -44,8 +53,9 @@ identity to retry or replay.
 
 ## Boundary
 
-This closes only the initial P4 store-process claim/Denied/Interrupted batch.
-It does not qualify real daemon crash/restart, approved Executable routing,
+Once the hardened target rerun passes, it will qualify only the initial P4
+store-process claim/Denied/Interrupted batch. It does not qualify real daemon
+crash/restart, approved Executable routing,
 effect admission, external effect/reconciliation, P4 settlement, or P3
 ToolResult/Action/cursor convergence. Those remain subsequent L4 rows; AH7 is
 not closed. No full suite, real dual-daemon test, or integration/main-tree
