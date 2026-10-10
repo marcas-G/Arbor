@@ -53,6 +53,7 @@ import {
   PermissionGrantRepository,
   type PermissionGrantRepositoryService,
   ProjectRepository,
+  ProjectResourceProfilePort,
   SessionRepository,
   VerificationRepository,
   type VerificationRepositoryService,
@@ -100,6 +101,9 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const projects = yield* ProjectRepository;
     const workspaces = yield* WorkspaceRepository;
     const sessions = yield* SessionRepository;
+    const projectResourceProfiles = yield* Effect.serviceOption(
+      ProjectResourceProfilePort,
+    );
     const works = yield* WorkRepository;
     const clock = yield* Effect.serviceOption(Clock);
     const executions = yield* ExecutionRepository;
@@ -129,6 +133,9 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
         workspaces,
         sessions,
         works,
+        ...(Option.isSome(projectResourceProfiles)
+          ? { projectResourceProfiles: projectResourceProfiles.value }
+          : {}),
         executions,
         ...(Option.isSome(assignWorkBindings)
           ? {

@@ -40,6 +40,7 @@ import {
   MessageStore,
   PermissionGrantRepository,
   ProjectRepository,
+  ProjectResourceProfilePort,
   SessionRepository,
   VerificationRepository,
   WorkRepository,
@@ -49,6 +50,7 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { makeProjectResourceProfilePort } from "../src/project-resource-profiles.js";
 import { SingleWorkspaceCommandHandlerRegistryLive } from "../src/registry.js";
 
 describe("external command codec registry parity", () => {
@@ -136,6 +138,10 @@ describe("external command codec registry parity", () => {
     const actualTypes = (includeControlApprovalStore: boolean) => {
       const baseServices = [
         Layer.succeed(ProjectRepository, {} as never),
+        Layer.succeed(
+          ProjectResourceProfilePort,
+          makeProjectResourceProfilePort([]),
+        ),
         Layer.succeed(WorkspaceRepository, {} as never),
         Layer.succeed(SessionRepository, {} as never),
         Layer.succeed(WorkRepository, {} as never),
@@ -222,5 +228,81 @@ describe("external command codec registry parity", () => {
     expect(registry.lookup("AdmitExecution")?.externalOriginAllowed).toBe(
       false,
     );
+  });
+
+  it("accepts only the v2 Profile/ConversationOnly resource selector for CreateProject", () => {
+    const workspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789ab";
+    const sessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789ab";
+    const base = {
+      name: "Project",
+      revision: 0,
+      projectPolicy: { delegationCeiling: 1 },
+      projectPolicyRevision: 0,
+      defaultConfiguration: {},
+      environmentRef: "local",
+      rootWorkspaceId: workspaceId,
+      primarySession: { sessionId, contextEpoch: 0 },
+      rootWorkspace: {
+        name: "root",
+        responsibilityDefinition: {
+          purpose: "Project",
+          ownedResponsibilities: [],
+          obligations: [],
+          includes: [],
+          excludes: [],
+          interfaces: [],
+        },
+        responsibilityRevision: 0,
+        agentBinding: {
+          _tag: "ResponsibilityBoundAgentBinding",
+          workspaceId,
+        },
+        workspacePolicy: { delegationCeiling: 1 },
+        workspacePolicyRevision: 0,
+        revision: 0,
+      },
+    };
+    const contract = CommandInputContractRegistry.lookup("CreateProject");
+    expect(contract).toBeDefined();
+    const profileSelection = contract?.decodePayload({
+      ...base,
+      rootWorkspace: {
+        ...base.rootWorkspace,
+        resourceSelection: {
+          _tag: "Profile",
+          resourceProfileRef: "project-root",
+          version: "v-test",
+        },
+      },
+    });
+    expect(profileSelection?.ok).toBe(true);
+    expect(
+      contract?.decodePayload({
+        ...base,
+        rootWorkspace: {
+          ...base.rootWorkspace,
+          resourceSelection: { _tag: "ConversationOnly" },
+        },
+      }).ok,
+    ).toBe(true);
+    const legacy = contract?.decodePayload({
+      ...base,
+      rootWorkspace: {
+        ...base.rootWorkspace,
+        resourceBoundary: { basisResponsibilityRevision: 0, addresses: [] },
+        resourceBoundaryRevision: 0,
+      },
+    });
+    expect(legacy?.ok).toBe(false);
+    const mixed = contract?.decodePayload({
+      ...base,
+      rootWorkspace: {
+        ...base.rootWorkspace,
+        resourceSelection: { _tag: "ConversationOnly" },
+        resourceBoundary: { basisResponsibilityRevision: 0, addresses: [] },
+        resourceBoundaryRevision: 0,
+      },
+    });
+    expect(mixed?.ok).toBe(false);
   });
 });
