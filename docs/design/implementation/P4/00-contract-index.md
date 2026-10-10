@@ -5,6 +5,23 @@ where this index records the v1.18 source-of-truth supersession. These
 documents are **not** a fifth design layer; they are the P4-owned
 implementation contracts authorized by DID §13.
 
+## Accepted owner amendment — AH7-DG-03 (2026-10-10)
+
+Decision: `ACCEPT_TOOL_APPROVAL_SETTLEMENT_ATOMICITY`. The exact accepted
+proposal is
+`planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
+SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
+Acceptance and delegated landing authority are recorded in
+`planning/results/AH7-DG-03-governance-acceptance-and-landing.review.md`.
+
+The amendment is limited to P4 `01`/`02`/`03`/`06`: exact approval is consumed
+with the intent in one fenced pre-effect claim transaction, separate from
+terminal result settlement. It adds typed no-effect `Denied`, the
+`effect_admission_state` lifecycle, P4 stop/quiescence admission and the P4
+Worker-fencing surfaces. Control `ActionApproval` / AssignWork consumption is
+unchanged. No DID version was changed; each owner clause cites this accepted
+amendment and its source digest.
+
 ```text
 Detailed Implementation Design v1.18 (frozen)
         ↓ delegates phase-scoped closure
@@ -44,7 +61,7 @@ existing P4 `ToolIntent` / `ToolRuntimePort` path.
 | Ruling | Closed by |
 |---|---|
 | G1 trusted `InvocationAuthority` fact (resolver deferred) | `03` §2–§3 |
-| G2 Exact-Intent Approval, atomic single consumption | `03` §4 |
+| G2 Exact-Intent Approval, atomic single consumption in the fenced intent claim (not terminal settlement) | `03` §4, `06` §2–§5 |
 | G3 P4 `SandboxPort` + minimal executor; P11 advanced | `04` |
 | G4 Resource Admission validate-only | `05` |
 | G5 `read`/`patch`/`shell` versioned contract artifacts | `08` |

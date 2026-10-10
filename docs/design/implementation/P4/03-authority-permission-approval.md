@@ -1,7 +1,10 @@
 # P4 — 03 Authority / Permission / Approval
 
 **Authority:** DID v1.8 §7.6/§6A.7, G1/G2; SD v1.3 §8.1–§8.5.
-**Status:** DRAFT (first draft for contract review).
+**Status:** FROZEN; accepted AH7-DG-03 amendment (2026-10-10). Post-landing
+consistency review pending.
+**Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
+SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
 
 ## 1. Boundary
 
@@ -77,11 +80,46 @@ interface InvocationApproval {
 
 - An approval is valid only if tool/version, `actionDigest`, target resources,
   `controlBasisDigest` all match the actual invocation and it is unexpired.
-- It is consumed **atomically by exactly one matching invocation**
-  (`consumedBy` set in the same transaction as the invocation settlement).
+- Matching occurs before Resource Admission. After all pre-effect checks pass,
+  an approval-required call persists its exact `ToolInvocation` intent and sets
+  `consumedBy` to its `ToolInvocationId` in the **same fenced claim
+  transaction**. The Worker fence and `stop_requested_at IS NULL` predicate
+  are checked in that transaction. Intent and approval consumption either both
+  commit or neither does.
+- Approval consumption is not in the later terminal ToolInvocation settlement
+  transaction. No database transaction spans the external effect. Once
+  consumed, the approval is permanently bound to that invocation and is never
+  released, refunded or transferred, including after interruption, revocation
+  or an unknown effect result.
+- Re-entry requires the same exact Execution, ToolInvocation and immutable
+  intent. It re-resolves current authority, resources and ControlBasis before
+  any further effect. An approval is consent to an exact action, not a
+  PermissionGrant and never bypasses a changed or revoked authority basis.
 - A mismatch / changed control revision / expiry forces re-approval.
 - Producing an approval is the deferred resolver's job; P4 owns the record and
-  the atomic consumption semantics.
+  the atomic single-consumption semantics.
+
+Denial and approval reuse:
+
+- Before consumption, authority/approval/resource denial is persisted as a
+  terminal no-effect `Denied` invocation record with
+  `effect_admission_state = NotAdmitted`; the approval remains unused. A later
+  different invocation may use the exact approval once if it remains
+  unexpired and its action, target and ControlBasis still match. The same
+  terminal denied invocation cannot later execute.
+- If a claim's approval compare-and-set loses to another invocation, the
+  transaction rolls back its intent insert. The losing invocation receives
+  terminal `Denied(ApprovalConsumedByOtherInvocation)` and cannot execute.
+- If the same invocation already consumed approval but current authority is
+  denied while its effect state is `NotAdmitted`, P4 writes terminal
+  `Denied(ApprovalNoLongerAuthorized)` under the current Worker fence. The
+  approval remains consumed. The ToolResult is `Denied`; AgentLoop marks that
+  action `TerminalRejected` and advances its cursor once without failing the
+  whole Execution. A repeated call replays this Denied result. Restored
+  permission requires a new action/invocation and new approval.
+- P4 `Denied` reason codes are the closed `NoEffectDenialCode` set in `01`;
+  stop/quiescence is instead `ExecutionStopping` or the existing `Interrupted`
+  settlement and never a Denied code.
 
 ### Control ActionApproval consumption for AssignWork (DID v1.33)
 
@@ -113,7 +151,15 @@ CommandId-bound approval consumption, replay evidence, or transaction boundary.
 ## 5. Rejection projection
 
 - All authority/permission/approval failures → `Denied` observation (`02` §3),
-  persisted as a settled invocation.
+  persisted as a terminal no-effect invocation settlement using the closed
+  `NoEffectDenialCode` union (`01` §4–§5, `06` §1/§3). It is valid only when
+  `effect_admission_state = NotAdmitted`; `Denied` never asserts that an
+  external effect occurred.
+- A pre-consumption denial leaves approval unconsumed. A post-consumption
+  revocation remains bound to the same invocation and replays its stored Denied
+  result; it does not release approval for another invocation.
+- `ExecutionStopping` and P4 `Interrupted` are separate stop/quiescence results,
+  not permission-denial projections.
 
 ## 6. Must Not Decide
 
