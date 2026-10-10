@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   type CanonicalResourceRegion,
   ContextEpochNumber,
+  EnvironmentFingerprint,
   makeProjectPolicy,
   makeWorkspacePolicy,
   ProjectId,
@@ -19,6 +20,8 @@ import {
 import {
   DomainEventJournal,
   type DomainEventJournalError,
+  type EnvironmentResolverError,
+  EnvironmentResolverPort,
   EnvironmentRevisionStore,
   OwnershipWriteService,
   ProjectEnvironmentPort,
@@ -76,10 +79,71 @@ const FakeEnvironment: Layer.Layer<ProjectEnvironmentPort> = Layer.succeed(
   },
 );
 
+const fakeEnvironmentResolver = (
+  exists: (address: ResourceAddress) => boolean,
+) =>
+  Layer.effect(
+    EnvironmentResolverPort,
+    Effect.gen(function* () {
+      const environment = yield* ProjectEnvironmentPort;
+      const digest = "0".repeat(64);
+      return EnvironmentResolverPort.of({
+        observe: (targetProjectId, addresses) =>
+          Effect.mapError(
+            Effect.map(
+              environment.resolve(targetProjectId, addresses),
+              (resolved) => ({
+                projectId: targetProjectId,
+                observedRevision: resolved.observedEnvironmentRevision,
+                fingerprint: EnvironmentFingerprint.of(digest),
+                snapshotBlobRef: `blob:${digest}` as never,
+                changedRegions: resolved.regions,
+                entries: resolved.regions.map((region, index) => {
+                  const address = addresses[index];
+                  if (address === undefined) {
+                    throw new Error("fake resolver lost an input address");
+                  }
+                  const isAvailable = exists(address);
+                  return {
+                    address,
+                    resolved: region,
+                    probe:
+                      address._tag === "GitWorktree"
+                        ? {
+                            kind: "GitWorktree" as const,
+                            exists: isAvailable,
+                            ...(isAvailable ? { head: "HEAD" } : {}),
+                            dirty: false,
+                          }
+                        : {
+                            kind: "FileTree" as const,
+                            exists: isAvailable,
+                            ...(isAvailable ? { mtime: "t0" } : {}),
+                          },
+                  };
+                }),
+              }),
+            ),
+            (cause): EnvironmentResolverError => ({
+              _tag: "ProbeFailed",
+              cause,
+            }),
+          ),
+      });
+    }),
+  );
+
+const FakeEnvironmentResolver = fakeEnvironmentResolver(() => true);
+
 const makeApp = (
   environmentLayer: Layer.Layer<ProjectEnvironmentPort> = FakeEnvironment,
   journalLayer?: Layer.Layer<DomainEventJournal>,
   filename = ":memory:",
+  resolverLayer: Layer.Layer<
+    EnvironmentResolverPort,
+    never,
+    ProjectEnvironmentPort
+  > | null = FakeEnvironmentResolver,
 ) => {
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
@@ -93,6 +157,9 @@ const makeApp = (
     Layer.provide(WorkspaceResourceActivationStoreLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     environmentLayer,
+    ...(resolverLayer === null
+      ? []
+      : [Layer.provide(resolverLayer, environmentLayer)]),
   );
   return Layer.mergeAll(
     infra,
@@ -114,6 +181,7 @@ const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789ab",
 );
 const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789ab");
+const address: ResourceAddress = { _tag: "FileTree", path: "/repo/a" };
 
 const definition = {
   purpose: "p",
@@ -176,36 +244,48 @@ const seed = Effect.gen(function* () {
   );
 });
 
-const seedActivationBoundaryAndIntent = Effect.gen(function* () {
-  const tx = yield* TransactionPort;
-  const workspaces = yield* WorkspaceRepository;
-  const activationIntents = yield* WorkspaceResourceActivationStore;
-  const pinnedBoundary = {
-    ...boundary,
-    addresses: [address],
-  };
-  const resourceBoundaryRevision = parse(ResourceBoundaryRevision)(1);
-  yield* tx.transact(
-    workspaces.updateResourceBoundaryIfRevision(
-      workspaceId,
-      parse(Revision)(0),
-      pinnedBoundary,
-      resourceBoundaryRevision,
-      parse(Revision)(1),
-    ),
-  );
-  yield* tx.transact(
-    activationIntents.insertPending({
-      projectId,
-      workspaceId,
-      resourceBoundaryRevision,
-      status: "Pending",
-      createdAt: "t0",
-      updatedAt: "t0",
-      activatedAt: null,
-    }),
-  );
-});
+const makeSeedActivationBoundaryAndIntent = (
+  resourceAddress: ResourceAddress,
+) =>
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const workspaces = yield* WorkspaceRepository;
+    const activationIntents = yield* WorkspaceResourceActivationStore;
+    const pinnedBoundary = {
+      ...boundary,
+      addresses: [resourceAddress],
+    };
+    const resourceBoundaryRevision = parse(ResourceBoundaryRevision)(1);
+    yield* tx.transact(
+      workspaces.updateResourceBoundaryIfRevision(
+        workspaceId,
+        parse(Revision)(0),
+        pinnedBoundary,
+        resourceBoundaryRevision,
+        parse(Revision)(1),
+      ),
+    );
+    yield* tx.transact(
+      activationIntents.insertPending({
+        projectId,
+        workspaceId,
+        resourceBoundaryRevision,
+        status: "Pending",
+        createdAt: "t0",
+        updatedAt: "t0",
+        activatedAt: null,
+      }),
+    );
+  });
+
+const seedActivationBoundaryAndIntent =
+  makeSeedActivationBoundaryAndIntent(address);
+const gitWorktreeAddress: ResourceAddress = {
+  _tag: "GitWorktree",
+  path: "C:/repo/.git",
+};
+const seedGitWorktreeActivationBoundaryAndIntent =
+  makeSeedActivationBoundaryAndIntent(gitWorktreeAddress);
 
 const claim = (id: string, path: string): ResourceOwnershipClaimRecord => ({
   claimId: id,
@@ -220,8 +300,6 @@ const claim = (id: string, path: string): ResourceOwnershipClaimRecord => ({
   createdAt: "t0",
   releasedAt: null,
 });
-
-const address: ResourceAddress = { _tag: "FileTree", path: "/repo/a" };
 
 describe("ownership write service", () => {
   it("writes claims and records the observed environment revision", async () => {
@@ -499,6 +577,104 @@ describe("ownership write service", () => {
     expect(Option.isNone(result.anchorBefore)).toBe(true);
     expect(Option.isNone(result.anchorAfter)).toBe(true);
     expect(result.eventCount).toBe(0);
+    expect(Option.isSome(result.intent)).toBe(true);
+    if (Option.isSome(result.intent)) {
+      expect(result.intent.value.status).toBe("Pending");
+    }
+  });
+
+  it("fails closed when activation has no full resource-availability resolver", async () => {
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P35_MIGRATIONS);
+      yield* seed;
+      yield* seedActivationBoundaryAndIntent;
+      const ownership = yield* OwnershipWriteService;
+      const repository = yield* ResourceOwnershipRepository;
+      const tx = yield* TransactionPort;
+      const intents = yield* WorkspaceResourceActivationStore;
+      const failure = yield* ownership
+        .activatePendingWorkspaceResource(
+          projectId,
+          workspaceId,
+          parse(ResourceBoundaryRevision)(1),
+          [address],
+        )
+        .pipe(Effect.flip);
+      return {
+        failure,
+        claims: yield* tx.transact(
+          repository.listActiveByWorkspace(workspaceId),
+        ),
+        intent: yield* tx.transact(
+          intents.find(
+            projectId,
+            workspaceId,
+            parse(ResourceBoundaryRevision)(1),
+          ),
+        ),
+      };
+    });
+    const result = await Effect.runPromise(
+      Effect.provide(
+        program,
+        makeApp(FakeEnvironment, undefined, ":memory:", null),
+      ),
+    );
+    expect(result.failure).toMatchObject({ _tag: "EnvironmentError" });
+    expect(result.claims).toEqual([]);
+    expect(Option.isSome(result.intent)).toBe(true);
+    if (Option.isSome(result.intent)) {
+      expect(result.intent.value.status).toBe("Pending");
+    }
+  });
+
+  it("fails closed when a GitWorktree probe reports exists:false", async () => {
+    const missingGitWorktreeResolver = fakeEnvironmentResolver(
+      (candidate) => candidate._tag !== "GitWorktree",
+    );
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P35_MIGRATIONS);
+      yield* seed;
+      yield* seedGitWorktreeActivationBoundaryAndIntent;
+      const ownership = yield* OwnershipWriteService;
+      const repository = yield* ResourceOwnershipRepository;
+      const tx = yield* TransactionPort;
+      const intents = yield* WorkspaceResourceActivationStore;
+      const failure = yield* ownership
+        .activatePendingWorkspaceResource(
+          projectId,
+          workspaceId,
+          parse(ResourceBoundaryRevision)(1),
+          [gitWorktreeAddress],
+        )
+        .pipe(Effect.flip);
+      return {
+        failure,
+        claims: yield* tx.transact(
+          repository.listActiveByWorkspace(workspaceId),
+        ),
+        intent: yield* tx.transact(
+          intents.find(
+            projectId,
+            workspaceId,
+            parse(ResourceBoundaryRevision)(1),
+          ),
+        ),
+      };
+    });
+    const result = await Effect.runPromise(
+      Effect.provide(
+        program,
+        makeApp(
+          FakeEnvironment,
+          undefined,
+          ":memory:",
+          missingGitWorktreeResolver,
+        ),
+      ),
+    );
+    expect(result.failure).toMatchObject({ _tag: "EnvironmentError" });
+    expect(result.claims).toEqual([]);
     expect(Option.isSome(result.intent)).toBe(true);
     if (Option.isSome(result.intent)) {
       expect(result.intent.value.status).toBe("Pending");

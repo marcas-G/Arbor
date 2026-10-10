@@ -114,6 +114,7 @@ import {
 } from "./transport/daemons.js";
 import {
   type CliShell,
+  type CreateProjectPostCommitBeforeActivationQualificationProbe,
   type ExternalSubmissionPort,
   type HttpShell,
   makeCliShell,
@@ -187,12 +188,16 @@ export const TransportBoundaryLive = (
   authenticator: AuthenticatorService,
   governance: ParentUserGovernanceFacts,
   authenticatorConfigured: boolean,
+  postCommitBeforeActivationProbe?: CreateProjectPostCommitBeforeActivationQualificationProbe,
 ): Layer.Layer<TransportBoundary, never, TransportBoundaryServices> =>
   Layer.effect(
     TransportBoundary,
     Effect.gen(function* () {
       const queryPort = yield* ProjectionQueryPort;
-      const submission = yield* makeExternalSubmissionFromServices(governance);
+      const submission = yield* makeExternalSubmissionFromServices(
+        governance,
+        postCommitBeforeActivationProbe,
+      );
       const core = makeTransportCore({
         views: viewQueryFaceFromPort(queryPort),
         authenticator,

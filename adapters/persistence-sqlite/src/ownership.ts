@@ -12,6 +12,7 @@ import {
   Clock,
   DomainEventJournal,
   type EnvironmentError,
+  EnvironmentResolverPort,
   EnvironmentRevisionStore,
   type EnvironmentRevisionStoreError,
   IdGenerator,
@@ -249,6 +250,9 @@ const makeOwnershipWriteServiceEffect = (
 ) =>
   Effect.gen(function* () {
     const environment = yield* ProjectEnvironmentPort;
+    const environmentResolver = yield* Effect.serviceOption(
+      EnvironmentResolverPort,
+    );
     const tx = yield* TransactionPort;
     const repository = yield* ResourceOwnershipRepository;
     const revisions = yield* EnvironmentRevisionStore;
@@ -378,7 +382,45 @@ const makeOwnershipWriteServiceEffect = (
 
           // Resolve the exact persisted Workspace boundary before entering the
           // claim transaction. No Profile catalog or request path is read.
-          const resolved = yield* environment.resolve(projectId, addresses);
+          const resolved = yield* Effect.gen(function* () {
+            if (Option.isNone(environmentResolver)) {
+              return yield* Effect.fail<EnvironmentError>({
+                _tag: "EnvironmentError",
+                cause: "the pinned resource boundary cannot be verified",
+              });
+            }
+            // The legacy ProjectEnvironmentPort intentionally drops probe
+            // facts such as exists:false. Activation is narrower: a pinned
+            // host boundary may become Active only when the full P11
+            // resolver can currently observe each FileTree/GitWorktree.
+            const observation = yield* environmentResolver.value
+              .observe(projectId, addresses)
+              .pipe(
+                Effect.mapError(
+                  (error): EnvironmentError => ({
+                    _tag: "EnvironmentError",
+                    cause: { _tag: error._tag },
+                  }),
+                ),
+              );
+            if (
+              observation.entries.some(
+                (entry) =>
+                  (entry.address._tag === "FileTree" ||
+                    entry.address._tag === "GitWorktree") &&
+                  !entry.probe.exists,
+              )
+            ) {
+              return yield* Effect.fail<EnvironmentError>({
+                _tag: "EnvironmentError",
+                cause: "the pinned resource boundary is unavailable",
+              });
+            }
+            return {
+              regions: observation.changedRegions,
+              observedEnvironmentRevision: observation.observedRevision,
+            };
+          });
           const claims = yield* Effect.forEach(resolved.regions, (region) =>
             Effect.gen(function* () {
               const sourceAddress = sourceAddressForRegion(region, addresses);
