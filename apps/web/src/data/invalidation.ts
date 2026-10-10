@@ -1,3 +1,5 @@
+import type { Problem } from "@arbor/api-contracts";
+
 /**
  * P13-006 WS invalidation face (`05` §3 / `01` §3 I4): frames are
  * invalidation-only — {kind:"invalidate", view, watermark} with NO payload. A
@@ -12,6 +14,7 @@ export interface InvalidationHandlers {
   onInvalidate(view: string, watermark: number): void;
   onOpen?(): void;
   onClose?(): void;
+  onUnauthenticated?(problem: Problem): void;
 }
 
 export interface InvalidationConnection {
@@ -19,10 +22,22 @@ export interface InvalidationConnection {
 }
 
 interface SocketLike {
+  send(data: string): void;
   onmessage: ((event: { data: unknown }) => void) | null;
   onopen: (() => void) | null;
-  onclose: (() => void) | null;
+  onclose: ((event?: { readonly code: number }) => void) | null;
   close(): void;
+}
+
+export interface InitialViewProof {
+  readonly token: string;
+  readonly view: string;
+  readonly request: unknown;
+}
+
+export interface InvalidationConnectionOptions {
+  /** First normal view frame authenticates and seeds the read subscription. */
+  readonly firstView: InitialViewProof;
 }
 
 const RECONNECT_DELAY_MS = 1000;
@@ -51,6 +66,7 @@ const detach = (socket: SocketLike): void => {
 export function connectInvalidation(
   url: string,
   handlers: InvalidationHandlers,
+  options: InvalidationConnectionOptions,
 ): InvalidationConnection {
   let socket: SocketLike | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -78,16 +94,28 @@ export function connectInvalidation(
     }
 
     socket = nextSocket;
+    let firstViewAccepted = false;
+    let authenticationRejected = false;
+    const pendingInvalidations = new Map<string, number>();
     nextSocket.onopen = () => {
-      handlers.onOpen?.();
+      const firstView = options.firstView;
+      nextSocket.send(
+        JSON.stringify({
+          kind: "view",
+          token: firstView.token,
+          view: firstView.view,
+          request: firstView.request,
+        }),
+      );
     };
-    nextSocket.onclose = () => {
+    nextSocket.onclose = (event) => {
+      if (event?.code === 1008) authenticationRejected = true;
       detach(nextSocket);
       if (socket === nextSocket) {
         socket = null;
       }
       handlers.onClose?.();
-      if (!closed && reconnectTimer === null) {
+      if (!closed && !authenticationRejected && reconnectTimer === null) {
         reconnectTimer = setTimeout(() => {
           reconnectTimer = null;
           openSocket();
@@ -102,6 +130,49 @@ export function connectInvalidation(
         return;
       }
       if (!isInvalidationFrame(parsed)) {
+        if (!firstViewAccepted) {
+          if (
+            typeof parsed === "object" &&
+            parsed !== null &&
+            "ok" in parsed &&
+            parsed.ok === true &&
+            "status" in parsed &&
+            parsed.status === 200
+          ) {
+            firstViewAccepted = true;
+            handlers.onOpen?.();
+            for (const [view, watermark] of pendingInvalidations) {
+              handlers.onInvalidate(view, watermark);
+            }
+            pendingInvalidations.clear();
+          } else {
+            const record =
+              typeof parsed === "object" && parsed !== null
+                ? (parsed as Record<string, unknown>)
+                : {};
+            authenticationRejected =
+              record.status === 401 || record.status === 403;
+            const problem = record.problem;
+            if (
+              record.status === 401 &&
+              typeof problem === "object" &&
+              problem !== null &&
+              "category" in problem &&
+              problem.category === "unauthenticated"
+            ) {
+              handlers.onUnauthenticated?.(problem as Problem);
+            }
+            nextSocket.close();
+          }
+          return;
+        }
+        return;
+      }
+      if (!firstViewAccepted) {
+        const previous = pendingInvalidations.get(parsed.view) ?? -1;
+        if (parsed.watermark > previous) {
+          pendingInvalidations.set(parsed.view, parsed.watermark);
+        }
         return;
       }
       handlers.onInvalidate(parsed.view, parsed.watermark);
@@ -143,19 +214,24 @@ export interface ViewInvalidationChannel {
 
 export function createViewInvalidationChannel(
   url: string,
+  firstView: InitialViewProof,
 ): ViewInvalidationChannel & { close(): void } {
   const listenersByView = new Map<string, Set<(watermark: number) => void>>();
-  const connection = connectInvalidation(url, {
-    onInvalidate: (view, watermark) => {
-      const listeners = listenersByView.get(view);
-      if (listeners === undefined) {
-        return;
-      }
-      for (const listener of [...listeners]) {
-        listener(watermark);
-      }
+  const connection = connectInvalidation(
+    url,
+    {
+      onInvalidate: (view, watermark) => {
+        const listeners = listenersByView.get(view);
+        if (listeners === undefined) {
+          return;
+        }
+        for (const listener of [...listeners]) {
+          listener(watermark);
+        }
+      },
     },
-  });
+    { firstView },
+  );
   return {
     subscribeView(viewId, listener) {
       const existing = listenersByView.get(viewId);

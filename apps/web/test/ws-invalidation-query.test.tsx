@@ -1,9 +1,10 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { useViewQuery } from "../src/api/useViewQuery.js";
 import { connectInvalidation } from "../src/data/invalidation.js";
 import { AppProviders } from "../src/providers/AppProviders.js";
-import { SessionContext } from "../src/session/SessionContext.js";
+import { useSession } from "../src/session/SessionContext.js";
 
 /** W-00 — WS invalidation in the Query stack: frames ONLY invalidate queries
  * (EC-5 evidence carried into Web v1): displayed data after an invalidation
@@ -11,6 +12,8 @@ import { SessionContext } from "../src/session/SessionContext.js";
  * never write cache content. */
 
 type FakeSocket = {
+  readonly url: string;
+  readonly sentFrames: string[];
   send: (data: string) => void;
   close: () => void;
   open: () => void;
@@ -24,10 +27,24 @@ const installFakeWebSocket = (): {
 } => {
   const sockets: FakeSocket[] = [];
   class FakeWebSocket {
+    readonly url: string;
+    readonly sentFrames: string[] = [];
     onopen: (() => void) | null = null;
     onmessage: ((event: { data: string }) => void) | null = null;
     onclose: (() => void) | null = null;
-    send = () => undefined;
+    send = (data: string) => {
+      this.sentFrames.push(data);
+      const frame = JSON.parse(data) as { kind?: string };
+      if (frame.kind === "view") {
+        this.message(
+          JSON.stringify({
+            ok: true,
+            status: 200,
+            body: { value: {}, watermark: 1 },
+          }),
+        );
+      }
+    };
     close = () => undefined;
     disconnect = () => {
       this.onclose?.();
@@ -38,7 +55,8 @@ const installFakeWebSocket = (): {
     message = (data: string) => {
       this.onmessage?.({ data });
     };
-    constructor() {
+    constructor(url: string) {
+      this.url = url;
       sockets.push(this as unknown as FakeSocket);
     }
   }
@@ -78,6 +96,21 @@ const Probe = ({
   );
 };
 
+const PrimeSession = ({
+  token,
+  projectId,
+}: {
+  readonly token: string;
+  readonly projectId: string;
+}) => {
+  const session = useSession();
+  useEffect(() => {
+    session.setSession(token, "user:test");
+    session.setProjectId(projectId);
+  }, [projectId, session.setProjectId, session.setSession, token]);
+  return null;
+};
+
 describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
   it("an invalidate frame for the displayed view triggers a server refetch; data comes from the second response", async () => {
     const fake = installFakeWebSocket();
@@ -103,22 +136,10 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
       }),
     );
 
-    const sessionValue = {
-      token: "tok",
-      actor: "user:test",
-      projectId: "prj_1",
-      unauthenticatedProblem: null,
-      setSession: () => undefined,
-      clearSession: () => undefined,
-      setProjectId: () => undefined,
-      reportUnauthenticated: () => undefined,
-    };
-
     render(
       <AppProviders>
-        <SessionContext.Provider value={sessionValue as never}>
-          <Probe responses={bodies} callCount={{ count: -1 }} />
-        </SessionContext.Provider>
+        <PrimeSession token="tok" projectId="prj_1" />
+        <Probe responses={bodies} callCount={{ count: -1 }} />
       </AppProviders>,
     );
 
@@ -127,6 +148,19 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
     act(() => {
       fake.sockets[0]?.open();
     });
+    const proofFrame = JSON.parse(fake.sockets[0]?.sentFrames[0] ?? "null") as {
+      kind?: string;
+      token?: string;
+      view?: string;
+      request?: { projectId?: string };
+    };
+    expect(proofFrame).toEqual({
+      kind: "view",
+      token: "tok",
+      view: "attention",
+      request: { projectId: "prj_1" },
+    });
+    expect(fake.sockets[0]?.url).not.toContain("tok");
     await waitFor(() =>
       expect(screen.getByTestId("state").textContent).toContain("A"),
     );
@@ -180,25 +214,14 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
       }),
     );
 
-    const sessionValue = {
-      token: "tok",
-      actor: "user:test",
-      projectId: "prj_1",
-      unauthenticatedProblem: null,
-      setSession: () => undefined,
-      clearSession: () => undefined,
-      setProjectId: () => undefined,
-      reportUnauthenticated: () => undefined,
-    };
     const view = render(
       <AppProviders>
-        <SessionContext.Provider value={sessionValue as never}>
-          <Probe
-            responses={bodies}
-            callCount={{ count: -1 }}
-            projectId="prj_reconnect"
-          />
-        </SessionContext.Provider>
+        <PrimeSession token="tok" projectId="prj_1" />
+        <Probe
+          responses={bodies}
+          callCount={{ count: -1 }}
+          projectId="prj_reconnect"
+        />
       </AppProviders>,
     );
 
@@ -207,6 +230,7 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
       act(() => {
         fake.sockets[0]?.open();
       });
+      expect(fake.sockets[0]?.sentFrames).toHaveLength(1);
       await waitFor(() =>
         expect(screen.getByTestId("state").textContent).toContain("A"),
       );
@@ -221,6 +245,7 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
       act(() => {
         fake.sockets[1]?.open();
       });
+      expect(fake.sockets[1]?.sentFrames).toHaveLength(1);
 
       await waitFor(() =>
         expect(screen.getByTestId("state").textContent).toContain("B"),
@@ -234,11 +259,21 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
 
   it("channel contract: only invalidate frames are delivered; bad frames ignored", () => {
     const seen: Array<{ view: string; watermark: number }> = [];
-    const channel = connectInvalidation("ws://x/ws", {
-      onInvalidate: (view, watermark) => {
-        seen.push({ view, watermark: watermark as number });
+    const channel = connectInvalidation(
+      "ws://x/ws",
+      {
+        onInvalidate: (view, watermark) => {
+          seen.push({ view, watermark: watermark as number });
+        },
       },
-    });
+      {
+        firstView: {
+          token: "tok",
+          view: "attention",
+          request: { projectId: "prj_1" },
+        },
+      },
+    );
     // direct channel-level delivery check (no socket involved in unit sense)
     channel.close();
     expect(seen).toEqual([]);

@@ -23,7 +23,7 @@ import {
 } from "react";
 import { connectInvalidation } from "../data/invalidation.js";
 import { ErrorBoundary } from "../ErrorBoundary.js";
-import { SessionProvider } from "../session/SessionContext.js";
+import { SessionProvider, useSession } from "../session/SessionContext.js";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -58,34 +58,50 @@ function WSInvalidationProvider({
   readonly children: ReactNode;
 }) {
   const client = useQueryClient();
+  const session = useSession();
   const [freshness, setFreshness] = useState<FreshnessValue>({
     state: "offline",
     lastWatermark: null,
   });
   useEffect(() => {
+    if (session.token === null || session.projectId === null) {
+      setFreshness({ state: "offline", lastWatermark: null });
+      return;
+    }
     let hasOpened = false;
-    const channel = connectInvalidation(wsUrl(), {
-      onOpen: () => {
-        if (hasOpened) {
-          void client.invalidateQueries({ queryKey: ["view"] });
-        }
-        hasOpened = true;
-        setFreshness((previous) => ({ ...previous, state: "fresh" }));
+    const channel = connectInvalidation(
+      wsUrl(),
+      {
+        onOpen: () => {
+          if (hasOpened) {
+            void client.invalidateQueries({ queryKey: ["view"] });
+          }
+          hasOpened = true;
+          setFreshness((previous) => ({ ...previous, state: "fresh" }));
+        },
+        onClose: () => {
+          setFreshness((previous) => ({ ...previous, state: "offline" }));
+        },
+        onUnauthenticated: session.reportUnauthenticated,
+        onInvalidate: (view: ViewId, watermark: number) => {
+          setFreshness({ state: "fresh", lastWatermark: watermark });
+          void client.invalidateQueries({
+            queryKey: ["view", view],
+          });
+        },
       },
-      onClose: () => {
-        setFreshness((previous) => ({ ...previous, state: "offline" }));
+      {
+        firstView: {
+          token: session.token,
+          view: "attention",
+          request: { projectId: session.projectId },
+        },
       },
-      onInvalidate: (view: ViewId, watermark: number) => {
-        setFreshness({ state: "fresh", lastWatermark: watermark });
-        void client.invalidateQueries({
-          queryKey: ["view", view],
-        });
-      },
-    });
+    );
     return () => {
       channel.close();
     };
-  }, [client]);
+  }, [client, session.projectId, session.reportUnauthenticated, session.token]);
   return (
     <FreshnessContext.Provider value={freshness}>
       {children}

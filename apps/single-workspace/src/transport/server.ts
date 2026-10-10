@@ -512,8 +512,20 @@ export const startWebTransport = async (
       socket.destroy();
       return;
     }
+    if (
+      (!config.authenticatorConfigured &&
+        !isLoopbackListenerHost(config.host)) ||
+      (config.authenticatorConfigured && config.authenticator === undefined)
+    ) {
+      socket.write(
+        "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
+      socket.destroy();
+      return;
+    }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      sockets.add(ws);
+      let viewAuthenticated = !config.authenticatorConfigured;
+      if (viewAuthenticated) sockets.add(ws);
       ws.on("close", () => {
         sockets.delete(ws);
       });
@@ -530,11 +542,32 @@ export const startWebTransport = async (
                 problem: { code: "transport/invalid-request" },
               }),
             );
+            if (!viewAuthenticated) {
+              ws.close(1008, "view authentication required");
+            }
             return;
           }
-          const response = await Effect.runPromise(
-            config.webSocket.handleFrame(frame),
-          );
+          let response: TransportResponse<unknown>;
+          if (frame.kind === "view") {
+            if (!viewAuthenticated) {
+              const authorizationFailure = await Effect.runPromise(
+                config.webSocket.authorizeViewFrame(frame),
+              );
+              if (authorizationFailure !== null) {
+                ws.close(1008, "view authentication required");
+                return;
+              }
+              viewAuthenticated = true;
+              sockets.add(ws);
+            }
+            response = await Effect.runPromise(
+              config.webSocket.handleAuthorizedViewFrame(frame),
+            );
+          } else {
+            response = await Effect.runPromise(
+              config.webSocket.handleFrame(frame),
+            );
+          }
           if (ws.readyState === ws.OPEN) {
             ws.send(JSON.stringify(response));
           }

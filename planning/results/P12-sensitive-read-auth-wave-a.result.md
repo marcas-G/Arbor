@@ -94,7 +94,10 @@ assertions; the focused P12/P13 run then passed.
   intentionally untouched. Source inspection confirms `/ws` still accepts a
   wildcard/no-auth upgrade and adds that socket to the broadcast set directly
   after `wss.handleUpgrade`; that wildcard-upgrade RED remains OPEN for Wave B.
-  No Wave A claim is made that `/ws` is guarded.
+  No Wave A claim is made that `/ws` is guarded. This is the status at Wave A
+  completion; Wave B follow-up evidence is recorded in
+  `planning/results/P12-sensitive-read-auth-wave-b.result.md`, which closes
+  the wildcard-upgrade guard and configured-auth first-view admission.
 - Multi-principal Project/Workspace read visibility remains OPEN.
 - This qualification starts the actual local HTTP server and temporary DB
   inside the Vitest process; it is not a separate child-process daemon/restart
