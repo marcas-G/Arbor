@@ -11,8 +11,9 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
-  functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -35,10 +36,21 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
       const hits: AhProbeHit[] = [];
       const daemonOutput: string[] = [];
       let targetProviderCalls = 0;
+      let probeArmed = false;
       let latestToolResult = "<none>";
       const fixture = await startProductionFixture({
         reply: (call) => {
-          if (JSON.stringify(call.messages).includes(marker)) {
+          const context = JSON.stringify(call.messages);
+          const available = new Set(
+            call.tools
+              .map((tool) => tool.function?.name)
+              .filter((name): name is string => name !== undefined),
+          );
+          const targetWorkTurn = available.has("read");
+          if (context.includes(marker) && targetWorkTurn) {
+            if (!probeArmed) {
+              return { _tag: "HttpError", status: 503 };
+            }
             targetProviderCalls += 1;
             latestToolResult =
               [...call.messages]
@@ -49,12 +61,36 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
               return { _tag: "HttpError", status: 429 };
             }
           }
-          const toolNames = new Set(
-            call.tools
-              .map((tool) => tool.function?.name)
-              .filter((name): name is string => name !== undefined),
-          );
-          if (toolNames.has("read")) {
+          if (
+            context.includes(marker) &&
+            available.has("assign_work") &&
+            !targetWorkTurn &&
+            !context.includes("WorkAssigned(")
+          ) {
+            return {
+              _tag: "ToolCall",
+              name: "assign_work",
+              arguments: {
+                objective: `Read proof.txt for ${marker}.`,
+                why: "qualify action intent recovery before P4 ToolRuntime",
+                constraints: [],
+                completionExpectation: "the Agent has observed proof.txt",
+                verificationMission: {
+                  goal: `Verify the read result for ${marker}`,
+                  criteria: [
+                    {
+                      criterionId: "proof-read",
+                      requirement: "proof.txt contains FUNCTIONAL_VERIFIED",
+                      required: true,
+                    },
+                  ],
+                  riskRequirements: [],
+                },
+                reason: "AH7 functional test",
+              },
+            };
+          }
+          if (context.includes(marker) && targetWorkTurn) {
             const readResult = call.messages.some(
               (message) =>
                 message.role === "tool" &&
@@ -73,10 +109,6 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           }
           return { _tag: "Text", text: `Waiting for Work ${marker}` };
         },
-        firstDaemonEntry: crashChild,
-        daemonEnvironment: {
-          ARBOR_AH_BOUNDARY: boundary,
-        },
         onDaemonStdout: (line) => {
           daemonOutput.push(line);
           recordAhProbeLine(hits, line);
@@ -89,35 +121,62 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         fixture.workspaceDirectory,
         "AH7 Pending action intent",
       );
-      const workId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
-        workId,
-        workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Read proof.txt for ${marker}.`,
-        why: "qualify action intent recovery before P4 ToolRuntime",
-        constraints: [],
-        completionExpectation: "the Agent has observed proof.txt",
-        verificationMission: {
-          goal: `Verify the read result for ${marker}`,
-          criteria: [
-            {
-              criterionId: "proof-read",
-              requirement: "proof.txt contains FUNCTIONAL_VERIFIED",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+      await submitHumanMessage(
+        client,
+        project,
+        `请创建并执行一个读取 proof.txt 的目标 ${marker}`,
+      );
+      const approval = await waitForApproval(client, project, marker).catch(
+        (error: unknown) => {
+          throw new Error(
+            `AH7 public Work approval absent: ${error instanceof Error ? error.message : String(error)}; provider=${JSON.stringify(fixture.providerCalls)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+          );
         },
-        provenance: { predecessorWorkId: null, reason: "AH7 functional test" },
-        revision: 0,
+      );
+      expect(
+        await client.view("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      ).toBeNull();
+
+      await client.command(project.projectId, "ResolveControlApproval", {
+        approvalId: approval.approvalId,
+        expectedRevision: approval.revision,
+        decision: "Approve",
+        reason: "AH7 public Work admission",
+      });
+      const currentWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            objective?: string;
+            status: string;
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (value) => value?.workId !== undefined,
+      );
+      expect(currentWork).toMatchObject({
+        objective: expect.stringContaining(marker),
+        status: "Open",
+      });
+      // Keep the seed conversation outside the AH7 probe. If the normal daemon
+      // reaches the new Work first, the fake provider returns a transport
+      // failure (never a ToolCall/P4 effect); killing it now lets recovery
+      // redispatch the same Open Work under the selected probe.
+      await fixture.crash();
+      probeArmed = true;
+      const targetProviderCallStart = fixture.providerCalls.length;
+      await fixture.restart({
+        entry: crashChild,
+        daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
       });
 
       const observed = await waitForPublic(
-        async () => ({ hits, providerCalls: fixture.providerCalls.length }),
+        async () => ({ hits, targetProviderCalls }),
         (value) =>
           value.hits.some((hit) => hit.boundary === boundary) ||
-          value.providerCalls >= 5,
+          value.targetProviderCalls >= 5,
         15_000,
       ).catch((error: unknown) => {
         throw new Error(
@@ -148,7 +207,23 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
 
       await fixture.crash();
       const crashed = durableSnapshot(fixture.databaseFile);
-      expect(crashed.steps).toEqual([
+      const targetSteps = crashed.steps.filter(
+        (step) => step.execution_id === hit?.executionId,
+      );
+      const targetActions = crashed.actions.filter(
+        (action) => action.execution_id === hit?.executionId,
+      );
+      const targetInvocations = crashed.toolInvocations.filter(
+        (invocation) => invocation.execution_id === hit?.executionId,
+      );
+      const targetToolResults = crashed.toolResults.filter((result) =>
+        JSON.stringify(result).includes(hit?.callRef ?? ""),
+      );
+      const targetInvocationId = targetInvocations[0]?.invocation_id;
+      const targetArtifacts = crashed.artifacts.filter(
+        (artifact) => artifact.invocation_id === targetInvocationId,
+      );
+      expect(targetSteps).toEqual([
         expect.objectContaining({
           execution_id: hit?.executionId,
           provider_turn_id:
@@ -159,7 +234,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           next_action_index: boundary === "AH7AfterActionResultCommit" ? 1 : 0,
         }),
       ]);
-      expect(crashed.actions).toEqual([
+      expect(targetActions).toEqual([
         expect.objectContaining({
           execution_id: hit?.executionId,
           action_index: 0,
@@ -170,7 +245,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
             boundary === "AH7AfterActionResultCommit" ? "Applied" : "Pending",
         }),
       ]);
-      expect(crashed.toolInvocations).toEqual(
+      expect(targetInvocations).toEqual(
         boundary === "AH7AfterActionIntentCommit"
           ? []
           : [
@@ -186,19 +261,19 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
               }),
             ],
       );
-      expect(crashed.toolResults).toHaveLength(
+      expect(targetToolResults).toHaveLength(
         boundary === "AH7AfterActionResultCommit" ? 1 : 0,
       );
       if (
         boundary === "AH7AfterToolSettlementCommit" ||
         boundary === "AH7AfterActionResultCommit"
       ) {
-        expect(crashed.artifacts).toHaveLength(1);
+        expect(targetArtifacts).toHaveLength(1);
       } else {
-        expect(crashed.artifacts).toEqual([]);
+        expect(targetArtifacts).toEqual([]);
       }
       const logicalActionId = (
-        crashed.actions[0] as { logical_action_id?: string } | undefined
+        targetActions[0] as { logical_action_id?: string } | undefined
       )?.logical_action_id;
       if (logicalActionId === undefined) {
         throw new Error("AH7 committed action identity absent");
@@ -231,7 +306,19 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           `AH7 restart did not resume the committed Pending action: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; daemonOutput=${daemonOutput.slice(-10).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
         );
       });
-      expect(recovered.actions).toEqual([
+      const recoveredTargetActions = recovered.actions.filter(
+        (action) => action.execution_id === hit?.executionId,
+      );
+      const recoveredTargetInvocations = recovered.toolInvocations.filter(
+        (invocation) => invocation.execution_id === hit?.executionId,
+      );
+      const recoveredTargetToolResults = recovered.toolResults.filter(
+        (result) => JSON.stringify(result).includes(hit?.callRef ?? ""),
+      );
+      const recoveredTargetArtifacts = recovered.artifacts.filter(
+        (artifact) => artifact.invocation_id === targetInvocationId,
+      );
+      expect(recoveredTargetActions).toEqual([
         expect.objectContaining({
           execution_id: hit?.executionId,
           action_index: 0,
@@ -243,7 +330,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           observation_source_ref: expect.stringMatching(/^observation_/u),
         }),
       ]);
-      expect(recovered.toolInvocations).toEqual([
+      expect(recoveredTargetInvocations).toEqual([
         expect.objectContaining({
           execution_id: hit?.executionId,
           tool_name: "read",
@@ -252,30 +339,40 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           result_ref: expect.any(String),
         }),
       ]);
-      expect(recovered.toolResults).toHaveLength(1);
+      if (targetInvocationId !== undefined) {
+        expect(recoveredTargetInvocations[0]?.invocation_id).toBe(
+          targetInvocationId,
+        );
+      }
+      expect(recoveredTargetToolResults).toHaveLength(1);
       if (
         boundary === "AH7AfterToolSettlementCommit" ||
         boundary === "AH7AfterActionResultCommit"
       ) {
-        expect(recovered.artifacts).toEqual(crashed.artifacts);
-        expect(recovered.toolInvocations).toEqual(crashed.toolInvocations);
+        expect(recoveredTargetArtifacts).toEqual(targetArtifacts);
+        expect(recoveredTargetInvocations).toEqual(targetInvocations);
       }
-      expect(recovered.toolResults[0]).toMatchObject({
+      expect(recoveredTargetToolResults[0]).toMatchObject({
         source_kind: "AgentLoopAction",
       });
       expect(
-        JSON.stringify(recovered.toolResults[0]).includes(hit?.callRef ?? ""),
+        JSON.stringify(recoveredTargetToolResults[0]).includes(
+          hit?.callRef ?? "",
+        ),
       ).toBe(true);
       expect(
-        fixture.providerCalls.filter(
-          (call) =>
-            JSON.stringify(call.messages).includes(marker) &&
-            !call.messages.some(
-              (message) =>
-                message.role === "tool" &&
-                message.content?.includes("FUNCTIONAL_VERIFIED") === true,
-            ),
-        ),
+        fixture.providerCalls
+          .slice(targetProviderCallStart)
+          .filter(
+            (call) =>
+              JSON.stringify(call.messages).includes(marker) &&
+              call.tools.some((tool) => tool.function?.name === "read") &&
+              !call.messages.some(
+                (message) =>
+                  message.role === "tool" &&
+                  message.content?.includes("FUNCTIONAL_VERIFIED") === true,
+              ),
+          ),
       ).toHaveLength(1);
       expect(fixture.daemonErrors).toEqual([]);
     }, 120_000);
