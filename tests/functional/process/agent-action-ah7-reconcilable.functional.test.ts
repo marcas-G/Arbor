@@ -15,6 +15,8 @@ import {
   createFunctionalProject,
   functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -75,6 +77,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
     const { boundary, semantics } = scenario;
     it(`does not replay an ambiguous ${semantics} shell effect after ${boundary}`, async () => {
       const marker = `AH7-SHELL-${crypto.randomUUID().slice(0, 8)}`;
+      const steerMarker = `AH7-SHELL-STEER-${crypto.randomUUID().slice(0, 8)}`;
       const effectFile = `ah7-effect-${marker}.txt`;
       const command =
         process.platform === "win32"
@@ -82,10 +85,71 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           : `printf '%s\\n' '${marker}' >> '${effectFile}'`;
       const hits: AhProbeHit[] = [];
       let targetProviderCalls = 0;
+      let workProviderCalls = 0;
+      let manualWaitCalls = 0;
+      let probeArmed = false;
       let latestToolResult = "<none>";
       const fixture = await startProductionFixture({
         reply: (call) => {
-          if (JSON.stringify(call.messages).includes(marker)) {
+          const names = new Set(call.tools.map((tool) => tool.function?.name));
+          const context = JSON.stringify(call.messages);
+          if (
+            names.has("assign_work") &&
+            !names.has("claim_completion") &&
+            context.includes(marker)
+          ) {
+            return context.includes("WorkAssigned(")
+              ? { _tag: "Text", text: `Work admitted for ${marker}` }
+              : {
+                  _tag: "ToolCall",
+                  name: "assign_work",
+                  arguments: {
+                    objective: `Wait for a human steer, then inspect the workspace with shell for ${marker}.`,
+                    why: "qualify Reconcilable shell intent crash",
+                    constraints: [],
+                    completionExpectation:
+                      "shell effect is not blindly replayed",
+                    verificationMission: {
+                      goal: `Verify safe shell recovery for ${marker}`,
+                      criteria: [
+                        {
+                          criterionId: "shell-safe",
+                          requirement: "no ambiguous shell effect is replayed",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH7 Reconcilable functional test",
+                  },
+                };
+          }
+          if (
+            names.has("claim_completion") &&
+            names.has("shell") &&
+            context.includes(marker)
+          ) {
+            workProviderCalls += 1;
+            if (!context.includes(steerMarker)) {
+              manualWaitCalls += 1;
+              return {
+                _tag: "ToolCall",
+                name: "wait",
+                arguments: {
+                  reason: `waiting for ${steerMarker}`,
+                  waitSpec: {
+                    mode: "Any",
+                    conditions: [{ _tag: "Manual" }],
+                  },
+                },
+              };
+            }
+            if (!probeArmed) {
+              return {
+                _tag: "Text",
+                text: `Steer reached before the AH7 probe was armed: ${steerMarker}`,
+              };
+            }
             targetProviderCalls += 1;
             latestToolResult =
               [...call.messages]
@@ -95,19 +159,17 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             if (targetProviderCalls > 5) {
               return { _tag: "HttpError", status: 429 };
             }
+            return {
+              _tag: "ToolCall",
+              name: "shell",
+              arguments: {
+                command,
+                cwd: { mount: "workspace", path: "." },
+                timeoutMs: 5_000,
+              },
+            };
           }
-          const names = new Set(call.tools.map((tool) => tool.function?.name));
-          return names.has("shell")
-            ? {
-                _tag: "ToolCall",
-                name: "shell",
-                arguments: {
-                  command,
-                  cwd: { mount: "workspace", path: "." },
-                  timeoutMs: 5_000,
-                },
-              }
-            : { _tag: "Text", text: `Waiting ${marker}` };
+          return { _tag: "Text", text: `Waiting ${marker}` };
         },
         firstDaemonEntry: crashChild,
         daemonEnvironment: {
@@ -136,29 +198,88 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         target: project.rootWorkspaceId,
         expiresAt: null,
       });
-      const workId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
+      await submitHumanMessage(
+        client,
+        project,
+        `请创建一个等待人工指示后再用 shell 检查工作区的 Work，目标标记 ${marker}。`,
+      );
+      const approval = await waitForApproval(client, project, marker);
+      expect(
+        await client.view("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      ).toBeNull();
+      await client.command(project.projectId, "ResolveControlApproval", {
+        approvalId: approval.approvalId,
+        expectedRevision: approval.revision,
+        decision: "Approve",
+        reason: "AH7 public Work admission",
+      });
+      const currentWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            objective?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (value) =>
+          value?.workId !== undefined &&
+          value.objective?.includes(marker) === true,
+      );
+      if (currentWork?.workId === undefined) {
+        throw new Error("AH7 public Reconcilable Work was not admitted");
+      }
+      const workId = currentWork.workId;
+      expect(currentWork).toMatchObject({ revision: 0, status: "Open" });
+      await waitForPublic(
+        async () => ({ workProviderCalls, manualWaitCalls }),
+        (value) => value.workProviderCalls >= 1 && value.manualWaitCalls >= 1,
+      );
+      const idleWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (value) =>
+          value?.workId === workId && value.activeExecution === undefined,
+      );
+      expect(idleWork).toMatchObject({ workId, revision: 0, status: "Open" });
+      expect(targetProviderCalls).toBe(0);
+
+      await fixture.crash();
+      probeArmed = true;
+      await fixture.restart({
+        entry: crashChild,
+        daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
+      });
+      await client.command(project.projectId, "SteerWork", {
         workId,
         workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Inspect the workspace with shell for ${marker}.`,
-        why: "qualify Reconcilable intent crash",
-        constraints: [],
-        completionExpectation: "shell result is handled safely",
-        verificationMission: {
-          goal: "verify shell recovery",
-          criteria: [
-            {
-              criterionId: "shell-safe",
-              requirement: "no ambiguous shell effect is replayed",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
-        },
-        provenance: { predecessorWorkId: null, reason: "AH7 shell test" },
-        revision: 0,
+        expectedWorkRevision: 0,
+        steer: { severity: "Normal", guidance: steerMarker },
+        provenance: { source: "HumanInput" },
       });
+      const steeredWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (value) => value?.workId === workId && value.revision === 1,
+      );
+      expect(steeredWork?.status).toBe("Open");
 
       let hit: AhProbeHit | undefined;
       try {
@@ -188,13 +309,19 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         throw new Error("AH7 shell probe lacks exact execution/tool identity");
       }
       const targetExecutionId = hit.executionId;
-      const crashedAction = crashed.actions[0];
+      const crashedActions = crashed.actions.filter(
+        (action) => action.execution_id === targetExecutionId,
+      );
+      const crashedAction = crashedActions.find(
+        (action) => action.call_ref === hit.callRef,
+      );
       if (
         crashedAction?.logical_action_id === undefined ||
         crashedAction.call_ref === undefined
       ) {
         throw new Error("AH7 crash snapshot lacks exact action identity");
       }
+      expect(crashedActions).toHaveLength(1);
       expect(crashedAction.call_ref).toBe(hit.callRef);
       const crashedTarget = readExecutionProviderTurns(
         fixture.databaseFile,
@@ -205,7 +332,11 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         episode_kind: "WorkEpisode",
         episode_ref: workId,
       });
-      expect(crashed.toolInvocations).toEqual([
+      expect(
+        crashed.toolInvocations.filter(
+          (invocation) => invocation.execution_id === targetExecutionId,
+        ),
+      ).toEqual([
         expect.objectContaining({
           invocation_id: hit.invocationId,
           execution_id: targetExecutionId,
@@ -213,7 +344,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
           settled_at: null,
         }),
       ]);
-      expect(crashed.actions).toEqual([
+      expect(crashedActions).toEqual([
         expect.objectContaining({
           execution_id: targetExecutionId,
           logical_action_id: crashedAction.logical_action_id,
@@ -260,8 +391,11 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         targetExecutionId,
       );
       expect(recoveredTarget.execution).toEqual(crashedTarget.execution);
-      expect(recovered.toolInvocations).toHaveLength(1);
-      const settledInvocation = recovered.toolInvocations[0];
+      const recoveredTargetInvocations = recovered.toolInvocations.filter(
+        (invocation) => invocation.execution_id === targetExecutionId,
+      );
+      expect(recoveredTargetInvocations).toHaveLength(1);
+      const settledInvocation = recoveredTargetInvocations[0];
       expect(settledInvocation).toMatchObject({
         invocation_id: hit.invocationId,
         execution_id: targetExecutionId,
@@ -279,7 +413,10 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         expect(settledInvocation?.settlement_kind).toBeNull();
         expect(settledInvocation?.settlement_json).toBeNull();
       }
-      expect(recovered.actions).toEqual([
+      const recoveredTargetActions = recovered.actions.filter(
+        (action) => action.execution_id === targetExecutionId,
+      );
+      expect(recoveredTargetActions).toEqual([
         expect.objectContaining({
           execution_id: targetExecutionId,
           logical_action_id: crashedAction.logical_action_id,
