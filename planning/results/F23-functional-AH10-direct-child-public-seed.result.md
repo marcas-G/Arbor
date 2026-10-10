@@ -21,6 +21,11 @@ consumer 创建后从公开责任树/Workspace Detail 取得并核对真实 Work
 direct-child `assign_work`、Grant/Approval、目标身份绑定与 receipt-first takeover
 矩阵仍是唯一创建被测 target Work 的路径。
 
+在 receipt-binding 的 Root-parent 分支，公共责任树仅用于核实 target/sibling
+按 exact Formation 审批后存在且没有 current Work；这些分支不声称读取
+Workspace Detail。目标 child ResourceBoundary 的 Workspace Detail 核对只在
+takeover 文件相应 seed 及 receipt-binding 的 `non-root-parent` 分支执行。
+
 普通 Root Parent Work 通过 Root `assign_work`，并按精确 CAPA Inbox 项执行
 `ResolveControlApproval`。`non-root-parent` 分支通过 Root Formation 批准 Parent，
 并由同一 FormationProposal 的 `initialWork` 创建 Parent WorkEpisode；Parent Agent
