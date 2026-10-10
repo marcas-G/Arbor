@@ -3,6 +3,10 @@ import {
   main,
   runDaemonForever,
 } from "../../../apps/single-workspace/dist/main.js";
+import {
+  makeProjectResourceProfilePort,
+  projectResourceProfilesFromEnvironment,
+} from "../../../apps/single-workspace/dist/project-resource-profiles.js";
 import { SHELL_DEFINITION } from "../../../packages/tool-runtime/dist/catalog.js";
 
 const targetBoundary = process.env.ARBOR_AH_BOUNDARY;
@@ -50,6 +54,9 @@ const pauseAtBoundary = async (event) => {
 
 const config = {
   tickIntervalMs: 25,
+  projectResourceProfiles: makeProjectResourceProfilePort(
+    projectResourceProfilesFromEnvironment(),
+  ),
   webTransport: {
     staticRoot: process.env.ARBOR_WEB_DIST,
     port: Number(process.env.ARBOR_HTTP_PORT),

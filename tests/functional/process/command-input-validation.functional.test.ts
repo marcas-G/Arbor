@@ -181,6 +181,7 @@ describe("F23 external command input validation", () => {
   it("rejects an acp_ ID at the public acceptance boundary", async () => {
     const marker = `F23-ACCEPT-${crypto.randomUUID().slice(0, 8)}`;
     const fixture = await startProductionFixture({
+      admitWorkspaceDirectory: true,
       reply: makeWorkProvider({ marker, verdict: "Pass" }),
     });
     fixtures.push(fixture);
@@ -189,6 +190,7 @@ describe("F23 external command input validation", () => {
       client,
       fixture.workspaceDirectory,
       "F23 invalid AcceptanceId",
+      { resourceSelection: "Profile" },
     );
     await submitHumanMessage(client, project, `请完成目标 ${marker}。`);
     const approval = await waitForApproval(client, project, marker);
