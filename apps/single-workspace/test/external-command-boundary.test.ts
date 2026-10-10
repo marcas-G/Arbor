@@ -15,7 +15,7 @@ import { makeHttpShell } from "../src/transport/http.js";
 import { makeWebSocketShell } from "../src/transport/websocket.js";
 
 describe("external command transport boundary", () => {
-  it("authenticates before inspecting malformed command envelopes in every shell", async () => {
+  it("returns 401 for unauthenticated malformed command input through every shell", async () => {
     const authenticationCalls: unknown[] = [];
     const submissionCalls: unknown[] = [];
     const core = makeTransportCore({
