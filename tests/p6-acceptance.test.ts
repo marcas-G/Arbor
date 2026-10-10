@@ -12,13 +12,14 @@ import {
   InboxProjectionStoreLive,
   layer,
   MessageStoreLive,
-  P6_MIGRATIONS,
+  P35_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
+  WorkspaceResourceActivationStoreLive,
   WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -117,6 +118,7 @@ import {
   TransactionPort,
   WorkRepository,
   WorkspaceRepository,
+  WorkspaceResourceActivationStore,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import {
@@ -238,6 +240,7 @@ const AcceptanceRegistryLive: Layer.Layer<
   | FormationProposalStore
   | InboxProjectionStore
   | MessageStore
+  | WorkspaceResourceActivationStore
   | ProjectResourceProfilePort
 > = Layer.effect(
   CommandHandlerRegistry,
@@ -251,12 +254,14 @@ const AcceptanceRegistryLive: Layer.Layer<
     const proposals = yield* FormationProposalStore;
     const inbox = yield* InboxProjectionStore;
     const messages = yield* MessageStore;
+    const activations = yield* WorkspaceResourceActivationStore;
     const projectResourceProfiles = yield* ProjectResourceProfilePort;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
       ...makeP1CommandHandlers({
         projects,
         workspaces,
         sessions,
+        activations,
         works,
         projectResourceProfiles,
       }),
@@ -303,6 +308,7 @@ const makeAcceptanceApp = (
   | DomainEventJournal
   | FormationProposalStore
   | MessageStore
+  | WorkspaceResourceActivationStore
   | InboxProjectionStore
   | WorkspaceRepository
   | WorkRepository
@@ -321,6 +327,7 @@ const makeAcceptanceApp = (
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
+    Layer.provide(WorkspaceResourceActivationStoreLive, infra),
     Layer.succeed(ProjectResourceProfilePort, p6ProjectResourceProfiles),
   );
   const registry = Layer.provide(AcceptanceRegistryLive, storeDeps);
@@ -343,6 +350,7 @@ const makeAcceptanceApp = (
     | DomainEventJournal
     | FormationProposalStore
     | MessageStore
+    | WorkspaceResourceActivationStore
     | InboxProjectionStore
     | WorkspaceRepository
     | WorkRepository
@@ -885,7 +893,7 @@ const idFromText = (text: string, prefix: string): string | undefined =>
 describe("p6-acceptance", () => {
   it("Story A: first-layer formation under the human gate (D1)", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P6_MIGRATIONS);
+      yield* runMigrations(P35_MIGRATIONS);
       yield* seedProject;
 
       const proposeHandler = makeProposeChildWorkspaceHandler({
@@ -1108,7 +1116,7 @@ describe("p6-acceptance", () => {
     const CHILD_B_STORY = ws("b1");
     const CHILD_B_STORY_SESSION = ses("b1");
     const program = Effect.gen(function* () {
-      yield* runMigrations(P6_MIGRATIONS);
+      yield* runMigrations(P35_MIGRATIONS);
       yield* seedProject;
       yield* seedLineage([
         {
@@ -1312,7 +1320,7 @@ describe("p6-acceptance", () => {
 
   it("Story C: specialist spawn, settlement dedup, parent session zero-write (D3)", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P6_MIGRATIONS);
+      yield* runMigrations(P35_MIGRATIONS);
       yield* seedProject;
       const admitted = yield* admitMain({
         commandId: MAIN_ADMIT_C,
@@ -1458,7 +1466,7 @@ describe("p6-acceptance", () => {
 
   it("Story D: Report does not preempt, Reply closes correlation, illegal Query denied (D2)", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P6_MIGRATIONS);
+      yield* runMigrations(P35_MIGRATIONS);
       yield* seedProject;
       yield* seedLineage([
         {
@@ -1614,7 +1622,7 @@ describe("p6-acceptance", () => {
 
   it("Story E: Normal steer never interrupts; Critical steer stops atomically", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P6_MIGRATIONS);
+      yield* runMigrations(P35_MIGRATIONS);
       yield* seedProject;
       yield* seedLineage([
         {

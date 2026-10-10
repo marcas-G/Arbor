@@ -5,7 +5,7 @@ import { Effect } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   P32_MIGRATIONS,
-  P34_MIGRATIONS,
+  P35_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -114,7 +114,10 @@ const buildLayer = (dbFile: string) =>
   buildSingleWorkspaceLayer({
     databaseFile: dbFile,
     projectId: PROJECT,
-    authenticator: makeStaticAuthenticator({ "test-token": HUMAN }),
+    authenticator: makeStaticAuthenticator({
+      "test-token": HUMAN,
+      "local-view-token": parse(Principal)("user:local"),
+    }),
     governance: { authenticatedHumans: [HUMAN], directParentOf: [] },
   });
 
@@ -215,7 +218,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
         const health = yield* HealthPort;
         const beforeMigration = yield* health.readiness();
 
-        yield* runMigrations(P34_MIGRATIONS);
+        yield* runMigrations(P35_MIGRATIONS);
         const afterMigration = yield* health.readiness();
 
         const resolver = yield* AuthorityResolverPort;
@@ -253,6 +256,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
         const treeResponse = yield* boundary.http.handle({
           method: "POST",
           path: "/views/responsibility-tree",
+          authorization: "Bearer local-view-token",
           body: { projectId: PROJECT },
         });
 
@@ -307,7 +311,9 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
       };
       expect(body.resolution).toBe("Committed");
     }
-    expect(outcome.treeResponse.ok).toBe(true);
+    expect(outcome.treeResponse.ok, JSON.stringify(outcome.treeResponse)).toBe(
+      true,
+    );
     if (outcome.treeResponse.ok) {
       const body = outcome.treeResponse.body as {
         readonly value?: { readonly nodes: ReadonlyArray<unknown> };
@@ -321,7 +327,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
     const outcome = await runWith(
       join(dir, "slice.db"),
       Effect.gen(function* () {
-        yield* runMigrations(P34_MIGRATIONS);
+        yield* runMigrations(P35_MIGRATIONS);
         yield* p7SeedProject;
         const deployment = yield* ProductionDaemonService;
         // the runnable entrypoint: start (migrations + T1 recovery), scheduler
