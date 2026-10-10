@@ -172,13 +172,14 @@ const storedReceipt = (
   resolution: "Committed" | "TerminalRejected",
   resultJson: string | null,
   terminalErrorJson: string | null,
+  schemaVersion = "1",
 ): StoredCommandResolution => ({
   commandId: id("cmd_") as StoredCommandResolution["commandId"],
   projectId: id("prj_") as StoredCommandResolution["projectId"],
   semanticRequestFingerprint: "f".repeat(
     64,
   ) as StoredCommandResolution["semanticRequestFingerprint"],
-  schemaVersion: "1",
+  schemaVersion,
   fingerprintAlgorithmVersion: 1,
   resolution,
   resultJson,
@@ -188,7 +189,7 @@ const storedReceipt = (
 });
 
 describe("registered command receipt runtime decoders", () => {
-  it("has a positive schema-v1 result example for every registered command", async () => {
+  it("has a positive example for each current registered Handler/result pair", async () => {
     const registered = [...CommandInputContractRegistry.commandTypes].sort();
     expect(registered).toEqual(Object.keys(resultByCommand).sort());
 
@@ -197,9 +198,14 @@ describe("registered command receipt runtime decoders", () => {
         "Committed",
         JSON.stringify(resultByCommand[commandType]),
         null,
+        commandType === "CreateProject" ? "2" : "1",
       );
       const exit = await Effect.runPromiseExit(
-        decodeRegisteredCommandReceipt(stored, commandType, "1"),
+        decodeRegisteredCommandReceipt(
+          stored,
+          commandType,
+          commandType === "CreateProject" ? "2" : "1",
+        ),
       );
       expect(Exit.isSuccess(exit), commandType).toBe(true);
       if (Exit.isSuccess(exit)) {
@@ -221,6 +227,7 @@ describe("registered command receipt runtime decoders", () => {
   it("decodes complete rejection fields and rejects missing, extra, or inherited tags", async () => {
     const rejectionExamples = [
       { _tag: "IdempotencyConflict", commandId: id("cmd_") },
+      { _tag: "ProjectResourceUnavailable", commandId: id("cmd_") },
       { _tag: "AuthorityDenied", reason: "no" },
       { _tag: "RevisionConflict", expected: 1, actual: 2 },
       { _tag: "InvalidProjectName", reason: "invalid" },
@@ -272,9 +279,9 @@ describe("registered command receipt runtime decoders", () => {
       expect(isCommandRejection(example), example._tag).toBe(true);
       const exit = await Effect.runPromiseExit(
         decodeRegisteredCommandReceipt(
-          storedReceipt("TerminalRejected", null, JSON.stringify(example)),
+          storedReceipt("TerminalRejected", null, JSON.stringify(example), "2"),
           "CreateProject",
-          "1",
+          "2",
         ),
       );
       expect(Exit.isSuccess(exit), example._tag).toBe(true);
@@ -286,16 +293,47 @@ describe("registered command receipt runtime decoders", () => {
         extra: true,
       }),
     ).toBe(false);
+    expect(isCommandRejection({ _tag: "ProjectResourceUnavailable" })).toBe(
+      false,
+    );
+    expect(
+      isCommandRejection({
+        _tag: "ProjectResourceUnavailable",
+        commandId: "not-a-command-id",
+      }),
+    ).toBe(false);
+    expect(
+      isCommandRejection({
+        _tag: "ProjectResourceUnavailable",
+        commandId: id("cmd_"),
+        profileRef: "must-not-be-stored",
+      }),
+    ).toBe(false);
     expect(isCommandRejection({ _tag: "AuthorityDenied" })).toBe(false);
     expect(isCommandRejection({ _tag: "constructor" })).toBe(false);
   });
 
-  it("fails closed for malformed JSON and unsupported exact schema versions", async () => {
-    const malformed = storedReceipt("Committed", "{", null);
+  it("fails closed for malformed JSON, preserve-only v1, and unsupported exact schema versions", async () => {
+    const malformed = storedReceipt("Committed", "{", null, "2");
     const malformedExit = await Effect.runPromiseExit(
-      decodeRegisteredCommandReceipt(malformed, "CreateProject", "1"),
+      decodeRegisteredCommandReceipt(malformed, "CreateProject", "2"),
     );
     expect(Exit.isFailure(malformedExit)).toBe(true);
+
+    const preservedV1 = storedReceipt(
+      "Committed",
+      JSON.stringify(resultByCommand.CreateProject),
+      null,
+      "1",
+    );
+    const preservedV1Exit = await Effect.runPromiseExit(
+      decodeRegisteredCommandReceipt(preservedV1, "CreateProject", "2"),
+    );
+    expect(Exit.isFailure(preservedV1Exit)).toBe(true);
+    const noV1DecoderExit = await Effect.runPromiseExit(
+      decodeRegisteredCommandReceipt(preservedV1, "CreateProject", "1"),
+    );
+    expect(Exit.isFailure(noV1DecoderExit)).toBe(true);
 
     const unsupported = {
       ...storedReceipt(
@@ -303,10 +341,10 @@ describe("registered command receipt runtime decoders", () => {
         JSON.stringify(resultByCommand.CreateProject),
         null,
       ),
-      schemaVersion: "2",
+      schemaVersion: "3",
     };
     const unsupportedExit = await Effect.runPromiseExit(
-      decodeRegisteredCommandReceipt(unsupported, "CreateProject", "2"),
+      decodeRegisteredCommandReceipt(unsupported, "CreateProject", "3"),
     );
     expect(Exit.isFailure(unsupportedExit)).toBe(true);
 

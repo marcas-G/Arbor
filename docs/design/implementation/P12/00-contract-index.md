@@ -125,7 +125,7 @@ Revisions P12 explicitly owns against frozen P0–P11 contracts or the frozen DI
 | TR-9 | lease-triple port evolution: `LeaseRecord` + `ExecutionRepository.{tryAcquireLease,renewLease,releaseLease}` + `LeaseService` + `SessionRepository.appendEntry` fence + `FenceStopCheck` gain `worker_incarnation_id` | P2 `02` §3/§6, `03` §2, `04` §3.2 | `06` |
 | TR-10 | optional `RuntimeSafetyObservation` channel widening the frozen P2 `RuntimeSafetyGate.admitActivity` (additive third argument) | P2 `02` §5 | `08` |
 | TR-11 | `ToolCatalogPortService.definitions()` → `visibleRefs()` + `resolveForModel()` (model-facing resolution; P12 completion blocker #2) | P3 `01` §1/§2; P4 `01` §1 | `07` |
-| TR-12 | Host-registered Project Resource Profile catalog and path-free authenticated bootstrap listing; P1 owns the immutable lookup Port; resolver/authority remains unchanged | SD v1.13 §4.5.1; DID v1.35 §4.1C; P1 `02` | `10` |
+| TR-12 | Host-registered Project Resource Profile catalog and path-free authenticated bootstrap listing; P1 owns the immutable lookup Port; resolver/authority remains unchanged | SD v1.13 §4.5.1; DID v1.36 §4.1C; P1 `02` | `10` |
 
 TR-12 is an additive FT-DG-01 bootstrap contract. It does not reopen the other
 P12 phase closures and does not claim F21 qualification or FT-DG-01 completion.
