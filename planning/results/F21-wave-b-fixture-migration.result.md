@@ -89,6 +89,18 @@ Focused evidence after this correction:
 
 These are focused test-fixture corrections, not F21 qualification or closure.
 
+## Canonical-path consistency follow-up
+
+The P5 and P12 ownership seeds now take `canonicalRoot` from the trusted
+Profile Port's resolved `canonicalAddress.path` and use that exact value for
+`normalizedRegion` and `sourceAddressSnapshot`. Each fixture asserts the
+resolved Profile path equals `realpathSync(dir)`, directly checking agreement
+with the host adapter's canonicalization without requiring Windows symlink
+creation privileges. No symlink/junction test was added in this environment.
+After this follow-up, P5 is 1/1, P12 runtime safety is 25/25, and P12
+acceptance story 9 is 7/7; `tsconfig.test` typecheck, targeted Biome, and
+`git diff --check` pass.
+
 The production F21 process qualification and its raw-path cases are in a
 separately owned, untracked file in the shared worktree; they are excluded from
 this commit. Browser form/catalog UI migration is also outside this file

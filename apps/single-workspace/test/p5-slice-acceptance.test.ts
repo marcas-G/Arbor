@@ -1,6 +1,6 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import {
   type AssignWorkPayload,
   CommandGateway,
@@ -36,7 +36,7 @@ import {
   TransactionPort,
   WorkWaitStore,
 } from "@arbor/ports";
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -194,6 +194,17 @@ describe("I0 executable/control vertical slice", () => {
     if (profile === undefined || !profile.available) {
       throw new Error("P5 host Project Profile must be available");
     }
+    const resolvedProfile = Effect.runSync(
+      projectResourceProfiles.resolve(
+        profile.resourceProfileRef,
+        profile.version,
+      ),
+    );
+    if (Option.isNone(resolvedProfile)) {
+      throw new Error("P5 host Project Profile did not resolve");
+    }
+    const canonicalRoot = resolvedProfile.value.canonicalAddress.path;
+    expect(canonicalRoot).toBe(realpathSync(dir));
     const selectedProjectPayload = projectPayload({
       _tag: "Profile",
       resourceProfileRef: profile.resourceProfileRef,
@@ -242,9 +253,12 @@ describe("I0 executable/control vertical slice", () => {
                 // P12 `09`: the production resolver emits the frozen object
                 // encoding with an ABSOLUTE normalized path (P1 `04` §3.3);
                 // the claim fixture must match it.
-                normalizedRegion: { kind: "FileTree", path: resolve(dir) },
+                normalizedRegion: { kind: "FileTree", path: canonicalRoot },
               },
-              sourceAddressSnapshot: { _tag: "FileTree", path: dir },
+              sourceAddressSnapshot: {
+                _tag: "FileTree",
+                path: canonicalRoot,
+              },
               resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
               resolvedAtEnvironmentRevision: "local",
               createdAt: "t",
