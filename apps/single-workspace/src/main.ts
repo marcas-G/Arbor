@@ -192,6 +192,10 @@ export interface ProductionDaemonRunConfig
     readonly port?: number | undefined;
     readonly host?: string | undefined;
   };
+  /** Optional process-local observer for the successful Web transport bind.
+   * The reported port is the actual bound port (including when configured as
+   * zero). Observer failures must not change daemon startup semantics. */
+  readonly onWebTransportListening?: (port: number) => void;
 }
 
 /** P5 `01` §3: migrate, then run one scheduler loop step for a workspace.
@@ -328,6 +332,11 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
         }),
       );
       webTransportHandle = handle;
+      try {
+        config.onWebTransportListening?.(handle.port);
+      } catch {
+        // Lifecycle observation is non-authoritative and cannot fail startup.
+      }
       yield* Effect.addFinalizer(() => Effect.promise(handle.close));
     }
     // ResponseJob transitions may happen in the daemon sweep without a
