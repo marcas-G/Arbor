@@ -26,6 +26,7 @@ import {
   makePublicProject,
   makeRecordingProvider,
   newCapabilityId,
+  publicProjectPayload,
 } from "../support/public-chat.js";
 
 const TOKEN = "tok_capability_b01";
@@ -128,7 +129,7 @@ describe("B01 L2 — public Human Input to durable transcript", () => {
                   projectId: project.projectId,
                   actor: "user:capability-test",
                   issuedAt: new Date().toISOString(),
-                  payload: project,
+                  payload: publicProjectPayload(project),
                 });
                 expect(created.status).toBe(200);
                 expect(created.payload.body?.resolution).toBe("Committed");

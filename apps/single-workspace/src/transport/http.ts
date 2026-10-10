@@ -2,10 +2,7 @@ import type { ViewRequestMap } from "@arbor/api-contracts";
 import type { ViewId } from "@arbor/domain";
 import { Effect } from "effect";
 import type { TransportCredential } from "./auth.js";
-import type {
-  ExternalCommandEnvelope,
-  TransportResponse,
-} from "./contracts.js";
+import type { TransportResponse } from "./contracts.js";
 import { isViewId, type TransportCore } from "./core.js";
 import {
   failureResponse,
@@ -58,15 +55,9 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
 export const makeHttpShell = (core: TransportCore): HttpShell => ({
   handle: (request) => {
     if (request.method === "POST" && request.path === "/commands") {
-      const body = asRecord(request.body);
-      if (body === null) {
-        return Effect.succeed(
-          failureResponse(invalidCommandProblem("command envelope required")),
-        );
-      }
       return core.submitCommand(
         bearerCredential(request.authorization),
-        body as unknown as ExternalCommandEnvelope,
+        request.body,
       );
     }
 

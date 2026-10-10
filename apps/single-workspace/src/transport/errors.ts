@@ -88,6 +88,7 @@ export const problemFromProjectionError = (
 export const statusForCategory = (category: string): number => {
   switch (category) {
     case "invalid-request":
+    case "validation":
       return 400;
     case "unauthenticated":
       return 401;
@@ -117,6 +118,38 @@ export const invalidCommandProblem = (detail: string): Problem =>
   makeProblem("transport/invalid-request", "invalid-request", "non-retryable", {
     detail,
   });
+
+export interface InvalidCommandPayloadIssue {
+  readonly path: ReadonlyArray<string | number>;
+  readonly rule:
+    | "required"
+    | "type"
+    | "format"
+    | "range"
+    | "enum"
+    | "unknown-field"
+    | "unsupported-command";
+}
+
+export const invalidCommandPayloadProblem = (input: {
+  readonly commandType?: string;
+  readonly issues: ReadonlyArray<InvalidCommandPayloadIssue>;
+}): Problem => ({
+  code: "InvalidCommandPayload",
+  category: "validation",
+  message: "Command payload is invalid",
+  correlationId: null,
+  retryDisposition: "non-retryable",
+  safeDetails: {
+    ...(input.commandType !== undefined
+      ? { commandType: input.commandType }
+      : {}),
+    issues: input.issues.map((issue) => ({
+      path: [...issue.path],
+      rule: issue.rule,
+    })),
+  },
+});
 
 export const unknownViewProblem = (view: string): Problem =>
   makeProblem("transport/unknown-view", "not-found", "non-retryable", {

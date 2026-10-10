@@ -229,11 +229,11 @@ const createProjectEnvelope = () => ({
   payload: createProjectPayload() as unknown,
 });
 
-const stopEnvelope = () => ({
+const stopEnvelope = (actor: string) => ({
   commandType: "StopExecution",
   commandId: STOP_COMMAND,
   projectId: PROJECT,
-  actor: parse(Actor)("user:human"),
+  actor: parse(Actor)(actor),
   issuedAt: "2026-09-22T00:00:00.000Z",
   payload: { executionId: EXECUTION } as unknown,
 });
@@ -538,7 +538,7 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
         });
         const response = yield* core.submitCommand(
           { token: "agent-token" },
-          stopEnvelope(),
+          stopEnvelope(AGENT),
         );
         return { response, executions: yield* countRows("executions") };
       }),
@@ -567,7 +567,7 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
         });
         return yield* core.submitCommand(
           { token: "human-token" },
-          stopEnvelope(),
+          stopEnvelope(HUMAN),
         );
       }),
     );

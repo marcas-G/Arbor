@@ -19,7 +19,7 @@ import {
   startWebTransport,
   type WebTransportHandle,
 } from "../src/transport/server.js";
-import { createProjectPayloadShape } from "./p13-e2e-fixtures.js";
+import { createProjectPayloadShape, p13Id } from "./p13-e2e-fixtures.js";
 
 /**
  * P13 `06` EC-11 — the story-§1 mechanical path against the REAL slice
@@ -146,17 +146,17 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
   });
 
   it("story §1: CreateProject via /commands (external human governance) lands Committed", async () => {
-    const payload = createProjectPayloadShape("story");
+    const project = createProjectPayloadShape("story");
     const response = await fetch(`${base()}/commands`, {
       method: "POST",
       headers: authHeaders,
       body: JSON.stringify({
         commandType: "CreateProject",
-        commandId: `cmd_${crypto.randomUUID()}`,
-        projectId: payload.projectId,
+        commandId: p13Id("cmd"),
+        projectId: project.projectId,
         actor: "user:human",
         issuedAt: new Date().toISOString(),
-        payload,
+        payload: project.payload,
       }),
     });
     expect(response.status).toBe(200);
@@ -170,11 +170,11 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
 
   it("story §1: the responsibility-tree view renders the created root workspace", async () => {
     await runConsumers?.();
-    const payload = createProjectPayloadShape("story");
+    const project = createProjectPayloadShape("story");
     const response = await fetch(`${base()}/views/responsibility-tree`, {
       method: "POST",
       headers: authHeaders,
-      body: JSON.stringify({ projectId: payload.projectId }),
+      body: JSON.stringify({ projectId: project.projectId }),
     });
     expect(response.status).toBe(200);
     const result = (await response.json()) as {
@@ -216,17 +216,17 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
       frames.push(JSON.parse(String(event.data)));
     };
 
-    const payload = createProjectPayloadShape("ws");
+    const project = createProjectPayloadShape("ws");
     const response = await fetch(`${base()}/commands`, {
       method: "POST",
       headers: authHeaders,
       body: JSON.stringify({
         commandType: "CreateProject",
-        commandId: `cmd_${crypto.randomUUID()}`,
-        projectId: payload.projectId,
+        commandId: p13Id("cmd"),
+        projectId: project.projectId,
         actor: "user:human",
         issuedAt: new Date().toISOString(),
-        payload,
+        payload: project.payload,
       }),
     });
     expect(response.status).toBe(200);

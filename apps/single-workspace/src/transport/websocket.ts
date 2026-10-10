@@ -2,16 +2,9 @@ import type { ViewRequestMap } from "@arbor/api-contracts";
 import type { ViewId } from "@arbor/domain";
 import { Effect } from "effect";
 import type { TransportCredential } from "./auth.js";
-import type {
-  ExternalCommandEnvelope,
-  TransportResponse,
-} from "./contracts.js";
+import type { TransportResponse } from "./contracts.js";
 import { isViewId, type TransportCore } from "./core.js";
-import {
-  failureResponse,
-  invalidCommandProblem,
-  unknownViewProblem,
-} from "./errors.js";
+import { failureResponse, unknownViewProblem } from "./errors.js";
 
 /**
  * P12 `10` §2: the WebSocket shell. One frame in, one rendered
@@ -39,15 +32,7 @@ const credentialOf = (token: string | undefined): TransportCredential | null =>
 export const makeWebSocketShell = (core: TransportCore): WebSocketShell => ({
   handleFrame: (frame) => {
     if (frame.kind === "command") {
-      if (typeof frame.envelope !== "object" || frame.envelope === null) {
-        return Effect.succeed(
-          failureResponse(invalidCommandProblem("command envelope required")),
-        );
-      }
-      return core.submitCommand(
-        credentialOf(frame.token),
-        frame.envelope as ExternalCommandEnvelope,
-      );
+      return core.submitCommand(credentialOf(frame.token), frame.envelope);
     }
     const view = frame.view ?? "";
     if (!isViewId(view)) {

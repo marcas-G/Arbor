@@ -18,8 +18,12 @@ import {
   ResourceOwnershipRepository,
   TransactionPort,
 } from "../../../packages/ports/src/index.js";
-import type { PublicAppHandle, PublicProject } from "./public-chat.js";
-import { newCapabilityId } from "./public-chat.js";
+import {
+  newCapabilityId,
+  type PublicAppHandle,
+  type PublicProject,
+  publicProjectPayload,
+} from "./public-chat.js";
 
 const capabilityPrincipal = parse(Principal)("user:capability-test");
 
@@ -53,7 +57,7 @@ export const submitWork = async (
       projectId: project.projectId,
       actor: "user:capability-test",
       issuedAt: new Date().toISOString(),
-      payload: project,
+      payload: publicProjectPayload(project),
     });
     if (
       created.status !== 200 ||

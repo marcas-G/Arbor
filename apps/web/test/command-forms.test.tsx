@@ -121,7 +121,7 @@ describe("CreateProjectForm", () => {
     expect(String(envelope.projectId)).toMatch(/^prj_/);
     const payload = payloadOf(envelope) as Record<string, unknown>;
     expect(payload.name).toBe("论文写作平台");
-    expect(payload.projectId).toBe(envelope.projectId);
+    expect(payload).not.toHaveProperty("projectId");
     const root = payload.rootWorkspace as Record<string, unknown>;
     expect(root.name).toBe("论文写作平台");
     expect(
@@ -157,9 +157,8 @@ describe("CreateProjectForm", () => {
     const first = readCall(fetchMock, 0).envelope;
     const second = readCall(fetchMock, 1).envelope;
     expect(second.commandId).toBe(first.commandId);
-    expect((payloadOf(second) as Record<string, unknown>).projectId).toBe(
-      (payloadOf(first) as Record<string, unknown>).projectId,
-    );
+    expect(second.projectId).toBe(first.projectId);
+    expect(payloadOf(second)).not.toHaveProperty("projectId");
     await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
   });
 });
