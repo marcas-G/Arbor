@@ -47,6 +47,14 @@ interface ViewObservation {
   readonly denied: boolean;
   readonly canonicalPathReturned: boolean;
   readonly workspaceIdReturned: boolean;
+  readonly projectNameReturned: boolean;
+  readonly projectIdReturned: boolean;
+}
+
+interface CatalogObservation {
+  readonly status: number;
+  readonly denied: boolean;
+  readonly canonicalPathReturned: boolean;
 }
 
 const handles: WebTransportHandle[] = [];
@@ -190,6 +198,46 @@ describe("pending P12 view read authentication boundary", () => {
                     body,
                     String(p7RootWorkspace),
                   ),
+                  projectNameReturned: containsValue(body, "p6"),
+                  projectIdReturned: containsValue(body, String(p7Project)),
+                };
+              });
+
+            const readProjects = (port: number, token?: string) =>
+              Effect.promise(async (): Promise<ViewObservation> => {
+                const response = await fetch(
+                  `http://127.0.0.1:${String(port)}/projects`,
+                  token === undefined
+                    ? {}
+                    : { headers: { authorization: `Bearer ${token}` } },
+                );
+                const body: unknown = await response.json();
+                return {
+                  status: response.status,
+                  denied: response.status >= 400,
+                  canonicalPathReturned: containsValue(body, canonicalPath),
+                  workspaceIdReturned: containsValue(
+                    body,
+                    String(p7RootWorkspace),
+                  ),
+                  projectNameReturned: containsValue(body, "p6"),
+                  projectIdReturned: containsValue(body, String(p7Project)),
+                };
+              });
+
+            const readCatalog = (port: number, token?: string) =>
+              Effect.promise(async (): Promise<CatalogObservation> => {
+                const response = await fetch(
+                  `http://127.0.0.1:${String(port)}/project-resources`,
+                  token === undefined
+                    ? {}
+                    : { headers: { authorization: `Bearer ${token}` } },
+                );
+                const body: unknown = await response.json();
+                return {
+                  status: response.status,
+                  denied: response.status >= 400,
+                  canonicalPathReturned: containsValue(body, canonicalPath),
                 };
               });
 
@@ -203,6 +251,7 @@ describe("pending P12 view read authentication boundary", () => {
               "responsibility-tree",
               { projectId: p7Project },
             );
+            const noAuthProjects = yield* readProjects(remoteWithoutAuth.port);
             const missingTokenDetail = yield* query(
               remoteWithAuth.port,
               "workspace-detail",
@@ -220,10 +269,25 @@ describe("pending P12 view read authentication boundary", () => {
               { workspaceId: p7RootWorkspace },
               "foreign-user-token",
             );
+            const missingTokenProjects = yield* readProjects(
+              remoteWithAuth.port,
+            );
+            const invalidTokenProjects = yield* readProjects(
+              remoteWithAuth.port,
+              "invalid-token",
+            );
+            const foreignPrincipalProjects = yield* readProjects(
+              remoteWithAuth.port,
+              "foreign-user-token",
+            );
             const authorizedDetail = yield* query(
               remoteWithAuth.port,
               "workspace-detail",
               { workspaceId: p7RootWorkspace },
+              "valid-local-token",
+            );
+            const authorizedProjects = yield* readProjects(
+              remoteWithAuth.port,
               "valid-local-token",
             );
             const loopbackDetail = yield* query(
@@ -231,15 +295,29 @@ describe("pending P12 view read authentication boundary", () => {
               "workspace-detail",
               { workspaceId: p7RootWorkspace },
             );
+            const loopbackProjects = yield* readProjects(localLoopback.port);
+            const noAuthCatalog = yield* readCatalog(remoteWithoutAuth.port);
+            const authorizedCatalog = yield* readCatalog(
+              remoteWithAuth.port,
+              "valid-local-token",
+            );
 
             return {
               noAuthDetail,
               noAuthTree,
+              noAuthProjects,
               missingTokenDetail,
               invalidTokenTree,
               foreignPrincipalDetail,
+              missingTokenProjects,
+              invalidTokenProjects,
+              foreignPrincipalProjects,
               authorizedDetail,
+              authorizedProjects,
               loopbackDetail,
+              loopbackProjects,
+              noAuthCatalog,
+              authorizedCatalog,
             };
           }),
           app,
@@ -250,26 +328,54 @@ describe("pending P12 view read authentication boundary", () => {
     const unauthorized = [
       report.noAuthDetail,
       report.noAuthTree,
+      report.noAuthProjects,
       report.missingTokenDetail,
       report.invalidTokenTree,
       report.foreignPrincipalDetail,
+      report.missingTokenProjects,
+      report.invalidTokenProjects,
+      report.foreignPrincipalProjects,
     ];
     expect(report.authorizedDetail).toMatchObject({
       status: 200,
       denied: false,
       canonicalPathReturned: true,
     });
+    expect(report.authorizedProjects).toMatchObject({
+      status: 200,
+      denied: false,
+      projectNameReturned: true,
+      projectIdReturned: true,
+    });
     expect(report.loopbackDetail).toMatchObject({
       status: 200,
       denied: false,
       canonicalPathReturned: true,
+    });
+    expect(report.loopbackProjects).toMatchObject({
+      status: 200,
+      denied: false,
+      projectNameReturned: true,
+      projectIdReturned: true,
+    });
+    expect(report.noAuthCatalog).toMatchObject({
+      status: 503,
+      denied: true,
+      canonicalPathReturned: false,
+    });
+    expect(report.authorizedCatalog).toMatchObject({
+      status: 200,
+      denied: false,
+      canonicalPathReturned: false,
     });
     expect(
       unauthorized.filter(
         (observation) =>
           !observation.denied ||
           observation.canonicalPathReturned ||
-          observation.workspaceIdReturned,
+          observation.workspaceIdReturned ||
+          observation.projectNameReturned ||
+          observation.projectIdReturned,
       ),
     ).toEqual([]);
   }, 45_000);

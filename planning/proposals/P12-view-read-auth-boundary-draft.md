@@ -1,90 +1,104 @@
-# P12 View Read Authentication Boundary
+# P12 Sensitive Read Transport Authentication Boundary
 
 **Status: DRAFT — not accepted; no production or design-owner changes are authorized by this file.**
 
 ## Problem and evidence
 
-The local single-user daemon stores canonical Workspace `ResourceBoundary`
+Arbor's single-user daemon stores canonical Workspace `ResourceBoundary`
 addresses. F21's Profile selector and `GET /project-resources` catalog are
 path-free: the public catalog exposes only ref, version, display name and
 availability, while the trusted Profile lookup carries the canonical address
-inside Application. CreateProject persists that address in the Workspace.
+inside Application. CreateProject persists that address in Workspace state.
+P10's frozen `WorkspaceDetailRes` contains `boundary: ResourceBoundary`, and
+P13 currently renders FileTree/GitWorktree paths in Workspace Detail. That is
+not itself a contradiction of F21's narrower catalog/selector contract: an
+authorized local user may see the path they selected.
 
-That does not mean every view is path-free. P10's frozen `WorkspaceDetailRes`
-contains `boundary: ResourceBoundary`; the projection returns the canonical
-Workspace boundary, and P13 currently renders `FileTree.path` and
-`GitWorktree.path` in Workspace Detail and its header. That is not, by itself,
-a contradiction of F21's narrower catalog/selector contract. The local
-single-user loopback user may see the path they selected.
+The security boundary is broader than `/views`. P12 `10` §1/§2 assigns HTTP,
+WebSocket, CLI, web-shell, authentication and deployment to P12 and says
+external human/parent requests authenticate at the transport boundary. P12
+`10` §3 makes authentication precede external command decoding. Current route
+inventory at integration base `e122a89fdd7329ef37c9dd962a30df9e7924a575`:
 
-There is a separate transport boundary defect. P12 `10` §1/§3 assigns HTTP,
-web-shell authentication and deployment to P12 and says external human/parent
-requests are authenticated at the transport boundary. The current
-`POST /views/:view` route calls `TransportCore.queryView` without passing or
-checking a credential; `queryView` directly invokes `ProjectionQueryPort`.
-The command route authenticates, but the view route does not. The server
-defaults to loopback and `main.ts` describes unauthenticated operation as a
-loopback desktop process; however, `ARBOR_HTTP_HOST` can select a non-loopback
-bind. The separate Profile catalog route has a non-loopback/no-auth guard,
-but `/views` does not.
+| Surface | Current route/frame | Data / current boundary |
+|---|---|---|
+| Project directory | HTTP `GET /projects` | Returns project names, ProjectIds, root WorkspaceIds and lifecycle/revision metadata. Configured auth is checked and only `user:local` is admitted, but without an authenticator it maps every request to local principal and lacks the non-loopback listener guard. |
+| P10 views | HTTP `POST /views/:view` (implementation currently accepts any method except DELETE); WebSocket `view` frame | Projection DTOs can include WorkspaceIds, project/work facts and canonical host paths. HTTP route and `TransportCore.queryView` do not authenticate. WebSocket upgrade/frame query does not authenticate or inspect its token. |
+| WS invalidation | Server→client frames on `/ws` | Contains only view id and journal watermark, not DTO/event bodies, per P13 `05` TR-W1. Still exposes view activity/freshness metadata; WebSocket currently accepts connections without authentication. |
+| Conversation progress | HTTP/SSE `GET /conversation-progress/:messageId` | Checks configured authentication and stored `human_principal`; without an authenticator it maps requests to local principal and lacks a non-loopback guard. A known message ID can therefore reach that principal's stream on a wildcard/no-auth listener. |
+| Resource Profile catalog | HTTP `GET /project-resources` | Path-free catalog. Existing guard rejects non-loopback/no-auth, authenticates when configured, and admits only `user:local`; preserve this stricter existing behavior. |
+| Commands | HTTP `POST /commands`; WebSocket `command` frame | Mutating authority path; already calls authenticated submission. This proposal does not change command auth, decode, Actor, Resolver, Gateway or receipt ordering. |
+| Static client | HTTP `GET`/`HEAD` non-API paths when static root configured | Public Web bundle/static assets only; no canonical Project/Workspace view DTO. Keep public. Health/readiness is not an HTTP route in `server.ts`; operational HealthPort/CLI output is a local admin surface, not a remote API route. |
+| CLI | Local process `view` / `command` commands | CLI view invokes ProjectionQueryPort directly and is not exposed by the HTTP listener; classify as local admin/ops surface. Do not silently claim it is a remote authenticated route. |
 
-On a remotely reachable listener, an unauthenticated caller can POST a known
-WorkspaceId to `/views/workspace-detail` and receive canonical boundary
-paths. `WorkspaceDetailReq` contains only WorkspaceId; the projection query
-has no principal or project-visibility context. A known ProjectId can also be
-queried through the unauthenticated responsibility-tree view to obtain
-WorkspaceIds. No real remote service is contacted by the attached RED test.
+The P12 `10` contract is sufficient to classify missing external transport
+authentication as an implementation defect for the existing single-user
+shell. P15's local project-directory comment explicitly requires a future
+visibility resolver before multi-principal listings; the configured-auth
+implementation already fails closed for non-local principals. This proposal
+does not invent that resolver or multi-tenant policy.
 
 ## Proposed minimum contract
 
-1. Preserve current local behavior: with no configured authenticator and a
-   loopback listener, the local single-user principal may query views.
-2. With no authenticator, a non-loopback listener must fail closed for views
-   (preferably reject the configuration or return a safe non-success Problem
-   before projection data is loaded). The guard applies to every view, not
-   only `/project-resources`.
-3. With an authenticator configured, every external view request authenticates
-   before ProjectionQueryPort access. Only the existing supported local
-   principal (`user:local`) is admitted by this single-user read surface;
-   missing/invalid credentials and unsupported principals receive a safe
-   non-success response with no DTO/path data. This does not alter command
-   submission, Authority Resolver ordering, or grants.
-4. Do not infer cross-principal read permission from command authority.
-   Project/Workspace visibility for multiple authenticated principals remains
-   **OPEN**; this proposal does not introduce a multi-tenant model or claim
-   foreign-project isolation.
-5. F21's path-free catalog and closed `Profile(ref, version) |
-   ConversationOnly` CreateProject selector remain unchanged. An authorized
-   local Workspace Detail may continue to show canonical ResourceBoundary as
-   P10/P13 currently specify. If product policy requires every UI surface to
-   hide host paths, that is a separate P10/P13 view DTO/rendering decision.
+1. Preserve the existing no-auth local single-user experience only when the
+   listener host is loopback. A non-loopback listener with no authenticator
+   fails closed for every sensitive remote read before loading its data.
+2. When an authenticator is configured, every sensitive external read first
+   authenticates and admits only the existing supported local principal
+   (`user:local`). Missing/invalid credentials and unsupported principals
+   receive a safe non-success response with no read DTO, canonical path,
+   Project name/ID or Workspace ID. Do not infer read permission from command
+   authority.
+3. Apply this boundary consistently to HTTP P10 view queries, WebSocket view
+   frames and invalidation subscriptions, `GET /projects`, and
+   `GET /conversation-progress/:messageId`.
+   Preserve `/project-resources`' existing stricter guard and path-free DTO.
+   Keep command submission authorization semantics/order unchanged.
+4. Static Web assets and local admin/ops CLI are not remote canonical-data
+   read APIs and remain outside this transport rule. If a new HTTP health or
+   other read endpoint is later added, classify it by returned data before
+   exposure; this draft does not authorize a new endpoint.
+5. Project/Workspace visibility for multiple authenticated principals remains
+   **OPEN**. The current v1 shell is single-user; this candidate does not add
+   multi-tenant visibility, project scoping, or a new principal model.
+6. F21's path-free catalog and closed `Profile(ref, version) | ConversationOnly`
+   selector remain unchanged. An authorized local Workspace Detail may
+   continue to show canonical ResourceBoundary as P10/P13 currently specify.
+   If policy requires every local UI surface to hide host paths, govern a
+   separate P10/P13 DTO/rendering change.
 
 ## Implementation disposition and owners
 
-P12 `10` already owns HTTP/web-shell authentication and deployment, and its
-§3 authentication-at-transport rule is sufficient to classify the missing
-view authentication as an **implementation defect** for the current local
-human shell. P10 `05` owns view shape/semantics and P13 `03` owns rendering;
-neither currently requires redacting Workspace Detail's ResourceBoundary.
-The multi-principal visibility decision is not specified by those view
-contracts and remains OPEN. This candidate proposes only a fail-closed
-single-user boundary until that policy is separately governed.
+P12 `10` owns external HTTP/WS/web-shell authentication and deployment. Its
+transport-boundary rule supports classifying the missing guards as an
+**implementation defect**, not a change to P10 view meaning. P10 `05` owns DTO
+shape, P13 `03` owns presentation, and neither is changed here. P15's
+single-user directory contract supports the configured-principal restriction
+but leaves future multi-principal visibility OPEN. No command authority,
+Gateway receipt, F21 resource admission, or local detail rendering semantics
+are modified.
 
 ## Required qualification
 
-- Keep the regression under `tests/functional/pending/` until implementation
-  is accepted and independently reviewed.
-- Use a temporary SQLite database with a known canonical FileTree boundary;
-  start only local test listeners (`host: 0.0.0.0`, ephemeral port) and connect
-  exclusively through `127.0.0.1`.
-- RED the unauthenticated non-loopback and configured-auth missing/invalid or
-  unsupported-principal `/views/workspace-detail` and responsibility-tree
-  requests; record only status and booleans for path/WorkspaceId presence, never
-  the path value.
-- Positive controls: configured valid `user:local` token can query; default
-  loopback with no authenticator preserves current local behavior.
-- Verify `/project-resources` remains path-free, no command mutation path is
-  changed, and no query result leaks in unauthorized responses.
+- Keep regression coverage under `tests/functional/pending/` until this
+  candidate is accepted, implemented and independently reviewed.
+- Use an isolated temporary SQLite database and local test servers only. The
+  wildcard bind is `0.0.0.0` with an ephemeral port; all requests connect only
+  to `127.0.0.1`. Never contact a real remote service or print path/project
+  values in test diagnostics.
+- RED unauthenticated wildcard `GET /projects` and HTTP view queries; also
+  configured-auth missing/invalid/foreign-principal reads. Assert only
+  sanitized status and boolean presence of protected values.
+- Positive controls: configured valid `user:local` can read, loopback/no-auth
+  retains local behavior, and `/project-resources` continues to reject
+  wildcard/no-auth while returning its path-free payload to the supported
+  local principal.
+- Additional route qualification before closure: no-auth wildcard SSE must
+  not read a known local principal's progress stream; WebSocket view frames
+  must require the supported principal; unauthorized requests must not reach
+  the projection/stream data source. Command routes remain independently
+  covered and unchanged.
 
 This draft does not modify `docs/design/**`, production transports, F21, or
-Project/Workspace data semantics.
+Project/Workspace data semantics. The pending HTTP RED does not by itself
+qualify SSE/WS or close multi-principal visibility.
