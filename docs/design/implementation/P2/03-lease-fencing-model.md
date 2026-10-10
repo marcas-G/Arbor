@@ -7,6 +7,10 @@ consistency review pending.
 **Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
 SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
 
+**Accepted cross-phase application (DID v1.37 AH10):** P7 DeliverMessage is an
+Execution-originated NormalExecutionMutation covered by this existing fence
+contract. This note adds no lease predicate, mutation class, or P2 command.
+
 This document freezes the P2 lease/fencing mechanism. DID §9.7 freezes the
 *guarantees* (expiry + generation + authoritative same-transaction check); P2
 freezes the concrete mechanism.
@@ -107,6 +111,16 @@ WHERE e.execution_id = ?
   `effect_admission_state = MayHaveStarted`.
 - `executions.settled_at IS NULL` means a fence can never authorize a write on
   a settled Execution.
+
+P7 `DeliverMessage` is an Execution-originated Application command for the
+durable Message handover. The stale-Worker fence applies to its durable write;
+admission of this normal execution action follows the existing
+`NormalExecutionMutation` rule. This adds no fence exception or mutation
+class, and does not reclassify Message as a canonical Work/Deliverable entity.
+Its Message, MessageSent, Inbox admission and Command receipt use this same
+authoritative fence inside the CommandGateway transaction. The MessageSent
+consumer derives ChildDelivered after commit; no wake row is part of the
+fenced transaction.
 
 ## 4. Stop / quiescence admission
 

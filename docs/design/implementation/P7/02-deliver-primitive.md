@@ -1,7 +1,17 @@
 # P7 — 02 Deliver Primitive
 
 **Authority:** DID v1.10 §1.8 (Deliver primitive), §4.2, §5.3 (MessageSent), §8.15, §8.18; v1.10 G2; SD v1.3 §7.2, §7.5; P6 `02` (D2 continuation; kind-set expansion authorized by v1.10 G2), P6 `01` §3 (same-boundary wake precedent); `01` §3/§4 (ProduceDeliverable / SatisfyDependency), `04` §1 (coordinator); domain `communication.ts` / `scheduler.ts` (frozen shapes, extended at P7 implementation).
-**Status:** DRAFT (first draft for contract review). v1.10 G2 is a frozen governance input; this document implements it and adds no new adjudication.
+**Status:** DRAFT baseline from the P7 phase-scoped contract review; v1.10 G2 remains the base Deliver semantic owner. The AH10 DeliverMessage/1 Gateway, receipt and replay subsection below is an accepted DID v1.37 amendment; other unclosed P7 draft material is unchanged.
+
+**Accepted owner amendment (DID v1.36 → v1.37): AH10 Deliver fence and
+replay.** The accepted contract maps Deliver to a dedicated DeliverMessage/1
+CommandGateway route without changing ordinary SendMessage/1. It adds no
+Deliverable mutation, MessageSent event type/version, or Inbox kind. Accepted
+proposal SHA-256:
+`75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`.
+The decision and owner landing audit are recorded in
+`planning/results/AH10-deliver-generation-fence-governance.decision.md` and
+`planning/results/AH10-deliver-generation-fence-design-landing.md`.
 
 ## 1. Primitive definition (G2 frozen)
 
@@ -11,7 +21,7 @@ Deliver             delivers an existing Deliverable, child → parent (formal h
 SatisfyDependency   changes Dependency state (matcher always authoritative)             — `01` §4
 ```
 
-- `Deliver` is an independent communication/orchestration primitive — a **Message kind** — not a new canonical Deliverable command and not a canonical mutation envelope (DID §12.10 Message row note: durable communication ≠ canonical mutation envelope).
+- `Deliver` is an independent communication/orchestration primitive — a **Message kind** — not a command that creates or changes a Deliverable. The accepted AH10 route uses a `DeliverMessage` CommandGateway envelope solely for generation fencing, immutable receipt and atomic Message/Event/Inbox commit; the envelope does not turn the Message into a Work/Deliverable canonical entity or add a Deliverable mutation.
 - D2 continuation: **`Report` ≠ `Deliverable` is maintained** (P6 `02` §1). Report stays cognitive upward exposure and can never satisfy a Dependency; Deliver adds the formal handover channel Report deliberately lacks.
 - Deliver is delivery, not matching: a Deliver message never satisfies a Dependency by itself (§7).
 
@@ -43,9 +53,22 @@ Query | Reply | Report | DecisionRequest | Deliver      (P7 onwards; v1.10 G2)
 - `deliverableId` **references, never creates**: there is no "Deliver-and-create" combined shortcut; creation belongs solely to `ProduceDeliverable` (`01` §3, G2 division of labor).
 - `bodyRef` is a bounded view of the handover (P6 `02` §2 discipline; DID §8.14); artifact content stays referenced through the Deliverable's artifact list (`01` §3), never inlined into the message.
 
-## 4. `SendMessage` preconditions for kind = Deliver
+## 4. `DeliverMessage` CommandGateway contract
 
-All inherited P6 `02` §3 rows apply unchanged (recipient exists; same Project; recipient Active; sender identity bound by the authority fact; bodyRef quota). Added rows:
+P7 defines a distinct CommandType `DeliverMessage`, Handler `schemaVersion="1"`. It reuses the existing P1 CommandGateway fence/receipt pipeline and `SendMessageAuthority`; ordinary `SendMessage` v1 payload, handler, result decoder and receipts are unchanged. `DeliverMessage` has no External-origin route. The strict internal payload is:
+
+```ts
+{
+  readonly messageId: MessageId;                 // stable across generations; caller-preallocated
+  readonly senderWorkspaceId: WorkspaceId;       // exact executing Workspace; SendMessageAuthority-bound
+  readonly deliverableId: DeliverableId;         // existing result reference, never created here
+  readonly bodyRef: string;                      // bounded summary
+  readonly correlationId?: string;               // v1 control route leaves absent/null
+  readonly causationId?: string;                 // v1 control route leaves absent/null
+}
+```
+
+`recipientWorkspaceId` is Runtime-derived from the sender's current direct-parent binding, never model-supplied. The handler sets `urgency="Normal"`. Closed fields/IDs and bodyRef length 1..4096 are strict-validated. All inherited P6 `02` §3 conditions apply to the derived Message (recipient exists, same Project, recipient Active, sender bound by `SendMessageAuthority`, bounded body). Added conditions:
 
 | Condition | Rejection |
 |---|---|
@@ -56,29 +79,49 @@ All inherited P6 `02` §3 rows apply unchanged (recipient exists; same Project; 
 
 - **Direction (frozen definition)**: delivery is child → parent. The sender must be the Workspace owning the Work that produced the deliverable (`deliverable.sourceWorkId` → owning Workspace, resolved canonically, never model-asserted); the recipient must be that Workspace's direct parent. No grandparent, sibling, cross-subtree, or cross-Project delivery exists (same rule shape as Report/DecisionRequest in P6 `02` §3).
 
+`DeliverMessageAuthority` is the existing trusted `SendMessageAuthority` fact projected for the exact `senderWorkspaceId`; it binds CommandId, semantic fingerprint and project in the usual Application command contract. P7 does not add a new authority hierarchy or grant External submission.
+
+### Result and receipt
+
+The strict Committed result is `{messageId, deliverableId, senderWorkspaceId, recipientWorkspaceId, admitted:true}`. Its v1 receipt decoder is registered under the exact `(DeliverMessage,"1")` pair. P1 `07` owns the Deliver AgentAction→DeliverMessage/1 route, generation-scoped CommandIds and receipt-first recovery. The P7 handler does not write a parallel effect receipt.
+
+Message, MessageSent(v1), Inbox admission and the Committed `DeliverMessage` receipt commit in the same Gateway transaction. No `commands`, Message, or MessageSent schema change is introduced. Migration 0034 adds only the P9 DeliverReplay failure-fact table; historical direct-write Deliver facts without a receipt use P1/P9's one strict read-only adoption exception below and never receive a fabricated receipt.
+
 ### Events
 
 ```text
-MessageSent { messageId, kind: "Deliver", sender, recipient, deliverableId, correlationId, causationId }
+MessageSent(v1) {
+  messageId, kind: "Deliver", sender, recipient, deliverableId,
+  correlationId, causationId
+}
 ```
+
+For `DeliverMessage`, the event envelope uses the same `projectId`,
+`aggregateRef=messageId`, `eventVersion=1`, `causedByCommandId=commandId`,
+and `occurredAt=message.sentAt` as the committed command transaction. Generic
+MessageSent variants remain unchanged. MessageSent is the sole durable
+ChildDelivered wake source.
 
 ## 5. Inbox admission: kind "Message" (no InboxEntry expansion)
 
 - Deliver lands in the existing `InboxEntry.kind = "Message"` member of the frozen set `"SpecialistSettled" | "Message" | "HumanInput" | "Governance"` (P6 InboxEntry). Admission stays upsert-by-key with `messageEntryKey(messageId)` (D3-generalized rule; at-least-once redelivery is a no-op).
-- The **summary must reference the deliverable** (e.g. `Deliver <deliverableId> from <sender>`); summary is projection text for cognitive triage, not canonical semantics.
+- The **summary is exactly** `Deliver <deliverableId> from <senderWorkspaceId>`; it is projection text for cognitive triage, not canonical semantics.
 - No new InboxEntry enum value is introduced; a Deliver entry stays distinguishable through its referenced message (kind + deliverableId).
 
-## 6. Wake: `ChildDelivered` (same commit boundary)
+## 6. Wake: `ChildDelivered` from the MessageSent consumer
 
 ```text
-SendMessage(kind = Deliver), single transaction:
-  MessageStore append + MessageSent + recipient Inbox admission
-  + wake(recipientWorkspaceId = parent, reason = ChildDelivered)
+DeliverMessage transaction:
+  MessageStore append + MessageSent(v1) + recipient Inbox admission
+  + Committed DeliverMessage receipt
+after commit:
+  WorkflowSignalConsumer reads MessageSent + canonical Message
+  → wakeSink(recipientWorkspaceId = parent, reason = ChildDelivered)
 ```
 
-- "Successful Inbox delivery" = the SendMessage transaction committed with the Inbox admission persisted (P6 `02` §5 same-commitment shape; invariant-36 pattern).
+- "Successful Inbox delivery" = the DeliverMessage transaction committed with the Inbox admission persisted (P6 `02` §5 same-commitment shape; invariant-36 pattern).
 - `ChildDelivered` already exists in the frozen `WakeReason` vocabulary (`scheduler.ts`; DID §8.18: "ChildDelivered is triggered by a successful Deliver Inbox delivery — v1.10 G2; P7 wires it").
-- Wake idempotence: repeated wake is harmless (P2 durable-wait semantics; P6 `01` §3 precedent). The wake mechanism and consumer-side routing remain P2-owned; P7 produces the signal (DID §8.16 source-phase split).
+- The unique committed `MessageSent` event is the only durable wake source. The command transaction writes no separate wake row or second wake payload. The existing WorkflowSignalConsumer reads this event after commit and reconstructs `ChildDelivered` from the canonical Message; the existing wake sink is idempotent under replay. P2 still owns durable WorkWait/timer mechanics; P7 owns the MessageSent→ChildDelivered source mapping.
 
 ## 7. Promotion: none — Deliver never satisfies
 
@@ -98,7 +141,7 @@ interface DeliverDirectiveSpec {
 ```
 
 - **Recipient is derived, never model-chosen**: the direct parent of the executing (sender) Workspace — deterministic structural computation.
-- Directive handler validates deliverable ownership (source Work belongs to the executing Workspace), builds the SendMessage command (kind = Deliver, caller-preallocated messageId / commandId) with the existing `SendMessageAuthority` (P6 `02` §3), and returns the model-visible observation `MessageDelivered(messageId, admitSummary)` (P6 `02` §5 shape).
+- Directive handler validates deliverable ownership (source Work belongs to the executing Workspace), builds the `DeliverMessage` CommandGateway request (caller-preallocated stable messageId and generation-scoped commandId) with the existing `SendMessageAuthority` (P6 `02` §3), and returns `DeliverableDelivered(deliverableId, recipientWorkspaceId)`. The receipt stores exact result `messageId`, `deliverableId`, sender, recipient and `admitted=true`.
 - Typical sequence: `ProduceDeliverable` (`01` §3) → `Deliver` (this doc) → coordinator / agent satisfaction path (`01` §4) — three steps, three separate facts (G2 division of labor).
 - A Deliver rejection (deliverable not found, recipient terminal, …) is a directive execution result / model-visible observation, not an Execution failure (DID §8.15 result vocabulary).
 
@@ -117,7 +160,7 @@ interface DeliverDirectiveSpec {
 
 ## 10. Must Not Decide
 
-- No new canonical Deliverable command (G2: Deliver is not a mutation envelope; DID §12.10 Message row note).
+- No command creates or changes a Deliverable (G2: Deliver references an existing result; `DeliverMessage` commits only its Message handover and delivery facts).
 - No InboxEntry kind enumeration expansion (Deliver lands in "Message").
 - No satisfaction semantics (matcher / SatisfyDependency owned by `01`; a Deliver message never changes Dependency state — §7).
 - No modification of the existing four kinds' semantics / correlation / causation / urgency rules (P6 `02`; only the G2-authorized kind-set expansion).

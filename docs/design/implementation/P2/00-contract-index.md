@@ -49,7 +49,7 @@ is compatibility-only and cannot admit or drive a new execution.
 |---|---|
 | `01-command-contracts.md` | P2 command set, runtime authority facts, mutation classes, payload/result/rejection/events |
 | `02-port-contracts.md` | P2 ports (ExecutionRepository, Session append/idempotent source write, AgentLoopStepStore, WorkerDispatch, ExecutionDriver, RuntimeSafetyGate, ExecutionScheduler, WorkWaitStore, timers), Effect A/E/R |
-| `03-lease-fencing-model.md` | lease lifecycle, generation, fence/stop predicates, quiescence-control admission, recovery authority |
+| `03-lease-fencing-model.md` | lease lifecycle, generation, fence/stop predicates, quiescence-control admission, recovery authority; AH10 DeliverMessage inherits the existing NormalExecutionMutation fence |
 | `04-sqlite-schema.md` | P2 DDL (`executions`, `execution_leases`, `agent_execution_state`, `session_entries`, `work_waits`, `scheduler_timers`) + DID v1.20 `agent_loop_steps`/`agent_loop_step_actions` successor migration, indexes, CAS SQL |
 | `05-scheduler-wait.md` | ExecutionScheduler, deterministic re-evaluation trigger, durable WorkWait, wake/timer, lost-wake-up protection |
 | `06-recovery-skeleton.md` | recovery order, expired-lease invalidation, unsettled detection, RecoveryController settlement, DurabilityEnvelope |

@@ -23,7 +23,7 @@ in favor of the DID.
 | `05-event-journal.md` | sequence scope + durable counter, `eventVersion`, offset/projection boundary, poison handling |
 | `04-sqlite-schema.md` | DDL, cyclic FKs, indexes, resource-region encoding, migration, retention |
 | `06-recovery-matrix.md` | crash-point matrix, durability, attempt recording |
-| `07-agent-loop-step-command-identity.md` | DID v1.20 LogicalActionId/LogicalSettlementId、generation-scoped CommandId、receipt-first takeover eligibility |
+| `07-agent-loop-step-command-identity.md` | DID v1.20 LogicalActionId/LogicalSettlementId、generation-scoped CommandId、receipt-first takeover eligibility; accepted AH10 direct-child AssignWork and P7 Deliver legacy proof exceptions |
 | `00-contract-index.md` | this index |
 
 ## Gap closure mapping

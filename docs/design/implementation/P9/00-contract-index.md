@@ -39,7 +39,7 @@ or recovery ownership.
 | `04-provider-tool-hardening.md` | Provider disconnect mapping + unsettled-turn recovery (GQ4), tool four-tier assertions, dispatch-failure semantics |
 | `05-consumer-rebuild-hardening.md` | Consumer offset wiring + crash matrix, generic rebuild (GQ2 P9 face), P10 boundary |
 | `06-acceptance.md` | Stories A–G and mechanical assertion list |
-| `07-agent-loop-step-recovery.md` | DID v1.20 Provider success local convergence、AgentLoopStep recovery matrix、legacy adoption、AH1–AH14 |
+| `07-agent-loop-step-recovery.md` | DID v1.20 Provider success local convergence、AgentLoopStep recovery matrix、legacy adoption、AH1–AH14; accepted AH10 DeliverMessage receipt priority and DeliverReplayEscalated fact/event |
 
 ## Scope (DID §11 P9, nine faces)
 
@@ -49,6 +49,12 @@ lease expiration / old worker resurrection / dispatch failure /
 consumer crash / projection rebuild (generic face, GQ2) /
 settled Provider result handoff / AgentLoopStep crash windows / legacy adoption
 ```
+
+Accepted cross-phase AH10 extension: `07` also owns DeliverMessage receipt
+priority, the pre-Gateway exact-proof adoption path, and its immutable
+`DeliverReplayEscalated` fact/event. This adds no tenth generic P9 fault face;
+the existing P1 fence/receipt and P7 message transaction remain the owners of
+their mechanisms.
 
 P9 is hardening over existing semantics: P2 owns the mechanism, P1 owns the
 command-transaction matrix, P5 owns the representative restart proof — P9

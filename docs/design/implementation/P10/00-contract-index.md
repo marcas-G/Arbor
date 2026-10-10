@@ -45,12 +45,12 @@ ordered/list consumers remain compatible by ignoring additive fields.
 | Doc | Owns |
 |---|---|
 | `01-view-inventory.md` | Authoritative view list (SD full inventory), per-view derive inputs & query shapes, WorkspaceStatus exhaustive label map |
-| `02-attention-readmodel.md` | Attention source→severity→target→bubbling→dedup→read-model contract; canonical/event fact sources including FT-DG-01 OPEN-3; GAP-01 view |
+| `02-attention-readmodel.md` | Attention source→severity→target→bubbling→dedup→read-model contract; accepted `DeliverReplayFailure`, FT-DG-01 OPEN-3, and GAP-01 view |
 | `03-effectivefacts-freshness.md` | EffectiveFacts shared projection (def/materialization/query); freshness watermark/lag/barrier contract |
 | `04-rebuild-atscale.md` | Business-projection at-scale rebuild (GQ2 handover from P9): checkpoints, projection-side retention (P1 `04` horizon untouched), orchestration, query correctness |
 | `05-surface-actions-transport.md` | ProjectionQueryPort/api-contracts DTOs; Query(P14 consume)/Steer/Stop/Governance-Change surfaces; P12 transport boundary |
 | `06-humanintervention-fact.md` | HumanInterventionApplied payload, emission points, WorkSteered back-fill (inherited evolution) |
-| `07-acceptance.md` | Stories + mechanical assertions |
+| `07-acceptance.md` | Stories + mechanical assertions, including DeliverReplayFailure source/fact projection, rebuild and restart |
 
 ## Implementation baseline (from scope extraction)
 
