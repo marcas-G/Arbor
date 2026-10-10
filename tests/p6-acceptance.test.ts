@@ -117,7 +117,10 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
-import { seedCurrentOpenWork } from "./support/execution-episode-fixtures.js";
+import {
+  seedCurrentOpenWork,
+  workEpisode,
+} from "./support/execution-episode-fixtures.js";
 
 const ACTOR = parse(Actor)("user:gov");
 const PRINCIPAL = parse(Principal)("user:gov");
@@ -152,6 +155,7 @@ const APPROVE_COMMAND = cmd("a4");
 const CHILD_B1 = ws("b2");
 const CHILD_B1_SESSION = ses("b2");
 const EXE_CHILD = exe("b3");
+const CHILD_B_STORY_WORK = wrk("b9");
 const FORCED_CHILD = ws("b4");
 const FORCED_SESSION = ses("b4");
 const SIBLING_CREATE_COMMAND = cmd("b5");
@@ -490,6 +494,7 @@ const executionOf = (
   executionId: ExecutionId,
   workspaceId: WorkspaceId,
   stopRequestedAt: string | null = null,
+  episode = workEpisode(MAIN_WORK),
 ): Execution => ({
   executionId,
   projectId: PROJECT,
@@ -497,11 +502,7 @@ const executionOf = (
   binding: {
     _tag: "WorkspaceExecution" as const,
     workspaceId,
-    episode: {
-      _tag: "WorkEpisode" as const,
-      workId: MAIN_WORK,
-      targetWorkRevision: parse(WorkRevision)(0),
-    },
+    episode,
   },
   sessionId: ROOT_SESSION,
   admittedAt: "t",
@@ -1077,6 +1078,8 @@ describe("p6-acceptance", () => {
           sessionId: CHILD_B1_SESSION,
         },
       ]);
+      yield* seedCurrentOpenWork(PROJECT, CHILD_B_STORY, CHILD_B_STORY_WORK);
+      const worksBeforeFormation = yield* countRows("works");
 
       const handler = makeProposeChildWorkspaceHandler({
         gateway: yield* CommandGateway,
@@ -1090,7 +1093,12 @@ describe("p6-acceptance", () => {
           _tag: "ProposeChildWorkspace",
           spec: proposalDraft("grandchild-deep"),
         },
-        execution: executionOf(EXE_CHILD, CHILD_B_STORY),
+        execution: executionOf(
+          EXE_CHILD,
+          CHILD_B_STORY,
+          null,
+          workEpisode(CHILD_B_STORY_WORK),
+        ),
         context: executionContext(EXE_CHILD),
       });
       const grandchildId = parse(WorkspaceId)(
@@ -1108,9 +1116,20 @@ describe("p6-acceptance", () => {
       );
       const directCounts = {
         workspaces: yield* countRows("workspaces"),
-        works: yield* countRows("works"),
+        worksAdded: (yield* countRows("works")) - worksBeforeFormation,
         proposals: yield* countRows("formation_proposals"),
       };
+      const parentWorkOwner = yield* scalar<string | null>(
+        "SELECT workspace_id AS value FROM works WHERE work_id = ?",
+        [CHILD_B_STORY_WORK],
+      );
+      const sql = yield* SqlClient;
+      const grandchildWorkRows = yield* sql.unsafe<{
+        work_id: string;
+        workspace_id: string;
+      }>("SELECT work_id, workspace_id FROM works WHERE workspace_id = ?", [
+        grandchildId,
+      ]);
       const childInbox = yield* inboxOf(CHILD_B_STORY);
 
       const ceilingOutcome = yield* handler.handle({
@@ -1120,7 +1139,12 @@ describe("p6-acceptance", () => {
             { _tag: "FileTree", path: "outside/parent/boundary" },
           ]),
         },
-        execution: executionOf(EXE_CHILD, CHILD_B_STORY),
+        execution: executionOf(
+          EXE_CHILD,
+          CHILD_B_STORY,
+          null,
+          workEpisode(CHILD_B_STORY_WORK),
+        ),
         context: executionContext(EXE_CHILD),
       });
       const afterCeilingWorkspaces = yield* countRows("workspaces");
@@ -1183,10 +1207,13 @@ describe("p6-acceptance", () => {
 
       return {
         outcome,
+        grandchildId,
         grandchildParent,
         childParent,
         childId: CHILD_B_STORY,
         directCounts,
+        parentWorkOwner,
+        grandchildWorkRows,
         childInbox,
         ceilingOutcome,
         afterCeilingWorkspaces,
@@ -1202,9 +1229,15 @@ describe("p6-acceptance", () => {
     expect(result.grandchildParent).toBe(result.childId);
     expect(result.directCounts).toEqual({
       workspaces: 4,
-      works: 1,
+      worksAdded: 1,
       proposals: 0,
     });
+    expect(result.parentWorkOwner).toBe(result.childId);
+    expect(result.grandchildWorkRows).toHaveLength(1);
+    expect(result.grandchildWorkRows[0]?.workspace_id).toBe(
+      result.grandchildId,
+    );
+    expect(result.grandchildWorkRows[0]?.work_id).not.toBe(CHILD_B_STORY_WORK);
     expect(result.childInbox).toHaveLength(0);
 
     expect(result.ceilingOutcome._tag).toBe("Observation");

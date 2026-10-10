@@ -89,6 +89,8 @@ import { labeled } from "./support/p9-harness-api.js";
 
 const WORK_1 = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000001");
 const WORK_P = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000002");
+const EXE_DF1 = "exe_00000000-0000-7000-8000-00000000df01";
+const EXE_DF2 = "exe_00000000-0000-7000-8000-00000000df02";
 const ASSIGN_CMD_1 = parse(CommandId)(
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789e1",
 );
@@ -406,11 +408,11 @@ const INSERT_EXECUTION = (executionId: string) =>
     const sql = yield* SqlClient;
     yield* sql.unsafe(
       "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,NULL,?,0,'t')",
-      [`ses_${executionId}`, "ExecutionScoped", executionId],
+      [`ses_${executionId.slice(4)}`, "ExecutionScoped", executionId],
     );
     yield* sql.unsafe(
       "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
-      [executionId, p7Project, p7RootWorkspace, `ses_${executionId}`],
+      [executionId, p7Project, p7RootWorkspace, `ses_${executionId.slice(4)}`],
     );
   });
 
@@ -421,11 +423,11 @@ const INSERT_MAIN_EXECUTION = (executionId: string) =>
     const sql = yield* SqlClient;
     yield* sql.unsafe(
       "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,NULL,?,0,'t')",
-      [`ses_${executionId}`, "ExecutionScoped", executionId],
+      [`ses_${executionId.slice(4)}`, "ExecutionScoped", executionId],
     );
     yield* sql.unsafe(
       "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'workspace', ?, 'coordination', NULL, NULL, NULL, ?, 't', NULL, NULL, NULL, NULL)",
-      [executionId, p7Project, p7RootWorkspace, `ses_${executionId}`],
+      [executionId, p7Project, p7RootWorkspace, `ses_${executionId.slice(4)}`],
     );
   });
 
@@ -600,7 +602,7 @@ describe("p9-workflow-interruption (WF1–WF3 / DF1–DF2 / D5)", () => {
         const claimRef = "claim-wf2";
         const head = yield* preconsume("wf2");
         yield* journalEvent("ExecutionSettled", {
-          executionId: "exe_00000000-0000-7000-8000-0000000000w2",
+          executionId: "exe_00000000-0000-7000-8000-000000000002",
           workId: WORK_1,
           workRevision: 0,
           claimRef,
@@ -714,7 +716,7 @@ describe("p9-workflow-interruption (WF1–WF3 / DF1–DF2 / D5)", () => {
         yield* seedProjectAndWork;
         const head = yield* preconsume("wf3a");
         yield* journalEvent("ExecutionSettled", {
-          executionId: "exe_00000000-0000-7000-8000-0000000000wa",
+          executionId: "exe_00000000-0000-7000-8000-00000000000a",
           workId: WORK_1,
           workRevision: 0,
           claimRef: "claim-wf3a",
@@ -846,32 +848,30 @@ describe("p9-workflow-interruption (WF1–WF3 / DF1–DF2 / D5)", () => {
       Effect.gen(function* () {
         yield* p9Boot;
         yield* p7SeedProject;
-        yield* INSERT_EXECUTION("exe_p9_df1");
+        yield* INSERT_EXECUTION(EXE_DF1);
         const exit = yield* Effect.exit(
-          dispatchRound("exe_p9_df1", dyingDispatch()),
+          dispatchRound(EXE_DF1, dyingDispatch()),
         );
         expect(exit._tag).toBe("Failure");
         // A dispatch failure never settles (P2 `02` §5): no settlement,
         // no lease, no canonical side effects.
-        expect(yield* executionSettlement("exe_p9_df1")).toBeNull();
+        expect(yield* executionSettlement(EXE_DF1)).toBeNull();
         expect(
-          yield* countRows("execution_leases", "execution_id = ?", [
-            "exe_p9_df1",
-          ]),
+          yield* countRows("execution_leases", "execution_id = ?", [EXE_DF1]),
         ).toBe(0);
         expect(
           yield* countRows("commands", "command_id LIKE 'cmd_settle_%'"),
         ).toBe(0);
         // The re-dispatch surface stays eligible (no live lease).
-        expect(yield* preDispatchCheck("exe_p9_df1" as never)).toBe(true);
+        expect(yield* preDispatchCheck(EXE_DF1 as never)).toBe(true);
         const sink: Array<string> = [];
-        yield* dispatchRound("exe_p9_df1", recordingDispatch(sink));
-        expect(sink).toEqual(["exe_p9_df1"]);
-        const receipt = yield* settleCompleted("exe_p9_df1");
+        yield* dispatchRound(EXE_DF1, recordingDispatch(sink));
+        expect(sink).toEqual([EXE_DF1]);
+        const receipt = yield* settleCompleted(EXE_DF1);
         expect(
           (receipt as { resolution: { _tag: string } }).resolution._tag,
         ).toBe("Committed");
-        expect(yield* executionSettlement("exe_p9_df1")).toBe("Completed");
+        expect(yield* executionSettlement(EXE_DF1)).toBe("Completed");
       }),
       makeP9ConsumerApp(),
     );
@@ -885,21 +885,19 @@ describe("p9-workflow-interruption (WF1–WF3 / DF1–DF2 / D5)", () => {
       Effect.gen(function* () {
         yield* p9Boot;
         yield* p7SeedProject;
-        yield* INSERT_MAIN_EXECUTION("exe_p9_df2");
+        yield* INSERT_MAIN_EXECUTION(EXE_DF2);
         const sink: Array<string> = [];
-        yield* dispatchRound("exe_p9_df2", recordingDispatch(sink));
-        expect(sink).toEqual(["exe_p9_df2"]);
+        yield* dispatchRound(EXE_DF2, recordingDispatch(sink));
+        expect(sink).toEqual([EXE_DF2]);
         // Lost dispatch: ticket accepted, worker never starts — Active +
         // no live lease + no session progress (the observable surface).
-        expect(yield* executionSettlement("exe_p9_df2")).toBeNull();
+        expect(yield* executionSettlement(EXE_DF2)).toBeNull();
         expect(
-          yield* countRows("execution_leases", "execution_id = ?", [
-            "exe_p9_df2",
-          ]),
+          yield* countRows("execution_leases", "execution_id = ?", [EXE_DF2]),
         ).toBe(0);
         expect(
           yield* countRows("session_entries", "session_id = ?", [
-            "ses_exe_p9_df2",
+            "ses_00000000-0000-7000-8000-00000000df02",
           ]),
         ).toBe(0);
         // Bottom line: the next sweep (T2/T3) runs; the reevaluation of
@@ -916,14 +914,14 @@ describe("p9-workflow-interruption (WF1–WF3 / DF1–DF2 / D5)", () => {
         });
         // Re-dispatch within the sweep cadence: eligible, and the
         // workspace continues to settlement on the same execution.
-        expect(yield* preDispatchCheck("exe_p9_df2" as never)).toBe(true);
-        yield* dispatchRound("exe_p9_df2", recordingDispatch(sink));
+        expect(yield* preDispatchCheck(EXE_DF2 as never)).toBe(true);
+        yield* dispatchRound(EXE_DF2, recordingDispatch(sink));
         expect(sink).toHaveLength(2);
-        const receipt = yield* settleCompleted("exe_p9_df2");
+        const receipt = yield* settleCompleted(EXE_DF2);
         expect(
           (receipt as { resolution: { _tag: string } }).resolution._tag,
         ).toBe("Committed");
-        expect(yield* executionSettlement("exe_p9_df2")).toBe("Completed");
+        expect(yield* executionSettlement(EXE_DF2)).toBe("Completed");
       }),
       makeP9ConsumerApp(),
     );

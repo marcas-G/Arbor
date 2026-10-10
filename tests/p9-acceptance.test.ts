@@ -225,7 +225,7 @@ const attentionFacts = (executionId: string) =>
 const INSERT_EXECUTION = (executionId: string, stopRequested: string | null) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const sesId = `ses_${executionId}`;
+    const sesId = `ses_${executionId.slice(4)}`;
     yield* sql.unsafe(
       "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,NULL,?,0,'t')",
       [sesId, "ExecutionScoped", executionId],
@@ -413,6 +413,12 @@ const C_EXECUTION = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789c3",
 ) as ExecutionId;
 const C_EXECUTION_T4 = "exe_018f2b3c-4d5e-7abc-8def-0123456789c4";
+const EXE_SA_DIRTY = "exe_00000000-0000-7000-8000-00000000a101";
+const EXE_SA_CLEAN = "exe_00000000-0000-7000-8000-00000000a102";
+const EXE_SB_CLEAN = "exe_00000000-0000-7000-8000-00000000b201";
+const EXE_SB_FACT = "exe_00000000-0000-7000-8000-00000000b202";
+const EXE_SB_PENDING = "exe_00000000-0000-7000-8000-00000000b203";
+const EXE_SG_DF1 = "exe_00000000-0000-7000-8000-00000000c001";
 const C_TURN = parse(ProviderTurnId)(
   "ptn_018f2b3c-4d5e-7abc-8def-0123456789c3",
 );
@@ -1887,11 +1893,11 @@ const INSERT_EXECUTION_G = (executionId: string) =>
     const sql = yield* SqlClient;
     yield* sql.unsafe(
       "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,NULL,?,0,'t')",
-      [`ses_${executionId}`, "ExecutionScoped", executionId],
+      [`ses_${executionId.slice(4)}`, "ExecutionScoped", executionId],
     );
     yield* sql.unsafe(
       "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
-      [executionId, p7Project, p7RootWorkspace, `ses_${executionId}`],
+      [executionId, p7Project, p7RootWorkspace, `ses_${executionId.slice(4)}`],
     );
   });
 
@@ -1984,9 +1990,9 @@ describe("p9-acceptance", () => {
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
         yield* p7SeedProject;
-        yield* INSERT_EXECUTION("exe_sa_dirty", "t");
-        yield* INSERT_INVOCATION("tin_sa_non", "exe_sa_dirty", "NonIdempotent");
-        yield* INSERT_EXECUTION("exe_sa_clean", "t");
+        yield* INSERT_EXECUTION(EXE_SA_DIRTY, "t");
+        yield* INSERT_INVOCATION("tin_sa_non", EXE_SA_DIRTY, "NonIdempotent");
+        yield* INSERT_EXECUTION(EXE_SA_CLEAN, "t");
         // BEFORE (B-1 stub-era defect shape): the retired stub's pending
         // visibility is the empty list, so a stopped execution carrying an
         // unsettled NonIdempotent invocation would take the clean path and
@@ -1996,26 +2002,22 @@ describe("p9-acceptance", () => {
         // AFTER: the wired ReconciliationSource sees the dangling
         // invocation; recovery escalates with a durable Attention fact.
         const recovery = yield* runRecovery(p7TestPrincipal);
-        expect([...recovery.settled].sort()).toEqual(["exe_sa_clean"]);
-        expect(recovery.escalated).toEqual(["exe_sa_dirty"]);
-        const clean = yield* executionRowOf("exe_sa_clean");
+        expect([...recovery.settled].sort()).toEqual([EXE_SA_CLEAN]);
+        expect(recovery.escalated).toEqual([EXE_SA_DIRTY]);
+        const clean = yield* executionRowOf(EXE_SA_CLEAN);
         expect(clean?.settlement_kind).toBe("Interrupted");
         expect(JSON.parse(clean?.settlement_json ?? "null")).toEqual({
           _tag: "Interrupted",
           result: { _tag: "StopRequested" },
         });
-        const dirty = yield* executionRowOf("exe_sa_dirty");
+        const dirty = yield* executionRowOf(EXE_SA_DIRTY);
         expect(dirty?.settlement_kind).not.toBe("Interrupted");
         expect(dirty?.settlement_kind).toBeNull();
         expect(dirty?.settled_at).toBeNull();
         expect(dirty?.settlement_json).toBeNull();
-        expect(yield* attentionFacts("exe_sa_dirty")).toBe(1);
-        expect(yield* countEventsFor("exe_sa_dirty", "ExecutionSettled")).toBe(
-          0,
-        );
-        expect(yield* countEventsFor("exe_sa_clean", "ExecutionSettled")).toBe(
-          1,
-        );
+        expect(yield* attentionFacts(EXE_SA_DIRTY)).toBe(1);
+        expect(yield* countEventsFor(EXE_SA_DIRTY, "ExecutionSettled")).toBe(0);
+        expect(yield* countEventsFor(EXE_SA_CLEAN, "ExecutionSettled")).toBe(1);
       }),
       makeP7App(durableFile("a")),
     );
@@ -2030,26 +2032,26 @@ describe("p9-acceptance", () => {
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
         yield* p7SeedProject;
-        yield* INSERT_EXECUTION("exe_sb_clean", "t");
-        const fact = yield* INSERT_COMPLETION_FACT("exe_sb_fact");
-        yield* INSERT_EXECUTION("exe_sb_fact", null);
-        yield* INSERT_EXPIRED_LEASE("exe_sb_clean");
+        yield* INSERT_EXECUTION(EXE_SB_CLEAN, "t");
+        const fact = yield* INSERT_COMPLETION_FACT(EXE_SB_FACT);
+        yield* INSERT_EXECUTION(EXE_SB_FACT, null);
+        yield* INSERT_EXPIRED_LEASE(EXE_SB_CLEAN);
         yield* INSERT_TIMER("tmr_sb_due", "2000-01-01T00:00:00.000Z");
         yield* INSERT_TIMER("tmr_sb_future", "2999-01-01T00:00:00.000Z");
         const first = yield* startupRecovery(p7TestPrincipal);
         expect([...first.recovery.settled].sort()).toEqual([
-          "exe_sb_clean",
-          "exe_sb_fact",
+          EXE_SB_CLEAN,
+          EXE_SB_FACT,
         ]);
         expect(first.recovery.escalated).toEqual([]);
         expect(first.recovery.invalidated).toBeGreaterThanOrEqual(1);
-        const clean = yield* executionRowOf("exe_sb_clean");
+        const clean = yield* executionRowOf(EXE_SB_CLEAN);
         expect(clean?.settlement_kind).toBe("Interrupted");
         expect(JSON.parse(clean?.settlement_json ?? "null")).toEqual({
           _tag: "Interrupted",
           result: { _tag: "StopRequested" },
         });
-        const completed = yield* executionRowOf("exe_sb_fact");
+        const completed = yield* executionRowOf(EXE_SB_FACT);
         expect(completed?.settlement_kind).toBe("Completed");
         expect(JSON.parse(completed?.settlement_json ?? "null")).toEqual(fact);
         expect(
@@ -2061,12 +2063,12 @@ describe("p9-acceptance", () => {
         ]);
         expect(
           yield* sqlCount(
-            "SELECT COUNT(*) AS count FROM commands WHERE command_id = 'cmd_recovery_completion_exe_sb_fact'",
+            `SELECT COUNT(*) AS count FROM commands WHERE command_id = 'cmd_recovery_completion_${EXE_SB_FACT}'`,
           ),
         ).toBe(1);
         expect(
           yield* sqlCount(
-            "SELECT COUNT(*) AS count FROM commands WHERE command_id = 'cmd_recovery_settle_exe_sb_clean'",
+            `SELECT COUNT(*) AS count FROM commands WHERE command_id = 'cmd_recovery_settle_${EXE_SB_CLEAN}'`,
           ),
         ).toBe(1);
         // Crash during/after T1 → restart re-runs T1: idempotent re-entry.
@@ -2079,9 +2081,7 @@ describe("p9-acceptance", () => {
         expect(second.firedTimers).toEqual([]);
         expect(yield* timerIds()).toEqual(["tmr_sb_future"]);
         expect(calls).toHaveLength(1);
-        expect(yield* countEventsFor("exe_sb_clean", "ExecutionSettled")).toBe(
-          1,
-        );
+        expect(yield* countEventsFor(EXE_SB_CLEAN, "ExecutionSettled")).toBe(1);
         expect(yield* sqlCount("SELECT COUNT(*) AS count FROM commands")).toBe(
           commandsAfterFirst,
         );
@@ -2118,22 +2118,14 @@ describe("p9-acceptance", () => {
             p7RootWorkspace,
           ),
         );
-        yield* INSERT_EXECUTION("exe_sb_pending", "t");
-        yield* INSERT_INVOCATION("tin_sb_ro", "exe_sb_pending", "ReadOnly");
-        yield* INSERT_INVOCATION("tin_sb_idem", "exe_sb_pending", "Idempotent");
-        yield* INSERT_INVOCATION(
-          "tin_sb_rec",
-          "exe_sb_pending",
-          "Reconcilable",
-        );
-        yield* INSERT_INVOCATION(
-          "tin_sb_non",
-          "exe_sb_pending",
-          "NonIdempotent",
-        );
+        yield* INSERT_EXECUTION(EXE_SB_PENDING, "t");
+        yield* INSERT_INVOCATION("tin_sb_ro", EXE_SB_PENDING, "ReadOnly");
+        yield* INSERT_INVOCATION("tin_sb_idem", EXE_SB_PENDING, "Idempotent");
+        yield* INSERT_INVOCATION("tin_sb_rec", EXE_SB_PENDING, "Reconcilable");
+        yield* INSERT_INVOCATION("tin_sb_non", EXE_SB_PENDING, "NonIdempotent");
         yield* INSERT_TIMER("tmr_sbp_due", "2000-01-01T00:00:00.000Z");
         yield* INSERT_TIMER("tmr_sbp_future", "2999-01-01T00:00:00.000Z");
-        yield* INSERT_EXPIRED_LEASE("exe_sb_pending");
+        yield* INSERT_EXPIRED_LEASE(EXE_SB_PENDING);
         const sql = yield* SqlClient;
         yield* sql.unsafe(
           "INSERT INTO work_waits (work_id, wait_mode, conditions_json, registered_at, updated_at) VALUES (?, 'Any', '[]', 't', 't')",
@@ -2142,16 +2134,16 @@ describe("p9-acceptance", () => {
         // T1 over the full pending-state fixture.
         const first = yield* startupRecovery(p7TestPrincipal);
         expect(first.recovery.settled).toEqual([]);
-        expect(first.recovery.escalated).toEqual(["exe_sb_pending"]);
+        expect(first.recovery.escalated).toEqual([EXE_SB_PENDING]);
         expect(first.recovery.invalidated).toBeGreaterThanOrEqual(1);
         expect(
           first.firedTimers.map((timer: SchedulerTimer) => timer.timerId),
         ).toEqual(["tmr_sbp_due"]);
-        const pending = yield* executionRowOf("exe_sb_pending");
+        const pending = yield* executionRowOf(EXE_SB_PENDING);
         expect(pending?.settlement_kind).not.toBe("Interrupted");
         expect(pending?.settlement_kind).toBeNull();
         expect(pending?.stop_requested_at).not.toBeNull();
-        expect(yield* attentionFacts("exe_sb_pending")).toBe(1);
+        expect(yield* attentionFacts(EXE_SB_PENDING)).toBe(1);
         // No tier was auto-replayed: every invocation still exactly one
         // row, none settled by the restart itself.
         for (const tin of [
@@ -2187,9 +2179,9 @@ describe("p9-acceptance", () => {
         // Repeated T1: idempotent — deduped fact, no re-fire, no settle.
         const second = yield* startupRecovery(p7TestPrincipal);
         expect(second.recovery.settled).toEqual([]);
-        expect(second.recovery.escalated).toEqual(["exe_sb_pending"]);
+        expect(second.recovery.escalated).toEqual([EXE_SB_PENDING]);
         expect(second.firedTimers).toEqual([]);
-        expect(yield* attentionFacts("exe_sb_pending")).toBe(1);
+        expect(yield* attentionFacts(EXE_SB_PENDING)).toBe(1);
         expect(calls).toHaveLength(1);
         // Four-tier disposition: ReadOnly + Idempotent settle safely (the
         // Idempotent settlement write replays as a no-op — still one row),
@@ -2209,11 +2201,11 @@ describe("p9-acceptance", () => {
         ).toBe(1);
         const third = yield* startupRecovery(p7TestPrincipal);
         expect(third.recovery.settled).toEqual([]);
-        expect(third.recovery.escalated).toEqual(["exe_sb_pending"]);
+        expect(third.recovery.escalated).toEqual([EXE_SB_PENDING]);
         // The [non]-only fingerprint is new relative to the seeded
         // [non, rec] fact → exactly one additional durable Attention fact.
-        expect(yield* attentionFacts("exe_sb_pending")).toBe(2);
-        const finalState = yield* executionRowOf("exe_sb_pending");
+        expect(yield* attentionFacts(EXE_SB_PENDING)).toBe(2);
+        const finalState = yield* executionRowOf(EXE_SB_PENDING);
         expect(finalState?.settlement_kind).not.toBe("Interrupted");
         expect(finalState?.settlement_kind).toBeNull();
         const nonRow = yield* invocationRowOf("tin_sb_non");
@@ -3160,25 +3152,25 @@ describe("p9-acceptance", () => {
         ).toBe(1);
         expect(yield* countEvents("WorkCompleted")).toBe(1);
         // DF1: dispatch port failure never settles; re-dispatch converges.
-        yield* INSERT_EXECUTION_G("exe_sg_df1");
+        yield* INSERT_EXECUTION_G(EXE_SG_DF1);
         const dispatchExit = yield* Effect.exit(
-          dispatchRound("exe_sg_df1", dyingDispatch()),
+          dispatchRound(EXE_SG_DF1, dyingDispatch()),
         );
         expect(dispatchExit._tag).toBe("Failure");
         expect(
           yield* countRows(
             "executions",
             "execution_id = ? AND settled_at IS NULL",
-            ["exe_sg_df1"],
+            [EXE_SG_DF1],
           ),
         ).toBe(1);
         expect(
           yield* countRows("execution_leases", "execution_id = ?", [
-            "exe_sg_df1",
+            EXE_SG_DF1,
           ]),
         ).toBe(0);
-        expect(yield* preDispatchCheck("exe_sg_df1" as never)).toBe(true);
-        const receipt = yield* settleCompletedG("exe_sg_df1");
+        expect(yield* preDispatchCheck(EXE_SG_DF1 as never)).toBe(true);
+        const receipt = yield* settleCompletedG(EXE_SG_DF1);
         expect(
           (receipt as { resolution: { _tag: string } }).resolution._tag,
         ).toBe("Committed");
@@ -3186,7 +3178,7 @@ describe("p9-acceptance", () => {
           yield* countRows(
             "executions",
             "execution_id = ? AND settlement_kind = 'Completed'",
-            ["exe_sg_df1"],
+            [EXE_SG_DF1],
           ),
         ).toBe(1);
       }),
