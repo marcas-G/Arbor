@@ -87,25 +87,28 @@ describe("external command codec registry parity", () => {
       makeSteerWorkHandler,
       makeSubmitHumanMessageHandler,
     } as const;
-    const handlers = directFactories.map((name) => {
+    const productionHandlerTypes = directFactories.map((name) => {
       const factory = factories[name as keyof typeof factories];
       if (factory === undefined) {
         throw new Error(`unhandled production command factory: ${name}`);
       }
-      return factory(unused);
+      return factory(unused).commandType;
     });
     if (productionArray.includes("...makeP1CommandHandlers(")) {
-      handlers.push(...makeP1CommandHandlers(unused));
+      productionHandlerTypes.push(
+        ...makeP1CommandHandlers(unused).map((handler) => handler.commandType),
+      );
     }
     if (productionArray.includes("...makeP15CommandHandlers(")) {
-      handlers.push(...makeP15CommandHandlers(unused));
+      productionHandlerTypes.push(
+        ...makeP15CommandHandlers(unused).map((handler) => handler.commandType),
+      );
     }
     if (productionArray.includes("...makeP2CommandHandlers(")) {
-      handlers.push(...makeP2CommandHandlers(unused));
+      productionHandlerTypes.push(
+        ...makeP2CommandHandlers(unused).map((handler) => handler.commandType),
+      );
     }
-    const productionHandlerTypes = handlers.map(
-      (handler) => handler.commandType,
-    );
 
     const registry = makeCommandInputContractRegistry(productionHandlerTypes);
     expect(registry.commandTypes).toHaveLength(26);
