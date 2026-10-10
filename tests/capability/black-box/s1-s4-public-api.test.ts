@@ -335,6 +335,48 @@ const view = async <A>(name: string, request: unknown): Promise<A> => {
   return (response.body as { value: A }).value;
 };
 
+interface DaemonReadinessProbe {
+  readonly status: number | null;
+  readonly problemCode: string | null;
+  readonly transportError: "fetch-failed" | null;
+}
+
+const readDaemonReadiness = async (): Promise<DaemonReadinessProbe> => {
+  try {
+    const response = await fetch(`${base}/views/readiness-probe`);
+    let problemCode: string | null = null;
+    try {
+      const payload = (await response.json()) as {
+        readonly problem?: { readonly code?: unknown };
+      };
+      const candidate = payload.problem?.code;
+      if (
+        typeof candidate === "string" &&
+        /^transport\/[a-z-]+$/u.test(candidate)
+      ) {
+        problemCode = candidate;
+      }
+    } catch {
+      // Readiness diagnostics deliberately retain no response body.
+    }
+    return { status: response.status, problemCode, transportError: null };
+  } catch {
+    return {
+      status: null,
+      problemCode: null,
+      transportError: "fetch-failed",
+    };
+  }
+};
+
+const waitForDaemonReady = (timeoutMs = 30_000) =>
+  waitFor(
+    readDaemonReadiness,
+    (probe) =>
+      probe.status === 404 && probe.problemCode === "transport/unknown-view",
+    timeoutMs,
+  );
+
 const projectId = id("prj");
 const rootWorkspaceId = id("ws");
 const rootSessionId = id("ses");
@@ -351,11 +393,7 @@ beforeAll(async () => {
   provider = await startProvider();
   daemon = startDaemon();
   try {
-    await waitFor(
-      () => fetch(base),
-      (response) => response.ok,
-      60_000,
-    );
+    await waitForDaemonReady(60_000);
   } catch (error) {
     throw new Error(
       `${error instanceof Error ? error.message : String(error)}; pid=${String(daemon.pid)}; exit=${String(daemon.exitCode)}; daemon=${daemonErrors.join(" | ")}; entry=${DAEMON_ENTRY}; cwd=${directory}`,
@@ -629,10 +667,7 @@ describe("S1-S4 public-process black-box", () => {
       daemon.once("exit", () => resolveExit()),
     );
     daemon = startDaemon();
-    await waitFor(
-      () => fetch(base),
-      (response) => response.ok,
-    );
+    await waitForDaemonReady();
 
     const tree = await view<{ nodes: Array<{ workspaceId: string }> }>(
       "responsibility-tree",
