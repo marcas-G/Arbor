@@ -135,7 +135,6 @@ const admit = (commandId: CommandId) =>
       _tag: "WorkspaceMain",
       executionId,
       workspaceId,
-      focus: { _tag: "Work", workId },
       episode: {
         _tag: "WorkEpisode",
         workId,

@@ -140,7 +140,6 @@ const admitWorkExecution = Effect.gen(function* () {
     _tag: "WorkspaceMain",
     executionId,
     workspaceId,
-    focus: { _tag: "Work", workId },
     episode: {
       _tag: "WorkEpisode",
       workId,

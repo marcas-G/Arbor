@@ -134,6 +134,7 @@ import {
   ContextEpochNumber,
   canonicalRegionString,
   checkPluginSdkCompatibility,
+  DecisionId,
   type Execution,
   ExecutionId,
   makeProjectPolicy,
@@ -1034,6 +1035,9 @@ const rwSessionId = parse(SessionId)(
 const rwExecutionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
+const rwDecisionId = parse(DecisionId)(
+  "dec_018f2b3c-4d5e-7abc-8def-0123456789a1",
+);
 const rwWorkerA = parse(WorkerId)("wkr_018f2b3c-4d5e-7abc-8def-0123456789b1");
 const rwInc1 = parse(WorkerIncarnationId)(
   "wic_018f2b3c-4d5e-7abc-8def-0123456789c1",
@@ -1050,7 +1054,12 @@ const rwExecution: Execution = {
   binding: {
     _tag: "WorkspaceExecution",
     workspaceId: rwWorkspaceId,
-    focus: { _tag: "Coordination" },
+    episode: {
+      _tag: "DecisionEpisode",
+      decisionId: rwDecisionId,
+      decisionKind: "SelectCurrentWork",
+      requestRevision: 0,
+    },
   },
   sessionId: rwSessionId,
   admittedAt: "t",
@@ -1212,7 +1221,10 @@ const rwMutation = (
       executionId: rwExecutionId,
       settlement: {
         _tag: "Completed" as const,
-        result: { _tag: "CoordinationCompleted" as const },
+        result: {
+          _tag: "DecisionSubmitted" as const,
+          decisionId: rwDecisionId,
+        },
       },
       expectedFencingGeneration: 0,
     },
@@ -2028,7 +2040,7 @@ const transportCreateEnvelope = () => ({
   commandType: "CreateProject",
   commandId: transportCommand,
   projectId: transportProject,
-  actor: parse(Actor)("user:human"),
+  actor: parse(Actor)(String(HUMAN)),
   issuedAt: ISSUED_AT,
   payload: transportCreateProjectPayload() as unknown,
 });
