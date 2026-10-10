@@ -8,6 +8,9 @@ import {
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
 import { SHELL_DEFINITION } from "../../../packages/tool-runtime/dist/catalog.js";
+import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
+
+const onWebTransportListening = createFunctionalDaemonListenReporter();
 
 const targetBoundary = process.env.ARBOR_AH_BOUNDARY;
 if (
@@ -62,6 +65,7 @@ const config = {
     port: Number(process.env.ARBOR_HTTP_PORT),
     host: "127.0.0.1",
   },
+  onWebTransportListening,
   qualificationProbe: pauseAtBoundary,
   inputPromotionQualificationProbe: pauseAtBoundary,
   providerQualificationProbe: pauseAtBoundary,

@@ -188,7 +188,9 @@ describe("AH15 Inbox input promotion process crash", () => {
       let childActionIssued = false;
       let parentWorkspaceId = "";
       let senderWorkspaceId = "";
+      const daemonOutput: string[] = [];
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
         reply: (call) => {
           const context = JSON.stringify(call.messages);
@@ -285,9 +287,13 @@ describe("AH15 Inbox input promotion process crash", () => {
         },
         firstDaemonEntry: crashChild,
         daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
-        onDaemonStdout: (line) => recordProbe(hits, line),
+        onDaemonStdout: (line) => {
+          daemonOutput.push(line);
+          recordProbe(hits, line);
+        },
       });
       fixtures.push(fixture);
+      const baseUrlBeforeCrash = fixture.baseUrl;
       const client = makePublicClient(fixture.baseUrl);
       const project = await createFunctionalProject(
         client,
@@ -390,6 +396,8 @@ describe("AH15 Inbox input promotion process crash", () => {
         ]);
       }
 
+      // crash() waits for the custom AH child to exit before the ordinary
+      // nonce-reporting daemon rebinds this fixture's stable URL.
       await fixture.crash();
       const afterKill = readPromotionSnapshot(
         fixture.databaseFile,
@@ -412,6 +420,45 @@ describe("AH15 Inbox input promotion process crash", () => {
       }
 
       await fixture.restart();
+      expect(fixture.baseUrl).toBe(baseUrlBeforeCrash);
+      const startupReports = daemonOutput
+        .map((line) => {
+          try {
+            return JSON.parse(line) as {
+              readonly tag?: string;
+              readonly nonce?: string;
+              readonly pid?: number;
+              readonly port?: number;
+            };
+          } catch {
+            return undefined;
+          }
+        })
+        .filter(
+          (report) =>
+            report?.tag === "FUNCTIONAL_DAEMON_STARTED" ||
+            report?.tag === "FUNCTIONAL_DAEMON_LISTENING",
+        );
+      const started = startupReports.filter(
+        (report) => report?.tag === "FUNCTIONAL_DAEMON_STARTED",
+      );
+      const listening = startupReports.filter(
+        (report) => report?.tag === "FUNCTIONAL_DAEMON_LISTENING",
+      );
+      expect(started).toHaveLength(2);
+      expect(listening).toHaveLength(2);
+      expect(started[1]?.nonce).not.toBe(started[0]?.nonce);
+      expect(started[1]?.pid).not.toBe(started[0]?.pid);
+      expect(listening.map((report) => report?.nonce)).toEqual(
+        started.map((report) => report?.nonce),
+      );
+      expect(listening.map((report) => report?.pid)).toEqual(
+        started.map((report) => report?.pid),
+      );
+      expect(listening.map((report) => report?.port)).toEqual([
+        Number(new URL(baseUrlBeforeCrash).port),
+        Number(new URL(baseUrlBeforeCrash).port),
+      ]);
       await waitForPublic(
         async () =>
           readPromotionSnapshot(

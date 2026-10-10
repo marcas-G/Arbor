@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
 import {
   main,
@@ -9,13 +8,9 @@ import {
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
 import { parse, WorkspaceId } from "../../../packages/domain/dist/index.js";
+import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
 
-const nonce = randomUUID();
-const pid = process.pid;
-const report = (tag, fields) =>
-  process.stdout.write(`${JSON.stringify({ tag, nonce, pid, ...fields })}\n`);
-
-report("FUNCTIONAL_DAEMON_STARTED", {});
+const onWebTransportListening = createFunctionalDaemonListenReporter();
 
 const projectResourceProfiles = makeProjectResourceProfilePort(
   projectResourceProfilesFromEnvironment(),
@@ -32,8 +27,7 @@ const webTransport = {
 const config = {
   projectResourceProfiles,
   webTransport,
-  onWebTransportListening: (actualPort) =>
-    report("FUNCTIONAL_DAEMON_LISTENING", { port: actualPort }),
+  onWebTransportListening,
   ...(process.env.ARBOR_WORKSPACE_ID !== undefined
     ? { workspaceId: parse(WorkspaceId)(process.env.ARBOR_WORKSPACE_ID) }
     : {}),
