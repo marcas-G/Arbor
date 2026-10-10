@@ -89,9 +89,12 @@ assertions; the focused P12/P13 run then passed.
 ## Remaining scope
 
 - Wave B is still required: authenticated first WS `view` frame, no
-  pre-auth query/broadcast, and browser freshness behavior. The existing WS
-  implementation was intentionally untouched; its prior wildcard invalidation
-  RED remains applicable.
+  pre-auth query/broadcast, and browser freshness behavior. At the Wave A
+  implementation commits (`502f26c` / `917c176`), WebSocket code was
+  intentionally untouched. Source inspection confirms `/ws` still accepts a
+  wildcard/no-auth upgrade and adds that socket to the broadcast set directly
+  after `wss.handleUpgrade`; that wildcard-upgrade RED remains OPEN for Wave B.
+  No Wave A claim is made that `/ws` is guarded.
 - Multi-principal Project/Workspace read visibility remains OPEN.
 - This qualification starts the actual local HTTP server and temporary DB
   inside the Vitest process; it is not a separate child-process daemon/restart
