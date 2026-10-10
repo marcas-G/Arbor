@@ -648,6 +648,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       let siblingProposalApproved = false;
 
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);

@@ -6,6 +6,11 @@ import {
   main,
   runDaemonForever,
 } from "../../../apps/single-workspace/dist/main.js";
+import {
+  makeProjectResourceProfilePort,
+  projectResourceProfilesFromEnvironment,
+} from "../../../apps/single-workspace/dist/project-resource-profiles.js";
+import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
 
 const role = process.env.ARBOR_AH10_ROLE;
 if (role !== "old" && role !== "new") {
@@ -14,6 +19,10 @@ if (role !== "old" && role !== "new") {
 const databaseFile = process.env.ARBOR_DB;
 if (databaseFile === undefined)
   throw new Error("AH10 test child needs ARBOR_DB");
+const onWebTransportListening = createFunctionalDaemonListenReporter();
+const projectResourceProfiles = makeProjectResourceProfilePort(
+  projectResourceProfilesFromEnvironment(),
+);
 const gateDirectory = join(dirname(databaseFile), "ah10-gates");
 
 const waitForGate = async (name, event) => {
@@ -146,6 +155,8 @@ const pauseAttentionBoundary = async (event) => {
 const port = Number(process.env.ARBOR_HTTP_PORT);
 const config = {
   tickIntervalMs: 25,
+  onWebTransportListening,
+  projectResourceProfiles,
   webTransport: {
     staticRoot: process.env.ARBOR_WEB_DIST,
     port,

@@ -401,6 +401,7 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
       let selectionProviderCalls = 0;
       let selectedWorkId: string | undefined;
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         reply: (call) => {
           const tools = availableTools(call);
           const messageText = JSON.stringify(call.messages);
@@ -823,6 +824,7 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
     let selectionProviderCalls = 0;
     let selectedWorkId: string | undefined;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: (call) => {
         const tools = availableTools(call);
         const messageText = JSON.stringify(call.messages);

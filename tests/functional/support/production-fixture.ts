@@ -458,11 +458,6 @@ export const startProductionFixture = async (input: {
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
   }) => {
     const isFirstDaemon = daemonStarts === 0;
-    if (input.isolatedPortHandshake === true && override?.entry !== undefined) {
-      throw new Error(
-        "nonce-isolated fixture restart overrides require a migrated nonce-reporting child",
-      );
-    }
     const requestedPort =
       input.isolatedPortHandshake === true && isFirstDaemon ? 0 : httpPort;
     const daemonEnv: NodeJS.ProcessEnv = {
@@ -489,9 +484,10 @@ export const startProductionFixture = async (input: {
     delete daemonEnv.NO_COLOR;
     const entry =
       input.isolatedPortHandshake === true
-        ? isFirstDaemon && input.firstDaemonEntry !== undefined
-          ? input.firstDaemonEntry
-          : NONCE_DAEMON_ENTRY
+        ? (override?.entry ??
+          (isFirstDaemon && input.firstDaemonEntry !== undefined
+            ? input.firstDaemonEntry
+            : NONCE_DAEMON_ENTRY))
         : (override?.entry ??
           (isFirstDaemon && input.firstDaemonEntry !== undefined
             ? input.firstDaemonEntry
@@ -531,7 +527,12 @@ export const startProductionFixture = async (input: {
       daemonErrors.push(`spawn error=${error.message}`);
     });
     if (input.isolatedPortHandshake === true) {
-      httpPort = await waitForNonceBoundPort(daemon, input.onDaemonStdout);
+      try {
+        httpPort = await waitForNonceBoundPort(daemon, input.onDaemonStdout);
+      } catch (error) {
+        await stopChild(daemon);
+        throw error;
+      }
       baseUrl = `http://127.0.0.1:${httpPort}`;
     }
     await waitFor(
@@ -556,14 +557,6 @@ export const startProductionFixture = async (input: {
       await startDaemon(override);
     },
     startAdditionalDaemon: async (options) => {
-      if (
-        input.isolatedPortHandshake === true &&
-        resolve(options.entry) !== DAEMON_ENTRY
-      ) {
-        throw new Error(
-          "nonce-isolated additional daemons currently require the ordinary production daemon entry",
-        );
-      }
       let additionalPort =
         input.isolatedPortHandshake === true ? 0 : await freePort();
       let additionalBaseUrl = `http://127.0.0.1:${additionalPort}`;
@@ -591,7 +584,8 @@ export const startProductionFixture = async (input: {
       delete daemonEnv.FORCE_COLOR;
       delete daemonEnv.NO_COLOR;
       const childEntry =
-        input.isolatedPortHandshake === true
+        input.isolatedPortHandshake === true &&
+        resolve(options.entry) === DAEMON_ENTRY
           ? NONCE_DAEMON_ENTRY
           : options.entry;
       const child = spawn(process.execPath, [childEntry], {
