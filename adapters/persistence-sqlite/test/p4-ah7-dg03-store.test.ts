@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   ExecutionId,
   type LeaseGeneration,
@@ -8,6 +11,7 @@ import {
   WorkspaceId,
 } from "@arbor/domain";
 import {
+  invocationAuthoritySourceRevisionOf,
   type ToolExecutionContext,
   type ToolInvocationIntent,
   ToolInvocationStore,
@@ -40,6 +44,8 @@ const invocationC =
   "tin_218f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
 const invocationE =
   "tin_318f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
+const invocationF =
+  "tin_418f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
 const approvalId = "apr_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const workerId = "worker:ah7-dg03";
 const workerIncarnationId = "incarnation:ah7-dg03";
@@ -302,6 +308,202 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
     expect(result.loserRows?.count).toBe(0);
   });
 
+  it("rejects a stale authority source after a resolver snapshot and concurrent grant revoke", async () => {
+    const migrations = p36Migrations();
+    expect(migrations).toBeDefined();
+    if (migrations === undefined) return;
+
+    const directory = mkdtempSync(join(tmpdir(), "ah7-authority-fence-"));
+    const filename = join(directory, "authority.db");
+    const primarySqlite = layer({ filename });
+    const revokerSqlite = layer({ filename });
+    const app = Layer.mergeAll(
+      primarySqlite,
+      Layer.provide(TransactionPortLive, primarySqlite),
+      Layer.provide(ToolInvocationStoreLive, primarySqlite),
+    );
+    let signalResolved!: () => void;
+    let releaseAdmission!: () => void;
+    const authorityResolved = new Promise<void>((resolve) => {
+      signalResolved = resolve;
+    });
+    const continueAdmission = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    const executorCalls = 0;
+
+    try {
+      const resultPromise = Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* runMigrations(migrations);
+            yield* seedExecution;
+            yield* seedApproval;
+            const sql = yield* SqlClient;
+            const tx = yield* TransactionPort;
+            const store = yield* ToolInvocationStore;
+            yield* sql.unsafe(
+              `INSERT INTO permission_grants (
+                 permission_grant_id, project_id, scope, issuer, lifetime,
+                 state, subject_kind, subject_ref, capability, target,
+                 valid_from, expires_at, revision
+               ) VALUES (
+                 'pgr_018f2b3c-4d5e-7abc-8def-0123456789a1', ?,
+                 'Write', 'human:test', 'until-revoked', 'Active',
+                 'WorkspaceAgent', ?, 'Write', 'filesystem',
+                 '2026-10-11T00:00:00.000Z', NULL, 0
+               )`,
+              [projectId, workspaceId],
+            );
+
+            yield* tx.transact(
+              Effect.gen(function* () {
+                yield* store.recordIntent(
+                  intent(invocationF, true),
+                  fence,
+                  fenceNow,
+                );
+                const consumed = yield* store.consumeApproval(
+                  approvalId,
+                  invocationF,
+                  fence,
+                  fenceNow,
+                );
+                if (!consumed) {
+                  return yield* Effect.fail(
+                    new Error("fixture approval claim did not commit"),
+                  );
+                }
+              }),
+            );
+
+            const authoritySource = yield* tx.transact(
+              Effect.gen(function* () {
+                const workspaceRows = yield* sql.unsafe<{
+                  readonly workspace_policy_revision: number;
+                }>(
+                  "SELECT workspace_policy_revision FROM workspaces WHERE workspace_id = ?",
+                  [workspaceId],
+                );
+                const grantRows = yield* sql.unsafe<{
+                  readonly permission_grant_id: string;
+                  readonly revision: number | null;
+                }>(
+                  `SELECT permission_grant_id, revision
+                     FROM permission_grants
+                    WHERE project_id = ? AND state = 'Active'
+                    ORDER BY permission_grant_id`,
+                  [projectId],
+                );
+                const verifierRows = yield* sql.unsafe<{
+                  readonly verification_id: string;
+                }>(
+                  `SELECT v.verification_id
+                     FROM verification_executions ve
+                     JOIN verifications v
+                       ON v.verification_id = ve.verification_id
+                    WHERE ve.execution_id = ?
+                    ORDER BY ve.bound_at, v.verification_id
+                    LIMIT 1`,
+                  [executionId],
+                );
+                return invocationAuthoritySourceRevisionOf({
+                  workspacePolicyRevision: Number(
+                    workspaceRows[0]?.workspace_policy_revision,
+                  ),
+                  activeGrants: grantRows.map((grant) => ({
+                    permissionGrantId: grant.permission_grant_id,
+                    revision:
+                      grant.revision === null ? null : Number(grant.revision),
+                  })),
+                  verifierId: verifierRows[0]?.verification_id ?? null,
+                });
+              }),
+            );
+            const authority = {
+              principal: "worker:ah7-dg03",
+              workspaceId,
+              executionId,
+              toolName: "write_once",
+              toolVersion: "1",
+              resourceSpaceIds: [],
+              allowedCapabilities: [],
+              controlBasisDigest: "basis",
+              expiresAt: "2999-01-01T00:00:00.000Z",
+              delegationDepth: 0,
+              sourceRevision: authoritySource,
+            };
+
+            // Deterministic admission barrier: the exact authority source has
+            // been read; a separate SQLite connection revokes it before the
+            // fenced effect-admission transaction begins.
+            signalResolved();
+            yield* Effect.promise(() => continueAdmission);
+
+            const gate = yield* tx.transact(
+              store.admitEffect(invocationF, authority, fenceNow, fence),
+            );
+            if (gate._tag !== "Denied") {
+              return { gate, record: null, approval: null };
+            }
+            const record = yield* tx.transact(
+              store.recordNoEffectDenial(
+                intent(invocationF, true),
+                "ApprovalNoLongerAuthorized",
+                fenceNow,
+                fence,
+                fenceNow,
+              ),
+            );
+            const persisted = yield* tx.transact(store.findById(invocationF));
+            const approval = yield* tx.transact(store.findApproval(approvalId));
+            return { gate, record, persisted, approval };
+          }),
+          app,
+        ),
+      );
+      void resultPromise.catch(() => signalResolved());
+
+      await authorityResolved;
+      await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(
+              `UPDATE permission_grants SET state = 'Revoked'
+                WHERE permission_grant_id = 'pgr_018f2b3c-4d5e-7abc-8def-0123456789a1'`,
+            );
+          }),
+          revokerSqlite,
+        ),
+      );
+      releaseAdmission();
+      const result = await resultPromise;
+
+      expect(result.gate).toEqual({
+        _tag: "Denied",
+        reasonCode: "InvocationAuthorityDenied",
+      });
+      expect(result.record?.effectAdmissionState).toBe("NotAdmitted");
+      expect(Option.isSome(result.persisted)).toBe(true);
+      if (Option.isSome(result.persisted)) {
+        expect(result.persisted.value).toMatchObject({
+          effectAdmissionState: "NotAdmitted",
+          settlement: {
+            _tag: "Denied",
+            reasonCode: "ApprovalNoLongerAuthorized",
+          },
+        });
+      }
+      expect(
+        Option.isSome(result.approval) && result.approval.value.consumedBy,
+      ).toBe(invocationF);
+      expect(executorCalls).toBe(0);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("stores Denied/Interrupted only while NotAdmitted and rejects a stale fence", async () => {
     const migrations = p36Migrations();
     expect(migrations).toBeDefined();
@@ -385,6 +587,11 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         controlBasisDigest: "basis",
         expiresAt: "2999-01-01T00:00:00.000Z",
         delegationDepth: 0,
+        sourceRevision: invocationAuthoritySourceRevisionOf({
+          workspacePolicyRevision: 0,
+          activeGrants: [],
+          verifierId: null,
+        }),
       };
       const staleAdmission = yield* Effect.exit(
         tx.transact(
@@ -473,6 +680,23 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         "SELECT effect_admission_state, settlement_kind FROM tool_invocations WHERE invocation_id = ?",
         [invocationB],
       );
+      yield* sql.unsafe(
+        "UPDATE executions SET stop_requested_at = NULL WHERE execution_id = ?",
+        [executionId],
+      );
+      yield* sql.unsafe(
+        "UPDATE execution_leases SET expires_at = ? WHERE execution_id = ?",
+        [fenceNow, executionId],
+      );
+      const expiredLeaseAdmission = yield* Effect.exit(
+        tx.transact(store.admitEffect(invocationC, authority, fenceNow, fence)),
+      );
+      const stateAfterExpiredLease = yield* sql.unsafe<{
+        effect_admission_state: string;
+      }>(
+        "SELECT effect_admission_state FROM tool_invocations WHERE invocation_id = ?",
+        [invocationC],
+      );
 
       return {
         staleWrite,
@@ -491,6 +715,8 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         stoppedGate,
         interrupted,
         interruptionRow: interruptionRow[0],
+        expiredLeaseAdmission,
+        stateAfterExpiredLease: stateAfterExpiredLease[0],
       };
     });
     const result = await Effect.runPromise(Effect.provide(program, app));
@@ -530,6 +756,10 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
       effect_admission_state: "NotAdmitted",
       settlement_kind: "Interrupted",
     });
+    expect(Exit.isFailure(result.expiredLeaseAdmission)).toBe(true);
+    expect(result.stateAfterExpiredLease?.effect_admission_state).toBe(
+      "NotAdmitted",
+    );
     expect(Exit.isFailure(result.staleWrite)).toBe(true);
     expect(result.staleRows?.count).toBe(0);
   });

@@ -105,10 +105,12 @@ interface PipelineFaults {
 interface PipelineTrace {
   readonly noEffectDenials: Array<string>;
   readonly events: Array<string>;
+  approvalConsumer: string | null;
   intentWrites: number;
   effectAdmissions: number;
   approvalConsumes: number;
   effectAdmissionDenial?: NoEffectDenialCode;
+  afterAuthorityResolved?: () => Promise<void>;
 }
 
 const app = (
@@ -196,6 +198,7 @@ const app = (
           return Effect.succeed(false);
         }
         approval = { ...approval, consumedBy: invocationId };
+        if (trace !== undefined) trace.approvalConsumer = String(invocationId);
         return Effect.succeed(true);
       },
       recordNoEffectDenial: (
@@ -307,7 +310,22 @@ const app = (
       now: () => Effect.succeed("2026-01-01T00:00:00.000Z"),
     }),
   );
-  return Layer.mergeAll(deps, Layer.provide(ToolRuntimeLive([executor]), deps));
+  const toolRuntime = ToolRuntimeLive(
+    [executor],
+    trace?.afterAuthorityResolved === undefined
+      ? {}
+      : {
+          qualificationProbe: async (event) => {
+            if (
+              event.boundary ===
+              "AH7AfterEffectAuthorityResolvedBeforeAdmission"
+            ) {
+              await trace.afterAuthorityResolved?.();
+            }
+          },
+        },
+  );
+  return Layer.mergeAll(deps, Layer.provide(toolRuntime, deps));
 };
 
 const run = (
@@ -389,6 +407,7 @@ describe("P4 tool runtime pipeline", () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],
       events: [],
+      approvalConsumer: null,
       intentWrites: 0,
       effectAdmissions: 0,
       approvalConsumes: 0,
@@ -404,6 +423,7 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace).toEqual({
       noEffectDenials: ["ResourceAdmissionDenied"],
       events: ["denied"],
+      approvalConsumer: null,
       intentWrites: 0,
       effectAdmissions: 0,
       approvalConsumes: 0,
@@ -436,6 +456,7 @@ describe("P4 tool runtime pipeline", () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],
       events: [],
+      approvalConsumer: null,
       intentWrites: 0,
       effectAdmissions: 0,
       approvalConsumes: 0,
@@ -451,6 +472,7 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace).toEqual({
       noEffectDenials: ["ApprovalRequired"],
       events: ["denied"],
+      approvalConsumer: null,
       intentWrites: 0,
       effectAdmissions: 0,
       approvalConsumes: 0,
@@ -479,20 +501,38 @@ describe("P4 tool runtime pipeline", () => {
       expiresAt: "2999-01-01T00:00:00.000Z",
       consumedBy: null,
     };
+    let signalAuthorityResolved!: () => void;
+    let resumeEffectGate!: () => void;
+    const authorityResolved = new Promise<void>((resolve) => {
+      signalAuthorityResolved = resolve;
+    });
+    const effectGateResumed = new Promise<void>((resolve) => {
+      resumeEffectGate = resolve;
+    });
     const trace: PipelineTrace = {
       noEffectDenials: [],
       events: [],
+      approvalConsumer: null,
       intentWrites: 0,
       effectAdmissions: 0,
       approvalConsumes: 0,
-      effectAdmissionDenial: "InvocationAuthorityDenied",
+      afterAuthorityResolved: async () => {
+        signalAuthorityResolved();
+        await effectGateResumed;
+      },
     };
 
-    const result = await run(
+    const resultPromise = run(
       app(false, approvalExecutor, {}, trace, approval),
       argumentsJson,
       approvalId,
     );
+    await authorityResolved;
+    // Simulate the authoritative source changing after resolution but before
+    // the store's separate fenced admission transaction.
+    trace.effectAdmissionDenial = "InvocationAuthorityDenied";
+    resumeEffectGate();
+    const result = await resultPromise;
 
     expect(result).toMatchObject({
       _tag: "Denied",
@@ -505,6 +545,7 @@ describe("P4 tool runtime pipeline", () => {
       "denied",
     ]);
     expect(trace.approvalConsumes).toBe(1);
+    expect(trace.approvalConsumer).toBe(String(invocationId));
     expect(executorCalls).toBe(0);
   });
 
