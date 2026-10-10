@@ -59,6 +59,7 @@ import {
   type VerificationRepositoryService,
   WorkRepository,
   WorkspaceRepository,
+  WorkspaceResourceActivationStore,
   WorkWaitStore,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -101,6 +102,9 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const projects = yield* ProjectRepository;
     const workspaces = yield* WorkspaceRepository;
     const sessions = yield* SessionRepository;
+    const activations = yield* Effect.serviceOption(
+      WorkspaceResourceActivationStore,
+    );
     const projectResourceProfiles = yield* Effect.serviceOption(
       ProjectResourceProfilePort,
     );
@@ -132,6 +136,9 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
         projects,
         workspaces,
         sessions,
+        ...(Option.isSome(activations)
+          ? { activations: activations.value }
+          : {}),
         works,
         ...(Option.isSome(projectResourceProfiles)
           ? { projectResourceProfiles: projectResourceProfiles.value }
