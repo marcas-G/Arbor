@@ -1,6 +1,6 @@
 # P12 — 10 Transport Shells (v1.13 G6)
 
-**Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.35 §4.1C, v1.13 G6; SD v1.13 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
+**Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.36 §4.1C, v1.13 G6; SD v1.13 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
 **Status:** DRAFT.
 
 ## 1. Boundary (frozen)

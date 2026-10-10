@@ -83,7 +83,7 @@ owner files are:
 | `docs/design/implementation/P1/07-agent-loop-step-command-identity.md` | `3663BD8B0AACDDD505F5E8FE4DDC2BDCD131168D42D23A1CBC8C2811DD0B0804` | unchanged from corrected F23 landing |
 | `docs/design/implementation/P9/07-agent-loop-step-recovery.md` | `8B82994A19420CD821AA0B136569D00D151843657F6032B932A23D858A0396D1` | unchanged from corrected F23 landing |
 | `docs/design/implementation/P12/00-contract-index.md` | `244C0B210D813A762401A873DFBEA4D08CD33DD217D8BDDDFE4FC721AE0B4870` | F21 landing with DID reference updated to v1.36 |
-| `docs/design/implementation/P12/10-transport-shells.md` | `AAADC65B7A359F3875B4B017F2B4F66D5D287D9FB42AD260D2CBC910D093CF38` | unchanged from F21 landing |
+| `docs/design/implementation/P12/10-transport-shells.md` | `2B9E511C2D57E4B7F0573F1FDB2A2B6E6304BE5A7E9B6E043B04EA893C875535` | F21 landing digest is historical; current Authority reference is updated to integrated DID v1.36; the v1.34/v1.35 sequence in §9 remains historical |
 | `docs/design/implementation/P13/02-command-exposure-matrix.md` | `C0544A12A7E55B209A2F427E4DD0E99EDE43455CB2FB81FD47BF84D9491EB688` | unchanged from F21 landing |
 | `docs/design/implementation/MAC/03-golden-paths-and-fulfillment.md` | `BDCD4BEA0F0AECA967393A0BA350C908EB3FCF7EE1CAD60AC0424D7588E7C607` | unchanged from F21 landing |
 
@@ -106,7 +106,8 @@ transaction order, and other result/rejection validators are unchanged.
   codec test also pass a direct targeted Biome check.
 - Decoder + P1/P12/F21/catalog targeted unit suites — 6 files, 35 tests PASS.
 - F21 Profile daemon-restart public process test — 1/1 PASS.
-- F21 Profile/ConversationOnly and conversation Playwright tests — 3/3 PASS.
+- F21-specific Profile journey and forged-ref/path Playwright cases — 2/2 PASS.
+- Generic ConversationOnly public conversation Playwright journey — 1/1 PASS.
 - F23 Gateway tuple-ordering functional process tests — 2/2 PASS.
 - F23 exact-tuple HTTP wrong-shape Committed receipt — 1/1 PASS.
 - F23 direct-child P9 A1 malformed-result `corrupt-result-before` two-daemon
