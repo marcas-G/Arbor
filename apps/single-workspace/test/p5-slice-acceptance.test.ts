@@ -46,6 +46,10 @@ import {
   evaluateAndSelect,
   runMigrations,
 } from "../src/index.js";
+import {
+  makeProjectResourceProfilePort,
+  projectResourceProfilesFromEnvironment,
+} from "../src/project-resource-profiles.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
 const workspaceId = parse(WorkspaceId)(
@@ -72,7 +76,9 @@ const definition = {
   interfaces: [],
 };
 
-const projectPayload: CreateProjectPayload = {
+const projectPayload = (
+  resourceSelection: CreateProjectPayload["rootWorkspace"]["resourceSelection"],
+): CreateProjectPayload => ({
   name: "Arbor",
   revision: parse(Revision)(0),
   projectPolicy: makeProjectPolicy(),
@@ -88,13 +94,13 @@ const projectPayload: CreateProjectPayload = {
     name: "root",
     responsibilityDefinition: definition,
     responsibilityRevision: parse(ResponsibilityRevision)(0),
-    resourceSelection: { _tag: "ConversationOnly" },
+    resourceSelection,
     agentBinding: responsibilityBound(workspaceId),
     workspacePolicy: makeWorkspacePolicy(),
     workspacePolicyRevision: parse(Revision)(0),
     revision: parse(Revision)(0),
   },
-};
+});
 
 const workPayload: AssignWorkPayload = {
   workId,
@@ -181,9 +187,22 @@ const turns = [
 describe("I0 executable/control vertical slice", () => {
   it("routes shell through ToolRuntime and Wait through ControlToolRegistry", async () => {
     const dir = mkdtempSync(join(tmpdir(), "p5-accept-"));
+    const projectResourceProfiles = makeProjectResourceProfilePort(
+      projectResourceProfilesFromEnvironment({ ARBOR_PROJECT_ROOT: dir }),
+    );
+    const profile = Effect.runSync(projectResourceProfiles.list())[0];
+    if (profile === undefined || !profile.available) {
+      throw new Error("P5 host Project Profile must be available");
+    }
+    const selectedProjectPayload = projectPayload({
+      _tag: "Profile",
+      resourceProfileRef: profile.resourceProfileRef,
+      version: profile.version,
+    });
     const app = buildSingleWorkspaceLayer({
       databaseFile: join(dir, "slice.db"),
       providerTurns: turns,
+      projectResourceProfiles,
     });
 
     const result = await Effect.runPromise(
@@ -195,11 +214,11 @@ describe("I0 executable/control vertical slice", () => {
           const sql = yield* SqlClient;
 
           const created = yield* gateway.execute(
-            envelope("CreateProject", projectPayload, commandId("1")),
+            envelope("CreateProject", selectedProjectPayload, commandId("1")),
             context,
             p1Authority(
               "CreateProjectAuthority",
-              projectPayload,
+              selectedProjectPayload,
               commandId("1"),
             ),
           );
@@ -223,9 +242,9 @@ describe("I0 executable/control vertical slice", () => {
                 // P12 `09`: the production resolver emits the frozen object
                 // encoding with an ABSOLUTE normalized path (P1 `04` §3.3);
                 // the claim fixture must match it.
-                normalizedRegion: { kind: "FileTree", path: resolve(".") },
+                normalizedRegion: { kind: "FileTree", path: resolve(dir) },
               },
-              sourceAddressSnapshot: { _tag: "FileTree", path: "." },
+              sourceAddressSnapshot: { _tag: "FileTree", path: dir },
               resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
               resolvedAtEnvironmentRevision: "local",
               createdAt: "t",

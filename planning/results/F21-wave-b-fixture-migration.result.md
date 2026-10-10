@@ -32,8 +32,8 @@ existing `admitWorkspaceDirectory` test-host switch registers the startup
   using the separate local catalog identity and copies only the returned
   opaque ref/version. Filesystem ownership seeding uses the canonical host
   path, not a client boundary.
-- P13 e2e fixtures, S1–S4 bootstrap, and direct P1/P6/P7/P12 project seeds now
-  use `ConversationOnly` when no file behavior is under test. Direct Gateway
+- P13 e2e fixtures and direct P1/P6/P7 project seeds use `ConversationOnly`
+  when no file behavior is under test. Direct Gateway
   CreateProject fingerprints use Handler schema version 2. The obsolete P1
   client-controlled boundary-basis rejection case was removed; v2 no longer
   accepts a client boundary or basis revision.
@@ -50,7 +50,44 @@ existing `admitWorkspaceDirectory` test-host switch registers the startup
 
 - `pnpm exec tsc -p tsconfig.test.json --noEmit` — PASS.
 - `pnpm exec biome check` on the 47 owned test/fixture source files — PASS.
-- No functional or full test suite was run by this migration subtask.
+- No full functional or full repository test suite was run; focused follow-up
+  commands are recorded below.
+
+## Review follow-up — file-backed test seeds
+
+An independent review found four test fixtures that had been classified as
+conversation-only despite asserting filesystem-backed behavior. They now use
+host-registered Profiles without restoring any client-controlled path or
+boundary field:
+
+- `tests/capability/black-box/s1-s4-public-api.test.ts` registers the daemon's
+  temporary workspace directory as `ARBOR_PROJECT_ROOT`; S1/S3 selects the
+  sole available ref/version through authenticated public `GET
+  /project-resources`. It retains child boundary creation and shell-backed
+  `BB_VERIFIED` verification.
+- `apps/single-workspace/test/p5-slice-acceptance.test.ts`,
+  `tests/p12-runtime-safety.test.ts`, and the safety story in
+  `tests/p12-acceptance.test.ts` install a test host
+  `ProjectResourceProfilePort` for their temporary directory and select only
+  its listed ref/version. Existing shell, region/ceiling, and ownership
+  assertions remain; ownership claims use the canonical temp root.
+
+Focused evidence after this correction:
+
+- P5 shell vertical slice — 1/1 PASS. A temporary ConversationOnly control
+  run was RED: the expected shell invocation count was 0 instead of 1.
+- S1/S3 public root/child journey — PASS with Profile; a temporary
+  ConversationOnly control run timed out with the public tree still root-only.
+  Final S1–S4 file run — 4/4 PASS.
+- P12 runtime-safety file — 25/25 PASS; P12 acceptance story 9 — 7/7 PASS.
+  These safety-stop scenarios can short-circuit before shell execution, so a
+  ConversationOnly control run of story 9 D3 is not a valid RED signal. The
+  test still now selects the host Profile to preserve its declared filesystem
+  setup and ownership fixture.
+- `pnpm exec tsc -p tsconfig.test.json --noEmit` — PASS; targeted Biome check —
+  PASS after formatting the two changed call sites.
+
+These are focused test-fixture corrections, not F21 qualification or closure.
 
 The production F21 process qualification and its raw-path cases are in a
 separately owned, untracked file in the shared worktree; they are excluded from
