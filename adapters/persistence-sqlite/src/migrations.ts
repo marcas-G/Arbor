@@ -1858,3 +1858,47 @@ export const P34_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P34_ATTENTION_PROJECTION_DDL,
   },
 ];
+
+/** FT-DG-01 OPEN-3 P1 intent source; user_version 35. No historical rows are
+ * inferred from Workspace boundaries, receipts, or ownership claims. */
+export const P35_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P34_MIGRATIONS,
+  {
+    id: 35,
+    name: "workspace_resource_activation_intents",
+    sql: `
+      CREATE TABLE workspace_resource_activation_intents (
+        project_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        resource_boundary_revision INTEGER NOT NULL CHECK (resource_boundary_revision >= 0),
+        status TEXT NOT NULL CHECK (status IN ('Pending','Active')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        activated_at TEXT,
+        PRIMARY KEY (project_id, workspace_id, resource_boundary_revision),
+        FOREIGN KEY (workspace_id, project_id)
+          REFERENCES workspaces(workspace_id, project_id),
+        CHECK ((status = 'Active') = (activated_at IS NOT NULL))
+      );
+      CREATE INDEX idx_workspace_resource_activation_pending
+        ON workspace_resource_activation_intents(project_id, created_at,
+          workspace_id, resource_boundary_revision)
+        WHERE status = 'Pending';
+
+      CREATE TABLE workspace_resource_activation_attention_rows (
+        project_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        resource_boundary_revision INTEGER NOT NULL,
+        occurred_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, workspace_id, resource_boundary_revision),
+        FOREIGN KEY (project_id, workspace_id, resource_boundary_revision)
+          REFERENCES workspace_resource_activation_intents
+            (project_id, workspace_id, resource_boundary_revision)
+      );
+
+      CREATE INDEX workspace_resource_activation_attention_target
+        ON workspace_resource_activation_attention_rows
+          (project_id, workspace_id, occurred_at);
+    `,
+  },
+];

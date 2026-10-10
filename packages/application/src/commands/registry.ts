@@ -18,6 +18,8 @@ import {
   type WorkRepositoryService,
   WorkspaceRepository,
   type WorkspaceRepositoryService,
+  WorkspaceResourceActivationStore,
+  type WorkspaceResourceActivationStoreService,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { type CommandHandler, CommandHandlerRegistry } from "../gateway.js";
@@ -37,6 +39,7 @@ export interface P1CommandDependencies {
   readonly projects: ProjectRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
+  readonly activations?: WorkspaceResourceActivationStoreService;
   readonly projectResourceProfiles?: ProjectResourceProfilePortService;
   readonly works: WorkRepositoryService;
   readonly executions?: Pick<ExecutionRepositoryService, "findById">;
@@ -99,6 +102,9 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
     const projects = yield* ProjectRepository;
     const workspaces = yield* WorkspaceRepository;
     const sessions = yield* SessionRepository;
+    const activations = yield* Effect.serviceOption(
+      WorkspaceResourceActivationStore,
+    );
     const works = yield* WorkRepository;
     const projectResourceProfiles = yield* Effect.serviceOption(
       ProjectResourceProfilePort,
@@ -109,6 +115,7 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
       projects,
       workspaces,
       sessions,
+      ...(Option.isSome(activations) ? { activations: activations.value } : {}),
       works,
       ...(Option.isSome(projectResourceProfiles)
         ? { projectResourceProfiles: projectResourceProfiles.value }

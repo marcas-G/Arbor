@@ -36,6 +36,7 @@ import type {
   VerificationRepositoryError,
   WorkRepositoryError,
   WorkspaceRepositoryError,
+  WorkspaceResourceActivationStoreError,
   WorktreeStoreError,
   WorkWaitStoreError,
 } from "@arbor/ports";
@@ -92,6 +93,7 @@ export type CommandHandlerError =
   | EnvironmentError
   | EnvironmentRevisionStoreError
   | WorktreeStoreError
+  | WorkspaceResourceActivationStoreError
   | ResourceOwnershipRepositoryError
   | ProjectToolRegistryError
   | PermissionGrantRepositoryError

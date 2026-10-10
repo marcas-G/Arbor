@@ -38,4 +38,5 @@ export * from "./work-plan.js";
 export * from "./worker-transport.js";
 export * from "./workspace-knowledge.js";
 export * from "./workspace-placement.js";
+export * from "./workspace-resource-activation.js";
 export * from "./worktree-store.js";

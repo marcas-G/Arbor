@@ -176,13 +176,15 @@ const readCounts = Effect.gen(function* () {
     events: number;
     claims: number;
     receipts: number;
+    activationIntents: number;
   }>(`SELECT
        (SELECT COUNT(*) FROM projects) AS projects,
        (SELECT COUNT(*) FROM workspaces) AS workspaces,
        (SELECT COUNT(*) FROM sessions) AS sessions,
        (SELECT COUNT(*) FROM domain_events) AS events,
        (SELECT COUNT(*) FROM resource_ownership WHERE released_at IS NULL) AS claims,
-       (SELECT COUNT(*) FROM commands) AS receipts`);
+       (SELECT COUNT(*) FROM commands) AS receipts,
+       (SELECT COUNT(*) FROM workspace_resource_activation_intents) AS activationIntents`);
   return rows[0];
 });
 
@@ -288,6 +290,31 @@ describe("F21 CreateProject v2 host resource admission", () => {
         }>(
           "SELECT project_id, event_type, event_version FROM domain_events ORDER BY project_id, sequence",
         );
+        const activationEvents = yield* sql.unsafe<{
+          project_id: string;
+          aggregate_ref: string;
+          event_version: number;
+          payload_json: string;
+        }>(
+          `SELECT project_id, aggregate_ref, event_version, payload_json
+           FROM domain_events
+           WHERE event_type = 'WorkspaceResourceActivationChanged'
+           ORDER BY project_id, sequence`,
+        );
+        const activationIntents = yield* sql.unsafe<{
+          project_id: string;
+          workspace_id: string;
+          resource_boundary_revision: number;
+          status: string;
+          created_at: string;
+          updated_at: string;
+          activated_at: string | null;
+        }>(
+          `SELECT project_id, workspace_id, resource_boundary_revision,
+                  status, created_at, updated_at, activated_at
+           FROM workspace_resource_activation_intents
+           ORDER BY project_id, workspace_id, resource_boundary_revision`,
+        );
         return {
           selected,
           onlyConversation,
@@ -298,6 +325,8 @@ describe("F21 CreateProject v2 host resource admission", () => {
             ? conversationWorkspace.value.resourceBoundary
             : null,
           eventVersions,
+          activationEvents,
+          activationIntents,
           counts: yield* readCounts,
         };
       }),
@@ -330,6 +359,11 @@ describe("F21 CreateProject v2 host resource admission", () => {
         event_version: 1,
       },
       {
+        project_id: requestProfile.projectId,
+        event_type: "WorkspaceResourceActivationChanged",
+        event_version: 1,
+      },
+      {
         project_id: requestConversation.projectId,
         event_type: "ProjectCreated",
         event_version: 1,
@@ -340,13 +374,43 @@ describe("F21 CreateProject v2 host resource admission", () => {
         event_version: 1,
       },
     ]);
+    expect(
+      outcome.activationEvents.map((event) => ({
+        ...event,
+        payload_json: JSON.parse(event.payload_json) as unknown,
+      })),
+    ).toEqual([
+      {
+        project_id: requestProfile.projectId,
+        aggregate_ref: requestProfile.workspaceId,
+        event_version: 1,
+        payload_json: {
+          _tag: "WorkspaceResourceActivationChanged",
+          workspaceId: requestProfile.workspaceId,
+          resourceBoundaryRevision: 0,
+          status: "Pending",
+        },
+      },
+    ]);
+    expect(outcome.activationIntents).toEqual([
+      {
+        project_id: requestProfile.projectId,
+        workspace_id: requestProfile.workspaceId,
+        resource_boundary_revision: 0,
+        status: "Pending",
+        created_at: issuedAt,
+        updated_at: issuedAt,
+        activated_at: null,
+      },
+    ]);
     expect(outcome.counts).toMatchObject({
       projects: 2,
       workspaces: 2,
       sessions: 2,
-      events: 4,
+      events: 5,
       claims: 1,
       receipts: 2,
+      activationIntents: 1,
     });
   });
 
@@ -492,7 +556,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
         const claims = yield* tx.transact(
           ownership.listActiveByWorkspace(request.workspaceId),
         );
-        return { response, claims };
+        return { response, claims, counts: yield* readCounts };
       }),
     );
     expect(created.response).toMatchObject({
@@ -528,7 +592,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
         const claims = yield* tx.transact(
           ownership.listActiveByWorkspace(request.workspaceId),
         );
-        return { response, claims };
+        return { response, claims, counts: yield* readCounts };
       }),
     );
     expect(sameSnapshotReplay.response).toMatchObject({
@@ -538,6 +602,11 @@ describe("F21 CreateProject v2 host resource admission", () => {
     expect(
       sameSnapshotReplay.claims.map((claim) => claim.sourceAddressSnapshot),
     ).toEqual([{ _tag: "FileTree", path: realpathSync(originalDirectory) }]);
+    expect(sameSnapshotReplay.counts).toMatchObject({
+      events: 3,
+      activationIntents: 1,
+      receipts: 1,
+    });
 
     let changedProfileResolveCalls = 0;
     const changedProfileSnapshot = makeProjectResourceProfilePort([
@@ -592,9 +661,10 @@ describe("F21 CreateProject v2 host resource admission", () => {
       projects: 1,
       workspaces: 1,
       sessions: 1,
-      events: 2,
+      events: 3,
       claims: 1,
       receipts: 2,
+      activationIntents: 1,
     });
     expect(changedProfileResolveCalls).toBe(1);
   });
@@ -696,6 +766,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
       events: 0,
       claims: 0,
       receipts: 1,
+      activationIntents: 0,
     });
     expect(profileResolveCalls).toBe(0);
   });

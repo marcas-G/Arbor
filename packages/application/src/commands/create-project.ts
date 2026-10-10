@@ -25,6 +25,7 @@ import type {
   ProjectResourceProfilePortService,
   SessionRepositoryService,
   WorkspaceRepositoryService,
+  WorkspaceResourceActivationStoreService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr } from "../command-result.js";
@@ -73,6 +74,7 @@ export interface CreateProjectDependencies {
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
   readonly projectResourceProfiles?: ProjectResourceProfilePortService;
+  readonly activations?: WorkspaceResourceActivationStoreService;
 }
 
 export const makeCreateProjectHandler = (
@@ -156,6 +158,43 @@ export const makeCreateProjectHandler = (
         }),
       );
 
+      const activationEvent: PendingDomainEvent | undefined =
+        payload.rootWorkspace.resourceSelection._tag === "Profile"
+          ? {
+              projectId: envelope.projectId,
+              eventType: "WorkspaceResourceActivationChanged",
+              eventVersion: 1,
+              occurredAt: envelope.issuedAt,
+              aggregateRef: payload.rootWorkspaceId,
+              actor: envelope.actor,
+              causedByCommandId: envelope.commandId,
+              payload: {
+                _tag: "WorkspaceResourceActivationChanged",
+                workspaceId: payload.rootWorkspaceId,
+                resourceBoundaryRevision,
+                status: "Pending",
+              },
+            }
+          : undefined;
+      if (activationEvent !== undefined) {
+        if (dependencies.activations === undefined) {
+          return yield* Effect.die(
+            new Error(
+              "CreateProject Profile requires the activation intent store",
+            ),
+          );
+        }
+        yield* dependencies.activations.insertPending({
+          projectId: envelope.projectId,
+          workspaceId: payload.rootWorkspaceId,
+          resourceBoundaryRevision,
+          status: "Pending",
+          createdAt: envelope.issuedAt,
+          updatedAt: envelope.issuedAt,
+          activatedAt: null,
+        });
+      }
+
       const events: PendingDomainEvent[] = [
         {
           projectId: envelope.projectId,
@@ -186,6 +225,7 @@ export const makeCreateProjectHandler = (
             name: payload.rootWorkspace.name,
           },
         },
+        ...(activationEvent === undefined ? [] : [activationEvent]),
       ];
 
       return ok({

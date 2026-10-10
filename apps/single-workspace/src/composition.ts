@@ -84,7 +84,7 @@ import {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P34_MIGRATIONS,
+  P35_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -104,6 +104,7 @@ import {
   VerificationRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
+  WorkspaceResourceActivationStoreLive,
   WorkWaitStoreLive,
 } from "@arbor/persistence-sqlite";
 import {
@@ -556,6 +557,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(ProjectDirectoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
+    Layer.provide(WorkspaceResourceActivationStoreLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(LocalPlanStoreLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
@@ -912,6 +914,6 @@ export {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P34_MIGRATIONS as CURRENT_MIGRATIONS,
+  P35_MIGRATIONS as CURRENT_MIGRATIONS,
   runMigrations,
 };

@@ -11,6 +11,14 @@ export const ProjectPolicyChanged = Schema.TaggedStruct(
 export const ProjectRenamed = Schema.TaggedStruct("ProjectRenamed", {});
 export const ProjectClosed = Schema.TaggedStruct("ProjectClosed", {});
 export const WorkspaceCreated = Schema.TaggedStruct("WorkspaceCreated", {});
+export const WorkspaceResourceActivationChanged = Schema.TaggedStruct(
+  "WorkspaceResourceActivationChanged",
+  {
+    workspaceId: Schema.String,
+    resourceBoundaryRevision: Schema.Number,
+    status: Schema.Literals(["Pending", "Active"]),
+  },
+);
 export const ResponsibilityChanged = Schema.TaggedStruct(
   "ResponsibilityChanged",
   {},
@@ -230,6 +238,7 @@ export const DomainEventPayload = Schema.Union([
   ProjectRenamed,
   ProjectClosed,
   WorkspaceCreated,
+  WorkspaceResourceActivationChanged,
   ResponsibilityChanged,
   ResourceBoundaryChanged,
   ResourceOwnershipChanged,
@@ -279,6 +288,7 @@ export const EVENT_CATALOG = {
   ProjectRenamed,
   ProjectClosed,
   WorkspaceCreated,
+  WorkspaceResourceActivationChanged,
   ResponsibilityChanged,
   ResourceBoundaryChanged,
   ResourceOwnershipChanged,

@@ -33,7 +33,7 @@ describe("MAC-P4 final active-runtime convergence", () => {
     expect(migrations).toContain("DROP TABLE invocation_approvals");
     expect(migrations).toContain("DROP TABLE control_action_approvals");
     expect(migrations).toContain("binding_proven");
-    expect(composition).toContain("P34_MIGRATIONS as CURRENT_MIGRATIONS");
-    expect(production).toContain("runMigrations(P34_MIGRATIONS)");
+    expect(composition).toContain("P35_MIGRATIONS as CURRENT_MIGRATIONS");
+    expect(production).toContain("runMigrations(P35_MIGRATIONS)");
   });
 });
