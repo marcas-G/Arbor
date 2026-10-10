@@ -7,6 +7,12 @@ Accepted AH7-DG-03 amendment (2026-10-10); post-landing consistency review
 pending. Source proposal SHA-256:
 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
 
+**Accepted AH10 Deliver amendment (DID v1.37):** this document owns the
+DeliverMessage receipt precedence, legacy exact-proof adoption, and immutable
+DeliverReplayEscalated P9 fact/event. The accepted proposal SHA-256 is
+`75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`;
+runtime implementation remains separately gated.
+
 ## 1. Recovery order extension
 
 P2's nine-step recovery order remains. During “reconcile external reality” and
@@ -116,6 +122,101 @@ commit before recovery returns blocked. A pre-commit crash retries the same
 deterministic pair; a post-commit crash reads that pair. P10 `02` owns the
 Action Required projection and P10 `07` owns its qualification; this recovery
 contract does not define projection semantics.
+
+### DeliverMessage receipt and pre-Gateway legacy effect recovery (AH10)
+
+P1 `07` binds the Deliver AgentAction to `DeliverMessage/1`; P7 `02` owns its
+Gateway effect. Recovery follows this strict order for the pinned
+`LogicalActionId` and stable MessageId:
+
+| Earlier-generation `DeliverMessage/1` receipt | Canonical facts | Recovery |
+|---|---|---|
+| Committed and exact typed receipt | One exact Message and MessageSent(v1); causedByCommandId equals this receipt CommandId; if Inbox row remains, exact P7 fields | Reuse receipt; append the original Action Observation once; no new Command/effect |
+| Committed, but receipt/result/effect/event/Inbox proof is missing or mismatched | Any | Record `PriorReceiptResultMismatch`, return `AgentActionRecoveryBlocked`; no replay/Observation/Applied |
+| `TerminalRejected(FencingRejected)` | No Message, MessageSent, or Inbox effect exists for stable MessageId | Apply P1 eligibility; next owner may submit its generation-scoped CommandId |
+| `FencingRejected` | Any such effect exists | Record `RejectedReceiptEffectConflict`; block and do not treat effect as success or retry |
+| Retryable `OperationalFailure` | No effect evidence | Retry with the same CommandId/fingerprint |
+| Retryable failure or non-FencingRejected terminal rejection | Any effect evidence | Record `PriorReceiptEffectConflict`; block, never change CommandId to overwrite history |
+| Non-FencingRejected terminal rejection | No effect evidence | Apply the DeliverMessage/Command error algebra; generation change does not retry |
+| No prior receipt | Exact pre-Gateway direct-write evidence below | Adopt the existing effect without synthesizing a receipt; converge one Action Observation |
+| No prior receipt | No Message, MessageSent, or Inbox key exists | If P1 action/freshness/effect eligibility holds, submit current-generation DeliverMessage |
+| No prior receipt | Partial, duplicate, or conflicting effect evidence | Record the corresponding Legacy failure; block with Action Required |
+
+For a prior Committed receipt, `exact` requires that the typed
+DeliverMessage/1 receipt result and pinned AgentAction match the unique
+Message fields and unique MessageSent(v1) envelope/payload listed below; the
+event's `causedByCommandId` must equal the Committed receipt's CommandId (not
+the legacy gen0 ID). A missing/duplicate Message or event, a mismatch of
+project/aggregate/type/version/payload, or an extant Inbox row that differs
+from the P7 fields is `PriorReceiptResultMismatch` and cannot converge the
+Action.
+
+The legacy case is limited to the old handler which committed the delivery
+transaction without CommandGateway. It is considered committed only if all of
+these facts match the same pinned action: the unique Message row has the exact
+stable MessageId, sender Workspace, kind=Deliver, direct-parent recipient,
+deliverableId, bounded bodyRef and optional correlation/causation, and
+`sentAt=MessageSent.occurredAt`; there is exactly one `MessageSent` event with
+`projectId=execution.projectId`, `aggregateRef=messageId`,
+`eventType=MessageSent`, `eventVersion=1`, `causedByCommandId` equal to
+`legacyDeliverCommandId(providerTurnId,outputPosition)`, and exact payload
+`{messageId,kind:"Deliver",sender,recipient,deliverableId,
+correlationId:null,causationId:null}`. Duplicate or mismatched events, or
+wrong Message identity/fields, are `LegacyMessageBindingMismatch`. This is a
+strict tuple proof, not a containment/field-presence check.
+
+Inbox admission used `workspaceId=recipientWorkspaceId`,
+`entryKey=messageEntryKey(messageId)`, `kind="Message"`, summary exactly
+`Deliver <deliverableId> from <senderWorkspaceId>`, `correlationId=null`, and
+`admittedAt=MessageSent.occurredAt`. If `findByKey` returns a row, including a
+consumed row retained by the projection, every field must match. A missing
+row after consumption/projection cleanup is allowed. An Inbox row without the
+exact Message/Event proof, or with mismatched fields, is `LegacyInboxConflict`.
+
+The P9 failure source is one `deliver_replay_attention_facts` row plus
+`DeliverReplayEscalated(v1)`. Its fields are
+`{attentionFactId,eventId,projectId,executionId,targetWorkspaceId,
+logicalActionId,messageId,failureCode,firstDetectedAt}`. Closed failure codes
+are `LegacyMessageMissingEvent`, `LegacyEventMissingMessage`,
+`LegacyMessageBindingMismatch`, `LegacyInboxConflict`,
+`PriorReceiptDecodeMismatch`, `PriorReceiptResultMismatch`,
+`RejectedReceiptEffectConflict`, and `PriorReceiptEffectConflict`. The fact
+identity is `att_` + lowercase SHA-256 of UTF-8
+`JSON.stringify({version:1,executionId,logicalActionId,messageId})`; the
+database also enforces UNIQUE `(execution_id,logical_action_id,message_id)`.
+The first failure code/time is immutable; an exact tuple retry returns the
+original fact; conflicting project/target/identity is a typed invariant
+failure. No message body, model summary, raw JSON, parser/database error or
+authority material is persisted in the fact/event.
+
+`RecoveryAttentionFactStore.recordDeliverReplayFailure(input)` returns the
+exact stored fact, `findDeliverReplayFailure(attentionFactId)` is the targeted
+read, and `listDeliverReplayFailures(projectId)` is the P10 rebuild read. All
+three require `TransactionScope`. Their error channel reuses the existing
+`RecoveryAttentionFactStore` repository/journal errors and typed
+`RecoveryAttentionFactInvariantConflict`; the Deliver extension adds no
+generic Attention port or error union.
+
+Fact and event are committed in one `TransactionScope` before recovery
+returns blocked. Event payload is exactly
+`{attentionFactId,executionId,targetWorkspaceId,logicalActionId,messageId,
+failureCode}`; `aggregate_ref=targetWorkspaceId`,
+`correlation_ref=logicalActionId`, actor=`system:recovery`, and
+`occurred_at=firstDetectedAt`. `caused_by_command_id` is the exact prior
+DeliverMessage CommandId when one exists; it is omitted for receipt-absent
+legacy proof failure. A pre-commit crash leaves neither fact nor event; a
+post-commit retry returns the same fact without another event. If the
+transaction fails, recovery remains fail-closed and does not advance the
+Action or append an Observation.
+
+After fact commit, recovery returns `AgentActionRecoveryBlocked`, preserves
+the Action as Pending with no Observation/Applied, leaves the
+`ActionsInProgress` Step without inventing a SettlementProposed result, and
+releases the current owner lease. A subsequent recovery first finds the same
+fact and blocks again; it does not submit a Command, Message, Inbox admission,
+or Provider request. The P10 Attention has no automatic dismiss/repair path in
+v1. P10 `02` owns projection fields; P10 `07` owns materialization, rebuild,
+and restart qualification.
 
 ## 3. Legacy adoption
 

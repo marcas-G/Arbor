@@ -1,9 +1,9 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.36\
+**Version:** 1.37\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.35\
-**Date:** 2026-10-10\
+**Supersedes:** v1.36\
+**Date:** 2026-10-11\
 **Depends on:** `Arbor System Design Specification v1.13`
 
 **Integration reconciliation (2026-10-10):** This version combines two separately
@@ -123,8 +123,10 @@ receipt-first prior-consumer decode**
   operational failure and does not create an AssignWork binding fact. P9's
   existing fact identity, atomic write, deduplication and crash recovery are
   unchanged.
-- No generic P10 Attention source or observable diagnostic/logging port is
-  added. Existing AH10 P9→P10 `Action Required` projection is unchanged.
+- This F23 amendment adds no generic P10 Attention source or observable
+  diagnostic/logging port. The existing AssignWork-binding P9→P10
+  `Action Required` projection is unchanged; the separately accepted P7
+  Deliver route is defined by the DID v1.37 amendment below.
 - Landing basis: fixed candidate proposal SHA-256
   `70D55E2AD117D28522297B7BF55EC8AD479CA1BFEEF4025AEA7F1901793DD1A7`;
   independent proposal review Blocking = 0; user standing authorization for
@@ -134,6 +136,38 @@ receipt-first prior-consumer decode**
   The real CommandStore writer transaction and P9 pre/post-commit crash matrix,
   an operator-visible diagnostic sink, and cross-schema-version prior replay
   remain explicit OPEN qualifications.
+
+**Accepted owner amendment (source DID v1.36 → v1.37): AH10 DeliverMessage
+generation fence and legacy replay**
+
+- The exact accepted route is AgentAction.Deliver → `DeliverMessage` CommandType,
+  Handler `schemaVersion="1"`, through the existing CommandGateway/P1
+  generation-scoped CommandId and receipt-first contract. Ordinary SendMessage
+  v1 remains unchanged; no External-origin route is added.
+- P7 `02` owns the DeliverMessage request/result, canonical Deliverable
+  ownership/direct-parent checks, MessageSent(v1) Deliver payload, Inbox
+  summary, same-transaction Message/Event/Inbox/receipt, and MessageSent-only
+  ChildDelivered wake source. P2 `03` confirms this is an existing
+  NormalExecutionMutation fenced in the Gateway transaction; no fence class
+  changes.
+- P1 `07` owns the trusted action route and the narrow pre-Gateway
+  DeliverMessage receipt-absent exact-proof exception. P9 `07` owns the
+  immutable `DeliverReplayEscalated` fact/event, exact legacy/receipt mismatch
+  priority, and RecoveryBlocked behavior. P10 `02`/`07` own the
+  ActionRequired projection and qualification. Migration 0034 adds only the
+  P9 failure-fact row; MessageSent EventVersion remains 1 and the generic
+  SendMessage receipt schema remains unchanged.
+- Accepted proposal SHA-256:
+  `75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`.
+  The user delegated governance authority; independent proposal review
+  Blocking = 0. Acceptance record:
+  `planning/results/AH10-deliver-generation-fence-governance.decision.md`.
+  Owner landing hashes and self-consistency audit:
+  `planning/results/AH10-deliver-generation-fence-design-landing.md`.
+- Design acceptance/landing does not authorize runtime implementation. The
+  strict Command/receipt unit seam, P9/P10 failure/rebuild behavior, and real
+  two-daemon crash/restart matrix remain implementation qualifications before
+  AH10 can close.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -2395,10 +2429,14 @@ The Application owns `ExternalCommandDecoder` and
 `CommandInputContractRegistry`: the decoder accepts bounded raw JSON plus a
 `commandType` and returns a typed semantic envelope or safe codec issues; the
 registry contains exactly one closed input descriptor and origin policy per
-command in the current 26-command production registry. Shells retain raw
+command in the current 27-command production registry. Shells retain raw
 `unknown` only until decoding and do not cast to a trusted envelope or use Web
-form schemas as a server guarantee. Codec validity grants no authority; P13's
-UI exposure classification remains separate. Handler factories for
+form schemas as a server guarantee. The new DeliverMessage descriptor is the
+closed P7 payload at wire codec v1, with External origin denied; typed
+ExecutionOrigin submissions use the same semantic validator. Its registered
+Handler/result `schemaVersion="1"` is independent from the wire version.
+Codec validity grants no authority; P13's UI exposure classification remains
+separate. Handler factories for
 `ReviseDependencyContract`, `WithdrawDependency`,
 `MarkDependencyUnfulfillable`, `RegisterProjectTool`, `CreateWorktree`, and
 `RetireWorktree` are factory-only and are not current `RegisteredCommandType`
@@ -2454,7 +2492,7 @@ fingerprint algorithm mismatch uses the existing exact P1 tuple rule and
 returns `IdempotencyConflict`; no historical comparator or row rewrite is
 added. Only an exact tuple is decoded through the Application-owned strict
 receipt decoder registered for the exact current `(commandType,
-Handler.schemaVersion)`. Every current one of the 26 registered command
+Handler.schemaVersion)`. Every current one of the 27 registered command
 handlers must have a Committed-result decoder; TerminalRejected uses the
 exhaustive Application `CommandRejection` decoder. Missing version/descriptor,
 invalid JSON, wrong shape or unknown rejection member fails as the existing
@@ -2612,6 +2650,7 @@ WithdrawDependency
 MarkDependencyUnfulfillable
 ReviseDependencyContract
 SendMessage
+DeliverMessage
 ```
 
 ### Verification / Acceptance
@@ -2769,9 +2808,17 @@ PermissionChanged
 DecisionRecorded
 ReconciliationEscalated
 AssignWorkTargetBindingEscalated
+DeliverReplayEscalated
 EnvironmentChanged
 HumanInterventionApplied        # v1.13 G7: {actor, targetWorkspaceId, summaryRef, occurredAt, kind}
 ```
+
+`MessageSent` remains EventVersion 1. Its `Deliver` payload is the P7 v1
+shape `{messageId, kind:"Deliver", sender, recipient, deliverableId,
+correlationId, causationId}`; non-Deliver payloads are unchanged. The AH10
+`DeliverMessage` route adds no MessageSent version or wake event. It adds the
+P9-owned `DeliverReplayEscalated(v1)` fact event for an unprovable legacy or
+receipt-bound handover; P10 consumes it as `DeliverReplayFailure` Attention.
 
 高频 Provider Turn、Tool Invocation、Lease Renew、stream delta 不进入 Project Domain Event Journal，而进入 Execution Trace / Runtime Records。
 
@@ -3382,7 +3429,16 @@ Parent and Work revisions at that boundary.
 provides `recordAssignWorkBindingFailure(fact)` and
 `findAssignWorkBindingFailure(attentionFactId)` under the same scope; record
 atomically appends the dedicated event and immutable P9 fact, and returns an
-existing row only for the exact same identity tuple.
+existing row only for the exact same identity tuple. The same P9-owned port
+also provides `recordDeliverReplayFailure(fact)`,
+`findDeliverReplayFailure(attentionFactId)`, and
+`listDeliverReplayFailures(projectId)` for the accepted AH10 Deliver route;
+these methods use the separate `deliver_replay_attention_facts` relation,
+retain the same transaction-scoped append/dedup/error guarantees, and do not
+alter the existing AssignWork fact identity or schema. They return the existing
+`RecoveryAttentionFactStore` repository/journal errors and typed
+`RecoveryAttentionFactInvariantConflict`; no generic Attention port or new
+store error union is introduced.
 
 ---
 
@@ -4634,6 +4690,7 @@ provider_turns
 provider_attempts
 model_context_manifests
 tool_invocations
+deliver_replay_attention_facts
 ```
 
 Migration `0033_assign_work_target_bindings` (`PRAGMA user_version = 33`) is
@@ -4749,6 +4806,44 @@ The fact id is `att_` plus lowercase hex of the versioned SHA-256 tuple
 the first detected failure code is retained. Event and row are atomic. No
 resolution command, dismissal state, automatic deletion, legacy backfill, or
 schema downgrade is added. Older binaries refuse `user_version > 32`.
+
+Migration `0034_deliver_replay_attention_facts` (`PRAGMA user_version = 34`)
+is additive and forward-only. It creates no fact rows for historical
+Deliver/Message events; the P9 recovery route creates a row only when the
+accepted exact-proof boundary detects incomplete/conflicting effect evidence.
+
+```sql
+CREATE TABLE deliver_replay_attention_facts (
+  attention_fact_id       TEXT PRIMARY KEY,
+  event_id                TEXT NOT NULL UNIQUE REFERENCES domain_events(event_id),
+  project_id              TEXT NOT NULL,
+  execution_id            TEXT NOT NULL,
+  target_workspace_id     TEXT NOT NULL,
+  logical_action_id       TEXT NOT NULL,
+  message_id              TEXT NOT NULL,
+  failure_code            TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyMessageMissingEvent','LegacyEventMissingMessage',
+    'LegacyMessageBindingMismatch','LegacyInboxConflict',
+    'PriorReceiptDecodeMismatch','PriorReceiptResultMismatch',
+    'RejectedReceiptEffectConflict','PriorReceiptEffectConflict'
+  )),
+  first_detected_at       TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id, message_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id)
+);
+
+CREATE INDEX deliver_replay_attention_target
+  ON deliver_replay_attention_facts(project_id, target_workspace_id, first_detected_at);
+```
+
+There is deliberately no Message/Event/Command FK from `message_id` or
+`logical_action_id`: the fact must represent proof failures where those
+canonical rows are missing. Its ID is `att_` plus lowercase SHA-256 hex of
+UTF-8 `JSON.stringify({version:1,executionId,logicalActionId,messageId})`.
+No canonical message repair, receipt synthesis, clear/dismiss state, or
+legacy backfill is performed by the migration. Binaries whose schema ceiling
+is v33 refuse `user_version > 33`.
 
 ## 9.4 Relational vs JSON Rule
 
@@ -5943,7 +6038,8 @@ normalizedRegion
 | Dependency (contract revision) | ReviseDependencyContract | DependencyContractRevised | DependencyRepository | application | v1.10 G1; revision++, never reinterprets prior satisfaction |
 | Deadlock attention | — (derived fact) | DeadlockAttentionRequested | — (projection-consumed) | coordination consumer | v1.10 G4; deterministic detection; no automatic lifecycle mutation |
 | Deliverable | ProduceDeliverable | DeliverableProduced | DeliverableRepository | application | source Work revision fixed |
-| Message | SendMessage | MessageSent | MessageStore | application / communication | durable communication ≠ canonical mutation envelope |
+| Message | SendMessage | MessageSent(v1) | MessageStore | application / communication | Message is durable communication, not a canonical Work/Deliverable mutation; External denied |
+| Deliver handover | DeliverMessage/1 | MessageSent(v1) | MessageStore + InboxProjection | Application/communication | existing Deliverable only; Gateway envelope supplies P1 generation fence/receipt; MessageSent is sole ChildDelivered wake source |
 | Verification | Start / RecordEvidence / Conclude | VerificationStarted / VerificationConcluded | VerificationRepository | verification + application | verdict immutable; version-bound |
 | Acceptance | AcceptWorkOutcome | WorkOutcomeAccepted | AcceptanceRepository | application | target revision + Verification fixed |
 | Permission | Grant / Revoke | PermissionChanged | PermissionGrantRepository | application | cannot exceed policy/ownership ceiling |

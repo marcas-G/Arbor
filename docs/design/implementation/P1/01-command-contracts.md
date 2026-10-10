@@ -183,7 +183,9 @@ decoders validate JSON syntax, object/union shape, owned fields, branded IDs,
 primitive/range/enum values and nested result values; unexpected members and
 missing required members fail closed.
 
-The current 26 registered command handlers all use schema version `"1"`.
+The current 27 registered command handlers all use schema version `"1"`.
+This count includes the P7-owned `DeliverMessage/1` Handler; it does not widen
+P1's own three-command phase set or the ordinary `SendMessage/1` receipt DTO.
 That current registration set must have a corresponding result decoder plus
 the shared rejection decoder. A missing descriptor, unsupported schema
 version, invalid JSON, wrong shape, missing required resolution JSON, or

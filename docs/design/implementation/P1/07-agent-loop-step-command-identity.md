@@ -3,6 +3,11 @@
 **Authority:** DID v1.20 AHT-4；P1 `01`/`03` existing immutable Command rules。
 **Status:** FROZEN；implementation AUTHORIZED by DID v1.21 ALS-I1。
 
+**Accepted AH10 amendment (DID v1.37):** the trusted action-route table below
+adds Deliver→DeliverMessage/1 and the narrowly bounded pre-Gateway direct-write
+proof path; no CommandResolution or receipt schema changes. Accepted proposal
+SHA-256: `75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`.
+
 ## 1. Three identities that must not be conflated
 
 ```text
@@ -63,17 +68,37 @@ defined by System Design §4.11 and DID §6A.16. Recovery does not resolve the
 stale opaque selector again. Missing, malformed, duplicate, or mismatched
 evidence records the P9 `AssignWorkBindingAttentionFact`, leaves the Action
 Pending, emits no Observation, and cannot fall through to a new-generation
-Command. This is the sole exception to item 1; it does not change Command
+Command. This is one narrowly scoped exception to item 1; the P7 Deliver
+legacy direct-write exception is defined separately below. It does not change Command
 resolution or reinterpret a receipt as FencingRejected. Existing
 `FencingRejected` takeover eligibility is unchanged. Historical Committed
 receipts have no fabricated binding and are handled by the same fail-closed
 exception. See P9 `07` for durable fact/recovery order and P10 `02`/`07` for
 projection/qualification.
 
+**P7 Deliver pre-Gateway direct-write exception.** The prior DeliverMessage/1
+receipt lookup remains first. Before that route existed, a Deliver Action
+could commit its Message, MessageSent(v1), and Inbox admission in one
+transaction while the Action/Observation remained Pending, without a Command
+receipt. Only when no prior DeliverMessage receipt exists may recovery adopt
+that old effect, and only with the exact Message/Event proof in P7 `02`: the
+stable MessageId, unique Deliver Message, unique MessageSent event with exact
+project/aggregate/type/version/payload, and the deterministic gen0
+`deliver-command` CommandId in `causedByCommandId`. If the Inbox row remains,
+its exact P7 target/key/kind/summary/correlation/admittedAt fields are required;
+absence after consumption/projection cleanup is allowed. Exact proof converges
+the same Action/Observation without synthesizing a receipt or writing another
+handover. Partial/duplicate/conflicting evidence records P9
+`DeliverReplayEscalated` and projects the P10 `DeliverReplayFailure` Action
+Required source. It never replays Provider or commits another Command.
+An existing `FencingRejected` receipt plus any such effect is a conflict, not
+takeover eligibility. This scoped historical exception does not change
+CommandResolution or receipt schema; see P7 `02`, P9 `07`, P10 `02`/`07`.
+
 ### Prior-generation receipt decoding
 
 The Application receipt-first consumers used by generation takeover (for
-example AssignWork, AcceptResult, SendMessage, SelectCurrentWork,
+example AssignWork, AcceptResult, SendMessage, Deliver, SelectCurrentWork,
 DeclareDependency, and ProduceDeliverable) read the prior immutable CommandId
 directly; they are not Gateway submissions and do not compare a candidate
 fingerprint/schema/algorithm tuple. Before decoding raw receipt JSON, the
@@ -93,15 +118,22 @@ Handler, currently `"1"` for each row):
 | AssignWork | `AssignWork` |
 | AcceptResult | `AcceptWorkOutcome` |
 | SendMessage | `SendMessage` |
+| Deliver | `DeliverMessage` |
 | SelectCurrentWork | `SelectCurrentWork` |
 | DeclareDependency | `DeclareDependency` |
 | ProduceDeliverable | `ProduceDeliverable` |
 
-For a non-direct-child prior receipt, invalid JSON/shape is a
+`DeliverMessage` is the trusted registered Handler descriptor at schemaVersion
+`"1"`; this route does not share or alter the ordinary `SendMessage` v1
+request/result receipt contract.
+
+For other non-direct-child prior receipts, invalid JSON/shape is a
 `PersistenceCorruption<"CommandStore">` operational failure, not
 `AgentActionRejected`; it produces no successful Observation, no replayed
 handler/Gateway Command, and no row repair. It does not create the special P9
-AssignWork binding fact.
+AssignWork binding fact. The separately specified DeliverMessage/1 legacy
+evidence failure uses its scoped P9 Deliver fact as above; it does not create
+an AssignWork binding fact.
 
 For the direct-child AssignWork exception, a Committed receipt is a component
 of the proof-complete effect binding, not sufficient evidence by itself.
