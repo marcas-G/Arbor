@@ -7,8 +7,10 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
-  functionalId,
   makePublicClient,
+  proposeAndApproveChildWithInitialWork,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -36,12 +38,101 @@ describe("F19 dependency-first delivery", () => {
     const consumerObjective = `Consume F19-WAKE-${marker}`;
     const producerObjective = `Produce F19-WAKE-${marker}`;
     const deliverableKind = `wake-report-${marker}`;
-    const childWorkspaceId = functionalId("ws");
+    const childName = `producer-${marker}`;
+    const producerResumeMarker = `F19-RESUME-${marker}`;
+    let childWorkspaceId = "";
+    let producerResumed = false;
     let consumerWaitIssued = false;
     let consumerWoke = false;
     let consumerWakeContext = "";
     const reply = (call: CapturedProviderCall): ScriptedProviderResponse => {
       const context = contextOf(call);
+      const available = new Set(
+        call.tools
+          .map((tool) => tool.function?.name)
+          .filter((name): name is string => name !== undefined),
+      );
+      const latestUser = [...call.messages]
+        .reverse()
+        .find((message) => message.role === "user")?.content;
+      if (
+        available.has("propose_workspace") &&
+        latestUser?.includes(`请为 ${producerObjective} 提议一个子工作区`) ===
+          true
+      ) {
+        if (context.includes("ProposalRecorded(")) {
+          return { _tag: "Text", text: `Proposal recorded for ${marker}` };
+        }
+        return {
+          _tag: "ToolCall",
+          name: "propose_workspace",
+          arguments: {
+            name: childName,
+            rationale: "F19 producer responsibility for dependency-first wake",
+            responsibilityDraft: {
+              purpose: producerObjective,
+              ownedResponsibilities: [producerObjective],
+              obligations: ["deliver a formal result"],
+              includes: [],
+              excludes: [],
+              interfaces: [],
+            },
+            resourceBoundaryDraft: {
+              addresses: [
+                { _tag: "FileTree", path: fixture.workspaceDirectory },
+              ],
+            },
+            initialWork: {
+              objective: producerObjective,
+              why: "produce the later child result",
+              constraints: [],
+              completionExpectation: "formal deliverable is delivered",
+              verificationMission: {
+                goal: "verify child delivery",
+                criteria: [
+                  {
+                    criterionId: "child-delivery",
+                    requirement: "a formal deliverable is delivered",
+                    required: true,
+                  },
+                ],
+                riskRequirements: [],
+              },
+            },
+          },
+        };
+      }
+      if (
+        available.has("assign_work") &&
+        !available.has("claim_completion") &&
+        latestUser?.includes(consumerObjective) === true
+      ) {
+        return context.includes("WorkAssigned(")
+          ? { _tag: "Text", text: `Consumer started ${consumerObjective}` }
+          : {
+              _tag: "ToolCall",
+              name: "assign_work",
+              arguments: {
+                objective: consumerObjective,
+                why: "prove dependency-first waiting and exact wake",
+                constraints: [],
+                completionExpectation:
+                  "child delivery satisfies the dependency",
+                verificationMission: {
+                  goal: "verify dependency-first wake",
+                  criteria: [
+                    {
+                      criterionId: "dependency-wake",
+                      requirement: "consumer resumes only after child delivery",
+                      required: true,
+                    },
+                  ],
+                  riskRequirements: [],
+                },
+                reason: "F19 wake test",
+              },
+            };
+      }
       if (context.includes(consumerObjective)) {
         if (!context.includes("DependencyDeclared(")) {
           return {
@@ -91,6 +182,10 @@ describe("F19 dependency-first delivery", () => {
       }
 
       if (context.includes(producerObjective)) {
+        if (!context.includes(producerResumeMarker)) {
+          return manualWait("producer waits for later explicit human steer");
+        }
+        producerResumed = true;
         const deliverableId = /del_[0-9a-f-]{36}/u.exec(context)?.[0];
         if (deliverableId === undefined) {
           return {
@@ -123,53 +218,30 @@ describe("F19 dependency-first delivery", () => {
       fixture.workspaceDirectory,
       "F19 dependency-first wake",
     );
-    await client.command(project.projectId, "CreateChildWorkspace", {
-      parentWorkspaceId: project.rootWorkspaceId,
-      workspaceId: childWorkspaceId,
-      primarySession: { sessionId: functionalId("ses"), contextEpoch: 0 },
-      name: `producer-${marker}`,
-      responsibilityDefinition: {
-        purpose: producerObjective,
-        ownedResponsibilities: [producerObjective],
-        obligations: ["deliver a formal result"],
-        includes: [],
-        excludes: [],
-        interfaces: [],
+    const producer = await proposeAndApproveChildWithInitialWork(
+      client,
+      project,
+      marker,
+      `请为 ${producerObjective} 提议一个子工作区，并附带首个工作。`,
+      {
+        name: childName,
+        initialWork: { objective: producerObjective },
       },
-      responsibilityRevision: 0,
-      resourceBoundary: { basisResponsibilityRevision: 0, addresses: [] },
-      resourceBoundaryRevision: 0,
-      agentBinding: {
-        _tag: "ResponsibilityBoundAgentBinding",
-        workspaceId: childWorkspaceId,
-      },
-      workspacePolicy: {},
-      workspacePolicyRevision: 0,
-      revision: 0,
-    });
+    );
+    childWorkspaceId = producer.workspaceId;
+    expect(producer.currentWork.objective).toBe(producerObjective);
 
-    const consumerWorkId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
-      workId: consumerWorkId,
-      workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: consumerObjective,
-      why: "prove dependency-first waiting and exact wake",
-      constraints: [],
-      completionExpectation: "child delivery satisfies the dependency",
-      verificationMission: {
-        goal: "verify dependency-first wake",
-        criteria: [
-          {
-            criterionId: "dependency-wake",
-            requirement: "consumer resumes only after child delivery",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      provenance: { predecessorWorkId: null, reason: "F19 wake test" },
-      revision: 0,
+    await submitHumanMessage(
+      client,
+      project,
+      `请创建消费工作 ${consumerObjective}，它需要来自子工作区 ${childWorkspaceId} 的 ${deliverableKind}。`,
+    );
+    const approval = await waitForApproval(client, project, consumerObjective);
+    await client.command(project.projectId, "ResolveControlApproval", {
+      approvalId: approval.approvalId,
+      expectedRevision: approval.revision,
+      decision: "Approve",
+      reason: "F19 public consumer Work approval",
     });
 
     const pending = await waitForPublic(
@@ -217,32 +289,30 @@ describe("F19 dependency-first delivery", () => {
       );
     }
     expect(
-      fixture.providerCalls.filter((call) =>
-        contextOf(call).includes(consumerObjective),
+      fixture.providerCalls.filter(
+        (call) =>
+          call.tools.some(
+            (tool) => tool.function?.name === "declare_dependency",
+          ) && contextOf(call).includes(consumerObjective),
       ),
     ).toHaveLength(2);
 
-    await client.command(project.projectId, "AssignWork", {
-      workId: functionalId("wrk"),
-      workspaceId: childWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: producerObjective,
-      why: "produce the later child result",
-      constraints: [],
-      completionExpectation: "formal deliverable is delivered",
-      verificationMission: {
-        goal: "verify child delivery",
-        criteria: [
-          {
-            criterionId: "child-delivery",
-            requirement: "a formal deliverable is delivered",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      provenance: { predecessorWorkId: null, reason: "F19 wake test" },
+    const producerBeforeSteer = await client.view<{
+      workId?: string;
+      revision: number;
+      status: string;
+    } | null>("current-work", { workspaceId: childWorkspaceId });
+    expect(producerBeforeSteer).toMatchObject({
+      workId: producer.currentWork.workId,
       revision: 0,
+      status: "Open",
+    });
+    await client.command(project.projectId, "SteerWork", {
+      workId: producer.currentWork.workId,
+      workspaceId: childWorkspaceId,
+      expectedWorkRevision: 0,
+      steer: { severity: "Normal", guidance: producerResumeMarker },
+      provenance: { source: "HumanInput" },
     });
 
     const satisfied = await waitForPublic(
@@ -277,6 +347,7 @@ describe("F19 dependency-first delivery", () => {
       (value) => value,
       30_000,
     );
+    expect(producerResumed).toBe(true);
     const deliveredId = satisfied.rows.find(
       (row) => row.dependencyId === dependencyId,
     )?.satisfiedBy;

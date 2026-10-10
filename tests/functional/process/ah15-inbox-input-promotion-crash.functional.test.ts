@@ -1,4 +1,3 @@
-import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,8 +8,8 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
-  functionalId,
   makePublicClient,
+  proposeAndApproveChildWithInitialWork,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -197,8 +196,60 @@ describe("AH15 Inbox input promotion process crash", () => {
               .map((tool) => tool.function?.name)
               .filter((name): name is string => name !== undefined),
           );
+          const latestUser = [...call.messages]
+            .reverse()
+            .find((message) => message.role === "user")?.content;
+          if (
+            available.has("propose_workspace") &&
+            latestUser?.includes(childMarker) === true
+          ) {
+            if (context.includes("ProposalRecorded(")) {
+              return { _tag: "Text", text: `Proposed ${childMarker}` };
+            }
+            return {
+              _tag: "ToolCall",
+              name: "propose_workspace",
+              arguments: {
+                name: `child-${childMarker}`,
+                rationale: "AH15 Inbox promotion process fixture",
+                responsibilityDraft: {
+                  purpose: `send one Query containing ${messageMarker}`,
+                  ownedResponsibilities: [messageMarker],
+                  obligations: [`send one message ${messageMarker}`],
+                  includes: [],
+                  excludes: [],
+                  interfaces: [],
+                },
+                resourceBoundaryDraft: {
+                  addresses: [
+                    { _tag: "FileTree", path: fixture.workspaceDirectory },
+                  ],
+                },
+                initialWork: {
+                  objective: `For ${childMarker}, send one Query to the parent containing ${messageMarker}.`,
+                  why: "qualify Inbox append/consume recovery across daemon restart",
+                  constraints: ["send exactly one Query"],
+                  completionExpectation:
+                    "the parent Inbox promotes the Query exactly once",
+                  verificationMission: {
+                    goal: `Verify exact Inbox promotion for ${messageMarker}`,
+                    criteria: [
+                      {
+                        criterionId: "ah15-single-promotion",
+                        requirement:
+                          "the exact MessageId is promoted once and consumed",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                },
+              },
+            };
+          }
           if (
             context.includes(childMarker) &&
+            available.has("send_message") &&
             !call.messages.some((message) => message.role === "tool")
           ) {
             childInitialDecisionRequests += 1;
@@ -243,65 +294,27 @@ describe("AH15 Inbox input promotion process crash", () => {
         `AH15 inbox promotion ${messageMarker}`,
       );
       parentWorkspaceId = project.rootWorkspaceId;
-      const childWorkspaceId = functionalId("ws");
+      const child = await proposeAndApproveChildWithInitialWork(
+        client,
+        project,
+        childMarker,
+        `请为职责 ${childMarker} 提议子工作区，并安排首个工作将 ${messageMarker} 作为单条 Query 发给父工作区。`,
+        {
+          name: `child-${childMarker}`,
+          initialWork: {
+            objective: `For ${childMarker}, send one Query to the parent containing ${messageMarker}.`,
+          },
+        },
+      ).catch((error: unknown) => {
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}; formationProvider=${JSON.stringify(fixture.providerCalls.map((call) => ({ tools: call.tools.map((tool) => tool.function?.name), roles: call.messages.map((message) => message.role), hasProposalMarker: JSON.stringify(call.messages).includes(childMarker), hasMessageMarker: JSON.stringify(call.messages).includes(messageMarker) })))}; daemon=${fixture.daemonErrors.join(" | ")}`,
+        );
+      });
+      const childWorkspaceId = child.workspaceId;
       senderWorkspaceId = childWorkspaceId;
-      const childSessionId = functionalId("ses");
-      const childWorkId = functionalId("wrk");
-      const childDirectory = resolve(
-        fixture.directory,
-        `child-${messageMarker}`,
+      expect(child.currentWork.objective).toBe(
+        `For ${childMarker}, send one Query to the parent containing ${messageMarker}.`,
       );
-      mkdirSync(childDirectory, { recursive: true });
-      await client.command(project.projectId, "CreateChildWorkspace", {
-        parentWorkspaceId: project.rootWorkspaceId,
-        workspaceId: childWorkspaceId,
-        primarySession: { sessionId: childSessionId, contextEpoch: 0 },
-        name: `child-${messageMarker}`,
-        responsibilityDefinition: {
-          purpose: `send one Query containing ${messageMarker}`,
-          ownedResponsibilities: [messageMarker],
-          obligations: [`send one message ${messageMarker}`],
-          includes: [],
-          excludes: [],
-          interfaces: [],
-        },
-        responsibilityRevision: 0,
-        resourceBoundary: {
-          basisResponsibilityRevision: 0,
-          addresses: [{ _tag: "FileTree", path: childDirectory }],
-        },
-        resourceBoundaryRevision: 0,
-        agentBinding: {
-          _tag: "ResponsibilityBoundAgentBinding",
-          workspaceId: childWorkspaceId,
-        },
-        workspacePolicy: {},
-        workspacePolicyRevision: 0,
-        revision: 0,
-      });
-      await client.command(project.projectId, "AssignWork", {
-        workId: childWorkId,
-        workspaceId: childWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `For ${childMarker}, send one Query to the parent containing ${messageMarker}.`,
-        why: "qualify Inbox append/consume recovery across daemon restart",
-        constraints: ["send exactly one Query"],
-        completionExpectation:
-          "the parent Inbox promotes the Query exactly once",
-        verificationMission: {
-          goal: `Verify exact Inbox promotion for ${messageMarker}`,
-          criteria: [
-            {
-              criterionId: "ah15-single-promotion",
-              requirement: "the exact MessageId is promoted once and consumed",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
-        },
-        provenance: { predecessorWorkId: null, reason: "AH15 process fixture" },
-        revision: 0,
-      });
 
       const hit = await waitForPublic(
         async () => hits.find((candidate) => candidate.boundary === boundary),
