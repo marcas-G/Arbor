@@ -588,6 +588,9 @@ export const decodeRegisteredCommandReceipt = <R>(
       return Effect.fail(corruption());
     }
     const byVersion = resultDecoders[commandType as RegisteredCommandType];
+    if (!Object.hasOwn(byVersion, schemaVersion)) {
+      return Effect.fail(corruption());
+    }
     const validateResult = byVersion[schemaVersion];
     if (validateResult === undefined) return Effect.fail(corruption());
 

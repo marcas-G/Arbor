@@ -330,4 +330,17 @@ describe("registered command receipt runtime decoders", () => {
     );
     expect(Exit.isFailure(inheritedTagExit)).toBe(true);
   });
+
+  it("does not resolve inherited object properties as stored result schema versions", async () => {
+    for (const schemaVersion of ["constructor", "toString"]) {
+      const stored = {
+        ...storedReceipt("Committed", JSON.stringify({}), null),
+        schemaVersion,
+      };
+      const exit = await Effect.runPromiseExit(
+        decodeRegisteredCommandReceipt(stored, "CreateProject", schemaVersion),
+      );
+      expect(Exit.isFailure(exit), schemaVersion).toBe(true);
+    }
+  });
 });
