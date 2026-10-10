@@ -32,10 +32,10 @@ tuple and confirms the conflict branch remains tuple-first.
 
 - `pnpm typecheck` — PASS.
 - Biome on the four changed TypeScript files — PASS.
-- `tests/application/command-result-codec.test.ts` — 3/3 PASS, including
+- `tests/application/command-result-codec.test.ts` — 4/4 PASS, including
   positive schema-v1 examples for all 26 registered command result DTOs,
   positive decoding of all current rejection tags, malformed/unknown schema
-  failure, and inherited-tag rejection.
+  failure, inherited-tag rejection, and schema-version prototype-key rejection.
 - `packages/application/test/p1-gateway.test.ts` focused
   “compares a stored tuple before interpreting its raw result JSON” — 1/1
   PASS.
@@ -60,3 +60,18 @@ tuple and confirms the conflict branch remains tuple-first.
   the exhaustive `Record<CommandRejection["_tag"], Validator>` check.
 - No design documents, transport adapters, production result writers, or
   receipt storage adapters were changed.
+
+### Supplemental prototype-key regression
+
+The first RED run used exact stored schema versions `constructor` and
+`toString` with a Committed `{}` result. The `constructor` case was incorrectly
+accepted because ordinary object property lookup returned an inherited
+function. The decoder now requires the version to be an own key of the
+command's schema map before retrieving its validator; both schema-version
+cases now fail closed. This does not change Gateway tuple ordering.
+
+F21 integration adds another explicit compatibility task: in addition to its
+`ProjectResourceUnavailable{commandId}` rejection member, the CreateProject
+handler schema-v2 result requires its own positive decoder/example. This
+Wave1 candidate only supports the baseline's schema-v1 command/result pairs;
+it does not claim cross-schema replay qualification.
