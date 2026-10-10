@@ -53,7 +53,8 @@ export interface ToolRuntimeQualificationEvent {
     | "AH7AfterToolEffectBeforeSettlement"
     | "AH7BeforeToolSettlementTransaction"
     | "AH7AfterToolSettlementCommit"
-    | "AH7ToolSettlementFenceRejected";
+    | "AH7ToolSettlementFenceRejected"
+    | "AH7AfterEffectAuthorityResolvedBeforeAdmission";
   readonly executionId: string;
   readonly invocationId: string;
   readonly callRef: string;
@@ -868,6 +869,29 @@ export const ToolRuntimeLive = (
                 )
             : context.authority;
           if (effectAuthority === undefined) {
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              regions,
+              approvalAlreadyConsumedBySelf
+                ? "ApprovalNoLongerAuthorized"
+                : "InvocationAuthorityDenied",
+            );
+          }
+          if (options.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "AH7AfterEffectAuthorityResolvedBeforeAdmission",
+                  executionId: context.executionId,
+                  invocationId: intent.invocationId,
+                  callRef: intent.callRef,
+                }) ?? Promise.resolve(),
+            );
+          }
+          if (
+            context.executionFence !== undefined &&
+            effectAuthority.sourceRevision === undefined
+          ) {
             return yield* recordNoEffectDenial(
               definition.sideEffectSemantics,
               regions,

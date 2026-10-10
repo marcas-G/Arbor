@@ -446,9 +446,13 @@ const makeToolApp = (root: string) => {
       admit: () => Effect.succeed({ _tag: "Admitted" as const }),
     } as never),
     Layer.succeed(ToolInvocationStore, {
-      recordIntent: () => Effect.void,
+      recordIntent: () => Effect.succeed("Recorded" as const),
       settle: () => Effect.succeed(true),
       consumeApproval: () => Effect.succeed(true),
+      recordNoEffectDenial: () =>
+        Effect.die(new Error("unexpected no-effect denial")),
+      recordNoEffectInterruption: () => Effect.succeed(false),
+      admitEffect: () => Effect.succeed({ _tag: "Admitted" as const }),
       findApproval: () => Effect.succeed(Option.none()),
       findById: () => Effect.succeed(Option.none()),
       findUnsettled: () => Effect.succeed([]),

@@ -6,6 +6,7 @@ import type {
 } from "@arbor/domain";
 import {
   type InvocationApproval,
+  invocationAuthoritySourceRevisionOf,
   type LeaseFencingRejected,
   type NoEffectDenialCode,
   type ToolExecutionContext,
@@ -459,6 +460,15 @@ export const ToolInvocationStoreLive: Layer.Layer<
               ),
             );
           }
+          if (
+            executionFence !== undefined &&
+            currentAuthority.sourceRevision === undefined
+          ) {
+            return {
+              _tag: "Denied",
+              reasonCode: "InvocationAuthorityDenied",
+            } as const;
+          }
           const authorityMatches =
             currentAuthority.executionId === record.executionId &&
             currentAuthority.workspaceId === record.workspaceId &&
@@ -475,6 +485,66 @@ export const ToolInvocationStoreLive: Layer.Layer<
               _tag: "Denied",
               reasonCode: "InvocationAuthorityDenied",
             } as const;
+          }
+          if (currentAuthority.sourceRevision !== undefined) {
+            const workspaceRows = yield* run(
+              sql.unsafe<{
+                readonly project_id: string;
+                readonly workspace_policy_revision: number;
+              }>(
+                `SELECT project_id, workspace_policy_revision
+                   FROM workspaces WHERE workspace_id = ?`,
+                [record.workspaceId],
+              ),
+            );
+            const workspace = workspaceRows[0];
+            if (workspace === undefined) {
+              return {
+                _tag: "Denied",
+                reasonCode: "InvocationAuthorityDenied",
+              } as const;
+            }
+            const grantRows = yield* run(
+              sql.unsafe<{
+                readonly permission_grant_id: string;
+                readonly revision: number | null;
+              }>(
+                `SELECT permission_grant_id, revision
+                   FROM permission_grants
+                  WHERE project_id = ? AND state = 'Active'
+                  ORDER BY permission_grant_id`,
+                [workspace.project_id],
+              ),
+            );
+            const verifierRows = yield* run(
+              sql.unsafe<{ readonly verification_id: string }>(
+                `SELECT v.verification_id
+                   FROM verification_executions ve
+                   JOIN verifications v
+                     ON v.verification_id = ve.verification_id
+                  WHERE ve.execution_id = ?
+                  ORDER BY ve.bound_at, v.verification_id
+                  LIMIT 1`,
+                [record.executionId],
+              ),
+            );
+            const currentSourceRevision = invocationAuthoritySourceRevisionOf({
+              workspacePolicyRevision: Number(
+                workspace.workspace_policy_revision,
+              ),
+              activeGrants: grantRows.map((grant) => ({
+                permissionGrantId: grant.permission_grant_id,
+                revision:
+                  grant.revision === null ? null : Number(grant.revision),
+              })),
+              verifierId: verifierRows[0]?.verification_id ?? null,
+            });
+            if (currentSourceRevision !== currentAuthority.sourceRevision) {
+              return {
+                _tag: "Denied",
+                reasonCode: "InvocationAuthorityDenied",
+              } as const;
+            }
           }
           if (record.approvalId !== null) {
             const unified = yield* hasUnifiedLedger;

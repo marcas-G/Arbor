@@ -53,7 +53,28 @@ export interface InvocationAuthority {
   readonly controlBasisDigest: string;
   readonly expiresAt: string;
   readonly delegationDepth: number;
+  /** Persistence source snapshot used by the fenced pre-effect gate. This is
+   * an implementation token, not additional authority. */
+  readonly sourceRevision?: string;
 }
+
+export const invocationAuthoritySourceRevisionOf = (input: {
+  readonly workspacePolicyRevision: number;
+  readonly activeGrants: ReadonlyArray<{
+    readonly permissionGrantId: string;
+    readonly revision: number | null;
+  }>;
+  readonly verifierId: string | null;
+}): string =>
+  JSON.stringify({
+    workspacePolicyRevision: input.workspacePolicyRevision,
+    activeGrants: [...input.activeGrants]
+      .sort((left, right) =>
+        left.permissionGrantId.localeCompare(right.permissionGrantId),
+      )
+      .map((grant) => [grant.permissionGrantId, grant.revision]),
+    verifierId: input.verifierId,
+  });
 
 export interface ToolIntent {
   readonly callRef: string;
