@@ -90,11 +90,19 @@ const toolDelta = (name: string, args: unknown) => ({
 });
 
 const macRootGoalMarker = "MAC-P1-BLACKBOX-GOAL";
+const childFormationMarker = `MAC-P2-BLACKBOX-${randomUUID().slice(0, 8)}`;
+const childFormationName = `black-box-child-${randomUUID().slice(0, 8)}`;
+const s2SteerGoalMarker = `MAC-S2-BLACKBOX-${randomUUID().slice(0, 8)}`;
+const s2SteerGuidanceMarker = `MAC-S2-STEER-${randomUUID().slice(0, 8)}`;
 
 const startProvider = () =>
   new Promise<{ server: Server; port: number; calls: ProviderCall[] }>(
     (resolveStart) => {
       const calls: ProviderCall[] = [];
+      let childFormationProposalSent = false;
+      let childFormationFollowupResponded = false;
+      const rootAssignmentsProposed = new Set<string>();
+      const rootAssignmentFollowupsResponded = new Set<string>();
       const server = createServer((request, response) => {
         const chunks: Buffer[] = [];
         request.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -114,43 +122,174 @@ const startProvider = () =>
               .filter((name): name is string => name !== undefined),
           );
           const serialized = JSON.stringify(call.messages);
+          const rootGoalMarker = [macRootGoalMarker, s2SteerGoalMarker]
+            .filter((marker) => serialized.includes(marker))
+            .sort(
+              (left, right) =>
+                serialized.lastIndexOf(right) - serialized.lastIndexOf(left),
+            )[0];
 
           if (
-            toolNames.has("assign_work") &&
-            !toolNames.has("claim_completion") &&
-            serialized.includes(macRootGoalMarker)
+            toolNames.has("propose_workspace") &&
+            serialized.includes(childFormationMarker)
           ) {
-            if (serialized.includes("WorkAssigned(")) {
+            if (!childFormationProposalSent) {
+              childFormationProposalSent = true;
               sse(
                 response,
-                { role: "assistant", content: "工作已创建并进入异步执行。" },
+                toolDelta("propose_workspace", {
+                  name: childFormationName,
+                  rationale:
+                    "A durable child responsibility is needed for this independent area.",
+                  responsibilityDraft: {
+                    purpose: `Own the ${childFormationMarker} responsibility.`,
+                    ownedResponsibilities: [childFormationMarker],
+                    obligations: [],
+                    includes: [],
+                    excludes: [],
+                    interfaces: [],
+                  },
+                  resourceBoundaryDraft: {
+                    addresses: [
+                      {
+                        _tag: "FileTree",
+                        path: join(directory, "workspace"),
+                      },
+                    ],
+                  },
+                  initialWork: {
+                    objective: `Establish the ${childFormationMarker} responsibility.`,
+                    why: "Start the newly approved responsibility with bounded work.",
+                    constraints: [],
+                    completionExpectation:
+                      "The child responsibility is initialized.",
+                    verificationMission: {
+                      goal: "Verify the child responsibility is initialized.",
+                      criteria: [
+                        {
+                          criterionId: "child-initialized",
+                          requirement:
+                            "The child Workspace has its initial Work.",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                  },
+                }),
+                "tool_calls",
+              );
+              return;
+            }
+            if (
+              serialized.includes("ProposalRecorded(") &&
+              !childFormationFollowupResponded
+            ) {
+              childFormationFollowupResponded = true;
+              sse(
+                response,
+                { role: "assistant", content: "方案已提交给用户审批。" },
                 "stop",
               );
               return;
             }
+          }
+
+          if (
+            toolNames.has("claim_completion") &&
+            serialized.includes(childFormationMarker) &&
+            !serialized.includes(macRootGoalMarker) &&
+            !serialized.includes(s2SteerGoalMarker)
+          ) {
             sse(
               response,
-              toolDelta("assign_work", {
-                objective: `Claim ${macRootGoalMarker} complete immediately.`,
-                why: "exercise the complete MAC-P1 user path",
-                constraints: ["do not place real orders"],
-                completionExpectation: "verified and accepted",
-                verificationMission: {
-                  goal: "independently verify the black-box shell observation",
-                  criteria: [
-                    {
-                      criterionId: "bb-criterion",
-                      requirement: "shell observation contains BB_VERIFIED",
-                      required: true,
-                    },
-                  ],
-                  riskRequirements: ["do not place real orders"],
-                },
-                reason: "start the bounded goal from the root conversation",
+              toolDelta("wait", {
+                reason: `Hold initial Work for ${childFormationMarker}.`,
+                waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
               }),
               "tool_calls",
             );
             return;
+          }
+
+          if (
+            toolNames.has("claim_completion") &&
+            serialized.includes(s2SteerGoalMarker)
+          ) {
+            sse(
+              response,
+              toolDelta("wait", {
+                reason: serialized.includes(s2SteerGuidanceMarker)
+                  ? `Await follow-up after ${s2SteerGuidanceMarker}.`
+                  : `Hold ${s2SteerGoalMarker} for the user's correction.`,
+                waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+              }),
+              "tool_calls",
+            );
+            return;
+          }
+
+          if (
+            toolNames.has("assign_work") &&
+            !toolNames.has("claim_completion") &&
+            rootGoalMarker !== undefined
+          ) {
+            if (!rootAssignmentsProposed.has(rootGoalMarker)) {
+              rootAssignmentsProposed.add(rootGoalMarker);
+              sse(
+                response,
+                toolDelta("assign_work", {
+                  objective:
+                    rootGoalMarker === macRootGoalMarker
+                      ? `Claim ${rootGoalMarker} complete immediately.`
+                      : `Hold ${rootGoalMarker} for the user's correction.`,
+                  why:
+                    rootGoalMarker === macRootGoalMarker
+                      ? "exercise the complete MAC-P1 user path"
+                      : "exercise the public S2 correction path",
+                  constraints:
+                    rootGoalMarker === macRootGoalMarker
+                      ? ["do not place real orders"]
+                      : [],
+                  completionExpectation:
+                    rootGoalMarker === macRootGoalMarker
+                      ? "verified and accepted"
+                      : "the Agent incorporates the public steer",
+                  verificationMission: {
+                    goal: "independently verify the black-box shell observation",
+                    criteria: [
+                      {
+                        criterionId: "bb-criterion",
+                        requirement: "shell observation contains BB_VERIFIED",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements:
+                      rootGoalMarker === macRootGoalMarker
+                        ? ["do not place real orders"]
+                        : [],
+                  },
+                  reason:
+                    rootGoalMarker === macRootGoalMarker
+                      ? "start the bounded goal from the root conversation"
+                      : "start Work so the human can steer it",
+                }),
+                "tool_calls",
+              );
+              return;
+            }
+            if (!rootAssignmentFollowupsResponded.has(rootGoalMarker)) {
+              rootAssignmentFollowupsResponded.add(rootGoalMarker);
+              sse(
+                response,
+                {
+                  role: "assistant",
+                  content: "工作已提交，并可在审批后开始。",
+                },
+                "stop",
+              );
+              return;
+            }
           }
 
           if (toolNames.has("record_verification_evidence")) {
@@ -311,23 +450,59 @@ const post = async (path: string, body: unknown) => {
   return payload;
 };
 
+const commandEnvelope = (
+  projectId: string,
+  commandType: string,
+  payload: unknown,
+) => ({
+  commandType,
+  commandId: id("cmd"),
+  projectId,
+  actor: HUMAN,
+  issuedAt: new Date().toISOString(),
+  payload,
+});
+
 const command = async (
   projectId: string,
   commandType: string,
   payload: unknown,
 ) => {
-  const response = await post("/commands", {
-    commandType,
-    commandId: id("cmd"),
-    projectId,
-    actor: HUMAN,
-    issuedAt: new Date().toISOString(),
-    payload,
-  });
+  const response = await post(
+    "/commands",
+    commandEnvelope(projectId, commandType, payload),
+  );
   expect((response.body as { resolution?: string }).resolution).toBe(
     "Committed",
   );
   return response;
+};
+
+const expectExternalOriginDenied = async (
+  projectId: string,
+  commandType: string,
+  payload: unknown,
+) => {
+  const response = await fetch(`${base}/commands`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(commandEnvelope(projectId, commandType, payload)),
+  });
+  const result = (await response.json()) as {
+    readonly ok: boolean;
+    readonly problem?: {
+      readonly code?: string;
+      readonly safeDetails?: { readonly reason?: string };
+    };
+  };
+  expect(response.status).toBe(403);
+  expect(result).toMatchObject({
+    ok: false,
+    problem: {
+      code: "authority/denied",
+      safeDetails: { reason: `UnsupportedOrigin:${commandType}` },
+    },
+  });
 };
 
 const view = async <A>(name: string, request: unknown): Promise<A> => {
@@ -449,7 +624,7 @@ describe("S1-S4 public-process black-box", () => {
       },
     });
 
-    await command(projectId, "CreateChildWorkspace", {
+    await expectExternalOriginDenied(projectId, "CreateChildWorkspace", {
       parentWorkspaceId: rootWorkspaceId,
       workspaceId: childWorkspaceId,
       primarySession: { sessionId: id("ses"), contextEpoch: 0 },
@@ -477,12 +652,94 @@ describe("S1-S4 public-process black-box", () => {
       revision: 0,
     });
 
-    const tree = await view<{
+    const beforeFormation = await view<{
       nodes: Array<{
         workspaceId: string;
         parentWorkspaceId: string | null;
       }>;
     }>("responsibility-tree", { projectId });
+    expect(beforeFormation.nodes).toHaveLength(1);
+    expect(beforeFormation.nodes[0]).toMatchObject({
+      workspaceId: rootWorkspaceId,
+      parentWorkspaceId: null,
+    });
+
+    await command(projectId, "SubmitHumanMessage", {
+      messageId: id("msg"),
+      targetWorkspaceId: rootWorkspaceId,
+      bodyRef:
+        `请为长期独立责任 ${childFormationMarker} 提议一个子工作区，` +
+        "并为该责任给出具体的初始 Work。",
+    });
+    const formationInbox = await waitFor(
+      () =>
+        view<{
+          unconsumed: Array<{
+            entryKey: string;
+            kind: string;
+            summary: string;
+          }>;
+        }>("inbox-view", { workspaceId: rootWorkspaceId }),
+      (value) =>
+        value.unconsumed.some(
+          (entry) =>
+            entry.kind === "Governance" &&
+            /^gov:fpr_[^:]+:\d+$/u.test(entry.entryKey) &&
+            entry.summary.includes(childFormationName),
+        ),
+    );
+    const pendingFormation = formationInbox.unconsumed.find(
+      (entry) =>
+        entry.kind === "Governance" &&
+        /^gov:fpr_[^:]+:\d+$/u.test(entry.entryKey) &&
+        entry.summary.includes(childFormationName),
+    );
+    if (pendingFormation === undefined) {
+      throw new Error(
+        "public Inbox exposed no pending child formation proposal",
+      );
+    }
+    const formationMatch = /^gov:(fpr_[^:]+):(\d+)$/u.exec(
+      pendingFormation.entryKey,
+    );
+    if (formationMatch === null) {
+      throw new Error(
+        `invalid public formation ref ${pendingFormation.entryKey}`,
+      );
+    }
+    await command(projectId, "RecordDecision", {
+      proposalId: formationMatch[1],
+      expectedProposalRevision: Number(formationMatch[2]),
+      outcome: { _tag: "Approve" },
+    });
+
+    const tree = await waitFor(
+      () =>
+        view<{
+          nodes: Array<{
+            workspaceId: string;
+            parentWorkspaceId: string | null;
+            name: string;
+            currentWork?: { workId?: string; objective: string };
+          }>;
+        }>("responsibility-tree", { projectId }),
+      (value) =>
+        value.nodes.some(
+          (node) =>
+            node.parentWorkspaceId === rootWorkspaceId &&
+            node.name === childFormationName &&
+            node.currentWork?.workId !== undefined,
+        ),
+    );
+    const formedChild = tree.nodes.find(
+      (node) => node.parentWorkspaceId === rootWorkspaceId,
+    );
+    expect(formedChild).toMatchObject({
+      name: childFormationName,
+      currentWork: {
+        objective: expect.stringContaining(childFormationMarker),
+      },
+    });
     expect(tree.nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -490,7 +747,6 @@ describe("S1-S4 public-process black-box", () => {
           parentWorkspaceId: null,
         }),
         expect.objectContaining({
-          workspaceId: childWorkspaceId,
           parentWorkspaceId: rootWorkspaceId,
         }),
       ]),
@@ -689,38 +945,150 @@ describe("S1-S4 public-process black-box", () => {
   }, 30_000);
 
   it("S2 applies a local steer through the public command face", async () => {
-    const steeredWorkId = id("wrk");
-    await command(projectId, "AssignWork", {
-      workId: steeredWorkId,
+    const rejectedWorkId = id("wrk");
+    await expectExternalOriginDenied(projectId, "AssignWork", {
+      workId: rejectedWorkId,
       workspaceId: rootWorkspaceId,
       expectedWorkspaceRevision: 2,
-      objective: "Hold for an S2 steer, then claim completion.",
-      why: "exercise user correction",
+      objective: "External callers cannot create Agent-originated Work.",
+      why: "the Root Agent owns AssignWork control",
       constraints: [],
-      completionExpectation: "steer accepted",
+      completionExpectation: "an Agent-created Work",
       verificationMission: {
-        goal: "verify steer path",
+        goal: "verify Work assignment ownership",
         criteria: [
           {
-            criterionId: "bb-criterion",
-            requirement: "shell observation contains BB_VERIFIED",
+            criterionId: "agent-assignment",
+            requirement: "the Root Agent creates Work through its control path",
             required: true,
           },
         ],
         riskRequirements: [],
       },
-      provenance: { predecessorWorkId: null, reason: "black-box-steer" },
+      provenance: {
+        predecessorWorkId: null,
+        reason: "external callers cannot author control provenance",
+      },
       revision: 0,
     });
+
+    expect(
+      await view<unknown>("current-work", { workspaceId: rootWorkspaceId }),
+    ).toBeNull();
+    await command(projectId, "SubmitHumanMessage", {
+      messageId: id("msg"),
+      targetWorkspaceId: rootWorkspaceId,
+      bodyRef:
+        `请创建并执行目标 ${s2SteerGoalMarker}，然后暂停等待我的局部纠偏。` +
+        "请直接调用 assign_work，并保留后续纠偏所需的目标。",
+    });
+    const approvalInbox = await waitFor(
+      () =>
+        view<{
+          unconsumed: Array<{
+            entryKey: string;
+            kind: string;
+            summary: string;
+          }>;
+        }>("inbox-view", { workspaceId: rootWorkspaceId }),
+      (value) =>
+        value.unconsumed.some(
+          (entry) =>
+            entry.kind === "Governance" &&
+            /^cap:cap_[^:]+:\d+$/u.test(entry.entryKey) &&
+            entry.summary.includes(s2SteerGoalMarker),
+        ),
+    );
+    const pendingApproval = approvalInbox.unconsumed.find(
+      (entry) =>
+        entry.kind === "Governance" &&
+        /^cap:cap_[^:]+:\d+$/u.test(entry.entryKey) &&
+        entry.summary.includes(s2SteerGoalMarker),
+    );
+    if (pendingApproval === undefined) {
+      throw new Error("public Inbox exposed no exact S2 Work approval");
+    }
+    const approvalMatch = /^cap:(cap_[^:]+):(\d+)$/u.exec(
+      pendingApproval.entryKey,
+    );
+    if (approvalMatch === null) {
+      throw new Error(
+        `invalid public approval ref ${pendingApproval.entryKey}`,
+      );
+    }
+    expect(
+      await view<unknown>("current-work", { workspaceId: rootWorkspaceId }),
+    ).toBeNull();
+    await command(projectId, "ResolveControlApproval", {
+      approvalId: approvalMatch[1],
+      expectedRevision: Number(approvalMatch[2]),
+      decision: "Approve",
+      reason: "approve exact S2 Root Agent Work before user steer",
+    });
+    const assignedWork = await waitFor(
+      () =>
+        view<{
+          workId?: string;
+          objective: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", { workspaceId: rootWorkspaceId }),
+      (value) =>
+        value?.workId !== undefined &&
+        value.objective.includes(s2SteerGoalMarker) &&
+        value.status === "Open",
+    );
+    if (assignedWork?.workId === undefined) {
+      throw new Error("approved S2 goal produced no Open Work");
+    }
+    await waitFor(
+      async () => provider.calls,
+      (calls) =>
+        calls.some(
+          (call) =>
+            call.tools.some(
+              (tool) => tool.function?.name === "claim_completion",
+            ) && JSON.stringify(call.messages).includes(s2SteerGoalMarker),
+        ),
+    );
+    expect(
+      provider.calls.some((call) =>
+        JSON.stringify(call.messages).includes(s2SteerGuidanceMarker),
+      ),
+    ).toBe(false);
+
     await command(projectId, "SteerWork", {
-      workId: steeredWorkId,
+      workId: assignedWork.workId,
       workspaceId: rootWorkspaceId,
-      expectedWorkRevision: 0,
+      expectedWorkRevision: assignedWork.revision,
       steer: {
         severity: "Normal",
-        guidance: `BB-STEER-${randomUUID().slice(0, 8)}`,
+        guidance: s2SteerGuidanceMarker,
       },
       provenance: { source: "HumanInput" },
     });
+    const revisedWork = await waitFor(
+      () =>
+        view<{
+          workId?: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", { workspaceId: rootWorkspaceId }),
+      (value) =>
+        value?.workId === assignedWork.workId &&
+        value.revision === assignedWork.revision + 1,
+    );
+    expect(revisedWork?.status).toBe("Open");
+    await waitFor(
+      async () => provider.calls,
+      (calls) =>
+        calls.some(
+          (call) =>
+            call.tools.some(
+              (tool) => tool.function?.name === "claim_completion",
+            ) && JSON.stringify(call.messages).includes(s2SteerGuidanceMarker),
+        ),
+    );
+    expect(daemonErrors).toEqual([]);
   });
 });
