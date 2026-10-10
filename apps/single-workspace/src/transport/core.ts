@@ -5,6 +5,7 @@ import { Effect } from "effect";
 import {
   type AuthenticatorService,
   externalContext,
+  LOCAL_PRINCIPAL,
   type TransportCredential,
 } from "./auth.js";
 import type {
@@ -15,6 +16,7 @@ import type {
 } from "./contracts.js";
 import {
   failureResponse,
+  makeProblem,
   problemFromProjectionError,
   unauthenticatedProblem,
 } from "./errors.js";
@@ -33,6 +35,9 @@ export interface TransportCoreDeps {
 }
 
 export interface TransportCore {
+  readonly authorizeSensitiveRead: (
+    credential: TransportCredential | null,
+  ) => Effect.Effect<TransportResponse<never> | null>;
   readonly queryView: <V extends ViewId>(
     view: V,
     request: ViewRequestMap[V],
@@ -47,6 +52,20 @@ export const isViewId = (value: string): value is ViewId =>
   (VIEW_IDS as ReadonlyArray<string>).includes(value);
 
 export const makeTransportCore = (deps: TransportCoreDeps): TransportCore => ({
+  authorizeSensitiveRead: (credential) =>
+    Effect.match(deps.authenticator.authenticate(credential), {
+      onFailure: () => failureResponse(unauthenticatedProblem()),
+      onSuccess: (principal) =>
+        String(principal) === LOCAL_PRINCIPAL
+          ? null
+          : failureResponse(
+              makeProblem(
+                "auth/unsupported-principal",
+                "forbidden",
+                "non-retryable",
+              ),
+            ),
+    }),
   queryView: (<V extends ViewId>(view: V, request: ViewRequestMap[V]) =>
     Effect.match(deps.views.query(view, request), {
       onFailure: (error) => failureResponse(problemFromProjectionError(error)),
