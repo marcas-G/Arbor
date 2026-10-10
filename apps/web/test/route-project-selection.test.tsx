@@ -124,11 +124,15 @@ const installFetch = (projectIds: ReadonlyArray<string>) => {
   return { fetchMock, inboxReads: () => inboxReads };
 };
 
-const RouteProbe = () => {
+const RouteProbe = ({
+  workspaceId = "ws_default",
+}: {
+  readonly workspaceId?: string;
+}) => {
   const session = useSession();
   const freshness = useFreshness();
   const inbox = useViewQuery("inbox-view", {
-    workspaceId: "ws_root" as never,
+    workspaceId: workspaceId as never,
   });
   return (
     <output data-testid="route-state">
@@ -160,6 +164,71 @@ afterEach(() => {
 });
 
 describe("URL-backed recent project selection", () => {
+  it("ignores a stale A response after an A-to-B-to-A route generation", async () => {
+    const firstProjectId = "prj_aba_first";
+    const secondProjectId = "prj_aba_second";
+    const directoryResponses: Array<(response: Response) => void> = [];
+    const directoryRequestCount = () => directoryResponses.length;
+    const directoryResponse = (projectIds: ReadonlyArray<string>) =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          status: 200,
+          body: { projects: projectIds.map(project) },
+        }),
+        { status: 200 },
+      );
+    installFakeWebSocket();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input) === "/projects") {
+          return new Promise<Response>((resolve) => {
+            directoryResponses.push(resolve);
+          });
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ok: true,
+              status: 200,
+              body: { value: { unconsumed: [] }, watermark: 1, lag: 0 },
+            }),
+            { status: 200 },
+          ),
+        );
+      }),
+    );
+    history.replaceState(null, "", `/p/${firstProjectId}`);
+
+    render(
+      <AppProviders>
+        <RouteProbe workspaceId="ws_aba" />
+      </AppProviders>,
+    );
+
+    await waitFor(() => expect(directoryRequestCount()).toBe(1));
+    act(() => pushPath(`/p/${secondProjectId}`));
+    await waitFor(() => expect(directoryRequestCount()).toBe(2));
+    act(() => pushPath(`/p/${firstProjectId}/queue`));
+    await waitFor(() => expect(directoryRequestCount()).toBe(3));
+
+    await act(async () => {
+      directoryResponses[2]?.(directoryResponse([]));
+    });
+    await waitFor(() => expect(routeState().selectedProjectId).toBeNull());
+
+    await act(async () => {
+      directoryResponses[0]?.(directoryResponse([firstProjectId]));
+    });
+    expect(routeState().selectedProjectId).toBeNull();
+
+    await act(async () => {
+      directoryResponses[1]?.(directoryResponse([secondProjectId]));
+    });
+    expect(routeState().selectedProjectId).toBeNull();
+  });
+
   it("selects a valid direct route and refreshes queued Inbox after WS invalidation", async () => {
     const projectId = "prj_direct";
     const sockets = installFakeWebSocket();
@@ -168,7 +237,7 @@ describe("URL-backed recent project selection", () => {
 
     render(
       <AppProviders>
-        <RouteProbe />
+        <RouteProbe workspaceId="ws_direct" />
       </AppProviders>,
     );
 
@@ -212,7 +281,7 @@ describe("URL-backed recent project selection", () => {
 
     render(
       <AppProviders>
-        <RouteProbe />
+        <RouteProbe workspaceId="ws_first" />
       </AppProviders>,
     );
 
@@ -257,7 +326,7 @@ describe("URL-backed recent project selection", () => {
 
     render(
       <AppProviders>
-        <RouteProbe />
+        <RouteProbe workspaceId="ws_known" />
       </AppProviders>,
     );
 

@@ -63,6 +63,32 @@ const directoryResponse = () =>
     },
   });
 
+const viewResponse = (url: string) =>
+  url === "/views/responsibility-tree"
+    ? jsonResponse(200, {
+        ok: true,
+        status: 200,
+        body: {
+          value: {
+            nodes: [
+              {
+                workspaceId: "ws_root",
+                parentWorkspaceId: null,
+                name: "root",
+                status: "Open",
+                subtreeAttention: { attention: 0, actionRequired: 0 },
+              },
+            ],
+          },
+          watermark: 1,
+        },
+      })
+    : jsonResponse(200, {
+        ok: true,
+        status: 200,
+        body: { value: { rows: [] }, watermark: 1 },
+      });
+
 function stubFetch(impl: FetchImpl): FetchFn {
   const fetchMock = vi.fn(impl);
   vi.stubGlobal("fetch", fetchMock);
@@ -264,13 +290,7 @@ describe("Web v1 shell integration smoke (W-02)", () => {
   it("login → project switch routes to /p/:projectId → rail nav → disconnect returns to login", async () => {
     stubFetch((url) =>
       Promise.resolve(
-        url === "/projects"
-          ? directoryResponse()
-          : jsonResponse(200, {
-              ok: true,
-              status: 200,
-              body: { value: { rows: [] }, watermark: 1 },
-            }),
+        url === "/projects" ? directoryResponse() : viewResponse(url),
       ),
     );
     history.replaceState(null, "", "/");
