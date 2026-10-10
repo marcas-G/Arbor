@@ -64,3 +64,49 @@ an event-loop handle), not P10 behavior failures; the final process batch is
 2/2 green. No production behavior or design semantics were changed. No full
 `pnpm check` or `pnpm test:functional` was run. P10 rebuild qualification here
 does not close F21 OPEN-3 or the remaining F21 governance work.
+
+## F21/P12/P4 integration compatibility follow-up
+
+The later `b6b3831` activation implementation requires the full read-only
+`EnvironmentResolverPort` to verify the pinned canonical Workspace boundary.
+The older P10 custom child supplied only a fake `ProjectEnvironmentPort` and
+seeded the nonexistent `C:/F21_PRIVATE_TEST_PATH`. On the integrated tree this
+correctly failed closed before activation with
+`EnvironmentError: the pinned resource boundary cannot be verified`; this was
+a stale test fixture, not evidence that production activation should relax its
+resolver requirement.
+
+The P10 fixture now creates a real temporary `pinned-tree` beside its isolated
+SQLite file, seeds that exact path into the canonical Workspace boundary, and
+passes the path to the custom child. The child provides the same local
+read-only resolver and resolver-backed legacy projection as production. No
+production behavior or Story L ordering/assertions were weakened.
+
+The first retry after adding the resolver exposed a Windows-specific lock
+probe result: while the P10 process held its real writer transaction,
+`DatabaseSync` `BEGIN IMMEDIATE` returned extended SQLite `errcode=1546`
+(`disk I/O error`), not a `SQLITE_BUSY` message. The test-only probe now treats
+only the existing busy/locked messages or this exact Windows extended code as
+the competing writer response; all other I/O failures still fail immediately.
+Qualification continues to require that after killing P10, the same P11 child
+actually acquires the writer lock and commits activation. The final P10 Story L
+rerun is 2/2 PASS.
+
+Integrated follow-up evidence at the temporary security/port/P4/OPEN3 stack:
+
+- Typecheck and changed-file Biome: PASS.
+- P10 Story L full-rebuild process cases: 2/2 PASS.
+- P11/P12 activation-recovery process cases: 6/6 PASS.
+- P10/P11 ownership, rebuild, admission, P1 recovery and architecture module
+  set: 8 files / 42 tests PASS.
+- P4 real-daemon lease-fencing process case: 1/1 PASS.
+- P12 read-auth pending qualification: 2/2 PASS; F23 malformed-MessageId
+  nonce representative: 1/1 PASS (other cases intentionally filtered).
+- The initial fail-closed fake-path failure and the first Windows lock-probe
+  failure are retained in this follow-up rather than represented as green.
+  The exact `planning/results/P12.restore-drill.json` test output was restored
+  after each run.
+
+No full `pnpm check`, full `pnpm test:functional`, or Playwright run was made.
+This qualification remains local and does not by itself close the complete
+F21 governance/release gates.

@@ -3,6 +3,10 @@ import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
+  EnvironmentResolverLocalLive,
+  ProjectEnvironmentPortFromResolverLive,
+} from "../../../adapters/environment-resolver-local/dist/index.js";
+import {
   ClockLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
@@ -31,28 +35,36 @@ import {
   ConsumerOffsetStore,
   DomainEventJournal,
   OwnershipWriteService,
-  ProjectEnvironmentPort,
   ProjectionStore,
   RecoveryAttentionFactStore,
   TransactionPort,
   WorkspaceResourceActivationStore,
 } from "../../../packages/ports/dist/index.js";
 
-const [databaseFile, projectIdRaw, workspaceIdRaw, mode, markerFile] =
-  process.argv.slice(2);
+const [
+  databaseFile,
+  projectIdRaw,
+  workspaceIdRaw,
+  mode,
+  markerFile,
+  pinnedRoot,
+] = process.argv.slice(2);
 if (
   databaseFile === undefined ||
   projectIdRaw === undefined ||
   workspaceIdRaw === undefined ||
   mode === undefined ||
-  markerFile === undefined
+  markerFile === undefined ||
+  pinnedRoot === undefined
 ) {
-  throw new Error("expected database, project, workspace, mode, marker path");
+  throw new Error(
+    "expected database, project, workspace, mode, marker path, pinned root",
+  );
 }
 
 const projectId = parse(ProjectId)(projectIdRaw);
 const workspaceId = parse(WorkspaceId)(workspaceIdRaw);
-const address = { _tag: "FileTree", path: "C:/F21_PRIVATE_TEST_PATH" };
+const address = { _tag: "FileTree", path: pinnedRoot };
 const waitForever = () =>
   new Promise(() => {
     setInterval(() => {}, 1_000);
@@ -61,6 +73,11 @@ const waitForever = () =>
 if (mode === "activate") {
   const base = sqliteLayer({ filename: databaseFile });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const environmentResolver = Layer.provide(EnvironmentResolverLocalLive, base);
+  const projectEnvironment = Layer.provide(
+    ProjectEnvironmentPortFromResolverLive,
+    environmentResolver,
+  );
   const services = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(ResourceOwnershipRepositoryLive, infra),
@@ -68,16 +85,8 @@ if (mode === "activate") {
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(WorkspaceResourceActivationStoreLive, infra),
-    Layer.succeed(ProjectEnvironmentPort, {
-      resolve: (_project, addresses) =>
-        Effect.succeed({
-          regions: addresses.map((item) => ({
-            resourceSpaceId: "f21-full-rebuild-test",
-            normalizedRegion: item,
-          })),
-          observedEnvironmentRevision: "test-env-revision",
-        }),
-    }),
+    environmentResolver,
+    projectEnvironment,
   );
   const app = Layer.mergeAll(
     infra,
@@ -109,9 +118,23 @@ if (mode === "activate") {
       db.close();
       const reason =
         error instanceof Error
-          ? `${error.name}: ${error.message}`
+          ? `${error.name}${
+              typeof error === "object" && "errcode" in error
+                ? ` code=${error.errcode}`
+                : ""
+            }: ${error.message}`
           : String(error);
-      if (!/SQLITE_BUSY|database is locked/i.test(reason)) throw error;
+      const windowsWriterContention =
+        typeof error === "object" &&
+        error !== null &&
+        "errcode" in error &&
+        error.errcode === 1546;
+      if (
+        !/SQLITE_BUSY|database is locked/i.test(reason) &&
+        !windowsWriterContention
+      ) {
+        throw error;
+      }
       if (!observedBusy) {
         writeFileSync(lockWaitMarker, reason, "utf8");
         observedBusy = true;
