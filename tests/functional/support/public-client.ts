@@ -401,3 +401,50 @@ export const waitForApproval = async (
   }
   return { approvalId: match[1] as string, revision: Number(match[2]) };
 };
+
+export const admitRootWorkThroughPublicConversation = async (
+  client: PublicClient,
+  project: FunctionalProject,
+  marker: string,
+  request: string,
+): Promise<{
+  readonly workId: string;
+  readonly objective: string;
+  readonly revision: number;
+  readonly status: string;
+}> => {
+  await submitHumanMessage(client, project, request);
+  const approval = await waitForApproval(client, project, marker);
+  await client.command(project.projectId, "ResolveControlApproval", {
+    approvalId: approval.approvalId,
+    expectedRevision: approval.revision,
+    decision: "Approve",
+    reason: `public Root Work approval for ${marker}`,
+  });
+  const work = await waitForPublic(
+    () =>
+      client.view<{
+        workId?: string;
+        objective?: string;
+        revision: number;
+        status: string;
+      } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+    (value) =>
+      value?.workId !== undefined && value.objective?.includes(marker) === true,
+  );
+  if (
+    work === null ||
+    work.workId === undefined ||
+    work.objective === undefined
+  ) {
+    throw new Error(
+      `public Root Work admission did not expose Work for ${marker}`,
+    );
+  }
+  return {
+    workId: work.workId,
+    objective: work.objective,
+    revision: work.revision,
+    status: work.status,
+  };
+};

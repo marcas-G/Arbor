@@ -7,9 +7,10 @@ import {
   startProductionFixture,
 } from "../support/production-fixture.js";
 import {
+  admitRootWorkThroughPublicConversation,
   createFunctionalProject,
-  functionalId,
   makePublicClient,
+  proposeAndApproveChildWithInitialWork,
   waitForPublic,
 } from "../support/public-client.js";
 import { makeWorkProvider } from "../support/work-provider.js";
@@ -67,6 +68,15 @@ interface Ah10ProviderAttemptRow {
 }
 
 const fixtures: ProductionFixture[] = [];
+
+const manualWait = (reason: string) => ({
+  _tag: "ToolCall" as const,
+  name: "wait",
+  arguments: {
+    reason,
+    waitSpec: { mode: "Any" as const, conditions: [{ _tag: "Manual" }] },
+  },
+});
 const ah10Child = resolve("tests/functional/support/ah10-process-child.mjs");
 
 afterEach(async () => {
@@ -207,33 +217,66 @@ describe("AH10 real daemon generation takeover", () => {
       const marker = `AH10-${crypto.randomUUID().slice(0, 8)}`;
       const events: Ah10Probe[] = [];
       const providerMarkerCalls: string[] = [];
+      let probeArmed = false;
+      let seedWaitIssued = false;
       const fixture = await startProductionFixture({
         reply: (call, index) => {
-          if (JSON.stringify(call.messages).includes(marker)) {
-            providerMarkerCalls.push(`provider-call-${index}`);
-          }
+          const context = JSON.stringify(call.messages);
           const available = new Set(
             call.tools
               .map((tool) => tool.function?.name)
               .filter((name): name is string => name !== undefined),
           );
-          if (!available.has("produce_deliverable")) {
-            return { _tag: "HttpError", status: 422 };
+          if (
+            context.includes(marker) &&
+            !available.has("claim_completion") &&
+            available.has("assign_work")
+          ) {
+            return context.includes("WorkAssigned(")
+              ? { _tag: "Text", text: `Parent Work admitted for ${marker}` }
+              : {
+                  _tag: "ToolCall",
+                  name: "assign_work",
+                  arguments: {
+                    objective: `Exercise AH10 takeover ${marker}.`,
+                    why: "qualify old owner fencing and new owner receipt lookup",
+                    constraints: [],
+                    completionExpectation:
+                      "the pinned action commits one Deliverable",
+                    verificationMission: {
+                      goal: `Verify AH10 source Work ${marker}`,
+                      criteria: [
+                        {
+                          criterionId: "ah10-source-open",
+                          requirement:
+                            "the source Work remains open during takeover",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH10 process fixture",
+                  },
+                };
           }
-          return {
-            _tag: "ToolCall",
-            name: "produce_deliverable",
-            arguments: {
-              kind: "report",
-              artifacts: [],
-            },
-          };
-        },
-        firstDaemonEntry: ah10Child,
-        daemonEnvironment: {
-          ARBOR_AH10_ROLE: "old",
-          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
-            crashSide === "before" ? "1" : "0",
+          if (
+            context.includes(marker) &&
+            available.has("produce_deliverable")
+          ) {
+            if (!probeArmed) {
+              seedWaitIssued = true;
+              return manualWait(
+                `AH10 seed Work waits for takeover probe ${marker}`,
+              );
+            }
+            providerMarkerCalls.push(`provider-call-${index}`);
+            return {
+              _tag: "ToolCall",
+              name: "produce_deliverable",
+              arguments: { kind: "report", artifacts: [] },
+            };
+          }
+          return { _tag: "HttpError", status: 422 };
         },
         onDaemonStdout: (line) => pushProbe(events, line),
       });
@@ -246,28 +289,55 @@ describe("AH10 real daemon generation takeover", () => {
         fixture.workspaceDirectory,
         "AH10 real daemon takeover",
       );
-      const sourceWorkId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
+      const sourceWork = await admitRootWorkThroughPublicConversation(
+        client,
+        project,
+        marker,
+        `Please create the AH10 takeover Parent Work ${marker}.`,
+      );
+      const sourceWorkId = sourceWork.workId;
+      const seedWorkAtWait = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            objective?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+        (work) =>
+          seedWaitIssued &&
+          work?.workId === sourceWorkId &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+      );
+      if (seedWorkAtWait === null || seedWorkAtWait.workId !== sourceWorkId) {
+        throw new Error("AH10 public seed Work did not reach its Manual wait");
+      }
+      expect(seedWorkAtWait).toMatchObject({
+        workId: sourceWorkId,
+        revision: 0,
+        status: "Open",
+      });
+      await fixture.crash();
+      probeArmed = true;
+      await fixture.restart({
+        entry: ah10Child,
+        daemonEnvironment: {
+          ARBOR_AH10_ROLE: "old",
+          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
+            crashSide === "before" ? "1" : "0",
+        },
+      });
+      await client.command(project.projectId, "SteerWork", {
         workId: sourceWorkId,
         workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Exercise AH10 takeover ${marker}.`,
-        why: "qualify old owner fencing and new owner receipt lookup",
-        constraints: [],
-        completionExpectation: "the pinned action commits one Deliverable",
-        verificationMission: {
-          goal: `Verify AH10 source Work ${marker}`,
-          criteria: [
-            {
-              criterionId: "ah10-source-open",
-              requirement: "the source Work remains open during takeover",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: seedWorkAtWait.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `Resume the measured AH10 action ${marker}.`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
       });
 
       const oldActionGate = (event: Ah10Probe) =>
@@ -444,7 +514,6 @@ describe("AH10 real daemon generation takeover", () => {
         }),
       );
       expect(providerMarkerCalls).toHaveLength(1);
-      expect(fixture.providerCalls).toHaveLength(1);
       expect(newDaemon.daemonErrors).toEqual([]);
       expect(fixture.daemonErrors).toEqual([]);
 
@@ -457,28 +526,64 @@ describe("AH10 real daemon generation takeover", () => {
   it("recovers a committed Deliverable receipt when its Action is still Pending", async () => {
     const marker = `AH10-pending-${crypto.randomUUID().slice(0, 8)}`;
     const events: Ah10Probe[] = [];
+    let probeArmed = false;
+    let seedWaitIssued = false;
+    let targetProviderCalls = 0;
     const fixture = await startProductionFixture({
       reply: (call) => {
-        if (JSON.stringify(call.messages).includes(marker)) {
-          const available = new Set(
-            call.tools
-              .map((tool) => tool.function?.name)
-              .filter((name): name is string => name !== undefined),
-          );
-          return available.has("produce_deliverable")
-            ? {
+        const context = JSON.stringify(call.messages);
+        const available = new Set(
+          call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        );
+        if (
+          context.includes(marker) &&
+          !available.has("claim_completion") &&
+          available.has("assign_work")
+        ) {
+          return context.includes("WorkAssigned(")
+            ? { _tag: "Text", text: `Parent Work admitted for ${marker}` }
+            : {
                 _tag: "ToolCall",
-                name: "produce_deliverable",
-                arguments: { kind: "report", artifacts: [] },
-              }
-            : { _tag: "HttpError", status: 422 };
+                name: "assign_work",
+                arguments: {
+                  objective: `Exercise pending action takeover ${marker}.`,
+                  why: "qualify canonical receipt recovery before Action result commit",
+                  constraints: [],
+                  completionExpectation:
+                    "the pinned action commits one Deliverable",
+                  verificationMission: {
+                    goal: `Verify AH10 pending Action ${marker}`,
+                    criteria: [
+                      {
+                        criterionId: "ah10-pending-action",
+                        requirement:
+                          "the source Work remains open during takeover",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                  reason: "AH10 process fixture",
+                },
+              };
+        }
+        if (context.includes(marker) && available.has("produce_deliverable")) {
+          if (!probeArmed) {
+            seedWaitIssued = true;
+            return manualWait(
+              `AH10 seed Work waits for pending receipt probe ${marker}`,
+            );
+          }
+          targetProviderCalls += 1;
+          return {
+            _tag: "ToolCall",
+            name: "produce_deliverable",
+            arguments: { kind: "report", artifacts: [] },
+          };
         }
         return { _tag: "HttpError", status: 422 };
-      },
-      firstDaemonEntry: ah10Child,
-      daemonEnvironment: {
-        ARBOR_AH10_ROLE: "old",
-        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
       },
       onDaemonStdout: (line) => pushProbe(events, line),
     });
@@ -490,28 +595,49 @@ describe("AH10 real daemon generation takeover", () => {
       fixture.workspaceDirectory,
       "AH10 committed receipt pending-action recovery",
     );
-    const sourceWorkId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
+    const sourceWork = await admitRootWorkThroughPublicConversation(
+      client,
+      project,
+      marker,
+      `Please create the pending AH10 Work ${marker}.`,
+    );
+    const sourceWorkId = sourceWork.workId;
+    const seedWorkAtWait = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (work) =>
+        seedWaitIssued &&
+        work?.workId === sourceWorkId &&
+        work.status === "Open" &&
+        work.activeExecution === undefined,
+    );
+    if (seedWorkAtWait === null || seedWorkAtWait.workId !== sourceWorkId) {
+      throw new Error("AH10 pending seed Work did not reach Manual wait");
+    }
+    expect(seedWorkAtWait.revision).toBe(0);
+    await fixture.crash();
+    probeArmed = true;
+    await fixture.restart({
+      entry: ah10Child,
+      daemonEnvironment: {
+        ARBOR_AH10_ROLE: "old",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
+      },
+    });
+    await client.command(project.projectId, "SteerWork", {
       workId: sourceWorkId,
       workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Exercise pending action takeover ${marker}.`,
-      why: "qualify canonical receipt recovery before Action result commit",
-      constraints: [],
-      completionExpectation: "the pinned action commits one Deliverable",
-      verificationMission: {
-        goal: `Verify AH10 pending Action ${marker}`,
-        criteria: [
-          {
-            criterionId: "ah10-pending-action",
-            requirement: "the source Work remains open during takeover",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
+      expectedWorkRevision: seedWorkAtWait.revision,
+      steer: {
+        severity: "Normal",
+        guidance: `Resume pending AH10 Work ${marker}.`,
       },
-      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-      revision: 0,
+      provenance: { source: "HumanInput" },
     });
     const actionIntent = await waitForPublic(
       async () =>
@@ -568,8 +694,14 @@ describe("AH10 real daemon generation takeover", () => {
         state: "Pending",
       }),
     );
-    expect(beforeCrash.actionObservations).toHaveLength(0);
-    expect(fixture.providerCalls).toHaveLength(1);
+    expect(
+      beforeCrash.actionObservations.filter((observation) =>
+        observation.source_ref.startsWith(
+          `observation_${actionIntent.executionId}_`,
+        ),
+      ),
+    ).toHaveLength(0);
+    expect(targetProviderCalls).toBe(1);
 
     await fixture.crash();
     await waitForPublic(
@@ -660,8 +792,14 @@ describe("AH10 real daemon generation takeover", () => {
         state: "Applied",
       }),
     );
-    expect(recovered.actionObservations).toHaveLength(1);
-    expect(fixture.providerCalls).toHaveLength(1);
+    expect(
+      recovered.actionObservations.filter((observation) =>
+        observation.source_ref.startsWith(
+          `observation_${actionIntent.executionId}_`,
+        ),
+      ),
+    ).toHaveLength(1);
+    expect(targetProviderCalls).toBe(1);
     expect(recoveryDaemon.daemonErrors).toEqual([]);
     releaseGate(fixture, "new", "action-result");
     await recoveryDaemon.crash();
@@ -672,18 +810,58 @@ describe("AH10 real daemon generation takeover", () => {
     const dependencyKind = `ah10-pending-${marker}`;
     const events: Ah10Probe[] = [];
     let declarationProviderCalls = 0;
+    let probeArmed = false;
+    let seedWaitIssued = false;
     const fixture = await startProductionFixture({
       reply: (call) => {
+        const context = JSON.stringify(call.messages);
         const available = new Set(
           call.tools
             .map((tool) => tool.function?.name)
             .filter((name): name is string => name !== undefined),
         );
         if (
+          context.includes(marker) &&
+          !available.has("claim_completion") &&
+          available.has("assign_work")
+        ) {
+          return context.includes("WorkAssigned(")
+            ? { _tag: "Text", text: `Dependency Work admitted for ${marker}` }
+            : {
+                _tag: "ToolCall",
+                name: "assign_work",
+                arguments: {
+                  objective: `Declare one dependency ${marker}.`,
+                  why: "qualify committed dependency receipt recovery before Observation",
+                  constraints: [],
+                  completionExpectation:
+                    "one exact dependency is durably declared",
+                  verificationMission: {
+                    goal: `Verify dependency declaration ${marker}`,
+                    criteria: [
+                      {
+                        criterionId: "ah10-dependency-pending-recovery",
+                        requirement: "one dependency is durably declared",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                  reason: "AH10 process fixture",
+                },
+              };
+        }
+        if (
           declarationProviderCalls === 0 &&
           available.has("declare_dependency") &&
-          JSON.stringify(call.messages).includes(marker)
+          context.includes(marker)
         ) {
+          if (!probeArmed) {
+            seedWaitIssued = true;
+            return manualWait(
+              `AH10 seed Work waits for dependency receipt probe ${marker}`,
+            );
+          }
           declarationProviderCalls += 1;
           return {
             _tag: "ToolCall",
@@ -699,12 +877,6 @@ describe("AH10 real daemon generation takeover", () => {
         }
         return { _tag: "Text", text: `Declared dependency for ${marker}.` };
       },
-      firstDaemonEntry: ah10Child,
-      daemonEnvironment: {
-        ARBOR_AH10_ROLE: "old",
-        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
-        ARBOR_AH10_GATE_ACTION_KIND: "declare_dependency",
-      },
       onDaemonStdout: (line) => pushProbe(events, line),
     });
     fixtures.push(fixture);
@@ -715,28 +887,50 @@ describe("AH10 real daemon generation takeover", () => {
       fixture.workspaceDirectory,
       "AH10 committed DeclareDependency receipt recovery",
     );
-    const consumerWorkId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
+    const consumerWork = await admitRootWorkThroughPublicConversation(
+      client,
+      project,
+      marker,
+      `Please admit the dependency Work ${marker}.`,
+    );
+    const consumerWorkId = consumerWork.workId;
+    const seedWorkAtWait = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (work) =>
+        seedWaitIssued &&
+        work?.workId === consumerWorkId &&
+        work.status === "Open" &&
+        work.activeExecution === undefined,
+    );
+    if (seedWorkAtWait === null || seedWorkAtWait.workId !== consumerWorkId) {
+      throw new Error("AH10 dependency seed Work did not reach Manual wait");
+    }
+    expect(seedWorkAtWait.revision).toBe(0);
+    await fixture.crash();
+    probeArmed = true;
+    await fixture.restart({
+      entry: ah10Child,
+      daemonEnvironment: {
+        ARBOR_AH10_ROLE: "old",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
+        ARBOR_AH10_GATE_ACTION_KIND: "declare_dependency",
+      },
+    });
+    await client.command(project.projectId, "SteerWork", {
       workId: consumerWorkId,
       workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Declare one dependency ${marker}.`,
-      why: "qualify committed dependency receipt recovery before Observation",
-      constraints: [],
-      completionExpectation: "one exact dependency is durably declared",
-      verificationMission: {
-        goal: `Verify dependency declaration ${marker}`,
-        criteria: [
-          {
-            criterionId: "ah10-dependency-pending-recovery",
-            requirement: "one dependency is durably declared",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
+      expectedWorkRevision: seedWorkAtWait.revision,
+      steer: {
+        severity: "Normal",
+        guidance: `Resume dependency receipt action ${marker}.`,
       },
-      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-      revision: 0,
+      provenance: { source: "HumanInput" },
     });
 
     const oldAction = await waitForPublic(
@@ -823,7 +1017,13 @@ describe("AH10 real daemon generation takeover", () => {
         state: "Pending",
       }),
     );
-    expect(beforeCrash.actionObservations).toHaveLength(0);
+    expect(
+      beforeCrash.actionObservations.filter((observation) =>
+        observation.source_ref.startsWith(
+          `observation_${oldAction.executionId}_`,
+        ),
+      ),
+    ).toHaveLength(0);
     expect(
       beforeCrash.providerAttempts.filter(
         (attempt) => attempt.provider_turn_id === oldAction.providerTurnId,
@@ -958,20 +1158,61 @@ describe("AH10 real daemon generation takeover", () => {
       const dependencyKind = `ah10-dependency-${marker}`;
       const events: Ah10Probe[] = [];
       const providerMarkerCalls: string[] = [];
+      let probeArmed = false;
+      let seedWaitIssued = false;
       const fixture = await startProductionFixture({
         reply: (call, index) => {
-          if (!JSON.stringify(call.messages).includes(marker)) {
-            return { _tag: "HttpError", status: 422 };
-          }
-          providerMarkerCalls.push(`provider-call-${index}`);
+          const context = JSON.stringify(call.messages);
           const available = new Set(
             call.tools
               .map((tool) => tool.function?.name)
               .filter((name): name is string => name !== undefined),
           );
-          if (!available.has("declare_dependency")) {
+          if (
+            context.includes(marker) &&
+            !available.has("claim_completion") &&
+            available.has("assign_work")
+          ) {
+            return context.includes("WorkAssigned(")
+              ? { _tag: "Text", text: `Dependency Work admitted for ${marker}` }
+              : {
+                  _tag: "ToolCall",
+                  name: "assign_work",
+                  arguments: {
+                    objective: `Declare dependency ${marker}.`,
+                    why: "qualify generation-scoped dependency command takeover",
+                    constraints: [],
+                    completionExpectation:
+                      "one exact dependency is durably declared",
+                    verificationMission: {
+                      goal: `Verify dependency declaration ${marker}`,
+                      criteria: [
+                        {
+                          criterionId: "ah10-dependency-declared",
+                          requirement:
+                            "the dependency is durable and initially unsatisfied",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH10 process fixture",
+                  },
+                };
+          }
+          if (
+            !context.includes(marker) ||
+            !available.has("declare_dependency")
+          ) {
             return { _tag: "HttpError", status: 422 };
           }
+          if (!probeArmed) {
+            seedWaitIssued = true;
+            return manualWait(
+              `AH10 seed Work waits for dependency takeover probe ${marker}`,
+            );
+          }
+          providerMarkerCalls.push(`provider-call-${index}`);
           return {
             _tag: "ToolCall",
             name: "declare_dependency",
@@ -984,12 +1225,6 @@ describe("AH10 real daemon generation takeover", () => {
             },
           };
         },
-        firstDaemonEntry: ah10Child,
-        daemonEnvironment: {
-          ARBOR_AH10_ROLE: "old",
-          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
-            crashSide === "before" ? "1" : "0",
-        },
         onDaemonStdout: (line) => pushProbe(events, line),
       });
       fixtures.push(fixture);
@@ -1000,29 +1235,52 @@ describe("AH10 real daemon generation takeover", () => {
         fixture.workspaceDirectory,
         "AH10 DeclareDependency generation takeover",
       );
-      const consumerWorkId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
+      const consumerWork = await admitRootWorkThroughPublicConversation(
+        client,
+        project,
+        marker,
+        `Please admit the dependency Work ${marker}.`,
+      );
+      const consumerWorkId = consumerWork.workId;
+      const seedWorkAtWait = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (work) =>
+          seedWaitIssued &&
+          work?.workId === consumerWorkId &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+      );
+      if (seedWorkAtWait === null || seedWorkAtWait.workId !== consumerWorkId) {
+        throw new Error("AH10 dependency seed Work did not reach Manual wait");
+      }
+      expect(seedWorkAtWait.revision).toBe(0);
+      await fixture.crash();
+      probeArmed = true;
+      await fixture.restart({
+        entry: ah10Child,
+        daemonEnvironment: {
+          ARBOR_AH10_ROLE: "old",
+          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
+            crashSide === "before" ? "1" : "0",
+        },
+      });
+      await client.command(project.projectId, "SteerWork", {
         workId: consumerWorkId,
         workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Declare dependency ${marker}.`,
-        why: "qualify generation-scoped dependency command takeover",
-        constraints: [],
-        completionExpectation: "one exact dependency is durably declared",
-        verificationMission: {
-          goal: `Verify dependency declaration ${marker}`,
-          criteria: [
-            {
-              criterionId: "ah10-dependency-declared",
-              requirement:
-                "the dependency is durable and initially unsatisfied",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: seedWorkAtWait.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `Resume dependency takeover action ${marker}.`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
       });
 
       const oldAction = await waitForPublic(
@@ -1214,9 +1472,14 @@ describe("AH10 real daemon generation takeover", () => {
           state: "Applied",
         }),
       );
-      expect(final.actionObservations).toHaveLength(1);
+      expect(
+        final.actionObservations.filter((observation) =>
+          observation.source_ref.startsWith(
+            `observation_${oldAction.executionId}_`,
+          ),
+        ),
+      ).toHaveLength(1);
       expect(providerMarkerCalls).toHaveLength(1);
-      expect(fixture.providerCalls).toHaveLength(1);
       expect(newDaemon.daemonErrors).toEqual([]);
       expect(fixture.daemonErrors).toEqual([]);
       releaseGate(fixture, "new", "action-result");
@@ -1242,6 +1505,8 @@ describe("AH10 real daemon generation takeover", () => {
         readonly tools: ReadonlyArray<string | undefined>;
         readonly tail: string;
       }> = [];
+      let probeArmed = false;
+      let parentSeedWaitIssued = false;
       const childWorkProvider = makeWorkProvider({
         marker: childMarker,
         verdict: "Pass",
@@ -1259,6 +1524,105 @@ describe("AH10 real daemon generation takeover", () => {
               .map((tool) => tool.function?.name)
               .filter((name): name is string => name !== undefined),
           );
+          const latestUser = [...call.messages]
+            .reverse()
+            .find((message) => message.role === "user")?.content;
+          if (
+            !available.has("claim_completion") &&
+            available.has("propose_workspace") &&
+            latestUser?.includes(`Propose ${childMarker}`) === true
+          ) {
+            return context.includes("ProposalRecorded(")
+              ? { _tag: "Text", text: `Proposed child ${childMarker}` }
+              : {
+                  _tag: "ToolCall",
+                  name: "propose_workspace",
+                  arguments: {
+                    name: `child-${childMarker}`,
+                    rationale:
+                      "produce a verified result for Parent acceptance qualification",
+                    responsibilityDraft: {
+                      purpose: `produce a verified result for ${childMarker}`,
+                      ownedResponsibilities: [childMarker],
+                      obligations: ["produce independently verified evidence"],
+                      includes: [],
+                      excludes: [],
+                      interfaces: [],
+                    },
+                    resourceBoundaryDraft: {
+                      addresses: [
+                        { _tag: "FileTree", path: fixture.workspaceDirectory },
+                      ],
+                    },
+                    initialWork: {
+                      objective: `Complete ${childMarker}.`,
+                      why: "prepare a verified child result before parent execution starts",
+                      constraints: ["do not perform external side effects"],
+                      completionExpectation:
+                        "independently verified child result",
+                      verificationMission: {
+                        goal: `Verify ${childMarker}`,
+                        criteria: [
+                          {
+                            criterionId: "functional-criterion",
+                            requirement: `proof.txt contains FUNCTIONAL_VERIFIED for ${childMarker}`,
+                            required: true,
+                          },
+                        ],
+                        riskRequirements: ["read-only verification"],
+                      },
+                    },
+                  },
+                };
+          }
+          if (
+            !available.has("claim_completion") &&
+            available.has("assign_work") &&
+            latestUser?.includes(
+              `Create Parent Acceptance Work ${parentMarker}`,
+            ) === true
+          ) {
+            return context.includes("WorkAssigned(")
+              ? {
+                  _tag: "Text",
+                  text: `Parent Acceptance Work admitted ${parentMarker}`,
+                }
+              : {
+                  _tag: "ToolCall",
+                  name: "assign_work",
+                  arguments: {
+                    objective: `Accept the ready child result ${parentMarker}.`,
+                    why: "qualify durable Parent acceptance across owner generations",
+                    constraints: [],
+                    completionExpectation:
+                      "the exact verified child result is accepted",
+                    verificationMission: {
+                      goal: `Verify Parent acceptance ${parentMarker}`,
+                      criteria: [
+                        {
+                          criterionId: "ah10-parent-acceptance",
+                          requirement:
+                            "the child PASS result is accepted exactly once",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH10 process fixture",
+                  },
+                };
+          }
+          if (
+            available.has("claim_completion") &&
+            available.has("accept_result") &&
+            context.includes(parentMarker) &&
+            !probeArmed
+          ) {
+            parentSeedWaitIssued = true;
+            return manualWait(
+              `AH10 Parent Acceptance Work waits for probe ${parentMarker}`,
+            );
+          }
           if (
             context.includes(parentMarker) &&
             available.has("accept_result")
@@ -1298,64 +1662,26 @@ describe("AH10 real daemon generation takeover", () => {
         fixture.workspaceDirectory,
         "AH10 AcceptResult generation takeover",
       );
-      const childWorkspaceId = functionalId("ws");
-      const childSessionId = functionalId("ses");
-      const childWorkId = functionalId("wrk");
-      const childDirectory = resolve(fixture.directory, `child-${childMarker}`);
-      mkdirSync(childDirectory, { recursive: true });
+      const childDirectory = fixture.workspaceDirectory;
       writeFileSync(
         resolve(childDirectory, "proof.txt"),
         `FUNCTIONAL_VERIFIED for ${childMarker}`,
       );
-      await client.command(project.projectId, "CreateChildWorkspace", {
-        parentWorkspaceId: project.rootWorkspaceId,
-        workspaceId: childWorkspaceId,
-        primarySession: { sessionId: childSessionId, contextEpoch: 0 },
-        name: `child-${childMarker}`,
-        responsibilityDefinition: {
-          purpose: `produce a verified result for ${childMarker}`,
-          ownedResponsibilities: [childMarker],
-          obligations: ["produce independently verified evidence"],
-          includes: [],
-          excludes: [],
-          interfaces: [],
+      const child = await proposeAndApproveChildWithInitialWork(
+        client,
+        project,
+        childMarker,
+        `Propose ${childMarker} as a durable producer with its first Work.`,
+        {
+          name: `child-${childMarker}`,
+          initialWork: {
+            objective: `Complete ${childMarker}.`,
+          },
         },
-        responsibilityRevision: 0,
-        resourceBoundary: {
-          basisResponsibilityRevision: 0,
-          addresses: [{ _tag: "FileTree", path: childDirectory }],
-        },
-        resourceBoundaryRevision: 0,
-        agentBinding: {
-          _tag: "ResponsibilityBoundAgentBinding",
-          workspaceId: childWorkspaceId,
-        },
-        workspacePolicy: {},
-        workspacePolicyRevision: 0,
-        revision: 0,
-      });
-      await client.command(project.projectId, "AssignWork", {
-        workId: childWorkId,
-        workspaceId: childWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Complete ${childMarker}.`,
-        why: "prepare a verified child result before parent execution starts",
-        constraints: ["do not perform external side effects"],
-        completionExpectation: "independently verified child result",
-        verificationMission: {
-          goal: `Verify ${childMarker}`,
-          criteria: [
-            {
-              criterionId: "functional-criterion",
-              requirement: `proof.txt contains FUNCTIONAL_VERIFIED for ${childMarker}`,
-              required: true,
-            },
-          ],
-          riskRequirements: ["read-only verification"],
-        },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
-      });
+      );
+      const childWorkspaceId = child.workspaceId;
+      const childWorkId = child.currentWork.workId;
+      expect(child.currentWork.objective).toBe(`Complete ${childMarker}.`);
 
       const childVerification = await waitForPublic(
         () =>
@@ -1381,7 +1707,8 @@ describe("AH10 real daemon generation takeover", () => {
             activeExecution?: { executionId: string };
           } | null>("current-work", { workspaceId: childWorkspaceId }),
         (view) =>
-          view?.workId === childWorkId &&
+          view !== null &&
+          view.workId === childWorkId &&
           view.status === "Open" &&
           view.activeExecution === undefined,
         30_000,
@@ -1396,8 +1723,35 @@ describe("AH10 real daemon generation takeover", () => {
       });
       expect(readAh10Rows(fixture.databaseFile).acceptances).toHaveLength(0);
 
-      // Child evidence is settled before the crash-qualified parent process
-      // starts, so its first AgentLoop action is the target AcceptResult.
+      const parentWork = await admitRootWorkThroughPublicConversation(
+        client,
+        project,
+        parentMarker,
+        `Create Parent Acceptance Work ${parentMarker}`,
+      );
+      const parentWorkId = parentWork.workId;
+      const seedParentWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+        (work) =>
+          parentSeedWaitIssued &&
+          work?.workId === parentWorkId &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+      );
+      if (seedParentWork === null || seedParentWork.workId !== parentWorkId) {
+        throw new Error(
+          "AH10 Parent Acceptance Work did not reach Manual wait",
+        );
+      }
+      expect(seedParentWork.revision).toBe(0);
+      await fixture.crash();
+      probeArmed = true;
       await fixture.restart({
         entry: ah10Child,
         daemonEnvironment: {
@@ -1408,28 +1762,15 @@ describe("AH10 real daemon generation takeover", () => {
         },
       });
       mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
-      const parentWorkId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
+      await client.command(project.projectId, "SteerWork", {
         workId: parentWorkId,
         workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Accept the ready child result ${parentMarker}.`,
-        why: "qualify durable Parent acceptance across owner generations",
-        constraints: [],
-        completionExpectation: "the exact verified child result is accepted",
-        verificationMission: {
-          goal: `Verify Parent acceptance ${parentMarker}`,
-          criteria: [
-            {
-              criterionId: "ah10-parent-acceptance",
-              requirement: "the child PASS result is accepted exactly once",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: seedParentWork.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `Resume Parent AcceptResult ${parentMarker}.`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
       });
       const oldAction = await waitForPublic(
         async () =>
@@ -1697,6 +2038,8 @@ describe("AH10 real daemon generation takeover", () => {
       readonly tools: ReadonlyArray<string | undefined>;
       readonly tail: string;
     }> = [];
+    let probeArmed = false;
+    let parentSeedWaitIssued = false;
     const childWorkProvider = makeWorkProvider({
       marker: childMarker,
       verdict: "Pass",
@@ -1714,7 +2057,111 @@ describe("AH10 real daemon generation takeover", () => {
             .map((tool) => tool.function?.name)
             .filter((name): name is string => name !== undefined),
         );
-        if (context.includes(parentMarker) && available.has("accept_result")) {
+        const latestUser = [...call.messages]
+          .reverse()
+          .find((message) => message.role === "user")?.content;
+        if (
+          available.has("propose_workspace") &&
+          !available.has("claim_completion") &&
+          latestUser?.includes(`Propose ${childMarker}`) === true
+        ) {
+          return context.includes("ProposalRecorded(")
+            ? { _tag: "Text", text: `Proposed child ${childMarker}` }
+            : {
+                _tag: "ToolCall",
+                name: "propose_workspace",
+                arguments: {
+                  name: `child-${childMarker}`,
+                  rationale:
+                    "produce a verified result for Parent acceptance qualification",
+                  responsibilityDraft: {
+                    purpose: `produce a verified result for ${childMarker}`,
+                    ownedResponsibilities: [childMarker],
+                    obligations: ["produce independently verified evidence"],
+                    includes: [],
+                    excludes: [],
+                    interfaces: [],
+                  },
+                  resourceBoundaryDraft: {
+                    addresses: [
+                      { _tag: "FileTree", path: fixture.workspaceDirectory },
+                    ],
+                  },
+                  initialWork: {
+                    objective: `Complete ${childMarker}.`,
+                    why: "prepare a verified child result before the parent execution starts",
+                    constraints: ["do not perform external side effects"],
+                    completionExpectation:
+                      "independently verified child result",
+                    verificationMission: {
+                      goal: `Verify ${childMarker}`,
+                      criteria: [
+                        {
+                          criterionId: "functional-criterion",
+                          requirement: `proof.txt contains FUNCTIONAL_VERIFIED for ${childMarker}`,
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: ["read-only verification"],
+                    },
+                  },
+                },
+              };
+        }
+        if (
+          !available.has("claim_completion") &&
+          available.has("assign_work") &&
+          latestUser?.includes(
+            `Create Parent Acceptance Work ${parentMarker}`,
+          ) === true
+        ) {
+          return context.includes("WorkAssigned(")
+            ? {
+                _tag: "Text",
+                text: `Parent Acceptance Work admitted ${parentMarker}`,
+              }
+            : {
+                _tag: "ToolCall",
+                name: "assign_work",
+                arguments: {
+                  objective: `Accept the ready child result ${parentMarker}.`,
+                  why: "qualify committed Parent acceptance recovery before Observation",
+                  constraints: [],
+                  completionExpectation:
+                    "the exact verified child result is accepted",
+                  verificationMission: {
+                    goal: `Verify Parent acceptance ${parentMarker}`,
+                    criteria: [
+                      {
+                        criterionId:
+                          "ah10-parent-acceptance-committed-recovery",
+                        requirement:
+                          "the exact child PASS result is accepted once",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                  reason: "AH10 process fixture",
+                },
+              };
+        }
+        if (
+          available.has("claim_completion") &&
+          available.has("accept_result") &&
+          context.includes(parentMarker) &&
+          !probeArmed
+        ) {
+          parentSeedWaitIssued = true;
+          return manualWait(
+            `AH10 Parent Acceptance Work waits for probe ${parentMarker}`,
+          );
+        }
+        if (
+          available.has("claim_completion") &&
+          context.includes(parentMarker) &&
+          available.has("accept_result")
+        ) {
           if (acceptResultCalls.length > 0) {
             return {
               _tag: "Text",
@@ -1755,64 +2202,26 @@ describe("AH10 real daemon generation takeover", () => {
       fixture.workspaceDirectory,
       "AH10 committed AcceptResult receipt recovery",
     );
-    const childWorkspaceId = functionalId("ws");
-    const childSessionId = functionalId("ses");
-    const childWorkId = functionalId("wrk");
-    const childDirectory = resolve(fixture.directory, `child-${childMarker}`);
-    mkdirSync(childDirectory, { recursive: true });
+    const childDirectory = fixture.workspaceDirectory;
     writeFileSync(
       resolve(childDirectory, "proof.txt"),
       `FUNCTIONAL_VERIFIED for ${childMarker}`,
     );
-    await client.command(project.projectId, "CreateChildWorkspace", {
-      parentWorkspaceId: project.rootWorkspaceId,
-      workspaceId: childWorkspaceId,
-      primarySession: { sessionId: childSessionId, contextEpoch: 0 },
-      name: `child-${childMarker}`,
-      responsibilityDefinition: {
-        purpose: `produce a verified result for ${childMarker}`,
-        ownedResponsibilities: [childMarker],
-        obligations: ["produce independently verified evidence"],
-        includes: [],
-        excludes: [],
-        interfaces: [],
+    const child = await proposeAndApproveChildWithInitialWork(
+      client,
+      project,
+      childMarker,
+      `Propose ${childMarker} as a durable producer with its first Work.`,
+      {
+        name: `child-${childMarker}`,
+        initialWork: {
+          objective: `Complete ${childMarker}.`,
+        },
       },
-      responsibilityRevision: 0,
-      resourceBoundary: {
-        basisResponsibilityRevision: 0,
-        addresses: [{ _tag: "FileTree", path: childDirectory }],
-      },
-      resourceBoundaryRevision: 0,
-      agentBinding: {
-        _tag: "ResponsibilityBoundAgentBinding",
-        workspaceId: childWorkspaceId,
-      },
-      workspacePolicy: {},
-      workspacePolicyRevision: 0,
-      revision: 0,
-    });
-    await client.command(project.projectId, "AssignWork", {
-      workId: childWorkId,
-      workspaceId: childWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Complete ${childMarker}.`,
-      why: "prepare a verified child result before the parent execution starts",
-      constraints: ["do not perform external side effects"],
-      completionExpectation: "independently verified child result",
-      verificationMission: {
-        goal: `Verify ${childMarker}`,
-        criteria: [
-          {
-            criterionId: "functional-criterion",
-            requirement: `proof.txt contains FUNCTIONAL_VERIFIED for ${childMarker}`,
-            required: true,
-          },
-        ],
-        riskRequirements: ["read-only verification"],
-      },
-      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-      revision: 0,
-    });
+    );
+    const childWorkspaceId = child.workspaceId;
+    const childWorkId = child.currentWork.workId;
+    expect(child.currentWork.objective).toBe(`Complete ${childMarker}.`);
     const childVerification = await waitForPublic(
       () =>
         client.view<{
@@ -1846,6 +2255,35 @@ describe("AH10 real daemon generation takeover", () => {
     });
     expect(readAh10Rows(fixture.databaseFile).acceptances).toHaveLength(0);
 
+    const parentWork = await admitRootWorkThroughPublicConversation(
+      client,
+      project,
+      parentMarker,
+      `Create Parent Acceptance Work ${parentMarker}`,
+    );
+    const parentWorkId = parentWork.workId;
+    const seedParentWork = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (work) =>
+        parentSeedWaitIssued &&
+        work?.workId === parentWorkId &&
+        work.status === "Open" &&
+        work.activeExecution === undefined,
+    );
+    if (seedParentWork === null || seedParentWork.workId !== parentWorkId) {
+      throw new Error(
+        "AH10 committed Parent Acceptance Work did not reach Manual wait",
+      );
+    }
+    expect(seedParentWork.revision).toBe(0);
+    await fixture.crash();
+    probeArmed = true;
     await fixture.restart({
       entry: ah10Child,
       daemonEnvironment: {
@@ -1855,28 +2293,15 @@ describe("AH10 real daemon generation takeover", () => {
       },
     });
     mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
-    const parentWorkId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
+    await client.command(project.projectId, "SteerWork", {
       workId: parentWorkId,
       workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Accept the ready child result ${parentMarker}.`,
-      why: "qualify committed Parent acceptance recovery before Observation",
-      constraints: [],
-      completionExpectation: "the exact verified child result is accepted",
-      verificationMission: {
-        goal: `Verify Parent acceptance ${parentMarker}`,
-        criteria: [
-          {
-            criterionId: "ah10-parent-acceptance-committed-recovery",
-            requirement: "the exact child PASS result is accepted once",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
+      expectedWorkRevision: seedParentWork.revision,
+      steer: {
+        severity: "Normal",
+        guidance: `Resume committed Parent AcceptResult ${parentMarker}.`,
       },
-      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-      revision: 0,
+      provenance: { source: "HumanInput" },
     });
     const listActionIntent = await waitForPublic(
       async () =>

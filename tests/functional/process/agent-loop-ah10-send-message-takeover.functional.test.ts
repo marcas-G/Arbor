@@ -7,9 +7,10 @@ import {
   startProductionFixture,
 } from "../support/production-fixture.js";
 import {
+  admitRootWorkThroughPublicConversation,
   createFunctionalProject,
-  functionalId,
   makePublicClient,
+  proposeAndApproveChildWithInitialWork,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -86,6 +87,15 @@ interface WorkWaitRow {
 
 const fixtures: ProductionFixture[] = [];
 const ah10Child = resolve("tests/functional/support/ah10-process-child.mjs");
+
+const manualWait = (reason: string) => ({
+  _tag: "ToolCall" as const,
+  name: "wait",
+  arguments: {
+    reason,
+    waitSpec: { mode: "Any" as const, conditions: [{ _tag: "Manual" }] },
+  },
+});
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
@@ -273,20 +283,74 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       const marker = `AH10-send-query-${crypto.randomUUID().slice(0, 8)}`;
       const events: Ah10Probe[] = [];
       const providerMarkerCalls: number[] = [];
+      let probeArmed = false;
+      let seedWaitIssued = false;
+      let parentWorkspaceId = "";
       const fixture = await startProductionFixture({
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
           if (!context.includes(marker))
             return { _tag: "HttpError", status: 422 };
-          providerMarkerCalls.push(index);
           const available = new Set(
             call.tools
               .map((tool) => tool.function?.name)
               .filter((name): name is string => name !== undefined),
           );
+          if (
+            available.has("propose_workspace") &&
+            !available.has("claim_completion")
+          ) {
+            return context.includes("ProposalRecorded(")
+              ? { _tag: "Text", text: `Proposed child for ${marker}` }
+              : {
+                  _tag: "ToolCall",
+                  name: "propose_workspace",
+                  arguments: {
+                    name: `child-${marker}`,
+                    rationale: "durable status Query sender for AH10 takeover",
+                    responsibilityDraft: {
+                      purpose: `send a status Query for ${marker}`,
+                      ownedResponsibilities: [marker],
+                      obligations: ["send one durable Query to the parent"],
+                      includes: [],
+                      excludes: [],
+                      interfaces: [],
+                    },
+                    resourceBoundaryDraft: {
+                      addresses: [
+                        { _tag: "FileTree", path: fixture.workspaceDirectory },
+                      ],
+                    },
+                    initialWork: {
+                      objective: `Send the parent a status Query for ${marker}.`,
+                      why: "qualify durable SendMessage ownership across daemon generations",
+                      constraints: ["send exactly one Query to the parent"],
+                      completionExpectation:
+                        "one Query is admitted to the parent Inbox",
+                      verificationMission: {
+                        goal: `Verify one status Query for ${marker}`,
+                        criteria: [
+                          {
+                            criterionId: "ah10-send-query-admitted",
+                            requirement:
+                              "one exact Query is present in the parent Inbox",
+                            required: true,
+                          },
+                        ],
+                        riskRequirements: [],
+                      },
+                    },
+                  },
+                };
+          }
           if (!available.has("send_message")) {
             return { _tag: "HttpError", status: 422 };
           }
+          if (!probeArmed) {
+            seedWaitIssued = true;
+            return manualWait(`AH10 Query seed waits for probe ${marker}`);
+          }
+          providerMarkerCalls.push(index);
           return {
             _tag: "ToolCall",
             name: "send_message",
@@ -296,13 +360,6 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
               recipientWorkspaceId: project.rootWorkspaceId,
             },
           };
-        },
-        firstDaemonEntry: ah10Child,
-        daemonEnvironment: {
-          ARBOR_AH10_ROLE: "old",
-          ARBOR_AH10_GATE_ACTION_KIND: "send_message",
-          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
-            crashSide === "before" ? "1" : "0",
         },
         onDaemonStdout: (line) => pushProbe(events, line),
       });
@@ -315,59 +372,66 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         fixture.workspaceDirectory,
         "AH10 SendMessage generation takeover",
       );
-      const childWorkspaceId = functionalId("ws");
-      const childSessionId = functionalId("ses");
-      const childWorkId = functionalId("wrk");
-      const childDirectory = resolve(fixture.directory, `child-${marker}`);
-      mkdirSync(childDirectory, { recursive: true });
-      await client.command(project.projectId, "CreateChildWorkspace", {
-        parentWorkspaceId: project.rootWorkspaceId,
-        workspaceId: childWorkspaceId,
-        primarySession: { sessionId: childSessionId, contextEpoch: 0 },
-        name: `child-${marker}`,
-        responsibilityDefinition: {
-          purpose: `send a status Query for ${marker}`,
-          ownedResponsibilities: [marker],
-          obligations: ["send one durable Query to the parent"],
-          includes: [],
-          excludes: [],
-          interfaces: [],
+      parentWorkspaceId = project.rootWorkspaceId;
+      const child = await proposeAndApproveChildWithInitialWork(
+        client,
+        project,
+        marker,
+        `请为职责 ${marker} 提议子工作区，并安排首个工作发送状态 Query。`,
+        {
+          name: `child-${marker}`,
+          initialWork: {
+            objective: `Send the parent a status Query for ${marker}.`,
+          },
         },
-        responsibilityRevision: 0,
-        resourceBoundary: {
-          basisResponsibilityRevision: 0,
-          addresses: [{ _tag: "FileTree", path: childDirectory }],
-        },
-        resourceBoundaryRevision: 0,
-        agentBinding: {
-          _tag: "ResponsibilityBoundAgentBinding",
-          workspaceId: childWorkspaceId,
-        },
-        workspacePolicy: {},
-        workspacePolicyRevision: 0,
+      );
+      const childWorkspaceId = child.workspaceId;
+      const childWorkId = child.currentWork.workId;
+      expect(child.currentWork.objective).toBe(
+        `Send the parent a status Query for ${marker}.`,
+      );
+      const seedChildWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", { workspaceId: childWorkspaceId }),
+        (work) =>
+          seedWaitIssued &&
+          work?.workId === childWorkId &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+      );
+      if (seedChildWork === null || seedChildWork.workId !== childWorkId) {
+        throw new Error("AH10 Query seed Work did not reach its Manual wait");
+      }
+      expect(seedChildWork).toMatchObject({
+        workId: childWorkId,
         revision: 0,
+        status: "Open",
       });
-      await client.command(project.projectId, "AssignWork", {
+      await fixture.crash();
+      probeArmed = true;
+      await fixture.restart({
+        entry: ah10Child,
+        daemonEnvironment: {
+          ARBOR_AH10_ROLE: "old",
+          ARBOR_AH10_GATE_ACTION_KIND: "send_message",
+          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
+            crashSide === "before" ? "1" : "0",
+        },
+      });
+      await client.command(project.projectId, "SteerWork", {
         workId: childWorkId,
         workspaceId: childWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Send the parent a status Query for ${marker}.`,
-        why: "qualify durable SendMessage ownership across daemon generations",
-        constraints: ["send exactly one Query to the parent"],
-        completionExpectation: "one Query is admitted to the parent Inbox",
-        verificationMission: {
-          goal: `Verify one status Query for ${marker}`,
-          criteria: [
-            {
-              criterionId: "ah10-send-query-admitted",
-              requirement: "one exact Query is present in the parent Inbox",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: seedChildWork.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `Resume the measured status Query ${marker}.`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
       });
 
       const oldAction = await waitForPublic(
@@ -539,7 +603,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       const message = completed.messages[0];
       expect(message).toMatchObject({
         sender_workspace_id: childWorkspaceId,
-        recipient_workspace_id: project.rootWorkspaceId,
+        recipient_workspace_id: parentWorkspaceId,
         kind: "Query",
       });
       expect(message?.body_ref).toMatch(/^[a-f0-9]{64}$/u);
@@ -587,8 +651,13 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
           state: "Applied",
         }),
       );
-      expect(completed.observations).toHaveLength(1);
-      expect(fixture.providerCalls).toHaveLength(1);
+      expect(
+        completed.observations.filter((observation) =>
+          observation.source_ref.startsWith(
+            `observation_${oldAction.executionId}_`,
+          ),
+        ),
+      ).toHaveLength(1);
       expect(providerMarkerCalls).toHaveLength(1);
       expect(newDaemon.daemonErrors).toEqual([]);
     },
@@ -603,6 +672,9 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       const events: Ah10Probe[] = [];
       const queryProviderCalls: number[] = [];
       const replyProviderCalls: number[] = [];
+      let replyProbeArmed = false;
+      let parentSeedWaitIssued = false;
+      let parentWorkspaceId = "";
       const fixture = await startProductionFixture({
         onDaemonStdout: (line) => pushProbe(events, line),
         reply: (call, index) => {
@@ -613,11 +685,104 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
               .filter((name): name is string => name !== undefined),
           );
           const isWorkEpisode = available.has("claim_completion");
+          const latestUser = [...call.messages]
+            .reverse()
+            .find((message) => message.role === "user")?.content;
+
+          if (
+            !isWorkEpisode &&
+            available.has("propose_workspace") &&
+            latestUser?.includes(`Propose ${queryMarker}`) === true
+          ) {
+            return context.includes("ProposalRecorded(")
+              ? { _tag: "Text", text: `Proposed Query sender ${queryMarker}` }
+              : {
+                  _tag: "ToolCall",
+                  name: "propose_workspace",
+                  arguments: {
+                    name: `child-${queryMarker}`,
+                    rationale: "ask the root for one status reply",
+                    responsibilityDraft: {
+                      purpose: `ask the root for status ${queryMarker}`,
+                      ownedResponsibilities: [queryMarker],
+                      obligations: ["send one Query to the root Workspace"],
+                      includes: [],
+                      excludes: [],
+                      interfaces: [],
+                    },
+                    resourceBoundaryDraft: {
+                      addresses: [
+                        { _tag: "FileTree", path: fixture.workspaceDirectory },
+                      ],
+                    },
+                    initialWork: {
+                      objective: `Ask the root for status ${queryMarker}.`,
+                      why: "create an exact open Query for Reply recovery qualification",
+                      constraints: ["send only one Query to the parent"],
+                      completionExpectation:
+                        "the exact Query is admitted to the root Inbox",
+                      verificationMission: {
+                        goal: `Verify Query admission ${queryMarker}`,
+                        criteria: [
+                          {
+                            criterionId: "ah10-reply-query-admitted",
+                            requirement:
+                              "one Query is admitted to the root Inbox",
+                            required: true,
+                          },
+                        ],
+                        riskRequirements: [],
+                      },
+                    },
+                  },
+                };
+          }
+
+          if (
+            !isWorkEpisode &&
+            available.has("assign_work") &&
+            latestUser?.includes(`Create Parent Reply Work ${replyMarker}`) ===
+              true
+          ) {
+            return context.includes("WorkAssigned(")
+              ? {
+                  _tag: "Text",
+                  text: `Parent Reply Work admitted ${replyMarker}`,
+                }
+              : {
+                  _tag: "ToolCall",
+                  name: "assign_work",
+                  arguments: {
+                    objective: `Reply to the pending status Query ${replyMarker}.`,
+                    why: "qualify receipt-first recovery of a committed Reply",
+                    constraints: [
+                      "reply to the unique open Query exactly once",
+                    ],
+                    completionExpectation:
+                      "send one Reply bound to the pending Query",
+                    verificationMission: {
+                      goal: `Verify Reply recovery ${replyMarker}`,
+                      criteria: [
+                        {
+                          criterionId: "ah10-reply-committed",
+                          requirement:
+                            "one Reply is committed for the open Query",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH10 Reply process fixture",
+                  },
+                };
+          }
 
           if (
             isWorkEpisode &&
             available.has("send_message") &&
-            context.includes(queryMarker)
+            context.includes(
+              `objective: Ask the root for status ${queryMarker}`,
+            )
           ) {
             if (context.includes("MessageDelivered(")) {
               return {
@@ -636,7 +801,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
               arguments: {
                 kind: "Query",
                 body: `Please send a status reply for ${queryMarker}.`,
-                recipientWorkspaceId: project.rootWorkspaceId,
+                recipientWorkspaceId: parentWorkspaceId,
               },
             };
           }
@@ -653,6 +818,12 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
             available.has("send_message") &&
             context.includes(replyMarker)
           ) {
+            if (!replyProbeArmed) {
+              parentSeedWaitIssued = true;
+              return manualWait(
+                `AH10 Parent Reply Work waits for probe ${replyMarker}`,
+              );
+            }
             if (context.includes("MessageDelivered(")) {
               return {
                 _tag: "ToolCall",
@@ -685,60 +856,23 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         fixture.workspaceDirectory,
         "AH10 SendMessage Reply recovery",
       );
-      const childWorkspaceId = functionalId("ws");
-      const childSessionId = functionalId("ses");
-      const childWorkId = functionalId("wrk");
-      const childDirectory = resolve(fixture.directory, `child-${queryMarker}`);
-      mkdirSync(childDirectory, { recursive: true });
-      await client.command(project.projectId, "CreateChildWorkspace", {
-        parentWorkspaceId: project.rootWorkspaceId,
-        workspaceId: childWorkspaceId,
-        primarySession: { sessionId: childSessionId, contextEpoch: 0 },
-        name: `child-${queryMarker}`,
-        responsibilityDefinition: {
-          purpose: `ask the root for status ${queryMarker}`,
-          ownedResponsibilities: [queryMarker],
-          obligations: ["send one Query to the root Workspace"],
-          includes: [],
-          excludes: [],
-          interfaces: [],
+      parentWorkspaceId = project.rootWorkspaceId;
+      const child = await proposeAndApproveChildWithInitialWork(
+        client,
+        project,
+        queryMarker,
+        `Propose ${queryMarker} as a status-Query sender with its first Work.`,
+        {
+          name: `child-${queryMarker}`,
+          initialWork: {
+            objective: `Ask the root for status ${queryMarker}.`,
+          },
         },
-        responsibilityRevision: 0,
-        resourceBoundary: {
-          basisResponsibilityRevision: 0,
-          addresses: [{ _tag: "FileTree", path: childDirectory }],
-        },
-        resourceBoundaryRevision: 0,
-        agentBinding: {
-          _tag: "ResponsibilityBoundAgentBinding",
-          workspaceId: childWorkspaceId,
-        },
-        workspacePolicy: {},
-        workspacePolicyRevision: 0,
-        revision: 0,
-      });
-      await client.command(project.projectId, "AssignWork", {
-        workId: childWorkId,
-        workspaceId: childWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Ask the root for status ${queryMarker}.`,
-        why: "create an exact open Query for Reply recovery qualification",
-        constraints: ["send only one Query to the parent"],
-        completionExpectation: "the exact Query is admitted to the root Inbox",
-        verificationMission: {
-          goal: `Verify Query admission ${queryMarker}`,
-          criteria: [
-            {
-              criterionId: "ah10-reply-query-admitted",
-              requirement: "one Query is admitted to the root Inbox",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
-        },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
-      });
+      );
+      const childWorkspaceId = child.workspaceId;
+      expect(child.currentWork.objective).toBe(
+        `Ask the root for status ${queryMarker}.`,
+      );
 
       const queryReady = await waitForPublic(
         async () => readRows(fixture.databaseFile),
@@ -823,7 +957,33 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         }),
       );
 
+      const parentWork = await admitRootWorkThroughPublicConversation(
+        client,
+        project,
+        replyMarker,
+        `Create Parent Reply Work ${replyMarker}`,
+      );
+      const parentWorkId = parentWork.workId;
+      const seedParentWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+        (work) =>
+          parentSeedWaitIssued &&
+          work?.workId === parentWorkId &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+      );
+      if (seedParentWork === null || seedParentWork.workId !== parentWorkId) {
+        throw new Error("AH10 Reply Parent Work did not reach Manual wait");
+      }
+      expect(seedParentWork.revision).toBe(0);
       await fixture.crash();
+      replyProbeArmed = true;
       await fixture.restart({
         entry: ah10Child,
         daemonEnvironment: {
@@ -837,29 +997,15 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         },
       });
       mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
-
-      const parentWorkId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
+      await client.command(project.projectId, "SteerWork", {
         workId: parentWorkId,
         workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Reply to the pending status Query ${replyMarker}.`,
-        why: "qualify receipt-first recovery of a committed Reply",
-        constraints: ["reply to the unique open Query exactly once"],
-        completionExpectation: "send one Reply bound to the pending Query",
-        verificationMission: {
-          goal: `Verify Reply recovery ${replyMarker}`,
-          criteria: [
-            {
-              criterionId: "ah10-reply-committed",
-              requirement: "one Reply is committed for the open Query",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: seedParentWork.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `Resume Parent Reply action ${replyMarker}.`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
       });
 
       const oldAction = await waitForPublic(
@@ -1272,6 +1418,8 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       const marker = `AH10-decision-request-${crypto.randomUUID().slice(0, 8)}`;
       const events: Ah10Probe[] = [];
       const actionProviderCalls: number[] = [];
+      let probeArmed = false;
+      let seedWaitIssued = false;
       const fixture = await startProductionFixture({
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
@@ -1281,6 +1429,64 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
               .filter((name): name is string => name !== undefined),
           );
           const isWorkEpisode = available.has("claim_completion");
+          const latestUser = [...call.messages]
+            .reverse()
+            .find((message) => message.role === "user")?.content;
+          if (
+            !isWorkEpisode &&
+            available.has("propose_workspace") &&
+            latestUser?.includes(`Propose ${marker}`) === true
+          ) {
+            return context.includes("ProposalRecorded(")
+              ? {
+                  _tag: "Text",
+                  text: `Proposed DecisionRequest sender ${marker}`,
+                }
+              : {
+                  _tag: "ToolCall",
+                  name: "propose_workspace",
+                  arguments: {
+                    name: `child-${marker}`,
+                    rationale: "send a direct-parent DecisionRequest",
+                    responsibilityDraft: {
+                      purpose: `request a parent decision for ${marker}`,
+                      ownedResponsibilities: [marker],
+                      obligations: [
+                        "send one DecisionRequest to the direct parent",
+                      ],
+                      includes: [],
+                      excludes: [],
+                      interfaces: [],
+                    },
+                    resourceBoundaryDraft: {
+                      addresses: [
+                        { _tag: "FileTree", path: fixture.workspaceDirectory },
+                      ],
+                    },
+                    initialWork: {
+                      objective: `Request a parent decision for ${marker}.`,
+                      why: "qualify DecisionRequest Message takeover across generations",
+                      constraints: [
+                        "send exactly one DecisionRequest to the parent",
+                      ],
+                      completionExpectation:
+                        "one direct-parent DecisionRequest is admitted",
+                      verificationMission: {
+                        goal: `Verify DecisionRequest admission ${marker}`,
+                        criteria: [
+                          {
+                            criterionId: "ah10-decision-request-admitted",
+                            requirement:
+                              "one DecisionRequest is admitted to the parent Inbox",
+                            required: true,
+                          },
+                        ],
+                        riskRequirements: [],
+                      },
+                    },
+                  },
+                };
+          }
           if (!isWorkEpisode && available.has("send_message")) {
             return {
               _tag: "Text",
@@ -1307,6 +1513,12 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
             available.has("wait") &&
             context.includes(marker)
           ) {
+            if (!probeArmed) {
+              seedWaitIssued = true;
+              return manualWait(
+                `AH10 DecisionRequest seed Work waits for probe ${marker}`,
+              );
+            }
             actionProviderCalls.push(index);
             return {
               _tag: "ToolCalls",
@@ -1333,13 +1545,6 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
           }
           return { _tag: "HttpError", status: 422 };
         },
-        firstDaemonEntry: ah10Child,
-        daemonEnvironment: {
-          ARBOR_AH10_ROLE: "old",
-          ARBOR_AH10_GATE_ACTION_KIND: "send_message",
-          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
-            crashSide === "before" ? "1" : "0",
-        },
         onDaemonStdout: (line) => pushProbe(events, line),
       });
       fixtures.push(fixture);
@@ -1351,60 +1556,63 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         fixture.workspaceDirectory,
         "AH10 DecisionRequest generation takeover",
       );
-      const childWorkspaceId = functionalId("ws");
-      const childSessionId = functionalId("ses");
-      const childWorkId = functionalId("wrk");
-      const childDirectory = resolve(fixture.directory, `child-${marker}`);
-      mkdirSync(childDirectory, { recursive: true });
-      await client.command(project.projectId, "CreateChildWorkspace", {
-        parentWorkspaceId: project.rootWorkspaceId,
-        workspaceId: childWorkspaceId,
-        primarySession: { sessionId: childSessionId, contextEpoch: 0 },
-        name: `child-${marker}`,
-        responsibilityDefinition: {
-          purpose: `request a parent decision for ${marker}`,
-          ownedResponsibilities: [marker],
-          obligations: ["send one DecisionRequest to the direct parent"],
-          includes: [],
-          excludes: [],
-          interfaces: [],
+      const child = await proposeAndApproveChildWithInitialWork(
+        client,
+        project,
+        marker,
+        `Propose ${marker} as a DecisionRequest sender with its first Work.`,
+        {
+          name: `child-${marker}`,
+          initialWork: {
+            objective: `Request a parent decision for ${marker}.`,
+          },
         },
-        responsibilityRevision: 0,
-        resourceBoundary: {
-          basisResponsibilityRevision: 0,
-          addresses: [{ _tag: "FileTree", path: childDirectory }],
+      );
+      const childWorkspaceId = child.workspaceId;
+      const childWorkId = child.currentWork.workId;
+      expect(child.currentWork.objective).toBe(
+        `Request a parent decision for ${marker}.`,
+      );
+      const seedChildWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", { workspaceId: childWorkspaceId }),
+        (work) =>
+          seedWaitIssued &&
+          work?.workId === childWorkId &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+      );
+      if (seedChildWork === null || seedChildWork.workId !== childWorkId) {
+        throw new Error(
+          "AH10 DecisionRequest seed Work did not reach Manual wait",
+        );
+      }
+      expect(seedChildWork.revision).toBe(0);
+      await fixture.crash();
+      probeArmed = true;
+      await fixture.restart({
+        entry: ah10Child,
+        daemonEnvironment: {
+          ARBOR_AH10_ROLE: "old",
+          ARBOR_AH10_GATE_ACTION_KIND: "send_message",
+          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
+            crashSide === "before" ? "1" : "0",
         },
-        resourceBoundaryRevision: 0,
-        agentBinding: {
-          _tag: "ResponsibilityBoundAgentBinding",
-          workspaceId: childWorkspaceId,
-        },
-        workspacePolicy: {},
-        workspacePolicyRevision: 0,
-        revision: 0,
       });
-      await client.command(project.projectId, "AssignWork", {
+      await client.command(project.projectId, "SteerWork", {
         workId: childWorkId,
         workspaceId: childWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Request a parent decision for ${marker}.`,
-        why: "qualify DecisionRequest Message takeover across generations",
-        constraints: ["send exactly one DecisionRequest to the parent"],
-        completionExpectation: "one direct-parent DecisionRequest is admitted",
-        verificationMission: {
-          goal: `Verify DecisionRequest admission ${marker}`,
-          criteria: [
-            {
-              criterionId: "ah10-decision-request-admitted",
-              requirement:
-                "one DecisionRequest is admitted to the parent Inbox",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: seedChildWork.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `Resume DecisionRequest ${marker}.`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
       });
 
       const oldAction = await waitForPublic(
