@@ -1,13 +1,16 @@
 import {
   CommandGateway,
+  newUuid7,
   semanticRequestFingerprint,
   type VerifiedRuntimeCommandAuthority,
 } from "@arbor/application";
-import type {
-  DomainEvent,
-  ExecutionId,
-  ExecutionSettlement,
-  Principal,
+import {
+  CommandId,
+  type DomainEvent,
+  type ExecutionId,
+  type ExecutionSettlement,
+  type Principal,
+  parse,
 } from "@arbor/domain";
 import {
   Clock,
@@ -54,6 +57,12 @@ const completionFact = (
   return null;
 };
 
+const recoveryCommandId = (
+  executionId: ExecutionId,
+  branch: "completion" | "stop",
+): CommandId =>
+  parse(CommandId)(`cmd_${newUuid7("recovery", `${executionId}:${branch}`)}`);
+
 /**
  * Deterministic Execution-boundary recovery (P2 `06` §2–§6).
  * Invalidates expired leases; settles only deterministic outcomes via
@@ -98,8 +107,10 @@ export const runRecovery = (principal: Principal) =>
           executionId: execution.executionId,
           settlement: completion,
         };
-        const commandId =
-          `cmd_recovery_completion_${execution.executionId}` as never;
+        const commandId = recoveryCommandId(
+          execution.executionId,
+          "completion",
+        );
         const authority: VerifiedRuntimeCommandAuthority = {
           _tag: "SettleExecutionAuthority",
           submissionOrigin: "RecoveryController",
@@ -200,7 +211,7 @@ export const runRecovery = (principal: Principal) =>
       // still live (TTL not expired) — lazy lease expiry is the authority
       // for taking over; the NEXT recovery pass settles this execution. A
       // fenced execution must never crash the whole daemon at startup.
-      const commandId = `cmd_recovery_settle_${execution.executionId}` as never;
+      const commandId = recoveryCommandId(execution.executionId, "stop");
       const authority: VerifiedRuntimeCommandAuthority = {
         _tag: "SettleExecutionAuthority",
         submissionOrigin: "RecoveryController",
