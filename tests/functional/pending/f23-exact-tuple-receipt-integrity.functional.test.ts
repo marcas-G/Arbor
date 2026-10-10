@@ -7,6 +7,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   P32_MIGRATIONS,
+  P34_MIGRATIONS,
   runMigrations,
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import { assignWorkHandler } from "../../../apps/single-workspace/src/control-actions.js";
@@ -14,6 +15,7 @@ import { buildSingleWorkspaceLayer } from "../../../apps/single-workspace/src/in
 import type { AgentActionHandlerInput } from "../../../packages/agent-runtime/src/index.js";
 import {
   CommandGateway,
+  CommandHandlerRegistry,
   newUuid7,
   semanticRequestFingerprint,
 } from "../../../packages/application/src/index.js";
@@ -27,6 +29,7 @@ import {
 import {
   Clock,
   CommandStore,
+  RecoveryAttentionFactStore,
   type StoredCommandResolution,
   TransactionPort,
   TransactionScope,
@@ -343,6 +346,7 @@ describe("pending F23 exact-tuple receipt integrity", () => {
       const commandReceipts = yield* CommandStore;
       const workspaces = yield* WorkspaceRepository;
       const gateway = yield* CommandGateway;
+      const commandHandlerRegistry = yield* CommandHandlerRegistry;
       const clock = yield* Clock;
       const mismatchFingerprint = semanticRequestFingerprint({
         commandType: "AssignWork",
@@ -374,6 +378,7 @@ describe("pending F23 exact-tuple receipt integrity", () => {
       );
       const handler = assignWorkHandler({
         gateway,
+        commandHandlerRegistry,
         commandReceipts,
         workspaces,
         clock,
@@ -387,6 +392,7 @@ describe("pending F23 exact-tuple receipt integrity", () => {
         program,
         app as Layer.Layer<
           | CommandGateway
+          | CommandHandlerRegistry
           | SqlClient
           | CommandStore
           | TransactionPort
@@ -396,8 +402,12 @@ describe("pending F23 exact-tuple receipt integrity", () => {
       ),
     );
     expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value).toMatchObject({ _tag: "Observation" });
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(failure)).toBe(true);
+      if (Option.isSome(failure)) {
+        expect(failure.value._tag).toBe("AgentActionOperationalFailure");
+      }
     }
   }, 45_000);
 
@@ -451,6 +461,12 @@ describe("pending F23 exact-tuple receipt integrity", () => {
       } as never,
       clock: { now: () => Effect.succeed("2026-10-10T00:00:00.000Z") } as never,
       tx,
+      commandHandlerRegistry: {
+        lookup: (commandType: string) =>
+          commandType === "AssignWork"
+            ? Option.some({ commandType, schemaVersion: "1" } as never)
+            : Option.none(),
+      } as never,
       bindings: {
         findByExecutionAndAction: () => Effect.succeed([]),
         findByCommandId: () => Effect.succeed(Option.none()),
@@ -533,6 +549,167 @@ describe("pending F23 exact-tuple receipt integrity", () => {
       expect(Option.isSome(failure)).toBe(true);
       if (Option.isSome(failure)) {
         expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+      }
+    }
+  });
+
+  it("rolls back the P9 fact/event and fails closed when the real fact insert fails", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "f23-p9-fact-rollback-"));
+    directories.push(directory);
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: join(directory, "arbor.db"),
+      blobRoot: join(directory, "blobs"),
+    });
+    const providerTurnId = parse(ProviderTurnId)(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789b1",
+    );
+    const occurrence = `${providerTurnId}:1`;
+    const priorCommandId = parse(CommandId)(
+      `cmd_${newUuid7("assign-work-command", occurrence)}`,
+    );
+    const executionId = parse(ExecutionId)(
+      "exe_018f2b3c-4d5e-7abc-8def-0123456789b1",
+    );
+    const logicalActionId = "act_018f2b3c-4d5e-7abc-8def-0123456789b1";
+    const rawMalformedResult = '{"p9_transaction_marker":';
+    const actionInput = {
+      action: {
+        _tag: "AssignWork",
+        targetWorkspaceRef: "child:opaque-target",
+        objective: "one child Work",
+        why: "recover the exact committed action",
+        constraints: [],
+        completionExpectation: "the Work is assigned",
+        verificationMission: {
+          goal: "verify assignment",
+          criteria: [],
+          riskRequirements: [],
+        },
+        reason: "pending P9 fact transaction qualification",
+      },
+      invocation: {
+        providerTurnId,
+        outputPosition: 1,
+        callRef: "call-f23-p9-fact-rollback",
+        toolName: "assign_work",
+        argumentsJson: "{}",
+      },
+      execution: {
+        executionId,
+        projectId: p7Project,
+        workspaceId: p7RootWorkspace,
+        sessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789c2",
+        binding: {
+          _tag: "WorkspaceExecution",
+          workspaceId: p7RootWorkspace,
+          episode: {
+            _tag: "WorkEpisode",
+            workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789b1",
+            targetWorkRevision: 0,
+          },
+        },
+        admittedAt: "2026-10-10T00:00:00.000Z",
+        stopRequestedAt: null,
+        state: { status: "Active", settlement: null },
+      },
+      context: {
+        _tag: "ExecutionOrigin",
+        principal: "agent:f23-p9-fact-rollback",
+        executionId,
+        fencingGeneration: 1,
+      },
+      logicalActionId,
+      assignWorkReplay: true,
+    } as unknown as AgentActionHandlerInput;
+    let gatewayCalls = 0;
+
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* runMigrations(P34_MIGRATIONS);
+          yield* p7SeedProject;
+          const sql = yield* SqlClient;
+          const tx = yield* TransactionPort;
+          const commandReceipts = yield* CommandStore;
+          const commandHandlerRegistry = yield* CommandHandlerRegistry;
+          const bindingAttention = yield* RecoveryAttentionFactStore;
+          const workspaces = yield* WorkspaceRepository;
+          const clock = yield* Clock;
+          yield* tx.transact(
+            sql.unsafe(
+              `INSERT INTO commands (
+                 command_id, project_id, semantic_request_fingerprint,
+                 schema_version, fingerprint_algorithm_version, resolution,
+                 result_json, terminal_error_json, created_at, settled_at
+               ) VALUES (?, ?, ?, '1', 1, 'Committed', ?, NULL, ?, ?)`,
+              [
+                priorCommandId,
+                p7Project,
+                "a".repeat(64),
+                rawMalformedResult,
+                "2026-10-10T00:00:00.000Z",
+                "2026-10-10T00:00:00.000Z",
+              ],
+            ),
+          );
+          yield* tx.transact(
+            sql.unsafe(
+              `CREATE TRIGGER fail_p9_attention_fact_insert
+               BEFORE INSERT ON assign_work_binding_attention_facts
+               BEGIN SELECT RAISE(ABORT, 'injected P9 fact write failure'); END`,
+            ),
+          );
+          const handler = assignWorkHandler({
+            gateway: {
+              execute: () => {
+                gatewayCalls += 1;
+                return Effect.succeed({} as never);
+              },
+            } as never,
+            commandHandlerRegistry,
+            commandReceipts,
+            workspaces,
+            clock,
+            tx,
+            bindingAttention,
+          });
+          const exit = yield* Effect.exit(handler.handle(actionInput));
+          const receipt = yield* sql.unsafe<{ result_json: string }>(
+            "SELECT result_json FROM commands WHERE command_id = ?",
+            [priorCommandId],
+          );
+          const facts = yield* sql.unsafe<{ attention_fact_id: string }>(
+            "SELECT attention_fact_id FROM assign_work_binding_attention_facts",
+          );
+          const events = yield* sql.unsafe<{ event_id: string }>(
+            "SELECT event_id FROM domain_events WHERE event_type = 'AssignWorkTargetBindingEscalated'",
+          );
+          return { exit, receipt, facts, events };
+        }),
+        app as Layer.Layer<
+          | SqlClient
+          | TransactionPort
+          | CommandGateway
+          | CommandStore
+          | CommandHandlerRegistry
+          | RecoveryAttentionFactStore
+          | WorkspaceRepository
+          | Clock
+        >,
+      ),
+    );
+
+    expect(result.receipt).toEqual([{ result_json: rawMalformedResult }]);
+    expect(result.facts).toEqual([]);
+    expect(result.events).toEqual([]);
+    expect(gatewayCalls).toBe(0);
+    expect(Exit.isFailure(result.exit)).toBe(true);
+    expect(JSON.stringify(result.exit)).not.toContain("p9_transaction_marker");
+    if (Exit.isFailure(result.exit)) {
+      const failure = Cause.findErrorOption(result.exit.cause);
+      expect(Option.isSome(failure)).toBe(true);
+      if (Option.isSome(failure)) {
+        expect(failure.value._tag).toBe("AgentActionOperationalFailure");
       }
     }
   });
