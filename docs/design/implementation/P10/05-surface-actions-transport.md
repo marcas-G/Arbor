@@ -49,11 +49,16 @@ pending; file actions are unavailable.” `occurredAt` is the source intent's
 `createdAt`, stable across event redelivery and rebuild.
 
 P10's source-specific activation Attention projection store atomically
-upserts/deletes this key from the P1 status event, lists/replaces the project's
-Pending rows during rebuild, and resets this source for the project. These
-writes share the P1 `TransactionScope` with Attention projection rows and the
-consumer offset. P10 reads only P1 intent identity/status/timestamps, never
-boundary addresses, Profile ref/version, or activation failure details.
+reconciles this key set from the current P1 intent table, lists/replaces the
+project's Pending rows during rebuild, and resets this source for the project.
+P1 status events are wakeups only; the handler uses current table state rather
+than event payload status. Reconciliation writes share one P1
+`TransactionScope` with the intent snapshot and P10 source rows; the P12
+maintenance call does not read, reset, or advance the shared P1 event-consumer
+offset. P12 post-commit and startup hooks call this same source-specific
+reconciler, which remains usable when the generic P1 rebuild reports
+`ConsumerRebuildRefused`. P10 reads only P1 intent identity/status/timestamps,
+never boundary addresses, Profile ref/version, or activation failure details.
 
 `acceptedResult` is exactly `{ acceptanceId, verificationId, targetWorkRevision,
 verdict: Pass, actor, acceptedAt }`. It is present only when a canonical

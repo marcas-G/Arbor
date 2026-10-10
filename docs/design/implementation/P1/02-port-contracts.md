@@ -150,16 +150,22 @@ interface WorkspaceResourceActivationStoreService {
   readonly listPending: (
     projectId?: ProjectId,
   ) => Effect.Effect<ReadonlyArray<WorkspaceResourceActivationIntent>, WorkspaceResourceActivationStoreError, TransactionScope>;
+  readonly listAll: () => Effect.Effect<
+    ReadonlyArray<WorkspaceResourceActivationIntent>,
+    WorkspaceResourceActivationStoreError,
+    TransactionScope
+  >;
 }
 ```
 
 The unique identity is `(projectId, workspaceId, resourceBoundaryRevision)`;
 `insertPending` participates in the CreateProject Gateway transaction.
 `listPending` is deterministic (createdAt then identity) and is the P12
-restart worklist. Active intents remain durable so replay/rebuild can prove
-the exact transition; no intent is hard-deleted by P12 or P10. The additive
-migration never infers/backfills rows from a non-empty Workspace boundary or
-a missing claim.
+activation worklist. `listAll` is deterministic and lets P12/P10 reconcile
+stale Active projection rows after a crash. Active intents remain durable so
+replay/rebuild can prove the exact transition; no intent is hard-deleted by
+P12 or P10. The additive migration never infers/backfills rows from a
+non-empty Workspace boundary or a missing claim.
 
 ### CommandStore
 

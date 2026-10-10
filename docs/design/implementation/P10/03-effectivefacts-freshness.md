@@ -37,11 +37,15 @@ stale recovery           — retry / catch-up / rebuild per DID §5.4 (P1 `05` �
 - The barrier reuses the `FreshnessRequirement` vocabulary (DID §8.19) at the projection boundary; action-admission semantics in P3/P4 are untouched.
 
 FT-DG-01 OPEN-3's P1 `WorkspaceResourceActivationChanged` event participates
-in the existing project sequence and Attention consumer watermark. Its Pending
-or Active projection change may lag the CreateProject/activation commit until
-that consumer catches up. There is no new read-your-writes guarantee or
-filesystem lookup on the Attention query path; callers that require fresher
-Attention use the existing watermark/barrier contract.
+in the existing project sequence and may wake the generic Attention consumer.
+The activation source itself is reconciled directly from the current P1 intent
+table by P12 post-commit/startup hooks and by P10's event handler; this source
+reconciliation does not read, reset, or advance the shared P1 consumer offset.
+It can therefore become current even while that generic offset is below the
+retained journal floor, without claiming the generic consumer caught up. There
+is no new read-your-writes guarantee or filesystem lookup on the Attention
+query path; callers that require fresher journal-derived Attention use the
+existing watermark/barrier contract.
 
 ## 3. Must Not Decide
 

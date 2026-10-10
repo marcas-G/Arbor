@@ -67,7 +67,10 @@ The same atomic reset/snapshot/rewind rule applies to a startup rebuild, an
 explicit operator rebuild, and detected projection drift. Rebuild never
 changes the P1 intent, resource boundary, ownership claims, Project, or
 receipt; it does not expose a Profile/path value. P1 remains the owner of the
-event-journal pruning floor.
+event-journal pruning floor. The source-specific P12 reconciliation does not
+invoke this generic rebuild and does not change its refusal/offset contract;
+it can make only the activation source current while a generic
+`ConsumerRebuildRefused` remains unresolved.
 
 ## 4. Must Not Decide
 
