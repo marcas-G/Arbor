@@ -60,6 +60,32 @@ interface CatalogObservation {
 const handles: WebTransportHandle[] = [];
 const directories: string[] = [];
 
+const observeUnauthenticatedWildcardWebSocket = (
+  port: number,
+  publish: () => void,
+): Promise<{ readonly connected: boolean; readonly frameReceived: boolean }> =>
+  new Promise((resolve) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/ws`);
+    let connected = false;
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (frameReceived: boolean): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve({ connected, frameReceived });
+      socket.close();
+    };
+    socket.onopen = () => {
+      connected = true;
+      timer = setTimeout(() => finish(false), 100);
+      publish();
+    };
+    socket.onmessage = () => finish(true);
+    socket.onerror = () => finish(false);
+    socket.onclose = () => finish(false);
+  });
+
 const containsValue = (value: unknown, expected: string): boolean => {
   if (typeof value === "string") return value === expected;
   if (Array.isArray(value))
@@ -78,7 +104,7 @@ afterEach(async () => {
 });
 
 describe("pending P12 view read authentication boundary", () => {
-  it("denies remote unauthenticated/foreign Workspace Detail and Tree reads without hiding local authorized paths", async () => {
+  it("denies remote unauthenticated/foreign reads without hiding local authorized paths", async () => {
     const directory = mkdtempSync(join(tmpdir(), "p12-view-read-auth-"));
     directories.push(directory);
     const resourceDirectory = join(directory, "canonical-host-resource");
@@ -301,6 +327,12 @@ describe("pending P12 view read authentication boundary", () => {
               remoteWithAuth.port,
               "valid-local-token",
             );
+            const wildcardWebSocket = yield* Effect.promise(() =>
+              observeUnauthenticatedWildcardWebSocket(
+                remoteWithoutAuth.port,
+                () => remoteWithoutAuth.fanout.publishWatermark(777),
+              ),
+            );
 
             return {
               noAuthDetail,
@@ -318,6 +350,7 @@ describe("pending P12 view read authentication boundary", () => {
               loopbackProjects,
               noAuthCatalog,
               authorizedCatalog,
+              wildcardWebSocket,
             };
           }),
           app,
@@ -368,15 +401,19 @@ describe("pending P12 view read authentication boundary", () => {
       denied: false,
       canonicalPathReturned: false,
     });
-    expect(
-      unauthorized.filter(
+    expect({
+      unauthorizedObservations: unauthorized.filter(
         (observation) =>
           !observation.denied ||
           observation.canonicalPathReturned ||
           observation.workspaceIdReturned ||
           observation.projectNameReturned ||
           observation.projectIdReturned,
-      ),
-    ).toEqual([]);
+      ).length,
+      wildcardWebSocket: report.wildcardWebSocket,
+    }).toEqual({
+      unauthorizedObservations: 0,
+      wildcardWebSocket: { connected: false, frameReceived: false },
+    });
   }, 45_000);
 });
