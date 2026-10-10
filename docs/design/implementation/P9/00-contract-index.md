@@ -18,6 +18,17 @@ admission, lease fencing and Stop/quiescence. They inherit P4/P2/P3 semantics;
 this addition does not change P9's guarantee classes, fault-injection method,
 or recovery ownership.
 
+## AH10 Deliver P10 storage addendum (DID v1.38)
+
+Accepted addendum SHA-256:
+`040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
+P9 `07` remains the owner of the immutable Deliver failure fact/event and
+exposes its project-scoped fact list for P10 rebuild. The fact's identity,
+failure-code set, event payload, transaction and retry semantics are unchanged.
+The source relation is in proposed migration 0037 after accepted AH7/P36
+migration 0036 is integrated; the integrated tree currently remains at P35/
+user_version 35. Migration 0037 cannot be released independently of P36.
+
 ## Governance decisions recorded (GQ1–GQ5; no DID catalog changes)
 
 | GQ | Decision → contract placement |
@@ -39,7 +50,7 @@ or recovery ownership.
 | `04-provider-tool-hardening.md` | Provider disconnect mapping + unsettled-turn recovery (GQ4), tool four-tier assertions, dispatch-failure semantics |
 | `05-consumer-rebuild-hardening.md` | Consumer offset wiring + crash matrix, generic rebuild (GQ2 P9 face), P10 boundary |
 | `06-acceptance.md` | Stories A–G and mechanical assertion list |
-| `07-agent-loop-step-recovery.md` | DID v1.20 Provider success local convergence、AgentLoopStep recovery matrix、legacy adoption、AH1–AH14; accepted AH10 DeliverMessage receipt priority and DeliverReplayEscalated fact/event |
+| `07-agent-loop-step-recovery.md` | DID v1.20 Provider success local convergence、AgentLoopStep recovery matrix、legacy adoption、AH1–AH14; accepted AH10 DeliverMessage receipt priority, immutable DeliverReplayEscalated fact/event, and source-fact list for P10 rebuild |
 
 ## Scope (DID §11 P9, nine faces)
 

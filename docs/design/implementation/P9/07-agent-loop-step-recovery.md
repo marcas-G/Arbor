@@ -13,6 +13,15 @@ DeliverReplayEscalated P9 fact/event. The accepted proposal SHA-256 is
 `75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`;
 runtime implementation remains separately gated.
 
+**Accepted AH10 Deliver P10 storage addendum (DID v1.38):** this document's
+P9 fact/event semantics and identity remain unchanged. The Deliver fact is
+created by P9 and is the durable source for P10's `deliver_replay_attention_rows`
+marker and rebuild. Its forward migration is proposed `0037`, conditional on
+integrating accepted AH7/P36 migration `0036`; the integrated tree currently
+ends at P35/user_version 35. P37 MUST NOT be independently implemented or
+released before P36 integration. Accepted addendum SHA-256:
+`040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
+
 ## 1. Recovery order extension
 
 P2's nine-step recovery order remains. During “reconcile external reality” and
@@ -196,6 +205,13 @@ three require `TransactionScope`. Their error channel reuses the existing
 `RecoveryAttentionFactStore` repository/journal errors and typed
 `RecoveryAttentionFactInvariantConflict`; the Deliver extension adds no
 generic Attention port or error union.
+
+`listDeliverReplayFailures(projectId)` is the source-fact snapshot for P10's
+authorized full rebuild. P10 derives the projection marker from each returned
+immutable fact; it does not write or clear P9 facts. The fact table and event
+are part of proposed migration 0037 only after P36 integration; the existing
+fact identity, event payload, failure codes, transaction and retry behavior do
+not change.
 
 Fact and event are committed in one `TransactionScope` before recovery
 returns blocked. Event payload is exactly

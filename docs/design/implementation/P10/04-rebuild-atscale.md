@@ -72,6 +72,37 @@ invoke this generic rebuild and does not change its refusal/offset contract;
 it can make only the activation source current while a generic
 `ConsumerRebuildRefused` remains unresolved.
 
+## 3.1 AH10 Deliver fact-backed Attention reset and rebuild
+
+Accepted DID v1.38 storage correction SHA-256:
+`040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
+Deliver's P10 marker source is `deliver_replay_attention_rows`, keyed by and
+FK-bound to P9's immutable `deliver_replay_attention_facts` row. The P9 fact
+list, not retained MessageSent events, is the durable rebuild source; therefore
+a pruned `DeliverReplayEscalated` event cannot erase an existing Attention
+fact.
+
+For one project, an authorized full P10 rebuild performs the following in one
+`BEGIN IMMEDIATE` / `TransactionScope`:
+
+1. reset the Deliver marker together with the other P10 source projections;
+2. read the P1 retained floor and rewind the Attention consumer offset to
+   `floor - 1` under the existing P9-hardened rebuild rule;
+3. read one consistent `listDeliverReplayFailures(projectId)` P9 fact snapshot
+   and insert one marker per returned `attentionFactId`; and
+4. commit the reset, fact snapshot/seed and offset rewind together.
+
+After commit, replay retained journal events in project-sequence order. The
+P10 event consumer inserts the Deliver marker and advances its own project
+offset in the same transaction; a marker primary-key conflict for the same
+P9 fact is idempotent. The source reset, fact snapshot, marker inserts and
+offset rewind either all commit or all roll back. A post-reset P9 fact/event
+is above the rewind point and is applied by ordinary catch-up. P10 never
+changes or removes the P9 fact, Message, MessageSent, Inbox, receipt, Work or
+Dependency. This Deliver path does not change F21's source-specific
+reset/refusal behavior or the accepted AH7/P36 offset rules; P37 remains
+conditional on P36 integration.
+
 ## 4. Must Not Decide
 
 - No journal pruning/horizon change (P1 `04`).
