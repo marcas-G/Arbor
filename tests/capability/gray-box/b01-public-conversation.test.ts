@@ -97,6 +97,7 @@ describe("B01 L2 — public Human Input to durable transcript", () => {
                 startWebTransport({
                   http: boundary.http,
                   webSocket: boundary.webSocket,
+                  authenticatorConfigured: true,
                   sql,
                   projectDirectory: { list: () => Effect.succeed([]) },
                   pollIntervalMs: 60_000,

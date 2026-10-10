@@ -839,6 +839,7 @@ export const buildSingleWorkspaceLayer = (
       // desktop process (every request is the local principal, no login).
       config.authenticator ?? makeLocalAuthenticator(),
       config.governance ?? { authenticatedHumans: [], directParentOf: [] },
+      config.authenticator !== undefined,
     ),
     Layer.mergeAll(coreAll, authorityResolver, projectionQuery),
   );

@@ -19,7 +19,10 @@ import { viewQueryFaceFromPort } from "../../../apps/single-workspace/src/transp
 import type { ConversationProgressHub } from "../../../apps/single-workspace/src/transport/conversation-progress.js";
 import { createConversationProgressHub } from "../../../apps/single-workspace/src/transport/conversation-progress.js";
 import { makeTransportCore } from "../../../apps/single-workspace/src/transport/core.js";
-import { makeHttpShell } from "../../../apps/single-workspace/src/transport/http.js";
+import {
+  type HttpShell,
+  makeHttpShell,
+} from "../../../apps/single-workspace/src/transport/http.js";
 import {
   startWebTransport,
   type WebTransportHandle,
@@ -199,6 +202,8 @@ describe("pending P12 view read authentication boundary", () => {
                 startWebTransport({
                   http: options.http,
                   webSocket: boundary.webSocket,
+                  authenticatorConfigured:
+                    options.configuredAuthenticator !== undefined,
                   conversationProgress: tracedProgressHub,
                   ...(options.configuredAuthenticator === undefined
                     ? {}
@@ -562,5 +567,221 @@ describe("pending P12 view read authentication boundary", () => {
         sourceCalls: 0,
       },
     });
+  }, 45_000);
+
+  it("uses explicit local-single-user configuration, not Composition's fallback object, for wildcard reads", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "p12-composition-auth-mode-"));
+    directories.push(directory);
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: join(directory, "arbor.db"),
+      blobRoot: join(directory, "blobs"),
+      projectResourceProfiles: makeProjectResourceProfilePort([]),
+    });
+    let projectListCalls = 0;
+    let profileListCalls = 0;
+    let viewQueryCalls = 0;
+    let progressSubscriptionCalls = 0;
+
+    const report = await Effect.runPromise(
+      Effect.scoped(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* runMigrations(CURRENT_MIGRATIONS);
+            yield* p7SeedProject;
+            const sql = yield* SqlClient;
+            const boundary = yield* TransportBoundary;
+            const projectDirectory = yield* ProjectDirectory;
+            const profiles = yield* ProjectResourceProfilePort;
+            const fallbackMessageId =
+              "msg_018f2b3c-4d5e-7abc-8def-0123456789c3";
+            yield* sql.unsafe(
+              `INSERT INTO human_messages (
+                 message_id, project_id, root_workspace_id, human_principal,
+                 body_ref, command_id, fingerprint, state, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?)`,
+              [
+                fallbackMessageId,
+                String(p7Project),
+                String(p7RootWorkspace),
+                "user:local",
+                "blob_test_fallback_progress",
+                "cmd_018f2b3c-4d5e-7abc-8def-0123456789c3",
+                "test-fallback-progress-fingerprint",
+                "2026-10-10T00:00:00.000Z",
+              ],
+            );
+            const baseHub = createConversationProgressHub();
+            const progressHub: ConversationProgressHub = {
+              publish: (...args) => baseHub.publish(...args),
+              subscribe: (...args) => {
+                progressSubscriptionCalls += 1;
+                return baseHub.subscribe(...args);
+              },
+              close: () => baseHub.close(),
+            };
+            const http: HttpShell = {
+              authorizeSensitiveRead: (authorization) =>
+                boundary.http.authorizeSensitiveRead(authorization),
+              handle: (request) => boundary.http.handle(request),
+              handleAuthorizedView: (request) => {
+                viewQueryCalls += 1;
+                return boundary.http.handleAuthorizedView(request);
+              },
+            };
+            const tracedProjectDirectory = {
+              list: () => {
+                projectListCalls += 1;
+                return projectDirectory.list();
+              },
+            } as typeof projectDirectory;
+            const tracedProfiles = {
+              list: () => {
+                profileListCalls += 1;
+                return profiles.list();
+              },
+            } as typeof profiles;
+            const start = (host: string) =>
+              Effect.promise(() =>
+                startWebTransport({
+                  http,
+                  webSocket: boundary.webSocket,
+                  // Production's Composition fallback is non-null even when
+                  // no authenticator was configured by main/environment.
+                  authenticator: boundary.authenticator,
+                  authenticatorConfigured: boundary.authenticatorConfigured,
+                  conversationProgress: progressHub,
+                  sql,
+                  projectDirectory: tracedProjectDirectory,
+                  projectResourceProfiles: tracedProfiles,
+                  host,
+                  port: 0,
+                  pollIntervalMs: 60_000,
+                }),
+              );
+            const wildcard = yield* start("0.0.0.0");
+            handles.push(wildcard);
+            const loopback = yield* start("127.0.0.1");
+            handles.push(loopback);
+            const request = async (
+              port: number,
+              path: string,
+              method = "GET",
+              body?: unknown,
+            ) => {
+              const response = await fetch(
+                `http://127.0.0.1:${String(port)}${path}`,
+                {
+                  method,
+                  ...(body === undefined
+                    ? {}
+                    : {
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify(body),
+                      }),
+                },
+              );
+              const result = {
+                status: response.status,
+                eventStream:
+                  response.headers
+                    .get("content-type")
+                    ?.includes("text/event-stream") ?? false,
+              };
+              await response.body?.cancel();
+              return result;
+            };
+
+            const observations = yield* Effect.promise(async () => {
+              const wildcardProjects = await request(
+                wildcard.port,
+                "/projects",
+              );
+              const wildcardViews = await request(
+                wildcard.port,
+                "/views/responsibility-tree",
+                "POST",
+                { projectId: p7Project },
+              );
+              const wildcardProgress = await request(
+                wildcard.port,
+                `/conversation-progress/${fallbackMessageId}`,
+              );
+              const wildcardCatalog = await request(
+                wildcard.port,
+                "/project-resources",
+              );
+              const wildcardSourceCalls = {
+                projectList: projectListCalls,
+                profileList: profileListCalls,
+                viewQuery: viewQueryCalls,
+                progressSubscribe: progressSubscriptionCalls,
+              };
+
+              const loopbackProjects = await request(
+                loopback.port,
+                "/projects",
+              );
+              const loopbackViews = await request(
+                loopback.port,
+                "/views/responsibility-tree",
+                "POST",
+                { projectId: p7Project },
+              );
+              const loopbackProgress = await request(
+                loopback.port,
+                `/conversation-progress/${fallbackMessageId}`,
+              );
+              const loopbackCatalog = await request(
+                loopback.port,
+                "/project-resources",
+              );
+              return {
+                wildcardProjects,
+                wildcardViews,
+                wildcardProgress,
+                wildcardCatalog,
+                wildcardSourceCalls,
+                loopbackProjects,
+                loopbackViews,
+                loopbackProgress,
+                loopbackCatalog,
+              };
+            });
+
+            return {
+              compositionFallbackAuthenticatorPresent:
+                boundary.authenticator !== undefined,
+              compositionAuthenticatorConfigured:
+                boundary.authenticatorConfigured,
+              ...observations,
+            };
+          }),
+          app,
+        ),
+      ),
+    );
+
+    expect(report.compositionFallbackAuthenticatorPresent).toBe(true);
+    expect(report.compositionAuthenticatorConfigured).toBe(false);
+    expect(report.wildcardProjects.status).toBe(503);
+    expect(report.wildcardViews.status).toBe(503);
+    expect(report.wildcardProgress).toMatchObject({
+      status: 503,
+      eventStream: false,
+    });
+    expect(report.wildcardCatalog.status).toBe(503);
+    expect(report.wildcardSourceCalls).toEqual({
+      projectList: 0,
+      profileList: 0,
+      viewQuery: 0,
+      progressSubscribe: 0,
+    });
+    expect(report.loopbackProjects.status).toBe(200);
+    expect(report.loopbackViews.status).toBe(200);
+    expect(report.loopbackProgress).toMatchObject({
+      status: 200,
+      eventStream: true,
+    });
+    expect(report.loopbackCatalog.status).toBe(200);
   }, 45_000);
 });

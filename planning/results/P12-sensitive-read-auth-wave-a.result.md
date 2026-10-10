@@ -96,3 +96,47 @@ assertions; the focused P12/P13 run then passed.
 - This qualification starts the actual local HTTP server and temporary DB
   inside the Vitest process; it is not a separate child-process daemon/restart
   qualification.
+
+## Follow-up: explicit configured-authenticator provenance
+
+Independent review found that the original Wave A test constructed a local
+`makeHttpShell` and omitted `startWebTransport.authenticator`; it did not model
+production Composition. In production, `TransportBoundary.authenticator` is
+always non-null because Composition substitutes `makeLocalAuthenticator()`
+when no authenticator is configured, and `main` passes that fallback object to
+the server. Thus the first Wave A guard's `config.authenticator === undefined`
+test could not distinguish configured auth from the local fallback on a
+wildcard bind.
+
+The follow-up adds the explicit `TransportBoundary.authenticatorConfigured`
+composition fact (derived from `SingleWorkspaceConfig.authenticator` before
+fallback) and passes it through `main` into required
+`WebTransportConfig.authenticatorConfigured`. Sensitive routes, including
+the pre-existing `/project-resources` guard, now use that trusted bool plus
+listener host, never object non-nullness. The authenticator remains available
+to perform credential validation when the bool is true. No handler reads
+global environment state.
+
+The new pending regression builds the real `buildSingleWorkspaceLayer` with
+no configured authenticator, confirms its Composition boundary still contains
+the local fallback object while `authenticatorConfigured=false`, then starts
+the real local HTTP server with that pair on both `0.0.0.0` and loopback. On
+wildcard, `/projects`, `/views`, known-message SSE and `/project-resources`
+all return 503 with zero ProjectDirectory/Profile/authorized-view/progress
+subscription source calls. The same composition on loopback preserves local
+200 responses for all four. This test was RED before the explicit-state fix
+(`GET /projects` returned 200) and is now GREEN.
+
+Follow-up verification:
+
+- `pnpm typecheck` — PASS.
+- Biome on all touched source/test files — PASS.
+- Both pending Wave A tests, including configured missing/bad/valid/foreign
+  credentials and real Composition fallback — PASS, 2/2.
+- P13 local transport/e2e/catalog tests — PASS, 25/25.
+- No full `pnpm check` or full functional suite was run.
+
+The P13 HTTP e2e fixture previously used its `user:human` command credential
+for a P10 view read. It now provides a separate `user:local` read token for
+that query while retaining the original human command identity and command
+assertions; the updated P13 tests pass.
