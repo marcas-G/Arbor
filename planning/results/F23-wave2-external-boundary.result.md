@@ -20,6 +20,7 @@ HTTP / WebSocket / CLI raw unknown
   → decode registered wire-v1 envelope and payload
   → derive Handler schema and semantic fingerprint
   → exact string Actor == authenticated Principal
+  → reject descriptors that disallow external origin
   → load current facts / active Grants and run Resolver
   → existing Gateway transaction and receipt boundary
 ```
@@ -29,8 +30,12 @@ with HTTP status 400, stable schema-authored issue paths, and no receipt,
 attempt, Resolver invocation, Gateway invocation, or canonical event. Unknown
 command names and caller property names/values are never reflected. A valid
 but mismatched Actor is rejected as `authority/denied` before facts loading or
-Resolver. Codec validity and origin-policy metadata do not grant authority;
-internal/model execution routes do not enter the external submission port.
+Resolver. A syntactically valid command whose registered descriptor disallows
+external origin is also rejected before facts loading or Resolver. That
+deny-only origin gate does not authorize commands whose descriptor permits
+external origin; they still require the P12 Resolver and Gateway authority
+checks. Internal/model execution routes do not enter the external submission
+port.
 
 ## Public F23 reproduction and repair
 
@@ -79,7 +84,7 @@ the project ID while the payload omits it.
 - Regression coverage includes authentication priority and raw forwarding for
   all three shells, malformed-input short-circuiting, Actor binding and
   Resolver/Gateway order, registry parity, P13 HTTP/WebSocket behavior, F23
-  public behavior, and valid CreateProject callers.
+  public behavior, registered origin denial, and valid CreateProject callers.
 - No file under `docs/design/**`, Application Gateway implementation, receipt
   store, migration, or SQL contract was changed. No functional test was
   promoted from the pending suite.
@@ -90,6 +95,11 @@ the project ID while the payload omits it.
   `Committed`.
 - Focused shell/composition/codec/registry/P13 HTTP+WebSocket/P12 transport
   command: **PASS, 7 files / 49 tests**.
+- Raw external `AssignWork` negative control: **RED reproduced** before the
+  deny check with `load-inputs`, Resolver, and Gateway all called and a
+  `Committed` result; after the fix, the descriptor denies it before those
+  calls. Focused rerun: **PASS, 3 files / 10 tests**; P12 transport and P13
+  HTTP/WebSocket rerun: **PASS, 2 files / 16 tests**.
 - Pending F23 public cases: **PASS, 2 / 2**.
 - S1/S3 public CreateProject regression: **PASS, 1 / 1**.
 - B01 public conversation/CreateProject regression: **PASS, 1 / 1**.

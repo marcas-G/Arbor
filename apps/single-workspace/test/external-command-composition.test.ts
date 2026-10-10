@@ -171,4 +171,78 @@ describe("external command composition boundary", () => {
     });
     expect(calls).toEqual([]);
   });
+
+  it("rejects raw external AssignWork before loading facts, Resolver, or Gateway", async () => {
+    const calls: string[] = [];
+    const submission = makeExternalSubmission({
+      resolver: {
+        resolve: () => {
+          calls.push("resolver");
+          return Effect.succeed({} as never);
+        },
+      } as never,
+      gateway: {
+        execute: () => {
+          calls.push("gateway");
+          return Effect.succeed({
+            commandId: "cmd_018ee90a-5b83-7def-8c2d-7ef1a3c5a031",
+            resolution: { _tag: "Committed", result: {} },
+          } as never);
+        },
+      } as never,
+      registry: {
+        lookup: () => Option.some({ schemaVersion: 1 }),
+      } as never,
+      loadInputs: () => {
+        calls.push("load-inputs");
+        return Effect.succeed({} as AuthorityInputs);
+      },
+    });
+    const response = await Effect.runPromise(
+      submission.submit(
+        "user:local" as never,
+        externalContext("user:local" as never),
+        {
+          commandType: "AssignWork",
+          commandId: "cmd_018ee90a-5b83-7def-8c2d-7ef1a3c5a031",
+          projectId: "prj_018ee90a-5b83-7def-8c2d-7ef1a3c5a032",
+          actor: "user:local",
+          issuedAt: "2026-10-10T00:00:00.000Z",
+          payload: {
+            workId: "wrk_018ee90a-5b83-7def-8c2d-7ef1a3c5a033",
+            workspaceId: "ws_018ee90a-5b83-7def-8c2d-7ef1a3c5a034",
+            expectedWorkspaceRevision: 0,
+            objective: "raw external assignment",
+            why: "must remain an internal control route",
+            constraints: [],
+            completionExpectation: "a verified result",
+            verificationMission: {
+              goal: "verify the result independently",
+              criteria: [
+                {
+                  criterionId: "result-exists",
+                  requirement: "the result exists",
+                  required: true,
+                },
+              ],
+              riskRequirements: [],
+            },
+            provenance: {
+              predecessorWorkId: null,
+              reason: "external callers cannot author control provenance",
+            },
+            revision: 0,
+          },
+        },
+      ),
+    );
+
+    expect(calls).toEqual([]);
+    expect(response).toMatchObject({
+      ok: false,
+      status: 403,
+      problem: { code: "authority/denied", category: "forbidden" },
+    });
+    expect(JSON.stringify(response)).not.toContain("raw external assignment");
+  });
 });
