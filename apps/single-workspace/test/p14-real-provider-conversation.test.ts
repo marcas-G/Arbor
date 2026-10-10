@@ -275,12 +275,12 @@ describe("P14 production conversation model context", () => {
                 yield* sql.unsafe(
                   "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Pending',NULL,?,NULL,NULL,0)",
                   [
-                    "msg_wave1_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
                     projectId,
                     workspaceId,
                     parse(Principal)("user:integration-test"),
                     currentHumanQuestion,
-                    "cmd_wave1_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    "cmd_018f2b3c-4d5e-7abc-8def-0123456789ad",
                     "wave1-human-fingerprint",
                     "2026-09-26T00:00:00.000Z",
                   ],
@@ -288,7 +288,7 @@ describe("P14 production conversation model context", () => {
                 yield* sql.unsafe(
                   "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Queued',NULL,0,NULL,NULL,NULL,NULL,'conversation-retry-v1',NULL,NULL,NULL,0,?,?)",
                   [
-                    "msg_wave1_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
                     projectId,
                     workspaceId,
                     "2026-09-26T00:00:00.000Z",
@@ -313,7 +313,7 @@ describe("P14 production conversation model context", () => {
               response_body: string | null;
             }>(
               "SELECT state, response_body FROM conversation_response_jobs WHERE message_id = ?",
-              ["msg_wave1_018f2b3c-4d5e-7abc-8def-0123456789ac"],
+              ["msg_018f2b3c-4d5e-7abc-8def-0123456789ad"],
             );
             return { manifests, message: messages[0] };
           }),
@@ -365,7 +365,7 @@ describe("P14 production conversation model context", () => {
         modelRef,
       });
       expect(manifest.contextRefs).toContain(
-        "human-input:msg_wave1_018f2b3c-4d5e-7abc-8def-0123456789ac",
+        "human-input:msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
       );
       expect(manifest.compiledRequestHash).toBe(
         result.manifests[0]?.compiled_request_hash,
@@ -477,8 +477,7 @@ describe("P14 production conversation model context", () => {
                   0,
                   JSON.stringify({
                     _tag: "ToolCall",
-                    providerTurnId:
-                      "ptn_prior_work_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789ae",
                     callRef: "call_prior_work",
                     toolRef: "shell",
                     argumentsRef: "inline:prior-work",
@@ -486,7 +485,7 @@ describe("P14 production conversation model context", () => {
                   }),
                   "2026-09-23T00:00:00.000Z",
                   "ProviderTurnCall",
-                  "ptn_prior_work_018f2b3c-4d5e-7abc-8def-0123456789ac:call_prior_work",
+                  "ptn_018f2b3c-4d5e-7abc-8def-0123456789ae:call_prior_work",
                   "technical-work-session-call-hash",
                 ],
               );
@@ -528,8 +527,7 @@ describe("P14 production conversation model context", () => {
                   0,
                   JSON.stringify({
                     _tag: "ToolCall",
-                    providerTurnId:
-                      "ptn_dangling_work_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789af",
                     callRef: "call_dangling_prior_work",
                     toolRef: "read",
                     argumentsRef: "inline:dangling-prior-work",
@@ -537,7 +535,7 @@ describe("P14 production conversation model context", () => {
                   }),
                   "2026-09-23T00:00:02.000Z",
                   "ProviderTurnCall",
-                  "ptn_dangling_work_018f2b3c-4d5e-7abc-8def-0123456789ac:call_dangling_prior_work",
+                  "ptn_018f2b3c-4d5e-7abc-8def-0123456789af:call_dangling_prior_work",
                   "dangling-work-session-call-hash",
                 ],
               );
@@ -564,12 +562,12 @@ describe("P14 production conversation model context", () => {
               yield* sql.unsafe(
                 "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Answered',NULL,?,?,?,0)",
                 [
-                  "msg_prior_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                  "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
                   projectId,
                   workspaceId,
                   parse(Principal)("user:integration-test"),
                   priorHumanQuestion,
-                  "cmd_prior_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                  "cmd_018f2b3c-4d5e-7abc-8def-0123456789ad",
                   "integration-prior-fingerprint",
                   "2026-09-24T00:00:00.000Z",
                   "2026-09-24T00:01:00.000Z",
@@ -592,11 +590,11 @@ describe("P14 production conversation model context", () => {
               yield* sql.unsafe(
                 "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Answered',NULL,1,NULL,NULL,NULL,NULL,'conversation-retry-v1',?,?,NULL,0,?,?), (?,?,?,'Queued',NULL,0,NULL,NULL,NULL,NULL,'conversation-retry-v1',NULL,NULL,NULL,0,?,?)",
                 [
-                  "msg_prior_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                  "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
                   projectId,
                   workspaceId,
                   priorAssistantAnswer,
-                  "exe_prior_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                  "exe_018f2b3c-4d5e-7abc-8def-0123456789ad",
                   "2026-09-24T00:00:00.000Z",
                   "2026-09-24T00:01:00.000Z",
                   "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",

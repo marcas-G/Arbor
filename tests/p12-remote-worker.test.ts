@@ -30,6 +30,7 @@ import {
   Actor,
   CommandId,
   type CommandReceipt,
+  DecisionId,
   type DomainError,
   type Execution,
   ExecutionId,
@@ -82,6 +83,9 @@ const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
+const decisionId = parse(DecisionId)(
+  "dec_018f2b3c-4d5e-7abc-8def-0123456789a1",
+);
 const workerA = parse(WorkerId)("wkr_018f2b3c-4d5e-7abc-8def-0123456789b1");
 const workerB = parse(WorkerId)("wkr_018f2b3c-4d5e-7abc-8def-0123456789b2");
 const inc1 = parse(WorkerIncarnationId)(
@@ -100,7 +104,12 @@ const execution: Execution = {
   binding: {
     _tag: "WorkspaceExecution",
     workspaceId,
-    focus: { _tag: "Coordination" },
+    episode: {
+      _tag: "DecisionEpisode",
+      decisionId,
+      decisionKind: "SelectCurrentWork",
+      requestRevision: 0,
+    },
   },
   sessionId,
   admittedAt: "t",
@@ -266,7 +275,7 @@ const settleEnvelope = () => ({
     executionId,
     settlement: {
       _tag: "Completed" as const,
-      result: { _tag: "CoordinationCompleted" as const },
+      result: { _tag: "DecisionSubmitted" as const, decisionId },
     },
     expectedFencingGeneration: 0,
   },
