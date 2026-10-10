@@ -104,3 +104,32 @@ full release gate, does not qualify arbitrary resolver outages or repair, and
 does not close F21 OPEN-3. Permanent unavailability remains Pending with
 path-free Attention; no automatic Profile fallback or periodic path retry is
 introduced. No full `pnpm check` or `pnpm test:functional` was run.
+
+## Accepted OPEN-3 qualification matrix cross-check
+
+The accepted proposal's full matrix was cross-checked after the repeated
+restart addition. This table distinguishes an evidence layer from an actual
+row closure; it does not infer OPEN-3 closure from nearby green tests.
+
+| Proposal boundary | Current evidence | Disposition |
+|---|---|---|
+| Before CreateProject Gateway commit | `tests/p1-create-project.test.ts` verifies rollback leaves no Project/Workspace/Session/receipt/events/intent. | Partial: transactional unit evidence; exact fresh-daemon process kill before Gateway commit remains open. |
+| After Gateway commit, before ownership activation | The public process test's SQLite trigger proves durable Committed state on activation failure. P11 probes cover inside its own claim transaction, not the exact Gateway-return/activation-entry instruction boundary. | Open: no exact public-process kill seam at this boundary. |
+| Resolver/claim failure survives restart | New repeated-restart public process case keeps the claim-insert failure active through two separate daemon restarts; each restart retains Pending/one Attention/no claims/events. The retention-floor case separately deletes the Pending event/row and confirms public source reconciliation below floor. | Partial: claim-transaction failure is covered; a post-commit resolver failure from a physically unavailable persisted directory is not independently injected. |
+| Same persisted boundary recovers once | Repeated-restart case removes the fault and replays the exact CommandId; it verifies one claim, one Active event, unchanged P1 entities/receipt, and a claim source-address snapshot equal to the original Workspace path even while the current public Profile version differs. `tests/f21-create-project-resource-admission.test.ts` also covers changed-snapshot receipt replay at the P1/application layer. | Pass for claim-failure recovery/exact receipt replay; not a substitute for the untested real resolver-outage restoration branch. |
+| Same intent processed twice/concurrently | `adapters/persistence-sqlite/test/ownership.test.ts` races two independent SQLite-backed P11 service compositions and verifies one claim/CAS/Active event; repeated restart verifies idempotent sequential retries. | Partial: database-client concurrency and sequential restart are covered; two full P12 daemons racing the same intent are not. |
+| Profile catalog changes while Pending | The repeated-restart case changes the public host Profile version to `review-v2` on both restart incarnations while the intent remains Pending; successful exact replay still writes the original stored Workspace boundary. | Pass for changed-version/no-rebind behavior during repeated Pending recovery; same-selector/different-directory process variant is not separately tested. |
+| Path remains unavailable across retries | Repeated claim-insert failure produces the required stable Pending/one-row/no-claim behavior over two actual restarts. | Partial: the retried failure is an injected claim write fault, not a physically missing/unreadable resource path; permanent resolver failure remains open. |
+| ConversationOnly | `tests/f21-create-project-resource-admission.test.ts` covers explicit empty boundary with no activation intent/claim; codec tests keep the selector closed. | Pass at the CreateProject integration/codec layer; no dedicated repeated-daemon ConversationOnly process case. |
+| Attention rebuild after journal pruning | `tests/functional/process/f21-open3-p10-full-rebuild.functional.test.ts` removes the Pending event and source row, then verifies Story L reset/snapshot/offset rewind on both sides of process kill. | Pass at real SQLite process level. |
+| P1 offset below retained floor | `tests/functional/process/f21-open3-activation-recovery.functional.test.ts` sets P10 offset below floor, prunes the Pending event and row, then confirms startup restores one public row; P10 reconciliation tests assert it does not mutate the shared offset. | Pass for Activation source-only recovery; generic `ConsumerRebuildRefused` remains intentionally unchanged. |
+| Old Pending status event after Active | `tests/p10-activation-attention-reconciliation.test.ts` applies a stale Pending wakeup after CAS Active and verifies no Activation row. | Pass at P10 consumer/source unit layer. |
+| Pending→Active versus rebuild/reconcile | Story L real-process tests use a lock-wait handshake, kill before commit, commit Active, then rebuild; the after-commit test commits Active before catch-up and proves catch-up clears Attention from current intent truth. | Pass for the tested SQLite serialization/replay orderings; not every possible multi-daemon schedule. |
+| Pre-intent v2 receipt | Current F21 admission tests cover old v1 preserve-only collision, but do not seed a committed pre-intent v2 Workspace/receipt and assert no startup backfill. | Open: dedicated pre-intent v2 fixture/receipt qualification remains missing. |
+
+The repeated-restart test itself passed as a targeted real-daemon case (1/1),
+with two failed restarts while the failure remained active and exact replay
+after fault removal. The evidence above intentionally leaves exact
+pre-activation kill, physical resolver outage/restoration, two-daemon P11
+competition, and pre-intent v2 no-backfill qualification OPEN. OPEN-1 and
+OPEN-2 also remain independently open; F21 OPEN-3 is not closed.
