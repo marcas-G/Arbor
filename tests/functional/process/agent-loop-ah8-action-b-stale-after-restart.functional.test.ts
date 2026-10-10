@@ -11,8 +11,9 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
-  functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -30,54 +31,40 @@ describe("AH8 action A commit followed by stale action B", () => {
     const hits: AhProbeHit[] = [];
     const daemonOutput: string[] = [];
     let targetProviderCalls = 0;
+    let seedWorkProviderCalls = 0;
+    let probeArmed = false;
     let batchSent = false;
     const fixture = await startProductionFixture({
       reply: (call) => {
-        if (JSON.stringify(call.messages).includes(marker)) {
-          targetProviderCalls += 1;
-          if (targetProviderCalls > 5) {
-            return { _tag: "HttpError", status: 429 };
-          }
-        }
-        if (!batchSent) {
-          batchSent = true;
-          const available = new Set(
-            call.tools
-              .map((tool) => tool.function?.name)
-              .filter((name): name is string => name !== undefined),
-          );
-          if (!available.has("update_plan") || !available.has("assign_work")) {
-            return { _tag: "HttpError", status: 422 };
-          }
-          return {
-            _tag: "ToolCalls",
-            calls: [
-              {
-                name: "update_plan",
-                arguments: {
-                  items: [
-                    {
-                      itemId: "ah8-action-a",
-                      text: `Action A committed for ${marker}`,
-                      status: "InProgress",
-                    },
-                  ],
-                },
-              },
-              {
+        const context = JSON.stringify(call.messages);
+        const available = new Set(
+          call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        );
+        if (
+          available.has("assign_work") &&
+          !available.has("update_plan") &&
+          context.includes(marker)
+        ) {
+          return context.includes("WorkAssigned(")
+            ? { _tag: "Text", text: `Work admitted for ${marker}` }
+            : {
+                _tag: "ToolCall",
                 name: "assign_work",
                 arguments: {
-                  objective: `This must be skipped as stale: ${marker}`,
-                  why: "AH8 second action after the basis changes",
+                  objective: `Exercise AH8 action recovery ${marker}.`,
+                  why: "qualify action A commit followed by stale action B",
                   constraints: [],
                   completionExpectation:
-                    "the stale action must not create Work",
+                    "action A is committed and stale B is skipped",
                   verificationMission: {
                     goal: `Verify AH8 ${marker}`,
                     criteria: [
                       {
-                        criterionId: "ah8-stale-action",
-                        requirement: "the stale second action was skipped",
+                        criterionId: "ah8-stale-b",
+                        requirement:
+                          "the stale action does not create another Work",
                         required: true,
                       },
                     ],
@@ -85,8 +72,85 @@ describe("AH8 action A commit followed by stale action B", () => {
                   },
                   reason: "AH8 stale-basis qualification",
                 },
+              };
+        }
+        if (available.has("update_plan") && context.includes(marker)) {
+          if (!probeArmed) {
+            seedWorkProviderCalls += 1;
+            return {
+              _tag: "ToolCall",
+              name: "wait",
+              arguments: {
+                reason: `AH8 setup waits for probe ${marker}`,
+                waitSpec: {
+                  mode: "Any",
+                  conditions: [{ _tag: "Manual" }],
+                },
               },
-            ],
+            };
+          }
+          targetProviderCalls += 1;
+          if (targetProviderCalls > 5) {
+            return { _tag: "HttpError", status: 429 };
+          }
+          if (!batchSent) {
+            batchSent = true;
+            if (
+              !available.has("update_plan") ||
+              !available.has("assign_work")
+            ) {
+              return { _tag: "HttpError", status: 422 };
+            }
+            return {
+              _tag: "ToolCalls",
+              calls: [
+                {
+                  name: "update_plan",
+                  arguments: {
+                    items: [
+                      {
+                        itemId: "ah8-action-a",
+                        text: `Action A committed for ${marker}`,
+                        status: "InProgress",
+                      },
+                    ],
+                  },
+                },
+                {
+                  name: "assign_work",
+                  arguments: {
+                    objective: `This must be skipped as stale: ${marker}`,
+                    why: "AH8 second action after the basis changes",
+                    constraints: [],
+                    completionExpectation:
+                      "the stale action must not create Work",
+                    verificationMission: {
+                      goal: `Verify AH8 ${marker}`,
+                      criteria: [
+                        {
+                          criterionId: "ah8-stale-action",
+                          requirement: "the stale second action was skipped",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH8 stale-basis qualification",
+                  },
+                },
+              ],
+            };
+          }
+          return {
+            _tag: "ToolCall",
+            name: "wait",
+            arguments: {
+              reason: `AH8 stale action qualified for ${marker}`,
+              waitSpec: {
+                mode: "Any",
+                conditions: [{ _tag: "Manual" }],
+              },
+            },
           };
         }
         return {
@@ -101,8 +165,6 @@ describe("AH8 action A commit followed by stale action B", () => {
           },
         };
       },
-      firstDaemonEntry: crashChild,
-      daemonEnvironment: { ARBOR_AH_BOUNDARY: ah8Boundary },
       onDaemonStdout: (line) => {
         daemonOutput.push(line);
         recordAhProbeLine(hits, line);
@@ -116,39 +178,92 @@ describe("AH8 action A commit followed by stale action B", () => {
       fixture.workspaceDirectory,
       "AH8 stale second action",
     );
-    const workId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
+    await submitHumanMessage(
+      client,
+      project,
+      `请创建工作目标 Exercise AH8 action recovery ${marker}.`,
+    );
+    const approval = await waitForApproval(client, project, marker);
+    expect(
+      await client.view("current-work", {
+        workspaceId: project.rootWorkspaceId,
+      }),
+    ).toBeNull();
+    await client.command(project.projectId, "ResolveControlApproval", {
+      approvalId: approval.approvalId,
+      expectedRevision: approval.revision,
+      decision: "Approve",
+      reason: "AH8 public Work admission",
+    });
+    const currentWork = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      (work) => work?.workId !== undefined,
+    );
+    const workId = currentWork?.workId;
+    if (workId === undefined) throw new Error("AH8 public Work absent");
+    expect(currentWork).toMatchObject({ revision: 0, status: "Open" });
+    await waitForPublic(
+      async () => seedWorkProviderCalls,
+      (count) => count >= 1,
+    );
+    await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      (work) =>
+        work?.workId === workId &&
+        work.revision === 0 &&
+        work.activeExecution === undefined,
+    );
+    const seedSnapshot = durableSnapshot(fixture.databaseFile);
+    const seedExecutionIds = new Set(
+      seedSnapshot.executions.map((execution) => execution.execution_id),
+    );
+    expect(
+      seedSnapshot.executions.every(
+        (execution) => execution.settlement_kind !== "Failed",
+      ),
+    ).toBe(true);
+
+    // The seed ProviderTurn only enters a safe Manual wait. Install the AH8
+    // probe before a new public SteerWork resumes the measured A/B batch.
+    await fixture.crash();
+    probeArmed = true;
+    const targetProviderCallStart = fixture.providerCalls.length;
+    await fixture.restart({
+      entry: crashChild,
+      daemonEnvironment: { ARBOR_AH_BOUNDARY: ah8Boundary },
+    });
+    await client.command(project.projectId, "SteerWork", {
       workId,
       workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Exercise AH8 action recovery ${marker}.`,
-      why: "qualify action A commit followed by stale action B",
-      constraints: [],
-      completionExpectation: "action A is committed and stale B is skipped",
-      verificationMission: {
-        goal: `Verify AH8 ${marker}`,
-        criteria: [
-          {
-            criterionId: "ah8-stale-b",
-            requirement: "the stale action does not create another Work",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      provenance: { predecessorWorkId: null, reason: "AH8 process test" },
-      revision: 0,
+      expectedWorkRevision: 0,
+      steer: { severity: "Normal", guidance: `AH8 probe armed ${marker}` },
+      provenance: { source: "HumanInput" },
     });
 
     const atActionACommit = await waitForPublic(
-      async () => ({ hits, providerCalls: fixture.providerCalls.length }),
+      async () => ({ hits, targetProviderCalls }),
       (value) =>
         value.hits.some(
           (hit) =>
             hit.boundary === ah8Boundary &&
             hit.actionIndex === 0 &&
             hit.callRef !== undefined,
-        ) || value.providerCalls >= 5,
+        ) || value.targetProviderCalls >= 5,
       30_000,
     ).catch((error: unknown) => {
       throw new Error(
@@ -170,9 +285,14 @@ describe("AH8 action A commit followed by stale action B", () => {
     expect(batchSent).toBe(true);
     expect(hit.providerTurnId).toMatch(/^ptn_/u);
     expect(hit.executionId).toMatch(/^exe_/u);
+    expect(seedExecutionIds.has(hit.executionId)).toBe(false);
 
     const actionACommitted = durableSnapshot(fixture.databaseFile);
-    expect(actionACommitted.steps).toEqual([
+    expect(
+      actionACommitted.steps.filter(
+        (step) => step.execution_id === hit.executionId,
+      ),
+    ).toEqual([
       expect.objectContaining({
         execution_id: hit.executionId,
         logical_step_no: 0,
@@ -181,7 +301,11 @@ describe("AH8 action A commit followed by stale action B", () => {
         next_action_index: 1,
       }),
     ]);
-    expect(actionACommitted.actions).toEqual([
+    expect(
+      actionACommitted.actions.filter(
+        (action) => action.execution_id === hit.executionId,
+      ),
+    ).toEqual([
       expect.objectContaining({
         execution_id: hit.executionId,
         logical_step_no: 0,
@@ -199,7 +323,7 @@ describe("AH8 action A commit followed by stale action B", () => {
     await client.command(project.projectId, "SteerWork", {
       workId,
       workspaceId: project.rootWorkspaceId,
-      expectedWorkRevision: 0,
+      expectedWorkRevision: 1,
       steer: { severity: "Normal", guidance: `basis changed ${marker}` },
       provenance: { source: "HumanInput" },
     });
@@ -210,7 +334,7 @@ describe("AH8 action A commit followed by stale action B", () => {
           revision: number;
           status: string;
         } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
-      (work) => work?.workId === workId && work.revision === 1,
+      (work) => work?.workId === workId && work.revision === 2,
       10_000,
     );
     expect(steered?.status).toBe("Open");
@@ -293,12 +417,16 @@ describe("AH8 action A commit followed by stale action B", () => {
     ]);
     expect(recovered.works).toHaveLength(1);
     expect(recovered.works).toEqual([
-      expect.objectContaining({ work_id: workId, revision: 1 }),
+      expect.objectContaining({ work_id: workId, revision: 2 }),
     ]);
     expect(
-      fixture.providerCalls.filter((call) =>
-        JSON.stringify(call.messages).includes(marker),
-      ).length,
+      fixture.providerCalls
+        .slice(targetProviderCallStart)
+        .filter(
+          (call) =>
+            call.tools.some((tool) => tool.function?.name === "update_plan") &&
+            JSON.stringify(call.messages).includes(marker),
+        ).length,
     ).toBeLessThanOrEqual(3);
     expect(fixture.daemonErrors).toEqual([]);
   }, 90_000);
