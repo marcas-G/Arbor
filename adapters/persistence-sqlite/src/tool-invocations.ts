@@ -129,6 +129,7 @@ export const ToolInvocationStoreLive: Layer.Layer<
         resultRef,
         settledAt,
         executionFence,
+        fenceNow,
       ) =>
         Effect.gen(function* () {
           yield* TransactionScope;
@@ -152,7 +153,7 @@ export const ToolInvocationStoreLive: Layer.Layer<
                   executionFence.workerId,
                   executionFence.workerIncarnationId,
                   executionFence.fencingGeneration,
-                  settledAt,
+                  fenceNow ?? settledAt,
                 ],
               ),
             );
