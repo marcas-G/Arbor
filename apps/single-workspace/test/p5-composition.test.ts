@@ -51,7 +51,7 @@ describe("P5 composition root", () => {
       >,
     );
     expect(result).toEqual({
-      version: 34,
+      version: 35,
       attentionTable: "attention_projection_rows",
     });
   });
