@@ -1,4 +1,4 @@
-import { Effect, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import { ProjectEnvironmentPortLive } from "../adapters/environment-local/src/index.js";
@@ -465,7 +465,7 @@ describe("p11-worktree", () => {
     );
   });
 
-  it("duplicate worktreeId: same commandId replays the identical receipt (idempotent); a NEW commandId is a typed conflict", async () => {
+  it("factory-only CreateWorktree exact replay fails closed without changing the receipt; a NEW commandId is a typed conflict", async () => {
     await run(
       Effect.gen(function* () {
         yield* seed;
@@ -476,12 +476,38 @@ describe("p11-worktree", () => {
           commandId: cmd("0002"),
           payload,
         });
-        const replay = yield* submitCreate(gw, {
-          commandId: cmd("0002"),
-          payload,
-        });
         expect(first.resolution._tag).toBe("Committed");
-        expect(replay).toEqual(first);
+        const receiptBeforeReplay = yield* sql.unsafe<Record<string, unknown>>(
+          "SELECT * FROM commands WHERE command_id = ?",
+          [cmd("0002")],
+        );
+        const replayExit = yield* Effect.exit(
+          submitCreate(gw, {
+            commandId: cmd("0002"),
+            payload,
+          }),
+        );
+        expect(Exit.isFailure(replayExit)).toBe(true);
+        if (Exit.isFailure(replayExit)) {
+          const failure = Cause.findErrorOption(replayExit.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value._tag).toBe("PersistenceCorruption");
+            expect(failure.value).toMatchObject({
+              repository: "CommandStore",
+              operation: "decodeReceipt",
+            });
+          }
+        }
+        const receiptAfterReplay = yield* sql.unsafe<Record<string, unknown>>(
+          "SELECT * FROM commands WHERE command_id = ?",
+          [cmd("0002")],
+        );
+        expect(receiptAfterReplay).toEqual(receiptBeforeReplay);
+        const rowAfterReplay = yield* worktreeRow(sql, "wt_0001");
+        expect(rowAfterReplay?.state).toBe("Active");
+        expect(rowAfterReplay?.path).toBe("/repo/wt-0001");
+        expect(yield* eventsOf(sql, "WorktreeCreated")).toHaveLength(1);
         const conflict = yield* submitCreate(gw, {
           commandId: cmd("0003"),
           payload,
