@@ -6,14 +6,16 @@ import type { WorkId, WorkspaceId, WorkspaceLifecycle } from "@arbor/domain";
  * not a row) — rows only ever carry Attention or ActionRequired. */
 export type AttentionSeverity = "Attention" | "ActionRequired";
 
-/** Six fact sources exactly per P10 `02` §1 (GAP-01 vacant producer
- * realized as the `WaitingOnVacantProducer` derived view label). */
+/** P10's frozen base Attention labels (including GAP-01's derived
+ * `WaitingOnVacantProducer`) plus the accepted additive materialized sources
+ * for FT-DG-02 and F21 OPEN-3. */
 export type AttentionSource =
   | "DependencyUnfulfillable"
   | "Deadlock"
   | "RuntimeSafetyEnvelope"
   | "ReconciliationEscalated"
   | "AssignWorkTargetBindingFailure"
+  | "WorkspaceResourceActivationPending"
   | "VerifierOrphan"
   | "WaitingOnVacantProducer";
 

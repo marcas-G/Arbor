@@ -1,4 +1,5 @@
 export * from "./actions.js";
+export * from "./activation-attention-reconciliation.js";
 export * from "./attention.js";
 export * from "./attention-loader.js";
 export * from "./effective-facts.js";

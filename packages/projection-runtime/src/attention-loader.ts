@@ -12,6 +12,7 @@ import type {
 import type {
   AssignWorkBindingAttentionFact,
   AssignWorkBindingAttentionProjectionRow,
+  WorkspaceResourceActivationAttentionProjectionRow,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
@@ -81,6 +82,12 @@ export interface AttentionReadDeps {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<AssignWorkBindingAttentionProjectionRow>,
+    ProjectionReadError
+  >;
+  readonly listProjectedWorkspaceResourceActivations?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<WorkspaceResourceActivationAttentionProjectionRow>,
     ProjectionReadError
   >;
 }
@@ -282,23 +289,39 @@ export const deriveProjectAttention = (
     const derived = deriveAttentionRows(
       yield* loadAttentionFacts(projectId, deps),
     );
-    if (deps.listProjectedAssignWorkBindingFailures === undefined) {
-      return derived;
+    let rows = derived;
+    if (deps.listProjectedAssignWorkBindingFailures !== undefined) {
+      const materialized =
+        yield* deps.listProjectedAssignWorkBindingFailures(projectId);
+      rows = [
+        ...rows.filter(
+          (row) => row.source !== "AssignWorkTargetBindingFailure",
+        ),
+        ...materialized.map((row) => ({
+          source: row.source,
+          severity: row.severity,
+          targetWorkspaceId: row.targetWorkspaceId,
+          dedupKey: row.dedupKey,
+          summary: row.summary,
+          occurredAt: row.occurredAt,
+        })),
+      ];
     }
-    const materialized =
-      yield* deps.listProjectedAssignWorkBindingFailures(projectId);
-    const nonMaterializedSources = derived.filter(
-      (row) => row.source !== "AssignWorkTargetBindingFailure",
-    );
-    return [
-      ...nonMaterializedSources,
-      ...materialized.map((row) => ({
-        source: row.source,
-        severity: row.severity,
-        targetWorkspaceId: row.targetWorkspaceId,
-        dedupKey: row.dedupKey,
-        summary: row.summary,
-        occurredAt: row.occurredAt,
-      })),
-    ];
+    if (deps.listProjectedWorkspaceResourceActivations !== undefined) {
+      const activationRows =
+        yield* deps.listProjectedWorkspaceResourceActivations(projectId);
+      rows = [
+        ...rows,
+        ...activationRows.map((row) => ({
+          source: "WorkspaceResourceActivationPending" as const,
+          severity: "ActionRequired" as const,
+          targetWorkspaceId: row.workspaceId,
+          dedupKey: `resource-activation:${row.projectId}:${row.workspaceId}:${row.resourceBoundaryRevision}`,
+          summary:
+            "Project resource activation is pending; file actions are unavailable.",
+          occurredAt: row.occurredAt,
+        })),
+      ];
+    }
+    return rows;
   });
