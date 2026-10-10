@@ -121,16 +121,32 @@ describe("P4 tool invocation store", () => {
         }),
       );
       const dangling = yield* tx.transact(store.findUnsettled(executionId));
-      yield* tx.transact(
+      const firstSettlementApplied = yield* tx.transact(
         store.settle(invocationId, { _tag: "Success" }, null, "t2"),
       );
+      const duplicateSettlementApplied = yield* tx.transact(
+        store.settle(
+          invocationId,
+          { _tag: "OutcomeUnknown", reconciliationRefs: [invocationId] },
+          null,
+          "t3",
+        ),
+      );
       const after = yield* tx.transact(store.findUnsettled(executionId));
+      const canonical = yield* tx.transact(store.findById(invocationId));
       const sql = yield* SqlClient;
       const rows = yield* sql.unsafe<{ settlement_kind: string | null }>(
         "SELECT settlement_kind FROM tool_invocations WHERE invocation_id = ?",
         [invocationId],
       );
-      return { dangling, after, kind: rows[0]?.settlement_kind };
+      return {
+        dangling,
+        after,
+        firstSettlementApplied,
+        duplicateSettlementApplied,
+        canonical,
+        kind: rows[0]?.settlement_kind,
+      };
     });
     const r = await Effect.runPromise(
       Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
@@ -139,6 +155,16 @@ describe("P4 tool invocation store", () => {
       1,
     );
     expect((r as { after: ReadonlyArray<unknown> }).after).toHaveLength(0);
+    expect(
+      (r as { firstSettlementApplied: boolean }).firstSettlementApplied,
+    ).toBe(true);
+    expect(
+      (r as { duplicateSettlementApplied: boolean }).duplicateSettlementApplied,
+    ).toBe(false);
+    expect(
+      (r as { canonical: { value: { settlement: { _tag: string } } } })
+        .canonical.value.settlement._tag,
+    ).toBe("Success");
     expect((r as { kind: string | null }).kind).toBe("Success");
   });
 });

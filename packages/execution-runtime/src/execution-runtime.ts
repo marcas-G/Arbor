@@ -14,9 +14,11 @@ import type {
 import {
   AgentExecutionStateStore,
   Clock,
+  type ExecutionDriverOwnershipLost,
   ExecutionDriverPort,
   ExecutionRepository,
   type ExecutionRepositoryError,
+  type LeaseFencingRejected,
   type LeaseRecord,
   LeaseService,
   RuntimeSafetyGate,
@@ -221,6 +223,16 @@ export const runExecution = (
         lease.generation,
         renewIntervalMs,
         leaseQualificationProbe,
+      ),
+    ).pipe(
+      Effect.catchTag(
+        "ExecutionDriverOwnershipLost",
+        (lost: ExecutionDriverOwnershipLost) =>
+          Effect.fail<LeaseFencingRejected>({
+            _tag: "LeaseFencingRejected",
+            executionId: lost.executionId,
+            generation: lost.generation,
+          }),
       ),
     );
 

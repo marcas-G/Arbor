@@ -176,7 +176,7 @@ describe("AH7 concurrent ToolInvocationId reentry", () => {
           }
           settlementWrites += 1;
           invocation = { ...invocation, settledAt, settlement, resultRef };
-          return Effect.void;
+          return Effect.succeed(true);
         },
         consumeApproval: () => Effect.succeed(false),
         findApproval: () => Effect.succeed(Option.none()),

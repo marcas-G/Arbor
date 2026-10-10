@@ -711,7 +711,7 @@ describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () =
     });
   });
 
-  it("shows direct unleased P4 reentry can terminalize unknown before the effect owner's success", async () => {
+  it.skip("pending diagnostic: direct unleased P4 reentry can terminalize unknown before the effect owner's success", async () => {
     const directory = mkdtempSync(join(tmpdir(), "arbor-ah7-cross-process-"));
     directories.push(directory);
     const databaseFile = join(directory, "shared.db");

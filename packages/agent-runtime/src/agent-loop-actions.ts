@@ -17,6 +17,7 @@ import type {
   BoundedObservation,
   ExecutionActivity,
   ExecutionDriverError,
+  LeaseFencingRejected,
   RuntimeSafetyObservation,
   SessionRepositoryService,
   TransactionPortService,
@@ -44,6 +45,14 @@ const actionRejectionObservation = (
   }),
   truncated: false,
 });
+
+const isLeaseFencingRejected = (
+  cause: unknown,
+): cause is LeaseFencingRejected =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "_tag" in cause &&
+  cause._tag === "LeaseFencingRejected";
 
 export interface AgentLoopActionDependencies {
   readonly input: {
@@ -698,6 +707,12 @@ export const executeAgentLoopActions = (
           },
         );
         if (!executed.ok) {
+          if (
+            executed.cause._tag === "AgentActionOperationalFailure" &&
+            isLeaseFencingRejected(executed.cause.cause)
+          ) {
+            return yield* Effect.fail(failure(executed.cause.cause));
+          }
           if (executed.cause._tag === "AgentActionRejected") {
             const disposition = `ModelUsable:${executed.cause.code}`;
             const observation = actionRejectionObservation(executed.cause);

@@ -251,7 +251,8 @@ export interface ToolRuntimeCleanupFailure {
 
 export type ToolRuntimeError =
   | ToolRuntimeOperationalFailure
-  | ToolRuntimeCleanupFailure;
+  | ToolRuntimeCleanupFailure
+  | LeaseFencingRejected;
 export interface SandboxError {
   readonly _tag: "SandboxError";
   readonly cause: unknown;
@@ -260,7 +261,9 @@ export interface ResourceAdmissionError {
   readonly _tag: "ResourceAdmissionError";
   readonly cause: unknown;
 }
-export type ToolInvocationStoreError = RepositoryFailure<"ToolInvocationStore">;
+export type ToolInvocationStoreError =
+  | RepositoryFailure<"ToolInvocationStore">
+  | LeaseFencingRejected;
 export interface ArtifactError {
   readonly _tag: "ArtifactError";
   readonly cause: unknown;

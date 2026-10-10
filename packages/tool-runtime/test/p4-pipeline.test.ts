@@ -14,6 +14,7 @@ import {
   ResourceAdmission,
   SandboxPort,
   ToolDefinitionStore,
+  type ToolInvocationRecord,
   ToolInvocationStore,
   type ToolRuntimeError,
   ToolRuntimePort,
@@ -95,6 +96,7 @@ interface PipelineFaults {
   readonly sandboxClose?: boolean;
   readonly intentJournal?: boolean;
   readonly settlementJournal?: boolean;
+  readonly settlementUnapplied?: boolean;
 }
 
 const app = (
@@ -127,7 +129,7 @@ const app = (
               _tag: "SandboxError" as const,
               cause: "sandbox-close-failure",
             })
-          : Effect.void,
+          : Effect.succeed(true),
     }),
     Layer.succeed(ResourceAdmission, {
       admit: () =>
@@ -164,10 +166,38 @@ const app = (
               sourceTag: "InjectedFailure",
               cause: "settlement-journal-failure",
             })
-          : Effect.void,
+          : Effect.succeed(faults.settlementUnapplied !== true),
       consumeApproval: () => Effect.succeed(true),
       findApproval: () => Effect.succeed(Option.none()),
-      findById: () => Effect.succeed(Option.none()),
+      findById: (() => {
+        let calls = 0;
+        const canonicalUnknown: ToolInvocationRecord = {
+          invocationId,
+          executionId,
+          workspaceId,
+          toolName: "read",
+          toolVersion: "2",
+          sideEffectSemantics: "NonIdempotent",
+          argumentsJson: '{"target":{"mount":"workspace","path":"."}}',
+          resolvedRegions: [],
+          approvalId: null,
+          intentAt: "2026-01-01T00:00:00.000Z",
+          settledAt: "2026-01-01T00:00:01.000Z",
+          settlement: {
+            _tag: "OutcomeUnknown",
+            reconciliationRefs: [String(invocationId)],
+          },
+          resultRef: null,
+        };
+        return () => {
+          calls += 1;
+          return Effect.succeed(
+            faults.settlementUnapplied === true && calls > 1
+              ? Option.some(canonicalUnknown)
+              : Option.none(),
+          );
+        };
+      })(),
       findUnsettled: () => Effect.succeed([]),
     } as never),
     Layer.succeed(ProjectEnvironmentPort, {
@@ -248,6 +278,31 @@ describe("P4 tool runtime pipeline", () => {
       '{"target":{"mount":"workspace","path":"."}}',
     );
     expect(result._tag).toBe("Success");
+  });
+
+  it("returns the canonical OutcomeUnknown when settlement CAS updates zero rows", async () => {
+    let externalEffects = 0;
+    const executor: ToolExecutor = {
+      ...okExecutor,
+      execute: () =>
+        Effect.sync(() => {
+          externalEffects += 1;
+          return {
+            settlement: { _tag: "Success" as const },
+            observation: { text: "executed once", truncated: false },
+            resultRef: null,
+          };
+        }),
+    };
+    const result = await run(
+      app(false, executor, { settlementUnapplied: true }),
+      '{"target":{"mount":"workspace","path":"."}}',
+    );
+    expect(result).toMatchObject({
+      _tag: "OutcomeUnknown",
+      reconciliationRefs: [String(invocationId)],
+    });
+    expect(externalEffects).toBe(1);
   });
 
   it("returns ExpectedFailure on invalid input", async () => {
