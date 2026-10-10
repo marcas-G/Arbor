@@ -19,7 +19,20 @@ file changed; no tests were run.
   `planning/proposals/ui-project-resource-admission-decision-draft.md`, SHA-256
   `E6EC3E2E395121699A2327329B42658218C90E8912D55EE960E77E3D15D91196`.
 - Proposal after this edit: SHA-256
-  `3BF05DBF1E90D701EAFC1A0F71EBE62F70DBC801FD92DDF45BD6B8B0AE04005C`.
+- Committed proposal blob content SHA-256 at v3 commit `b29b1a7`:
+  `274885C110E3B277753B49F6BAD023619ADFCF52D866CC86F01F27F7FDA85DD0`.
+  `git rev-parse HEAD:planning/proposals/ui-project-resource-admission-decision-draft.md`
+  identifies that Git blob as `9eef97e801891e222928f4230e09f387b45de444`.
+- The earlier `3BF05DBF...` value was a raw working-tree PowerShell hash, not the
+  committed proposal content hash. Git reports `i/lf w/crlf` and system
+  `core.autocrlf=true`: raw `Get-FileHash` of the checkout is
+  `3BF05DBF1E90D701EAFC1A0F71EBE62F70DBC801FD92DDF45BD6B8B0AE04005C`, while
+  PowerShell `Get-FileHash -InputStream` over the UTF-8 LF-normalized bytes returns
+  `274885C110E3B277753B49F6BAD023619ADFCF52D866CC86F01F27F7FDA85DD0`, matching
+  the exact bytes emitted by `git cat-file blob HEAD:<path>`.
+- This follow-up addresses the independent review's sole Blocking finding: the prior
+  note bound the CRLF worktree hash to the committed proposal. The v3 proposal blob
+  and all three OPEN boundaries are unchanged by this correction.
 - Static evidence: browser CreateProject sends an empty root ResourceBoundary;
   production does not consume the fixture-only ARBOR_PROJECT_ROOT; CreateProject
   v1 accepts a ResourceBoundary and persists it after only the revision check; and
