@@ -33,18 +33,24 @@ import {
   ProjectId,
   parse,
   SessionId,
+  WorkId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
   type AdmitExecutionPayload,
   P2CommandHandlerRegistryLive,
 } from "../packages/execution-runtime/src/index.js";
+import {
+  seedCurrentOpenWork,
+  workEpisode,
+} from "./support/execution-episode-fixtures.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
 const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
+const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const actor = parse(Actor)("user:test");
 const principal = parse(Principal)("runtime:system");
 const systemContext: CommandSubmissionContext = {
@@ -119,6 +125,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* seedCurrentOpenWork(projectId, workspaceId, workId);
     }),
   );
 });
@@ -127,7 +134,7 @@ const payloadMain = (executionId: ExecutionId): AdmitExecutionPayload => ({
   _tag: "WorkspaceMain",
   executionId,
   workspaceId,
-  focus: { _tag: "Coordination" },
+  episode: workEpisode(workId),
 });
 
 const payloadBound = (

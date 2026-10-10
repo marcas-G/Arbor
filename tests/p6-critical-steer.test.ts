@@ -63,6 +63,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
+import { workEpisode } from "./support/execution-episode-fixtures.js";
 import {
   p6Project,
   p6RootWorkspace,
@@ -251,7 +252,7 @@ const admitMainExecution = Effect.gen(function* () {
     _tag: "WorkspaceMain" as const,
     executionId: mainExecutionId,
     workspaceId: p6RootWorkspace,
-    focus: { _tag: "Coordination" as const },
+    episode: workEpisode(workId),
   };
   const receipt = yield* gw.execute(
     {

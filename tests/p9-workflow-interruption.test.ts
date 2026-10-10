@@ -65,6 +65,7 @@ import {
   WorkRepository,
   WorkspaceRepository,
 } from "../packages/ports/src/index.js";
+import { yieldedSettlement } from "./support/execution-episode-fixtures.js";
 import {
   p7Project,
   p7RootWorkspace,
@@ -485,8 +486,7 @@ const settleCompleted = (executionId: string) =>
     const payload: SettleExecutionPayload = {
       executionId: executionId as never as ExecutionId,
       settlement: {
-        _tag: "Completed",
-        result: { _tag: "CoordinationCompleted" },
+        ...yieldedSettlement,
       },
       expectedFencingGeneration: lease.generation,
     };

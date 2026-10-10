@@ -140,6 +140,7 @@ import {
   type ToolExecutor,
   ToolRuntimeLive,
 } from "../packages/tool-runtime/src/index.js";
+import { yieldedSettlement } from "./support/execution-episode-fixtures.js";
 import {
   makeP7App,
   p7Project,
@@ -575,8 +576,7 @@ const cRenewLease = (workerId: string, generation: LeaseGeneration) =>
   });
 
 const cCompleted: SettleExecutionPayload["settlement"] = {
-  _tag: "Completed",
-  result: { _tag: "CoordinationCompleted" },
+  ...yieldedSettlement,
 };
 
 const cSettleViaGateway = (
@@ -1931,8 +1931,7 @@ const settleCompletedG = (executionId: string) =>
     const payload: SettleExecutionPayload = {
       executionId: executionId as never as ExecutionId,
       settlement: {
-        _tag: "Completed",
-        result: { _tag: "CoordinationCompleted" },
+        ...yieldedSettlement,
       },
       expectedFencingGeneration: lease.generation,
     };

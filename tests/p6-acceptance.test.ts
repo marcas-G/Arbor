@@ -117,6 +117,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
+import { seedCurrentOpenWork } from "./support/execution-episode-fixtures.js";
 
 const ACTOR = parse(Actor)("user:gov");
 const PRINCIPAL = parse(Principal)("user:gov");
@@ -143,6 +144,7 @@ const wrk = (suffix: string) =>
   parse(WorkId)(`wrk_018f2b3c-4d5e-7abc-8def-0123456789${suffix}`);
 
 const EXE_ROOT = exe("a1");
+const MAIN_WORK = wrk("e1");
 const MODIFY_COMMAND = cmd("a2");
 const STALE_COMMAND = cmd("a3");
 const APPROVE_COMMAND = cmd("a4");
@@ -495,7 +497,11 @@ const executionOf = (
   binding: {
     _tag: "WorkspaceExecution" as const,
     workspaceId,
-    focus: { _tag: "Coordination" as const },
+    episode: {
+      _tag: "WorkEpisode" as const,
+      workId: MAIN_WORK,
+      targetWorkRevision: parse(WorkRevision)(0),
+    },
   },
   sessionId: ROOT_SESSION,
   admittedAt: "t",
@@ -558,11 +564,16 @@ const admitMain = (args: {
 }) =>
   Effect.gen(function* () {
     const gw = yield* CommandGateway;
+    yield* seedCurrentOpenWork(PROJECT, args.workspaceId, MAIN_WORK);
     const payload = {
       _tag: "WorkspaceMain" as const,
       executionId: args.executionId,
       workspaceId: args.workspaceId,
-      focus: { _tag: "Coordination" as const },
+      episode: {
+        _tag: "WorkEpisode" as const,
+        workId: MAIN_WORK,
+        targetWorkRevision: parse(WorkRevision)(0),
+      },
     };
     return yield* gw.execute(
       {
