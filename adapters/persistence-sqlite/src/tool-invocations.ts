@@ -6,22 +6,23 @@ import type {
 } from "@arbor/domain";
 import {
   type InvocationApproval,
-  type InvocationAuthority,
   type LeaseFencingRejected,
   type NoEffectDenialCode,
   type ToolExecutionContext,
   type ToolInvocationIntent,
   type ToolInvocationRecord,
   type ToolInvocationSettlement,
-  type ToolInvocationStoreError,
-  type ToolEffectAdmissionResult,
   ToolInvocationStore,
+  type ToolInvocationStoreError,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
-import { persistenceCorruption, repositoryFailure } from "./repository-error.js";
+import {
+  persistenceCorruption,
+  repositoryFailure,
+} from "./repository-error.js";
 
 interface InvocationRow {
   readonly invocation_id: string;
@@ -294,7 +295,11 @@ export const ToolInvocationStoreLive: Layer.Layer<
                   RETURNING invocation_id`,
                 [
                   settledAt,
-                  JSON.stringify({ _tag: "Denied", reasonCode }),
+                  JSON.stringify({
+                    _tag: "Denied",
+                    reasonCode,
+                    projectionVersion: 1,
+                  }),
                   invocation.invocationId,
                 ],
               ),
@@ -330,7 +335,11 @@ export const ToolInvocationStoreLive: Layer.Layer<
                   invocation.approvalId,
                   invocation.intentAt,
                   settledAt,
-                  JSON.stringify({ _tag: "Denied", reasonCode }),
+                  JSON.stringify({
+                    _tag: "Denied",
+                    reasonCode,
+                    projectionVersion: 1,
+                  }),
                 ],
               ),
             );
@@ -378,7 +387,8 @@ export const ToolInvocationStoreLive: Layer.Layer<
           const record = toRecord(row);
           if (
             record.effectAdmissionState !== "NotAdmitted" ||
-            (record.settlement !== null && record.settlement._tag !== "Interrupted")
+            (record.settlement !== null &&
+              record.settlement._tag !== "Interrupted")
           ) {
             return false;
           }
@@ -391,7 +401,11 @@ export const ToolInvocationStoreLive: Layer.Layer<
                 WHERE invocation_id = ? AND settled_at IS NULL
                   AND effect_admission_state = 'NotAdmitted'
                 RETURNING invocation_id`,
-              [settledAt, JSON.stringify({ _tag: "Interrupted" }), invocationId],
+              [
+                settledAt,
+                JSON.stringify({ _tag: "Interrupted" }),
+                invocationId,
+              ],
             ),
           );
           return updated.length > 0;
@@ -452,7 +466,9 @@ export const ToolInvocationStoreLive: Layer.Layer<
             currentAuthority.toolVersion === record.toolVersion &&
             currentAuthority.expiresAt > now &&
             record.resolvedRegions.every((region) =>
-              currentAuthority.resourceSpaceIds.includes(region.resourceSpaceId),
+              currentAuthority.resourceSpaceIds.includes(
+                region.resourceSpaceId,
+              ),
             );
           if (!authorityMatches) {
             return {
@@ -477,21 +493,28 @@ export const ToolInvocationStoreLive: Layer.Layer<
             );
             const approval = approvalRows[0];
             if (approval === undefined) {
-              return { _tag: "Denied", reasonCode: "ApprovalNotFound" } as const;
+              return {
+                _tag: "Denied",
+                reasonCode: "ApprovalNoLongerAuthorized",
+              } as const;
             }
             if (approval.consumed_by !== invocationId) {
               return {
                 _tag: "Denied",
-                reasonCode: "ApprovalConsumedByOtherInvocation",
+                reasonCode: "ApprovalNoLongerAuthorized",
               } as const;
             }
             if (approval.expires_at <= now) {
-              return { _tag: "Denied", reasonCode: "ApprovalExpired" } as const;
+              return {
+                _tag: "Denied",
+                reasonCode: "ApprovalNoLongerAuthorized",
+              } as const;
             }
             if (
               approval.tool_name !== record.toolName ||
               approval.tool_version !== record.toolVersion ||
-              approval.control_basis_digest !== currentAuthority.controlBasisDigest
+              approval.control_basis_digest !==
+                currentAuthority.controlBasisDigest
             ) {
               return {
                 _tag: "Denied",

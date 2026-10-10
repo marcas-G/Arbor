@@ -179,7 +179,7 @@ describe("P4 exact approval recovery for the same ToolInvocationId", () => {
       Layer.succeed(ToolInvocationStore, {
         recordIntent: () => {
           intentWrites += 1;
-          return Effect.void;
+          return Effect.succeed("Recorded" as const);
         },
         settle: (id: ToolInvocationRecord["invocationId"]) => {
           expect(id).toBe(invocationId);
@@ -196,6 +196,9 @@ describe("P4 exact approval recovery for the same ToolInvocationId", () => {
           // invocation. A replay must converge without consuming it twice.
           return Effect.succeed(false);
         },
+        recordNoEffectDenial: () => Effect.die(new Error("unexpected denial")),
+        recordNoEffectInterruption: () => Effect.succeed(false),
+        admitEffect: () => Effect.succeed({ _tag: "Admitted" as const }),
         findApproval: () => Effect.succeed(Option.some(consumedApproval)),
         findById: (id: ToolInvocationRecord["invocationId"]) => {
           expect(id).toBe(invocationId);

@@ -614,7 +614,8 @@ export const executeAgentLoopActions = (
                     expectedState: "Pending",
                     next: {
                       ...pendingAction,
-                      state: "Applied",
+                      state:
+                        status === "Denied" ? "TerminalRejected" : "Applied",
                       resultRef,
                       disposition: { _tag: disposition, status },
                       observationSourceRef,
@@ -741,6 +742,16 @@ export const executeAgentLoopActions = (
             settlement: executed.outcome.settlement,
           };
         }
+        if (executed.outcome.status === "Interrupted") {
+          const settlement: ExecutionSettlement = {
+            _tag: "Interrupted",
+            result: { _tag: "StopRequested" },
+          };
+          const disposition =
+            executed.outcome.disposition ?? "ExecutionStopping";
+          yield* persistActionRejection(settlement, disposition, "Interrupted");
+          return { _tag: "Settle", settlement };
+        }
         const persisted = yield* persistActionObservation(
           executed.outcome.source,
           executed.outcome.observation,
@@ -748,6 +759,9 @@ export const executeAgentLoopActions = (
             ...(executed.outcome.status === undefined
               ? {}
               : { status: executed.outcome.status }),
+            ...(executed.outcome.disposition === undefined
+              ? {}
+              : { disposition: executed.outcome.disposition }),
             ...(executed.outcome.resultRef === undefined
               ? {}
               : { resultRef: executed.outcome.resultRef }),

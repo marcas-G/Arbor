@@ -1,28 +1,28 @@
-import { Effect, Exit, Layer, Option } from "effect";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   ExecutionId,
   type LeaseGeneration,
-  type ToolInvocationId,
-  parse,
   ProjectId,
+  parse,
   SessionId,
+  type ToolInvocationId,
   WorkspaceId,
 } from "@arbor/domain";
 import {
-  ToolInvocationStore,
-  TransactionPort,
   type ToolExecutionContext,
   type ToolInvocationIntent,
+  ToolInvocationStore,
+  TransactionPort,
 } from "@arbor/ports";
+import { Effect, Exit, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import * as migrationExports from "../src/migrations.js";
 import {
   layer,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
 } from "../src/index.js";
+import * as migrationExports from "../src/migrations.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -32,10 +32,14 @@ const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
-const invocationA = "tin_018f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
-const invocationB = "tin_118f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
-const invocationC = "tin_218f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
-const invocationE = "tin_318f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
+const invocationA =
+  "tin_018f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
+const invocationB =
+  "tin_118f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
+const invocationC =
+  "tin_218f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
+const invocationE =
+  "tin_318f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
 const approvalId = "apr_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const workerId = "worker:ah7-dg03";
 const workerIncarnationId = "incarnation:ah7-dg03";
@@ -46,7 +50,10 @@ const fence = {
   fencingGeneration: 0 as LeaseGeneration,
 } as NonNullable<ToolExecutionContext["executionFence"]>;
 const fenceNow = "2026-10-11T00:00:01.000Z";
-const intent = (id: ToolInvocationId, withApproval: boolean): ToolInvocationIntent => ({
+const intent = (
+  id: ToolInvocationId,
+  withApproval: boolean,
+): ToolInvocationIntent => ({
   invocationId: id,
   executionId,
   workspaceId,
@@ -156,9 +163,15 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
   it("exposes fenced intent, denial, interruption and effect-admission store operations", async () => {
     const app = makeApp();
     const store = await Effect.runPromise(
-      Effect.provide(Effect.gen(function* () {
-        return (yield* ToolInvocationStore) as unknown as Record<string, unknown>;
-      }), app),
+      Effect.provide(
+        Effect.gen(function* () {
+          return (yield* ToolInvocationStore) as unknown as Record<
+            string,
+            unknown
+          >;
+        }),
+        app,
+      ),
     );
     expect(typeof store.recordIntent).toBe("function");
     expect(typeof store.consumeApproval).toBe("function");
@@ -178,17 +191,31 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
       yield* seedApproval;
       const tx = yield* TransactionPort;
       const store = (yield* ToolInvocationStore) as unknown as {
-        recordIntent: (...args: ReadonlyArray<unknown>) => Effect.Effect<void, unknown, never>;
-        consumeApproval: (...args: ReadonlyArray<unknown>) => Effect.Effect<boolean, unknown, never>;
+        recordIntent: (
+          ...args: ReadonlyArray<unknown>
+        ) => Effect.Effect<void, unknown, never>;
+        consumeApproval: (
+          ...args: ReadonlyArray<unknown>
+        ) => Effect.Effect<boolean, unknown, never>;
       };
       const sql = yield* SqlClient;
 
       const failedClaim = yield* Effect.exit(
         tx.transact(
           Effect.gen(function* () {
-            yield* store.recordIntent(intent(invocationA, true), fence, fenceNow);
-            const consumed = yield* store.consumeApproval(approvalId, invocationA, fence, fenceNow);
-            if (!consumed) return yield* Effect.fail(new Error("approval claim lost"));
+            yield* store.recordIntent(
+              intent(invocationA, true),
+              fence,
+              fenceNow,
+            );
+            const consumed = yield* store.consumeApproval(
+              approvalId,
+              invocationA,
+              fence,
+              fenceNow,
+            );
+            if (!consumed)
+              return yield* Effect.fail(new Error("approval claim lost"));
             return yield* Effect.fail(new Error("injected claim rollback"));
           }),
         ),
@@ -205,7 +232,12 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
       const claimWon = yield* tx.transact(
         Effect.gen(function* () {
           yield* store.recordIntent(intent(invocationA, true), fence, fenceNow);
-          return yield* store.consumeApproval(approvalId, invocationA, fence, fenceNow);
+          return yield* store.consumeApproval(
+            approvalId,
+            invocationA,
+            fence,
+            fenceNow,
+          );
         }),
       );
       const committed = yield* sql.unsafe<{
@@ -223,10 +255,24 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
       const loser = yield* Effect.exit(
         tx.transact(
           Effect.gen(function* () {
-            yield* store.recordIntent(intent(invocationB, true), fence, fenceNow);
-            const consumed = yield* store.consumeApproval(approvalId, invocationB, fence, fenceNow);
-            if (consumed) return yield* Effect.fail(new Error("unexpected approval winner"));
-            return yield* Effect.fail(new Error("roll back losing claim intent"));
+            yield* store.recordIntent(
+              intent(invocationB, true),
+              fence,
+              fenceNow,
+            );
+            const consumed = yield* store.consumeApproval(
+              approvalId,
+              invocationB,
+              fence,
+              fenceNow,
+            );
+            if (consumed)
+              return yield* Effect.fail(
+                new Error("unexpected approval winner"),
+              );
+            return yield* Effect.fail(
+              new Error("roll back losing claim intent"),
+            );
           }),
         ),
       );
@@ -234,7 +280,14 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         "SELECT COUNT(*) AS count FROM tool_invocations WHERE invocation_id = ?",
         [invocationB],
       );
-      return { failedClaim, rolledBack: rolledBack[0], claimWon, committed: committed[0], loser, loserRows: loserRows[0] };
+      return {
+        failedClaim,
+        rolledBack: rolledBack[0],
+        claimWon,
+        committed: committed[0],
+        loser,
+        loserRows: loserRows[0],
+      };
     });
     const result = await Effect.runPromise(Effect.provide(program, app));
     expect(Exit.isFailure(result.failedClaim)).toBe(true);
@@ -260,12 +313,24 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
       yield* seedApproval;
       const tx = yield* TransactionPort;
       const store = (yield* ToolInvocationStore) as unknown as {
-        recordIntent: (...args: ReadonlyArray<unknown>) => Effect.Effect<void, unknown, never>;
-        recordNoEffectDenial: (...args: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown, never>;
-        recordNoEffectInterruption: (...args: ReadonlyArray<unknown>) => Effect.Effect<boolean, unknown, never>;
-        admitEffect: (...args: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown, never>;
-        consumeApproval: (...args: ReadonlyArray<unknown>) => Effect.Effect<boolean, unknown, never>;
-        settle: (...args: ReadonlyArray<unknown>) => Effect.Effect<boolean, unknown, never>;
+        recordIntent: (
+          ...args: ReadonlyArray<unknown>
+        ) => Effect.Effect<void, unknown, never>;
+        recordNoEffectDenial: (
+          ...args: ReadonlyArray<unknown>
+        ) => Effect.Effect<unknown, unknown, never>;
+        recordNoEffectInterruption: (
+          ...args: ReadonlyArray<unknown>
+        ) => Effect.Effect<boolean, unknown, never>;
+        admitEffect: (
+          ...args: ReadonlyArray<unknown>
+        ) => Effect.Effect<unknown, unknown, never>;
+        consumeApproval: (
+          ...args: ReadonlyArray<unknown>
+        ) => Effect.Effect<boolean, unknown, never>;
+        settle: (
+          ...args: ReadonlyArray<unknown>
+        ) => Effect.Effect<boolean, unknown, never>;
       };
       const sql = yield* SqlClient;
       const staleFence = { ...fence, fencingGeneration: 1 as LeaseGeneration };
@@ -279,9 +344,13 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         "SELECT COUNT(*) AS count FROM tool_invocations WHERE invocation_id = ?",
         [invocationC],
       );
-      yield* tx.transact(store.recordIntent(intent(invocationC, true), fence, fenceNow));
+      yield* tx.transact(
+        store.recordIntent(intent(invocationC, true), fence, fenceNow),
+      );
       const staleConsume = yield* Effect.exit(
-        tx.transact(store.consumeApproval(approvalId, invocationC, staleFence, fenceNow)),
+        tx.transact(
+          store.consumeApproval(approvalId, invocationC, staleFence, fenceNow),
+        ),
       );
       const approvalAfterStaleConsume = yield* tx.transact(
         (yield* ToolInvocationStore).findApproval(approvalId),
@@ -302,7 +371,9 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         [invocationE],
       );
 
-      yield* tx.transact(store.recordIntent(intent(invocationE, false), fence, fenceNow));
+      yield* tx.transact(
+        store.recordIntent(intent(invocationE, false), fence, fenceNow),
+      );
       const authority = {
         principal: "worker:ah7-dg03",
         workspaceId,
@@ -316,7 +387,9 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         delegationDepth: 0,
       };
       const staleAdmission = yield* Effect.exit(
-        tx.transact(store.admitEffect(invocationE, authority, fenceNow, staleFence)),
+        tx.transact(
+          store.admitEffect(invocationE, authority, fenceNow, staleFence),
+        ),
       );
       const stateAfterStaleAdmission = yield* sql.unsafe<{
         effect_admission_state: string;
@@ -359,25 +432,39 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
       const denialRow = yield* sql.unsafe<{
         effect_admission_state: string;
         settlement_kind: string;
+        settlement_json: string;
         consumed_by: string | null;
       }>(
-        `SELECT i.effect_admission_state, i.settlement_kind, a.consumed_by
+        `SELECT i.effect_admission_state, i.settlement_kind,
+                i.settlement_json, a.consumed_by
            FROM tool_invocations i
            JOIN action_approvals a ON a.approval_id = i.approval_id
           WHERE i.invocation_id = ?`,
         [invocationA],
       );
 
-      yield* tx.transact(store.recordIntent(intent(invocationB, false), fence, fenceNow));
+      yield* tx.transact(
+        store.recordIntent(intent(invocationB, false), fence, fenceNow),
+      );
       yield* sql.unsafe(
         "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ?",
         [fenceNow, executionId],
       );
       const stoppedGate = yield* tx.transact(
-        store.admitEffect(invocationB, { controlBasisDigest: "basis" }, fenceNow, fence),
+        store.admitEffect(
+          invocationB,
+          { controlBasisDigest: "basis" },
+          fenceNow,
+          fence,
+        ),
       );
       const interrupted = yield* tx.transact(
-        store.recordNoEffectInterruption(invocationB, fenceNow, fence, fenceNow),
+        store.recordNoEffectInterruption(
+          invocationB,
+          fenceNow,
+          fence,
+          fenceNow,
+        ),
       );
       const interruptionRow = yield* sql.unsafe<{
         effect_admission_state: string;
@@ -417,7 +504,9 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
     expect(Exit.isFailure(result.staleDenial)).toBe(true);
     expect(result.staleDenialRows?.count).toBe(0);
     expect(Exit.isFailure(result.staleAdmission)).toBe(true);
-    expect(result.stateAfterStaleAdmission?.effect_admission_state).toBe("NotAdmitted");
+    expect(result.stateAfterStaleAdmission?.effect_admission_state).toBe(
+      "NotAdmitted",
+    );
     expect(result.admitted).toEqual({ _tag: "Admitted" });
     expect(Exit.isFailure(result.staleSettlement)).toBe(true);
     expect(result.afterStaleSettlement).toEqual({
@@ -428,6 +517,11 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
     expect(result.denialRow).toEqual({
       effect_admission_state: "NotAdmitted",
       settlement_kind: "Denied",
+      settlement_json: JSON.stringify({
+        _tag: "Denied",
+        reasonCode: "InvocationAuthorityDenied",
+        projectionVersion: 1,
+      }),
       consumed_by: null,
     });
     expect(result.stoppedGate).toEqual({ _tag: "ExecutionStopping" });
