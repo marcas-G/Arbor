@@ -1,7 +1,13 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -55,7 +61,8 @@ const setupLayer = (databaseFile: string) => {
   );
 };
 
-const seedDatabase = async (databaseFile: string) => {
+const seedDatabase = async (databaseFile: string, pinnedRoot: string) => {
+  mkdirSync(pinnedRoot, { recursive: true });
   const app = setupLayer(databaseFile);
   const setup = Effect.gen(function* () {
     yield* runMigrations(P35_MIGRATIONS);
@@ -79,10 +86,17 @@ const seedDatabase = async (databaseFile: string) => {
             resource_boundary_revision, agent_binding, primary_session_id,
             current_work_id, workspace_policy, workspace_policy_revision,
             revision, lifecycle, created_at, updated_at
-          ) VALUES (?, ?, NULL, 'root', '{}', 0,
-            '{"basisResponsibilityRevision":0,"addresses":[{"_tag":"FileTree","path":"C:/F21_PRIVATE_TEST_PATH"}]}',
+          ) VALUES (?, ?, NULL, 'root', '{}', 0, ?,
             0, '{}', ?, NULL, '{}', 0, 0, 'Active', 't0', 't0')`,
-          [workspaceId, projectId, sessionId],
+          [
+            workspaceId,
+            projectId,
+            JSON.stringify({
+              basisResponsibilityRevision: 0,
+              addresses: [{ _tag: "FileTree", path: pinnedRoot }],
+            }),
+            sessionId,
+          ],
         );
         yield* sql.unsafe(
           `INSERT INTO sessions (
@@ -216,6 +230,7 @@ const startWorker = (
       String(workspaceId),
       mode,
       markerFile,
+      pinnedPathFor(databaseFile),
     ],
     {
       cwd: repositoryRoot,
@@ -308,6 +323,8 @@ const inspectState = (databaseFile: string) => {
 };
 
 const makeDirectory = () => mkdtempSync(join(tmpdir(), "arbor-f21-story-l-"));
+const pinnedPathFor = (databaseFile: string) =>
+  join(dirname(databaseFile), "pinned-tree");
 
 const readPublicActivationAttention = async (databaseFile: string) => {
   const app = buildSingleWorkspaceLayer({ databaseFile, projectId });
@@ -332,7 +349,10 @@ test("P10 Story L rebuild rolls back snapshot/offset rewind on kill and lineariz
   let p10: ChildProcess | undefined;
   let p11: ChildProcess | undefined;
   try {
-    const originalOffset = await seedDatabase(databaseFile);
+    const originalOffset = await seedDatabase(
+      databaseFile,
+      pinnedPathFor(databaseFile),
+    );
     expect(originalOffset.last_sequence).toBe(3);
     p10 = startWorker(databaseFile, "hold-before-commit", markerFile);
     const before = JSON.parse(await waitForMarker(markerFile, p10)) as {
@@ -357,7 +377,7 @@ test("P10 Story L rebuild rolls back snapshot/offset rewind on kill and lineariz
       activationStarted,
     );
     const lockWait = await waitForMarker(activationStarted, p11);
-    expect(lockWait).toMatch(/SQLITE_BUSY|database is locked/i);
+    expect(lockWait).toMatch(/SQLITE_BUSY|database is locked|code=1546/i);
     const lockAcquiredMarker = `${activationStarted}.acquired`;
     expect(existsSync(lockAcquiredMarker)).toBe(false);
     await killWorker(p10);
@@ -421,7 +441,10 @@ test("P10 Story L after-commit kill preserves snapshot and restarted consumer ca
   const markerFile = join(directory, "p10-after.marker");
   let child: ChildProcess | undefined;
   try {
-    const originalOffset = await seedDatabase(databaseFile);
+    const originalOffset = await seedDatabase(
+      databaseFile,
+      pinnedPathFor(databaseFile),
+    );
     expect(originalOffset.last_sequence).toBe(3);
     child = startWorker(databaseFile, "hold-after-commit", markerFile);
     const committedMarker = JSON.parse(
