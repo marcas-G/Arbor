@@ -43,9 +43,13 @@ P10 writes only its read-model row and consumer offset, never the source fact.
 ### FT-DG-01 OPEN-3 Workspace resource activation
 
 The source is the P1 intent row, not the Profile catalog or an inferred
-non-empty-boundary/no-claim predicate. The P1 status event is the incremental
-trigger; the intent table is the authoritative level-triggered source for P10
-rebuild. For `Pending`, P10 upserts exactly one row with
+non-empty-boundary/no-claim predicate. P10's source-specific
+`reconcileProjectActivationAttention(projectId)` reads the current P1
+`listAll` snapshot and replaces only this source's rows in one transaction:
+upsert one row for each `Pending` intent and remove rows for `Active` or absent
+intents. The P1 status event and P12 post-commit/startup hooks are wakeups for
+this reconciliation; neither supplies row state. For `Pending`, P10 upserts
+exactly one row with
 `source=WorkspaceResourceActivationPending`, `severity=ActionRequired`,
 `targetWorkspaceId=workspaceId`, and
 `dedupKey=(projectId,workspaceId,resourceBoundaryRevision)`. Its fixed summary
@@ -56,12 +60,17 @@ same intent is `Active`; a changed Workspace boundary revision does not clear
 an older pending intent.
 
 `WorkspaceResourceActivationChanged(Pending|Active)` is applied by P10 in the
-generic `(projectId, sequence)` apply-then-advance transaction. Source-key
-upsert/delete makes re-delivery idempotent; the transaction-local P10 offset
-prevents two daemons from consuming the same sequence independently. P10 only
+generic `(projectId, sequence)` apply-then-advance transaction only as a
+reconciliation trigger. The handler re-reads current intent state and never
+upserts/deletes from the event's status payload; delayed Pending cannot revive
+an Active row. P12 invokes the same reconciler after the post-commit activation
+attempt and at startup for all projects with intents, so this source remains
+current even if the generic Attention consumer returns
+`ConsumerRebuildRefused` because its offset is below the journal floor. That
+reconciliation never reads, resets, or advances the shared P1 offset. P10 only
 changes its own Attention projection, never the P1 intent, Workspace, claims,
-or receipt. A pending intent is visible after consumer catch-up; ordinary
-freshness watermark/barrier rules remain in force.
+or receipt. Normal event-derived Attention sources retain the existing
+freshness watermark/barrier behavior.
 
 ## 3. Read-model contract
 

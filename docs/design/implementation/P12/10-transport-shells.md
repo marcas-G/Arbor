@@ -152,8 +152,9 @@ human/parent ⇄ shells         : owned here — resolver-gated; no canonical wr
 production daemon                     : the long-running composition process (P8 `00` defers it)
 recovery daemon / composition surface : startup recovery pass driver + periodic/event sweeps
                                         (P9 `00` "Explicitly out of P9")
-F21 resource activation recovery       : startup-only scan of P1 Pending activation intents;
-                                        uses the P11 same-boundary activation service
+F21 resource activation recovery       : post-commit + startup source reconciliation for all
+                                        activation intents, then Pending scan via P11
+                                        same-boundary activation service
 consumer-loop daemon wiring           : verification + completion chain consumers are
                                         offset-driven; single-command-face preserved
                                         (`P8.result.md` Notes for downstream phases)
@@ -257,7 +258,10 @@ mutation route.
 ### FT-DG-01 OPEN-3 startup activation recovery
 
 After the ordered SQLite migrations and the existing P2/P12 startup recovery
-pass, the production composition scans only P1
+pass, the production composition lists P1 activation intents and calls the P10
+source reconciler once per affected Project **before** attempting Pending
+activations. This includes Active intents, so a crash after P11 commits Active
+but before its P10 cleanup cannot leave a stale Pending row. It then scans
 `WorkspaceResourceActivationIntent(Pending)` rows. For each row it reads the
 current persisted Workspace and delegates to the P11
 `activatePendingWorkspaceResource` operation. P11 verifies the pinned
@@ -268,10 +272,18 @@ source, not a public view or new command.
 
 An unavailable path or other operational activation failure leaves the intent
 Pending and does not undo the Committed command; the startup pass continues to
-other intents and readiness/recovery orchestration remains able to run. P10
-publishes the corresponding path-free Attention through its registered v1
-event projection and level-triggered rebuild source. P12 does not create or
-clear Attention itself.
+other intents and readiness/recovery orchestration remains able to run. P12
+reconciles that Project's path-free Attention source after every activation
+attempt, successful or failed. The P1 status event may also wake P10's generic
+consumer, but P10 rereads current intent state; P12's direct reconciliation
+does not call generic rebuild or read/reset/advance the shared P1 consumer
+offset. P12 does not write Attention rows itself.
+
+The post-commit CreateProject composition uses the same order: after Gateway
+returns Committed, it attempts P11 activation from the persisted Workspace
+boundary, then invokes the P10 source reconciler before returning the ordinary
+success or post-commit convergence failure. A process crash before that call
+is repaired by the startup reconcile above.
 
 This release has no periodic retry loop. If the same canonical path is
 restored while the daemon remains running, retry requires an exact current-v2
