@@ -16,6 +16,7 @@ import {
   type ConcludeVerificationResult,
   type DeclareDependencyPayload,
   type DeclareDependencyResult,
+  decodeCommandReceipt,
   deriveFormationIds,
   isChildWorkspaceProposal,
   makeSendMessageHandler,
@@ -37,6 +38,7 @@ import {
   type ChildWorkspaceProposal,
   CommandId,
   type CommandId as CommandIdType,
+  type CommandReceipt,
   type CommandSubmissionContext,
   DeliverableId,
   type DeliverableKind,
@@ -100,7 +102,6 @@ import {
   type RecoveryAttentionFactStoreService,
   SessionRepository,
   type SessionRepositoryService,
-  type StoredCommandReceipt,
   sha256Hex,
   ToolInvocationStore,
   type ToolInvocationStoreService,
@@ -333,16 +334,22 @@ const isFencingRejectedReceipt = (resolution: unknown): boolean =>
   "_tag" in resolution.error &&
   resolution.error._tag === "FencingRejected";
 
-type PriorCommittedCommandReceipt = Omit<StoredCommandReceipt, "resolution"> & {
+type PriorCommittedCommandReceipt = Omit<
+  CommandReceipt<unknown, unknown>,
+  "resolution"
+> & {
   readonly resolution: Extract<
-    StoredCommandReceipt["resolution"],
+    CommandReceipt<unknown, unknown>["resolution"],
     { readonly _tag: "Committed" }
   >;
 };
 
-type PriorRejectedCommandReceipt = Omit<StoredCommandReceipt, "resolution"> & {
+type PriorRejectedCommandReceipt = Omit<
+  CommandReceipt<unknown, unknown>,
+  "resolution"
+> & {
   readonly resolution: Extract<
-    StoredCommandReceipt["resolution"],
+    CommandReceipt<unknown, unknown>["resolution"],
     { readonly _tag: "TerminalRejected" }
   >;
 };
@@ -403,9 +410,10 @@ const findPriorCommandReceipt = (input: {
         input.commandReceipts.findResolution(priorCommandId),
       );
       if (Option.isNone(prior)) continue;
+      const decodedPrior = decodeCommandReceipt<unknown>(prior.value);
       if (
-        prior.value.commandId !== priorCommandId ||
-        prior.value.projectId !== input.projectId
+        decodedPrior.commandId !== priorCommandId ||
+        decodedPrior.projectId !== input.projectId
       ) {
         return yield* Effect.fail(
           actionOperationalFailure(input.operation)(
@@ -414,16 +422,16 @@ const findPriorCommandReceipt = (input: {
           ),
         );
       }
-      if (prior.value.resolution._tag === "Committed") {
+      if (decodedPrior.resolution._tag === "Committed") {
         return {
           _tag: "Committed" as const,
-          receipt: prior.value as PriorCommittedCommandReceipt,
+          receipt: decodedPrior as PriorCommittedCommandReceipt,
         };
       }
-      if (isFencingRejectedReceipt(prior.value.resolution)) continue;
+      if (isFencingRejectedReceipt(decodedPrior.resolution)) continue;
       return {
         _tag: "TerminalRejected" as const,
-        receipt: prior.value as PriorRejectedCommandReceipt,
+        receipt: decodedPrior as PriorRejectedCommandReceipt,
       };
     }
     return { _tag: "None" as const };

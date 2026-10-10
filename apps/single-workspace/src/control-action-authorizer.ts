@@ -185,7 +185,7 @@ export const ControlActionAuthorizerLive: Layer.Layer<
               Option.isSome(prior) &&
               prior.value.commandId === priorCommandId &&
               prior.value.projectId === input.execution.projectId &&
-              prior.value.resolution._tag === "Committed"
+              prior.value.resolution === "Committed"
             ) {
               return {
                 _tag: "Authorized" as const,

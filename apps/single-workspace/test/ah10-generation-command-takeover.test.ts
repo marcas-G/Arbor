@@ -16,6 +16,7 @@ import {
   Principal,
   ProjectId,
   parse,
+  SemanticRequestFingerprint,
   SessionId,
   VerificationId,
   WorkId,
@@ -26,6 +27,7 @@ import type {
   ClockService,
   CommandStoreService,
   DecisionRequestStoreService,
+  StoredCommandResolution,
   TransactionPortService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
@@ -48,6 +50,71 @@ const workspaceId = parse(WorkspaceId)(
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const principal = parse(Principal)("worker:ah10");
+
+type FakeReceipt =
+  | {
+      readonly resolution: {
+        readonly _tag: "Committed";
+        readonly result: unknown;
+      };
+    }
+  | {
+      readonly resolution: {
+        readonly _tag: "TerminalRejected";
+        readonly error: unknown;
+      };
+    };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isFakeReceipt = (value: unknown): value is FakeReceipt => {
+  if (!isRecord(value) || !isRecord(value.resolution)) return false;
+  const resolution = value.resolution;
+  return (
+    (resolution._tag === "Committed" && "result" in resolution) ||
+    (resolution._tag === "TerminalRejected" && "error" in resolution)
+  );
+};
+
+const toStoredCommandResolution = (
+  commandId: string,
+  value: unknown,
+): StoredCommandResolution => {
+  if (!isFakeReceipt(value)) {
+    throw new Error("AH10 fake receipt fixture has an invalid resolution");
+  }
+  const receipt = value;
+  return receipt.resolution._tag === "Committed"
+    ? {
+        commandId: parse(CommandId)(commandId),
+        projectId,
+        semanticRequestFingerprint: parse(SemanticRequestFingerprint)(
+          "ah10-test-fingerprint",
+        ),
+        schemaVersion: "1",
+        fingerprintAlgorithmVersion: 1,
+        resolution: "Committed",
+        resultJson: JSON.stringify(receipt.resolution.result) ?? "null",
+        terminalErrorJson: null,
+        createdAt: "2026-10-05T00:00:00.000Z",
+        settledAt: "2026-10-05T00:00:00.000Z",
+      }
+    : {
+        commandId: parse(CommandId)(commandId),
+        projectId,
+        semanticRequestFingerprint: parse(SemanticRequestFingerprint)(
+          "ah10-test-fingerprint",
+        ),
+        schemaVersion: "1",
+        fingerprintAlgorithmVersion: 1,
+        resolution: "TerminalRejected",
+        resultJson: null,
+        terminalErrorJson: JSON.stringify(receipt.resolution.error) ?? "null",
+        createdAt: "2026-10-05T00:00:00.000Z",
+        settledAt: "2026-10-05T00:00:00.000Z",
+      };
+};
 
 const execution = {
   executionId,
@@ -229,21 +296,18 @@ const transaction = {
   transact: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect,
 } as TransactionPortService;
 
-const receiptLookup = (receipts: ReadonlyMap<string, unknown>) =>
-  ({
-    findResolution: (commandId: string) => {
-      const receipt = receipts.get(String(commandId));
-      return Effect.succeed(
-        receipt === undefined
-          ? Option.none()
-          : Option.some({
-              commandId,
-              projectId,
-              ...(receipt as object),
-            } as never),
-      );
-    },
-  }) as Pick<CommandStoreService, "findResolution">;
+const receiptLookup = (
+  receipts: ReadonlyMap<string, unknown>,
+): Pick<CommandStoreService, "findResolution"> => ({
+  findResolution: (commandId) => {
+    const receipt = receipts.get(String(commandId));
+    return Effect.succeed(
+      receipt === undefined
+        ? Option.none()
+        : Option.some(toStoredCommandResolution(String(commandId), receipt)),
+    );
+  },
+});
 
 const runControlHandler = (
   handler: AgentActionHandler,
@@ -492,20 +556,7 @@ const makeHandler = (
 ) =>
   assignWorkHandler({
     gateway,
-    commandReceipts: {
-      findResolution: (commandId) => {
-        const receipt = receipts.get(String(commandId));
-        return Effect.succeed(
-          receipt === undefined
-            ? Option.none()
-            : Option.some({
-                commandId,
-                projectId,
-                ...(receipt as object),
-              } as never),
-        );
-      },
-    } as Pick<CommandStoreService, "findResolution">,
+    commandReceipts: receiptLookup(receipts),
     workspaces: {
       findById: () =>
         Effect.succeed(
@@ -827,20 +878,7 @@ describe("AH10 takeover for another canonical control action", () => {
     const handler = produceDeliverableHandler({
       gateway,
       tx: transaction,
-      commandReceipts: {
-        findResolution: (commandId) => {
-          const receipt = receipts.get(String(commandId));
-          return Effect.succeed(
-            receipt === undefined
-              ? Option.none()
-              : Option.some({
-                  commandId,
-                  projectId,
-                  ...(receipt as object),
-                } as never),
-          );
-        },
-      } as Pick<CommandStoreService, "findResolution">,
+      commandReceipts: receiptLookup(receipts),
       clock: {
         now: () => Effect.succeed("2026-10-05T00:00:00.000Z"),
       } as ClockService,
@@ -904,20 +942,7 @@ describe("AH10 takeover for another canonical control action", () => {
     const handler = produceDeliverableHandler({
       gateway,
       tx: transaction,
-      commandReceipts: {
-        findResolution: (commandId) => {
-          const receipt = receipts.get(String(commandId));
-          return Effect.succeed(
-            receipt === undefined
-              ? Option.none()
-              : Option.some({
-                  commandId,
-                  projectId,
-                  ...(receipt as object),
-                } as never),
-          );
-        },
-      } as Pick<CommandStoreService, "findResolution">,
+      commandReceipts: receiptLookup(receipts),
       clock: {
         now: () => Effect.succeed("2026-10-05T00:00:00.000Z"),
       } as ClockService,
