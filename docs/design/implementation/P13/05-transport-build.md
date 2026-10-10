@@ -3,6 +3,12 @@
 **Owns:** 开发态/生产态构建与托管、WS invalidation 协议（TR-W1/W2）、前端依赖基线
 **Does not own:** transport 语义（P12 `10`，除 TR-W1/W2 外不变）、view 语义
 
+**TR-W1 认证订阅修订（2026-10-10，P12-SRA-01）：** accepted governance
+candidate SHA-256
+`90BCB4224D501FA10D949D386DE4B2C667F4256FECDC0D61E29C6836B552F89B`。
+此修订只约束订阅认证与客户端 freshness，不改变 invalidation 帧形状或
+P10 view 语义。
+
 ## 1. 开发态（frozen）
 
 ```text
@@ -55,6 +61,19 @@ interface InvalidationFrame {
    未展示的帧丢弃；**禁止**用帧内容更新 render cache（`01` I4）。
 4. client→server 帧不变（`view` / `command` 两种，P12 `10` §2 原样）；
    HTTP `POST /views/:view` / `POST /commands` 不变。
+5. **订阅认证（P12 `10` §3.1）：** 在配置 authenticator 的部署中，
+   WebSocket upgrade 不代表读取授权。client 使用 session 内存中的凭据，
+   在连接上发送第一条普通 `view` 请求帧（复用 P12 `10` 已有
+   `WebSocketFrame.token?`；不增加帧种类、不把凭据放 URL/query）。Server
+   必须先验证凭据并确认 `user:local`，才可执行该 view query、将 socket
+   加入 invalidation fanout；缺失/无效/不支持的 principal 不得到 DTO 或
+   invalidation，并关闭连接。成功的首个 view 响应是普通 query DTO，后续
+   freshness 仍只由本节定义的 invalidation→HTTP refetch 得到。
+6. no-auth loopback 继续按本机单用户语义使用 WebSocket。non-loopback 且
+   无 authenticator 的 `/ws` 在 upgrade 阶段 fail-closed。配置了
+   authenticator 时，客户端仅在首个已认证 view 请求成功后将该实时通道
+   标记为 fresh；在首帧成功前不允许服务端 broadcast，也不允许 UI 宣称
+   fresh。单独的 `command` 帧不授权 invalidation 订阅。
 
 ## 4. 前端构建基线与依赖（frozen，DID §14.1 v1.15）
 
@@ -96,3 +115,10 @@ build + web tests。
 
 `06` EC-5（invalidation → refetch，无本地 replay）、EC-11（dev proxy /
 prod 同源托管 e2e：daemon 起服务后浏览器侧冒烟）、EC-12（依赖 exact pin）。
+TR-W1 additionally qualifies that an authenticated listener does not add a
+WebSocket to the invalidation fanout or mark its channel fresh before the
+first credential-bearing ordinary view frame is authenticated as `user:local`.
+The invalidation payload remains `{kind, view, watermark}` only. Negative tests
+cover missing/invalid/unsupported credentials and prove no pre-auth query or
+broadcast; positive tests cover loopback/no-auth and configured local-principal
+query/refetch. Non-loopback/no-auth upgrade fails closed.

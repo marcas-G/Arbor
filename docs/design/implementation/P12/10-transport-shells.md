@@ -3,6 +3,12 @@
 **Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.36 §4.1C, v1.13 G6; SD v1.13 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
 **Status:** DRAFT.
 
+**敏感读取边界修订（2026-10-10，P12-SRA-01）：** accepted governance
+candidate SHA-256
+`90BCB4224D501FA10D949D386DE4B2C667F4256FECDC0D61E29C6836B552F89B`。
+具体认证与读取准入合同见 §3 / §3.1；该修订不改变命令授权、Resolver 或
+Gateway receipt 顺序。
+
 ## 1. Boundary (frozen)
 
 ```text
@@ -49,6 +55,33 @@ daemons : recovery pass driver (`P9/00`), verification/completion consumer loops
 ## 3. Authentication → Authority Resolver
 
 - External human/parent requests are authenticated at the transport boundary.
+- For sensitive read surfaces, transport authentication and the existing
+  supported local-principal check (`user:local`) MUST complete before any
+  projection, directory, progress-stream source, or invalidation broadcast is
+  touched. This includes HTTP `GET /projects`, supported HTTP
+  `POST /views/:view`, and HTTP/SSE `GET /conversation-progress/:messageId`.
+  Missing/invalid credentials and unsupported principals fail closed without
+  returning view, Project/Workspace identifiers, canonical paths, or progress
+  events. The read boundary does not infer permission from command authority.
+- A non-loopback HTTP listener without a configured authenticator MUST fail
+  closed for these sensitive reads. The default no-auth loopback listener
+  retains the local single-user principal behavior. The same distinction
+  applies at `/ws`: reject a non-loopback/no-auth upgrade before accepting
+  the connection; on a configured-auth listener, do not query or admit a
+  socket to invalidation broadcast until an authenticated first `view` frame
+  proves `user:local`. A no-auth loopback WebSocket retains local behavior.
+- Only HTTP `POST /views/:view` is a supported view method. Any other method
+  MUST fail without invoking ProjectionQueryPort; authentication for a
+  supported view completes before body decoding and projection access. Existing
+  `/project-resources` protection remains stricter and path-free. Public
+  static Web assets and the local CLI admin/ops face are outside this remote
+  sensitive-read rule.
+- The v1 read surface remains single-user. Project/Workspace visibility for
+  multiple authenticated principals is **OPEN** and requires separate
+  authorization semantics; this rule does not create tenant isolation. An
+  authorized local Workspace Detail may continue to render its frozen
+  `ResourceBoundary`, including canonical host paths; this does not widen
+  F21's path-free resource catalog/selector contract.
 - Authentication completes before command-body decoding. The HTTP, WebSocket,
   CLI, and future external shells pass the same bounded raw JSON envelope,
   authenticated `Principal`, submission context, and correlation information
@@ -71,6 +104,30 @@ daemons : recovery pass driver (`P9/00`), verification/completion consumer loops
   the resolver** (`02` §2). The transport hands over only the authenticated principal and
   the raw submission context; it holds no resolver capability and cannot synthesize facts.
 - External Stop / external `AdmitExecution` follow `02` §4.
+
+### 3.1 Authenticated WebSocket view and invalidation admission
+
+- The existing client→server frame kinds remain `view` and `command`; no
+  authentication URL parameter or new frame kind is introduced. The existing
+  `WebSocketFrame.token?` carries the same opaque credential accepted by the
+  configured `Authenticator` (including a configured Basic credential).
+- On an authenticated listener, the first ordinary `view` frame is the
+  authentication proof and a normal view request. The server validates the
+  credential and requires `user:local` before invoking ProjectionQueryPort
+  and before adding that socket to the server→client invalidation fanout. A
+  missing, invalid, or unsupported-principal proof returns no view DTO or
+  invalidation and closes the connection. Credentials MUST NOT be put in the
+  WebSocket URL or query string.
+- The browser holds its credential in session memory and sends it in that
+  first `view` frame. The returned DTO follows the normal view response path;
+  later invalidation frames retain P13 `05` TR-W1's payload-free shape. The
+  client MUST NOT claim the authenticated real-time channel is fresh before
+  the first authenticated view response succeeds. A `command` frame retains
+  its existing command-auth path and alone does not authorize view
+  subscription.
+- The no-auth loopback exception is the local single-user form: it may admit
+  the socket locally without a credential. It does not apply to wildcard or
+  other non-loopback listeners.
 
 ## 4. Remote-worker transport is not a human shell (RG-16)
 
@@ -135,6 +192,10 @@ no transport path writes canonical state directly
 human shell carries no worker identity; worker transport carries no human authority
 worker transport is owned by `06`; its wire contract is domain/ports-level (no application types)
 recovery/consumer daemons run from composition root; offsets drive consumer loops
+Sensitive reads (`/projects`, supported `/views`, conversation-progress SSE,
+and WS view/invalidation subscription) authenticate before reading or fanout;
+non-loopback/no-auth fails closed; loopback/no-auth preserves local single-user behavior
+Configured-auth reads admit only `user:local`; multi-principal visibility remains open
 ```
 
 ## 9. Host Project Resource Profile catalog (FT-DG-01 functional scope)
