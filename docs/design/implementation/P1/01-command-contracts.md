@@ -323,18 +323,28 @@ copied.
 
 The Profile ref/version is part of the v2 semantic fingerprint via the closed
 payload. The ProjectCreated and WorkspaceCreated event types, EventVersion=1,
-and existing event payloads remain unchanged. The canonical Workspace
-ResourceBoundary persisted by this command is the resource truth. Durable
-Profile source attribution is OPEN-1 in the FT-DG-01 v3 proposal and is not
-claimed here.
+their payloads, and relative order remain unchanged. For a non-empty Profile
+boundary only, the command additionally writes the P1-owned
+`WorkspaceResourceActivationIntent(Pending)` and appends
+`WorkspaceResourceActivationChanged(Pending)` after WorkspaceCreated in this
+same transaction. ConversationOnly has no intent and no activation event. The
+canonical Workspace ResourceBoundary persisted by this command is the resource
+truth. Durable Profile source attribution is OPEN-1 in the FT-DG-01 v3
+proposal and is not claimed here.
 
 ### Events (same transaction, ordered)
 
 ```text
 ProjectCreated → WorkspaceCreated
+  → WorkspaceResourceActivationChanged(Pending) [Profile only]
 ```
 
 No Session Domain Event (DID §5.3). Session created atomically.
+`WorkspaceResourceActivationChanged` is a separate operational status fact;
+it does not modify either existing event payload and is not written for the
+empty ConversationOnly boundary. P1 `05` owns its EventVersion-1 payload and
+reader contract. A post-commit ownership failure cannot roll back this
+committed intent, these events, or the receipt.
 
 ## 6. CreateChildWorkspace
 

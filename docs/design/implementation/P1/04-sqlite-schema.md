@@ -29,6 +29,7 @@ Only the Arbor Runtime writes this DB (DID §9.2).
 | `sessions` | `Session` |
 | `works` | `Work` |
 | `resource_ownership` | `ResourceOwnershipClaim` |
+| `workspace_resource_activation_intents` | `WorkspaceResourceActivationIntent` (P1 operational convergence fact; FT-DG-01 OPEN-3) |
 | `environment_revisions` | environment revision anchor |
 | `commands` | `CommandReceipt` (authoritative resolution) |
 | `command_attempts` | `CommandAttempt` (non-authoritative trace) |
@@ -166,6 +167,40 @@ CREATE TABLE environment_revisions (
 write records the observed revision. `EnvironmentRevisionStore.current`
 returns `None` when absent/NULL, and the stale check treats that as
 "not stale" (nothing observed yet).
+
+The FT-DG-01 OPEN-3 intent is additive and contains no resource address or
+Profile provenance. It is created only for a new Profile CreateProject after
+the handler has built the canonical Workspace boundary; ConversationOnly has
+no intent. There is no migration backfill from historical Workspace paths or
+missing ownership claims.
+
+```sql
+CREATE TABLE workspace_resource_activation_intents (
+  project_id                  TEXT NOT NULL,
+  workspace_id                TEXT NOT NULL,
+  resource_boundary_revision  INTEGER NOT NULL,
+  status                      TEXT NOT NULL CHECK (status IN ('Pending','Active')),
+  created_at                  TEXT NOT NULL,
+  updated_at                  TEXT NOT NULL,
+  activated_at                TEXT,
+  PRIMARY KEY (project_id, workspace_id, resource_boundary_revision),
+  FOREIGN KEY (workspace_id, project_id)
+    REFERENCES workspaces(workspace_id, project_id),
+  CHECK ((status = 'Active') = (activated_at IS NOT NULL))
+);
+
+CREATE INDEX idx_workspace_resource_activation_pending
+  ON workspace_resource_activation_intents(project_id, created_at, workspace_id,
+                                            resource_boundary_revision)
+  WHERE status = 'Pending';
+```
+
+The next forward-only additive migration after the current P10 Attention
+projection baseline (`user_version=34`) creates this table together with the
+P10-owned activation-attention projection table (`04`/`05`). Active intent
+rows are retained as the durable idempotency record for their exact boundary
+revision. The migration does not inspect/interpret old command result JSON or
+reconstruct v1/v2 intents from raw paths.
 
 Write transaction (DID §9.5): `ProjectEnvironmentPort.resolve` outside the tx
 returns `{ regions, observedEnvironmentRevision }`; then `BEGIN IMMEDIATE` →

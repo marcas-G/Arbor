@@ -104,6 +104,63 @@ P1 `ResourceOwnershipClaim` record (matches the DDL columns;
   resolvedAtEnvironmentRevision, createdAt, releasedAt: string | null }
 ```
 
+### WorkspaceResourceActivationStore (FT-DG-01 OPEN-3)
+
+This P1-owned operational store records only a root Workspace's committed
+boundary-activation obligation. It is not a Profile source/audit record and
+stores no canonical path, Profile ref/version, raw failure, or model/user
+text.
+
+```ts
+interface WorkspaceResourceActivationIntent {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly resourceBoundaryRevision: ResourceBoundaryRevision;
+  readonly status: "Pending" | "Active";
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly activatedAt: string | null;
+}
+
+type NewWorkspaceResourceActivationIntent = Omit<
+  WorkspaceResourceActivationIntent,
+  "status" | "activatedAt"
+> & { readonly status: "Pending"; readonly activatedAt: null };
+
+type WorkspaceResourceActivationStoreError = RepositoryFailure<
+  "WorkspaceResourceActivationStore"
+>;
+
+interface WorkspaceResourceActivationStoreService {
+  readonly insertPending: (
+    intent: NewWorkspaceResourceActivationIntent,
+  ) => Effect.Effect<void, WorkspaceResourceActivationStoreError, TransactionScope>;
+  readonly find: (
+    projectId: ProjectId,
+    workspaceId: WorkspaceId,
+    resourceBoundaryRevision: ResourceBoundaryRevision,
+  ) => Effect.Effect<Option.Option<WorkspaceResourceActivationIntent>, WorkspaceResourceActivationStoreError, TransactionScope>;
+  readonly compareAndSetActive: (
+    projectId: ProjectId,
+    workspaceId: WorkspaceId,
+    resourceBoundaryRevision: ResourceBoundaryRevision,
+    activatedAt: string,
+    updatedAt: string,
+  ) => Effect.Effect<boolean, WorkspaceResourceActivationStoreError, TransactionScope>;
+  readonly listPending: (
+    projectId?: ProjectId,
+  ) => Effect.Effect<ReadonlyArray<WorkspaceResourceActivationIntent>, WorkspaceResourceActivationStoreError, TransactionScope>;
+}
+```
+
+The unique identity is `(projectId, workspaceId, resourceBoundaryRevision)`;
+`insertPending` participates in the CreateProject Gateway transaction.
+`listPending` is deterministic (createdAt then identity) and is the P12
+restart worklist. Active intents remain durable so replay/rebuild can prove
+the exact transition; no intent is hard-deleted by P12 or P10. The additive
+migration never infers/backfills rows from a non-empty Workspace boundary or
+a missing claim.
+
 ### CommandStore
 
 | Method | Semantics |
@@ -182,9 +239,14 @@ parsing before those boundaries is forbidden. This clarification changes no
 | Method | Semantics |
 |---|---|
 | `resolveAndWrite(projectId, addresses, claims)` | implements the 04 §3.3 ownership write sequence; returns `{ regions, claims }` |
+| `activatePendingWorkspaceResource(projectId, workspaceId, resourceBoundaryRevision, addresses)` | P11 CreateProject recovery path; resolves addresses outside the write transaction, then in one `BEGIN IMMEDIATE` scope checks the exact Pending intent and environment revision, loads overlaps, inserts the complete claim set, CASes Pending→Active, appends `WorkspaceResourceActivationChanged(Active)`, and commits; returns `Activated` or idempotent `AlreadyActive`; missing/mismatched intent fails closed |
 
-`ProjectionStore` requires `TransactionScope`; `OwnershipWriteService` opens
-its own transaction (it resolves outside, then transacts).
+`ProjectionStore` requires `TransactionScope`; ordinary `resolveAndWrite`
+opens its own transaction (it resolves outside, then transacts). The activation
+operation also resolves outside, but its claim insert, intent CAS, and P1
+DomainEventJournal append share exactly one transaction; it MUST NOT call
+`resolveAndWrite` as a nested/separate commit and MUST NOT expose a state where
+claims are committed while the intent remains Pending or vice versa.
 
 ### ConsumerOffsetStore
 
@@ -274,6 +336,7 @@ ResourceOwnershipRepository / CommandStore / DomainEventJournal
 ConsumerOffsetStore / EnvironmentRevisionStore / ConsumerDeadLetterStore
 ProjectionStore                                    -> require TransactionScope
 OwnershipWriteService                               -> opens its own transaction
+WorkspaceResourceActivationStore                   -> require TransactionScope
 ProjectEnvironmentPort                             -> NO TransactionScope (slow I/O)
 ProjectResourceProfilePort                         -> NO TransactionScope (immutable in-memory snapshot)
 Clock / IdGenerator                                -> NO TransactionScope

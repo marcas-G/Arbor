@@ -31,7 +31,7 @@ ordered/list consumers remain compatible by ignoring additive fields.
 |---|---|---|
 | GQ1 | SD view inventory is authoritative (Search/Summary/Overview/Inbox all P10); WorkspaceStatus labels frozen from SD text | `01`, `02` |
 | GQ2 | EffectiveFacts = the single shared canonical-state-derived projection (P10 owns def/materialization/freshness/query; P3 consumes) | `03`, `04` |
-| GQ3 | P10 owns Attention read-model (source→severity→target→bubbling→dedup); upstream produces facts only; never auto canonical mutation | `04` |
+| GQ3 | P10 owns Attention read-model (source→severity→target→bubbling→dedup); upstream produces facts only; never auto canonical mutation | `02`, `04` |
 | GQ4 | External Stop authority resolver = P12 (inherited clarification of P2 `01`); P10 exposes control surface only | `05` |
 | GQ5 | Freshness = monotonic watermark + observable lag + explicit FreshnessRequirement barrier; no implicit RYW | `03` |
 | GQ6 | P10 = programmatic projection/query + UI-facing view semantics; P12 = transport shells (no reinterpretation) | `05` |
@@ -45,7 +45,7 @@ ordered/list consumers remain compatible by ignoring additive fields.
 | Doc | Owns |
 |---|---|
 | `01-view-inventory.md` | Authoritative view list (SD full inventory), per-view derive inputs & query shapes, WorkspaceStatus exhaustive label map |
-| `02-attention-readmodel.md` | Attention source→severity→target→bubbling→dedup→read-model contract; six fact sources; GAP-01 view |
+| `02-attention-readmodel.md` | Attention source→severity→target→bubbling→dedup→read-model contract; canonical/event fact sources including FT-DG-01 OPEN-3; GAP-01 view |
 | `03-effectivefacts-freshness.md` | EffectiveFacts shared projection (def/materialization/query); freshness watermark/lag/barrier contract |
 | `04-rebuild-atscale.md` | Business-projection at-scale rebuild (GQ2 handover from P9): checkpoints, projection-side retention (P1 `04` horizon untouched), orchestration, query correctness |
 | `05-surface-actions-transport.md` | ProjectionQueryPort/api-contracts DTOs; Query(P14 consume)/Steer/Stop/Governance-Change surfaces; P12 transport boundary |

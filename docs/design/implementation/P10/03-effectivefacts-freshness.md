@@ -36,6 +36,13 @@ stale recovery           — retry / catch-up / rebuild per DID §5.4 (P1 `05` �
 
 - The barrier reuses the `FreshnessRequirement` vocabulary (DID §8.19) at the projection boundary; action-admission semantics in P3/P4 are untouched.
 
+FT-DG-01 OPEN-3's P1 `WorkspaceResourceActivationChanged` event participates
+in the existing project sequence and Attention consumer watermark. Its Pending
+or Active projection change may lag the CreateProject/activation commit until
+that consumer catches up. There is no new read-your-writes guarantee or
+filesystem lookup on the Attention query path; callers that require fresher
+Attention use the existing watermark/barrier contract.
+
 ## 3. Must Not Decide
 
 - No RYW SLA; no clock-based freshness (sequence watermark only).
