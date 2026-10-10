@@ -105,6 +105,7 @@ if (mode === "activate") {
   for (;;) {
     const db = new DatabaseSync(databaseFile);
     try {
+      db.exec("PRAGMA busy_timeout = 0");
       db.exec("BEGIN IMMEDIATE");
       db.exec("ROLLBACK");
       db.close();

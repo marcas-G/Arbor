@@ -52,18 +52,25 @@ const ALLOWED_PROJECTION_RUNTIME_SPECIFIERS =
   /^(\.\/|\.\.\/|effect|@arbor\/domain$|@arbor\/ports$|node:)/;
 
 /** Canonical write faces — must never be called inside projection-runtime
- * (P10 `01` §3 / `02` §3: no view writes anything; GQ3/G8 zero mutation).
- * Read faces (findById, listX, classify, readAfter, lastSequence) are
- * absent from this list on purpose. */
+ * (P10 `01` §3 / `02` §3: no canonical mutation; GQ3/G8). Transaction scope
+ * is intentionally not a write face: P10 owns atomic writes to its own
+ * rebuildable read-model rows, and source-only reconciliation is explicitly
+ * one transaction. Read faces (findById, listX, classify, readAfter,
+ * lastSequence) are absent from this list on purpose. */
 const WRITE_FACE_PATTERNS: ReadonlyArray<{
   readonly pattern: RegExp;
   readonly label: string;
 }> = [
   { pattern: /\.insert\s*\(/, label: "repository insert" },
+  { pattern: /\.insertPending\s*\(/, label: "activation intent insert" },
   { pattern: /\.create\s*\(/, label: "repository create" },
   { pattern: /\.upsert\s*\(/, label: "store upsert" },
   { pattern: /\.append\s*\(/, label: "append" },
   { pattern: /\.update\s*[A-Z]/, label: "repository update CAS" },
+  {
+    pattern: /\.compareAndSetActive\s*\(/,
+    label: "activation intent state change",
+  },
   { pattern: /\.settle\s*\(/, label: "execution settle" },
   { pattern: /\.requestStop\s*\(/, label: "execution stop request" },
   {
@@ -75,7 +82,6 @@ const WRITE_FACE_PATTERNS: ReadonlyArray<{
   { pattern: /\.clear\s*\(/, label: "wait clear" },
   { pattern: /\.schedule\s*\(/, label: "timer schedule" },
   { pattern: /\.cancel\s*\(/, label: "timer cancel" },
-  { pattern: /\.transact\s*\(/, label: "transaction scope" },
   { pattern: /\.appendEntry\s*\(/, label: "session entry append" },
   { pattern: /\.releaseClaim\s*\(/, label: "ownership claim release" },
   { pattern: /\.insertClaim\s*\(/, label: "ownership claim insert" },
