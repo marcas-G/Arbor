@@ -254,6 +254,7 @@ describe("release-functional recovery and negative verdicts", () => {
     it(`F${verdict === "Fail" ? "12" : "13"} Verification ${verdict} keeps Work Open`, async () => {
       const marker = `F${verdict === "Fail" ? "12-FAIL" : "13-UNKNOWN"}-${crypto.randomUUID().slice(0, 8)}`;
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         reply: verdictProvider(marker, verdict),
       });
       fixtures.push(fixture);
@@ -262,6 +263,7 @@ describe("release-functional recovery and negative verdicts", () => {
         client,
         fixture.workspaceDirectory,
         `${verdict} verification`,
+        { resourceSelection: "Profile" },
       );
 
       await submitHumanMessage(client, project, `请创建并执行 ${marker}`);

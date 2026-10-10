@@ -39,6 +39,7 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
       let seedWorkProviderCalls = 0;
       let targetProviderCalls = 0;
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         reply: (call) => {
           const context = JSON.stringify(call.messages);
           const available = new Set(
@@ -128,6 +129,7 @@ describe("AH11 Observation to StepEffectsCommitted process crash", () => {
         client,
         fixture.workspaceDirectory,
         `AH11 step effects ${marker}`,
+        { resourceSelection: "Profile" },
       );
       await submitHumanMessage(
         client,

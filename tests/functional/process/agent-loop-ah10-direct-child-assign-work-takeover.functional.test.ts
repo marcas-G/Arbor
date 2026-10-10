@@ -269,6 +269,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       let parentSeedWaitIssued = false;
 
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
           providerTrace.push({ index, tail: context.slice(-1_000) });
@@ -422,6 +423,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         fixture.workspaceDirectory,
         `AH10 direct-child AssignWork ${marker}`,
         {
+          resourceSelection: "Profile",
           rootWorkspacePolicy: {
             controlApprovalPolicy: {
               "core.control.assign-work": "Ask",

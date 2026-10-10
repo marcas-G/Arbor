@@ -135,6 +135,7 @@ describe("AH7 general two-action interleaving", () => {
     const valueA = `ACTION_A_${marker}`;
     const valueB = `ACTION_B_${marker}`;
     const fixture = await startProductionFixture({
+      admitWorkspaceDirectory: true,
       reply: (call) => {
         const context = JSON.stringify(call.messages);
         const available = new Set(
@@ -242,6 +243,7 @@ describe("AH7 general two-action interleaving", () => {
       client,
       fixture.workspaceDirectory,
       `AH7 two-action interleaving ${marker}`,
+      { resourceSelection: "Profile" },
     );
     await submitHumanMessage(
       client,

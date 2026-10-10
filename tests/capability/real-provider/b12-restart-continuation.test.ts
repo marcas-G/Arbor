@@ -8,7 +8,11 @@ import { Readable } from "node:stream";
 import { afterEach, describe } from "vitest";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
 import { runAndCapture } from "../support/capture.js";
-import { makePublicProject, newCapabilityId } from "../support/public-chat.js";
+import {
+  makePublicProject,
+  newCapabilityId,
+  publicProjectPayload,
+} from "../support/public-chat.js";
 import type { HttpProviderRuntime } from "./http-sdk-client.js";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
@@ -302,7 +306,7 @@ describe("B12 L3 — daemon process restart continues cognition without replay",
                 projectId: project.projectId,
                 actor: "user:capability-test",
                 issuedAt: new Date().toISOString(),
-                payload: project,
+                payload: publicProjectPayload(project),
               }),
             });
             const payload = (await response.json()) as {

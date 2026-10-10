@@ -287,6 +287,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       let seedWaitIssued = false;
       let parentWorkspaceId = "";
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
           if (!context.includes(marker))
@@ -371,6 +372,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         client,
         fixture.workspaceDirectory,
         "AH10 SendMessage generation takeover",
+        { resourceSelection: "Profile" },
       );
       parentWorkspaceId = project.rootWorkspaceId;
       const child = await proposeAndApproveChildWithInitialWork(
@@ -676,6 +678,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       let parentSeedWaitIssued = false;
       let parentWorkspaceId = "";
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         onDaemonStdout: (line) => pushProbe(events, line),
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
@@ -855,6 +858,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         client,
         fixture.workspaceDirectory,
         "AH10 SendMessage Reply recovery",
+        { resourceSelection: "Profile" },
       );
       parentWorkspaceId = project.rootWorkspaceId;
       const child = await proposeAndApproveChildWithInitialWork(
@@ -1421,6 +1425,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       let probeArmed = false;
       let seedWaitIssued = false;
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
           const available = new Set(
@@ -1555,6 +1560,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
         client,
         fixture.workspaceDirectory,
         "AH10 DecisionRequest generation takeover",
+        { resourceSelection: "Profile" },
       );
       const child = await proposeAndApproveChildWithInitialWork(
         client,

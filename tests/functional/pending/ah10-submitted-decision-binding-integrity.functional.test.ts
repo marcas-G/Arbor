@@ -294,6 +294,7 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
       let selectionProviderCalls = 0;
       let selectedWorkId: string | undefined;
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         reply: (call) => {
           const tools = availableTools(call);
           const messageText = JSON.stringify(call.messages);
@@ -362,12 +363,13 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
         client,
         fixture.workspaceDirectory,
         `AH10 submitted binding integrity ${corruption}`,
+        { resourceSelection: "Profile" },
       );
       let foreignWorkspaceId: string | undefined;
       if (corruption === "workspace") {
         foreignWorkspaceId = functionalId("ws");
         const foreignDirectory = resolve(
-          fixture.directory,
+          fixture.workspaceDirectory,
           `foreign-${marker}`,
         );
         mkdirSync(foreignDirectory, { recursive: true });

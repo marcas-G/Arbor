@@ -1512,6 +1512,7 @@ describe("AH10 real daemon generation takeover", () => {
         verdict: "Pass",
       });
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
           providerTrace.push({
@@ -1661,6 +1662,7 @@ describe("AH10 real daemon generation takeover", () => {
         client,
         fixture.workspaceDirectory,
         "AH10 AcceptResult generation takeover",
+        { resourceSelection: "Profile" },
       );
       const childDirectory = fixture.workspaceDirectory;
       writeFileSync(
@@ -2045,6 +2047,7 @@ describe("AH10 real daemon generation takeover", () => {
       verdict: "Pass",
     });
     const fixture = await startProductionFixture({
+      admitWorkspaceDirectory: true,
       reply: (call, index) => {
         const context = JSON.stringify(call.messages);
         providerTrace.push({
@@ -2201,6 +2204,7 @@ describe("AH10 real daemon generation takeover", () => {
       client,
       fixture.workspaceDirectory,
       "AH10 committed AcceptResult receipt recovery",
+      { resourceSelection: "Profile" },
     );
     const childDirectory = fixture.workspaceDirectory;
     writeFileSync(

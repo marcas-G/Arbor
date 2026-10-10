@@ -20,12 +20,14 @@ const marker = `F22-COMPLETED-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
 test.beforeAll(async () => {
   fixture = await startProductionFixture({
+    admitWorkspaceDirectory: true,
     reply: makeWorkProvider({ marker, verdict: "Pass" }),
   });
   const project = await createFunctionalProject(
     makePublicClient(fixture.baseUrl),
     fixture.workspaceDirectory,
     "F22 完成状态可见性",
+    { resourceSelection: "Profile" },
   );
   projectId = project.projectId;
   rootWorkspaceId = project.rootWorkspaceId;

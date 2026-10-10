@@ -15,6 +15,16 @@ const uuidV7 = () => {
 
 export const functionalId = (prefix: string): string => `${prefix}_${uuidV7()}`;
 
+export interface PublicProjectResourceCatalog {
+  readonly profiles: ReadonlyArray<{
+    readonly resourceProfileRef: string;
+    readonly version: string;
+    readonly displayName: string;
+    readonly available: boolean;
+  }>;
+  readonly conversationOnlySupported: true;
+}
+
 export const waitForPublic = async <A>(
   read: () => Promise<A>,
   predicate: (value: A) => boolean,
@@ -35,12 +45,21 @@ export const waitForPublic = async <A>(
 };
 
 export interface PublicClient {
+  readonly rawCommand: (
+    projectId: string,
+    commandType: string,
+    payload: unknown,
+  ) => Promise<{
+    readonly status: number;
+    readonly payload: Record<string, unknown>;
+  }>;
   readonly command: (
     projectId: string,
     commandType: string,
     payload: unknown,
   ) => Promise<Record<string, unknown>>;
   readonly view: <A>(name: string, request: unknown) => Promise<A>;
+  readonly projectResources: () => Promise<PublicProjectResourceCatalog>;
 }
 
 export const makePublicClient = (baseUrl: string): PublicClient => {
@@ -63,28 +82,64 @@ export const makePublicClient = (baseUrl: string): PublicClient => {
     }
     return parsed;
   };
-  return {
-    command: async (projectId, commandType, payload) => {
-      const response = await post("/commands", {
+  const get = async (path: string) => {
+    const response = await fetch(`${baseUrl}${path}`, {
+      headers: { authorization: "Bearer local" },
+    });
+    const text = await response.text();
+    if (text.length === 0) {
+      throw new Error(`${path} ${response.status}: empty response`);
+    }
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    if (!response.ok) {
+      throw new Error(`${path} ${response.status}: ${JSON.stringify(parsed)}`);
+    }
+    return parsed;
+  };
+  const rawCommand = (
+    projectId: string,
+    commandType: string,
+    payload: unknown,
+  ) =>
+    fetch(`${baseUrl}/commands`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Bearer local",
+      },
+      body: JSON.stringify({
         commandType,
         commandId: functionalId("cmd"),
         projectId,
         actor: "user:local",
         issuedAt: new Date().toISOString(),
         payload,
-      });
-      const resolution = (response.body as { resolution?: string } | undefined)
-        ?.resolution;
-      if (resolution !== "Committed") {
+      }),
+    }).then(async (response) => ({
+      status: response.status,
+      payload: (await response.json()) as Record<string, unknown>,
+    }));
+  return {
+    rawCommand,
+    command: async (projectId, commandType, payload) => {
+      const response = await rawCommand(projectId, commandType, payload);
+      const resolution = (
+        response.payload.body as { resolution?: string } | undefined
+      )?.resolution;
+      if (response.status !== 200 || resolution !== "Committed") {
         throw new Error(
-          `${commandType} did not commit: ${JSON.stringify(response)}`,
+          `${commandType} did not commit: ${JSON.stringify(response.payload)}`,
         );
       }
-      return response;
+      return response.payload;
     },
     view: async <A>(name: string, request: unknown): Promise<A> => {
       const response = await post(`/views/${name}`, request);
       return (response.body as { value: A }).value;
+    },
+    projectResources: async () => {
+      const response = await get("/project-resources");
+      return response.body as PublicProjectResourceCatalog;
     },
   };
 };
@@ -97,15 +152,38 @@ export interface FunctionalProject {
 
 export const createFunctionalProject = async (
   client: PublicClient,
-  workspaceDirectory: string,
+  _workspaceDirectory: string,
   name: string,
   options: {
     readonly rootWorkspacePolicy?: Readonly<Record<string, unknown>>;
+    readonly resourceSelection?: "ConversationOnly" | "Profile";
   } = {},
 ): Promise<FunctionalProject> => {
   const projectId = functionalId("prj");
   const rootWorkspaceId = functionalId("ws");
   const rootSessionId = functionalId("ses");
+  const mode = options.resourceSelection ?? "ConversationOnly";
+  let resourceSelection: Record<string, string>;
+  if (mode === "ConversationOnly") {
+    resourceSelection = { _tag: "ConversationOnly" };
+  } else {
+    const catalog = await client.projectResources();
+    const available = catalog.profiles.filter((profile) => profile.available);
+    if (available.length !== 1) {
+      throw new Error(
+        `CreateProject Profile fixture requires exactly one available host profile; received ${available.length}`,
+      );
+    }
+    const profile = available[0];
+    if (profile === undefined) {
+      throw new Error("CreateProject Profile catalog lost its only entry");
+    }
+    resourceSelection = {
+      _tag: "Profile",
+      resourceProfileRef: profile.resourceProfileRef,
+      version: profile.version,
+    };
+  }
   await client.command(projectId, "CreateProject", {
     name,
     revision: 0,
@@ -126,14 +204,7 @@ export const createFunctionalProject = async (
         interfaces: [],
       },
       responsibilityRevision: 0,
-      resourceBoundary: {
-        basisResponsibilityRevision: 0,
-        addresses: [
-          { _tag: "FileTree", path: workspaceDirectory },
-          { _tag: "GitWorktree", path: workspaceDirectory },
-        ],
-      },
-      resourceBoundaryRevision: 0,
+      resourceSelection,
       agentBinding: {
         _tag: "ResponsibilityBoundAgentBinding",
         workspaceId: rootWorkspaceId,

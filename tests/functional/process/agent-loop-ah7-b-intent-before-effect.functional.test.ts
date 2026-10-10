@@ -166,6 +166,7 @@ describe("AH7 action B intent before effect", () => {
     const valueB = `ACTION_B_${marker}`;
 
     const fixture = await startProductionFixture({
+      admitWorkspaceDirectory: true,
       reply: (call) => {
         const context = JSON.stringify(call.messages);
         const available = new Set(
@@ -284,6 +285,7 @@ describe("AH7 action B intent before effect", () => {
       client,
       fixture.workspaceDirectory,
       `AH7 B intent before effect ${marker}`,
+      { resourceSelection: "Profile" },
     );
     await submitHumanMessage(
       client,

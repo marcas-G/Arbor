@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
@@ -19,10 +19,11 @@ import {
   TransactionPort,
 } from "../../../packages/ports/src/index.js";
 import {
+  hostProfileDirectoryForFixture,
   newCapabilityId,
   type PublicAppHandle,
   type PublicProject,
-  publicProjectPayload,
+  publicProjectPayloadFromCatalog,
 } from "./public-chat.js";
 
 const capabilityPrincipal = parse(Principal)("user:capability-test");
@@ -57,7 +58,7 @@ export const submitWork = async (
       projectId: project.projectId,
       actor: "user:capability-test",
       issuedAt: new Date().toISOString(),
-      payload: publicProjectPayload(project),
+      payload: await publicProjectPayloadFromCatalog(handle, project),
     });
     if (
       created.status !== 200 ||
@@ -119,6 +120,13 @@ export const seedFilesystemOwnership = (
 ): Promise<void> =>
   handle.run(
     Effect.gen(function* () {
+      const hostProfileDirectory = hostProfileDirectoryForFixture(project);
+      if (hostProfileDirectory === undefined) {
+        throw new Error(
+          "filesystem ownership fixture requires a host-registered Profile",
+        );
+      }
+      const canonicalPath = realpathSync(hostProfileDirectory);
       const ownership = yield* ResourceOwnershipRepository;
       const tx = yield* TransactionPort;
       yield* tx.transact(
@@ -127,9 +135,9 @@ export const seedFilesystemOwnership = (
           workspaceId: project.rootWorkspaceId as never,
           region: {
             resourceSpaceId: "filesystem",
-            normalizedRegion: { kind: "FileTree", path: resolve(".") },
+            normalizedRegion: { kind: "FileTree", path: canonicalPath },
           },
-          sourceAddressSnapshot: { _tag: "FileTree", path: "." },
+          sourceAddressSnapshot: { _tag: "FileTree", path: canonicalPath },
           resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
           resolvedAtEnvironmentRevision: "local",
           createdAt: "t",

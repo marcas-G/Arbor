@@ -268,6 +268,7 @@ describe("AH7 multi-action B effect before settlement", () => {
     const valueB = `ACTION_B_${marker}`;
 
     const fixture = await startProductionFixture({
+      admitWorkspaceDirectory: true,
       reply: (call) => {
         const context = JSON.stringify(call.messages);
         const available = new Set(
@@ -376,6 +377,7 @@ describe("AH7 multi-action B effect before settlement", () => {
       client,
       fixture.workspaceDirectory,
       `AH7 B effect before settlement ${marker}`,
+      { resourceSelection: "Profile" },
     );
     await submitHumanMessage(
       client,

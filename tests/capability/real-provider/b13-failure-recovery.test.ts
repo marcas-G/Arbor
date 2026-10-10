@@ -14,6 +14,7 @@ import {
   makePublicProject,
   newCapabilityId,
   type PublicTranscriptPage,
+  publicProjectPayload,
   withPublicConversationApp,
 } from "../support/public-chat.js";
 import { makeHttpProviderClient } from "./http-sdk-client.js";
@@ -95,7 +96,7 @@ describe("B13 L3 — transient provider failure recovers without duplicated effe
                 projectId: project.projectId,
                 actor: "user:capability-test",
                 issuedAt: new Date().toISOString(),
-                payload: project,
+                payload: publicProjectPayload(project),
               });
               if (
                 created.status !== 200 ||
