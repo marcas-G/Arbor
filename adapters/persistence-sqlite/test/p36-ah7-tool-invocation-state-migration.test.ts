@@ -1,14 +1,14 @@
+import { ToolInvocationStore, TransactionPort } from "@arbor/ports";
 import { Effect, Exit, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { ToolInvocationStore, TransactionPort } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
-import { runMigrations } from "../src/migrate.js";
-import * as migrationExports from "../src/migrations.js";
 import {
   layer,
   ToolInvocationStoreLive,
   TransactionPortLive,
 } from "../src/index.js";
+import { runMigrations } from "../src/migrate.js";
+import * as migrationExports from "../src/migrations.js";
 
 const makeApp = () => {
   const sqlite = layer({ filename: ":memory:" });
@@ -19,8 +19,13 @@ const makeApp = () => {
   );
 };
 
-const runDb = <A>(program: Effect.Effect<A, unknown, SqlClient | ToolInvocationStore | TransactionPort>) =>
-  Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp())));
+const runDb = <A>(
+  program: Effect.Effect<
+    A,
+    unknown,
+    SqlClient | ToolInvocationStore | TransactionPort
+  >,
+) => Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp())));
 
 const LEGACY_EXECUTION = "exe_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const LEGACY_WORKSPACE = "ws_018f2b3c-4d5e-7abc-8def-0123456789a1";
@@ -101,7 +106,10 @@ describe("AH7-DG-03 P36 ToolInvocation state migration", () => {
         }>;
       }
     ).P36_MIGRATIONS;
-    expect(p36, "P36 must be the next forward migration after P35").toBeDefined();
+    expect(
+      p36,
+      "P36 must be the next forward migration after P35",
+    ).toBeDefined();
     if (p36 === undefined) return;
 
     const program = Effect.gen(function* () {
@@ -157,7 +165,14 @@ describe("AH7-DG-03 P36 ToolInvocation state migration", () => {
         "SELECT effect_admission_state, settlement_kind FROM tool_invocations WHERE invocation_id = ?",
         [UNSETTLED_INVOCATION],
       );
-      return { applied, before, after, replayed, legacyNoEffectDenied, afterLegacyAttempt: afterLegacyAttempt[0] };
+      return {
+        applied,
+        before,
+        after,
+        replayed,
+        legacyNoEffectDenied,
+        afterLegacyAttempt: afterLegacyAttempt[0],
+      };
     });
 
     const result = await runDb(program);

@@ -6,6 +6,7 @@ import {
   type CanonicalToolObservation,
   Clock,
   type LeaseFencingRejected,
+  type NoEffectDenialCode,
   ProjectEnvironmentPort,
   ResourceAdmission,
   type SandboxHandle,
@@ -121,10 +122,42 @@ const primaryFilesystemAddress = (
   );
 };
 
-const denied = (reason: string): CanonicalToolObservation => ({
+const denialReason = (reasonCode: NoEffectDenialCode): string => {
+  switch (reasonCode) {
+    case "InvocationAuthorityDenied":
+      return "tool authority denied";
+    case "ApprovalRequired":
+      return "approval required";
+    case "ApprovalNotFound":
+      return "approval not found";
+    case "ApprovalMismatch":
+      return "approval does not match this invocation";
+    case "ApprovalExpired":
+      return "approval expired";
+    case "ApprovalConsumedByOtherInvocation":
+      return "approval was consumed by another invocation";
+    case "ResourceResolutionDenied":
+      return "tool resource could not be resolved";
+    case "ResourceAdmissionDenied":
+      return "tool resource admission denied";
+    case "ApprovalNoLongerAuthorized":
+      return "approval is no longer authorized";
+  }
+};
+
+const denied = (reasonCode: NoEffectDenialCode): CanonicalToolObservation => ({
   _tag: "Denied",
-  reason,
+  reasonCode,
+  reason: denialReason(reasonCode),
 });
+
+const approvalDenialCode = (reason: string): NoEffectDenialCode => {
+  if (reason === "approval already consumed") {
+    return "ApprovalConsumedByOtherInvocation";
+  }
+  if (reason === "approval expired") return "ApprovalExpired";
+  return "ApprovalMismatch";
+};
 
 const isLeaseFencingRejected = (
   cause: unknown,
@@ -191,14 +224,14 @@ export const ToolRuntimeLive = (
             intent.toolVersion,
           );
           if (Option.isNone(definitionOption)) {
-            return denied("unknown tool");
+            return denied("InvocationAuthorityDenied");
           }
           const definition = definitionOption.value;
           const executor = executors.find(
             (entry) => entry.name === intent.toolName,
           );
           if (executor === undefined) {
-            return denied("no executor for tool");
+            return denied("InvocationAuthorityDenied");
           }
 
           const validation = validateToolInput(
@@ -213,6 +246,149 @@ export const ToolRuntimeLive = (
           }
 
           const now = options.now ?? (yield* clock.now());
+          const recordNoEffectDenial = (
+            sideEffectSemantics: ToolDefinition["sideEffectSemantics"],
+            resolvedRegions: ReadonlyArray<CanonicalResourceRegion>,
+            reasonCode: NoEffectDenialCode,
+          ) =>
+            Effect.gen(function* () {
+              const settledAt = yield* clock.now();
+              const current = yield* tx
+                .transact(store.findById(intent.invocationId))
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "IntentJournal",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              if (Option.isSome(current)) {
+                const record = current.value;
+                const exact =
+                  record.executionId === context.executionId &&
+                  record.workspaceId === context.workspaceId &&
+                  record.toolName === intent.toolName &&
+                  record.toolVersion === intent.toolVersion &&
+                  record.sideEffectSemantics === sideEffectSemantics &&
+                  record.argumentsJson === intent.argumentsJson &&
+                  JSON.stringify(record.resolvedRegions) ===
+                    JSON.stringify(resolvedRegions) &&
+                  record.approvalId === intent.approvalId;
+                if (exact && record.settlement !== null) {
+                  if (record.settlement._tag === "Denied") {
+                    return denied(record.settlement.reasonCode);
+                  }
+                  if (record.settlement._tag === "Interrupted") {
+                    return { _tag: "Interrupted" as const };
+                  }
+                  if (
+                    record.settlement._tag === "Success" &&
+                    record.resultRef !== null &&
+                    Option.isSome(artifactService)
+                  ) {
+                    let artifactId: ArtifactId;
+                    try {
+                      artifactId = parse(ArtifactId)(record.resultRef);
+                    } catch {
+                      return {
+                        _tag: "OutcomeUnknown" as const,
+                        reconciliationRefs: [String(intent.invocationId)],
+                      };
+                    }
+                    const bytes = yield* tx
+                      .transact(artifactService.value.load(artifactId))
+                      .pipe(
+                        Effect.mapError(
+                          operationalFailure(
+                            "SettlementJournal",
+                            String(intent.invocationId),
+                          ),
+                        ),
+                      );
+                    if (Option.isSome(bytes)) {
+                      return {
+                        _tag: "Success" as const,
+                        observation: bounded(
+                          new TextDecoder().decode(bytes.value),
+                        ),
+                        resultRef: record.resultRef,
+                      };
+                    }
+                  }
+                  return {
+                    _tag: "OutcomeUnknown" as const,
+                    reconciliationRefs: [String(intent.invocationId)],
+                  };
+                }
+                if (exact && record.effectAdmissionState !== "NotAdmitted") {
+                  return {
+                    _tag: "OutcomeUnknown" as const,
+                    reconciliationRefs: [String(intent.invocationId)],
+                  };
+                }
+              }
+              const recorded = yield* tx
+                .transact(
+                  store.recordNoEffectDenial(
+                    {
+                      invocationId: intent.invocationId,
+                      executionId: context.executionId,
+                      workspaceId: context.workspaceId,
+                      toolName: intent.toolName,
+                      toolVersion: intent.toolVersion,
+                      sideEffectSemantics,
+                      argumentsJson: intent.argumentsJson,
+                      resolvedRegions,
+                      approvalId: intent.approvalId,
+                      intentAt: now,
+                    },
+                    reasonCode,
+                    settledAt,
+                    context.executionFence,
+                    settledAt,
+                  ),
+                )
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "IntentJournal",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              if (recorded === "ExecutionStopping") {
+                const interrupted = yield* tx
+                  .transact(
+                    store.recordNoEffectInterruption(
+                      intent.invocationId,
+                      settledAt,
+                      context.executionFence,
+                      settledAt,
+                    ),
+                  )
+                  .pipe(
+                    Effect.mapError(
+                      operationalFailure(
+                        "IntentJournal",
+                        String(intent.invocationId),
+                      ),
+                    ),
+                  );
+                if (!interrupted && Option.isSome(current)) {
+                  return {
+                    _tag: "OutcomeUnknown" as const,
+                    reconciliationRefs: [String(intent.invocationId)],
+                  };
+                }
+                return { _tag: "Interrupted" as const };
+              }
+              return denied(
+                recorded.settlement?._tag === "Denied"
+                  ? recorded.settlement.reasonCode
+                  : reasonCode,
+              );
+            });
           const mountRefs = requestedMountRefs(intent.argumentsJson);
           let address: FilesystemAddress | undefined;
           let addresses: ReadonlyArray<ResourceAddress>;
@@ -221,10 +397,18 @@ export const ToolRuntimeLive = (
               mountRefs.length !== 1 ||
               mountRefs.some((mount) => mount !== "workspace")
             ) {
-              return denied("tool target must reference the workspace mount");
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                [],
+                "ResourceResolutionDenied",
+              );
             }
             if (Option.isNone(workspaces)) {
-              return denied("workspace mount resolver unavailable");
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                [],
+                "ResourceResolutionDenied",
+              );
             }
             const workspace = yield* tx
               .transact(workspaces.value.findById(context.workspaceId))
@@ -237,14 +421,20 @@ export const ToolRuntimeLive = (
                 ),
               );
             if (Option.isNone(workspace)) {
-              return denied("workspace not found");
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                [],
+                "ResourceResolutionDenied",
+              );
             }
             address = primaryFilesystemAddress(
               workspace.value.resourceBoundary.addresses,
             );
             if (address === undefined) {
-              return denied(
-                "workspace filesystem mount is missing or ambiguous",
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                [],
+                "ResourceResolutionDenied",
               );
             }
             addresses = [address];
@@ -267,8 +457,10 @@ export const ToolRuntimeLive = (
             address !== undefined &&
             (region === undefined || regions.length !== 1)
           ) {
-            return denied(
-              "workspace filesystem region is unresolved or ambiguous",
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              [],
+              "ResourceResolutionDenied",
             );
           }
 
@@ -291,7 +483,11 @@ export const ToolRuntimeLive = (
                 )
             : context.authority;
           if (resolvedAuthority === undefined) {
-            return denied("tool authority unavailable");
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              regions,
+              "InvocationAuthorityDenied",
+            );
           }
           const authority = checkInvocationAuthority({
             authority: resolvedAuthority,
@@ -303,14 +499,22 @@ export const ToolRuntimeLive = (
             maxDelegationDepth: options.maxDelegationDepth ?? 1,
           });
           if (authority._tag === "Denied") {
-            return denied(authority.reason);
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              regions,
+              "InvocationAuthorityDenied",
+            );
           }
 
           const needsApproval = executor.requiresApproval(intent);
           let approvalAlreadyConsumedBySelf = false;
           if (needsApproval) {
             if (intent.approvalId === null) {
-              return denied("approval required");
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                "ApprovalRequired",
+              );
             }
             const approval = yield* tx
               .transact(store.findApproval(intent.approvalId))
@@ -323,7 +527,11 @@ export const ToolRuntimeLive = (
                 ),
               );
             if (Option.isNone(approval)) {
-              return denied("approval not found");
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                "ApprovalNotFound",
+              );
             }
             if (approval.value.consumedBy === intent.invocationId) {
               const recorded = yield* tx
@@ -337,7 +545,11 @@ export const ToolRuntimeLive = (
                   ),
                 );
               if (Option.isNone(recorded)) {
-                return denied("approval consumed without matching invocation");
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
+                  regions,
+                  "ApprovalConsumedByOtherInvocation",
+                );
               }
               approvalAlreadyConsumedBySelf = true;
             }
@@ -351,7 +563,11 @@ export const ToolRuntimeLive = (
               replayOfRecordedInvocation: approvalAlreadyConsumedBySelf,
             });
             if (matched._tag === "Denied") {
-              return denied(matched.reason);
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                approvalDenialCode(matched.reason),
+              );
             }
           }
 
@@ -372,7 +588,11 @@ export const ToolRuntimeLive = (
               ),
             );
           if (admitted._tag === "Denied") {
-            return denied(admitted.reason);
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              regions,
+              "ResourceAdmissionDenied",
+            );
           }
 
           const prior = yield* tx
@@ -408,6 +628,12 @@ export const ToolRuntimeLive = (
               );
             }
             if (recorded.settlement !== null) {
+              if (recorded.settlement._tag === "Denied") {
+                return denied(recorded.settlement.reasonCode);
+              }
+              if (recorded.settlement._tag === "Interrupted") {
+                return { _tag: "Interrupted" as const };
+              }
               if (
                 recorded.settlement._tag === "Success" &&
                 recorded.resultRef !== null &&
@@ -521,30 +747,94 @@ export const ToolRuntimeLive = (
                 reconciliationRefs,
               };
             }
+            if (recorded.effectAdmissionState === "LegacyUnknown") {
+              return {
+                _tag: "OutcomeUnknown" as const,
+                reconciliationRefs: [String(intent.invocationId)],
+              };
+            }
           } else {
-            yield* tx
-              .transact(
-                store.recordIntent({
-                  invocationId: intent.invocationId,
-                  executionId: context.executionId,
-                  workspaceId: context.workspaceId,
-                  toolName: intent.toolName,
-                  toolVersion: intent.toolVersion,
-                  sideEffectSemantics: definition.sideEffectSemantics,
-                  argumentsJson: intent.argumentsJson,
-                  resolvedRegions: regions,
-                  approvalId: intent.approvalId,
-                  intentAt: now,
+            const invocation = {
+              invocationId: intent.invocationId,
+              executionId: context.executionId,
+              workspaceId: context.workspaceId,
+              toolName: intent.toolName,
+              toolVersion: intent.toolVersion,
+              sideEffectSemantics: definition.sideEffectSemantics,
+              argumentsJson: intent.argumentsJson,
+              resolvedRegions: regions,
+              approvalId: intent.approvalId,
+              intentAt: now,
+            } as const;
+            const claimStopped = { _tag: "AH7ClaimStopped" as const };
+            const approvalClaimLost = { _tag: "AH7ApprovalClaimLost" as const };
+            const claim = yield* Effect.match(
+              tx.transact(
+                Effect.gen(function* () {
+                  const recordedIntent = yield* store.recordIntent(
+                    invocation,
+                    context.executionFence,
+                    now,
+                  );
+                  if (recordedIntent === "ExecutionStopping") {
+                    return "ExecutionStopping" as const;
+                  }
+                  if (needsApproval && intent.approvalId !== null) {
+                    const consumed = yield* store.consumeApproval(
+                      intent.approvalId,
+                      intent.invocationId,
+                      context.executionFence,
+                      now,
+                    );
+                    if (consumed === "ExecutionStopping") {
+                      return yield* Effect.fail(claimStopped);
+                    }
+                    if (!consumed) {
+                      return yield* Effect.fail(approvalClaimLost);
+                    }
+                  }
+                  return "Claimed" as const;
                 }),
-              )
-              .pipe(
-                Effect.mapError(
-                  operationalFailure(
-                    "IntentJournal",
-                    String(intent.invocationId),
-                  ),
-                ),
+              ),
+              {
+                onFailure: (cause) => ({ _tag: "Failed" as const, cause }),
+                onSuccess: (value) => ({ _tag: "Succeeded" as const, value }),
+              },
+            );
+            if (claim._tag === "Failed") {
+              if (
+                typeof claim.cause === "object" &&
+                claim.cause !== null &&
+                "_tag" in claim.cause &&
+                claim.cause._tag === "AH7ApprovalClaimLost"
+              ) {
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
+                  regions,
+                  "ApprovalConsumedByOtherInvocation",
+                );
+              }
+              if (
+                typeof claim.cause === "object" &&
+                claim.cause !== null &&
+                "_tag" in claim.cause &&
+                claim.cause._tag === "AH7ClaimStopped"
+              ) {
+                return { _tag: "Interrupted" as const };
+              }
+              return yield* Effect.fail<ToolRuntimeError>(
+                isLeaseFencingRejected(claim.cause)
+                  ? claim.cause
+                  : operationalFailure(
+                      "IntentJournal",
+                      String(intent.invocationId),
+                    )(claim.cause),
               );
+            }
+            if (claim.value === "ExecutionStopping") {
+              return { _tag: "Interrupted" as const };
+            }
+            if (needsApproval) approvalAlreadyConsumedBySelf = true;
             if (options.qualificationProbe !== undefined) {
               yield* Effect.promise(
                 () =>
@@ -557,26 +847,159 @@ export const ToolRuntimeLive = (
               );
             }
           }
-          if (
-            needsApproval &&
-            intent.approvalId !== null &&
-            !approvalAlreadyConsumedBySelf
-          ) {
-            const consumed = yield* tx
-              .transact(
-                store.consumeApproval(intent.approvalId, intent.invocationId),
-              )
+
+          const effectGateNow = yield* clock.now();
+          const effectAuthority = Option.isSome(authorityResolver)
+            ? yield* authorityResolver.value
+                .resolve({
+                  intent,
+                  definition,
+                  context,
+                  regions,
+                  now: effectGateNow,
+                })
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "AuthorityResolution",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                )
+            : context.authority;
+          if (effectAuthority === undefined) {
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              regions,
+              approvalAlreadyConsumedBySelf
+                ? "ApprovalNoLongerAuthorized"
+                : "InvocationAuthorityDenied",
+            );
+          }
+          const effectAuthorityCheck = checkInvocationAuthority({
+            authority: effectAuthority,
+            definition,
+            intent,
+            context,
+            regions,
+            now: effectGateNow,
+            maxDelegationDepth: options.maxDelegationDepth ?? 1,
+          });
+          if (effectAuthorityCheck._tag === "Denied") {
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              regions,
+              approvalAlreadyConsumedBySelf
+                ? "ApprovalNoLongerAuthorized"
+                : "InvocationAuthorityDenied",
+            );
+          }
+          if (needsApproval && intent.approvalId !== null) {
+            const approval = yield* tx
+              .transact(store.findApproval(intent.approvalId))
               .pipe(
                 Effect.mapError(
                   operationalFailure(
-                    "ApprovalConsumption",
+                    "ApprovalLookup",
                     String(intent.invocationId),
                   ),
                 ),
               );
-            if (!consumed) {
-              return denied("approval already consumed");
+            const matched = Option.isSome(approval)
+              ? matchApproval({
+                  approval: approval.value,
+                  intent,
+                  definition,
+                  context,
+                  regions,
+                  now: effectGateNow,
+                  replayOfRecordedInvocation: approvalAlreadyConsumedBySelf,
+                })
+              : { _tag: "Denied" as const, reason: "approval not found" };
+            if (matched._tag === "Denied") {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                approvalAlreadyConsumedBySelf
+                  ? "ApprovalNoLongerAuthorized"
+                  : approvalDenialCode(matched.reason),
+              );
             }
+          }
+          const effectAdmission = yield* Effect.match(
+            tx.transact(
+              store.admitEffect(
+                intent.invocationId,
+                effectAuthority,
+                effectGateNow,
+                context.executionFence,
+              ),
+            ),
+            {
+              onFailure: (cause) => ({ _tag: "Failed" as const, cause }),
+              onSuccess: (value) => ({ _tag: "Succeeded" as const, value }),
+            },
+          );
+          if (effectAdmission._tag === "Failed") {
+            return yield* Effect.fail<ToolRuntimeError>(
+              isLeaseFencingRejected(effectAdmission.cause)
+                ? effectAdmission.cause
+                : operationalFailure(
+                    "IntentJournal",
+                    String(intent.invocationId),
+                  )(effectAdmission.cause),
+            );
+          }
+          if (effectAdmission.value._tag === "Denied") {
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              regions,
+              approvalAlreadyConsumedBySelf
+                ? "ApprovalNoLongerAuthorized"
+                : effectAdmission.value.reasonCode,
+            );
+          }
+          if (effectAdmission.value._tag === "ExecutionStopping") {
+            const settledAt = yield* clock.now();
+            const interrupted = yield* tx
+              .transact(
+                store.recordNoEffectInterruption(
+                  intent.invocationId,
+                  settledAt,
+                  context.executionFence,
+                  settledAt,
+                ),
+              )
+              .pipe(
+                Effect.mapError(
+                  operationalFailure(
+                    "IntentJournal",
+                    String(intent.invocationId),
+                  ),
+                ),
+              );
+            if (!interrupted) {
+              const current = yield* tx
+                .transact(store.findById(intent.invocationId))
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "IntentJournal",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              if (
+                Option.isSome(current) &&
+                current.value.effectAdmissionState !== "NotAdmitted"
+              ) {
+                return {
+                  _tag: "OutcomeUnknown" as const,
+                  reconciliationRefs: [String(intent.invocationId)],
+                };
+              }
+            }
+            return { _tag: "Interrupted" as const };
           }
 
           const handle = yield* sandbox
@@ -805,6 +1228,8 @@ export const ToolRuntimeLive = (
                   _tag: "ExpectedFailure",
                   observation: outcome.observation,
                 };
+              case "Denied":
+                return denied(outcome.settlement.reasonCode);
               case "Interrupted":
                 return { _tag: "Interrupted" };
               case "OutcomeUnknown":

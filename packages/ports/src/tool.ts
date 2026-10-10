@@ -311,7 +311,11 @@ export interface ToolInvocationStoreService {
     invocationId: ToolInvocationId,
     executionFence?: ToolExecutionContext["executionFence"],
     fenceNow?: string,
-  ) => Effect.Effect<boolean | "ExecutionStopping", ToolInvocationStoreError, TransactionScope>;
+  ) => Effect.Effect<
+    boolean | "ExecutionStopping",
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
   readonly recordNoEffectDenial: (
     invocation: ToolInvocationIntent,
     reasonCode: NoEffectDenialCode,
@@ -334,7 +338,11 @@ export interface ToolInvocationStoreService {
     currentAuthority: InvocationAuthority,
     now: string,
     executionFence?: ToolExecutionContext["executionFence"],
-  ) => Effect.Effect<ToolEffectAdmissionResult, ToolInvocationStoreError, TransactionScope>;
+  ) => Effect.Effect<
+    ToolEffectAdmissionResult,
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
   readonly findApproval: (
     approvalId: string,
   ) => Effect.Effect<
