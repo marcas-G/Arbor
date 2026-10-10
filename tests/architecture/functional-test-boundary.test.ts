@@ -41,17 +41,25 @@ describe("functional-test trust boundary", () => {
   });
 
   it("F21 exercises browser project creation without an internal setup shortcut", () => {
-    const browser = source(
-      "tests/functional/pending/ui-project-resource.spec.ts",
-    );
+    const browser = source("tests/functional/ui/f21-project-resource.spec.ts");
     expect(browser).toContain("page.goto(fixture.baseUrl)");
     expect(browser).toContain('page.getByRole("button", { name: "创建项目" })');
+    expect(browser).toContain("makePublicClient(fixture.baseUrl)");
+    expect(browser).toContain('fetch("/projects"');
+    expect(browser).toContain('fetch("/commands"');
     for (const forbidden of [
       "node:sqlite",
+      "DatabaseSync",
       "SqlClient",
+      "CommandStore",
+      "WorkspaceRepository",
       "buildSingleWorkspaceLayer",
-      'fetch("/commands"',
-      'fetch("/views/',
+      "readRows(",
+      "SELECT ",
+      "PRAGMA ",
+      "fixture.databaseFile",
+      "@arbor/ports",
+      "@arbor/application",
     ]) {
       expect(browser).not.toContain(forbidden);
     }

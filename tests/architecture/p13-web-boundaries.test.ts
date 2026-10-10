@@ -7,8 +7,9 @@ import { describe, expect, it } from "vitest";
  *
  * I1/EC-2  zero backend imports except `@arbor/api-contracts` (type-only);
  *          no node builtins; no repo-package source reach-through.
- * I3       every network touch is a whitelist URL (`/views/...`, `/commands`,
- *          `/ws`) — commands ONLY via `/commands`.
+ * I3       every network touch is a whitelist URL (`/views/...`, the exact
+ *          local-authenticated GET `/project-resources`, `/commands`, `/ws`)
+ *          — mutations ONLY via `/commands`.
  * EC-9     no `/search` surface anywhere in the client (out-of-v1).
  */
 
@@ -89,9 +90,10 @@ describe("p13-web-boundaries", () => {
     }
   });
 
-  it("I3: network URLs are exactly the whitelist (/views/:view, /projects, /commands, /ws)", () => {
+  it("I3: network URLs are exactly the whitelist (/views/:view, /project-resources GET, /projects, /commands, /ws)", () => {
     const allowed = new Set([
       "/commands",
+      "/project-resources",
       "/projects",
       "/ws",
       "/conversation-progress/",
@@ -124,6 +126,21 @@ describe("p13-web-boundaries", () => {
         }
       }
     }
+
+    const resourceCatalog = readFileSync(
+      join(webRoot, "src", "api", "transport.ts"),
+      "utf8",
+    );
+    const requestStart = resourceCatalog.indexOf(
+      'fetch("/project-resources", {',
+    );
+    expect(requestStart).toBeGreaterThanOrEqual(0);
+    const requestEnd = resourceCatalog.indexOf("});", requestStart);
+    expect(requestEnd).toBeGreaterThan(requestStart);
+    const requestInit = resourceCatalog.slice(requestStart, requestEnd);
+    expect(requestInit).toContain("Authorization");
+    expect(requestInit).not.toMatch(/\bmethod\s*:/);
+    expect(requestInit).not.toMatch(/\bbody\s*:/);
   });
 
   it("I3/EC-6: mutations go through POST /commands only — no other write verb target exists", () => {
