@@ -23,14 +23,19 @@ evidence for the accepted disposition, not implementation or GREEN evidence.
 
 ## Owning documents and post-landing digests
 
-| Owner | Revision/status after landing | SHA-256 |
+Owner digests below are SHA-256 of the exact committed Git blob bytes returned
+by `git cat-file blob <commit>:<path>` at landing commit
+`ac4a1ea9fb06aa78c1cbd3fd3b166fd951257563`. This byte sequence (not the
+working-tree CRLF representation) is authoritative for the recorded digest.
+
+| Owner | Revision/status after landing | Git-blob SHA-256 |
 |---|---|---|
-| `docs/design/03-detailed-implementation-design.md` | DID v1.35 | `C7FAA94E80C8B9B7C379EDE8C6FFEABDE2F459170224D72A409EC4AA326EFCF6` |
-| `docs/design/implementation/P1/01-command-contracts.md` | P1 phase-scoped owner amended | `EDF6822F5E12EA8E560A40A65440AC9D2CCE6F5B8B371F6B36B24F46236D71ED` |
-| `docs/design/implementation/P1/02-port-contracts.md` | P1 phase-scoped Port owner amended | `5CE3CE2B4CAF1DF6FC55B2E66FA17D5E634ED4099935EE66AD67F145584B4176` |
-| `docs/design/implementation/P1/03-transaction-model.md` | P1 phase-scoped transaction owner amended | `D635CBBE4AF48E6308FA2957670CB4A734DD96592F2EC878ADA8556D714F97F8` |
-| `docs/design/implementation/P1/07-agent-loop-step-command-identity.md` | Frozen P1 `07` owner amended | `D9DCDC866FFEF1DDBFD1A20A0BC24460438D4060BBC61674DC6379A6571AF686` |
-| `docs/design/implementation/P9/07-agent-loop-step-recovery.md` | Frozen P9 `07` owner amended | `C53D825A3B232BA0E2BA19AC533EE67C0157152E173DAB61EF32F881067183A4` |
+| `docs/design/03-detailed-implementation-design.md` | DID v1.35 | `870DC29BB807E79DC63EE5E7D591E81EB4DCF33298F18E63AFBD93191598FE3C` |
+| `docs/design/implementation/P1/01-command-contracts.md` | P1 phase-scoped owner amended | `DE1C5BC7A7FA1AB58AEAA57A86E722061CB6C1EDD4567DF1EE8F47D7C02CFE78` |
+| `docs/design/implementation/P1/02-port-contracts.md` | P1 phase-scoped Port owner amended | `D4E347BD63E196BD0F9D9BD6CD64B751812E4326BDDD28F7DF6CA212E40BFBDF` |
+| `docs/design/implementation/P1/03-transaction-model.md` | P1 phase-scoped transaction owner amended | `1B9571E8559486B4C38D5608D18C38A8390A04863402332C790D3E513751D366` |
+| `docs/design/implementation/P1/07-agent-loop-step-command-identity.md` | Frozen P1 `07` owner amended | `3663BD8B0AACDDD505F5E8FE4DDC2BDCD131168D42D23A1CBC8C2811DD0B0804` |
+| `docs/design/implementation/P9/07-agent-loop-step-recovery.md` | Frozen P9 `07` owner amended | `8B82994A19420CD821AA0B136569D00D151843657F6032B932A23D858A0396D1` |
 
 The top-level change is recorded as DID v1.34 → v1.35. The phase-owned P1/P9
 documents do not have independent numeric revision headers; their owner clauses
@@ -53,7 +58,9 @@ are amended in place. No other design owner was changed.
   Domain ID/value schemas may be reused as sub-schemas. The current schema-v1
   `ConcludeVerificationResult.conclusionReason` is absent in persisted JSON when
   `undefined`; decoding reconstructs the existing typed `undefined` value.
-  No semantic result or handler schema version is changed.
+  This landing resolves the earlier RED report's serialization question; it is
+  no longer an open design decision, though runtime decoder qualification is
+  still open. No semantic result or Handler schema version is changed.
 - **Prior-generation consumers:** these are separate from Gateway replay and do
   not compare a candidate tuple. They validate the expected prior CommandId and
   Project before decoding, then select by trusted action-route CommandType and
