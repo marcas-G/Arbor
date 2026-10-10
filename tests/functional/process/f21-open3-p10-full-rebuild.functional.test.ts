@@ -15,12 +15,18 @@ import {
   TransactionPortLive,
   WorkspaceResourceActivationStoreLive,
 } from "../../../adapters/persistence-sqlite/src/index.js";
+import { buildSingleWorkspaceLayer } from "../../../apps/single-workspace/src/index.js";
+import type {
+  AttentionReq,
+  AttentionRes,
+} from "../../../packages/api-contracts/src/views.js";
 import {
   ProjectId,
   parse,
   WorkspaceId,
 } from "../../../packages/domain/src/index.js";
 import {
+  ProjectionQueryPort,
   TransactionPort,
   WorkspaceResourceActivationStore,
 } from "../../../packages/ports/src/index.js";
@@ -197,6 +203,10 @@ const startWorker = (
   markerFile: string,
   startedMarker?: string,
 ) => {
+  const lockWaitMarker =
+    mode === "activate"
+      ? (startedMarker ?? `${markerFile}.lock-wait`)
+      : undefined;
   const child = spawn(
     process.execPath,
     [
@@ -211,8 +221,11 @@ const startWorker = (
       cwd: repositoryRoot,
       env: {
         ...process.env,
-        ...(startedMarker !== undefined
-          ? { F21_ACTIVATION_STARTED_MARKER: startedMarker }
+        ...(lockWaitMarker !== undefined
+          ? {
+              F21_ACTIVATION_LOCK_WAIT_MARKER: lockWaitMarker,
+              F21_ACTIVATION_LOCK_ACQUIRED_MARKER: `${lockWaitMarker}.acquired`,
+            }
           : {}),
       },
       stdio: ["ignore", "ignore", "pipe"],
@@ -296,6 +309,19 @@ const inspectState = (databaseFile: string) => {
 
 const makeDirectory = () => mkdtempSync(join(tmpdir(), "arbor-f21-story-l-"));
 
+const readPublicActivationAttention = async (databaseFile: string) => {
+  const app = buildSingleWorkspaceLayer({ databaseFile, projectId });
+  const program = Effect.gen(function* () {
+    const queries = yield* ProjectionQueryPort;
+    const response = yield* queries.query<AttentionReq, AttentionRes>(
+      "attention",
+      { projectId },
+    );
+    return response.value.rows;
+  });
+  return Effect.runPromise(Effect.scoped(Effect.provide(program, app)));
+};
+
 test("P10 Story L rebuild rolls back snapshot/offset rewind on kill and linearizes an Active intent", async () => {
   const directory = makeDirectory();
   const databaseFile = join(directory, "story-l.sqlite");
@@ -330,21 +356,15 @@ test("P10 Story L rebuild rolls back snapshot/offset rewind on kill and lineariz
       activationMarker,
       activationStarted,
     );
-    const startedAt = Date.now();
-    while (!existsSync(activationStarted)) {
-      if (p11.exitCode !== null || Date.now() - startedAt > 30_000) {
-        throw new Error("P11 activation worker did not start");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    expect(
-      existsSync(activationMarker)
-        ? readFileSync(activationMarker, "utf8")
-        : undefined,
-    ).toBeUndefined();
+    const lockWait = await waitForMarker(activationStarted, p11);
+    expect(lockWait).toMatch(/SQLITE_BUSY|database is locked/i);
+    const lockAcquiredMarker = `${activationStarted}.acquired`;
+    expect(existsSync(lockAcquiredMarker)).toBe(false);
     await killWorker(p10);
     p10 = undefined;
+    expect(await waitForMarker(lockAcquiredMarker, p11)).toContain(
+      "writer lock acquired",
+    );
     expect(JSON.parse(await waitForMarker(activationMarker, p11))).toEqual({
       _tag: "Activated",
     });
@@ -380,6 +400,14 @@ test("P10 Story L rebuild rolls back snapshot/offset rewind on kill and lineariz
     expect(afterActiveRebuild.offset.last_sequence).toBe(4);
     expect(afterActiveRebuild.claims.count).toBe(1);
     expect(afterActiveRebuild.activationStatuses).toEqual(["Active"]);
+    expect(
+      await readPublicActivationAttention(databaseFile),
+    ).not.toContainEqual(
+      expect.objectContaining({
+        source: "WorkspaceResourceActivationPending",
+        targetWorkspaceId: workspaceId,
+      }),
+    );
   } finally {
     if (p11 !== undefined) await killWorker(p11);
     if (p10 !== undefined) await killWorker(p10);
@@ -420,6 +448,35 @@ test("P10 Story L after-commit kill preserves snapshot and restarted consumer ca
     expect(afterCommitKill.claims.count).toBe(0);
     expect(afterCommitKill.activationStatuses).toEqual([]);
 
+    const pendingPublicRows = await readPublicActivationAttention(databaseFile);
+    expect(pendingPublicRows).toContainEqual(
+      expect.objectContaining({
+        source: "WorkspaceResourceActivationPending",
+        targetWorkspaceId: workspaceId,
+      }),
+    );
+
+    // P11 commits after the P10 reset/snapshot/rewind commit but before the
+    // restarted P10 consumer confirms the Active event. Until catch-up, the
+    // same public Attention query still exposes the materialized Pending row.
+    const activationMarker = join(directory, "p11-active-after-rebuild.marker");
+    child = startWorker(databaseFile, "activate", activationMarker);
+    expect(JSON.parse(await waitForMarker(activationMarker, child))).toEqual({
+      _tag: "Activated",
+    });
+    await killWorker(child);
+    child = undefined;
+    const afterActivationBeforeCatchUp = inspectState(databaseFile);
+    expect(afterActivationBeforeCatchUp.intent.status).toBe("Active");
+    expect(afterActivationBeforeCatchUp.rows).toHaveLength(1);
+    expect(afterActivationBeforeCatchUp.claims.count).toBe(1);
+    expect(await readPublicActivationAttention(databaseFile)).toContainEqual(
+      expect.objectContaining({
+        source: "WorkspaceResourceActivationPending",
+        targetWorkspaceId: workspaceId,
+      }),
+    );
+
     const catchUpMarker = join(directory, "restarted-p10-catch-up.marker");
     child = startWorker(databaseFile, "catch-up", catchUpMarker);
     const catchUp = JSON.parse(await waitForMarker(catchUpMarker, child)) as {
@@ -430,18 +487,26 @@ test("P10 Story L after-commit kill preserves snapshot and restarted consumer ca
     };
     expect(catchUp).toEqual({
       fromSequence: 0,
-      lastSequence: 2,
-      applied: 2,
+      lastSequence: 4,
+      applied: 3,
       quarantined: 0,
     });
     await killWorker(child);
     child = undefined;
     const afterRestartCatchUp = inspectState(databaseFile);
-    expect(afterRestartCatchUp.offset.last_sequence).toBe(2);
-    expect(afterRestartCatchUp.rows).toEqual([
-      { workspace_id: workspaceId, resource_boundary_revision: 0 },
-    ]);
-    expect(afterRestartCatchUp.intent.status).toBe("Pending");
+    expect(afterRestartCatchUp.offset.last_sequence).toBe(4);
+    expect(afterRestartCatchUp.rows).toEqual([]);
+    expect(afterRestartCatchUp.intent.status).toBe("Active");
+    expect(afterRestartCatchUp.claims.count).toBe(1);
+    expect(afterRestartCatchUp.activationStatuses).toEqual(["Active"]);
+    expect(
+      await readPublicActivationAttention(databaseFile),
+    ).not.toContainEqual(
+      expect.objectContaining({
+        source: "WorkspaceResourceActivationPending",
+        targetWorkspaceId: workspaceId,
+      }),
+    );
   } finally {
     if (child !== undefined) await killWorker(child);
     rmSync(directory, { recursive: true, force: true });
