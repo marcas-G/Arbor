@@ -1,6 +1,6 @@
 # P1 — 02 Port Contracts
 
-**Authority:** DID v1.6 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10
+**Authority:** DID v1.6 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10; DID v1.35 §4.1C FT-DG-01 ProjectResourceProfilePort
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Implements:** P1 port contracts; P1-DG-08 persistence access; P1-DG-10 port ownership.
 
@@ -207,6 +207,47 @@ failure (re-resolve + re-evaluate), never an authoritative rejection.
 | `IdGenerator` | `generate<T>(kind): Effect<T, never>` | used by **callers** and the journal (EventId), not command handlers |
 | `ProjectEnvironmentPort` | `resolve(projectId, addresses): Effect<{ regions: ReadonlyArray<CanonicalResourceRegion>; observedEnvironmentRevision: string }, EnvironmentError>` | resolve **outside** write tx (DID §1.5); returns regions + revision together |
 
+### ProjectResourceProfilePort (FT-DG-01 CreateProject v2)
+
+The P12 host composition loads and validates the local host Profile registry at
+startup, then supplies this immutable, read-only snapshot to Application. The
+Port itself performs no filesystem I/O; its Profile lookup is deterministic
+memory access so CreateProject may call it only after the Gateway has checked
+for an existing receipt, without holding the transaction across a slow host
+probe.
+
+```ts
+interface ProjectResourceProfileSummary {
+  readonly resourceProfileRef: string;
+  readonly version: string;
+  readonly displayName: string;
+  readonly available: boolean;
+}
+
+interface TrustedProjectResourceProfile extends ProjectResourceProfileSummary {
+  readonly available: true;
+  readonly canonicalAddress: Extract<ResourceAddress, { readonly _tag: "FileTree" }>;
+}
+
+interface ProjectResourceProfilePortService {
+  readonly list: () => Effect.Effect<ReadonlyArray<ProjectResourceProfileSummary>, never>;
+  readonly resolve: (
+    resourceProfileRef: string,
+    version: string,
+  ) => Effect.Effect<Option.Option<TrustedProjectResourceProfile>, never>;
+}
+```
+
+`canonicalAddress` is an Application/handler trusted value and must never be
+returned by the public profile-list transport. The list exposes only opaque
+ref, version, friendly display name and availability. The host configuration
+owns stable ref/version values across process restart; changing canonical path
+or scope requires a new version. Profile lookup does not decide authority,
+create a GitWorktree, or mutate ownership claims. The existing
+ProjectEnvironmentPort / OwnershipWriteService remains the filesystem
+resolution and ownership-activation path after the canonical Workspace
+boundary has committed.
+
 ## 4A. Application boundary input: `VerifiedCommandAuthority`
 
 `VerifiedCommandAuthority` (`01-command-contracts.md` §2A, P1-DG-11) is **not**
@@ -225,6 +266,7 @@ ConsumerOffsetStore / EnvironmentRevisionStore / ConsumerDeadLetterStore
 ProjectionStore                                    -> require TransactionScope
 OwnershipWriteService                               -> opens its own transaction
 ProjectEnvironmentPort                             -> NO TransactionScope (slow I/O)
+ProjectResourceProfilePort                         -> NO TransactionScope (immutable in-memory snapshot)
 Clock / IdGenerator                                -> NO TransactionScope
 CommandStore.recordResolvingAttempt                -> command transaction
 CommandStore.recordRetryableAttempt                -> separate scope (after rollback)

@@ -1,6 +1,6 @@
 # P12 — 10 Transport Shells (v1.13 G6)
 
-**Authority:** DID v1.14 §10.1/§10.4.1/§10.5, v1.13 G6; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger); SD v1.3 §12, §13.9/§13.10.
+**Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.35 §4.1C, v1.13 G6; SD v1.13 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
 **Status:** DRAFT.
 
 ## 1. Boundary (frozen)
@@ -24,7 +24,8 @@ The planes share no authority capability and must not be conflated.
 ## 2. Surfaces
 
 ```text
-HTTP/WS : bind api-contracts DTOs (views + Problem); forward Commands
+HTTP/WS : bind api-contracts DTOs (views + Problem); forward Commands;
+          bind the path-free host resource catalog (FT-DG-01 §9)
 CLI     : admin/ops surface (see `04` health, `05` assessment, `06` worker)
 web shell: renders api-contracts DTOs
 Search  : OUT-OF-v1 deferral (P10 `01` §1/§4) — Search view semantics remain
@@ -135,3 +136,57 @@ human shell carries no worker identity; worker transport carries no human author
 worker transport is owned by `06`; its wire contract is domain/ports-level (no application types)
 recovery/consumer daemons run from composition root; offsets drive consumer loops
 ```
+
+## 9. Host Project Resource Profile catalog (FT-DG-01 functional scope)
+
+P12 host configuration supplies the Profile catalog consumed by the P1
+ProjectResourceProfilePort. In the first single-root implementation,
+ARBOR_PROJECT_ROOT is the configured directory; host configuration also
+supplies the stable opaque resourceProfileRef, ResourceProfileVersion and a
+path-free displayName for that entry. At process startup, the composition
+adapter validates the directory, resolves its canonical real FileTree
+address, and freezes an immutable snapshot for command handling. The same host
+configuration must produce the same ref/version across restart; changing
+canonical path or scope requires a new configured version. A Profile is not a
+capability and does not replace Authority Resolver decisions.
+
+The local web shell exposes an authenticated GET /project-resources catalog
+endpoint for the bootstrap form. Its response contains only opaque ref,
+version, host-configured friendly display name and availability; the name must
+not be derived from the path. It MUST NOT return canonical paths,
+environment-variable values, filesystem errors or raw exception text.
+The first implementation is limited to the existing local single-user
+principal model. A multi-principal host requires a separate catalog visibility
+contract before sharing resource entries.
+
+The transport body is:
+
+~~~ts
+{
+  profiles: ReadonlyArray<{
+    resourceProfileRef: string;
+    version: string;
+    displayName: string;
+    available: boolean;
+  }>;
+  conversationOnlySupported: true;
+}
+~~~
+
+An empty profile array is valid and still advertises ConversationOnly. This is a
+bootstrap catalog, not a Project-scoped P10 View and not an authorization fact.
+
+This route is not a P10 view and does not create a new command. CreateProject
+continues through the shared POST /commands path. HTTP, WebSocket and CLI
+submissions keep DID v1.34/v1.35 authentication → strict wire-v1 decode →
+Actor binding → Resolver → Gateway receipt order. The transport never reads a
+receipt or resolves a filesystem path. The immutable Profile adapter's pure
+lookup occurs only in the P1 CreateProject handler after the Gateway has
+proved no receipt exists.
+
+After Project/Workspace/Session commit, ownership activation reads the
+canonical boundary back from the persisted root Workspace and invokes the
+existing ownership/environment ports. A path disappearance or canonical
+region change fails closed without selecting a replacement Profile. This is
+post-commit convergence of the exact CreateProject fact, not a new resource
+mutation route.

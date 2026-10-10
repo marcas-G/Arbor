@@ -1,6 +1,6 @@
 # P1 — 01 Command Contracts
 
-**Authority:** DID v1.6 §4.1, §4.1A, §4.2, §0A.1, §6A.15, §12.3, §12.5, §12.6, §12.10, §12.11
+**Authority:** DID v1.6 §4.1, §4.1A, §4.2, §0A.1, §6A.15, §12.3, §12.5, §12.6, §12.10, §12.11; DID v1.35 §4.1C FT-DG-01 CreateProject v2
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Implements:** P1 command contracts; P1-DG-02/05 (DID-resolved); P1-DG-10 sub-items (ID generation, `AssignWork` rejections, child-workspace phase); fingerprint algorithm (P1-DG-03).
 
@@ -18,7 +18,8 @@ DomainError =
   VerificationAcceptanceMismatch | DependencyNotSatisfiable | PermissionRevoked
 
 CommandRejection =
-  DomainError | FencingRejected | ExecutionStopping | WorkspaceNotFound
+  DomainError | FencingRejected | ExecutionStopping | WorkspaceNotFound |
+  ProjectResourceUnavailable
 
 CommandResolution<Result, Rejection> =
     Committed(Result)
@@ -28,8 +29,16 @@ CommandResolution<Result, Rejection> =
 - Domain instantiates `CommandResolution<R, DomainError>`.
 - The Application command boundary instantiates
   `CommandResolution<R, CommandRejection>`.
-- `FencingRejected` / `ExecutionStopping` / `WorkspaceNotFound` are
+- `FencingRejected` / `ExecutionStopping` / `WorkspaceNotFound` /
+  `ProjectResourceUnavailable` are
   Application-owned; they never appear in `DomainError`.
+
+For CreateProject v2, `ProjectResourceUnavailable` carries only the
+CommandId. It MUST NOT echo the submitted Profile ref/version, host path,
+filesystem error, or registry contents. It is a deterministic terminal
+rejection recorded by the existing CommandGateway receipt path. The external
+receipt view exposes only the rejection tag; it is not a transport Problem and
+contains no host detail.
 
 > **P2 evolution (DID v1.7 G1):** P2 adds Application-owned
 > `ExecutionNotFound { executionId }` and generalizes the authority fact to
@@ -209,6 +218,17 @@ FNV-1a is superseded (see `03-transaction-model.md` §7). Idempotency compares
 
 ### Payload
 
+CreateProject semantic Handler schemaVersion **2** (external wire codec remains
+the server-selected wire-v1 codec; DID §4.1B). The v2 root resource choice is a
+closed selector; the client does not submit a ResourceBoundary or path.
+ResourceProfileRef and ResourceProfileVersion are bounded non-empty opaque
+host identifiers, not Domain entity IDs or authority capabilities.
+
+```ts
+type ResourceProfileRef = string;
+type ResourceProfileVersion = string;
+```
+
 ```ts
 {
   name: string
@@ -223,8 +243,10 @@ FNV-1a is superseded (see `03-transaction-model.md` §7). Idempotency compares
     name: string
     responsibilityDefinition: ResponsibilityDefinition
     responsibilityRevision: ResponsibilityRevision
-    resourceBoundary: ResourceBoundary       // basisResponsibilityRevision == responsibilityRevision
-    resourceBoundaryRevision: ResourceBoundaryRevision
+    resourceSelection:
+      | { _tag: "Profile"; resourceProfileRef: ResourceProfileRef;
+          version: ResourceProfileVersion }
+      | { _tag: "ConversationOnly" }
     agentBinding: ResponsibilityBoundAgentBinding
     workspacePolicy: WorkspacePolicy
     workspacePolicyRevision: Revision
@@ -246,8 +268,25 @@ FNV-1a is superseded (see `03-transaction-model.md` §7). Idempotency compares
 | Condition | Rejection |
 |---|---|
 | no authority | `DomainError.AuthorityDenied` |
-| `resourceBoundary.basisResponsibilityRevision != responsibilityRevision` | `DomainError.AuthorityDenied` (reason) |
+| Profile ref/version is absent, unknown, or stale in the immutable host registry | `CommandRejection.ProjectResourceUnavailable` (no Project/Workspace/Session/Event write) |
 | same id + different fingerprint | `CommandRejection.IdempotencyConflict` |
+
+For Profile selection, the handler resolves the exact ref/version through the
+P1 `02` ProjectResourceProfilePort only after CommandGateway's existing receipt
+tuple check has found no row. The port returns a trusted host-canonical
+FileTree address from its immutable in-memory snapshot; it performs no slow
+filesystem I/O in the semantic transaction. ConversationOnly constructs an
+empty ResourceBoundary. In both cases the handler sets the initial
+ResourceBoundary basis to the root Responsibility revision and initial
+boundary revision to 0; no caller-supplied address or boundary revision is
+copied.
+
+The Profile ref/version is part of the v2 semantic fingerprint via the closed
+payload. The ProjectCreated and WorkspaceCreated event types, EventVersion=1,
+and existing event payloads remain unchanged. The canonical Workspace
+ResourceBoundary persisted by this command is the resource truth. Durable
+Profile source attribution is OPEN-1 in the FT-DG-01 v3 proposal and is not
+claimed here.
 
 ### Events (same transaction, ordered)
 
