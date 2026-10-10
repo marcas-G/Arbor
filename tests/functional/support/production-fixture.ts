@@ -6,6 +6,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
+const NONCE_DAEMON_ENTRY = resolve(
+  "tests/functional/support/nonce-daemon-child.mjs",
+);
 const WEB_DIST = resolve("apps/web/dist");
 
 export interface CapturedProviderCall {
@@ -69,6 +72,105 @@ const freePort = () =>
         typeof address === "object" && address !== null ? address.port : -1;
       server.close(() => resolvePort(port));
     });
+  });
+
+const waitForNonceBoundPort = (
+  child: ChildProcess,
+  onLine?: (line: string) => void,
+): Promise<number> =>
+  new Promise<number>((resolvePort, rejectPort) => {
+    let settled = false;
+    let startedNonce: string | undefined;
+    let stdoutBuffer = "";
+    const finish = (
+      result: { readonly port: number } | { readonly error: Error },
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.removeListener("exit", onExit);
+      if ("error" in result) rejectPort(result.error);
+      else resolvePort(result.port);
+    };
+    const timeout = setTimeout(
+      () =>
+        finish({
+          error: new Error("functional daemon startup handshake timed out"),
+        }),
+      60_000,
+    );
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) =>
+      finish({
+        error: new Error(
+          `functional daemon exited before listening report: code=${String(code)} signal=${String(signal)}`,
+        ),
+      });
+    const readLine = (line: string) => {
+      if (line.length === 0) return;
+      onLine?.(line);
+      let event: {
+        readonly tag?: unknown;
+        readonly nonce?: unknown;
+        readonly pid?: unknown;
+        readonly port?: unknown;
+      };
+      try {
+        event = JSON.parse(line) as typeof event;
+      } catch {
+        return;
+      }
+      if (event.tag === "FUNCTIONAL_DAEMON_STARTED") {
+        if (
+          typeof event.nonce !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(
+            event.nonce,
+          ) ||
+          event.pid !== child.pid ||
+          child.exitCode !== null
+        ) {
+          finish({
+            error: new Error("invalid functional daemon start identity"),
+          });
+          return;
+        }
+        startedNonce = event.nonce;
+        return;
+      }
+      if (event.tag !== "FUNCTIONAL_DAEMON_LISTENING") return;
+      if (
+        startedNonce === undefined ||
+        event.nonce !== startedNonce ||
+        event.pid !== child.pid ||
+        typeof event.port !== "number" ||
+        !Number.isInteger(event.port) ||
+        event.port < 1 ||
+        event.port > 65_535 ||
+        child.exitCode !== null
+      ) {
+        finish({
+          error: new Error("functional daemon listening identity mismatch"),
+        });
+        return;
+      }
+      finish({ port: event.port });
+    };
+    const readStdout = (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString("utf8");
+      let newline = stdoutBuffer.indexOf("\n");
+      while (newline >= 0) {
+        readLine(stdoutBuffer.slice(0, newline).trim());
+        stdoutBuffer = stdoutBuffer.slice(newline + 1);
+        newline = stdoutBuffer.indexOf("\n");
+      }
+    };
+    child.once("exit", onExit);
+    if (child.stdout === null) {
+      finish({
+        error: new Error("functional daemon stdout is required for handshake"),
+      });
+      return;
+    }
+    child.stdout.on("data", readStdout);
   });
 
 const waitFor = async <A>(
@@ -326,6 +428,10 @@ export const startProductionFixture = async (input: {
   /** Test-only entrypoint for the first daemon incarnation. Restarts use the
    * ordinary production binary so recovery is never run with a fault hook. */
   readonly firstDaemonEntry?: string;
+  /** Opt in to an OS-selected port and a child-PID/nonce-bound listen report.
+   * This first-wave path supports the ordinary daemon entry; custom crash
+   * children remain on the legacy startup path until migrated explicitly. */
+  readonly isolatedPortHandshake?: boolean;
   readonly daemonEnvironment?: Readonly<Record<string, string>>;
   readonly onDaemonStdout?: (line: string) => void;
 }): Promise<ProductionFixture> => {
@@ -339,8 +445,8 @@ export const startProductionFixture = async (input: {
     input.onResponseSent,
     input.beforeResponse,
   );
-  const httpPort = await freePort();
-  const baseUrl = `http://127.0.0.1:${httpPort}`;
+  let httpPort = input.isolatedPortHandshake === true ? 0 : await freePort();
+  let baseUrl = `http://127.0.0.1:${httpPort}`;
   const daemonErrors: string[] = [];
   const additionalDaemons: ChildProcess[] = [];
   let daemon: ChildProcess | undefined;
@@ -351,10 +457,22 @@ export const startProductionFixture = async (input: {
     readonly entry?: string;
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
   }) => {
+    const isFirstDaemon = daemonStarts === 0;
+    if (
+      input.isolatedPortHandshake === true &&
+      (override?.entry !== undefined ||
+        (isFirstDaemon && input.firstDaemonEntry !== undefined))
+    ) {
+      throw new Error(
+        "nonce-isolated fixture startup currently requires the ordinary production daemon entry",
+      );
+    }
+    const requestedPort =
+      input.isolatedPortHandshake === true && isFirstDaemon ? 0 : httpPort;
     const daemonEnv: NodeJS.ProcessEnv = {
       ...process.env,
       ARBOR_DB: databaseFile,
-      ARBOR_HTTP_PORT: String(httpPort),
+      ARBOR_HTTP_PORT: String(requestedPort),
       ARBOR_HTTP_HOST: "127.0.0.1",
       ARBOR_WEB_DIST: WEB_DIST,
       ARBOR_AUTH_TOKENS: "",
@@ -374,27 +492,37 @@ export const startProductionFixture = async (input: {
     delete daemonEnv.FORCE_COLOR;
     delete daemonEnv.NO_COLOR;
     const entry =
-      override?.entry ??
-      (daemonStarts === 0 && input.firstDaemonEntry !== undefined
-        ? input.firstDaemonEntry
-        : DAEMON_ENTRY);
+      input.isolatedPortHandshake === true
+        ? NONCE_DAEMON_ENTRY
+        : (override?.entry ??
+          (isFirstDaemon && input.firstDaemonEntry !== undefined
+            ? input.firstDaemonEntry
+            : DAEMON_ENTRY));
     daemonStarts += 1;
     daemon = spawn(process.execPath, [entry], {
       cwd: directory,
       env: daemonEnv,
-      stdio: ["ignore", input.onDaemonStdout ? "pipe" : "ignore", "pipe"],
+      stdio: [
+        "ignore",
+        input.isolatedPortHandshake === true || input.onDaemonStdout
+          ? "pipe"
+          : "ignore",
+        "pipe",
+      ],
     });
-    let stdoutBuffer = "";
-    daemon.stdout?.on("data", (chunk: Buffer) => {
-      stdoutBuffer += chunk.toString("utf8");
-      let newline = stdoutBuffer.indexOf("\n");
-      while (newline >= 0) {
-        const line = stdoutBuffer.slice(0, newline).trim();
-        stdoutBuffer = stdoutBuffer.slice(newline + 1);
-        if (line.length > 0) input.onDaemonStdout?.(line);
-        newline = stdoutBuffer.indexOf("\n");
-      }
-    });
+    if (input.isolatedPortHandshake !== true) {
+      let stdoutBuffer = "";
+      daemon.stdout?.on("data", (chunk: Buffer) => {
+        stdoutBuffer += chunk.toString("utf8");
+        let newline = stdoutBuffer.indexOf("\n");
+        while (newline >= 0) {
+          const line = stdoutBuffer.slice(0, newline).trim();
+          stdoutBuffer = stdoutBuffer.slice(newline + 1);
+          if (line.length > 0) input.onDaemonStdout?.(line);
+          newline = stdoutBuffer.indexOf("\n");
+        }
+      });
+    }
     daemon.stderr?.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8").trim();
       if (text.length > 0 && !text.includes("ExperimentalWarning")) {
@@ -404,9 +532,13 @@ export const startProductionFixture = async (input: {
     daemon.on("error", (error) => {
       daemonErrors.push(`spawn error=${error.message}`);
     });
+    if (input.isolatedPortHandshake === true) {
+      httpPort = await waitForNonceBoundPort(daemon, input.onDaemonStdout);
+      baseUrl = `http://127.0.0.1:${httpPort}`;
+    }
     await waitFor(
       () => fetch(baseUrl),
-      (response) => response.ok,
+      (response) => response.ok && daemon?.exitCode === null,
       60_000,
     );
   };
@@ -426,8 +558,17 @@ export const startProductionFixture = async (input: {
       await startDaemon(override);
     },
     startAdditionalDaemon: async (options) => {
-      const additionalPort = await freePort();
-      const additionalBaseUrl = `http://127.0.0.1:${additionalPort}`;
+      if (
+        input.isolatedPortHandshake === true &&
+        resolve(options.entry) !== DAEMON_ENTRY
+      ) {
+        throw new Error(
+          "nonce-isolated additional daemons currently require the ordinary production daemon entry",
+        );
+      }
+      let additionalPort =
+        input.isolatedPortHandshake === true ? 0 : await freePort();
+      let additionalBaseUrl = `http://127.0.0.1:${additionalPort}`;
       const additionalErrors: string[] = [];
       const daemonEnv: NodeJS.ProcessEnv = {
         ...process.env,
@@ -451,23 +592,29 @@ export const startProductionFixture = async (input: {
       }
       delete daemonEnv.FORCE_COLOR;
       delete daemonEnv.NO_COLOR;
-      const child = spawn(process.execPath, [options.entry], {
+      const childEntry =
+        input.isolatedPortHandshake === true
+          ? NONCE_DAEMON_ENTRY
+          : options.entry;
+      const child = spawn(process.execPath, [childEntry], {
         cwd: directory,
         env: daemonEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });
       additionalDaemons.push(child);
-      let stdoutBuffer = "";
-      child.stdout?.on("data", (chunk: Buffer) => {
-        stdoutBuffer += chunk.toString("utf8");
-        let newline = stdoutBuffer.indexOf("\n");
-        while (newline >= 0) {
-          const line = stdoutBuffer.slice(0, newline).trim();
-          stdoutBuffer = stdoutBuffer.slice(newline + 1);
-          if (line.length > 0) options.onStdout?.(line);
-          newline = stdoutBuffer.indexOf("\n");
-        }
-      });
+      if (input.isolatedPortHandshake !== true) {
+        let stdoutBuffer = "";
+        child.stdout?.on("data", (chunk: Buffer) => {
+          stdoutBuffer += chunk.toString("utf8");
+          let newline = stdoutBuffer.indexOf("\n");
+          while (newline >= 0) {
+            const line = stdoutBuffer.slice(0, newline).trim();
+            stdoutBuffer = stdoutBuffer.slice(newline + 1);
+            if (line.length > 0) options.onStdout?.(line);
+            newline = stdoutBuffer.indexOf("\n");
+          }
+        });
+      }
       child.stderr?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf8").trim();
         if (text.length > 0 && !text.includes("ExperimentalWarning")) {
@@ -478,9 +625,13 @@ export const startProductionFixture = async (input: {
         additionalErrors.push(`spawn error=${error.message}`);
       });
       try {
+        if (input.isolatedPortHandshake === true) {
+          additionalPort = await waitForNonceBoundPort(child, options.onStdout);
+          additionalBaseUrl = `http://127.0.0.1:${additionalPort}`;
+        }
         await waitFor(
           () => fetch(additionalBaseUrl),
-          (response) => response.ok,
+          (response) => response.ok && child.exitCode === null,
           60_000,
         );
       } catch (error) {

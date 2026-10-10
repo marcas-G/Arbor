@@ -81,7 +81,10 @@ afterEach(async () => {
 
 describe("F23 external command input validation", () => {
   it("rejects a malformed typed MessageId before writing canonical state", async () => {
+    const daemonOutput: string[] = [];
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
+      onDaemonStdout: (line) => daemonOutput.push(line),
       reply: () => ({ _tag: "Text", text: "No model call expected" }),
     });
     fixtures.push(fixture);
@@ -175,6 +178,36 @@ describe("F23 external command input validation", () => {
         entry.body?.includes("Malformed identity must not enter the journal"),
       ),
     ).toBe(false);
+    const startupEvents = daemonOutput
+      .map((line) => {
+        try {
+          return JSON.parse(line) as {
+            readonly tag?: string;
+            readonly nonce?: string;
+            readonly pid?: number;
+            readonly port?: number;
+          };
+        } catch {
+          return undefined;
+        }
+      })
+      .filter(
+        (event) =>
+          event?.tag === "FUNCTIONAL_DAEMON_STARTED" ||
+          event?.tag === "FUNCTIONAL_DAEMON_LISTENING",
+      );
+    expect(startupEvents).toHaveLength(2);
+    expect(startupEvents[0]).toMatchObject({
+      tag: "FUNCTIONAL_DAEMON_STARTED",
+      nonce: expect.any(String),
+      pid: expect.any(Number),
+    });
+    expect(startupEvents[1]).toMatchObject({
+      tag: "FUNCTIONAL_DAEMON_LISTENING",
+      nonce: startupEvents[0]?.nonce,
+      pid: startupEvents[0]?.pid,
+      port: Number(new URL(fixture.baseUrl).port),
+    });
     expect(fixture.daemonErrors).toEqual([]);
   }, 45_000);
 
