@@ -20,7 +20,8 @@ import {
   validateCommandAuthority,
 } from "./authority.js";
 import { CommandHandlerRegistry } from "./command-handler-registry.js";
-import { decodeCommandReceipt, makeCommandReceipt } from "./command-receipt.js";
+import { makeCommandReceipt } from "./command-receipt.js";
+import { decodeRegisteredCommandReceipt } from "./command-result-codec.js";
 import { CommandInputContractRegistry } from "./external-command-codec.js";
 import { FenceStopCheck } from "./fence-stop.js";
 import {
@@ -132,7 +133,11 @@ export const makeCommandGatewayLive = (
                 stored.fingerprintAlgorithmVersion ===
                   FINGERPRINT_ALGORITHM_VERSION
               ) {
-                return decodeCommandReceipt<R>(stored);
+                return yield* decodeRegisteredCommandReceipt<R>(
+                  stored,
+                  envelope.commandType,
+                  schemaVersion,
+                );
               }
               return {
                 commandId: stored.commandId,
