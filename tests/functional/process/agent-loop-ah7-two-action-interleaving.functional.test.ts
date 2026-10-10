@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { durableSnapshot } from "../support/ah-durable-snapshot.js";
 import {
@@ -14,6 +15,8 @@ import {
   createFunctionalProject,
   functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -37,6 +40,82 @@ const toolResultPayload = (
   };
 };
 
+const isObservationForExecution = (
+  sourceRef: unknown,
+  executionId: unknown,
+): boolean =>
+  typeof sourceRef === "string" &&
+  typeof executionId === "string" &&
+  sourceRef.startsWith(`observation_${executionId}_`);
+
+const readPinnedProviderTurn = (
+  databaseFile: string,
+  providerTurnId: string,
+) => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const entries = db
+      .prepare(
+        `SELECT source_kind, source_ref, entry_kind, item_type, payload_json
+           FROM session_entries
+          WHERE source_kind IN ('ProviderTurn', 'ProviderTurnCall')
+          ORDER BY sequence`,
+      )
+      .all() as Array<{
+      source_kind: string;
+      source_ref: string;
+      entry_kind: string;
+      item_type: string | null;
+      payload_json: string;
+    }>;
+    const modelOutputs = entries.filter(
+      (entry) =>
+        entry.source_kind === "ProviderTurn" &&
+        ((entry.entry_kind === "ModelOutput" &&
+          entry.source_ref === providerTurnId) ||
+          (entry.item_type === "AssistantMessage" &&
+            entry.source_ref === `${providerTurnId}:assistant`)),
+    );
+    const typedCalls = entries
+      .filter(
+        (entry) =>
+          entry.source_kind === "ProviderTurnCall" &&
+          entry.source_ref.startsWith(`${providerTurnId}:`),
+      )
+      .map(
+        (entry) =>
+          JSON.parse(entry.payload_json) as {
+            callRef?: string;
+            toolRef?: string;
+          },
+      );
+    const legacyCalls =
+      typedCalls.length > 0 || modelOutputs.length !== 1
+        ? []
+        : ((
+            JSON.parse(modelOutputs[0]?.payload_json ?? "{}") as {
+              toolInvocations?: Array<{
+                callRef?: string;
+                toolName?: string;
+              }>;
+            }
+          ).toolInvocations ?? []);
+    const calls =
+      typedCalls.length > 0
+        ? typedCalls.map((call) => ({
+            callRef: call.callRef,
+            toolRef: call.toolRef,
+          }))
+        : legacyCalls.map((call) => ({
+            callRef: call.callRef,
+            toolRef: call.toolName,
+          }));
+    return { modelOutputs, calls };
+  } finally {
+    db.close();
+  }
+};
+
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
@@ -46,6 +125,8 @@ describe("AH7 general two-action interleaving", () => {
     const marker = `AH7-AB-${crypto.randomUUID().slice(0, 8)}`;
     const hits: AhProbeHit[] = [];
     const daemonOutput: string[] = [];
+    let probeArmed = false;
+    let seedWorkProviderCalls = 0;
     let targetProviderCalls = 0;
     let actionBatchSent = false;
     let providerActionBatches = 0;
@@ -55,50 +136,100 @@ describe("AH7 general two-action interleaving", () => {
     const valueB = `ACTION_B_${marker}`;
     const fixture = await startProductionFixture({
       reply: (call) => {
-        if (JSON.stringify(call.messages).includes(marker)) {
+        const context = JSON.stringify(call.messages);
+        const available = new Set(
+          call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        );
+        if (
+          context.includes(marker) &&
+          available.has("assign_work") &&
+          !available.has("patch")
+        ) {
+          return context.includes("WorkAssigned(")
+            ? { _tag: "Text", text: `Work admitted for ${marker}.` }
+            : {
+                _tag: "ToolCall",
+                name: "assign_work",
+                arguments: {
+                  objective: `Apply two ordered patches for ${marker}.`,
+                  why: "qualify normal A/B action interleaving across restart",
+                  constraints: [],
+                  completionExpectation:
+                    "both patch files contain their distinct marker",
+                  verificationMission: {
+                    goal: `Verify both ordered patches for ${marker}`,
+                    criteria: [
+                      {
+                        criterionId: "patch-a",
+                        requirement: "file A contains its marker once",
+                        required: true,
+                      },
+                      {
+                        criterionId: "patch-b",
+                        requirement: "file B contains its marker once",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                  reason: "AH7 A/B test",
+                },
+              };
+        }
+        if (context.includes(marker) && available.has("patch")) {
+          if (!probeArmed) {
+            if (!available.has("wait")) {
+              return { _tag: "HttpError", status: 422 };
+            }
+            seedWorkProviderCalls += 1;
+            return {
+              _tag: "ToolCall",
+              name: "wait",
+              arguments: {
+                reason: `AH7 setup waits for the two-action probe ${marker}`,
+                waitSpec: {
+                  mode: "Any",
+                  conditions: [{ _tag: "Manual" }],
+                },
+              },
+            };
+          }
           targetProviderCalls += 1;
           if (targetProviderCalls > 5) {
             return { _tag: "HttpError", status: 429 };
           }
-        }
-        if (!actionBatchSent) {
-          actionBatchSent = true;
-          const available = new Set(
-            call.tools
-              .map((tool) => tool.function?.name)
-              .filter((name): name is string => name !== undefined),
-          );
-          if (!available.has("patch")) {
-            return { _tag: "HttpError", status: 422 };
+          if (!actionBatchSent) {
+            actionBatchSent = true;
+            providerActionBatches += 1;
+            return {
+              _tag: "ToolCalls",
+              calls: [
+                {
+                  name: "patch",
+                  arguments: {
+                    target: { mount: "workspace", path: fileA },
+                    unifiedDiff: `@@ -1,1 +1,1 @@\n-FUNCTIONAL_VERIFIED\n+${valueA}`,
+                  },
+                },
+                {
+                  name: "patch",
+                  arguments: {
+                    target: { mount: "workspace", path: fileB },
+                    unifiedDiff: `@@ -0,0 +1,1 @@\n+${valueB}`,
+                  },
+                },
+              ],
+            };
           }
-          providerActionBatches += 1;
           return {
-            _tag: "ToolCalls",
-            calls: [
-              {
-                name: "patch",
-                arguments: {
-                  target: { mount: "workspace", path: fileA },
-                  unifiedDiff: `@@ -1,1 +1,1 @@\n-FUNCTIONAL_VERIFIED\n+${valueA}`,
-                },
-              },
-              {
-                name: "patch",
-                arguments: {
-                  target: { mount: "workspace", path: fileB },
-                  unifiedDiff: `@@ -0,0 +1,1 @@\n+${valueB}`,
-                },
-              },
-            ],
+            _tag: "Text",
+            text: `Both ordered patches finished for ${marker}.`,
           };
         }
-        return {
-          _tag: "Text",
-          text: `Both ordered patches finished for ${marker}.`,
-        };
+        return { _tag: "Text", text: `Waiting for Work ${marker}.` };
       },
-      firstDaemonEntry: crashChild,
-      daemonEnvironment: { ARBOR_AH_BOUNDARY: actionIntentBoundary },
       onDaemonStdout: (line) => {
         daemonOutput.push(line);
         recordAhProbeLine(hits, line);
@@ -112,6 +243,12 @@ describe("AH7 general two-action interleaving", () => {
       fixture.workspaceDirectory,
       `AH7 two-action interleaving ${marker}`,
     );
+    await submitHumanMessage(
+      client,
+      project,
+      `Please create a Work to apply two ordered patches for ${marker}.`,
+    );
+    const approval = await waitForApproval(client, project, marker);
     await client.command(project.projectId, "GrantPermission", {
       permissionGrantId: functionalId("pgr"),
       issuer: "user:local",
@@ -123,33 +260,76 @@ describe("AH7 general two-action interleaving", () => {
       target: project.rootWorkspaceId,
       expiresAt: null,
     });
-    const workId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
+    await client.command(project.projectId, "ResolveControlApproval", {
+      approvalId: approval.approvalId,
+      expectedRevision: approval.revision,
+      decision: "Approve",
+      reason: "AH7 two-action public Work admission",
+    });
+    const currentWork = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          objective?: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      (work) => work?.workId !== undefined,
+    );
+    const workId = currentWork?.workId;
+    if (workId === undefined)
+      throw new Error("AH7 two-action public Work absent");
+    expect(currentWork).toMatchObject({
+      objective: expect.stringContaining(marker),
+      revision: 0,
+      status: "Open",
+    });
+    await waitForPublic(
+      async () => seedWorkProviderCalls,
+      (count) => count >= 1,
+    );
+    await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      (work) =>
+        work?.workId === workId &&
+        work.revision === 0 &&
+        work.activeExecution === undefined,
+    );
+    const seedSnapshot = durableSnapshot(fixture.databaseFile);
+    const seedExecutionIds = new Set(
+      seedSnapshot.executions.map((execution) => execution.execution_id),
+    );
+    expect(
+      seedSnapshot.executions.every(
+        (execution) => execution.settlement_kind !== "Failed",
+      ),
+    ).toBe(true);
+
+    await fixture.crash();
+    probeArmed = true;
+    await fixture.restart({
+      entry: crashChild,
+      daemonEnvironment: { ARBOR_AH_BOUNDARY: actionIntentBoundary },
+    });
+    await client.command(project.projectId, "SteerWork", {
       workId,
       workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Apply two ordered patches for ${marker}.`,
-      why: "qualify normal A/B action interleaving across restart",
-      constraints: [],
-      completionExpectation: "both patch files contain their distinct marker",
-      verificationMission: {
-        goal: `Verify both ordered patches for ${marker}`,
-        criteria: [
-          {
-            criterionId: "patch-a",
-            requirement: "file A contains its marker once",
-            required: true,
-          },
-          {
-            criterionId: "patch-b",
-            requirement: "file B contains its marker once",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
+      expectedWorkRevision: 0,
+      steer: {
+        severity: "Normal",
+        guidance: `AH7 two-action probe ${marker}`,
       },
-      provenance: { predecessorWorkId: null, reason: "AH7 A/B test" },
-      revision: 0,
+      provenance: { source: "HumanInput" },
     });
 
     const firstActionIntent = await waitForPublic(
@@ -158,7 +338,7 @@ describe("AH7 general two-action interleaving", () => {
         value.hits.some(
           (hit) =>
             hit.boundary === actionIntentBoundary && hit.actionIndex === 0,
-        ) || value.providerCalls >= 5,
+        ) || targetProviderCalls >= 5,
       30_000,
     ).catch((error: unknown) => {
       throw new Error(
@@ -179,10 +359,30 @@ describe("AH7 general two-action interleaving", () => {
     expect(hitAIntent.callRef).toMatch(/^call_/u);
     expect(actionBatchSent).toBe(true);
     expect(providerActionBatches).toBe(1);
+    expect(seedExecutionIds.has(hitAIntent.executionId)).toBe(false);
+    expect(targetProviderCalls).toBe(1);
 
     await fixture.crash();
     const beforeAEffect = durableSnapshot(fixture.databaseFile);
-    expect(beforeAEffect.steps).toEqual([
+    const beforeAEffectSteps = beforeAEffect.steps.filter(
+      (step) => step.execution_id === hitAIntent.executionId,
+    );
+    const beforeAEffectActions = beforeAEffect.actions.filter(
+      (action) => action.execution_id === hitAIntent.executionId,
+    );
+    const beforeAEffectInvocations = beforeAEffect.toolInvocations.filter(
+      (invocation) => invocation.execution_id === hitAIntent.executionId,
+    );
+    const beforeAEffectToolResults = beforeAEffect.toolResults.filter((entry) =>
+      isObservationForExecution(entry.source_ref, hitAIntent.executionId),
+    );
+    const beforeAEffectInvocationIds = new Set(
+      beforeAEffectInvocations.map((invocation) => invocation.invocation_id),
+    );
+    const beforeAEffectArtifacts = beforeAEffect.artifacts.filter((artifact) =>
+      beforeAEffectInvocationIds.has(artifact.invocation_id),
+    );
+    expect(beforeAEffectSteps).toEqual([
       expect.objectContaining({
         execution_id: hitAIntent.executionId,
         logical_step_no: 0,
@@ -191,7 +391,7 @@ describe("AH7 general two-action interleaving", () => {
         next_action_index: 0,
       }),
     ]);
-    expect(beforeAEffect.actions).toEqual([
+    expect(beforeAEffectActions).toEqual([
       expect.objectContaining({
         execution_id: hitAIntent.executionId,
         logical_step_no: 0,
@@ -202,10 +402,10 @@ describe("AH7 general two-action interleaving", () => {
         state: "Pending",
       }),
     ]);
-    expect(beforeAEffect.actions).toHaveLength(1);
-    expect(beforeAEffect.toolInvocations).toEqual([]);
-    expect(beforeAEffect.toolResults).toEqual([]);
-    expect(beforeAEffect.artifacts).toEqual([]);
+    expect(beforeAEffectActions).toHaveLength(1);
+    expect(beforeAEffectInvocations).toEqual([]);
+    expect(beforeAEffectToolResults).toEqual([]);
+    expect(beforeAEffectArtifacts).toEqual([]);
     expect(() =>
       readFileSync(join(fixture.workspaceDirectory, fileB), "utf8"),
     ).toThrow();
@@ -221,7 +421,7 @@ describe("AH7 general two-action interleaving", () => {
         value.hits.some(
           (hit) =>
             hit.boundary === actionResultBoundary && hit.actionIndex === 0,
-        ) || value.providerCalls >= 5,
+        ) || targetProviderCalls >= 5,
       30_000,
     );
     const hitA = firstActionCommit.hits.find(
@@ -239,7 +439,25 @@ describe("AH7 general two-action interleaving", () => {
 
     await fixture.crash();
     const afterA = durableSnapshot(fixture.databaseFile);
-    expect(afterA.steps).toEqual([
+    const afterASteps = afterA.steps.filter(
+      (step) => step.execution_id === hitA.executionId,
+    );
+    const afterAActions = afterA.actions.filter(
+      (action) => action.execution_id === hitA.executionId,
+    );
+    const afterAInvocations = afterA.toolInvocations.filter(
+      (invocation) => invocation.execution_id === hitA.executionId,
+    );
+    const afterAToolResults = afterA.toolResults.filter((entry) =>
+      isObservationForExecution(entry.source_ref, hitA.executionId),
+    );
+    const afterAInvocationIds = new Set(
+      afterAInvocations.map((invocation) => invocation.invocation_id),
+    );
+    const afterAArtifacts = afterA.artifacts.filter((artifact) =>
+      afterAInvocationIds.has(artifact.invocation_id),
+    );
+    expect(afterASteps).toEqual([
       expect.objectContaining({
         execution_id: hitA.executionId,
         logical_step_no: 0,
@@ -248,7 +466,7 @@ describe("AH7 general two-action interleaving", () => {
         next_action_index: 1,
       }),
     ]);
-    expect(afterA.actions).toEqual([
+    expect(afterAActions).toEqual([
       expect.objectContaining({
         execution_id: hitA.executionId,
         logical_step_no: 0,
@@ -261,8 +479,8 @@ describe("AH7 general two-action interleaving", () => {
         observation_source_ref: expect.stringMatching(/^observation_/u),
       }),
     ]);
-    expect(afterA.toolInvocations).toHaveLength(1);
-    expect(afterA.toolInvocations).toEqual([
+    expect(afterAInvocations).toHaveLength(1);
+    expect(afterAInvocations).toEqual([
       expect.objectContaining({
         execution_id: hitA.executionId,
         tool_name: "patch",
@@ -271,13 +489,13 @@ describe("AH7 general two-action interleaving", () => {
         result_ref: expect.any(String),
       }),
     ]);
-    expect(afterA.toolResults).toHaveLength(1);
+    expect(afterAToolResults).toHaveLength(1);
     expect(
-      afterA.toolResults.map(
+      afterAToolResults.map(
         (entry) => toolResultPayload(entry.payload_json).callRef,
       ),
     ).toEqual([hitA.callRef]);
-    expect(afterA.artifacts).toHaveLength(1);
+    expect(afterAArtifacts).toHaveLength(1);
     expect(readFileSync(join(fixture.workspaceDirectory, fileA), "utf8")).toBe(
       valueA,
     );
@@ -300,7 +518,9 @@ describe("AH7 general two-action interleaving", () => {
             tool.execution_id === hitA.executionId &&
             tool.tool_name === "patch",
         ).length === 2 &&
-        snapshot.toolResults.length === 2,
+        snapshot.toolResults.filter((entry) =>
+          isObservationForExecution(entry.source_ref, hitA.executionId),
+        ).length === 2,
       45_000,
     ).catch((error: unknown) => {
       throw new Error(
@@ -315,11 +535,28 @@ describe("AH7 general two-action interleaving", () => {
       await fixture.crash();
       throw new Error("Action B durable result missing after restart");
     }
+    const afterBActions = afterB.actions.filter(
+      (action) => action.execution_id === hitA.executionId,
+    );
+    const afterBInvocations = afterB.toolInvocations.filter(
+      (invocation) => invocation.execution_id === hitA.executionId,
+    );
+    const afterBToolResults = afterB.toolResults.filter((entry) =>
+      isObservationForExecution(entry.source_ref, hitA.executionId),
+    );
+    const afterBInvocationIds = new Set(
+      afterBInvocations.map((invocation) => invocation.invocation_id),
+    );
+    const afterBArtifacts = afterB.artifacts.filter((artifact) =>
+      afterBInvocationIds.has(artifact.invocation_id),
+    );
     expect(actionB.logical_action_id).toMatch(/^lac_/u);
     expect(actionB.logical_action_id).not.toBe(hitA.logicalActionId);
     expect(actionB.call_ref).toMatch(/^call_/u);
     expect(actionB.call_ref).not.toBe(hitA.callRef);
-    expect(afterB.steps).toEqual(
+    expect(
+      afterB.steps.filter((step) => step.execution_id === hitA.executionId),
+    ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           execution_id: hitA.executionId,
@@ -329,8 +566,8 @@ describe("AH7 general two-action interleaving", () => {
         }),
       ]),
     );
-    expect(afterB.actions).toHaveLength(2);
-    expect(afterB.actions).toEqual(
+    expect(afterBActions).toHaveLength(2);
+    expect(afterBActions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           action_index: 0,
@@ -348,8 +585,8 @@ describe("AH7 general two-action interleaving", () => {
         }),
       ]),
     );
-    expect(afterB.toolInvocations).toHaveLength(2);
-    expect(afterB.toolInvocations).toEqual(
+    expect(afterBInvocations).toHaveLength(2);
+    expect(afterBInvocations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           execution_id: hitA.executionId,
@@ -365,9 +602,9 @@ describe("AH7 general two-action interleaving", () => {
         }),
       ]),
     );
-    expect(afterB.toolResults).toHaveLength(2);
-    expect(afterB.artifacts).toHaveLength(2);
-    const toolResultPayloads = afterB.toolResults.map((entry) =>
+    expect(afterBToolResults).toHaveLength(2);
+    expect(afterBArtifacts).toHaveLength(2);
+    const toolResultPayloads = afterBToolResults.map((entry) =>
       toolResultPayload(entry.payload_json),
     );
     expect(toolResultPayloads.map((result) => result.callRef).sort()).toEqual(
@@ -379,12 +616,10 @@ describe("AH7 general two-action interleaving", () => {
     expect(toolResultInvocationIds).toHaveLength(2);
     expect(new Set(toolResultInvocationIds).size).toBe(2);
     expect(
-      afterB.toolInvocations
-        .map((invocation) => invocation.invocation_id)
-        .sort(),
+      afterBInvocations.map((invocation) => invocation.invocation_id).sort(),
     ).toEqual(toolResultInvocationIds);
     expect(
-      afterB.artifacts.map((artifact) => artifact.invocation_id).sort(),
+      afterBArtifacts.map((artifact) => artifact.invocation_id).sort(),
     ).toEqual(toolResultInvocationIds);
     expect(readFileSync(join(fixture.workspaceDirectory, fileA), "utf8")).toBe(
       valueA,
@@ -392,15 +627,14 @@ describe("AH7 general two-action interleaving", () => {
     expect(readFileSync(join(fixture.workspaceDirectory, fileB), "utf8")).toBe(
       valueB,
     );
-    const targetCalls = fixture.providerCalls.filter((call) =>
-      JSON.stringify(call.messages).includes(marker),
+    const originalTurnAfterRecovery = readPinnedProviderTurn(
+      fixture.databaseFile,
+      hitA.providerTurnId ?? "",
     );
-    const toolResultCounts = targetCalls.map(
-      (call) =>
-        call.messages.filter((message) => message.role === "tool").length,
-    );
-    expect(toolResultCounts.filter((count) => count === 0)).toHaveLength(1);
-    expect(toolResultCounts.filter((count) => count === 1)).toHaveLength(0);
+    expect(originalTurnAfterRecovery.modelOutputs).toHaveLength(1);
+    expect(
+      originalTurnAfterRecovery.calls.map((call) => call.callRef).sort(),
+    ).toEqual([hitA.callRef, actionB.call_ref].sort());
     expect(targetProviderCalls).toBeLessThanOrEqual(2);
     expect(fixture.daemonErrors).toEqual([]);
     await fixture.crash();
