@@ -150,31 +150,60 @@ const isLoopbackListenerHost = (host: string | undefined): boolean => {
   );
 };
 
+const authenticateLocalSensitiveRead = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: WebTransportConfig,
+  unsupportedPrincipal: { readonly status: number; readonly code: string },
+): Promise<Principal | null> => {
+  if (
+    config.authenticator === undefined &&
+    !isLoopbackListenerHost(config.host)
+  ) {
+    sendJson(response, 503, {
+      ok: false,
+      problem: { code: "auth/local-listener-required" },
+    });
+    return null;
+  }
+  const token = bearerToken(request.headers.authorization);
+  const principal =
+    config.authenticator === undefined
+      ? (LOCAL_PRINCIPAL as unknown as Principal)
+      : await Effect.runPromise(
+          config.authenticator.authenticate(token === null ? null : { token }),
+        ).catch(() => null);
+  if (principal === null) {
+    sendJson(response, 401, {
+      ok: false,
+      problem: { code: "auth/unauthenticated" },
+    });
+    return null;
+  }
+  if (String(principal) !== LOCAL_PRINCIPAL) {
+    sendJson(response, unsupportedPrincipal.status, {
+      ok: false,
+      problem: { code: unsupportedPrincipal.code },
+    });
+    return null;
+  }
+  return principal;
+};
+
 const streamConversationProgress = async (
   request: IncomingMessage,
   response: ServerResponse,
   messageId: string,
   config: WebTransportConfig,
 ): Promise<void> => {
-  const authenticator = config.authenticator;
   const hub = config.conversationProgress ?? defaultConversationProgressHub;
-  const token = bearerToken(request.headers.authorization);
-  // Local single-user form: no configured authenticator = every request is
-  // the local principal (product decision 2026-09-29). Configured
-  // authenticators keep full 401 semantics.
-  const principal =
-    authenticator === undefined
-      ? (LOCAL_PRINCIPAL as unknown as Principal)
-      : token === null
-        ? null
-        : await Effect.runPromise(authenticator.authenticate({ token })).catch(
-            () => null,
-          );
+  const principal = await authenticateLocalSensitiveRead(
+    request,
+    response,
+    config,
+    { status: 403, code: "conversation-progress/forbidden" },
+  );
   if (principal === null) {
-    sendJson(response, 401, {
-      ok: false,
-      problem: { code: "auth/unauthenticated" },
-    });
     return;
   }
   const rows = await Effect.runPromise(
@@ -252,25 +281,13 @@ const readLocalProjectDirectory = async (
   response: ServerResponse,
   config: WebTransportConfig,
 ): Promise<void> => {
-  const token = bearerToken(request.headers.authorization);
-  const principal =
-    config.authenticator === undefined
-      ? (LOCAL_PRINCIPAL as unknown as Principal)
-      : await Effect.runPromise(
-          config.authenticator.authenticate(token === null ? null : { token }),
-        ).catch(() => null);
+  const principal = await authenticateLocalSensitiveRead(
+    request,
+    response,
+    config,
+    { status: 503, code: "project-directory/visibility-resolver-required" },
+  );
   if (principal === null) {
-    sendJson(response, 401, {
-      ok: false,
-      problem: { code: "auth/unauthenticated" },
-    });
-    return;
-  }
-  if (String(principal) !== LOCAL_PRINCIPAL) {
-    sendJson(response, 503, {
-      ok: false,
-      problem: { code: "project-directory/visibility-resolver-required" },
-    });
     return;
   }
   const rows = await Effect.runPromise(config.projectDirectory.list());
@@ -379,6 +396,53 @@ export const startWebTransport = async (
 
       if (path === "/project-resources" && method === "GET") {
         await readLocalProjectResourceProfiles(request, response, config);
+        return;
+      }
+
+      if (path.startsWith("/views/")) {
+        if (method !== "POST") {
+          sendJson(response, 400, {
+            ok: false,
+            problem: { code: "transport/invalid-request" },
+          });
+          return;
+        }
+        if (
+          config.authenticator === undefined &&
+          !isLoopbackListenerHost(config.host)
+        ) {
+          sendJson(response, 503, {
+            ok: false,
+            problem: { code: "auth/local-listener-required" },
+          });
+          return;
+        }
+        const authorizationFailure = await Effect.runPromise(
+          config.http.authorizeSensitiveRead(request.headers.authorization),
+        );
+        if (authorizationFailure !== null) {
+          sendJson(response, authorizationFailure.status, authorizationFailure);
+          return;
+        }
+        const body = await readBody(request);
+        const result = await Effect.runPromise(
+          config.http.handleAuthorizedView({
+            method,
+            path,
+            ...(request.headers.authorization === undefined
+              ? {}
+              : { authorization: request.headers.authorization }),
+            body,
+          }),
+        );
+        sendBytes(
+          response,
+          result.status,
+          "application/json; charset=utf-8",
+          "no-store",
+          Buffer.from(JSON.stringify(result)),
+          false,
+        );
         return;
       }
 

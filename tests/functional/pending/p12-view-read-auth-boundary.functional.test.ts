@@ -16,6 +16,8 @@ import {
   makeStaticAuthenticator,
 } from "../../../apps/single-workspace/src/transport/auth.js";
 import { viewQueryFaceFromPort } from "../../../apps/single-workspace/src/transport/composition.js";
+import type { ConversationProgressHub } from "../../../apps/single-workspace/src/transport/conversation-progress.js";
+import { createConversationProgressHub } from "../../../apps/single-workspace/src/transport/conversation-progress.js";
 import { makeTransportCore } from "../../../apps/single-workspace/src/transport/core.js";
 import { makeHttpShell } from "../../../apps/single-workspace/src/transport/http.js";
 import {
@@ -57,34 +59,14 @@ interface CatalogObservation {
   readonly canonicalPathReturned: boolean;
 }
 
+interface ProgressObservation {
+  readonly status: number;
+  readonly denied: boolean;
+  readonly eventStream: boolean;
+}
+
 const handles: WebTransportHandle[] = [];
 const directories: string[] = [];
-
-const observeUnauthenticatedWildcardWebSocket = (
-  port: number,
-  publish: () => void,
-): Promise<{ readonly connected: boolean; readonly frameReceived: boolean }> =>
-  new Promise((resolve) => {
-    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/ws`);
-    let connected = false;
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const finish = (frameReceived: boolean): void => {
-      if (settled) return;
-      settled = true;
-      if (timer !== undefined) clearTimeout(timer);
-      resolve({ connected, frameReceived });
-      socket.close();
-    };
-    socket.onopen = () => {
-      connected = true;
-      timer = setTimeout(() => finish(false), 100);
-      publish();
-    };
-    socket.onmessage = () => finish(true);
-    socket.onerror = () => finish(false);
-    socket.onclose = () => finish(false);
-  });
 
 const containsValue = (value: unknown, expected: string): boolean => {
   if (typeof value === "string") return value === expected;
@@ -105,6 +87,9 @@ afterEach(async () => {
 
 describe("pending P12 view read authentication boundary", () => {
   it("denies remote unauthenticated/foreign reads without hiding local authorized paths", async () => {
+    let projectionReads = 0;
+    let projectDirectoryReads = 0;
+    let progressSubscriptions = 0;
     const directory = mkdtempSync(join(tmpdir(), "p12-view-read-auth-"));
     directories.push(directory);
     const resourceDirectory = join(directory, "canonical-host-resource");
@@ -136,6 +121,47 @@ describe("pending P12 view read authentication boundary", () => {
             const projectDirectory = yield* ProjectDirectory;
             const profiles = yield* ProjectResourceProfilePort;
             const boundary = yield* TransportBoundary;
+            const queryFace = viewQueryFaceFromPort(projection);
+            const tracedQueryFace = {
+              query: (...args: Parameters<typeof queryFace.query>) => {
+                projectionReads += 1;
+                return queryFace.query(...args);
+              },
+            } as typeof queryFace;
+            const tracedProjectDirectory = {
+              list: () => {
+                projectDirectoryReads += 1;
+                return projectDirectory.list();
+              },
+            } as typeof projectDirectory;
+            const baseProgressHub = createConversationProgressHub();
+            const tracedProgressHub: ConversationProgressHub = {
+              publish: (...args) => baseProgressHub.publish(...args),
+              subscribe: (...args) => {
+                progressSubscriptions += 1;
+                return baseProgressHub.subscribe(...args);
+              },
+              close: () => baseProgressHub.close(),
+            };
+
+            const progressMessageId =
+              "msg_018f2b3c-4d5e-7abc-8def-0123456789c2";
+            yield* sql.unsafe(
+              `INSERT INTO human_messages (
+                 message_id, project_id, root_workspace_id, human_principal,
+                 body_ref, command_id, fingerprint, state, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?)`,
+              [
+                progressMessageId,
+                String(p7Project),
+                String(p7RootWorkspace),
+                "user:local",
+                "blob_test_progress",
+                "cmd_018f2b3c-4d5e-7abc-8def-0123456789c2",
+                "test-progress-fingerprint",
+                "2026-10-10T00:00:00.000Z",
+              ],
+            );
 
             yield* tx.transact(
               workspaces.updateResourceBoundaryIfRevision(
@@ -152,8 +178,15 @@ describe("pending P12 view read authentication boundary", () => {
 
             const localHttp = makeHttpShell(
               makeTransportCore({
-                views: viewQueryFaceFromPort(projection),
+                views: tracedQueryFace,
                 authenticator: makeLocalAuthenticator(),
+                submission: boundary.submission,
+              }),
+            );
+            const authenticatedHttp = makeHttpShell(
+              makeTransportCore({
+                views: tracedQueryFace,
+                authenticator,
                 submission: boundary.submission,
               }),
             );
@@ -166,11 +199,12 @@ describe("pending P12 view read authentication boundary", () => {
                 startWebTransport({
                   http: options.http,
                   webSocket: boundary.webSocket,
+                  conversationProgress: tracedProgressHub,
                   ...(options.configuredAuthenticator === undefined
                     ? {}
                     : { authenticator: options.configuredAuthenticator }),
                   sql,
-                  projectDirectory,
+                  projectDirectory: tracedProjectDirectory,
                   projectResourceProfiles: profiles,
                   host: options.host,
                   port: 0,
@@ -184,7 +218,7 @@ describe("pending P12 view read authentication boundary", () => {
             });
             handles.push(remoteWithoutAuth);
             const remoteWithAuth = yield* start({
-              http: boundary.http,
+              http: authenticatedHttp,
               host: "0.0.0.0",
               configuredAuthenticator: authenticator,
             });
@@ -267,6 +301,7 @@ describe("pending P12 view read authentication boundary", () => {
                 };
               });
 
+            const projectionReadsBeforeNoAuthViews = projectionReads;
             const noAuthDetail = yield* query(
               remoteWithoutAuth.port,
               "workspace-detail",
@@ -277,7 +312,13 @@ describe("pending P12 view read authentication boundary", () => {
               "responsibility-tree",
               { projectId: p7Project },
             );
+            const noAuthViewSourceCalls =
+              projectionReads - projectionReadsBeforeNoAuthViews;
+            const projectDirectoryReadsBeforeNoAuth = projectDirectoryReads;
             const noAuthProjects = yield* readProjects(remoteWithoutAuth.port);
+            const noAuthProjectSourceCalls =
+              projectDirectoryReads - projectDirectoryReadsBeforeNoAuth;
+            const projectionReadsBeforeConfiguredDenied = projectionReads;
             const missingTokenDetail = yield* query(
               remoteWithAuth.port,
               "workspace-detail",
@@ -295,6 +336,10 @@ describe("pending P12 view read authentication boundary", () => {
               { workspaceId: p7RootWorkspace },
               "foreign-user-token",
             );
+            const configuredDeniedViewSourceCalls =
+              projectionReads - projectionReadsBeforeConfiguredDenied;
+            const projectDirectoryReadsBeforeConfiguredDenied =
+              projectDirectoryReads;
             const missingTokenProjects = yield* readProjects(
               remoteWithAuth.port,
             );
@@ -306,6 +351,9 @@ describe("pending P12 view read authentication boundary", () => {
               remoteWithAuth.port,
               "foreign-user-token",
             );
+            const configuredDeniedProjectSourceCalls =
+              projectDirectoryReads -
+              projectDirectoryReadsBeforeConfiguredDenied;
             const authorizedDetail = yield* query(
               remoteWithAuth.port,
               "workspace-detail",
@@ -327,12 +375,63 @@ describe("pending P12 view read authentication boundary", () => {
               remoteWithAuth.port,
               "valid-local-token",
             );
-            const wildcardWebSocket = yield* Effect.promise(() =>
-              observeUnauthenticatedWildcardWebSocket(
-                remoteWithoutAuth.port,
-                () => remoteWithoutAuth.fanout.publishWatermark(777),
-              ),
+
+            const progressRead = (port: number, token?: string) =>
+              Effect.promise(async (): Promise<ProgressObservation> => {
+                const response = await fetch(
+                  `http://127.0.0.1:${String(port)}/conversation-progress/${progressMessageId}`,
+                  {
+                    headers: {
+                      ...(token === undefined
+                        ? {}
+                        : { authorization: `Bearer ${token}` }),
+                    },
+                  },
+                );
+                const observation = {
+                  status: response.status,
+                  denied: response.status >= 400,
+                  eventStream:
+                    response.headers
+                      .get("content-type")
+                      ?.includes("text/event-stream") ?? false,
+                };
+                await response.body?.cancel();
+                return observation;
+              });
+            const progressSubscriptionsBefore = progressSubscriptions;
+            const noAuthProgress = yield* progressRead(remoteWithoutAuth.port);
+            const noAuthProgressSourceCalls =
+              progressSubscriptions - progressSubscriptionsBefore;
+            const validTokenProgress = yield* progressRead(
+              remoteWithAuth.port,
+              "valid-local-token",
             );
+            const loopbackProgress = yield* progressRead(localLoopback.port);
+
+            const unsupportedMethodMatrix = yield* Effect.promise(async () => {
+              const before = projectionReads;
+              const observations: Array<{ method: string; status: number }> =
+                [];
+              for (const method of [
+                "GET",
+                "PUT",
+                "PATCH",
+                "DELETE",
+                "OPTIONS",
+              ]) {
+                const response = await fetch(
+                  `http://127.0.0.1:${String(remoteWithAuth.port)}/views/workspace-detail`,
+                  { method },
+                );
+                observations.push({ method, status: response.status });
+                await response.body?.cancel();
+              }
+              return {
+                observations,
+                sourceCalls: projectionReads - before,
+              };
+            });
 
             return {
               noAuthDetail,
@@ -350,7 +449,15 @@ describe("pending P12 view read authentication boundary", () => {
               loopbackProjects,
               noAuthCatalog,
               authorizedCatalog,
-              wildcardWebSocket,
+              noAuthProjectSourceCalls,
+              noAuthViewSourceCalls,
+              configuredDeniedViewSourceCalls,
+              configuredDeniedProjectSourceCalls,
+              noAuthProgress,
+              noAuthProgressSourceCalls,
+              validTokenProgress,
+              loopbackProgress,
+              unsupportedMethodMatrix,
             };
           }),
           app,
@@ -401,6 +508,16 @@ describe("pending P12 view read authentication boundary", () => {
       denied: false,
       canonicalPathReturned: false,
     });
+    expect(report.validTokenProgress).toMatchObject({
+      status: 200,
+      denied: false,
+      eventStream: true,
+    });
+    expect(report.loopbackProgress).toMatchObject({
+      status: 200,
+      denied: false,
+      eventStream: true,
+    });
     expect({
       unauthorizedObservations: unauthorized.filter(
         (observation) =>
@@ -410,10 +527,40 @@ describe("pending P12 view read authentication boundary", () => {
           observation.projectNameReturned ||
           observation.projectIdReturned,
       ).length,
-      wildcardWebSocket: report.wildcardWebSocket,
+      projectDirectorySourceCalls: report.noAuthProjectSourceCalls,
+      noAuthViewSourceCalls: report.noAuthViewSourceCalls,
+      configuredDeniedViewSourceCalls: report.configuredDeniedViewSourceCalls,
+      configuredDeniedProjectSourceCalls:
+        report.configuredDeniedProjectSourceCalls,
+      wildcardProgress: {
+        status: report.noAuthProgress.status,
+        denied: report.noAuthProgress.denied,
+        eventStream: report.noAuthProgress.eventStream,
+        sourceCalls: report.noAuthProgressSourceCalls,
+      },
+      unsupportedViewMethods: report.unsupportedMethodMatrix,
     }).toEqual({
       unauthorizedObservations: 0,
-      wildcardWebSocket: { connected: false, frameReceived: false },
+      projectDirectorySourceCalls: 0,
+      noAuthViewSourceCalls: 0,
+      configuredDeniedViewSourceCalls: 0,
+      configuredDeniedProjectSourceCalls: 0,
+      wildcardProgress: {
+        status: 503,
+        denied: true,
+        eventStream: false,
+        sourceCalls: 0,
+      },
+      unsupportedViewMethods: {
+        observations: [
+          { method: "GET", status: 400 },
+          { method: "PUT", status: 400 },
+          { method: "PATCH", status: 400 },
+          { method: "DELETE", status: 400 },
+          { method: "OPTIONS", status: 400 },
+        ],
+        sourceCalls: 0,
+      },
     });
   }, 45_000);
 });

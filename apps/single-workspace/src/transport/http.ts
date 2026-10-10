@@ -25,7 +25,14 @@ export interface HttpTransportRequest {
 }
 
 export interface HttpShell {
+  readonly authorizeSensitiveRead: (
+    authorization: string | undefined,
+  ) => Effect.Effect<TransportResponse<never> | null>;
   readonly handle: (
+    request: HttpTransportRequest,
+  ) => Effect.Effect<TransportResponse<unknown>>;
+  /** Internal server continuation after authorization and body decoding. */
+  readonly handleAuthorizedView: (
     request: HttpTransportRequest,
   ) => Effect.Effect<TransportResponse<unknown>>;
 }
@@ -52,34 +59,62 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
     ? (value as Record<string, unknown>)
     : null;
 
-export const makeHttpShell = (core: TransportCore): HttpShell => ({
-  handle: (request) => {
-    if (request.method === "POST" && request.path === "/commands") {
-      return core.submitCommand(
-        bearerCredential(request.authorization),
-        request.body,
+export const makeHttpShell = (core: TransportCore): HttpShell => {
+  const handleAuthorizedView = (
+    request: HttpTransportRequest,
+  ): Effect.Effect<TransportResponse<unknown>> => {
+    const viewMatch = /^\/views\/([a-z0-9-]+)$/u.exec(request.path);
+    if (request.method !== "POST" || viewMatch === null) {
+      return Effect.succeed(
+        failureResponse(invalidCommandProblem("unsupported view request")),
       );
     }
-
-    const viewMatch = /^\/views\/([a-z0-9-]+)$/.exec(request.path);
-    if (viewMatch !== null && request.method !== "DELETE") {
-      const view = viewMatch[1] ?? "";
-      if (!isViewId(view)) {
-        return Effect.succeed(failureResponse(unknownViewProblem(view)));
-      }
-      const body = asRecord(request.body) ?? {};
-      return core.queryView(
-        view,
-        body as ViewRequestMap[ViewId],
-      ) as Effect.Effect<TransportResponse<unknown>>;
+    const view = viewMatch[1] ?? "";
+    if (!isViewId(view)) {
+      return Effect.succeed(failureResponse(unknownViewProblem(view)));
     }
+    const body = asRecord(request.body) ?? {};
+    return core.queryView(
+      view,
+      body as ViewRequestMap[ViewId],
+    ) as Effect.Effect<TransportResponse<unknown>>;
+  };
 
-    return Effect.succeed(
-      failureResponse(
-        invalidCommandProblem(
-          `unsupported route ${request.method} ${request.path}`,
+  return {
+    authorizeSensitiveRead: (authorization) =>
+      core.authorizeSensitiveRead(bearerCredential(authorization)),
+    handleAuthorizedView,
+    handle: (request) => {
+      if (request.method === "POST" && request.path === "/commands") {
+        return core.submitCommand(
+          bearerCredential(request.authorization),
+          request.body,
+        );
+      }
+
+      const viewMatch = /^\/views\/([a-z0-9-]+)$/.exec(request.path);
+      if (viewMatch !== null) {
+        if (request.method !== "POST") {
+          return Effect.succeed(
+            failureResponse(invalidCommandProblem("unsupported view method")),
+          );
+        }
+        return Effect.flatMap(
+          core.authorizeSensitiveRead(bearerCredential(request.authorization)),
+          (authorizationFailure) =>
+            authorizationFailure === null
+              ? handleAuthorizedView(request)
+              : Effect.succeed(authorizationFailure),
+        );
+      }
+
+      return Effect.succeed(
+        failureResponse(
+          invalidCommandProblem(
+            `unsupported route ${request.method} ${request.path}`,
+          ),
         ),
-      ),
-    );
-  },
-});
+      );
+    },
+  };
+};

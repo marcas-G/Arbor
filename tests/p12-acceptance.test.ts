@@ -2144,7 +2144,10 @@ describe("p12-acceptance story 11 — transport shells + daemons", () => {
   it("story 11: shells render the frozen DTOs, forward Commands, hold no canonical write, and Search stays deferred", async () => {
     const core = makeTransportCore({
       views: transportViews(),
-      authenticator: makeStaticAuthenticator({ "human-token": HUMAN }),
+      authenticator: makeStaticAuthenticator({
+        "human-token": HUMAN,
+        "local-read-token": parse(Principal)("user:local"),
+      }),
       submission: {
         submit: () =>
           Effect.succeed({
@@ -2166,6 +2169,7 @@ describe("p12-acceptance story 11 — transport shells + daemons", () => {
       http.handle({
         method: "POST",
         path: "/views/responsibility-tree",
+        authorization: "Bearer local-read-token",
         body: { projectId: transportProject },
       }),
     );
@@ -2198,6 +2202,7 @@ describe("p12-acceptance story 11 — transport shells + daemons", () => {
       http.handle({
         method: "POST",
         path: "/views/attention",
+        authorization: "Bearer local-read-token",
         body: { projectId: transportProject },
       }),
     );

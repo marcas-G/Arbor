@@ -347,7 +347,10 @@ const emptyConsumerResult: ConsumerLoopResult = {
 describe("P12-010 transport shells render api-contracts DTOs (EC-11)", () => {
   const core = makeTransportCore({
     views: stubViews(),
-    authenticator: makeStaticAuthenticator({ "human-token": HUMAN }),
+    authenticator: makeStaticAuthenticator({
+      "human-token": HUMAN,
+      "local-read-token": parse(Principal)("user:local"),
+    }),
     submission: {
       submit: () =>
         Effect.succeed({
@@ -367,6 +370,7 @@ describe("P12-010 transport shells render api-contracts DTOs (EC-11)", () => {
       http.handle({
         method: "POST",
         path: "/views/responsibility-tree",
+        authorization: "Bearer local-read-token",
         body: { projectId: PROJECT },
       }),
     );
@@ -415,6 +419,7 @@ describe("P12-010 transport shells render api-contracts DTOs (EC-11)", () => {
       http.handle({
         method: "POST",
         path: "/views/attention",
+        authorization: "Bearer local-read-token",
         body: { projectId: PROJECT },
       }),
     );
@@ -433,7 +438,12 @@ describe("P12-010 transport shells render api-contracts DTOs (EC-11)", () => {
       expect(response.status).toBe(409);
     }
     const unknown = await Effect.runPromise(
-      http.handle({ method: "POST", path: "/views/does-not-exist", body: {} }),
+      http.handle({
+        method: "POST",
+        path: "/views/does-not-exist",
+        authorization: "Bearer local-read-token",
+        body: {},
+      }),
     );
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) {
