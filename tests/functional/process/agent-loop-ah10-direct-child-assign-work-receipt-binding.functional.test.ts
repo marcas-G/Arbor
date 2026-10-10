@@ -323,6 +323,14 @@ const makePreBindingP32Copy = async (
     db.exec("DROP TABLE IF EXISTS attention_projection_rows");
     db.exec("DROP TABLE IF EXISTS assign_work_binding_attention_facts");
     db.exec("DROP TABLE IF EXISTS assign_work_target_bindings");
+    // The copied live fixture is currently at P35. An equivalent P32 image
+    // must remove the later activation schema as well as the P33/P34 objects.
+    // Dropping the attention child before its intent parent also drops each
+    // table's migration-owned index.
+    db.exec(
+      "DROP TABLE IF EXISTS workspace_resource_activation_attention_rows",
+    );
+    db.exec("DROP TABLE IF EXISTS workspace_resource_activation_intents");
     db.exec("PRAGMA user_version = 32");
     db.exec("PRAGMA foreign_keys = ON");
     const version = db.prepare("PRAGMA user_version").get() as {
@@ -352,6 +360,21 @@ const makePreBindingP32Copy = async (
       .all();
     if (p34Objects.length !== 0) {
       throw new Error("P32 fixture still contains migration 0034 objects");
+    }
+    const p35Objects = db
+      .prepare(
+        `SELECT name FROM sqlite_master
+          WHERE name IN (
+            'workspace_resource_activation_intents',
+            'idx_workspace_resource_activation_pending',
+            'workspace_resource_activation_attention_rows',
+            'workspace_resource_activation_attention_target'
+          )
+          ORDER BY name`,
+      )
+      .all();
+    if (p35Objects.length !== 0) {
+      throw new Error("P32 fixture still contains migration 0035 objects");
     }
     const receipt = db
       .prepare("SELECT resolution FROM commands WHERE command_id = ?")
@@ -1747,13 +1770,53 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       }
       if (crashSide === "legacy-p32-upgrade") {
         const upgraded = readRows(recoveryDatabaseFile);
-        expect(upgraded.schemaVersion).toBe(34);
+        expect(upgraded.schemaVersion).toBe(35);
         expect(upgraded.assignWorkTargetBindings).toHaveLength(0);
         expect(
           upgraded.commands.find(
             (command) => command.command_id === priorCommittedCommandId,
           )?.resolution,
         ).toBe("Committed");
+        const upgradedDb = new DatabaseSync(recoveryDatabaseFile, {
+          readOnly: true,
+        });
+        try {
+          const p35Tables = upgradedDb
+            .prepare(
+              `SELECT name FROM sqlite_master
+                WHERE type = 'table'
+                  AND name IN (
+                    'workspace_resource_activation_intents',
+                    'workspace_resource_activation_attention_rows'
+                  )
+                ORDER BY name`,
+            )
+            .all() as Array<{ name: string }>;
+          expect(p35Tables.map((row) => row.name)).toEqual([
+            "workspace_resource_activation_attention_rows",
+            "workspace_resource_activation_intents",
+          ]);
+          expect(
+            (
+              upgradedDb
+                .prepare(
+                  "SELECT COUNT(*) AS count FROM workspace_resource_activation_intents",
+                )
+                .get() as { count: number }
+            ).count,
+          ).toBe(0);
+          expect(
+            (
+              upgradedDb
+                .prepare(
+                  "SELECT COUNT(*) AS count FROM workspace_resource_activation_attention_rows",
+                )
+                .get() as { count: number }
+            ).count,
+          ).toBe(0);
+        } finally {
+          upgradedDb.close();
+        }
       }
       expect(newLease.fencingGeneration).toBe(
         crashSide === "approval-committed" ||
