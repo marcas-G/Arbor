@@ -18,28 +18,31 @@ Only after the exact approval is pending does the test grant the Workspace
 Agent the scoped `core.control.assign-work` capability used by the measured
 WorkspaceWork episode.
 
-The Work Provider's setup turn emits a legal Manual wait. The test confirms the
-Work is idle at revision 0 and snapshots seed Execution IDs before enabling the
-AH10 probe. A public `SteerWork` then resumes the measured Work at revision
-1; the probed execution must differ from every seed execution, and seed
-Executions must contain no Failed settlement. This keeps Root admission,
-CAPA and the harmless seed ProviderTurn outside the measured action.
-
 For SelectCurrentWork, the existing Agent Work still creates two runnable
-candidate Works and waits; the Scheduler persists the genuine DecisionEpisode,
-whose candidate set excludes the existing current Work. Existing gen0
-FencingRejected receipt-before/after takeover assertions, exact DecisionId,
-providerTurn/action identity, unique committed SelectCurrentWork receipt and
-single selection Provider call remain. The separate committed-receipt case
-uses the same public seed and retains same-DecisionEpisode receipt replay.
+candidate Works and enters its Manual wait. That wait automatically causes the
+Scheduler to persist the genuine DecisionEpisode, whose candidate set excludes
+the existing current Work. The AH10 test daemon/probe is present from initial
+startup but gates only `select_current_work`; Root Work admission and candidate
+assignment do not hit that gate. This scenario uses no `SteerWork` and has no
+`probeArmed` phase. Existing gen0 FencingRejected receipt-before/after takeover
+assertions, exact DecisionId, providerTurn/action identity, unique committed
+SelectCurrentWork receipt and single selection Provider call remain. The
+separate committed-receipt case uses the same public seed and retains
+same-DecisionEpisode receipt replay.
 
 For current-Workspace AssignWork, the measured Action still omits
 `targetWorkspaceRef`, uses the exact self-target WorkspaceAgent grant, and
-creates one Work in the current Workspace. Before/after FencingRejected
-receipt-commit takeover assertions and the committed-receipt/action-Pending
-recovery case remain. They continue to assert old/new owner action identity,
-receipt and Work uniqueness, one WorkAssigned fact, exact Action Observation
-source reference, and one target action Provider decision.
+creates one Work in the current Workspace. Here the Root-created Work first
+enters a legal Manual wait under the ordinary daemon. After confirming it is
+idle at revision 0 and snapshotting the non-Failed seed ExecutionIds, the test
+restarts with the AH10 probe and uses public `SteerWork` to resume the Work at
+revision 1. The probed execution is distinct from every seed execution. This
+keeps the seed ProviderTurn outside the measured Action. Before/after
+FencingRejected receipt-commit takeover assertions and the
+committed-receipt/action-Pending recovery case remain. They continue to assert
+old/new owner action identity, receipt and Work uniqueness, one WorkAssigned
+fact, exact Action Observation source reference, and one target action
+Provider decision.
 
 ## RED / verification
 
