@@ -197,7 +197,8 @@ interface RootSeedProviderDecision {
     readonly hasAssignWork: boolean;
     readonly hasClaimCompletion: boolean;
     readonly hasMarker: boolean;
-    readonly hasWorkAssigned: boolean;
+    readonly hasWorkAssignedToolResult: boolean;
+    readonly assignWorkToolCallAlreadySent: boolean;
   };
   readonly response: ScriptedProviderResponse;
 }
@@ -211,47 +212,105 @@ interface RootSeedDiagnostics {
   readonly daemonStdout: ReadonlyArray<string>;
 }
 
-const approvedRootWorkReply =
-  (
-    marker: string,
-    work: ApprovedWorkSeed,
-    onDecision?: (decision: RootSeedProviderDecision) => void,
-  ): ((
-    call: CapturedProviderCall,
-    index: number,
-  ) => ScriptedProviderResponse) =>
-  (call, index) => {
+const approvedRootWorkReply = (
+  marker: string,
+  work: ApprovedWorkSeed,
+  onDecision?: (decision: RootSeedProviderDecision) => void,
+): ((
+  call: CapturedProviderCall,
+  index: number,
+) => ScriptedProviderResponse) => {
+  let assignWorkToolCallSent = false;
+  return (call, index) => {
     const available = new Set(
       call.tools
         .map((tool) => tool.function?.name)
         .filter((name): name is string => name !== undefined),
     );
     const context = JSON.stringify(call.messages);
+    const hasWorkAssignedToolResult = call.messages.some(
+      (message) =>
+        message.role === "tool" &&
+        message.content?.includes("WorkAssigned(") === true,
+    );
     const selector = {
       availableTools: [...available].sort(),
       hasAssignWork: available.has("assign_work"),
       hasClaimCompletion: available.has("claim_completion"),
       hasMarker: context.includes(marker),
-      hasWorkAssigned: context.includes("WorkAssigned("),
+      hasWorkAssignedToolResult,
+      assignWorkToolCallAlreadySent: assignWorkToolCallSent,
     };
-    const response: ScriptedProviderResponse =
+    const eligibleRootRequest =
       selector.hasAssignWork &&
       !selector.hasClaimCompletion &&
-      selector.hasMarker
-        ? selector.hasWorkAssigned
-          ? { _tag: "Text", text: `AH19 Work seed approved: ${marker}` }
-          : {
-              _tag: "ToolCall",
-              name: "assign_work",
-              arguments: {
-                ...work,
-                reason: "AH19 public Work seed under RootConversation",
-              },
-            }
-        : { _tag: "HttpError", status: 500 };
+      selector.hasMarker;
+    let response: ScriptedProviderResponse;
+    if (!eligibleRootRequest) {
+      response = { _tag: "HttpError", status: 500 };
+    } else if (!assignWorkToolCallSent) {
+      // A textual mention, or even a stale tool result, is not proof that
+      // this fixture has proposed and committed this request's AssignWork.
+      assignWorkToolCallSent = true;
+      response = {
+        _tag: "ToolCall",
+        name: "assign_work",
+        arguments: {
+          ...work,
+          reason: "AH19 public Work seed under RootConversation",
+        },
+      };
+    } else if (hasWorkAssignedToolResult) {
+      response = { _tag: "Text", text: `AH19 Work seed approved: ${marker}` };
+    } else {
+      response = { _tag: "HttpError", status: 500 };
+    }
     onDecision?.({ index, request: call, selector, response });
     return response;
   };
+};
+
+it("AH19 Root Work fake does not acknowledge a non-tool WorkAssigned mention", () => {
+  const marker = "AH19-root-seed-selector-negative";
+  const reply = approvedRootWorkReply(marker, {
+    objective: marker,
+    why: "selector regression fixture",
+    constraints: [],
+    completionExpectation: "create the requested Work",
+    verificationMission: {
+      goal: "preserve the provider response selector",
+      criteria: [],
+      riskRequirements: [],
+    },
+  });
+  const request: CapturedProviderCall = {
+    messages: [
+      { role: "user", content: `Please handle ${marker}.` },
+      {
+        role: "assistant",
+        content: "A prior note mentioned WorkAssigned(wrk_example).",
+      },
+    ],
+    tools: [{ function: { name: "assign_work" } }],
+  };
+
+  expect(reply(request, 0)).toMatchObject({
+    _tag: "ToolCall",
+    name: "assign_work",
+  });
+  expect(
+    reply(
+      {
+        ...request,
+        messages: [
+          ...request.messages,
+          { role: "tool", content: "WorkAssigned(wrk_current)" },
+        ],
+      },
+      1,
+    ),
+  ).toEqual({ _tag: "Text", text: `AH19 Work seed approved: ${marker}` });
+});
 
 const seedRootWorkViaPublicApproval = async (
   fixture: ProductionFixture,
