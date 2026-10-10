@@ -615,7 +615,9 @@ export const executeAgentLoopActions = (
                     next: {
                       ...pendingAction,
                       state:
-                        status === "Denied" ? "TerminalRejected" : "Applied",
+                        route._tag === "Executable" && status === "Denied"
+                          ? "TerminalRejected"
+                          : "Applied",
                       resultRef,
                       disposition: { _tag: disposition, status },
                       observationSourceRef,
