@@ -2176,6 +2176,7 @@ describe("p12-acceptance story 11 — transport shells + daemons", () => {
     const viaWs = await Effect.runPromise(
       ws.handleFrame({
         kind: "view",
+        token: "local-read-token",
         view: "responsibility-tree",
         request: { projectId: transportProject },
       }),

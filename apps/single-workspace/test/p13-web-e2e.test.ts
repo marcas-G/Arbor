@@ -217,6 +217,21 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
 
   it("TR-W1: WS invalidation pushes after a commit advances the journal watermark", async () => {
     expect(handle).toBeDefined();
+    const existingProject = createProjectPayloadShape("ws-existing");
+    const seedResponse = await fetch(`${base()}/commands`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        commandType: "CreateProject",
+        commandId: p13Id("cmd"),
+        projectId: existingProject.projectId,
+        actor: "user:human",
+        issuedAt: new Date().toISOString(),
+        payload: existingProject.payload,
+      }),
+    });
+    expect(seedResponse.status).toBe(200);
+
     const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws`);
     await new Promise<void>((resolveOpen) => {
       ws.onopen = () => {
@@ -227,6 +242,29 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
     ws.onmessage = (event) => {
       frames.push(JSON.parse(String(event.data)));
     };
+
+    const proof = new Promise<unknown>((resolveProof) => {
+      const receive = (event: MessageEvent): void => {
+        const parsed = JSON.parse(String(event.data)) as {
+          readonly ok?: boolean;
+          readonly status?: number;
+          readonly kind?: string;
+        };
+        if (parsed.kind === "invalidate") return;
+        ws.removeEventListener("message", receive);
+        resolveProof(parsed);
+      };
+      ws.addEventListener("message", receive);
+    });
+    ws.send(
+      JSON.stringify({
+        kind: "view",
+        token: READ_TOKEN,
+        view: "responsibility-tree",
+        request: { projectId: existingProject.projectId },
+      }),
+    );
+    expect(await proof).toMatchObject({ ok: true, status: 200 });
 
     const project = createProjectPayloadShape("ws");
     const response = await fetch(`${base()}/commands`, {

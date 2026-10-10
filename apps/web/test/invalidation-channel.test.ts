@@ -6,6 +6,7 @@ import { connectInvalidation } from "../src/data/invalidation.js";
  * ws-invalidation-query.test.tsx.) */
 
 type FakeSocket = {
+  readonly sentFrames: string[];
   send: (data: string) => void;
   close: () => void;
   open: () => void;
@@ -16,10 +17,19 @@ type FakeSocket = {
 const installFakeWebSocket = () => {
   const sockets: FakeSocket[] = [];
   class FakeWebSocket {
+    readonly sentFrames: string[] = [];
     onopen: (() => void) | null = null;
     onmessage: ((event: { data: string }) => void) | null = null;
     onclose: (() => void) | null = null;
-    send = () => undefined;
+    send = (data: string) => {
+      this.sentFrames.push(data);
+      const frame = JSON.parse(data) as { kind?: string };
+      if (frame.kind === "view") {
+        this.message(
+          JSON.stringify({ ok: true, status: 200, body: { value: {} } }),
+        );
+      }
+    };
     close = () => undefined;
     disconnect = () => {
       this.onclose?.();
@@ -42,12 +52,23 @@ describe("connectInvalidation channel", () => {
   it("delivers only well-formed invalidate frames", () => {
     const sockets = installFakeWebSocket();
     const seen: unknown[] = [];
-    connectInvalidation("ws://x/ws", {
-      onInvalidate: (frame) => {
-        seen.push(frame);
+    connectInvalidation(
+      "ws://x/ws",
+      {
+        onInvalidate: (frame) => {
+          seen.push(frame);
+        },
       },
-    });
+      {
+        firstView: {
+          token: "test-token",
+          view: "attention",
+          request: { projectId: "prj_test" },
+        },
+      },
+    );
     const socket = sockets[0];
+    socket?.open();
     socket?.message(
       JSON.stringify({ kind: "invalidate", view: "attention", watermark: 5 }),
     );
@@ -62,11 +83,21 @@ describe("connectInvalidation channel", () => {
   it("close stops delivery and clears callbacks", () => {
     const sockets = installFakeWebSocket();
     const seen: unknown[] = [];
-    const channel = connectInvalidation("ws://x/ws", {
-      onInvalidate: (frame) => {
-        seen.push(frame);
+    const channel = connectInvalidation(
+      "ws://x/ws",
+      {
+        onInvalidate: (frame) => {
+          seen.push(frame);
+        },
       },
-    });
+      {
+        firstView: {
+          token: "test-token",
+          view: "attention",
+          request: { projectId: "prj_test" },
+        },
+      },
+    );
     channel.close();
     sockets[0]?.message(
       JSON.stringify({ kind: "invalidate", view: "usage", watermark: 1 }),
@@ -84,7 +115,17 @@ describe("connectInvalidation channel", () => {
       },
     );
     expect(() =>
-      connectInvalidation("ws://x/ws", { onInvalidate: () => undefined }),
+      connectInvalidation(
+        "ws://x/ws",
+        { onInvalidate: () => undefined },
+        {
+          firstView: {
+            token: "test-token",
+            view: "attention",
+            request: { projectId: "prj_test" },
+          },
+        },
+      ),
     ).not.toThrow();
   });
 
@@ -94,11 +135,21 @@ describe("connectInvalidation channel", () => {
     try {
       const sockets = installFakeWebSocket();
       const seen: unknown[] = [];
-      channel = connectInvalidation("ws://x/ws", {
-        onInvalidate: (frame) => {
-          seen.push(frame);
+      channel = connectInvalidation(
+        "ws://x/ws",
+        {
+          onInvalidate: (frame) => {
+            seen.push(frame);
+          },
         },
-      });
+        {
+          firstView: {
+            token: "test-token",
+            view: "attention",
+            request: { projectId: "prj_test" },
+          },
+        },
+      );
 
       expect(sockets).toHaveLength(1);
       sockets[0]?.open();

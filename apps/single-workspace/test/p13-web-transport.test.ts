@@ -203,6 +203,7 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     ws.send(
       JSON.stringify({
         kind: "view",
+        token: "local",
         view: "attention",
         request: { projectId: "prj_1" },
       }),
@@ -215,6 +216,20 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
 
   it("pushes invalidation frames (view + watermark, no payload) on watermark advance", async () => {
     const ws = await openClient(handle.port);
+    const proof = new Promise<unknown>((resolveProof) => {
+      ws.onMessage((data) => {
+        resolveProof(JSON.parse(data));
+      });
+    });
+    ws.send(
+      JSON.stringify({
+        kind: "view",
+        token: "local",
+        view: "attention",
+        request: { projectId: "prj_1" },
+      }),
+    );
+    expect(await proof).toMatchObject({ ok: true, status: 200 });
     const frames: unknown[] = [];
     ws.onMessage((data) => {
       frames.push(JSON.parse(data));

@@ -377,6 +377,7 @@ describe("P12-010 transport shells render api-contracts DTOs (EC-11)", () => {
     const viaWs = await Effect.runPromise(
       ws.handleFrame({
         kind: "view",
+        token: "local-read-token",
         view: "responsibility-tree",
         request: { projectId: PROJECT },
       }),

@@ -21,6 +21,13 @@ export interface WebSocketFrame {
 }
 
 export interface WebSocketShell {
+  readonly authorizeViewFrame: (
+    frame: WebSocketFrame,
+  ) => Effect.Effect<TransportResponse<never> | null>;
+  /** Internal continuation after the first view-frame proof succeeded. */
+  readonly handleAuthorizedViewFrame: (
+    frame: WebSocketFrame,
+  ) => Effect.Effect<TransportResponse<unknown>>;
   readonly handleFrame: (
     frame: WebSocketFrame,
   ) => Effect.Effect<TransportResponse<unknown>>;
@@ -29,10 +36,16 @@ export interface WebSocketShell {
 const credentialOf = (token: string | undefined): TransportCredential | null =>
   token === undefined ? null : { token };
 
-export const makeWebSocketShell = (core: TransportCore): WebSocketShell => ({
-  handleFrame: (frame) => {
-    if (frame.kind === "command") {
-      return core.submitCommand(credentialOf(frame.token), frame.envelope);
+export const makeWebSocketShell = (core: TransportCore): WebSocketShell => {
+  const handleAuthorizedViewFrame = (
+    frame: WebSocketFrame,
+  ): Effect.Effect<TransportResponse<unknown>> => {
+    if (frame.kind !== "view") {
+      return Effect.succeed(
+        failureResponse(
+          unknownViewProblem("unsupported websocket request frame"),
+        ),
+      );
     }
     const view = frame.view ?? "";
     if (!isViewId(view)) {
@@ -42,5 +55,41 @@ export const makeWebSocketShell = (core: TransportCore): WebSocketShell => ({
       view,
       (frame.request ?? {}) as ViewRequestMap[ViewId],
     ) as Effect.Effect<TransportResponse<unknown>>;
-  },
-});
+  };
+
+  const authorizeViewFrame = (frame: WebSocketFrame) => {
+    if (frame.kind !== "view") {
+      return Effect.succeed(
+        failureResponse(
+          unknownViewProblem("unsupported websocket request frame"),
+        ),
+      );
+    }
+    return Effect.flatMap(
+      core.authorizeSensitiveRead(credentialOf(frame.token)),
+      (authorizationFailure) =>
+        authorizationFailure !== null
+          ? Effect.succeed(authorizationFailure)
+          : isViewId(frame.view ?? "")
+            ? Effect.succeed(null)
+            : Effect.succeed(
+                failureResponse(unknownViewProblem(frame.view ?? "")),
+              ),
+    );
+  };
+
+  return {
+    authorizeViewFrame,
+    handleAuthorizedViewFrame,
+    handleFrame: (frame) => {
+      if (frame.kind === "command") {
+        return core.submitCommand(credentialOf(frame.token), frame.envelope);
+      }
+      return Effect.flatMap(authorizeViewFrame(frame), (failure) =>
+        failure === null
+          ? handleAuthorizedViewFrame(frame)
+          : Effect.succeed(failure),
+      );
+    },
+  };
+};

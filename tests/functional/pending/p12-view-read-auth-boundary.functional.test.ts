@@ -27,6 +27,7 @@ import {
   startWebTransport,
   type WebTransportHandle,
 } from "../../../apps/single-workspace/src/transport/server.js";
+import { makeWebSocketShell } from "../../../apps/single-workspace/src/transport/websocket.js";
 import {
   Principal,
   parse,
@@ -68,8 +69,85 @@ interface ProgressObservation {
   readonly eventStream: boolean;
 }
 
+interface WebSocketOpenObservation {
+  readonly socket: WebSocket;
+  readonly opened: boolean;
+}
+
 const handles: WebTransportHandle[] = [];
 const directories: string[] = [];
+
+const openWebSocket = (port: number): Promise<WebSocketOpenObservation> =>
+  new Promise((resolve) => {
+    const socket = new WebSocket(`ws://127.0.0.1:${String(port)}/ws`);
+    let settled = false;
+    const finish = (opened: boolean): void => {
+      if (settled) return;
+      settled = true;
+      resolve({ socket, opened });
+    };
+    socket.onopen = () => finish(true);
+    socket.onerror = () => finish(false);
+    socket.onclose = () => finish(false);
+  });
+
+const nextWebSocketMessage = (
+  socket: WebSocket,
+  timeoutMs = 150,
+): Promise<unknown | null> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      socket.onmessage = null;
+      resolve(null);
+    }, timeoutMs);
+    socket.onmessage = (event) => {
+      clearTimeout(timer);
+      socket.onmessage = null;
+      try {
+        resolve(JSON.parse(String(event.data)) as unknown);
+      } catch {
+        resolve(null);
+      }
+    };
+  });
+
+const waitForWebSocketClose = (
+  socket: WebSocket,
+  timeoutMs = 150,
+): Promise<boolean> =>
+  new Promise((resolve) => {
+    if (socket.readyState === WebSocket.CLOSED) {
+      resolve(true);
+      return;
+    }
+    let settled = false;
+    const finish = (closed: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.onclose = null;
+      resolve(closed);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.onclose = () => finish(true);
+  });
+
+const sanitizeWebSocketMessage = (
+  value: unknown,
+): {
+  readonly kind: string;
+  readonly ok?: boolean;
+  readonly status?: number;
+} => {
+  if (typeof value !== "object" || value === null) return { kind: "other" };
+  const record = value as Record<string, unknown>;
+  if (record.kind === "invalidate") return { kind: "invalidate" };
+  return {
+    kind: "response",
+    ok: record.ok === true,
+    ...(typeof record.status === "number" ? { status: record.status } : {}),
+  };
+};
 
 const containsValue = (value: unknown, expected: string): boolean => {
   if (typeof value === "string") return value === expected;
@@ -193,15 +271,23 @@ describe("pending P12 view read authentication boundary", () => {
                 submission: boundary.submission,
               }),
             );
+            const authenticatedWebSocket = makeWebSocketShell(
+              makeTransportCore({
+                views: tracedQueryFace,
+                authenticator,
+                submission: boundary.submission,
+              }),
+            );
             const start = (options: {
               readonly http: typeof localHttp;
               readonly host: string;
+              readonly webSocket?: typeof boundary.webSocket;
               readonly configuredAuthenticator?: typeof authenticator;
             }) =>
               Effect.promise(() =>
                 startWebTransport({
                   http: options.http,
-                  webSocket: boundary.webSocket,
+                  webSocket: options.webSocket ?? boundary.webSocket,
                   authenticatorConfigured:
                     options.configuredAuthenticator !== undefined,
                   conversationProgress: tracedProgressHub,
@@ -225,6 +311,7 @@ describe("pending P12 view read authentication boundary", () => {
             const remoteWithAuth = yield* start({
               http: authenticatedHttp,
               host: "0.0.0.0",
+              webSocket: authenticatedWebSocket,
               configuredAuthenticator: authenticator,
             });
             handles.push(remoteWithAuth);
@@ -381,6 +468,157 @@ describe("pending P12 view read authentication boundary", () => {
               "valid-local-token",
             );
 
+            const webSocketQualification = yield* Effect.promise(async () => {
+              const unproved = await openWebSocket(remoteWithAuth.port);
+              let preProofMessage: unknown | null = null;
+              let preProofQueryCalls = 0;
+              if (unproved.opened) {
+                const before = projectionReads;
+                const nextMessage = nextWebSocketMessage(unproved.socket);
+                remoteWithAuth.fanout.publishWatermark(880);
+                preProofMessage = await nextMessage;
+                preProofQueryCalls = projectionReads - before;
+                unproved.socket.close();
+              }
+
+              const deniedFrames: Array<{
+                readonly opened: boolean;
+                readonly closed: boolean;
+                readonly response: ReturnType<
+                  typeof sanitizeWebSocketMessage
+                > | null;
+                readonly queryCalls: number;
+              }> = [];
+              for (const token of [
+                undefined,
+                "invalid-token",
+                "foreign-user-token",
+              ]) {
+                const connection = await openWebSocket(remoteWithAuth.port);
+                if (!connection.opened) {
+                  deniedFrames.push({
+                    opened: false,
+                    closed: true,
+                    response: null,
+                    queryCalls: 0,
+                  });
+                  continue;
+                }
+                const before = projectionReads;
+                const message = nextWebSocketMessage(connection.socket);
+                const closed = waitForWebSocketClose(connection.socket);
+                connection.socket.send(
+                  JSON.stringify({
+                    kind: "view",
+                    ...(token === undefined ? {} : { token }),
+                    view: "responsibility-tree",
+                    request: { projectId: p7Project },
+                  }),
+                );
+                const [rawMessage, socketClosed] = await Promise.all([
+                  message,
+                  closed,
+                ]);
+                deniedFrames.push({
+                  opened: true,
+                  closed: socketClosed,
+                  response:
+                    rawMessage === null
+                      ? null
+                      : sanitizeWebSocketMessage(rawMessage),
+                  queryCalls: projectionReads - before,
+                });
+                connection.socket.close();
+              }
+
+              const authorized = await openWebSocket(remoteWithAuth.port);
+              let authorizedResponse: ReturnType<
+                typeof sanitizeWebSocketMessage
+              > | null = null;
+              let authorizedInvalidation: ReturnType<
+                typeof sanitizeWebSocketMessage
+              > | null = null;
+              let authorizedQueryCalls = 0;
+              if (authorized.opened) {
+                const before = projectionReads;
+                const response = nextWebSocketMessage(authorized.socket);
+                authorized.socket.send(
+                  JSON.stringify({
+                    kind: "view",
+                    token: "valid-local-token",
+                    view: "responsibility-tree",
+                    request: { projectId: p7Project },
+                  }),
+                );
+                const rawResponse = await response;
+                authorizedResponse =
+                  rawResponse === null
+                    ? null
+                    : sanitizeWebSocketMessage(rawResponse);
+                authorizedQueryCalls = projectionReads - before;
+                const invalidation = nextWebSocketMessage(authorized.socket);
+                remoteWithAuth.fanout.publishWatermark(881);
+                const rawInvalidation = await invalidation;
+                authorizedInvalidation =
+                  rawInvalidation === null
+                    ? null
+                    : sanitizeWebSocketMessage(rawInvalidation);
+                authorized.socket.close();
+              }
+
+              const commandOnly = await openWebSocket(remoteWithAuth.port);
+              let commandOnlyInvalidation: ReturnType<
+                typeof sanitizeWebSocketMessage
+              > | null = null;
+              let commandOnlyQueryCalls = 0;
+              if (commandOnly.opened) {
+                const commandResponse = nextWebSocketMessage(
+                  commandOnly.socket,
+                );
+                commandOnly.socket.send(
+                  JSON.stringify({
+                    kind: "command",
+                    token: "valid-local-token",
+                    envelope: {},
+                  }),
+                );
+                await commandResponse;
+                const invalidation = nextWebSocketMessage(commandOnly.socket);
+                const before = projectionReads;
+                remoteWithAuth.fanout.publishWatermark(882);
+                const rawInvalidation = await invalidation;
+                commandOnlyInvalidation =
+                  rawInvalidation === null
+                    ? null
+                    : sanitizeWebSocketMessage(rawInvalidation);
+                commandOnlyQueryCalls = projectionReads - before;
+                commandOnly.socket.close();
+              }
+
+              return {
+                unproved: {
+                  opened: unproved.opened,
+                  message:
+                    preProofMessage === null
+                      ? null
+                      : sanitizeWebSocketMessage(preProofMessage),
+                  queryCalls: preProofQueryCalls,
+                },
+                deniedFrames,
+                authorized: {
+                  opened: authorized.opened,
+                  response: authorizedResponse,
+                  invalidation: authorizedInvalidation,
+                  queryCalls: authorizedQueryCalls,
+                },
+                commandOnly: {
+                  opened: commandOnly.opened,
+                  invalidation: commandOnlyInvalidation,
+                  queryCalls: commandOnlyQueryCalls,
+                },
+              };
+            });
+
             const progressRead = (port: number, token?: string) =>
               Effect.promise(async (): Promise<ProgressObservation> => {
                 const response = await fetch(
@@ -454,6 +692,7 @@ describe("pending P12 view read authentication boundary", () => {
               loopbackProjects,
               noAuthCatalog,
               authorizedCatalog,
+              webSocketQualification,
               noAuthProjectSourceCalls,
               noAuthViewSourceCalls,
               configuredDeniedViewSourceCalls,
@@ -543,6 +782,7 @@ describe("pending P12 view read authentication boundary", () => {
         eventStream: report.noAuthProgress.eventStream,
         sourceCalls: report.noAuthProgressSourceCalls,
       },
+      webSocketQualification: report.webSocketQualification,
       unsupportedViewMethods: report.unsupportedMethodMatrix,
     }).toEqual({
       unauthorizedObservations: 0,
@@ -555,6 +795,44 @@ describe("pending P12 view read authentication boundary", () => {
         denied: true,
         eventStream: false,
         sourceCalls: 0,
+      },
+      webSocketQualification: {
+        unproved: {
+          opened: true,
+          message: null,
+          queryCalls: 0,
+        },
+        deniedFrames: [
+          {
+            opened: true,
+            closed: true,
+            response: null,
+            queryCalls: 0,
+          },
+          {
+            opened: true,
+            closed: true,
+            response: null,
+            queryCalls: 0,
+          },
+          {
+            opened: true,
+            closed: true,
+            response: null,
+            queryCalls: 0,
+          },
+        ],
+        authorized: {
+          opened: true,
+          response: { kind: "response", ok: true, status: 200 },
+          invalidation: { kind: "invalidate" },
+          queryCalls: 1,
+        },
+        commandOnly: {
+          opened: true,
+          invalidation: null,
+          queryCalls: 0,
+        },
       },
       unsupportedViewMethods: {
         observations: [
@@ -735,6 +1013,52 @@ describe("pending P12 view read authentication boundary", () => {
                 loopback.port,
                 "/project-resources",
               );
+              const wildcardSocket = await openWebSocket(wildcard.port);
+              let wildcardSocketFrame: ReturnType<
+                typeof sanitizeWebSocketMessage
+              > | null = null;
+              if (wildcardSocket.opened) {
+                const message = nextWebSocketMessage(wildcardSocket.socket);
+                wildcard.fanout.publishWatermark(883);
+                const rawMessage = await message;
+                wildcardSocketFrame =
+                  rawMessage === null
+                    ? null
+                    : sanitizeWebSocketMessage(rawMessage);
+                wildcardSocket.socket.close();
+              }
+              const loopbackSocket = await openWebSocket(loopback.port);
+              let loopbackSocketResponse: ReturnType<
+                typeof sanitizeWebSocketMessage
+              > | null = null;
+              let loopbackSocketInvalidation: ReturnType<
+                typeof sanitizeWebSocketMessage
+              > | null = null;
+              if (loopbackSocket.opened) {
+                const response = nextWebSocketMessage(loopbackSocket.socket);
+                loopbackSocket.socket.send(
+                  JSON.stringify({
+                    kind: "view",
+                    view: "responsibility-tree",
+                    request: { projectId: p7Project },
+                  }),
+                );
+                const rawResponse = await response;
+                loopbackSocketResponse =
+                  rawResponse === null
+                    ? null
+                    : sanitizeWebSocketMessage(rawResponse);
+                const invalidation = nextWebSocketMessage(
+                  loopbackSocket.socket,
+                );
+                loopback.fanout.publishWatermark(884);
+                const rawInvalidation = await invalidation;
+                loopbackSocketInvalidation =
+                  rawInvalidation === null
+                    ? null
+                    : sanitizeWebSocketMessage(rawInvalidation);
+                loopbackSocket.socket.close();
+              }
               return {
                 wildcardProjects,
                 wildcardViews,
@@ -745,6 +1069,15 @@ describe("pending P12 view read authentication boundary", () => {
                 loopbackViews,
                 loopbackProgress,
                 loopbackCatalog,
+                wildcardSocket: {
+                  opened: wildcardSocket.opened,
+                  frame: wildcardSocketFrame,
+                },
+                loopbackSocket: {
+                  opened: loopbackSocket.opened,
+                  response: loopbackSocketResponse,
+                  invalidation: loopbackSocketInvalidation,
+                },
               };
             });
 
@@ -783,5 +1116,14 @@ describe("pending P12 view read authentication boundary", () => {
       eventStream: true,
     });
     expect(report.loopbackCatalog.status).toBe(200);
+    expect(report.wildcardSocket).toEqual({
+      opened: false,
+      frame: null,
+    });
+    expect(report.loopbackSocket).toEqual({
+      opened: true,
+      response: { kind: "response", ok: true, status: 200 },
+      invalidation: { kind: "invalidate" },
+    });
   }, 45_000);
 });
