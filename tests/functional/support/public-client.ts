@@ -268,6 +268,102 @@ const expectOnlyRootWorkspace = (
   }
 };
 
+export const proposeAndApproveChildWithoutWork = async (
+  client: PublicClient,
+  project: FunctionalProject,
+  marker: string,
+  request: string,
+  proposal: Readonly<{
+    name: string;
+    rationale: string;
+    responsibilityDraft: Readonly<Record<string, unknown>>;
+    resourceBoundaryDraft: Readonly<{
+      addresses: ReadonlyArray<Readonly<{ _tag: string; path: string }>>;
+    }>;
+  }>,
+): Promise<{ readonly workspaceId: string; readonly name: string }> => {
+  await submitHumanMessage(client, project, request);
+  const inbox = await waitForPublic(
+    () =>
+      client.view<{
+        unconsumed: Array<{ entryKey: string; kind: string; summary: string }>;
+      }>("inbox-view", { workspaceId: project.rootWorkspaceId }),
+    (value) =>
+      value.unconsumed.some(
+        (entry) =>
+          entry.kind === "Governance" &&
+          entry.summary.includes(marker) &&
+          /^gov:fpr_[^:]+:\d+$/u.test(entry.entryKey),
+      ),
+  );
+  const entry = inbox.unconsumed.find(
+    (candidate) =>
+      candidate.kind === "Governance" &&
+      candidate.summary.includes(marker) &&
+      /^gov:fpr_[^:]+:\d+$/u.test(candidate.entryKey),
+  );
+  const formation =
+    entry === undefined
+      ? null
+      : /^gov:(fpr_[^:]+):(\d+)$/u.exec(entry.entryKey);
+  if (formation === null) {
+    throw new Error(
+      `public Inbox exposed no exact FormationProposal for ${marker}`,
+    );
+  }
+  const before = await client.view<{
+    nodes: Array<{
+      workspaceId: string;
+      parentWorkspaceId: string | null;
+      name: string;
+    }>;
+  }>("responsibility-tree", { projectId: project.projectId });
+  if (
+    before.nodes.some(
+      (node) =>
+        node.parentWorkspaceId === project.rootWorkspaceId &&
+        node.name === proposal.name,
+    )
+  ) {
+    throw new Error(`child ${proposal.name} exists before Formation approval`);
+  }
+  await client.command(project.projectId, "RecordDecision", {
+    proposalId: formation[1],
+    expectedProposalRevision: Number(formation[2]),
+    outcome: { _tag: "Approve" },
+  });
+  const tree = await waitForPublic(
+    () =>
+      client.view<{
+        nodes: Array<{
+          workspaceId: string;
+          parentWorkspaceId: string | null;
+          name: string;
+          currentWork?: { workId?: string };
+        }>;
+      }>("responsibility-tree", { projectId: project.projectId }),
+    (value) =>
+      value.nodes.some(
+        (node) =>
+          node.parentWorkspaceId === project.rootWorkspaceId &&
+          node.name === proposal.name &&
+          node.currentWork === undefined,
+      ),
+    45_000,
+  );
+  const child = tree.nodes.find(
+    (node) =>
+      node.parentWorkspaceId === project.rootWorkspaceId &&
+      node.name === proposal.name,
+  );
+  if (child === undefined || child.currentWork !== undefined) {
+    throw new Error(
+      `approved FormationProposal unexpectedly lacks an empty child ${proposal.name}`,
+    );
+  }
+  return { workspaceId: child.workspaceId, name: child.name };
+};
+
 export const waitForApproval = async (
   client: PublicClient,
   project: FunctionalProject,
