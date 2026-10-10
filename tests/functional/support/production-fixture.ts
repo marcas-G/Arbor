@@ -458,13 +458,9 @@ export const startProductionFixture = async (input: {
     readonly daemonEnvironment?: Readonly<Record<string, string>>;
   }) => {
     const isFirstDaemon = daemonStarts === 0;
-    if (
-      input.isolatedPortHandshake === true &&
-      (override?.entry !== undefined ||
-        (isFirstDaemon && input.firstDaemonEntry !== undefined))
-    ) {
+    if (input.isolatedPortHandshake === true && override?.entry !== undefined) {
       throw new Error(
-        "nonce-isolated fixture startup currently requires the ordinary production daemon entry",
+        "nonce-isolated fixture restart overrides require a migrated nonce-reporting child",
       );
     }
     const requestedPort =
@@ -493,7 +489,9 @@ export const startProductionFixture = async (input: {
     delete daemonEnv.NO_COLOR;
     const entry =
       input.isolatedPortHandshake === true
-        ? NONCE_DAEMON_ENTRY
+        ? isFirstDaemon && input.firstDaemonEntry !== undefined
+          ? input.firstDaemonEntry
+          : NONCE_DAEMON_ENTRY
         : (override?.entry ??
           (isFirstDaemon && input.firstDaemonEntry !== undefined
             ? input.firstDaemonEntry
