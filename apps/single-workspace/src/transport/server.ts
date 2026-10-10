@@ -132,6 +132,24 @@ const bearerToken = (authorization: string | undefined): string | null => {
   return match?.[1] ?? null;
 };
 
+const isLoopbackListenerHost = (host: string | undefined): boolean => {
+  const normalized = (host ?? "127.0.0.1")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/gu, "");
+  if (normalized === "localhost" || normalized === "::1") return true;
+  if (normalized.startsWith("::ffff:")) {
+    return isLoopbackListenerHost(normalized.slice("::ffff:".length));
+  }
+  const octets = normalized.split(".");
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => /^(0|[1-9][0-9]{0,2})$/u.test(octet)) &&
+    octets.every((octet) => Number(octet) <= 255) &&
+    Number(octets[0]) === 127
+  );
+};
+
 const streamConversationProgress = async (
   request: IncomingMessage,
   response: ServerResponse,
@@ -281,6 +299,19 @@ const readLocalProjectResourceProfiles = async (
   response: ServerResponse,
   config: WebTransportConfig,
 ): Promise<void> => {
+  // The no-auth LOCAL_PRINCIPAL fallback is only the local desktop identity.
+  // Do not let a wildcard/non-loopback bind turn it into remote access to host
+  // resource metadata. Other routes retain their existing auth behavior.
+  if (
+    config.authenticator === undefined &&
+    !isLoopbackListenerHost(config.host)
+  ) {
+    sendJson(response, 503, {
+      ok: false,
+      problem: { code: "project-resource-profiles/local-listener-required" },
+    });
+    return;
+  }
   const token = bearerToken(request.headers.authorization);
   const principal =
     config.authenticator === undefined

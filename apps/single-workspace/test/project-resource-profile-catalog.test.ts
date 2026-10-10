@@ -2,7 +2,9 @@ import {
   accessSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -175,6 +177,29 @@ describe("host ProjectResourceProfilePort", () => {
     accessSync(directory);
   });
 
+  it("stores the canonical realpath target when the configured directory is a symlink", () => {
+    const root = tempRoot();
+    const target = join(root, "canonical-target");
+    const alias = join(root, "profile-alias");
+    mkdirSync(target);
+    symlinkSync(
+      target,
+      alias,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const port = makeProjectResourceProfilePort([profile(alias, "linked")]);
+    const resolved = Effect.runSync(port.resolve("linked", "v1"));
+    expect(resolved).toMatchObject({
+      _tag: "Some",
+      value: {
+        canonicalAddress: {
+          _tag: "FileTree",
+          path: realpathSync(target),
+        },
+      },
+    });
+  });
+
   it("fails unavailable on directory permission errors without exposing diagnostics", () => {
     const root = tempRoot();
     const directory = join(root, "secret-permission-path");
@@ -296,9 +321,6 @@ describe("host ProjectResourceProfilePort", () => {
           }),
       } as never,
       webSocket: { handleFrame: () => Effect.succeed({ ok: true }) } as never,
-      authenticator: makeStaticAuthenticator({
-        "local-token": parse(Principal)("user:local"),
-      }),
       sql: { unsafe: () => Effect.succeed([]) } as never,
       projectDirectory: { list: () => Effect.succeed([]) } as never,
       projectResourceProfiles: makeProjectResourceProfilePort([]),
@@ -309,14 +331,47 @@ describe("host ProjectResourceProfilePort", () => {
     try {
       const response = await fetch(
         `http://127.0.0.1:${handle.port}/project-resources`,
-        {
-          headers: { authorization: "Bearer local-token" },
-        },
       );
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({
         body: { profiles: [], conversationOnlySupported: true },
       });
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("does not use the local-principal fallback for a non-loopback no-auth bind", async () => {
+    const root = tempRoot();
+    const directory = join(root, "private-directory-name");
+    mkdirSync(directory);
+    const handle = await startWebTransport({
+      http: {
+        handle: () =>
+          Effect.succeed({
+            ok: true,
+            status: 404,
+            problem: { code: "unused" },
+          }),
+      } as never,
+      webSocket: { handleFrame: () => Effect.succeed({ ok: true }) } as never,
+      sql: { unsafe: () => Effect.succeed([]) } as never,
+      projectDirectory: { list: () => Effect.succeed([]) } as never,
+      projectResourceProfiles: makeProjectResourceProfilePort([
+        profile(directory, "opaque-ref", "Friendly workspace"),
+      ]),
+      host: "0.0.0.0",
+      port: 0,
+      pollIntervalMs: 60_000,
+    });
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${handle.port}/project-resources`,
+      );
+      expect(response.status).toBe(503);
+      const body = await response.text();
+      expect(body).not.toContain(directory);
+      expect(body).not.toContain("opaque-ref");
     } finally {
       await handle.close();
     }
