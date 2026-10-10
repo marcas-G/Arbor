@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect, Exit, type Layer } from "effect";
+import { Cause, Effect, Exit, type Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -27,7 +27,9 @@ import {
 import {
   Clock,
   CommandStore,
+  type StoredCommandResolution,
   TransactionPort,
+  TransactionScope,
   WorkspaceRepository,
 } from "../../../packages/ports/src/index.js";
 import {
@@ -398,4 +400,139 @@ describe("pending F23 exact-tuple receipt integrity", () => {
       expect(exit.value).toMatchObject({ _tag: "Observation" });
     }
   }, 45_000);
+
+  it("routes a syntax-corrupt direct-child prior receipt into the existing P9 ReceiptMismatch fact before blocking", async () => {
+    const providerTurnId = parse(ProviderTurnId)(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789b0",
+    );
+    const outputPosition = 1;
+    const occurrence = `${providerTurnId}:${outputPosition}`;
+    const priorCommandId = parse(CommandId)(
+      `cmd_${newUuid7("assign-work-command", occurrence)}`,
+    );
+    const executionId = parse(ExecutionId)(
+      "exe_018f2b3c-4d5e-7abc-8def-0123456789b0",
+    );
+    const logicalActionId = "act_018f2b3c-4d5e-7abc-8def-0123456789b0";
+    const rawMalformedResult = "{";
+    const stored = {
+      commandId: priorCommandId,
+      projectId: p7Project,
+      semanticRequestFingerprint: "f".repeat(64),
+      schemaVersion: "1",
+      fingerprintAlgorithmVersion: 1,
+      resolution: "Committed",
+      resultJson: rawMalformedResult,
+      terminalErrorJson: null,
+      createdAt: "2026-10-10T00:00:00.000Z",
+      settledAt: "2026-10-10T00:00:00.000Z",
+    } as StoredCommandResolution;
+    const p9Facts: Array<Record<string, unknown>> = [];
+    let gatewayCalls = 0;
+    const tx = {
+      transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
+        Effect.provideService(body, TransactionScope, {
+          session: { id: "f23-p9-disposition" },
+        }),
+    } as never;
+    const handler = assignWorkHandler({
+      gateway: {
+        execute: () => {
+          gatewayCalls += 1;
+          return Effect.succeed({} as never);
+        },
+      } as never,
+      commandReceipts: {
+        findResolution: () => Effect.succeed(Option.some(stored)),
+      } as never,
+      workspaces: {
+        findById: () => Effect.succeed(Option.none()),
+      } as never,
+      clock: { now: () => Effect.succeed("2026-10-10T00:00:00.000Z") } as never,
+      tx,
+      bindings: {
+        findByExecutionAndAction: () => Effect.succeed([]),
+        findByCommandId: () => Effect.succeed(Option.none()),
+      } as never,
+      works: { findById: () => Effect.succeed(Option.none()) } as never,
+      grants: { findById: () => Effect.succeed(Option.none()) } as never,
+      approvals: { findById: () => Effect.succeed(Option.none()) } as never,
+      journal: {} as never,
+      bindingAttention: {
+        recordAssignWorkBindingFailure: (input: Record<string, unknown>) =>
+          Effect.sync(() => {
+            p9Facts.push(input);
+          }),
+      } as never,
+    });
+    const actionInput = {
+      action: {
+        _tag: "AssignWork",
+        targetWorkspaceRef: "child:opaque-target",
+        objective: "one child Work",
+        why: "recover the exact committed action",
+        constraints: [],
+        completionExpectation: "the Work is assigned",
+        verificationMission: {
+          goal: "verify assignment",
+          criteria: [],
+          riskRequirements: [],
+        },
+        reason: "pending P9 receipt disposition qualification",
+      },
+      invocation: {
+        providerTurnId,
+        outputPosition,
+        callRef: "call-f23-p9-syntax-corrupt",
+        toolName: "assign_work",
+        argumentsJson: "{}",
+      },
+      execution: {
+        executionId,
+        projectId: p7Project,
+        workspaceId: p7RootWorkspace,
+        sessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789b0",
+        binding: {
+          _tag: "WorkspaceExecution",
+          workspaceId: p7RootWorkspace,
+          episode: {
+            _tag: "WorkEpisode",
+            workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789b0",
+            targetWorkRevision: 0,
+          },
+        },
+        admittedAt: "2026-10-10T00:00:00.000Z",
+        stopRequestedAt: null,
+        state: { status: "Active", settlement: null },
+      },
+      context: {
+        _tag: "ExecutionOrigin",
+        principal: "agent:f23-p9-disposition",
+        executionId,
+        fencingGeneration: 1,
+      },
+      logicalActionId,
+      assignWorkReplay: true,
+    } as unknown as AgentActionHandlerInput;
+
+    const exit = await Effect.runPromiseExit(handler.handle(actionInput));
+
+    expect(p9Facts).toHaveLength(1);
+    expect(p9Facts[0]).toMatchObject({
+      commandId: priorCommandId,
+      executionId,
+      logicalActionId,
+      failureCode: "ReceiptMismatch",
+    });
+    expect(JSON.stringify(p9Facts)).not.toContain(rawMalformedResult);
+    expect(gatewayCalls).toBe(0);
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(failure)).toBe(true);
+      if (Option.isSome(failure)) {
+        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+      }
+    }
+  });
 });
