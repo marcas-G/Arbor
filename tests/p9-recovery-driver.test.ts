@@ -22,11 +22,16 @@ import {
 const principal = parse(Principal)("user:gov");
 
 const ROOT_WS = "ws_018f2b3c-4d5e-7abc-8def-0123456789c1";
+const EXE_B2 = "exe_00000000-0000-7000-8000-0000000000b2";
+const EXE_T1 = "exe_00000000-0000-7000-8000-0000000000b1";
+const EXE_T2 = "exe_00000000-0000-7000-8000-0000000000b3";
+const EXE_T4A = "exe_00000000-0000-7000-8000-00000000004a";
+const EXE_T4B = "exe_00000000-0000-7000-8000-00000000004b";
 
 const INSERT_EXECUTION = (executionId: string, stopRequested: string | null) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const sesId = `ses_${executionId}`;
+    const sesId = `ses_${executionId.slice(4)}`;
     yield* sql.unsafe(
       "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,NULL,?,0,'t')",
       [sesId, "ExecutionScoped", executionId],
@@ -130,15 +135,15 @@ describe("P9-003 completion-fact settle + recovery drive (B-2, T1, T4)", () => {
       Effect.gen(function* () {
         yield* runMigrations(P8_MIGRATIONS);
         yield* p7SeedProject;
-        const fact = yield* INSERT_COMPLETION_FACT("exe_p9_b2");
-        yield* INSERT_EXECUTION("exe_p9_b2", null);
+        const fact = yield* INSERT_COMPLETION_FACT(EXE_B2);
+        yield* INSERT_EXECUTION(EXE_B2, null);
         const result = yield* runRecovery(principal);
-        expect(result.settled).toContain("exe_p9_b2");
-        const row = yield* executionRow("exe_p9_b2");
+        expect(result.settled).toContain(EXE_B2);
+        const row = yield* executionRow(EXE_B2);
         expect(row.kind).toBe("Completed");
         expect(row.settlement).toEqual(fact);
         const commands = yield* countCommands(
-          "cmd_recovery_completion_exe_p9_b2",
+          `cmd_recovery_completion_${EXE_B2}`,
         );
         expect(commands).toBe(1);
       }),
@@ -151,19 +156,19 @@ describe("P9-003 completion-fact settle + recovery drive (B-2, T1, T4)", () => {
       Effect.gen(function* () {
         yield* runMigrations(P8_MIGRATIONS);
         yield* p7SeedProject;
-        yield* INSERT_COMPLETION_FACT("exe_p9_t1");
-        yield* INSERT_EXECUTION("exe_p9_t1", null);
+        yield* INSERT_COMPLETION_FACT(EXE_T1);
+        yield* INSERT_EXECUTION(EXE_T1, null);
         const first = yield* startupRecovery(principal);
-        expect(first.recovery.settled).toEqual(["exe_p9_t1"]);
+        expect(first.recovery.settled).toEqual([EXE_T1]);
         // Crash during/after T1 → restart re-runs T1: idempotent re-entry.
         const second = yield* startupRecovery(principal);
         expect(second.recovery.settled).toEqual([]);
         expect(second.recovery.escalated).toEqual([]);
-        const row = yield* executionRow("exe_p9_t1");
+        const row = yield* executionRow(EXE_T1);
         expect(row.kind).toBe("Completed");
         // One seeded fact + one settle event — never two settles.
-        expect(yield* countEvents("exe_p9_t1", "ExecutionSettled")).toBe(2);
-        expect(yield* countCommands("cmd_recovery_completion_exe_p9_t1")).toBe(
+        expect(yield* countEvents(EXE_T1, "ExecutionSettled")).toBe(2);
+        expect(yield* countCommands(`cmd_recovery_completion_${EXE_T1}`)).toBe(
           1,
         );
       }),
@@ -176,11 +181,11 @@ describe("P9-003 completion-fact settle + recovery drive (B-2, T1, T4)", () => {
       Effect.gen(function* () {
         yield* runMigrations(P8_MIGRATIONS);
         yield* p7SeedProject;
-        yield* INSERT_COMPLETION_FACT("exe_p9_t2");
-        yield* INSERT_EXECUTION("exe_p9_t2", null);
+        yield* INSERT_COMPLETION_FACT(EXE_T2);
+        yield* INSERT_EXECUTION(EXE_T2, null);
         const swept = yield* sweepRecovery(principal);
-        expect(swept.recovery.settled).toEqual(["exe_p9_t2"]);
-        const row = yield* executionRow("exe_p9_t2");
+        expect(swept.recovery.settled).toEqual([EXE_T2]);
+        const row = yield* executionRow(EXE_T2);
         expect(row.kind).toBe("Completed");
       }),
       makeP7App(),
@@ -192,8 +197,8 @@ describe("P9-003 completion-fact settle + recovery drive (B-2, T1, T4)", () => {
       Effect.gen(function* () {
         yield* runMigrations(P8_MIGRATIONS);
         yield* p7SeedProject;
-        yield* INSERT_EXECUTION("exe_p9_t4a", null);
-        yield* INSERT_EXECUTION("exe_p9_t4b", null);
+        yield* INSERT_EXECUTION(EXE_T4A, null);
+        yield* INSERT_EXECUTION(EXE_T4B, null);
         const sql = yield* SqlClient;
         const snapshot = Effect.gen(function* () {
           const events = yield* sql.unsafe<{ count: number }>(
@@ -214,15 +219,15 @@ describe("P9-003 completion-fact settle + recovery drive (B-2, T1, T4)", () => {
         const before = yield* snapshot;
         // Live, unexpired lease fences the dispatch → skip.
         yield* INSERT_LEASE(
-          "exe_p9_t4a",
+          EXE_T4A,
           new Date(Date.now() + 60_000).toISOString(),
         );
-        expect(yield* preDispatchCheck("exe_p9_t4a" as never)).toBe(false);
+        expect(yield* preDispatchCheck(EXE_T4A as never)).toBe(false);
         // Expired lease: lazy invalidation at acquisition (P2 `06` §3) → proceed.
-        yield* INSERT_LEASE("exe_p9_t4a", "2000-01-01T00:00:00.000Z");
-        expect(yield* preDispatchCheck("exe_p9_t4a" as never)).toBe(true);
+        yield* INSERT_LEASE(EXE_T4A, "2000-01-01T00:00:00.000Z");
+        expect(yield* preDispatchCheck(EXE_T4A as never)).toBe(true);
         // No lease at all → proceed.
-        expect(yield* preDispatchCheck("exe_p9_t4b" as never)).toBe(true);
+        expect(yield* preDispatchCheck(EXE_T4B as never)).toBe(true);
         const after = yield* snapshot;
         expect(after).toEqual(before);
       }),
