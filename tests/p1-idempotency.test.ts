@@ -43,6 +43,11 @@ import {
 
 const commandId = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789ab");
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
+const createProjectResult = {
+  projectId,
+  rootWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ac",
+  primarySessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789ad",
+};
 const actor = parse(Actor)("user:test");
 const context: CommandSubmissionContext = {
   _tag: "External",
@@ -50,7 +55,7 @@ const context: CommandSubmissionContext = {
 };
 
 const envelope = (payload: unknown): GatewayEnvelope<unknown> => ({
-  commandType: "TestCommand",
+  commandType: "CreateProject",
   commandId,
   projectId,
   actor,
@@ -63,10 +68,10 @@ const authorityFor = (payload: unknown): VerifiedCommandAuthority => ({
   principal: parse(Principal)("user:test"),
   commandId,
   semanticRequestFingerprint: semanticRequestFingerprint({
-    commandType: "TestCommand",
+    commandType: "CreateProject",
     projectId,
     actor,
-    schemaVersion: "1",
+    schemaVersion: "2",
     payload,
   }),
   projectId,
@@ -82,8 +87,8 @@ const buildApp = (
   transaction?: Layer.Layer<TransactionPort, never, SqlClient>,
 ) => {
   const handler: CommandHandler<unknown, unknown> = {
-    commandType: "TestCommand",
-    schemaVersion: "1",
+    commandType: "CreateProject",
+    schemaVersion: "2",
     authority: { tag: "CreateProjectAuthority", targetMatches: () => true },
     stopAdmission: { _tag: "Unclassified" },
     execute: (env) =>
@@ -179,7 +184,7 @@ describe("P1 idempotency / replay / concurrency", () => {
   it("replays the existing committed receipt without re-executing", async () => {
     let executions = 0;
     const app = buildApp(
-      () => ok({ result: { ok: true }, events: [] }),
+      () => ok({ result: createProjectResult, events: [] }),
       () => {
         executions += 1;
       },
@@ -244,7 +249,7 @@ describe("P1 idempotency / replay / concurrency", () => {
   it("returns IdempotencyConflict on a different fingerprint without re-executing", async () => {
     let executions = 0;
     const app = buildApp(
-      () => ok({ result: { ok: true }, events: [] }),
+      () => ok({ result: createProjectResult, events: [] }),
       () => {
         executions += 1;
       },
@@ -279,7 +284,7 @@ describe("P1 idempotency / replay / concurrency", () => {
     const dir = mkdtempSync(join(tmpdir(), "arbor-idem-"));
     const filename = join(dir, "idem.db");
     const app = buildApp(
-      () => ok({ result: { ok: true }, events: [] }),
+      () => ok({ result: createProjectResult, events: [] }),
       () => {},
       filename,
     );
@@ -307,7 +312,7 @@ describe("P1 idempotency / replay / concurrency", () => {
 
   it("records a retryable attempt on operational failure, then a new attempt on retry", async () => {
     const app = buildApp(
-      () => ok({ result: { ok: true }, events: [] }),
+      () => ok({ result: createProjectResult, events: [] }),
       () => {},
       ":memory:",
       flakyTransaction(),

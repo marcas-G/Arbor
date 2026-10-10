@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -111,6 +111,8 @@ import {
   InboxProjectionStore,
   MessageStore,
   ProjectRepository,
+  ProjectResourceProfilePort,
+  type ProjectResourceProfilePortService,
   SessionRepository,
   TransactionPort,
   WorkRepository,
@@ -129,6 +131,36 @@ const ROOT = parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const ROOT_SESSION = parse(SessionId)(
   "ses_018f2b3c-4d5e-7abc-8def-0123456789c1",
 );
+const P6_PROFILE_REF = "p6-acceptance-root";
+const P6_PROFILE_VERSION = "fixture-v1";
+const P6_PROFILE_ADDRESS = realpathSync("tests");
+const P6_FILE_TREE_ADDRESS = {
+  _tag: "FileTree" as const,
+  path: P6_PROFILE_ADDRESS,
+};
+const p6ProjectResourceProfiles: ProjectResourceProfilePortService = {
+  list: () =>
+    Effect.succeed([
+      {
+        resourceProfileRef: P6_PROFILE_REF,
+        version: P6_PROFILE_VERSION,
+        displayName: "P6 test FileTree profile",
+        available: true,
+      },
+    ]),
+  resolve: (resourceProfileRef, version) =>
+    Effect.succeed(
+      resourceProfileRef === P6_PROFILE_REF && version === P6_PROFILE_VERSION
+        ? Option.some({
+            resourceProfileRef: P6_PROFILE_REF,
+            version: P6_PROFILE_VERSION,
+            displayName: "P6 test FileTree profile",
+            available: true as const,
+            canonicalAddress: P6_FILE_TREE_ADDRESS,
+          })
+        : Option.none(),
+    ),
+};
 const SEED_COMMAND = parse(CommandId)(
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789c1",
 );
@@ -206,6 +238,7 @@ const AcceptanceRegistryLive: Layer.Layer<
   | FormationProposalStore
   | InboxProjectionStore
   | MessageStore
+  | ProjectResourceProfilePort
 > = Layer.effect(
   CommandHandlerRegistry,
   Effect.gen(function* () {
@@ -218,8 +251,15 @@ const AcceptanceRegistryLive: Layer.Layer<
     const proposals = yield* FormationProposalStore;
     const inbox = yield* InboxProjectionStore;
     const messages = yield* MessageStore;
+    const projectResourceProfiles = yield* ProjectResourceProfilePort;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
-      ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
+      ...makeP1CommandHandlers({
+        projects,
+        workspaces,
+        sessions,
+        works,
+        projectResourceProfiles,
+      }),
       ...makeP2CommandHandlers({
         projects,
         workspaces,
@@ -281,6 +321,7 @@ const makeAcceptanceApp = (
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
+    Layer.succeed(ProjectResourceProfilePort, p6ProjectResourceProfiles),
   );
   const registry = Layer.provide(AcceptanceRegistryLive, storeDeps);
   const gatewayDeps = Layer.mergeAll(
@@ -347,11 +388,11 @@ const seedProject = Effect.gen(function* () {
         interfaces: [],
       },
       responsibilityRevision: parse(ResponsibilityRevision)(0),
-      resourceBoundary: {
-        basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-        addresses: [],
+      resourceSelection: {
+        _tag: "Profile" as const,
+        resourceProfileRef: P6_PROFILE_REF,
+        version: P6_PROFILE_VERSION,
       },
-      resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
       agentBinding: responsibilityBound(ROOT),
       workspacePolicy: makeWorkspacePolicy(),
       workspacePolicyRevision: parse(Revision)(0),
@@ -402,7 +443,10 @@ const workspaceRow = (
     interfaces: [],
   }),
   1,
-  JSON.stringify({ basisResponsibilityRevision: 1, addresses: [] }),
+  JSON.stringify({
+    basisResponsibilityRevision: 1,
+    addresses: [P6_FILE_TREE_ADDRESS],
+  }),
   1,
   JSON.stringify({ _tag: "ResponsibilityBound", workspaceId }),
   sessionId,

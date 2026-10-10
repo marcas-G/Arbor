@@ -7,10 +7,12 @@ import {
   ExecutionId,
   err,
   LeaseGeneration,
+  MessageId,
   ok,
   Principal,
   ProjectId,
   parse,
+  WorkspaceId,
 } from "@arbor/domain";
 import {
   Clock,
@@ -52,6 +54,20 @@ const otherCommandId = parse(CommandId)(
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
 const actor = parse(Actor)("user:test");
 const principal = parse(Principal)("user:test");
+const createProjectResult = {
+  projectId,
+  rootWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ac",
+  primarySessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789ad",
+};
+const submitHumanMessageResult = {
+  messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789ae",
+  state: "Pending",
+};
+const submitHumanMessagePayload = {
+  messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789ae",
+  targetWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ac",
+  bodyRef: "body-ref",
+};
 const externalContext: CommandSubmissionContext = {
   _tag: "External",
   principal,
@@ -65,7 +81,7 @@ const executionContext: CommandSubmissionContext = {
 
 const envelope = (
   payload: unknown,
-  commandType = "TestCommand",
+  commandType = "CreateProject",
 ): GatewayEnvelope<unknown> => ({
   commandType,
   commandId,
@@ -75,12 +91,15 @@ const envelope = (
   payload,
 });
 
-const fpFor = (payload: unknown, commandType = "TestCommand") =>
+const schemaVersionFor = (commandType: string): string =>
+  commandType === "CreateProject" ? "2" : "1";
+
+const fpFor = (payload: unknown, commandType = "CreateProject") =>
   semanticRequestFingerprint({
     commandType,
     projectId,
     actor,
-    schemaVersion: "1",
+    schemaVersion: schemaVersionFor(commandType),
     payload,
   });
 
@@ -92,15 +111,36 @@ type CreateProjectAuthority = Extract<
 const authorityFor = (
   payload: unknown,
   overrides: Partial<CreateProjectAuthority> = {},
-  commandType = "TestCommand",
-): VerifiedCommandAuthority => ({
-  _tag: "CreateProjectAuthority",
-  principal,
-  commandId,
-  semanticRequestFingerprint: fpFor(payload, commandType),
-  projectId,
-  ...overrides,
-});
+  commandType = "CreateProject",
+): VerifiedCommandAuthority => {
+  const semanticRequestFingerprint = fpFor(payload, commandType);
+  if (commandType === "SubmitHumanMessage") {
+    const record = payload as Record<string, unknown>;
+    return {
+      _tag: "SubmitHumanMessageAuthority",
+      principal,
+      commandId,
+      semanticRequestFingerprint,
+      projectId,
+      targetWorkspaceId:
+        typeof record.targetWorkspaceId === "string"
+          ? parse(WorkspaceId)(record.targetWorkspaceId)
+          : parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789ac"),
+      messageId:
+        typeof record.messageId === "string"
+          ? record.messageId
+          : parse(MessageId)("msg_018f2b3c-4d5e-7abc-8def-0123456789ae"),
+    };
+  }
+  return {
+    _tag: "CreateProjectAuthority",
+    principal,
+    commandId,
+    semanticRequestFingerprint,
+    projectId,
+    ...overrides,
+  };
+};
 
 interface FakeState {
   readonly rows: Map<string, StoredCommandResolution>;
@@ -231,25 +271,39 @@ const buildApp = (
 
 const handler = (
   behaviour: (payload: unknown) => DomainResult<{
-    result: { readonly ok: boolean };
+    result: unknown;
     events: ReadonlyArray<PendingDomainEvent>;
   }>,
   onExecute?: () => void,
-  authority: CommandAuthorityRule<unknown> = {
-    tag: "CreateProjectAuthority",
+  authority?: CommandAuthorityRule<unknown>,
+  commandType = "CreateProject",
+): CommandHandler<unknown, unknown> => ({
+  commandType,
+  schemaVersion: schemaVersionFor(commandType),
+  authority: authority ?? {
+    tag:
+      commandType === "SubmitHumanMessage"
+        ? "SubmitHumanMessageAuthority"
+        : "CreateProjectAuthority",
     targetMatches: () => true,
   },
-  commandType = "TestCommand",
-): CommandHandler<unknown, { readonly ok: boolean }> => ({
-  commandType,
-  schemaVersion: "1",
-  authority,
   stopAdmission: { _tag: "Unclassified" },
   execute: (env) =>
     Effect.sync(() => {
       onExecute?.();
       return behaviour(env.payload);
-    }),
+    }).pipe(
+      Effect.map((outcome) => {
+        if (!outcome.ok) return outcome;
+        if (commandType === "CreateProject") {
+          return ok({ ...outcome.value, result: createProjectResult });
+        }
+        if (commandType === "SubmitHumanMessage") {
+          return ok({ ...outcome.value, result: submitHumanMessageResult });
+        }
+        return outcome;
+      }),
+    ),
 });
 
 const fenceLive = (outcome: FenceStopOutcome): Layer.Layer<FenceStopCheck> =>
@@ -497,7 +551,7 @@ describe("command gateway", () => {
       commandId,
       projectId,
       semanticRequestFingerprint: fpFor({ x: 1 }),
-      schemaVersion: "1",
+      schemaVersion: "2",
       fingerprintAlgorithmVersion: 1,
       resolution: "Committed" as const,
       resultJson: `{"sentinel":"${sentinel}`,
@@ -558,15 +612,22 @@ describe("command gateway", () => {
   it("distinguishes FencingRejected from ExecutionStopping via the hook", async () => {
     for (const outcome of ["FencingRejected", "ExecutionStopping"] as const) {
       const { app, state } = buildApp(
-        [handler(() => ok({ result: { ok: true }, events: [] }))],
+        [
+          handler(
+            () => ok({ result: submitHumanMessageResult, events: [] }),
+            undefined,
+            undefined,
+            "SubmitHumanMessage",
+          ),
+        ],
         fenceLive(outcome),
       );
       const program = Effect.gen(function* () {
         const gw = yield* CommandGateway;
         return yield* gw.execute(
-          envelope({ x: 1 }),
+          envelope(submitHumanMessagePayload, "SubmitHumanMessage"),
           executionContext,
-          authorityFor({ x: 1 }),
+          authorityFor(submitHumanMessagePayload, {}, "SubmitHumanMessage"),
         );
       });
       const receipt = await run(program, app);
@@ -658,9 +719,9 @@ describe("command gateway", () => {
       sourceTag: "InjectedFailure",
       cause: "database unavailable",
     };
-    const failingHandler: CommandHandler<unknown, { readonly ok: boolean }> = {
-      commandType: "TestCommand",
-      schemaVersion: "1",
+    const failingHandler: CommandHandler<unknown, unknown> = {
+      commandType: "CreateProject",
+      schemaVersion: "2",
       authority: {
         tag: "CreateProjectAuthority",
         targetMatches: () => true,
@@ -848,10 +909,12 @@ describe("command authority (P1-DG-11)", () => {
     const { app } = buildApp(
       [
         handler(
-          () => ok({ result: { ok: true }, events: [] }),
+          () => ok({ result: submitHumanMessageResult, events: [] }),
           () => {
             executed = true;
           },
+          undefined,
+          "SubmitHumanMessage",
         ),
       ],
       FenceStopCheckInertLive,
@@ -862,9 +925,9 @@ describe("command authority (P1-DG-11)", () => {
       Effect.gen(function* () {
         const gateway = yield* CommandGateway;
         return yield* gateway.execute(
-          envelope({ x: 1 }),
+          envelope(submitHumanMessagePayload, "SubmitHumanMessage"),
           externalContext,
-          authorityFor({ x: 1 }),
+          authorityFor(submitHumanMessagePayload, {}, "SubmitHumanMessage"),
         );
       }),
       app,
