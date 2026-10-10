@@ -18,6 +18,7 @@ interface SocketObservation {
 let fixture: ProductionFixture;
 let firstProjectId: string;
 let secondProjectId: string;
+let secondRootWorkspaceId: string;
 const observations: SocketObservation[] = [];
 
 const hasProjectProof = (
@@ -70,10 +71,52 @@ test.beforeAll(async () => {
   );
   firstProjectId = first.projectId;
   secondProjectId = second.projectId;
+  secondRootWorkspaceId = second.rootWorkspaceId;
 });
 
 test.afterAll(async () => {
   await fixture?.stop();
+});
+
+test("a foreign workspace route is rejected before its workspace DTO is requested", async ({
+  page,
+}) => {
+  const viewRequests: Array<{
+    readonly view: string;
+    readonly request: unknown;
+  }> = [];
+  await page.route(`${fixture.baseUrl}/views/**`, async (route) => {
+    const url = new URL(route.request().url());
+    viewRequests.push({
+      view: url.pathname.split("/").at(-1) ?? "",
+      request: route.request().postDataJSON(),
+    });
+    await route.continue();
+  });
+
+  await page.goto(
+    `${fixture.baseUrl}/p/${firstProjectId}/workspace/${secondRootWorkspaceId}/overview`,
+  );
+  await expect(page.getByText("对象不存在")).toBeVisible({ timeout: 15_000 });
+  expect(viewRequests.length).toBeGreaterThan(0);
+  expect(
+    viewRequests.every(
+      ({ view, request }) =>
+        view === "responsibility-tree" &&
+        JSON.stringify(request) ===
+          JSON.stringify({ projectId: firstProjectId }),
+    ),
+  ).toBe(true);
+  expect(viewRequests.some(({ view }) => view === "workspace-detail")).toBe(
+    false,
+  );
+  await expect(
+    page.getByText("Route session beta", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText(secondRootWorkspaceId, { exact: true }),
+  ).toHaveCount(0);
+  expect(fixture.daemonErrors).toEqual([]);
 });
 
 test("direct load, refresh, project picker and history keep WS scoped to the URL project", async ({
