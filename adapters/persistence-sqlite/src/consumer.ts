@@ -24,6 +24,20 @@ export interface ConsumerRunResult {
   readonly quarantined: number;
 }
 
+export interface RebuildProjectionQualificationEvent {
+  readonly boundary: "P10AfterResetAndOffsetRewindCommitBeforeCatchUp";
+  readonly consumerId: string;
+  readonly projectId: ProjectId;
+  readonly floor: number;
+  readonly rewoundTo: number;
+}
+
+/** Process-local deterministic seam for qualification of the rebuild's
+ * reset/snapshot/offset-rewind commit boundary. Ordinary callers omit it. */
+export type RebuildProjectionQualificationProbe = (
+  event: RebuildProjectionQualificationEvent,
+) => Promise<void>;
+
 export const P10_ATTENTION_CONSUMER_ID = "p10-rebuild:attention";
 
 export type ConsumerRunError =
@@ -205,6 +219,7 @@ export const rebuildProjection = (
   consumerId: string,
   projectId: ProjectId,
   batchSize = 100,
+  qualificationProbe?: RebuildProjectionQualificationProbe,
 ): Effect.Effect<
   { readonly replayed: number; readonly floor: number },
   ConsumerRunError | ConsumerRebuildRefused,
@@ -237,6 +252,7 @@ export const rebuildProjection = (
         floor,
       });
     }
+    const rewoundTo = Math.max(floor - 1, 0);
     yield* tx.transact(
       Effect.gen(function* () {
         yield* projection.reset();
@@ -245,9 +261,20 @@ export const rebuildProjection = (
         // sequence before the floor (clamped: absent row reads 0), which
         // makes the rebuild deliver the floor event exactly like the
         // PR1 offset-loss batch replay does.
-        yield* offsets.advance(consumerId, projectId, Math.max(floor - 1, 0));
+        yield* offsets.advance(consumerId, projectId, rewoundTo);
       }),
     );
+    if (qualificationProbe !== undefined) {
+      yield* Effect.promise(() =>
+        qualificationProbe({
+          boundary: "P10AfterResetAndOffsetRewindCommitBeforeCatchUp",
+          consumerId,
+          projectId,
+          floor,
+          rewoundTo,
+        }),
+      );
+    }
     let replayed = 0;
     for (;;) {
       const result = yield* runConsumerBatch(consumerId, projectId, batchSize);
