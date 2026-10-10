@@ -25,6 +25,22 @@ const boundaries = [
 ] as const;
 
 type Snapshot = ReturnType<typeof durableSnapshot>;
+type Ah9ActionRow = {
+  readonly execution_id: string;
+  readonly logical_step_no: number;
+  readonly action_index: number;
+  readonly logical_action_id: string;
+  readonly call_ref: string;
+  readonly action_kind: string;
+  readonly state: string;
+  readonly settlement_ref: string | null;
+  readonly disposition_json: string | null;
+  readonly observation_source_ref: string | null;
+};
+type Ah9ControlResultRow = {
+  readonly source_ref: string;
+  readonly payload_json: string;
+};
 
 const durableSnapshot = (databaseFile: string) => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
@@ -42,9 +58,9 @@ const durableSnapshot = (databaseFile: string) => {
         .all(),
       actions: db
         .prepare(
-          "SELECT execution_id, logical_step_no, action_index, logical_action_id, call_ref, action_kind, state, settlement_ref, disposition_json FROM agent_loop_step_actions ORDER BY logical_step_no, action_index",
+          "SELECT execution_id, logical_step_no, action_index, logical_action_id, call_ref, action_kind, state, settlement_ref, disposition_json, observation_source_ref FROM agent_loop_step_actions ORDER BY logical_step_no, action_index",
         )
-        .all(),
+        .all() as unknown as Ah9ActionRow[],
       toolInvocations: db
         .prepare(
           "SELECT invocation_id, execution_id, tool_name, settled_at FROM tool_invocations ORDER BY invocation_id",
@@ -52,9 +68,9 @@ const durableSnapshot = (databaseFile: string) => {
         .all(),
       controlResults: db
         .prepare(
-          "SELECT payload_json FROM session_entries WHERE item_type = 'ControlResult' ORDER BY sequence",
+          "SELECT source_ref, payload_json FROM session_entries WHERE item_type = 'ControlResult' ORDER BY sequence",
         )
-        .all(),
+        .all() as unknown as Ah9ControlResultRow[],
       works: db
         .prepare(
           "SELECT work_id, workspace_id, lifecycle, revision FROM works ORDER BY work_id",
@@ -70,6 +86,28 @@ const durableSnapshot = (databaseFile: string) => {
   } finally {
     db.close();
   }
+};
+
+const controlResultsForActions = (
+  snapshot: Snapshot,
+  actions: ReadonlyArray<{
+    readonly call_ref: string;
+    readonly observation_source_ref: string | null;
+  }>,
+) => {
+  const actionCallRefs = new Set(actions.map((action) => action.call_ref));
+  const actionObservationRefs = actions.map(
+    (action) => action.observation_source_ref,
+  );
+  const rows = snapshot.controlResults.filter((row) => {
+    const payload = JSON.parse(row.payload_json) as {
+      readonly callRef?: unknown;
+    };
+    return (
+      typeof payload.callRef === "string" && actionCallRefs.has(payload.callRef)
+    );
+  });
+  return { rows, actionObservationRefs };
 };
 
 afterEach(async () => {
@@ -318,9 +356,12 @@ describe("AH9 terminal action and early-skip transaction", () => {
 
       await fixture.crash();
       const killed = durableSnapshot(fixture.databaseFile);
-      const killedTargetControlResults = killed.controlResults.filter(
-        (result) =>
-          JSON.stringify(result).includes(`observation_${hit.executionId}_`),
+      const killedTargetActions = killed.actions.filter(
+        (action) => action.execution_id === hit.executionId,
+      );
+      const killedTargetControlResults = controlResultsForActions(
+        killed,
+        killedTargetActions,
       );
       const killedTargetInvocations = killed.toolInvocations.filter(
         (invocation) => invocation.execution_id === hit.executionId,
@@ -355,7 +396,14 @@ describe("AH9 terminal action and early-skip transaction", () => {
             (execution) => execution.execution_id === hit.executionId,
           ),
         ).toEqual([expect.objectContaining({ settled_at: null })]);
-        expect(killedTargetControlResults).toEqual([]);
+        expect(killedTargetActions).toMatchObject([
+          expect.objectContaining({
+            call_ref: hit.callRef,
+            action_kind: "wait",
+            observation_source_ref: null,
+          }),
+        ]);
+        expect(killedTargetControlResults.rows).toEqual([]);
       } else {
         expect(
           killed.steps.filter((step) => step.execution_id === hit.executionId),
@@ -387,7 +435,32 @@ describe("AH9 terminal action and early-skip transaction", () => {
             disposition_json: expect.stringContaining("SkippedEarlySettlement"),
           }),
         ]);
-        expect(killedTargetControlResults).toHaveLength(2);
+        expect(killedTargetControlResults.rows).toHaveLength(2);
+        expect(
+          killedTargetControlResults.actionObservationRefs.every(
+            (ref): ref is string => ref !== null,
+          ),
+        ).toBe(true);
+        expect(
+          new Set(killedTargetControlResults.rows.map((row) => row.source_ref))
+            .size,
+        ).toBe(2);
+        expect(
+          killedTargetControlResults.rows.map((row) => row.source_ref).sort(),
+        ).toEqual(killedTargetControlResults.actionObservationRefs.sort());
+        for (const row of killedTargetControlResults.rows) {
+          const payload = JSON.parse(row.payload_json) as {
+            readonly callRef: string;
+            readonly actionKind: string;
+            readonly observationRef: string;
+          };
+          const action = killedTargetActions.find(
+            (candidate) => candidate.call_ref === payload.callRef,
+          );
+          expect(action?.observation_source_ref).toBe(row.source_ref);
+          expect(action?.action_kind).toBe(payload.actionKind);
+          expect(payload.observationRef).toBe(row.source_ref);
+        }
         expect(
           killed.executions.filter(
             (execution) => execution.execution_id === hit.executionId,
@@ -472,11 +545,39 @@ describe("AH9 terminal action and early-skip transaction", () => {
           (invocation) => invocation.execution_id === hit.executionId,
         ),
       ).toEqual([]);
+      const recoveredTargetActions = recovered.actions.filter(
+        (action) => action.execution_id === hit.executionId,
+      );
+      const recoveredTargetControlResults = controlResultsForActions(
+        recovered,
+        recoveredTargetActions,
+      );
+      expect(recoveredTargetControlResults.rows).toHaveLength(2);
       expect(
-        recovered.controlResults.filter((result) =>
-          JSON.stringify(result).includes(`observation_${hit.executionId}_`),
-        ),
-      ).toHaveLength(2);
+        new Set(recoveredTargetControlResults.rows.map((row) => row.source_ref))
+          .size,
+      ).toBe(2);
+      expect(
+        recoveredTargetControlResults.rows.map((row) => row.source_ref).sort(),
+      ).toEqual(recoveredTargetControlResults.actionObservationRefs.sort());
+      for (const row of recoveredTargetControlResults.rows) {
+        const payload = JSON.parse(row.payload_json) as {
+          readonly callRef: string;
+          readonly actionKind: string;
+          readonly observationRef: string;
+        };
+        const action = recoveredTargetActions.find(
+          (candidate) => candidate.call_ref === payload.callRef,
+        );
+        expect(action?.observation_source_ref).toBe(row.source_ref);
+        expect(action?.action_kind).toBe(payload.actionKind);
+        expect(payload.observationRef).toBe(row.source_ref);
+      }
+      if (boundary === "AH9AfterTerminalActionCommit") {
+        expect(recoveredTargetControlResults.rows).toEqual(
+          killedTargetControlResults.rows,
+        );
+      }
       expect(recovered.workWaits).toEqual([
         expect.objectContaining({ work_id: workId }),
       ]);

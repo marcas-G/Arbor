@@ -31,11 +31,15 @@ AH9 retains both crash-boundary assertions. Before terminal-action commit the
 target execution has a pending Wait action and zero target-execution
 ControlResults. After commit, Wait is Applied, the following `assign_work` is
 `SkippedEarlySettlement`, and exactly two target-execution ControlResults are
-present. The target execution has no P4 ToolInvocation; its action ledger is
-exactly the expected one or two actions. Recovery settles the same execution,
-preserves the skip, and leaves exactly one Work (revision 1 after the seed
-SteerWork) and one Work wait. The measured Work provider call count is exactly
-one.
+present. Correlation is by each target Action's exact `call_ref` and
+`observation_source_ref`: `session_entries.source_ref` and the parsed
+ControlResult `observationRef` must both equal the Action ref, the after-boundary
+ref set must equal both target Action refs, and duplicate refs/results fail.
+Seed Root/Manual-wait results are excluded by the target call refs. The target
+execution has no P4 ToolInvocation; its action ledger is exactly the expected
+one or two actions. Recovery settles the same execution, preserves the skip,
+and leaves exactly one Work (revision 1 after the seed SteerWork) and one Work
+wait. The measured Work provider call count is exactly one.
 
 AH11 retains both `Observation → StepEffectsCommitted` kill boundaries. The
 measured read is Applied with its exact result and Observation refs; the target
