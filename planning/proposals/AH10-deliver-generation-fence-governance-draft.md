@@ -40,7 +40,7 @@
 
 1. 每次 Gateway mutation 都在 effect/receipt/Event 同一事务内核对 lease holder、incarnation、generation、未过期和 Execution 未 settled。外置 lease 预检只能快速失败，不能替代事务内 fence。
 2. gen0 lease 已被 gen1 替代后，gen0 的 DeliverMessage command 必须提交 `TerminalRejected(FencingRejected)`，且无 Message、MessageSent、Inbox 或 Command receipt Committed effect；MessageSent consumer 不会收到 wake source；旧 Worker 停止该 Execution-origin write。
-3. gen1 在提交新 Command 前按 P1 查所有较早 generation 的精确 SendMessage receipt：
+3. gen1 在提交新 Command 前按 P1 查所有较早 generation 的精确 `DeliverMessage/1` receipt：
    - 旧 Committed：严格校验 receipt envelope/result，重用其 MessageId/结果，不发新 Command、不新增 handover。
    - 旧 `TerminalRejected(FencingRejected)`：只有 LogicalAction 仍 Pending、当前 freshness/authority 仍通过、且无 unresolved effect，才以 gen1 CommandId 和相同稳定 MessageId 重试。
    - 旧 domain-semantic rejection 或 `ExecutionStopping`：遵循既有 Command/AgentAction error algebra，不因 takeover 重试。
