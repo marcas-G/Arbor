@@ -11,6 +11,7 @@ import { runAndCapture } from "../support/capture.js";
 import {
   makePublicProject,
   newCapabilityId,
+  publicProjectPayload,
   withPublicConversationApp,
 } from "../support/public-chat.js";
 import { driveWorkExecution, submitWork } from "../support/work-execution.js";
@@ -69,7 +70,7 @@ describe("B06 L3 — parent/child communication through the adopted route", () =
                 projectId: project.projectId,
                 actor: "user:capability-test",
                 issuedAt: new Date().toISOString(),
-                payload: project,
+                payload: publicProjectPayload(project),
               });
               if (
                 created.status !== 200 ||

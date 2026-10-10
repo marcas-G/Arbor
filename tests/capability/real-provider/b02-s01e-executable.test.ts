@@ -35,10 +35,10 @@ describe("B02 L3 — real-model executable tool use (S01-E)", () => {
         caseId: "B02-L3-REAL",
         body: async (runtime, calls) => {
           const marker = `B02_ECHO_${randomUUID().replaceAll("-", "").slice(0, 10)}`;
-          const project = makePublicProject(`b02-${marker}`);
           const directory = join(tmpdir(), `arbor-b02-real-${randomUUID()}`);
           mkdirSync(directory, { recursive: true });
           temporaryDirectories.push(directory);
+          const project = makePublicProject(`b02-${marker}`, directory);
           const objective =
             `第一个 Provider Turn 只调用 shell 执行 echo ${marker}（cwd 用 {"mount":"workspace","path":"."}），` +
             "不要在同一轮调用 wait，也不要使用 list/read/patch。" +

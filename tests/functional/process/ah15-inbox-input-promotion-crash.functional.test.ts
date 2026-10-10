@@ -189,6 +189,7 @@ describe("AH15 Inbox input promotion process crash", () => {
       let parentWorkspaceId = "";
       let senderWorkspaceId = "";
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         reply: (call) => {
           const context = JSON.stringify(call.messages);
           const available = new Set(
@@ -292,6 +293,7 @@ describe("AH15 Inbox input promotion process crash", () => {
         client,
         fixture.workspaceDirectory,
         `AH15 inbox promotion ${messageMarker}`,
+        { resourceSelection: "Profile" },
       );
       parentWorkspaceId = project.rootWorkspaceId;
       const child = await proposeAndApproveChildWithInitialWork(

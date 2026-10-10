@@ -12,6 +12,7 @@ import { runAndCapture } from "../support/capture.js";
 import {
   makePublicProject,
   newCapabilityId,
+  publicProjectPayloadFromCatalog,
   withPublicConversationApp,
 } from "../support/public-chat.js";
 import { driveWorkExecution, submitWork } from "../support/work-execution.js";
@@ -28,7 +29,7 @@ describe("B07 L3 — responsibility delegation through the adopted route", () =>
           const marker = `MAC2_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
           const directory = mkdtempSync(join(tmpdir(), "arbor-mac2-real-"));
           execFileSync("git", ["init", "--quiet", directory]);
-          const project = makePublicProject(`mac2-${marker}`, directory, true);
+          const project = makePublicProject(`mac2-${marker}`, directory);
           let proposals: ReadonlyArray<{
             state: string;
             proposal_json: string;
@@ -59,7 +60,10 @@ describe("B07 L3 — responsibility delegation through the adopted route", () =>
                   projectId: project.projectId,
                   actor: "user:capability-test",
                   issuedAt: new Date().toISOString(),
-                  payload: project,
+                  payload: await publicProjectPayloadFromCatalog(
+                    handle,
+                    project,
+                  ),
                 });
                 if (
                   created.status !== 200 ||
@@ -208,7 +212,7 @@ describe("B07 L3 — responsibility delegation through the adopted route", () =>
             ].join("\n"),
           );
           execFileSync("git", ["init", "--quiet", directory]);
-          const project = makePublicProject(`b07-${marker}`, directory, true);
+          const project = makePublicProject(`b07-${marker}`, directory);
           const objective =
             "阅读 RESPONSIBILITIES.md，判断其中的数据质量管道是否应成为独立长期职责。" +
             `如果证据支持，请调用 propose_workspace，名称必须为 pipeline-${marker}，purpose 必须包含 ${marker}，资源边界限定当前 FileTree。` +

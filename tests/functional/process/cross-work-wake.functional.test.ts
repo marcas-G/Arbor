@@ -210,13 +210,17 @@ describe("F19 dependency-first delivery", () => {
       return { _tag: "Text", text: "Unexpected unrelated episode" };
     };
 
-    const fixture = await startProductionFixture({ reply });
+    const fixture = await startProductionFixture({
+      admitWorkspaceDirectory: true,
+      reply,
+    });
     fixtures.push(fixture);
     const client = makePublicClient(fixture.baseUrl);
     const project = await createFunctionalProject(
       client,
       fixture.workspaceDirectory,
       "F19 dependency-first wake",
+      { resourceSelection: "Profile" },
     );
     const producer = await proposeAndApproveChildWithInitialWork(
       client,

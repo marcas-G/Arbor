@@ -34,7 +34,7 @@ describe("B11 L3 — completion claim through the adopted route", () => {
           const evidence = `completion-proof:${marker}`;
           writeFileSync(join(directory, evidenceFile), `${evidence}\n`, "utf8");
           execFileSync("git", ["init", "--quiet", directory]);
-          const project = makePublicProject(`b11-${marker}`, directory, true);
+          const project = makePublicProject(`b11-${marker}`, directory);
           const objective =
             `在当前隔离工作树中读取 ${evidenceFile}。` +
             `验收标准是文件内容去掉末尾换行后必须严格等于 ${evidence}。` +

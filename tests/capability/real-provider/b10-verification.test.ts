@@ -59,7 +59,7 @@ describe("B10 L3 — independent real-provider Verification", () => {
             join(repository, "verification-evidence.txt"),
             `verified:${marker}\n`,
           );
-          const project = makePublicProject(`b10-${marker}`, repository, true);
+          const project = makePublicProject(`b10-${marker}`, repository);
           const verificationId = newCapabilityId("ver");
           const verifierExecutionId = newCapabilityId("exe");
           let result!: {

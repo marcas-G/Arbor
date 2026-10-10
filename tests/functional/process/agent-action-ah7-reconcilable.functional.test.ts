@@ -90,6 +90,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       let probeArmed = false;
       let latestToolResult = "<none>";
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         reply: (call) => {
           const names = new Set(call.tools.map((tool) => tool.function?.name));
           const context = JSON.stringify(call.messages);
@@ -186,6 +187,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         client,
         fixture.workspaceDirectory,
         "AH7 shell intent ambiguity",
+        { resourceSelection: "Profile" },
       );
       await client.command(project.projectId, "GrantPermission", {
         permissionGrantId: functionalId("pgr"),

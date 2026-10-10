@@ -376,7 +376,7 @@ const seedProject = Effect.gen(function* () {
         commandType: "CreateProject",
         projectId: PROJECT,
         actor: ACTOR,
-        schemaVersion: "1",
+        schemaVersion: "2",
         payload,
       }),
       projectId: PROJECT,

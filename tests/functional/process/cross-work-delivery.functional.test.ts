@@ -193,7 +193,10 @@ describe("release-functional cross-Work Dependency and Deliverable", () => {
       return { _tag: "Text", text: "Coordination input observed" };
     };
 
-    const fixture = await startProductionFixture({ reply });
+    const fixture = await startProductionFixture({
+      admitWorkspaceDirectory: true,
+      reply,
+    });
     fixtures.push(fixture);
     workspacePath = fixture.workspaceDirectory;
     const client = makePublicClient(fixture.baseUrl);
@@ -201,6 +204,7 @@ describe("release-functional cross-Work Dependency and Deliverable", () => {
       client,
       fixture.workspaceDirectory,
       "F19 cross-Work delivery",
+      { resourceSelection: "Profile" },
     );
 
     await submitHumanMessage(

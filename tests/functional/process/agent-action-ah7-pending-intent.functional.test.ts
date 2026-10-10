@@ -39,6 +39,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
       let probeArmed = false;
       let latestToolResult = "<none>";
       const fixture = await startProductionFixture({
+        admitWorkspaceDirectory: true,
         reply: (call) => {
           const context = JSON.stringify(call.messages);
           const available = new Set(
@@ -120,6 +121,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         client,
         fixture.workspaceDirectory,
         "AH7 Pending action intent",
+        { resourceSelection: "Profile" },
       );
       await submitHumanMessage(
         client,

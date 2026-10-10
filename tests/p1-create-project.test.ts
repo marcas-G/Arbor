@@ -34,7 +34,6 @@ import {
   Principal,
   ProjectId,
   parse,
-  ResourceBoundaryRevision,
   ResponsibilityRevision,
   Revision,
   responsibilityBound,
@@ -60,7 +59,7 @@ const definition = {
   interfaces: [],
 };
 
-const payloadWith = (basisRevision: number): CreateProjectPayload => ({
+const payloadWith = (): CreateProjectPayload => ({
   name: "Arbor",
   revision: parse(Revision)(0),
   projectPolicy: makeProjectPolicy(),
@@ -76,11 +75,7 @@ const payloadWith = (basisRevision: number): CreateProjectPayload => ({
     name: "root",
     responsibilityDefinition: definition,
     responsibilityRevision: parse(ResponsibilityRevision)(0),
-    resourceBoundary: {
-      basisResponsibilityRevision: parse(ResponsibilityRevision)(basisRevision),
-      addresses: [],
-    },
-    resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+    resourceSelection: { _tag: "ConversationOnly" },
     agentBinding: responsibilityBound(workspaceId),
     workspacePolicy: makeWorkspacePolicy(),
     workspacePolicyRevision: parse(Revision)(0),
@@ -109,7 +104,7 @@ const authority = (
     commandType: "CreateProject",
     projectId,
     actor,
-    schemaVersion: "1",
+    schemaVersion: "2",
     payload,
   }),
   projectId,
@@ -159,7 +154,7 @@ describe("P1-010 CreateProject", () => {
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
       const gw = yield* CommandGateway;
-      const payload = payloadWith(0);
+      const payload = payloadWith();
       const receipt = yield* gw.execute(
         envelope(payload),
         { _tag: "External", principal },
@@ -197,33 +192,12 @@ describe("P1-010 CreateProject", () => {
     expect(sessions).toBe(1);
   });
 
-  it("rejects a mismatched basis responsibility revision with AuthorityDenied", async () => {
-    const app = makeApp();
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P1_MIGRATIONS);
-      const gw = yield* CommandGateway;
-      const payload = payloadWith(1);
-      const receipt = yield* gw.execute(
-        envelope(payload),
-        { _tag: "External", principal },
-        authority(payload),
-      );
-      return { receipt, projects: yield* countRows("projects") };
-    });
-    const { receipt, projects } = await run(program, app);
-    expect(receipt.resolution._tag).toBe("TerminalRejected");
-    if (receipt.resolution._tag === "TerminalRejected") {
-      expect(receipt.resolution.error._tag).toBe("AuthorityDenied");
-    }
-    expect(projects).toBe(0);
-  });
-
   it("replays the existing receipt for the same logical request", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
       const gw = yield* CommandGateway;
-      const payload = payloadWith(0);
+      const payload = payloadWith();
       const first = yield* gw.execute(
         envelope(payload),
         { _tag: "External", principal },

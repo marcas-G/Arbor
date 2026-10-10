@@ -28,6 +28,7 @@ it("AH14 ambiguous legacy action evidence yields durable project Attention witho
   const hits: AhProbeHit[] = [];
   let providerCalls = 0;
   const fixture = await startProductionFixture({
+    admitWorkspaceDirectory: true,
     reply: (call) => {
       if (JSON.stringify(call.messages).includes(marker)) {
         providerCalls += 1;
@@ -52,6 +53,7 @@ it("AH14 ambiguous legacy action evidence yields durable project Attention witho
     client,
     fixture.workspaceDirectory,
     `AH14 ambiguous ${marker}`,
+    { resourceSelection: "Profile" },
   );
   await client.command(project.projectId, "AssignWork", {
     workId: functionalId("wrk"),

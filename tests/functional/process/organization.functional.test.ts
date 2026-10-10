@@ -107,7 +107,10 @@ describe("release-functional long-lived responsibility", () => {
       return childWorkProvider(call);
     };
 
-    const fixture = await startProductionFixture({ reply });
+    const fixture = await startProductionFixture({
+      admitWorkspaceDirectory: true,
+      reply,
+    });
     fixtures.push(fixture);
     childDirectory = fixture.workspaceDirectory;
     const client = makePublicClient(fixture.baseUrl);
@@ -115,6 +118,7 @@ describe("release-functional long-lived responsibility", () => {
       client,
       fixture.workspaceDirectory,
       "F18 organization",
+      { resourceSelection: "Profile" },
     );
 
     await submitHumanMessage(

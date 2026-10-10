@@ -97,7 +97,7 @@ describe("real coding dogfood — failure-informed repair", () => {
           encoding: "utf8",
         });
         const marker = `DOGFOOD_${randomUUID().replaceAll("-", "").slice(0, 8)}`;
-        const project = makePublicProject(marker, repository, true);
+        const project = makePublicProject(marker, repository);
         let settlement: unknown;
         let workRow: { lifecycle: string; revision: number } | undefined;
         let durable:

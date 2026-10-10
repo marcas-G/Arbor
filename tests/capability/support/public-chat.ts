@@ -14,6 +14,10 @@ import {
   ProductionDaemonService,
   TransportBoundary,
 } from "../../../apps/single-workspace/src/production.js";
+import {
+  makeProjectResourceProfilePort,
+  projectResourceProfilesFromEnvironment,
+} from "../../../apps/single-workspace/src/project-resource-profiles.js";
 import { makeStaticAuthenticator } from "../../../apps/single-workspace/src/transport/auth.js";
 import { startWebTransport } from "../../../apps/single-workspace/src/transport/server.js";
 import {
@@ -29,6 +33,8 @@ import {
 
 export const capabilityHuman = parse(Principal)("user:capability-test");
 export const capabilityToken = "tok_arbor_capability_harness";
+const profileCatalogToken = "tok_arbor_profile_catalog_harness";
+const profileCatalogPrincipal = parse(Principal)("user:local");
 
 const uuidV7 = (): string => {
   const value = randomUUID().replaceAll("-", "").split("");
@@ -69,11 +75,6 @@ export interface PublicProject {
       readonly interfaces: ReadonlyArray<string>;
     };
     readonly responsibilityRevision: number;
-    readonly resourceBoundary: {
-      readonly basisResponsibilityRevision: number;
-      readonly addresses: ReadonlyArray<unknown>;
-    };
-    readonly resourceBoundaryRevision: number;
     readonly agentBinding: {
       readonly _tag: "ResponsibilityBoundAgentBinding";
       readonly workspaceId: string;
@@ -84,9 +85,74 @@ export interface PublicProject {
   };
 }
 
-export const publicProjectPayload = (project: PublicProject) => {
+export type PublicProjectResourceSelection =
+  | {
+      readonly _tag: "Profile";
+      readonly resourceProfileRef: string;
+      readonly version: string;
+    }
+  | { readonly _tag: "ConversationOnly" };
+
+export interface ProjectResourceCatalog {
+  readonly profiles: ReadonlyArray<{
+    readonly resourceProfileRef: string;
+    readonly version: string;
+    readonly displayName: string;
+    readonly available: boolean;
+  }>;
+  readonly conversationOnlySupported: true;
+}
+
+const hostProfileDirectories = new WeakMap<PublicProject, string>();
+
+/** Test-host-only metadata; never appears in the serializable command input. */
+export const hostProfileDirectoryForFixture = (
+  project: PublicProject,
+): string | undefined => hostProfileDirectories.get(project);
+
+export const publicProjectPayload = (
+  project: PublicProject,
+  resourceSelection: PublicProjectResourceSelection = {
+    _tag: "ConversationOnly",
+  },
+) => {
   const { projectId: _envelopeProjectId, ...payload } = project;
-  return payload;
+  return {
+    ...payload,
+    rootWorkspace: {
+      ...payload.rootWorkspace,
+      resourceSelection,
+    },
+  };
+};
+
+/** Selects an opaque Profile only from the public host catalog. The host path
+ * is held outside the serializable Project shape and never copied to the
+ * CreateProject payload. */
+export const publicProjectPayloadFromCatalog = async (
+  handle: Pick<PublicAppHandle, "projectResources">,
+  project: PublicProject,
+) => {
+  const hostProfileDirectory = hostProfileDirectories.get(project);
+  if (hostProfileDirectory === undefined) {
+    return publicProjectPayload(project, { _tag: "ConversationOnly" });
+  }
+  const catalog = await handle.projectResources();
+  const available = catalog.profiles.filter((profile) => profile.available);
+  if (available.length !== 1) {
+    throw new Error(
+      `expected one available host Profile for file-backed capability fixture; received ${available.length}`,
+    );
+  }
+  const selected = available[0];
+  if (selected === undefined) {
+    throw new Error("host Profile catalog lost its only available entry");
+  }
+  return publicProjectPayload(project, {
+    _tag: "Profile",
+    resourceProfileRef: selected.resourceProfileRef,
+    version: selected.version,
+  });
 };
 
 export interface CapturedProviderCall {
@@ -183,13 +249,12 @@ const commandEnvelope = (
 
 export const makePublicProject = (
   key: string,
-  resourcePath = process.cwd(),
-  includeGitWorktree = resourcePath === process.cwd(),
+  hostProfileDirectory?: string,
 ): PublicProject => {
   const projectId = prefixedId("prj");
   const rootWorkspaceId = prefixedId("ws");
   const sessionId = prefixedId("ses");
-  return {
+  const project: PublicProject = {
     projectId,
     rootWorkspaceId,
     name: `Capability ${key}`,
@@ -210,20 +275,6 @@ export const makePublicProject = (
         interfaces: [],
       },
       responsibilityRevision: 0,
-      resourceBoundary: {
-        basisResponsibilityRevision: 0,
-        // Real boundary fact: the workspace owns the repository working tree.
-        // Without an address, ResourceAdmission denies every tool region
-        // ("region outside ResourceBoundary") and tool-use capabilities
-        // cannot be exercised.
-        addresses: [
-          { _tag: "FileTree", path: resourcePath },
-          ...(includeGitWorktree
-            ? [{ _tag: "GitWorktree" as const, path: resourcePath }]
-            : []),
-        ],
-      },
-      resourceBoundaryRevision: 0,
       agentBinding: {
         _tag: "ResponsibilityBoundAgentBinding",
         workspaceId: rootWorkspaceId,
@@ -233,6 +284,10 @@ export const makePublicProject = (
       revision: 0,
     },
   };
+  if (hostProfileDirectory !== undefined) {
+    hostProfileDirectories.set(project, hostProfileDirectory);
+  }
+  return project;
 };
 
 export interface PublicTranscriptEntry {
@@ -257,6 +312,7 @@ export interface PublicAppHandle {
   readonly postCommand: (
     envelope: Record<string, unknown>,
   ) => Promise<{ status: number; payload: { ok: boolean; body?: unknown } }>;
+  readonly projectResources: () => Promise<ProjectResourceCatalog>;
   readonly tick: () => Promise<void>;
   readonly readTranscript: (params: {
     readonly workspaceId: string;
@@ -285,8 +341,17 @@ export const withPublicConversationApp = async (
   body: (handle: PublicAppHandle) => Promise<void>,
 ): Promise<void> => {
   const projectId = parse(ProjectId)(input.project.projectId);
+  const hostProfileDirectory = hostProfileDirectoryForFixture(input.project);
+  const projectResourceProfiles = makeProjectResourceProfilePort(
+    projectResourceProfilesFromEnvironment(
+      hostProfileDirectory === undefined
+        ? {}
+        : { ARBOR_PROJECT_ROOT: hostProfileDirectory },
+    ),
+  );
   const authenticator = makeStaticAuthenticator({
     [capabilityToken]: capabilityHuman,
+    [profileCatalogToken]: profileCatalogPrincipal,
   });
   const app = buildSingleWorkspaceLayer({
     databaseFile: input.databaseFile,
@@ -296,6 +361,7 @@ export const withPublicConversationApp = async (
     provider: { adapterId: "provider-openai", client: input.provider },
     ...(input.blobRoot === undefined ? {} : { blobRoot: input.blobRoot }),
     ...(input.secretRef === undefined ? {} : { secretRef: input.secretRef }),
+    projectResourceProfiles,
     authenticator,
     governance: {
       authenticatedHumans: [capabilityHuman],
@@ -334,8 +400,10 @@ export const withPublicConversationApp = async (
             startWebTransport({
               http: boundary.http,
               webSocket: boundary.webSocket,
+              authenticator: boundary.authenticator,
               sql,
               projectDirectory: { list: () => Effect.succeed([]) },
+              projectResourceProfiles,
               pollIntervalMs: 60_000,
             }),
           );
@@ -364,6 +432,23 @@ export const withPublicConversationApp = async (
                   };
                 }),
               ),
+            projectResources: async () => {
+              const response = await fetch(`${base}/project-resources`, {
+                headers: {
+                  authorization: `Bearer ${profileCatalogToken}`,
+                },
+              });
+              const payload = (await response.json()) as {
+                readonly ok: boolean;
+                readonly body?: ProjectResourceCatalog;
+              };
+              if (!response.ok || !payload.ok || payload.body === undefined) {
+                throw new Error(
+                  `public Profile catalog failed: ${response.status} ${JSON.stringify(payload)}`,
+                );
+              }
+              return payload.body;
+            },
             tick: () =>
               Effect.runPromise(provideApp(daemon.daemon.conversationTick)),
             readTranscript: async (params) => {
@@ -425,7 +510,7 @@ export const runPublicConversation = async (input: {
       commandEnvelope(
         input.project.projectId,
         "CreateProject",
-        publicProjectPayload(input.project),
+        await publicProjectPayloadFromCatalog(handle, input.project),
       ),
     );
     if (

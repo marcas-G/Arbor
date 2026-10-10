@@ -52,11 +52,7 @@ const build = () => {
           interfaces: [],
         },
         responsibilityRevision: 0,
-        resourceBoundary: {
-          basisResponsibilityRevision: 0,
-          addresses: [],
-        },
-        resourceBoundaryRevision: 0,
+        resourceSelection: { _tag: "ConversationOnly" },
         agentBinding: {
           _tag: "ResponsibilityBoundAgentBinding",
           workspaceId: rootWorkspaceId,

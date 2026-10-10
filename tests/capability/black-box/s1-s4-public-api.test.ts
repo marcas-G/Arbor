@@ -604,14 +604,7 @@ describe("S1-S4 public-process black-box", () => {
           interfaces: [],
         },
         responsibilityRevision: 0,
-        resourceBoundary: {
-          basisResponsibilityRevision: 0,
-          addresses: [
-            { _tag: "FileTree", path: join(directory, "workspace") },
-            { _tag: "GitWorktree", path: join(directory, "workspace") },
-          ],
-        },
-        resourceBoundaryRevision: 0,
+        resourceSelection: { _tag: "ConversationOnly" },
         agentBinding: {
           _tag: "ResponsibilityBoundAgentBinding",
           workspaceId: rootWorkspaceId,
