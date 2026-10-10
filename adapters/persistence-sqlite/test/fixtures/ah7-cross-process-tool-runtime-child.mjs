@@ -28,6 +28,7 @@ import {
 const databaseFile = process.env.ARBOR_AH7_DB;
 const effectLogPath = process.env.ARBOR_AH7_EFFECT_LOG;
 const workerName = process.env.ARBOR_AH7_WORKER;
+const pauseAfterEffect = process.env.ARBOR_AH7_PAUSE_AFTER_EFFECT === "1";
 if (
   databaseFile === undefined ||
   effectLogPath === undefined ||
@@ -128,6 +129,30 @@ const executor = {
     }),
 };
 
+const qualificationProbe = async (event) => {
+  if (
+    !pauseAfterEffect ||
+    workerName !== "worker-a" ||
+    event.boundary !== "AH7AfterToolEffectBeforeSettlement"
+  ) {
+    return;
+  }
+  await new Promise((resolveRelease, rejectRelease) => {
+    const onMessage = (message) => {
+      if (message?.type !== "release-settlement") return;
+      process.off("message", onMessage);
+      resolveRelease();
+    };
+    process.on("message", onMessage);
+    process.send({ type: "effect-ready", worker: workerName }, (error) => {
+      if (error) {
+        process.off("message", onMessage);
+        rejectRelease(error);
+      }
+    });
+  });
+};
+
 const sqlite = layer({ filename: databaseFile });
 const infrastructure = Layer.mergeAll(
   sqlite,
@@ -166,7 +191,10 @@ const dependencies = Layer.mergeAll(
 );
 const app = Layer.mergeAll(
   dependencies,
-  Layer.provide(ToolRuntimeLive([executor]), dependencies),
+  Layer.provide(
+    ToolRuntimeLive([executor], { qualificationProbe }),
+    dependencies,
+  ),
 );
 
 try {
