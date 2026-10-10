@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Effect, Layer, Option, Stream } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, describe, expect, it } from "vitest";
@@ -61,6 +61,10 @@ import {
   buildSingleWorkspaceLayer,
   evaluateAndSelect,
 } from "../apps/single-workspace/src/index.js";
+import {
+  makeProjectResourceProfilePort,
+  projectResourceProfilesFromEnvironment,
+} from "../apps/single-workspace/src/project-resource-profiles.js";
 import { SingleWorkspaceCommandHandlerRegistryLive } from "../apps/single-workspace/src/registry.js";
 import { runRestoreDrill } from "../apps/single-workspace/src/restore-drill.js";
 import {
@@ -1529,7 +1533,9 @@ const safetyDefinition = {
   interfaces: [],
 };
 
-const safetyProjectPayload: CreateProjectPayload = {
+const safetyProjectPayload = (
+  resourceSelection: CreateProjectPayload["rootWorkspace"]["resourceSelection"],
+): CreateProjectPayload => ({
   name: "Arbor",
   revision: parse(Revision)(0),
   projectPolicy: makeProjectPolicy(),
@@ -1545,13 +1551,13 @@ const safetyProjectPayload: CreateProjectPayload = {
     name: "root",
     responsibilityDefinition: safetyDefinition,
     responsibilityRevision: parse(ResponsibilityRevision)(0),
-    resourceSelection: { _tag: "ConversationOnly" },
+    resourceSelection,
     agentBinding: responsibilityBound(safetyWorkspaceId),
     workspacePolicy: makeWorkspacePolicy(),
     workspacePolicyRevision: parse(Revision)(0),
     revision: parse(Revision)(0),
   },
-};
+});
 
 const safetyWorkPayload: AssignWorkPayload = {
   workId: safetyWorkId,
@@ -1659,10 +1665,23 @@ const runSafetyScenario = async (
   providerTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>,
 ): Promise<SafetyScenario> => {
   const dir = mkdtempSync(join(tmpdir(), "p12-acceptance-safety-"));
+  const projectResourceProfiles = makeProjectResourceProfilePort(
+    projectResourceProfilesFromEnvironment({ ARBOR_PROJECT_ROOT: dir }),
+  );
+  const profile = Effect.runSync(projectResourceProfiles.list())[0];
+  if (profile === undefined || !profile.available) {
+    throw new Error("P12 acceptance Project Profile must be available");
+  }
+  const selectedSafetyProjectPayload = safetyProjectPayload({
+    _tag: "Profile",
+    resourceProfileRef: profile.resourceProfileRef,
+    version: profile.version,
+  });
   const app = buildSingleWorkspaceLayer({
     databaseFile: join(dir, "slice.db"),
     providerTurns,
     runtimeSafetyPolicy: safetyPolicyConfig,
+    projectResourceProfiles,
   });
   return Effect.runPromise(
     Effect.provide(
@@ -1670,9 +1689,13 @@ const runSafetyScenario = async (
         yield* runMigrations(P26_MIGRATIONS);
         const gateway = yield* CommandGateway;
         const created = yield* gateway.execute(
-          safetyEnvelope("CreateProject", safetyProjectPayload, "1"),
+          safetyEnvelope("CreateProject", selectedSafetyProjectPayload, "1"),
           safetyContext,
-          safetyAuthority("CreateProjectAuthority", safetyProjectPayload, "1"),
+          safetyAuthority(
+            "CreateProjectAuthority",
+            selectedSafetyProjectPayload,
+            "1",
+          ),
         );
         if (created.resolution._tag !== "Committed") {
           throw new Error(
@@ -1695,9 +1718,9 @@ const runSafetyScenario = async (
             workspaceId: safetyWorkspaceId,
             region: {
               resourceSpaceId: "filesystem",
-              normalizedRegion: { kind: "FileTree", path: "." },
+              normalizedRegion: { kind: "FileTree", path: resolve(dir) },
             },
-            sourceAddressSnapshot: { _tag: "FileTree", path: "." },
+            sourceAddressSnapshot: { _tag: "FileTree", path: dir },
             resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
             resolvedAtEnvironmentRevision: "local",
             createdAt: "t",

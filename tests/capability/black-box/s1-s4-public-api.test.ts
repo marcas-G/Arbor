@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
 const WEB_DIST = resolve("apps/web/dist");
 const TOKEN = "scenario-black-box-token";
+const CATALOG_TOKEN = "scenario-local-catalog-token";
 const HUMAN = "user:scenario-black-box";
 
 const uuidV7 = () => {
@@ -408,7 +409,8 @@ const startDaemon = () => {
       ARBOR_HTTP_PORT: String(httpPort),
       ARBOR_HTTP_HOST: "127.0.0.1",
       ARBOR_WEB_DIST: WEB_DIST,
-      ARBOR_AUTH_TOKENS: `${TOKEN}=${HUMAN}`,
+      ARBOR_AUTH_TOKENS: `${TOKEN}=${HUMAN},${CATALOG_TOKEN}=user:local`,
+      ARBOR_PROJECT_ROOT: join(directory, "workspace"),
       ARBOR_MODEL_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
       ARBOR_MODEL_NAME: "scenario-black-box",
       ARBOR_MODEL_API_KEY_VAR: "ARBOR_SCENARIO_TEST_KEY",
@@ -448,6 +450,39 @@ const post = async (path: string, body: unknown) => {
     throw new Error(`${path} ${response.status}: ${JSON.stringify(payload)}`);
   }
   return payload;
+};
+
+const readProjectProfileSelection = async () => {
+  const response = await fetch(`${base}/project-resources`, {
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${CATALOG_TOKEN}`,
+    },
+  });
+  const result = (await response.json()) as {
+    readonly ok: boolean;
+    readonly body?: {
+      readonly profiles?: ReadonlyArray<{
+        readonly resourceProfileRef: string;
+        readonly version: string;
+        readonly available: boolean;
+      }>;
+    };
+  };
+  if (!response.ok || !result.ok) {
+    throw new Error(`project profile catalog unavailable: ${response.status}`);
+  }
+  const available = result.body?.profiles?.filter(
+    (profile) => profile.available,
+  );
+  if (available?.length !== 1 || available[0] === undefined) {
+    throw new Error("expected one available host Project Profile");
+  }
+  return {
+    _tag: "Profile" as const,
+    resourceProfileRef: available[0].resourceProfileRef,
+    version: available[0].version,
+  };
 };
 
 const commandEnvelope = (
@@ -584,6 +619,7 @@ afterAll(async () => {
 
 describe("S1-S4 public-process black-box", () => {
   it("S1/S3 creates a project and a visible first-layer responsibility tree", async () => {
+    const resourceSelection = await readProjectProfileSelection();
     await command(projectId, "CreateProject", {
       name: "Scenario black-box",
       revision: 0,
@@ -604,7 +640,7 @@ describe("S1-S4 public-process black-box", () => {
           interfaces: [],
         },
         responsibilityRevision: 0,
-        resourceSelection: { _tag: "ConversationOnly" },
+        resourceSelection,
         agentBinding: {
           _tag: "ResponsibilityBoundAgentBinding",
           workspaceId: rootWorkspaceId,

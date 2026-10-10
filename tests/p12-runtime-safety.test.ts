@@ -1,6 +1,6 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -11,6 +11,10 @@ import {
   evaluateAndSelect,
   runMigrations,
 } from "../apps/single-workspace/src/index.js";
+import {
+  makeProjectResourceProfilePort,
+  projectResourceProfilesFromEnvironment,
+} from "../apps/single-workspace/src/project-resource-profiles.js";
 import {
   type AssignWorkPayload,
   CommandGateway,
@@ -480,7 +484,9 @@ const definition = {
   interfaces: [],
 };
 
-const projectPayload: CreateProjectPayload = {
+const projectPayload = (
+  resourceSelection: CreateProjectPayload["rootWorkspace"]["resourceSelection"],
+): CreateProjectPayload => ({
   name: "Arbor",
   revision: parse(Revision)(0),
   projectPolicy: makeProjectPolicy(),
@@ -496,13 +502,13 @@ const projectPayload: CreateProjectPayload = {
     name: "root",
     responsibilityDefinition: definition,
     responsibilityRevision: parse(ResponsibilityRevision)(0),
-    resourceSelection: { _tag: "ConversationOnly" },
+    resourceSelection,
     agentBinding: responsibilityBound(workspaceId),
     workspacePolicy: makeWorkspacePolicy(),
     workspacePolicyRevision: parse(Revision)(0),
     revision: parse(Revision)(0),
   },
-};
+});
 
 const workPayload: AssignWorkPayload = {
   workId,
@@ -600,11 +606,24 @@ const runScenario = async (
   providerFailures?: ReadonlyArray<ProviderFailureKind>,
 ): Promise<ScenarioResult> => {
   const dir = mkdtempSync(join(tmpdir(), "p12-safety-"));
+  const projectResourceProfiles = makeProjectResourceProfilePort(
+    projectResourceProfilesFromEnvironment({ ARBOR_PROJECT_ROOT: dir }),
+  );
+  const profile = Effect.runSync(projectResourceProfiles.list())[0];
+  if (profile === undefined || !profile.available) {
+    throw new Error("P12 runtime-safety Project Profile must be available");
+  }
+  const selectedProjectPayload = projectPayload({
+    _tag: "Profile",
+    resourceProfileRef: profile.resourceProfileRef,
+    version: profile.version,
+  });
   const app = buildSingleWorkspaceLayer({
     databaseFile: join(dir, "slice.db"),
     providerTurns,
     ...(providerFailures !== undefined ? { providerFailures } : {}),
     runtimeSafetyPolicy: safetyPolicy,
+    projectResourceProfiles,
   });
   return Effect.runPromise(
     Effect.provide(
@@ -612,9 +631,13 @@ const runScenario = async (
         yield* runMigrations(CURRENT_MIGRATIONS);
         const gateway = yield* CommandGateway;
         yield* gateway.execute(
-          envelope("CreateProject", projectPayload, commandId("1")),
+          envelope("CreateProject", selectedProjectPayload, commandId("1")),
           context,
-          p1Authority("CreateProjectAuthority", projectPayload, commandId("1")),
+          p1Authority(
+            "CreateProjectAuthority",
+            selectedProjectPayload,
+            commandId("1"),
+          ),
         );
         yield* gateway.execute(
           envelope("AssignWork", workPayload, commandId("2")),
@@ -629,9 +652,9 @@ const runScenario = async (
             workspaceId,
             region: {
               resourceSpaceId: "filesystem",
-              normalizedRegion: { kind: "FileTree", path: "." },
+              normalizedRegion: { kind: "FileTree", path: resolve(dir) },
             },
-            sourceAddressSnapshot: { _tag: "FileTree", path: "." },
+            sourceAddressSnapshot: { _tag: "FileTree", path: dir },
             resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
             resolvedAtEnvironmentRevision: "local",
             createdAt: "t",
