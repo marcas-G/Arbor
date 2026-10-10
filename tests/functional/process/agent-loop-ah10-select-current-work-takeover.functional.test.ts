@@ -8,8 +8,11 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
+  type FunctionalProject,
   functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -320,6 +323,73 @@ const workAssignment = (label: string, marker: string) => ({
   reason: "exercise exact DecisionEpisode selection across owner generations",
 });
 
+const schedulerSelectionWork = (marker: string) => ({
+  objective: `Stage Scheduler selection candidates for ${marker}.`,
+  why: "create one waiting current Work and two runnable alternatives",
+  constraints: [],
+  completionExpectation:
+    "Scheduler admits a DecisionEpisode for two runnable Works",
+  verificationMission: {
+    goal: `Verify Scheduler selection setup for ${marker}`,
+    criteria: [
+      {
+        criterionId: "decision-episode-created",
+        requirement:
+          "two runnable alternatives produce a persisted selection decision",
+        required: true,
+      },
+    ],
+    riskRequirements: [],
+  },
+  reason: "AH10 process fixture",
+});
+
+const admitSchedulerSelectionWork = async (
+  client: ReturnType<typeof makePublicClient>,
+  project: FunctionalProject,
+  marker: string,
+): Promise<string> => {
+  const objective = `Stage Scheduler selection candidates for ${marker}.`;
+  await submitHumanMessage(
+    client,
+    project,
+    `Please create the Scheduler selection Work ${marker}.`,
+  );
+  const approval = await waitForApproval(client, project, marker);
+  await client.command(project.projectId, "GrantPermission", {
+    permissionGrantId: functionalId("pgr"),
+    issuer: "user:local",
+    subject: { _tag: "WorkspaceAgent", workspaceId: project.rootWorkspaceId },
+    capability: "core.control.assign-work",
+    target: project.rootWorkspaceId,
+    expiresAt: null,
+  });
+  await client.command(project.projectId, "ResolveControlApproval", {
+    approvalId: approval.approvalId,
+    expectedRevision: approval.revision,
+    decision: "Approve",
+    reason: "AH10 Scheduler Work seed approval",
+  });
+  const currentWork = await waitForPublic(
+    () =>
+      client.view<{
+        workId?: string;
+        objective?: string;
+        revision: number;
+        status: string;
+      } | null>("current-work", {
+        workspaceId: project.rootWorkspaceId,
+      }),
+    (work) => work?.workId !== undefined && work.objective === objective,
+  );
+  const workId = currentWork?.workId;
+  if (workId === undefined) {
+    throw new Error("public Scheduler selection Work was not admitted");
+  }
+  expect(currentWork).toMatchObject({ objective, revision: 0, status: "Open" });
+  return workId;
+};
+
 describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
   it.each(["before", "after"] as const)(
     "takes over the genuine Scheduler DecisionEpisode after gen0 FencingRejected receipt commits %s",
@@ -347,6 +417,20 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
               name: "select_current_work",
               arguments: { workId: selectedWorkId },
             };
+          }
+
+          if (
+            messageText.includes(marker) &&
+            tools.has("assign_work") &&
+            !tools.has("claim_completion")
+          ) {
+            return messageText.includes("WorkAssigned(")
+              ? { _tag: "Text", text: `Work admitted for ${marker}.` }
+              : {
+                  _tag: "ToolCall",
+                  name: "assign_work",
+                  arguments: schedulerSelectionWork(marker),
+                };
           }
 
           if (
@@ -404,43 +488,11 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
         fixture.workspaceDirectory,
         "AH10 SelectCurrentWork generation takeover",
       );
-      await client.command(project.projectId, "GrantPermission", {
-        permissionGrantId: functionalId("pgr"),
-        issuer: "user:local",
-        subject: {
-          _tag: "WorkspaceAgent",
-          workspaceId: project.rootWorkspaceId,
-        },
-        capability: "core.control.assign-work",
-        target: project.rootWorkspaceId,
-        expiresAt: null,
-      });
-
-      const currentWorkId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
-        workId: currentWorkId,
-        workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Stage Scheduler selection candidates for ${marker}.`,
-        why: "create one waiting current Work and two runnable alternatives",
-        constraints: [],
-        completionExpectation:
-          "Scheduler admits a DecisionEpisode for two runnable Works",
-        verificationMission: {
-          goal: `Verify Scheduler selection setup for ${marker}`,
-          criteria: [
-            {
-              criterionId: "decision-episode-created",
-              requirement:
-                "two runnable alternatives produce a persisted selection decision",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
-        },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
-      });
+      const currentWorkId = await admitSchedulerSelectionWork(
+        client,
+        project,
+        marker,
+      );
 
       const oldAction = await waitForPublic(
         async () =>
@@ -790,6 +842,19 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
         if (
           messageText.includes(marker) &&
           tools.has("assign_work") &&
+          !tools.has("claim_completion")
+        ) {
+          return messageText.includes("WorkAssigned(")
+            ? { _tag: "Text", text: `Work admitted for ${marker}.` }
+            : {
+                _tag: "ToolCall",
+                name: "assign_work",
+                arguments: schedulerSelectionWork(marker),
+              };
+        }
+        if (
+          messageText.includes(marker) &&
+          tools.has("assign_work") &&
           !assignmentsSent
         ) {
           assignmentsSent = true;
@@ -840,43 +905,11 @@ describe("AH10 real daemon SelectCurrentWork generation takeover", () => {
       fixture.workspaceDirectory,
       "AH10 SelectCurrentWork committed receipt takeover",
     );
-    await client.command(project.projectId, "GrantPermission", {
-      permissionGrantId: functionalId("pgr"),
-      issuer: "user:local",
-      subject: {
-        _tag: "WorkspaceAgent",
-        workspaceId: project.rootWorkspaceId,
-      },
-      capability: "core.control.assign-work",
-      target: project.rootWorkspaceId,
-      expiresAt: null,
-    });
-
-    const currentWorkId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
-      workId: currentWorkId,
-      workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Stage Scheduler selection candidates for ${marker}.`,
-      why: "create one waiting current Work and two runnable alternatives",
-      constraints: [],
-      completionExpectation:
-        "Scheduler admits a DecisionEpisode for two runnable Works",
-      verificationMission: {
-        goal: `Verify Scheduler selection setup for ${marker}`,
-        criteria: [
-          {
-            criterionId: "decision-episode-created",
-            requirement:
-              "two runnable alternatives produce a persisted selection decision",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-      revision: 0,
-    });
+    const currentWorkId = await admitSchedulerSelectionWork(
+      client,
+      project,
+      marker,
+    );
 
     const oldAction = await waitForPublic(
       async () =>
