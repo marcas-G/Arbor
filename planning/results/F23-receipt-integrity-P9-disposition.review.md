@@ -56,3 +56,22 @@
 - 只读审阅 `SD §4.11`、DID/F23 receipt ordering owner、P1 `07`、P9 `07`、AH10 accepted decision record、当前 control-action 调用路径、FailureCode enum 和 validator。
 - 未运行测试；未编辑测试/生产代码/设计文档/固定 proposal。
 - 仅本 review 结果用于记录 Design Gap 与后续需要的最小治理问题；不得宣称 P9 corruption disposition 已闭合。
+
+## 后续 P9 disposition direction（候选更新，未落 owner documents）
+
+后续独立 P9 审阅给出如下 direct-child prior Committed 裁决建议，现已并入 F23 固定候选草案
+（本 review 上述结论是裁决前的只读状态快照，不再表示 A1 完全无方向）：
+
+- A1 raw `result_json` JSON syntax corruption：保留内部非披露
+  `PersistenceCorruption<"CommandStore">` diagnostic，同时进入 direct-child 既有 P9
+  `ReceiptMismatch` fact/event transaction，最后 `AgentActionRecoveryBlocked`。不把 decoder
+  corruption 原样返回成 `AgentActionOperationalFailure` / `ControlActionHandlerRejected`。
+- A2 可解析坏 shape 与 B 结构合法但 receipt/ref/authority/effect mismatch：保留 existing
+  P9 `ReceiptMismatch` 或具体 failure code / fact/event。
+- 普通非-direct-child prior consumer corruption：仅 operational failure，不创建 P9 fact。
+- P9 fact/event transaction/identity/crash replay沿用现有 direct-child合同；transaction failure
+  fail closed。P10 不加通用腐败 source，existing P9 AH10 fact→Action Required view保持不变。
+
+该 follow-up 是候选措辞/实施方向，不是 `docs/design/**` landing 或新的实现通过证据。本波
+加入 A1 isolated RED 检查当前 decoder 是否在 P9 fact sink 调用前退出；真实 P9 adapter 事务和
+提交前/后 crash资格仍须实现阶段按已接受 P9 contract验证。

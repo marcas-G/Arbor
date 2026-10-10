@@ -82,13 +82,39 @@ handler，也不能为该 Committed receipt 调 Gateway。对于 AH10 direct-chi
 Grant/ActionApproval 证据核验；只有 proof complete 才可 Observation / Applied。需要 result
 字段与 binding/work/event 比较的验证在严格 decode 之后做；Observation 必须晚于完整 binding
 proof。错误 identity、坏 result 或缺失/冲突 binding 均不得 Observation、产生新 Command 或
-重放 handler。普通 prior-consumer 路径的坏 result 必须成为
-`AgentActionOperationalFailure`，而非 `AgentActionRejected`。对于 direct-child AH10：若 receipt
-result 无法与 exact binding/effect proof 相符，必须保留已接受的 P9 `ReceiptMismatch`/其他
-适用 binding-failure fact/event 与 recovery-blocked 路径；不能让通用 decoder failure 越过或
-抹掉既有 P9 事实。是否将特定 JSON/type decode fault 映射为 P9 `ReceiptMismatch`，仅限于它
-确实表示已接受合同中的 receipt/effect mismatch，实施前应与 P9 owner 对齐；不得将一般
-CommandStore corruption 一概伪装成 binding failure。不得新增 P10 source。
+重放 handler。普通非-direct-child prior-consumer 路径的坏 result 必须成为
+`AgentActionOperationalFailure`，而非 `AgentActionRejected` 或成功 Observation；不创建 P9
+AssignWork binding fact。
+
+Direct-child AH10 prior Committed 路径采用 P9 所有者裁决的双层处置：
+
+- JSON 可解析但 `AssignWorkResult` v1 shape 不成立（A2），或 shape 合法但与 proof/binding
+  不符（B），均属于该 Committed effect 的既有 P9 `ReceiptMismatch`/具体 failure-code 路径；
+  在同一现有 P9 fact/event 事务中写入 `AssignWorkBindingAttentionFact` 与
+  `AssignWorkTargetBindingEscalated`，事实 key 仍是
+  `(executionId, logicalActionId, committedCommandId)`。该失败不是一般 `PersistenceCorruption`
+  的替代标签，也不增加 failure code/source。
+- raw `result_json` 语法损坏（A1）同时保留内部固定、安全的
+  `PersistenceCorruption<"CommandStore">` 诊断（不包含原 JSON、异常文本或敏感字段），并按
+  direct-child 的既有 P9 `ReceiptMismatch` durable fact/event 路径记录证明失败；Agent Loop
+  以 `AgentActionRecoveryBlocked` 收敛该 pinned action。不得把 decoder 的
+  `PersistenceCorruption` 原样包装为 `AgentActionOperationalFailure` 并降落到
+  `ControlActionHandlerRejected`，也不得变成模型拒绝。
+- 这些 direct-child decode/proof failures 不写或修复 Command receipt/原行，不执行新的
+  AssignWork handler/Gateway Command，不创建 CommandAttempt，不写 Work/Event/Observation，不把
+  Action 变为 Applied。即使 binding row 中的 CommandId 可见，只有原 Committed CommandId被引用，
+  不重放其 handler。
+- P9 fact/event 必须继续使用 existing `recordAssignWorkBindingFailure` 事务原子写入；沿用既有
+  dedup identity 与提交前/后 crash replay 行为。fact/event transaction 失败时不宣称 fact 已持久，
+  不允许 Action Applied/Observation/新 Command，按现有 fail-closed persistence path 退出。
+- 普通非-direct-child consumer 的 raw JSON/result-shape corruption 仍只走通用非重试
+  operational failure；不得借用 AH10 P9 fact。Gateway exact-tuple 路径也仍按通用
+  `PersistenceCorruption` Problem 处理，不写 P9 AH10 fact。
+
+P9 `07` 已有 direct-child receipt/binding proof failure fact/event、确定 identity、同事务原子性及
+提交前/后崩溃重试语义；本候选将 A1/A2 纳入其 direct-child proof-failure application，仅对 raw
+JSON syntax error附带非披露内部 corruption 诊断。**不新增通用 P10 corruption source**；既有
+P9 AH10 fact 仍按已接受 P10 `Action Required` 投影；P10 其它持久 Attention/open coverage保持独立。
 
 该子合同由 P1 `07-agent-loop-step-command-identity.md` 与 P9
 `07-agent-loop-step-recovery.md` owning clause 补充；Application decoder/handler registry 与
@@ -215,16 +241,20 @@ fixture，绝不是正常 writer 产物。现有 tuple-ordering 测试已覆盖�
 |---|---|---|---|
 | Exact Committed shape | 当前 `SubmitHumanMessage` v1，stored result 为合法 JSON `{}`，候选 tuple exact；HTTP `/commands` | 当前会将 `{}` 当 Committed result 返回 | 非重试安全 `persistence/corruption` Problem；不包含行/JSON/sentinel；原 tuple/result bytes 不变，无 receipt 写、attempt、Event、handler/domain write |
 | Exact TerminalRejected shape | 同命令 v1，stored terminal error 为合法 JSON `{ "_tag": "AuthorityDenied" }`（缺 required `reason`），候选 tuple exact | 当前会将错误 cast 为 `CommandRejection` 并作为 TerminalRejected 返回 | 同上 typed corruption Problem；不得成为 `AuthorityDenied` 拒绝，原 error bytes 不变，无 attempt/Event/write |
-| AH10 prior consumer（不经 Gateway、不比 candidate tuple） | `assignWorkHandler` generation takeover：generation-0 prior receipt 的派生 CommandId/Project 匹配；fingerprint 是原始 prior 行 metadata，不是当前候选 tuple 判定；合法 JSON 缺 `lifecycle`/`revision`；generation-1 运行同 pinned action | 当前 receipt-first 路径只检查 prior result 的 `workId` 和 `workspaceId`，可据不完整结果返回 Observation(success) | 按 trusted expected `AssignWork`/handler schema descriptor decode；失败为 `AgentActionOperationalFailure`；不得 Observation/新 Gateway Command/handler replay；仍验证既有 direct-child binding proofs，不改旧 receipt/event/attempt |
+| 普通 AH10 prior consumer（非 direct-child，不经 Gateway、不比 candidate tuple） | generation takeover prior Committed result JSON shape 损坏 | 当前可能把不完整 result cast 成成功 | 非 retryable `AgentActionOperationalFailure`；无 P9 fact、Observation、新 Gateway Command/handler replay；receipt 原行不变 |
+| Direct-child AH10 prior A1 (syntax corrupt) | exact prior CommandId/Project；raw `result_json` 不能 JSON parse；generation takeover | 当前 decoder defects before P9 fact/write | 非披露 `PersistenceCorruption<CommandStore>` 内部诊断 + 现有 P9 `ReceiptMismatch` fact/event 事务 + `AgentActionRecoveryBlocked`；raw data不入 fact/event/诊断；无 handler replay/新 Command/attempt/Work/Event/Observation/Applied |
+| Direct-child AH10 prior A2/B | A2: JSON 可解析但 AssignWorkResult v1 shape错；B: strict shape有效但 receipt/ref/work/authority/effect 与 binding证据不符 | 当前 P9 validator将可解析的 A2/B分到 ReceiptMismatch或既有具体 failure code | 同既有 P9 fact/event 与 block路径；decoder失败/绑定不符都不得 Observation/Applied/新Command；不得泛化到普通 prior consumer |
 | Tuple precedence control | 现有 `tests/functional/process/f23-receipt-tuple-ordering.functional.test.ts` | 已由 tuple-first landing 覆盖；不是本次 RED | schema/fingerprint/algorithm 每个 mismatch 即使 JSON shape/syntax 错，仍 IdempotencyConflict，不解码/不披露，不改历史行 |
 | Decoder parity | current 26 registered command handler registry | 当前缺 26 runtime result schemas 与 complete rejection validator | 每一 current `(commandType, schemaVersion)` 有 positive valid receipt fixture 与 wrong-shape/missing-field/tag/ID/enum tests；unknown version/registration fails closed |
 | Future history | older schema/algorithm tuple | 当前 tuple comparator已覆盖 mismatch | 先 mismatch；只 exact tuple选择该版本 decoder。无该旧版 decoder必须 operational fail-closed，不repair、不fallback至 current DTO |
 
 前两个 RED 是 Gateway exact-tuple decode；只断言 public Problem 不泄露和 receipt side-effect
-postconditions。第三个 RED 是 P1 `07`/AH10 prior-consumer shape validation，使用
-`assignWorkHandler` 现有 runtime action handler，不经 Gateway、不比较 candidate tuple，也不把
-fixture fingerprint 伪造成 tuple match；它只断言 prior corrupt result 不产生 success
-Observation。三条测试合同与结果分类分开。测试不应断言新增 P10 Attention。
+postconditions。普通 AH10 prior-consumer RED 使用 `assignWorkHandler`，不经 Gateway、不比较
+candidate tuple，也不把 fixture fingerprint 伪造成 tuple match；只验证错误 result 不产生成功
+Observation。Direct-child A1 RED 经相同既有 action handler 的 `assignWorkReplay` proof route，
+断言现有 P9 store 被调用写 `ReceiptMismatch`、最终为 `AgentActionRecoveryBlocked`，不泄露 JSON、无
+Observation/新 Gateway Command。它使用仅测试的事实 sink，不能取代 P9 adapter真实事务的已有提交
+前后 crash资格。本矩阵不新增 P10 source。
 
 ## Owner、顺序和停工条件
 
