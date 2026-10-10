@@ -364,6 +364,11 @@ describe("F21 CreateProject v2 host resource admission", () => {
         event_version: 1,
       },
       {
+        project_id: requestProfile.projectId,
+        event_type: "WorkspaceResourceActivationChanged",
+        event_version: 1,
+      },
+      {
         project_id: requestConversation.projectId,
         event_type: "ProjectCreated",
         event_version: 1,
@@ -391,23 +396,34 @@ describe("F21 CreateProject v2 host resource admission", () => {
           status: "Pending",
         },
       },
-    ]);
-    expect(outcome.activationIntents).toEqual([
       {
         project_id: requestProfile.projectId,
-        workspace_id: requestProfile.workspaceId,
-        resource_boundary_revision: 0,
-        status: "Pending",
-        created_at: issuedAt,
-        updated_at: issuedAt,
-        activated_at: null,
+        aggregate_ref: requestProfile.workspaceId,
+        event_version: 1,
+        payload_json: {
+          _tag: "WorkspaceResourceActivationChanged",
+          workspaceId: requestProfile.workspaceId,
+          resourceBoundaryRevision: 0,
+          status: "Active",
+        },
       },
     ]);
+    expect(outcome.activationIntents).toHaveLength(1);
+    expect(outcome.activationIntents[0]).toMatchObject({
+      project_id: requestProfile.projectId,
+      workspace_id: requestProfile.workspaceId,
+      resource_boundary_revision: 0,
+      status: "Active",
+      created_at: issuedAt,
+    });
+    expect(outcome.activationIntents[0]?.activated_at).toEqual(
+      expect.any(String),
+    );
     expect(outcome.counts).toMatchObject({
       projects: 2,
       workspaces: 2,
       sessions: 2,
-      events: 5,
+      events: 6,
       claims: 1,
       receipts: 2,
       activationIntents: 1,
@@ -567,25 +583,11 @@ describe("F21 CreateProject v2 host resource admission", () => {
       { _tag: "FileTree", path: realpathSync(originalDirectory) },
     ]);
 
-    const releaseClaims = Effect.gen(function* () {
-      const ownership = yield* ResourceOwnershipRepository;
-      const tx = yield* TransactionPort;
-      const claims = yield* tx.transact(
-        ownership.listActiveByWorkspace(request.workspaceId),
-      );
-      for (const claim of claims) {
-        yield* tx.transact(
-          ownership.releaseClaim(claim.claimId, "2099-01-01T00:00:00.000Z"),
-        );
-      }
-    });
-
     const sameSnapshotReplay = await runWith(
       databaseFile,
       makeProjectResourceProfilePort([hostProfile(originalDirectory, "v1")]),
       Effect.gen(function* () {
         yield* runMigrations(CURRENT_MIGRATIONS);
-        yield* releaseClaims;
         const response = yield* submit(request, originalPayload);
         const ownership = yield* ResourceOwnershipRepository;
         const tx = yield* TransactionPort;
@@ -603,7 +605,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
       sameSnapshotReplay.claims.map((claim) => claim.sourceAddressSnapshot),
     ).toEqual([{ _tag: "FileTree", path: realpathSync(originalDirectory) }]);
     expect(sameSnapshotReplay.counts).toMatchObject({
-      events: 3,
+      events: 4,
       activationIntents: 1,
       receipts: 1,
     });
@@ -624,7 +626,6 @@ describe("F21 CreateProject v2 host resource admission", () => {
       changedProfilePort,
       Effect.gen(function* () {
         yield* runMigrations(CURRENT_MIGRATIONS);
-        yield* releaseClaims;
         const replay = yield* submit(request, originalPayload);
         const staleNewRequest = ids("c5");
         const stale = yield* submit(
@@ -661,7 +662,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
       projects: 1,
       workspaces: 1,
       sessions: 1,
-      events: 3,
+      events: 4,
       claims: 1,
       receipts: 2,
       activationIntents: 1,

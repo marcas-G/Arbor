@@ -69,7 +69,7 @@ import {
   type IdGenerator,
   InboxProjectionStore,
   type LeaseService,
-  type OwnershipWriteService,
+  OwnershipWriteService,
   type PermissionGrantRepository,
   type ProjectEnvironmentPort,
   ProjectionQueryPort,
@@ -89,6 +89,7 @@ import {
   WorkspaceRepository,
   WorkspaceResourceActivationStore,
 } from "@arbor/ports";
+import { reconcileProjectActivationAttention } from "@arbor/projection-runtime";
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { T1RecoveryState } from "./health.js";
@@ -281,6 +282,7 @@ export type ProductionDaemonServices =
   | EnvironmentRevisionStore
   | BlobStorePort
   | T1RecoveryState
+  | OwnershipWriteService
   | ConversationResponseJobStore
   | ControlApprovalStore
   | ConversationAttemptStore
@@ -304,6 +306,7 @@ export const ProductionDaemonServiceLive = (
       const projection = yield* ProjectionStore;
       const attentionProjection = yield* AttentionProjectionStore;
       const activationIntents = yield* WorkspaceResourceActivationStore;
+      const ownershipWrite = yield* OwnershipWriteService;
       const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
       const verifications = yield* VerificationRepository;
       const acceptances = yield* AcceptanceRepository;
@@ -625,11 +628,61 @@ export const ProductionDaemonServiceLive = (
         },
       };
 
+      const activationAttention = (projectId: ProjectId) =>
+        reconcileProjectActivationAttention(
+          {
+            transactions: tx,
+            activationIntents,
+            attentionProjection,
+          },
+          projectId,
+        );
+      const recoverProjectResourceActivations = Effect.gen(function* () {
+        const intents = yield* tx.transact(activationIntents.listAll());
+        const projectIds = [
+          ...new Set(intents.map((intent) => String(intent.projectId))),
+        ];
+        for (const projectIdValue of projectIds) {
+          yield* activationAttention(projectIdValue as ProjectId);
+        }
+        for (const intent of intents) {
+          if (intent.status !== "Pending") continue;
+          const workspace = yield* tx.transact(
+            workspaces.findById(intent.workspaceId),
+          );
+          if (
+            Option.isNone(workspace) ||
+            workspace.value.projectId !== intent.projectId ||
+            workspace.value.resourceBoundaryRevision !==
+              intent.resourceBoundaryRevision
+          ) {
+            // Keep the durable intent and its path-free Attention visible;
+            // never reconstruct or substitute its boundary.
+            continue;
+          }
+          yield* Effect.match(
+            ownershipWrite.activatePendingWorkspaceResource(
+              intent.projectId,
+              intent.workspaceId,
+              intent.resourceBoundaryRevision,
+              workspace.value.resourceBoundary.addresses,
+            ),
+            {
+              onFailure: () => undefined,
+              onSuccess: () => undefined,
+            },
+          );
+          yield* activationAttention(intent.projectId);
+        }
+      });
+
       const recovery: RecoveryDaemon<ProductionDaemonServices> = {
         startup: Effect.asVoid(
-          Effect.flatMap(
-            startupRecovery(config.principal),
-            () => t1.markComplete,
+          Effect.flatMap(startupRecovery(config.principal), () =>
+            Effect.flatMap(
+              recoverProjectResourceActivations,
+              () => t1.markComplete,
+            ),
           ),
         ),
         sweep: Effect.asVoid(sweepRecovery(config.principal)),

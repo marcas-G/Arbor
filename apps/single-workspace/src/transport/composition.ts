@@ -38,6 +38,7 @@ import type {
   ProjectionQueryPortService,
 } from "@arbor/ports";
 import {
+  AttentionProjectionStore,
   Clock,
   ExecutionRepository,
   ExecutionScheduler,
@@ -50,7 +51,9 @@ import {
   TransactionPort,
   WorkRepository,
   WorkspaceRepository,
+  WorkspaceResourceActivationStore,
 } from "@arbor/ports";
+import { reconcileProjectActivationAttention } from "@arbor/projection-runtime";
 import { Effect, Option } from "effect";
 import type {
   CommandReceiptView,
@@ -367,6 +370,12 @@ export const makeExternalSubmissionFromServices = (
     const loadInputs = yield* makeRepositoryInputsLoader(governance);
     const tx = yield* TransactionPort;
     const workspaces = yield* WorkspaceRepository;
+    const activationIntentsOption = yield* Effect.serviceOption(
+      WorkspaceResourceActivationStore,
+    );
+    const attentionProjectionOption = yield* Effect.serviceOption(
+      AttentionProjectionStore,
+    );
     const ownershipOption = yield* Effect.serviceOption(
       ResourceOwnershipRepository,
     );
@@ -400,6 +409,26 @@ export const makeExternalSubmissionFromServices = (
     const clock = clockOption.value;
     const ids = idsOption.value;
     const scheduler = schedulerOption.value;
+    const reconcileActivationAttention = (
+      projectId: DecodedExternalCommandEnvelope["projectId"],
+    ) => {
+      if (
+        Option.isNone(activationIntentsOption) ||
+        Option.isNone(attentionProjectionOption)
+      ) {
+        return Effect.fail(
+          new Error("F21 Activation Attention services are unavailable"),
+        );
+      }
+      return reconcileProjectActivationAttention(
+        {
+          transactions: tx,
+          activationIntents: activationIntentsOption.value,
+          attentionProjection: attentionProjectionOption.value,
+        },
+        projectId,
+      );
+    };
     const activateIfMissing = (input: {
       readonly projectId: DecodedExternalCommandEnvelope["projectId"];
       readonly workspaceId: WorkspaceId;
@@ -426,7 +455,7 @@ export const makeExternalSubmissionFromServices = (
           { environment, ownershipWrite, clock, ids },
         );
       });
-    const activatePersistedWorkspaceIfMissing = (input: {
+    const activateCommittedProjectResource = (input: {
       readonly projectId: DecodedExternalCommandEnvelope["projectId"];
       readonly workspaceId: WorkspaceId;
     }) =>
@@ -439,17 +468,57 @@ export const makeExternalSubmissionFromServices = (
             new Error("committed workspace boundary is unavailable"),
           );
         }
-        return yield* activateIfMissing({
+        const resourceBoundaryRevision =
+          workspace.value.resourceBoundaryRevision;
+        const addresses = workspace.value.resourceBoundary.addresses;
+        if (Option.isNone(activationIntentsOption)) {
+          return yield* Effect.fail(
+            new Error("F21 activation intent store is unavailable"),
+          );
+        }
+        const intent = yield* tx.transact(
+          activationIntentsOption.value.find(
+            input.projectId,
+            input.workspaceId,
+            resourceBoundaryRevision,
+          ),
+        );
+        if (Option.isSome(intent)) {
+          const activation = yield* Effect.match(
+            ownershipWrite.activatePendingWorkspaceResource(
+              input.projectId,
+              input.workspaceId,
+              resourceBoundaryRevision,
+              addresses,
+            ),
+            {
+              onFailure: (error) => ({ _tag: "Failed" as const, error }),
+              onSuccess: () => ({ _tag: "Activated" as const }),
+            },
+          );
+          yield* reconcileActivationAttention(input.projectId);
+          if (activation._tag === "Failed") {
+            return yield* Effect.fail(activation.error);
+          }
+          return;
+        }
+
+        // Existing pre-intent v2 receipts remain preserve-only for migration.
+        // An exact Gateway replay may retain its older post-commit retry path,
+        // but it never synthesizes an ActivationIntent or Attention source.
+        yield* reconcileActivationAttention(input.projectId);
+        if (addresses.length === 0) return;
+        yield* activateIfMissing({
           projectId: input.projectId,
           workspaceId: input.workspaceId,
-          resourceBoundaryRevision: workspace.value.resourceBoundaryRevision,
+          resourceBoundaryRevision,
           resourceBoundary: workspace.value.resourceBoundary,
         });
       });
     const afterCommitted = (envelope: DecodedExternalCommandEnvelope) => {
       const payload = payloadRecord(envelope.payload);
       if (envelope.commandType === "CreateProject") {
-        return activatePersistedWorkspaceIfMissing({
+        return activateCommittedProjectResource({
           projectId: envelope.projectId,
           workspaceId: String(payload.rootWorkspaceId) as WorkspaceId,
         });
