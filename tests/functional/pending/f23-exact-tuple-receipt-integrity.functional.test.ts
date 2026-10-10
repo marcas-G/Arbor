@@ -149,6 +149,7 @@ describe("pending F23 exact-tuple receipt integrity", () => {
   it("rejects a valid-JSON wrong-shape exact Committed result without mutation", async () => {
     const sentinel = `F23-RESULT-SHAPE-${crypto.randomUUID()}`;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: () => ({ _tag: "HttpError", status: 500 }),
     });
     fixtures.push(fixture);
@@ -209,6 +210,7 @@ describe("pending F23 exact-tuple receipt integrity", () => {
   it("does not return a wrong-shape exact TerminalRejected as a semantic rejection", async () => {
     const sentinel = `F23-REJECTION-SHAPE-${crypto.randomUUID()}`;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: () => ({ _tag: "HttpError", status: 500 }),
     });
     fixtures.push(fixture);

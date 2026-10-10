@@ -211,6 +211,7 @@ describe("F19 dependency-first delivery", () => {
     };
 
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       admitWorkspaceDirectory: true,
       reply,
     });

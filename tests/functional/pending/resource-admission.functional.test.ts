@@ -16,6 +16,7 @@ afterEach(async () => {
 describe("F21 trusted project resource admission", () => {
   it("rejects a v2 selector combined with a raw client-supplied path", async () => {
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       admitWorkspaceDirectory: true,
       reply: () => ({ _tag: "Text", text: "No model call expected" }),
     });
