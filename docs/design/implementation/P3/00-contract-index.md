@@ -11,6 +11,21 @@ versions except where this index records later supersessions.
 These documents are **not** a fifth design layer; they are P3-owned
 implementation contracts authorized by DID §13.
 
+## Accepted owner amendment — AH7-DG-03 (2026-10-10)
+
+Decision: `ACCEPT_TOOL_APPROVAL_SETTLEMENT_ATOMICITY`. Accepted proposal SHA-256:
+`E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`;
+source and delegated decision record are
+`planning/proposals/AH7-approval-settlement-fixed-decision-draft.md` and
+`planning/results/AH7-DG-03-governance-acceptance-and-landing.review.md`.
+
+P3 `08` now specifies how P4 no-effect Denied and stop/quiescence Interrupted
+results converge to the action ledger, sourced ToolResult, remaining-action
+disposition, cursor and Execution settlement proposal. Denied resolves only
+the current action; `ExecutionStopping` closes the action batch as
+`Interrupted(StopRequested)`. This amendment does not change the AgentLoopStep
+identity or provider-result authority.
+
 ```text
 Detailed Implementation Design v1.22 (frozen)
         ↓ delegates phase-scoped closure
