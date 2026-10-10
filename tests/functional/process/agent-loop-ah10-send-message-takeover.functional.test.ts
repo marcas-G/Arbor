@@ -287,6 +287,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       let seedWaitIssued = false;
       let parentWorkspaceId = "";
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
@@ -678,6 +679,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       let parentSeedWaitIssued = false;
       let parentWorkspaceId = "";
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
         onDaemonStdout: (line) => pushProbe(events, line),
         reply: (call, index) => {
@@ -1425,6 +1427,7 @@ describe("AH10 real daemon SendMessage generation takeover", () => {
       let probeArmed = false;
       let seedWaitIssued = false;
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);

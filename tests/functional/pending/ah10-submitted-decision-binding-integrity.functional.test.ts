@@ -294,6 +294,7 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
       let selectionProviderCalls = 0;
       let selectedWorkId: string | undefined;
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
         reply: (call) => {
           const tools = availableTools(call);

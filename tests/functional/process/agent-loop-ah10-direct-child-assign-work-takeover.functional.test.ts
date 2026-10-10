@@ -67,6 +67,13 @@ interface ControlResult {
   readonly outputText?: string;
 }
 
+interface FunctionalStartupReport {
+  readonly tag: "FUNCTIONAL_DAEMON_STARTED" | "FUNCTIONAL_DAEMON_LISTENING";
+  readonly nonce: string;
+  readonly pid: number;
+  readonly port?: number;
+}
+
 const fixtures: ProductionFixture[] = [];
 const ah10Child = resolve("tests/functional/support/ah10-process-child.mjs");
 
@@ -81,6 +88,41 @@ const pushProbe = (events: Probe[], line: string) => {
   } catch {
     // Retain daemon output in the fixture for failure diagnostics.
   }
+};
+
+const assertStartupReports = (
+  lines: ReadonlyArray<string>,
+  expectedPorts: ReadonlyArray<number>,
+): ReadonlyArray<FunctionalStartupReport> => {
+  const reports = lines.flatMap((line): FunctionalStartupReport[] => {
+    try {
+      const report = JSON.parse(line) as Partial<FunctionalStartupReport>;
+      if (
+        (report.tag === "FUNCTIONAL_DAEMON_STARTED" ||
+          report.tag === "FUNCTIONAL_DAEMON_LISTENING") &&
+        typeof report.nonce === "string" &&
+        typeof report.pid === "number"
+      ) {
+        return [report as FunctionalStartupReport];
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  });
+  const started = reports.filter(
+    (report) => report.tag === "FUNCTIONAL_DAEMON_STARTED",
+  );
+  const listening = reports.filter(
+    (report) => report.tag === "FUNCTIONAL_DAEMON_LISTENING",
+  );
+  expect(started).toHaveLength(expectedPorts.length);
+  expect(listening).toHaveLength(expectedPorts.length);
+  expect(listening.map((report) => [report.nonce, report.pid])).toEqual(
+    started.map((report) => [report.nonce, report.pid]),
+  );
+  expect(listening.map((report) => report.port)).toEqual(expectedPorts);
+  return started;
 };
 
 const releaseGate = (
@@ -261,6 +303,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         riskRequirements: ["do not weaken either Work constraint"],
       };
       const events: Probe[] = [];
+      const primaryDaemonOutput: string[] = [];
+      const additionalDaemonOutput: string[] = [];
       const listWorkspaceCalls: number[] = [];
       const assignWorkCalls: number[] = [];
       const providerTrace: Array<{ index: number; tail: string }> = [];
@@ -269,6 +313,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       let parentSeedWaitIssued = false;
 
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
@@ -412,9 +457,13 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             },
           };
         },
-        onDaemonStdout: (line) => pushProbe(events, line),
+        onDaemonStdout: (line) => {
+          primaryDaemonOutput.push(line);
+          pushProbe(events, line);
+        },
       });
       fixtures.push(fixture);
+      const primaryBaseUrl = fixture.baseUrl;
       mkdirSync(resolve(fixture.directory, "ah10-gates"), { recursive: true });
 
       const client = makePublicClient(fixture.baseUrl);
@@ -542,6 +591,11 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           ARBOR_AH10_PAUSE_AFTER_CONTROL_KIND: "assign_work",
         },
       });
+      expect(fixture.baseUrl).toBe(primaryBaseUrl);
+      const primaryStartup = assertStartupReports(primaryDaemonOutput, [
+        Number(new URL(primaryBaseUrl).port),
+        Number(new URL(primaryBaseUrl).port),
+      ]);
       await client.command(project.projectId, "SteerWork", {
         workId: parentWorkId,
         workspaceId: project.rootWorkspaceId,
@@ -780,8 +834,28 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
           ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
           ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "0",
         },
-        onStdout: (line) => pushProbe(events, line),
+        onStdout: (line) => {
+          additionalDaemonOutput.push(line);
+          pushProbe(events, line);
+        },
       });
+      const additionalStartup = assertStartupReports(additionalDaemonOutput, [
+        newDaemon.httpPort,
+      ]);
+      expect(new URL(newDaemon.baseUrl).port).toBe(String(newDaemon.httpPort));
+      expect(newDaemon.httpPort).not.toBe(Number(new URL(primaryBaseUrl).port));
+      expect(
+        new Set([
+          ...primaryStartup.map((report) => report.nonce),
+          ...additionalStartup.map((report) => report.nonce),
+        ]).size,
+      ).toBe(3);
+      expect(
+        new Set([
+          ...primaryStartup.map((report) => report.pid),
+          ...additionalStartup.map((report) => report.pid),
+        ]).size,
+      ).toBe(3);
       const newLease = await waitForPublic(
         async () =>
           events.find(

@@ -237,6 +237,7 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
       let probeArmed = false;
       let targetActionIssued = false;
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
           if (!context.includes(marker)) {
@@ -678,6 +679,7 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
     let probeArmed = false;
     let targetActionIssued = false;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: (call, index) => {
         const context = JSON.stringify(call.messages);
         if (!context.includes(marker)) {

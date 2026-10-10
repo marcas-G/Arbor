@@ -220,6 +220,7 @@ describe("AH10 real daemon generation takeover", () => {
       let probeArmed = false;
       let seedWaitIssued = false;
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
           const available = new Set(
@@ -530,6 +531,7 @@ describe("AH10 real daemon generation takeover", () => {
     let seedWaitIssued = false;
     let targetProviderCalls = 0;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: (call) => {
         const context = JSON.stringify(call.messages);
         const available = new Set(
@@ -813,6 +815,7 @@ describe("AH10 real daemon generation takeover", () => {
     let probeArmed = false;
     let seedWaitIssued = false;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: (call) => {
         const context = JSON.stringify(call.messages);
         const available = new Set(
@@ -1161,6 +1164,7 @@ describe("AH10 real daemon generation takeover", () => {
       let probeArmed = false;
       let seedWaitIssued = false;
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
           const available = new Set(
@@ -1512,6 +1516,7 @@ describe("AH10 real daemon generation takeover", () => {
         verdict: "Pass",
       });
       const fixture = await startProductionFixture({
+        isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
@@ -2047,6 +2052,7 @@ describe("AH10 real daemon generation takeover", () => {
       verdict: "Pass",
     });
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       admitWorkspaceDirectory: true,
       reply: (call, index) => {
         const context = JSON.stringify(call.messages);
