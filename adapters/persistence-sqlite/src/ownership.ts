@@ -48,6 +48,18 @@ interface ClaimRow {
   readonly released_at: string | null;
 }
 
+export interface WorkspaceResourceActivationQualificationEvent {
+  readonly boundary: "P11BeforeActivationCommit" | "P11AfterActivationCommit";
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly resourceBoundaryRevision: ResourceBoundaryRevision;
+}
+
+/** Process-local test seam for the two durable activation boundaries. */
+export type WorkspaceResourceActivationQualificationProbe = (
+  event: WorkspaceResourceActivationQualificationEvent,
+) => Promise<void>;
+
 const toClaim = (row: ClaimRow): ResourceOwnershipClaimRecord => ({
   claimId: row.claim_id,
   workspaceId: row.workspace_id as WorkspaceId,
@@ -232,20 +244,9 @@ export const EnvironmentRevisionStoreLive: Layer.Layer<
   }),
 );
 
-export const OwnershipWriteServiceLive: Layer.Layer<
-  OwnershipWriteService,
-  never,
-  | ProjectEnvironmentPort
-  | TransactionPort
-  | ResourceOwnershipRepository
-  | EnvironmentRevisionStore
-  | WorkspaceRepository
-  | WorkspaceResourceActivationStore
-  | DomainEventJournal
-  | IdGenerator
-  | Clock
-> = Layer.effect(
-  OwnershipWriteService,
+const makeOwnershipWriteServiceEffect = (
+  qualificationProbe?: WorkspaceResourceActivationQualificationProbe,
+) =>
   Effect.gen(function* () {
     const environment = yield* ProjectEnvironmentPort;
     const tx = yield* TransactionPort;
@@ -413,7 +414,7 @@ export const OwnershipWriteServiceLive: Layer.Layer<
             });
           }
 
-          return yield* tx.transact(
+          const activation = yield* tx.transact(
             Effect.gen(function* () {
               const currentIntent = yield* activationIntents.find(
                 projectId,
@@ -527,14 +528,60 @@ export const OwnershipWriteServiceLive: Layer.Layer<
               yield* journal
                 .append([event])
                 .pipe(Effect.provideService(IdGenerator, ids));
+              if (qualificationProbe !== undefined) {
+                yield* Effect.promise(() =>
+                  qualificationProbe({
+                    boundary: "P11BeforeActivationCommit",
+                    projectId,
+                    workspaceId,
+                    resourceBoundaryRevision,
+                  }),
+                );
+              }
               return { _tag: "Activated" as const };
             }),
           );
+          if (
+            activation._tag === "Activated" &&
+            qualificationProbe !== undefined
+          ) {
+            yield* Effect.promise(() =>
+              qualificationProbe({
+                boundary: "P11AfterActivationCommit",
+                projectId,
+                workspaceId,
+                resourceBoundaryRevision,
+              }),
+            );
+          }
+          return activation;
         });
 
     return OwnershipWriteService.of({
       resolveAndWrite,
       activatePendingWorkspaceResource,
     });
-  }),
-);
+  });
+
+export const OwnershipWriteServiceWithQualificationProbe = (
+  qualificationProbe?: WorkspaceResourceActivationQualificationProbe,
+): Layer.Layer<
+  OwnershipWriteService,
+  never,
+  | ProjectEnvironmentPort
+  | TransactionPort
+  | ResourceOwnershipRepository
+  | EnvironmentRevisionStore
+  | WorkspaceRepository
+  | WorkspaceResourceActivationStore
+  | DomainEventJournal
+  | IdGenerator
+  | Clock
+> =>
+  Layer.effect(
+    OwnershipWriteService,
+    makeOwnershipWriteServiceEffect(qualificationProbe),
+  );
+
+export const OwnershipWriteServiceLive =
+  OwnershipWriteServiceWithQualificationProbe();

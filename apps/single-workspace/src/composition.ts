@@ -78,6 +78,7 @@ import {
   makeAttentionProjectionStoreLive,
   makeRecoveryAttentionFactStoreLive,
   OwnershipWriteServiceLive,
+  OwnershipWriteServiceWithQualificationProbe,
   P12_MIGRATIONS,
   P16_MIGRATIONS,
   P17_MIGRATIONS,
@@ -104,6 +105,7 @@ import {
   VerificationRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
+  type WorkspaceResourceActivationQualificationProbe,
   WorkspaceResourceActivationStoreLive,
   WorkWaitStoreLive,
 } from "@arbor/persistence-sqlite";
@@ -328,6 +330,8 @@ export interface SingleWorkspaceConfig {
   readonly recoveryAttentionFactQualificationProbe?: RecoveryAttentionFactQualificationProbe;
   /** Test-only P10 consumer pause point after row write but before commit. */
   readonly attentionProjectionQualificationProbe?: AttentionProjectionQualificationProbe;
+  /** Test-only process-local probe around P11 activation transaction commit. */
+  readonly workspaceResourceActivationQualificationProbe?: WorkspaceResourceActivationQualificationProbe;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
@@ -616,7 +620,11 @@ export const buildSingleWorkspaceLayer = (
   const workspaceKnowledge = Layer.provide(WorkspaceKnowledgePortLive, repos);
   const workspacePlacement = Layer.provide(WorkspacePlacementPortLive, repos);
   const ownershipWrite = Layer.provide(
-    OwnershipWriteServiceLive,
+    config.workspaceResourceActivationQualificationProbe === undefined
+      ? OwnershipWriteServiceLive
+      : OwnershipWriteServiceWithQualificationProbe(
+          config.workspaceResourceActivationQualificationProbe,
+        ),
     Layer.mergeAll(repos, infra),
   );
   const inputPromotion = Layer.provide(
