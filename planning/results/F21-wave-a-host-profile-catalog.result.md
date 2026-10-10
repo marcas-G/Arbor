@@ -33,11 +33,14 @@ or any resource/authority design contract.
   generic path-free errors.
 - `GET /project-resources` serves only `{resourceProfileRef, version,
   displayName, available}` plus `conversationOnlySupported`. It follows the
-  existing local-single-user directory policy: unauthenticated requests get
-  401; authenticated non-local principals get generic 503 until a multi-user
-  visibility contract exists. The endpoint never queries the authority
-  resolver or reads files. The catalog is passed through the production
-  composition Port layer and transport config.
+  existing local-single-user policy. With a configured authenticator, missing
+  or rejected credentials get 401; authenticated non-local principals get
+  generic 503 until a multi-user visibility contract exists. With no
+  authenticator, the LOCAL_PRINCIPAL fallback is accepted only when the
+  listener host is loopback; a non-loopback/wildcard bind gets generic 503 on
+  this endpoint. The endpoint never queries the authority resolver or reads
+  files. The catalog is passed through the production composition Port layer
+  and transport config.
 - No GitWorktree is created. The catalog does not activate ownership claims or
   change durable Workspace boundaries.
 
@@ -49,14 +52,33 @@ profile adapter did not exist (`Cannot find module
 
 GREEN: `pnpm exec vitest run
 apps/single-workspace/test/project-resource-profile-catalog.test.ts` — 1 file,
-8 tests passed. Coverage includes zero/one/multiple Port entries, deterministic
+10 tests passed. Coverage includes zero/one/multiple Port entries, deterministic
 ordering and canonical FileTree mapping, malformed/duplicate refs, lexical
 path traversal rejection, missing/non-directory/permission-denied
 availability without path disclosure, restart-stable derived version and
 version change after moving the configured path, environment config parsing,
-and the actual HTTP shell's authenticated path-free catalog response.
+symlink-to-realpath canonical mapping, and the actual HTTP shell's path-free
+catalog response. HTTP assertions distinguish 401 with a configured auth
+provider, local-principal fallback on loopback without one, and generic 503
+for the no-auth wildcard/non-loopback bind regression.
 Permission denial is exercised through the adapter's injected filesystem
 boundary; no platform ACL was changed.
+
+## Follow-up review correction
+
+The first follow-up RED used an HTTP server bound to `0.0.0.0` with no
+authenticator and received HTTP 200 for the Profile catalog (expected generic
+503). A wildcard listener is remotely reachable, while the transport's
+ordinary no-auth `LOCAL_PRINCIPAL` fallback had treated every request as
+local. The fix is limited to `GET /project-resources`: when no authenticator
+is configured it refuses non-loopback listener hosts with a generic 503; the
+global listener and all other route auth behavior are unchanged. The catalog
+tests now also prove no-auth loopback remains available and that a directory
+symlink is stored as the `realpath` target. With a configured authenticator,
+401 applies only when that authenticator rejects missing/invalid credentials.
+This follows P12 `10` §9's local-single-user restriction and the existing
+transport-auth contract: no-auth identity relies on OS-user ownership plus a
+loopback listener, so a wildcard bind is not a valid local principal proof.
 
 `pnpm typecheck` passed (`tsc -b` and test-project typecheck). Targeted Biome
 passed for the seven changed source/test files. `git diff --check` passed.
