@@ -34,9 +34,11 @@ from target-uniqueness counts rather than treated as failures.
 AH17's local provider now serves the public Root assignment and the seed Manual
 wait before the probe is armed. It injects the context-overflow response only
 for the resumed target Work after SteerWork. The existing checkpoint payload,
-epoch advance, provider native/canonical history, request identity/hash,
-replacement turn, and before/after crash assertions remain in place; target
-overflow/summary/wait counts are distinguished from the public seed requests.
+epoch advance, provider native/canonical history, ProviderTurn identities and
+ordering, replacement turn, and before/after crash assertions remain in place;
+target overflow/summary/wait counts are distinguished from the public seed
+requests. This test does not make a new content-hash or decoded-output-hash
+claim.
 
 ## RED / verification
 
