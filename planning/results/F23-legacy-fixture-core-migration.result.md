@@ -32,6 +32,13 @@ P9 recovery fixtures that previously used values such as `exe_p9_b2`,
 IDs derive from the UUID tail with the `ses_` prefix, with related SQL
 assertions/reference values updated consistently.
 
+One legacy exception remains intentionally visible in
+`tests/p9-workflow-interruption.test.ts`: its P12 old-schema-13 raw database
+fixture inserts `focus_kind = 'coordination'` directly into `executions`. This
+is historical phase-schema state used by recovery/legacy migration coverage,
+not a current `AdmitExecution` Gateway payload or new write. It should not be
+read as evidence that P9 current writes still use Coordination focus.
+
 ## Verification
 
 - `pnpm build`: PASS.
@@ -40,7 +47,13 @@ assertions/reference values updated consistently.
 - P6 Story B standalone: 1/1 PASS.
 - Related P6 acceptance/critical-steer/specialist-spawn files: 3 files / 12
   tests PASS.
-- Full targeted 18-file core set: 18 files / 76 tests PASS.
+- Full targeted core command (18 files / 76 tests):
+
+  ```powershell
+  pnpm vitest run tests/p2-admit-execution.test.ts tests/p2-driver.test.ts tests/p2-recovery.test.ts tests/p2-recovery-matrix.test.ts tests/p2-settle-execution.test.ts tests/p2-stop-execution.test.ts tests/p3-integration.test.ts apps/single-workspace/test/p5-restart-continuity.test.ts tests/p6-acceptance.test.ts tests/p6-critical-steer.test.ts tests/p6-specialist-spawn.test.ts tests/p9-acceptance.test.ts tests/p9-lease-expiry.test.ts tests/p9-lease-renewal.test.ts tests/p9-recovery-driver.test.ts tests/p9-recovery-visibility.test.ts tests/p9-worker-crash.test.ts tests/p9-workflow-interruption.test.ts
+  ```
+
+  Result: 18 files / 76 tests PASS.
 - `pnpm typecheck`: PASS (`tsc -b` and test project).
 - Biome check on the 17 changed test/helper files: PASS.
 - Full `pnpm check` and functional suite were not run, per task scope.
