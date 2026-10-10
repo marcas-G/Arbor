@@ -185,7 +185,6 @@ export const admitExecution = (
       _tag: "WorkspaceMain",
       executionId,
       workspaceId,
-      focus,
       episode: {
         _tag: "WorkEpisode",
         workId: focus.workId,
