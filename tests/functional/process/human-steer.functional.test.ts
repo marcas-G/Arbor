@@ -5,8 +5,9 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
-  functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -29,9 +30,51 @@ describe("F07 public human steer", () => {
   it("delivers the revision-bound correction to the next Agent execution", async () => {
     const objectiveMarker = `F07-WORK-${crypto.randomUUID().slice(0, 8)}`;
     const guidanceMarker = `F07-STEER-${crypto.randomUUID().slice(0, 8)}`;
+    let workProviderCalls = 0;
     const fixture = await startProductionFixture({
       reply: (call) => {
         const context = JSON.stringify(call.messages);
+        const available = new Set(
+          call.tools
+            .map((tool) => tool.function?.name)
+            .filter((name): name is string => name !== undefined),
+        );
+        if (
+          available.has("assign_work") &&
+          !available.has("claim_completion") &&
+          context.includes(objectiveMarker)
+        ) {
+          return context.includes("WorkAssigned(")
+            ? { _tag: "Text", text: `Work admitted for ${objectiveMarker}` }
+            : {
+                _tag: "ToolCall",
+                name: "assign_work",
+                arguments: {
+                  objective: `Inspect ${objectiveMarker} and wait for correction.`,
+                  why: "test whether the next execution receives a user correction",
+                  constraints: [],
+                  completionExpectation: "correction observed",
+                  verificationMission: {
+                    goal: "verify correction uptake",
+                    criteria: [
+                      {
+                        criterionId: "correction-visible",
+                        requirement: "the Agent receives the user correction",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                  reason: "functional steer",
+                },
+              };
+        }
+        if (
+          available.has("claim_completion") &&
+          context.includes(objectiveMarker)
+        ) {
+          workProviderCalls += 1;
+        }
         return manualWait(
           context.includes(guidanceMarker)
             ? `observed ${guidanceMarker}`
@@ -46,48 +89,71 @@ describe("F07 public human steer", () => {
       fixture.workspaceDirectory,
       "F07 correction",
     );
-    const workId = functionalId("wrk");
-
-    await client.command(project.projectId, "AssignWork", {
-      workId,
-      workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
+    await submitHumanMessage(
+      client,
+      project,
+      `请创建工作目标 ${objectiveMarker}，等待我随后提供修正。`,
+    );
+    const approval = await waitForApproval(client, project, objectiveMarker);
+    expect(
+      await client.view("current-work", {
+        workspaceId: project.rootWorkspaceId,
+      }),
+    ).toBeNull();
+    await client.command(project.projectId, "ResolveControlApproval", {
+      approvalId: approval.approvalId,
+      expectedRevision: approval.revision,
+      decision: "Approve",
+      reason: "F07 public Work admission",
+    });
+    const currentWork = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          objective: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      (work) => work?.workId !== undefined,
+    );
+    const workId = currentWork?.workId;
+    if (workId === undefined) throw new Error("F07 public Work absent");
+    expect(currentWork).toMatchObject({
       objective: `Inspect ${objectiveMarker} and wait for correction.`,
-      why: "test whether the next execution receives a user correction",
-      constraints: [],
-      completionExpectation: "correction observed",
-      verificationMission: {
-        goal: "verify correction uptake",
-        criteria: [
-          {
-            criterionId: "correction-visible",
-            requirement: "the Agent receives the user correction",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      provenance: { predecessorWorkId: null, reason: "functional steer" },
       revision: 0,
+      status: "Open",
     });
 
     await waitForPublic(
-      async () => fixture.providerCalls.length,
+      async () => workProviderCalls,
       (count) => count >= 1,
     );
-    const beforeSteer = await client.view<{
-      workId?: string;
-      revision: number;
-      status: string;
-    } | null>("current-work", { workspaceId: project.rootWorkspaceId });
+    const beforeSteer = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (work) =>
+        work?.workId === workId &&
+        work.revision === 0 &&
+        work.activeExecution === undefined,
+    );
     expect(beforeSteer).toMatchObject({
       workId,
       revision: 0,
       status: "Open",
     });
     expect(
-      fixture.providerCalls.some((call) =>
-        JSON.stringify(call.messages).includes(guidanceMarker),
+      fixture.providerCalls.some(
+        (call) =>
+          call.tools.some(
+            (tool) => tool.function?.name === "claim_completion",
+          ) && JSON.stringify(call.messages).includes(guidanceMarker),
       ),
     ).toBe(false);
 
@@ -110,11 +176,14 @@ describe("F07 public human steer", () => {
     );
     expect(revised?.status).toBe("Open");
     await waitForPublic(
-      async () => fixture.providerCalls,
-      (calls) =>
-        calls.some((call) =>
-          JSON.stringify(call.messages).includes(guidanceMarker),
-        ),
+      async () => ({ calls: fixture.providerCalls, workProviderCalls }),
+      (value) =>
+        value.calls.some(
+          (call) =>
+            call.tools.some(
+              (tool) => tool.function?.name === "claim_completion",
+            ) && JSON.stringify(call.messages).includes(guidanceMarker),
+        ) && workProviderCalls > 1,
       30_000,
     );
     expect(fixture.daemonErrors).toEqual([]);
