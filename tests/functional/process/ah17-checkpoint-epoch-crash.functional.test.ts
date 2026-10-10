@@ -8,8 +8,8 @@ import {
   startProductionFixture,
 } from "../support/production-fixture.js";
 import {
+  admitRootWorkThroughPublicConversation,
   createFunctionalProject,
-  functionalId,
   makePublicClient,
   waitForPublic,
 } from "../support/public-client.js";
@@ -24,7 +24,13 @@ interface Ah17Probe {
 interface ProviderRequest {
   readonly messages: ReadonlyArray<{ role?: string; content?: string }>;
   readonly tools: ReadonlyArray<{ function?: { name?: string } }>;
-  readonly kind: "context-overflow" | "summary" | "wait" | "text";
+  readonly kind:
+    | "root-work"
+    | "seed-wait"
+    | "context-overflow"
+    | "summary"
+    | "wait"
+    | "text";
 }
 
 interface Ah17Snapshot {
@@ -188,6 +194,51 @@ const sendManualWait = (response: import("node:http").ServerResponse) => {
   response.end("data: [DONE]\n\n");
 };
 
+const sendFunctionCall = (
+  response: import("node:http").ServerResponse,
+  name: string,
+  args: Readonly<Record<string, unknown>>,
+) => {
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  response.write(
+    `data: ${JSON.stringify({
+      id: `chatcmpl-ah17-${randomUUID()}`,
+      object: "chat.completion.chunk",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            role: "assistant",
+            tool_calls: [
+              {
+                index: 0,
+                id: `call_${randomUUID().replaceAll("-", "")}`,
+                type: "function",
+                function: { name, arguments: JSON.stringify(args) },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+      usage: null,
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      id: `chatcmpl-ah17-${randomUUID()}`,
+      object: "chat.completion.chunk",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    })}\n\n`,
+  );
+  response.end("data: [DONE]\n\n");
+};
+
 const sendContextOverflow = (response: import("node:http").ServerResponse) => {
   response.writeHead(200, {
     "content-type": "text/event-stream",
@@ -205,7 +256,10 @@ const sendContextOverflow = (response: import("node:http").ServerResponse) => {
   );
 };
 
-const startCompactionProvider = async (marker: string) => {
+const startCompactionProvider = async (
+  marker: string,
+  state: { probeArmed: boolean },
+) => {
   const requests: ProviderRequest[] = [];
   let contextOverflowSent = false;
   const server = createServer((request, response) => {
@@ -236,6 +290,12 @@ const startCompactionProvider = async (marker: string) => {
       const messageText = messages
         .map((message) => message.content ?? "")
         .join("\n");
+      const tools = body.tools ?? [];
+      const available = new Set(
+        tools
+          .map((tool) => tool.function?.name)
+          .filter((name): name is string => name !== undefined),
+      );
       if (messageText.includes("Produce a compact continuation summary")) {
         requests.push({
           messages,
@@ -243,6 +303,38 @@ const startCompactionProvider = async (marker: string) => {
           kind: "summary",
         });
         sendText(response, `Compacted continuation for ${marker}.`);
+        return;
+      }
+      if (available.has("assign_work") && !available.has("claim_completion")) {
+        requests.push({ messages, tools, kind: "root-work" });
+        if (messageText.includes("WorkAssigned(")) {
+          sendText(response, `Admitted AH17 Work ${marker}.`);
+          return;
+        }
+        sendFunctionCall(response, "assign_work", {
+          objective: `Exercise one compaction checkpoint boundary for ${marker}.`,
+          why: "qualify atomic ContextEpoch/checkpoint recovery",
+          constraints: [],
+          completionExpectation:
+            "compaction resumes the same logical Work step",
+          verificationMission: {
+            goal: `Verify compaction recovery for ${marker}`,
+            criteria: [
+              {
+                criterionId: "ah17-atomic-compaction",
+                requirement: "one checkpoint matches the single epoch advance",
+                required: true,
+              },
+            ],
+            riskRequirements: [],
+          },
+          reason: "AH17 process fixture",
+        });
+        return;
+      }
+      if (available.has("claim_completion") && !state.probeArmed) {
+        requests.push({ messages, tools, kind: "seed-wait" });
+        sendManualWait(response);
         return;
       }
       if (!contextOverflowSent) {
@@ -255,7 +347,6 @@ const startCompactionProvider = async (marker: string) => {
         sendContextOverflow(response);
         return;
       }
-      const tools = body.tools ?? [];
       if (tools.some((tool) => tool.function?.name === "wait")) {
         requests.push({ messages, tools, kind: "wait" });
         sendManualWait(response);
@@ -362,6 +453,19 @@ const readAh17Snapshot = (
   }
 };
 
+const readExecutionIds = (databaseFile: string): string[] => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return (
+      db
+        .prepare("SELECT execution_id FROM executions ORDER BY execution_id")
+        .all() as Array<{ execution_id: string }>
+    ).map((row) => row.execution_id);
+  } finally {
+    db.close();
+  }
+};
+
 const probes: Ah17Probe[] = [];
 
 afterEach(async () => {
@@ -383,16 +487,12 @@ describe("AH17 CompactionCheckpoint and ContextEpoch process crash", () => {
     async (crashSide) => {
       const marker = `AH17-${crypto.randomUUID().slice(0, 8)}`;
       probes.length = 0;
-      const provider = await startCompactionProvider(marker);
+      const providerState = { probeArmed: false };
+      const provider = await startCompactionProvider(marker, providerState);
       providerServers.push(provider.server);
       const fixture = await startProductionFixture({
         reply: () => ({ _tag: "HttpError", status: 500 }),
-        firstDaemonEntry: ah17Child,
         daemonEnvironment: {
-          ARBOR_AH17_BOUNDARY:
-            crashSide === "before"
-              ? "AH17BeforeCheckpointEpochCommit"
-              : "AH17AfterCheckpointEpochCommit",
           ARBOR_MODEL_BASE_URL: provider.baseUrl,
         },
         onDaemonStdout: (line) => {
@@ -411,28 +511,61 @@ describe("AH17 CompactionCheckpoint and ContextEpoch process crash", () => {
         fixture.workspaceDirectory,
         `AH17 atomic compaction ${marker}`,
       );
-      const workId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
+      const seededWork = await admitRootWorkThroughPublicConversation(
+        client,
+        project,
+        marker,
+        `Please exercise one compaction checkpoint boundary for ${marker}.`,
+      );
+      const workId = seededWork.workId;
+      expect(seededWork).toMatchObject({ revision: 0, status: "Open" });
+      await waitForPublic(
+        async () =>
+          provider.requests.filter((request) => request.kind === "seed-wait"),
+        (requests) => requests.length === 1,
+      );
+      const seedWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (work) =>
+          work?.workId === workId &&
+          work.revision === 0 &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+      );
+      if (seedWork?.workId !== workId) {
+        throw new Error("AH17 public seed Work did not reach Manual wait");
+      }
+      const seedExecutionIds = new Set(readExecutionIds(fixture.databaseFile));
+      expect(providerState.probeArmed).toBe(false);
+      await fixture.crash();
+      providerState.probeArmed = true;
+      await fixture.restart({
+        entry: ah17Child,
+        daemonEnvironment: {
+          ARBOR_AH17_BOUNDARY:
+            crashSide === "before"
+              ? "AH17BeforeCheckpointEpochCommit"
+              : "AH17AfterCheckpointEpochCommit",
+          ARBOR_MODEL_BASE_URL: provider.baseUrl,
+        },
+      });
+      await client.command(project.projectId, "SteerWork", {
         workId,
         workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Exercise one compaction checkpoint boundary for ${marker}.`,
-        why: "qualify atomic ContextEpoch/checkpoint recovery",
-        constraints: [],
-        completionExpectation: "compaction resumes the same logical Work step",
-        verificationMission: {
-          goal: `Verify compaction recovery for ${marker}`,
-          criteria: [
-            {
-              criterionId: "ah17-atomic-compaction",
-              requirement: "one checkpoint matches the single epoch advance",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: seedWork.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `Resume compaction checkpoint qualification ${marker}.`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH17 process fixture" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
       });
 
       const boundary = await waitForPublic(
@@ -450,6 +583,7 @@ describe("AH17 CompactionCheckpoint and ContextEpoch process crash", () => {
         );
       });
       if (boundary === undefined) throw new Error("AH17 boundary probe absent");
+      expect(seedExecutionIds.has(boundary.executionId)).toBe(false);
       const ids = {
         sessionId: project.rootSessionId,
         executionId: boundary.executionId,
@@ -653,13 +787,25 @@ describe("AH17 CompactionCheckpoint and ContextEpoch process crash", () => {
         provider.requests.filter((request) => request.kind === "summary"),
       ).toHaveLength(1);
       expect(
+        provider.requests.filter((request) => request.kind === "seed-wait"),
+      ).toHaveLength(1);
+      expect(
+        provider.requests.some(
+          (request) =>
+            request.kind === "root-work" &&
+            request.tools.some((tool) => tool.function?.name === "assign_work"),
+        ),
+      ).toBe(true);
+      expect(
         provider.requests.filter((request) => request.kind === "wait"),
       ).toHaveLength(1);
-      expect(provider.requests.map((request) => request.kind)).toEqual([
-        "context-overflow",
-        "summary",
-        "wait",
-      ]);
+      expect(
+        provider.requests
+          .filter((request) =>
+            ["context-overflow", "summary", "wait"].includes(request.kind),
+          )
+          .map((request) => request.kind),
+      ).toEqual(["context-overflow", "summary", "wait"]);
       expect(recovered.workWait).toMatchObject({
         work_id: workId,
         wait_mode: "Any",

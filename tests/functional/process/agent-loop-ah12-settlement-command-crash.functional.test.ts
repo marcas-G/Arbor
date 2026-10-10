@@ -11,8 +11,8 @@ import {
   startProductionFixture,
 } from "../support/production-fixture.js";
 import {
+  admitRootWorkThroughPublicConversation,
   createFunctionalProject,
-  functionalId,
   makePublicClient,
   waitForPublic,
 } from "../support/public-client.js";
@@ -79,7 +79,7 @@ const verificationSnapshot = (databaseFile: string) => {
         .prepare(
           "SELECT event_id, payload_json FROM domain_events WHERE event_type = 'ExecutionSettled' ORDER BY event_id",
         )
-        .all(),
+        .all() as Array<{ event_id: string; payload_json: string }>,
       workLifecycle: db
         .prepare(
           "SELECT work_id, lifecycle, revision FROM works ORDER BY work_id",
@@ -90,6 +90,15 @@ const verificationSnapshot = (databaseFile: string) => {
     db.close();
   }
 };
+
+const settledEventsForExecution = (
+  events: Array<{ event_id: string; payload_json: string }>,
+  executionId: string,
+) =>
+  events.filter((event) => {
+    const payload = JSON.parse(event.payload_json) as { executionId?: string };
+    return payload.executionId === executionId;
+  });
 
 /** One SQLite read snapshot for the recovered cross-table invariants. */
 const recoverySnapshot = (databaseFile: string) => {
@@ -141,7 +150,11 @@ const recoverySnapshot = (databaseFile: string) => {
         .prepare(
           "SELECT event_id, aggregate_ref, payload_json FROM domain_events WHERE event_type = 'ExecutionSettled' ORDER BY event_id",
         )
-        .all(),
+        .all() as Array<{
+        event_id: string;
+        aggregate_ref: string;
+        payload_json: string;
+      }>,
     };
     db.exec("COMMIT");
     return snapshot;
@@ -177,15 +190,64 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
       const marker = `AH12-${crypto.randomUUID().slice(0, 8)}`;
       const hits: AhProbeHit[] = [];
       const daemonOutput: string[] = [];
+      let probeArmed = false;
+      let seedWaitIssued = false;
       let targetProviderCalls = 0;
       const fixture = await startProductionFixture({
         reply: (call) => {
+          const context = JSON.stringify(call.messages);
+          const available = new Set(
+            call.tools
+              .map((tool) => tool.function?.name)
+              .filter((name): name is string => name !== undefined),
+          );
           if (
-            JSON.stringify(call.messages).includes(marker) &&
-            call.tools.some(
-              (tool) => tool.function?.name === "claim_completion",
-            )
+            context.includes(marker) &&
+            available.has("assign_work") &&
+            !available.has("claim_completion")
           ) {
+            return context.includes("WorkAssigned(")
+              ? { _tag: "Text", text: `Work admitted for ${marker}.` }
+              : {
+                  _tag: "ToolCall",
+                  name: "assign_work",
+                  arguments: {
+                    objective: `Complete this bounded qualification Work ${marker}.`,
+                    why: "qualify CompletionClaimed verification startup recovery",
+                    constraints: [],
+                    completionExpectation:
+                      "the Work completion claim is recorded for verification",
+                    verificationMission: {
+                      goal: `Verify AH12 ${marker}`,
+                      criteria: [
+                        {
+                          criterionId: "ah12-completion",
+                          requirement:
+                            "the exact Work revision completion claim is independently verified",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH12 process test",
+                  },
+                };
+          }
+          if (context.includes(marker) && available.has("claim_completion")) {
+            if (!probeArmed) {
+              seedWaitIssued = true;
+              return {
+                _tag: "ToolCall",
+                name: "wait",
+                arguments: {
+                  reason: `AH12 setup waits for settlement probe ${marker}`,
+                  waitSpec: {
+                    mode: "Any",
+                    conditions: [{ _tag: "Manual" }],
+                  },
+                },
+              };
+            }
             targetProviderCalls += 1;
             if (targetProviderCalls > 1) {
               return { _tag: "HttpError", status: 429 };
@@ -225,8 +287,6 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
             },
           };
         },
-        firstDaemonEntry: crashChild,
-        daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
         onDaemonStdout: (line) => {
           daemonOutput.push(line);
           recordAhProbeLine(hits, line);
@@ -239,31 +299,80 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
         fixture.workspaceDirectory,
         `AH12 completion recovery ${marker}`,
       );
-      const workId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
+      const seededWork = await admitRootWorkThroughPublicConversation(
+        client,
+        project,
+        marker,
+        `Please complete this bounded qualification Work ${marker}.`,
+      );
+      const workId = seededWork.workId;
+      expect(seededWork).toMatchObject({ revision: 0, status: "Open" });
+      const seedWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (work) =>
+          seedWaitIssued &&
+          work?.workId === workId &&
+          work.revision === 0 &&
+          work.status === "Open" &&
+          work.activeExecution === undefined,
+      );
+      if (seedWork?.workId !== workId) {
+        throw new Error("AH12 public seed Work did not reach Manual wait");
+      }
+      const targetWorkRevision = seedWork.revision + 1;
+      const seedExecutionIds = new Set(
+        durableSnapshot(fixture.databaseFile).executions.map(
+          (execution) => execution.execution_id,
+        ),
+      );
+      expect(
+        durableSnapshot(fixture.databaseFile).executions.every(
+          (execution) => execution.settlement_kind !== "Failed",
+        ),
+      ).toBe(true);
+
+      await fixture.crash();
+      probeArmed = true;
+      await fixture.restart({
+        entry: crashChild,
+        daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
+      });
+      const steer = await client.command(project.projectId, "SteerWork", {
         workId,
         workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: `Complete this bounded qualification Work ${marker}.`,
-        why: "qualify CompletionClaimed verification startup recovery",
-        constraints: [],
-        completionExpectation:
-          "the Work completion claim is recorded for verification",
-        verificationMission: {
-          goal: `Verify AH12 ${marker}`,
-          criteria: [
-            {
-              criterionId: "ah12-completion",
-              requirement:
-                "the exact Work revision completion claim is independently verified",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: seedWork.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `Resume completion qualification ${marker}.`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH12 process test" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
       });
+      expect(
+        (steer.body as { resolution?: string } | undefined)?.resolution,
+      ).toBe("Committed");
+      const steeredWork = await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (work) =>
+          work?.workId === workId &&
+          work.revision === targetWorkRevision &&
+          work.status === "Open",
+      );
+      expect(steeredWork?.revision).toBe(targetWorkRevision);
 
       const observed = await waitForPublic(
         async () => ({ hits, providerCalls: fixture.providerCalls.length }),
@@ -281,6 +390,7 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
           `AH12 probe absent at ${boundary}; daemon=${fixture.daemonErrors.join(" | ")}; output=${daemonOutput.slice(-8).join(" | ")}`,
         );
       }
+      expect(seedExecutionIds.has(hit.executionId)).toBe(false);
 
       if (boundary === "AH12BeforeSettleExecutionCommit") {
         // The gateway hook runs after SettleExecution's handler, event append,
@@ -306,13 +416,18 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
         expect(commandAttempts(fixture.databaseFile, hit.commandId)).toEqual(
           [],
         );
-        expect(concurrentVerification.executionSettledEvents).toEqual([]);
+        expect(
+          settledEventsForExecution(
+            concurrentVerification.executionSettledEvents,
+            hit.executionId,
+          ),
+        ).toEqual([]);
         expect(concurrentVerification.verifications).toEqual([]);
         expect(concurrentVerification.workLifecycle).toEqual([
           expect.objectContaining({
             work_id: workId,
             lifecycle: "Open",
-            revision: 0,
+            revision: targetWorkRevision,
           }),
         ]);
       }
@@ -339,21 +454,27 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
       expect(completionResult).toEqual(
         expect.objectContaining({
           _tag: "CompletionClaimed",
-          workRevision: 0,
+          workRevision: targetWorkRevision,
           claimRef: expect.any(String),
         }),
       );
       expect(completionResult.claimRef).toEqual(expect.any(String));
       expect(completionResult.claimRef.length).toBeGreaterThan(0);
-      expect(killed.actions).toHaveLength(1);
-      expect(killed.actions[0]).toEqual(
+      const killedTargetActions = killed.actions.filter(
+        (action) => action.execution_id === hit.executionId,
+      );
+      expect(killedTargetActions).toHaveLength(1);
+      expect(killedTargetActions[0]).toEqual(
         expect.objectContaining({
           execution_id: hit.executionId,
           action_kind: "claim_completion",
           state: "Applied",
         }),
       );
-      expect(killed.executions).toEqual([
+      const killedTargetExecutions = killed.executions.filter(
+        (execution) => execution.execution_id === hit.executionId,
+      );
+      expect(killedTargetExecutions).toEqual([
         expect.objectContaining({
           execution_id: hit.executionId,
           settled_at:
@@ -362,12 +483,15 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
               : null,
         }),
       ]);
-      expect(killedVerification.executionEpisodes).toEqual([
+      const killedTargetEpisodes = killedVerification.executionEpisodes.filter(
+        (execution) => execution.execution_id === hit.executionId,
+      );
+      expect(killedTargetEpisodes).toEqual([
         expect.objectContaining({
           execution_id: hit.executionId,
           episode_kind: "WorkEpisode",
           episode_ref: workId,
-          episode_revision: 0,
+          episode_revision: targetWorkRevision,
           settled_at:
             boundary === "AH12AfterSettleCommandCommit"
               ? expect.any(String)
@@ -385,7 +509,11 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
         );
       }
       expect(killedVerification.verifications).toEqual([]);
-      expect(killedVerification.executionSettledEvents).toEqual(
+      const killedTargetSettledEvents = settledEventsForExecution(
+        killedVerification.executionSettledEvents,
+        hit.executionId,
+      );
+      expect(killedTargetSettledEvents).toEqual(
         boundary !== "AH12AfterSettleCommandCommit" ? [] : [expect.anything()],
       );
       if (boundary !== "AH12AfterSettleCommandCommit") {
@@ -395,10 +523,10 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
           expect.objectContaining({
             work_id: workId,
             lifecycle: "Open",
-            revision: 0,
+            revision: targetWorkRevision,
           }),
         ]);
-        expect(killedVerification.executionEpisodes).toEqual([
+        expect(killedTargetEpisodes).toEqual([
           expect.objectContaining({
             execution_id: hit.executionId,
             settled_at: null,
@@ -417,28 +545,28 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
             _tag: "Completed",
             result: expect.objectContaining({
               _tag: "CompletionClaimed",
-              workRevision: 0,
+              workRevision: targetWorkRevision,
               claimRef: completionResult.claimRef,
             }),
           }),
         );
       } else {
         expect(producerExecution?.settled_at).not.toBeNull();
-        expect(killedVerification.executionSettledEvents).toHaveLength(1);
+        expect(killedTargetSettledEvents).toHaveLength(1);
         const settledPayload = JSON.parse(
-          String(killedVerification.executionSettledEvents[0]?.payload_json),
+          String(killedTargetSettledEvents[0]?.payload_json),
         );
         expect(settledPayload).toEqual(
           expect.objectContaining({
             executionId: hit.executionId,
             workId,
-            workRevision: 0,
+            workRevision: targetWorkRevision,
             claimRef: completionResult.claimRef,
             settlement: expect.objectContaining({
               _tag: "Completed",
               result: expect.objectContaining({
                 _tag: "CompletionClaimed",
-                workRevision: 0,
+                workRevision: targetWorkRevision,
                 claimRef: completionResult.claimRef,
               }),
             }),
@@ -473,8 +601,18 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
       );
       expect(
         recovered.steps.filter((step) => step.execution_id === hit.executionId),
-      ).toEqual(killed.steps);
-      expect(recovered.actions).toEqual(killed.actions);
+      ).toEqual(
+        killed.steps.filter((step) => step.execution_id === hit.executionId),
+      );
+      expect(
+        recovered.actions.filter(
+          (action) => action.execution_id === hit.executionId,
+        ),
+      ).toEqual(
+        killed.actions.filter(
+          (action) => action.execution_id === hit.executionId,
+        ),
+      );
       const recoveredProducer = recovered.executions.find(
         (execution) => execution.execution_id === hit.executionId,
       );
@@ -495,28 +633,34 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
           _tag: "Completed",
           result: expect.objectContaining({
             _tag: "CompletionClaimed",
-            workRevision: 0,
+            workRevision: targetWorkRevision,
             claimRef: completionResult.claimRef,
           }),
         }),
       );
-      expect(recovered.executions).toHaveLength(2);
-      expect(recovered.executions).toEqual(
+      const recoveredTargetWorkExecutions = recovered.executions.filter(
+        (execution) =>
+          execution.episode_kind === "WorkEpisode" &&
+          execution.episode_ref === workId,
+      );
+      expect(recoveredTargetWorkExecutions).toHaveLength(2);
+      expect(recoveredTargetWorkExecutions).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             execution_id: hit.executionId,
             episode_kind: "WorkEpisode",
             episode_ref: workId,
-            episode_revision: 0,
+            episode_revision: targetWorkRevision,
             settlement_kind: "Completed",
             settled_at: expect.any(String),
           }),
-          expect.objectContaining({
-            execution_id: verifierExecutionId,
-            settled_at: null,
-          }),
         ]),
       );
+      expect(
+        recovered.executions.find(
+          (execution) => execution.execution_id === verifierExecutionId,
+        ),
+      ).toMatchObject({ settled_at: null });
       const recoveredSettlementReceipts = recovered.settlementReceipts.filter(
         (receipt) =>
           String(receipt.command_id).startsWith(
@@ -535,7 +679,7 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
         expect.objectContaining({
           verification_id: expect.any(String),
           work_id: workId,
-          target_work_revision: 0,
+          target_work_revision: targetWorkRevision,
           state: "Open",
           verdict: null,
         }),
@@ -546,21 +690,25 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
           execution_id: verifierExecutionId,
         }),
       ]);
-      expect(recovered.executionSettledEvents).toHaveLength(1);
+      const recoveredTargetSettledEvents = settledEventsForExecution(
+        recovered.executionSettledEvents,
+        hit.executionId,
+      );
+      expect(recoveredTargetSettledEvents).toHaveLength(1);
       const recoveredSettledPayload = JSON.parse(
-        String(recovered.executionSettledEvents[0]?.payload_json),
+        String(recoveredTargetSettledEvents[0]?.payload_json),
       );
       expect(recoveredSettledPayload).toEqual(
         expect.objectContaining({
           executionId: hit.executionId,
           workId,
-          workRevision: 0,
+          workRevision: targetWorkRevision,
           claimRef: completionResult.claimRef,
           settlement: expect.objectContaining({
             _tag: "Completed",
             result: expect.objectContaining({
               _tag: "CompletionClaimed",
-              workRevision: 0,
+              workRevision: targetWorkRevision,
               claimRef: completionResult.claimRef,
             }),
           }),
@@ -579,23 +727,21 @@ describe("AH12 CompletionClaimed settlement to Verification recovery", () => {
         expect.objectContaining({
           verificationId: recoveredVerification?.verification_id,
           workId,
-          targetWorkRevision: 0,
+          targetWorkRevision,
           verifierExecutionId,
           state: "Open",
         }),
       );
-      expect(recovered.works).toEqual([
-        expect.objectContaining({
-          work_id: workId,
-          lifecycle: "Open",
-          revision: 0,
-        }),
-      ]);
-      expect(
-        fixture.providerCalls.filter((call) =>
-          call.tools.some((tool) => tool.function?.name === "claim_completion"),
-        ),
-      ).toHaveLength(1);
+      expect(recovered.works.filter((work) => work.work_id === workId)).toEqual(
+        [
+          expect.objectContaining({
+            work_id: workId,
+            lifecycle: "Open",
+            revision: targetWorkRevision,
+          }),
+        ],
+      );
+      expect(targetProviderCalls).toBe(1);
       expect(fixture.daemonErrors).toEqual([]);
     },
     120_000,
