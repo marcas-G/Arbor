@@ -12,7 +12,6 @@ import type { ViewId } from "@arbor/api-contracts";
 import {
   QueryClient,
   QueryClientProvider,
-  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import {
@@ -65,19 +64,12 @@ function WSInvalidationProvider({
   const session = useSession();
   const path = usePath();
   const routeProjectId = parseRoute(path)?.projectId ?? null;
-  const routeSelection = useRef<string | null>(null);
-  const projectDirectory = useQuery({
-    queryKey: ["project-directory"],
-    queryFn: ({ signal }) =>
-      fetchProjectDirectory({
-        token: session.token,
-        signal,
-        onUnauthenticated: session.reportUnauthenticated,
-      }),
-    enabled:
-      session.token !== null &&
-      routeProjectId !== null &&
-      routeProjectId !== session.projectId,
+  const routeSelection = useRef({
+    path,
+    token: session.token,
+    generation: 0,
+    pendingGeneration: null as number | null,
+    validatedGeneration: null as number | null,
   });
   const [freshness, setFreshness] = useState<FreshnessValue>({
     state: "offline",
@@ -86,29 +78,75 @@ function WSInvalidationProvider({
 
   // The route is the project identity. Mirror a verified route into the
   // Session's recent-project memory so the invalidation socket follows direct
-  // links, refreshes, and popstate navigation. ProjectDirectory is only a
-  // local existence check; page requests continue to use the URL route.
+  // links, refreshes, and popstate navigation. Each distinct path receives a
+  // generation so an old A request cannot win after A → B → A.
   useEffect(() => {
+    if (
+      routeSelection.current.path !== path ||
+      routeSelection.current.token !== session.token
+    ) {
+      routeSelection.current = {
+        path,
+        token: session.token,
+        generation: routeSelection.current.generation + 1,
+        pendingGeneration: null,
+        validatedGeneration: null,
+      };
+    }
+    const generation = routeSelection.current.generation;
+    const isCurrentGeneration = (): boolean =>
+      routeSelection.current.path === path &&
+      routeSelection.current.token === session.token &&
+      routeSelection.current.generation === generation;
+
     if (path === "/" || path === "") {
-      routeSelection.current = null;
+      routeSelection.current = {
+        ...routeSelection.current,
+        pendingGeneration: null,
+        validatedGeneration: generation,
+      };
       return;
     }
     if (session.token === null || routeProjectId === null) {
-      routeSelection.current = null;
+      routeSelection.current = {
+        ...routeSelection.current,
+        pendingGeneration: null,
+        validatedGeneration: generation,
+      };
       session.setProjectId(null);
       return;
     }
-    if (routeSelection.current === routeProjectId) return;
-    routeSelection.current = routeProjectId;
-    if (session.projectId === routeProjectId) return;
+    if (routeSelection.current.validatedGeneration === generation) return;
+    if (routeSelection.current.pendingGeneration === generation) return;
+
+    routeSelection.current = {
+      ...routeSelection.current,
+      pendingGeneration: generation,
+    };
 
     // Disconnect any prior project's invalidation stream while the route is
     // checked against the canonical local directory.
-    session.setProjectId(null);
-    void projectDirectory
-      .refetch()
-      .then(({ data }) => {
-        if (routeSelection.current !== routeProjectId) return;
+    if (session.projectId !== routeProjectId) {
+      session.setProjectId(null);
+    }
+    void client
+      .fetchQuery({
+        queryKey: ["project-directory", "route-selection", path, generation],
+        queryFn: ({ signal }) =>
+          fetchProjectDirectory({
+            token: session.token,
+            signal,
+            onUnauthenticated: session.reportUnauthenticated,
+          }),
+        staleTime: 0,
+      })
+      .then((data) => {
+        if (!isCurrentGeneration()) return;
+        routeSelection.current = {
+          ...routeSelection.current,
+          pendingGeneration: null,
+          validatedGeneration: generation,
+        };
         const routeExists =
           data?.ok === true &&
           data.dto.projects.some(
@@ -117,15 +155,21 @@ function WSInvalidationProvider({
         session.setProjectId(routeExists ? routeProjectId : null);
       })
       .catch(() => {
-        if (routeSelection.current === routeProjectId) {
+        if (isCurrentGeneration()) {
+          routeSelection.current = {
+            ...routeSelection.current,
+            pendingGeneration: null,
+            validatedGeneration: generation,
+          };
           session.setProjectId(null);
         }
       });
   }, [
     path,
-    projectDirectory.refetch,
+    client,
     routeProjectId,
     session.projectId,
+    session.reportUnauthenticated,
     session.setProjectId,
     session.token,
   ]);

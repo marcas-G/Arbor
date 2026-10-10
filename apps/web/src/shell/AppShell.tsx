@@ -23,6 +23,7 @@ import { Sheet } from "../components/Sheet.js";
 import { BootstrapPage } from "../pages/bootstrap/BootstrapPage.js";
 import { useFreshness, usePath } from "../providers/AppProviders.js";
 import { useSession } from "../session/SessionContext.js";
+import { ProjectRouteContent } from "./ProjectRouteContent.js";
 import styles from "./shell.module.css";
 
 export interface ShellPageProps {
@@ -73,7 +74,11 @@ export function AppShell({
               <RouteNotFound path={path} connected={connected} />
             )
           ) : session.unauthenticatedProblem !== null ? null : (
-            pageFor(route)
+            <ProjectRouteContent
+              key={routeScopeKey(route)}
+              route={route}
+              pageFor={pageFor}
+            />
           )}
         </main>
       </div>
@@ -86,6 +91,11 @@ export function AppShell({
     </div>
   );
 }
+
+const routeScopeKey = (route: Route): string =>
+  route.name === "workspace" || route.name === "work"
+    ? `${route.projectId}:${route.workspaceId}`
+    : route.projectId;
 
 function RouteNotFound({
   path,
