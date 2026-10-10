@@ -45,7 +45,8 @@ Gateway; `apps/single-workspace/test/external-command-composition.test.ts`.
 pnpm exec vitest run --config vitest.functional.config.ts tests/capability/black-box/s1-s4-public-api.test.ts
 ```
 
-Result: **1 file / 4 tests passed** (23.68 seconds).
+Result: **1 file / 4 tests passed** (23.51 seconds) after the stability
+follow-up below.
 
 - S1/S3: a direct external `CreateChildWorkspace` request returns 403
   `UnsupportedOrigin:CreateChildWorkspace`; the public responsibility tree
@@ -70,6 +71,12 @@ case `rejects raw external AssignWork before loading facts, Resolver, or
 Gateway` provides the focused no-Resolver/no-Gateway evidence for rejected
 AssignWork. The public black-box additionally proves the rejected external
 CreateChildWorkspace and AssignWork requests create no visible child or Work.
+
+The Root fake provider selects the MAC-P1 or S2 goal marker from the latest
+`role: "user"` message in that Provider request; it does not rank markers
+found in serialized conversation history. After the pending formation Inbox
+entry appears, the public responsibility-tree is asserted to contain exactly
+the root and no child before `RecordDecision` is sent.
 
 `pnpm exec biome check tests/capability/black-box/s1-s4-public-api.test.ts` and
 `git diff --check` pass. No production source or `docs/design/**` files changed.

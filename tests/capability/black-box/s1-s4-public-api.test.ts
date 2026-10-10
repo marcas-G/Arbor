@@ -122,12 +122,12 @@ const startProvider = () =>
               .filter((name): name is string => name !== undefined),
           );
           const serialized = JSON.stringify(call.messages);
-          const rootGoalMarker = [macRootGoalMarker, s2SteerGoalMarker]
-            .filter((marker) => serialized.includes(marker))
-            .sort(
-              (left, right) =>
-                serialized.lastIndexOf(right) - serialized.lastIndexOf(left),
-            )[0];
+          const latestUserContent = [...call.messages]
+            .reverse()
+            .find((message) => message.role === "user")?.content;
+          const rootGoalMarker = [macRootGoalMarker, s2SteerGoalMarker].find(
+            (marker) => latestUserContent?.includes(marker) === true,
+          );
 
           if (
             toolNames.has("propose_workspace") &&
@@ -707,6 +707,18 @@ describe("S1-S4 public-process black-box", () => {
         `invalid public formation ref ${pendingFormation.entryKey}`,
       );
     }
+    const treeBeforeDecision = await view<{
+      nodes: Array<{
+        workspaceId: string;
+        parentWorkspaceId: string | null;
+      }>;
+    }>("responsibility-tree", { projectId });
+    expect(treeBeforeDecision.nodes).toHaveLength(1);
+    expect(treeBeforeDecision.nodes[0]).toMatchObject({
+      workspaceId: rootWorkspaceId,
+      parentWorkspaceId: null,
+    });
+
     await command(projectId, "RecordDecision", {
       proposalId: formationMatch[1],
       expectedProposalRevision: Number(formationMatch[2]),
