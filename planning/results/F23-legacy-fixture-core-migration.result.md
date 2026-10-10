@@ -73,3 +73,48 @@ fixture failures: internal ingress decodes command payloads, and the failure
 path was the payload `executionId`. The generated CommandId/replay-identity
 concern remains an independent audit/follow-up; no runtime or receipt code was
 changed here.
+
+## AH19 public Work-seed pre-header gate PoC
+
+An isolated-tree AH19 Work-seed migration remains limited to
+`tests/functional/process/ah19-provider-native-binding-recovery.functional.test.ts`
+and its test-only support in `tests/functional/support/production-fixture.ts`.
+The public route reaches RootConversation `assign_work`, exposes the exact CAPA
+Inbox approval, commits public `ResolveControlApproval`, and makes the Work
+visible as Open.
+
+The generic production fixture now has an optional asynchronous
+`beforeResponse` gate. It runs only after the provider has received the full
+HTTP request body and before the fake writes any response headers or bytes;
+returning `abort` destroys the held response without synthesizing a provider
+response. The AH19 `AH17BeforeCheckpointEpochCommit` case waits for the first
+Work provider request at this gate, verifies the Work is Open/current and the
+active attempt contains only `TurnStarted`, all six replay-safety observation
+facts are false, and there is no Native request, checkpoint, or action. It
+then kills the ordinary daemon, aborts the old HTTP connection, and starts the
+AH19 child. The child reaches the original `AH17BeforeCheckpointEpochCommit`
+checkpoint boundary. This demonstrates a retryable, known-no-effect provider
+attempt; it does not treat an unknown external effect as replay-safe.
+
+Verification for this PoC: the targeted Vitest invocation for
+`persists one real ProviderNative checkpoint at AH17BeforeCheckpointEpochCommit`
+passed 1/1 (about 37 seconds; 35 other cases skipped). `pnpm typecheck` and
+Biome on the two changed test files passed. No full functional suite or full
+`pnpm check` was run.
+
+The earlier HTTP 500 attempt remains rejected evidence, not the successful
+path: its persisted snapshot showed Work Execution `Failed`, ProviderAttempt
+`TerminalFailure`/`ProviderUnavailable`, and `responseStarted = true`, so it
+was not a retryable seed under P9 and was not used for this PoC.
+
+The initial target-tree attempt also found the ignored `apps/web/dist` missing;
+the test fixture's readiness probe GET `/` returns 503 when that static dist
+is absent. Building the Web dist removed that readiness issue. In a separate
+earlier setup, switching to the AH19 child while CAPA was still pending, then
+approving publicly, returned Committed but left `current-work` null for the
+bounded observation window. That remains unexplained test-child/recovery
+evidence, not a production-bug conclusion; the AH19 child is specialized for
+Native Work traces and does not implement the RootConversation `assign_work`
+seed response. No direct internal command, DDL Work seed, assertion weakening,
+or production change was used. The PoC qualifies only the single
+pre-checkpoint boundary, not all AH19 Work scenarios or the complete suite.
