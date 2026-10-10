@@ -36,7 +36,7 @@ validator。
 
 | commandType | Payload / codec owner | External origin policy |
 |---|---|---|
-| `CreateProject` | P1 `01` §5 | human/bootstrap |
+| `CreateProject` | P1 `01` §5 | human/bootstrap; v2 form selects a host Profile or ConversationOnly; never accepts a client filesystem path |
 | `CreateChildWorkspace` | P1 `01` §6 | reject external |
 | `AssignWork` | P1 `01` §7 | reject external; agent-originated |
 | `RenameProject` | P15 project-management `01` | reject external |
@@ -131,6 +131,16 @@ Recovery / ops 通道（如 recovery settlement）不经过外部 command regist
    提交前不可变；网络失败重试必须**复用同一 commandId**（服务器幂等）；
 3. `projectId` / `actor` / `issuedAt`：按 `01` §4；
 4. `payload`：仅由表单字段构造；不嵌入 server 未要求的字段。
+
+For CreateProject v2, the form's resource selector is populated only from the
+authenticated P12 `GET /project-resources` catalog or the explicit
+ConversationOnly choice. It constructs the closed P1 `01` ResourceSelection;
+it MUST NOT construct or submit rootWorkspace.resourceBoundary.addresses,
+absolute paths, Profile-derived canonical addresses, or a GitWorktree. The
+Profile ref/version is an input selector, not an authority fact. A retry keeps
+the exact commandId and selection; changing the selection starts a new logical
+request and requires a new commandId. The UI displays a friendly Profile name
+and availability but never renders the host path.
 
 ## 4. 特殊约束：`SelectCurrentWork`
 

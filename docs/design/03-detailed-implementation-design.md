@@ -1,14 +1,36 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.34\
+**Version:** 1.35\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.33\
-**Date:** 2026-10-09\
-**Depends on:** `Arbor System Design Specification v1.12`
+**Supersedes:** v1.34\
+**Date:** 2026-10-10\
+**Depends on:** `Arbor System Design Specification v1.13`
 
 **Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
 **Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
 **Scope:** 将已冻结的系统级设计落实为可实现且可测试的契约。v1.4 是 governance patch：闭合 P0 planning 审阅发现的 DG-01…DG-06，不改变 C1–C10 / X1–X11 的语义结论；v1.5 闭合 P1 pre-implementation 审阅发现的 P1-DG-01…05 与 P1-DG-10，P1+ 的 exact DDL、逐 Command payload/signature、Prompt 正文与经验参数仍按 phase-scoped closure 管理。
+
+**Governance changes (v1.34 → v1.35): FT-DG-01 functional resource admission**
+
+- CreateProject's external Handler schema is v2 while the server-selected
+  external wire codec remains v1. Root resource input is the closed
+  Profile(ref, version) | ConversationOnly selector; client paths are rejected.
+- The authenticated wire-v1 → exact Actor/Principal → Resolver → Gateway tuple
+  order in §4.1B is unchanged. No receipt pre-read or old-schema v1 replay is
+  added. Historical v1 receipts are preserve-only; matching a v1 CommandId
+  with a v2 candidate fails closed by the existing tuple rule.
+- The Profile registry is an immutable, host-owned startup snapshot. The P1
+  handler consults its pure in-memory lookup only after Gateway finds no
+  receipt. It constructs the canonical FileTree boundary and writes it with
+  Project/Workspace/Session in the existing command transaction. Filesystem
+  resolution/ownership activation remains post-commit and reads the persisted
+  Workspace boundary.
+- ProjectCreated stays EventVersion 1 with its existing payload; OPEN-1
+  Profile-source audit, OPEN-2 legacy same-ID retry expectations, and OPEN-3
+  post-commit durable-attention semantics remain open.
+- Proposal content SHA-256:
+  `274885C110E3B277753B49F6BAD023619ADFCF52D866CC86F01F27F7FDA85DD0`.
+  This is a functional-scope landing, not full FT-DG-01 closure.
 
 **Governance changes (v1.31 → v1.32): FT-DG-02 — Completed Work public view**
 
@@ -2395,10 +2417,81 @@ by SD §4.11, DID §6A.16/§9.3/§9.9, P4 `03`, and P9/P10 owners. F23 adds no
 bypass, codec-generated authority, receipt pre-read, SQL, or alternate
 AssignWork recovery path.
 
-For `CreateProject`, the codec validates only the existing P1 `01` §5
-payload, IDs, and revision contracts. It does not create a trusted
-resource-admission flow or resolve FT-DG-01; F21 and its qualification remain
-isolated and pending their own governance.
+For the existing CreateProject payload owner and the FT-DG-01 v2 bootstrap
+extension, see §4.1C. This does not change §4.1B's receipt visibility or tuple
+ordering.
+
+## 4.1C CreateProject v2 host resource admission (FT-DG-01 functional scope)
+
+CreateProject's current external wire codec remains server-selected v1. Its
+registered Handler semantic schema changes to v2; these are different version
+axes as defined in §4.1B. P1 `01` owns the closed v2 payload and schema.
+
+```ts
+type ResourceSelection =
+  | { readonly _tag: "Profile";
+      readonly resourceProfileRef: ResourceProfileRef;
+      readonly version: ResourceProfileVersion }
+  | { readonly _tag: "ConversationOnly" };
+```
+
+The v2 root Workspace payload carries ResourceSelection, not
+ResourceBoundary.addresses. It rejects absolute paths, raw ResourceBoundary
+fields, and mixed selector/address inputs through the registered strict codec.
+Invalid shapes use the existing non-reflecting InvalidCommandPayload Problem
+and HTTP 400; they do not reach Resolver, Gateway, receipt lookup, or writes.
+The semantic fingerprint includes the full selector/ref/version and all other
+CreateProject v2 fields, but never re-resolves the current host path into the
+same request identity.
+
+The existing P1 transaction and event sequence remains:
+
+```text
+Project + Root Workspace + WorkspacePrimary Session + ProjectCreated(v1)
+  + WorkspaceCreated(v1) + Committed receipt
+```
+
+After the Gateway's in-transaction receipt tuple check proves the CommandId is
+absent, the CreateProject handler may query P1's ProjectResourceProfilePort.
+This port exposes a deterministic in-memory view of the immutable P12 host
+startup registry; it does no filesystem I/O and has no TransactionScope.
+Profile(ref, version) maps to exactly one host-canonical FileTree address;
+ConversationOnly maps to an empty boundary. An unknown/expired ref produces
+the P1 ProjectResourceUnavailable terminal rejection, without Project,
+Workspace, Session, Domain Event, or ownership claim. The typed result must map
+to the existing non-disclosing TerminalRejected receipt view (rejection tag
+only, no path/ref/filesystem detail); it is not a transport Problem. The
+CommandGateway preserves the existing terminal-receipt/attempt semantics.
+
+The host Profile is not authority and does not change Resolver behavior. The
+resolver remains pure and runs before Gateway as required by §4.1B. In
+particular, Profile lookup is not a Composition pre-read and cannot make an
+existing receipt depend on current host configuration.
+
+After a successful commit, Application ownership activation re-reads the
+persisted root Workspace ResourceBoundary. The existing ProjectEnvironmentPort
+and OwnershipWriteService resolve/record that exact boundary outside
+BEGIN IMMEDIATE. If the path is gone or resolves to a different canonical
+region, activation fails closed without switching to another Profile/path; an
+exact receipt retry or restart retries convergence from the same durable
+Workspace boundary. The command remains Committed and is never reported as
+rolled back. This deterministic activation is a consequence of the committed
+CreateProject governance command, not a separate client resource-admission or
+GitWorktree command.
+
+Existing v1 Projects, Workspace boundaries, receipts, and ProjectCreated
+events remain untouched. A v1 raw-address request that fails the current v2
+codec is rejected before Resolver/Gateway. A valid current v2 candidate whose
+CommandId collides with a stored v1 receipt follows §4.1B's schema/fingerprint
+tuple mismatch and returns non-disclosing IdempotencyConflict; no historical
+decoder or stored-schema comparison is permitted. This is preserve-only, not a
+successful old v1 same-ID replay.
+
+F21 browser qualification remains pending until its positive browser journey
+and public raw-path/ref negative cases pass in the default functional suite.
+Profile-source audit (OPEN-1), old v1 same-ID success (OPEN-2), and durable
+public Attention for post-commit activation failure (OPEN-3) are not closed by
+this functional-scope contract.
 
 ## 4.2 Public / Governance Commands
 
@@ -5817,9 +5910,11 @@ Package-level ownership由 §10.4.1 的 allowed-edge matrix 强制。
 
 ```text
 - projectId 由 caller 预分配（prj_ + UUIDv7）；CommandEnvelope.projectId 即该值。
-- payload 提供 Root Workspace 的 ResponsibilityDefinition /
-  ResourceBoundary / ResponsibilityBoundAgentBinding / WorkspacePolicy /
-  ProjectPolicy / default configuration / environmentRef。
+- v2 payload 提供 Root Workspace 的 ResponsibilityDefinition /
+  ResourceSelection（P1 host Profile ref/version 或 ConversationOnly）/
+  ResponsibilityBoundAgentBinding / WorkspacePolicy / ProjectPolicy /
+  default configuration / environmentRef；canonical ResourceBoundary 由
+  trusted Profile Port 在 Gateway absent-receipt 分支构造，不接受客户端路径。
 - rootWorkspaceId 与 primarySessionId 由 caller 预分配。
 - 单一事务原子创建 Project + Root Workspace + WorkspacePrimary Session
   （§9.13 deferred FK 在同一 COMMIT 校验）。

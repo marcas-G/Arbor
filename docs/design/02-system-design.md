@@ -1,12 +1,12 @@
 # Arbor System Design Specification
 
-**Version:** 1.12
+**Version:** 1.13
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.11
+**Supersedes:** v1.12
 
-**Date:** 2026-10-09
+**Date:** 2026-10-10
 
 **Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.3`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量  
@@ -63,6 +63,25 @@
   `planning/results/FT-DG-03-governance-acceptance-and-landing.md`.
 - This acceptance and landing authorize design only. Runtime implementation
   requires separate authorization. AH10 §4.11 is unchanged.
+
+**Governance changes (v1.12 → v1.13): FT-DG-01 host resource admission**
+
+- Root Project bootstrap may select only a host-registered FileTree Profile or
+  explicitly choose ConversationOnly. The Profile ref/version is a selection
+  identifier, not authority or a client-supplied path.
+- The server constructs and atomically persists the root Workspace's canonical
+  ResourceBoundary. The persisted boundary is the execution/ownership truth;
+  ownership activation must re-read it and cannot fall back to a new path.
+- Profile selection does not create a GitWorktree and does not alter Child
+  Workspace resource-ceiling semantics.
+- CreateProject's existing ProjectCreated v1 event remains unchanged. Durable
+  source attribution for the selected Profile is OPEN-1; no EventVersion=2 is
+  introduced by this landing. Legacy v1 CreateProject receipts remain
+  preserve-only under F23; OPEN-2 and post-commit activation signal OPEN-3
+  remain explicit.
+- Functional-scope candidate SHA-256:
+  `274885C110E3B277753B49F6BAD023619ADFCF52D866CC86F01F27F7FDA85DD0`.
+  This landing does not claim full FT-DG-01 closure or qualification.
 
 **Governance changes (v1.8 → v1.9): Minimal Architecture Convergence
 (`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`)**
@@ -675,6 +694,26 @@ Responsibility → Resource Ownership
 正式写资源原则上唯一 Owner；Read 可以按协作需要更宽松。
 
 Write ownership 判断针对**规范化后的现实 backing resource**，而不是只比较用户配置中的路径或资源字符串。Environment 必须能够消解 path alias、worktree-to-filesystem mapping 等会让不同语义地址落到同一现实资源的情况；系统设计只冻结这一语义要求，具体 `ResourceAddress` 代数与 resolver contract 由 Detailed Implementation Design 定义。
+
+### 4.5.1 Root Project resource admission (FT-DG-01)
+
+- The host may expose a bounded catalog of registered FileTree Profiles. A
+  Profile is host configuration, not a Project/Workspace/GitWorktree aggregate
+  and not a capability. Its opaque ref/version identifies a host-approved
+  selection; the client never supplies the filesystem path.
+- Root Project creation selects one exact Profile ref/version or the explicit
+  ConversationOnly option. The trusted application constructs the initial
+  ResourceBoundary from the registered Profile; ConversationOnly produces an
+  empty boundary. The effective canonical Workspace boundary is persisted
+  with Project/Workspace/Primary Session creation.
+- A Profile selection never creates a GitWorktree. Child Workspaces remain
+  constrained by the existing ancestor ResourceBoundary ceiling.
+- Resource ownership activation is convergence for the already committed
+  Workspace boundary: it re-reads that durable boundary, resolves the same
+  canonical backing region, and fails closed without rebinding if the host
+  path changed. Profile source attribution after creation remains OPEN-1;
+  this rule does not imply that the Profile ref/version is independently
+  persisted or queryable.
 
 ## 4.6 Context 隔离
 

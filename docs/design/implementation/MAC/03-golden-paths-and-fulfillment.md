@@ -15,6 +15,12 @@ No later phase is required to make an earlier phase correct.
 
 ## 2. MAC-P1 golden path
 
+The Project/root Workspace is provisioned before this Work golden path. Its
+initial FileTree boundary comes only from the accepted host Profile selection
+or ConversationOnly choice (DID §4.1C / SD §4.5.1); MAC does not select paths,
+create GitWorktrees, or widen the persisted Workspace boundary. The remaining
+Work → Verification → Acceptance semantics below are unchanged.
+
 ```text
 Human goal
 → RootConversation: text or assign_work(current)
