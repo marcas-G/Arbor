@@ -99,8 +99,37 @@ attempt; it does not treat an unknown external effect as replay-safe.
 Verification for this PoC: the targeted Vitest invocation for
 `persists one real ProviderNative checkpoint at AH17BeforeCheckpointEpochCommit`
 passed 1/1 (about 37 seconds; 35 other cases skipped). `pnpm typecheck` and
-Biome on the two changed test files passed. No full functional suite or full
-`pnpm check` was run.
+Biome on the two changed test files passed. Filtered follow-up cases passed
+individually: public Work Session history 1/1, AH17After checkpoint commit
+1/1, ordinary Native AH17After source-identity recovery after child restart
+1/1, and ConversationCommon fail-closed negative control 1/1. The existing
+checkpoint/hash/epoch/Provider-call assertions were retained; ConversationResponse
+does not use the Work pre-header gate.
+
+After the complete Work-seed gate rollout and persistent report-endpoint fix,
+the full AH19 file passed in one Vitest run:
+
+```powershell
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/ah19-provider-native-binding-recovery.functional.test.ts
+```
+
+Result: 1 file, 36/36 tests passed in 3331.12 seconds. This qualifies the AH19
+file only, not the full functional suite. `pnpm typecheck`, Biome on the two
+changed test files, and `git diff --check` passed. Full `pnpm check` and
+`pnpm test:functional` were not run.
+
+The AH19 identity/manifest corruption `it.each` group had a previous
+120-second bound. It alone is now 160 seconds; no other test timeout changed.
+The analogous `compiledRequestHash` recovery case passed in 129.366 seconds
+with its existing 180-second bound, providing the measured budget basis. In
+the full-file run, the five identity-corruption fields passed in 127.384,
+127.478, 129.859, 129.218, and 128.437 seconds. No production Provider/model
+timeout, business wait, or assertion was changed.
+
+The first full-file attempt after introducing the gate was stopped after
+repeated timeout failures showed the same missing-report-endpoint child setup
+error on later restarts. After putting the report URL in the persistent base
+daemon environment for each AH19 fixture, the single full-file run above passed.
 
 The earlier HTTP 500 attempt remains rejected evidence, not the successful
 path: its persisted snapshot showed Work Execution `Failed`, ProviderAttempt
@@ -115,6 +144,13 @@ approving publicly, returned Committed but left `current-work` null for the
 bounded observation window. That remains unexplained test-child/recovery
 evidence, not a production-bug conclusion; the AH19 child is specialized for
 Native Work traces and does not implement the RootConversation `assign_work`
-seed response. No direct internal command, DDL Work seed, assertion weakening,
-or production change was used. The PoC qualifies only the single
-pre-checkpoint boundary, not all AH19 Work scenarios or the complete suite.
+seed response. The filtered ordinary Native restart initially exposed a test
+child setup omission: a later child restart lacked `ARBOR_AH19_REPORT_URL`;
+the database already had a valid Native checkpoint and source successor, and
+the child log said `AH19 report endpoint required`. AH19 fixtures now keep the
+report URL in their persistent base daemon environment across child restarts.
+All public Work seed call sites use the
+same pre-header hold/kill/abort before AH19 child takeover; no 500 is treated as
+replayable. No direct internal command, DDL Work seed, assertion weakening, or
+production change was used. The complete AH19 file passed as stated above; it
+does not claim the full functional suite passed.
