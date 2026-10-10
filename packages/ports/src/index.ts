@@ -19,6 +19,7 @@ export * from "./human-messages.js";
 export * from "./journal.js";
 export * from "./permission-grant-repository.js";
 export * from "./project-directory.js";
+export * from "./project-resource-profile.js";
 export * from "./project-tool-registry.js";
 export * from "./projection-query.js";
 export * from "./provider.js";

@@ -125,6 +125,8 @@ import {
   type PersistenceHealthProbe,
   type ProjectDirectory,
   type ProjectionQueryPort,
+  ProjectResourceProfilePort,
+  type ProjectResourceProfilePortService,
   type ProviderFailureKind,
   type ProviderPort,
   type ReconciliationSource,
@@ -191,6 +193,7 @@ import {
   type TransportBoundary,
   TransportBoundaryLive,
 } from "./production.js";
+import { makeProjectResourceProfilePort } from "./project-resource-profiles.js";
 import { ProjectionQueryPortLive } from "./projection-query.js";
 import { INLINE_SECRET_REF } from "./provider-config.js";
 import { PROVIDER_REGISTRY_TABLE } from "./provider-registry.table.js";
@@ -293,6 +296,8 @@ export interface SingleWorkspaceConfig {
    * single-user loopback principal; remote deployments must configure an
    * authenticator explicitly. */
   readonly authenticator?: AuthenticatorService;
+  /** P12 host-owned immutable startup snapshot for project bootstrap. */
+  readonly projectResourceProfiles?: ProjectResourceProfilePortService;
   /** B-7: the system principal the production daemon submits recovery /
    * consumer commands as (default `runtime:system`). */
   readonly principalRef?: string;
@@ -350,6 +355,7 @@ export type SingleWorkspaceServices =
   | PersistenceHealthProbe
   | UsageService
   | TransportBoundary
+  | ProjectResourceProfilePort
   | HumanMessageStore
   | InputPromotionService
   | WorkflowSignalConsumer
@@ -783,6 +789,10 @@ export const buildSingleWorkspaceLayer = (
     registry,
     gateway,
     reconciliation,
+    Layer.succeed(
+      ProjectResourceProfilePort,
+      config.projectResourceProfiles ?? makeProjectResourceProfilePort([]),
+    ),
   );
 
   // --- B-7 production deployment surfaces (composition-root wiring) ---------
