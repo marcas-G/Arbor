@@ -203,6 +203,17 @@ interface RootSeedProviderDecision {
   readonly response: ScriptedProviderResponse;
 }
 
+type RootSeedProviderMessage = CapturedProviderCall["messages"][number] & {
+  readonly tool_call_id?: string;
+  readonly tool_calls?: ReadonlyArray<{
+    readonly id?: string;
+    readonly function?: {
+      readonly name?: string;
+      readonly arguments?: string;
+    };
+  }>;
+};
+
 interface RootSeedDiagnostics {
   readonly providerDecisions: ReadonlyArray<RootSeedProviderDecision>;
   readonly responsesSent: ReadonlyArray<{
@@ -228,9 +239,52 @@ const approvedRootWorkReply = (
         .filter((name): name is string => name !== undefined),
     );
     const context = JSON.stringify(call.messages);
-    const hasWorkAssignedToolResult = call.messages.some(
+    const providerMessages =
+      call.messages as ReadonlyArray<RootSeedProviderMessage>;
+    const expectedArguments = {
+      ...work,
+      reason: "AH19 public Work seed under RootConversation",
+    };
+    const currentAssignWorkCallIds = new Set(
+      providerMessages.flatMap((message) =>
+        message.role === "assistant"
+          ? (message.tool_calls ?? [])
+              .filter((toolCall) => {
+                if (
+                  toolCall.function?.name !== "assign_work" ||
+                  typeof toolCall.id !== "string" ||
+                  typeof toolCall.function.arguments !== "string"
+                ) {
+                  return false;
+                }
+                try {
+                  const args = JSON.parse(
+                    toolCall.function.arguments,
+                  ) as Record<string, unknown>;
+                  return (
+                    args.objective === expectedArguments.objective &&
+                    args.why === expectedArguments.why &&
+                    JSON.stringify(args.constraints) ===
+                      JSON.stringify(expectedArguments.constraints) &&
+                    args.completionExpectation ===
+                      expectedArguments.completionExpectation &&
+                    JSON.stringify(args.verificationMission) ===
+                      JSON.stringify(expectedArguments.verificationMission) &&
+                    args.reason === expectedArguments.reason
+                  );
+                } catch {
+                  return false;
+                }
+              })
+              .map((toolCall) => toolCall.id as string)
+          : [],
+      ),
+    );
+    const hasWorkAssignedToolResult = providerMessages.some(
       (message) =>
         message.role === "tool" &&
+        typeof message.tool_call_id === "string" &&
+        currentAssignWorkCallIds.has(message.tool_call_id) &&
         message.content?.includes("WorkAssigned(") === true,
     );
     const selector = {
@@ -270,9 +324,9 @@ const approvedRootWorkReply = (
   };
 };
 
-it("AH19 Root Work fake does not acknowledge a non-tool WorkAssigned mention", () => {
+const makeRootSeedSelectorCase = () => {
   const marker = "AH19-root-seed-selector-negative";
-  const reply = approvedRootWorkReply(marker, {
+  const work: ApprovedWorkSeed = {
     objective: marker,
     why: "selector regression fixture",
     constraints: [],
@@ -282,34 +336,115 @@ it("AH19 Root Work fake does not acknowledge a non-tool WorkAssigned mention", (
       criteria: [],
       riskRequirements: [],
     },
-  });
-  const request: CapturedProviderCall = {
-    messages: [
-      { role: "user", content: `Please handle ${marker}.` },
-      {
-        role: "assistant",
-        content: "A prior note mentioned WorkAssigned(wrk_example).",
-      },
-    ],
-    tools: [{ function: { name: "assign_work" } }],
   };
+  return {
+    marker,
+    work,
+    request: {
+      messages: [{ role: "user", content: `Please handle ${marker}.` }],
+      tools: [{ function: { name: "assign_work" } }],
+    } satisfies CapturedProviderCall,
+    assignmentToolCall: (callId: string): RootSeedProviderMessage => ({
+      role: "assistant",
+      tool_calls: [
+        {
+          id: callId,
+          function: {
+            name: "assign_work",
+            arguments: JSON.stringify({
+              ...work,
+              reason: "AH19 public Work seed under RootConversation",
+            }),
+          },
+        },
+      ],
+    }),
+    toolResult: (callId: string, content: string): RootSeedProviderMessage => ({
+      role: "tool",
+      tool_call_id: callId,
+      content,
+    }),
+  };
+};
 
-  expect(reply(request, 0)).toMatchObject({
-    _tag: "ToolCall",
-    name: "assign_work",
-  });
+it("AH19 Root Work fake ignores a non-tool WorkAssigned text mention", () => {
+  const { marker, work, request } = makeRootSeedSelectorCase();
+  const reply = approvedRootWorkReply(marker, work);
+  const response = reply(
+    {
+      ...request,
+      messages: [
+        ...request.messages,
+        {
+          role: "assistant",
+          content: "A prior note mentioned WorkAssigned(wrk_example).",
+        },
+      ],
+    },
+    0,
+  );
+  expect(response).toMatchObject({ _tag: "ToolCall", name: "assign_work" });
+});
+
+it("AH19 Root Work fake fails closed instead of repeating AssignWork without a ToolResult", () => {
+  const { marker, work, request, assignmentToolCall } =
+    makeRootSeedSelectorCase();
+  const reply = approvedRootWorkReply(marker, work);
+  const first = reply(request, 0);
+  const second = reply(
+    {
+      ...request,
+      messages: [
+        ...request.messages,
+        assignmentToolCall("ah19-assign-current"),
+      ],
+    },
+    1,
+  );
+  expect(first).toMatchObject({ _tag: "ToolCall", name: "assign_work" });
+  expect(second).toEqual({ _tag: "HttpError", status: 500 });
   expect(
-    reply(
-      {
-        ...request,
-        messages: [
-          ...request.messages,
-          { role: "tool", content: "WorkAssigned(wrk_current)" },
-        ],
-      },
-      1,
+    [first, second].filter(
+      (response) =>
+        typeof response !== "string" && response._tag === "ToolCall",
     ),
-  ).toEqual({ _tag: "Text", text: `AH19 Work seed approved: ${marker}` });
+  ).toHaveLength(1);
+});
+
+it("AH19 Root Work fake matches WorkAssigned ToolResult by the emitted call id", () => {
+  const { marker, work, request, assignmentToolCall, toolResult } =
+    makeRootSeedSelectorCase();
+  const reply = approvedRootWorkReply(marker, work);
+  const first = reply(request, 0);
+  const priorCall = assignmentToolCall("ah19-assign-current");
+  const withStaleResult = reply(
+    {
+      ...request,
+      messages: [
+        ...request.messages,
+        priorCall,
+        toolResult("old-unrelated-call", "WorkAssigned(wrk_stale)"),
+      ],
+    },
+    1,
+  );
+  const withMatchingResult = reply(
+    {
+      ...request,
+      messages: [
+        ...request.messages,
+        priorCall,
+        toolResult("ah19-assign-current", "WorkAssigned(wrk_current)"),
+      ],
+    },
+    2,
+  );
+  expect(first).toMatchObject({ _tag: "ToolCall", name: "assign_work" });
+  expect(withStaleResult).toEqual({ _tag: "HttpError", status: 500 });
+  expect(withMatchingResult).toEqual({
+    _tag: "Text",
+    text: `AH19 Work seed approved: ${marker}`,
+  });
 });
 
 const seedRootWorkViaPublicApproval = async (
