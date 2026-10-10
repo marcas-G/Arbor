@@ -6,6 +6,7 @@ import {
   Principal,
   ProjectId,
   parse,
+  SemanticRequestFingerprint,
   SessionId,
   WorkId,
   WorkspaceId,
@@ -16,6 +17,7 @@ import {
   ControlApprovalStore,
   InboxProjectionStore,
   PermissionGrantRepository,
+  type StoredCommandResolution,
   TransactionPort,
   WorkspaceRepository,
 } from "@arbor/ports";
@@ -98,6 +100,33 @@ const authorizeRawChildAction = async (
   );
   let pendingApprovals = 0;
   let inboxAdmissions = 0;
+  const storedReceipt: StoredCommandResolution | undefined =
+    priorReceipt === "Missing"
+      ? undefined
+      : {
+          commandId,
+          projectId,
+          semanticRequestFingerprint: parse(SemanticRequestFingerprint)(
+            "ah10-legacy-fixture-fingerprint",
+          ),
+          schemaVersion: "1",
+          fingerprintAlgorithmVersion: 1,
+          resolution:
+            priorReceipt === "Committed" ? "Committed" : "TerminalRejected",
+          resultJson:
+            priorReceipt === "Committed"
+              ? JSON.stringify({
+                  workId: "wrk_legacy",
+                  workspaceId: childWorkspaceId,
+                })
+              : null,
+          terminalErrorJson:
+            priorReceipt === "FencingRejected"
+              ? JSON.stringify({ _tag: "FencingRejected" })
+              : null,
+          createdAt: "2026-10-10T00:00:00.000Z",
+          settledAt: "2026-10-10T00:00:00.000Z",
+        };
   const services = Layer.mergeAll(
     Layer.succeed(Clock, {
       now: () => Effect.succeed("2026-10-10T00:00:00.000Z"),
@@ -105,27 +134,15 @@ const authorizeRawChildAction = async (
     Layer.succeed(CommandStore, {
       findResolution: () =>
         Effect.succeed(
-          priorReceipt !== "Missing"
-            ? Option.some({
-                commandId,
-                projectId,
-                resolution:
-                  priorReceipt === "Committed"
-                    ? {
-                        _tag: "Committed",
-                        result: {
-                          workId: "wrk_legacy",
-                          workspaceId: childWorkspaceId,
-                        },
-                      }
-                    : {
-                        _tag: "TerminalRejected",
-                        error: { _tag: "FencingRejected" },
-                      },
-              } as never)
-            : Option.none(),
+          storedReceipt === undefined
+            ? Option.none()
+            : Option.some(storedReceipt),
         ),
-    } as never),
+      insertCommitted: () => Effect.void,
+      insertTerminalRejected: () => Effect.void,
+      recordResolvingAttempt: () => Effect.void,
+      recordRetryableAttempt: () => Effect.void,
+    }),
     Layer.succeed(ControlApprovalStore, {
       findById: () => Effect.succeed(Option.none()),
       putPending: () =>

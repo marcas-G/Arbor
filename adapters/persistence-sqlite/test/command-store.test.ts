@@ -93,11 +93,51 @@ describe("command store & domain event journal", () => {
     const result = await Effect.runPromise(Effect.provide(program, app));
     expect(Option.isSome(result.receipt)).toBe(true);
     if (Option.isSome(result.receipt)) {
-      expect(result.receipt.value.resolution._tag).toBe("Committed");
+      expect(result.receipt.value.resolution).toBe("Committed");
+      expect(result.receipt.value.resultJson).toBe(
+        JSON.stringify({ ok: true }),
+      );
+      expect(result.receipt.value.terminalErrorJson).toBeNull();
       expect(result.receipt.value.semanticRequestFingerprint).toBe("fp");
     }
     expect(result.last).toBe(2);
     expect(result.sequences).toEqual([1, 2]);
     expect(result.types).toEqual(["ProjectCreated", "WorkspaceCreated"]);
+  });
+
+  it("returns malformed stored JSON as raw text without decoding in the Store", async () => {
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P1_MIGRATIONS);
+      const tx = yield* TransactionPort;
+      const store = yield* CommandStore;
+      return yield* tx.transact(
+        Effect.gen(function* () {
+          yield* store.insertCommitted(
+            commandId,
+            projectId,
+            fingerprint,
+            "1",
+            1,
+            "{",
+          );
+          return yield* store.findResolution(commandId);
+        }),
+      );
+    });
+
+    const resolution = await Effect.runPromise(Effect.provide(program, app));
+    expect(Option.isSome(resolution)).toBe(true);
+    if (Option.isSome(resolution)) {
+      expect(resolution.value).toMatchObject({
+        commandId,
+        projectId,
+        semanticRequestFingerprint: fingerprint,
+        schemaVersion: "1",
+        fingerprintAlgorithmVersion: 1,
+        resolution: "Committed",
+        resultJson: "{",
+        terminalErrorJson: null,
+      });
+    }
   });
 });

@@ -1,7 +1,6 @@
 import {
   Actor,
   CommandId,
-  type CommandReceipt,
   type CommandSubmissionContext,
   type DomainError,
   type DomainResult,
@@ -25,6 +24,7 @@ import {
   type PendingDomainEvent,
   ProjectRepository,
   type ProjectRepositoryService,
+  type StoredCommandResolution,
   TransactionPort,
   TransactionScope,
 } from "@arbor/ports";
@@ -103,7 +103,7 @@ const authorityFor = (
 });
 
 interface FakeState {
-  readonly rows: Map<string, CommandReceipt<unknown, unknown>>;
+  readonly rows: Map<string, StoredCommandResolution>;
   readonly attempts: Array<{
     readonly commandId: string;
     readonly outcome: string;
@@ -132,11 +132,10 @@ const buildApp = (
   };
   const store: CommandStoreService = {
     findResolution: (id) =>
-      Effect.sync(() =>
-        state.rows.has(id)
-          ? Option.some(state.rows.get(id) as CommandReceipt<unknown, unknown>)
-          : Option.none(),
-      ),
+      Effect.sync(() => {
+        const stored = state.rows.get(id);
+        return stored === undefined ? Option.none() : Option.some(stored);
+      }),
     insertCommitted: (
       id,
       project,
@@ -152,7 +151,9 @@ const buildApp = (
           semanticRequestFingerprint: fingerprint,
           schemaVersion,
           fingerprintAlgorithmVersion: algorithmVersion,
-          resolution: { _tag: "Committed", result: JSON.parse(resultJson) },
+          resolution: "Committed",
+          resultJson,
+          terminalErrorJson: null,
           createdAt: "t",
           settledAt: "t",
         });
@@ -172,10 +173,9 @@ const buildApp = (
           semanticRequestFingerprint: fingerprint,
           schemaVersion,
           fingerprintAlgorithmVersion: algorithmVersion,
-          resolution: {
-            _tag: "TerminalRejected",
-            error: JSON.parse(terminalJson),
-          },
+          resolution: "TerminalRejected",
+          resultJson: null,
+          terminalErrorJson: terminalJson,
           createdAt: "t",
           settledAt: "t",
         });
@@ -481,7 +481,53 @@ describe("command gateway", () => {
     if (receipt.resolution._tag === "TerminalRejected") {
       expect(receipt.resolution.error._tag).toBe("IdempotencyConflict");
     }
-    expect(state.rows.get(commandId)?.resolution._tag).toBe("Committed");
+    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
+  });
+
+  it("compares a stored tuple before interpreting its raw result JSON", async () => {
+    let executions = 0;
+    const { app, state } = buildApp([
+      handler(() => {
+        executions += 1;
+        return ok({ result: { ok: true }, events: [] });
+      }),
+    ]);
+    const sentinel = "RAW-RECEIPT-MUST-NOT-BE-INTERPRETED";
+    const stored = {
+      commandId,
+      projectId,
+      semanticRequestFingerprint: fpFor({ x: 1 }),
+      schemaVersion: "1",
+      fingerprintAlgorithmVersion: 1,
+      resolution: "Committed" as const,
+      resultJson: `{"sentinel":"${sentinel}`,
+      terminalErrorJson: null,
+      createdAt: "t0",
+      settledAt: "t1",
+    } satisfies StoredCommandResolution;
+    state.rows.set(commandId, stored);
+
+    const receipt = await run(
+      Effect.gen(function* () {
+        const gw = yield* CommandGateway;
+        return yield* gw.execute(
+          envelope({ x: 2 }),
+          externalContext,
+          authorityFor({ x: 2 }),
+        );
+      }),
+      app,
+    );
+
+    expect(receipt.resolution._tag).toBe("TerminalRejected");
+    if (receipt.resolution._tag === "TerminalRejected") {
+      expect(receipt.resolution.error._tag).toBe("IdempotencyConflict");
+    }
+    expect(JSON.stringify(receipt)).not.toContain(sentinel);
+    expect(state.rows.get(commandId)).toEqual(stored);
+    expect(state.attempts).toEqual([]);
+    expect(state.appended).toEqual([]);
+    expect(executions).toBe(0);
   });
 
   it("persists a terminal rejection with no event", async () => {
@@ -671,7 +717,7 @@ describe("command authority (P1-DG-11)", () => {
     const receipt = await run(program, app);
     expect(receipt.resolution._tag).toBe("Committed");
     expect(executions).toBe(1);
-    expect(state.rows.get(commandId)?.resolution._tag).toBe("Committed");
+    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
   });
 
   it("denies a wrong principal, commandId, fingerprint, or kind", async () => {

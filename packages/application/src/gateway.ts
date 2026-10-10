@@ -135,8 +135,11 @@ export const makeCommandGatewayLive = (
                 return decodeCommandReceipt<R>(stored);
               }
               return {
-                ...stored,
+                commandId: stored.commandId,
+                projectId: stored.projectId,
                 semanticRequestFingerprint: fingerprint,
+                schemaVersion: stored.schemaVersion,
+                fingerprintAlgorithmVersion: stored.fingerprintAlgorithmVersion,
                 resolution: {
                   _tag: "TerminalRejected" as const,
                   error: {
@@ -144,6 +147,8 @@ export const makeCommandGatewayLive = (
                     commandId: envelope.commandId,
                   } satisfies CommandRejection,
                 },
+                createdAt: stored.createdAt,
+                settledAt: stored.settledAt,
               } satisfies CommandReceipt<R, CommandRejection>;
             }
 

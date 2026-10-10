@@ -1,6 +1,5 @@
 import type {
   CommandId,
-  CommandReceipt,
   ProjectId,
   SemanticRequestFingerprint,
 } from "@arbor/domain";
@@ -8,6 +7,7 @@ import {
   Clock,
   CommandStore,
   type CommandStoreError,
+  type StoredCommandResolution,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -28,20 +28,16 @@ interface CommandRow {
   readonly settled_at: string;
 }
 
-const toReceipt = (row: CommandRow): CommandReceipt<unknown, unknown> => ({
+const toStoredResolution = (row: CommandRow): StoredCommandResolution => ({
   commandId: row.command_id as CommandId,
   projectId: row.project_id as ProjectId,
   semanticRequestFingerprint:
     row.semantic_request_fingerprint as SemanticRequestFingerprint,
   schemaVersion: row.schema_version,
   fingerprintAlgorithmVersion: Number(row.fingerprint_algorithm_version),
-  resolution:
-    row.resolution === "Committed"
-      ? { _tag: "Committed", result: JSON.parse(row.result_json ?? "null") }
-      : {
-          _tag: "TerminalRejected",
-          error: JSON.parse(row.terminal_error_json ?? "null"),
-        },
+  resolution: row.resolution,
+  resultJson: row.result_json,
+  terminalErrorJson: row.terminal_error_json,
   createdAt: row.created_at,
   settledAt: row.settled_at,
 });
@@ -84,7 +80,7 @@ export const CommandStoreLive: Layer.Layer<
           const row = rows[0];
           return row === undefined
             ? Option.none()
-            : Option.some(toReceipt(row));
+            : Option.some(toStoredResolution(row));
         }),
       insertCommitted: (
         commandId,
