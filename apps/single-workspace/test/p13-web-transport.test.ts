@@ -108,6 +108,7 @@ beforeAll(async () => {
     http,
     webSocket,
     authenticator: fakeAuthenticator,
+    authenticatorConfigured: true,
     conversationProgress: progress,
     sql: fakeSql,
     projectDirectory: {

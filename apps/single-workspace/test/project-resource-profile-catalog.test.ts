@@ -265,6 +265,7 @@ describe("host ProjectResourceProfilePort", () => {
         "local-token": parse(Principal)("user:local"),
         "other-token": parse(Principal)("user:other"),
       }),
+      authenticatorConfigured: true,
       sql: { unsafe: () => Effect.succeed([]) } as never,
       projectDirectory: { list: () => Effect.succeed([]) } as never,
       projectResourceProfiles: profiles as ProjectResourceProfilePortService,
@@ -321,6 +322,7 @@ describe("host ProjectResourceProfilePort", () => {
           }),
       } as never,
       webSocket: { handleFrame: () => Effect.succeed({ ok: true }) } as never,
+      authenticatorConfigured: false,
       sql: { unsafe: () => Effect.succeed([]) } as never,
       projectDirectory: { list: () => Effect.succeed([]) } as never,
       projectResourceProfiles: makeProjectResourceProfilePort([]),
@@ -355,6 +357,7 @@ describe("host ProjectResourceProfilePort", () => {
           }),
       } as never,
       webSocket: { handleFrame: () => Effect.succeed({ ok: true }) } as never,
+      authenticatorConfigured: false,
       sql: { unsafe: () => Effect.succeed([]) } as never,
       projectDirectory: { list: () => Effect.succeed([]) } as never,
       projectResourceProfiles: makeProjectResourceProfilePort([

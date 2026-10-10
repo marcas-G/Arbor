@@ -401,6 +401,7 @@ export const withPublicConversationApp = async (
               http: boundary.http,
               webSocket: boundary.webSocket,
               authenticator: boundary.authenticator,
+              authenticatorConfigured: true,
               sql,
               projectDirectory: { list: () => Effect.succeed([]) },
               projectResourceProfiles,

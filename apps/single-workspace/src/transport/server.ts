@@ -38,6 +38,9 @@ export interface WebTransportConfig {
   readonly http: HttpShell;
   readonly webSocket: WebSocketShell;
   readonly authenticator?: AuthenticatorService | undefined;
+  /** Explicit composition fact; do not infer configured auth from the
+   * AuthenticatorService object because Composition supplies a local fallback. */
+  readonly authenticatorConfigured: boolean;
   readonly conversationProgress?: ConversationProgressHub | undefined;
   /** Journal-tail watermark source (SqlClient-backed). */
   readonly sql: SqlClient;
@@ -156,10 +159,7 @@ const authenticateLocalSensitiveRead = async (
   config: WebTransportConfig,
   unsupportedPrincipal: { readonly status: number; readonly code: string },
 ): Promise<Principal | null> => {
-  if (
-    config.authenticator === undefined &&
-    !isLoopbackListenerHost(config.host)
-  ) {
+  if (!config.authenticatorConfigured && !isLoopbackListenerHost(config.host)) {
     sendJson(response, 503, {
       ok: false,
       problem: { code: "auth/local-listener-required" },
@@ -167,9 +167,10 @@ const authenticateLocalSensitiveRead = async (
     return null;
   }
   const token = bearerToken(request.headers.authorization);
-  const principal =
-    config.authenticator === undefined
-      ? (LOCAL_PRINCIPAL as unknown as Principal)
+  const principal = !config.authenticatorConfigured
+    ? (LOCAL_PRINCIPAL as unknown as Principal)
+    : config.authenticator === undefined
+      ? null
       : await Effect.runPromise(
           config.authenticator.authenticate(token === null ? null : { token }),
         ).catch(() => null);
@@ -319,10 +320,7 @@ const readLocalProjectResourceProfiles = async (
   // The no-auth LOCAL_PRINCIPAL fallback is only the local desktop identity.
   // Do not let a wildcard/non-loopback bind turn it into remote access to host
   // resource metadata. Other routes retain their existing auth behavior.
-  if (
-    config.authenticator === undefined &&
-    !isLoopbackListenerHost(config.host)
-  ) {
+  if (!config.authenticatorConfigured && !isLoopbackListenerHost(config.host)) {
     sendJson(response, 503, {
       ok: false,
       problem: { code: "project-resource-profiles/local-listener-required" },
@@ -330,9 +328,10 @@ const readLocalProjectResourceProfiles = async (
     return;
   }
   const token = bearerToken(request.headers.authorization);
-  const principal =
-    config.authenticator === undefined
-      ? (LOCAL_PRINCIPAL as unknown as Principal)
+  const principal = !config.authenticatorConfigured
+    ? (LOCAL_PRINCIPAL as unknown as Principal)
+    : config.authenticator === undefined
+      ? null
       : await Effect.runPromise(
           config.authenticator.authenticate(token === null ? null : { token }),
         ).catch(() => null);
@@ -408,7 +407,7 @@ export const startWebTransport = async (
           return;
         }
         if (
-          config.authenticator === undefined &&
+          !config.authenticatorConfigured &&
           !isLoopbackListenerHost(config.host)
         ) {
           sendJson(response, 503, {

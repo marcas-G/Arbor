@@ -146,6 +146,9 @@ export interface TransportBoundaryService {
   readonly webSocket: WebSocketShell;
   readonly cli: CliShell;
   readonly web: WebShell;
+  /** Explicit composition fact. The AuthenticatorService itself may be the
+   * local fallback even when no remote authenticator was configured. */
+  readonly authenticatorConfigured: boolean;
   /** The transport-boundary authenticator (P12 `10` §3) — exposed for
    * app-level transport surfaces (conversation-progress SSE ownership). */
   readonly authenticator: AuthenticatorService;
@@ -180,6 +183,7 @@ export type TransportBoundaryServices =
 export const TransportBoundaryLive = (
   authenticator: AuthenticatorService,
   governance: ParentUserGovernanceFacts,
+  authenticatorConfigured: boolean,
 ): Layer.Layer<TransportBoundary, never, TransportBoundaryServices> =>
   Layer.effect(
     TransportBoundary,
@@ -198,6 +202,7 @@ export const TransportBoundaryLive = (
         webSocket: makeWebSocketShell(core),
         cli: makeCliShell(core),
         authenticator,
+        authenticatorConfigured,
         web: makeWebShell(core),
       });
     }),

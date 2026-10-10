@@ -31,6 +31,7 @@ import { createProjectPayloadShape, p13Id } from "./p13-e2e-fixtures.js";
 
 const TOKEN = "tok_p13_e2e";
 const HUMAN = parse(Principal)("user:human");
+const READ_TOKEN = "tok_p13_local_read";
 
 let handle: WebTransportHandle;
 let dir: string;
@@ -67,7 +68,10 @@ beforeAll(async () => {
               }),
               buildSingleWorkspaceLayer({
                 databaseFile: join(dir, "slice.db"),
-                authenticator: makeStaticAuthenticator({ [TOKEN]: HUMAN }),
+                authenticator: makeStaticAuthenticator({
+                  [TOKEN]: HUMAN,
+                  [READ_TOKEN]: parse(Principal)("user:local"),
+                }),
                 governance: {
                   authenticatedHumans: [HUMAN],
                   directParentOf: [],
@@ -79,6 +83,8 @@ beforeAll(async () => {
           startWebTransport({
             http: boundary.http,
             webSocket: boundary.webSocket,
+            authenticator: boundary.authenticator,
+            authenticatorConfigured: true,
             sql,
             projectDirectory: { list: () => Effect.succeed([]) },
             staticRoot: dist,
@@ -91,7 +97,10 @@ beforeAll(async () => {
       }),
       buildSingleWorkspaceLayer({
         databaseFile: join(dir, "slice.db"),
-        authenticator: makeStaticAuthenticator({ [TOKEN]: HUMAN }),
+        authenticator: makeStaticAuthenticator({
+          [TOKEN]: HUMAN,
+          [READ_TOKEN]: parse(Principal)("user:local"),
+        }),
         governance: { authenticatedHumans: [HUMAN], directParentOf: [] },
       }),
     ),
@@ -173,7 +182,10 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
     const project = createProjectPayloadShape("story");
     const response = await fetch(`${base()}/views/responsibility-tree`, {
       method: "POST",
-      headers: authHeaders,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${READ_TOKEN}`,
+      },
       body: JSON.stringify({ projectId: project.projectId }),
     });
     expect(response.status).toBe(200);

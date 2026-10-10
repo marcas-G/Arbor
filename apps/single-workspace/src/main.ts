@@ -312,6 +312,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           http: boundary.http,
           webSocket: boundary.webSocket,
           authenticator: boundary.authenticator,
+          authenticatorConfigured: boundary.authenticatorConfigured,
           sql,
           projectDirectory,
           projectResourceProfiles,
