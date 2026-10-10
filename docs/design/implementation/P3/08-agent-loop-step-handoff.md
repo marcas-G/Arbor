@@ -10,6 +10,9 @@
 **Authority:** DID v1.20 AHT-1…AHT-8；人工治理裁决
 `planning/proposals/provider-result-handoff-governance-decision.md`。
 **Status:** FROZEN；implementation AUTHORIZED by DID v1.21 ALS-I1。
+Accepted AH7-DG-03 amendment (2026-10-10); post-landing consistency review
+pending. Source proposal SHA-256:
+`E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
 
 ## 1. Ownership and boundary
 
@@ -219,6 +222,25 @@ stores the process-local `AgentAction` object.
   action remains Pending for P1 `07` receipt-first takeover. In contrast,
   `ExecutionStopping` admits no new normal action across generations and enters
   quiescence/reconciliation.
+- A P4 no-effect `Denied` ToolResult is terminal for that `LogicalActionId`:
+  persist ToolResult status `Denied`, disposition `AuthorizationDenied`,
+  action state `TerminalRejected`, Observation source and cursor advance
+  atomically. It does not settle/fail the whole Execution. Re-entry reads the
+  P4 terminal denial for the same ToolInvocation; a new attempt requires a new
+  action/invocation identity.
+- `ExecutionStopping` before P4 claim creates no ToolInvocation intent. Record
+  ToolResult status `Interrupted` / disposition `ExecutionStopping`, mark the
+  current action `TerminalRejected` and the remaining actions
+  `SkippedEarlySettlement`, advance the cursor once and persist
+  `SettlementProposed(Interrupted(StopRequested))` under the current
+  AgentLoopStep fence. If P4 already claimed the exact invocation but it is
+  still `NotAdmitted`, its P4 `Interrupted` result converges through the same
+  action/cursor transition; any approval already consumed remains bound.
+- After P4 `effect_admission_state = MayHaveStarted`, StopExecution uses the
+  existing unresolved-side-effect gate. Do not begin a new Executor call or
+  replay; cancel, confirm or reconcile. A known outcome is recorded once;
+  unresolved work remains `ReconciliationPending` or proposes
+  `OutcomeUnknown(ReconciliationRequired)`.
 
 `ReconciliationPending` is not a normal terminal action state. Before
 `StepEffectsCommitted`, `NextStepReady`, or ordinary
