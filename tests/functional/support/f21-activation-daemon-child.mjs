@@ -13,7 +13,8 @@ const boundary = process.env.F21_ACTIVATION_PROBE_BOUNDARY;
 const markerFile = process.env.F21_ACTIVATION_MARKER;
 if (
   (boundary !== "P11BeforeActivationCommit" &&
-    boundary !== "P11AfterActivationCommit") ||
+    boundary !== "P11AfterActivationCommit" &&
+    boundary !== "GatewayCommittedBeforeP11Activation") ||
   markerFile === undefined
 ) {
   throw new Error("expected F21 activation boundary and marker path");
@@ -40,12 +41,34 @@ const daemonConfig = {
 };
 const app = main({
   projectResourceProfiles: profiles,
-  workspaceResourceActivationQualificationProbe: async (event) => {
-    if (event.boundary === boundary) {
-      writeFileSync(markerFile, JSON.stringify(event), "utf8");
-      await new Promise(() => {});
-    }
-  },
+  ...(boundary === "GatewayCommittedBeforeP11Activation"
+    ? {
+        createProjectPostCommitBeforeActivationQualificationProbe: async (
+          event,
+        ) => {
+          writeFileSync(
+            markerFile,
+            JSON.stringify({
+              boundary,
+              ...event,
+            }),
+            "utf8",
+          );
+          await new Promise(() => {
+            setInterval(() => {}, 1_000);
+          });
+        },
+      }
+    : {
+        workspaceResourceActivationQualificationProbe: async (event) => {
+          if (event.boundary === boundary) {
+            writeFileSync(markerFile, JSON.stringify(event), "utf8");
+            await new Promise(() => {
+              setInterval(() => {}, 1_000);
+            });
+          }
+        },
+      }),
 });
 
 await Effect.runPromise(

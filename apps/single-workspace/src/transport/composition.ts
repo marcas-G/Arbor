@@ -216,7 +216,21 @@ export interface ExternalSubmissionDeps {
   readonly afterCommitted?: (
     envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<void, unknown>;
+  readonly afterGatewayCommitBeforeCreateProjectActivation?: (
+    envelope: DecodedExternalCommandEnvelope,
+  ) => Effect.Effect<void, unknown>;
 }
+
+export interface CreateProjectPostCommitBeforeActivationQualificationEvent {
+  readonly commandId: string;
+  readonly projectId: DecodedExternalCommandEnvelope["projectId"];
+  readonly workspaceId: WorkspaceId;
+}
+
+/** Test-only process-local boundary after Gateway commit and before P11 entry. */
+export type CreateProjectPostCommitBeforeActivationQualificationProbe = (
+  event: CreateProjectPostCommitBeforeActivationQualificationEvent,
+) => Promise<void>;
 
 const receiptToView = (
   receipt: CommandReceipt<unknown, CommandRejection>,
@@ -327,6 +341,27 @@ export const makeExternalSubmission = (
       }
       if (
         executed.receipt.resolution._tag === "Committed" &&
+        envelope.commandType === "CreateProject" &&
+        deps.afterGatewayCommitBeforeCreateProjectActivation !== undefined
+      ) {
+        const held = yield* Effect.match(
+          deps.afterGatewayCommitBeforeCreateProjectActivation(envelope),
+          {
+            onFailure: (error) => ({ _tag: "failure" as const, error }),
+            onSuccess: () => ({ _tag: "success" as const }),
+          },
+        );
+        if (held._tag === "failure") {
+          return failureResponse(
+            problemFromUnknownFailure(
+              "command/post-commit-convergence-failure",
+              held.error,
+            ),
+          );
+        }
+      }
+      if (
+        executed.receipt.resolution._tag === "Committed" &&
         deps.afterCommitted !== undefined
       ) {
         const converged = yield* Effect.match(deps.afterCommitted(envelope), {
@@ -355,6 +390,7 @@ export const makeExternalSubmission = (
  * submission port the transport shells bind to. */
 export const makeExternalSubmissionFromServices = (
   governance: ParentUserGovernanceFacts,
+  postCommitBeforeActivationProbe?: CreateProjectPostCommitBeforeActivationQualificationProbe,
 ): Effect.Effect<
   ExternalSubmissionPort,
   never,
@@ -368,6 +404,21 @@ export const makeExternalSubmissionFromServices = (
     const gateway = yield* CommandGateway;
     const registry = yield* CommandHandlerRegistry;
     const loadInputs = yield* makeRepositoryInputsLoader(governance);
+    const afterGatewayCommitBeforeCreateProjectActivation =
+      postCommitBeforeActivationProbe === undefined
+        ? undefined
+        : (envelope: DecodedExternalCommandEnvelope) => {
+            const payload = payloadRecord(envelope.payload);
+            return envelope.commandType !== "CreateProject"
+              ? Effect.void
+              : Effect.promise(() =>
+                  postCommitBeforeActivationProbe({
+                    commandId: String(envelope.commandId),
+                    projectId: envelope.projectId,
+                    workspaceId: String(payload.rootWorkspaceId) as WorkspaceId,
+                  }),
+                );
+          };
     const tx = yield* TransactionPort;
     const workspaces = yield* WorkspaceRepository;
     const activationIntentsOption = yield* Effect.serviceOption(
@@ -401,6 +452,9 @@ export const makeExternalSubmissionFromServices = (
         gateway,
         registry,
         loadInputs,
+        ...(afterGatewayCommitBeforeCreateProjectActivation !== undefined
+          ? { afterGatewayCommitBeforeCreateProjectActivation }
+          : {}),
       });
     }
     const ownership = ownershipOption.value;
@@ -544,6 +598,9 @@ export const makeExternalSubmissionFromServices = (
       gateway,
       registry,
       loadInputs,
+      ...(afterGatewayCommitBeforeCreateProjectActivation !== undefined
+        ? { afterGatewayCommitBeforeCreateProjectActivation }
+        : {}),
       afterCommitted,
     });
   });

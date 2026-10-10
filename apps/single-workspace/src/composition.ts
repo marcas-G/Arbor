@@ -214,6 +214,7 @@ import {
   type AuthenticatorService,
   makeLocalAuthenticator,
 } from "./transport/auth.js";
+import type { CreateProjectPostCommitBeforeActivationQualificationProbe } from "./transport/composition.js";
 import { publishConversationProgress } from "./transport/conversation-progress-bridge.js";
 import { WorkspaceKnowledgePortLive } from "./workspace-knowledge.js";
 import { WorkspacePlacementPortLive } from "./workspace-placement.js";
@@ -332,6 +333,9 @@ export interface SingleWorkspaceConfig {
   readonly attentionProjectionQualificationProbe?: AttentionProjectionQualificationProbe;
   /** Test-only process-local probe around P11 activation transaction commit. */
   readonly workspaceResourceActivationQualificationProbe?: WorkspaceResourceActivationQualificationProbe;
+  /** Test-only process-local P12 pause after the CreateProject receipt commits,
+   * before P11 activation is entered. Never loaded from environment/HTTP. */
+  readonly createProjectPostCommitBeforeActivationQualificationProbe?: CreateProjectPostCommitBeforeActivationQualificationProbe;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
@@ -853,6 +857,7 @@ export const buildSingleWorkspaceLayer = (
       config.authenticator ?? makeLocalAuthenticator(),
       config.governance ?? { authenticatedHumans: [], directParentOf: [] },
       config.authenticator !== undefined,
+      config.createProjectPostCommitBeforeActivationQualificationProbe,
     ),
     Layer.mergeAll(coreAll, authorityResolver, projectionQuery),
   );
