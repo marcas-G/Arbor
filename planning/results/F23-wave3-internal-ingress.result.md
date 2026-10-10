@@ -1,8 +1,8 @@
 # F23 Wave 3 — Typed Internal Gateway Input Validation
 
-Date: 2026-10-10  
-Baseline: `e2b3848ddc4e63b5a8d159309ef6130341bd462d`  
-Accepted contract: `ACCEPT_EXTERNAL_COMMAND_RUNTIME_CODEC`  
+Date: 2026-10-10
+Baseline: `e2b3848ddc4e63b5a8d159309ef6130341bd462d`
+Accepted contract: `ACCEPT_EXTERNAL_COMMAND_RUNTIME_CODEC`
 Accepted proposal SHA-256: `DD24C9550BFE253D94DE7236255E5E8E710A7E612A57607E474E8A90653529FC`
 
 ## Result
