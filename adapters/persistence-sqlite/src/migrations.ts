@@ -352,11 +352,67 @@ CREATE TABLE invocation_approvals (
 );
 `;
 
+/** AH7-DG-03 accepted P4 owner amendment; user_version 36. Existing rows are
+ * conservatively LegacyUnknown because the prior schema did not record the
+ * effect-admission boundary. Denied is only valid before effect admission. */
+export const P36_TOOL_INVOCATION_ADMISSION_DDL = `
+ALTER TABLE tool_invocations RENAME TO tool_invocations_legacy_ah7_dg03;
+
+CREATE TABLE tool_invocations (
+  invocation_id          TEXT PRIMARY KEY,
+  execution_id           TEXT NOT NULL REFERENCES executions(execution_id),
+  workspace_id           TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  tool_name              TEXT NOT NULL,
+  tool_version           TEXT NOT NULL,
+  side_effect_semantics  TEXT NOT NULL CHECK (side_effect_semantics IN
+                           ('ReadOnly','Idempotent','Reconcilable','NonIdempotent')),
+  arguments_json         TEXT NOT NULL,
+  resolved_regions_json  TEXT NOT NULL,
+  approval_id            TEXT,
+  effect_admission_state TEXT NOT NULL DEFAULT 'LegacyUnknown' CHECK
+                           (effect_admission_state IN
+                             ('NotAdmitted','MayHaveStarted','LegacyUnknown')),
+  intent_at              TEXT NOT NULL,
+  settled_at             TEXT,
+  settlement_kind        TEXT CHECK (settlement_kind IN
+                           ('Success','ExpectedFailure','Denied','Interrupted','OutcomeUnknown','RuntimeFailure')),
+  settlement_json        TEXT,
+  result_ref             TEXT,
+  CHECK ((settled_at IS NULL) = (settlement_kind IS NULL)),
+  CHECK (settlement_kind <> 'Denied' OR
+         (effect_admission_state = 'NotAdmitted' AND result_ref IS NULL))
+);
+
+INSERT INTO tool_invocations (
+  invocation_id, execution_id, workspace_id, tool_name, tool_version,
+  side_effect_semantics, arguments_json, resolved_regions_json, approval_id,
+  effect_admission_state, intent_at, settled_at, settlement_kind,
+  settlement_json, result_ref
+)
+SELECT invocation_id, execution_id, workspace_id, tool_name, tool_version,
+       side_effect_semantics, arguments_json, resolved_regions_json, approval_id,
+       'LegacyUnknown', intent_at, settled_at, settlement_kind,
+       settlement_json, result_ref
+FROM tool_invocations_legacy_ah7_dg03;
+
+DROP TABLE tool_invocations_legacy_ah7_dg03;
+
+CREATE INDEX idx_tool_invocations_execution ON tool_invocations(execution_id);
+CREATE INDEX idx_tool_invocations_unsettled
+  ON tool_invocations(settled_at) WHERE settled_at IS NULL;
+`;
+
 export const P4_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 1, name: "init", sql: DDL },
   { id: 2, name: "execution_session_kernel", sql: P2_DDL },
   { id: 3, name: "provider_model_context", sql: P3_DDL },
   { id: 4, name: "tool_runtime", sql: P4_DDL },
+  {
+    id: 36,
+    name: "ah7_tool_invocation_admission",
+    sql: P36_TOOL_INVOCATION_ADMISSION_DDL,
+    foreignKeysOff: true,
+  },
 ];
 
 /** P6 `01` §4.1 (D1), `02` §3/§4 (D2), `01` §3 (D3). The composite primary
@@ -1900,5 +1956,17 @@ export const P35_MIGRATIONS: ReadonlyArray<MigrationFile> = [
         ON workspace_resource_activation_attention_rows
           (project_id, workspace_id, occurred_at);
     `,
+  },
+];
+
+/** AH7-DG-03 accepted forward migration; preserves legacy rows as
+ * LegacyUnknown and advances the production SQLite baseline to user_version 36. */
+export const P36_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P35_MIGRATIONS.filter((migration) => migration.id !== 36),
+  {
+    id: 36,
+    name: "ah7_tool_invocation_admission",
+    sql: P36_TOOL_INVOCATION_ADMISSION_DDL,
+    foreignKeysOff: true,
   },
 ];
