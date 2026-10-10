@@ -1,126 +1,163 @@
-# AH7 / P4 concurrent invocation settlement ownership — draft
+# AH7 / P4–P2 invocation settlement seam — revised draft
 
-Status: **Design Gap proposal; not accepted and not implemented**
+Status: **Design/implementation disposition candidate; not accepted and not
+implemented**
 
-Scope: P4 `ToolRuntime` concurrent calls using the same `(executionId,
-invocationId)` where one caller owns a live non-idempotent effect and another
-caller re-enters before that effect owner's settlement is durable.
+Scope: the seam between P4 `ToolRuntime` invocation idempotency and P2/P9
+execution-lease ownership, especially same-key re-entry, stale-generation
+settlement, and RecoveryController takeover.
 
-## Evidence
+## Why this revision is narrower
 
-The deterministic regression is in
+The deterministic P4 RED below is a valid lower-layer counterexample, but it
+does **not** prove that production can dispatch two valid Workers in the same
+live lease generation. P2 leases are the execution-level concurrency gate.
+The test directly assembles two `ToolRuntimeLive` callers with the same intent
+and no `ExecutionOrigin`, lease holder, or fencing generation. It must not be
+read as evidence that two production Workers can both own one Execution.
+
+Production does have a distinct stale-generation case: a lease may expire
+while a worker is in-flight, and a new generation can take over. P2 `03` and
+P9 `02` explicitly require that every old-generation durable write, including
+ToolInvocation settlement, be rejected. That is a frozen contract, not a new
+“permanent intent owner” rule. The production P4 call chain currently does not
+carry the worker fence to `ToolInvocationStore.settle`, so the frozen seam is
+not represented by the P4 port/adapter API and needs implementation-level
+closure.
+
+## Deterministic lower-layer counterexample
+
+The test is in
 `adapters/persistence-sqlite/test/p4-ah7-cross-connection-concurrency.test.ts`:
 
-1. Two OS processes connect to the same SQLite database and are both held at
-   the `ToolDefinitionStore.definition` barrier before either invokes.
-2. Worker A is released first. It records the unique `ToolInvocation` intent,
-   appends the external-effect marker exactly once, then the existing
-   `AH7AfterToolEffectBeforeSettlement` qualification probe holds it before
-   settlement.
-3. Only after A reports the post-effect/pre-settlement boundary, worker B is
-   released with the exact same `ToolInvocationId` and intent. B returns
-   `OutcomeUnknown` from the existing-prior unsettled `NonIdempotent` path.
-4. After B has finished, A is released to persist its known `Success` result.
-5. The test proves both runtime results (`A=Success`, `B=OutcomeUnknown`) and
-   exactly one external-effect marker. It fails only at durable state: the
-   single invocation row is already terminal `OutcomeUnknown`, not `Success`.
+1. Two OS processes connect to one SQLite file and rendezvous before invoke.
+2. A records the unique intent and appends the external effect exactly once;
+   `AH7AfterToolEffectBeforeSettlement` holds A before durable settlement.
+3. B re-enters directly through P4 with the identical intent and no P2 lease
+   context. The existing-prior branch writes `OutcomeUnknown` and returns it.
+4. A resumes and returns `Success`, but its conditional settlement update is
+   now a no-op because B already terminalized the row.
+5. The RED asserts one effect, one invocation, caller outcomes A=`Success` and
+   B=`OutcomeUnknown`, and canonical durable settlement=`Success`. Only the
+   last assertion fails: the row is `OutcomeUnknown`.
 
-The focused test fails deterministically at the final `settlement_kind`
-assertion. The earlier nondeterministic cross-process test also failed once in
-the full `pnpm check` run: its runtime-outcome and one-effect assertions passed,
-but its durable row was `OutcomeUnknown`. Six immediate focused reruns of that
-old race passed; they do not negate the deterministic counterexample.
+This is deterministic at the P4 boundary. The earlier unconstrained two-process
+case failed once in the full check and passed six focused reruns; that supports
+the race explanation but does not establish production dispatch reachability.
 
-Relevant current code:
+Relevant code evidence:
 
-- `packages/tool-runtime/src/runtime.ts`: after finding an existing unsettled
-  `NonIdempotent` invocation, the re-entry persists `OutcomeUnknown` and
-  returns that observation.
-- `adapters/persistence-sqlite/src/tool-invocations.ts`: `settle` updates only
-  `WHERE invocation_id = ? AND settled_at IS NULL` and does not report whether
-  it updated one row. Thus a later owner `Success` settlement can be a no-op
-  after the competing re-entry has terminalized the row, while the owner still
-  returns its successful observation.
+- `packages/tool-runtime/src/runtime.ts`: existing unsettled
+  `NonIdempotent` prior writes a terminal unknown settlement.
+- `adapters/persistence-sqlite/src/tool-invocations.ts`: settlement is a
+  `WHERE settled_at IS NULL` update, returns `void`, and does not report a
+  zero-row CAS or reread canonical state.
+- `apps/single-workspace/src/executable-tool-handler.ts`: production builds
+  `ToolExecutionContext` without lease holder/generation; the P4
+  `ToolInvocationStore` port also has no settlement-fence argument.
 
-## Frozen-contract reading
+## Production dispatch and lease reachability
 
-The current owners establish these relevant rules:
+Read-only code audit plus the targeted P2 lease test establish:
 
-- P4 `01` §2 and §5: `NonIdempotent` automatic replay is forbidden on
-  ambiguity; `OutcomeUnknown` may coexist with an external effect.
-- P4 `02` §1–§2 and §5: invocation follows intent/authorization/resource
-  checks, Execute, durable Settlement, then bounded observation; ambiguity
-  becomes `OutcomeUnknown` and must not be blindly replayed.
-- P4 `06` §2–§4: intent precedes external effect; dangling invocations are
-  discoverable; P2 `ReconciliationSource` enumerates unresolved references and
-  recovery decides between unknown and safe settlement.
-- SD §6.5 and §10.4; DID §6A.7 and §9.12: “no result” is not proof of no
-  effect, and unresolved non-idempotent effects must not be automatically
-  replayed.
+- `apps/single-workspace/src/production.ts` funnels active execution attempts
+  through `preDispatchCheck` and `runExecution` (`runIfDispatchable`).
+- `packages/execution-runtime/src/execution-runtime.ts` acquires a lease before
+  calling `driver.drive`; a live-lease acquisition failure is
+  `LeaseFencingRejected` and the caller never reaches the driver.
+- `adapters/persistence-sqlite/src/execution.ts` uses one lease row per
+  Execution and acquires with an atomic upsert permitted only when the prior
+  row is expired; successful takeover increments generation.
+- `packages/agent-runtime/src/model-output-journal.ts` processes one Provider
+  Turn's tool invocations in a serial `for` loop, not concurrent `Promise.all`
+  dispatch.
+- `adapters/persistence-sqlite/test/p2-lease.test.ts` confirms a second holder
+  is rejected while the first lease is live and a later holder acquires the
+  next generation. Targeted result: 1 file / 2 tests PASS.
 
-These rules do not say whether a second caller seeing an unsettled intent may
-durably terminalize it while its original effect owner is still live. The
-`tool_invocations` record has no owner/fencing/lease field, and the P4 port does
-not distinguish an active invocation from a crash-abandoned intent. Therefore
-the counterexample exposes an unclosed concurrency semantic; this proposal does
-not claim that the existing text unambiguously authorizes a particular fix.
+Conclusion: a **same-generation second Worker** cannot legally enter P4 for
+the same active Execution through the production dispatch path. The direct RED
+is not production proof for that state.
 
-## Governance decision requested
+Different generations are reachable after lease expiry/takeover. P2 `03` §3
+requires authoritative same-transaction fencing for every Worker-originated
+durable write, including ToolInvocation settlement. P9 `02` W3/R4 requires an
+old Worker to leave the invocation unsettled and receive
+`LeaseFencingRejected`. This gives an existing contract for stale-generation
+settlement; no permanent-intent-owner semantic should be added. However, the
+current production P4 context/store path does not carry or check that fence.
+Whether `raceFirst` interruption always prevents a late P4 settlement is not
+proven here; the P9 contract requires an authoritative fence even when a stale
+write is attempted.
 
-Choose the P4 meaning of same-key re-entry while an earlier effect owner may
-still be active:
+## Three-state P4/P2 contract seam requested
 
-1. **Owner-preserving settlement (recommended):** only the caller that
-   successfully admitted the unique intent may durably settle its execution;
-   a competing re-entry cannot write a terminal `OutcomeUnknown` over that
-   owner's pending settlement. The re-entry must fail closed or return a
-   non-terminal/ephemeral unknown result without changing the durable row.
-   A's eventual known settlement remains canonical. Crash recovery still treats
-   a genuinely abandoned dangling intent as unresolved and never replays a
-   non-idempotent effect.
-2. **Durable unknown wins:** any re-entry that observes a dangling
-   non-idempotent intent may terminalize it as `OutcomeUnknown`, even if its
-   original owner is live. If chosen, the contract must state what A returns
-   when its subsequent known settlement loses the terminal-state CAS and how
-   that observation is represented without contradicting durable state.
-3. **Explicit owner/lease/fencing:** persist a bounded owner claim so a
-   duplicate can distinguish a live owner from an abandoned intent. This
-   requires deciding the owner identity, lease/expiry authority, crash/restart
-   detection, and fencing of stale settlement; it is broader than this minimal
-   qualification.
+| State | Production reachability | Durable authority and loser result |
+|---|---|---|
+| **Same-generation live duplicate** | A second Worker is blocked before `driver.drive` by the live lease CAS. The direct P4 RED has no lease and is a component-level stress case, not a legal dual-Worker dispatch. | Do not infer a permanent owner from intent insertion. At P4, a duplicate must not execute the effect. If it reports `OutcomeUnknown` while the row is unresolved, the result should not terminalize the shared row ahead of the active caller; P2 remains responsible for crash/lost-owner disposition. The exact direct-P4 projection should be confirmed with the owner contract. |
+| **Old generation after takeover** | Reachable when the TTL expires and a new generation acquires while the old process is still unwinding. | P2 `03` §3 + P9 `02` R4 already require a same-transaction fence on ToolInvocation settlement. Old generation must receive `LeaseFencingRejected` (or its typed P4 operational translation), must not return a successful observation from an uncommitted settlement, and must not mutate the row. New generation must not repeat a non-idempotent effect; its unresolved ref remains for reconciliation. |
+| **RecoveryController takeover** | Recovery runs over durable state; it is not another Worker generation and never invokes the P4 executor. P2 `06`/P9 `01` own the disposition. | Recovery reads the canonical invocation/evidence. A committed settled success is reused by the durable AgentLoopStep handoff; an unresolved non-idempotent ref is enumerated and escalated/settled `OutcomeUnknown` only by the governed recovery path. No stale Worker authority is resurrected and no effect is replayed. |
 
-The preferred invariant is that external effects remain at-most-once, the
-unique invocation has one canonical settlement, and a live effect owner's
-known result cannot be silently discarded by a competing same-key re-entry.
-This is a recommendation for governance, not an accepted contract.
+## CAS result and canonical read
+
+The P4 store currently returns `void` from `settle`; zero updated rows are
+indistinguishable from a successful commit to `ToolRuntime`. The owning P4/P2
+contracts should make the result observable:
+
+- Worker settlement first checks the full current lease-holder triple and
+  expiry in the **same transaction** as the settlement CAS. A stale generation
+  gets `LeaseFencingRejected` before any canonical read or mutation.
+- A successful one-row CAS returns `Applied` and the stored canonical
+  settlement.
+- A zero-row CAS under a still-valid authority rereads the row in the same
+  transaction and returns `AlreadySettled(canonicalRecord)` only when the
+  exact invocation identity is compatible. It must never return the caller's
+  attempted success while the stored state says `OutcomeUnknown`.
+- An authorized re-entry seeing an unresolved non-idempotent intent returns
+  no-effect/unknown and leaves durable reconciliation to P2; it does not write
+  a terminal result merely because another owner may have crashed. Recovery
+  or the active effect owner is the only path that later changes canonical
+  state.
+- RecoveryController has separate authority and no worker generation; it
+  rereads canonical state and applies only the P2 recovery disposition.
+
+The first bullet is already required by P2/P9. The latter CAS/readback shape is
+the minimal proposed P4/P2 port clarification. It preserves at-most-once
+effects and prevents caller observation from disagreeing with the durable
+canonical row.
+
+## Existing-contract disposition
+
+- **Not a new P2 lease semantic:** P2 already prohibits same-generation
+  multi-holder and requires stale-generation fencing.
+- **Implementation gap under existing P2/P9 contract:** the P4 Worker call
+  path has no fencing data in `ToolExecutionContext` / `ToolInvocationStore`,
+  although P9 R4 requires the settlement boundary to fence.
+- **Direct-P4 RED classification remains narrow:** it proves that an
+  unleased P4 duplicate can persist `OutcomeUnknown` over a live caller's
+  success; whether P4 must make that re-entry non-terminal is an owner-contract
+  clarification, not proof that production dispatch violates P2.
+- **No production change is authorized by this proposal.** The proposed port
+  data-flow/CAS shape needs independent review before implementation; no
+  `docs/design/**` was changed.
 
 ## Required qualification after ruling
 
-The deterministic two-process test should retain all of these assertions:
+Keep the deterministic direct-P4 RED intact until the P4 owner resolves its
+scope. Add or adapt a production-path qualification for the existing P2/P9
+contract that proves:
 
-- A reaches the real post-effect/pre-settlement boundary before B is released.
-- A and B use the same `ToolInvocationId`, same exact intent, and same
-  database file; their PIDs are distinct.
-- The external-effect marker occurs exactly once.
-- B does not execute the effect and returns only the contractually selected
-  loser outcome.
-- A's owner outcome and the single durable settlement are consistent with the
-  governance ruling; no competing write can silently replace the owner result.
-- There is one intent row and one terminal settlement row, with no second
-  invocation/observation/effect.
-- A crash-abandoned non-idempotent intent remains unresolved/unknown and is
-  never automatically replayed.
+- live generation G admits only one `runExecution` driver; a second attempt
+  fails lease acquire before Provider/Tool dispatch;
+- after generation G+1 takeover, G's ToolInvocation settlement is rejected in
+  the authoritative transaction and leaves the invocation unsettled;
+- G+1 does not re-run the non-idempotent effect, and recovery handles the
+  canonical unresolved ref without resurrecting G;
+- any zero-row settlement CAS rereads canonical state for an authorized
+  caller, while stale authority receives fencing rejection first;
+- exactly one external effect, one invocation identity, and one canonical
+  settlement/observation path remain evidenced.
 
-No assertion should be weakened to merely accept either `Success` or
-`OutcomeUnknown` without checking which caller owned the effect and whether the
-durable row agrees with that owner's actual result.
-
-## Not in scope
-
-- Changing P4 `SideEffectSemantics`, making non-idempotent effects replayable,
-  or relaxing at-most-once effect qualification.
-- Resolving AH7 crash/restart, approval/settlement atomicity, Observation
-  replay, or general execution lease/fencing questions.
-- Choosing a SQL schema, owner token, lease, or process-local workaround before
-  the governance ruling.
-- Modifying `docs/design/**` or production implementation in this proposal.
+No assertion should be weakened to accept either `Success` or
+`OutcomeUnknown` without identifying the lease generation, actual effect
+owner, canonical DB row, and recovery disposition.
