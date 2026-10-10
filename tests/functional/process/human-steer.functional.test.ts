@@ -32,6 +32,7 @@ describe("F07 public human steer", () => {
     const guidanceMarker = `F07-STEER-${crypto.randomUUID().slice(0, 8)}`;
     let workProviderCalls = 0;
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       reply: (call) => {
         const context = JSON.stringify(call.messages);
         const available = new Set(

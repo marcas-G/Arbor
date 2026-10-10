@@ -194,6 +194,7 @@ describe("release-functional cross-Work Dependency and Deliverable", () => {
     };
 
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       admitWorkspaceDirectory: true,
       reply,
     });
