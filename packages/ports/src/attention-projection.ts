@@ -1,4 +1,9 @@
-import type { EventId, ProjectId, WorkspaceId } from "@arbor/domain";
+import type {
+  EventId,
+  ProjectId,
+  ResourceBoundaryRevision,
+  WorkspaceId,
+} from "@arbor/domain";
 import { Context, type Effect } from "effect";
 import type {
   AssignWorkBindingAttentionFact,
@@ -6,6 +11,7 @@ import type {
 } from "./assign-work-target-binding.js";
 import type { RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
+import type { WorkspaceResourceActivationIntent } from "./workspace-resource-activation.js";
 
 export interface AssignWorkBindingAttentionProjectionRow {
   readonly projectId: ProjectId;
@@ -20,6 +26,13 @@ export interface AssignWorkBindingAttentionProjectionRow {
   readonly sourceFactId: string;
 }
 
+export interface WorkspaceResourceActivationAttentionProjectionRow {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly resourceBoundaryRevision: ResourceBoundaryRevision;
+  readonly occurredAt: string;
+}
+
 export type AttentionProjectionStoreError =
   RepositoryFailure<"AttentionProjectionStore">;
 
@@ -32,6 +45,17 @@ export interface AttentionProjectionStoreService {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<AssignWorkBindingAttentionProjectionRow>,
+    AttentionProjectionStoreError,
+    TransactionScope
+  >;
+  readonly reconcileWorkspaceResourceActivation: (
+    projectId: ProjectId,
+    intents: ReadonlyArray<WorkspaceResourceActivationIntent>,
+  ) => Effect.Effect<void, AttentionProjectionStoreError, TransactionScope>;
+  readonly listWorkspaceResourceActivationPending: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<WorkspaceResourceActivationAttentionProjectionRow>,
     AttentionProjectionStoreError,
     TransactionScope
   >;

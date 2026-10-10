@@ -306,6 +306,10 @@ export const ProjectionQueryPortLive: Layer.Layer<
         inTx(bindingAttention.findAssignWorkBindingFailure(attentionFactId)),
       listProjectedAssignWorkBindingFailures: (projectId) =>
         inTx(attentionProjection.listAssignWorkBindingFailures(projectId)),
+      listProjectedWorkspaceResourceActivations: (projectId) =>
+        inTx(
+          attentionProjection.listWorkspaceResourceActivationPending(projectId),
+        ),
     };
 
     const tree: TreeViewDeps = {

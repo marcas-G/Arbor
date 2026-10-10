@@ -9,6 +9,9 @@ import {
   type ProjectionStoreService,
   type RecoveryAttentionFactStoreService,
   TransactionScope,
+  type WorkspaceResourceActivationAttentionProjectionRow,
+  type WorkspaceResourceActivationIntent,
+  type WorkspaceResourceActivationStoreService,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -26,6 +29,13 @@ interface AttentionProjectionDbRow {
   readonly occurred_at: string;
   readonly source_event_id: string;
   readonly source_fact_id: string;
+}
+
+interface WorkspaceResourceActivationAttentionDbRow {
+  readonly project_id: string;
+  readonly workspace_id: string;
+  readonly resource_boundary_revision: number;
+  readonly occurred_at: string;
 }
 
 export interface AttentionProjectionQualificationEvent {
@@ -51,6 +61,17 @@ const fromDb = (
   occurredAt: row.occurred_at,
   sourceEventId: row.source_event_id as never,
   sourceFactId: row.source_fact_id,
+});
+
+const activationRowFromDb = (
+  row: WorkspaceResourceActivationAttentionDbRow,
+): WorkspaceResourceActivationAttentionProjectionRow => ({
+  projectId: row.project_id as ProjectId,
+  workspaceId: row.workspace_id as never,
+  resourceBoundaryRevision: Number(
+    row.resource_boundary_revision,
+  ) as WorkspaceResourceActivationAttentionProjectionRow["resourceBoundaryRevision"],
+  occurredAt: row.occurred_at,
 });
 
 const sameRow = (
@@ -179,15 +200,111 @@ export const makeAttentionProjectionStoreLive = (
             ),
             (rows) => rows.map(fromDb),
           ),
-        resetProject: (projectId) =>
-          Effect.asVoid(
+        reconcileWorkspaceResourceActivation: (projectId, intents) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const current = new Map<
+              string,
+              WorkspaceResourceActivationIntent
+            >();
+            for (const intent of intents) {
+              if (intent.projectId !== projectId) continue;
+              const key = `${intent.workspaceId}:${intent.resourceBoundaryRevision}`;
+              if (current.has(key)) {
+                return yield* Effect.fail<AttentionProjectionStoreError>({
+                  _tag: "PersistenceCorruption",
+                  repository: "AttentionProjectionStore",
+                  operation: "activation-reconcile",
+                  reason:
+                    "P1 activation intent snapshot has duplicate identities",
+                });
+              }
+              current.set(key, intent);
+            }
+            const existing = yield* run(
+              sql.unsafe<WorkspaceResourceActivationAttentionDbRow>(
+                `SELECT project_id, workspace_id, resource_boundary_revision,
+                        occurred_at
+                   FROM workspace_resource_activation_attention_rows
+                  WHERE project_id = ?`,
+                [projectId],
+              ),
+            );
+            const pendingKeys = new Set(
+              [...current.entries()]
+                .filter(([, intent]) => intent.status === "Pending")
+                .map(([key]) => key),
+            );
+            for (const row of existing) {
+              const key = `${row.workspace_id}:${Number(row.resource_boundary_revision)}`;
+              if (pendingKeys.has(key)) continue;
+              yield* run(
+                sql.unsafe(
+                  `DELETE FROM workspace_resource_activation_attention_rows
+                    WHERE project_id = ? AND workspace_id = ?
+                      AND resource_boundary_revision = ?`,
+                  [projectId, row.workspace_id, row.resource_boundary_revision],
+                ),
+              );
+            }
+            for (const intent of current.values()) {
+              if (intent.status !== "Pending") continue;
+              yield* run(
+                sql.unsafe(
+                  `INSERT INTO workspace_resource_activation_attention_rows (
+                    project_id, workspace_id, resource_boundary_revision,
+                    occurred_at
+                  ) VALUES (?,?,?,?)
+                  ON CONFLICT(project_id, workspace_id, resource_boundary_revision)
+                  DO UPDATE SET occurred_at = excluded.occurred_at`,
+                  [
+                    projectId,
+                    intent.workspaceId,
+                    intent.resourceBoundaryRevision,
+                    intent.createdAt,
+                  ],
+                ),
+              );
+            }
+          }),
+        listWorkspaceResourceActivationPending: (projectId) =>
+          Effect.map(
             run(
+              sql.unsafe<WorkspaceResourceActivationAttentionDbRow>(
+                `SELECT project_id, workspace_id, resource_boundary_revision,
+                        occurred_at
+                   FROM workspace_resource_activation_attention_rows
+                  WHERE project_id = ?
+                  ORDER BY occurred_at, workspace_id, resource_boundary_revision`,
+                [projectId],
+              ),
+            ),
+            (rows) => rows.map(activationRowFromDb),
+          ),
+        resetProject: (projectId) =>
+          Effect.gen(function* () {
+            yield* run(
               sql.unsafe(
                 "DELETE FROM attention_projection_rows WHERE project_id = ?",
                 [projectId],
               ),
-            ),
-          ),
+            );
+            const table = yield* run(
+              sql.unsafe<{ name: string }>(
+                `SELECT name FROM sqlite_master
+                  WHERE type = 'table'
+                    AND name = 'workspace_resource_activation_attention_rows'`,
+              ),
+            );
+            if (table.length > 0) {
+              yield* run(
+                sql.unsafe(
+                  "DELETE FROM workspace_resource_activation_attention_rows WHERE project_id = ?",
+                  [projectId],
+                ),
+              );
+            }
+          }),
       });
     }),
   );
@@ -240,12 +357,60 @@ export const makeProjectAttentionProjectionStore = (
   >,
   attentionRows: Pick<
     AttentionProjectionStoreService,
-    "putAssignWorkBindingFailure" | "resetProject"
+    | "putAssignWorkBindingFailure"
+    | "resetProject"
+    | "reconcileWorkspaceResourceActivation"
   >,
+  activationIntents?: Pick<WorkspaceResourceActivationStoreService, "listAll">,
 ): ProjectionStoreService => ({
   apply: (batch: ReadonlyArray<DomainEvent<unknown>>) =>
     Effect.gen(function* () {
       for (const event of batch) {
+        if (event.eventType === "WorkspaceResourceActivationChanged") {
+          if (event.projectId !== projectId) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "P10 Attention consumer received an activation event for another project",
+            });
+          }
+          if (activationIntents === undefined) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason: "P10 Activation Attention event has no P1 intent source",
+            });
+          }
+          const eventPayload = payloadRecord(event.payload);
+          const revision = eventPayload.resourceBoundaryRevision;
+          if (
+            eventPayload._tag !== "WorkspaceResourceActivationChanged" ||
+            typeof eventPayload.workspaceId !== "string" ||
+            event.aggregateRef !== eventPayload.workspaceId ||
+            typeof revision !== "number" ||
+            !Number.isInteger(revision) ||
+            revision < 0 ||
+            (eventPayload.status !== "Pending" &&
+              eventPayload.status !== "Active")
+          ) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason: "P10 Activation Attention wakeup event was malformed",
+            });
+          }
+          const intents = yield* activationIntents
+            .listAll()
+            .pipe(Effect.mapError(projectionFailure));
+          yield* attentionRows
+            .reconcileWorkspaceResourceActivation(projectId, intents)
+            .pipe(Effect.mapError(projectionFailure));
+          continue;
+        }
         if (event.eventType !== "AssignWorkTargetBindingEscalated") continue;
         if (event.projectId !== projectId) {
           return yield* Effect.fail<ConsumerOffsetStoreError>({
@@ -307,7 +472,16 @@ export const makeProjectAttentionProjectionStore = (
       }
     }),
   reset: () =>
-    attentionRows
-      .resetProject(projectId)
-      .pipe(Effect.mapError(projectionFailure)),
+    Effect.gen(function* () {
+      yield* attentionRows
+        .resetProject(projectId)
+        .pipe(Effect.mapError(projectionFailure));
+      if (activationIntents === undefined) return;
+      const intents = yield* activationIntents
+        .listAll()
+        .pipe(Effect.mapError(projectionFailure));
+      yield* attentionRows
+        .reconcileWorkspaceResourceActivation(projectId, intents)
+        .pipe(Effect.mapError(projectionFailure));
+    }),
 });

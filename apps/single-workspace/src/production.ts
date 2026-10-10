@@ -87,6 +87,7 @@ import {
   type WorkerDispatchPort,
   WorkRepository,
   WorkspaceRepository,
+  WorkspaceResourceActivationStore,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -167,6 +168,7 @@ export type TransportBoundaryServices =
   | TransactionPort
   | ProjectRepository
   | WorkspaceRepository
+  | WorkspaceResourceActivationStore
   | ExecutionRepository
   | WorkRepository
   | PermissionGrantRepository
@@ -269,6 +271,7 @@ export type ProductionDaemonServices =
   | DeliverableRepository
   | WorkRepository
   | WorkspaceRepository
+  | WorkspaceResourceActivationStore
   | FormationProposalStore
   | FormationFulfillmentStore
   | InboxProjectionStore
@@ -300,6 +303,7 @@ export const ProductionDaemonServiceLive = (
       const deadLetters = yield* ConsumerDeadLetterStore;
       const projection = yield* ProjectionStore;
       const attentionProjection = yield* AttentionProjectionStore;
+      const activationIntents = yield* WorkspaceResourceActivationStore;
       const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
       const verifications = yield* VerificationRepository;
       const acceptances = yield* AcceptanceRepository;
@@ -475,6 +479,7 @@ export const ProductionDaemonServiceLive = (
                     projectId,
                     recoveryAttentionFacts,
                     attentionProjection,
+                    activationIntents,
                   ),
                   handlers: () => Effect.succeed([]),
                 },
