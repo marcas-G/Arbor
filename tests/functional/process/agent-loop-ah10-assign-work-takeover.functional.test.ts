@@ -8,8 +8,11 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
+  type FunctionalProject,
   functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -91,6 +94,14 @@ const readRows = (databaseFile: string) => {
         generation: number;
         expires_at: string;
       }>,
+      executions: db
+        .prepare(
+          "SELECT execution_id, settlement_kind FROM executions ORDER BY admitted_at",
+        )
+        .all() as Array<{
+        execution_id: string;
+        settlement_kind: string | null;
+      }>,
       commands: db
         .prepare(
           "SELECT command_id, resolution, result_json, terminal_error_json FROM commands",
@@ -167,6 +178,52 @@ const fencedReceipts = (rows: ReturnType<typeof readRows>) =>
 const targetWorks = (rows: ReturnType<typeof readRows>, objective: string) =>
   rows.works.filter((work) => work.objective === objective);
 
+const admitRootWorkspaceSeedWork = async (
+  client: ReturnType<typeof makePublicClient>,
+  project: FunctionalProject,
+  marker: string,
+  objective: string,
+): Promise<{ readonly workId: string; readonly revision: number }> => {
+  await submitHumanMessage(
+    client,
+    project,
+    `Please create the source Work ${marker}: ${objective}`,
+  );
+  const approval = await waitForApproval(client, project, marker);
+  await client.command(project.projectId, "GrantPermission", {
+    permissionGrantId: functionalId("pgr"),
+    issuer: "user:local",
+    subject: { _tag: "WorkspaceAgent", workspaceId: project.rootWorkspaceId },
+    capability: "core.control.assign-work",
+    target: project.rootWorkspaceId,
+    expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+  });
+  await client.command(project.projectId, "ResolveControlApproval", {
+    approvalId: approval.approvalId,
+    expectedRevision: approval.revision,
+    decision: "Approve",
+    reason: "AH10 public source Work admission",
+  });
+  const currentWork = await waitForPublic(
+    () =>
+      client.view<{
+        workId?: string;
+        objective?: string;
+        revision: number;
+        status: string;
+      } | null>("current-work", {
+        workspaceId: project.rootWorkspaceId,
+      }),
+    (work) => work?.workId !== undefined && work.objective === objective,
+  );
+  const workId = currentWork?.workId;
+  if (currentWork === null || workId === undefined) {
+    throw new Error("public Root assign_work did not expose source WorkId");
+  }
+  expect(currentWork).toMatchObject({ objective, revision: 0, status: "Open" });
+  return { workId, revision: currentWork.revision };
+};
+
 describe("AH10 real daemon AssignWork generation takeover", () => {
   it.each(["before", "after"] as const)(
     "takes over current-Workspace AssignWork after killing gen0 %s its FencingRejected receipt commits",
@@ -176,6 +233,9 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
       const targetObjective = `Assigned Work from AH10 ${marker}.`;
       const events: Ah10Probe[] = [];
       const actionProviderCalls: number[] = [];
+      let seedWorkProviderCalls = 0;
+      let probeArmed = false;
+      let targetActionIssued = false;
       const fixture = await startProductionFixture({
         reply: (call, index) => {
           const context = JSON.stringify(call.messages);
@@ -187,42 +247,86 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
               .map((tool) => tool.function?.name)
               .filter((name): name is string => name !== undefined),
           );
-          if (!available.has("assign_work")) {
-            return { _tag: "HttpError", status: 422 };
-          }
-          if (context.includes("WorkAssigned(")) {
-            return { _tag: "Text", text: `Assigned ${marker}.` };
-          }
-          actionProviderCalls.push(index);
-          return {
-            _tag: "ToolCall",
-            name: "assign_work",
-            arguments: {
-              objective: targetObjective,
-              why: "qualify generation takeover of the canonical AssignWork command",
-              constraints: ["preserve the single pinned action"],
-              completionExpectation: "one WorkAssigned fact is committed",
-              verificationMission: {
-                goal: `Verify assigned Work ${marker}`,
-                criteria: [
-                  {
-                    criterionId: "ah10-assigned-work-created",
-                    requirement: `one Work is assigned for ${marker}`,
-                    required: true,
+          if (
+            available.has("assign_work") &&
+            !available.has("claim_completion") &&
+            context.includes(marker)
+          ) {
+            return context.includes("WorkAssigned(")
+              ? { _tag: "Text", text: `Source Work admitted for ${marker}.` }
+              : {
+                  _tag: "ToolCall",
+                  name: "assign_work",
+                  arguments: {
+                    objective: sourceObjective,
+                    why: "host the WorkspaceWork episode that exercises AssignWork",
+                    constraints: [],
+                    completionExpectation:
+                      "the model assigns one additional Work",
+                    verificationMission: {
+                      goal: `Verify AssignWork action ${marker}`,
+                      criteria: [
+                        {
+                          criterionId: "ah10-source-work-open",
+                          requirement:
+                            "the source Work remains open during takeover",
+                          required: true,
+                        },
+                      ],
+                      riskRequirements: [],
+                    },
+                    reason: "AH10 process fixture",
                   },
-                ],
-                riskRequirements: [],
+                };
+          }
+          if (
+            available.has("assign_work") &&
+            available.has("claim_completion") &&
+            context.includes(marker)
+          ) {
+            if (!probeArmed) {
+              seedWorkProviderCalls += 1;
+              return {
+                _tag: "ToolCall",
+                name: "wait",
+                arguments: {
+                  reason: `AH10 setup waits for the AssignWork probe ${marker}`,
+                  waitSpec: {
+                    mode: "Any",
+                    conditions: [{ _tag: "Manual" }],
+                  },
+                },
+              };
+            }
+            if (targetActionIssued) {
+              return { _tag: "Text", text: `Assigned ${marker}.` };
+            }
+            targetActionIssued = true;
+            actionProviderCalls.push(index);
+            return {
+              _tag: "ToolCall",
+              name: "assign_work",
+              arguments: {
+                objective: targetObjective,
+                why: "qualify generation takeover of the canonical AssignWork command",
+                constraints: ["preserve the single pinned action"],
+                completionExpectation: "one WorkAssigned fact is committed",
+                verificationMission: {
+                  goal: `Verify assigned Work ${marker}`,
+                  criteria: [
+                    {
+                      criterionId: "ah10-assigned-work-created",
+                      requirement: `one Work is assigned for ${marker}`,
+                      required: true,
+                    },
+                  ],
+                  riskRequirements: [],
+                },
+                reason: "AH10 receipt-first process qualification",
               },
-              reason: "AH10 receipt-first process qualification",
-            },
-          };
-        },
-        firstDaemonEntry: ah10Child,
-        daemonEnvironment: {
-          ARBOR_AH10_ROLE: "old",
-          ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
-          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
-            crashSide === "before" ? "1" : "0",
+            };
+          }
+          return { _tag: "Text", text: `Observed ${marker}.` };
         },
         onDaemonStdout: (line) => pushProbe(events, line),
       });
@@ -235,44 +339,61 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
         fixture.workspaceDirectory,
         "AH10 AssignWork generation takeover",
       );
-
-      // The public, exact-bound WorkspaceAgent grant satisfies CAPA for this
-      // WorkspaceWork action. The model omits targetWorkspaceRef, so both the
-      // grant and the action target are the current root Workspace.
-      await client.command(project.projectId, "GrantPermission", {
-        permissionGrantId: functionalId("pgr"),
-        issuer: "user:local",
-        subject: {
-          _tag: "WorkspaceAgent",
-          workspaceId: project.rootWorkspaceId,
+      const sourceWork = await admitRootWorkspaceSeedWork(
+        client,
+        project,
+        marker,
+        sourceObjective,
+      );
+      await waitForPublic(
+        async () => seedWorkProviderCalls,
+        (count) => count >= 1,
+      );
+      await waitForPublic(
+        () =>
+          client.view<{
+            workId?: string;
+            revision: number;
+            status: string;
+            activeExecution?: { executionId: string };
+          } | null>("current-work", {
+            workspaceId: project.rootWorkspaceId,
+          }),
+        (work) =>
+          work?.workId === sourceWork.workId &&
+          work.revision === 0 &&
+          work.activeExecution === undefined,
+      );
+      const seedExecutionIds = new Set(
+        readRows(fixture.databaseFile).executions.map(
+          (execution) => execution.execution_id,
+        ),
+      );
+      expect(
+        readRows(fixture.databaseFile).executions.every(
+          (execution) => execution.settlement_kind !== "Failed",
+        ),
+      ).toBe(true);
+      await fixture.crash();
+      probeArmed = true;
+      await fixture.restart({
+        entry: ah10Child,
+        daemonEnvironment: {
+          ARBOR_AH10_ROLE: "old",
+          ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
+          ARBOR_AH10_PAUSE_BEFORE_FENCED_RECEIPT:
+            crashSide === "before" ? "1" : "0",
         },
-        capability: "core.control.assign-work",
-        target: project.rootWorkspaceId,
-        expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
       });
-
-      const sourceWorkId = functionalId("wrk");
-      await client.command(project.projectId, "AssignWork", {
-        workId: sourceWorkId,
+      await client.command(project.projectId, "SteerWork", {
+        workId: sourceWork.workId,
         workspaceId: project.rootWorkspaceId,
-        expectedWorkspaceRevision: 0,
-        objective: sourceObjective,
-        why: "host the WorkspaceWork episode that exercises AssignWork",
-        constraints: [],
-        completionExpectation: "the model assigns one additional Work",
-        verificationMission: {
-          goal: `Verify AssignWork action ${marker}`,
-          criteria: [
-            {
-              criterionId: "ah10-source-work-open",
-              requirement: "the source Work remains open during takeover",
-              required: true,
-            },
-          ],
-          riskRequirements: [],
+        expectedWorkRevision: sourceWork.revision,
+        steer: {
+          severity: "Normal",
+          guidance: `AH10 AssignWork probe ${marker}`,
         },
-        provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-        revision: 0,
+        provenance: { source: "HumanInput" },
       });
 
       const oldAction = await waitForPublic(
@@ -301,6 +422,7 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
         throw new Error("AH10 AssignWork ActionIntent omitted pinned identity");
       }
       expect(actionProviderCalls).toHaveLength(1);
+      expect(seedExecutionIds.has(oldAction.executionId)).toBe(false);
 
       const oldLeasePause = await waitForPublic(
         async () =>
@@ -552,6 +674,9 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
     const targetObjective = `Committed AssignWork result ${marker}.`;
     const events: Ah10Probe[] = [];
     const actionProviderCalls: number[] = [];
+    let seedWorkProviderCalls = 0;
+    let probeArmed = false;
+    let targetActionIssued = false;
     const fixture = await startProductionFixture({
       reply: (call, index) => {
         const context = JSON.stringify(call.messages);
@@ -563,41 +688,81 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
             .map((tool) => tool.function?.name)
             .filter((name): name is string => name !== undefined),
         );
-        if (!available.has("assign_work")) {
-          return { _tag: "HttpError", status: 422 };
-        }
-        if (context.includes("WorkAssigned(")) {
-          return { _tag: "Text", text: `Assigned ${marker}.` };
-        }
-        actionProviderCalls.push(index);
-        return {
-          _tag: "ToolCall",
-          name: "assign_work",
-          arguments: {
-            objective: targetObjective,
-            why: "qualify recovery from a committed AssignWork Command",
-            constraints: ["preserve the exact committed Work result"],
-            completionExpectation: "one WorkAssigned fact is committed",
-            verificationMission: {
-              goal: `Verify committed AssignWork ${marker}`,
-              criteria: [
-                {
-                  criterionId: "ah10-committed-assigned-work",
-                  requirement: `one Work is assigned for ${marker}`,
-                  required: true,
+        if (
+          available.has("assign_work") &&
+          !available.has("claim_completion")
+        ) {
+          return context.includes("WorkAssigned(")
+            ? { _tag: "Text", text: `Source Work admitted for ${marker}.` }
+            : {
+                _tag: "ToolCall",
+                name: "assign_work",
+                arguments: {
+                  objective: sourceObjective,
+                  why: "host the WorkspaceWork episode that exercises AssignWork recovery",
+                  constraints: [],
+                  completionExpectation:
+                    "the model assigns one additional Work",
+                  verificationMission: {
+                    goal: `Verify source Work for ${marker}`,
+                    criteria: [
+                      {
+                        criterionId: "ah10-source-work-open",
+                        requirement:
+                          "the source Work remains open during recovery",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                  reason: "AH10 process fixture",
                 },
-              ],
-              riskRequirements: [],
+              };
+        }
+        if (available.has("assign_work") && available.has("claim_completion")) {
+          if (!probeArmed) {
+            seedWorkProviderCalls += 1;
+            return {
+              _tag: "ToolCall",
+              name: "wait",
+              arguments: {
+                reason: `AH10 committed-receipt seed waits for probe ${marker}`,
+                waitSpec: {
+                  mode: "Any",
+                  conditions: [{ _tag: "Manual" }],
+                },
+              },
+            };
+          }
+          if (targetActionIssued) {
+            return { _tag: "Text", text: `Assigned ${marker}.` };
+          }
+          targetActionIssued = true;
+          actionProviderCalls.push(index);
+          return {
+            _tag: "ToolCall",
+            name: "assign_work",
+            arguments: {
+              objective: targetObjective,
+              why: "qualify recovery from a committed AssignWork Command",
+              constraints: ["preserve the exact committed Work result"],
+              completionExpectation: "one WorkAssigned fact is committed",
+              verificationMission: {
+                goal: `Verify committed AssignWork ${marker}`,
+                criteria: [
+                  {
+                    criterionId: "ah10-committed-assigned-work",
+                    requirement: `one Work is assigned for ${marker}`,
+                    required: true,
+                  },
+                ],
+                riskRequirements: [],
+              },
+              reason: "AH10 committed-receipt process qualification",
             },
-            reason: "AH10 committed-receipt process qualification",
-          },
-        };
-      },
-      firstDaemonEntry: ah10Child,
-      daemonEnvironment: {
-        ARBOR_AH10_ROLE: "old",
-        ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
-        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
+          };
+        }
+        return { _tag: "Text", text: `Observed ${marker}.` };
       },
       onDaemonStdout: (line) => pushProbe(events, line),
     });
@@ -610,40 +775,60 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
       fixture.workspaceDirectory,
       "AH10 AssignWork committed-receipt recovery",
     );
-    await client.command(project.projectId, "GrantPermission", {
-      permissionGrantId: functionalId("pgr"),
-      issuer: "user:local",
-      subject: {
-        _tag: "WorkspaceAgent",
-        workspaceId: project.rootWorkspaceId,
-      },
-      capability: "core.control.assign-work",
-      target: project.rootWorkspaceId,
-      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
-    });
+    const sourceWork = await admitRootWorkspaceSeedWork(
+      client,
+      project,
+      marker,
+      sourceObjective,
+    );
+    await waitForPublic(
+      async () => seedWorkProviderCalls,
+      (count) => count >= 1,
+    );
+    await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      (work) =>
+        work?.workId === sourceWork.workId &&
+        work.revision === 0 &&
+        work.activeExecution === undefined,
+    );
+    const seedRows = readRows(fixture.databaseFile);
+    const seedExecutionIds = new Set(
+      seedRows.executions.map((execution) => execution.execution_id),
+    );
+    expect(
+      seedRows.executions.every(
+        (execution) => execution.settlement_kind !== "Failed",
+      ),
+    ).toBe(true);
 
-    const sourceWorkId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
-      workId: sourceWorkId,
-      workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: sourceObjective,
-      why: "host the WorkspaceWork episode that exercises AssignWork recovery",
-      constraints: [],
-      completionExpectation: "the model assigns one additional Work",
-      verificationMission: {
-        goal: `Verify source Work for ${marker}`,
-        criteria: [
-          {
-            criterionId: "ah10-source-work-open",
-            requirement: "the source Work remains open during recovery",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
+    await fixture.crash();
+    probeArmed = true;
+    await fixture.restart({
+      entry: ah10Child,
+      daemonEnvironment: {
+        ARBOR_AH10_ROLE: "old",
+        ARBOR_AH10_GATE_ACTION_KIND: "assign_work",
+        ARBOR_AH10_PAUSE_AFTER_CONTROL_RETURN: "1",
       },
-      provenance: { predecessorWorkId: null, reason: "AH10 process fixture" },
-      revision: 0,
+    });
+    await client.command(project.projectId, "SteerWork", {
+      workId: sourceWork.workId,
+      workspaceId: project.rootWorkspaceId,
+      expectedWorkRevision: sourceWork.revision,
+      steer: {
+        severity: "Normal",
+        guidance: `AH10 committed-receipt probe ${marker}`,
+      },
+      provenance: { source: "HumanInput" },
     });
 
     const oldAction = await waitForPublic(
@@ -671,6 +856,7 @@ describe("AH10 real daemon AssignWork generation takeover", () => {
     ) {
       throw new Error("AH10 committed AssignWork omitted pinned identity");
     }
+    expect(seedExecutionIds.has(oldAction.executionId)).toBe(false);
     expect(actionProviderCalls).toHaveLength(1);
 
     const oldLease = readRows(fixture.databaseFile).leases.find(
