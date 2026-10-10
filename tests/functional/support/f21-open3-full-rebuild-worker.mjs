@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
@@ -86,8 +87,38 @@ if (mode === "activate") {
       Layer.mergeAll(services, infra),
     ),
   );
-  const startedFile = process.env.F21_ACTIVATION_STARTED_MARKER;
-  if (startedFile !== undefined) writeFileSync(startedFile, "started", "utf8");
+  const lockWaitMarker = process.env.F21_ACTIVATION_LOCK_WAIT_MARKER;
+  const lockAcquiredMarker = process.env.F21_ACTIVATION_LOCK_ACQUIRED_MARKER;
+  if (lockWaitMarker === undefined || lockAcquiredMarker === undefined) {
+    throw new Error("activation worker requires lock-wait marker paths");
+  }
+  let observedBusy = false;
+  for (;;) {
+    const db = new DatabaseSync(databaseFile);
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      db.exec("ROLLBACK");
+      db.close();
+      writeFileSync(
+        lockAcquiredMarker,
+        "P1 SQLite writer lock acquired",
+        "utf8",
+      );
+      break;
+    } catch (error) {
+      db.close();
+      const reason =
+        error instanceof Error
+          ? `${error.name}: ${error.message}`
+          : String(error);
+      if (!/SQLITE_BUSY|database is locked/i.test(reason)) throw error;
+      if (!observedBusy) {
+        writeFileSync(lockWaitMarker, reason, "utf8");
+        observedBusy = true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
