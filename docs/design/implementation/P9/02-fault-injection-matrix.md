@@ -7,7 +7,10 @@
 `planning/results/P8.result.md` (crash windows already closed deterministically);
 P9 `04` (provider/tool detail), P9 `05` (consumer/rebuild detail);
 GQ1/GQ2/GQ4/GQ5 adjudications (`planning/proposals/P9/00-scope-extraction.md` §3).
-**Status:** DRAFT (first draft for contract review).
+**Status:** FROZEN; accepted AH7-DG-03 amendment (2026-10-10). Post-landing
+consistency review pending.
+**Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
+SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
 
 P9 injects faults into **existing frozen semantics** (P2 owns the recovery
 mechanism; P5 owns the representative restart proof). This file freezes the
@@ -143,6 +146,29 @@ Note: T1–T4 share the dangling-detection assertion; they differ only in the
 permitted post-crash action. T4 additionally asserts no path exists from
 dangling NonIdempotent intent to any settlement without reconciliation.
 Expanded assertions (replay keys, no-duplicate-effect probes): 04 §3.
+
+### AH7-DG-03 approval, fencing and stop boundaries
+
+These supplement AH7's action/tool handoff points (§7 `AH7`) with the accepted
+P4 claim and effect-admission commits. Inject a real process/daemon crash before
+and after each commit, restart on the same DB, and label the evidence
+`crash-injected`. SQLite concurrency alone is not process-crash qualification.
+
+| ID | Boundary / interruption | Required recovery assertion | Guarantee |
+|---|---|---|---|
+| AH7-AP1 | approval claim transaction before COMMIT | Neither exact intent nor approval consumption is durable; no effect admission. A later matching call may attempt the single-consume claim. | crash-injected |
+| AH7-AP2 | approval claim transaction after COMMIT | Exact intent and `consumed_by` commit together; state is `NotAdmitted`; only same ToolInvocation resumes and approval is not consumed again. | crash-injected |
+| AH7-AP3 | `recordNoEffectDenial` before/after COMMIT | Before COMMIT there is no Denied row; after COMMIT one terminal Denied row with `NotAdmitted` and a closed reason code exists. Approval remains unchanged; exact replay is idempotent. | crash-injected |
+| AH7-AP4 | stop before claim / intent COMMIT | `ExecutionStopping`; no P4 intent or approval consumption, no Executor call. AgentLoop persists Interrupted, current action `TerminalRejected`, remainder `SkippedEarlySettlement`, one cursor advance and `Interrupted(StopRequested)`. | crash-injected |
+| AH7-AP5 | stop after claim COMMIT while `NotAdmitted` | P4 `Interrupted` is committed under the current fence; no effect admission; consumed approval remains bound. AgentLoop action/result/cursor converge exactly once. | crash-injected |
+| AH7-AP6 | race StopExecution against effect-admission transaction | Commit order determines the branch: stop first → no `MayHaveStarted` and no effect admission; marker first → invocation is in flight and stop follows P4 §6 quiescence. | crash-injected |
+| AH7-AP7 | after `MayHaveStarted`, then stop/crash | No new Executor call or replay. Cancel/confirm/reconcile by `SideEffectSemantics`; persist known result once, otherwise retain reconciliation or `OutcomeUnknown(ReconciliationRequired)`. | crash-injected |
+| AH7-AP8 | stale generation at intent/claim, no-effect denial/interruption, effect-admission or settlement | Full trusted lease tuple + expiry rejects the write in the same transaction; old generation causes no post-rejection effect. A previously committed `MayHaveStarted` effect is recovered as possibly occurred, never inferred absent. | crash-injected |
+
+For `ResourceResolutionDenied`, the terminal no-effect record uses empty
+resolved regions and cannot satisfy an approval match. Historical rows migrate
+to `LegacyUnknown`, never `NotAdmitted`; they are excluded from AP3's no-effect
+conclusion and remain under the §5 side-effect recovery rules.
 
 ## 6. Provider disconnect (PD) — GQ4 mapping (zero-DID-change)
 

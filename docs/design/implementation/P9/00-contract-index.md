@@ -1,7 +1,22 @@
 # P9 — 00 Contract Index
 
 **Authority:** DID v1.20（含原 DID v1.11 P9 closure 与 AHT-1…AHT-8）；SD v1.3 §6.5/§7.3/§10/§14；P1 `06`/`07`, P2 `03`/`06`, P3 `06`/`08`, P4 `01`/`02`/`06`, P5 `04`/`05`, P8 `00`/`02`/`03`；GQ1–GQ5 与 2026-09-30 AgentLoopStep 治理裁决。
-**Status:** FROZEN (first draft for contract review).
+**Status:** FROZEN — P9 formally closed; accepted AH7-DG-03 owner amendment
+(2026-10-10). Post-landing consistency review pending.
+
+## Accepted owner amendment — AH7-DG-03 (2026-10-10)
+
+Decision: `ACCEPT_TOOL_APPROVAL_SETTLEMENT_ATOMICITY`. Accepted proposal SHA-256:
+`E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`;
+source and delegated decision record are
+`planning/proposals/AH7-approval-settlement-fixed-decision-draft.md` and
+`planning/results/AH7-DG-03-governance-acceptance-and-landing.review.md`.
+
+P9 `02` and `07` add AH7-DG-03 crash/restart qualification for atomic
+intent+approval claim, P4 no-effect Denied/Interrupted records, effect
+admission, lease fencing and Stop/quiescence. They inherit P4/P2/P3 semantics;
+this addition does not change P9's guarantee classes, fault-injection method,
+or recovery ownership.
 
 ## Governance decisions recorded (GQ1–GQ5; no DID catalog changes)
 
