@@ -15,12 +15,14 @@ const marker = `UI-APPROVAL-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
 
 test.beforeAll(async () => {
   fixture = await startProductionFixture({
+    admitWorkspaceDirectory: true,
     reply: makeWorkProvider({ marker, verdict: "Pass" }),
   });
   const project = await createFunctionalProject(
     makePublicClient(fixture.baseUrl),
     fixture.workspaceDirectory,
     "审批功能测试",
+    { resourceSelection: "Profile" },
   );
   projectId = project.projectId;
 });
