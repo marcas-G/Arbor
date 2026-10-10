@@ -2,19 +2,24 @@ import type {
   CanonicalResourceRegion,
   ProjectId,
   ResourceAddress,
+  ResourceBoundaryRevision,
+  WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
 import type {
+  DomainEventJournalError,
   EnvironmentError,
   EnvironmentRevisionStoreError,
   ResourceOwnershipRepositoryError,
   ResourceResolutionStale,
+  WorkspaceRepositoryError,
 } from "./errors.js";
 import type { ResourceOwnershipClaimRecord } from "./repositories.js";
 import type {
   TransactionOperationalFailure,
   TransactionScope,
 } from "./session.js";
+import type { WorkspaceResourceActivationStoreError } from "./workspace-resource-activation.js";
 
 /**
  * P11 `01` §3 store mapping: the stored string IS the counter. The typed
@@ -88,6 +93,22 @@ export interface OwnershipWriteServiceService {
     | ResourceResolutionStale
     | TransactionOperationalFailure
     | EnvironmentRevisionStoreError
+  >;
+  readonly activatePendingWorkspaceResource: (
+    projectId: ProjectId,
+    workspaceId: WorkspaceId,
+    resourceBoundaryRevision: ResourceBoundaryRevision,
+    addresses: ReadonlyArray<ResourceAddress>,
+  ) => Effect.Effect<
+    { readonly _tag: "Activated" } | { readonly _tag: "AlreadyActive" },
+    | EnvironmentError
+    | ResourceOwnershipRepositoryError
+    | ResourceResolutionStale
+    | TransactionOperationalFailure
+    | EnvironmentRevisionStoreError
+    | WorkspaceResourceActivationStoreError
+    | WorkspaceRepositoryError
+    | DomainEventJournalError
   >;
 }
 
