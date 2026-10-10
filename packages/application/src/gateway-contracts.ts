@@ -46,6 +46,7 @@ import type {
   StopAdmission,
 } from "./authority.js";
 import type { CommandResult } from "./command-result.js";
+import type { CommandInputIssue } from "./external-command-codec.js";
 import type { CommandRejection } from "./rejection.js";
 
 export interface GatewayEnvelope<C> {
@@ -120,9 +121,19 @@ export interface CommandHandler<C, R> {
 }
 
 export type CommandGatewayError =
+  | InternalCommandContractDefect
   | CommandHandlerError
   | ExecutionRepositoryError
   | TransactionOperationalFailure;
+
+/** A typed internal caller violated the registered command payload contract.
+ * This is a non-command defect: it is never persisted as a receipt, attempt,
+ * authority rejection, or domain event. */
+export interface InternalCommandContractDefect {
+  readonly _tag: "InternalCommandContractDefect";
+  readonly commandType: string;
+  readonly issues: ReadonlyArray<CommandInputIssue>;
+}
 
 export interface CommandGatewayService {
   readonly execute: <C, R>(
