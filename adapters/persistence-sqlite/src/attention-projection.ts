@@ -38,11 +38,18 @@ interface WorkspaceResourceActivationAttentionDbRow {
   readonly occurred_at: string;
 }
 
-export interface AttentionProjectionQualificationEvent {
-  readonly boundary: "P10AfterAttentionRowWriteBeforeConsumerCommit";
-  readonly projectId: ProjectId;
-  readonly attentionFactId: string;
-}
+export type AttentionProjectionQualificationEvent =
+  | {
+      readonly boundary: "P10AfterAttentionRowWriteBeforeConsumerCommit";
+      readonly projectId: ProjectId;
+      readonly attentionFactId: string;
+    }
+  | {
+      readonly boundary: "P10AfterActivationAttentionRowWriteBeforeProjectionCommit";
+      readonly projectId: ProjectId;
+      readonly workspaceId: WorkspaceResourceActivationAttentionProjectionRow["workspaceId"];
+      readonly resourceBoundaryRevision: WorkspaceResourceActivationAttentionProjectionRow["resourceBoundaryRevision"];
+    };
 
 export type AttentionProjectionQualificationProbe = (
   event: AttentionProjectionQualificationEvent,
@@ -265,6 +272,17 @@ export const makeAttentionProjectionStoreLive = (
                   ],
                 ),
               );
+              if (qualificationProbe !== undefined) {
+                yield* Effect.promise(() =>
+                  qualificationProbe({
+                    boundary:
+                      "P10AfterActivationAttentionRowWriteBeforeProjectionCommit",
+                    projectId,
+                    workspaceId: intent.workspaceId,
+                    resourceBoundaryRevision: intent.resourceBoundaryRevision,
+                  }),
+                );
+              }
             }
           }),
         listWorkspaceResourceActivationPending: (projectId) =>
