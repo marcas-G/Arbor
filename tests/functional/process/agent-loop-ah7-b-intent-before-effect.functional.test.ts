@@ -15,6 +15,8 @@ import {
   createFunctionalProject,
   functionalId,
   makePublicClient,
+  submitHumanMessage,
+  waitForApproval,
   waitForPublic,
 } from "../support/public-client.js";
 
@@ -34,6 +36,14 @@ const toolResultPayload = (
     readonly invocationId?: string;
   };
 };
+
+const isObservationForExecution = (
+  sourceRef: unknown,
+  executionId: unknown,
+): boolean =>
+  typeof sourceRef === "string" &&
+  typeof executionId === "string" &&
+  sourceRef.startsWith(`observation_${executionId}_`);
 
 const readPinnedProviderTurn = (
   databaseFile: string,
@@ -144,6 +154,8 @@ describe("AH7 action B intent before effect", () => {
     const marker = `AH7-B-INTENT-${crypto.randomUUID().slice(0, 8)}`;
     const hits: AhProbeHit[] = [];
     const daemonOutput: string[] = [];
+    let probeArmed = false;
+    let seedWorkProviderCalls = 0;
     let targetProviderCalls = 0;
     let actionBatchSent = false;
     let providerActionBatches = 0;
@@ -155,61 +167,111 @@ describe("AH7 action B intent before effect", () => {
 
     const fixture = await startProductionFixture({
       reply: (call) => {
-        if (JSON.stringify(call.messages).includes(marker)) {
-          targetProviderCalls += 1;
-        }
+        const context = JSON.stringify(call.messages);
         const available = new Set(
           call.tools
             .map((tool) => tool.function?.name)
             .filter((name): name is string => name !== undefined),
         );
-        if (!actionBatchSent) {
-          actionBatchSent = true;
-          if (!available.has("patch")) {
-            return { _tag: "HttpError", status: 422 };
+        if (
+          context.includes(marker) &&
+          available.has("assign_work") &&
+          !available.has("patch")
+        ) {
+          return context.includes("WorkAssigned(")
+            ? { _tag: "Text", text: `Work admitted for ${marker}.` }
+            : {
+                _tag: "ToolCall",
+                name: "assign_work",
+                arguments: {
+                  objective: `Apply two ordered patches for ${marker}.`,
+                  why: "qualify B recovery after P4 intent but before effect",
+                  constraints: [],
+                  completionExpectation:
+                    "both patch files contain their distinct marker",
+                  verificationMission: {
+                    goal: `Verify both ordered patches for ${marker}`,
+                    criteria: [
+                      {
+                        criterionId: "patch-a",
+                        requirement: "file A contains its marker once",
+                        required: true,
+                      },
+                      {
+                        criterionId: "patch-b",
+                        requirement: "file B contains its marker once",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                  reason: "AH7 B intent test",
+                },
+              };
+        }
+        if (context.includes(marker) && available.has("patch")) {
+          if (!probeArmed) {
+            if (!available.has("wait")) {
+              return { _tag: "HttpError", status: 422 };
+            }
+            seedWorkProviderCalls += 1;
+            return {
+              _tag: "ToolCall",
+              name: "wait",
+              arguments: {
+                reason: `AH7 setup waits for the B-intent probe ${marker}`,
+                waitSpec: {
+                  mode: "Any",
+                  conditions: [{ _tag: "Manual" }],
+                },
+              },
+            };
           }
-          providerActionBatches += 1;
-          return {
-            _tag: "ToolCalls",
-            calls: [
-              {
-                name: "patch",
-                arguments: {
-                  target: { mount: "workspace", path: fileA },
-                  unifiedDiff: `@@ -1,1 +1,1 @@\n-FUNCTIONAL_VERIFIED\n+${valueA}`,
+          targetProviderCalls += 1;
+          if (!actionBatchSent) {
+            actionBatchSent = true;
+            providerActionBatches += 1;
+            return {
+              _tag: "ToolCalls",
+              calls: [
+                {
+                  name: "patch",
+                  arguments: {
+                    target: { mount: "workspace", path: fileA },
+                    unifiedDiff: `@@ -1,1 +1,1 @@\n-FUNCTIONAL_VERIFIED\n+${valueA}`,
+                  },
+                },
+                {
+                  name: "patch",
+                  arguments: {
+                    target: { mount: "workspace", path: fileB },
+                    unifiedDiff: `@@ -0,0 +1,1 @@\n+${valueB}`,
+                  },
+                },
+              ],
+            };
+          }
+          if (available.has("wait")) {
+            successorWaitCalls += 1;
+            return {
+              _tag: "ToolCall",
+              name: "wait",
+              arguments: {
+                reason: `wait after both ordered patches for ${marker}`,
+                waitSpec: {
+                  mode: "Any",
+                  conditions: [{ _tag: "Manual" }],
                 },
               },
-              {
-                name: "patch",
-                arguments: {
-                  target: { mount: "workspace", path: fileB },
-                  unifiedDiff: `@@ -0,0 +1,1 @@\n+${valueB}`,
-                },
-              },
-            ],
-          };
-        }
-        if (available.has("wait")) {
-          successorWaitCalls += 1;
+            };
+          }
           return {
-            _tag: "ToolCall",
-            name: "wait",
-            arguments: {
-              reason: `wait after both ordered patches for ${marker}`,
-              waitSpec: {
-                mode: "Any",
-                conditions: [{ _tag: "Manual" }],
-              },
-            },
+            _tag: "Text",
+            text: `Both ordered patches finished for ${marker}.`,
           };
         }
-        return {
-          _tag: "Text",
-          text: `Both ordered patches finished for ${marker}.`,
-        };
+        return { _tag: "Text", text: `Waiting for Work ${marker}.` };
       },
-      firstDaemonEntry: crashChild,
-      daemonEnvironment: { ARBOR_AH_BOUNDARY: actionResultBoundary },
       onDaemonStdout: (line) => {
         daemonOutput.push(line);
         recordAhProbeLine(hits, line);
@@ -223,6 +285,12 @@ describe("AH7 action B intent before effect", () => {
       fixture.workspaceDirectory,
       `AH7 B intent before effect ${marker}`,
     );
+    await submitHumanMessage(
+      client,
+      project,
+      `Please create a Work to apply two ordered patches for ${marker}.`,
+    );
+    const approval = await waitForApproval(client, project, marker);
     await client.command(project.projectId, "GrantPermission", {
       permissionGrantId: functionalId("pgr"),
       issuer: "user:local",
@@ -234,33 +302,77 @@ describe("AH7 action B intent before effect", () => {
       target: project.rootWorkspaceId,
       expiresAt: null,
     });
-    const workId = functionalId("wrk");
-    await client.command(project.projectId, "AssignWork", {
+    await client.command(project.projectId, "ResolveControlApproval", {
+      approvalId: approval.approvalId,
+      expectedRevision: approval.revision,
+      decision: "Approve",
+      reason: "AH7 B intent public Work admission",
+    });
+    const currentWork = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          objective?: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      (work) => work?.workId !== undefined,
+    );
+    const workId = currentWork?.workId;
+    if (workId === undefined)
+      throw new Error("AH7 B intent public Work absent");
+    expect(currentWork).toMatchObject({
+      objective: expect.stringContaining(marker),
+      revision: 0,
+      status: "Open",
+    });
+    await waitForPublic(
+      async () => seedWorkProviderCalls,
+      (count) => count >= 1,
+    );
+    await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", {
+          workspaceId: project.rootWorkspaceId,
+        }),
+      (work) =>
+        work?.workId === workId &&
+        work.revision === 0 &&
+        work.activeExecution === undefined,
+    );
+    const seedSnapshot = durableSnapshot(fixture.databaseFile);
+    const seedExecutionIds = new Set(
+      seedSnapshot.executions.map((execution) => execution.execution_id),
+    );
+    expect(
+      seedSnapshot.executions.every(
+        (execution) => execution.settlement_kind !== "Failed",
+      ),
+    ).toBe(true);
+
+    await fixture.crash();
+    probeArmed = true;
+    const targetProviderCallStart = fixture.providerCalls.length;
+    await fixture.restart({
+      entry: crashChild,
+      daemonEnvironment: { ARBOR_AH_BOUNDARY: actionResultBoundary },
+    });
+    await client.command(project.projectId, "SteerWork", {
       workId,
       workspaceId: project.rootWorkspaceId,
-      expectedWorkspaceRevision: 0,
-      objective: `Apply two ordered patches for ${marker}.`,
-      why: "qualify B recovery after P4 intent but before effect",
-      constraints: [],
-      completionExpectation: "both patch files contain their distinct marker",
-      verificationMission: {
-        goal: `Verify both ordered patches for ${marker}`,
-        criteria: [
-          {
-            criterionId: "patch-a",
-            requirement: "file A contains its marker once",
-            required: true,
-          },
-          {
-            criterionId: "patch-b",
-            requirement: "file B contains its marker once",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
+      expectedWorkRevision: 0,
+      steer: {
+        severity: "Normal",
+        guidance: `AH7 B-intent probe ${marker}`,
       },
-      provenance: { predecessorWorkId: null, reason: "AH7 B intent test" },
-      revision: 0,
+      provenance: { source: "HumanInput" },
     });
 
     const actionA = await waitForPublic(
@@ -295,10 +407,29 @@ describe("AH7 action B intent before effect", () => {
     expect(actionBatchSent).toBe(true);
     expect(providerActionBatches).toBe(1);
     expect(targetProviderCalls).toBe(1);
+    expect(seedExecutionIds.has(executionId)).toBe(false);
 
     await fixture.crash();
     const afterA = durableSnapshot(fixture.databaseFile);
-    expect(afterA.steps).toEqual([
+    const afterASteps = afterA.steps.filter(
+      (step) => step.execution_id === executionId,
+    );
+    const afterAActions = afterA.actions.filter(
+      (action) => action.execution_id === executionId,
+    );
+    const afterAInvocations = afterA.toolInvocations.filter(
+      (invocation) => invocation.execution_id === executionId,
+    );
+    const afterAToolResults = afterA.toolResults.filter((entry) =>
+      isObservationForExecution(entry.source_ref, executionId),
+    );
+    const afterAInvocationIds = new Set(
+      afterAInvocations.map((invocation) => invocation.invocation_id),
+    );
+    const afterAArtifacts = afterA.artifacts.filter((artifact) =>
+      afterAInvocationIds.has(artifact.invocation_id),
+    );
+    expect(afterASteps).toEqual([
       expect.objectContaining({
         execution_id: executionId,
         logical_step_no: 0,
@@ -308,7 +439,7 @@ describe("AH7 action B intent before effect", () => {
         decoded_output_hash: expect.stringMatching(/^[a-f0-9]{64}$/u),
       }),
     ]);
-    const originalStep = afterA.steps[0] as {
+    const originalStep = afterASteps[0] as {
       readonly decoded_output_hash: string;
     };
     const originalTurnAfterA = readPinnedProviderTurn(
@@ -328,7 +459,7 @@ describe("AH7 action B intent before effect", () => {
       (call) => call.callRef !== actionACallRef,
     )?.callRef;
     expect(expectedBCallRef).toMatch(/^call_/u);
-    expect(afterA.actions).toEqual([
+    expect(afterAActions).toEqual([
       expect.objectContaining({
         execution_id: executionId,
         action_index: 0,
@@ -338,7 +469,7 @@ describe("AH7 action B intent before effect", () => {
         state: "Applied",
       }),
     ]);
-    expect(afterA.toolInvocations).toEqual([
+    expect(afterAInvocations).toEqual([
       expect.objectContaining({
         execution_id: executionId,
         tool_name: "patch",
@@ -346,12 +477,16 @@ describe("AH7 action B intent before effect", () => {
         settlement_kind: "Success",
       }),
     ]);
-    expect(afterA.toolResults).toHaveLength(1);
-    expect(toolResultPayload(afterA.toolResults[0]?.payload_json).callRef).toBe(
+    expect(afterAToolResults).toHaveLength(1);
+    expect(toolResultPayload(afterAToolResults[0]?.payload_json).callRef).toBe(
       actionACallRef,
     );
-    expect(afterA.artifacts).toHaveLength(1);
-    expect(readActionObservations(fixture.databaseFile)).toHaveLength(1);
+    expect(afterAArtifacts).toHaveLength(1);
+    expect(
+      readActionObservations(fixture.databaseFile).filter((observation) =>
+        observation.source_ref.startsWith(`observation_${executionId}_`),
+      ),
+    ).toHaveLength(1);
     expect(readFileSync(join(fixture.workspaceDirectory, fileA), "utf8")).toBe(
       valueA,
     );
@@ -391,7 +526,25 @@ describe("AH7 action B intent before effect", () => {
     // durable facts plus the absent B file identify the pre-effect side without
     // a timing delay.
     const beforeBEffect = durableSnapshot(fixture.databaseFile);
-    expect(beforeBEffect.steps).toEqual([
+    const beforeBEffectSteps = beforeBEffect.steps.filter(
+      (step) => step.execution_id === executionId,
+    );
+    const beforeBEffectActions = beforeBEffect.actions.filter(
+      (action) => action.execution_id === executionId,
+    );
+    const beforeBEffectInvocations = beforeBEffect.toolInvocations.filter(
+      (invocation) => invocation.execution_id === executionId,
+    );
+    const beforeBEffectToolResults = beforeBEffect.toolResults.filter((entry) =>
+      isObservationForExecution(entry.source_ref, executionId),
+    );
+    const beforeBEffectInvocationIds = new Set(
+      beforeBEffectInvocations.map((invocation) => invocation.invocation_id),
+    );
+    const beforeBEffectArtifacts = beforeBEffect.artifacts.filter((artifact) =>
+      beforeBEffectInvocationIds.has(artifact.invocation_id),
+    );
+    expect(beforeBEffectSteps).toEqual([
       expect.objectContaining({
         execution_id: executionId,
         logical_step_no: 0,
@@ -409,8 +562,8 @@ describe("AH7 action B intent before effect", () => {
     expect(
       originalTurnBeforeBEffect.calls.map((call) => call.callRef).sort(),
     ).toEqual([actionACallRef, expectedBCallRef].sort());
-    expect(beforeBEffect.actions).toHaveLength(2);
-    expect(beforeBEffect.actions).toEqual(
+    expect(beforeBEffectActions).toHaveLength(2);
+    expect(beforeBEffectActions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           execution_id: executionId,
@@ -429,8 +582,8 @@ describe("AH7 action B intent before effect", () => {
         }),
       ]),
     );
-    expect(beforeBEffect.toolInvocations).toHaveLength(2);
-    expect(beforeBEffect.toolInvocations).toEqual(
+    expect(beforeBEffectInvocations).toHaveLength(2);
+    expect(beforeBEffectInvocations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           execution_id: executionId,
@@ -449,9 +602,13 @@ describe("AH7 action B intent before effect", () => {
         }),
       ]),
     );
-    expect(beforeBEffect.toolResults).toHaveLength(1);
-    expect(beforeBEffect.artifacts).toHaveLength(1);
-    const beforeBObservations = readActionObservations(fixture.databaseFile);
+    expect(beforeBEffectToolResults).toHaveLength(1);
+    expect(beforeBEffectArtifacts).toHaveLength(1);
+    const beforeBObservations = readActionObservations(
+      fixture.databaseFile,
+    ).filter((observation) =>
+      observation.source_ref.startsWith(`observation_${executionId}_`),
+    );
     expect(beforeBObservations).toHaveLength(1);
     expect(
       (
@@ -468,12 +625,23 @@ describe("AH7 action B intent before effect", () => {
     ).toThrow();
     expect(targetProviderCalls).toBe(1);
     expect(providerActionBatches).toBe(1);
-    expect(fixture.providerCalls).toHaveLength(1);
+    expect(
+      fixture.providerCalls
+        .slice(targetProviderCallStart)
+        .filter(
+          (call) =>
+            JSON.stringify(call.messages).includes(marker) &&
+            call.tools.some((tool) => tool.function?.name === "patch"),
+        ),
+    ).toHaveLength(1);
 
     await fixture.crash();
     const afterOldKill = durableSnapshot(fixture.databaseFile);
-    expect(afterOldKill.toolInvocations).toHaveLength(2);
-    expect(afterOldKill.toolInvocations).toContainEqual(
+    const afterOldKillInvocations = afterOldKill.toolInvocations.filter(
+      (invocation) => invocation.execution_id === executionId,
+    );
+    expect(afterOldKillInvocations).toHaveLength(2);
+    expect(afterOldKillInvocations).toContainEqual(
       expect.objectContaining({
         invocation_id: bIntent.invocationId,
         execution_id: executionId,
@@ -506,7 +674,10 @@ describe("AH7 action B intent before effect", () => {
             step.logical_step_no === 0 &&
             step.provider_turn_id === providerTurnId &&
             step.next_action_index === 2,
-        ),
+        ) &&
+        snapshot.toolResults.filter((entry) =>
+          isObservationForExecution(entry.source_ref, executionId),
+        ).length === 2,
       45_000,
     ).catch((error: unknown) => {
       throw new Error(
@@ -529,6 +700,17 @@ describe("AH7 action B intent before effect", () => {
       );
     });
     const recovered = durableSnapshot(fixture.databaseFile);
+    const recoveredTargetToolResults = recovered.toolResults.filter((entry) =>
+      isObservationForExecution(entry.source_ref, executionId),
+    );
+    const recoveredTargetInvocationIds = new Set(
+      recovered.toolInvocations
+        .filter((invocation) => invocation.execution_id === executionId)
+        .map((invocation) => invocation.invocation_id),
+    );
+    const recoveredTargetArtifacts = recovered.artifacts.filter((artifact) =>
+      recoveredTargetInvocationIds.has(artifact.invocation_id),
+    );
 
     const actions = recovered.actions.filter(
       (action) =>
@@ -605,8 +787,8 @@ describe("AH7 action B intent before effect", () => {
         settled_at: expect.any(String),
       }),
     ]);
-    expect(recovered.toolResults).toHaveLength(2);
-    const results = recovered.toolResults.map((entry) =>
+    expect(recoveredTargetToolResults).toHaveLength(2);
+    const results = recoveredTargetToolResults.map((entry) =>
       toolResultPayload(entry.payload_json),
     );
     expect(results.map((result) => result.callRef).sort()).toEqual(
@@ -615,13 +797,16 @@ describe("AH7 action B intent before effect", () => {
     expect(
       results.filter((result) => result.invocationId === bIntent.invocationId),
     ).toHaveLength(1);
-    expect(recovered.artifacts).toHaveLength(2);
+    expect(recoveredTargetArtifacts).toHaveLength(2);
     expect(
-      recovered.artifacts.filter(
+      recoveredTargetArtifacts.filter(
         (artifact) => artifact.invocation_id === bIntent.invocationId,
       ),
     ).toHaveLength(1);
-    const observations = readActionObservations(fixture.databaseFile);
+    const observations = readActionObservations(fixture.databaseFile).filter(
+      (observation) =>
+        observation.source_ref.startsWith(`observation_${executionId}_`),
+    );
     const pinnedActionObservations = observations
       .map(
         (observation) =>
