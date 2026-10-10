@@ -1,6 +1,8 @@
 import {
+  Actor,
   type CanonicalResourceRegion,
   type ProjectId,
+  parse,
   type ResourceAddress,
   type ResourceBoundaryRevision,
   regionsOverlap,
@@ -8,11 +10,15 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  DomainEventJournal,
   type EnvironmentError,
   EnvironmentRevisionStore,
   type EnvironmentRevisionStoreError,
+  IdGenerator,
   type OwnershipWriteResult,
   OwnershipWriteService,
+  type OwnershipWriteServiceService,
+  type PendingDomainEvent,
   ProjectEnvironmentPort,
   type ResourceOwnershipClaimRecord,
   ResourceOwnershipRepository,
@@ -22,6 +28,8 @@ import {
   type TransactionOperationalFailure,
   TransactionPort,
   TransactionScope,
+  WorkspaceRepository,
+  WorkspaceResourceActivationStore,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -54,6 +62,39 @@ const toClaim = (row: ClaimRow): ResourceOwnershipClaimRecord => ({
   createdAt: row.created_at,
   releasedAt: row.released_at,
 });
+
+const sourceAddressForRegion = (
+  region: CanonicalResourceRegion,
+  addresses: ReadonlyArray<ResourceAddress>,
+): ResourceAddress | undefined => {
+  const normalized = region.normalizedRegion as {
+    readonly kind?: unknown;
+    readonly _tag?: unknown;
+    readonly path?: unknown;
+    readonly namespace?: unknown;
+    readonly address?: unknown;
+  };
+  const kind = normalized.kind ?? normalized._tag;
+  return addresses.find((address) => {
+    if (
+      (kind === "FileTree" || kind === "GitWorktree") &&
+      (address._tag === "FileTree" || address._tag === "GitWorktree")
+    ) {
+      return (
+        address.path.replaceAll("\\", "/").toLowerCase() ===
+        String(normalized.path).replaceAll("\\", "/").toLowerCase()
+      );
+    }
+    if (kind === "DatabaseNamespace" && address._tag === "DatabaseNamespace") {
+      return address.namespace === normalized.namespace;
+    }
+    return (
+      kind === "ExternalResource" &&
+      address._tag === "ExternalResource" &&
+      address.address === normalized.address
+    );
+  });
+};
 
 export const ResourceOwnershipRepositoryLive: Layer.Layer<
   ResourceOwnershipRepository,
@@ -198,6 +239,11 @@ export const OwnershipWriteServiceLive: Layer.Layer<
   | TransactionPort
   | ResourceOwnershipRepository
   | EnvironmentRevisionStore
+  | WorkspaceRepository
+  | WorkspaceResourceActivationStore
+  | DomainEventJournal
+  | IdGenerator
+  | Clock
 > = Layer.effect(
   OwnershipWriteService,
   Effect.gen(function* () {
@@ -205,6 +251,14 @@ export const OwnershipWriteServiceLive: Layer.Layer<
     const tx = yield* TransactionPort;
     const repository = yield* ResourceOwnershipRepository;
     const revisions = yield* EnvironmentRevisionStore;
+    const clock = yield* Clock;
+    const workspaces = yield* WorkspaceRepository;
+    const activationIntents = yield* WorkspaceResourceActivationStore;
+    const journal = yield* DomainEventJournal;
+    const ids = yield* IdGenerator;
+    const activationActor = parse(Actor)(
+      "system:workspace-resource-activation",
+    );
 
     const resolveAndWrite = (
       projectId: ProjectId,
@@ -269,6 +323,218 @@ export const OwnershipWriteServiceLive: Layer.Layer<
         return { regions: resolved.regions, claims };
       });
 
-    return OwnershipWriteService.of({ resolveAndWrite });
+    const activatePendingWorkspaceResource: OwnershipWriteServiceService["activatePendingWorkspaceResource"] =
+      (projectId, workspaceId, resourceBoundaryRevision, addresses) =>
+        Effect.gen(function* () {
+          const initial = yield* tx.transact(
+            Effect.gen(function* () {
+              const intent = yield* activationIntents.find(
+                projectId,
+                workspaceId,
+                resourceBoundaryRevision,
+              );
+              if (Option.isNone(intent)) {
+                return yield* Effect.fail({
+                  _tag: "PersistenceCorruption" as const,
+                  repository: "WorkspaceResourceActivationStore" as const,
+                  operation: "activate",
+                  reason: "the exact Pending activation intent does not exist",
+                });
+              }
+              if (intent.value.status === "Active") {
+                return { _tag: "AlreadyActive" as const };
+              }
+              const workspace = yield* workspaces.findById(workspaceId);
+              if (
+                Option.isNone(workspace) ||
+                workspace.value.projectId !== projectId ||
+                workspace.value.resourceBoundaryRevision !==
+                  resourceBoundaryRevision ||
+                JSON.stringify(workspace.value.resourceBoundary.addresses) !==
+                  JSON.stringify(addresses)
+              ) {
+                return yield* Effect.fail({
+                  _tag: "PersistenceCorruption" as const,
+                  repository: "WorkspaceResourceActivationStore" as const,
+                  operation: "activate",
+                  reason:
+                    "the supplied addresses do not match the pinned canonical Workspace boundary",
+                });
+              }
+              return { _tag: "Pending" as const };
+            }),
+          );
+          if (initial._tag === "AlreadyActive") {
+            return { _tag: "AlreadyActive" as const };
+          }
+          if (addresses.length === 0) {
+            return yield* Effect.fail<EnvironmentError>({
+              _tag: "EnvironmentError",
+              cause:
+                "a Pending activation intent requires a non-empty boundary",
+            });
+          }
+
+          // Resolve the exact persisted Workspace boundary before entering the
+          // claim transaction. No Profile catalog or request path is read.
+          const resolved = yield* environment.resolve(projectId, addresses);
+          const claims = yield* Effect.forEach(resolved.regions, (region) =>
+            Effect.gen(function* () {
+              const sourceAddress = sourceAddressForRegion(region, addresses);
+              if (sourceAddress === undefined) {
+                return yield* Effect.fail<EnvironmentError>({
+                  _tag: "EnvironmentError",
+                  cause:
+                    "resource resolver produced a region without a source address",
+                });
+              }
+              const claimId = yield* ids.generate<string>(
+                "ResourceOwnershipClaim",
+              );
+              const createdAt = yield* clock.now();
+              return {
+                claimId,
+                workspaceId,
+                region,
+                sourceAddressSnapshot: sourceAddress,
+                resourceBoundaryRevision,
+                resolvedAtEnvironmentRevision:
+                  resolved.observedEnvironmentRevision,
+                createdAt,
+                releasedAt: null,
+              } satisfies ResourceOwnershipClaimRecord;
+            }),
+          );
+          if (claims.length === 0) {
+            return yield* Effect.fail<EnvironmentError>({
+              _tag: "EnvironmentError",
+              cause:
+                "resource resolver returned no claims for a non-empty boundary",
+            });
+          }
+
+          return yield* tx.transact(
+            Effect.gen(function* () {
+              const currentIntent = yield* activationIntents.find(
+                projectId,
+                workspaceId,
+                resourceBoundaryRevision,
+              );
+              if (Option.isNone(currentIntent)) {
+                return yield* Effect.fail({
+                  _tag: "PersistenceCorruption" as const,
+                  repository: "WorkspaceResourceActivationStore" as const,
+                  operation: "activate",
+                  reason:
+                    "the exact activation intent disappeared before commit",
+                });
+              }
+              if (currentIntent.value.status === "Active") {
+                return { _tag: "AlreadyActive" as const };
+              }
+              const currentWorkspace = yield* workspaces.findById(workspaceId);
+              if (
+                Option.isNone(currentWorkspace) ||
+                currentWorkspace.value.projectId !== projectId ||
+                currentWorkspace.value.resourceBoundaryRevision !==
+                  resourceBoundaryRevision ||
+                JSON.stringify(
+                  currentWorkspace.value.resourceBoundary.addresses,
+                ) !== JSON.stringify(addresses)
+              ) {
+                return yield* Effect.fail({
+                  _tag: "PersistenceCorruption" as const,
+                  repository: "WorkspaceResourceActivationStore" as const,
+                  operation: "activate",
+                  reason:
+                    "the pinned Workspace boundary changed while activation was resolving",
+                });
+              }
+              const currentEnvironment = yield* revisions.current(projectId);
+              if (
+                Option.isSome(currentEnvironment) &&
+                currentEnvironment.value !==
+                  resolved.observedEnvironmentRevision
+              ) {
+                return yield* Effect.fail<ResourceResolutionStale>({
+                  _tag: "ResourceResolutionStale",
+                  observed: resolved.observedEnvironmentRevision,
+                  current: currentEnvironment.value,
+                });
+              }
+              const conflicts = yield* Effect.forEach(
+                resolved.regions,
+                (region) =>
+                  repository.loadActiveConflicts(region.resourceSpaceId),
+              );
+              const activeClaims = conflicts.flat();
+              const overlap = claims.some((claim) =>
+                activeClaims.some((existing) =>
+                  regionsOverlap(
+                    existing.region,
+                    claim.region,
+                    resourceRegionComparator,
+                  ),
+                ),
+              );
+              if (overlap) {
+                return yield* Effect.fail<ResourceOwnershipRepositoryError>({
+                  _tag: "PersistenceConstraintViolation",
+                  repository: "ResourceOwnershipRepository",
+                  operation: "insert-active-claim",
+                  constraintKind: "Constraint",
+                  constraint: "active-resource-overlap",
+                });
+              }
+              yield* Effect.forEach(claims, (claim) =>
+                repository.insertClaim(claim),
+              );
+              yield* revisions.record(
+                projectId,
+                resolved.observedEnvironmentRevision,
+              );
+              const activatedAt = yield* clock.now();
+              const changed = yield* activationIntents.compareAndSetActive(
+                projectId,
+                workspaceId,
+                resourceBoundaryRevision,
+                activatedAt,
+                activatedAt,
+              );
+              if (!changed) {
+                return yield* Effect.fail({
+                  _tag: "PersistenceCorruption" as const,
+                  repository: "WorkspaceResourceActivationStore" as const,
+                  operation: "activate",
+                  reason:
+                    "Pending intent CAS lost after the transaction-local state check",
+                });
+              }
+              const event: PendingDomainEvent = {
+                projectId,
+                eventType: "WorkspaceResourceActivationChanged",
+                eventVersion: 1,
+                occurredAt: activatedAt,
+                aggregateRef: workspaceId,
+                actor: activationActor,
+                payload: {
+                  _tag: "WorkspaceResourceActivationChanged",
+                  workspaceId,
+                  resourceBoundaryRevision,
+                  status: "Active",
+                },
+              };
+              yield* journal
+                .append([event])
+                .pipe(Effect.provideService(IdGenerator, ids));
+              return { _tag: "Activated" as const };
+            }),
+          );
+        });
+
+    return OwnershipWriteService.of({
+      resolveAndWrite,
+      activatePendingWorkspaceResource,
+    });
   }),
 );

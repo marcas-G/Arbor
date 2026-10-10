@@ -615,7 +615,10 @@ export const buildSingleWorkspaceLayer = (
   const admission = Layer.provide(ResourceAdmissionLive, repos);
   const workspaceKnowledge = Layer.provide(WorkspaceKnowledgePortLive, repos);
   const workspacePlacement = Layer.provide(WorkspacePlacementPortLive, repos);
-  const ownershipWrite = Layer.provide(OwnershipWriteServiceLive, repos);
+  const ownershipWrite = Layer.provide(
+    OwnershipWriteServiceLive,
+    Layer.mergeAll(repos, infra),
+  );
   const inputPromotion = Layer.provide(
     config.inputPromotionQualificationProbe === undefined
       ? InputPromotionServiceLive

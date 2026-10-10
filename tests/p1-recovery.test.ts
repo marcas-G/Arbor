@@ -19,6 +19,8 @@ import {
   runConsumerBatch,
   runMigrations,
   TransactionPortLive,
+  WorkspaceRepositoryLive,
+  WorkspaceResourceActivationStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
   CommandId,
@@ -329,6 +331,9 @@ describe("P1-014 recovery matrix — ownership and migration", () => {
       Layer.provide(TransactionPortLive, infra),
       Layer.provide(ResourceOwnershipRepositoryLive, infra),
       Layer.provide(EnvironmentRevisionStoreLive, infra),
+      Layer.provide(DomainEventJournalLive, infra),
+      Layer.provide(WorkspaceRepositoryLive, infra),
+      Layer.provide(WorkspaceResourceActivationStoreLive, infra),
       Layer.succeed(ProjectEnvironmentPort, {
         resolve: (_projectId, addresses) =>
           Effect.succeed({
@@ -343,7 +348,7 @@ describe("P1-014 recovery matrix — ownership and migration", () => {
     return Layer.mergeAll(
       infra,
       services,
-      Layer.provide(OwnershipWriteServiceLive, services),
+      Layer.provide(OwnershipWriteServiceLive, Layer.mergeAll(services, infra)),
     );
   };
 
