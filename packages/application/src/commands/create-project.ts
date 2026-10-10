@@ -8,8 +8,9 @@ import {
   ok,
   type ProjectId,
   type ProjectPolicy,
-  type ResourceBoundary,
-  type ResourceBoundaryRevision,
+  parse,
+  type ResourceAddress,
+  ResourceBoundaryRevision,
   type ResponsibilityBoundAgentBinding,
   type ResponsibilityDefinition,
   type ResponsibilityRevision,
@@ -21,11 +22,21 @@ import {
 import type {
   PendingDomainEvent,
   ProjectRepositoryService,
+  ProjectResourceProfilePortService,
   SessionRepositoryService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
+import { commandErr } from "../command-result.js";
 import type { CommandHandler } from "../gateway.js";
+
+export type CreateProjectResourceSelection =
+  | {
+      readonly _tag: "Profile";
+      readonly resourceProfileRef: string;
+      readonly version: string;
+    }
+  | { readonly _tag: "ConversationOnly" };
 
 export interface CreateProjectPayload {
   readonly name: string;
@@ -43,8 +54,7 @@ export interface CreateProjectPayload {
     readonly name: string;
     readonly responsibilityDefinition: ResponsibilityDefinition;
     readonly responsibilityRevision: ResponsibilityRevision;
-    readonly resourceBoundary: ResourceBoundary;
-    readonly resourceBoundaryRevision: ResourceBoundaryRevision;
+    readonly resourceSelection: CreateProjectResourceSelection;
     readonly agentBinding: ResponsibilityBoundAgentBinding;
     readonly workspacePolicy: WorkspacePolicy;
     readonly workspacePolicyRevision: Revision;
@@ -62,13 +72,14 @@ export interface CreateProjectDependencies {
   readonly projects: ProjectRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
+  readonly projectResourceProfiles?: ProjectResourceProfilePortService;
 }
 
 export const makeCreateProjectHandler = (
   dependencies: CreateProjectDependencies,
 ): CommandHandler<CreateProjectPayload, CreateProjectResult> => ({
   commandType: "CreateProject",
-  schemaVersion: "1",
+  schemaVersion: "2",
   authority: { tag: "CreateProjectAuthority", targetMatches: () => true },
   stopAdmission: { _tag: "Unclassified" },
   execute: (envelope) =>
@@ -78,15 +89,30 @@ export const makeCreateProjectHandler = (
       if (!projectName.ok) {
         return err(projectName.error);
       }
-      if (
-        payload.rootWorkspace.resourceBoundary.basisResponsibilityRevision !==
-        payload.rootWorkspace.responsibilityRevision
-      ) {
-        return err({
-          _tag: "AuthorityDenied",
-          reason: "resource boundary basis revision mismatch",
-        });
+      let trustedAddresses: ReadonlyArray<ResourceAddress> = [];
+      if (payload.rootWorkspace.resourceSelection._tag === "Profile") {
+        const profiles = dependencies.projectResourceProfiles;
+        const selected =
+          profiles === undefined
+            ? Option.none()
+            : yield* profiles.resolve(
+                payload.rootWorkspace.resourceSelection.resourceProfileRef,
+                payload.rootWorkspace.resourceSelection.version,
+              );
+        if (Option.isNone(selected)) {
+          return commandErr({
+            _tag: "ProjectResourceUnavailable",
+            commandId: envelope.commandId,
+          });
+        }
+        trustedAddresses = [selected.value.canonicalAddress];
       }
+      const resourceBoundary = {
+        basisResponsibilityRevision:
+          payload.rootWorkspace.responsibilityRevision,
+        addresses: trustedAddresses,
+      };
+      const resourceBoundaryRevision = parse(ResourceBoundaryRevision)(0);
 
       yield* dependencies.projects.create(
         createProject({
@@ -109,9 +135,8 @@ export const makeCreateProjectHandler = (
           responsibilityDefinition:
             payload.rootWorkspace.responsibilityDefinition,
           responsibilityRevision: payload.rootWorkspace.responsibilityRevision,
-          resourceBoundary: payload.rootWorkspace.resourceBoundary,
-          resourceBoundaryRevision:
-            payload.rootWorkspace.resourceBoundaryRevision,
+          resourceBoundary,
+          resourceBoundaryRevision,
           agentBinding: payload.rootWorkspace.agentBinding,
           primarySessionId: payload.primarySession.sessionId,
           workspacePolicy: payload.rootWorkspace.workspacePolicy,

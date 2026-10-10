@@ -110,10 +110,12 @@ import {
   type AgentLoopStepStore,
   type CanonicalProviderEvent,
   type Clock,
+  type CommandStore,
   type DecisionRequestStore,
   type DeliverableRepository,
   type DomainEventJournal,
   type ExecutionDriverPort,
+  type ExecutionRepository,
   type ExecutionScheduler,
   type HealthPort,
   type HumanMessageStore,
@@ -122,21 +124,25 @@ import {
   type MessageStore,
   type ModelDeployment,
   makeProviderRegistry,
+  type PermissionGrantRepository,
   type PersistenceHealthProbe,
   type ProjectDirectory,
   type ProjectionQueryPort,
+  type ProjectRepository,
   ProjectResourceProfilePort,
   type ProjectResourceProfilePortService,
   type ProviderFailureKind,
   type ProviderPort,
   type ReconciliationSource,
   type ResolvedModelBinding,
+  type ResourceOwnershipRepository,
   type RunnableWorkSource,
   resolvedModelBindingFingerprint,
   resolveModelBinding,
   SecretMaterial,
   type SecretRef,
   SecretStorePort,
+  type SessionRepository,
   SkillRegistry,
   type ToolCatalogPort,
   type TransactionPort,
@@ -167,6 +173,7 @@ import {
 } from "@arbor/tool-runtime";
 import { WorkerDispatchPortLive } from "@arbor/worker-local";
 import { Effect, Layer } from "effect";
+import type { SqlClient as SqlClientService } from "effect/unstable/sql/SqlClient";
 import { ControlActionAuthorizerLive } from "./control-action-authorizer.js";
 import {
   type AssignWorkBindingAttentionQualificationProbe,
@@ -329,6 +336,7 @@ export interface SingleWorkspaceConfig {
 
 export type SingleWorkspaceServices =
   | CommandGateway
+  | CommandStore
   | Clock
   | DeliverableRepository
   | DomainEventJournal
@@ -336,6 +344,12 @@ export type SingleWorkspaceServices =
   | InboxProjectionStore
   | MessageStore
   | TransactionPort
+  | SqlClientService
+  | ExecutionRepository
+  | PermissionGrantRepository
+  | ProjectRepository
+  | ResourceOwnershipRepository
+  | SessionRepository
   | WorkRepository
   | WorkspaceRepository
   | AgentLoopStepStore
@@ -635,9 +649,13 @@ export const buildSingleWorkspaceLayer = (
       artifactService,
     ),
   );
+  const projectResourceProfilePort = Layer.succeed(
+    ProjectResourceProfilePort,
+    config.projectResourceProfiles ?? makeProjectResourceProfilePort([]),
+  );
   const registry = Layer.provide(
     SingleWorkspaceCommandHandlerRegistryLive,
-    Layer.mergeAll(repos, infra),
+    Layer.mergeAll(repos, infra, projectResourceProfilePort),
   );
   const gateway = Layer.provide(
     makeCommandGatewayLive(config.gatewayQualificationProbe),
@@ -789,10 +807,7 @@ export const buildSingleWorkspaceLayer = (
     registry,
     gateway,
     reconciliation,
-    Layer.succeed(
-      ProjectResourceProfilePort,
-      config.projectResourceProfiles ?? makeProjectResourceProfilePort([]),
-    ),
+    projectResourceProfilePort,
   );
 
   // --- B-7 production deployment surfaces (composition-root wiring) ---------

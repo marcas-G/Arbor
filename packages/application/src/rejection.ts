@@ -1,4 +1,5 @@
 import type {
+  CommandId,
   DeliverableId,
   DependencyId,
   DomainError,
@@ -11,6 +12,11 @@ import type {
 
 export type CommandRejection =
   | DomainError
+  | {
+      /** P1 FT-DG-01: a host Profile selector is unknown, stale, or unavailable. */
+      readonly _tag: "ProjectResourceUnavailable";
+      readonly commandId: CommandId;
+    }
   | { readonly _tag: "FencingRejected" }
   | { readonly _tag: "ExecutionStopping" }
   | {

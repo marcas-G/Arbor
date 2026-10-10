@@ -366,6 +366,7 @@ export const makeExternalSubmissionFromServices = (
     const registry = yield* CommandHandlerRegistry;
     const loadInputs = yield* makeRepositoryInputsLoader(governance);
     const tx = yield* TransactionPort;
+    const workspaces = yield* WorkspaceRepository;
     const ownershipOption = yield* Effect.serviceOption(
       ResourceOwnershipRepository,
     );
@@ -425,15 +426,32 @@ export const makeExternalSubmissionFromServices = (
           { environment, ownershipWrite, clock, ids },
         );
       });
+    const activatePersistedWorkspaceIfMissing = (input: {
+      readonly projectId: DecodedExternalCommandEnvelope["projectId"];
+      readonly workspaceId: WorkspaceId;
+    }) =>
+      Effect.gen(function* () {
+        const workspace = yield* tx.transact(
+          workspaces.findById(input.workspaceId),
+        );
+        if (Option.isNone(workspace)) {
+          return yield* Effect.fail(
+            new Error("committed workspace boundary is unavailable"),
+          );
+        }
+        return yield* activateIfMissing({
+          projectId: input.projectId,
+          workspaceId: input.workspaceId,
+          resourceBoundaryRevision: workspace.value.resourceBoundaryRevision,
+          resourceBoundary: workspace.value.resourceBoundary,
+        });
+      });
     const afterCommitted = (envelope: DecodedExternalCommandEnvelope) => {
       const payload = payloadRecord(envelope.payload);
       if (envelope.commandType === "CreateProject") {
-        const root = payloadRecord(payload.rootWorkspace);
-        return activateIfMissing({
+        return activatePersistedWorkspaceIfMissing({
           projectId: envelope.projectId,
           workspaceId: String(payload.rootWorkspaceId) as WorkspaceId,
-          resourceBoundaryRevision: Number(root.resourceBoundaryRevision),
-          resourceBoundary: payloadRecord(root.resourceBoundary),
         });
       }
       if (envelope.commandType === "CreateChildWorkspace") {

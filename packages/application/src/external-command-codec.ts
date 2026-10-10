@@ -187,6 +187,7 @@ export type SemanticExternalCommand = {
 type Rule =
   | { readonly kind: "string" }
   | { readonly kind: "non-empty-string" }
+  | { readonly kind: "opaque-identifier" }
   | { readonly kind: "boolean" }
   | { readonly kind: "integer" }
   | { readonly kind: "id"; readonly idType: IdTypeName }
@@ -205,6 +206,7 @@ type Rule =
 
 const string: Rule = { kind: "string" };
 const nonEmptyString: Rule = { kind: "non-empty-string" };
+const opaqueIdentifier: Rule = { kind: "opaque-identifier" };
 const boolean: Rule = { kind: "boolean" };
 const integer: Rule = { kind: "integer" };
 const record: Rule = { kind: "record" };
@@ -273,6 +275,14 @@ const resourceAddress = union("_tag", {
 const resourceBoundary = object({
   basisResponsibilityRevision: integer,
   addresses: array(resourceAddress),
+});
+const projectResourceSelection = union("_tag", {
+  Profile: object({
+    _tag: literal("Profile"),
+    resourceProfileRef: opaqueIdentifier,
+    version: opaqueIdentifier,
+  }),
+  ConversationOnly: object({ _tag: literal("ConversationOnly") }),
 });
 const responsibilityBoundAgentBinding = object({
   _tag: literal("ResponsibilityBoundAgentBinding"),
@@ -479,8 +489,7 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
       name: string,
       responsibilityDefinition,
       responsibilityRevision: integer,
-      resourceBoundary,
-      resourceBoundaryRevision: integer,
+      resourceSelection: projectResourceSelection,
       agentBinding: responsibilityBoundAgentBinding,
       workspacePolicy: record,
       workspacePolicyRevision: revision,
@@ -902,6 +911,15 @@ const decodeValue = (
       return INVALID;
     case "non-empty-string":
       if (typeof input === "string" && input.length > 0) return input;
+      addIssue(issues, path, typeof input === "string" ? "format" : "type");
+      return INVALID;
+    case "opaque-identifier":
+      if (
+        typeof input === "string" &&
+        /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(input)
+      ) {
+        return input;
+      }
       addIssue(issues, path, typeof input === "string" ? "format" : "type");
       return INVALID;
     case "boolean":

@@ -9,6 +9,8 @@ import {
   type PermissionGrantRepositoryService,
   ProjectRepository,
   type ProjectRepositoryService,
+  ProjectResourceProfilePort,
+  type ProjectResourceProfilePortService,
   type ProjectToolRegistryService,
   SessionRepository,
   type SessionRepositoryService,
@@ -35,6 +37,7 @@ export interface P1CommandDependencies {
   readonly projects: ProjectRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
+  readonly projectResourceProfiles?: ProjectResourceProfilePortService;
   readonly works: WorkRepositoryService;
   readonly executions?: Pick<ExecutionRepositoryService, "findById">;
   readonly bindings?: Pick<AssignWorkTargetBindingRepositoryService, "insert">;
@@ -97,6 +100,9 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
     const workspaces = yield* WorkspaceRepository;
     const sessions = yield* SessionRepository;
     const works = yield* WorkRepository;
+    const projectResourceProfiles = yield* Effect.serviceOption(
+      ProjectResourceProfilePort,
+    );
     const clock = yield* Effect.serviceOption(Clock);
     const handlers = makeP1CommandHandlers({
       ...(Option.isSome(clock) ? { clock: clock.value } : {}),
@@ -104,6 +110,9 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
       workspaces,
       sessions,
       works,
+      ...(Option.isSome(projectResourceProfiles)
+        ? { projectResourceProfiles: projectResourceProfiles.value }
+        : {}),
     });
     return CommandHandlerRegistry.of({
       lookup: (commandType) => {
