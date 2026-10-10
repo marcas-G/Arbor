@@ -23,9 +23,11 @@ schema冒充 receipt result schema。`ConcludeVerificationResult.conclusionReaso
 未将已有安全 Problem/operational failure 夸大成 durable Attention。
 
 本增量将收到的 AH10/P9 direct-child prior Committed disposition direction 纳入候选，不落设计：
-A1 raw JSON syntax corruption 保留非披露内部 `PersistenceCorruption<"CommandStore">` diagnostic，
-并使用现有 P9 `ReceiptMismatch` fact/event 事务，最终 `AgentActionRecoveryBlocked`；不得将
-decoder corruption 原样变成会导致 `ControlActionHandlerRejected` 的
+A1 raw JSON syntax corruption 在 decoder/control boundary内分类为
+`PersistenceCorruption<"CommandStore">`，并使用现有 P9 `ReceiptMismatch` fact/event 事务，最终
+`AgentActionRecoveryBlocked`；该分类仅作内部控制信息，不声称写入可观测诊断sink。该 ADT不承载
+corruption cause，P9 durable fact也只承载固定 failureCode等字段。若要求 operator-visible诊断需
+独立 diagnostic-port/logger OPEN。不得将 decoder corruption 原样变成会导致 `ControlActionHandlerRejected` 的
 `AgentActionOperationalFailure`。A2 可解析坏 shape 与 B binding/effect mismatch 继续归既有 P9
 failure code。普通非-direct-child prior corruption 只 operational，不借用 P9 fact。P9 事务保持
 atomic/dedup/提交前后 crash identity，事务失败 fail closed。未新增通用 P10 source；既有 AH10 P9
@@ -57,7 +59,7 @@ pnpm exec vitest run --config vitest.pending-functional.config.ts tests/function
 pnpm exec vitest run --config vitest.pending-functional.config.ts tests/functional/pending/f23-exact-tuple-receipt-integrity.functional.test.ts --testNamePattern "syntax-corrupt direct-child prior receipt"
 ```
 
-结果 **1 failed / 3 skipped，9.36s**；`tests/functional/pending/f23-exact-tuple-receipt-integrity.functional.test.ts:520` 断言 P9 fact sink应收到一条 `ReceiptMismatch`，但当前 `decodeCommandReceipt` parse error先退出，spy实际调用为 0。该 RED 使用隔离 fact sink，证明 P9 store调用被遗漏，不证明真实 adapter事务/crash行为。测试还要求恢复最终 `AgentActionRecoveryBlocked`、无 JSON进入 fact/diagnostic、无 Observation/Gateway Command。
+结果 **1 failed / 3 skipped**（定向运行约9s）；A1输入为含唯一 `leakSentinel` 的语法损坏 JSON `{"leak_marker_<sentinel>":`。`tests/functional/pending/f23-exact-tuple-receipt-integrity.functional.test.ts:521` 断言 P9 fact sink应收到一条 `ReceiptMismatch`，但当前 `decodeCommandReceipt` parse error先退出，spy实际调用为 0。fact postcondition按真实 writer字段 `committedCommandId` 核对，并要求固定 fact不含 sentinel。该 RED 使用隔离 fake sink，证明 P9 store调用被遗漏，不证明真实 adapter事务/crash行为；`AgentActionRecoveryBlocked`自身不携带原因，当前没有测试或声称可观察日志/diagnostic。后续若需要独立 observable diagnostic port，仍为 OPEN。
 
 控制动作调用点提供可信 CommandType 静态来源：AssignWork→`AssignWork`、AcceptResult→`AcceptWorkOutcome`、SendMessage→`SendMessage`、SelectCurrentWork→`SelectCurrentWork`、DeclareDependency→`DeclareDependency`、ProduceDeliverable→`ProduceDeliverable`；当前对应 Handler schemaVersion 均为 `"1"`。未来 prior consumer decoder 应由 typed caller 与 handler registry/decoder descriptor 共同确定，不能让存储行自选 command type/schema decoder。先核 prior CommandId/Project identity，再严格 decode；result-dependent binding/effect proof 在 decode 后、Observation 前完整完成。普通 prior-consumer 坏 result 必须为 `AgentActionOperationalFailure`；direct-child AH10 的 proof-incomplete Committed receipt 则须保留已接受的 P9 `ReceiptMismatch`/适用 failure fact 与 recovery-blocked 路径，不能被通用 decode failure 吞掉，也不能把一般 store corruption 伪装成 binding failure。P1 `07`/P9 `07` 未裁决跨部署 schema-version prior receipt replay；无 explicit decoder mapping 时 fail closed，跨版本支持为独立 OPEN。
 

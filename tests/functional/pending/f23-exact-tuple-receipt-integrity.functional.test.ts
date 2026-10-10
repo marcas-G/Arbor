@@ -414,7 +414,8 @@ describe("pending F23 exact-tuple receipt integrity", () => {
       "exe_018f2b3c-4d5e-7abc-8def-0123456789b0",
     );
     const logicalActionId = "act_018f2b3c-4d5e-7abc-8def-0123456789b0";
-    const rawMalformedResult = "{";
+    const leakSentinel = `F23-P9-A1-${crypto.randomUUID()}`;
+    const rawMalformedResult = `{"leak_marker_${leakSentinel}":`;
     const stored = {
       commandId: priorCommandId,
       projectId: p7Project,
@@ -519,12 +520,12 @@ describe("pending F23 exact-tuple receipt integrity", () => {
 
     expect(p9Facts).toHaveLength(1);
     expect(p9Facts[0]).toMatchObject({
-      commandId: priorCommandId,
+      committedCommandId: priorCommandId,
       executionId,
       logicalActionId,
       failureCode: "ReceiptMismatch",
     });
-    expect(JSON.stringify(p9Facts)).not.toContain(rawMalformedResult);
+    expect(JSON.stringify(p9Facts)).not.toContain(leakSentinel);
     expect(gatewayCalls).toBe(0);
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
