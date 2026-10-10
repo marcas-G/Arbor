@@ -108,6 +108,7 @@ describe("release-functional long-lived responsibility", () => {
     };
 
     const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
       admitWorkspaceDirectory: true,
       reply,
     });
