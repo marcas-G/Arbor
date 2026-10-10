@@ -44,3 +44,21 @@ same-request receipt replay. It does **not** claim to fix or green the nine
 existing P9 recovery RED tests: their fixtures primarily use malformed
 ExecutionIds and were not modified or run here. Any fixture repair or further
 recovery behavior remains separate work.
+
+## Shared core fixture follow-up
+
+After the recovery CommandId change was integrated with the core fixture
+migration, two P9 tests still queried the retired literal forms
+`cmd_recovery_completion_<ExecutionId>` / `cmd_recovery_settle_<ExecutionId>`.
+Their assertions now derive the exact expected `CommandId` with the exported
+stable `newUuid7("recovery", "<ExecutionId>:<branch>")` helper, pass it through
+the Domain `CommandId` parser, and retain the existing one-row receipt and
+second-recovery no-duplicate assertions. The completion recovery tests also
+assert the seeded fact plus exactly one `ExecutionSettled` event.
+
+Verification after this fixture-only follow-up:
+
+- `tests/p9-acceptance.test.ts` + `tests/p9-recovery-driver.test.ts` — PASS,
+  2 files / 15 tests.
+- Core targeted matrix — PASS, 18 files / 76 tests.
+- P12/app targeted matrix — PASS, 21 files / 172 passed / 2 skipped.
