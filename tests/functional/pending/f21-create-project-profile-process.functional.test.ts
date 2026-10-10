@@ -6,11 +6,14 @@ import {
 import { functionalId, makePublicClient } from "../support/public-client.js";
 
 let fixture: ProductionFixture;
+const daemonOutput: string[] = [];
 
 test.beforeAll(async () => {
   fixture = await startProductionFixture({
+    isolatedPortHandshake: true,
     admitWorkspaceDirectory: true,
     reply: () => ({ _tag: "Text", text: "No model call expected" }),
+    onDaemonStdout: (line) => daemonOutput.push(line),
   });
 });
 
@@ -19,6 +22,7 @@ test.afterAll(async () => {
 });
 
 test("public CreateProject Profile receipt survives daemon restart without exposing or changing the host path", async () => {
+  const baseUrlBeforeRestart = fixture.baseUrl;
   const client = makePublicClient(fixture.baseUrl);
   const catalog = await client.projectResources();
   const available = catalog.profiles.filter((profile) => profile.available);
@@ -91,7 +95,10 @@ test("public CreateProject Profile receipt survives daemon restart without expos
   });
   expect(JSON.stringify(first.body)).not.toContain(fixture.workspaceDirectory);
 
+  // restart waits for the first child to exit before rebinding this URL under
+  // a fresh daemon process identity.
   await fixture.restart();
+  expect(fixture.baseUrl).toBe(baseUrlBeforeRestart);
   const afterRestartCatalog = await client.projectResources();
   expect(afterRestartCatalog).toEqual(catalog);
   const replay = await send();
@@ -101,6 +108,44 @@ test("public CreateProject Profile receipt survives daemon restart without expos
     body: { commandId, resolution: "Committed" },
   });
   expect(JSON.stringify(replay.body)).not.toContain(fixture.workspaceDirectory);
+  const startupReports = daemonOutput
+    .map((line) => {
+      try {
+        return JSON.parse(line) as {
+          readonly tag?: string;
+          readonly nonce?: string;
+          readonly pid?: number;
+          readonly port?: number;
+        };
+      } catch {
+        return undefined;
+      }
+    })
+    .filter(
+      (report) =>
+        report?.tag === "FUNCTIONAL_DAEMON_STARTED" ||
+        report?.tag === "FUNCTIONAL_DAEMON_LISTENING",
+    );
+  const started = startupReports.filter(
+    (report) => report?.tag === "FUNCTIONAL_DAEMON_STARTED",
+  );
+  const listening = startupReports.filter(
+    (report) => report?.tag === "FUNCTIONAL_DAEMON_LISTENING",
+  );
+  expect(started).toHaveLength(2);
+  expect(listening).toHaveLength(2);
+  expect(started[1]?.nonce).not.toBe(started[0]?.nonce);
+  expect(started[1]?.pid).not.toBe(started[0]?.pid);
+  expect(listening.map((report) => report?.nonce)).toEqual(
+    started.map((report) => report?.nonce),
+  );
+  expect(listening.map((report) => report?.pid)).toEqual(
+    started.map((report) => report?.pid),
+  );
+  expect(listening.map((report) => report?.port)).toEqual([
+    Number(new URL(baseUrlBeforeRestart).port),
+    Number(new URL(baseUrlBeforeRestart).port),
+  ]);
   expect(fixture.daemonErrors).toEqual([]);
   expect(fixture.providerCalls).toHaveLength(0);
 });
