@@ -22,7 +22,7 @@ current/stale generation fence, effect count, ToolResult count/source, action
 state and cursor from one coherent SQLite snapshot. Cases with no P4 row before
 claim explicitly assert that absence.
 
-## Reusable process harness (design; not yet run)
+## Reusable process harness
 
 `tests/functional/support/production-fixture.ts` already provides the minimal
 production harness faces: `crash`, `restart`, and `startAdditionalDaemon`. The
@@ -33,14 +33,19 @@ two-daemon pattern: hold/fence generation 0, expire its lease, start a second
 daemon on the same DB, acquire generation 1, then release the old process and
 assert its settlement is fenced.
 
-The first P4 storage batch should be a separately labelled **store-process**
-runner over file-backed SQLite: the parent seeds the fixture, an independent
-Node child uses production `ToolInvocationStoreLive` + `TransactionPortLive`,
-and test-only probes park inside a transaction just before COMMIT or directly
-after COMMIT. The parent SIGKILLs the child, inspects from a separate read
-connection, then starts a fresh child to retry/replay. This proves real SQLite
-process crash atomicity for claim/Denied/Interrupted; it must not be reported
-as a production daemon or external-effect qualification.
+The first P4 storage batch is prepared as a separately labelled
+**store-process** runner over file-backed SQLite:
+`tests/functional/process/agent-action-ah7-p4-store-process-crash.functional.test.ts`
+starts `tests/functional/support/ah7-p4-store-crash-child.mjs`. The parent
+seeds the fixture, an independent Node child uses production
+`ToolInvocationStoreLive` + `TransactionPortLive`, and test-only probes park
+inside a transaction just before COMMIT or directly after COMMIT. The parent
+SIGKILLs the child, inspects from a separate read connection, then starts a
+fresh child to retry/replay. This can prove real SQLite process crash atomicity
+for claim/Denied/Interrupted; it must not be reported as a production daemon or
+external-effect qualification. The six claim/Denied/Interrupted before/after-
+COMMIT branches passed as one targeted test; see
+`planning/results/AH7-DG-03-L4-store-process.result.md`.
 
 After those store-process cases, the production `ProductionFixture` should be
 reused for the P3 ToolResult/Action/cursor and P4 effect/settlement boundaries.
