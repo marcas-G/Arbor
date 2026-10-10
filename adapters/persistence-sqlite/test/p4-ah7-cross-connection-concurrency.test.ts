@@ -128,7 +128,7 @@ afterEach(async () => {
 });
 
 interface CrossProcessMessage {
-  readonly type: "ready" | "result" | "error";
+  readonly type: "ready" | "effect-ready" | "result" | "error";
   readonly worker?: string;
   readonly pid?: number;
   readonly result?: {
@@ -404,6 +404,7 @@ const withTimeout = <A>(promise: Promise<A>, label: string): Promise<A> =>
 const runCrossProcessRace = async (
   databaseFile: string,
   effectLogPath: string,
+  pauseFirstAfterEffect = false,
 ): Promise<ReadonlyArray<CrossProcessMessage>> => {
   const ready = new Map<string, CrossProcessMessage>();
   const results = new Map<string, CrossProcessMessage>();
@@ -411,6 +412,14 @@ const runCrossProcessRace = async (
   let resolveReady: (() => void) | undefined;
   let resolveResults: (() => void) | undefined;
   let rejectRace: ((error: Error) => void) | undefined;
+  let resolveFirstEffect: (() => void) | undefined;
+  let resolveSecondResult: (() => void) | undefined;
+  const firstEffect = new Promise<void>((resolveEffect) => {
+    resolveFirstEffect = resolveEffect;
+  });
+  const secondResult = new Promise<void>((resolveResult) => {
+    resolveSecondResult = resolveResult;
+  });
   const bothReady = new Promise<void>((resolveBarrier) => {
     resolveReady = resolveBarrier;
   });
@@ -430,6 +439,9 @@ const runCrossProcessRace = async (
         ARBOR_AH7_DB: databaseFile,
         ARBOR_AH7_EFFECT_LOG: effectLogPath,
         ARBOR_AH7_WORKER: worker,
+        ...(pauseFirstAfterEffect && worker === "worker-a"
+          ? { ARBOR_AH7_PAUSE_AFTER_EFFECT: "1" }
+          : {}),
       },
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
@@ -445,8 +457,11 @@ const runCrossProcessRace = async (
       if (message.type === "ready") {
         ready.set(worker, message);
         if (ready.size === 2) resolveReady?.();
+      } else if (message.type === "effect-ready") {
+        resolveFirstEffect?.();
       } else if (message.type === "result") {
         results.set(worker, message);
+        if (worker === "worker-b") resolveSecondResult?.();
         if (results.size === 2) resolveResults?.();
       } else if (message.type === "error") {
         rejectRace?.(
@@ -479,8 +494,23 @@ const runCrossProcessRace = async (
   expect(ready.get("worker-a")?.pid).not.toBe(ready.get("worker-b")?.pid);
 
   // Both processes have reached ToolDefinitionStore.definition and are blocked
-  // there; release both through IPC only after observing both ready messages.
-  for (const child of workers) child.send({ type: "go" });
+  // there. The focused owner race holds A after its real effect but before its
+  // settlement, then lets B re-enter the same invocation before A can settle.
+  if (pauseFirstAfterEffect) {
+    workers[0]?.send({ type: "go" });
+    await withTimeout(
+      Promise.race([firstEffect, raceFailure]),
+      "first worker effect before settlement",
+    );
+    workers[1]?.send({ type: "go" });
+    await withTimeout(
+      Promise.race([secondResult, raceFailure]),
+      "second worker reentry result",
+    );
+    workers[0]?.send({ type: "release-settlement" });
+  } else {
+    for (const child of workers) child.send({ type: "go" });
+  }
   await withTimeout(
     Promise.race([bothFinished, raceFailure]),
     "both child results",
@@ -679,5 +709,37 @@ describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () =
       settled: 1,
       settlement_kind: "Success",
     });
+  });
+
+  it("does not let a concurrent reentry settle unknown over the active effect owner's later success", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "arbor-ah7-cross-process-"));
+    directories.push(directory);
+    const databaseFile = join(directory, "shared.db");
+    const effectLogPath = join(directory, "external-effects.log");
+    const infrastructure = makeInfrastructure(databaseFile);
+    await Effect.runPromise(
+      Effect.scoped(Effect.provide(seedDatabase, infrastructure)),
+    );
+
+    const results = await runCrossProcessRace(
+      databaseFile,
+      effectLogPath,
+      true,
+    );
+    expect(results.map((result) => result.type)).toEqual(["result", "result"]);
+    expect(results.map((result) => result.worker)).toEqual([
+      "worker-a",
+      "worker-b",
+    ]);
+    expect(results.map((result) => result.result?.outcome)).toEqual([
+      "Success",
+      "OutcomeUnknown",
+    ]);
+    expect(readFileSync(effectLogPath, "utf8").trim().split(/\r?\n/u)).toEqual([
+      processEffectMarker,
+    ]);
+    expect(await durableCounts(infrastructure)).toMatchObject([
+      { intents: 1, settled: 1, settlement_kind: "Success" },
+    ]);
   });
 });
