@@ -33,6 +33,8 @@ const contextFor = (executionId: string) =>
     _tag: "ExecutionOrigin",
     principal: "worker:identity-test" as never,
     executionId: executionId as ExecutionId,
+    workerId: "worker:identity-test",
+    workerIncarnationId: "incarnation:identity-test",
     fencingGeneration: 0 as never,
   }) as never;
 
@@ -140,5 +142,47 @@ describe("executable tool invocation identity scope", () => {
     }
     expect(ids[0]).toBe(legacyId);
     expect(ids[1]).not.toBe(legacyId);
+  });
+
+  it("fails closed before ToolRuntime when an active ExecutionOrigin lacks the lease holder triple", async () => {
+    let invocationCalls = 0;
+    const handler = makeExecutableToolHandler(
+      {
+        invoke: () => {
+          invocationCalls += 1;
+          return Effect.succeed({
+            _tag: "Success" as const,
+            observation: { text: "must not run", truncated: false },
+            resultRef: null,
+          });
+        },
+      },
+      { now: () => Effect.succeed("2026-10-05T00:00:00.000Z") },
+      {
+        visibleRefs: () =>
+          Effect.succeed([{ name: "read", version: "1", hash: "read-v1" }]),
+        resolveForModel: () => Effect.die("unused"),
+      },
+    );
+    const error = await Effect.runPromise(
+      Effect.flip(
+        handler.handle({
+          invocation,
+          execution: executionFor("exe_missing_execution_fence"),
+          context: {
+            _tag: "ExecutionOrigin",
+            principal: "worker:identity-test" as never,
+            executionId: "exe_missing_execution_fence" as never,
+            fencingGeneration: 0 as never,
+          } as never,
+          controlBasis: {} as never,
+        }),
+      ),
+    );
+    expect(error).toMatchObject({
+      _tag: "AgentActionOperationalFailure",
+      operation: "ToolRuntime.LeaseFenceUnavailable",
+    });
+    expect(invocationCalls).toBe(0);
   });
 });

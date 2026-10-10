@@ -270,6 +270,7 @@ export interface ToolInvocationStoreService {
     resultRef: string | null,
     settledAt: string,
     executionFence?: ToolExecutionContext["executionFence"],
+    fenceNow?: string,
   ) => Effect.Effect<boolean, ToolInvocationStoreError, TransactionScope>;
   readonly consumeApproval: (
     approvalId: string,

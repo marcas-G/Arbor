@@ -115,6 +115,24 @@ export const makeExecutableToolHandler = (
   handle: ({ invocation, execution, context, controlBasis }) =>
     Effect.gen(function* () {
       const requestedAt = yield* clock.now();
+      const executionFence =
+        context._tag === "ExecutionOrigin" &&
+        context.workerId !== undefined &&
+        context.workerIncarnationId !== undefined
+          ? {
+              executionId: execution.executionId,
+              workerId: context.workerId,
+              workerIncarnationId: context.workerIncarnationId,
+              fencingGeneration: context.fencingGeneration,
+            }
+          : undefined;
+      if (context._tag === "ExecutionOrigin" && executionFence === undefined) {
+        return yield* Effect.fail({
+          _tag: "AgentActionOperationalFailure" as const,
+          operation: "ToolRuntime.LeaseFenceUnavailable",
+          cause: "active ExecutionOrigin is missing its lease-holder triple",
+        });
+      }
       const matchingRefs = (yield* catalog.visibleRefs().pipe(
         Effect.mapError((cause) => ({
           _tag: "AgentActionOperationalFailure" as const,
@@ -175,18 +193,7 @@ export const makeExecutableToolHandler = (
         actor: context.principal as never,
         authenticatedPrincipal: context.principal,
         controlBasisDigest,
-        ...(context._tag === "ExecutionOrigin" &&
-        context.workerId !== undefined &&
-        context.workerIncarnationId !== undefined
-          ? {
-              executionFence: {
-                executionId: execution.executionId,
-                workerId: context.workerId,
-                workerIncarnationId: context.workerIncarnationId,
-                fencingGeneration: context.fencingGeneration,
-              },
-            }
-          : {}),
+        ...(executionFence === undefined ? {} : { executionFence }),
         delegationDepth:
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,

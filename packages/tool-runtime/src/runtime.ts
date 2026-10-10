@@ -50,6 +50,7 @@ export interface ToolRuntimeQualificationEvent {
   readonly boundary:
     | "AH7AfterToolIntentCommit"
     | "AH7AfterToolEffectBeforeSettlement"
+    | "AH7BeforeToolSettlementTransaction"
     | "AH7AfterToolSettlementCommit"
     | "AH7ToolSettlementFenceRejected";
   readonly executionId: string;
@@ -460,6 +461,9 @@ export const ToolRuntimeLive = (
                         null,
                         settledAt,
                         context.executionFence,
+                        context.executionFence === undefined
+                          ? undefined
+                          : yield* clock.now(),
                       );
                       return {
                         applied,
@@ -689,15 +693,31 @@ export const ToolRuntimeLive = (
               : outcome.resultRef;
 
           const settledAt = yield* clock.now();
+          if (options.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "AH7BeforeToolSettlementTransaction",
+                  executionId: context.executionId,
+                  invocationId: intent.invocationId,
+                  callRef: intent.callRef,
+                }) ?? Promise.resolve(),
+            );
+          }
           const settlementWrite = yield* Effect.match(
             tx.transact(
               Effect.gen(function* () {
+                const fenceNow =
+                  context.executionFence === undefined
+                    ? undefined
+                    : yield* clock.now();
                 const applied = yield* store.settle(
                   intent.invocationId,
                   outcome.settlement,
                   resultRef,
                   settledAt,
                   context.executionFence,
+                  fenceNow,
                 );
                 return {
                   applied,

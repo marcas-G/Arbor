@@ -52,8 +52,10 @@ P4 row changed from unsettled to `Success` while G1's driver remained paused.
   returns whether its conditional settlement CAS updated a row.
 - SQLite settlement checks the exact invocation→Execution binding, unsettled
   Execution, worker id, process incarnation, generation, and unexpired lease in
-  the same `TransactionScope` transaction as the settlement update. A stale
-  holder receives typed `LeaseFencingRejected` and performs no row mutation.
+  the same `TransactionScope` transaction as the settlement update. The fence
+  comparison uses a fresh `Clock.now()` after the transaction has begun; the
+  earlier `settledAt` remains only the durable record timestamp. A stale holder
+  receives typed `LeaseFencingRejected` and performs no row mutation.
 - `ToolRuntime` preserves lease-fence rejection, emits the test boundary, and
   never emits the settlement-committed probe after a rejected or zero-row CAS.
   On a zero-row CAS it rereads the canonical ToolInvocation in the same
@@ -71,9 +73,21 @@ P4 row changed from unsettled to `Success` while G1's driver remained paused.
 
 - `pnpm build`: PASS.
 - `pnpm typecheck`: PASS.
+- Final focused Vitest batch covering the expiry queue, SQLite settlement/CAS,
+  direct P4 diagnostic, ToolRuntime, active ExecutionOrigin, and executable
+  outcome paths: 6 files / 31 passed, 1 skipped (the retained direct-unleased
+  pending diagnostic).
 - P2/P4/ToolRuntime unit batch: 6 files / 20 tests PASS. This includes P2 live
   lease acquire/takeover, SQLite P4 settle applied-vs-zero-row CAS, and
   ToolRuntime canonical `OutcomeUnknown` on a zero-row settlement CAS.
+- Expiry-only semaphore queue case: deterministic RED with stale
+  `settledAt` as fence time; GREEN after sampling `Clock.now()` inside the
+  settlement transaction. The row keeps generation 0 throughout; only its
+  lease expiry passes while settlement is queued. The corrected test verifies
+  `LeaseFencingRejected`, one external effect, an unsettled invocation row, and
+  no settlement-committed probe.
+- `ExecutionOrigin` missing its worker/incarnation/generation triple fails
+  closed before calling ToolRuntime (focused local regression test).
 - Real production cross-generation process test above: 1/1 PASS after fix.
   G0 was fenced while G1 owned the lease; the invocation stayed unsettled
   until G1 resumed, G1 did not repeat the shell effect, final P4/Execution
@@ -100,3 +114,7 @@ Only the lower-layer direct/unleased P4 re-entry projection remains pending the
 P4 owner decision. The P2/P9 old-generation fencing requirement is implemented
 under its existing frozen clauses. No `docs/design/**` changes, no full gates,
 no push, and no merge were performed.
+
+The legacy directive handler conditionally forwards a fence when one is
+present but is not wired into the active production Composition; this was not
+used to establish the production qualification and is non-blocking here.
