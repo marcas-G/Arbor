@@ -44,6 +44,11 @@ import {
   type SettleExecutionPayload,
 } from "../packages/execution-runtime/src/index.js";
 import { LeaseService, TransactionPort } from "../packages/ports/src/index.js";
+import {
+  seedCurrentOpenWork,
+  workEpisode,
+  yieldedSettlement,
+} from "./support/execution-episode-fixtures.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -126,6 +131,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* seedCurrentOpenWork(projectId, workspaceId, workId);
     }),
   );
 });
@@ -134,7 +140,7 @@ const admitPayload: AdmitExecutionPayload = {
   _tag: "WorkspaceMain",
   executionId,
   workspaceId,
-  focus: { _tag: "Coordination" },
+  episode: workEpisode(workId),
 };
 const admitEnvelope = (
   id: CommandId,
@@ -229,10 +235,7 @@ const bootstrap = (admitId: CommandId) =>
     yield* tx.transact(leases.acquire(executionId, "worker:a", "inc-a"));
   });
 
-const completed: SettleExecutionPayload["settlement"] = {
-  _tag: "Completed",
-  result: { _tag: "CoordinationCompleted" },
-};
+const completed: SettleExecutionPayload["settlement"] = yieldedSettlement;
 
 describe("P2-011 SettleExecution", () => {
   it("emits the exact top-level CompletionClaim trigger only for Work-bound claims", () => {

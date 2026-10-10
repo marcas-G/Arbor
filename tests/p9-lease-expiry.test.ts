@@ -51,6 +51,7 @@ import {
   TransactionPort,
 } from "../packages/ports/src/index.js";
 import { ReconciliationSourceLive } from "../packages/tool-runtime/src/index.js";
+import { yieldedSettlement } from "./support/execution-episode-fixtures.js";
 import { labeled } from "./support/p9-harness-api.js";
 
 /**
@@ -312,8 +313,7 @@ const settleViaGateway = (
   });
 
 const completed: SettleExecutionPayload["settlement"] = {
-  _tag: "Completed",
-  result: { _tag: "CoordinationCompleted" },
+  ...yieldedSettlement,
 };
 
 const executionOriginCtx = (

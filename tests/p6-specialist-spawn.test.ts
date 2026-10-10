@@ -18,6 +18,7 @@ import {
   parse,
   parse as parse2,
   SessionId,
+  WorkId,
 } from "../packages/domain/dist/index.js";
 import {
   Clock,
@@ -25,6 +26,10 @@ import {
   TransactionPort,
   WorkspaceRepository,
 } from "../packages/ports/src/index.js";
+import {
+  seedCurrentOpenWork,
+  workEpisode,
+} from "./support/execution-episode-fixtures.js";
 import {
   makeP6App,
   p6Project,
@@ -34,8 +39,13 @@ import {
   runP6,
 } from "./support/p6-app.js";
 
+const specialistWorkId = parse2(WorkId)(
+  "wrk_018f2b3c-4d5e-7abc-8def-0123456789e1",
+);
+
 const admitMainExecution = Effect.gen(function* () {
   const gw = yield* CommandGateway;
+  yield* seedCurrentOpenWork(p6Project, p6RootWorkspace, specialistWorkId);
   const executionId = parse2(ExeId)("exe_018f2b3c-4d5e-7abc-8def-0123456789e1");
   const _sessionId = parse2(SessionId)(
     "ses_018f2b3c-4d5e-7abc-8def-0123456789e1",
@@ -47,7 +57,7 @@ const admitMainExecution = Effect.gen(function* () {
     _tag: "WorkspaceMain" as const,
     executionId,
     workspaceId: p6RootWorkspace,
-    focus: { _tag: "Coordination" as const },
+    episode: workEpisode(specialistWorkId),
   };
   const receipt = yield* gw.execute(
     {
@@ -89,7 +99,7 @@ const executionOf =
     binding: {
       _tag: "WorkspaceExecution" as const,
       workspaceId: p6RootWorkspace,
-      focus: { _tag: "Coordination" as const },
+      episode: workEpisode(specialistWorkId),
     },
     sessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789c1" as never,
     admittedAt: "t",

@@ -35,6 +35,7 @@ import {
   ProjectId,
   parse,
   SessionId,
+  WorkId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
@@ -46,6 +47,11 @@ import {
 } from "../packages/execution-runtime/src/index.js";
 import { RuntimeSafetyGate } from "../packages/ports/src/index.js";
 import { FakeDriverLive } from "../packages/testkit/src/index.js";
+import {
+  seedCurrentOpenWork,
+  workEpisode,
+  yieldedSettlement,
+} from "./support/execution-episode-fixtures.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -57,6 +63,7 @@ const principal = parse(Principal)("worker:a");
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 ) as ExecutionId;
+const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 
 const makeApp = (settlement: ExecutionSettlement) => {
   const base = layer({ filename: ":memory:" });
@@ -131,6 +138,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* seedCurrentOpenWork(projectId, workspaceId, workId);
     }),
   );
 });
@@ -139,7 +147,7 @@ const admitPayload: AdmitExecutionPayload = {
   _tag: "WorkspaceMain",
   executionId,
   workspaceId,
-  focus: { _tag: "Coordination" },
+  episode: workEpisode(workId),
 };
 
 const admit = Effect.gen(function* () {
@@ -192,10 +200,7 @@ const run = <A>(
 
 describe("P2-014 driver / dispatch / safety", () => {
   it("settles the driver's proposal through the command pipeline", async () => {
-    const app = makeApp({
-      _tag: "Completed",
-      result: { _tag: "CoordinationCompleted" },
-    });
+    const app = makeApp(yieldedSettlement);
     const program = Effect.gen(function* () {
       yield* runMigrations(P12_MIGRATIONS);
       yield* seed;
@@ -230,10 +235,7 @@ describe("P2-014 driver / dispatch / safety", () => {
   });
 
   it("stops repeated action fingerprints at the safety gate", async () => {
-    const app = makeApp({
-      _tag: "Completed",
-      result: { _tag: "CoordinationCompleted" },
-    });
+    const app = makeApp(yieldedSettlement);
     const program = Effect.gen(function* () {
       yield* runMigrations(P12_MIGRATIONS);
       const gate = yield* RuntimeSafetyGate;

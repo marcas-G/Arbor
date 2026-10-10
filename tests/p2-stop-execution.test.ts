@@ -33,6 +33,7 @@ import {
   ProjectId,
   parse,
   SessionId,
+  WorkId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
@@ -40,6 +41,10 @@ import {
   P2CommandHandlerRegistryLive,
   type StopExecutionPayload,
 } from "../packages/execution-runtime/src/index.js";
+import {
+  seedCurrentOpenWork,
+  workEpisode,
+} from "./support/execution-episode-fixtures.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -56,6 +61,7 @@ const systemContext: CommandSubmissionContext = {
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 ) as ExecutionId;
+const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 
 const makeApp = () => {
   const base = layer({ filename: ":memory:" });
@@ -123,6 +129,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* seedCurrentOpenWork(projectId, workspaceId, workId);
     }),
   );
 });
@@ -131,7 +138,7 @@ const admitPayload: AdmitExecutionPayload = {
   _tag: "WorkspaceMain",
   executionId,
   workspaceId,
-  focus: { _tag: "Coordination" },
+  episode: workEpisode(workId),
 };
 const admitEnvelope = (
   commandId: CommandId,
