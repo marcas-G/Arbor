@@ -1,6 +1,6 @@
 # P1 — 01 Command Contracts
 
-**Authority:** DID v1.6 §4.1, §4.1A, §4.2, §0A.1, §6A.15, §12.3, §12.5, §12.6, §12.10, §12.11; DID v1.35 §4.1C FT-DG-01 CreateProject v2
+**Authority:** DID v1.6 §4.1, §4.1A, §4.2, §0A.1, §6A.15, §12.3, §12.5, §12.6, §12.10, §12.11; DID v1.36 §4.1C FT-DG-01 CreateProject v2
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Implements:** P1 command contracts; P1-DG-02/05 (DID-resolved); P1-DG-10 sub-items (ID generation, `AssignWork` rejections, child-workspace phase); fingerprint algorithm (P1-DG-03).
 

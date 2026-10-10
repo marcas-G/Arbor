@@ -1,6 +1,6 @@
 # P1 — 02 Port Contracts
 
-**Authority:** DID v1.6 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10; DID v1.35 §4.1C FT-DG-01 ProjectResourceProfilePort
+**Authority:** DID v1.6 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10; DID v1.36 §4.1C FT-DG-01 ProjectResourceProfilePort
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Implements:** P1 port contracts; P1-DG-08 persistence access; P1-DG-10 port ownership.
 

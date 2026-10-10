@@ -263,8 +263,9 @@ type ResultDecoderRegistry = Readonly<
 /** Strict JSON DTO decoders for the current registered Handler/result pairs.
  * Command-specific result shape remains owned by each command contract. */
 const resultDecoders: ResultDecoderRegistry = {
+  // F21 v1 CreateProject receipts are preserve-only. The current Handler is v2.
   CreateProject: {
-    "1": (value) =>
+    "2": (value) =>
       objectWith(value, {
         projectId: id("ProjectId"),
         rootWorkspaceId: id("WorkspaceId"),
@@ -480,6 +481,9 @@ const resultDecoders: ResultDecoderRegistry = {
 
 const rejectionDecoders = {
   IdempotencyConflict: tagged("IdempotencyConflict", {
+    commandId: id("CommandId"),
+  }),
+  ProjectResourceUnavailable: tagged("ProjectResourceUnavailable", {
     commandId: id("CommandId"),
   }),
   AuthorityDenied: tagged("AuthorityDenied", { reason: stringValue }),
