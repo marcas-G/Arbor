@@ -1220,12 +1220,12 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     });
     expect(Exit.isSuccess(legacyOutcome)).toBe(true);
     if (Exit.isSuccess(legacyOutcome)) {
-      expect(legacyOutcome.value).toMatchObject({
-        _tag: "Observation",
-        observation: {
-          text: `DeliverableDelivered(${seed.deliverable.deliverable_id},`,
-        },
-      });
+      expect(legacyOutcome.value._tag).toBe("Observation");
+      if (legacyOutcome.value._tag === "Observation") {
+        expect(legacyOutcome.value.observation.text).toContain(
+          `DeliverableDelivered(${seed.deliverable.deliverable_id}, `,
+        );
+      }
     }
     const directWrite = readP37Snapshot(seed.fixture.databaseFile);
     expect(
