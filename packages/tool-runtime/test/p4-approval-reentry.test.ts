@@ -112,6 +112,7 @@ const pendingInvocation: ToolInvocationRecord = {
   argumentsJson,
   resolvedRegions: [],
   approvalId,
+  effectAdmissionState: "NotAdmitted",
   intentAt: "2026-10-05T00:00:00.000Z",
   settledAt: null,
   settlement: null,

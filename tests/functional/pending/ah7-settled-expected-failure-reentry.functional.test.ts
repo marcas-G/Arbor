@@ -102,6 +102,7 @@ const settledExpectedFailure: ToolInvocationRecord = {
   argumentsJson,
   resolvedRegions: [],
   approvalId: null,
+  effectAdmissionState: "MayHaveStarted",
   intentAt: "2026-10-05T00:00:00.000Z",
   settledAt: "2026-10-05T00:00:01.000Z",
   settlement: { _tag: "ExpectedFailure" },

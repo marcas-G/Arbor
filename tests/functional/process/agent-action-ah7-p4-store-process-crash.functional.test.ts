@@ -14,6 +14,7 @@ import {
   ToolInvocationStoreLive,
   TransactionPortLive,
 } from "../../../adapters/persistence-sqlite/src/index.js";
+import type { ToolInvocationId } from "../../../packages/domain/src/index.js";
 import {
   type ToolInvocationIntent,
   ToolInvocationStore,
@@ -172,8 +173,8 @@ const makeFixture = async () => {
 
 const approvalFor = (number: number) =>
   `apr_018f2b3c-4d5e-7abc-8def-${String(number).padStart(12, "0")}`;
-const invocationFor = (number: number) =>
-  `tin_018f2b3c-4d5e-7abc-8def-${String(number).padStart(12, "0")}`;
+const invocationFor = (number: number): ToolInvocationId =>
+  `tin_018f2b3c-4d5e-7abc-8def-${String(number).padStart(12, "0")}` as ToolInvocationId;
 
 interface StoreChildHandle {
   readonly child: ChildProcess;

@@ -127,7 +127,13 @@ const readRows = (
               AND json_extract(payload_json, '$.invocationId') = ?
               AND json_extract(payload_json, '$.callRef') = ?`,
         )
-        .all(invocationId, callRef) as AdmissionRows["toolResults"],
+        .all(invocationId, callRef)
+        .map((row) => {
+          if (typeof row.payload_json !== "string") {
+            throw new Error("ToolResult payload_json was not text");
+          }
+          return { payload_json: row.payload_json };
+        }),
       workApproval: db
         .prepare(
           "SELECT route_kind, state FROM action_approvals WHERE approval_id = ?",
@@ -313,7 +319,8 @@ describe("P4 AH7 effect-admission generation takeover", () => {
             workspaceId: project.rootWorkspaceId,
           }),
         (value) =>
-          value?.workId !== undefined &&
+          value !== null &&
+          value.workId !== undefined &&
           value.objective?.includes(marker) === true,
       );
       if (work?.workId === undefined) throw new Error("Work was not admitted");
@@ -331,7 +338,9 @@ describe("P4 AH7 effect-admission generation takeover", () => {
             workspaceId: project.rootWorkspaceId,
           }),
         (value) =>
-          value?.workId === work.workId && value.activeExecution === undefined,
+          value !== null &&
+          value.workId === work.workId &&
+          value.activeExecution === undefined,
       );
       if (idleWork?.workId === undefined) throw new Error("Work did not idle");
       await client.command(project.projectId, "SteerWork", {
