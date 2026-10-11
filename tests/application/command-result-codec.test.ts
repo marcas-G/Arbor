@@ -240,7 +240,10 @@ describe("registered command receipt runtime decoders", () => {
       deliverableId: id("del_"),
       bodyRef: "blob:deliver-summary",
     };
-    expect(contract?.decodePayload(payload)).toEqual({ ok: true, value: payload });
+    expect(contract?.decodePayload(payload)).toEqual({
+      ok: true,
+      value: payload,
+    });
     expect(
       contract?.decodePayload({ ...payload, recipientWorkspaceId: id("ws_") }),
     ).toMatchObject({

@@ -8,13 +8,11 @@ import {
   LeaseGeneration,
   Principal,
   ProjectId,
-  WorkspaceId,
   parse,
+  WorkspaceId,
 } from "../packages/domain/dist/index.js";
 
-const projectId = parse(ProjectId)(
-  "prj_018f2b3c-4d5e-7abc-8def-0123456789c1",
-);
+const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const senderWorkspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789d2",
 );
@@ -35,11 +33,14 @@ describe("Deliver control Gateway route", () => {
       readonly generation: number;
     }> = [];
     const gateway = {
-      execute: (envelope: {
-        readonly commandType: string;
-        readonly commandId: string;
-        readonly payload: Record<string, unknown>;
-      }, context: { readonly fencingGeneration?: number }) => {
+      execute: (
+        envelope: {
+          readonly commandType: string;
+          readonly commandId: string;
+          readonly payload: Record<string, unknown>;
+        },
+        context: { readonly fencingGeneration?: number },
+      ) => {
         calls.push({
           commandType: envelope.commandType,
           commandId: envelope.commandId,
@@ -90,30 +91,28 @@ describe("Deliver control Gateway route", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         for (const generation of [0, 1]) {
-          yield* handler.handle(
-            {
-              action: {
-                _tag: "Deliver",
-                deliverableId,
-                summary: "bounded delivery summary",
-              },
-              invocation: {
-                providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
-                outputPosition: 0,
-              },
-              execution: {
-                executionId,
-                projectId,
-                workspaceId: senderWorkspaceId,
-              },
-              context: {
-                _tag: "ExecutionOrigin",
-                principal,
-                executionId,
-                fencingGeneration: parse(LeaseGeneration)(generation),
-              },
-            } as never,
-          );
+          yield* handler.handle({
+            action: {
+              _tag: "Deliver",
+              deliverableId,
+              summary: "bounded delivery summary",
+            },
+            invocation: {
+              providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+              outputPosition: 0,
+            },
+            execution: {
+              executionId,
+              projectId,
+              workspaceId: senderWorkspaceId,
+            },
+            context: {
+              _tag: "ExecutionOrigin",
+              principal,
+              executionId,
+              fencingGeneration: parse(LeaseGeneration)(generation),
+            },
+          } as never);
         }
       }),
     );

@@ -25,8 +25,8 @@ import {
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
 } from "../../adapters/persistence-sqlite/src/index.js";
-import { makeRecordDecisionHandler } from "../../packages/application/src/commands/record-decision.js";
 import { makeDeliverMessageHandler } from "../../packages/application/src/commands/deliver-message.js";
+import { makeRecordDecisionHandler } from "../../packages/application/src/commands/record-decision.js";
 import { makeSendMessageHandler } from "../../packages/application/src/commands/send-message.js";
 import { makeSteerWorkHandler } from "../../packages/application/src/commands/steer-work.js";
 import { CommandHandlerRegistry } from "../../packages/application/src/gateway.js";
@@ -35,8 +35,8 @@ import {
   CommandGatewayLive,
   type CommandHandler,
   type CreateProjectPayload,
+  type FenceStopCheck,
   FenceStopCheckInertLive,
-  FenceStopCheck,
   makeP1CommandHandlers,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
@@ -62,7 +62,7 @@ import {
 } from "../../packages/execution-runtime/src/index.js";
 import {
   type AcceptanceRepository,
-  type DeliverableRepository,
+  DeliverableRepository,
   type DependencyRepository,
   type EvidenceRepository,
   ExecutionRepository,
