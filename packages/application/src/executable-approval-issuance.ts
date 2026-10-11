@@ -41,13 +41,6 @@ export type ExecutableApprovalIssuanceResult =
   | ExecutableApprovalRecord
   | "ExecutionStopping";
 
-const sameStrings = (
-  left: ReadonlyArray<string>,
-  right: ReadonlyArray<string>,
-): boolean =>
-  left.length === right.length &&
-  left.every((value, index) => value === right[index]);
-
 /** Application-side issuance composition. Storage is required to linearize
  * Pending-row, Inbox admission, request event and P2 wake source in one
  * transaction. The P38 SQLite implementation supplies that port after 0038. */
@@ -77,9 +70,8 @@ export const issueExecutableApproval = (
       input.authority.toolVersion !== input.binding.toolVersion ||
       input.authority.controlBasisDigest !== input.binding.controlBasisDigest ||
       input.authority.expiresAt <= input.requestedAt ||
-      !sameStrings(
-        input.authority.resourceSpaceIds,
-        input.binding.targetResourceSpaceIds,
+      input.binding.targetResourceSpaceIds.some(
+        (target) => !input.authority.resourceSpaceIds.includes(target),
       )
     ) {
       return yield* Effect.fail({

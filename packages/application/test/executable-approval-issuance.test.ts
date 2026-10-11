@@ -21,6 +21,7 @@ const binding = (): ExecutableApprovalBinding => ({
   toolInvocationId: "tin_ea_test" as never,
   toolName: "write_file",
   toolVersion: "v2",
+  sideEffectSemantics: "Idempotent",
   argumentsJson: '{"path":"src/a.ts","content":"x"}',
   actionDigest: "digest-a",
   targetResourceSpaceIds: ["rsp_project"],
@@ -54,6 +55,14 @@ const recordFor = (
   routeKind: "Executable",
   revision: 0,
   state: "Pending",
+  decidedAt: null,
+  decidedBy: null,
+  decisionReason: null,
+  cancelledAt: null,
+  cancelledBy: null,
+  cancellationReason: null,
+  consumedAt: null,
+  consumedBy: null,
 });
 
 describe("Executable approval issuance", () => {

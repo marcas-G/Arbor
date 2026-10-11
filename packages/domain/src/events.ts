@@ -248,6 +248,28 @@ export const ControlApprovalResolved = Schema.TaggedStruct(
     revision: Schema.Number,
   },
 );
+export const ExecutableApprovalRequested = Schema.TaggedStruct(
+  "ExecutableApprovalRequested",
+  {
+    approvalId: Schema.String,
+    executionId: Schema.String,
+    workspaceId: Schema.String,
+    logicalActionId: Schema.String,
+    revision: Schema.Number,
+    expiresAt: Schema.String,
+  },
+);
+export const ExecutableApprovalResolved = Schema.TaggedStruct(
+  "ExecutableApprovalResolved",
+  {
+    approvalId: Schema.String,
+    executionId: Schema.String,
+    workspaceId: Schema.String,
+    logicalActionId: Schema.String,
+    revision: Schema.Number,
+    outcome: Schema.Literals(["Approved", "Rejected", "Expired", "Cancelled"]),
+  },
+);
 
 export const DomainEventPayload = Schema.Union([
   ProjectCreated,
@@ -296,6 +318,8 @@ export const DomainEventPayload = Schema.Union([
   ConversationResponseResumed,
   ConversationResponseCancelled,
   ControlApprovalResolved,
+  ExecutableApprovalRequested,
+  ExecutableApprovalResolved,
 ]);
 
 export type DomainEventPayload = Schema.Schema.Type<typeof DomainEventPayload>;
@@ -347,6 +371,8 @@ export const EVENT_CATALOG = {
   ConversationResponseResumed,
   ConversationResponseCancelled,
   ControlApprovalResolved,
+  ExecutableApprovalRequested,
+  ExecutableApprovalResolved,
 } as const;
 
 export type EventTypeName = keyof typeof EVENT_CATALOG;
