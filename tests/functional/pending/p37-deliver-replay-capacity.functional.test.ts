@@ -581,16 +581,16 @@ describe("pending P37 v1.43 Attention fairness and capacity qualification", () =
 
   describe("pending deployment-profile capacity gate", () => {
     it.todo(
-      "requires an owner-selected P37 profileId/profileRevision before measuring max population, poll daemons, backoff and due-healthy fairness",
+      "requires the deployment-selected profileId/profileRevision before measuring maxActiveProjects, maxConcurrentPollDaemons, minimumHealthyAttemptCount, backoff and due-healthy fairness",
     );
     it.todo(
-      "measures queue INSERT/ACK/requeue counts and same-window rates, burst/drain, depth/age and distinct P1/P10 batch sizes",
+      "measures queueRowsInserted/queueRowsAcknowledged/queueNetGrowth, same-window sustained and ACK rates, post-ACK exact-tuple requeue, burst/drain, peak queue depth/age, observedMaxAttentionPollInterval, and distinct P1 event/P10 queue batch sizes",
     );
     it.todo(
-      "measures raw preflight, full poll lock hold, SQLite/P9 writer waits and rebuild at the declared maximum population",
+      "measures rawPreflightWithinLock and full poll lock-hold p95/max, SQLite and concurrent P9 writer-wait p95, full transaction duration, and rebuild at maxP9FactsPerProjectForRebuild and declared maximum population",
     );
     it.todo(
-      "recomputes DeliverReplay Qualified/OutOfEnvelope/InsufficientEvidence and combined SQLiteSufficient only from validated profile evidence",
+      "recomputes Qualified/OutOfEnvelope/InsufficientEvidence boundary cases (ACK below/equal/above minimum, ACK less/equal/greater than sustained inserts, incomplete windows) and combined SQLiteSufficient only from validated selected-profile evidence",
     );
   });
 });
@@ -598,4 +598,3 @@ describe("pending P37 v1.43 Attention fairness and capacity qualification", () =
 // Evidence selection is a manual deployment gate. The current checked-in
 // P12 artifact has only the base four-dimensional envelope; no DeliverReplay
 // numeric profile or capacity result is invented by this test source.
-void readFileSync;
