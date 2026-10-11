@@ -88,7 +88,7 @@ const validateP39ProtectedPath = (
         "$w=[Security.Principal.WindowsIdentity]::GetCurrent()",
         "$u=$w.User.Value",
         "$t=@($u,'S-1-5-18','S-1-5-32-544')",
-        "$m=[int][Security.AccessControl.FileSystemRights]::Write -bor [int][Security.AccessControl.FileSystemRights]::Modify -bor [int][Security.AccessControl.FileSystemRights]::FullControl -bor [int][Security.AccessControl.FileSystemRights]::CreateFiles -bor [int][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles",
+        "$m=[int][Security.AccessControl.FileSystemRights]::Write -bor [int][Security.AccessControl.FileSystemRights]::Modify -bor [int][Security.AccessControl.FileSystemRights]::FullControl -bor [int][Security.AccessControl.FileSystemRights]::CreateFiles -bor [int][Security.AccessControl.FileSystemRights]::Delete -bor [int][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [int][Security.AccessControl.FileSystemRights]::ChangePermissions -bor [int][Security.AccessControl.FileSystemRights]::TakeOwnership",
         "$g=$false",
         "foreach($r in $a.Access){$sid=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($r.AccessControlType -eq 'Allow' -and (([int]$r.FileSystemRights -band $m) -ne 0)){if(!($t -contains $sid)){exit 3};if($sid -eq $u){$g=$true}}}",
         "$o=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value",
