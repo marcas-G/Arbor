@@ -254,12 +254,34 @@ describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
             ? "test-token-present"
             : "missing-or-other",
       }));
+    const domSnapshot = () => {
+      const snapshot = document.body.cloneNode(true) as HTMLElement;
+      for (const input of snapshot.querySelectorAll<HTMLInputElement>(
+        "input",
+      )) {
+        const identity = [
+          input.name,
+          input.id,
+          input.placeholder,
+          input.getAttribute("aria-label") ?? "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (identity.includes("token")) {
+          input.value = "[redacted]";
+          input.setAttribute("value", "[redacted]");
+        }
+      }
+      return snapshot.innerHTML
+        .replace(/Bearer\s+[^\s"'<>]+/giu, "Bearer [redacted]")
+        .replace(/\btok_[A-Za-z0-9_-]+\b/gu, "[redacted-token]");
+    };
     try {
       await waitFor(() => expect(screen.getByText("未认证")).toBeTruthy());
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(
-        `${detail}\nDOM: ${document.body.innerHTML}\n` +
+        `${detail}\nDOM: ${domSnapshot()}\n` +
           `fetch requests: ${JSON.stringify(fetchSnapshot())}\n` +
           `tree response: ${treeResponseState}`,
       );
