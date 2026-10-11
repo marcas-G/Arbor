@@ -259,6 +259,14 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           if (Option.isNone(active)) return;
           const executionId = active.value.executionId;
           if (!(yield* preDispatchCheck(executionId))) {
+            const leaseProbe = config.executionLeaseQualificationProbe;
+            if (leaseProbe !== undefined)
+              yield* Effect.promise(() =>
+                leaseProbe({
+                  boundary: "AH10PreDispatchSkippedLiveLease",
+                  executionId,
+                }),
+              );
             return;
           }
           // runExecution owns the shared P38 Pending-approval gate before

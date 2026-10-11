@@ -425,6 +425,8 @@ export const startProductionFixture = async (input: {
   readonly beforeResponse?: ProviderResponseGate;
   /** Host-side resource admission for the pending F21 browser contract. */
   readonly admitWorkspaceDirectory?: boolean;
+  /** Preserve isolated DB/process diagnostics after the test fixture is stopped. */
+  readonly preserveDirectoryOnStop?: boolean;
   /** Test-only entrypoint for the first daemon incarnation. Restarts use the
    * ordinary production binary so recovery is never run with a fault hook. */
   readonly firstDaemonEntry?: string;
@@ -647,7 +649,9 @@ export const startProductionFixture = async (input: {
       await new Promise<void>((resolveClose) =>
         provider.server.close(() => resolveClose()),
       );
-      rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
+      if (input.preserveDirectoryOnStop !== true) {
+        rmSync(directory, { recursive: true, force: true, maxRetries: 3 });
+      }
     },
   };
 };

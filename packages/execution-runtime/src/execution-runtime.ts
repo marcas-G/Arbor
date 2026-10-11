@@ -49,11 +49,27 @@ export type ExecutionSettlementQualificationProbe = (event: {
 
 /** Test-child-only seam for proving real lease takeover without editing the
  * durable lease. Production Composition leaves this probe absent. */
-export type ExecutionLeaseQualificationProbe = (event: {
-  readonly boundary: "AH10BeforeLeaseRenewal" | "AH10AfterLeaseAcquired";
-  readonly executionId: ExecutionId;
-  readonly fencingGeneration: LeaseGeneration;
-}) => Promise<void>;
+export type ExecutionLeaseQualificationProbe = (
+  event:
+    | {
+        readonly boundary: "AH10BeforeLeaseRenewal" | "AH10AfterLeaseAcquired";
+        readonly executionId: ExecutionId;
+        readonly fencingGeneration: LeaseGeneration;
+      }
+    | {
+        /** Scheduler observed a live lease and skipped before runExecution. */
+        readonly boundary: "AH10PreDispatchSkippedLiveLease";
+        readonly executionId: ExecutionId;
+      }
+    | {
+        /** Emitted only after this process's real LeaseService.acquire call rejects. */
+        readonly boundary: "AH10LeaseAcquisitionRejected";
+        readonly executionId: ExecutionId;
+        readonly workerId: string;
+        readonly workerIncarnationId: string;
+        readonly fencingGeneration: LeaseGeneration;
+      },
+) => Promise<void>;
 
 const WORKER_ID = "worker:local";
 /** P12 `06` §2: the in-process worker incarnation. A daemon restart mints a
@@ -282,11 +298,24 @@ export const runExecution = (
     });
     const { lease, agentExecutionState } = yield* tx.transact(
       Effect.gen(function* () {
-        const lease = yield* leases.acquire(
-          executionId,
-          WORKER_ID,
-          WORKER_INCARNATION_ID,
-        );
+        const lease = yield* leases
+          .acquire(executionId, WORKER_ID, WORKER_INCARNATION_ID)
+          .pipe(
+            Effect.tapError((error) =>
+              error._tag === "LeaseFencingRejected" &&
+              leaseQualificationProbe !== undefined
+                ? Effect.promise(() =>
+                    leaseQualificationProbe({
+                      boundary: "AH10LeaseAcquisitionRejected",
+                      executionId,
+                      workerId: WORKER_ID,
+                      workerIncarnationId: WORKER_INCARNATION_ID,
+                      fencingGeneration: error.generation,
+                    }),
+                  )
+                : Effect.void,
+            ),
+          );
         const existingState = yield* states.find(executionId);
         const episode = executionEpisodeIdentity(execution.value);
         if (Option.isSome(existingState)) {
