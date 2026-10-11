@@ -552,6 +552,15 @@ export const makeProjectAttentionProjectionStore = (
             });
           }
           const payload = payloadRecord(event.payload);
+          const payloadKeys = Object.keys(payload).sort();
+          const expectedPayloadKeys = [
+            "attentionFactId",
+            "executionId",
+            "failureCode",
+            "logicalActionId",
+            "messageId",
+            "targetWorkspaceId",
+          ];
           const attentionFactId = payload.attentionFactId;
           if (typeof attentionFactId !== "string" || attentionFactId.length === 0) {
             return yield* Effect.fail<ConsumerOffsetStoreError>({
@@ -579,6 +588,7 @@ export const makeProjectAttentionProjectionStore = (
             event.eventType !== "DeliverReplayEscalated" ||
             event.eventVersion !== 1 ||
             event.actor !== "system:recovery" ||
+            event.causedByEventId !== undefined ||
             event.aggregateRef !== fact.targetWorkspaceId ||
             event.correlationRef !== fact.logicalActionId ||
             event.occurredAt !== fact.firstDetectedAt ||
@@ -586,7 +596,9 @@ export const makeProjectAttentionProjectionStore = (
             fact.targetWorkspaceId !== String(payload.targetWorkspaceId ?? "") ||
             fact.logicalActionId !== String(payload.logicalActionId ?? "") ||
             fact.messageId !== String(payload.messageId ?? "") ||
-            fact.failureCode !== String(payload.failureCode ?? "")
+            fact.failureCode !== String(payload.failureCode ?? "") ||
+            payloadKeys.length !== expectedPayloadKeys.length ||
+            payloadKeys.some((key, index) => key !== expectedPayloadKeys[index])
           ) {
             return yield* Effect.fail<ConsumerOffsetStoreError>({
               _tag: "PersistenceCorruption",

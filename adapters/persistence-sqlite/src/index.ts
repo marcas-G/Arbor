@@ -3,6 +3,7 @@ export * from "./agent-state.js";
 export * from "./artifacts.js";
 export * from "./assign-work-target-binding.js";
 export * from "./attention-projection.js";
+export * from "./attention-poll.js";
 export * from "./client.js";
 export * from "./command-store.js";
 export * from "./communication.js";

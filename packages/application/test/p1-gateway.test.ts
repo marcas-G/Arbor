@@ -239,6 +239,7 @@ const buildApp = (
       }),
     appendReturningIds: () => Effect.succeed([]),
     readAfter: () => Effect.succeed([]),
+    readAfterRaw: () => Effect.succeed([]),
     lastSequence: () => Effect.succeed(0),
   };
   let clockTick = 0;

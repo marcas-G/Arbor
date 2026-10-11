@@ -16,7 +16,7 @@ import {
   makeProjectAttentionProjectionStore,
   makeRecoveryAttentionFactStoreLive,
   P10_ATTENTION_CONSUMER_ID,
-  P34_MIGRATIONS,
+  P37_MIGRATIONS,
   ProjectionStoreLive,
   rebuildProjection,
   runMigrations,
@@ -386,7 +386,7 @@ describe("AH10/P10 Attention materialization", () => {
     "fails closed when P9 event envelope field $field conflicts with its fact",
     async ({ field, value }) => {
       const program = Effect.gen(function* () {
-        yield* runMigrations(P34_MIGRATIONS);
+        yield* runMigrations(P37_MIGRATIONS);
         yield* seedSourceOwner(firstFixture);
         const fact = yield* seedP9FailureFactAndEvent(firstFixture);
         const sql = yield* SqlClient;
@@ -413,7 +413,7 @@ describe("AH10/P10 Attention materialization", () => {
 
   it("rolls back the row and offset together when the projection apply aborts", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P34_MIGRATIONS);
+      yield* runMigrations(P37_MIGRATIONS);
       yield* seedSourceOwner(firstFixture);
       yield* seedP9FailureFactAndEvent(firstFixture);
       const tx = yield* TransactionPort;
@@ -480,7 +480,7 @@ describe("AH10/P10 Attention materialization", () => {
 
   it("projects the real P9 fact/event once with its consumer offset", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P34_MIGRATIONS);
+      yield* runMigrations(P37_MIGRATIONS);
       yield* seedSourceOwner(firstFixture);
       const fact = yield* seedP9FailureFactAndEvent(firstFixture);
       const consumed = yield* runP10AttentionPoll();
@@ -538,7 +538,7 @@ describe("AH10/P10 Attention materialization", () => {
 
   it("rebuilds the fact-backed row without clearing another project's rows", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P34_MIGRATIONS);
+      yield* runMigrations(P37_MIGRATIONS);
       yield* seedSourceOwner(firstFixture);
       yield* seedSourceOwner(secondFixture);
       yield* seedP9FailureFactAndEvent(firstFixture);
@@ -597,7 +597,7 @@ describe("AH10/P10 Attention materialization", () => {
     const filename = join(directory, "attention.sqlite");
     try {
       const firstProcess = Effect.gen(function* () {
-        yield* runMigrations(P34_MIGRATIONS);
+        yield* runMigrations(P37_MIGRATIONS);
         yield* seedSourceOwner(firstFixture);
         yield* seedP9FailureFactAndEvent(firstFixture);
         yield* runP10AttentionPoll();
@@ -631,7 +631,7 @@ describe("AH10/P10 Attention materialization", () => {
     let runningChild: ReturnType<typeof spawn> | undefined;
     try {
       const seed = Effect.gen(function* () {
-        yield* runMigrations(P34_MIGRATIONS);
+        yield* runMigrations(P37_MIGRATIONS);
         yield* seedSourceOwner(firstFixture);
         yield* seedSourceOwner(secondFixture);
         const firstFact = yield* seedP9FailureFactAndEvent(firstFixture);
