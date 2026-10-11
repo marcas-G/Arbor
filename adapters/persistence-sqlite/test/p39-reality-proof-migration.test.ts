@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { linkSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex } from "@arbor/ports";
@@ -20,6 +20,10 @@ import {
   validateP39ReportSidecarDatabase,
   validateP39ReportSidecarPath,
 } from "../src/p39-report-database.js";
+import {
+  p39WriterLockFilename,
+  prepareP39PrimaryDatabasePath,
+} from "../src/p39-writer-lock.js";
 
 const withClient = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
   Effect.runPromise(Effect.provide(program, layer({ filename: ":memory:" })));
@@ -44,6 +48,17 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     expect(migration.id).toBe(39);
     expect(migration.name).toBe("ah7_reconciliation_attempts");
     expect(migrations.P36_MIGRATIONS.map(({ id }) => id).at(-1)).toBe(36);
+    const maintenanceMigrations = migrations.P39_MAINTENANCE_MIGRATIONS;
+    expect(Object.isFrozen(maintenanceMigrations)).toBe(true);
+    expect(Object.isFrozen(migration)).toBe(true);
+    for (const approved of maintenanceMigrations) {
+      const pin = migrations.P39_MAINTENANCE_MIGRATION_MANIFEST[approved.id];
+      expect(Object.isFrozen(pin)).toBe(true);
+      expect(pin).toEqual({
+        name: approved.name,
+        sha256: sha256Hex(approved.sql),
+      });
+    }
   });
 
   it("keeps the operator sidecar report immutable and rejects replacement", async () => {
@@ -166,10 +181,11 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
   });
 
   it("initializes and revalidates only the exact reserved sidecar schema", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "arbor-p39-sidecar-"));
+    const directory = mkdtempSync(join(process.cwd(), ".p39-sidecar-test-"));
     const primary = join(directory, "primary.sqlite");
     const sidecar = join(directory, "reports.sqlite");
     try {
+      writeFileSync(primary, "");
       const normalized = await Effect.runPromise(
         validateP39ReportSidecarPath(primary, sidecar),
       );
@@ -184,6 +200,59 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
         Effect.flip(validateP39ReportSidecarPath(primary, primary)),
       );
       expect(samePath.code).toBe("P39_REPORT_DB_PATH_INVALID");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects temporary sidecars and hard-linked database identities", async () => {
+    const directory = mkdtempSync(join(process.cwd(), ".p39-alias-test-"));
+    const primary = join(directory, "primary.sqlite");
+    const localReport = join(directory, "reports.sqlite");
+    const hardLink = join(directory, "primary-hardlink.sqlite");
+    try {
+      writeFileSync(primary, "");
+      linkSync(primary, hardLink);
+      const hardLinkDenied = await Effect.runPromise(
+        Effect.flip(validateP39ReportSidecarPath(primary, localReport)),
+      );
+      const tempDenied = await Effect.runPromise(
+        Effect.flip(
+          validateP39ReportSidecarPath(
+            primary,
+            join(tmpdir(), "p39-report-sidecar.sqlite"),
+          ),
+        ),
+      );
+      const otherStore = join(directory, "other-store.sqlite");
+      writeFileSync(otherStore, "");
+      const otherStoreAliasDenied = await Effect.runPromise(
+        Effect.flip(
+          validateP39ReportSidecarPath(primary, otherStore, [otherStore]),
+        ),
+      );
+
+      expect(hardLinkDenied.code).toBe("P39_REPORT_DB_PATH_INVALID");
+      expect(tempDenied.code).toBe("P39_REPORT_DB_PATH_INVALID");
+      expect(otherStoreAliasDenied.code).toBe("P39_REPORT_DB_PATH_INVALID");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("derives one shared writer-lock identity and rejects primary hard links", () => {
+    const directory = mkdtempSync(
+      join(process.cwd(), ".p39-writer-lock-test-"),
+    );
+    const primary = join(directory, "primary.sqlite");
+    const hardLink = join(directory, "primary-hardlink.sqlite");
+    try {
+      const prepared = prepareP39PrimaryDatabasePath(primary);
+      expect("databaseFilename" in prepared).toBe(true);
+      if (!("databaseFilename" in prepared)) return;
+      expect(p39WriterLockFilename(primary)).toBe(prepared.writerLockFilename);
+      linkSync(primary, hardLink);
+      expect(typeof p39WriterLockFilename(hardLink)).not.toBe("string");
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -1,5 +1,15 @@
-import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, realpathSync, statfsSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -33,12 +43,101 @@ const canonicalExistingOrNewPath = (path: string): string => {
 
 const isUncPath = (path: string): boolean => path.startsWith("\\\\");
 
+const normalizeWindowsExtendedPath = (path: string): string =>
+  path.replace(/^\\\\\?\\/u, "");
+
+const normalizedPath = (path: string): string => {
+  const normalized =
+    process.platform === "win32" ? normalizeWindowsExtendedPath(path) : path;
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+};
+
+const isWithinPath = (parent: string, child: string): boolean => {
+  const childFromParent = relative(
+    normalizedPath(parent),
+    normalizedPath(child),
+  );
+  return (
+    childFromParent === "" ||
+    (!childFromParent.startsWith(`..${sep}`) &&
+      childFromParent !== ".." &&
+      !isAbsolute(childFromParent))
+  );
+};
+
+const fileIdentity = (path: string): string | P39MaintenanceFailure => {
+  try {
+    const stat = statSync(path, { bigint: true });
+    if (
+      !stat.isFile() ||
+      stat.dev === 0n ||
+      stat.ino === 0n ||
+      stat.nlink !== 1n
+    ) {
+      return failure("P39_REPORT_DB_PATH_INVALID");
+    }
+    return `${stat.dev}:${stat.ino}`;
+  } catch (cause) {
+    return failure("P39_REPORT_DB_PATH_INVALID", cause);
+  }
+};
+
+const validateLocalFilesystem = (
+  path: string,
+): P39MaintenanceFailure | undefined => {
+  try {
+    const volumePath = existsSync(path) ? path : dirname(path);
+    if (process.platform === "win32") {
+      const encoded = Buffer.from(resolve(volumePath), "utf8").toString(
+        "base64",
+      );
+      const script = [
+        `$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))`,
+        "$r=[IO.Path]::GetPathRoot($p)",
+        "if($r.StartsWith(([string][char]92)+([char]92)+'?'+([char]92))){$r=$r.Substring(4)}",
+        "$d=[IO.DriveInfo]::new($r)",
+        "Write-Output ($d.DriveType.ToString()+'|'+$d.DriveFormat)",
+      ].join(";");
+      const output = execFileSync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", script],
+        { encoding: "utf8", timeout: 5000, windowsHide: true },
+      ).trim();
+      const [driveType, driveFormat] = output.split("|");
+      if (
+        (driveType !== "Fixed" && driveType !== "Removable") ||
+        !["NTFS", "ReFS", "exFAT", "FAT", "FAT32"].includes(driveFormat ?? "")
+      ) {
+        return failure("P39_REPORT_DB_PATH_INVALID");
+      }
+      return undefined;
+    }
+
+    const filesystemType = statfsSync(volumePath).type;
+    const supportedLocalTypes = new Set([
+      0x0000ef53, // ext2/3/4
+      0x58465342, // XFS
+      0x9123683e, // Btrfs
+      0xf2f52010, // F2FS
+      0x2011bab0, // exFAT
+      0x00004d44, // FAT
+    ]);
+    if (!supportedLocalTypes.has(filesystemType)) {
+      return failure("P39_REPORT_DB_PATH_INVALID");
+    }
+    return undefined;
+  } catch (cause) {
+    return failure("P39_REPORT_DB_PATH_INVALID", cause);
+  }
+};
+
 /** Validate the explicitly selected sidecar before opening the primary DB.
  * Network paths and non-absolute paths are rejected. Windows VM/VFS/power-loss
  * qualification remains a separate release gate even for a local drive. */
 export const validateP39ReportSidecarPath = (
   primaryFilename: string,
   sidecarFilename: string,
+  protectedStoreFilenames: ReadonlyArray<string> = [],
 ): Effect.Effect<string, P39MaintenanceFailure> => {
   if (
     !isAbsolute(primaryFilename) ||
@@ -57,6 +156,13 @@ export const validateP39ReportSidecarPath = (
     const primary = canonicalExistingOrNewPath(resolve(primaryFilename));
     const sidecar = canonicalExistingOrNewPath(resolve(sidecarFilename));
     if (
+      normalizedPath(resolve(primaryFilename)) !== normalizedPath(primary) ||
+      normalizedPath(resolve(sidecarFilename)) !== normalizedPath(sidecar) ||
+      isWithinPath(realpathSync.native(tmpdir()), sidecar)
+    ) {
+      return Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
+    }
+    if (
       isUncPath(primary) ||
       isUncPath(sidecar) ||
       (process.platform === "win32" &&
@@ -65,10 +171,57 @@ export const validateP39ReportSidecarPath = (
     ) {
       return Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
     }
-    const normalize = (path: string) =>
-      process.platform === "win32" ? path.toLocaleLowerCase("en-US") : path;
-    if (normalize(primary) === normalize(sidecar)) {
+    for (const path of [primary, sidecar]) {
+      const filesystemFailure = validateLocalFilesystem(path);
+      if (filesystemFailure !== undefined) {
+        return Effect.fail(filesystemFailure);
+      }
+    }
+    if (normalizedPath(primary) === normalizedPath(sidecar)) {
       return Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
+    }
+    const primaryIdentity = fileIdentity(primary);
+    if (typeof primaryIdentity !== "string") {
+      return Effect.fail(primaryIdentity);
+    }
+    if (existsSync(sidecar)) {
+      const sidecarIdentity = fileIdentity(sidecar);
+      if (
+        typeof sidecarIdentity !== "string" ||
+        sidecarIdentity === primaryIdentity
+      ) {
+        return Effect.fail(
+          typeof sidecarIdentity === "string"
+            ? failure("P39_REPORT_DB_PATH_INVALID")
+            : sidecarIdentity,
+        );
+      }
+    }
+    for (const protectedFilename of protectedStoreFilenames) {
+      const protectedResolved = resolve(protectedFilename);
+      if (!existsSync(protectedResolved)) {
+        return Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
+      }
+      const protectedCanonical = realpathSync.native(protectedResolved);
+      if (
+        normalizedPath(protectedResolved) !==
+          normalizedPath(protectedCanonical) ||
+        isWithinPath(realpathSync.native(tmpdir()), protectedCanonical)
+      ) {
+        return Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
+      }
+      const filesystemFailure = validateLocalFilesystem(protectedCanonical);
+      if (filesystemFailure !== undefined) {
+        return Effect.fail(filesystemFailure);
+      }
+      const protectedIdentity = fileIdentity(protectedCanonical);
+      if (
+        typeof protectedIdentity !== "string" ||
+        protectedIdentity === primaryIdentity ||
+        (existsSync(sidecar) && protectedIdentity === fileIdentity(sidecar))
+      ) {
+        return Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
+      }
     }
     return Effect.succeed(sidecar);
   } catch (cause) {
@@ -204,11 +357,13 @@ const p39ReportSetup = Effect.gen(function* () {
 export const validateP39ReportSidecarDatabase = (
   primaryFilename: string,
   sidecarFilename: string,
+  protectedStoreFilenames: ReadonlyArray<string> = [],
 ): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError> =>
   Effect.gen(function* () {
     const path = yield* validateP39ReportSidecarPath(
       primaryFilename,
       sidecarFilename,
+      protectedStoreFilenames,
     );
     yield* Effect.scoped(
       Effect.provide(
@@ -225,6 +380,14 @@ export const validateP39ReportSidecarDatabase = (
         SqliteClient.layer({ filename: path, disableWAL: true }),
       ),
     );
+    const finalPath = yield* validateP39ReportSidecarPath(
+      primaryFilename,
+      path,
+      protectedStoreFilenames,
+    );
+    if (finalPath !== path) {
+      return yield* Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
+    }
   }).pipe(
     Effect.mapError((cause: P39MaintenanceFailure | SqliteAdapterError) =>
       typeof cause === "object" &&

@@ -6,13 +6,18 @@ import { Context, Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import type { SqliteAdapterError } from "./errors.js";
-import { type MigrationFile, splitStatements } from "./migrate.js";
+import { splitStatements } from "./migrate.js";
+import {
+  P39_MAINTENANCE_MIGRATION_MANIFEST,
+  P39_MAINTENANCE_MIGRATIONS,
+} from "./migrations.js";
 import {
   type P39MaintenanceFailure,
   type P39MaintenancePort,
   type P39MigrationBlockReport,
   type P39PreflightSnapshot,
   type P39WriterExclusionLease,
+  readP39BlockReports,
   runP39MaintenanceGate,
   validateP39MigrationPrefix,
   writeP39BlockReportAndReadBack,
@@ -44,12 +49,10 @@ export interface P39MaintenanceSqlClient {
   ) => Effect.Effect<A, E | SqlError, R>;
 }
 
-export interface P39SqliteMaintenanceAdapterOptions {
+interface P39SqliteMaintenanceAdapterOptions {
   readonly primary: P39MaintenanceSqlClient;
   readonly writerLock: P39WriterLockClientService;
   readonly primaryFilename: string;
-  /** Complete exact predecessor suffix, normally [0037,0038,0039]. */
-  readonly migrations: ReadonlyArray<MigrationFile>;
   readonly writeAndReadBackSidecarReport: (
     report: P39MigrationBlockReport,
   ) => Effect.Effect<
@@ -66,7 +69,9 @@ class P39PrimarySqlClient extends Context.Service<
 export interface P39SqliteMaintenanceCommandOptions {
   readonly primaryFilename: string;
   readonly sidecarFilename: string;
-  readonly migrations: ReadonlyArray<MigrationFile>;
+  /** Other canonical databases owned by the application, used to reject an
+   * audit path that aliases a different store. */
+  readonly protectedStoreFilenames: ReadonlyArray<string>;
   readonly writerLockBusyTimeoutMs?: number;
 }
 
@@ -92,12 +97,17 @@ export const runP39SqliteMaintenance = (
         code: "P39_MIGRATION_PREFIX_INVALID" as const,
       });
     }
-    const primaryPath = realpathSync.native(resolvedPrimaryPath);
     const sidecarPath = yield* validateP39ReportSidecarPath(
-      primaryPath,
+      resolvedPrimaryPath,
       options.sidecarFilename,
+      options.protectedStoreFilenames,
     );
-    yield* validateP39ReportSidecarDatabase(primaryPath, sidecarPath);
+    const primaryPath = realpathSync.native(resolvedPrimaryPath);
+    yield* validateP39ReportSidecarDatabase(
+      primaryPath,
+      sidecarPath,
+      options.protectedStoreFilenames,
+    );
     const lockPath = p39WriterLockFilename(primaryPath);
     if (typeof lockPath !== "string") {
       return yield* Effect.fail({
@@ -118,28 +128,87 @@ export const runP39SqliteMaintenance = (
     const maintenance = Effect.gen(function* () {
       const primary = yield* P39PrimarySqlClient;
       const writerLock = yield* P39WriterLockClient;
+      const reportSidecarLayer = Layer.provideMerge(
+        Layer.effectDiscard(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.unsafe("PRAGMA foreign_keys = ON");
+            yield* sql.unsafe("PRAGMA busy_timeout = 5000");
+            yield* sql.unsafe("PRAGMA synchronous = FULL");
+          }),
+        ),
+        SqliteClient.layer({ filename: sidecarPath, disableWAL: true }),
+      );
+      const writeReport = (report: P39MigrationBlockReport) =>
+        Effect.scoped(
+          Effect.provide(
+            writeP39BlockReportAndReadBack(report),
+            reportSidecarLayer,
+          ),
+        ).pipe(
+          Effect.mapError((cause) =>
+            typeof cause === "object" &&
+            cause !== null &&
+            "_tag" in cause &&
+            cause._tag === "P39MaintenanceFailure"
+              ? (cause as P39MaintenanceFailure)
+              : failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
+          ),
+        );
+      const readReports = () =>
+        Effect.scoped(
+          Effect.provide(readP39BlockReports(), reportSidecarLayer),
+        );
       const port = makeP39SqliteMaintenancePort({
         primary,
         writerLock,
         primaryFilename: primaryPath,
-        migrations: options.migrations,
         writeAndReadBackSidecarReport: (report) =>
-          Effect.scoped(
-            Effect.provide(
-              writeP39BlockReportAndReadBack(report),
-              Layer.provideMerge(
-                Layer.effectDiscard(
-                  Effect.gen(function* () {
-                    const sql = yield* SqlClient;
-                    yield* sql.unsafe("PRAGMA foreign_keys = ON");
-                    yield* sql.unsafe("PRAGMA busy_timeout = 5000");
-                    yield* sql.unsafe("PRAGMA synchronous = FULL");
-                  }),
-                ),
-                SqliteClient.layer({ filename: sidecarPath, disableWAL: true }),
+          Effect.gen(function* () {
+            const attempted = yield* Effect.result(writeReport(report));
+            if (attempted._tag === "Success") return attempted.success;
+            if (attempted.failure.code !== "P39_REPORT_COMMIT_UNRESOLVED") {
+              return yield* Effect.fail(attempted.failure);
+            }
+
+            // The write connection's scope is closed before this fresh
+            // connection resolves an uncertain COMMIT acknowledgement.
+            yield* validateP39ReportSidecarDatabase(
+              primaryPath,
+              sidecarPath,
+              options.protectedStoreFilenames,
+            );
+            const reports = yield* readReports().pipe(
+              Effect.mapError((cause) =>
+                failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
               ),
-            ),
-          ).pipe(
+            );
+            const winner = reports.find(
+              ({ reportKey }) => reportKey === report.reportKey,
+            );
+            if (
+              winner !== undefined &&
+              winner.contentHash === report.contentHash &&
+              winner.reportJson === report.reportJson
+            ) {
+              return {
+                reportKey: winner.reportKey,
+                contentHash: winner.contentHash,
+              };
+            }
+            if (
+              reports.some(
+                ({ reportKey, contentHash }) =>
+                  reportKey === report.reportKey ||
+                  contentHash === report.contentHash,
+              )
+            ) {
+              return yield* Effect.fail(failure("P39_REPORT_KEY_CONFLICT"));
+            }
+            return yield* Effect.fail(
+              failure("P39_REPORT_COMMIT_UNRESOLVED", attempted.failure),
+            );
+          }).pipe(
             Effect.mapError((cause) =>
               typeof cause === "object" &&
               cause !== null &&
@@ -208,7 +277,7 @@ const toBlocker = (row: LegacyBlockedInvocationRow) => ({
  * primary writers across processes and remains open through the exact ordered
  * suffix. A blocker report commits/readbacks on the already validated sidecar
  * before the primary transaction is rolled back. */
-export const makeP39SqliteMaintenancePort = (
+const makeP39SqliteMaintenancePort = (
   options: P39SqliteMaintenanceAdapterOptions,
 ): P39MaintenancePort => {
   let snapshotState: SnapshotState | undefined;
@@ -358,11 +427,19 @@ export const makeP39SqliteMaintenancePort = (
           "PRAGMA user_version",
         );
         const currentVersion = Number(versions[0]?.user_version);
-        const suffix = options.migrations.filter(
+        const suffix = P39_MAINTENANCE_MIGRATIONS.filter(
           ({ id }) => id > currentVersion,
         );
         yield* validateP39MigrationPrefix(currentVersion, suffix);
         for (const migration of suffix) {
+          const approved = P39_MAINTENANCE_MIGRATION_MANIFEST[migration.id];
+          if (
+            approved === undefined ||
+            approved.name !== migration.name ||
+            approved.sha256 !== sha256Hex(migration.sql)
+          ) {
+            return yield* Effect.fail(failure("P39_MIGRATION_PREFIX_INVALID"));
+          }
           for (const statement of splitStatements(migration.sql)) {
             yield* sql.unsafe(statement);
           }

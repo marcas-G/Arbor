@@ -10,8 +10,8 @@ import {
 import {
   acquireP39RuntimeWriterPermit,
   type P39WriterLockFailure,
-  p39WriterLockFilename,
   p39WriterLockLayer,
+  prepareP39PrimaryDatabasePath,
   releaseP39WriterPermit,
   type SqliteAdapterError,
 } from "@arbor/persistence-sqlite";
@@ -447,8 +447,9 @@ const withP39RuntimeWriterPermit = <A, E, R>(
   E | P39WriterLockFailure | SqliteAdapterError,
   Exclude<R, Scope.Scope>
 > => {
-  const lockFilename = p39WriterLockFilename(primaryDatabaseFilename);
-  if (typeof lockFilename !== "string") return Effect.fail(lockFilename);
+  if (primaryDatabaseFilename === ":memory:") return Effect.scoped(use);
+  const prepared = prepareP39PrimaryDatabasePath(primaryDatabaseFilename);
+  if (!("databaseFilename" in prepared)) return Effect.fail(prepared);
   return Effect.scoped(
     Effect.provide(
       Effect.acquireUseRelease(
@@ -456,7 +457,7 @@ const withP39RuntimeWriterPermit = <A, E, R>(
         () => use,
         releaseP39WriterPermit,
       ),
-      p39WriterLockLayer(lockFilename),
+      p39WriterLockLayer(prepared.writerLockFilename),
     ),
   );
 };

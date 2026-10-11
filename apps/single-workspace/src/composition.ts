@@ -55,6 +55,7 @@ import {
   AssignWorkTargetBindingRepositoryLive,
   AttentionPollStoreLive,
   type AttentionProjectionQualificationProbe,
+  acquireP39RuntimeWriterPermit,
   ClockLive,
   CommandStoreLive,
   ConsumerDeadLetterStoreLive,
@@ -98,10 +99,13 @@ import {
   ProjectToolRegistryLive,
   ProviderDeploymentBreakerLive,
   ProviderTurnStoreLive,
+  p39WriterLockLayer,
+  prepareP39PrimaryDatabasePath,
   RecordEnvironmentChangeLive,
   type RecoveryAttentionFactQualificationProbe,
   ResourceOwnershipRepositoryLive,
   RuntimeClockLive,
+  releaseP39WriterPermit,
   runMigrations,
   SchedulerTimerStoreLive,
   SessionRepositoryLive,
@@ -428,7 +432,21 @@ export const buildSingleWorkspaceLayer = (
   config: SingleWorkspaceConfig,
 ): Layer.Layer<SingleWorkspaceServices> => {
   const governance = resolveCompositionGovernance(config);
-  const base = layer({ filename: config.databaseFile });
+  const preparedDatabase =
+    config.databaseFile === ":memory:"
+      ? undefined
+      : prepareP39PrimaryDatabasePath(config.databaseFile);
+  if (
+    preparedDatabase !== undefined &&
+    !("databaseFilename" in preparedDatabase)
+  ) {
+    throw new Error(
+      "P39 startup requires a supported local primary database path",
+    );
+  }
+  const primaryDatabaseFilename =
+    preparedDatabase?.databaseFilename ?? config.databaseFile;
+  const base = layer({ filename: primaryDatabaseFilename });
   const infra = Layer.mergeAll(
     base,
     ClockLive,
@@ -990,6 +1008,12 @@ export const buildSingleWorkspaceLayer = (
           "PRAGMA user_version",
         );
         const current = Number(versions[0]?.user_version ?? 0);
+        if (current >= 39) {
+          return yield* Effect.die({
+            _tag: "P39MaintenanceFailure",
+            code: "P39_RUNTIME_START_REFUSED",
+          });
+        }
         if (current > latestSupportedSchema) {
           return yield* Effect.die(
             sqliteAdapterError(
@@ -1001,9 +1025,22 @@ export const buildSingleWorkspaceLayer = (
     ),
     base,
   );
+
+  if (preparedDatabase === undefined) {
+    return Layer.provide(all, currentSchemaGate) as Layer.Layer<SingleWorkspaceServices>;
+  }
+  const p39WriterPermit = Layer.provide(
+    Layer.effectDiscard(
+      Effect.acquireRelease(acquireP39RuntimeWriterPermit(), (permit) =>
+        releaseP39WriterPermit(permit).pipe(Effect.orDie),
+      ),
+    ),
+    p39WriterLockLayer(preparedDatabase.writerLockFilename),
+  );
+  const p39StartupGate = Layer.provide(currentSchemaGate, p39WriterPermit);
   return Layer.provide(
     all,
-    currentSchemaGate,
+    p39StartupGate,
   ) as Layer.Layer<SingleWorkspaceServices>;
 };
 
