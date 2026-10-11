@@ -172,4 +172,17 @@ delegation; decision and owner hashes are in
 `planning/results/AH10-deliver-p7-migration-reference-correction-governance-decision.md`.
 The source accepted P37 addendum SHA is
 `040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
-Independent final re-review of this scope disposition remains pending.
+
+## Final independent review disposition
+
+The independent final review returned **Blocking = 0**. It verified the
+accepted P7 migration-reference correction and its separate governance-scope
+decision record against DID §9.3 and the accepted P37 addendum. The integrated
+P36–P38 design baseline is ready as the starting point for the separately
+accepted AH7-DG-02/P39 and AH7-DG-01/P40 owner-contract landing work.
+
+This disposition is design-only. P36–P38 migration implementations are not
+integrated in this tree; P39/P40 migration implementations, migration-runner
+qualification, Windows/local-filesystem durability qualification, and release
+qualification remain open. No implementation or deployment readiness is
+claimed.
