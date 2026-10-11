@@ -46,8 +46,41 @@ interface AdmissionRows {
       }
     | undefined;
   readonly step:
-    | { readonly provider_turn_id: string; readonly next_action_index: number }
+    | {
+        readonly logical_step_no: number;
+        readonly repair_attempt: number;
+        readonly provider_turn_id: string;
+        readonly state: string;
+        readonly next_action_index: number;
+        readonly decoded_output_hash: string | null;
+        readonly model_output_session_sequence: number | null;
+      }
     | undefined;
+  readonly steps: ReadonlyArray<{
+    readonly logical_step_no: number;
+    readonly repair_attempt: number;
+    readonly provider_turn_id: string;
+    readonly state: string;
+    readonly next_action_index: number;
+    readonly decoded_output_hash: string | null;
+    readonly model_output_session_sequence: number | null;
+  }>;
+  readonly providerTurns: ReadonlyArray<{
+    readonly provider_turn_id: string;
+    readonly settled_at: string | null;
+    readonly finish_reason: string | null;
+  }>;
+  readonly providerAttempts: ReadonlyArray<{
+    readonly provider_turn_id: string;
+    readonly attempt_no: number;
+    readonly outcome: string;
+    readonly settled_at: string | null;
+  }>;
+  readonly modelOutputSources: ReadonlyArray<{
+    readonly sequence: number;
+    readonly source_ref: string;
+    readonly content_hash: string;
+  }>;
   readonly action:
     | {
         readonly logical_action_id: string;
@@ -103,7 +136,9 @@ const readRows = (
         .get(executionId) as AdmissionRows["execution"],
       step: db
         .prepare(
-          `SELECT s.provider_turn_id, s.next_action_index
+          `SELECT s.logical_step_no, s.repair_attempt, s.provider_turn_id,
+                  s.state, s.next_action_index, s.decoded_output_hash,
+                  s.model_output_session_sequence
              FROM agent_loop_steps s
              JOIN agent_loop_step_actions a
                ON a.execution_id = s.execution_id
@@ -112,6 +147,44 @@ const readRows = (
             WHERE a.execution_id = ? AND a.call_ref = ?`,
         )
         .get(executionId, callRef) as AdmissionRows["step"],
+      steps: db
+        .prepare(
+          `SELECT logical_step_no, repair_attempt, provider_turn_id, state,
+                  next_action_index, decoded_output_hash,
+                  model_output_session_sequence
+             FROM agent_loop_steps
+            WHERE execution_id = ?
+            ORDER BY logical_step_no, repair_attempt`,
+        )
+        .all(executionId) as AdmissionRows["steps"],
+      providerTurns: db
+        .prepare(
+          `SELECT provider_turn_id, settled_at, finish_reason
+             FROM provider_turns WHERE execution_id = ?
+            ORDER BY provider_turn_id`,
+        )
+        .all(executionId) as AdmissionRows["providerTurns"],
+      providerAttempts: db
+        .prepare(
+          `SELECT a.provider_turn_id, a.attempt_no, a.outcome, a.settled_at
+             FROM provider_attempts a
+             JOIN provider_turns t USING (provider_turn_id)
+            WHERE t.execution_id = ?
+            ORDER BY a.provider_turn_id, a.attempt_no`,
+        )
+        .all(executionId) as AdmissionRows["providerAttempts"],
+      modelOutputSources: db
+        .prepare(
+          `SELECT sequence, source_ref, content_hash
+             FROM session_entries
+            WHERE session_id = (
+                    SELECT session_id FROM executions WHERE execution_id = ?
+                  )
+              AND item_type = 'AssistantMessage'
+              AND source_kind = 'ProviderTurn'
+            ORDER BY sequence`,
+        )
+        .all(executionId) as AdmissionRows["modelOutputSources"],
       action: db
         .prepare(
           `SELECT logical_action_id, call_ref, action_kind, state,
@@ -482,10 +555,25 @@ describe("P4 AH7 effect-admission generation takeover", () => {
               callRef,
               approval.approvalId,
             ),
-          (rows) =>
-            rows.invocation?.settlement_kind === "Success" &&
-            rows.action?.state === "Applied" &&
-            rows.toolResults.length === 1,
+          (rows) => {
+            const successorTurn = rows.providerTurns.find(
+              (turn) =>
+                turn.provider_turn_id !==
+                  beforeTakeover.step?.provider_turn_id &&
+                turn.settled_at !== null,
+            );
+            return (
+              rows.invocation?.settlement_kind === "Success" &&
+              rows.action?.state === "Applied" &&
+              rows.toolResults.length === 1 &&
+              successorTurn !== undefined &&
+              rows.modelOutputSources.some(
+                (source) =>
+                  source.source_ref ===
+                  `${successorTurn.provider_turn_id}:assistant`,
+              )
+            );
+          },
           60_000,
         );
         expect(recovered.invocation).toMatchObject({
@@ -499,14 +587,70 @@ describe("P4 AH7 effect-admission generation takeover", () => {
           call_ref: callRef,
           state: "Applied",
         });
+        expect(recovered.action?.observation_source_ref).toEqual(
+          expect.any(String),
+        );
         expect(recovered.step?.provider_turn_id).toBe(
           beforeTakeover.step?.provider_turn_id,
         );
+        expect(recovered.step).toMatchObject({
+          logical_step_no: beforeTakeover.step?.logical_step_no,
+          repair_attempt: beforeTakeover.step?.repair_attempt,
+          decoded_output_hash: beforeTakeover.step?.decoded_output_hash,
+          model_output_session_sequence:
+            beforeTakeover.step?.model_output_session_sequence,
+          next_action_index: 1,
+        });
         expect(recovered.toolResults).toHaveLength(1);
         const result = JSON.parse(
           recovered.toolResults[0]?.payload_json ?? "{}",
         ) as { callRef?: string; invocationId?: string };
         expect(result).toMatchObject({ callRef, invocationId });
+        const originalProviderTurnId =
+          beforeTakeover.step?.provider_turn_id ?? "";
+        const originalModelOutput = beforeTakeover.modelOutputSources.filter(
+          (source) =>
+            source.source_ref === `${originalProviderTurnId}:assistant`,
+        );
+        expect(originalModelOutput).toHaveLength(1);
+        expect(
+          recovered.modelOutputSources.filter(
+            (source) =>
+              source.source_ref === `${originalProviderTurnId}:assistant`,
+          ),
+        ).toEqual(originalModelOutput);
+        expect(
+          recovered.providerAttempts.filter(
+            (attempt) => attempt.provider_turn_id === originalProviderTurnId,
+          ),
+        ).toEqual(
+          beforeTakeover.providerAttempts.filter(
+            (attempt) => attempt.provider_turn_id === originalProviderTurnId,
+          ),
+        );
+        const successorTurn = recovered.providerTurns.find(
+          (turn) => turn.provider_turn_id !== originalProviderTurnId,
+        );
+        expect(successorTurn).toBeDefined();
+        const successorStep = recovered.steps.find(
+          (step) =>
+            step.logical_step_no ===
+              (beforeTakeover.step?.logical_step_no ?? -1) + 1 &&
+            step.repair_attempt === 0,
+        );
+        expect(successorStep?.provider_turn_id).toBe(
+          successorTurn?.provider_turn_id,
+        );
+        expect(successorStep?.provider_turn_id).not.toBe(
+          originalProviderTurnId,
+        );
+        expect(
+          recovered.modelOutputSources.filter(
+            (source) =>
+              source.source_ref ===
+              `${successorTurn?.provider_turn_id}:assistant`,
+          ),
+        ).toHaveLength(1);
         expect(
           readFileSync(join(fixture.workspaceDirectory, effectFile), "utf8")
             .split(/\r?\n/u)
@@ -553,7 +697,14 @@ describe("P4 AH7 effect-admission generation takeover", () => {
           false,
         );
       }
-      expect(targetProviderCalls).toBe(1);
+      // NotAdmitted resumes the original Step's persisted ModelOutput and then
+      // legitimately asks its distinct successor ProviderTurn to consume the
+      // ToolResult. MayHaveStarted recovery stops before another model request.
+      if (scenario.admission === "NotAdmitted") {
+        expect(targetProviderCalls).toBeGreaterThan(1);
+      } else {
+        expect(targetProviderCalls).toBe(1);
+      }
       expect(existsSync(join(fixture.workspaceDirectory, effectFile))).toBe(
         scenario.admission === "NotAdmitted",
       );

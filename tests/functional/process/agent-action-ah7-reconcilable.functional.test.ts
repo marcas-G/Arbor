@@ -55,6 +55,22 @@ const readExecutionProviderTurns = (
   }
 };
 
+const isToolResultFor = (
+  row: { readonly payload_json: unknown },
+  invocationId: string,
+  callRef: string,
+): boolean => {
+  try {
+    const payload = JSON.parse(String(row.payload_json)) as {
+      readonly invocationId?: unknown;
+      readonly callRef?: unknown;
+    };
+    return payload.invocationId === invocationId && payload.callRef === callRef;
+  } catch {
+    return false;
+  }
+};
+
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
@@ -75,7 +91,11 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
     },
   ] as const) {
     const { boundary, semantics } = scenario;
-    it(`does not replay an ambiguous ${semantics} shell effect after ${boundary}`, async () => {
+    const testName =
+      boundary === "AH7AfterToolIntentCommit"
+        ? "resumes a NotAdmitted shell intent from its persisted ProviderTurn"
+        : `does not replay an ambiguous ${semantics} shell effect after ${boundary}`;
+    it(testName, async () => {
       const marker = `AH7-SHELL-${crypto.randomUUID().slice(0, 8)}`;
       const steerMarker = `AH7-SHELL-STEER-${crypto.randomUUID().slice(0, 8)}`;
       const effectFile = `ah7-effect-${marker}.txt`;
@@ -160,15 +180,17 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             if (targetProviderCalls > 5) {
               return { _tag: "HttpError", status: 429 };
             }
-            return {
-              _tag: "ToolCall",
-              name: "shell",
-              arguments: {
-                command,
-                cwd: { mount: "workspace", path: "." },
-                timeoutMs: 5_000,
-              },
-            };
+            return targetProviderCalls === 1
+              ? {
+                  _tag: "ToolCall",
+                  name: "shell",
+                  arguments: {
+                    command,
+                    cwd: { mount: "workspace", path: "." },
+                    timeoutMs: 5_000,
+                  },
+                }
+              : { _tag: "Text", text: `Observed ${marker}` };
           }
           return { _tag: "Text", text: `Waiting ${marker}` };
         },
@@ -329,6 +351,16 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         fixture.databaseFile,
         targetExecutionId,
       );
+      const crashedSourceStep = crashed.steps.find(
+        (step) =>
+          step.execution_id === targetExecutionId &&
+          step.logical_step_no === crashedAction.logical_step_no &&
+          step.repair_attempt === crashedAction.repair_attempt,
+      );
+      const originalProviderTurnId = crashedSourceStep?.provider_turn_id;
+      if (originalProviderTurnId === undefined) {
+        throw new Error("AH7 crash snapshot lacks the source ProviderTurn");
+      }
       expect(crashedTarget.execution).toEqual({
         execution_id: targetExecutionId,
         episode_kind: "WorkEpisode",
@@ -377,15 +409,65 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       } else {
         await fixture.restart();
       }
+      const resumesUnadmittedIntent = boundary === "AH7AfterToolIntentCommit";
       const recovered = await waitForPublic(
         async () => durableSnapshot(fixture.databaseFile),
-        (value) =>
-          value.actions.some(
-            (action) => action.state === "ReconciliationPending",
-          ) &&
-          value.executions.some(
-            (execution) => execution.settlement_kind === "OutcomeUnknown",
-          ),
+        (value) => {
+          if (resumesUnadmittedIntent) {
+            const successorStep = value.steps.find(
+              (step) =>
+                step.execution_id === targetExecutionId &&
+                step.logical_step_no ===
+                  (crashedSourceStep?.logical_step_no ?? -1) + 1,
+            );
+            return (
+              value.actions.some(
+                (action) =>
+                  action.execution_id === targetExecutionId &&
+                  action.call_ref === hit?.callRef &&
+                  action.state === "Applied",
+              ) &&
+              value.toolInvocations.some(
+                (invocation) =>
+                  invocation.invocation_id === hit?.invocationId &&
+                  invocation.execution_id === targetExecutionId &&
+                  invocation.settlement_kind === "Success",
+              ) &&
+              value.toolResults.some((row) =>
+                isToolResultFor(
+                  row,
+                  hit?.invocationId ?? "",
+                  hit?.callRef ?? "",
+                ),
+              ) &&
+              successorStep !== undefined &&
+              successorStep.provider_turn_id !== originalProviderTurnId &&
+              value.providerTurns.some(
+                (turn) =>
+                  turn.provider_turn_id === successorStep.provider_turn_id &&
+                  turn.settled_at !== null,
+              ) &&
+              value.outputs.filter(
+                (output) =>
+                  output.source_ref ===
+                  `${successorStep.provider_turn_id}:assistant`,
+              ).length === 1
+            );
+          }
+          return (
+            value.actions.some(
+              (action) =>
+                action.execution_id === targetExecutionId &&
+                action.call_ref === hit?.callRef &&
+                action.state === "ReconciliationPending",
+            ) &&
+            value.executions.some(
+              (execution) =>
+                execution.execution_id === targetExecutionId &&
+                execution.settlement_kind === "OutcomeUnknown",
+            )
+          );
+        },
         45_000,
       );
       const recoveredTarget = readExecutionProviderTurns(
@@ -403,7 +485,10 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         execution_id: targetExecutionId,
         side_effect_semantics: semantics,
       });
-      if (semantics === "NonIdempotent") {
+      if (resumesUnadmittedIntent) {
+        expect(settledInvocation?.settled_at).not.toBeNull();
+        expect(settledInvocation?.settlement_kind).toBe("Success");
+      } else if (semantics === "NonIdempotent") {
         expect(settledInvocation?.settled_at).not.toBeNull();
         expect(settledInvocation?.settlement_kind).toBe("OutcomeUnknown");
         expect(JSON.parse(String(settledInvocation?.settlement_json))).toEqual({
@@ -416,14 +501,16 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         expect(settledInvocation?.settlement_json).toBeNull();
       }
       const recoveredTargetActions = recovered.actions.filter(
-        (action) => action.execution_id === targetExecutionId,
+        (action) =>
+          action.execution_id === targetExecutionId &&
+          action.call_ref === hit.callRef,
       );
       expect(recoveredTargetActions).toEqual([
         expect.objectContaining({
           execution_id: targetExecutionId,
           logical_action_id: crashedAction.logical_action_id,
           call_ref: crashedAction.call_ref,
-          state: "ReconciliationPending",
+          state: resumesUnadmittedIntent ? "Applied" : "ReconciliationPending",
         }),
       ]);
       const recoveredExecution = recovered.executions.find(
@@ -432,21 +519,109 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
       const contentAfter = existsSync(effectPath)
         ? readFileSync(effectPath, "utf8")
         : null;
-      expect(recoveredExecution).toMatchObject({
-        settlement_kind: "OutcomeUnknown",
-      });
-      expect(JSON.parse(String(recoveredExecution?.settlement_json))).toEqual({
-        _tag: "OutcomeUnknown",
-        reconciliation: {
-          _tag: "ReconciliationRequired",
-          invocationRefs: [hit?.invocationId],
-        },
-      });
-      expect(recoveredTarget.providerTurns).toEqual(
-        crashedTarget.providerTurns,
+      if (!resumesUnadmittedIntent) {
+        expect(recoveredExecution).toMatchObject({
+          settlement_kind: "OutcomeUnknown",
+        });
+        expect(JSON.parse(String(recoveredExecution?.settlement_json))).toEqual(
+          {
+            _tag: "OutcomeUnknown",
+            reconciliation: {
+              _tag: "ReconciliationRequired",
+              invocationRefs: [hit?.invocationId],
+            },
+          },
+        );
+      }
+      const recoveredSourceStep = recovered.steps.find(
+        (step) =>
+          step.execution_id === targetExecutionId &&
+          step.logical_step_no === crashedAction.logical_step_no &&
+          step.repair_attempt === crashedAction.repair_attempt,
       );
-      expect(targetProviderCalls).toBe(1);
-      expect(contentAfter).toBe(contentBefore);
+      expect(crashedSourceStep).toMatchObject({
+        state: "ActionsInProgress",
+        next_action_index: 0,
+        provider_turn_id: expect.any(String),
+        decoded_output_hash: expect.any(String),
+        model_output_session_sequence: expect.any(Number),
+      });
+      expect(recoveredSourceStep).toMatchObject({
+        provider_turn_id: crashedSourceStep?.provider_turn_id,
+        decoded_output_hash: crashedSourceStep?.decoded_output_hash,
+        model_output_session_sequence:
+          crashedSourceStep?.model_output_session_sequence,
+        next_action_index: 1,
+      });
+      expect(
+        crashed.outputs.filter(
+          (output) =>
+            output.source_ref === `${originalProviderTurnId}:assistant`,
+        ),
+      ).toHaveLength(1);
+      expect(
+        recovered.outputs.filter(
+          (output) =>
+            output.source_ref === `${originalProviderTurnId}:assistant`,
+        ),
+      ).toHaveLength(1);
+      expect(
+        recovered.attempts.filter(
+          (attempt) => attempt.provider_turn_id === originalProviderTurnId,
+        ),
+      ).toEqual(
+        crashed.attempts.filter(
+          (attempt) => attempt.provider_turn_id === originalProviderTurnId,
+        ),
+      );
+      if (resumesUnadmittedIntent) {
+        expect(
+          recoveredTarget.providerTurns.find(
+            (turn) => turn.provider_turn_id === originalProviderTurnId,
+          ),
+        ).toEqual(
+          crashedTarget.providerTurns.find(
+            (turn) => turn.provider_turn_id === originalProviderTurnId,
+          ),
+        );
+        const successorTurn = recoveredTarget.providerTurns.find(
+          (turn) => turn.provider_turn_id !== originalProviderTurnId,
+        );
+        expect(successorTurn?.settled_at).not.toBeNull();
+        expect(
+          recovered.outputs.filter(
+            (output) =>
+              output.source_ref ===
+              `${successorTurn?.provider_turn_id}:assistant`,
+          ),
+        ).toHaveLength(1);
+        expect(recoveredSourceStep?.next_action_index).toBe(1);
+        expect(
+          recovered.actions.find(
+            (action) =>
+              action.execution_id === targetExecutionId &&
+              action.call_ref === hit?.callRef,
+          )?.observation_source_ref,
+        ).toEqual(expect.any(String));
+        expect(
+          recovered.toolResults.filter((row) =>
+            isToolResultFor(row, hit?.invocationId ?? "", hit?.callRef ?? ""),
+          ),
+        ).toHaveLength(1);
+        expect(targetProviderCalls).toBeGreaterThan(1);
+        expect(contentBefore).toBeNull();
+        expect(
+          (contentAfter ?? "")
+            .split(/\r?\n/u)
+            .filter((line) => line === marker),
+        ).toHaveLength(1);
+      } else {
+        expect(recoveredTarget.providerTurns).toEqual(
+          crashedTarget.providerTurns,
+        );
+        expect(targetProviderCalls).toBe(1);
+        expect(contentAfter).toBe(contentBefore);
+      }
       expect(fixture.daemonErrors).toEqual([]);
     }, 90_000);
   }
