@@ -1,7 +1,9 @@
 # P37 L5 — Deliver Attention and Parent wake implementation checkpoint
 
-Date: 2026-10-11  
-Base: `80f10551cb11825cd207131fcd9f0ab665c38a62` (integrated P36 + P37 L2/L3)  
+Date: 2026-10-11
+
+Base: `80f10551cb11825cd207131fcd9f0ab665c38a62` (integrated P36 + P37 L2/L3)
+
 Status: **implementation checkpoint; functional and process qualification pending**
 
 ## Implemented
