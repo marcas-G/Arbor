@@ -343,8 +343,14 @@ export const AttentionPollStoreLive: Layer.Layer<
             sql.unsafe<{ readonly present: number }>(
               `SELECT 1 AS present FROM p10_attention_dispatch_state
                 WHERE singleton = 1 AND active_project_id = ?
-                  AND lease_owner = ? AND lease_generation = ?`,
-              [claim.projectId, claim.leaseOwner, claim.leaseGeneration],
+                  AND lease_owner = ? AND lease_generation = ?
+                  AND lease_expires_at > ?`,
+              [
+                claim.projectId,
+                claim.leaseOwner,
+                claim.leaseGeneration,
+                failedAt,
+              ],
             ),
           );
           if (current.length !== 1) return false;
@@ -377,8 +383,14 @@ export const AttentionPollStoreLive: Layer.Layer<
                   SET active_project_id = NULL, lease_owner = NULL,
                       claim_started_at = NULL, lease_expires_at = NULL
                 WHERE singleton = 1 AND active_project_id = ?
-                  AND lease_owner = ? AND lease_generation = ?`,
-              [claim.projectId, claim.leaseOwner, claim.leaseGeneration],
+                  AND lease_owner = ? AND lease_generation = ?
+                  AND lease_expires_at > ?`,
+              [
+                claim.projectId,
+                claim.leaseOwner,
+                claim.leaseGeneration,
+                failedAt,
+              ],
             ),
           );
           return true;
