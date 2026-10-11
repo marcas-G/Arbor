@@ -232,6 +232,11 @@ type AdmitExecutionPayload =
 `envelope.projectId` is the owning Project. All IDs are caller-preallocated;
 handlers never generate IDs.
 
+The `focus` payload above is historical migration/decoder material under EGP;
+new Execution writes use exact `ExecutionEpisodeBinding` as defined by DID
+§3.4 and §8.18A.1. RAI-DG-01 checks only a validated Work Episode binding and
+never reconstructs it from `focus`, Session text or a Workspace current pointer.
+
 ### Result
 
 ```ts
@@ -260,6 +265,18 @@ handlers never generate IDs.
 | another active main exists (`WorkspaceMain`) | `DomainError.ActiveExecutionConflict` |
 | `executionId` already used | defect (invariant violation), not a typed rejection |
 | authority mismatch | `DomainError.AuthorityDenied` |
+
+RAI-DG-01 admission overlay: when the candidate Execution is bound to an exact
+Work Episode, the handler revalidates canonical Work identity/revision and
+`WorkReadmissionGateStore.hasBlockingSource` inside the same authoritative
+`BEGIN IMMEDIATE` transaction that checks the one-active-main constraint and
+commits `ExecutionAdmitted`. A matching durable source returns the typed
+runtime admission result `WorkReadmissionHeld`; a canonical Work
+identity/scope/revision mismatch returns `ReadmissionTargetMismatch`;
+malformed, missing, duplicate or scope-conflicting source evidence returns the
+typed `ReadmissionGateIntegrityFailure`. Each branch commits no Execution. They do
+not introduce a Domain Event, Work lifecycle transition, or `CommandRejection`
+variant. Non-Work Episode admission is unchanged.
 
 ### Events
 

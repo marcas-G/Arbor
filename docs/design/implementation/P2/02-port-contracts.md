@@ -333,7 +333,7 @@ interface ExecutionSchedulerService {
 }
 
 type SchedulerDecision =
-  | { readonly _tag: "Noop"; readonly reason: "ActiveMainExecution" }
+  | { readonly _tag: "Noop"; readonly reason: "ActiveMainExecution" | "WorkReadmissionHeld" }
   | { readonly _tag: "Admit"; readonly focus: ExecutionFocus }
   | { readonly _tag: "SelectCurrentWork"; readonly workId: WorkId }
   | { readonly _tag: "Idle" };
@@ -351,8 +351,106 @@ interface RunnableWorkSourceService {
 ```
 
 P2 implements the DID §8.18A decision table over this port and ships a
-deterministic stub; P7 ships the real dependency-aware source. P2 does not add
-runnable semantics.
+deterministic stub; P7 ships the real dependency-aware source. RAI-DG-01 adds
+the exact-revision readmission source to P7's classifier inputs; it does not
+change the `classify(workspaceId)` signature or the meanings of WorkWait and
+Dependency.
+
+### 7.1 WorkReadmissionGateStore (RAI-DG-01)
+
+P2 owns the narrow durable-source query used by P7 and the authoritative
+Work-bound `AdmitExecution` transaction:
+
+```ts
+type ReadmissionSourceKind =
+  | "RuntimeSafetyStopSettlement"
+  | "OutcomeUnknownSettlement"
+  | "DeliverReplayFact"
+  | "AssignWorkBindingFact"
+  | "ReconciliationEscalationEvent";
+
+interface WorkReadmissionGateStoreService {
+  readonly hasBlockingSource: (input: {
+    readonly projectId: ProjectId;
+    readonly workspaceId: WorkspaceId;
+    readonly workId: WorkId;
+    readonly workRevision: WorkRevision;
+  }) => Effect.Effect<
+    Option.Option<{ readonly sourceKind: ReadmissionSourceKind;
+                    readonly executionId: ExecutionId }>,
+    ReadmissionTargetMismatch | ReadmissionGateIntegrityFailure,
+    TransactionScope
+  >;
+}
+```
+
+`None` means no exact-revision source; `Some` returns only bounded source
+identity. The SQLite query reads canonical Work, source Execution rows, P9
+fact/event witnesses and `agent_execution_state.episode_json` in one
+`TransactionScope`. It joins by `execution_id`, validates the EGP decoder and
+exact Project/owning Workspace/Work/revision, and never reads a P10 projection
+table. It adds no gate table or migration. Existing one-active-main and
+`BEGIN IMMEDIATE` admission discipline remain in force.
+
+The requested canonical Work must exist and match all four request fields;
+absence/scope/revision mismatch returns `ReadmissionTargetMismatch`. For each
+candidate source in the requested Project and owning Workspace, require one
+Execution row and one episode-state row. Fact/event `projectId`,
+`executionId`, and present `targetWorkspaceId` must match that Execution;
+`ReconciliationEscalated.aggregate_ref` and payload execution IDs must both
+equal it. A valid non-Work Episode is outside this gate. A Work Episode must
+resolve to a canonical Work in the same Project/owning Workspace and match the
+requested Work and revision exactly. A stale lower source revision is ignored;
+a source revision newer than canonical Work is integrity failure. Missing,
+duplicate, malformed, unknown-version or conflicting source evidence returns
+the closed integrity union below; it is never treated as `None` or attached to
+a guessed Work.
+
+```ts
+type ReadmissionGateIntegrityFailure = {
+  readonly _tag: "ReadmissionGateIntegrityFailure";
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly workId: WorkId;
+  readonly requestedWorkRevision: WorkRevision;
+  readonly executionId?: ExecutionId;
+  readonly sourceKind?: ReadmissionSourceKind;
+  readonly reasonCode:
+    | "ReadmissionTargetMissing" | "ReadmissionTargetScopeMismatch"
+    | "ReadmissionTargetRevisionMismatch" | "SourceExecutionMissing"
+    | "SourceExecutionNonUnique" | "SourceEpisodeStateMissing"
+    | "SourceEpisodeStateNonUnique" | "EpisodeMalformed"
+    | "EpisodeVersionUnsupported" | "SourceFactEventMismatch"
+    | "SourceEventExecutionMismatch" | "SourceProjectMismatch"
+    | "SourceWorkspaceMismatch" | "WorkMissing" | "WorkScopeMismatch"
+    | "FutureWorkRevision" | "SettlementMalformed";
+};
+
+type ReadmissionTargetMismatch = {
+  readonly _tag: "ReadmissionTargetMismatch";
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly workId: WorkId;
+  readonly requestedWorkRevision: WorkRevision;
+  readonly reasonCode: "ReadmissionTargetMissing"
+    | "ReadmissionTargetScopeMismatch" | "ReadmissionTargetRevisionMismatch";
+};
+
+type WorkAdmissionBlock =
+  | { readonly _tag: "WorkReadmissionHeld";
+      readonly sourceKind: ReadmissionSourceKind;
+      readonly executionId: ExecutionId }
+  | ReadmissionTargetMismatch
+  | ReadmissionGateIntegrityFailure;
+```
+
+Errors expose no raw `episode_json`, receipt/provider payload, invocation refs,
+SQLite text or parser text. A valid non-Work Episode is outside this gate.
+P7 propagates integrity failure through `RunnableWorkSourceError`; the
+authoritative Work-bound admission rechecks this query in its commit
+transaction, returns `WorkReadmissionHeld` for a valid hold and commits no
+Execution. Never attach a source to a guessed Work from Session,
+`currentWorkId`, Message, Attention target or Parent Workspace.
 
 ## 8. WorkWaitStore and SchedulerTimerStore
 

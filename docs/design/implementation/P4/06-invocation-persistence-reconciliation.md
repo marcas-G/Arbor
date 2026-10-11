@@ -151,6 +151,14 @@ interface ReconciliationSourceService {
   a safe settlement; `OutcomeUnknown` must not be swallowed by retry (DID §9.12).
 - `NonIdempotent` ambiguity → `OutcomeUnknown`, never automatic replay.
 
+RAI-DG-01 preserves this exact external-reality disposition as an independent
+Work readmission source: when the owning Execution is bound to a Work Episode,
+settled `OutcomeUnknown(ReconciliationRequired(nonempty invocationRefs))`
+holds that exact `(WorkId, WorkRevision)` even if no separate
+`ReconciliationEscalated` event or P10 Attention row exists. P2 derives the
+hold from canonical settlement plus the validated EGP binding. This does not
+change tool-invocation settlement, reconciliation, or retry semantics.
+
 ## 5. Transaction participation
 
 All store methods require `TransactionScope`. Each Worker-originated mutation

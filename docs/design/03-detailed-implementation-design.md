@@ -1,10 +1,10 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.36\
+**Version:** 1.37\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.35\
-**Date:** 2026-10-10\
-**Depends on:** `Arbor System Design Specification v1.13`
+**Supersedes:** v1.36\
+**Date:** 2026-10-12\
+**Depends on:** `Arbor System Design Specification v1.14`
 
 **Integration reconciliation (2026-10-10):** This version combines two separately
 accepted owner amendments that each landed from DID v1.34 as v1.35 in isolated
@@ -134,6 +134,48 @@ receipt-first prior-consumer decode**
   The real CommandStore writer transaction and P9 pre/post-commit crash matrix,
   an operator-visible diagnostic sink, and cross-schema-version prior replay
   remain explicit OPEN qualifications.
+
+**Governance changes (v1.36 → v1.37): RAI-DG-01 Work-revision readmission hold**
+
+- System Design §3.4/§7.6 and invariant 77 freeze a durable hold for a Work's
+  exact `(WorkId, WorkRevision)` after a Work-bound
+  `Interrupted(RuntimeSafetyStop)`, one of the closed P9 recovery-blocking
+  sources, or `OutcomeUnknown(ReconciliationRequired(nonempty refs))`.
+  Work remains Open; an authorized revision-advancing `SteerWork` makes only
+  the old revision's hold stale. This is not Work cancellation or Deliverable
+  deduplication.
+- The closed P9 sources are the `deliver_replay_attention_facts` row plus its
+  `DeliverReplayEscalated` witness, the
+  `assign_work_binding_attention_facts` row plus its
+  `AssignWorkTargetBindingEscalated` witness, and `ReconciliationEscalated`
+  journal events. P9 `07` owns exact failure-code unions, source identity,
+  immutability and atomic fact/event commit. Ephemeral `RecoveryBlocked` and
+  `ReconciliationSourceError` are not independent sources while the Execution
+  remains Active.
+- P2 `02`/`05` own `WorkReadmissionGateStore`; P7 `03` incorporates the
+  same-snapshot exact-revision result into its sole classifier. P2's
+  Work-bound `AdmitExecution` rechecks it inside the existing
+  `BEGIN IMMEDIATE` transaction. A hold returns typed `WorkReadmissionHeld`;
+  malformed or conflicting identities fail closed with the closed
+  `ReadmissionGateIntegrityFailure` union. No gate table or migration is added.
+- The query validates canonical Project/Workspace/Work/revision, unique source
+  Execution and EGP episode state, exact journal/fact witnesses, and exact
+  `ExecutionEpisodeBinding`. It never infers Work identity from Session,
+  `currentWorkId`, Message, Attention target, or Parent Workspace and never
+  exposes receipts, provider payload, raw episode JSON, invocation refs, or
+  parser/SQLite text.
+- P4 `06` retains exact unresolved invocation truth and the no-blind-replay
+  rule. P10 `02` uses a same-snapshot canonical Work revision filter for all
+  four Work-bound Attention sources; old-revision rows leave active detail and
+  subtree summaries, while immutable source facts remain auditable. Projection
+  rows and queue ACKs never govern admission.
+- EGP Work bindings `(WorkId, WorkRevision)` are the durable attribution and
+  release scope. Other Episode variants are outside this rule. Classification
+  and admission are restart-safe and source commits/Steer cannot race a held
+  revision into admission.
+- Accepted proposal SHA-256:
+  `0CEB2DAA2E6128F86CBD1CAA185B9847EAAB240360011F94425E0856F39AA106`.
+  Decision record: `planning/results/RAI-DG-01-governance-acceptance-and-landing.md`.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -4502,6 +4544,90 @@ Work 存在引用 `DependencyChanged(该依赖)` 的 active WorkWait）。上表
 Ownership（P2 冻结）：P2 提供 ExecutionScheduler 与 durable wake/timer 机制，使该 re-evaluation
 可在无 Active Main Execution 时被确定性触发；**P7** 拥有完整的 runnable/dependency reevaluation
 与 Wait-for graph。P2 不新增 runnable 语义。
+
+### 8.18A.1 Exact Work-revision readmission hold (RAI-DG-01)
+
+For a canonical Work `(projectId, workspaceId, workId, revision)`, the
+readmission gate is held when a durable source is bound by the exact EGP Work
+Episode `(workId, workRevision)` to that Work revision and is one of:
+
+1. settled `Interrupted(ControlledInterruption(RuntimeSafetyStop))`;
+2. a P9 recovery-blocking source in the closed P9 `07` inventory; or
+3. settled `OutcomeUnknown(ReconciliationRequired(invocationRefs))` with
+   non-empty refs.
+
+The P9 set is closed to `DeliverReplayEscalated` with its matching
+`deliver_replay_attention_facts` row, `AssignWorkTargetBindingEscalated` with
+its matching `assign_work_binding_attention_facts` row, and
+`ReconciliationEscalated`. Each source binds an exact `executionId`; the
+Execution and `agent_execution_state.episode_json` are joined by that ID, then
+Project, owning Workspace, Work and revision are validated. A valid non-Work
+Episode does not participate. No identity is reconstructed from Session text,
+`currentWorkId`, Message, projection target, or Parent Workspace.
+
+The gate is a read-only derivation from canonical Work, Execution settlement,
+P9 source rows/events and the durable EGP binding. P2 `02` defines its typed
+port/errors; P7 `03` excludes held revisions from both `current` and
+`runnable`. Work-bound `AdmitExecution` rechecks the same predicate and exact
+scope under the existing `BEGIN IMMEDIATE` transaction. A valid source returns
+`WorkReadmissionHeld`; a canonical Work target identity/scope/revision mismatch
+returns `ReadmissionTargetMismatch`; missing, duplicate, malformed,
+unsupported-version or scope-conflicting source data returns typed
+`ReadmissionGateIntegrityFailure` and commits no Execution. Classification
+and admission share a snapshot/commit boundary so a concurrent source commit
+or Steer cannot admit a held revision.
+
+The hold does not change Work lifecycle, WorkWait, Dependency, approval,
+Workspace current pointer, or Deliverable semantics. Same-revision polling,
+restart, P10 queue ingestion/ACK, or projection rebuild cannot release it.
+Only an authorized `SteerWork` that atomically advances the canonical Work
+revision makes the old source stale; the source remains audit evidence and the
+new revision follows the ordinary P7/P2 rules. Other Execution Episode
+variants are unaffected. See P2 `02`/`05`, P7 `03`, P9 `07`, P10 `02`, and
+System Design §3.4/§7.6/§12.3.
+
+### 8.18A.2 Required qualification (no implementation authorization)
+
+All scenarios use fresh isolated databases and real SQLite. Process cases use
+two independent daemon processes and actual kill/restart boundaries, with no
+test retry. The qualification package must demonstrate:
+
+1. A P9 Deliver replay fact continues to hold the Work after P10 writes its
+   marker and ACKs/removes the queue row; no second Execution, LogicalAction,
+   Provider request or Deliver receipt occurs.
+2. Each of the eight Deliver replay codes, fourteen AssignWork binding codes,
+   `ReconciliationEscalated`, and `OutcomeUnknown(ReconciliationRequired)`
+   holds only its exact Work/revision. Excluded ephemeral/ordinary outcomes do
+   not create an independent hold while the Active Main gate is effective.
+3. RuntimeSafetyStop without any P9 fact holds the same Work revision and
+   admits no new Execution.
+4. After source commit, kill both daemons and restart against the same SQLite
+   file; the same revision remains held without another Provider/Deliver
+   effect.
+5. Kill before and after each P9 fact/event and RuntimeSafetyStop settlement
+   boundary; recovery converges the hold from committed durable sources only.
+6. Inject missing/duplicate/malformed/unknown-version episode state, absent
+   source Execution and Project/Workspace/Work/revision mismatches. Assert
+   typed bounded integrity failure and zero new Execution/Provider/Action/
+   Command; include Parent/Child, sibling and cross-Project negatives.
+7. Advance a held revision with authorized Steer; old P10 Attention becomes
+   inactive, immutable audit sources remain, and the new revision follows
+   ordinary admission. Kill/restart immediately before and after the commit.
+8. Delay WorkSteered ingestion, rebuild/reset the projection, and restart;
+   canonical revision snapshots never expose or rebuild an old active row.
+9. Prove a child hold affects only that exact child revision, and symmetrically
+   that Parent, sibling and other-revision Work remain independently eligible.
+10. Prove no Work cancellation/status/current-pointer mutation, global
+    Deliverable deduplication, duplicate suppression or changed Dependency
+    semantics.
+11. Retain P2 scheduler/admission, P7 runnability/wake, P9 recovery fact/replay
+    and P10 projection/rebuild/restart regressions, including original P37 L6
+    assertions.
+
+P2/P7 own admission/classification qualification, P9 owns source/settlement
+crash qualification, and P10 owns projection freshness/rebuild qualification.
+Passing this matrix is a future implementation requirement, not evidence that
+implementation is authorized or complete.
 
 ## 8.19 ModelContext Manifest
 

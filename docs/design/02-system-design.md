@@ -1,12 +1,12 @@
 # Arbor System Design Specification
 
-**Version:** 1.13
+**Version:** 1.14
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.12
+**Supersedes:** v1.13
 
-**Date:** 2026-10-10
+**Date:** 2026-10-12
 
 **Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.3`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量  
@@ -522,6 +522,13 @@ Open | Completed | Cancelled
 ```
 
 Waiting、Blocked、Verifying、Running 等尽量由 Execution、Dependency、Inbox、Verification 等事实推导，不作为复杂 canonical status。
+
+Work-bound `Interrupted(RuntimeSafetyStop)`、本设计冻结的 P9 恢复阻断事实，或
+`OutcomeUnknown(ReconciliationRequired(refs))` 会对其精确绑定的 `(WorkId,
+WorkRevision)` 建立持久 readmission hold。该 Work 仍保持 Open；同一 revision
+不会仅因重启、队列确认或 Attention 投影进度而自动重新运行。只有获授权的
+`SteerWork` 提交并推进 Work revision，才使旧 revision 的 hold 不再匹配；源事实
+继续保留供审计。本合同没有 same-revision dismiss/repair；该门不取消 Work，也不改变其他 Work 或 Deliverable 的去重语义。
 
 ## 3.5 Execution
 
@@ -1170,9 +1177,9 @@ Scheduler 是确定性 Runtime，不是 LLM Planner。
 - fairness；
 - resource-aware scheduling。
 
-Open Work 如果暂时无法推进，必须有 durable `WaitSpec` 描述等待的 Dependency / Decision / Approval / Inbox / Environment / Time / Manual 条件；系统不得通过重复模型调用轮询。注册 Wait 与检查“被观察事实是否已经变化”必须处于同一一致性边界，避免 lost wake-up。时间条件必须由持久调度恢复，不能依赖某个 Worker 的内存 timer。
+Open Work 如果暂时无法推进，必须有 durable `WaitSpec` 描述等待的 Dependency / Decision / Approval / Inbox / Environment / Time / Manual 条件；系统不得通过重复模型调用轮询。注册 Wait 与检查“被观察事实是否已经变化”必须处于同一一致性边界，避免 lost wake-up。时间条件必须由持久调度恢复，不能依赖某个 Worker 的内存 timer。除认知等待外，Runtime 还必须在唯一 runnability classifier 与 authoritative Work admission 中检查精确 revision 的 readmission hold；该 hold 来自 canonical settlement/P9 源事实，不是 WorkWait，也不改变 Work 的 Open 状态。
 
-当无 Active Main Execution 时，Scheduler 重新计算 Workspace：Current Work 可运行则继续；Current Work 正在等待且没有其他 runnable Work 则保持静止；只有一个其他 runnable Work 时 Runtime 确定性切换；有多个候选时才 Admit `focus = Coordination` 的 Workspace Execution，让 Agent 进行语义选择。Coordination Execution 可以提交 `SelectCurrentWork`，而正在推进旧 Work 的 Work-focused Execution 不可以边执行边切 Current Work。
+当无 Active Main Execution 时，Scheduler 重新计算 Workspace：未被 hold 的 Current Work 可运行则继续；Current Work 正在等待或其当前 revision 被 readmission hold 且没有其他 runnable Work 时保持静止；只有一个其他 runnable Work 时 Runtime 确定性切换；有多个候选时才按当前 Execution Episode 合同处理选择。Work readmission hold 会同时从 `current` 与 `runnable` 排除精确被 hold 的 revision；无 hold 时现有 decision table 不变。获授权的 revision-advancing Steer 使新 revision 回到普通 runnability 规则。历史 `ExecutionFocus=Coordination` 仅为迁移/兼容材料，按 DID EGP 合同不得作为新写语义恢复。
 
 Workspace 数量与实时 Execution concurrency 分离：
 
@@ -1682,6 +1689,13 @@ UI 可根据事实投影：正在执行、等待、可执行但未 admission、�
 
 深层 Attention 向上冒泡为 subtree summary，但不复制底层上下文。
 
+Work-bound Runtime Safety Envelope、ReconciliationEscalated、AssignWork binding
+failure 与 Deliver replay failure 的 active Attention 只适用于其来源 Execution
+绑定的 Work revision 仍等于 canonical Work revision 的情况。查询在同一 read
+snapshot 校验来源 Execution、Work Episode 和当前 Work；Steer 推进 revision 后，旧
+revision 的 Attention 离开 active set 与 subtree summary，但 settlement、P9
+fact/event 仍在审计时间线中。Attention 投影及其消费 ACK 不是 readmission gate。
+
 典型 Action Required：
 
 - human-required approval；
@@ -1937,6 +1951,7 @@ Domain Core + Persistence/Event Journal
 74. Approval、reconciliation、compaction 与可恢复 interruption 属于同一 run 的 pause/resume，不得伪装成新 HumanMessage 或新 Conversation attempt。
 75. Model-visible tool surface 必须由 Execution purpose、exact registration readiness、capability 与当前 control facts 解析；静态 catalog 或布尔开关不是最终资格判定。
 76. 同一确定性 failure fingerprint 或 deployment systemic failure 达到 policy 阈值后必须停止 Provider bytes 并形成 durable Attention/circuit state。
+77. Work-bound RuntimeSafetyStop settlement、冻结的 P9 recovery-blocking source，或 `OutcomeUnknown(ReconciliationRequired(nonempty refs))` 必须阻止同一 `(WorkId, WorkRevision)` 的新 Work Execution admission；只有获授权的 revision-advancing Steer 解除旧 revision 的 hold，且不得通过 Attention 投影/ACK 解析。
 
 ---
 

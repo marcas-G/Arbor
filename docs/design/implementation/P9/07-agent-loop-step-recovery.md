@@ -117,6 +117,38 @@ deterministic pair; a post-commit crash reads that pair. P10 `02` owns the
 Action Required projection and P10 `07` owns its qualification; this recovery
 contract does not define projection semantics.
 
+### RAI-DG-01 closed Work-readmission sources
+
+P9 recovery failures that hold a Work revision are a closed source set. Each
+source is attached to the exact source Execution and its validated EGP
+`ExecutionEpisodeBinding`; P2/P7 join by `executionId` and never infer a Work
+from projection target or Session content.
+
+| Source | Durable identity / witness | Closed failure codes |
+|---|---|---|
+| Deliver receipt replay proof failure | `deliver_replay_attention_facts` row plus `DeliverReplayEscalated`; exact `executionId`, `logicalActionId`, `attentionFactId` | `LegacyMessageMissingEvent`, `LegacyEventMissingMessage`, `LegacyMessageBindingMismatch`, `LegacyInboxConflict`, `PriorReceiptDecodeMismatch`, `PriorReceiptResultMismatch`, `RejectedReceiptEffectConflict`, `PriorReceiptEffectConflict` |
+| AssignWork committed-receipt target proof failure | `assign_work_binding_attention_facts` row plus `AssignWorkTargetBindingEscalated`; exact `executionId`, `logicalActionId`, `committedCommandId`, `attentionFactId`; only direct-child proof | `LegacyUnbound`, `MissingBinding`, `DuplicateBinding`, `MalformedBinding`, `RefMismatch`, `AuthorityMismatch`, `ForeignTarget`, `PlacementMismatch`, `SourceActionMismatch`, `ReceiptMismatch`, `WorkMismatch`, `ProvenanceMismatch`, `EventMismatch`, `CommitLifecycleMismatch` |
+| External reality cannot be reconciled | every committed `ReconciliationEscalated` journal event; `aggregate_ref` and payload bind the exact `executionId`; dedup identity remains `(executionId, invocationRefsFingerprint)` | No failure-code union |
+
+The Deliver and AssignWork fact/event pairs retain their existing exact
+identities, immutability and atomic `TransactionScope` commit. A conflicting
+replay remains a typed invariant failure; no fact is rewritten or deleted.
+Once committed, a P9 source fact starts the hold even if its Execution has not
+settled; while Active, the existing one-active-main gate independently
+prevents another Work admission.
+`OutcomeUnknown(ReconciliationRequired(nonempty invocationRefs))` is also a
+readmission source from canonical Execution settlement even without a separate
+escalation event or Attention row; P4 `06` owns that invocation truth and the
+no-blind-replay rule.
+
+Ephemeral `AgentActionRecoveryBlocked` / `ExecutionDriveOutcome.RecoveryBlocked`
+and `ReconciliationSourceError` do not independently create this gate. They
+leave the same Execution Active, and the existing one-active-main invariant
+already prevents a second Work Execution. A later durable source in this
+closed set or a Work-bound RuntimeSafetyStop settlement starts the readmission
+hold. No in-memory recovery outcome is promoted to a P9 fact. The P10 queue,
+projected Attention row and consumer ACK are never source truth for P2/P7.
+
 ## 3. Legacy adoption
 
 Migration `0017_agent_loop_step_handoff` is forward-only and additive. Its adoption

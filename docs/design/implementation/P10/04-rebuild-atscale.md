@@ -7,6 +7,13 @@
 
 1. **Incremental checkpoints**: each business projection persists its applied-watermark; catch-up resumes from checkpoint + 1 (never below pruned floor).
 2. **Per-projection retention policy**: projection-side state lifecycle only (e.g., transcript paging windows, attention-row lifetime after underlying facts are superseded). **Journal horizon ownership stays with P1 `04` — unchanged.**
+
+RAI-DG-01 freshness rule: Attention rebuilds reconstruct only Work-bound rows
+whose validated source Execution Work Episode revision equals the canonical
+Work revision in the same source snapshot (`02` §1.1). A rebuild, reset,
+restart or delayed WorkSteered consumer must never revive an old-revision row.
+This affects only active P10 projection rows; it does not delete or rewrite
+canonical settlement/P9 source records.
 3. **Rebuild orchestration**: triggers = startup (after the P2 nine-step pass step 8), explicit operator command, detected drift (watermark < pruned floor ⇒ forced reset). Orchestration reuses the P9-hardened generic rebuild — the P9 closure reconciliation (DID v1.12 G2a) corrected the rewind to `floor−1` as an implementation correction restoring P1 `05` §6 full-replay semantics; P10 consumes that corrected form and changes nothing further (EffectiveFacts after raw fact views; Attention last).
 4. **Query correctness**: after any rebuild path, the projection reaches the same state as incremental application from the same events (RB-4 semantics restated for business projections; per-view assertion in `07`).
 

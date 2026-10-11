@@ -71,6 +71,12 @@ program/context selection is customized by it (DID §8.18).
 
 ## 4. Deterministic re-evaluation
 
+The `ExecutionFocus=Work|Coordination` terms in this historical phase table
+predate EGP. For new writes, read the exact `ExecutionEpisodeBinding` contract
+in DID §3.4/§8.18A: Work binds `(WorkId, WorkRevision)` and former Coordination
+rows are migration/decoder evidence only. RAI-DG-01's gate applies only to
+Work Episodes; other EGP Episode variants are unaffected.
+
 ```text
 reevaluate(workspaceId, wakeReason):
   if an Active Main Execution exists for the workspace: Noop(ActiveMainExecution)
@@ -88,6 +94,17 @@ reevaluate(workspaceId, wakeReason):
 | `current` = None, runnable = 0 | `Idle` |
 | `current` = None, runnable = 1 | `SelectCurrentWork(theOne)` |
 | `current` = None, runnable > 1 | `Admit { focus: Coordination }` |
+
+RAI-DG-01 adds a source-derived gate without changing WorkWait or Dependency
+semantics. P7 classification excludes an exactly held Work revision from both
+`current` and `runnable`; when no other Work is eligible the scheduler is
+`Idle`, with no new Work Execution or Provider request. A Work-bound admission
+also rechecks the gate in its `BEGIN IMMEDIATE` commit transaction; if a hold
+appeared after classification it returns `Noop(WorkReadmissionHeld)` and
+commits no Execution. Integrity errors propagate as typed failures, never as
+Runnable or ordinary waiting. No P10 Attention table/ACK participates in this
+decision. An authorized Steer releases the old revision only after canonical
+Work revision advance; a later revision follows the existing table.
 
 - The decision is computed by the Scheduler (deterministic Runtime, not an
   LLM planner, SD §7.6).
