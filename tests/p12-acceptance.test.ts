@@ -34,7 +34,6 @@ import {
   MessageStoreLive,
   P11_MIGRATIONS,
   P12_MIGRATIONS,
-  P35_MIGRATIONS,
   P38_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
@@ -47,6 +46,7 @@ import {
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
+import { CURRENT_MIGRATIONS } from "../adapters/persistence-sqlite/src/migrations.js";
 import {
   type OpenAISdkChunk,
   type OpenAISdkClient,
@@ -1701,7 +1701,7 @@ const runSafetyScenario = async (
   return Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P35_MIGRATIONS);
+        yield* runMigrations(CURRENT_MIGRATIONS);
         const gateway = yield* CommandGateway;
         const created = yield* gateway.execute(
           safetyEnvelope("CreateProject", selectedSafetyProjectPayload, "1"),
