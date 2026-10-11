@@ -41,6 +41,16 @@ export interface RawJournalEventCandidate {
   readonly payloadJsonRaw: unknown;
 }
 
+export type RawJournalDecodeResult =
+  | {
+      readonly _tag: "Decoded";
+      readonly event: DomainEvent<unknown>;
+    }
+  | {
+      readonly _tag: "Poison";
+      readonly reason: "MalformedEnvelope" | "UnknownEventType" | "MalformedPayload";
+    };
+
 export interface DomainEventJournalService {
   readonly append: (
     drafts: ReadonlyArray<PendingDomainEvent>,
@@ -74,6 +84,11 @@ export interface DomainEventJournalService {
     DomainEventJournalError,
     TransactionScope
   >;
+  /** Decode one raw candidate through the same closed P1 event catalog. The
+   * caller invokes this only after source-specific raw-ID preflight. */
+  readonly decodeRaw: (
+    candidate: RawJournalEventCandidate,
+  ) => Effect.Effect<RawJournalDecodeResult, DomainEventJournalError>;
   readonly lastSequence: (
     projectId: ProjectId,
   ) => Effect.Effect<number, DomainEventJournalError, TransactionScope>;

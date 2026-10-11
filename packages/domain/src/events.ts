@@ -115,6 +115,23 @@ export const AssignWorkTargetBindingEscalated = Schema.TaggedStruct(
     failureCode: Schema.String,
   },
 );
+export const DeliverReplayEscalated = Schema.Struct({
+  attentionFactId: Schema.String,
+  executionId: Schema.String,
+  targetWorkspaceId: Schema.String,
+  logicalActionId: Schema.String,
+  messageId: Schema.String,
+  failureCode: Schema.Literals([
+    "LegacyMessageMissingEvent",
+    "LegacyEventMissingMessage",
+    "LegacyMessageBindingMismatch",
+    "LegacyInboxConflict",
+    "PriorReceiptDecodeMismatch",
+    "PriorReceiptResultMismatch",
+    "RejectedReceiptEffectConflict",
+    "PriorReceiptEffectConflict",
+  ]),
+});
 export const DeadlockAttentionRequested = Schema.TaggedStruct(
   "DeadlockAttentionRequested",
   {
@@ -258,6 +275,7 @@ export const DomainEventPayload = Schema.Union([
   DeadlockAttentionRequested,
   ReconciliationEscalated,
   AssignWorkTargetBindingEscalated,
+  DeliverReplayEscalated,
   DependencyWithdrawn,
   DependencyMarkedUnfulfillable,
   DeliverableProduced,
@@ -310,6 +328,7 @@ export const EVENT_CATALOG = {
   DeadlockAttentionRequested,
   ReconciliationEscalated,
   AssignWorkTargetBindingEscalated,
+  DeliverReplayEscalated,
   DeliverableProduced,
   MessageSent,
   VerificationStarted,

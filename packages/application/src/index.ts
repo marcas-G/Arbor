@@ -6,6 +6,7 @@ export * from "./command-result-codec.js";
 export * from "./commands/index.js";
 export * from "./completion-consumer.js";
 export * from "./consumer-loop.js";
+export * from "./attention-poll-loop.js";
 export * from "./conversation-recovery.js";
 export * from "./conversation-response-runtime.js";
 export * from "./dependency-coordinator.js";
