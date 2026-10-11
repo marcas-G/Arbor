@@ -48,9 +48,11 @@ Status: **L3 scoped implementation and targeted qualification PASS; P37 remains 
 - Targeted Biome over the 12 changed source/test files — PASS.
 - `git diff --check` — PASS.
 - The pending direct-handler functional case is excluded by the default Vitest
-  config (`tests/functional/**`); it was not run or edited. Static call-site
-  inspection confirms only that pending case references the legacy direct
-  handler, while production registration uses the Gateway handler.
+  config (`tests/functional/**`); it was not run or edited. Production
+  registration uses `deliverMessageGatewayHandler`. The legacy direct
+  `deliverHandler` is still called by that pending reproduction and by
+  `apps/single-workspace/test/mac-p3-dependency-delivery.test.ts:226`; the
+  MAC-P3 test was not part of this targeted run.
 - No full `pnpm check`, functional suite, L4 receipt-first recovery, L5 Attention
   projection/wake qualification, or L6 two-daemon process matrix was run.
 
