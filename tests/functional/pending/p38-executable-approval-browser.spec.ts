@@ -26,12 +26,13 @@ test.skip("P38 executable approval can be resolved from the browser Queue and re
   page,
 }) => {
   const marker = `P38-BROWSER-${crypto.randomUUID().slice(0, 8)}`;
+  const secretCanary = `P38-SHELL-CANARY-${crypto.randomUUID()}`;
   const destination = `p38-browser-${marker}.txt`;
   const effectLog = `p38-browser-${marker}.log`;
   const command =
     process.platform === "win32"
-      ? `if (Test-Path -LiteralPath 'proof.txt') { Add-Content -LiteralPath '${effectLog}' -Value '${marker}'; mv -LiteralPath 'proof.txt' -Destination '${destination}' }`
-      : `if [ -f proof.txt ]; then printf '%s\\n' '${marker}' >> '${effectLog}' && mv proof.txt '${destination}'; fi`;
+      ? `if (Test-Path -LiteralPath 'proof.txt') { Add-Content -LiteralPath '${effectLog}' -Value '${secretCanary}'; mv -LiteralPath 'proof.txt' -Destination '${destination}' }`
+      : `if [ -f proof.txt ]; then printf '%s\\n' '${secretCanary}' >> '${effectLog}' && mv proof.txt '${destination}'; fi`;
   fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
     reply: (call) => {
@@ -136,6 +137,8 @@ test.skip("P38 executable approval can be resolved from the browser Queue and re
             readonly approvalId: string;
             readonly revision: number;
             readonly toolName: string;
+            readonly toolVersion: string;
+            readonly executionId: string;
             readonly capabilities: ReadonlyArray<string>;
             readonly sideEffectSemantics: string;
             readonly actionDigest: string;
@@ -174,7 +177,10 @@ test.skip("P38 executable approval can be resolved from the browser Queue and re
     );
   }
   const executableTarget = approvalEntry.target;
-  expect(JSON.stringify(executableTarget)).not.toContain(marker);
+  expect(JSON.stringify(executableTarget)).not.toContain(secretCanary);
+  expect(executableTarget.validatedArgumentsPreview).not.toContain(
+    secretCanary,
+  );
   expect(approvalEntry.summary).toBe("Executable approval requires review");
 
   await page.goto(`${fixture.baseUrl}/p/${project.projectId}`);
@@ -182,20 +188,22 @@ test.skip("P38 executable approval can be resolved from the browser Queue and re
   await expect(
     page.getByRole("heading", { name: "待处理", exact: true }),
   ).toBeVisible();
-  // Free-form command arguments carry this marker and must remain redacted.
-  // Locate the public review card by its safe target metadata instead.
+  const approvalDetails = page.getByLabel("待处理详情");
+  // The unique canary exists only in a free-form shell argument; locate the
+  // review card by its safe target metadata and check the entire details DOM.
   await expect(
     page.getByRole("heading", { name: executableTarget.toolName, exact: true }),
   ).toBeVisible({ timeout: 30_000 });
-  await expect(
-    page.getByText(executableTarget.actionDigest, { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(executableTarget.capabilities.join("、"), { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText(executableTarget.sideEffectSemantics, { exact: true }),
-  ).toBeVisible();
+  await expect(approvalDetails).toContainText(executableTarget.toolVersion);
+  await expect(approvalDetails).toContainText(executableTarget.executionId);
+  await expect(approvalDetails).toContainText(executableTarget.actionDigest);
+  await expect(approvalDetails).toContainText(
+    executableTarget.capabilities.join("、"),
+  );
+  await expect(approvalDetails).toContainText(
+    executableTarget.sideEffectSemantics,
+  );
+  await expect(approvalDetails).not.toContainText(secretCanary);
   await page.getByLabel("审批决定").selectOption("Approve");
   await page.getByRole("button", { name: "批准并继续" }).click();
 
