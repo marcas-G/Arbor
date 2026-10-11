@@ -4,7 +4,11 @@ import type {
 } from "@arbor/application";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
-import { externalContext } from "../src/transport/auth.js";
+import { resolveCompositionGovernance } from "../src/composition.js";
+import {
+  externalContext,
+  makeStaticAuthenticator,
+} from "../src/transport/auth.js";
 import {
   type AuthorityInputs,
   makeExternalSubmission,
@@ -170,6 +174,70 @@ describe("external command composition boundary", () => {
       problem: { code: "authority/denied" },
     });
     expect(calls).toEqual([]);
+  });
+
+  it("keeps a configured-auth outsider from resolving an Executable approval", async () => {
+    const calls: string[] = [];
+    const governance = resolveCompositionGovernance({
+      authenticator: makeStaticAuthenticator({
+        token: "user:outsider" as never,
+      }),
+    });
+    const submission = makeExternalSubmission({
+      resolver: {
+        resolve: (input: AuthorityDecisionInput) => {
+          calls.push("resolver");
+          expect(input.principal).toBe("user:outsider");
+          expect(input.governance.authenticatedHumans).toEqual([]);
+          return Effect.fail({
+            _tag: "NoApplicableGrant",
+            principal: input.principal,
+            commandType: "ResolveExecutableApproval",
+            commandId: input.envelope.commandId,
+          } as never);
+        },
+      } as never,
+      gateway: {
+        execute: () => {
+          calls.push("gateway");
+          return Effect.succeed({} as never);
+        },
+      } as never,
+      registry: { lookup: () => Option.some({ schemaVersion: 1 }) } as never,
+      loadInputs: () => {
+        calls.push("load-inputs");
+        return Effect.succeed({
+          governance,
+        } as AuthorityInputs);
+      },
+    });
+
+    const response = await Effect.runPromise(
+      submission.submit(
+        "user:outsider" as never,
+        externalContext("user:outsider" as never),
+        {
+          commandType: "ResolveExecutableApproval",
+          commandId: "cmd_018ee90a-5b83-7def-8c2d-7ef1a3c5a041",
+          projectId: "prj_018ee90a-5b83-7def-8c2d-7ef1a3c5a042",
+          actor: "user:outsider",
+          issuedAt: "2026-10-10T00:00:00.000Z",
+          payload: {
+            approvalId: "eap_local-bootstrap",
+            expectedRevision: 0,
+            decision: "Approve",
+            reason: "unauthorized test",
+          },
+        },
+      ),
+    );
+
+    expect(response).toMatchObject({
+      ok: false,
+      status: 403,
+      problem: { code: "authority/denied" },
+    });
+    expect(calls).toEqual(["load-inputs", "resolver"]);
   });
 
   it("rejects raw external AssignWork before loading facts, Resolver, or Gateway", async () => {

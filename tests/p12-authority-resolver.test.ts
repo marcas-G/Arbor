@@ -10,6 +10,8 @@ import {
   runMigrations,
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
+import { resolveCompositionGovernance } from "../apps/single-workspace/src/composition.js";
+import { makeStaticAuthenticator } from "../apps/single-workspace/src/transport/auth.js";
 import { validateCommandAuthority } from "../packages/application/src/authority.js";
 import {
   type AuthorityDecisionInput,
@@ -240,18 +242,41 @@ describe("P12-002 authority resolver production plane", () => {
     );
     expect(untrusted._tag).toBe("NoApplicableGrant");
 
+    const localPrincipal = parse(Principal)("user:local");
     const trusted = await runResolver(
       resolveFact(
         decisionInput({
-          principal: HUMAN,
-          submissionContext: externalContext(HUMAN),
-          envelope: { ...envelope, actor: parse(Actor)(HUMAN) },
+          principal: localPrincipal,
+          submissionContext: externalContext(localPrincipal),
+          envelope: { ...envelope, actor: parse(Actor)(localPrincipal) },
           canonicalFacts: approvalFacts,
-          governance: { authenticatedHumans: [HUMAN], directParentOf: [] },
+          governance: resolveCompositionGovernance({}),
         }),
       ),
     );
     expect(trusted._tag).toBe("ExecutableApprovalDecisionAuthority");
+
+    const configuredGovernance = resolveCompositionGovernance({
+      authenticator: makeStaticAuthenticator({
+        token: parse(Principal)("user:spoofable"),
+      }),
+    });
+    const configuredOutsider = await runResolver(
+      Effect.flip(
+        resolveFact(
+          decisionInput({
+            principal: parse(Principal)("user:spoofable"),
+            submissionContext: externalContext(
+              parse(Principal)("user:spoofable"),
+            ),
+            envelope,
+            canonicalFacts: approvalFacts,
+            governance: configuredGovernance,
+          }),
+        ),
+      ),
+    );
+    expect(configuredOutsider._tag).toBe("NoApplicableGrant");
   });
 
   it("resolver produces exact-bound facts; no CommandGateway/mutation/approval/tool path", async () => {
