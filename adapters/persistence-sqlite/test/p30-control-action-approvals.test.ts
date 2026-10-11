@@ -82,6 +82,7 @@ describe("CAPA migration 0030 control approval store", () => {
               actionDigest: record.actionDigest,
               controlBasisDigest: record.controlBasisDigest,
               consumedAt: "2026-10-03T00:11:00.000Z",
+              consumedBy: "lac_test_action",
             }),
           );
           expect(Option.getOrThrow(consumed)).toMatchObject({
@@ -97,6 +98,7 @@ describe("CAPA migration 0030 control approval store", () => {
                   actionDigest: record.actionDigest,
                   controlBasisDigest: record.controlBasisDigest,
                   consumedAt: "2026-10-03T00:12:00.000Z",
+                  consumedBy: "lac_test_action",
                 }),
               ),
             ),

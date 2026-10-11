@@ -1,4 +1,5 @@
 import type {
+  CommandId,
   CommandSubmissionContext,
   EvidenceId,
   Execution,
@@ -194,6 +195,13 @@ export type AgentActionOutcome =
       readonly _tag: "Observation";
       readonly source: "Runtime";
       readonly observation: BoundedObservation;
+      /** Exact Control approval consumption performed by AssignWork's
+       * Command Gateway transaction. */
+      readonly approvalConsumption?: {
+        readonly approvalId: string;
+        readonly commandId: CommandId;
+        readonly consumedRevision: number;
+      };
     }
   | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
 
@@ -207,6 +215,12 @@ export interface AgentActionHandlerInput {
   /** Exact process-local authorization evidence from the trusted authorizer. */
   readonly assignWorkEvidence?: import("@arbor/ports").AssignWorkControlAuthorizationEvidence;
   readonly assignWorkReplay?: boolean;
+  readonly assignWorkCommandReplay?: {
+    readonly commandId: CommandId;
+    readonly approvalId: string;
+    readonly approvalRevision: number;
+    readonly consumedRevision: number;
+  };
 }
 
 export interface AgentActionHandler {

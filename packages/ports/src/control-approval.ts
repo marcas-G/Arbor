@@ -74,7 +74,7 @@ export interface ControlApprovalStoreService {
     readonly actionDigest: string;
     readonly controlBasisDigest: string;
     readonly consumedAt: string;
-    readonly consumedBy?: string;
+    readonly consumedBy: string;
   }) => Effect.Effect<
     Option.Option<ControlApprovalRecord>,
     ControlApprovalStoreError,
