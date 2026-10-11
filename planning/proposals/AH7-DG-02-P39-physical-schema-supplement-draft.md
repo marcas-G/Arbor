@@ -82,16 +82,28 @@ CREATE TABLE tool_invocations_p39 (
   recovery_binding_state TEXT NOT NULL CHECK
                            (recovery_binding_state IN
                              ('Bound','LegacyBindingUnproven','HistoricalSettled')),
+  recovery_binding_sha256 TEXT,
+  reconciliation_fact_id TEXT,
   intent_at              TEXT NOT NULL,
   settled_at             TEXT,
   settlement_kind        TEXT CHECK (settlement_kind IN
                            ('Success','ExpectedFailure','Denied','Interrupted',
                             'OutcomeUnknown','RuntimeFailure','ReconciledNoEffect')),
   settlement_json        TEXT,
-  result_ref              TEXT,
+  result_ref              TEXT REFERENCES artifacts(artifact_id),
   CHECK ((settled_at IS NULL) = (settlement_kind IS NULL)),
   CHECK (recovery_binding_state <> 'HistoricalSettled' OR settled_at IS NOT NULL),
   CHECK (recovery_binding_state <> 'LegacyBindingUnproven' OR settled_at IS NULL),
+  CHECK ((recovery_binding_state = 'Bound') =
+         (recovery_binding_sha256 IS NOT NULL)),
+  FOREIGN KEY (invocation_id, recovery_binding_sha256)
+    REFERENCES tool_invocation_recovery_bindings(invocation_id, binding_sha256)
+    DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (invocation_id, reconciliation_fact_id)
+    REFERENCES tool_reconciliation_facts(invocation_id, fact_id)
+    DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((settlement_kind = 'ReconciledNoEffect') =
+         (reconciliation_fact_id IS NOT NULL)),
   CHECK (settlement_kind <> 'Denied' OR
          (effect_admission_state = 'NotAdmitted' AND result_ref IS NULL)),
   CHECK (settlement_kind <> 'ReconciledNoEffect' OR
@@ -128,15 +140,37 @@ CREATE TABLE tool_invocation_effect_attempts (
   effect_key             TEXT,
   binding_sha256         TEXT,
   admitted_at            TEXT,
+  admission_source       TEXT NOT NULL CHECK
+                           (admission_source IN ('P36Backfill','P39Claim','P39Admission')),
+  admission_time_precision TEXT NOT NULL CHECK
+                           (admission_time_precision IN
+                             ('NotAdmitted','TransactionTimestamp','UnknownLegacy')),
   PRIMARY KEY (invocation_id, attempt_no),
   FOREIGN KEY (invocation_id, binding_sha256)
     REFERENCES tool_invocation_recovery_bindings(invocation_id, binding_sha256),
-  CHECK ((admission_state = 'MayHaveStarted') = (admitted_at IS NOT NULL)),
+  CHECK (
+    (admission_state = 'NotAdmitted' AND admitted_at IS NULL
+      AND admission_time_precision = 'NotAdmitted'
+      AND admission_source IN ('P36Backfill','P39Claim'))
+    OR
+    (admission_state = 'MayHaveStarted' AND admitted_at IS NOT NULL
+      AND admission_time_precision = 'TransactionTimestamp'
+      AND admission_source = 'P39Admission')
+    OR
+    (admission_state = 'MayHaveStarted' AND admitted_at IS NULL
+      AND admission_time_precision = 'UnknownLegacy'
+      AND admission_source = 'P36Backfill')
+    OR
+    (admission_state = 'LegacyUnknown' AND admitted_at IS NULL
+      AND admission_time_precision = 'UnknownLegacy'
+      AND admission_source = 'P36Backfill')
+  ),
   CHECK ((profile_id IS NULL AND profile_version IS NULL AND profile_hash IS NULL
           AND profile_protocol IS NULL AND effect_key IS NULL)
       OR (profile_id IS NOT NULL AND profile_version IS NOT NULL
           AND profile_hash IS NOT NULL AND profile_protocol IS NOT NULL
-          AND effect_key IS NOT NULL))
+          AND effect_key IS NOT NULL)),
+  CHECK (profile_id IS NULL OR binding_sha256 IS NOT NULL)
 );
 
 CREATE TABLE tool_reconciliation_facts (
@@ -145,9 +179,18 @@ CREATE TABLE tool_reconciliation_facts (
                             fact_id NOT GLOB '*[^0-9a-f]*'),
   invocation_id          TEXT NOT NULL,
   attempt_no             INTEGER NOT NULL,
-  binding_sha256         TEXT NOT NULL,
-  profile_hash           TEXT NOT NULL,
-  effect_key             TEXT NOT NULL,
+  binding_sha256         TEXT,
+  profile_hash           TEXT,
+  effect_key             TEXT,
+  fact_origin            TEXT NOT NULL CHECK
+                           (fact_origin IN ('ProfileReconciliation',
+                                            'P36LegacyUnprofiled')),
+  legacy_reason          TEXT CHECK
+                           (legacy_reason IS NULL OR
+                            legacy_reason = 'LegacyProfileUnavailable'),
+  fact_disposition       TEXT NOT NULL CHECK
+                           (fact_disposition IN ('RecoveryInput',
+                                                 'PostTerminalEvidence')),
   outcome                TEXT NOT NULL CHECK
                            (outcome IN ('NotOccurred','Occurred','StillUnknown')),
   reason_code            TEXT,
@@ -157,6 +200,25 @@ CREATE TABLE tool_reconciliation_facts (
   observed_at             TEXT NOT NULL,
   FOREIGN KEY (invocation_id, attempt_no)
     REFERENCES tool_invocation_effect_attempts(invocation_id, attempt_no),
+  FOREIGN KEY (invocation_id, binding_sha256)
+    REFERENCES tool_invocation_recovery_bindings(invocation_id, binding_sha256),
+  FOREIGN KEY (evidence_ref) REFERENCES artifacts(artifact_id),
+  FOREIGN KEY (result_ref) REFERENCES artifacts(artifact_id),
+  CHECK (
+    (fact_origin = 'P36LegacyUnprofiled'
+      AND outcome = 'StillUnknown'
+      AND reason_code = 'ProfileUnavailable'
+      AND legacy_reason = 'LegacyProfileUnavailable'
+      AND binding_sha256 IS NULL AND profile_hash IS NULL AND effect_key IS NULL)
+    OR
+    (fact_origin = 'ProfileReconciliation'
+      AND legacy_reason IS NULL
+      AND binding_sha256 IS NOT NULL AND profile_hash IS NOT NULL
+      AND effect_key IS NOT NULL)
+  ),
+  CHECK (binding_sha256 IS NULL OR length(binding_sha256) = 64),
+  CHECK (profile_hash IS NULL OR length(profile_hash) > 0),
+  CHECK (effect_key IS NULL OR length(trim(effect_key)) > 0),
   CHECK ((outcome = 'StillUnknown' AND reason_code IS NOT NULL)
       OR (outcome <> 'StillUnknown' AND reason_code IS NULL)),
   CHECK (outcome <> 'StillUnknown' OR reason_code IN
@@ -164,9 +226,13 @@ CREATE TABLE tool_reconciliation_facts (
             'ExternalSourceUnavailable','ExternalSourceNotAuthoritative',
             'EvidenceStale','EvidenceBindingMismatch','AttemptNotFinal',
             'ResultEvidenceUnavailable','ProfileVersionUnavailable')),
+  CHECK (fact_disposition <> 'PostTerminalEvidence' OR
+         (outcome = 'StillUnknown' AND reason_code = 'EvidenceBindingMismatch')),
   CHECK ((outcome = 'Occurred' AND result_ref IS NOT NULL)
       OR (outcome <> 'Occurred' AND result_ref IS NULL)),
   CHECK ((evidence_ref IS NULL) = (evidence_sha256 IS NULL)),
+  CHECK (evidence_sha256 IS NULL OR
+         (length(evidence_sha256) = 64 AND evidence_sha256 NOT GLOB '*[^0-9a-f]*')),
   CHECK (outcome <> 'NotOccurred' OR evidence_ref IS NOT NULL)
 );
 
@@ -174,10 +240,14 @@ CREATE INDEX idx_effect_attempts_unsettled
   ON tool_invocation_effect_attempts(invocation_id, admission_state);
 CREATE INDEX idx_reconciliation_facts_invocation
   ON tool_reconciliation_facts(invocation_id, attempt_no, observed_at);
+CREATE UNIQUE INDEX reconciliation_facts_invocation_ref
+  ON tool_reconciliation_facts(invocation_id, fact_id);
 CREATE UNIQUE INDEX reconciliation_facts_exact_redelivery
   ON tool_reconciliation_facts(
-    invocation_id, attempt_no, profile_hash, outcome,
-    ifnull(reason_code, ''), ifnull(evidence_sha256, ''), ifnull(result_ref, '')
+    invocation_id, attempt_no, fact_origin, outcome, fact_disposition,
+    ifnull(binding_sha256, ''), ifnull(profile_hash, ''), ifnull(effect_key, ''),
+    ifnull(reason_code, ''), ifnull(legacy_reason, ''),
+    ifnull(evidence_ref, ''), ifnull(evidence_sha256, ''), ifnull(result_ref, '')
   );
 
 -- Facts and accepted bindings are immutable. Corrections append a new fact;
@@ -188,6 +258,57 @@ BEGIN SELECT RAISE(ABORT, 'recovery binding is immutable'); END;
 CREATE TRIGGER recovery_binding_no_delete
 BEFORE DELETE ON tool_invocation_recovery_bindings
 BEGIN SELECT RAISE(ABORT, 'recovery binding is immutable'); END;
+CREATE TRIGGER tool_invocation_binding_immutable
+BEFORE UPDATE OF recovery_binding_state, recovery_binding_sha256 ON tool_invocations
+WHEN NEW.recovery_binding_state IS NOT OLD.recovery_binding_state
+  OR NEW.recovery_binding_sha256 IS NOT OLD.recovery_binding_sha256
+BEGIN SELECT RAISE(ABORT, 'recovery binding state is immutable'); END;
+CREATE TRIGGER tool_invocation_settlement_no_rewrite
+BEFORE UPDATE OF settled_at, settlement_kind, settlement_json,
+                 result_ref, reconciliation_fact_id ON tool_invocations
+WHEN OLD.settled_at IS NOT NULL AND (
+     NEW.settled_at IS NOT OLD.settled_at
+  OR NEW.settlement_kind IS NOT OLD.settlement_kind
+  OR NEW.settlement_json IS NOT OLD.settlement_json
+  OR NEW.result_ref IS NOT OLD.result_ref
+  OR NEW.reconciliation_fact_id IS NOT OLD.reconciliation_fact_id)
+BEGIN SELECT RAISE(ABORT, 'terminal settlement is immutable'); END;
+CREATE TRIGGER tool_invocation_admission_monotone
+BEFORE UPDATE OF effect_admission_state ON tool_invocations
+WHEN OLD.effect_admission_state <> NEW.effect_admission_state
+ AND NOT (OLD.effect_admission_state = 'NotAdmitted'
+          AND NEW.effect_admission_state = 'MayHaveStarted')
+BEGIN SELECT RAISE(ABORT, 'invocation admission cannot move backwards'); END;
+CREATE TRIGGER effect_attempt_admission_monotone
+BEFORE UPDATE OF admission_state ON tool_invocation_effect_attempts
+WHEN OLD.admission_state <> NEW.admission_state
+ AND NOT (OLD.admission_state = 'NotAdmitted'
+          AND NEW.admission_state = 'MayHaveStarted')
+BEGIN SELECT RAISE(ABORT, 'attempt admission cannot move backwards'); END;
+CREATE TRIGGER effect_attempt_identity_immutable
+BEFORE UPDATE ON tool_invocation_effect_attempts
+WHEN NEW.invocation_id IS NOT OLD.invocation_id
+  OR NEW.attempt_no IS NOT OLD.attempt_no
+  OR NEW.tool_definition_hash IS NOT OLD.tool_definition_hash
+  OR NEW.side_effect_semantics IS NOT OLD.side_effect_semantics
+  OR NEW.profile_id IS NOT OLD.profile_id
+  OR NEW.profile_version IS NOT OLD.profile_version
+  OR NEW.profile_hash IS NOT OLD.profile_hash
+  OR NEW.profile_protocol IS NOT OLD.profile_protocol
+  OR NEW.effect_key IS NOT OLD.effect_key
+  OR NEW.binding_sha256 IS NOT OLD.binding_sha256
+BEGIN SELECT RAISE(ABORT, 'effect attempt identity is immutable'); END;
+CREATE TRIGGER reconciliation_fact_disposition_matches_terminal
+BEFORE INSERT ON tool_reconciliation_facts
+WHEN (NEW.fact_disposition = 'RecoveryInput'
+      AND EXISTS (SELECT 1 FROM tool_invocations i
+                   WHERE i.invocation_id = NEW.invocation_id
+                     AND i.settled_at IS NOT NULL))
+  OR (NEW.fact_disposition = 'PostTerminalEvidence'
+      AND NOT EXISTS (SELECT 1 FROM tool_invocations i
+                       WHERE i.invocation_id = NEW.invocation_id
+                         AND i.settled_at IS NOT NULL))
+BEGIN SELECT RAISE(ABORT, 'fact disposition does not match terminal state'); END;
 CREATE TRIGGER reconciliation_fact_no_update
 BEFORE UPDATE ON tool_reconciliation_facts
 BEGIN SELECT RAISE(ABORT, 'reconciliation fact is append-only'); END;
@@ -204,12 +325,51 @@ the rebuilt invocation table is exactly
 `AuthoritySnapshotChanged`, `ResourceSnapshotChanged`,
 `ApprovalNoLongerAuthorized`, `StopRequested`, or `ReplayLimitReached`.
 
+Physical reference/consistency rules are explicit: `tool_invocations.result_ref`
+and reconciliation fact `evidence_ref`/`result_ref` are P4 `ArtifactRef`s and
+reference `artifacts(artifact_id)`; P4 `ReconciledNoEffect` stores its exact
+`reconciliation_fact_id` as a deferred FK to `tool_reconciliation_facts(fact_id)`.
+Attempt/fact binding references use the composite `(invocation_id,
+binding_sha256)` FK, not a digest-only FK. For `recovery_binding_state='Bound'`,
+the invocation's non-null digest plus deferred composite FK requires a matching
+immutable binding row at transaction commit; the binding row itself requires
+the invocation FK. Attempt/fact composite FKs must match that same invocation.
+P4 validates the canonical JSON digest using the existing canonicalizer because
+SQLite has no repository hash function. These deferred FKs permit claim to
+insert invocation, binding, attempt and approval-consumption facts in one
+transaction while making a missing/mismatched binding fail at commit.
+
+Terminal P4 settlement is immutable: its trigger rejects any later change to
+settled time/kind/payload/result/fact reference. A new contradictory proof
+after terminal is appended only as `fact_disposition='PostTerminalEvidence'`;
+it cannot become a `RecoveryInput`, replace the selected terminal fact, undo P4
+settlement, roll back P3 ToolResult/Action/cursor, or cause replay. If that
+late contradiction is confirmed against the selected fact, the appended fact
+is `StillUnknown/EvidenceBindingMismatch`; identical redelivery returns the
+existing fact, while the contradictory fact is retained separately. P4 does
+not change `reconciliation_fact_id` or any terminal settlement field, and P3
+does not reverse Action/ToolResult/cursor. If that late contradiction must
+create new user-visible Attention, D0A does not define that post-terminal
+notification; it is a separate P9/P10 Design Gap. This proposal does not invent
+a second event or mutate terminal truth.
+
+Legacy unprofiled StillUnknown facts use the closed physical
+`legacy_reason='LegacyProfileUnavailable'` marker and null binding/profile/
+effect-key columns, while the P4/P3 canonical `reason_code` remains D0A's
+already accepted `ProfileUnavailable`. This preserves the precise migration
+provenance without extending the accepted reason union. Adding a public
+`LegacyProfileUnavailable` reason code instead is a mutually exclusive
+alternative that changes D0A's closed P4/P3 union and requires separate
+governance acceptance; this proposal recommends the existing-code mapping.
+
 The fact ID is proposed as lowercase hex SHA-256 over the repository's
-canonical JSON encoding of `(invocationId, attemptNo, profileHash, outcome,
-reasonCode, evidenceHash, resultRef)`. The expression unique index above treats
+canonical JSON encoding of `(invocationId, attemptNo, factOrigin,
+bindingSha256|null, profileHash|null, effectKey|null, outcome, reasonCode,
+legacyReason|null, evidenceHash|null, resultRef|null, factDisposition)`. The
+expression unique index above treats
 nullable values as empty only for exact redelivery-key comparison; the primary
-fact ID remains the content identity. Two non-identical authoritative proofs for one attempt are
-both preserved and interpreted as a conflict/StillUnknown; they cannot be
+fact ID remains the content identity. Two non-identical authoritative proofs
+for one attempt are both preserved and interpreted as a conflict/StillUnknown; they cannot be
 silently upserted over one another. P9 event and P10 projection identities
 remain the accepted D0A identities and are not duplicated as P39 mutable
 columns.
@@ -253,6 +413,13 @@ the claim-and-consume CAS, not from model output or caller-provided JSON.
   profile digest, and attempt number. No executor starts unless this commit is
   confirmed. A crash before commit is NotAdmitted; a crash after commit is
   MayHaveStarted even if the executor did not yet visibly run.
+- Every attempt records `admission_source` and `admission_time_precision`.
+  P39 admission writes the timestamp captured by the admission transaction
+  with `TransactionTimestamp` (not a claim of the precise SQLite COMMIT wall
+  time);
+  NotAdmitted writes null with `NotAdmitted`; P36 backfill writes null with
+  `UnknownLegacy` for MayHaveStarted/LegacyUnknown. `intent_at` is never copied
+  into `admitted_at` or used as an approximation of effect admission.
 - Reconciliation facts append under the current complete lease fence, even
   after Stop, because Stop blocks only new attempt admission. P9 escalation,
   terminal P4 settlement and P3 canonical result/Action/cursor use the D0A
@@ -276,61 +443,65 @@ P39 backfills exactly one attempt-0 row for each existing P36 invocation:
 - Settled P36 records retain their exact settlement/result refs. The new
   `ReconciledNoEffect` variant is not backfilled onto any historical row.
 - Settled P36 rows receive `recovery_binding_state='HistoricalSettled'`;
-  every unsettled P36 row lacking a complete persisted binding receives
-  `recovery_binding_state='LegacyBindingUnproven'`. New P39 rows are `Bound`
-  only when the same claim transaction verifies/inserts their immutable
-  binding.
+  unsettled P36 MayHaveStarted/LegacyUnknown rows lacking a complete persisted
+  binding receive `recovery_binding_state='LegacyBindingUnproven'`. Active
+  NotAdmitted rows without binding are rejected by the pre-upgrade gate below.
+  New P39 rows are `Bound` only when the same claim transaction
+  verifies/inserts their immutable binding.
 - Unsettled MayHaveStarted/LegacyUnknown without a matching exact historical
-  profile remains fail-closed StillUnknown/no execution, as D0A requires.
+  profile remains fail-closed StillUnknown/no execution, as D0A requires. A
+  `P36LegacyUnprofiled` fact stores null binding/profile/effect key,
+  `legacy_reason='LegacyProfileUnavailable'`, and the already-accepted P4
+  canonical `reason_code='ProfileUnavailable'`; no fake identity hash/key is
+  persisted.
 - Historical NotAdmitted shell@2 with no P39-persisted complete binding is
-  marked `LegacyBindingUnproven` and is not automatically re-entered. P3's
-  current cursor, Action and durable identity remain unchanged; P4 does not
-  graft a later binding onto the legacy row as an automatic recovery shortcut.
-  Any future human disposition must use an already-authorized exact record
-  operation; absent such a contract, the row remains unresolved and release is
-  blocked. Never reconstruct binding from Session text or silently substitute
-  shell@3.
+  rejected at the pre-upgrade gate below, leaving P3 cursor/Action and all
+  P36/P38 rows untouched. Never reconstruct binding from Session text or
+  silently substitute shell@3.
 
 ### Selected disposition: preserve unproven legacy rows, never auto-reenter
 
 P39 adds the closed `recovery_binding_state` marker to the rebuilt invocation
 row. New P39 invocations must be `Bound` and have the exact immutable binding
 row before claim/approval consumption can commit. Every P36 settled invocation
-is marked `HistoricalSettled`; every P36 unsettled invocation with no persisted
-complete RecoveryBinding is marked `LegacyBindingUnproven`, including
-NotAdmitted, MayHaveStarted, and LegacyUnknown. The row, original admission
-state, settlement/result refs, P38 approval association/consumption, and P3
-Action/Step/cursor are copied unchanged. No source identity/profile/approval
-revision is fabricated and the approval is neither refunded nor transferred.
+is marked `HistoricalSettled`; every P36 unsettled MayHaveStarted/LegacyUnknown
+row with no persisted complete RecoveryBinding is marked
+`LegacyBindingUnproven`. Unsettled NotAdmitted rows are rejected before
+migration by the gate below. Migrated row values, settlement/result refs, P38
+approval association/consumption, and P3 Action/Step/cursor are preserved. No
+source identity/profile/approval revision is fabricated and the approval is
+neither refunded nor transferred.
 
-An unsettled `LegacyBindingUnproven` invocation is not eligible for automatic
-claim, executor admission, or retry, even if a later current catalog happens to
-match. It remains an auditable unresolved row with its original invocation ID;
-P3 does not advance or create a replacement invocation. Only an already
-accepted P9 manual/legacy-evidence Attention and human-recovery path may
-resolve it. P4 must not manufacture a `Denied`, `Interrupted`, or
-`ReconciledNoEffect` result because none is entailed by this physical marker.
-The original consumed approval remains bound to the old invocation until an
-already-authorized terminal disposition exists; no new approval is silently
-attached.
+An unsettled `LegacyBindingUnproven` MayHaveStarted/LegacyUnknown invocation
+is not eligible for automatic claim, executor admission, or retry, even if a
+later current catalog happens to match. It remains an auditable unresolved row
+with its original invocation ID; P3 does not advance or create a replacement
+invocation. The existing D0A `StillUnknown` recovery path emits the exact P9
+`ReconciliationEscalated` fact/event and P10 `ActionRequired` projection.
 
-### Attention and release-stop condition
+### NotAdmitted pre-upgrade refusal gate
 
-P9 `07` currently states that insufficient legacy evidence requires durable
-Attention, but the accepted DG02 mapping does not name `LegacyBindingUnproven`
-as a P9 source or define its exact fact identity and P10 projection. It cannot
-use `ReconciliationEscalated`: that source is reserved for unresolved external
-effects and this row is NotAdmitted/no-effect. This supplement therefore does
-**not** invent a source, event, or reason code. Before P39 can be released with
-any active `LegacyBindingUnproven` row, an independent owner review must
-confirm an already-frozen P9/P10 legacy-evidence route covers this exact row
-and can surface it to a human. If not, this is a new P9/P10 Design Gap; stop
-owner landing/release and obtain that governance decision. The schema migration
-itself may run transactionally while preserving such rows, but the application
-release must remain blocked until every active row is surfaced and has an
-authorized human disposition. No active row may be deleted, auto-settled,
-converted into another ToolInvocation, or silently skipped to make the release
-gate pass.
+P36 has no persisted RecoveryBinding table/column, so P39 preflight enumerates
+every P36 unsettled `NotAdmitted` invocation. If any exist, the migration
+runner aborts before DDL or `user_version` mutation and returns a structured
+`P39LegacyUnboundNotAdmitted` report containing schema version, stable DB
+fingerprint and exact invocation IDs (never arguments/command text). The
+report shape is `{kind, schemaVersion, databaseFingerprint, createdAt,
+invocationIds}`; `databaseFingerprint` is SHA-256 of a consistent SQLite
+backup snapshot captured before rollback. Only the digest is reported; row
+content and tool arguments are not exported. If the snapshot cannot be
+captured, the gate fails closed. The deployment operator must
+durably persist the report as a release audit artifact before acknowledging
+the refusal. If audit persistence fails, the runner remains failed and release
+remains blocked. The
+source DB, P36 invocation/P38 approval rows, and P3 Action/Step/cursor remain
+unchanged. No SQL cleanup, auto-settle,
+approval refund/transfer, synthetic binding, or replacement invocation is
+permitted. P39 may proceed only after an already-authorized old-version P4/P9
+human disposition makes every listed row terminal. If that existing route
+cannot safely do so, P39 migration and application release stay blocked pending
+a separate P9/P10 governance decision; do not invent a NotAdmitted Attention
+source or misuse `ReconciliationEscalated`.
 
 This selected fail-closed disposition is the direct safety consequence of the
 accepted D0A rule “exact historical shell@2 re-entry only with a complete
@@ -361,13 +532,20 @@ shape above; this is not checked-in migration code):
 PRAGMA foreign_keys = OFF; -- before transaction; required only for table rebuild
 BEGIN IMMEDIATE;
 -- Assert current user_version is 38 and required P36/P38 tables exist.
+-- Read-only preflight under this write reservation: if unsettled P36
+-- NotAdmitted rows exist, collect IDs, ROLLBACK, persist a structured
+-- {kind,schemaVersion,databaseFingerprint,createdAt,invocationIds} report in
+-- deployment audit, and return without
+-- executing DDL or changing user_version.
 -- Create tool_invocations_p39 with the P39 settlement CHECK; copy every P36
 -- row byte-for-byte for its existing values, then replace the old table.
 -- Create binding/attempt/fact tables, indexes and immutability triggers.
 -- INSERT one attempt-0 row per copied invocation using its exact P36 admission
 -- state; leave sourceBinding/profile/effectKey null rather than infer them.
 -- Set recovery_binding_state=HistoricalSettled for settled P36 rows and
--- LegacyBindingUnproven for unsettled rows without a persisted exact binding.
+-- LegacyBindingUnproven for unsettled MayHaveStarted/LegacyUnknown rows.
+-- Backfill admission_source=P36Backfill; NotAdmitted precision=NotAdmitted;
+-- MayHaveStarted/LegacyUnknown precision=UnknownLegacy, admitted_at=NULL.
 PRAGMA foreign_key_check;
 PRAGMA user_version = 39;
 COMMIT;
@@ -384,19 +562,22 @@ implementation or review evidence.
 |---|---|
 | Valid P38 DB, no unsettled P36 invocations | Upgrade commits; P36 rows and approval ledger unchanged; empty new proof tables |
 | Settled success/failure/denial/interruption/outcome-unknown rows | Upgrade commits; exact old settlement and result refs preserved; attempt 0 copied without inventing a fact |
-| Unsettled P36 NotAdmitted | Upgrade commits with NotAdmitted attempt 0 and null binding/profile; later reentry is conditional on exact P3 source binding and P38 ledger verification |
-| Unsettled P36 MayHaveStarted or LegacyUnknown | Upgrade commits without fabricated profile/fact; recovery remains StillUnknown/fail-closed |
+| Any unsettled P36 NotAdmitted row | Preflight refuses before schema/user_version write; emits structured `P39LegacyUnboundNotAdmitted` report with DB fingerprint and exact IDs; same DB retains P36 state, P38 approval, P3 Action/cursor; release remains blocked until existing manual disposition is complete |
+| Unsettled P36 MayHaveStarted or LegacyUnknown without profile/binding/effect key | Upgrade commits with `LegacyBindingUnproven` marker and nullable attempt identity; a `StillUnknown(ProfileUnavailable)` fact may be stored with `legacy_reason=LegacyProfileUnavailable`; P9/P10 use accepted ReconciliationEscalated path |
 | Duplicate invocation IDs, broken P36 foreign keys, malformed canonical binding/fact hash, or unsupported profile metadata in a new claim | Migration aborts before version bump, or runtime claim rejects atomically; no partial binding/attempt/approval consumption |
+| Orphan legacy invocation result_ref or non-Artifact evidence/result ref | FK preflight/`foreign_key_check` aborts before version bump with exact source row IDs; no ref rewriting or guessed target |
 | Claim committed, process killed immediately after commit | Same invocation, consumed approval, binding and attempt 0 visible; retry is idempotent, no new approval consumption |
 | Admission transaction killed before/after COMMIT | Before: attempt remains NotAdmitted and executor count 0; after: MayHaveStarted and recovery reconciles, never blind-starts |
 | Fact insert / settlement / P9 event before and after their transaction commit | Before: no partial fact/settlement/event; after: exact unique durable result/event replayed without second effect or approval consumption |
 | Duplicate identical proof delivery | Deterministic fact ID/unique key returns existing exact fact; no duplicate canonical result/event |
 | Different/conflicting/late proof for same attempt | Append evidence without overwrite; classify conflict as StillUnknown, keep execution gate/Attention, no automatic replay |
+| Contradictory evidence arrives after terminal P4/P3 settlement | Append immutable `PostTerminalEvidence`; terminal P4 result and P3 ToolResult/Action/cursor remain unchanged; no retroactive replay/rollback. If user-visible escalation is required and existing P9 event cannot represent it, stop for P9/P10 governance |
 | Attempt 0 authoritative NotOccurred, full gate still valid, no Stop | At most attempt 1 admission; attempt number and effect key are exact, same invocation identity, approval not consumed twice |
 | NotOccurred after Stop, changed authority/resource/approval, or attempt 1 | Settle accepted ReconciledNoEffect/Interrupted-or-typed mapping from D0A; do not admit another attempt |
 | StillUnknown or old attempt not final | Persist unresolved fact/Attention under current fence; no new effect; late terminal accounting is allowed only by current fence |
 | P10 rebuild while source event retained / after P1 pruning | Rebuild reproduces accepted D0A ActionRequired row/offset within retention horizon; after prune, no indefinite Attention promise |
 | Migration transaction failure at each DDL/backfill stage | Transaction rollback leaves old schema, rows, P38 approvals, and `user_version=38` intact |
+| Same schema-38 DB migration attempted twice / process restarts after commit | First successful migration reaches 39 once; runner recognizes 39 as already applied on second invocation/restart and creates no duplicate attempt/fact/binding; failed preflight leaves version 38 and can be retried only after manual disposition |
 
 Retention follows the accepted D0A boundary: P39 binding, attempts and facts
 must remain while an invocation can be replayed, reconciled, settled, audited,
@@ -407,12 +588,16 @@ changes them.
 
 ## Open review gate
 
-The physical design is intentionally blocked on independent review of the
-legacy NotAdmitted rollout disposition above, whether the canonical JSON
-binding can be sourced exactly from P3/P38 at the P39 point in the migration
-sequence, and whether all result/evidence refs have repository-owned FK target
-tables before this SQL shape is frozen. Until those questions are closed,
-there must be no owner-document landing, P39 migration implementation, test
-implementation, or release claim. This draft cannot be used to infer that the
-green `C:\Arbor@f80` tree contains P36/P37/P38/P39, or that `db929` contains
+The physical design remains blocked on independent review of the new exact
+preflight/legacy disposition, whether the accepted P3/P38 source can provide
+canonical binding at the P39 point in the ordered migration sequence, and
+whether the existing D0A `ProfileUnavailable` public reason plus physical
+`LegacyProfileUnavailable` provenance is sufficient (the alternative expands
+the closed P4/P3 union and requires separate governance). A contradictory fact
+arriving after terminal P4/P3 state remains append-only audit evidence and
+cannot roll back that state; any new post-terminal Attention event requires
+separate P9/P10 governance. Until these questions are closed, there must be no
+owner-document landing, P39 migration implementation, test implementation, or
+release claim. This draft cannot be used to infer that the green
+`C:\Arbor@f80` tree contains P36/P37/P38/P39, or that `db929` contains
 P37/P38/P39.
