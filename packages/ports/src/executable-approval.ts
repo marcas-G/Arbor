@@ -6,10 +6,13 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
-import type { LeaseFencingRejected, ToolInvocationStoreError } from "./errors.js";
-import type { ToolExecutionContext } from "./tool.js";
-import type { TransactionScope } from "./session.js";
 import type { AgentLoopStepIdentity } from "./agent-loop-step.js";
+import type {
+  LeaseFencingRejected,
+  ToolInvocationStoreError,
+} from "./errors.js";
+import type { TransactionScope } from "./session.js";
+import type { ToolExecutionContext } from "./tool.js";
 
 export interface ExecutableApprovalKey {
   readonly executionId: ExecutionId;
@@ -69,9 +72,7 @@ export interface ExecutableApprovalRequest extends ExecutableApprovalBinding {
   readonly approvalId: string;
   readonly requestedAt: string;
   readonly expiresAt: string;
-  readonly executionFence: NonNullable<
-    ToolExecutionContext["executionFence"]
-  >;
+  readonly executionFence: NonNullable<ToolExecutionContext["executionFence"]>;
 }
 
 export interface ExecutableApprovalStoreService {
@@ -158,7 +159,10 @@ const sameStrings = (
 
 export const executableApprovalStepOf = (
   identity: AgentLoopStepIdentity,
-): Pick<ExecutableApprovalBinding, "executionId" | "logicalStepNo" | "repairAttempt"> => ({
+): Pick<
+  ExecutableApprovalBinding,
+  "executionId" | "logicalStepNo" | "repairAttempt"
+> => ({
   executionId: identity.executionId,
   logicalStepNo: identity.logicalStepNo,
   repairAttempt: identity.repairAttempt,

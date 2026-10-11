@@ -2,7 +2,9 @@ import type {
   ExecutableApprovalBinding,
   ExecutableApprovalRecord,
   ExecutableApprovalStoreService,
+  TransactionOperationalFailure,
   TransactionPortService,
+  TransactionScope,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
@@ -41,8 +43,20 @@ const authority = () => ({
   delegationDepth: 0,
 });
 
-const transaction = () =>
-  ({ transact: (effect: never) => effect as never }) as TransactionPortService;
+const transaction = (): TransactionPortService => ({
+  transact: <A, E, R>(
+    effect: Effect.Effect<A, E, R | TransactionScope>,
+  ): Effect.Effect<
+    A,
+    E | TransactionOperationalFailure,
+    Exclude<R, TransactionScope>
+  > =>
+    effect as unknown as Effect.Effect<
+      A,
+      E | TransactionOperationalFailure,
+      Exclude<R, TransactionScope>
+    >,
+});
 
 const recordFor = (
   request: ExecutableApprovalBinding & {
@@ -67,9 +81,9 @@ const recordFor = (
 
 describe("Executable approval issuance", () => {
   it("passes the exact trusted binding and lease to the atomic Pending writer", async () => {
-    let persisted: Parameters<
-      ExecutableApprovalStoreService["putPendingExact"]
-    >[0] | undefined;
+    let persisted:
+      | Parameters<ExecutableApprovalStoreService["putPendingExact"]>[0]
+      | undefined;
     const expected = recordFor({
       ...binding(),
       approvalId: "apr_first",
@@ -78,6 +92,7 @@ describe("Executable approval issuance", () => {
     });
     const store: ExecutableApprovalStoreService = {
       findByActionKey: () => Effect.succeed(Option.none()),
+      cancelForExecution: () => Effect.succeed([]),
       putPendingExact: (request) => {
         persisted = request;
         return Effect.succeed(expected);
@@ -141,6 +156,7 @@ describe("Executable approval issuance", () => {
     let pendingWrites = 0;
     const store: ExecutableApprovalStoreService = {
       findByActionKey: () => Effect.succeed(Option.some(committed)),
+      cancelForExecution: () => Effect.succeed([]),
       putPendingExact: () => {
         pendingWrites += 1;
         return Effect.succeed(committed);
@@ -174,6 +190,8 @@ describe("Executable approval issuance", () => {
       ),
     );
 
+    expect(result).not.toBe("ExecutionStopping");
+    if (result === "ExecutionStopping") throw new Error("unexpected Stop");
     expect(result.approvalId).toBe("apr_existing");
     expect(result.expiresAt).toBe("2026-10-11T00:15:00.000Z");
     expect(candidateResolutions).toBe(0);
@@ -190,6 +208,7 @@ describe("Executable approval issuance", () => {
     });
     const store: ExecutableApprovalStoreService = {
       findByActionKey: () => Effect.succeed(Option.some(committed)),
+      cancelForExecution: () => Effect.succeed([]),
       putPendingExact: () => Effect.die("must not write on binding conflict"),
     };
 

@@ -1,28 +1,25 @@
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
+import { makeCloseProjectHandler } from "../../../packages/application/src/commands/project-management.js";
 import {
   Actor,
   CommandId,
   ExecutionId,
-  parse,
   Principal,
   ProjectId,
+  parse,
 } from "../../../packages/domain/src/index.js";
-import { makeCloseProjectHandler } from "../../../packages/application/src/commands/project-management.js";
 import { makeStopExecutionHandler } from "../../../packages/execution-runtime/src/commands/stop-execution.js";
 import type { ExecutableApprovalRecord } from "../../../packages/ports/src/executable-approval.js";
+import { TransactionScope } from "../../../packages/ports/src/session.js";
 
 const actor = parse(Actor)("user:p38-stop-test");
 const principal = parse(Principal)("user:p38-stop-test");
-const projectId = parse(ProjectId)(
-  "prj_018f2b3c-4d5e-7abc-8def-0123456789a1",
-);
+const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
-const commandId = parse(CommandId)(
-  "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
-);
+const commandId = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1");
 
 describe("EA-DG-01 Stop cancellation boundary", () => {
   it("Stop cancels exact approvals and emits resolved wake facts", async () => {
@@ -90,15 +87,19 @@ describe("EA-DG-01 Stop cancellation boundary", () => {
     });
 
     const result = await Effect.runPromise(
-      handler.execute(
-        {
-          projectId,
-          commandId,
-          actor,
-          issuedAt: "2026-10-11T00:01:00.000Z",
-          payload: { executionId },
-        } as never,
-        { _tag: "System", principal, causationRef: "p38-stop-test" } as never,
+      Effect.provideService(
+        handler.execute(
+          {
+            projectId,
+            commandId,
+            actor,
+            issuedAt: "2026-10-11T00:01:00.000Z",
+            payload: { executionId },
+          } as never,
+          { _tag: "System", principal, causationRef: "p38-stop-test" } as never,
+        ),
+        TransactionScope,
+        { session: { id: "p38-stop-test" } },
       ),
     );
 
@@ -108,31 +109,30 @@ describe("EA-DG-01 Stop cancellation boundary", () => {
       cancelledBy: principal,
       reason: "StopRequested",
     });
-    expect(result).toMatchObject({
-      ok: true,
-      value: {
-        events: expect.arrayContaining([
-          {
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
             eventType: "ExecutableApprovalResolved",
             aggregateRef: approval.approvalId,
-            payload: {
+            payload: expect.objectContaining({
               approvalId: approval.approvalId,
               routeKind: "Executable",
               toolInvocationId: approval.toolInvocationId,
               revision: 1,
               resolution: "Cancelled",
               reasonCode: "StopRequested",
-            },
-          },
+            }),
+          }),
         ]),
-      },
-    });
+      );
+    }
   });
 
   it("Stop retry reconciles approval rows after the stop flag is set", async () => {
     let cancellationCount = 0;
-    const workspaceId =
-      "ws_018f2b3c-4d5e-7abc-8def-0123456789a1" as never;
+    const workspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789a1" as never;
     const handler = makeStopExecutionHandler({
       executions: {
         findById: () =>
@@ -170,7 +170,11 @@ describe("EA-DG-01 Stop cancellation boundary", () => {
           issuedAt: "2026-10-11T00:02:00.000Z",
           payload: { executionId },
         } as never,
-        { _tag: "System", principal, causationRef: "p38-stop-recovery" } as never,
+        {
+          _tag: "System",
+          principal,
+          causationRef: "p38-stop-recovery",
+        } as never,
       ) as Effect.Effect<unknown, unknown, never>,
     );
 
@@ -186,14 +190,15 @@ describe("EA-DG-01 Stop cancellation boundary", () => {
   it("CloseProject routes direct stops through the approval cancellation path", async () => {
     let stopCount = 0;
     let cancellationCount = 0;
+    const closeWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789a1" as never;
     const execution = {
       executionId,
       projectId,
-      workspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+      workspaceId: closeWorkspaceId,
       sessionId: "ses_p38_close" as never,
       binding: {
         _tag: "WorkspaceExecution",
-        workspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+        workspaceId: closeWorkspaceId,
         focus: { _tag: "Work", workId: "wrk_p38_close" as never },
       },
       admittedAt: "2026-10-11T00:00:00.000Z",
@@ -206,7 +211,7 @@ describe("EA-DG-01 Stop cancellation boundary", () => {
           Effect.succeed(
             Option.some({
               projectId,
-              rootWorkspaceId: execution.workspaceId,
+              rootWorkspaceId: closeWorkspaceId,
               lifecycle: "Open",
               revision: 0,
             } as never),
@@ -234,16 +239,24 @@ describe("EA-DG-01 Stop cancellation boundary", () => {
     });
 
     await Effect.runPromise(
-      closeProject.execute(
-        {
-          projectId,
-          commandId,
-          actor,
-          issuedAt: "2026-10-11T00:02:00.000Z",
-          payload: { expectedRevision: 0 as never, confirmed: true },
-        } as never,
-        { _tag: "System", principal, causationRef: "p38-close-test" } as never,
-      ) as Effect.Effect<unknown, unknown, never>,
+      Effect.provideService(
+        closeProject.execute(
+          {
+            projectId,
+            commandId,
+            actor,
+            issuedAt: "2026-10-11T00:02:00.000Z",
+            payload: { expectedRevision: 0 as never, confirmed: true },
+          } as never,
+          {
+            _tag: "System",
+            principal,
+            causationRef: "p38-close-test",
+          } as never,
+        ),
+        TransactionScope,
+        { session: { id: "p38-close-test" } },
+      ),
     );
 
     expect(stopCount).toBe(1);

@@ -1,16 +1,16 @@
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
-  layer,
   DomainEventJournalLive,
-  ExecutableApprovalStore,
   ExecutableApprovalStoreLive,
   InboxProjectionStoreLive,
+  layer,
   P36_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import {
+  ExecutableApprovalStore,
   IdGenerator,
   TransactionPort,
 } from "../../../packages/ports/src/index.js";
@@ -22,7 +22,10 @@ describe("EA-DG-01 SQLite approval-store red boundary", () => {
       generate: <T>(_kind: string) => Effect.succeed("id_test" as T),
     });
     const inbox = Layer.provide(InboxProjectionStoreLive, db);
-    const journal = Layer.provide(DomainEventJournalLive, Layer.mergeAll(db, ids));
+    const journal = Layer.provide(
+      DomainEventJournalLive,
+      Layer.mergeAll(db, ids),
+    );
     const approvalStore = Layer.provide(
       ExecutableApprovalStoreLive,
       Layer.mergeAll(db, ids, inbox, journal),
