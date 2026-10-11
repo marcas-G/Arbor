@@ -2907,8 +2907,17 @@ const exactObject = (
 
 const exactDeliverMessage = (
   actual: import("@arbor/domain").OutboundMessage,
-  expected: Readonly<Record<string, unknown>>,
-): boolean => exactObject(actual, expected);
+  expected: {
+    readonly recipientWorkspaceId: import("@arbor/domain").WorkspaceId;
+    readonly bodyRef: string;
+  },
+): boolean =>
+  actual.kind === "Deliver" &&
+  actual.recipientWorkspaceId === expected.recipientWorkspaceId &&
+  actual.bodyRef === expected.bodyRef &&
+  actual.correlationId === undefined &&
+  actual.causationId === undefined &&
+  actual.urgency === "Normal";
 
 export const deliverMessageGatewayHandler = (
   dependencies: DeliverActionDependencies,
@@ -3130,11 +3139,8 @@ export const deliverMessageGatewayHandler = (
         effects.message.value.senderWorkspaceId === execution.workspaceId &&
         effects.message.value.sentAt !== "" &&
         exactDeliverMessage(effects.message.value.message, {
-          kind: "Deliver",
           recipientWorkspaceId: expectedRecipientWorkspaceId,
-          deliverableId: action.deliverableId,
           bodyRef: action.summary,
-          urgency: "Normal",
         });
       const messageRecord = Option.isSome(effects.message)
         ? effects.message.value
