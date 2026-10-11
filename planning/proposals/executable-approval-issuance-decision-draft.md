@@ -110,7 +110,7 @@ type ExecutableApprovalBinding = {
   readonly actionDigest: string;                // canonical exact parameters
   readonly targetResourceSpaceIds: ReadonlyArray<string>;
   readonly controlBasisDigest: string;
-  readonly expiresAt: string;
+  readonly expiresAt: string; // first-commit TTL metadata, not binding identity
 };
 ```
 
@@ -119,11 +119,21 @@ exact action key, so replay of the same pinned action converges on the same
 row. It must not be derived from model-supplied approval data. Before minting
 an ID or evaluating a fresh TTL, issuance first looks up the committed request
 by `(projectId, executionId, AgentLoopStepIdentity, LogicalActionId, callRef,
-ToolInvocationId)`. An exact existing row returns its original ApprovalId,
-revision and `expiresAt`; a changed binding for that action key is a durable
-invariant conflict. Only an absent key can create a request and start its TTL.
-Concurrent first issuers race through a unique logical-action key; the loser
-reads and verifies the committed winner. The store retains the exact validated
+ToolInvocationId)`. The immutable binding comparison includes route, project,
+workspace, execution, subject, Step, LogicalActionId, callRef,
+ToolInvocationId, tool/version, exact arguments/action digest, resolved
+resource IDs and ControlBasis. It excludes `expiresAt`, mutable revision,
+state and decision fields. `expiresAt` is metadata fixed by the first
+successful commit, not part of the action identity.
+
+If no row exists, the first issuer computes a candidate TTL and attempts the
+unique insert. On a unique-key conflict, the loser reads the committed winner
+and compares only the immutable binding above. If those stable fields match,
+it accepts the winner's ApprovalId, original `expiresAt` and current revision;
+it does not compare its own candidate expiry or refresh the winner's TTL. If
+any stable field differs, it fails closed with an invariant conflict. Thus two
+first issuers with different `now` values converge when the first transaction
+commits before the second reads back. The store retains the exact validated
 arguments needed to verify the action digest; queue text is not the authority
 source.
 
@@ -418,8 +428,14 @@ Crash/replay rules:
 Migration preserves the route split. Existing `Control` rows remain governed
 by CAPA. Existing Executable approvals without a verifiable exact invocation
 and Step binding are not matched to Session text, callRef guesses or a
-Control approval; mark them expired/unusable as migration evidence. Historical
-P4 denial rows remain terminal. Do not reinterpret any old
+Control approval; retain `binding_proven=0` as migration evidence. Preserve
+the migration-0032 disposition: unconsumed legacy Executable approvals remain
+`Expired`, and previously consumed rows remain `Consumed` with their original
+`consumed_by` and `source_state='Consumed'`. Neither form is upgraded into a
+proven new binding or made available for a fresh action. Migration-derived
+timestamps remain identified as migration provenance, never represented as
+original human decision time. Historical P4 denial rows remain terminal. Do
+not reinterpret any old
 `Denied(ApprovalRequired)` as a pending request or resume it. They stay
 terminal no-effect outcomes; a later attempt needs a new model action and a
 new approval request.
@@ -486,7 +502,7 @@ approval as evidence of production issuance.
 
 | Layer | Required black-box evidence |
 |---|---|
-| Store / migration | Rebuild DDL CHECKs for `Cancelled` and provenance; test Pending/Approved → Cancelled while preserving any human decision; prove Pending+Inbox, expiry+Inbox-consumption+resolution fact+wake, and Stop+Cancel+Inbox-consumption+resolution fact+wake are atomic. Replace 0032's digest-only uniqueness: same Execution + different LogicalActionId + same digest creates two rows, while replay of one action reuses the exact row/TTL and changed binding fails. Retain Control exact-action uniqueness and prove route isolation. Executable consume accepts only its bound ToolInvocationId. Legacy unbound rows and old `Denied(ApprovalRequired)` replay fail closed and are never promoted. |
+| Store / migration | Rebuild DDL CHECKs for `Cancelled` and provenance; test Pending/Approved → Cancelled while preserving any human decision; prove Pending+Inbox, expiry+Inbox-consumption+resolution fact+wake, and Stop+Cancel+Inbox-consumption+resolution fact+wake are atomic. Replace 0032's digest-only uniqueness: same Execution + different LogicalActionId + same digest creates two rows. Race two first issuers with different `now`: commit winner, then make loser read back and assert identical ApprovalId/expiry/revision while its differing candidate `expiresAt` is ignored. Same-action retry reuses exact row/TTL; changed stable binding fails. Retain Control exact-action uniqueness and prove route isolation. Executable consume accepts only its bound ToolInvocationId. Legacy unbound rows and old `Denied(ApprovalRequired)` replay fail closed and are never promoted. |
 | P4 Runtime | New `requiresApproval=true` with no approved record returns nonterminal `ApprovalRequired`, writes no terminal `Denied(ApprovalRequired)` and makes zero Sandbox/Executor calls. Existing `Denied(ApprovalRequired)` replays as its historical terminal result. Reject maps to new closed `ApprovalRejected`; Expire maps to `ApprovalExpired`; wrong/mismatched IDs deny. Authority revoke before claim remains unconsumed; revoke after claim/before admission yields `ApprovalNoLongerAuthorized`; stop before claim yields Interrupted; stop/external effect after `MayHaveStarted` follows AP6/AP7. Every branch has one typed ToolResult/cursor progression and never calls an unauthorized effect. |
 | P3 / AgentLoop | Provider ToolCall is pinned once; issuance lookup by Runtime-owned Step/LogicalAction/callRef/ToolInvocationId returns existing expiry; pause leaves same Execution/Step/action Pending and cursor fixed. Approve resumes that identity and executes once. Reject/Expire/Cancel/revoke/Stop each yields its prescribed typed result, TerminalRejected or Interrupted, and exactly one cursor advance; later actions follow the frozen early-settlement rule. No new Provider request reconstructs or changes the action. |
 | Daemon / P2 / P9 process | Real daemon kills before/after issuance, Stop/cancel, expiry, decision and wake commits; prove commit-order race between issuance and Stop with the full lease tuple. Prove durable expiry/cancel/decision facts redeliver the same P2 wake after restart; old-generation writes fail. Cover AP1/AP2 claim commits, AP3 terminal no-effect commits, AP4/AP5 stop before/after claim, AP6 stop/effect-admission race, AP7 kill after `MayHaveStarted` and AP8 stale generation. Inject external effect completed but settlement absent for ReadOnly/Idempotent/Reconcilable/NonIdempotent; assert side-effect semantics, no unsafe duplicate and same invocation recovery. |
