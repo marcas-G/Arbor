@@ -55,6 +55,8 @@ interface ApprovalRow {
   readonly cancelled_at: string | null;
   readonly cancelled_by: string | null;
   readonly cancellation_reason: string | null;
+  readonly execution_project_id?: string;
+  readonly execution_workspace_id?: string;
 }
 
 const toApproval = (row: ApprovalRow): ExecutableApprovalRecord => ({
@@ -380,11 +382,14 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
                   correlationRef: request.logicalActionId,
                   payload: {
                     approvalId: request.approvalId,
+                    routeKind: "Executable",
                     executionId: request.executionId,
                     workspaceId: request.workspaceId,
                     logicalActionId: request.logicalActionId,
+                    toolInvocationId: request.toolInvocationId,
                     revision: 0,
                     expiresAt: request.expiresAt,
+                    actionDigest: request.actionDigest,
                   },
                 },
               ])
@@ -412,6 +417,107 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
             );
           }
           return winner.value;
+        }),
+      cancelForExecution: (input) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const stops = yield* run(
+            sql.unsafe<{ execution_id: string }>(
+              "SELECT execution_id FROM executions WHERE execution_id = ? AND stop_requested_at IS NOT NULL AND settled_at IS NULL",
+              [input.executionId],
+            ),
+          );
+          if (stops.length !== 1) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "ToolInvocationStore",
+                "executable-approval-cancel",
+                "StopExecution must commit its stop flag before approval cancellation",
+              ),
+            );
+          }
+          const candidates = yield* run(
+            sql.unsafe<ApprovalRow>(
+              `SELECT a.*, e.project_id AS execution_project_id,
+                      e.workspace_id AS execution_workspace_id
+                 FROM action_approvals a
+                 JOIN executions e ON e.execution_id = a.execution_id
+                WHERE a.route_kind = 'Executable' AND a.binding_proven = 1
+                  AND a.execution_id = ? AND a.state IN ('Pending','Approved')
+                  AND a.consumed_by IS NULL
+                ORDER BY a.logical_step_no, a.repair_attempt, a.action_index,
+                         a.logical_action_id`,
+              [input.executionId],
+            ),
+          );
+          const cancelled: Array<ExecutableApprovalRecord> = [];
+          for (const candidate of candidates) {
+            if (
+              candidate.project_id === null ||
+              candidate.workspace_id === null ||
+              candidate.project_id !== candidate.execution_project_id ||
+              candidate.workspace_id !== candidate.execution_workspace_id ||
+              candidate.execution_id === null ||
+              candidate.logical_step_no === null ||
+              candidate.repair_attempt === null ||
+              candidate.action_index === null ||
+              candidate.logical_action_id === null ||
+              candidate.call_ref === null ||
+              candidate.tool_invocation_id === null
+            ) {
+              return yield* Effect.fail(
+                persistenceCorruption(
+                  "ToolInvocationStore",
+                  "executable-approval-cancel",
+                  "proven Executable approval has an incomplete or foreign binding",
+                ),
+              );
+            }
+            const changed = yield* run(
+              sql.unsafe<ApprovalRow>(
+                `UPDATE action_approvals
+                    SET state = 'Cancelled', revision = revision + 1,
+                        cancelled_at = ?, cancelled_by = ?,
+                        cancellation_reason = ?
+                  WHERE approval_id = ? AND route_kind = 'Executable'
+                    AND binding_proven = 1 AND project_id = ?
+                    AND execution_id = ? AND revision = ?
+                    AND state IN ('Pending','Approved') AND consumed_by IS NULL
+                  RETURNING *`,
+                [
+                  input.cancelledAt,
+                  input.cancelledBy,
+                  input.reason,
+                  candidate.approval_id,
+                  candidate.project_id,
+                  input.executionId,
+                  candidate.revision,
+                ],
+              ),
+            );
+            const row = changed[0];
+            if (row === undefined) {
+              return yield* Effect.fail(
+                persistenceCorruption(
+                  "ToolInvocationStore",
+                  "executable-approval-cancel",
+                  "approval changed inside StopExecution transaction",
+                ),
+              );
+            }
+            yield* run(
+              sql.unsafe(
+                "UPDATE inbox_entries SET consumed_at = ? WHERE workspace_id = ? AND entry_key = ? AND consumed_at IS NULL",
+                [
+                  input.cancelledAt,
+                  candidate.workspace_id,
+                  `eap:${candidate.approval_id}:0`,
+                ],
+              ),
+            );
+            cancelled.push(toApproval(row));
+          }
+          return cancelled;
         }),
     });
   }),
