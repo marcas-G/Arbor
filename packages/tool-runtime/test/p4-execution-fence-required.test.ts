@@ -15,14 +15,13 @@ import {
   SandboxPort,
   ToolDefinitionStore,
   type ToolExecutionContext,
-  type ToolExecutor,
   ToolInvocationStore,
   ToolRuntimePort,
   TransactionPort,
 } from "@arbor/ports";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
-import { ToolRuntimeLive } from "../src/index.js";
+import { type ToolExecutor, ToolRuntimeLive } from "../src/index.js";
 
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
@@ -50,7 +49,7 @@ const runtimeLayer = (definitionCalls: number[]) => {
     Layer.succeed(ToolDefinitionStore, {
       definition: () => {
         definitionCalls.push(1);
-        return Effect.succeed({ _tag: "None" as const });
+        return Effect.succeed(Option.none());
       },
       all: () => Effect.succeed([]),
     }),
