@@ -218,11 +218,12 @@ const DEP_F_BLOCKED = dep("00f011");
 const DEP_F_UNREFERENCED = dep("00f012");
 const WS_F_OTHER = ws("00f005");
 
-// --- mini gateway composition: P1 + P2 + the nine P7-phase commands ---
+// --- mini gateway composition: P1 + P2 + the P7-phase commands ---
 
 const P7_PHASE_COMMAND_TYPES: ReadonlyArray<string> = [
   "RecordDecision",
   "SendMessage",
+  "DeliverMessage",
   "SteerWork",
   "DeclareDependency",
   "ProduceDeliverable",
@@ -319,6 +320,7 @@ const StoryRegistryLive: Layer.Layer<
         messages,
         workspaces,
         works,
+        deliverables,
       }),
       makeDeclareDependencyHandler({
         works,

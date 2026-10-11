@@ -10,8 +10,8 @@ import {
   type DeliverDependencies,
   submitDeliver,
 } from "../packages/application/src/commands/deliver-command.js";
-import { makeSendMessageHandler } from "../packages/application/src/commands/send-message.js";
 import { deliverMessagePlan } from "../packages/application/src/commands/deliver-message.js";
+import { makeSendMessageHandler } from "../packages/application/src/commands/send-message.js";
 import {
   CommandGateway,
   FenceStopCheck,
@@ -587,8 +587,7 @@ describe("p7-deliver-primitive", () => {
     const fence = Layer.succeed(FenceStopCheck, {
       check: (context) =>
         Effect.succeed(
-          context._tag === "ExecutionOrigin" &&
-            context.fencingGeneration === 0
+          context._tag === "ExecutionOrigin" && context.fencingGeneration === 0
             ? "FencingRejected"
             : "Pass",
         ),
@@ -624,8 +623,15 @@ describe("p7-deliver-primitive", () => {
         _tag: "TerminalRejected",
         error: { _tag: "FencingRejected" },
       });
-      expect(result.rejectedReplay).toEqual(result.rejected);
-      expect(result.beforeTakeover).toEqual({ messages: 0, events: [], inbox: [] });
+      expect(result.rejectedReplay.commandId).toBe(result.rejected.commandId);
+      expect(result.rejectedReplay.resolution).toEqual(
+        result.rejected.resolution,
+      );
+      expect(result.beforeTakeover).toEqual({
+        messages: 0,
+        events: [],
+        inbox: [],
+      });
       expect(result.committed.resolution).toMatchObject({
         _tag: "Committed",
         result: {

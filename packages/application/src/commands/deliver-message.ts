@@ -3,14 +3,15 @@ import type {
   CommandId,
   DeliverableId,
   MessageId,
+  OutboundMessage,
   Principal,
   ProjectId,
   WorkspaceId,
 } from "@arbor/domain";
 import type {
   DeliverableRepositoryService,
-  MessageStoreService,
   InboxProjectionStoreService,
+  MessageStoreService,
   WorkRepositoryService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
@@ -18,8 +19,8 @@ import { Effect, Option } from "effect";
 import type { VerifiedCommandAuthority } from "../authority.js";
 import { semanticRequestFingerprint } from "../fingerprint.js";
 import type { CommandHandler } from "../gateway.js";
+import type { SendMessagePayload } from "./send-message.js";
 import { makeSendMessageHandler } from "./send-message.js";
-import type { SendMessagePayload, SendMessageResult } from "./send-message.js";
 
 export interface DeliverMessagePayload {
   readonly messageId: MessageId;
@@ -28,6 +29,11 @@ export interface DeliverMessagePayload {
   readonly bodyRef: string;
   readonly correlationId?: string;
   readonly causationId?: string;
+}
+
+interface DeliverOutboundMessage extends OutboundMessage {
+  readonly kind: "Deliver";
+  readonly deliverableId: DeliverableId;
 }
 
 export interface DeliverMessageResult {
@@ -103,128 +109,128 @@ export interface DeliverMessageDependencies {
 export const makeDeliverMessageHandler = (
   dependencies: DeliverMessageDependencies,
 ): CommandHandler<DeliverMessagePayload, DeliverMessageResult> => ({
-    commandType: "DeliverMessage",
-    schemaVersion: "1",
-    authority: {
-      tag: "SendMessageAuthority",
-      targetMatches: (authority, payload) =>
-        authority._tag === "SendMessageAuthority" &&
-        authority.senderWorkspaceId === payload.senderWorkspaceId,
-    },
-    stopAdmission: { _tag: "NormalExecutionMutation" },
-    execute: (envelope, context) =>
-      Effect.gen(function* () {
-        const payload = envelope.payload;
-        const deliverable = yield* dependencies.deliverables.findById(
-          payload.deliverableId,
-        );
-        if (Option.isNone(deliverable)) {
-          return {
-            ok: false as const,
-            error: {
-              _tag: "DeliverableNotFound" as const,
-              deliverableId: payload.deliverableId,
-            },
-          };
-        }
-        const sourceWork = yield* dependencies.works.findById(
-          deliverable.value.sourceWorkId,
-        );
-        if (
-          Option.isNone(sourceWork) ||
-          sourceWork.value.projectId !== envelope.projectId ||
-          sourceWork.value.workspaceId !== payload.senderWorkspaceId
-        ) {
-          return {
-            ok: false as const,
-            error: {
-              _tag: "AuthorityDenied" as const,
-              reason: "sender must own the deliverable source work",
-            },
-          };
-        }
-        const sender = yield* dependencies.workspaces.findById(
-          payload.senderWorkspaceId,
-        );
-        if (Option.isNone(sender)) {
-          return {
-            ok: false as const,
-            error: {
-              _tag: "AuthorityDenied" as const,
-              reason: "sender workspace not found",
-            },
-          };
-        }
-        const recipientWorkspaceId = sender.value.parentWorkspaceId;
-        if (recipientWorkspaceId === null) {
-          return {
-            ok: false as const,
-            error: {
-              _tag: "AuthorityDenied" as const,
-              reason: "root has no parent to deliver to",
-            },
-          };
-        }
-
-        const messagePayload: SendMessagePayload = {
-          messageId: payload.messageId,
-          senderWorkspaceId: payload.senderWorkspaceId,
-          message: {
-            kind: "Deliver",
-            recipientWorkspaceId,
-            deliverableId: payload.deliverableId,
-            bodyRef: payload.bodyRef,
-            ...(payload.correlationId === undefined
-              ? {}
-              : { correlationId: payload.correlationId }),
-            ...(payload.causationId === undefined
-              ? {}
-              : { causationId: payload.causationId }),
-            urgency: "Normal",
-          },
-        };
-        const sendMessage = makeSendMessageHandler({
-          workspaces: dependencies.workspaces,
-          messages: dependencies.messages,
-          inbox: {
-            admitUpsert: (entry) =>
-              dependencies.inbox.admitUpsert({
-                ...entry,
-                summary: `Deliver ${payload.deliverableId} from ${payload.senderWorkspaceId}`,
-              }),
-          },
-        });
-        const sendEnvelope = {
-          ...envelope,
-          commandType: "DeliverMessage",
-          payload: messagePayload,
-        };
-        const sent = yield* sendMessage.execute(sendEnvelope, context);
-        if (!sent.ok) return sent;
-
+  commandType: "DeliverMessage",
+  schemaVersion: "1",
+  authority: {
+    tag: "SendMessageAuthority",
+    targetMatches: (authority, payload) =>
+      authority._tag === "SendMessageAuthority" &&
+      authority.senderWorkspaceId === payload.senderWorkspaceId,
+  },
+  stopAdmission: { _tag: "NormalExecutionMutation" },
+  execute: (envelope, context) =>
+    Effect.gen(function* () {
+      const payload = envelope.payload;
+      const deliverable = yield* dependencies.deliverables.findById(
+        payload.deliverableId,
+      );
+      if (Option.isNone(deliverable)) {
         return {
-          ok: true as const,
-          value: {
-            result: {
-              messageId: payload.messageId,
-              deliverableId: payload.deliverableId,
-              senderWorkspaceId: payload.senderWorkspaceId,
-              recipientWorkspaceId,
-              admitted: true,
-            },
-            events: sent.value.events.map((event) =>
-              event.eventType === "MessageSent"
-                ? {
-                    ...event,
-                    payload: {
-                      ...(event.payload as Record<string, unknown>),
-                      deliverableId: payload.deliverableId,
-                    },
-                  }
-                : event,
-            ),
+          ok: false as const,
+          error: {
+            _tag: "DeliverableNotFound" as const,
+            deliverableId: payload.deliverableId,
           },
         };
-      }),
-  });
+      }
+      const sourceWork = yield* dependencies.works.findById(
+        deliverable.value.sourceWorkId,
+      );
+      if (
+        Option.isNone(sourceWork) ||
+        sourceWork.value.projectId !== envelope.projectId ||
+        sourceWork.value.workspaceId !== payload.senderWorkspaceId
+      ) {
+        return {
+          ok: false as const,
+          error: {
+            _tag: "AuthorityDenied" as const,
+            reason: "sender must own the deliverable source work",
+          },
+        };
+      }
+      const sender = yield* dependencies.workspaces.findById(
+        payload.senderWorkspaceId,
+      );
+      if (Option.isNone(sender)) {
+        return {
+          ok: false as const,
+          error: {
+            _tag: "AuthorityDenied" as const,
+            reason: "sender workspace not found",
+          },
+        };
+      }
+      const recipientWorkspaceId = sender.value.parentWorkspaceId;
+      if (recipientWorkspaceId === null) {
+        return {
+          ok: false as const,
+          error: {
+            _tag: "AuthorityDenied" as const,
+            reason: "root has no parent to deliver to",
+          },
+        };
+      }
 
+      const message: DeliverOutboundMessage = {
+        kind: "Deliver",
+        recipientWorkspaceId,
+        deliverableId: payload.deliverableId,
+        bodyRef: payload.bodyRef,
+        ...(payload.correlationId === undefined
+          ? {}
+          : { correlationId: payload.correlationId }),
+        ...(payload.causationId === undefined
+          ? {}
+          : { causationId: payload.causationId }),
+        urgency: "Normal",
+      };
+      const messagePayload: SendMessagePayload = {
+        messageId: payload.messageId,
+        senderWorkspaceId: payload.senderWorkspaceId,
+        message,
+      };
+      const sendMessage = makeSendMessageHandler({
+        workspaces: dependencies.workspaces,
+        messages: dependencies.messages,
+        inbox: {
+          admitUpsert: (entry) =>
+            dependencies.inbox.admitUpsert({
+              ...entry,
+              summary: `Deliver ${payload.deliverableId} from ${payload.senderWorkspaceId}`,
+            }),
+        },
+      });
+      const sendEnvelope = {
+        ...envelope,
+        commandType: "DeliverMessage",
+        payload: messagePayload,
+      };
+      const sent = yield* sendMessage.execute(sendEnvelope, context);
+      if (!sent.ok) return sent;
+
+      return {
+        ok: true as const,
+        value: {
+          result: {
+            messageId: payload.messageId,
+            deliverableId: payload.deliverableId,
+            senderWorkspaceId: payload.senderWorkspaceId,
+            recipientWorkspaceId,
+            admitted: true,
+          },
+          events: sent.value.events.map((event) =>
+            event.eventType === "MessageSent"
+              ? {
+                  ...event,
+                  payload: {
+                    ...(event.payload as Record<string, unknown>),
+                    deliverableId: payload.deliverableId,
+                  },
+                }
+              : event,
+          ),
+        },
+      };
+    }),
+});

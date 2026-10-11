@@ -56,6 +56,34 @@ import { SingleWorkspaceCommandHandlerRegistryLive } from "../src/registry.js";
 
 describe("external command codec registry parity", () => {
   it("has exactly one descriptor for every composed production handler", () => {
+    const legacyCommandTypes = [
+      "CreateProject",
+      "CreateChildWorkspace",
+      "AssignWork",
+      "RenameProject",
+      "CloseProject",
+      "SelectCurrentWork",
+      "AdmitExecution",
+      "StopExecution",
+      "SettleExecution",
+      "SendMessage",
+      "DeclareDependency",
+      "ProduceDeliverable",
+      "SatisfyDependency",
+      "RecordDecision",
+      "ResolveControlApproval",
+      "SteerWork",
+      "AcceptWorkOutcome",
+      "CompleteWork",
+      "StartVerification",
+      "RecordVerificationEvidence",
+      "ConcludeVerification",
+      "GrantPermission",
+      "RevokePermission",
+      "SubmitHumanMessage",
+      "ResumeConversationResponse",
+      "CancelConversationResponse",
+    ];
     const unused = {} as never;
     const productionSource = readFileSync(
       "apps/single-workspace/src/registry.ts",
@@ -116,7 +144,17 @@ describe("external command codec registry parity", () => {
 
     const registry = makeCommandInputContractRegistry(productionHandlerTypes);
     expect(registry.commandTypes).toHaveLength(27);
-    expect(new Set(registry.commandTypes).size).toBe(26);
+    expect(new Set(registry.commandTypes).size).toBe(27);
+    expect(
+      registry.commandTypes
+        .filter((commandType) => commandType !== "DeliverMessage")
+        .toSorted(),
+    ).toEqual(legacyCommandTypes.toSorted());
+    expect(registry.lookup("DeliverMessage")).toMatchObject({
+      commandType: "DeliverMessage",
+      externalWireCodecVersion: 1,
+      externalOriginAllowed: false,
+    });
     expect(registry.commandTypes.toSorted()).toEqual(
       productionHandlerTypes.toSorted(),
     );
