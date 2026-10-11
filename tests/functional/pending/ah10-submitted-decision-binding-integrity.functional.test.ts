@@ -97,6 +97,16 @@ interface Snapshot {
     state: string;
   }>;
   readonly observations: Array<{ source_ref: string; payload_json: string }>;
+  readonly providerTurns: Array<{
+    provider_turn_id: string;
+    execution_id: string;
+    manifest_id: string;
+  }>;
+  readonly manifests: Array<{
+    manifest_id: string;
+    provider_turn_id: string;
+    execution_id: string;
+  }>;
   readonly events: Array<{
     event_type: string;
     aggregate_ref: string;
@@ -198,9 +208,21 @@ const readRows = (databaseFile: string): Snapshot => {
             ORDER BY sequence`,
         )
         .all() as Snapshot["observations"],
+      providerTurns: db
+        .prepare(
+          `SELECT provider_turn_id, execution_id, manifest_id
+             FROM provider_turns ORDER BY provider_turn_id`,
+        )
+        .all() as Snapshot["providerTurns"],
+      manifests: db
+        .prepare(
+          `SELECT manifest_id, provider_turn_id, execution_id
+             FROM model_context_manifests ORDER BY manifest_id`,
+        )
+        .all() as Snapshot["manifests"],
       events: db
         .prepare(
-          "SELECT event_type, aggregate_ref, payload_json FROM domain_events WHERE event_type = 'CurrentWorkChanged' ORDER BY sequence",
+          "SELECT event_type, aggregate_ref, payload_json FROM domain_events ORDER BY sequence",
         )
         .all() as Snapshot["events"],
       attempts: db
@@ -558,6 +580,7 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
         (attempt) => attempt.provider_turn_id === oldAction.providerTurnId,
       );
       expect(pinnedProviderAttempts).toHaveLength(1);
+      const providerCallCountBeforeCorruption = fixture.providerCalls.length;
       expect(baseRequest).toMatchObject({
         workspace_id: project.rootWorkspaceId,
         state: "Submitted",
@@ -722,6 +745,24 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
       );
 
       const finalRows = result.rows;
+      expect(fixture.providerCalls).toHaveLength(
+        providerCallCountBeforeCorruption,
+      );
+      expect(finalRows.commands).toEqual(corrupted.commands);
+      expect(
+        finalRows.commands.filter((command) =>
+          command.command_id.startsWith(`cmd_settle_${oldAction.executionId}_`),
+        ),
+      ).toEqual(
+        corrupted.commands.filter((command) =>
+          command.command_id.startsWith(`cmd_settle_${oldAction.executionId}_`),
+        ),
+      );
+      expect(finalRows.providerTurns).toEqual(corrupted.providerTurns);
+      expect(finalRows.manifests).toEqual(corrupted.manifests);
+      expect(finalRows.actions).toEqual(corrupted.actions);
+      expect(finalRows.works).toEqual(corrupted.works);
+      expect(finalRows.workspaces).toEqual(corrupted.workspaces);
       const targetExecution = finalRows.executions.find(
         (execution) => execution.execution_id === oldAction.executionId,
       );
@@ -769,30 +810,73 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
           (attempt) => attempt.provider_turn_id === oldAction.providerTurnId,
         ),
       ).toEqual(pinnedProviderAttempts);
-      expect(finalRows.events).toEqual(corrupted.events);
+      expect(
+        finalRows.events.filter(
+          (event) => event.event_type === "CurrentWorkChanged",
+        ),
+      ).toEqual(
+        corrupted.events.filter(
+          (event) => event.event_type === "CurrentWorkChanged",
+        ),
+      );
+      const bindingFailureEvents = finalRows.events.filter((event) => {
+        if (event.event_type !== "SubmittedDecisionBindingEscalated") {
+          return false;
+        }
+        const payload = JSON.parse(event.payload_json) as {
+          executionId?: string;
+        };
+        return payload.executionId === oldAction.executionId;
+      });
+      expect(bindingFailureEvents).toHaveLength(1);
+      const attention = await waitForPublic(
+        () =>
+          client.view<{
+            rows: ReadonlyArray<{
+              source: string;
+              severity: string;
+              targetWorkspaceId: string;
+              dedupKey: string;
+            }>;
+          }>("attention", { projectId: project.projectId }),
+        (response) =>
+          response.rows.some(
+            (row) =>
+              row.source === "SubmittedDecisionBindingFailure" &&
+              row.targetWorkspaceId === project.rootWorkspaceId,
+          ),
+        15_000,
+      );
+      const bindingAttention = attention.rows.filter(
+        (row) =>
+          row.source === "SubmittedDecisionBindingFailure" &&
+          row.targetWorkspaceId === project.rootWorkspaceId,
+      );
+      expect(bindingAttention).toHaveLength(1);
+      expect(bindingAttention[0]).toMatchObject({
+        severity: "ActionRequired",
+        targetWorkspaceId: project.rootWorkspaceId,
+      });
+      expect(bindingAttention[0]?.dedupKey).toMatch(/^att_[0-9a-f]{64}$/u);
       expect(targetExecutionObservations).toHaveLength(0);
       expect(result.actionIntent).toBeUndefined();
-
-      const orphanedFailedExecution =
-        targetExecution?.settled_at !== null &&
-        targetExecution?.settlement_kind === "Failed" &&
-        targetStep?.state === "ActionsInProgress" &&
-        targetStep.settlement_json === null &&
-        targetAction?.state === "Pending" &&
-        targetAction.observation_source_ref === null;
-      if (orphanedFailedExecution) {
-        throw new Error(
-          `AH10 binding rejection orphaned a failed Execution: ${JSON.stringify(
-            {
-              execution: targetExecution,
-              step: targetStep,
-              action: targetAction,
-              observations: targetExecutionObservations,
-            },
-          )}`,
-        );
-      }
-      expect(orphanedFailedExecution).toBe(false);
+      expect(targetExecution).toMatchObject({
+        settled_at: null,
+        settlement_kind: null,
+      });
+      expect(targetStep).toMatchObject({
+        logical_step_no: 0,
+        repair_attempt: 0,
+        provider_turn_id: oldAction.providerTurnId,
+        state: "ActionsInProgress",
+        next_action_index: 0,
+        settlement_json: null,
+      });
+      expect(targetAction).toMatchObject({
+        logical_action_id: oldAction.logicalActionId,
+        state: "Pending",
+        observation_source_ref: null,
+      });
       await newDaemon.crash();
     },
     180_000,
