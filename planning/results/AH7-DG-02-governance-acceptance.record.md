@@ -71,14 +71,15 @@ Status: **fixed semantics accepted; implementation authorization remains OPEN**.
 The accepted package requires a new P4 persistence migration for source
 bindings, effect attempts and reconciliation facts. The parent confirmed the
 reserved sequence: P36 (AH7-DG-03) → P37 (AH10 Deliver) → P38 (Executable
-approval) → **P39 `ah7_reconciliation_attempts`**. DG02 schema depends directly
-on P36 and P38; P37 is an ordered `user_version` prefix dependency. The current
-db929 baseline has not integrated P35–P38. Therefore owner documents must mark
-P39 and its schema as a conditional, not-yet-integrated/unreleased successor;
-P39 cannot be independently implemented or deployed before those predecessors.
-No migration code is authorized by this acceptance. If final physical DDL
-requires an unaccepted field/index beyond the proposal, stop and raise it rather
-than inventing schema semantics.
+approval) → **P39 `ah7_reconciliation_attempts`**. The green `C:\Arbor@f80`
+candidate is at P35; this managed `db929` checkout contains P35/P36 and
+production migration wiring to P36. P37/P38 are not integrated in this
+checkout. DG02 schema depends directly on P36 and P38; P37 is an ordered
+`user_version` prefix dependency. Therefore P39 and its schema are conditional,
+not-yet-integrated/unreleased; P39 cannot be independently implemented or
+deployed before P37/P38. No migration code is authorized by this acceptance. If
+final physical DDL requires an unaccepted field/index beyond the proposal, stop
+and raise it rather than inventing schema semantics.
 
 ## Landing scope
 
