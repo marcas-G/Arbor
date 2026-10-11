@@ -442,7 +442,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     );
   });
 
-  it("rejects a fabricated Success and a selected fact from another attempt", async () => {
+  it("rejects Success from NotOccurred, allows ExpectedFailure with a distinct external result Artifact, and rejects cross-attempt selection", async () => {
     const migration = getP39Migration();
     expect(migration, "P39 migration module is missing").toBeDefined();
     if (!migration) return;
