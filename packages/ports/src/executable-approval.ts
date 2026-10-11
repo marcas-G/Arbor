@@ -1,0 +1,134 @@
+import type {
+  ExecutionId,
+  Principal,
+  ProjectId,
+  ToolInvocationId,
+  WorkspaceId,
+} from "@arbor/domain";
+import { Context, type Effect, type Option } from "effect";
+import type { LeaseFencingRejected, ToolInvocationStoreError } from "./errors.js";
+import type { ToolExecutionContext } from "./tool.js";
+import type { TransactionScope } from "./session.js";
+import type { AgentLoopStepIdentity } from "./agent-loop-step.js";
+
+export interface ExecutableApprovalKey {
+  readonly executionId: ExecutionId;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly actionIndex: number;
+  readonly logicalActionId: string;
+}
+
+/** Runtime-derived immutable identity for one Executable approval request.
+ * Lifecycle state, revision and expiresAt are deliberately excluded. */
+export interface ExecutableApprovalBinding extends ExecutableApprovalKey {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly subject: Principal;
+  readonly callRef: string;
+  readonly toolInvocationId: ToolInvocationId;
+  readonly toolName: string;
+  readonly toolVersion: string;
+  readonly argumentsJson: string;
+  readonly actionDigest: string;
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
+  readonly controlBasisDigest: string;
+}
+
+export type ExecutableApprovalState =
+  | "Pending"
+  | "Approved"
+  | "Rejected"
+  | "Consumed"
+  | "Expired"
+  | "Cancelled";
+
+export interface ExecutableApprovalRecord extends ExecutableApprovalBinding {
+  readonly approvalId: string;
+  readonly routeKind: "Executable";
+  readonly revision: number;
+  readonly requestedAt: string;
+  readonly expiresAt: string;
+  readonly state: ExecutableApprovalState;
+}
+
+export interface ExecutableApprovalRequest extends ExecutableApprovalBinding {
+  readonly approvalId: string;
+  readonly requestedAt: string;
+  readonly expiresAt: string;
+  readonly executionFence: NonNullable<
+    ToolExecutionContext["executionFence"]
+  >;
+}
+
+export interface ExecutableApprovalStoreService {
+  readonly findByActionKey: (
+    key: ExecutableApprovalKey,
+  ) => Effect.Effect<
+    Option.Option<ExecutableApprovalRecord>,
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
+  /** Must atomically insert/read the exact Pending row, admit its eap: Inbox
+   * item, append request and durable wake facts, and enforce the active
+   * Execution/Step/action plus complete P2 lease fence. On a unique-key race,
+   * return the committed winner only when its immutable binding matches. */
+  readonly putPendingExact: (
+    request: ExecutableApprovalRequest,
+  ) => Effect.Effect<
+    ExecutableApprovalRecord | "ExecutionStopping",
+    ToolInvocationStoreError | LeaseFencingRejected,
+    TransactionScope
+  >;
+}
+
+export class ExecutableApprovalStore extends Context.Service<
+  ExecutableApprovalStore,
+  ExecutableApprovalStoreService
+>()("arbor/ExecutableApprovalStore") {}
+
+export const executableApprovalKeyOf = (
+  binding: ExecutableApprovalBinding,
+): ExecutableApprovalKey => ({
+  executionId: binding.executionId,
+  logicalStepNo: binding.logicalStepNo,
+  repairAttempt: binding.repairAttempt,
+  actionIndex: binding.actionIndex,
+  logicalActionId: binding.logicalActionId,
+});
+
+export const executableApprovalBindingMatches = (
+  left: ExecutableApprovalBinding,
+  right: ExecutableApprovalBinding,
+): boolean =>
+  left.executionId === right.executionId &&
+  left.logicalStepNo === right.logicalStepNo &&
+  left.repairAttempt === right.repairAttempt &&
+  left.actionIndex === right.actionIndex &&
+  left.logicalActionId === right.logicalActionId &&
+  left.projectId === right.projectId &&
+  left.workspaceId === right.workspaceId &&
+  left.subject === right.subject &&
+  left.callRef === right.callRef &&
+  left.toolInvocationId === right.toolInvocationId &&
+  left.toolName === right.toolName &&
+  left.toolVersion === right.toolVersion &&
+  left.argumentsJson === right.argumentsJson &&
+  left.actionDigest === right.actionDigest &&
+  left.controlBasisDigest === right.controlBasisDigest &&
+  sameStrings(left.targetResourceSpaceIds, right.targetResourceSpaceIds);
+
+const sameStrings = (
+  left: ReadonlyArray<string>,
+  right: ReadonlyArray<string>,
+): boolean =>
+  left.length === right.length &&
+  left.every((value, index) => value === right[index]);
+
+export const executableApprovalStepOf = (
+  identity: AgentLoopStepIdentity,
+): Pick<ExecutableApprovalBinding, "executionId" | "logicalStepNo" | "repairAttempt"> => ({
+  executionId: identity.executionId,
+  logicalStepNo: identity.logicalStepNo,
+  repairAttempt: identity.repairAttempt,
+});
