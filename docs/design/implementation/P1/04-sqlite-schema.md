@@ -515,6 +515,34 @@ integrity qualification. `FULL` durability is conditional on VFS/OS/device
 flush behavior. Network and unknown filesystems fail closed before primary DB
 open. No Windows deployment qualification is asserted here.
 
+### Accepted AH7-DG-01 / P39-P40 migration and startup boundary (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+
+The ordered suffix is `0036` P36 → `0037` P37 → `0038` P38 → `0039` P39 →
+`0040_tool_observation_evidence` P40. P40 may enter only at
+`PRAGMA user_version=39`, cannot be registered in phase-local
+`P4_MIGRATIONS`, cannot ship as a standalone v35 upgrade, and may not skip a
+predecessor. These are owner contracts, not migration implementation.
+
+P39 can be landed/applied only inside the ordered cumulative maintenance chain;
+a P39-only database at `user_version=39` MUST NOT start Agent/P4 Runtime or be
+released. Service start is permitted only after P40 commits version 40 and the
+binary includes the accepted RNO branch in its closed v1 Observation decoder.
+P40 adds only P4 `06` observation columns/triggers, the P9 replay-evidence
+fact/event and P10 source-specific marker. It does not edit earlier migration
+bodies/checksums, backfill historical terminal rows, change P39 selected facts,
+or reuse/change the P39 sidecar/preflight.
+
+P39's preflight/report rules remain unchanged. Cross-process serialization of
+the cumulative startup migration runner is required before P40 can be
+registered/executed; it is not qualified here. P36–P40 prefix integration and
+P39 Windows/local-filesystem sidecar durability remain explicit gates. P40 is
+forward-only and commits its DDL plus `user_version=40` atomically.
+
 ## 6. Retention / delete (P1-DG-09)
 
 ```text

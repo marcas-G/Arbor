@@ -36,6 +36,22 @@ DDL. P39 is the ordered 0039 suffix after accepted P36/P37/P38 owner contracts,
 but their real migration implementation/registration is not integrated here.
 No claim of Windows, sidecar power-loss, or migration qualification is made.
 
+## Accepted AH7-DG-01 / P39-P40 compatibility owner amendment (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+P39/P40 compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+
+P1 `04` owns the global `0036→0037→0038→0039→0040` user_version and startup
+boundary; `06` owns cumulative-migration recovery/failure cases. P39 may land
+as schema, but `user_version=39` is maintenance-only: no Agent/P4 Runtime
+startup or release until cumulative P40 commits version 40. P40's runtime
+binary must understand the accepted RNO v1 observation branch or refuse schema
+40. Cross-process migration serialization, P36–P40 prefix integration and
+P39 Windows/sidecar qualification remain gated. P39 sidecar/preflight and
+earlier migration bodies are unchanged.
+
 ```text
 Detailed Implementation Design v1.6 (frozen)
         ↓ delegates phase-scoped closure

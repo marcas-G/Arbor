@@ -54,6 +54,21 @@ shell@3 classification and the constrained-profile gate. P39 is
 `0039_ah7_reconciliation_attempts`, after accepted P36/P37/P38 owner contracts;
 their migration implementations remain unintegrated and separately gated.
 
+## Accepted AH7-DG-01 / P39-P40 terminal Observation compatibility (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+P39/P40 compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+P4 `01` owns the six-tag v1 canonical envelope (including P39
+`ReconciledNoEffect`); `02` owns first-write canonicalization and terminal
+re-entry; `06` owns the P40 row/JSON/P39 selected-fact checks, hash, fence,
+CAS and DDL; `07` retains Artifact identity and does not reconstruct an absent
+Observation. P1 `04`/`06` own cumulative prefix/startup; P3 `08`, P9 `07` and
+P10 `02`/`04`/`05`/`07` own their existing source/fact/query/read-model
+contracts. P39-only Runtime startup and all migration/sidecar qualification
+remain blocked until accepted P40 is present and the gates pass.
+
 ```text
 Detailed Implementation Design v1.18 (frozen)
         ↓ delegates phase-scoped closure

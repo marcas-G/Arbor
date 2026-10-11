@@ -201,3 +201,29 @@ after Stop. A stale generation may not write. NonIdempotent shell v3 and
 historical unprofiled shell v2 never blind-replay. `ReconciledNoEffect` is
 reserved for MayHaveStarted plus a selected authoritative NotOccurred fact; it
 does not use `Denied` or change `effect_admission_state`.
+
+## Accepted AH7-DG-01 / P39-P40 terminal RNO replay (DID v1.41)
+
+P40 `ReconciledNoEffect` uses the same accepted v1 bounded Observation envelope
+as the five DG01 evidence tags. P4 first writes the exact canonical
+`text`/`truncated`, closed RNO reason, selected P39 fact ref, and P4 Artifact
+ref in the observation bytes, then commits the P40 version/body/hash with the
+P39 terminal settlement/selected fact in the same transaction. P39 proof
+`evidence_ref` is not the terminal result Artifact; a NotOccurred fact's
+`result_ref` stays NULL.
+
+Every P4 terminal-evidence read, including same-invocation early return and
+same-ID CAS loser, passes the full current Worker fence/expiry before reading
+the invocation. A valid loser returns only the winner's exact verified RNO
+Observation, selected fact and Artifact binding; it never returns a local
+candidate, chooses a different fact, rewrites terminal data, re-reconciles or
+re-executes. A stale generation is `LeaseFencingRejected` without reading the
+winner or generating replay Attention. A valid-fence P39 binding/selected-fact
+conflict fails closed; a valid P39 RNO row with missing P40 evidence is
+`Missing` and enters RecoveryBlocked/P9/P10 without ToolResult or P3 cursor
+projection. P4 Artifact bytes cannot reconstruct that missing Observation.
+
+P39-only `user_version=39` is not Runtime-startable/releasable. The cumulative
+P36→P37→P38→P39→P40 chain must commit 40 before service start; P39 sidecar and
+preflight remain unchanged. The runtime decoder must include the accepted RNO
+branch before opening version 40.

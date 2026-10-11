@@ -520,3 +520,323 @@ while the canonical closed reason remains `ProfileUnavailable`. Active P36
 NotAdmitted rows are blocked by P1's mandatory preflight before any pending
 P37/P38/P39 migration and remain unchanged in a permanently isolated DB cohort
 until future governance; P4 does not manufacture a manual settlement.
+
+## Accepted AH7-DG-01 / P39-P40 terminal Observation evidence (DID v1.41)
+
+Accepted inputs: DG01 logical SHA-256
+`19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`, P40 physical
+`5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`, RNO
+compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`,
+and companion matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+
+P40 is `0040_tool_observation_evidence` after P36→P37→P38→P39 and is
+cumulative-only at `user_version=39`. P4 `06` owns the `tool_invocations`
+columns/checks/triggers; it does not alter P39 RecoveryBinding/attempt/fact
+tables or existing P39 triggers/contracts. The three added columns are:
+
+```sql
+ALTER TABLE tool_invocations ADD COLUMN observation_format_version TEXT
+  CHECK (observation_format_version IS NULL OR
+         observation_format_version = 'p4-canonical-tool-observation-v1');
+ALTER TABLE tool_invocations ADD COLUMN observation_json BLOB
+  CHECK (observation_json IS NULL OR
+         (typeof(observation_json) = 'blob'
+          AND length(observation_json) BETWEEN 1 AND 16384
+          AND json_valid(CAST(observation_json AS TEXT))));
+ALTER TABLE tool_invocations ADD COLUMN observation_sha256 TEXT
+  CHECK (observation_sha256 IS NULL OR
+         (length(observation_sha256) = 64
+          AND observation_sha256 NOT GLOB '*[^0-9a-f]*'));
+```
+
+The all-null/all-present and immutable-row triggers use the exact P40 `5B61`
+five-tag evidence branches plus the separate DG03 `Denied/NotAdmitted`
+NULL-evidence branch. Their closed terminal `CASE` additionally admits the
+following P39 RNO branch in **both** before-insert and unsettled→terminal
+before-update validation. Every branch is wrapped in `COALESCE(...,0)`; a
+missing JSON path/NULL cannot turn invalid evidence into a passing write.
+
+```sql
+WHEN NEW.settlement_kind = 'ReconciledNoEffect' THEN COALESCE((
+  NEW.settlement_provenance = 'Reconciliation'
+  AND NEW.effect_admission_state = 'MayHaveStarted'
+  AND NEW.recovery_binding_state = 'Bound'
+  AND NEW.recovery_binding_sha256 IS NOT NULL
+  AND NEW.selected_attempt_no IS NOT NULL
+  AND NEW.selected_fact_id IS NOT NULL
+  AND NEW.result_ref IS NOT NULL
+  AND NEW.observation_format_version = 'p4-canonical-tool-observation-v1'
+  AND NEW.observation_json IS NOT NULL
+  AND NEW.observation_sha256 IS NOT NULL
+  AND json_valid(NEW.settlement_json)
+  AND json_valid(CAST(NEW.observation_json AS TEXT))
+  AND json_extract(NEW.settlement_json, '$._tag') = 'ReconciledNoEffect'
+  AND json_extract(CAST(NEW.observation_json AS TEXT), '$._tag') = 'ReconciledNoEffect'
+  AND json_extract(NEW.settlement_json, '$.reasonCode') IN (
+    'AuthoritySnapshotChanged','ResourceSnapshotChanged',
+    'ApprovalNoLongerAuthorized','StopRequested','ReplayLimitReached'
+  )
+  AND json_extract(CAST(NEW.observation_json AS TEXT), '$.reasonCode') =
+      json_extract(NEW.settlement_json, '$.reasonCode')
+  AND json_extract(NEW.settlement_json, '$.reconciliationFactRef') = NEW.selected_fact_id
+  AND json_extract(CAST(NEW.observation_json AS TEXT), '$.reconciliationFactRef') =
+      NEW.selected_fact_id
+  AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text'
+  AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated')
+      IN ('true','false')
+  AND json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') = 'text'
+  AND json_extract(CAST(NEW.observation_json AS TEXT), '$.resultRef') = NEW.result_ref
+  AND EXISTS (
+    SELECT 1 FROM tool_reconciliation_facts AS f
+    WHERE f.fact_id = NEW.selected_fact_id
+      AND f.invocation_id = NEW.invocation_id
+      AND f.attempt_no = NEW.selected_attempt_no
+      AND f.fact_origin = 'ProfileReconciliation'
+      AND f.fact_disposition = 'RecoveryInput'
+      AND f.binding_sha256 = NEW.recovery_binding_sha256
+      AND f.outcome = 'NotOccurred'
+      AND f.reason_code IS NULL
+      AND f.evidence_ref IS NOT NULL
+      AND f.evidence_sha256 IS NOT NULL
+      AND length(f.evidence_sha256) = 64
+      AND f.evidence_sha256 NOT GLOB '*[^0-9a-f]*'
+      AND f.result_ref IS NULL
+  )
+), 0)
+```
+
+The trigger bodies use that RNO predicate in the closed terminal `CASE` below;
+the five P40 v1 tag predicates and DG03 Denied predicate are the accepted
+`5B61` SQL branches. P39 terminal identity/effect/selection columns join the
+terminal immutability list so P40 never edits a P39 selected fact.
+
+```sql
+CREATE TRIGGER tool_invocations_observation_insert_guard
+BEFORE INSERT ON tool_invocations
+WHEN
+  (NEW.settled_at IS NULL AND
+   (NEW.settlement_kind IS NOT NULL OR NEW.settlement_json IS NOT NULL OR
+    NEW.result_ref IS NOT NULL OR NEW.observation_format_version IS NOT NULL OR
+    NEW.observation_json IS NOT NULL OR NEW.observation_sha256 IS NOT NULL))
+  OR
+  (NEW.settled_at IS NOT NULL AND COALESCE(CASE
+    WHEN NEW.settlement_kind = 'Denied' THEN COALESCE((
+      NEW.effect_admission_state = 'NotAdmitted' AND NEW.result_ref IS NULL
+      AND NEW.observation_format_version IS NULL AND NEW.observation_json IS NULL
+      AND NEW.observation_sha256 IS NULL AND json_valid(NEW.settlement_json)
+      AND json_extract(NEW.settlement_json, '$._tag') = 'Denied'
+      AND json_extract(NEW.settlement_json, '$.projectionVersion') = 1
+      AND json_type(NEW.settlement_json, '$.reasonCode') = 'text'
+      AND json_extract(NEW.settlement_json, '$.reasonCode') IN (
+        'InvocationAuthorityDenied','ApprovalRequired','ApprovalNotFound',
+        'ApprovalMismatch','ApprovalExpired','ApprovalConsumedByOtherInvocation',
+        'ResourceResolutionDenied','ResourceAdmissionDenied','ApprovalNoLongerAuthorized')
+    ), 0)
+    WHEN NEW.settlement_kind IN
+      ('Success','ExpectedFailure','Interrupted','OutcomeUnknown','RuntimeFailure','ReconciledNoEffect')
+    THEN COALESCE((
+      NEW.settlement_json IS NOT NULL
+      AND NEW.observation_format_version = 'p4-canonical-tool-observation-v1'
+      AND NEW.observation_json IS NOT NULL AND NEW.observation_sha256 IS NOT NULL
+      AND json_valid(NEW.settlement_json)
+      AND json_valid(CAST(NEW.observation_json AS TEXT))
+      AND json_extract(NEW.settlement_json, '$._tag') = NEW.settlement_kind
+      AND json_extract(CAST(NEW.observation_json AS TEXT), '$._tag') = NEW.settlement_kind
+      AND CASE NEW.settlement_kind
+        WHEN 'Success' THEN (
+          ((NEW.result_ref IS NULL AND json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') IS 'null')
+           OR (NEW.result_ref IS NOT NULL
+               AND json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') = 'text'
+               AND json_extract(CAST(NEW.observation_json AS TEXT), '$.resultRef') = NEW.result_ref))
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text'
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false'))
+        WHEN 'ExpectedFailure' THEN (
+          NEW.result_ref IS NULL
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text'
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false'))
+        WHEN 'Interrupted' THEN NEW.result_ref IS NULL
+        WHEN 'OutcomeUnknown' THEN (
+          NEW.result_ref IS NULL
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs') = 'array'
+          AND json_extract(NEW.settlement_json, '$.reconciliationRefs') =
+              json_extract(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs')
+          AND json_array_length(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs') BETWEEN 1 AND 8
+          AND NOT EXISTS (
+            SELECT 1 FROM json_each(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs')
+            WHERE type <> 'text' OR length(CAST(value AS BLOB)) > 128))
+        WHEN 'RuntimeFailure' THEN (
+          NEW.result_ref IS NULL
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.cause') = 'text'
+          AND length(CAST(json_extract(CAST(NEW.observation_json AS TEXT), '$.cause') AS BLOB)) <= 1024
+          AND json_extract(NEW.settlement_json, '$.cause') =
+              json_extract(CAST(NEW.observation_json AS TEXT), '$.cause'))
+        WHEN 'ReconciledNoEffect' THEN (
+          NEW.settlement_provenance = 'Reconciliation'
+          AND NEW.effect_admission_state = 'MayHaveStarted'
+          AND NEW.recovery_binding_state = 'Bound' AND NEW.recovery_binding_sha256 IS NOT NULL
+          AND NEW.selected_attempt_no IS NOT NULL AND NEW.selected_fact_id IS NOT NULL
+          AND NEW.result_ref IS NOT NULL
+          AND json_extract(NEW.settlement_json, '$.reasonCode') IN (
+            'AuthoritySnapshotChanged','ResourceSnapshotChanged',
+            'ApprovalNoLongerAuthorized','StopRequested','ReplayLimitReached')
+          AND json_extract(CAST(NEW.observation_json AS TEXT), '$.reasonCode') =
+              json_extract(NEW.settlement_json, '$.reasonCode')
+          AND json_extract(NEW.settlement_json, '$.reconciliationFactRef') = NEW.selected_fact_id
+          AND json_extract(CAST(NEW.observation_json AS TEXT), '$.reconciliationFactRef') = NEW.selected_fact_id
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text'
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false')
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') = 'text'
+          AND json_extract(CAST(NEW.observation_json AS TEXT), '$.resultRef') = NEW.result_ref
+          AND EXISTS (
+            SELECT 1 FROM tool_reconciliation_facts AS f
+            WHERE f.fact_id = NEW.selected_fact_id
+              AND f.invocation_id = NEW.invocation_id
+              AND f.attempt_no = NEW.selected_attempt_no
+              AND f.fact_origin = 'ProfileReconciliation'
+              AND f.fact_disposition = 'RecoveryInput'
+              AND f.binding_sha256 = NEW.recovery_binding_sha256
+              AND f.outcome = 'NotOccurred' AND f.reason_code IS NULL
+              AND f.evidence_ref IS NOT NULL AND f.evidence_sha256 IS NOT NULL
+              AND length(f.evidence_sha256) = 64
+              AND f.evidence_sha256 NOT GLOB '*[^0-9a-f]*'
+              AND f.result_ref IS NULL))
+        ELSE 0
+      END
+    ), 0)
+    ELSE 0
+  END, 0) = 0)
+BEGIN
+  SELECT RAISE(ABORT, 'tool invocation observation evidence invariant');
+END;
+
+CREATE TRIGGER tool_invocations_observation_update_guard
+BEFORE UPDATE OF settled_at, settlement_kind, settlement_json, result_ref,
+  effect_admission_state, recovery_binding_state, recovery_binding_sha256,
+  settlement_provenance, selected_attempt_no, selected_fact_id,
+  observation_format_version, observation_json, observation_sha256
+ON tool_invocations
+WHEN
+  (OLD.settled_at IS NULL AND NEW.settled_at IS NULL AND
+   (NEW.settlement_kind IS NOT NULL OR NEW.settlement_json IS NOT NULL OR
+    NEW.result_ref IS NOT NULL OR NEW.observation_format_version IS NOT NULL OR
+    NEW.observation_json IS NOT NULL OR NEW.observation_sha256 IS NOT NULL))
+  OR
+  (OLD.settled_at IS NULL AND NEW.settled_at IS NOT NULL AND COALESCE(CASE
+    WHEN NEW.settlement_kind = 'Denied' THEN COALESCE((
+      NEW.effect_admission_state = 'NotAdmitted' AND NEW.result_ref IS NULL
+      AND NEW.observation_format_version IS NULL AND NEW.observation_json IS NULL
+      AND NEW.observation_sha256 IS NULL AND json_valid(NEW.settlement_json)
+      AND json_extract(NEW.settlement_json, '$._tag') = 'Denied'
+      AND json_extract(NEW.settlement_json, '$.projectionVersion') = 1
+      AND json_type(NEW.settlement_json, '$.reasonCode') = 'text'
+      AND json_extract(NEW.settlement_json, '$.reasonCode') IN (
+        'InvocationAuthorityDenied','ApprovalRequired','ApprovalNotFound',
+        'ApprovalMismatch','ApprovalExpired','ApprovalConsumedByOtherInvocation',
+        'ResourceResolutionDenied','ResourceAdmissionDenied','ApprovalNoLongerAuthorized')
+    ), 0)
+    WHEN NEW.settlement_kind IN
+      ('Success','ExpectedFailure','Interrupted','OutcomeUnknown','RuntimeFailure','ReconciledNoEffect')
+    THEN COALESCE((
+      NEW.settlement_json IS NOT NULL
+      AND NEW.observation_format_version = 'p4-canonical-tool-observation-v1'
+      AND NEW.observation_json IS NOT NULL AND NEW.observation_sha256 IS NOT NULL
+      AND json_valid(NEW.settlement_json)
+      AND json_valid(CAST(NEW.observation_json AS TEXT))
+      AND json_extract(NEW.settlement_json, '$._tag') = NEW.settlement_kind
+      AND json_extract(CAST(NEW.observation_json AS TEXT), '$._tag') = NEW.settlement_kind
+      AND CASE NEW.settlement_kind
+        WHEN 'Success' THEN (
+          ((NEW.result_ref IS NULL AND json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') IS 'null')
+           OR (NEW.result_ref IS NOT NULL
+               AND json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') = 'text'
+               AND json_extract(CAST(NEW.observation_json AS TEXT), '$.resultRef') = NEW.result_ref))
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text'
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false'))
+        WHEN 'ExpectedFailure' THEN (
+          NEW.result_ref IS NULL
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text'
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false'))
+        WHEN 'Interrupted' THEN NEW.result_ref IS NULL
+        WHEN 'OutcomeUnknown' THEN (
+          NEW.result_ref IS NULL
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs') = 'array'
+          AND json_extract(NEW.settlement_json, '$.reconciliationRefs') =
+              json_extract(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs')
+          AND json_array_length(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs') BETWEEN 1 AND 8
+          AND NOT EXISTS (
+            SELECT 1 FROM json_each(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs')
+            WHERE type <> 'text' OR length(CAST(value AS BLOB)) > 128))
+        WHEN 'RuntimeFailure' THEN (
+          NEW.result_ref IS NULL
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.cause') = 'text'
+          AND length(CAST(json_extract(CAST(NEW.observation_json AS TEXT), '$.cause') AS BLOB)) <= 1024
+          AND json_extract(NEW.settlement_json, '$.cause') =
+              json_extract(CAST(NEW.observation_json AS TEXT), '$.cause'))
+        WHEN 'ReconciledNoEffect' THEN (
+          NEW.settlement_provenance = 'Reconciliation'
+          AND NEW.effect_admission_state = 'MayHaveStarted'
+          AND NEW.recovery_binding_state = 'Bound' AND NEW.recovery_binding_sha256 IS NOT NULL
+          AND NEW.selected_attempt_no IS NOT NULL AND NEW.selected_fact_id IS NOT NULL
+          AND NEW.result_ref IS NOT NULL
+          AND json_extract(NEW.settlement_json, '$.reasonCode') IN (
+            'AuthoritySnapshotChanged','ResourceSnapshotChanged',
+            'ApprovalNoLongerAuthorized','StopRequested','ReplayLimitReached')
+          AND json_extract(CAST(NEW.observation_json AS TEXT), '$.reasonCode') =
+              json_extract(NEW.settlement_json, '$.reasonCode')
+          AND json_extract(NEW.settlement_json, '$.reconciliationFactRef') = NEW.selected_fact_id
+          AND json_extract(CAST(NEW.observation_json AS TEXT), '$.reconciliationFactRef') = NEW.selected_fact_id
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text'
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false')
+          AND json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') = 'text'
+          AND json_extract(CAST(NEW.observation_json AS TEXT), '$.resultRef') = NEW.result_ref
+          AND EXISTS (
+            SELECT 1 FROM tool_reconciliation_facts AS f
+            WHERE f.fact_id = NEW.selected_fact_id
+              AND f.invocation_id = NEW.invocation_id
+              AND f.attempt_no = NEW.selected_attempt_no
+              AND f.fact_origin = 'ProfileReconciliation'
+              AND f.fact_disposition = 'RecoveryInput'
+              AND f.binding_sha256 = NEW.recovery_binding_sha256
+              AND f.outcome = 'NotOccurred' AND f.reason_code IS NULL
+              AND f.evidence_ref IS NOT NULL AND f.evidence_sha256 IS NOT NULL
+              AND length(f.evidence_sha256) = 64
+              AND f.evidence_sha256 NOT GLOB '*[^0-9a-f]*'
+              AND f.result_ref IS NULL))
+        ELSE 0
+      END
+    ), 0)
+    ELSE 0
+  END, 0) = 0)
+  OR
+  (OLD.settled_at IS NOT NULL AND (
+    NEW.settled_at IS NOT OLD.settled_at OR NEW.settlement_kind IS NOT OLD.settlement_kind OR
+    NEW.settlement_json IS NOT OLD.settlement_json OR NEW.result_ref IS NOT OLD.result_ref OR
+    NEW.effect_admission_state IS NOT OLD.effect_admission_state OR
+    NEW.recovery_binding_state IS NOT OLD.recovery_binding_state OR
+    NEW.recovery_binding_sha256 IS NOT OLD.recovery_binding_sha256 OR
+    NEW.settlement_provenance IS NOT OLD.settlement_provenance OR
+    NEW.selected_attempt_no IS NOT OLD.selected_attempt_no OR NEW.selected_fact_id IS NOT OLD.selected_fact_id OR
+    NEW.observation_format_version IS NOT OLD.observation_format_version OR
+    NEW.observation_json IS NOT OLD.observation_json OR NEW.observation_sha256 IS NOT OLD.observation_sha256
+  ))
+BEGIN
+  SELECT RAISE(ABORT, 'terminal settlement and P39 selected fact are immutable');
+END;
+```
+
+P39's existing composite selected-fact FK still binds the exact
+`(invocation_id, selected_attempt_no, selected_fact_id)` at COMMIT. The trigger
+checks the selected NotOccurred fact/provenance; the P4 codec additionally
+verifies current RecoveryBinding/profile/effect identity, the accepted proof
+hash/finality, strict UTF-8/canonical v1 hash and P4 Artifact metadata. The P39
+fact's NotOccurred `result_ref` stays NULL. P4 row `result_ref` is a different,
+non-NULL ArtifactRef equal to the canonical Observation's `resultRef`; P3's
+bounded-payload content hash is a third identity.
+
+The terminal immutable trigger includes P40 version/body/hash together with
+P39 settlement/effect-state/provenance/selected-attempt/fact fields. No P40
+write may clear or replace `selected_fact_id`, P39 proof evidence or P4
+Artifact. No migration backfill is performed. Historical P39 RNO terminal
+rows with NULL P40 evidence remain unchanged and P4 reports `Missing` on a
+valid-fence replay; P4 does not reconstruct the Observation from Artifact
+bytes. P40 is forward-only; no down migration exists.

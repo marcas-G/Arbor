@@ -56,6 +56,20 @@ not admit an Executor replay. P39 `0039` follows owner contracts P36→P37→P38
 the source migrations are not implemented/registered by this design landing.
 Attention visibility remains bounded by the accepted event-retention horizon.
 
+## Accepted AH7-DG-01 / P39-P40 replay-evidence Attention source (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+P39/P40 RNO compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+P9 `07` owns the current-fence RecoveryBlocked transition and immutable
+`ToolObservationReplayEvidenceEscalated` fact/event keyed by
+`(executionId, invocationId)`. This source reports failure to replay a terminal
+Observation, not uncertain external reality; it is distinct from and does not
+write `ReconciliationEscalated`. P10 owns its dedicated marker/source query and
+shared-offset/rebuild mapping. Tool output/cause/paths/errors never enter the
+fact/event or public summary.
+
 ## Governance decisions recorded (GQ1–GQ5; no DID catalog changes)
 
 | GQ | Decision → contract placement |

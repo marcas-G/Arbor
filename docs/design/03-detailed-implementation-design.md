@@ -1,10 +1,10 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.40\
+**Version:** 1.41\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.39\
+**Supersedes:** v1.40\
 **Date:** 2026-10-11\
-**Depends on:** `Arbor System Design Specification v1.14`
+**Depends on:** `Arbor System Design Specification v1.16`
 
 **Integration reconciliation (2026-10-10):** This version combines two separately
 accepted owner amendments that each landed from DID v1.34 as v1.35 in isolated
@@ -15,8 +15,9 @@ or recovery rule. The isolated landing digests describe their original owner
 blobs, not this integrated blob; the combined digest is recorded in
 `planning/results/F21-F23-isolated-integration.result.md`.
 
-**Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
-**Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
+**Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线
+
+**Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订
 **Scope:** 将已冻结的系统级设计落实为可实现且可测试的契约。v1.4 是 governance patch：闭合 P0 planning 审阅发现的 DG-01…DG-06，不改变 C1–C10 / X1–X11 的语义结论；v1.5 闭合 P1 pre-implementation 审阅发现的 P1-DG-01…05 与 P1-DG-10，P1+ 的 exact DDL、逐 Command payload/signature、Prompt 正文与经验参数仍按 phase-scoped closure 管理。
 
 **Accepted owner amendment (source DID v1.34 → v1.35): FT-DG-01 functional resource admission**
@@ -255,6 +256,50 @@ generation fence and legacy replay**
 - This is an owner-contract landing only; it authorizes no production code,
   migration implementation, tests, real reconciliation claim, or Windows
   release.
+
+**Accepted owner amendment (DID v1.40 → v1.41): AH7-DG-01 terminal Observation replay and P39 compatibility**
+
+- P4 persists each new terminal Success/ExpectedFailure/Interrupted/
+  OutcomeUnknown/RuntimeFailure settlement with the exact first-returned
+  bounded `CanonicalToolObservation`, version, inline UTF-8 JSON bytes and
+  SHA-256. The shared v1 envelope has a 16,384-byte cap and preserves first-
+  write `text`/`truncated`, cause, ordered refs and Artifact identity. P4
+  Artifact/raw result refs are not Observation storage.
+- The accepted P39 compatibility addendum makes `ReconciledNoEffect` the sixth
+  v1 evidence-bearing branch. Its P39 row remains `MayHaveStarted`,
+  `settlement_provenance='Reconciliation'`, `recovery_binding_state='Bound'`,
+  and retains the exact immutable same-invocation/same-attempt selected
+  `NotOccurred` fact. P40 atomically adds the same versioned bounded
+  Observation; it also verifies the settlement/reason/fact refs and separates
+  the NULL P39 proof-fact `result_ref` from the non-NULL P4 ArtifactRef and P3
+  payload hash. P39 proof/fact, selected fact and Artifact semantics are not
+  mutated or aliased.
+- DG03 `Denied/NotAdmitted` remains the no-effect exception with its closed
+  `NoEffectDenialCode` and version-1 deterministic projection; all P40
+  evidence fields and `result_ref` are NULL. It is not mapped to
+  ExpectedFailure. CAPA approval consume and all `SideEffectSemantics` rules
+  are unchanged.
+- Before any P4 terminal evidence read, including a same-invocation CAS loser,
+  P4 proves the full current unexpired Worker lease. A valid fence returns
+  only the canonical P4 winner or blocks on missing/conflicting evidence;
+  stale generation is ownership loss with no winner read/projection or
+  replay-evidence Attention. P3 keeps the existing exact source formula and
+  atomic ToolResult/Observation/Action/cursor projection.
+- A P39-only database at `user_version=39` is maintenance-only: no Agent/P4
+  Runtime startup or release until cumulative P40 migration reaches 40. P40
+  follows the complete P36→P37→P38→P39→P40 prefix; the serialized cross-process
+  migration runner, prefix integration, P39 sidecar/Windows durability and
+  runtime/migration implementation remain qualification gates.
+- Accepted hashes: DG01 logical
+  `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`, P40
+  physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`,
+  P39/P40 compatibility addendum
+  `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`, and
+  matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+  Acceptance is recorded in
+  `planning/results/AH7-DG-01-P39-P40-compatibility-addendum-acceptance.record.md`.
+- Owner-contract landing only: no production code, migration execution,
+  qualification, release or AH7 phase closure is authorized.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -2903,6 +2948,7 @@ ExecutableApprovalResolved
 ReconciliationEscalated
 AssignWorkTargetBindingEscalated
 DeliverReplayEscalated
+ToolObservationReplayEvidenceEscalated
 EnvironmentChanged
 HumanInterventionApplied        # v1.13 G7: {actor, targetWorkspaceId, summaryRef, occurredAt, kind}
 ```
@@ -2913,6 +2959,17 @@ correlationId, causationId}`; non-Deliver payloads are unchanged. The AH10
 `DeliverMessage` route adds no MessageSent version or wake event. It adds the
 P9-owned `DeliverReplayEscalated(v1)` fact event for an unprovable legacy or
 receipt-bound handover; P10 consumes it as `DeliverReplayFailure` Attention.
+
+AH7-DG-01 adds `ToolObservationReplayEvidenceEscalated(v1)` for a valid-fence
+terminal Observation evidence failure. Payload is exactly
+`{attentionFactId, executionId, targetWorkspaceId, logicalActionId,
+providerTurnId, callRef, invocationId, failureCode}`; its envelope uses the
+Execution project, target Workspace aggregate, `logicalActionId` correlation,
+`system:recovery` actor and no Command cause. It contains no Observation,
+tool arguments/output, Artifact body, path or raw exception. P9 commits the
+immutable fact+event atomically; P10 owns the marker/read-model projection.
+This event is distinct from `ReconciliationEscalated`: absent replay evidence
+does not claim an unresolved external effect.
 
 EA-DG-01 adds `ExecutableApprovalRequested(v1)` and
 `ExecutableApprovalResolved(v1)` as durable wake facts. Requested carries the
@@ -3245,11 +3302,36 @@ consumer 不直接绕过 Command Handler 创建 Verification。
 ToolInvocationSettlement
 ├── Success
 ├── ExpectedFailure
+├── Denied(reasonCode: NoEffectDenialCode; P36 only with NotAdmitted)
 ├── Interrupted
 ├── OutcomeUnknown
 ├── ReconciledNoEffect(reconciliationFactRef, reasonCode)
 └── RuntimeFailure
 ```
+
+P36 `Denied/NotAdmitted` remains the durable no-effect result with closed
+`NoEffectDenialCode` and its version-1 deterministic projection. P40 preserves
+it with `result_ref` and all three P40 evidence columns NULL; it is not an
+Observation-envelope tag and must not be mapped to ExpectedFailure.
+
+P4 replay evidence corruption is a typed operational failure, not a new
+settlement or side-effect tag:
+
+```ts
+type ToolObservationReplayEvidenceFailureCode =
+  | "Missing" | "UnsupportedVersion" | "Malformed" | "HashMismatch"
+  | "SettlementMismatch" | "IntentMismatch" | "ResultRefMismatch"
+  | "UnexpectedResultRef";
+
+type ToolObservationReplayEvidenceFailure = {
+  readonly _tag: "ToolObservationReplayEvidenceFailure";
+  readonly failureCode: ToolObservationReplayEvidenceFailureCode;
+};
+```
+
+The failure carries no raw JSON, Observation, output, Artifact body, parser/OS
+text or arbitrary cause. A valid current fence maps it to the existing
+RecoveryBlocked/P9/P10 path; stale fencing remains ownership loss only.
 
 `pytest failed`、`git conflict`、shell exit 1 等通常是模型需要认知的 `ExpectedFailure Observation`，不应导致 Agent fiber 失败。
 
@@ -3867,6 +3949,11 @@ AgentRuntime 只看：
 invoke(ToolIntent, ToolExecutionContext)
 → CanonicalToolObservation | ApprovalRequired(ResolvedExecutableIntent)
 ```
+
+The `E` side also includes the closed
+`ToolObservationReplayEvidenceFailureCode` above. It is not encoded as a
+`CanonicalToolObservation`, `ExpectedFailure`, `Denied` or `OutcomeUnknown`
+settlement.
 
 For a new approval-required Executable action with no approved exact record,
 P4 returns `ApprovalRequired` with the P4-resolved, trusted tool/version,
@@ -4859,6 +4946,8 @@ model_context_manifests
 tool_invocations
 deliver_replay_attention_facts
 deliver_replay_attention_rows
+tool_observation_replay_attention_facts
+tool_observation_replay_attention_rows
 ```
 
 Migration `0033_assign_work_target_bindings` (`PRAGMA user_version = 33`) is
@@ -5157,6 +5246,35 @@ conditional on VFS, OS and hardware flush behavior; network and unknown
 filesystems fail closed. Exact table/column/check/FK/index/trigger contract is
 owned by P4 `06`; CLI/preflight and migration boundary by P1 `04`/`06` and P14
 `02`/`05`.
+
+Migration `0040_tool_observation_evidence` (`PRAGMA user_version = 40`) is the
+next forward-only suffix after P36→P37→P38→P39. It is cumulative-only and may
+enter only at version 39; it cannot be registered in phase-local
+`P4_MIGRATIONS`, released as a standalone v35 upgrade, or skip a predecessor.
+P1 `04` owns this global prefix/version/startup boundary; P4 `06` owns the
+`tool_invocations` evidence columns/checks/triggers; P9 `07` owns the immutable
+replay-evidence fact/event; P10 `02` owns its source-specific marker relation.
+The accepted P39 sidecar/preflight, RecoveryBinding, selected-fact and attempt
+contracts are unchanged.
+
+P40 adds nullable `observation_format_version TEXT`,
+`observation_json BLOB`, and `observation_sha256 TEXT`; five DG01 evidence tags
+and the accepted P39 `ReconciledNoEffect` branch use the same v1 UTF-8
+canonical envelope with 16,384-byte cap and hash
+`SHA-256(UTF8(version + LF + body))`. RNO's P4 Observation/result Artifact is
+strictly separate from P39's `NotOccurred` proof `evidence_ref` and NULL fact
+`result_ref`; P39 `selected_fact_id` remains bound to the exact invocation and
+attempt. DG03 `Denied/NotAdmitted` is evidence-null and keeps its closed
+reason-code projection. P40 performs no backfill, selected-fact update or P39
+sidecar mutation.
+
+P39 migration may be installed only as part of the cumulative maintenance
+chain; **a database at `user_version=39` must not start Agent/P4 Runtime or be
+released until P40 commits version 40**. The runtime binary must reject schema
+40 unless its v1 Observation decoder includes the RNO branch. The migration
+runner must serialize cross-process startup; this prerequisite, P36–P40 prefix
+integration and P39 sidecar/Windows durability remain unqualified. P40 has no
+down migration; DDL and `user_version=40` commit atomically.
 
 ## 9.4 Relational vs JSON Rule
 

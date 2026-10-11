@@ -246,6 +246,23 @@ FencingRejected = authoritative persistence rejection
   `MayHaveStarted` state without assuming the effect was absent.
 - Neither automatically fails or cancels the Work (DID §6A.5).
 
+### Accepted AH7-DG-01 terminal evidence read fence (DID v1.41)
+
+Every P4 read of settled ToolInvocation evidence—including same-invocation
+re-entry and a zero-row settlement-CAS loser—must prove the complete current
+Worker lease tuple
+`(executionId, workerId, workerIncarnationId, fencingGeneration)` and
+`expires_at > now` in the same Control-DB `TransactionScope`, before any
+ToolInvocation row/evidence read. P3 independently checks the current fence
+before it reads/projects a P3 Session/action winner.
+
+An expired, mismatched, missing or superseded fence returns ownership-lost
+`LeaseFencingRejected` only: no P4 Observation read, no Artifact/projection,
+no P3 ToolResult/Action/cursor, and no replay-evidence Attention. Only a valid
+generation may validate the exact P39/P40 winner. Valid-fence missing or
+conflicting evidence follows RecoveryBlocked/P9/P10; this does not alter
+effect-admission or P39 selected-fact settlement rules.
+
 ## 8. Out of scope
 
 - Worker crash / daemon crash / provider disconnect / tool `OutcomeUnknown`
