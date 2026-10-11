@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.41\
+**Version:** 1.42\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.40\
+**Supersedes:** v1.41\
 **Date:** 2026-10-11\
 **Depends on:** `Arbor System Design Specification v1.16`
 
@@ -300,6 +300,53 @@ generation fence and legacy replay**
   `planning/results/AH7-DG-01-P39-P40-compatibility-addendum-acceptance.record.md`.
 - Owner-contract landing only: no production code, migration execution,
   qualification, release or AH7 phase closure is authorized.
+
+**Accepted owner amendment (DID v1.41 → v1.42): AH10 Submitted DecisionEpisode binding failure / P41**
+
+- For an exact non-legacy DecisionEpisode whose Submitted DecisionRequest
+  Workspace or settled Provider result Manifest does not match the authoritative
+  Execution/AgentLoopStep binding, P3 fails closed before new Provider/action/
+  Command/Observation or ordinary settlement. P9 records one immutable
+  `SubmittedDecisionBindingEscalated(v1)` fact/event and recovery returns
+  `RecoveryBlocked`; P10 exposes one `ActionRequired` row at
+  `executions.workspace_id`. No `Failed` settlement, source repair, replay,
+  dismissal or new permission/Command is introduced.
+- The existing authorized StopExecution is the sole v1 release path for the
+  blocked active slot. Under the full current unexpired lease and only when the
+  unresolved P4 side-effect gate is clear, Recovery/Application composition
+  coordinates the P9 fact store and P3 StepStore in one TransactionScope.
+  Stop-first atomically writes the fact/event and P3 early settlement using
+  `TerminalRejected(StopRequestedAfterSubmittedBindingFailure)`,
+  `SkippedEarlySettlement`, and
+  `SettlementProposed(Interrupted(StopRequested))`. Fact-first remains blocked
+  until Stop. P2 RecoveryController settles only the persisted proposal;
+  Attention remains. P3 has no P9 implementation dependency.
+- P9 recovery also audits already-settled `Failed` DecisionEpisode rows whose
+  exact Step remains `ActionsInProgress` with a Pending
+  `select_current_work` Action. It records audit-only Attention, using the
+  specific still-provable binding mismatch or
+  `SettledExecutionWithPendingDecisionAction`; it never resurrects or rewrites
+  old Execution/Step/Action/Command/Work/receipt facts. Same-tuple duplicate
+  fact writers serialize to one immutable fact/event.
+- P10's source is included in `02`/`05`/`07`. P10 `04` owns full rebuild:
+  source-marker reset, one consistent P9 fact snapshot/marker seed, and P1
+  offset rewind to `floor - 1` commit in one `BEGIN IMMEDIATE`/
+  `TransactionScope`. The P9 fact's event id and P10 marker have no FK to
+  prunable `domain_events`; the marker is FK-bound to its P9 fact. Pruned-event
+  rebuild, duplicate consumption, both crash boundaries and fact/rebuild
+  concurrency are required qualifications.
+- P41 / migration `0041` is strictly conditional on integration and required
+  qualification of P36/0036 → P37/0037 → P38/0038 → P39/0039 → P40/0040 as one
+  cumulative prefix. It cannot be registered, implemented, run or released
+  independently, and cannot rewrite any 0036–0040 body/checksum/number. The
+  target is DID v1.42 after the unified DID v1.41 P36–P40 landing. Only the
+  accepted binding, Stop/fact, orphan-audit and P10 rebuild semantics change.
+- Accepted fixed-proposal SHA-256 over LF bytes:
+  `10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`.
+  Governance acceptance/landing audit:
+  `planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+  This is design-only; it does not authorize migration implementation,
+  production changes, tests or runtime qualification.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -2949,6 +2996,7 @@ ReconciliationEscalated
 AssignWorkTargetBindingEscalated
 DeliverReplayEscalated
 ToolObservationReplayEvidenceEscalated
+SubmittedDecisionBindingEscalated
 EnvironmentChanged
 HumanInterventionApplied        # v1.13 G7: {actor, targetWorkspaceId, summaryRef, occurredAt, kind}
 ```
@@ -2970,6 +3018,20 @@ tool arguments/output, Artifact body, path or raw exception. P9 commits the
 immutable fact+event atomically; P10 owns the marker/read-model projection.
 This event is distinct from `ReconciliationEscalated`: absent replay evidence
 does not claim an unresolved external effect.
+
+P41 adds `SubmittedDecisionBindingEscalated(v1)` for the exact immutable P9
+fact keyed by `(executionId, logicalStepNo, repairAttempt, logicalActionId)`.
+Its payload is exactly `{attentionFactId, executionId, workspaceId,
+logicalStepNo, repairAttempt, providerTurnId, logicalActionId, failureCode}`;
+the authoritative Execution Workspace is the aggregate/Attention target and
+the LogicalActionId is the correlation. `caused_by_command_id` is the unique
+original Committed `SelectCurrentWork` CommandId when present, otherwise null.
+The closed failure codes are `DecisionRequestWorkspaceMismatch`,
+`StepManifestMismatch`, and `SettledExecutionWithPendingDecisionAction`. It
+contains no candidate Work list,
+model text, corrupt opaque value, or parser/database details. The event id is
+stored as an audit identifier on the P9 fact, not as a foreign key to the
+prunable event journal.
 
 EA-DG-01 adds `ExecutableApprovalRequested(v1)` and
 `ExecutableApprovalResolved(v1)` as durable wake facts. Requested carries the
@@ -3673,6 +3735,17 @@ alter the existing AssignWork fact identity or schema. They return the existing
 `RecoveryAttentionFactStore` repository/journal errors and typed
 `RecoveryAttentionFactInvariantConflict`; no generic Attention port or new
 store error union is introduced.
+The same P9-owned port provides
+`recordSubmittedDecisionBindingFailure(fact)`,
+`findSubmittedDecisionBindingFailure(attentionFactId)`, and
+`listSubmittedDecisionBindingFailures(projectId)` by exact
+`(executionId, logicalStepNo, repairAttempt, logicalActionId)` identity. Fact
+and event share the caller's `TransactionScope`; same-tuple retry returns the
+immutable winner and a conflicting payload fails closed. P3 returns only a
+typed mismatch classification and pure Stop-close plan through
+provider-neutral ports; it has no P9 implementation dependency. The P9
+Recovery/Application coordinator owns a cross-store transaction when it also
+applies that plan through `AgentLoopStepStore`.
 
 ---
 
@@ -5275,6 +5348,27 @@ released until P40 commits version 40**. The runtime binary must reject schema
 runner must serialize cross-process startup; this prerequisite, P36–P40 prefix
 integration and P39 sidecar/Windows durability remain unqualified. P40 has no
 down migration; DDL and `user_version=40` commit atomically.
+
+Migration `0041_submitted_decision_binding_attention`
+(`PRAGMA user_version=41`) is the forward-only P41 suffix after the complete
+0036→0037→0038→0039→0040 prefix. It is cumulative-only: integration and
+qualification of every predecessor are prerequisites; 0041 cannot be run from
+v35, registered/skipped/released independently, or used to rewrite any prior
+migration body, number, or checksum. It creates P9's immutable
+`submitted_decision_binding_attention_facts`, unique on
+`(execution_id, logical_step_no, repair_attempt, logical_action_id)`, with an
+audit-only `event_id` that has no FK to `domain_events`; the row references the
+exact Execution/Step/Action and records the first typed failure. It creates
+P10's source-specific `submitted_decision_binding_attention_rows`, keyed by
+`attention_fact_id` and FK-bound to the P9 fact and owning Workspace, with no
+FK to the source event. It backfills no historical canonical/receipt rows and
+does not infer from Session text. The P9 startup audit classifies exact
+settled-Failed/AIP/Pending-select-current-work orphans as the specific mismatch
+when still provable, otherwise
+`SettledExecutionWithPendingDecisionAction`; it adds Attention only and never
+resurrects/repairs the orphan. DID v1.42 describes the target contract; the
+serialized cumulative runner, migration implementation and qualification
+remain separate gates.
 
 ## 9.4 Relational vs JSON Rule
 

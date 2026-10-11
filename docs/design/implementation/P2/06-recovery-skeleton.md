@@ -198,3 +198,34 @@ Expired/Cancelled resolution fact, P2 dispatches `HumanIntervention` for the
 same active Execution and recovers the same AgentLoopStep/action. Repeated or
 lost wake signals are recovered from the durable approval state/event; no
 second ProviderTurn or LogicalAction is created.
+
+## 11. P41 Submitted DecisionEpisode binding failure and authorized Stop
+
+For the exact P9 `SubmittedDecisionBindingEscalated` fact, ordinary recovery
+returns `RecoveryBlocked` before replay and does not submit SettleExecution.
+The Active Execution/Workspace slot remains held until the existing authorized
+`StopExecution` is durable. Stop is the sole v1 release path; it is not a fact
+dismissal or repair.
+
+After Stop, recovery requires the complete current unexpired lease-holder tuple
+and the existing unresolved-P4-side-effect source to report no unresolved
+references. It invokes only P3 stop-only quiescence coordinated with the P9
+Recovery/Application owner. That owner atomically reuses/writes the P9 fact and
+event with the P3 Step/Action close plan when Stop wins before fact creation.
+Recovery then rereads the persisted
+`SettlementProposed(Interrupted(StopRequested))`; only then may
+RecoveryController submit the existing deterministic SettleExecution through
+the normal Gateway. A fact committed before Stop leaves the Execution blocked
+until the user requests Stop. Concurrent Stop/fact writers serialize to one of
+these two orders.
+
+Do not settle an `ActionsInProgress`/Pending Action directly. The close plan
+uses the frozen P3 early-settlement states: current Action
+`TerminalRejected(StopRequestedAfterSubmittedBindingFailure)`, later Pending
+actions `SkippedEarlySettlement`, and the proposal above, with no Observation,
+Applied, Failed or OutcomeUnknown claim. Stop preserves the old Committed
+receipt, canonical Work/selection and P9/P10 ActionRequired Attention; it emits
+no new Provider request, SelectCurrentWork or action Command. A stale/old
+generation cannot write the fact or close plan. P41 migration 0041 is not
+available until P36–P40 are integrated and qualified; no implementation is
+authorized by this owner amendment.

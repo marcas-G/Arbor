@@ -472,3 +472,86 @@ neither; post-COMMIT retry returns the same immutable fact/event. P9 rechecks
 the full lease and expiry at this write boundary; stale generation writes no
 fact/event. `ReconciliationEscalated` remains the separate unresolved-effect
 signal and is not reused for terminal observation corruption.
+
+## Accepted AH10 Submitted DecisionEpisode binding failure (DID v1.42)
+
+Accepted fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance/landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+
+For an exact non-legacy DecisionEpisode `select_current_work` action, before
+ordinary `ActionsInProgress` replay P9 validates that the submitted
+DecisionRequest Workspace equals the authoritative Execution Workspace and
+that the settled Provider result Manifest equals the exact Step Manifest.
+Either mismatch is a durable integrity failure, not a false replay predicate:
+no new `SelectCurrentWork`, Provider request/Turn, action handler, Command,
+Observation or ordinary settlement is permitted. Existing Committed receipt,
+canonical selection and Work remain unchanged. If the exact immutable fact
+already exists, recovery returns `RecoveryBlocked` before Provider/action
+replay. Otherwise P9 records the fact/event under the complete current unexpired
+lease in one TransactionScope, then returns `RecoveryBlocked`; a stale or old
+generation cannot commit it. A read/write failure remains fail-closed and
+claims no public Attention before commit.
+
+The fact identity is exactly
+`(executionId, logicalStepNo, repairAttempt, logicalActionId)`; derive
+`attentionFactId` as `att_` plus lowercase SHA-256 of the version-1 canonical
+JSON object `{"version":1,"executionId":…,"logicalStepNo":…,
+"repairAttempt":…,"logicalActionId":…}` in exactly that key order, with no
+whitespace or trailing newline. It retains only the authoritative project and
+Workspace, exact Step/Action/ProviderTurn identities, first typed failure code,
+first detection time and journal event id. The EventVersion 1 payload is
+`{attentionFactId, executionId, workspaceId, logicalStepNo, repairAttempt,
+providerTurnId, logicalActionId, failureCode}` with the authoritative Execution
+Workspace aggregate, LogicalAction correlation and `system:recovery` actor.
+The event id is audit-only (no FK to prunable `domain_events`). Exact retry
+returns the original fact/event; a conflicting payload for that identity is an
+invariant failure. Two independent SQLite connections and OS processes racing
+the same tuple must result in one immutable fact and one event; the loser reads
+the committed winner.
+
+### Stop/fact ordering and P2/P3 composition
+
+The fact leaves the Execution active and the Step `ActionsInProgress` with its
+exact current Action Pending until the user invokes existing authorized
+`StopExecution`. Fact-first stays RecoveryBlocked. If Stop is already durable,
+the P9 Recovery/Application coordinator validates the current full lease,
+rechecks the exact mismatch, Step/Action identities and Stop, then atomically
+reuses/writes the fact/event and applies P3's pure early-settlement plan through
+`AgentLoopStepStore`: current Action `TerminalRejected` with
+`StopRequestedAfterSubmittedBindingFailure`, later Pending actions
+`SkippedEarlySettlement`, cursor at the end of the pinned ledger, and
+`SettlementProposed(Interrupted(StopRequested))`. P3 does not import or call a
+P9 store. P2 RecoveryController settles only that persisted proposal through
+the normal Gateway after the unresolved-P4-side-effect gate is empty. Stop
+releases the active slot but never clears the fact/Attention, changes Work or
+selection, asserts the old Command failed, or causes replay. Stop/fact writers
+serialize into fact-first or stop-first; neither order may skip the P3 close.
+Any unresolved side-effect reference blocks settlement and preserves the
+existing reconciliation/quiescence/OutcomeUnknown gate.
+
+For the Manifest mismatch, P3 may use the ProviderTurn's own internally
+consistent immutable Manifest and exact pinned decoder only to enumerate and
+identity-check already-persisted action rows for this stop-only close. It may
+not accept or rewrite the Step's mismatched Manifest, execute decoded actions,
+issue Commands, or append Observation. If ProviderTurn evidence or persisted
+row identity cannot be proven, use the existing insufficient-evidence path;
+never synthesize a Stop proposal from guessed actions.
+
+### Migration and legacy settled orphan audit
+
+P41/0041 adds `submitted_decision_binding_attention_facts` as an immutable
+source relation after the fully integrated and qualified 0036→0037→0038→0039→
+0040 prefix. It does not backfill/rewrite canonical or Command receipt rows.
+After upgrade, before the settled-Execution recovery short-circuit, P9 scans
+exact already-settled `Failed` DecisionEpisode rows whose exact Step remains
+`ActionsInProgress` and whose cursor Action is Pending `select_current_work`.
+That exact structural tuple is the audit trigger even if the original mismatch
+was later repaired. Record audit-only Attention with the specific mismatch
+code if current immutable evidence still proves it; otherwise use
+`SettledExecutionWithPendingDecisionAction`. This does not reopen Execution,
+Step, Action or receipt; it never retries the action. Unprovable identities
+follow the existing insufficient-evidence path, not inferred Session history.
+The migration and this audit are design-only until separately implemented and
+qualified.

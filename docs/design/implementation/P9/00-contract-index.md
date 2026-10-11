@@ -70,6 +70,20 @@ write `ReconciliationEscalated`. P10 owns its dedicated marker/source query and
 shared-offset/rebuild mapping. Tool output/cause/paths/errors never enter the
 fact/event or public summary.
 
+## Accepted AH10 Submitted DecisionEpisode binding failure (DID v1.42)
+
+Fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance/landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+P9 `07` owns the exact binding-failure source fact/event, repeatable
+RecoveryBlocked gate, old SettledFailed/AIP/Pending-select-current-work audit,
+and the same-tuple duplicate-writer idempotency. The P9 Recovery/Application
+coordinator owns the cross-store Stop/fact transaction with P3's StepStore;
+P3 itself has no P9 dependency. P10 owns the public ActionRequired source and
+fact-backed rebuild. P41/0041 is conditional on cumulative P36–P40 integration
+and qualification; no implementation is authorized by this landing.
+
 ## Governance decisions recorded (GQ1–GQ5; no DID catalog changes)
 
 | GQ | Decision → contract placement |

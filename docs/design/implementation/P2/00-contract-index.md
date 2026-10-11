@@ -46,6 +46,21 @@ landing audit: `planning/results/EA-DG-01-contract-landing.result.md`.
 DID §13 points at `docs/design/implementation/P2/**`; a conflict resolves in
 favor of the DID.
 
+## Accepted owner amendment — AH10 Submitted DecisionEpisode binding failure (DID v1.42)
+
+Fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance and landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+P2 `06` forbids ordinary recovery settlement of the exact fact-blocked
+DecisionEpisode. After existing authorized StopExecution, it requires a
+current full lease, P3/P9 stop-only quiescence, a persisted
+`SettlementProposed(Interrupted(StopRequested))`, and the existing unresolved
+P4 side-effect gate to be clear before RecoveryController uses the existing
+SettleExecution. This frees the active slot without clearing public P9/P10
+Attention or replaying the old selection. Migration 0041 remains conditional
+on integrated/qualified 0036–0040; this landing authorizes no implementation.
+
 **DID v1.28 EGP supersession:** every P2 statement that admits, persists,
 schedules or settles `ExecutionFocus=Coordination` is historical. New writes
 use exact `ExecutionEpisodeBinding`; migration 0024 retains the old focus
@@ -55,6 +70,10 @@ DecisionEpisode. `CoordinationCompleted` is not a valid new settlement.
 Implementation migrations 0025/0026 subsequently remove the focus columns from
 the current `executions` and `agent_execution_state` schemas; legacy decoding
 is compatibility-only and cannot admit or drive a new execution.
+
+P41 does not change the accepted EGP binding, formation, or settlement
+semantics; it adds only P2 RecoveryController handling for the exact
+fact-blocked Submitted DecisionEpisode case described above.
 
 ## Documents
 

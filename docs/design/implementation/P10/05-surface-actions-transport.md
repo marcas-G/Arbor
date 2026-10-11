@@ -105,6 +105,14 @@ the P9 `failureCode` remains internal projection detail and is not returned in
 the public API/read-model enum or DTO. P10/P12 continue to use the same frozen
 transport boundary.
 
+Accepted P41 adds exactly one literal,
+`SubmittedDecisionBindingFailure`, to the same closed `AttentionSource` union
+and `ATTENTION_SOURCES`. It adds no Attention request/response field, endpoint,
+ViewId or action. The source maps to the safe fixed summary in `02`; the P9
+failure code and DecisionEpisode/provider binding identifiers remain internal.
+The exact accepted proposal SHA-256 is
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`.
+
 P10's source-specific activation Attention projection store atomically
 reconciles this key set from the current P1 intent table, lists/replaces the
 project's Pending rows during rebuild, and resets this source for the project.
