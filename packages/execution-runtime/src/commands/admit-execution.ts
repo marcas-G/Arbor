@@ -16,7 +16,7 @@ import type {
   PendingDomainEvent,
   ProjectRepositoryService,
   ReadmissionGateIntegrityFailure,
-  ReadmissionGateStoreFailure,
+  ReadmissionGateStoreError,
   ReadmissionTargetMismatch,
   SessionRepositoryService,
   WorkReadmissionGateStoreService,
@@ -63,7 +63,7 @@ export interface AdmitExecutionDependencies {
 type AdmitExecutionHandlerFailure =
   | ReadmissionTargetMismatch
   | ReadmissionGateIntegrityFailure
-  | ReadmissionGateStoreFailure
+  | ReadmissionGateStoreError
   | WorkReadmissionHeld;
 
 export const makeAdmitExecutionHandler = (

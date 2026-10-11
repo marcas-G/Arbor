@@ -35,8 +35,12 @@ export const makeP2CommandHandlers = (
   const readmissionGate = dependencies.readmissionGate ?? {
     hasBlockingSource: () =>
       Effect.fail({
-        _tag: "ReadmissionGateStoreFailure" as const,
-        operation: "Query" as const,
+        _tag: "PersistenceUnavailable" as const,
+        repository: "WorkReadmissionGateStore" as const,
+        operation: "AdmitExecution",
+        retryDisposition: "non-retryable" as const,
+        sourceTag: "ReadmissionGateUnavailable",
+        cause: "readmission gate service is not registered",
       }),
   };
   const executableApprovals = dependencies.executableApprovals ?? {

@@ -411,6 +411,20 @@ const queryTarget = (
   });
 
 describe("P2 WorkReadmissionGateStore", () => {
+  it("maps SQLite query failures to the shared semantic persistence error", () =>
+    runDb(
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          const encoded = JSON.stringify(exit.cause);
+          expect(encoded).toContain('"_tag":"PersistenceUnavailable"');
+          expect(encoded).toContain('"repository":"WorkReadmissionGateStore"');
+          expect(encoded).not.toContain("ReadmissionGateStoreFailure");
+        }
+      }),
+    ));
+
   it("reads a durable RuntimeSafetyStop hold for the exact Work revision and releases only after revision advance", () =>
     runDb(
       Effect.gen(function* () {

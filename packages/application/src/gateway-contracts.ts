@@ -30,7 +30,7 @@ import type {
   ProjectRepositoryError,
   ProjectToolRegistryError,
   ReadmissionGateIntegrityFailure,
-  ReadmissionGateStoreFailure,
+  ReadmissionGateStoreError,
   ReadmissionTargetMismatch,
   ResourceOwnershipRepositoryError,
   SchedulerTimerStoreError,
@@ -118,7 +118,7 @@ export type CommandHandlerError =
   | AssignWorkTargetBindingStoreError
   | ReadmissionTargetMismatch
   | ReadmissionGateIntegrityFailure
-  | ReadmissionGateStoreFailure
+  | ReadmissionGateStoreError
   | WorkReadmissionHeld;
 
 export interface CommandHandler<C, R> {

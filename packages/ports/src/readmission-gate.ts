@@ -6,6 +6,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
+import type { RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
 
 export type ReadmissionSourceKind =
@@ -55,10 +56,8 @@ export interface ReadmissionGateIntegrityFailure {
     | "SettlementMalformed";
 }
 
-export interface ReadmissionGateStoreFailure {
-  readonly _tag: "ReadmissionGateStoreFailure";
-  readonly operation: "Query";
-}
+export type ReadmissionGateStoreError =
+  RepositoryFailure<"WorkReadmissionGateStore">;
 
 export interface WorkReadmissionHeld {
   readonly _tag: "WorkReadmissionHeld";
@@ -84,7 +83,7 @@ export interface WorkReadmissionGateStoreService {
     }>,
     | ReadmissionTargetMismatch
     | ReadmissionGateIntegrityFailure
-    | ReadmissionGateStoreFailure,
+    | ReadmissionGateStoreError,
     TransactionScope
   >;
 }

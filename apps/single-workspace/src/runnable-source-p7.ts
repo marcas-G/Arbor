@@ -76,8 +76,12 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
           if (Option.isSome(workspace) && open.length > 0) {
             if (Option.isNone(readmissionGate)) {
               return yield* Effect.fail({
-                _tag: "ReadmissionGateStoreFailure" as const,
-                operation: "Query" as const,
+                _tag: "PersistenceUnavailable" as const,
+                repository: "WorkReadmissionGateStore" as const,
+                operation: "RunnableWorkSource.classify",
+                retryDisposition: "non-retryable" as const,
+                sourceTag: "ReadmissionGateUnavailable",
+                cause: "readmission gate service is not registered",
               });
             }
             for (const work of open) {
