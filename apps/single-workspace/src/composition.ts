@@ -441,18 +441,17 @@ export const buildSingleWorkspaceLayer = (
     preparedDatabase !== undefined &&
     !("databaseFilename" in preparedDatabase)
   ) {
-    if (
-      preparedDatabase !== undefined &&
-      preparedDatabase.code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT"
-    ) {
+    if (preparedDatabase.code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT") {
       throw {
         _tag: "P39MaintenanceFailure",
         code: "P39_UNSUPPORTED_DEPLOYMENT",
       };
     }
-    throw new Error(
-      "P39 startup requires a supported local primary database path",
-    );
+    throw {
+      _tag: "P39MaintenanceFailure",
+      code: "P39_UNSUPPORTED_DEPLOYMENT",
+      cause: preparedDatabase,
+    };
   }
   const primaryDatabaseFilename =
     preparedDatabase?.databaseFilename ?? config.databaseFile;

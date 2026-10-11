@@ -29,6 +29,7 @@ import {
 import type {
   P39DatabaseWriterPermit,
   P39WriterLockClientService,
+  P39WriterLockFailure,
 } from "./p39-writer-lock.js";
 import {
   P39WriterLockClient,
@@ -88,7 +89,7 @@ export const runP39SqliteMaintenance = (
     if (options.primaryFilename === ":memory:") {
       return yield* Effect.fail({
         _tag: "P39MaintenanceFailure" as const,
-        code: "P39_REPORT_DB_PATH_INVALID" as const,
+        code: "P39_UNSUPPORTED_DEPLOYMENT" as const,
       });
     }
     const resolvedPrimaryPath = resolve(options.primaryFilename);
@@ -238,6 +239,25 @@ export const runP39SqliteMaintenance = (
           ),
         ),
       ),
+    ).pipe(
+      Effect.mapError((cause) => {
+        if (
+          typeof cause === "object" &&
+          cause !== null &&
+          "_tag" in cause &&
+          cause._tag === "P39WriterLockFailure"
+        ) {
+          const lockFailure = cause as P39WriterLockFailure;
+          const { code, ...detail } = lockFailure;
+          return failure(
+            code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT"
+              ? "P39_UNSUPPORTED_DEPLOYMENT"
+              : code,
+            detail,
+          );
+        }
+        return cause;
+      }),
     );
   });
 
