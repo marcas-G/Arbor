@@ -152,3 +152,25 @@ P9 durable fact-store/P10 rebuild-source design decision, not an implicit table.
 - Permission/resource/approval binding changes → no automatic replay.
 - A design requires another P4/P3/P9 semantic not fixed in the accepted package
   → stop implementation and raise a new owner-specific Design Gap.
+
+## P39 physical schema supplement gate (proposal only)
+
+The proposed physical representation and upgrade/rollback matrix are in
+`planning/proposals/AH7-DG-02-P39-physical-schema-supplement-draft.md`. The
+matrix below is qualification work after that supplement is independently
+reviewed/accepted and after P37/P38 are present; it is not authorization to
+write migration/tests now.
+
+| Gate | Deterministic evidence required | Must not claim |
+|---|---|---|
+| Migration prerequisite | Refuse any schema version other than P38/user_version 38; verify P36 invocation state and P38 approval ledger exist; set user_version 39 only after successful transactional upgrade | P39 can ship before P37/P38 or this `db929` checkout already has them |
+| Legacy backfill | One attempt-0 row per P36 invocation with exact NotAdmitted/MayHaveStarted/LegacyUnknown; no inferred binding/profile/effect key/fact; all prior settlements/results unchanged | Historical evidence was recovered from Session text or current catalog |
+| FK and rollback | Inject failure after each DDL/copy/backfill phase; transaction rollback preserves schema, rows, P38 approvals, and version 38; run `foreign_key_check` on success | A post-commit down migration can erase facts safely |
+| Binding integrity | Canonical RecoveryBinding digest verified; duplicate/mismatched P3 identity, action/callRef, resource snapshot or P38 approval subject/revision fails claim before effect admission | P4 trusts model/caller-supplied approval or source identities |
+| Attempt constraints | Unique `(invocationId, attemptNo)`, only attempt 0/1; CAS permits only NotAdmitted→MayHaveStarted; legacy no-profile rows remain representable but cannot pass new Reconcilable admission | Any row label alone proves admission or proof |
+| Fact integrity | Append-only trigger, deterministic fact identity, exact attempt/binding/profile/effect key match, duplicate identical proof idempotent, conflicting/late proof preserved and classified StillUnknown | A conflicting proof overwrites prior facts or implies NotOccurred |
+| Atomic handoff | Kill around claim+approval+attempt0, admission, fact+settlement, and P9 event writes; before/after commit outcomes match the accepted transaction boundaries | Approval is consumed twice or an uncommitted MayHaveStarted effect is reported as admitted |
+| Open legacy rollout choice | Independent reviewer must choose preflight-zero-active-unbound-NotAdmitted versus retain such rows non-reenterable/fail-closed; until selected, migration rollout remains blocked | D0A fixed the physical rollout disposition |
+
+This phase permits proposal review only. No SQLite fixture was migrated and no
+test was run while preparing the supplement.
