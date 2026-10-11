@@ -42,13 +42,19 @@ export interface InboxViewDeps {
     Option.Option<ExecutableApprovalRecord>,
     ProjectionReadError
   >;
+  /** Resolves the approved action's exact ToolDefinition hash through its
+   * durable AgentLoopStep → ProviderTurn manifest binding. */
+  readonly findToolDefinitionHash: (
+    approval: ExecutableApprovalRecord,
+  ) => Effect.Effect<Option.Option<string>, ProjectionReadError>;
   /** Resolves the unique project-catalogued tool definition for this exact
-   * name/version pair. Ambiguous, missing, or unavailable definitions fail
-   * closed at the review boundary. */
+   * name/version/hash identity. Ambiguous, missing, or unavailable definitions
+   * fail closed at the review boundary. */
   readonly resolveToolDefinition: (
     projectId: ProjectId,
     toolName: string,
     toolVersion: string,
+    toolDefinitionHash: string,
   ) => Effect.Effect<
     Option.Option<ModelFacingToolDefinition>,
     ProjectionReadError
@@ -227,16 +233,22 @@ const executableApprovalTarget = (
       return yield* reviewUnavailable();
     }
 
+    const definitionHashOption = yield* deps.findToolDefinitionHash(approval);
+    if (Option.isNone(definitionHashOption)) return yield* reviewUnavailable();
+    const definitionHash = definitionHashOption.value;
+
     const definitionOption = yield* deps.resolveToolDefinition(
       approval.projectId,
       approval.toolName,
       approval.toolVersion,
+      definitionHash,
     );
     if (Option.isNone(definitionOption)) return yield* reviewUnavailable();
     const definition = definitionOption.value;
     if (
       definition.name !== approval.toolName ||
       definition.version !== approval.toolVersion ||
+      definition.hash !== definitionHash ||
       definition.sideEffectSemantics !== approval.sideEffectSemantics
     ) {
       return yield* reviewUnavailable();

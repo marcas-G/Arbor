@@ -483,6 +483,7 @@ export const makeP10Deps = (): Effect.Effect<
       journalLastSequence,
       projectIdOfWorkspace,
       findExecutableApproval: () => Effect.succeed(Option.none()),
+      findToolDefinitionHash: () => Effect.succeed(Option.none()),
       resolveToolDefinition: () => Effect.succeed(Option.none()),
     };
 

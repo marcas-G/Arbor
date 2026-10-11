@@ -12,6 +12,7 @@ import {
 } from "@arbor/domain";
 import {
   AcceptanceRepository,
+  AgentLoopStepStore,
   AttentionProjectionStore,
   DependencyRepository,
   DomainEventJournal,
@@ -20,8 +21,10 @@ import {
   ExecutionRepository,
   MessageStore,
   ProjectionQueryPort,
+  ProviderTurnStore,
   RecoveryAttentionFactStore,
   RunnableWorkSource,
+  sha256Hex,
   ToolCatalogPort,
   TransactionPort,
   type TransactionScope,
@@ -142,7 +145,64 @@ export type ProjectionQueryWiringServices =
   | MessageStore
   | RunnableWorkSource
   | ExecutableApprovalStore
+  | AgentLoopStepStore
+  | ProviderTurnStore
   | ToolCatalogPort;
+
+const approvedToolHashFromManifest = (input: {
+  readonly manifestJson: string;
+  readonly providerTurnId: string;
+  readonly executionId: string;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly toolName: string;
+  readonly toolVersion: string;
+}): string | null => {
+  try {
+    const manifest = JSON.parse(input.manifestJson) as {
+      readonly providerTurnId?: unknown;
+      readonly executionId?: unknown;
+      readonly logicalStepNo?: unknown;
+      readonly repairAttempt?: unknown;
+      readonly toolRefs?: unknown;
+      readonly toolRoutes?: unknown;
+    };
+    if (
+      manifest.providerTurnId !== input.providerTurnId ||
+      manifest.executionId !== input.executionId ||
+      manifest.logicalStepNo !== input.logicalStepNo ||
+      manifest.repairAttempt !== input.repairAttempt ||
+      !Array.isArray(manifest.toolRoutes) ||
+      !Array.isArray(manifest.toolRefs)
+    ) {
+      return null;
+    }
+    const sameNameRoutes = manifest.toolRoutes.filter(
+      (route): route is Record<string, unknown> =>
+        typeof route === "object" &&
+        route !== null &&
+        "name" in route &&
+        route.name === input.toolName,
+    );
+    if (sameNameRoutes.length !== 1) return null;
+    const route = sameNameRoutes[0];
+    if (
+      route === undefined ||
+      route.route !== "Executable" ||
+      route.version !== input.toolVersion ||
+      typeof route.hash !== "string" ||
+      route.hash.length === 0
+    ) {
+      return null;
+    }
+    const exactRef = `Executable:${input.toolName}@${input.toolVersion}#${route.hash}`;
+    const refs = manifest.toolRefs.filter((ref) => typeof ref === "string");
+    if (refs.filter((ref) => ref === exactRef).length !== 1) return null;
+    return route.hash;
+  } catch {
+    return null;
+  }
+};
 
 const projectionQueryService = (catalogProjectId?: ProjectId) =>
   Effect.gen(function* () {
@@ -162,6 +222,8 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
     const messages = yield* MessageStore;
     const source = yield* RunnableWorkSource;
     const executableApprovals = yield* ExecutableApprovalStore;
+    const agentLoopSteps = yield* AgentLoopStepStore;
+    const providerTurns = yield* ProviderTurnStore;
     const toolCatalog = yield* ToolCatalogPort;
 
     const inTx = <A>(body: Effect.Effect<A, unknown, TransactionScope>) =>
@@ -661,7 +723,71 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
       projectIdOfWorkspace,
       findExecutableApproval: (approvalId) =>
         inTx(executableApprovals.findById(approvalId)),
-      resolveToolDefinition: (projectId, toolName, toolVersion) =>
+      findToolDefinitionHash: (approval) =>
+        inTx(
+          Effect.gen(function* () {
+            const identity = {
+              executionId: approval.executionId,
+              logicalStepNo: approval.logicalStepNo,
+              repairAttempt: approval.repairAttempt,
+            };
+            const stepOption = yield* agentLoopSteps.find(identity);
+            if (Option.isNone(stepOption)) return Option.none();
+            const step = stepOption.value;
+            if (
+              step.state !== "ActionsInProgress" ||
+              step.manifestId === undefined
+            ) {
+              return Option.none();
+            }
+            const actions = yield* agentLoopSteps.listActions(identity);
+            const matchingActions = actions.filter(
+              (action) => action.actionIndex === approval.actionIndex,
+            );
+            if (
+              matchingActions.length !== 1 ||
+              matchingActions[0] === undefined
+            ) {
+              return Option.none();
+            }
+            const action = matchingActions[0];
+            if (
+              action.state !== "Pending" ||
+              action.routeKind !== "Executable" ||
+              action.logicalActionId !== approval.logicalActionId ||
+              action.callRef !== approval.callRef ||
+              action.actionKind !== approval.toolName ||
+              action.inputHash !== sha256Hex(approval.argumentsJson)
+            ) {
+              return Option.none();
+            }
+            const manifestRecord = yield* providerTurns.findManifestByTurn(
+              step.providerTurnId,
+            );
+            if (
+              manifestRecord === null ||
+              manifestRecord.manifestId !== step.manifestId
+            ) {
+              return Option.none();
+            }
+            const hash = approvedToolHashFromManifest({
+              manifestJson: manifestRecord.manifestJson,
+              providerTurnId: step.providerTurnId,
+              executionId: approval.executionId,
+              logicalStepNo: approval.logicalStepNo,
+              repairAttempt: approval.repairAttempt,
+              toolName: approval.toolName,
+              toolVersion: approval.toolVersion,
+            });
+            return hash === null ? Option.none() : Option.some(hash);
+          }),
+        ),
+      resolveToolDefinition: (
+        projectId,
+        toolName,
+        toolVersion,
+        toolDefinitionHash,
+      ) =>
         Effect.gen(function* () {
           // ToolCatalogPort is composed for this application's project (or
           // builtins only when unconfigured). Never disclose project-scoped
@@ -674,7 +800,10 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
           }
           const refs = yield* toolCatalog.visibleRefs();
           const matches = refs.filter(
-            (ref) => ref.name === toolName && ref.version === toolVersion,
+            (ref) =>
+              ref.name === toolName &&
+              ref.version === toolVersion &&
+              ref.hash === toolDefinitionHash,
           );
           if (matches.length !== 1 || matches[0] === undefined) {
             return Option.none();
