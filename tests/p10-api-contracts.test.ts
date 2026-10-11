@@ -16,6 +16,8 @@ import {
   type CurrentWorkRes,
   type DependencyReq,
   type DependencyRes,
+  type ExecutableApprovalInboxTarget,
+  type InboxUnconsumedEntry,
   type InboxViewReq,
   type InboxViewRes,
   type TranscriptReq,
@@ -138,6 +140,50 @@ describe("P10-002 api-contracts ViewId pairing", () => {
       expect(REQUEST_CONTRACTS[view]).toMatch(/Req$/);
       expect(RESPONSE_CONTRACTS[view]).toMatch(/Res$/);
     }
+  });
+});
+
+describe("P10 Executable approval Inbox DTO", () => {
+  it("keeps the approval route target typed and display-only on Inbox entries", () => {
+    const target: ExecutableApprovalInboxTarget = {
+      kind: "ExecutableApproval",
+      approvalId: "eap_opaque_id",
+      revision: 0,
+      executionId: "exe_opaque_id",
+      toolName: "shell",
+      toolVersion: "2",
+      validatedArgumentsPreview: '{"command":"[redacted]"}',
+      targetResourceSpaceIds: ["space_opaque_id"],
+      capabilities: ["shell:exec"],
+      sideEffectSemantics: "Reconcilable",
+      expiresAt: "2026-10-12T03:00:00.000Z",
+      actionDigest: "sha256:opaque",
+    };
+    const entry: InboxUnconsumedEntry = {
+      entryKey: "eap:eap_opaque_id:0",
+      kind: "Governance",
+      summary: "safe summary",
+      watermark: 4,
+      target,
+    };
+
+    expect(entry.target).toBe(target);
+    expect(keys(target)).toEqual(
+      [
+        "actionDigest",
+        "approvalId",
+        "capabilities",
+        "executionId",
+        "expiresAt",
+        "kind",
+        "revision",
+        "sideEffectSemantics",
+        "targetResourceSpaceIds",
+        "toolName",
+        "toolVersion",
+        "validatedArgumentsPreview",
+      ].sort(),
+    );
   });
 });
 

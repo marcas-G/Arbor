@@ -874,7 +874,10 @@ export const buildSingleWorkspaceLayer = (
     ProductionHealthPortLive,
     persistenceHealthProbe,
   );
-  const projectionQuery = Layer.provide(ProjectionQueryPortLive, coreAll);
+  const projectionQuery = Layer.provide(
+    ProjectionQueryPortLive(config.projectId),
+    Layer.mergeAll(coreAll, toolCatalog),
+  );
   const transportBoundary = Layer.provide(
     TransportBoundaryLive(
       // Local single-user form: no configured authenticator = localhost

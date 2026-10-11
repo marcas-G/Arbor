@@ -16,11 +16,13 @@ import {
   DependencyRepository,
   DomainEventJournal,
   EvidenceRepository,
+  ExecutableApprovalStore,
   ExecutionRepository,
   MessageStore,
   ProjectionQueryPort,
   RecoveryAttentionFactStore,
   RunnableWorkSource,
+  ToolCatalogPort,
   TransactionPort,
   type TransactionScope,
   VerificationRepository,
@@ -138,14 +140,11 @@ export type ProjectionQueryWiringServices =
   | RecoveryAttentionFactStore
   | AttentionProjectionStore
   | MessageStore
-  | RunnableWorkSource;
+  | RunnableWorkSource
+  | ExecutableApprovalStore
+  | ToolCatalogPort;
 
-export const ProjectionQueryPortLive: Layer.Layer<
-  ProjectionQueryPort,
-  never,
-  ProjectionQueryWiringServices
-> = Layer.effect(
-  ProjectionQueryPort,
+const projectionQueryService = (catalogProjectId?: ProjectId) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const tx = yield* TransactionPort;
@@ -162,6 +161,8 @@ export const ProjectionQueryPortLive: Layer.Layer<
     const attentionProjection = yield* AttentionProjectionStore;
     const messages = yield* MessageStore;
     const source = yield* RunnableWorkSource;
+    const executableApprovals = yield* ExecutableApprovalStore;
+    const toolCatalog = yield* ToolCatalogPort;
 
     const inTx = <A>(body: Effect.Effect<A, unknown, TransactionScope>) =>
       tx.transact(body).pipe(Effect.mapError(projectionReadError));
@@ -658,6 +659,31 @@ export const ProjectionQueryPortLive: Layer.Layer<
       listUnconsumedInbox: workspaceDetail.listUnconsumedInbox,
       journalLastSequence,
       projectIdOfWorkspace,
+      findExecutableApproval: (approvalId) =>
+        inTx(executableApprovals.findById(approvalId)),
+      resolveToolDefinition: (projectId, toolName, toolVersion) =>
+        Effect.gen(function* () {
+          // ToolCatalogPort is composed for this application's project (or
+          // builtins only when unconfigured). Never disclose project-scoped
+          // tool metadata for a different Workspace project.
+          if (
+            catalogProjectId !== undefined &&
+            projectId !== catalogProjectId
+          ) {
+            return Option.none();
+          }
+          const refs = yield* toolCatalog.visibleRefs();
+          const matches = refs.filter(
+            (ref) => ref.name === toolName && ref.version === toolVersion,
+          );
+          if (matches.length !== 1 || matches[0] === undefined) {
+            return Option.none();
+          }
+          const definition = yield* toolCatalog
+            .resolveForModel(matches[0])
+            .pipe(Effect.mapError(projectionReadError));
+          return Option.some(definition);
+        }),
     };
 
     const effectiveFacts: EffectiveFactsDeps = {
@@ -743,5 +769,9 @@ export const ProjectionQueryPortLive: Layer.Layer<
     };
 
     return ProjectionQueryPort.of(makeProjectionQueryService(deps));
-  }),
-);
+  });
+
+export const ProjectionQueryPortLive = (
+  catalogProjectId?: ProjectId,
+): Layer.Layer<ProjectionQueryPort, never, ProjectionQueryWiringServices> =>
+  Layer.effect(ProjectionQueryPort, projectionQueryService(catalogProjectId));

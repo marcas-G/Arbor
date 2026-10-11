@@ -482,6 +482,8 @@ export const makeP10Deps = (): Effect.Effect<
       listUnconsumedInbox: workspaceDetail.listUnconsumedInbox,
       journalLastSequence,
       projectIdOfWorkspace,
+      findExecutableApproval: () => Effect.succeed(Option.none()),
+      resolveToolDefinition: () => Effect.succeed(Option.none()),
     };
 
     const effectiveFacts: EffectiveFactsDeps = {

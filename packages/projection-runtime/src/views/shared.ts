@@ -45,6 +45,27 @@ export interface InboxUnconsumedEntryView {
   readonly kind: InboxEntry["kind"];
   readonly summary: string;
   readonly watermark: number;
+  readonly target?: ExecutableApprovalInboxTargetView | undefined;
+}
+
+/** Mirrors the frozen api-contracts Executable approval Inbox target. */
+export interface ExecutableApprovalInboxTargetView {
+  readonly kind: "ExecutableApproval";
+  readonly approvalId: string;
+  readonly revision: number;
+  readonly executionId: string;
+  readonly toolName: string;
+  readonly toolVersion: string;
+  readonly validatedArgumentsPreview: string;
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
+  readonly capabilities: ReadonlyArray<string>;
+  readonly sideEffectSemantics:
+    | "ReadOnly"
+    | "Idempotent"
+    | "Reconcilable"
+    | "NonIdempotent";
+  readonly expiresAt: string;
+  readonly actionDigest: string;
 }
 
 /** Mirrors DependencyRow (P10 `05` §1). */

@@ -85,6 +85,7 @@ export interface InboxUnconsumedEntry {
   readonly kind: InboxEntryKind;
   readonly summary: string;
   readonly watermark: number;
+  readonly target?: ExecutableApprovalInboxTarget | undefined;
 }
 
 export interface PendingWorkRef {
@@ -333,6 +334,30 @@ export interface UsageRes {
 
 export interface InboxViewReq {
   readonly workspaceId: WorkspaceId;
+}
+
+/** Read-only, route-specific review details for an Executable approval.
+ * This display projection is not authority and must never be posted back as a
+ * decision binding. Control approvals retain their separate `cap:` route. */
+export interface ExecutableApprovalInboxTarget {
+  readonly kind: "ExecutableApproval";
+  readonly approvalId: string;
+  readonly revision: number;
+  readonly executionId: string;
+  readonly toolName: string;
+  readonly toolVersion: string;
+  /** Bounded preview produced from validated arguments and the exact tool
+   * version schema. Free-form values and paths are redacted. */
+  readonly validatedArgumentsPreview: string;
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
+  readonly capabilities: ReadonlyArray<string>;
+  readonly sideEffectSemantics:
+    | "ReadOnly"
+    | "Idempotent"
+    | "Reconcilable"
+    | "NonIdempotent";
+  readonly expiresAt: string;
+  readonly actionDigest: string;
 }
 
 export interface InboxViewRes {
