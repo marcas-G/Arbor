@@ -79,6 +79,9 @@ CREATE TABLE tool_invocations_p39 (
   effect_admission_state TEXT NOT NULL CHECK
                            (effect_admission_state IN
                              ('NotAdmitted','MayHaveStarted','LegacyUnknown')),
+  recovery_binding_state TEXT NOT NULL CHECK
+                           (recovery_binding_state IN
+                             ('Bound','LegacyBindingUnproven','HistoricalSettled')),
   intent_at              TEXT NOT NULL,
   settled_at             TEXT,
   settlement_kind        TEXT CHECK (settlement_kind IN
@@ -87,6 +90,8 @@ CREATE TABLE tool_invocations_p39 (
   settlement_json        TEXT,
   result_ref              TEXT,
   CHECK ((settled_at IS NULL) = (settlement_kind IS NULL)),
+  CHECK (recovery_binding_state <> 'HistoricalSettled' OR settled_at IS NOT NULL),
+  CHECK (recovery_binding_state <> 'LegacyBindingUnproven' OR settled_at IS NULL),
   CHECK (settlement_kind <> 'Denied' OR
          (effect_admission_state = 'NotAdmitted' AND result_ref IS NULL)),
   CHECK (settlement_kind <> 'ReconciledNoEffect' OR
@@ -270,23 +275,67 @@ P39 backfills exactly one attempt-0 row for each existing P36 invocation:
   text, current catalog state, or result absence.
 - Settled P36 records retain their exact settlement/result refs. The new
   `ReconciledNoEffect` variant is not backfilled onto any historical row.
+- Settled P36 rows receive `recovery_binding_state='HistoricalSettled'`;
+  every unsettled P36 row lacking a complete persisted binding receives
+  `recovery_binding_state='LegacyBindingUnproven'`. New P39 rows are `Bound`
+  only when the same claim transaction verifies/inserts their immutable
+  binding.
 - Unsettled MayHaveStarted/LegacyUnknown without a matching exact historical
   profile remains fail-closed StillUnknown/no execution, as D0A requires.
-- For historical NotAdmitted shell@2, re-entry is allowed only if P3's
-  still-durable exact AgentLoopStep/Action supplies the accepted Runtime
-  sourceBinding and P4 can verify all invocation/definition/arguments/resource
-  fields against the retained v2 row and current trusted approval ledger. The
-  binding row is then inserted atomically with exact claim/re-entry before any
-  effect-admission transition. If those facts are unavailable, fail closed;
-  never reconstruct them from Session text or silently substitute shell@3.
+- Historical NotAdmitted shell@2 with no P39-persisted complete binding is
+  marked `LegacyBindingUnproven` and is not automatically re-entered. P3's
+  current cursor, Action and durable identity remain unchanged; P4 does not
+  graft a later binding onto the legacy row as an automatic recovery shortcut.
+  Any future human disposition must use an already-authorized exact record
+  operation; absent such a contract, the row remains unresolved and release is
+  blocked. Never reconstruct binding from Session text or silently substitute
+  shell@3.
 
-This last rule is a **compatibility precondition, not a new authorization**.
-If P3/P4 cannot supply and verify the exact source binding for an extant
-NotAdmitted row, the migration/implementation cannot claim that row is safely
-re-enterable. Independent review must decide whether rollout requires (a) a
-preflight requiring zero such rows, or (b) retaining those rows as
-non-reenterable fail-closed legacy records. These are mutually exclusive
-rollout dispositions; this proposal does not silently choose between them.
+### Selected disposition: preserve unproven legacy rows, never auto-reenter
+
+P39 adds the closed `recovery_binding_state` marker to the rebuilt invocation
+row. New P39 invocations must be `Bound` and have the exact immutable binding
+row before claim/approval consumption can commit. Every P36 settled invocation
+is marked `HistoricalSettled`; every P36 unsettled invocation with no persisted
+complete RecoveryBinding is marked `LegacyBindingUnproven`, including
+NotAdmitted, MayHaveStarted, and LegacyUnknown. The row, original admission
+state, settlement/result refs, P38 approval association/consumption, and P3
+Action/Step/cursor are copied unchanged. No source identity/profile/approval
+revision is fabricated and the approval is neither refunded nor transferred.
+
+An unsettled `LegacyBindingUnproven` invocation is not eligible for automatic
+claim, executor admission, or retry, even if a later current catalog happens to
+match. It remains an auditable unresolved row with its original invocation ID;
+P3 does not advance or create a replacement invocation. Only an already
+accepted P9 manual/legacy-evidence Attention and human-recovery path may
+resolve it. P4 must not manufacture a `Denied`, `Interrupted`, or
+`ReconciledNoEffect` result because none is entailed by this physical marker.
+The original consumed approval remains bound to the old invocation until an
+already-authorized terminal disposition exists; no new approval is silently
+attached.
+
+### Attention and release-stop condition
+
+P9 `07` currently states that insufficient legacy evidence requires durable
+Attention, but the accepted DG02 mapping does not name `LegacyBindingUnproven`
+as a P9 source or define its exact fact identity and P10 projection. It cannot
+use `ReconciliationEscalated`: that source is reserved for unresolved external
+effects and this row is NotAdmitted/no-effect. This supplement therefore does
+**not** invent a source, event, or reason code. Before P39 can be released with
+any active `LegacyBindingUnproven` row, an independent owner review must
+confirm an already-frozen P9/P10 legacy-evidence route covers this exact row
+and can surface it to a human. If not, this is a new P9/P10 Design Gap; stop
+owner landing/release and obtain that governance decision. The schema migration
+itself may run transactionally while preserving such rows, but the application
+release must remain blocked until every active row is surfaced and has an
+authorized human disposition. No active row may be deleted, auto-settled,
+converted into another ToolInvocation, or silently skipped to make the release
+gate pass.
+
+This selected fail-closed disposition is the direct safety consequence of the
+accepted D0A rule “exact historical shell@2 re-entry only with a complete
+binding.” An absent binding is not a complete binding; refusing automatic
+re-entry does not change D0A or infer effect success/failure.
 
 The attempt-table SQL intentionally does not require every row labeled
 `Reconcilable` to have a profile: P36 history can legitimately contain
@@ -317,6 +366,8 @@ BEGIN IMMEDIATE;
 -- Create binding/attempt/fact tables, indexes and immutability triggers.
 -- INSERT one attempt-0 row per copied invocation using its exact P36 admission
 -- state; leave sourceBinding/profile/effectKey null rather than infer them.
+-- Set recovery_binding_state=HistoricalSettled for settled P36 rows and
+-- LegacyBindingUnproven for unsettled rows without a persisted exact binding.
 PRAGMA foreign_key_check;
 PRAGMA user_version = 39;
 COMMIT;
