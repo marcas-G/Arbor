@@ -1088,6 +1088,11 @@ export const executeAgentLoopActions = (
           ...(authorization.assignWorkReplay === true
             ? { assignWorkReplay: true }
             : {}),
+          ...(authorization.assignWorkCommandReplay === undefined
+            ? {}
+            : {
+                assignWorkCommandReplay: authorization.assignWorkCommandReplay,
+              }),
         }),
         {
           onFailure: (cause) => ({ ok: false as const, cause }),
@@ -1121,20 +1126,52 @@ export const executeAgentLoopActions = (
       }
       if (
         authorization.approvalId !== undefined &&
-        controlAuthorizer !== undefined &&
-        !(yield* controlAuthorizer.consumeApproval({
-          approvalId: authorization.approvalId,
-          approvalRevision: authorization.approvalRevision ?? 0,
-          actionDigest: authorization.actionDigest,
-          controlBasisDigest: authorization.controlBasisDigest,
-        }))
+        controlAuthorizer !== undefined
       ) {
-        const settlement = safetyStop("ControlApprovalConsumptionRejected");
-        yield* persistActionRejection(
-          settlement,
-          "ApprovalConsumptionRejected",
-        );
-        return { _tag: "Settle", settlement };
+        const consumption =
+          handled.outcome._tag === "Observation"
+            ? handled.outcome.approvalConsumption
+            : undefined;
+        const expectedRevision = authorization.approvalRevision ?? 0;
+        const commandBoundAssignWork =
+          decodedAction.value.action._tag === "AssignWork" &&
+          authorization.assignWorkEvidence?._tag === "ActionApproval";
+        const commandConsumptionMatches =
+          consumption !== undefined &&
+          consumption.approvalId === authorization.approvalId &&
+          consumption.consumedRevision === expectedRevision + 1;
+        const consumed =
+          commandBoundAssignWork && !commandConsumptionMatches
+            ? false
+            : yield* controlAuthorizer.consumeApproval({
+                approvalId: authorization.approvalId,
+                approvalRevision: expectedRevision,
+                actionDigest: authorization.actionDigest,
+                controlBasisDigest: authorization.controlBasisDigest,
+                consumedBy: commandConsumptionMatches
+                  ? consumption.commandId
+                  : (loopAction?.logicalActionId ??
+                    `lac_${sha256Hex(
+                      JSON.stringify({
+                        executionId: input.execution.executionId,
+                        providerTurnId: preparedTurn.manifest.providerTurnId,
+                        callRef: invocation.callRef,
+                        routeKind: route._tag,
+                        actionKind: invocation.toolName,
+                      }),
+                    )}`),
+                ...(commandConsumptionMatches
+                  ? { alreadyConsumedByCommandId: consumption.commandId }
+                  : {}),
+              });
+        if (!consumed) {
+          const settlement = safetyStop("ControlApprovalConsumptionRejected");
+          yield* persistActionRejection(
+            settlement,
+            "ApprovalConsumptionRejected",
+          );
+          return { _tag: "Settle", settlement };
+        }
       }
       if (handled.outcome._tag === "Settle") {
         yield* persistActionSettlement(handled.outcome.settlement);

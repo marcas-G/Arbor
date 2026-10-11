@@ -67,6 +67,7 @@ import {
 import {
   AcceptanceRepository,
   type AcceptanceRepositoryService,
+  type AssignWorkApprovalCommandEvidence,
   type AssignWorkBindingFailureCode,
   type AssignWorkCommandEvidence,
   type AssignWorkTargetBinding,
@@ -737,6 +738,7 @@ export const assignWorkHandler = (
     logicalActionId,
     assignWorkEvidence,
     assignWorkReplay,
+    assignWorkCommandReplay,
   }) =>
     Effect.gen(function* () {
       if (action._tag !== "AssignWork") {
@@ -997,6 +999,185 @@ export const assignWorkHandler = (
         },
         revision: parse(WorkRevision)(0),
       };
+      if (assignWorkCommandReplay !== undefined) {
+        const journal = dependencies.journal;
+        const blockReplay = () =>
+          Effect.fail<AgentActionError>({
+            _tag: "AgentActionRecoveryBlocked",
+            executionId: execution.executionId,
+            logicalActionId:
+              logicalActionId ?? assignWorkCommandReplay.commandId,
+          });
+        if (
+          context._tag !== "ExecutionOrigin" ||
+          logicalActionId === undefined ||
+          assignWorkEvidence?._tag !== "ActionApproval" ||
+          assignWorkCommandReplay.approvalId !==
+            assignWorkEvidence.approvalId ||
+          assignWorkCommandReplay.approvalRevision !==
+            assignWorkEvidence.approvalRevision ||
+          assignWorkCommandReplay.consumedRevision !==
+            assignWorkCommandReplay.approvalRevision + 1 ||
+          targetWorkspaceId !== execution.workspaceId ||
+          dependencies.commandReceipts === undefined ||
+          dependencies.commandHandlerRegistry === undefined ||
+          dependencies.works === undefined ||
+          dependencies.approvals === undefined ||
+          journal === undefined
+        ) {
+          return yield* blockReplay();
+        }
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "assign-work-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          commandType: "AssignWork",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          operation: "AssignWork.currentWorkspaceReceiptReplay",
+          errorOperation: "AssignWork",
+          lookupOperation: "AssignWork.receiptLookup",
+          identityErrorMessage:
+            "prior current-Workspace AssignWork receipt belongs to another Project",
+        });
+        if (
+          prior._tag !== "Committed" ||
+          prior.receipt.commandId !== assignWorkCommandReplay.commandId ||
+          prior.receipt.semanticRequestFingerprint !==
+            semanticRequestFingerprint({
+              commandType: "AssignWork",
+              projectId: execution.projectId,
+              actor: context.principal as never,
+              schemaVersion: "1",
+              payload,
+            })
+        ) {
+          return yield* blockReplay();
+        }
+        const result = prior.receipt.resolution.result;
+        if (
+          typeof result !== "object" ||
+          result === null ||
+          !("workId" in result) ||
+          result.workId !== payload.workId ||
+          !("workspaceId" in result) ||
+          result.workspaceId !== execution.workspaceId
+        ) {
+          return yield* blockReplay();
+        }
+        const approval = yield* dependencies.tx.transact(
+          dependencies.approvals.findById(assignWorkCommandReplay.approvalId),
+        );
+        const authority = assignWorkEvidence;
+        if (
+          Option.isNone(approval) ||
+          approval.value.state !== "Consumed" ||
+          approval.value.bindingProven !== true ||
+          approval.value.revision !==
+            assignWorkCommandReplay.consumedRevision ||
+          approval.value.consumedBy !== assignWorkCommandReplay.commandId ||
+          approval.value.projectId !== execution.projectId ||
+          approval.value.workspaceId !== execution.workspaceId ||
+          approval.value.executionId !== execution.executionId ||
+          approval.value.stableActionId !== authority.stableActionId ||
+          approval.value.actionDigest !== authority.actionDigest ||
+          approval.value.targetRef !== execution.workspaceId ||
+          approval.value.controlBasisDigest !== authority.controlBasisDigest ||
+          approval.value.expiresAt !== authority.expiresAt ||
+          authority.actionDigest !==
+            sha256Hex(
+              JSON.stringify({
+                stableActionId: "core.control.assign-work",
+                action,
+              }),
+            )
+        ) {
+          return yield* blockReplay();
+        }
+        const work = yield* dependencies.tx.transact(
+          dependencies.works.findById(result.workId as WorkId),
+        );
+        if (
+          Option.isNone(work) ||
+          work.value.projectId !== execution.projectId ||
+          work.value.workspaceId !== execution.workspaceId ||
+          work.value.objective !== action.objective ||
+          work.value.why !== action.why ||
+          JSON.stringify(work.value.constraints) !==
+            JSON.stringify(action.constraints) ||
+          work.value.completionExpectation !== action.completionExpectation ||
+          JSON.stringify(work.value.verificationMission) !==
+            JSON.stringify(action.verificationMission) ||
+          work.value.provenance.reason !== action.reason ||
+          work.value.provenance.predecessorWorkId !==
+            (workEpisode(execution)?.workId ?? null)
+        ) {
+          return yield* blockReplay();
+        }
+        const assignedEvents = yield* dependencies.tx.transact(
+          Effect.gen(function* () {
+            const matches = [];
+            let cursor = 0;
+            for (;;) {
+              const batch = yield* journal.readAfter(
+                execution.projectId,
+                cursor,
+                512,
+              );
+              for (const event of batch) {
+                if (
+                  event.eventType === "WorkAssigned" &&
+                  event.causedByCommandId === assignWorkCommandReplay.commandId
+                ) {
+                  matches.push(event);
+                }
+              }
+              if (batch.length < 512) break;
+              const last = batch[batch.length - 1];
+              if (last === undefined || Number(last.sequence) <= cursor) {
+                return yield* Effect.fail(
+                  actionOperationalFailure(
+                    "AssignWork.currentWorkspaceReceiptReplay",
+                  )("WorkAssigned journal scan did not advance"),
+                );
+              }
+              cursor = Number(last.sequence);
+            }
+            return matches;
+          }),
+        );
+        if (
+          assignedEvents.length !== 1 ||
+          assignedEvents[0]?.aggregateRef !== execution.workspaceId ||
+          typeof assignedEvents[0]?.payload !== "object" ||
+          assignedEvents[0].payload === null ||
+          !("workId" in assignedEvents[0].payload) ||
+          assignedEvents[0].payload.workId !== result.workId ||
+          !("workspaceId" in assignedEvents[0].payload) ||
+          assignedEvents[0].payload.workspaceId !== execution.workspaceId ||
+          !("projectId" in assignedEvents[0].payload) ||
+          assignedEvents[0].payload.projectId !== execution.projectId ||
+          !("objective" in assignedEvents[0].payload) ||
+          assignedEvents[0].payload.objective !== action.objective
+        ) {
+          return yield* blockReplay();
+        }
+        return {
+          _tag: "Observation" as const,
+          source: "Runtime" as const,
+          observation: {
+            text: `WorkAssigned(${result.workId}, ${execution.workspaceId})`,
+            truncated: false,
+          },
+          approvalConsumption: {
+            approvalId: approval.value.approvalId,
+            commandId: assignWorkCommandReplay.commandId,
+            consumedRevision: approval.value.revision,
+          },
+        };
+      }
       if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
         const prior = yield* findPriorCommandReceipt({
           context,
@@ -1054,6 +1235,9 @@ export const assignWorkHandler = (
         context,
       );
       let commandEvidence: AssignWorkCommandEvidence | undefined;
+      let approvalCommandEvidence:
+        | AssignWorkApprovalCommandEvidence
+        | undefined;
       if (resolvedChild !== undefined) {
         if (
           action.targetWorkspaceRef === undefined ||
@@ -1092,6 +1276,32 @@ export const assignWorkHandler = (
             reason: action.reason,
           },
         };
+      } else if (
+        assignWorkEvidence?._tag === "ActionApproval" &&
+        context._tag === "ExecutionOrigin" &&
+        logicalActionId !== undefined
+      ) {
+        approvalCommandEvidence = {
+          commandId,
+          projectId: execution.projectId,
+          executionId: execution.executionId,
+          providerTurnId: invocation.providerTurnId,
+          logicalActionId,
+          callRef: invocation.callRef,
+          workspaceId: execution.workspaceId,
+          authority: assignWorkEvidence,
+          action,
+        };
+      }
+      if (
+        assignWorkEvidence?._tag === "ActionApproval" &&
+        (context._tag !== "ExecutionOrigin" || logicalActionId === undefined)
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure("AssignWork.approvalEvidence")(
+            "approved AssignWork requires the pinned Runtime action identity",
+          ),
+        );
       }
       if (
         commandEvidence !== undefined &&
@@ -1123,6 +1333,9 @@ export const assignWorkHandler = (
           ...(commandEvidence === undefined
             ? {}
             : { assignWorkEvidence: commandEvidence }),
+          ...(approvalCommandEvidence === undefined
+            ? {}
+            : { assignWorkApprovalEvidence: approvalCommandEvidence }),
         },
         context,
         {
@@ -1140,7 +1353,10 @@ export const assignWorkHandler = (
           targetWorkspaceId,
         },
       );
-      if (receipt.resolution._tag !== "Committed") {
+      if (
+        receipt.commandId !== commandId ||
+        receipt.resolution._tag !== "Committed"
+      ) {
         return yield* Effect.fail(
           actionError(
             receipt.resolution._tag === "TerminalRejected"
@@ -1158,6 +1374,25 @@ export const assignWorkHandler = (
           text: `WorkAssigned(${receipt.resolution.result.workId}, ${targetWorkspaceId})`,
           truncated: false,
         },
+        ...(commandEvidence?.authority._tag === "ActionApproval"
+          ? {
+              approvalConsumption: {
+                approvalId: commandEvidence.authority.approvalId,
+                commandId,
+                consumedRevision:
+                  commandEvidence.authority.approvalRevision + 1,
+              },
+            }
+          : approvalCommandEvidence === undefined
+            ? {}
+            : {
+                approvalConsumption: {
+                  approvalId: approvalCommandEvidence.authority.approvalId,
+                  commandId,
+                  consumedRevision:
+                    approvalCommandEvidence.authority.approvalRevision + 1,
+                },
+              }),
       };
     }).pipe(Effect.mapError(actionOperationalFailure("AssignWork"))),
 });

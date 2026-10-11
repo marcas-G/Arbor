@@ -7,6 +7,7 @@ import type {
 } from "@arbor/domain";
 import type {
   AcceptanceRepositoryError,
+  AssignWorkApprovalCommandEvidence,
   AssignWorkCommandEvidence,
   AssignWorkTargetBindingStoreError,
   CommandStoreError,
@@ -62,6 +63,9 @@ export interface GatewayEnvelope<C> {
   readonly payload: C;
   /** Trusted in-process ControlAction evidence; never part of model output. */
   readonly assignWorkEvidence?: AssignWorkCommandEvidence;
+  /** Exact ActionApproval evidence for current-Workspace AssignWork; consumed
+   * by the AssignWork handler in this command transaction. */
+  readonly assignWorkApprovalEvidence?: AssignWorkApprovalCommandEvidence;
 }
 
 export interface CommandOutcome<R> {

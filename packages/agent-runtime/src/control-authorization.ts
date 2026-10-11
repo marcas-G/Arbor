@@ -1,4 +1,5 @@
 import type {
+  CommandId,
   CommandSubmissionContext,
   Execution,
   PermissionGrant,
@@ -18,6 +19,12 @@ export type ControlAuthorizationDecision =
       readonly controlBasisDigest: string;
       readonly assignWorkEvidence?: AssignWorkControlAuthorizationEvidence;
       readonly assignWorkReplay?: boolean;
+      readonly assignWorkCommandReplay?: {
+        readonly commandId: CommandId;
+        readonly approvalId: string;
+        readonly approvalRevision: number;
+        readonly consumedRevision: number;
+      };
     }
   | {
       readonly _tag: "ApprovalRequired";
@@ -40,6 +47,12 @@ export interface ControlActionAuthorizerService {
     readonly approvalRevision: number;
     readonly actionDigest: string;
     readonly controlBasisDigest: string;
+    /** Runtime-owned logical action identity for generic Control consumption;
+     * CommandId for an AssignWork approval already consumed by its Gateway. */
+    readonly consumedBy: string;
+    /** Set only from the trusted committed AssignWork handler outcome. This
+     * switches the operation to exact receipt-consumption verification. */
+    readonly alreadyConsumedByCommandId?: string;
   }) => Effect.Effect<boolean, never>;
 }
 

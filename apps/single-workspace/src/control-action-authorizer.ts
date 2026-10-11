@@ -155,13 +155,22 @@ export const ControlActionAuthorizerLive: Layer.Layer<
         const controlBasisDigest = sha256Hex(
           JSON.stringify(input.controlBasis),
         );
+        const approvalId = `cap_${sha256Hex(
+          JSON.stringify({
+            executionId: input.execution.executionId,
+            callRef: input.invocation.callRef,
+            actionDigest,
+            controlBasisDigest,
+          }),
+        )}`;
+        const currentWorkspaceAssignWork =
+          input.action._tag === "AssignWork" &&
+          (input.action.targetWorkspaceRef === undefined ||
+            input.action.targetWorkspaceRef === "current") &&
+          (input.action.targetWorkspaceId === undefined ||
+            input.action.targetWorkspaceId === input.execution.workspaceId);
         if (
           input.action._tag === "AssignWork" &&
-          ((input.action.targetWorkspaceRef !== undefined &&
-            input.action.targetWorkspaceRef !== "current") ||
-            (input.action.targetWorkspaceId !== undefined &&
-              input.action.targetWorkspaceId !==
-                input.execution.workspaceId)) &&
           input.context._tag === "ExecutionOrigin" &&
           input.context.fencingGeneration > 0 &&
           input.logicalActionId !== undefined
@@ -187,6 +196,64 @@ export const ControlActionAuthorizerLive: Layer.Layer<
               prior.value.projectId === input.execution.projectId &&
               prior.value.resolution === "Committed"
             ) {
+              if (currentWorkspaceAssignWork) {
+                const approval = yield* tx.transact(
+                  approvals.findById(approvalId),
+                );
+                let receiptWorkspaceId: unknown;
+                try {
+                  receiptWorkspaceId = JSON.parse(
+                    prior.value.resultJson ?? "null",
+                  )?.workspaceId;
+                } catch {
+                  receiptWorkspaceId = undefined;
+                }
+                if (
+                  Option.isSome(approval) &&
+                  approval.value.state === "Consumed" &&
+                  approval.value.bindingProven === true &&
+                  approval.value.revision === 2 &&
+                  approval.value.consumedBy === priorCommandId &&
+                  approval.value.projectId === input.execution.projectId &&
+                  approval.value.workspaceId === input.execution.workspaceId &&
+                  approval.value.executionId === input.execution.executionId &&
+                  approval.value.stableActionId === stableActionId &&
+                  approval.value.actionDigest === actionDigest &&
+                  approval.value.targetRef === targetRef &&
+                  approval.value.controlBasisDigest === controlBasisDigest &&
+                  receiptWorkspaceId === input.execution.workspaceId
+                ) {
+                  const authority = {
+                    _tag: "ActionApproval" as const,
+                    approvalId: approval.value.approvalId,
+                    approvalRevision: approval.value.revision - 1,
+                    projectId: approval.value.projectId,
+                    workspaceId: approval.value.workspaceId,
+                    executionId: approval.value.executionId,
+                    stableActionId: "core.control.assign-work" as const,
+                    actionDigest: approval.value.actionDigest,
+                    targetRef: approval.value.targetRef,
+                    controlBasisDigest: approval.value.controlBasisDigest,
+                    expiresAt: approval.value.expiresAt,
+                  } satisfies AssignWorkControlAuthorizationEvidence;
+                  return {
+                    _tag: "Authorized" as const,
+                    authorityRef: "receipt-first:assign-work-current-workspace",
+                    actionDigest,
+                    controlBasisDigest,
+                    approvalId,
+                    approvalRevision: authority.approvalRevision,
+                    assignWorkEvidence: authority,
+                    assignWorkCommandReplay: {
+                      commandId: priorCommandId,
+                      approvalId,
+                      approvalRevision: authority.approvalRevision,
+                      consumedRevision: approval.value.revision,
+                    },
+                  };
+                }
+                continue;
+              }
               return {
                 _tag: "Authorized" as const,
                 authorityRef: "receipt-first:assign-work",
@@ -208,14 +275,6 @@ export const ControlActionAuthorizerLive: Layer.Layer<
               "AssignWork direct-child targets require an opaque targetWorkspaceRef",
           };
         }
-        const approvalId = `cap_${sha256Hex(
-          JSON.stringify({
-            executionId: input.execution.executionId,
-            callRef: input.invocation.callRef,
-            actionDigest,
-            controlBasisDigest,
-          }),
-        )}`;
         const workspace = yield* tx.transact(
           workspaces.findById(input.execution.workspaceId),
         );
@@ -411,6 +470,36 @@ export const ControlActionAuthorizerLive: Layer.Layer<
       input,
     ) =>
       Effect.gen(function* () {
+        const existing = yield* tx.transact(
+          approvals.findById(input.approvalId),
+        );
+        if (Option.isNone(existing)) return false;
+        if (input.alreadyConsumedByCommandId !== undefined) {
+          return (
+            existing.value.state === "Consumed" &&
+            existing.value.revision === input.approvalRevision + 1 &&
+            existing.value.consumedBy === input.alreadyConsumedByCommandId &&
+            existing.value.actionDigest === input.actionDigest &&
+            existing.value.controlBasisDigest === input.controlBasisDigest
+          );
+        }
+        if (
+          existing.value.state === "Consumed" &&
+          existing.value.revision === input.approvalRevision + 1 &&
+          existing.value.consumedBy === input.consumedBy &&
+          existing.value.actionDigest === input.actionDigest &&
+          existing.value.controlBasisDigest === input.controlBasisDigest
+        ) {
+          return true;
+        }
+        if (
+          existing.value.state !== "Approved" ||
+          existing.value.revision !== input.approvalRevision ||
+          existing.value.actionDigest !== input.actionDigest ||
+          existing.value.controlBasisDigest !== input.controlBasisDigest
+        ) {
+          return false;
+        }
         const now = yield* clock.now();
         const consumed = yield* tx.transact(
           approvals.consumeApproved({
@@ -419,18 +508,10 @@ export const ControlActionAuthorizerLive: Layer.Layer<
             actionDigest: input.actionDigest,
             controlBasisDigest: input.controlBasisDigest,
             consumedAt: now,
+            consumedBy: input.consumedBy,
           }),
         );
-        if (Option.isSome(consumed)) return true;
-        const existing = yield* tx.transact(
-          approvals.findById(input.approvalId),
-        );
-        return (
-          Option.isSome(existing) &&
-          existing.value.state === "Consumed" &&
-          existing.value.actionDigest === input.actionDigest &&
-          existing.value.controlBasisDigest === input.controlBasisDigest
-        );
+        return Option.isSome(consumed);
       }).pipe(Effect.orDie);
 
     return ControlActionAuthorizer.of({ authorize, consumeApproval });

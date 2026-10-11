@@ -40,6 +40,45 @@ export type AssignWorkControlAuthorizationEvidence =
       readonly expiresAt: string;
     };
 
+export interface AssignWorkActionEvidence {
+  readonly _tag: "AssignWork";
+  readonly targetWorkspaceRef?: string;
+  readonly targetWorkspaceId?: WorkspaceId;
+  readonly objective: string;
+  readonly why: string;
+  readonly constraints: ReadonlyArray<string>;
+  readonly completionExpectation: string;
+  readonly verificationMission: {
+    readonly goal: string;
+    readonly criteria: ReadonlyArray<{
+      readonly criterionId: string;
+      readonly requirement: string;
+      readonly required: boolean;
+    }>;
+    readonly riskRequirements: ReadonlyArray<string>;
+  };
+  readonly reason: string;
+}
+
+/** Process-local evidence for an ActionApproval-backed AssignWork to the
+ * current Workspace. The Command Gateway consumes this exact approval in the
+ * same transaction as Work/event/receipt; it is not a direct-child placement
+ * binding and is never constructed from the external command codec. */
+export interface AssignWorkApprovalCommandEvidence {
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly executionId: ExecutionId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly logicalActionId: string;
+  readonly callRef: string;
+  readonly workspaceId: WorkspaceId;
+  readonly authority: Extract<
+    AssignWorkControlAuthorizationEvidence,
+    { readonly _tag: "ActionApproval" }
+  >;
+  readonly action: AssignWorkActionEvidence;
+}
+
 export interface ResolvedChildPlacementRef {
   readonly _tag: "ResolvedChildPlacementRef";
   readonly projectId: ProjectId;
@@ -60,23 +99,8 @@ export interface AssignWorkCommandEvidence {
   readonly targetWorkspaceRef: string;
   readonly target: ResolvedChildPlacementRef;
   readonly authority: AssignWorkControlAuthorizationEvidence;
-  readonly action: {
-    readonly _tag: "AssignWork";
+  readonly action: AssignWorkActionEvidence & {
     readonly targetWorkspaceRef: string;
-    readonly objective: string;
-    readonly why: string;
-    readonly constraints: ReadonlyArray<string>;
-    readonly completionExpectation: string;
-    readonly verificationMission: {
-      readonly goal: string;
-      readonly criteria: ReadonlyArray<{
-        readonly criterionId: string;
-        readonly requirement: string;
-        readonly required: boolean;
-      }>;
-      readonly riskRequirements: ReadonlyArray<string>;
-    };
-    readonly reason: string;
   };
 }
 

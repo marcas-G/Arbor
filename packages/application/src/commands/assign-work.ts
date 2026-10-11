@@ -7,6 +7,7 @@ import {
   type WorkspaceId,
 } from "@arbor/domain";
 import type {
+  AssignWorkApprovalCommandEvidence,
   AssignWorkTargetBindingRepositoryService,
   ClockService,
   ControlApprovalStoreService,
@@ -113,6 +114,91 @@ export const makeAssignWorkHandler = (
           expected: payload.expectedWorkspaceRevision,
           actual: currentWorkspace.revision,
         });
+      }
+
+      const approvalEvidence = envelope.assignWorkApprovalEvidence;
+      let approvalAuthority:
+        | Extract<
+            NonNullable<AssignWorkApprovalCommandEvidence["authority"]>,
+            { readonly _tag: "ActionApproval" }
+          >
+        | undefined;
+      let approvalCheckedAt: string | undefined;
+      if (approvalEvidence !== undefined) {
+        const rejected = (reason: string) =>
+          commandErr({ _tag: "AuthorityDenied" as const, reason });
+        if (
+          context._tag !== "ExecutionOrigin" ||
+          dependencies.executions === undefined ||
+          dependencies.approvals === undefined ||
+          dependencies.clock === undefined ||
+          approvalEvidence.commandId !== envelope.commandId ||
+          approvalEvidence.projectId !== envelope.projectId ||
+          approvalEvidence.executionId !== context.executionId ||
+          approvalEvidence.workspaceId !== currentWorkspace.workspaceId ||
+          approvalEvidence.action._tag !== "AssignWork" ||
+          (approvalEvidence.action.targetWorkspaceRef !== undefined &&
+            approvalEvidence.action.targetWorkspaceRef !== "current") ||
+          (approvalEvidence.action.targetWorkspaceId !== undefined &&
+            approvalEvidence.action.targetWorkspaceId !==
+              payload.workspaceId) ||
+          approvalEvidence.action.objective !== payload.objective ||
+          approvalEvidence.action.why !== payload.why ||
+          JSON.stringify(approvalEvidence.action.constraints) !==
+            JSON.stringify(payload.constraints) ||
+          approvalEvidence.action.completionExpectation !==
+            payload.completionExpectation ||
+          JSON.stringify(approvalEvidence.action.verificationMission) !==
+            JSON.stringify(payload.verificationMission) ||
+          approvalEvidence.action.reason !== payload.provenance.reason ||
+          approvalEvidence.authority.actionDigest !==
+            sha256Hex(
+              JSON.stringify({
+                stableActionId: "core.control.assign-work",
+                action: approvalEvidence.action,
+              }),
+            )
+        ) {
+          return rejected(
+            "current-Workspace AssignWork approval evidence is incomplete or mismatched",
+          );
+        }
+        const execution = yield* dependencies.executions.findById(
+          approvalEvidence.executionId,
+        );
+        const authority = approvalEvidence.authority;
+        const approval = yield* dependencies.approvals.findById(
+          authority.approvalId,
+        );
+        approvalCheckedAt = yield* dependencies.clock.now();
+        if (
+          Option.isNone(execution) ||
+          execution.value.projectId !== envelope.projectId ||
+          execution.value.workspaceId !== currentWorkspace.workspaceId ||
+          Option.isNone(approval) ||
+          approval.value.state !== "Approved" ||
+          approval.value.bindingProven !== true ||
+          approval.value.revision !== authority.approvalRevision ||
+          approval.value.projectId !== authority.projectId ||
+          approval.value.workspaceId !== authority.workspaceId ||
+          approval.value.executionId !== authority.executionId ||
+          authority.projectId !== envelope.projectId ||
+          authority.workspaceId !== currentWorkspace.workspaceId ||
+          authority.executionId !== approvalEvidence.executionId ||
+          authority.stableActionId !== "core.control.assign-work" ||
+          approval.value.stableActionId !== authority.stableActionId ||
+          approval.value.actionDigest !== authority.actionDigest ||
+          approval.value.targetRef !== currentWorkspace.workspaceId ||
+          authority.targetRef !== currentWorkspace.workspaceId ||
+          approval.value.controlBasisDigest !== authority.controlBasisDigest ||
+          approval.value.expiresAt !== authority.expiresAt ||
+          Date.parse(approvalCheckedAt) >= Date.parse(authority.expiresAt)
+        ) {
+          return rejected(
+            "current-Workspace AssignWork ActionApproval changed before Command commit",
+          );
+        }
+        approvalAuthority = authority;
       }
 
       let binding: import("@arbor/ports").AssignWorkTargetBinding | undefined;
@@ -332,6 +418,30 @@ export const makeAssignWorkHandler = (
           return commandErr({
             _tag: "AuthorityDenied",
             reason: "AssignWork ActionApproval was no longer consumable",
+          });
+        }
+      }
+      if (approvalAuthority !== undefined) {
+        const approvals = dependencies.approvals;
+        if (approvals === undefined || approvalCheckedAt === undefined) {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason: "AssignWork ActionApproval store is unavailable",
+          });
+        }
+        const consumed = yield* approvals.consumeApproved({
+          approvalId: approvalAuthority.approvalId,
+          expectedRevision: approvalAuthority.approvalRevision,
+          actionDigest: approvalAuthority.actionDigest,
+          controlBasisDigest: approvalAuthority.controlBasisDigest,
+          consumedAt: approvalCheckedAt,
+          consumedBy: envelope.commandId,
+        });
+        if (Option.isNone(consumed)) {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason:
+              "current-Workspace AssignWork ActionApproval was no longer consumable",
           });
         }
       }
