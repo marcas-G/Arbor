@@ -6,6 +6,7 @@ export * from "./create-child-workspace.js";
 export * from "./create-project.js";
 export * from "./declare-dependency.js";
 export * from "./deliver-command.js";
+export * from "./deliver-message.js";
 export * from "./grant-permission.js";
 export * from "./produce-deliverable.js";
 export * from "./project-management.js";

@@ -6,6 +6,7 @@ import {
   makeCompleteWorkHandler,
   makeConcludeVerificationHandler,
   makeDeclareDependencyHandler,
+  makeDeliverMessageHandler,
   makeGrantPermissionHandler,
   makeP1CommandHandlers,
   makeP15CommandHandlers,
@@ -176,6 +177,16 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
         workWaits,
       }),
       makeSendMessageHandler({
+        workspaces,
+        messages: messages as Pick<
+          MessageStoreService,
+          "append" | "closeCorrelation" | "isCorrelationClosed"
+        >,
+        inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+      }) as unknown as CommandHandler<unknown, unknown>,
+      makeDeliverMessageHandler({
+        deliverables,
+        works,
         workspaces,
         messages: messages as Pick<
           MessageStoreService,

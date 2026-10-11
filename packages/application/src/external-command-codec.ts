@@ -27,6 +27,7 @@ import type {
 import type { CreateChildWorkspacePayload } from "./commands/create-child-workspace.js";
 import type { CreateProjectPayload } from "./commands/create-project.js";
 import type { DeclareDependencyPayload } from "./commands/declare-dependency.js";
+import type { DeliverMessagePayload } from "./commands/deliver-message.js";
 import type { GrantPermissionPayload } from "./commands/grant-permission.js";
 import type { ProduceDeliverablePayload } from "./commands/produce-deliverable.js";
 import type {
@@ -54,6 +55,7 @@ export type RegisteredCommandType =
   | "StopExecution"
   | "SettleExecution"
   | "SendMessage"
+  | "DeliverMessage"
   | "DeclareDependency"
   | "ProduceDeliverable"
   | "SatisfyDependency"
@@ -141,6 +143,7 @@ export interface ExternalCommandPayloadMap {
     readonly expectedFencingGeneration?: LeaseGeneration;
   };
   readonly SendMessage: SendMessagePayload;
+  readonly DeliverMessage: DeliverMessagePayload;
   readonly DeclareDependency: DeclareDependencyPayload;
   readonly ProduceDeliverable: ProduceDeliverablePayload;
   readonly SatisfyDependency: SatisfyDependencyPayload;
@@ -187,6 +190,11 @@ export type SemanticExternalCommand = {
 type Rule =
   | { readonly kind: "string" }
   | { readonly kind: "non-empty-string" }
+  | {
+      readonly kind: "bounded-string";
+      readonly minLength: number;
+      readonly maxLength: number;
+    }
   | { readonly kind: "opaque-identifier" }
   | { readonly kind: "boolean" }
   | { readonly kind: "integer" }
@@ -206,6 +214,11 @@ type Rule =
 
 const string: Rule = { kind: "string" };
 const nonEmptyString: Rule = { kind: "non-empty-string" };
+const boundedString = (minLength: number, maxLength: number): Rule => ({
+  kind: "bounded-string",
+  minLength,
+  maxLength,
+});
 const opaqueIdentifier: Rule = { kind: "opaque-identifier" };
 const boolean: Rule = { kind: "boolean" };
 const integer: Rule = { kind: "integer" };
@@ -562,6 +575,14 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
     senderWorkspaceId: id("WorkspaceId"),
     message: outboundMessage,
   }),
+  DeliverMessage: object({
+    messageId: id("MessageId"),
+    senderWorkspaceId: id("WorkspaceId"),
+    deliverableId: id("DeliverableId"),
+    bodyRef: boundedString(1, 4096),
+    correlationId: optional(string),
+    causationId: optional(string),
+  }),
   DeclareDependency: object({
     dependencyId: id("DependencyId"),
     consumerWorkId: id("WorkId"),
@@ -714,6 +735,7 @@ const externalOriginPolicies: Readonly<
   StopExecution: "human/parent external; runtime remains typed internal",
   SettleExecution: "reject external; ExecutionOrigin/RecoveryController",
   SendMessage: "reject external; agent-originated",
+  DeliverMessage: "reject external; agent-originated",
   DeclareDependency: "reject external; producer Agent",
   ProduceDeliverable: "reject external; producer Agent",
   SatisfyDependency: "reject external; dependency coordinator",
@@ -913,6 +935,16 @@ const decodeValue = (
       if (typeof input === "string" && input.length > 0) return input;
       addIssue(issues, path, typeof input === "string" ? "format" : "type");
       return INVALID;
+    case "bounded-string":
+      if (typeof input !== "string") {
+        addIssue(issues, path, "type");
+        return INVALID;
+      }
+      if (input.length < rule.minLength || input.length > rule.maxLength) {
+        addIssue(issues, path, "range");
+        return INVALID;
+      }
+      return input;
     case "opaque-identifier":
       if (
         typeof input === "string" &&

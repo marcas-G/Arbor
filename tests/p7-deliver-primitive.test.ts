@@ -11,8 +11,11 @@ import {
   submitDeliver,
 } from "../packages/application/src/commands/deliver-command.js";
 import { makeSendMessageHandler } from "../packages/application/src/commands/send-message.js";
+import { deliverMessagePlan } from "../packages/application/src/commands/deliver-message.js";
 import {
   CommandGateway,
+  FenceStopCheck,
+  FenceStopCheckInertLive,
   semanticRequestFingerprint,
   sendMessagePlan,
 } from "../packages/application/src/index.js";
@@ -22,6 +25,8 @@ import {
   type DeliverableKind,
   DependencyId,
   DependencyRevision,
+  ExecutionId,
+  LeaseGeneration,
   MessageId,
   parse,
   Revision,
@@ -86,8 +91,9 @@ const KIND = "report" as never as DeliverableKind;
  * the caller's transaction). */
 const makeDeliverApp = (
   filename = ":memory:",
+  fenceStopCheck: Layer.Layer<FenceStopCheck> = FenceStopCheckInertLive,
 ): Layer.Layer<CommandGateway | SqlClient | DomainEventJournal> => {
-  const base = makeP7App(filename);
+  const base = makeP7App(filename, fenceStopCheck);
   const journal = Layer.provide(
     DomainEventJournalLive,
     base as unknown as Layer.Layer<SqlClient | IdGenerator>,
@@ -294,6 +300,43 @@ const deliver = (
     },
     deps,
   );
+
+const submitDeliverThroughGateway = (
+  commandId: CommandId,
+  generation: number,
+) =>
+  Effect.gen(function* () {
+    const gateway = yield* CommandGateway;
+    const plan = deliverMessagePlan({
+      messageId: DELIVER_MSG,
+      commandId,
+      projectId: p7Project,
+      senderWorkspaceId: CHILD,
+      deliverableId: DEL_CHILD,
+      bodyRef: "art-deliver-body-001",
+      principal: p7TestPrincipal,
+      actor: p7TestActor,
+    });
+    return yield* gateway.execute(
+      {
+        commandType: "DeliverMessage",
+        commandId,
+        projectId: p7Project,
+        actor: p7TestActor,
+        issuedAt: "t",
+        payload: plan.payload,
+      },
+      {
+        _tag: "ExecutionOrigin",
+        principal: p7TestPrincipal,
+        executionId: parse(ExecutionId)(
+          "exe_018f2b3c-4d5e-7abc-8def-0123456789e1",
+        ),
+        fencingGeneration: parse(LeaseGeneration)(generation),
+      },
+      plan.authority,
+    );
+  });
 
 const sentEventPayloads = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -537,6 +580,80 @@ describe("p7-deliver-primitive", () => {
       expect(result.events).toHaveLength(0);
       expect(result.entries).toHaveLength(0);
       expect(result.messages).toBe(0);
+    });
+  });
+
+  it("routes DeliverMessage through the Gateway fence and receipt using a stable MessageId across generations", async () => {
+    const fence = Layer.succeed(FenceStopCheck, {
+      check: (context) =>
+        Effect.succeed(
+          context._tag === "ExecutionOrigin" &&
+            context.fencingGeneration === 0
+            ? "FencingRejected"
+            : "Pass",
+        ),
+    });
+    await runP7(
+      Effect.gen(function* () {
+        yield* seed;
+        const rejected = yield* submitDeliverThroughGateway(DELIVER_CMD, 0);
+        const rejectedReplay = yield* submitDeliverThroughGateway(
+          DELIVER_CMD,
+          0,
+        );
+        const beforeTakeover = {
+          messages: yield* messageRowCount,
+          events: yield* sentEventPayloads,
+          inbox: yield* inboxOf(p7RootWorkspace),
+        };
+        const committed = yield* submitDeliverThroughGateway(cmd("e5"), 1);
+        return {
+          rejected,
+          rejectedReplay,
+          beforeTakeover,
+          committed,
+          messages: yield* messageRowCount,
+          events: yield* sentEventPayloads,
+          inbox: yield* inboxOf(p7RootWorkspace),
+          stored: yield* storedMessage(DELIVER_MSG),
+        };
+      }),
+      makeDeliverApp(":memory:", fence),
+    ).then((result) => {
+      expect(result.rejected.resolution).toMatchObject({
+        _tag: "TerminalRejected",
+        error: { _tag: "FencingRejected" },
+      });
+      expect(result.rejectedReplay).toEqual(result.rejected);
+      expect(result.beforeTakeover).toEqual({ messages: 0, events: [], inbox: [] });
+      expect(result.committed.resolution).toMatchObject({
+        _tag: "Committed",
+        result: {
+          messageId: DELIVER_MSG,
+          deliverableId: DEL_CHILD,
+          senderWorkspaceId: CHILD,
+          recipientWorkspaceId: p7RootWorkspace,
+          admitted: true,
+        },
+      });
+      expect(result.committed.commandId).not.toBe(result.rejected.commandId);
+      expect(result.messages).toBe(1);
+      expect(result.events).toEqual([
+        {
+          messageId: DELIVER_MSG,
+          kind: "Deliver",
+          sender: CHILD,
+          recipient: p7RootWorkspace,
+          correlationId: null,
+          causationId: null,
+          deliverableId: DEL_CHILD,
+        },
+      ]);
+      expect(result.inbox).toHaveLength(1);
+      expect(result.inbox[0]?.summary).toBe(
+        `Deliver ${DEL_CHILD} from ${CHILD}`,
+      );
+      expect(Option.isSome(result.stored)).toBe(true);
     });
   });
 
