@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS p39_writer_lock (
 INSERT OR IGNORE INTO p39_writer_lock (lock_id) VALUES (1);
 `;
 
+export const p39SameOperatingSystemIdentity = (
+  ownerIdentity: string,
+  processIdentity: string,
+): boolean => ownerIdentity.length > 0 && ownerIdentity === processIdentity;
+
 export interface P39DatabaseWriterPermit {
   readonly token: string;
   readonly mode: "RuntimeShared" | "MaintenanceExclusive";
@@ -33,6 +38,7 @@ export interface P39WriterLockFailure {
   readonly _tag: "P39WriterLockFailure";
   readonly code:
     | "P39_WRITER_LOCK_PATH_INVALID"
+    | "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT"
     | "P39_WRITER_LOCK_SCHEMA_INVALID"
     | "P39_WRITER_LOCK_ACQUIRE_FAILED"
     | "P39_WRITER_LOCK_RELEASE_FAILED";
@@ -53,73 +59,76 @@ export class P39WriterLockClient extends Context.Service<
   P39WriterLockClientService
 >()("arbor/P39WriterLockClient") {}
 
-/** Validate the primary/lock directory as a protected local write boundary.
- * Windows broad-principal write ACEs and POSIX world-writable directories fail
- * closed; a shared POSIX group must be setgid and contain the current process. */
-export const validateP39ProtectedDirectory = (directory: string): boolean => {
+/** v1 supports one OS identity owning the daemon, maintenance process, primary,
+ * writer lock and audit sidecar. Different owners and any other writers fail
+ * closed; deployments needing separate service/operator identities need a
+ * separately governed shared-ACL profile. */
+const validateP39ProtectedPath = (
+  path: string,
+  kind: "directory" | "file",
+): boolean => {
   try {
-    const stat = statSync(directory, { bigint: true });
+    const stat = statSync(path, { bigint: true });
     if (
-      !stat.isDirectory() ||
+      (kind === "directory" ? !stat.isDirectory() : !stat.isFile()) ||
       stat.dev === 0n ||
-      !isSupportedLocalFilesystem(directory)
+      (kind === "file" && (stat.ino === 0n || stat.nlink !== 1n)) ||
+      !isSupportedLocalFilesystem(path)
     ) {
       return false;
     }
     if (process.platform === "win32") {
-      const encoded = Buffer.from(directory, "utf8").toString("base64");
+      const encoded = Buffer.from(path, "utf8").toString("base64");
       const script = [
         "$ErrorActionPreference='Stop'",
         `$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))`,
         "$i=Get-Item -LiteralPath $p -Force",
-        "if(!$i.PSIsContainer -or (($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)){exit 2}",
+        `if(${kind === "directory" ? "!$i.PSIsContainer" : "$i.PSIsContainer"} -or (($i.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)){exit 2}`,
         "$a=Get-Acl -LiteralPath $p",
         "$w=[Security.Principal.WindowsIdentity]::GetCurrent()",
-        "$s=@($w.User.Value)+@($w.Groups|ForEach-Object {$_.Value})",
-        "$b=@('S-1-1-0','S-1-5-11','S-1-5-32-545')",
+        "$u=$w.User.Value",
+        "$t=@($u,'S-1-5-18','S-1-5-32-544')",
         "$m=[int][Security.AccessControl.FileSystemRights]::Write -bor [int][Security.AccessControl.FileSystemRights]::Modify -bor [int][Security.AccessControl.FileSystemRights]::FullControl -bor [int][Security.AccessControl.FileSystemRights]::CreateFiles -bor [int][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles",
         "$g=$false",
-        "foreach($r in $a.Access){$sid=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($r.AccessControlType -eq 'Allow' -and (([int]$r.FileSystemRights -band $m) -ne 0)){if($b -contains $sid){exit 3};if($s -contains $sid){$g=$true}}}",
+        "foreach($r in $a.Access){$sid=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($r.AccessControlType -eq 'Allow' -and (([int]$r.FileSystemRights -band $m) -ne 0)){if(!($t -contains $sid)){exit 3};if($sid -eq $u){$g=$true}}}",
         "$o=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value",
-        "if(!$g -or !($o -eq $w.User.Value -or $o -eq 'S-1-5-18' -or $o -eq 'S-1-5-32-544')){exit 4}",
-        "Write-Output 'OK'",
+        "if(!$g){exit 4}",
+        "Write-Output ($o+'|'+$u)",
       ].join(";");
-      return (
-        execFileSync(
-          "powershell.exe",
-          ["-NoProfile", "-NonInteractive", "-Command", script],
-          { encoding: "utf8", timeout: 5000, windowsHide: true },
-        ).trim() === "OK"
+      const [ownerIdentity, processIdentity] = execFileSync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", script],
+        { encoding: "utf8", timeout: 5000, windowsHide: true },
+      )
+        .trim()
+        .split("|");
+      return p39SameOperatingSystemIdentity(
+        ownerIdentity ?? "",
+        processIdentity ?? "",
       );
     }
     const mode = Number(stat.mode & 0o7777n);
-    if ((mode & 0o002) !== 0) return false;
-    if ((mode & 0o020) !== 0) {
-      const primaryGroup = process.getgid?.();
-      const groups = process.getgroups?.();
-      if (primaryGroup === undefined || groups === undefined) return false;
-      const allowedGroups = new Set([primaryGroup, ...groups]);
-      return (
-        (mode & 0o2000) !== 0 &&
-        (mode & 0o010) !== 0 &&
-        allowedGroups.has(Number(stat.gid))
-      );
-    }
     const currentUid = process.getuid?.();
     return (
       currentUid !== undefined &&
-      Number(stat.uid) === currentUid &&
-      (mode & 0o077) === 0 &&
-      (mode & 0o100) !== 0
+      p39SameOperatingSystemIdentity(`uid:${stat.uid}`, `uid:${currentUid}`) &&
+      (mode & 0o022) === 0 &&
+      (kind === "directory" ? (mode & 0o100) !== 0 : (mode & 0o200) !== 0)
     );
   } catch {
     return false;
   }
 };
 
-/** A stable, primary-adjacent lock database path shared by all accounts that
- * can legally open the primary. The canonical parent is a common root (not a
- * per-user state directory); aliases are normalized or rejected above. */
+export const validateP39ProtectedDirectory = (directory: string): boolean =>
+  validateP39ProtectedPath(directory, "directory");
+
+export const validateP39ProtectedFile = (filename: string): boolean =>
+  validateP39ProtectedPath(filename, "file");
+
+/** A primary-adjacent lock path shared by daemon and maintenance under the same
+ * validated OS identity. The v1 owner profile deliberately rejects other OS
+ * identities before either process can migrate or assemble P4. */
 export const p39WriterLockFilename = (
   primaryDatabaseFilename: string,
 ): string | P39WriterLockFailure => {
@@ -159,8 +168,11 @@ export const p39WriterLockFilename = (
       return invalidLockPath();
     }
     const parent = dirname(canonical);
-    if (!validateP39ProtectedDirectory(parent)) {
-      return invalidLockPath();
+    if (
+      !validateP39ProtectedDirectory(parent) ||
+      !validateP39ProtectedFile(canonical)
+    ) {
+      return unsupportedWriterDeployment();
     }
     const filename = join(
       parent,
@@ -207,6 +219,9 @@ export const p39WriterLockFilename = (
             (Number(lockStat.mode & 0o077n) & 0o077) !== 0))
     ) {
       return invalidLockPath();
+    }
+    if (!validateP39ProtectedFile(canonicalLock)) {
+      return unsupportedWriterDeployment();
     }
     return filename;
   } catch {
@@ -288,6 +303,11 @@ const invalidLockPath = (): P39WriterLockFailure => ({
   code: "P39_WRITER_LOCK_PATH_INVALID",
 });
 
+const unsupportedWriterDeployment = (): P39WriterLockFailure => ({
+  _tag: "P39WriterLockFailure",
+  code: "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT",
+});
+
 const normalizeForPlatform = (path: string): string => {
   const normalized =
     process.platform === "win32" ? path.replace(/^\\\\\?\\/u, "") : path;
@@ -347,6 +367,16 @@ export const p39WriterLockLayer = (
     P39WriterLockClient,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
+      if (
+        !validateP39ProtectedDirectory(dirname(filename)) ||
+        !validateP39ProtectedFile(filename)
+      ) {
+        return yield* Effect.fail(
+          sqliteAdapterError(
+            "P39 writer lock deployment identity is unsupported",
+          ),
+        );
+      }
       const currentMode = yield* sql.unsafe<{ journal_mode: string }>(
         "PRAGMA journal_mode",
       );
