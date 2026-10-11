@@ -16,6 +16,7 @@ import {
   makeRecordDecisionHandler,
   makeRecordVerificationEvidenceHandler,
   makeResolveControlApprovalHandler,
+  makeResolveExecutableApprovalHandler,
   makeResumeConversationResponseHandler,
   makeRevokePermissionHandler,
   makeSatisfyDependencyHandler,
@@ -72,6 +73,7 @@ describe("external command codec registry parity", () => {
       "SatisfyDependency",
       "RecordDecision",
       "ResolveControlApproval",
+      "ResolveExecutableApproval",
       "SteerWork",
       "AcceptWorkOutcome",
       "CompleteWork",
@@ -110,6 +112,7 @@ describe("external command codec registry parity", () => {
       makeRecordDecisionHandler,
       makeRecordVerificationEvidenceHandler,
       makeResolveControlApprovalHandler,
+      makeResolveExecutableApprovalHandler,
       makeResumeConversationResponseHandler,
       makeRevokePermissionHandler,
       makeSatisfyDependencyHandler,
@@ -143,8 +146,8 @@ describe("external command codec registry parity", () => {
     }
 
     const registry = makeCommandInputContractRegistry(productionHandlerTypes);
-    expect(registry.commandTypes).toHaveLength(27);
-    expect(new Set(registry.commandTypes).size).toBe(27);
+    expect(registry.commandTypes).toHaveLength(28);
+    expect(new Set(registry.commandTypes).size).toBe(28);
     expect(
       registry.commandTypes
         .filter((commandType) => commandType !== "DeliverMessage")
@@ -229,10 +232,10 @@ describe("external command codec registry parity", () => {
     const fullRegistry = makeCommandInputContractRegistry(withApproval);
     const reducedRegistry = makeCommandInputContractRegistry(withoutApproval);
 
-    expect(withApproval).toHaveLength(27);
-    expect(fullRegistry.commandTypes).toHaveLength(27);
-    expect(withoutApproval).toHaveLength(26);
-    expect(reducedRegistry.commandTypes).toHaveLength(26);
+    expect(withApproval).toHaveLength(28);
+    expect(fullRegistry.commandTypes).toHaveLength(28);
+    expect(withoutApproval).toHaveLength(27);
+    expect(reducedRegistry.commandTypes).toHaveLength(27);
     expect(reducedRegistry.lookup("ResolveControlApproval")).toBeUndefined();
     expect(withApproval.toSorted()).toEqual(
       CommandInputContractRegistry.commandTypes.toSorted(),

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { makeSingleWorkspaceControlActionHandlers } from "../apps/single-workspace/src/control-actions.js";
 import type { CommandGatewayService } from "../packages/application/src/index.js";
@@ -22,6 +22,10 @@ const executionId = parse(ExecutionId)(
 const deliverableId = parse(DeliverableId)(
   "del_018f2b3c-4d5e-7abc-8def-0123456789b1",
 );
+const recipientWorkspaceId = parse(WorkspaceId)(
+  "ws_018f2b3c-4d5e-7abc-8def-0123456789c1",
+);
+const sourceWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789b2";
 const principal = parse(Principal)("user:governor");
 
 describe("Deliver control Gateway route", () => {
@@ -59,9 +63,7 @@ describe("Deliver control Gateway route", () => {
               messageId: envelope.payload.messageId,
               deliverableId: envelope.payload.deliverableId,
               senderWorkspaceId: envelope.payload.senderWorkspaceId,
-              recipientWorkspaceId: parse(WorkspaceId)(
-                "ws_018f2b3c-4d5e-7abc-8def-0123456789c1",
-              ),
+              recipientWorkspaceId,
               admitted: true,
             },
           },
@@ -73,14 +75,51 @@ describe("Deliver control Gateway route", () => {
     const handler = makeSingleWorkspaceControlActionHandlers({
       gateway,
       blobs: {} as never,
-      deliverables: {} as never,
-      works: {} as never,
-      workspaces: {} as never,
-      messages: {} as never,
-      inbox: {} as never,
-      journal: {} as never,
+      deliverables: {
+        findById: () =>
+          Effect.succeed(Option.some({ deliverableId, sourceWorkId })),
+      },
+      works: {
+        findById: () =>
+          Effect.succeed(
+            Option.some({
+              workId: sourceWorkId,
+              projectId,
+              workspaceId: senderWorkspaceId,
+            }),
+          ),
+      },
+      workspaces: {
+        findById: () =>
+          Effect.succeed(
+            Option.some({
+              workspaceId: senderWorkspaceId,
+              projectId,
+              parentWorkspaceId: recipientWorkspaceId,
+            }),
+          ),
+      },
+      messages: { findById: () => Effect.succeed(Option.none()) },
+      inbox: {
+        admitUpsert: () => Effect.void,
+        findByKey: () => Effect.succeed(Option.none()),
+      },
+      journal: { readAfter: () => Effect.succeed([]) },
+      commandHandlerRegistry: {
+        lookup: () =>
+          Option.some({ commandType: "DeliverMessage", schemaVersion: "1" }),
+      },
+      commandReceipts: {
+        findResolution: () => Effect.succeed(Option.none()),
+        hasRetryableAttempt: () => Effect.succeed(false),
+      },
+      replayAttention: {
+        findDeliverReplayFailure: () => Effect.succeed(Option.none()),
+      },
       clock: { now: () => Effect.succeed("t") },
-      tx: {} as never,
+      tx: {
+        transact: (effect: Effect.Effect<unknown, unknown, never>) => effect,
+      },
       ids: {} as never,
       proposals: {} as never,
     } as never).find((candidate) => candidate.action === "Deliver");
@@ -106,6 +145,7 @@ describe("Deliver control Gateway route", () => {
               projectId,
               workspaceId: senderWorkspaceId,
             },
+            logicalActionId: "act_018f2b3c-4d5e-7abc-8def-0123456789e2",
             context: {
               _tag: "ExecutionOrigin",
               principal,
