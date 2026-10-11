@@ -54,6 +54,19 @@ interface ApprovalRow {
   readonly consumed_by: string | null;
 }
 
+/** P32's old P4 projection is deliberately recognizable without treating
+ * arbitrary unbound Executable history as an InvocationApproval. P38 EAP rows
+ * use binding_proven=1 and are only read through ExecutableApprovalStore. */
+const legacyP4UnifiedApprovalShape = `route_kind = 'Executable'
+  AND binding_proven = 0
+  AND subject_ref = 'legacy:unbound'
+  AND project_id IS NULL
+  AND workspace_id IS NULL
+  AND execution_id IS NULL
+  AND side_effect_semantics = 'LegacyUnknown'
+  AND arguments_json = '{}'
+  AND target_ref = target_resource_space_ids_json`;
+
 const toRecord = (row: InvocationRow): ToolInvocationRecord => ({
   invocationId: row.invocation_id as ToolInvocationId,
   executionId: row.execution_id as ExecutionId,
@@ -696,11 +709,10 @@ export const ToolInvocationStoreLive: Layer.Layer<
             if (gate === "ExecutionStopping") return gate;
           }
           const unified = yield* hasUnifiedLedger;
+          if (unified) return false;
           const rows = yield* run(
             sql.unsafe<{ approval_id: string }>(
-              unified
-                ? "UPDATE action_approvals SET state = 'Consumed', revision = revision + 1, consumed_by = ?, consumed_at = CURRENT_TIMESTAMP WHERE approval_id = ? AND route_kind = 'Executable' AND state = 'Approved' AND consumed_by IS NULL RETURNING approval_id"
-                : "UPDATE invocation_approvals SET consumed_by = ? WHERE approval_id = ? AND consumed_by IS NULL RETURNING approval_id",
+              "UPDATE invocation_approvals SET consumed_by = ? WHERE approval_id = ? AND consumed_by IS NULL RETURNING approval_id",
               [invocationId, approvalId],
             ),
           );
@@ -713,7 +725,15 @@ export const ToolInvocationStoreLive: Layer.Layer<
           const rows = yield* run(
             sql.unsafe<ApprovalRow>(
               unified
-                ? "SELECT approval_id, stable_action_id AS tool_name, action_version AS tool_version, action_digest, target_resource_space_ids_json, control_basis_digest, expires_at, consumed_by FROM action_approvals WHERE approval_id = ? AND route_kind = 'Executable'"
+                ? `SELECT approval_id, stable_action_id AS tool_name,
+                          action_version AS tool_version, action_digest,
+                          target_resource_space_ids_json, control_basis_digest,
+                          expires_at, consumed_by
+                     FROM action_approvals
+                    WHERE approval_id = ? AND ${legacyP4UnifiedApprovalShape}
+                      AND ((source_state IS NULL AND state IN ('Approved','Consumed'))
+                        OR (source_state = 'Approved' AND state = 'Expired')
+                        OR (source_state = 'Consumed' AND state = 'Consumed'))`
                 : "SELECT * FROM invocation_approvals WHERE approval_id = ?",
               [approvalId],
             ),

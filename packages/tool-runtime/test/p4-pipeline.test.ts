@@ -479,7 +479,7 @@ describe("P4 tool runtime pipeline", () => {
     });
   });
 
-  it("does not accept an arbitrary approval id without a matching approval record", async () => {
+  it("does not accept a P38 approval id without its exact executable context", async () => {
     const approvalExecutor: ToolExecutor = {
       name: "read",
       write: false,
@@ -497,7 +497,7 @@ describe("P4 tool runtime pipeline", () => {
     const result = await run(
       app(false, approvalExecutor, {}, trace),
       '{"target":{"mount":"workspace","path":"."}}',
-      "iap_unknown_approval",
+      "eap_018f2b3c-4d5e-7abc-8def-0123456789a1",
     );
 
     expect(result).toMatchObject({
@@ -512,6 +512,48 @@ describe("P4 tool runtime pipeline", () => {
       effectAdmissions: 0,
       approvalConsumes: 0,
     });
+  });
+
+  it("fails closed when this approval's consumer has no recorded invocation", async () => {
+    const approvalExecutor: ToolExecutor = {
+      name: "read",
+      write: false,
+      requiresApproval: () => true,
+      execute: okExecutor.execute,
+    };
+    const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
+    const approvalId = "iap_018f2b3c-4d5e-7abc-8def-0123456789a1";
+    const approval: InvocationApproval = {
+      approvalId,
+      toolName: "read",
+      toolVersion: "2",
+      actionDigest: actionDigestOf(intent(argumentsJson)),
+      targetResourceSpaceIds: ["filesystem"],
+      controlBasisDigest: "d",
+      expiresAt: "2999-01-01T00:00:00.000Z",
+      consumedBy: invocationId,
+    };
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+    };
+    const result = await run(
+      app(false, approvalExecutor, {}, trace, approval),
+      argumentsJson,
+      approvalId,
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Denied",
+      reasonCode: "ApprovalConsumedByOtherInvocation",
+    });
+    expect(trace.approvalConsumes).toBe(0);
+    expect(trace.intentWrites).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
   });
 
   it("does not reuse a legacy approval consumed by another invocation", async () => {

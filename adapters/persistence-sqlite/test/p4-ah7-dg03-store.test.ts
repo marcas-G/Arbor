@@ -23,6 +23,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   layer,
+  P31_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
@@ -48,6 +49,9 @@ const invocationE =
 const invocationF =
   "tin_418f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
 const approvalId = "apr_018f2b3c-4d5e-7abc-8def-0123456789a1";
+const executableApprovalId = "eap_018f2b3c-4d5e-7abc-8def-0123456789a1";
+const unprovenExecutableHistoryId =
+  "eap_legacy_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const workerId = "worker:ah7-dg03";
 const workerIncarnationId = "incarnation:ah7-dg03";
 const fence = {
@@ -135,6 +139,18 @@ const seedExecution = Effect.gen(function* () {
 const seedApproval = Effect.gen(function* () {
   const sql = yield* SqlClient;
   yield* sql.unsafe(
+    `INSERT INTO invocation_approvals (
+      approval_id, tool_name, tool_version, action_digest,
+      target_resource_space_ids_json, control_basis_digest, expires_at, consumed_by
+    ) VALUES (?, 'write_once', '1', 'digest', '[]', 'basis',
+      '2999-01-01T00:00:00.000Z', NULL)`,
+    [approvalId],
+  );
+});
+
+const seedExecutableApproval = Effect.gen(function* () {
+  const sql = yield* SqlClient;
+  yield* sql.unsafe(
     `INSERT INTO action_approvals (
       approval_id, route_kind, project_id, workspace_id, execution_id,
       subject_ref, stable_action_id, action_version, side_effect_semantics,
@@ -142,11 +158,30 @@ const seedApproval = Effect.gen(function* () {
       control_basis_digest, state, revision, requested_at, expires_at,
       decided_at, decided_by, decision_reason, consumed_at, consumed_by,
       binding_proven, source_state
-    ) VALUES (?, 'Executable', ?, ?, ?, 'human:test', 'write_once', '1',
-      'NonIdempotent', 'digest', '{}', 'workspace', '[]', 'basis',
+    ) VALUES (?, 'Executable', ?, ?, ?, 'Execution:exe_ah7_dg03', 'write_once', '1',
+      'NonIdempotent', 'digest-eap', '{}', 'workspace', '[]', 'basis-eap',
       'Approved', 1, 't0', '2999-01-01T00:00:00.000Z', 't0', 'human:test',
       NULL, NULL, NULL, 1, 'Approved')`,
-    [approvalId, projectId, workspaceId, executionId],
+    [executableApprovalId, projectId, workspaceId, executionId],
+  );
+});
+
+const seedUnprovenExecutableHistory = Effect.gen(function* () {
+  const sql = yield* SqlClient;
+  yield* sql.unsafe(
+    `INSERT INTO action_approvals (
+      approval_id, route_kind, project_id, workspace_id, execution_id,
+      subject_ref, stable_action_id, action_version, side_effect_semantics,
+      action_digest, arguments_json, target_ref, target_resource_space_ids_json,
+      control_basis_digest, state, revision, requested_at, expires_at,
+      decided_at, decided_by, decision_reason, consumed_at, consumed_by,
+      binding_proven, source_state
+    ) VALUES (?, 'Executable', ?, ?, ?, 'Execution:exe_ah7_dg03', 'write_once', '1',
+      'NonIdempotent', 'digest-unproven-eap-history', '{}', 'filesystem',
+      '["filesystem"]', 'basis-unproven-eap-history', 'Expired', 1,
+      't0', '1970-01-01T00:00:00.000Z', NULL, NULL,
+      'MigrationUnprovableSubject', NULL, NULL, 0, 'Approved')`,
+    [unprovenExecutableHistoryId, projectId, workspaceId, executionId],
   );
 });
 
@@ -161,6 +196,16 @@ const p36Migrations = () =>
       }>;
     }
   ).P36_MIGRATIONS;
+
+const p31Migrations = () => P31_MIGRATIONS;
+
+/** This focused adapter fixture combines P31 with the P36 tool-invocation
+ * admission migration, leaving P4's legacy approval table as the route under
+ * test. The separate route-separation case executes the real P31→P36 chain. */
+const p31WithAh7Migrations = () => {
+  const ah7 = p36Migrations()?.find((migration) => migration.id === 36);
+  return ah7 === undefined ? undefined : [...P31_MIGRATIONS, ah7];
+};
 
 describe("AH7-DG-03 P4 SQLite store contract", () => {
   it("provides the P36 forward migration and fenced no-effect store operations", () => {
@@ -188,7 +233,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
   });
 
   it("commits intent and approval claim together, and rolls both back on claim failure", async () => {
-    const migrations = p36Migrations();
+    const migrations = p31WithAh7Migrations();
     expect(migrations).toBeDefined();
     if (migrations === undefined) return;
     const app = makeApp();
@@ -232,7 +277,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         consumed_by: string | null;
       }>(
         `SELECT (SELECT COUNT(*) FROM tool_invocations WHERE invocation_id = ?) AS intents,
-                (SELECT consumed_by FROM action_approvals WHERE approval_id = ?) AS consumed_by`,
+                (SELECT consumed_by FROM invocation_approvals WHERE approval_id = ?) AS consumed_by`,
         [invocationA, approvalId],
       );
 
@@ -254,7 +299,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
       }>(
         `SELECT i.invocation_id, i.effect_admission_state, a.consumed_by
            FROM tool_invocations i
-           JOIN action_approvals a ON a.approval_id = i.approval_id
+           JOIN invocation_approvals a ON a.approval_id = i.approval_id
           WHERE i.invocation_id = ?`,
         [invocationA],
       );
@@ -309,6 +354,97 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
     expect(result.loserRows?.count).toBe(0);
   });
 
+  it("keeps binding-proven P38 approvals out of the legacy P4 find/consume route", async () => {
+    const migration31 = p31Migrations();
+    const migration36 = p36Migrations();
+    expect(migration36).toBeDefined();
+    if (migration36 === undefined) return;
+    const app = makeApp();
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* runMigrations(migration31);
+          yield* seedExecution;
+          yield* seedApproval;
+          // The actual P32 conversion expires an unconsumed old P4 approval
+          // and records its source; later P36 migrations keep that terminal
+          // history separate from binding-proven P38 Executable rows.
+          yield* runMigrations(migration36);
+          yield* seedExecutableApproval;
+          yield* seedUnprovenExecutableHistory;
+          const tx = yield* TransactionPort;
+          const store = yield* ToolInvocationStore;
+          const legacyBefore = yield* tx.transact(
+            store.findApproval(approvalId),
+          );
+          const executableThroughLegacy = yield* tx.transact(
+            store.findApproval(executableApprovalId),
+          );
+          const unprovenHistoryThroughLegacy = yield* tx.transact(
+            store.findApproval(unprovenExecutableHistoryId),
+          );
+          const legacyConsumed = yield* tx.transact(
+            store.consumeApproval(approvalId, invocationA),
+          );
+          const executableConsumedThroughLegacy = yield* tx.transact(
+            store.consumeApproval(executableApprovalId, invocationB),
+          );
+          const unprovenHistoryConsumedThroughLegacy = yield* tx.transact(
+            store.consumeApproval(unprovenExecutableHistoryId, invocationC),
+          );
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{
+            approval_id: string;
+            binding_proven: number;
+            state: string;
+            consumed_by: string | null;
+          }>(
+            `SELECT approval_id, binding_proven, state, consumed_by
+               FROM action_approvals
+              WHERE approval_id IN (?, ?, ?)
+              ORDER BY approval_id`,
+            [approvalId, executableApprovalId, unprovenExecutableHistoryId],
+          );
+          return {
+            legacyBefore,
+            executableThroughLegacy,
+            unprovenHistoryThroughLegacy,
+            legacyConsumed,
+            executableConsumedThroughLegacy,
+            unprovenHistoryConsumedThroughLegacy,
+            rows,
+          };
+        }),
+        app,
+      ),
+    );
+
+    expect(Option.isSome(result.legacyBefore)).toBe(true);
+    expect(Option.isNone(result.executableThroughLegacy)).toBe(true);
+    expect(Option.isNone(result.unprovenHistoryThroughLegacy)).toBe(true);
+    expect(result.legacyConsumed).toBe(false);
+    expect(result.executableConsumedThroughLegacy).toBe(false);
+    expect(result.unprovenHistoryConsumedThroughLegacy).toBe(false);
+    expect(result.rows).toContainEqual({
+      approval_id: approvalId,
+      binding_proven: 0,
+      state: "Expired",
+      consumed_by: null,
+    });
+    expect(result.rows).toContainEqual({
+      approval_id: executableApprovalId,
+      binding_proven: 1,
+      state: "Approved",
+      consumed_by: null,
+    });
+    expect(result.rows).toContainEqual({
+      approval_id: unprovenExecutableHistoryId,
+      binding_proven: 0,
+      state: "Expired",
+      consumed_by: null,
+    });
+  });
+
   it.each([
     "grant revocation",
     "workspace policy revision change",
@@ -316,7 +452,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
   ] as const)(
     "rejects stale authority after a resolver snapshot and concurrent %s",
     async (sourceChange) => {
-      const migrations = p36Migrations();
+      const migrations = p31WithAh7Migrations();
       expect(migrations).toBeDefined();
       if (migrations === undefined) return;
 
@@ -577,7 +713,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
   );
 
   it("stores Denied/Interrupted only while NotAdmitted and rejects a stale fence", async () => {
-    const migrations = p36Migrations();
+    const migrations = p31WithAh7Migrations();
     expect(migrations).toBeDefined();
     if (migrations === undefined) return;
     const app = makeApp();
@@ -717,7 +853,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         `SELECT i.effect_admission_state, i.settlement_kind,
                 i.settlement_json, a.consumed_by
            FROM tool_invocations i
-           JOIN action_approvals a ON a.approval_id = i.approval_id
+           JOIN invocation_approvals a ON a.approval_id = i.approval_id
           WHERE i.invocation_id = ?`,
         [invocationA],
       );

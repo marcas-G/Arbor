@@ -347,6 +347,10 @@ export interface ToolInvocationStoreService {
     executionFence?: ToolExecutionContext["executionFence"],
     fenceNow?: string,
   ) => Effect.Effect<boolean, ToolInvocationStoreError, TransactionScope>;
+  /** P4 legacy InvocationApproval route only. If a unified action_approvals
+   * ledger exists, this operation must fail closed: P32 terminalized all
+   * unprovable old approvals, and active P38 approvals are consumed only
+   * through ExecutableApprovalStore's exact runtime binding. */
   readonly consumeApproval: (
     approvalId: string,
     invocationId: ToolInvocationId,
@@ -384,6 +388,9 @@ export interface ToolInvocationStoreService {
     ToolInvocationStoreError,
     TransactionScope
   >;
+  /** Resolves a legacy P4 InvocationApproval only. A unified ledger may expose
+   * exact P32 P4 migration history for same-invocation replay/expiry handling;
+   * current binding-proven P38 Executable rows are not representable here. */
   readonly findApproval: (
     approvalId: string,
   ) => Effect.Effect<
