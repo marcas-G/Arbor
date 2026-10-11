@@ -334,6 +334,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
         // the runnable entrypoint: start (migrations + T1 recovery), scheduler
         // loop, consumer polls, recovery sweep.
         yield* runDaemonOnce({
+          databaseFile: join(dir, "slice.db"),
           workspaceId: p7RootWorkspace,
           principalRef: "runtime:system",
         });

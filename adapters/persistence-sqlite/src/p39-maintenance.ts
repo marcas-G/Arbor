@@ -22,9 +22,16 @@ BEGIN SELECT RAISE(ABORT, 'P39 audit report is retained'); END;
 `;
 
 export interface P39PreflightSnapshot {
-  readonly userVersion: 36 | 37 | 38;
+  readonly userVersion: 36 | 37 | 38 | 39;
   readonly databaseFingerprint: string;
-  readonly activeNotAdmittedInvocationIds: ReadonlyArray<string>;
+  readonly activeNotAdmittedInvocations: ReadonlyArray<{
+    readonly invocationId: string;
+    readonly executionId: string;
+    readonly sideEffectSemantics: string;
+    readonly effectAdmissionState: "NotAdmitted";
+    readonly unsettled: true;
+    readonly approvalId: string | null;
+  }>;
 }
 
 export interface P39MigrationBlockReport {
@@ -34,14 +41,18 @@ export interface P39MigrationBlockReport {
   readonly observedUserVersion: number;
   readonly targetUserVersion: 39;
   readonly databaseFingerprint: string;
-  readonly invocationIds: ReadonlyArray<string>;
+  readonly blockedInvocationIds: ReadonlyArray<string>;
   readonly blockerStateFingerprint: string;
 }
 
-/** Opaque proof that the maintenance adapter holds a process-independent
- * writer-quiescence primitive for this token's lifetime. It must cover every
- * primary-database writer across the ordered migration chain; an expiring
- * process-local lease or the short SQLite snapshot reservation is insufficient. */
+export interface P39StoredMigrationBlockReport {
+  readonly reportKey: string;
+  readonly contentHash: string;
+  readonly reportJson: string;
+}
+
+/** Opaque proof that the adapter owns the dedicated lock database's exclusive
+ * VFS lock. This waits for live daemon shared permits and blocks new permits. */
 export interface P39WriterExclusionLease {
   readonly token: string;
 }
@@ -52,7 +63,8 @@ export interface P39PrimarySnapshotReservation {
 }
 
 export interface P39MaintenancePort {
-  /** Stops/quiesces all primary writers, including other OS processes. */
+  /** Waits for live daemon writer permits and blocks new permits across OS
+   * processes. The primary BEGIN IMMEDIATE reservation fences direct writers. */
   readonly acquireWriterExclusion: () => Effect.Effect<
     P39WriterExclusionLease,
     P39MaintenanceFailure
@@ -61,7 +73,7 @@ export interface P39MaintenancePort {
   readonly releaseWriterExclusion: (
     lease: P39WriterExclusionLease,
   ) => Effect.Effect<void, P39MaintenanceFailure>;
-  /** Takes the short, read-only P1 snapshot while writer exclusion is held. */
+  /** Takes the read-only blocker snapshot inside the held SQLite writer lock. */
   readonly reservePrimarySnapshot: (
     lease: P39WriterExclusionLease,
   ) => Effect.Effect<P39PrimarySnapshotReservation, P39MaintenanceFailure>;
@@ -80,10 +92,15 @@ export interface P39MaintenancePort {
     { readonly reportKey: string; readonly contentHash: string },
     P39MaintenanceFailure
   >;
-  /** Must run while the same writer-exclusion lease is still held. */
+  /** Executes the exact migration suffix inside the reservation transaction
+   * and commits it. Any failure leaves rollback to releasePrimarySnapshot. */
   readonly applyOrderedMigrations: (
     lease: P39WriterExclusionLease,
-  ) => Effect.Effect<void, SqlError | SqliteAdapterError | P39MaintenanceFailure>;
+    reservation: P39PrimarySnapshotReservation,
+  ) => Effect.Effect<
+    void,
+    SqlError | SqliteAdapterError | P39MaintenanceFailure
+  >;
 }
 
 export interface P39MaintenanceFailure {
@@ -98,6 +115,12 @@ export interface P39MaintenanceFailure {
     | "P39_REPORT_DB_IO_FAILURE"
     | "P39_PRIMARY_JOURNAL_MODE_UNSUPPORTED"
     | "P39_REPORT_DURABILITY_UNSUPPORTED"
+    | "P39_MIGRATION_PREFIX_INVALID"
+    | "P39_RUNTIME_START_REFUSED"
+    | "P39_WRITER_LOCK_PATH_INVALID"
+    | "P39_WRITER_LOCK_SCHEMA_INVALID"
+    | "P39_WRITER_LOCK_ACQUIRE_FAILED"
+    | "P39_WRITER_LOCK_RELEASE_FAILED"
     | "P39_LEGACY_DB_ISOLATED";
   readonly cause?: unknown;
 }
@@ -107,8 +130,20 @@ const canonicalJson = (value: unknown): string => JSON.stringify(value);
 const makeReport = (
   snapshot: P39PreflightSnapshot,
 ): P39MigrationBlockReport => {
-  const invocationIds = [...snapshot.activeNotAdmittedInvocationIds].sort();
-  const blockerStateFingerprint = sha256Hex(invocationIds.join("\n"));
+  const blockers = [...snapshot.activeNotAdmittedInvocations].sort((a, b) =>
+    a.invocationId < b.invocationId
+      ? -1
+      : a.invocationId > b.invocationId
+        ? 1
+        : 0,
+  );
+  const blockedInvocationIds = blockers.map(({ invocationId }) => invocationId);
+  const blockerStateFingerprint = sha256Hex(
+    canonicalJson({
+      observedUserVersion: snapshot.userVersion,
+      invocations: blockers,
+    }),
+  );
   const keyJson = canonicalJson({
     schema: "p39-migration-block-report/v1",
     targetUserVersion: 39,
@@ -120,8 +155,9 @@ const makeReport = (
     kind: "LegacyActiveNotAdmitted",
     observedUserVersion: snapshot.userVersion,
     targetUserVersion: 39,
+    databaseFingerprint: snapshot.databaseFingerprint,
     blockerStateFingerprint,
-    invocationIds,
+    blockedInvocationIds,
   };
   const reportJson = canonicalJson(body);
   return {
@@ -131,7 +167,7 @@ const makeReport = (
     observedUserVersion: snapshot.userVersion,
     targetUserVersion: 39,
     databaseFingerprint: snapshot.databaseFingerprint,
-    invocationIds,
+    blockedInvocationIds,
     blockerStateFingerprint,
   };
 };
@@ -161,16 +197,39 @@ export const writeP39BlockReportAndReadBack = (
         databaseFingerprint: report.databaseFingerprint,
       }),
     );
+    const expectedReportJson = canonicalJson({
+      schema: "p39-migration-block-report/v1",
+      kind: "LegacyActiveNotAdmitted",
+      observedUserVersion: report.observedUserVersion,
+      targetUserVersion: 39,
+      databaseFingerprint: report.databaseFingerprint,
+      blockerStateFingerprint: report.blockerStateFingerprint,
+      blockedInvocationIds: report.blockedInvocationIds,
+    });
     if (
       report.reportKey !== expectedReportKey ||
-      report.contentHash !== sha256Hex(report.reportJson)
+      report.contentHash !== sha256Hex(report.reportJson) ||
+      report.reportJson !== expectedReportJson ||
+      (report.observedUserVersion !== 36 &&
+        report.observedUserVersion !== 37 &&
+        report.observedUserVersion !== 38) ||
+      !/^[0-9a-f]{64}$/u.test(report.databaseFingerprint) ||
+      !/^[0-9a-f]{64}$/u.test(report.blockerStateFingerprint) ||
+      report.blockedInvocationIds.length === 0 ||
+      report.blockedInvocationIds.some((id, index) => {
+        const previous =
+          index > 0 ? report.blockedInvocationIds[index - 1] : undefined;
+        return (
+          id.trim().length === 0 || (previous !== undefined && previous >= id)
+        );
+      })
     ) {
-      return yield* Effect.fail({
+      return yield* Effect.fail<P39MaintenanceFailure>({
         _tag: "P39MaintenanceFailure",
         code: "P39_REPORT_KEY_CONFLICT",
       });
     }
-    return yield* sql
+    const writeAttempt = sql
       .withTransaction(
         Effect.gen(function* () {
           const existing = yield* sql.unsafe<SidecarReportRow>(
@@ -184,7 +243,7 @@ export const writeP39BlockReportAndReadBack = (
               row.content_hash !== report.contentHash ||
               row.report_json !== report.reportJson
             ) {
-              return yield* Effect.fail({
+              return yield* Effect.fail<P39MaintenanceFailure>({
                 _tag: "P39MaintenanceFailure",
                 code: "P39_REPORT_KEY_CONFLICT",
               });
@@ -210,7 +269,7 @@ export const writeP39BlockReportAndReadBack = (
             saved.content_hash !== report.contentHash ||
             saved.report_json !== report.reportJson
           ) {
-            return yield* Effect.fail({
+            return yield* Effect.fail<P39MaintenanceFailure>({
               _tag: "P39MaintenanceFailure",
               code: "P39_REPORT_COMMIT_UNRESOLVED",
             });
@@ -238,21 +297,210 @@ export const writeP39BlockReportAndReadBack = (
           };
         }),
       );
+    const committed = yield* Effect.result(writeAttempt);
+    if (committed._tag === "Success") return committed.success;
+
+    // `withTransaction` can report an error after SQLite committed but before
+    // the caller received the acknowledgement. Resolve that uncertainty by
+    // the stable key and exact hash/bytes before deciding whether to stop.
+    const recovered = yield* sql
+      .unsafe<SidecarReportRow>(
+        `SELECT report_key, content_hash, report_json
+           FROM p39_migration_block_reports
+          WHERE report_key = ? OR content_hash = ?`,
+        [report.reportKey, report.contentHash],
+      )
+      .pipe(
+        Effect.mapError(
+          (cause): P39MaintenanceFailure => ({
+            _tag: "P39MaintenanceFailure",
+            code: "P39_REPORT_COMMIT_UNRESOLVED",
+            cause,
+          }),
+        ),
+      );
+    const winner = recovered.find(
+      ({ report_key }) => report_key === report.reportKey,
+    );
+    if (
+      winner !== undefined &&
+      winner.content_hash === report.contentHash &&
+      winner.report_json === report.reportJson
+    ) {
+      return { reportKey: winner.report_key, contentHash: winner.content_hash };
+    }
+    if (recovered.length > 0) {
+      return yield* Effect.fail({
+        _tag: "P39MaintenanceFailure" as const,
+        code: "P39_REPORT_KEY_CONFLICT" as const,
+      });
+    }
+    return yield* Effect.fail({
+      _tag: "P39MaintenanceFailure" as const,
+      code: "P39_REPORT_COMMIT_UNRESOLVED" as const,
+      cause: committed.failure,
+    });
   });
 
-/** Side-effect ordering for the P39 maintenance gate. The cross-process writer
- * exclusion lease covers the preflight and complete 0037→0038→0039 chain. The
- * shorter primary snapshot reservation is released before migration, but the
- * lease remains held until migration succeeds or fails. A blocker is reported
- * and read back while both lease and primary reservation are held, then the
- * snapshot is released and a typed isolation failure returned. No Runtime
- * startup path calls this helper. */
+/** Operator-facing read path for immutable blocker reports. It deliberately
+ * returns the stored JSON only after verifying both its key and content hash,
+ * so the report remains useful after the primary snapshot has been rolled
+ * back and the migration command has exited. */
+export const readP39BlockReports = (): Effect.Effect<
+  ReadonlyArray<P39StoredMigrationBlockReport>,
+  P39MaintenanceFailure,
+  SqlClient
+> =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const rows = yield* sql
+      .unsafe<SidecarReportRow>(
+        `SELECT report_key, content_hash, report_json
+         FROM p39_migration_block_reports ORDER BY report_key`,
+      )
+      .pipe(
+        Effect.mapError(
+          (cause): P39MaintenanceFailure => ({
+            _tag: "P39MaintenanceFailure" as const,
+            code: "P39_REPORT_DB_IO_FAILURE" as const,
+            cause,
+          }),
+        ),
+      );
+    const reports: P39StoredMigrationBlockReport[] = [];
+    for (const row of rows) {
+      let body: unknown;
+      try {
+        body = JSON.parse(row.report_json);
+      } catch (cause) {
+        return yield* Effect.fail<P39MaintenanceFailure>({
+          _tag: "P39MaintenanceFailure",
+          code: "P39_REPORT_KEY_CONFLICT",
+          cause,
+        });
+      }
+      if (
+        row.content_hash !== sha256Hex(row.report_json) ||
+        typeof body !== "object" ||
+        body === null ||
+        canonicalJson(body) !== row.report_json ||
+        !("schema" in body) ||
+        body.schema !== "p39-migration-block-report/v1" ||
+        !("targetUserVersion" in body) ||
+        body.targetUserVersion !== 39 ||
+        !("kind" in body) ||
+        body.kind !== "LegacyActiveNotAdmitted" ||
+        !("observedUserVersion" in body) ||
+        (body.observedUserVersion !== 36 &&
+          body.observedUserVersion !== 37 &&
+          body.observedUserVersion !== 38) ||
+        !("databaseFingerprint" in body) ||
+        typeof body.databaseFingerprint !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(body.databaseFingerprint) ||
+        !("blockerStateFingerprint" in body) ||
+        typeof body.blockerStateFingerprint !== "string" ||
+        !/^[0-9a-f]{64}$/u.test(body.blockerStateFingerprint) ||
+        !Array.isArray(
+          (body as { blockedInvocationIds?: unknown }).blockedInvocationIds,
+        )
+      ) {
+        return yield* Effect.fail<P39MaintenanceFailure>({
+          _tag: "P39MaintenanceFailure",
+          code: "P39_REPORT_KEY_CONFLICT",
+        });
+      }
+      const blockedIds = (
+        body as unknown as { blockedInvocationIds: unknown[] }
+      ).blockedInvocationIds;
+      const blockedIdStrings = blockedIds.filter(
+        (id): id is string => typeof id === "string",
+      );
+      if (
+        blockedIds.length === 0 ||
+        blockedIdStrings.length !== blockedIds.length ||
+        blockedIdStrings.some((id) => id.trim().length === 0) ||
+        blockedIdStrings.some((id, index) => {
+          const previous = index > 0 ? blockedIdStrings[index - 1] : undefined;
+          return previous !== undefined && previous >= id;
+        })
+      ) {
+        return yield* Effect.fail<P39MaintenanceFailure>({
+          _tag: "P39MaintenanceFailure",
+          code: "P39_REPORT_KEY_CONFLICT",
+        });
+      }
+      const expectedReportKey = sha256Hex(
+        canonicalJson({
+          schema: "p39-migration-block-report/v1",
+          targetUserVersion: 39,
+          databaseFingerprint: body.databaseFingerprint,
+        }),
+      );
+      if (row.report_key !== expectedReportKey) {
+        return yield* Effect.fail<P39MaintenanceFailure>({
+          _tag: "P39MaintenanceFailure",
+          code: "P39_REPORT_KEY_CONFLICT",
+        });
+      }
+      reports.push({
+        reportKey: row.report_key,
+        contentHash: row.content_hash,
+        reportJson: row.report_json,
+      });
+    }
+    return reports;
+  });
+
+/** Returns the exact suffix permitted by the P36→P37→P38→P39 prefix. This is
+ * intentionally strict: a direct [0039] call or a missing predecessor fails
+ * before any migration SQL is executed. */
+export const validateP39MigrationPrefix = (
+  currentVersion: number,
+  orderedMigrations: ReadonlyArray<{ readonly id: number }>,
+): Effect.Effect<
+  ReadonlyArray<{ readonly id: number }>,
+  P39MaintenanceFailure
+> => {
+  const expected =
+    currentVersion >= 36 && currentVersion <= 38
+      ? Array.from(
+          { length: 39 - currentVersion },
+          (_, index) => currentVersion + index + 1,
+        )
+      : [];
+  const actual = orderedMigrations.map(({ id }) => id);
+  if (
+    expected.length === 0 ||
+    actual.length !== expected.length ||
+    actual.some((id, index) => id !== expected[index])
+  ) {
+    return Effect.fail({
+      _tag: "P39MaintenanceFailure",
+      code: "P39_MIGRATION_PREFIX_INVALID",
+    });
+  }
+  return Effect.succeed(orderedMigrations);
+};
+
+/** Runtime entry points call this before creating any Agent/P4 service layer.
+ * A P39-only database is maintenance-only until P40 has committed. */
+export const requireP39RuntimeSchema = (
+  userVersion: number,
+): Effect.Effect<void, P39MaintenanceFailure> =>
+  userVersion === 39
+    ? Effect.fail({
+        _tag: "P39MaintenanceFailure",
+        code: "P39_RUNTIME_START_REFUSED",
+      })
+    : Effect.void;
+
+/** The process-independent SQLite writer lock and reserved primary snapshot
+ * enclose the entire migration chain. A blocker is reported/read back while
+ * both primary lock and snapshot remain open, then the unchanged primary is
+ * rolled back and a typed isolation failure returned. */
 export const runP39MaintenanceGate = (
   port: P39MaintenancePort,
-): Effect.Effect<
-  void,
-  P39MaintenanceFailure | SqlError | SqliteAdapterError
-> =>
+): Effect.Effect<void, P39MaintenanceFailure | SqlError | SqliteAdapterError> =>
   Effect.acquireUseRelease(
     port.acquireWriterExclusion(),
     (lease) =>
@@ -262,7 +510,11 @@ export const runP39MaintenanceGate = (
           (reservation) =>
             Effect.gen(function* () {
               const snapshot = reservation.snapshot;
-              if (snapshot.activeNotAdmittedInvocationIds.length === 0) {
+              if (snapshot.userVersion === 39) {
+                return { blocked: false as const };
+              }
+              if (snapshot.activeNotAdmittedInvocations.length === 0) {
+                yield* port.applyOrderedMigrations(lease, reservation);
                 return { blocked: false as const };
               }
               const report = makeReport(snapshot);
@@ -275,7 +527,7 @@ export const runP39MaintenanceGate = (
                 saved.reportKey !== report.reportKey ||
                 saved.contentHash !== report.contentHash
               ) {
-                return yield* Effect.fail({
+                return yield* Effect.fail<P39MaintenanceFailure>({
                   _tag: "P39MaintenanceFailure" as const,
                   code: "P39_REPORT_COMMIT_UNRESOLVED" as const,
                 });
@@ -287,12 +539,11 @@ export const runP39MaintenanceGate = (
         );
 
         if (preflight.blocked) {
-          return yield* Effect.fail({
+          return yield* Effect.fail<P39MaintenanceFailure>({
             _tag: "P39MaintenanceFailure",
             code: "P39_LEGACY_DB_ISOLATED",
           });
         }
-        yield* port.applyOrderedMigrations(lease);
       }),
     (lease) => port.releaseWriterExclusion(lease).pipe(Effect.orDie),
   );
