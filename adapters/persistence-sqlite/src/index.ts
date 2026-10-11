@@ -9,6 +9,7 @@ export * from "./command-store.js";
 export * from "./communication.js";
 export * from "./consumer.js";
 export * from "./control-approval.js";
+export * from "./executable-approval.js";
 export * from "./conversation-response.js";
 export * from "./decision-request.js";
 export * from "./dependency-store.js";

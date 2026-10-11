@@ -1,0 +1,418 @@
+import type { Actor, Principal, ToolInvocationId } from "@arbor/domain";
+import {
+  DomainEventJournal,
+  ExecutableApprovalStore,
+  type ExecutableApprovalBinding,
+  type ExecutableApprovalKey,
+  type ExecutableApprovalRecord,
+  type ExecutableApprovalRequest,
+  InboxProjectionStore,
+  IdGenerator,
+  sha256Hex,
+  TransactionScope,
+} from "@arbor/ports";
+import {
+  executableApprovalBindingMatches,
+  executableApprovalKeyOf,
+} from "@arbor/ports";
+import { Effect, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
+import { persistenceCorruption, repositoryFailure } from "./repository-error.js";
+
+interface ApprovalRow {
+  readonly approval_id: string;
+  readonly route_kind: string;
+  readonly project_id: string | null;
+  readonly workspace_id: string | null;
+  readonly execution_id: string | null;
+  readonly subject_ref: string;
+  readonly stable_action_id: string;
+  readonly action_version: string;
+  readonly side_effect_semantics: string;
+  readonly action_digest: string;
+  readonly arguments_json: string;
+  readonly target_ref: string;
+  readonly target_resource_space_ids_json: string;
+  readonly control_basis_digest: string;
+  readonly state: string;
+  readonly revision: number;
+  readonly requested_at: string;
+  readonly expires_at: string;
+  readonly decided_at: string | null;
+  readonly decided_by: string | null;
+  readonly decision_reason: string | null;
+  readonly consumed_at: string | null;
+  readonly consumed_by: string | null;
+  readonly binding_proven: number;
+  readonly source_state: string | null;
+  readonly logical_step_no: number | null;
+  readonly repair_attempt: number | null;
+  readonly action_index: number | null;
+  readonly logical_action_id: string | null;
+  readonly call_ref: string | null;
+  readonly tool_invocation_id: string | null;
+  readonly cancelled_at: string | null;
+  readonly cancelled_by: string | null;
+  readonly cancellation_reason: string | null;
+}
+
+const toApproval = (row: ApprovalRow): ExecutableApprovalRecord => ({
+  approvalId: row.approval_id,
+  routeKind: row.route_kind as "Executable",
+  projectId: row.project_id as ExecutableApprovalRecord["projectId"],
+  workspaceId: row.workspace_id as ExecutableApprovalRecord["workspaceId"],
+  executionId: row.execution_id as ExecutableApprovalRecord["executionId"],
+  subject: row.subject_ref as Principal,
+  logicalStepNo: Number(row.logical_step_no),
+  repairAttempt: Number(row.repair_attempt),
+  actionIndex: Number(row.action_index),
+  logicalActionId: row.logical_action_id as string,
+  callRef: row.call_ref as string,
+  toolInvocationId: row.tool_invocation_id as ToolInvocationId,
+  toolName: row.stable_action_id,
+  toolVersion: row.action_version,
+  sideEffectSemantics:
+    row.side_effect_semantics as ExecutableApprovalRecord["sideEffectSemantics"],
+  argumentsJson: row.arguments_json,
+  actionDigest: row.action_digest,
+  targetResourceSpaceIds: JSON.parse(
+    row.target_resource_space_ids_json,
+  ) as ReadonlyArray<string>,
+  controlBasisDigest: row.control_basis_digest,
+  revision: Number(row.revision),
+  requestedAt: row.requested_at,
+  expiresAt: row.expires_at,
+  state: row.state as ExecutableApprovalRecord["state"],
+  decidedAt: row.decided_at,
+  decidedBy: row.decided_by as Principal | null,
+  decisionReason: row.decision_reason,
+  cancelledAt: row.cancelled_at,
+  cancelledBy: row.cancelled_by as Principal | null,
+  cancellationReason: row.cancellation_reason,
+  consumedAt: row.consumed_at,
+  consumedBy: row.consumed_by as ToolInvocationId | null,
+});
+
+const immutableBindingOf = (
+  row: ExecutableApprovalRecord,
+): ExecutableApprovalBinding => ({
+  projectId: row.projectId,
+  workspaceId: row.workspaceId,
+  executionId: row.executionId,
+  logicalStepNo: row.logicalStepNo,
+  repairAttempt: row.repairAttempt,
+  actionIndex: row.actionIndex,
+  logicalActionId: row.logicalActionId,
+  subject: row.subject,
+  callRef: row.callRef,
+  toolInvocationId: row.toolInvocationId,
+  toolName: row.toolName,
+  toolVersion: row.toolVersion,
+  sideEffectSemantics: row.sideEffectSemantics,
+  argumentsJson: row.argumentsJson,
+  actionDigest: row.actionDigest,
+  targetResourceSpaceIds: row.targetResourceSpaceIds,
+  controlBasisDigest: row.controlBasisDigest,
+});
+
+const keyWhere =
+  "route_kind = 'Executable' AND binding_proven = 1 AND execution_id = ? AND logical_step_no = ? AND repair_attempt = ? AND action_index = ? AND logical_action_id = ?";
+
+export const ExecutableApprovalStoreLive: Layer.Layer<
+  ExecutableApprovalStore,
+  never,
+  SqlClient | InboxProjectionStore | DomainEventJournal | IdGenerator
+> = Layer.effect(
+  ExecutableApprovalStore,
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const inbox = yield* InboxProjectionStore;
+    const journal = yield* DomainEventJournal;
+    const ids = yield* IdGenerator;
+    const failure = repositoryFailure("ToolInvocationStore", "executable-approval");
+    const run = <A>(effect: Effect.Effect<A, SqlError>) =>
+      effect.pipe(Effect.mapError(failure));
+
+    const findByActionKey = (
+      key: ExecutableApprovalKey,
+    ): Effect.Effect<
+      Option.Option<ExecutableApprovalRecord>,
+      import("@arbor/ports").ToolInvocationStoreError,
+      TransactionScope
+    > =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        const rows = yield* run(
+          sql.unsafe<ApprovalRow>(
+            `SELECT * FROM action_approvals WHERE ${keyWhere}`,
+            [
+              key.executionId,
+              key.logicalStepNo,
+              key.repairAttempt,
+              key.actionIndex,
+              key.logicalActionId,
+            ],
+          ),
+        );
+        const row = rows[0];
+        if (row === undefined) return Option.none();
+        if (
+          row.project_id === null ||
+          row.workspace_id === null ||
+          row.execution_id === null ||
+          row.logical_step_no === null ||
+          row.repair_attempt === null ||
+          row.action_index === null ||
+          row.logical_action_id === null ||
+          row.call_ref === null ||
+          row.tool_invocation_id === null
+        ) {
+          return yield* Effect.fail(
+            persistenceCorruption(
+              "ToolInvocationStore",
+              "executable-approval-read",
+              "proven Executable approval has an incomplete binding",
+            ),
+          );
+        }
+        return Option.some(toApproval(row));
+      });
+
+    const validateWorkerAndAction = (
+      request: ExecutableApprovalRequest,
+    ): Effect.Effect<
+      "Ready" | "ExecutionStopping",
+      import("@arbor/ports").ToolInvocationStoreError,
+      TransactionScope
+    > =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        const fence = request.executionFence;
+        if (fence.executionId !== request.executionId) {
+          return yield* Effect.fail({
+            _tag: "LeaseFencingRejected" as const,
+            executionId: request.executionId,
+            generation: fence.fencingGeneration,
+          });
+        }
+        const executions = yield* run(
+          sql.unsafe<{
+            project_id: string;
+            workspace_id: string;
+            stop_requested_at: string | null;
+            settled_at: string | null;
+          }>(
+            `SELECT e.project_id, e.workspace_id, e.stop_requested_at, e.settled_at
+               FROM executions e
+               JOIN execution_leases l ON l.execution_id = e.execution_id
+              WHERE e.execution_id = ?
+                AND l.worker_id = ?
+                AND l.worker_incarnation_id = ?
+                AND l.generation = ?
+                AND l.expires_at > ?`,
+            [
+              request.executionId,
+              fence.workerId,
+              fence.workerIncarnationId,
+              fence.fencingGeneration,
+              request.requestedAt,
+            ],
+          ),
+        );
+        const execution = executions[0];
+        if (execution === undefined) {
+          return yield* Effect.fail({
+            _tag: "LeaseFencingRejected" as const,
+            executionId: request.executionId,
+            generation: fence.fencingGeneration,
+          });
+        }
+        if (execution.settled_at !== null || execution.stop_requested_at !== null) {
+          return "ExecutionStopping" as const;
+        }
+        if (
+          execution.project_id !== request.projectId ||
+          execution.workspace_id !== request.workspaceId
+        ) {
+          return yield* Effect.fail(
+            persistenceCorruption(
+              "ToolInvocationStore",
+              "executable-approval-write",
+              "approval binding does not match the fenced Execution",
+            ),
+          );
+        }
+
+        const actions = yield* run(
+          sql.unsafe<{
+            step_state: string;
+            action_state: string;
+            action_input_hash: string;
+            action_kind: string;
+            action_call_ref: string;
+            action_route_kind: string;
+          }>(
+            `SELECT s.state AS step_state, a.state AS action_state,
+                    a.input_hash AS action_input_hash, a.action_kind,
+                    a.call_ref AS action_call_ref, a.route_kind AS action_route_kind
+               FROM agent_loop_steps s
+               JOIN agent_loop_step_actions a
+                 ON a.execution_id = s.execution_id
+                AND a.logical_step_no = s.logical_step_no
+                AND a.repair_attempt = s.repair_attempt
+              WHERE s.execution_id = ? AND s.logical_step_no = ?
+                AND s.repair_attempt = ? AND a.action_index = ?
+                AND a.logical_action_id = ?`,
+            [
+              request.executionId,
+              request.logicalStepNo,
+              request.repairAttempt,
+              request.actionIndex,
+              request.logicalActionId,
+            ],
+          ),
+        );
+        const action = actions[0];
+        if (
+          action === undefined ||
+          action.step_state !== "ActionsInProgress" ||
+          action.action_state !== "Pending" ||
+          action.action_route_kind !== "Executable" ||
+          action.action_call_ref !== request.callRef ||
+          action.action_kind !== request.toolName ||
+          action.action_input_hash !== sha256Hex(request.argumentsJson)
+        ) {
+          return yield* Effect.fail(
+            persistenceCorruption(
+              "ToolInvocationStore",
+              "executable-approval-write",
+              "approval does not bind the exact Pending Executable action",
+            ),
+          );
+        }
+        return "Ready" as const;
+      });
+
+    return ExecutableApprovalStore.of({
+      findByActionKey,
+      putPendingExact: (request) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const ready = yield* validateWorkerAndAction(request);
+          if (ready === "ExecutionStopping") return ready;
+
+          const resourceIdsJson = JSON.stringify(
+            request.targetResourceSpaceIds,
+          );
+          const inserted = yield* run(
+            sql.unsafe<ApprovalRow>(
+              `INSERT INTO action_approvals (
+                 approval_id, route_kind, project_id, workspace_id, execution_id,
+                 subject_ref, stable_action_id, action_version, side_effect_semantics,
+                 action_digest, arguments_json, target_ref,
+                 target_resource_space_ids_json, control_basis_digest,
+                 state, revision, requested_at, expires_at, decided_at, decided_by,
+                 decision_reason, consumed_at, consumed_by, binding_proven,
+                 source_state, logical_step_no, repair_attempt, action_index,
+                 logical_action_id, call_ref, tool_invocation_id,
+                 cancelled_at, cancelled_by, cancellation_reason
+               ) VALUES (?, 'Executable', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                         'Pending', 0, ?, ?, NULL, NULL, NULL, NULL, NULL, 1,
+                         NULL, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+               ON CONFLICT DO NOTHING
+               RETURNING *`,
+              [
+                request.approvalId,
+                request.projectId,
+                request.workspaceId,
+                request.executionId,
+                request.subject,
+                request.toolName,
+                request.toolVersion,
+                request.sideEffectSemantics,
+                request.actionDigest,
+                request.argumentsJson,
+                resourceIdsJson,
+                resourceIdsJson,
+                request.controlBasisDigest,
+                request.requestedAt,
+                request.expiresAt,
+                request.logicalStepNo,
+                request.repairAttempt,
+                request.actionIndex,
+                request.logicalActionId,
+                request.callRef,
+                request.toolInvocationId,
+              ],
+            ),
+          );
+          const insertedRow = inserted[0];
+          if (insertedRow !== undefined) {
+            const inboxKey = `eap:${request.approvalId}:0`;
+            yield* inbox
+              .admitUpsert({
+                recipientWorkspaceId: request.workspaceId,
+                entryKey: inboxKey,
+                kind: "Governance",
+                summary: JSON.stringify({
+                  kind: "ExecutableApproval",
+                  approvalId: request.approvalId,
+                  revision: 0,
+                  toolName: request.toolName,
+                  toolVersion: request.toolVersion,
+                  targetResourceSpaceIds: request.targetResourceSpaceIds,
+                  expiresAt: request.expiresAt,
+                }),
+                correlationId: request.logicalActionId,
+                admittedAt: request.requestedAt,
+              })
+              .pipe(Effect.mapError(failure));
+            yield* journal
+              .append([
+                {
+                  projectId: request.projectId,
+                  eventType: "ExecutableApprovalRequested",
+                  eventVersion: 1,
+                  occurredAt: request.requestedAt,
+                  aggregateRef: request.approvalId,
+                  actor: request.subject as unknown as Actor,
+                  correlationRef: request.logicalActionId,
+                  payload: {
+                    approvalId: request.approvalId,
+                    executionId: request.executionId,
+                    workspaceId: request.workspaceId,
+                    logicalActionId: request.logicalActionId,
+                    revision: 0,
+                    expiresAt: request.expiresAt,
+                  },
+                },
+              ])
+              .pipe(
+                Effect.provideService(IdGenerator, ids),
+                Effect.mapError(failure),
+              );
+            return toApproval(insertedRow);
+          }
+
+          const winner = yield* findByActionKey(executableApprovalKeyOf(request));
+          if (
+            Option.isNone(winner) ||
+            !executableApprovalBindingMatches(
+              immutableBindingOf(winner.value),
+              request,
+            )
+          ) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "ToolInvocationStore",
+                "executable-approval-write",
+                "unique-key conflict has no matching Executable approval winner",
+              ),
+            );
+          }
+          return winner.value;
+        }),
+    });
+  }),
+);

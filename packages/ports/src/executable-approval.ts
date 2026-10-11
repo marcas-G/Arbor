@@ -29,6 +29,11 @@ export interface ExecutableApprovalBinding extends ExecutableApprovalKey {
   readonly toolInvocationId: ToolInvocationId;
   readonly toolName: string;
   readonly toolVersion: string;
+  readonly sideEffectSemantics:
+    | "ReadOnly"
+    | "Idempotent"
+    | "Reconcilable"
+    | "NonIdempotent";
   readonly argumentsJson: string;
   readonly actionDigest: string;
   readonly targetResourceSpaceIds: ReadonlyArray<string>;
@@ -50,6 +55,14 @@ export interface ExecutableApprovalRecord extends ExecutableApprovalBinding {
   readonly requestedAt: string;
   readonly expiresAt: string;
   readonly state: ExecutableApprovalState;
+  readonly decidedAt: string | null;
+  readonly decidedBy: Principal | null;
+  readonly decisionReason: string | null;
+  readonly cancelledAt: string | null;
+  readonly cancelledBy: Principal | null;
+  readonly cancellationReason: string | null;
+  readonly consumedAt: string | null;
+  readonly consumedBy: ToolInvocationId | null;
 }
 
 export interface ExecutableApprovalRequest extends ExecutableApprovalBinding {
@@ -113,6 +126,7 @@ export const executableApprovalBindingMatches = (
   left.toolInvocationId === right.toolInvocationId &&
   left.toolName === right.toolName &&
   left.toolVersion === right.toolVersion &&
+  left.sideEffectSemantics === right.sideEffectSemantics &&
   left.argumentsJson === right.argumentsJson &&
   left.actionDigest === right.actionDigest &&
   left.controlBasisDigest === right.controlBasisDigest &&
