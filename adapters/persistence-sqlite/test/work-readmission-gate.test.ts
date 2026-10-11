@@ -69,10 +69,24 @@ const runDb = <A>(
   >,
 ) => Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp())));
 
-const seed = (settlement: unknown = null) =>
+const seed = (
+  settlement: unknown = null,
+  stopRequestedAtOverride?: string | null,
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const tx = yield* TransactionPort;
+    const settlementResult =
+      typeof settlement === "object" && settlement !== null
+        ? (settlement as { readonly result?: { readonly _tag?: string } })
+            .result
+        : undefined;
+    const stopRequestedAt =
+      stopRequestedAtOverride === undefined
+        ? settlementResult?._tag === "StopRequested"
+          ? "t0"
+          : null
+        : stopRequestedAtOverride;
     yield* tx.transact(
       Effect.gen(function* () {
         yield* sql.unsafe(
@@ -115,13 +129,14 @@ const seed = (settlement: unknown = null) =>
             mission, session_id, admitted_at, stop_requested_at,
             settlement_kind, settlement_json, settled_at
           ) VALUES (?, ?, 'workspace', ?, 'WorkEpisode', ?, 0,
-            NULL, NULL, ?, 't0', NULL, ?, ?, ?)`,
+            NULL, NULL, ?, 't0', ?, ?, ?, ?)`,
           [
             executionId,
             projectId,
             workspaceId,
             workId,
             sessionId,
+            stopRequestedAt,
             settlement === null
               ? null
               : (settlement as { readonly _tag: string })._tag,
@@ -578,6 +593,24 @@ describe("P2 WorkReadmissionGateStore", () => {
           ),
         );
         expect(Option.isNone(yield* query())).toBe(true);
+      }),
+    ));
+
+  it("fails closed when StopRequested settlement has no stop request fact", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed(
+          { _tag: "Interrupted", result: { _tag: "StopRequested" } },
+          null,
+        );
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SettlementMalformed"',
+          );
+        }
       }),
     ));
 
