@@ -1,5 +1,6 @@
 import type { MigrationFile } from "./migrate.js";
 import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "./p38-executable-approval-migration.js";
+import { P39_RECONCILIATION_DDL } from "./p39-reconciliation-ddl.js";
 
 const DDL = `
 CREATE TABLE projects (
@@ -1959,6 +1960,19 @@ export const P35_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     `,
   },
 ];
+
+/** AH7-DG-02 P39 owner migration descriptor. Deliberately not composed into
+ * P36_MIGRATIONS or any CURRENT_MIGRATIONS alias: production must install
+ * 0036→0037→0038→0039 under the maintenance preflight and remain stopped at
+ * version 39 until P40 is available. Isolated DDL tests may apply this
+ * descriptor after a P36 fixture; that does not qualify or authorize a
+ * P39-only runtime. */
+export const P39_RECONCILIATION_MIGRATION: MigrationFile = {
+  id: 39,
+  name: "ah7_reconciliation_attempts",
+  sql: P39_RECONCILIATION_DDL,
+  foreignKeysOff: true,
+};
 
 /** AH7-DG-03 accepted forward migration; preserves legacy rows as
  * LegacyUnknown and advances the production SQLite baseline to user_version 36. */
