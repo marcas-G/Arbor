@@ -421,6 +421,15 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
       cancelForExecution: (input) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          const versions = yield* run(
+            sql.unsafe<{ user_version: number }>("PRAGMA user_version"),
+          );
+          if (Number(versions[0]?.user_version ?? 0) < 38) {
+            // Pre-0038 databases cannot contain a proven Executable approval.
+            // Once user_version reaches 38, all P38 columns are required and
+            // any SQL/schema failure aborts the stop transaction.
+            return [];
+          }
           const stops = yield* run(
             sql.unsafe<{ execution_id: string }>(
               "SELECT execution_id FROM executions WHERE execution_id = ? AND stop_requested_at IS NOT NULL AND settled_at IS NULL",
@@ -505,9 +514,9 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
                 ),
               );
             }
-            yield* run(
-              sql.unsafe(
-                "UPDATE inbox_entries SET consumed_at = ? WHERE workspace_id = ? AND entry_key = ? AND consumed_at IS NULL",
+            const inboxConsumed = yield* run(
+              sql.unsafe<{ entry_key: string }>(
+                "UPDATE inbox_entries SET consumed_at = ? WHERE workspace_id = ? AND entry_key = ? AND consumed_at IS NULL RETURNING entry_key",
                 [
                   input.cancelledAt,
                   candidate.workspace_id,
@@ -515,6 +524,19 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
                 ],
               ),
             );
+            // A still-Pending approval has never had its original Inbox item
+            // consumed; absence here is a broken atomic-admission invariant.
+            // An Approved row's revision-0 Inbox key may already be consumed
+            // by the human decision, so preserve that historical state.
+            if (candidate.state === "Pending" && inboxConsumed.length !== 1) {
+              return yield* Effect.fail(
+                persistenceCorruption(
+                  "ToolInvocationStore",
+                  "executable-approval-cancel",
+                  "Pending approval has no unconsumed exact Inbox entry",
+                ),
+              );
+            }
             cancelled.push(toApproval(row));
           }
           return cancelled;

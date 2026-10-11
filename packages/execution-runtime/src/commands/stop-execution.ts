@@ -1,4 +1,9 @@
-import { type CommandHandler, commandErr, commandOk } from "@arbor/application";
+import {
+  type CommandHandler,
+  commandErr,
+  commandOk,
+  stopExecutionAndCancelExecutableApprovals,
+} from "@arbor/application";
 import { type ExecutionId, type Principal, stopExecution } from "@arbor/domain";
 import type {
   ExecutableApprovalStoreService,
@@ -18,8 +23,7 @@ export interface StopExecutionResult {
 
 export interface StopExecutionDependencies {
   readonly executions: ExecutionRepositoryService;
-  /** Provided only when the ordered P38 storage suffix is installed. */
-  readonly executableApprovals?: Pick<
+  readonly executableApprovals: Pick<
     ExecutableApprovalStoreService,
     "cancelForExecution"
   >;
@@ -63,69 +67,46 @@ export const makeStopExecutionHandler = (
           lifecycle: "Settled",
         });
       }
-      if (current.stopRequestedAt !== null) {
-        return commandOk({
-          result: {
+      const firstStop = current.stopRequestedAt === null;
+      if (firstStop) {
+        const stopped = stopExecution(current, envelope.issuedAt);
+        if (!stopped.ok) return commandErr(stopped.error);
+      }
+      const resolvedApprovalEvents =
+        yield* stopExecutionAndCancelExecutableApprovals(
+          {
+            projectId: envelope.projectId,
             executionId: payload.executionId,
-            stopRequestedAt: current.stopRequestedAt,
+            stopRequestedAt: current.stopRequestedAt ?? envelope.issuedAt,
+            actor: envelope.actor,
+            actorPrincipal: envelope.actor as unknown as Principal,
+            commandId: envelope.commandId,
           },
-          events: [],
-        });
-      }
-      const stopped = stopExecution(current, envelope.issuedAt);
-      if (!stopped.ok) {
-        return commandErr(stopped.error);
-      }
-      yield* dependencies.executions.requestStop(
-        payload.executionId,
-        envelope.issuedAt,
-      );
-      const cancelledApprovals =
-        dependencies.executableApprovals === undefined
-          ? []
-          : yield* dependencies.executableApprovals.cancelForExecution({
-              executionId: payload.executionId,
-              cancelledAt: envelope.issuedAt,
-              cancelledBy: envelope.actor as unknown as Principal,
-              reason: "StopRequested",
-            });
+          {
+            executions: dependencies.executions,
+            approvals: dependencies.executableApprovals,
+          },
+        );
+      const stopEvent: PendingDomainEvent | undefined = firstStop
+        ? {
+            projectId: envelope.projectId,
+            eventType: "ExecutionStopRequested",
+            eventVersion: 1,
+            occurredAt: envelope.issuedAt,
+            aggregateRef: payload.executionId,
+            actor: envelope.actor,
+            causedByCommandId: envelope.commandId,
+            payload: { executionId: payload.executionId },
+          }
+        : undefined;
       const events: PendingDomainEvent[] = [
-        {
-          projectId: envelope.projectId,
-          eventType: "ExecutionStopRequested",
-          eventVersion: 1,
-          occurredAt: envelope.issuedAt,
-          aggregateRef: payload.executionId,
-          actor: envelope.actor,
-          causedByCommandId: envelope.commandId,
-          payload: { executionId: payload.executionId },
-        },
-        ...cancelledApprovals.map((approval) => ({
-          projectId: envelope.projectId,
-          eventType: "ExecutableApprovalResolved" as const,
-          eventVersion: 1,
-          occurredAt: envelope.issuedAt,
-          aggregateRef: approval.approvalId,
-          actor: envelope.actor,
-          causedByCommandId: envelope.commandId,
-          correlationRef: approval.logicalActionId,
-          payload: {
-            approvalId: approval.approvalId,
-            routeKind: "Executable" as const,
-            workspaceId: approval.workspaceId,
-            executionId: approval.executionId,
-            logicalActionId: approval.logicalActionId,
-            toolInvocationId: approval.toolInvocationId,
-            revision: approval.revision,
-            resolution: "Cancelled" as const,
-            reasonCode: "StopRequested",
-          },
-        })),
+        ...(stopEvent === undefined ? [] : [stopEvent]),
+        ...resolvedApprovalEvents,
       ];
       return commandOk({
         result: {
           executionId: payload.executionId,
-          stopRequestedAt: envelope.issuedAt,
+          stopRequestedAt: current.stopRequestedAt ?? envelope.issuedAt,
         },
         events,
       });

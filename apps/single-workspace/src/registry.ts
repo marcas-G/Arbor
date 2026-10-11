@@ -88,6 +88,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
   | EnvironmentRevisionStore
   | EvidenceRepository
   | ExecutionRepository
+  | ExecutableApprovalStore
   | WorkWaitStore
   | FormationProposalStore
   | InboxProjectionStore
@@ -113,11 +114,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const works = yield* WorkRepository;
     const clock = yield* Effect.serviceOption(Clock);
     const executions = yield* ExecutionRepository;
-    const executableApprovals = yield* Effect.serviceOption(
-      ExecutableApprovalStore,
-    );
-    // The accepted P38 stop hook activates only when its ordered SQLite store
-    // is provided; this worktree deliberately does not register 0038.
+    const executableApprovals = yield* ExecutableApprovalStore;
     const workWaits = yield* WorkWaitStore;
     const proposals = yield* FormationProposalStore;
     const fulfillments = yield* Effect.serviceOption(FormationFulfillmentStore);
@@ -169,6 +166,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
         executions,
         responseJobs,
         inbox,
+        executableApprovals,
       }),
       makeSelectCurrentWorkHandler({
         workspaces,
@@ -181,9 +179,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
         sessions,
         executions,
         workWaits,
-        ...(Option.isSome(executableApprovals)
-          ? { executableApprovals: executableApprovals.value }
-          : {}),
+        executableApprovals,
       }),
       makeSendMessageHandler({
         workspaces,

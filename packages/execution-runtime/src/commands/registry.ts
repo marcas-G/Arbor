@@ -29,20 +29,36 @@ export interface P2CommandDependencies {
 
 export const makeP2CommandHandlers = (
   dependencies: P2CommandDependencies,
-): ReadonlyArray<CommandHandler<unknown, unknown>> => [
-  makeAdmitExecutionHandler(dependencies) as unknown as CommandHandler<
-    unknown,
-    unknown
-  >,
-  makeStopExecutionHandler(dependencies) as unknown as CommandHandler<
-    unknown,
-    unknown
-  >,
-  makeSettleExecutionHandler(dependencies) as unknown as CommandHandler<
-    unknown,
-    unknown
-  >,
-];
+): ReadonlyArray<CommandHandler<unknown, unknown>> => {
+  const executableApprovals =
+    dependencies.executableApprovals ?? {
+      // Test/legacy compositions without the P38 port fail closed on Stop;
+      // production SingleWorkspace composition always supplies the real store.
+      cancelForExecution: () =>
+        Effect.fail({
+          _tag: "PersistenceUnavailable" as const,
+          repository: "ToolInvocationStore" as const,
+          operation: "StopExecution.ExecutableApprovalCancellation",
+          retryDisposition: "non-retryable" as const,
+          sourceTag: "ExecutableApprovalStoreUnavailable",
+          cause: "ordered P38 store is not registered",
+        }),
+    };
+  return [
+    makeAdmitExecutionHandler(dependencies) as unknown as CommandHandler<
+      unknown,
+      unknown
+    >,
+    makeStopExecutionHandler({
+      executions: dependencies.executions,
+      executableApprovals,
+    }) as unknown as CommandHandler<unknown, unknown>,
+    makeSettleExecutionHandler(dependencies) as unknown as CommandHandler<
+      unknown,
+      unknown
+    >,
+  ];
+};
 
 export const P2CommandHandlerRegistryLive: Layer.Layer<
   CommandHandlerRegistry,

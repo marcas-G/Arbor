@@ -13,6 +13,7 @@ export * from "./dependency-coordinator.js";
 export * from "./durability.js";
 export * from "./environment-drift.js";
 export * from "./executable-approval-issuance.js";
+export * from "./executable-approval-stop.js";
 export * from "./external-command-codec.js";
 export * from "./fingerprint.js";
 export * from "./formation-consumer.js";

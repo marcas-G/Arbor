@@ -1,11 +1,13 @@
 import {
   closeProject,
   type Execution,
+  type Principal,
   type Revision,
   renameProject,
 } from "@arbor/domain";
 import type {
   ConversationResponseJobStoreService,
+  ExecutableApprovalStoreService,
   ExecutionRepositoryService,
   InboxProjectionStoreService,
   PendingDomainEvent,
@@ -13,6 +15,7 @@ import type {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
+import { stopExecutionAndCancelExecutableApprovals } from "../executable-approval-stop.js";
 import type { CommandHandler } from "../gateway.js";
 
 export interface RenameProjectPayload {
@@ -42,6 +45,10 @@ type CloseProjectDeps = {
     "listForWorkspace" | "transition"
   >;
   readonly inbox: Pick<InboxProjectionStoreService, "markConsumed">;
+  readonly executableApprovals: Pick<
+    ExecutableApprovalStoreService,
+    "cancelForExecution"
+  >;
 };
 
 const governance = (commandType: "RenameProject" | "CloseProject") => ({
@@ -143,8 +150,39 @@ export const makeCloseProjectHandler = (
       activeExecutions = (yield* executions.findUnsettledExecutions()).filter(
         (execution) => execution.projectId === envelope.projectId,
       );
+      const stopEvents: PendingDomainEvent[] = [];
+      const approvalEvents: PendingDomainEvent[] = [];
       for (const execution of activeExecutions) {
-        yield* executions.requestStop(execution.executionId, envelope.issuedAt);
+        const resolved = yield* stopExecutionAndCancelExecutableApprovals(
+          {
+            projectId: envelope.projectId,
+            executionId: execution.executionId,
+            stopRequestedAt: envelope.issuedAt,
+            actor: envelope.actor,
+            actorPrincipal: envelope.actor as unknown as Principal,
+            commandId: envelope.commandId,
+          },
+          {
+            executions,
+            approvals: deps.executableApprovals,
+          },
+        );
+        approvalEvents.push(...resolved);
+        if (execution.stopRequestedAt === null) {
+          stopEvents.push({
+            projectId: envelope.projectId,
+            eventType: "ExecutionStopRequested",
+            eventVersion: 1,
+            occurredAt: envelope.issuedAt,
+            aggregateRef: execution.executionId,
+            actor: envelope.actor,
+            causedByCommandId: envelope.commandId,
+            payload: {
+              executionId: execution.executionId,
+              reason: "ProjectClosed",
+            },
+          });
+        }
       }
       for (const job of responseJobs) {
         if (
@@ -192,21 +230,8 @@ export const makeCloseProjectHandler = (
             revision: closed.value.revision,
           },
         },
-        ...activeExecutions.map(
-          (execution): PendingDomainEvent => ({
-            projectId: envelope.projectId,
-            eventType: "ExecutionStopRequested",
-            eventVersion: 1,
-            occurredAt: envelope.issuedAt,
-            aggregateRef: execution.executionId,
-            actor: envelope.actor,
-            causedByCommandId: envelope.commandId,
-            payload: {
-              executionId: execution.executionId,
-              reason: "ProjectClosed",
-            },
-          }),
-        ),
+        ...stopEvents,
+        ...approvalEvents,
       ];
       return commandOk({
         result: {

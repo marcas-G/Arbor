@@ -67,6 +67,7 @@ import {
   DependencyRepositoryLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
+  ExecutableApprovalStoreLive,
   EvidenceRepositoryLive,
   ExecutionRepositoryLive,
   FormationFulfillmentStoreLive,
@@ -568,10 +569,16 @@ export const buildSingleWorkspaceLayer = (
     ),
     projectToolRegistry,
   );
+  const domainEventJournal = Layer.provide(DomainEventJournalLive, infra);
+  const inboxProjection = Layer.provide(InboxProjectionStoreLive, infra);
+  const executableApprovalStore = Layer.provide(
+    ExecutableApprovalStoreLive,
+    Layer.mergeAll(infra, domainEventJournal, inboxProjection),
+  );
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    domainEventJournal,
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(ProjectDirectoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
@@ -591,7 +598,8 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(FormationFulfillmentStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
-    Layer.provide(InboxProjectionStoreLive, infra),
+    inboxProjection,
+    executableApprovalStore,
     Layer.provide(DependencyRepositoryLive, infra),
     Layer.provide(DeliverableRepositoryLive, infra),
     Layer.provide(DecisionRequestStoreLive, infra),
