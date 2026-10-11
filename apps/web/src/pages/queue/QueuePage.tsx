@@ -13,6 +13,7 @@ import { useViewQuery } from "../../api/useViewQuery.js";
 import { AcceptWorkOutcomeForm } from "../../commands/forms/AcceptWorkOutcomeForm.js";
 import { RecordDecisionForm } from "../../commands/forms/RecordDecisionForm.js";
 import { ResolveControlApprovalForm } from "../../commands/forms/ResolveControlApprovalForm.js";
+import { ResolveExecutableApprovalForm } from "../../commands/forms/ResolveExecutableApprovalForm.js";
 import type { CommandReceiptView } from "../../commands/submitCommand.js";
 import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
@@ -24,8 +25,10 @@ import { useCompactLayout } from "../../components/useCompactLayout.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import {
   type ControlApprovalTarget,
+  type ExecutableApprovalTarget,
   type GovernanceTarget,
   parseControlApprovalEntryKey,
+  parseExecutableApprovalEntry,
   parseGovernanceEntryKey,
 } from "../../queue/governance-target.js";
 import { useSession } from "../../session/SessionContext.js";
@@ -61,7 +64,21 @@ type ControlApprovalItem = {
   readonly target: ControlApprovalTarget;
 };
 
-type QueueItem = DecisionItem | AcceptanceItem | ControlApprovalItem;
+type ExecutableApprovalItem = {
+  readonly type: "executable-approval";
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly entryKey: string;
+  readonly summary: string;
+  readonly watermark: number;
+  readonly target: ExecutableApprovalTarget;
+};
+
+type QueueItem =
+  | DecisionItem
+  | AcceptanceItem
+  | ControlApprovalItem
+  | ExecutableApprovalItem;
 
 const asProblem = (error: unknown): Problem => error as Problem;
 
@@ -202,6 +219,35 @@ export function QueuePage({
       items.push({
         type: "control-approval",
         id: `control-approval:${node.workspaceId}:${entry.entryKey}`,
+        workspaceId: node.workspaceId,
+        entryKey: entry.entryKey,
+        summary: entry.summary,
+        watermark: entry.watermark,
+        target,
+      });
+    }
+
+    const executableApprovals = entries
+      .map((entry) => ({
+        entry,
+        target: parseExecutableApprovalEntry(
+          entry.entryKey,
+          entry.kind,
+          (entry as typeof entry & { readonly target?: unknown }).target,
+        ),
+      }))
+      .filter(
+        (
+          item,
+        ): item is {
+          readonly entry: (typeof entries)[number];
+          readonly target: ExecutableApprovalTarget;
+        } => item.target !== null,
+      );
+    for (const { entry, target } of executableApprovals) {
+      items.push({
+        type: "executable-approval",
+        id: `executable-approval:${node.workspaceId}:${entry.entryKey}`,
         workspaceId: node.workspaceId,
         entryKey: entry.entryKey,
         summary: entry.summary,
@@ -374,7 +420,9 @@ export function QueuePage({
                           ? "待决策"
                           : item.type === "control-approval"
                             ? "待授权"
-                            : "等待验收"}
+                            : item.type === "executable-approval"
+                              ? "工具审批"
+                              : "等待验收"}
                       </Badge>
                       <MonoText>{item.workspaceId}</MonoText>
                     </span>
@@ -391,6 +439,10 @@ export function QueuePage({
                     ) : item.type === "control-approval" ? (
                       <span className={styles.itemTarget}>
                         精确动作 · revision {item.target.approvalRevision}
+                      </span>
+                    ) : item.type === "executable-approval" ? (
+                      <span className={styles.itemTarget}>
+                        {item.target.toolName} · revision {item.target.revision}
                       </span>
                     ) : (
                       <span className={styles.itemTarget}>
@@ -453,7 +505,9 @@ function QueueHeader() {
         <p className={styles.eyebrow}>Actionable inbox</p>
         <h1 className={styles.heading}>待处理</h1>
       </div>
-      <p className={styles.intro}>仅显示具有精确结构化目标的决策与验收事项。</p>
+      <p className={styles.intro}>
+        仅显示具有精确结构化目标的决策、审批与验收事项。
+      </p>
     </header>
   );
 }
@@ -505,7 +559,9 @@ function QueueDetail({
             ? "治理决策"
             : item.type === "control-approval"
               ? "控制动作审批"
-              : "工作验收"}
+              : item.type === "executable-approval"
+                ? "工具动作审批"
+                : "工作验收"}
         </Badge>
         <span className={styles.detailWorkspace}>
           工作区 {item.workspaceId}
@@ -558,6 +614,70 @@ function QueueDetail({
             token={token}
             onSubmitted={onSubmitted}
           />
+        </>
+      ) : item.type === "executable-approval" ? (
+        <>
+          <h2>{item.target.toolName}</h2>
+          <dl className={styles.targetList}>
+            <div>
+              <dt>工具版本</dt>
+              <dd>
+                <MonoText>{item.target.toolVersion}</MonoText>
+              </dd>
+            </div>
+            <div>
+              <dt>执行</dt>
+              <dd>
+                <MonoText>{item.target.executionId}</MonoText>
+              </dd>
+            </div>
+            <div>
+              <dt>目标资源</dt>
+              <dd>{item.target.targetResourceSpaceIds.join("、") || "无"}</dd>
+            </div>
+            <div>
+              <dt>能力</dt>
+              <dd>{item.target.capabilities.join("、") || "无"}</dd>
+            </div>
+            <div>
+              <dt>副作用</dt>
+              <dd>{item.target.sideEffectSemantics}</dd>
+            </div>
+            <div>
+              <dt>过期时间</dt>
+              <dd>
+                <time dateTime={item.target.expiresAt}>
+                  {new Date(item.target.expiresAt).toLocaleString()}
+                </time>
+              </dd>
+            </div>
+            <div>
+              <dt>动作摘要</dt>
+              <dd>
+                <MonoText>{item.target.actionDigest}</MonoText>
+              </dd>
+            </div>
+          </dl>
+          <section aria-label="已验证参数预览">
+            <pre className={styles.approvalPreview}>
+              {item.target.validatedArgumentsPreview}
+            </pre>
+          </section>
+          {Date.parse(item.target.expiresAt) <= Date.now() ? (
+            <p className={styles.expiredApproval} role="status">
+              此工具动作审批已过期，不能再批准或拒绝。
+            </p>
+          ) : (
+            <ResolveExecutableApprovalForm
+              actor={actor}
+              projectId={projectId}
+              approvalId={item.target.approvalId}
+              approvalRevision={item.target.revision}
+              summary={item.summary}
+              token={token}
+              onSubmitted={onSubmitted}
+            />
+          )}
         </>
       ) : (
         <>

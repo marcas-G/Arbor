@@ -317,6 +317,158 @@ describe("W-08 Governance Queue（待处理）", () => {
     });
   });
 
+  it("submits the exact Executable approval while keeping cap: on the Control route", async () => {
+    const approvalId = "eap:prj_1:exe_1:4:0:0:la_1:call_1:tinv_1";
+    const executableEntry = {
+      entryKey: `eap:${approvalId}:0`,
+      kind: "Governance",
+      summary: "shell action awaits human approval",
+      watermark: 11,
+      target: {
+        kind: "ExecutableApproval",
+        approvalId,
+        revision: 0,
+        executionId: "exe_1",
+        toolName: "shell",
+        toolVersion: "1.0.0",
+        validatedArgumentsPreview: '{"command":"echo P38-UI-MARKER"}',
+        targetResourceSpaceIds: ["space_workspace"],
+        capabilities: ["shell:exec"],
+        sideEffectSemantics: "NonIdempotent",
+        expiresAt: "2099-01-02T03:04:05.000Z",
+        actionDigest: "sha256:action-1",
+      },
+    };
+    const recorded = installProjectQueue(
+      [treeDto.nodes[0] as Record<string, unknown>],
+      () => [
+        {
+          entryKey: "cap:cap_deadbeef:0",
+          kind: "Governance",
+          summary: "Control route remains separate",
+          watermark: 10,
+        },
+        executableEntry,
+      ],
+      () => ({}),
+    );
+    renderQueue();
+    const executableButton = await screen.findByRole("button", {
+      name: /shell · revision 0/,
+    });
+    fireEvent.click(executableButton);
+    expect(screen.getByLabelText("已验证参数预览").textContent).toContain(
+      "P38-UI-MARKER",
+    );
+    expect(screen.getByText("NonIdempotent")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "批准并继续" }));
+    await waitFor(() =>
+      expect(recorded.urls.some((url) => url === "/commands")).toBe(true),
+    );
+    const body = recorded.bodies[recorded.urls.indexOf("/commands")] as Record<
+      string,
+      unknown
+    >;
+    expect(body.commandType).toBe("ResolveExecutableApproval");
+    expect(body.payload).toEqual({
+      approvalId,
+      expectedRevision: 0,
+      decision: "Approve",
+      reason: null,
+    });
+  });
+
+  it("shows an expired Executable approval without decision controls", async () => {
+    const approvalId = "eap:prj_1:exe_expired:1:0:0:la_2:call_2:tinv_2";
+    installProjectQueue(
+      [treeDto.nodes[0] as Record<string, unknown>],
+      () => [
+        {
+          entryKey: `eap:${approvalId}:0`,
+          kind: "Governance",
+          summary: "expired tool action",
+          watermark: 12,
+          target: {
+            kind: "ExecutableApproval",
+            approvalId,
+            revision: 0,
+            executionId: "exe_expired",
+            toolName: "shell",
+            toolVersion: "1.0.0",
+            validatedArgumentsPreview: '{"command":"echo expired"}',
+            targetResourceSpaceIds: [],
+            capabilities: ["shell:exec"],
+            sideEffectSemantics: "NonIdempotent",
+            expiresAt: "2000-01-01T00:00:00.000Z",
+            actionDigest: "sha256:expired",
+          },
+        },
+      ],
+      () => ({}),
+    );
+    renderQueue();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /shell · revision 0/ }),
+    );
+    expect(
+      screen.getByText("此工具动作审批已过期，不能再批准或拒绝。"),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("审批决定")).toBeNull();
+    expect(screen.queryByRole("button", { name: "批准并继续" })).toBeNull();
+  });
+
+  it("submits an Executable rejection with its optional reason", async () => {
+    const approvalId = "eap:prj_1:exe_reject:1:0:0:la_3:call_3:tinv_3";
+    const recorded = installProjectQueue(
+      [treeDto.nodes[0] as Record<string, unknown>],
+      () => [
+        {
+          entryKey: `eap:${approvalId}:2`,
+          kind: "Governance",
+          summary: "reject this exact tool action",
+          watermark: 13,
+          target: {
+            kind: "ExecutableApproval",
+            approvalId,
+            revision: 2,
+            executionId: "exe_reject",
+            toolName: "shell",
+            toolVersion: "1.0.0",
+            validatedArgumentsPreview: '{"command":"echo reject"}',
+            targetResourceSpaceIds: [],
+            capabilities: ["shell:exec"],
+            sideEffectSemantics: "NonIdempotent",
+            expiresAt: "2099-01-02T03:04:05.000Z",
+            actionDigest: "sha256:reject",
+          },
+        },
+      ],
+      () => ({}),
+    );
+    renderQueue();
+    fireEvent.change(await screen.findByLabelText("审批决定"), {
+      target: { value: "Reject" },
+    });
+    fireEvent.change(screen.getByLabelText("原因（可选）"), {
+      target: { value: "Reviewed target; action is not required." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "拒绝动作" }));
+    await waitFor(() =>
+      expect(recorded.urls.some((url) => url === "/commands")).toBe(true),
+    );
+    const body = recorded.bodies[recorded.urls.indexOf("/commands")] as Record<
+      string,
+      unknown
+    >;
+    expect(body.commandType).toBe("ResolveExecutableApproval");
+    expect(body.payload).toEqual({
+      approvalId,
+      expectedRevision: 2,
+      decision: "Reject",
+      reason: "Reviewed target; action is not required.",
+    });
+  });
+
   it("empty project → empty state, no fake cards", async () => {
     install({
       "responsibility-tree": () => ({ nodes: [] }),
