@@ -1,5 +1,11 @@
 # P4 — Contract Index
 
+**RAI-DG-01 amendment (DID v1.37 §8.18A.1):** P4 `06` retains exact
+`OutcomeUnknown(ReconciliationRequired(nonempty invocationRefs))` truth and
+no-blind-replay semantics; a Work-bound settlement is a readmission source
+through the validated EGP binding. Tool invocation settlement behavior is
+unchanged.
+
 **Authority:** DID v1.18, with P4 phase contracts frozen under DID v1.8 except
 where this index records the v1.18 source-of-truth supersession. These
 documents are **not** a fifth design layer; they are the P4-owned

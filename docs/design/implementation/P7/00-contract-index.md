@@ -1,5 +1,10 @@
 # P7 — 00 Contract Index
 
+**RAI-DG-01 amendment (DID v1.37 §8.18A.1):** P7 `03` keeps
+`RunnableWorkSource.classify` as the sole classifier and adds the durable
+exact-Work-revision gate to its same-snapshot inputs. WorkWait and Dependency
+semantics are unchanged; no new runnability port signature is introduced.
+
 > **MAC successor (DID v1.31):** Dependency/Deliverable structural semantics
 > remain, but their model-facing surface is hidden for new turns until MAC-P3
 > ships declare → produce → deliver → deterministic satisfy → exact wake as one

@@ -1,5 +1,10 @@
 # P2 — Contract Index
 
+**RAI-DG-01 amendment (DID v1.37 §8.18A.1):** P2 `02`/`05` own the
+durable WorkReadmissionGateStore port, Work-bound admission recheck and
+no-admission result. It leaves the EGP Work Episode as the identity source and
+adds no schema/table/migration.
+
 > **MAC successor (DID v1.31):** generic durable Execution, Lease/Fencing,
 > Wait and recovery contracts remain. Active new-write temporary parallel Agent
 > semantics and MAC phase gates are owned by `docs/design/implementation/MAC/**`.

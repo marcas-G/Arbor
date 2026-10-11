@@ -16,6 +16,64 @@
 | Verifier orphan | Open verification × settled executions (derived condition, P8 `02` §3) | Attention | owner workspace |
 | Vacant producer (P7-GAP-01) | derived: dependencies(Unsatisfied ∧ WorkspaceBound) × works(无 Open Work ∧ ¬Retired) | Attention | consumer workspace (view label `WaitingOnVacantProducer`) |
 
+### 1.1 RAI-DG-01 Work-revision freshness for active Attention
+
+For Work-bound source rows only, Runtime Safety Envelope,
+`ReconciliationEscalated`, AssignWork binding failure and Deliver replay
+failure are active when and only when the source Execution's validated EGP Work
+Episode `(workId, workRevision)` equals the canonical Work's current
+`(workId, revision)` in the same read snapshot. The internal read contract
+carries `sourceExecutionId`; this is not a wire/DTO field. Resolve it through
+`executions` and `agent_execution_state.episode_json`, then validate exact
+Project, owning Workspace and Work identity. Do not infer Work identity from
+the Attention target Workspace.
+
+Source materialization retains its existing source identity: journal event id
+for event-derived facts, P9 fact id for fact-table sources, and the SafetyStop
+Execution id. `loadAttentionFacts` applies the Work revision filter before
+deriving event/fact rows. `listProjectedAssignWorkBindingFailures` and
+`listDeliverReplayFailures` apply the same source-Execution join and canonical
+revision filter in their read transaction; catch-up removes stale active rows.
+Detail queries and subtree bubbling omit stale rows immediately after the
+canonical revision advances, even if WorkSteered ingestion lags. Rebuilds
+reconstruct active rows only; active queries continue to filter against the
+same-snapshot Work revision before catch-up. Immutable settlement/fact/event
+sources remain in the audit timeline.
+
+Malformed or absent/unknown-version episode binding on a source Execution,
+missing/duplicate source rows or Execution, fact/event mismatch, future source
+revision, or cross-project/workspace mismatch returns typed
+`ProjectionIntegrityFailure` with only bounded identity fields. Its source and
+reason fields are closed:
+
+```ts
+type ProjectionIntegrityFailure = {
+  readonly _tag: "ProjectionIntegrityFailure";
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly workId?: WorkId;
+  readonly executionId: ExecutionId;
+  readonly sourceKind: "RuntimeSafetyEnvelope" | "ReconciliationEscalated"
+    | "AssignWorkTargetBindingFailure" | "DeliverReplayFailure";
+  readonly reasonCode: "SourceExecutionMissing" | "SourceExecutionNonUnique"
+    | "SourceEpisodeStateMissing" | "SourceEpisodeStateNonUnique"
+    | "EpisodeMalformed" | "EpisodeVersionUnsupported"
+    | "SourceFactEventMismatch" | "SourceEventExecutionMismatch"
+    | "SourceProjectMismatch" | "SourceWorkspaceMismatch"
+    | "SourceTargetMismatch" | "WorkMissing" | "WorkScopeMismatch"
+    | "FutureWorkRevision" | "SettlementMalformed";
+};
+```
+
+No parser, SQLite, receipt or provider text is returned; no candidate is
+guessed or silently dropped. The P10 projector remains read-only with respect
+to canonical state.
+
+`OutcomeUnknown(ReconciliationRequired(nonempty refs))` is a P2/P7
+readmission source even without a P10 row. It does not synthesize Attention
+unless an existing P10 source fact exists. Attention rows, subtree counts,
+queue position and consumer ACK never create or release a Runtime hold.
+
 - Normal is the absence of facts (default state, not a row).
 - Human-required approval maps to Action Required when a governance gate awaits human decision (formation approval pending — P6 `01` §4).
 

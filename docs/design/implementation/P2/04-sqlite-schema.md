@@ -109,6 +109,15 @@ CREATE TABLE agent_execution_state (
 Fields mirror DID §3.7. High-frequency `turn_no` updates are runtime
 operational writes; they never enter the Project Domain Event journal.
 
+**Final EGP schema used by RAI-DG-01:** the DDL above is the historical P2
+`0002` shape. Migration `0026` rebuilt `agent_execution_state` around the
+durable exact `episode_json` binding; subsequent contracts must join that
+canonical column to `executions.execution_id` and decode the frozen
+`ExecutionEpisodeBinding`. The readmission query uses the resulting Work
+`(workId, workRevision)` binding and existing settlement/fact/event rows in a
+single `TransactionScope`. This governance amendment adds no column, table,
+index, or migration.
+
 ### 3.4 session_entries
 
 ```sql
