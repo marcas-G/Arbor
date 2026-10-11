@@ -463,50 +463,34 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
             try {
               payload = record(decodeJson(event.payload_json));
             } catch {
-              const byAggregate = executionsById.get(event.aggregate_ref);
-              if (byAggregate?.workspace_id === input.workspaceId) {
-                return yield* Effect.fail(
-                  makeIntegrity(
-                    "SourceEventExecutionMismatch",
-                    byAggregate.execution_id as ExecutionId,
-                    "ReconciliationEscalationEvent",
-                  ),
-                );
-              }
-              continue;
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceEventExecutionMismatch",
+                  event.aggregate_ref as ExecutionId,
+                  "ReconciliationEscalationEvent",
+                ),
+              );
             }
             const executionId = payload?.executionId;
             const payloadExecutionId =
               typeof executionId === "string" ? executionId : undefined;
-            const aggregateExecution = executionsById.get(event.aggregate_ref);
-            const payloadExecution =
-              payloadExecutionId === undefined
-                ? undefined
-                : executionsById.get(payloadExecutionId);
-            const inRequestedWorkspace =
-              aggregateExecution?.workspace_id === input.workspaceId ||
-              payloadExecution?.workspace_id === input.workspaceId;
             const identitiesMatch =
               payloadExecutionId !== undefined &&
               event.aggregate_ref === payloadExecutionId;
             if (!identitiesMatch) {
-              if (inRequestedWorkspace) {
-                const candidateExecutionId =
-                  aggregateExecution?.workspace_id === input.workspaceId
-                    ? aggregateExecution.execution_id
-                    : (payloadExecution?.execution_id ?? event.aggregate_ref);
-                return yield* Effect.fail(
-                  makeIntegrity(
-                    "SourceEventExecutionMismatch",
-                    candidateExecutionId as ExecutionId,
-                    "ReconciliationEscalationEvent",
-                  ),
-                );
-              }
-              continue;
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceEventExecutionMismatch",
+                  (payloadExecutionId ?? event.aggregate_ref) as ExecutionId,
+                  "ReconciliationEscalationEvent",
+                ),
+              );
             }
-            if (!inRequestedWorkspace) continue;
-            if (Number(event.event_version) !== 1) {
+            if (
+              Number(event.event_version) !== 1 ||
+              typeof payload?.invocationRefsFingerprint !== "string" ||
+              !Array.isArray(payload.refs)
+            ) {
               return yield* Effect.fail(
                 makeIntegrity(
                   "SourceEventExecutionMismatch",
@@ -515,7 +499,39 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
                 ),
               );
             }
-            if (payloadExecution === undefined) {
+            const execution = executionsById.get(payloadExecutionId);
+            if (execution === undefined) {
+              const scopeRows = yield* run(
+                sql.unsafe<{
+                  readonly execution_id: string;
+                  readonly project_id: string;
+                  readonly workspace_id: string;
+                }>(
+                  `SELECT execution_id, project_id, workspace_id
+                     FROM executions WHERE execution_id = ?`,
+                  [payloadExecutionId],
+                ),
+              );
+              const sourceScope = scopeRows[0];
+              if (sourceScope === undefined) {
+                return yield* Effect.fail(
+                  makeIntegrity(
+                    "SourceExecutionMissing",
+                    payloadExecutionId as ExecutionId,
+                    "ReconciliationEscalationEvent",
+                  ),
+                );
+              }
+              if (sourceScope.project_id !== input.projectId) {
+                return yield* Effect.fail(
+                  makeIntegrity(
+                    "SourceProjectMismatch",
+                    payloadExecutionId as ExecutionId,
+                    "ReconciliationEscalationEvent",
+                  ),
+                );
+              }
+              if (sourceScope.workspace_id !== input.workspaceId) continue;
               return yield* Effect.fail(
                 makeIntegrity(
                   "SourceExecutionMissing",
@@ -524,6 +540,16 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
                 ),
               );
             }
+            if (execution.project_id !== input.projectId) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceProjectMismatch",
+                  payloadExecutionId as ExecutionId,
+                  "ReconciliationEscalationEvent",
+                ),
+              );
+            }
+            if (execution.workspace_id !== input.workspaceId) continue;
             candidates.push({
               executionId: payloadExecutionId as ExecutionId,
               kind: "ReconciliationEscalationEvent",

@@ -31,6 +31,10 @@ const otherWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789c2";
 const otherSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789c2";
 const otherWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789c2";
 const otherExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789c2";
+const otherProjectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789c2";
+const otherProjectWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789c3";
+const otherProjectSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789c3";
+const otherProjectExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789c3";
 
 const makeApp = () => {
   const sqlite = layer({ filename: ":memory:" });
@@ -197,6 +201,70 @@ const seedOtherWorkspaceExecution = Effect.gen(function* () {
           JSON.stringify({
             _tag: "WorkEpisode",
             workId: otherWorkId,
+            targetWorkRevision: 0,
+          }),
+        ],
+      );
+    }),
+  );
+});
+
+const seedOtherProjectExecution = Effect.gen(function* () {
+  const sql = yield* SqlClient;
+  const tx = yield* TransactionPort;
+  yield* tx.transact(
+    Effect.gen(function* () {
+      yield* sql.unsafe(
+        `INSERT INTO projects (
+          project_id, name, root_workspace_id, project_policy,
+          project_policy_revision, default_configuration, environment_ref,
+          lifecycle, revision, created_at, updated_at
+        ) VALUES (?, 'other project', ?, '{}', 0, '{}', 'local', 'Open', 0, 't0', 't0')`,
+        [otherProjectId, otherProjectWorkspaceId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO sessions (
+          session_id, binding_kind, workspace_id, execution_id,
+          context_epoch, created_at
+        ) VALUES (?, 'WorkspacePrimary', ?, NULL, 0, 't0')`,
+        [otherProjectSessionId, otherProjectWorkspaceId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO workspaces (
+          workspace_id, project_id, parent_workspace_id, name,
+          responsibility_definition, responsibility_revision,
+          resource_boundary, resource_boundary_revision, agent_binding,
+          primary_session_id, current_work_id, workspace_policy,
+          workspace_policy_revision, revision, lifecycle, created_at, updated_at
+        ) VALUES (?, ?, NULL, 'Other Project', '{}', 0, '{}', 0, '{}', ?, NULL, '{}', 0, 0, 'Active', 't0', 't0')`,
+        [otherProjectWorkspaceId, otherProjectId, otherProjectSessionId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO executions (
+          execution_id, project_id, binding_kind, workspace_id,
+          episode_kind, episode_ref, episode_revision, parent_execution_id,
+          mission, session_id, admitted_at, stop_requested_at,
+          settlement_kind, settlement_json, settled_at
+        ) VALUES (?, ?, 'workspace', ?, 'WorkEpisode', 'wrk_other_project', 0,
+          NULL, NULL, ?, 't0', NULL, NULL, NULL, NULL)`,
+        [
+          otherProjectExecutionId,
+          otherProjectId,
+          otherProjectWorkspaceId,
+          otherProjectSessionId,
+        ],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO agent_execution_state (
+          execution_id, episode_json, wake_reason, current_mode,
+          active_skill_refs_json, turn_no, recent_directive_refs_json,
+          recent_action_fingerprints_json, updated_at
+        ) VALUES (?, ?, 'Initial', NULL, '[]', 0, '[]', '[]', 't0')`,
+        [
+          otherProjectExecutionId,
+          JSON.stringify({
+            _tag: "WorkEpisode",
+            workId: "wrk_other_project",
             targetWorkRevision: 0,
           }),
         ],
@@ -397,7 +465,7 @@ describe("P2 WorkReadmissionGateStore", () => {
             '"reasonCode":"SourceEventExecutionMismatch"',
           );
           expect(JSON.stringify(exit.cause)).toContain(
-            `"executionId":"${executionId}"`,
+            `"executionId":"${otherExecutionId}"`,
           );
         }
       }),
@@ -437,6 +505,49 @@ describe("P2 WorkReadmissionGateStore", () => {
         if (exit._tag === "Failure") {
           expect(JSON.stringify(exit.cause)).toContain(
             '"reasonCode":"SourceEventExecutionMismatch"',
+          );
+        }
+      }),
+    ));
+
+  it("fails closed when both ReconciliationEscalated identities match but the Execution is missing", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        const missingExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789fe";
+        yield* appendReconciliationEvent(
+          missingExecutionId,
+          missingExecutionId,
+        );
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SourceExecutionMissing"',
+          );
+          expect(JSON.stringify(exit.cause)).toContain(
+            `"executionId":"${missingExecutionId}"`,
+          );
+        }
+      }),
+    ));
+
+  it("fails closed when both ReconciliationEscalated identities match an Execution in another Project", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* seedOtherProjectExecution;
+        yield* appendReconciliationEvent(
+          otherProjectExecutionId,
+          otherProjectExecutionId,
+        );
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SourceProjectMismatch"',
           );
         }
       }),
