@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   linkSync,
   mkdtempSync,
   rmSync,
@@ -313,6 +314,23 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     try {
       chmodSync(directory, 0o777);
       expect(validateP39ProtectedDirectory(directory)).toBe(false);
+    } finally {
+      chmodSync(directory, 0o700);
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("checks a primary parent before creating a missing database file", () => {
+    if (process.platform === "win32") return;
+    const directory = mkdtempSync(
+      join(process.cwd(), ".p39-primary-parent-preflight-test-"),
+    );
+    const primary = join(directory, "primary.sqlite");
+    try {
+      chmodSync(directory, 0o777);
+      const prepared = prepareP39PrimaryDatabasePath(primary);
+      expect("databaseFilename" in prepared).toBe(false);
+      expect(existsSync(primary)).toBe(false);
     } finally {
       chmodSync(directory, 0o700);
       rmSync(directory, { recursive: true, force: true });

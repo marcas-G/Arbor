@@ -131,6 +131,19 @@ const runWith = <A>(
   ) as Promise<A>;
 
 describe("p12 production composition (B-6 / B-7 / B-8)", () => {
+  it("P39: refuses an in-memory production database before runtime assembly", () => {
+    let failure: unknown;
+    try {
+      buildSingleWorkspaceLayer({ databaseFile: ":memory:" });
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toMatchObject({
+      _tag: "P39MaintenanceFailure",
+      code: "P39_UNSUPPORTED_DEPLOYMENT",
+    });
+  });
+
   it("B-6: production wires the P7 dependency-aware RunnableWorkSource (a waiting Open work is not runnable)", async () => {
     const dir = mkdtempSync(join(suiteTmp, "b6-"));
     const outcome = await runWith(

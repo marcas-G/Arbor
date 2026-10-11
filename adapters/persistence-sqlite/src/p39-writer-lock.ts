@@ -88,7 +88,7 @@ const validateP39ProtectedPath = (
         "$w=[Security.Principal.WindowsIdentity]::GetCurrent()",
         "$u=$w.User.Value",
         "$t=@($u,'S-1-5-18','S-1-5-32-544')",
-        "$m=[int][Security.AccessControl.FileSystemRights]::Write -bor [int][Security.AccessControl.FileSystemRights]::Modify -bor [int][Security.AccessControl.FileSystemRights]::FullControl -bor [int][Security.AccessControl.FileSystemRights]::CreateFiles -bor [int][Security.AccessControl.FileSystemRights]::Delete -bor [int][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [int][Security.AccessControl.FileSystemRights]::ChangePermissions -bor [int][Security.AccessControl.FileSystemRights]::TakeOwnership",
+        "$m=[int][Security.AccessControl.FileSystemRights]::WriteData -bor [int][Security.AccessControl.FileSystemRights]::AppendData -bor [int][Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor [int][Security.AccessControl.FileSystemRights]::WriteAttributes -bor [int][Security.AccessControl.FileSystemRights]::Delete -bor [int][Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [int][Security.AccessControl.FileSystemRights]::ChangePermissions -bor [int][Security.AccessControl.FileSystemRights]::TakeOwnership",
         "$g=$false",
         "foreach($r in $a.Access){$sid=$r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($r.AccessControlType -eq 'Allow' -and (([int]$r.FileSystemRights -band $m) -ne 0)){if(!($t -contains $sid)){exit 3};if($sid -eq $u){$g=$true}}}",
         "$o=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value",
@@ -137,10 +137,7 @@ export const p39WriterLockFilename = (
     primaryDatabaseFilename.trim().length === 0 ||
     primaryDatabaseFilename.startsWith("file:")
   ) {
-    return {
-      _tag: "P39WriterLockFailure",
-      code: "P39_WRITER_LOCK_PATH_INVALID",
-    };
+    return unsupportedWriterDeployment();
   }
   try {
     const resolved = resolve(primaryDatabaseFilename);
@@ -245,7 +242,7 @@ export const prepareP39PrimaryDatabasePath = (
     filename.trim().length === 0 ||
     filename.startsWith("file:")
   ) {
-    return invalidLockPath();
+    return unsupportedWriterDeployment();
   }
   try {
     const resolved = resolve(filename);
@@ -257,9 +254,12 @@ export const prepareP39PrimaryDatabasePath = (
       canonicalParent.startsWith("\\\\") ||
       (process.platform === "win32" &&
         !/^(?:\\\\\?\\)?[a-z]:\\/iu.test(canonicalParent)) ||
-      !isSupportedLocalFilesystem(canonicalParent, true)
+      !isSupportedLocalFilesystem(canonicalParent)
     ) {
       return invalidLockPath();
+    }
+    if (!validateP39ProtectedDirectory(canonicalParent)) {
+      return unsupportedWriterDeployment();
     }
     if (!existsSync(resolved)) {
       try {
@@ -314,10 +314,7 @@ const normalizeForPlatform = (path: string): string => {
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 };
 
-const isSupportedLocalFilesystem = (
-  path: string,
-  allowTemporaryFs = false,
-): boolean => {
+const isSupportedLocalFilesystem = (path: string): boolean => {
   try {
     if (process.platform === "win32") {
       const encoded = Buffer.from(path, "utf8").toString("base64");
@@ -347,7 +344,6 @@ const isSupportedLocalFilesystem = (
       0xf2f52010, // F2FS
       0x2011bab0, // exFAT
       0x00004d44, // FAT
-      ...(allowTemporaryFs ? [0x01021994] : []), // tmpfs (primary test data only)
     ]);
     return supportedLocalTypes.has(filesystemType);
   } catch {
@@ -362,7 +358,10 @@ const isSupportedLocalFilesystem = (
 export const p39WriterLockLayer = (
   filename: string,
   busyTimeoutMs = 30_000,
-): Layer.Layer<P39WriterLockClient, SqliteAdapterError> => {
+): Layer.Layer<
+  P39WriterLockClient,
+  SqliteAdapterError | P39WriterLockFailure
+> => {
   const lockClient = Layer.effect(
     P39WriterLockClient,
     Effect.gen(function* () {
@@ -371,11 +370,7 @@ export const p39WriterLockLayer = (
         !validateP39ProtectedDirectory(dirname(filename)) ||
         !validateP39ProtectedFile(filename)
       ) {
-        return yield* Effect.fail(
-          sqliteAdapterError(
-            "P39 writer lock deployment identity is unsupported",
-          ),
-        );
+        return yield* Effect.fail(unsupportedWriterDeployment());
       }
       const currentMode = yield* sql.unsafe<{ journal_mode: string }>(
         "PRAGMA journal_mode",
@@ -501,17 +496,25 @@ export const p39WriterLockLayer = (
         release,
       });
     }).pipe(
-      Effect.mapError((cause) =>
-        typeof cause === "object" &&
-        cause !== null &&
-        "_tag" in cause &&
-        cause._tag === "SqliteAdapterError"
+      Effect.mapError((cause) => {
+        if (
+          typeof cause === "object" &&
+          cause !== null &&
+          "_tag" in cause &&
+          cause._tag === "P39WriterLockFailure"
+        ) {
+          return cause as P39WriterLockFailure;
+        }
+        return typeof cause === "object" &&
+          cause !== null &&
+          "_tag" in cause &&
+          cause._tag === "SqliteAdapterError"
           ? (cause as SqliteAdapterError)
           : sqliteAdapterError(
               "failed to initialize P39 writer lock database",
               cause,
-            ),
-      ),
+            );
+      }),
     ),
   );
   return Layer.provide(

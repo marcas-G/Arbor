@@ -447,7 +447,6 @@ const withP39RuntimeWriterPermit = <A, E, R>(
   E | P39WriterLockFailure | SqliteAdapterError,
   Exclude<R, Scope.Scope>
 > => {
-  if (primaryDatabaseFilename === ":memory:") return Effect.scoped(use);
   const prepared = prepareP39PrimaryDatabasePath(primaryDatabaseFilename);
   if (!("databaseFilename" in prepared)) return Effect.fail(prepared);
   return Effect.scoped(
