@@ -286,6 +286,27 @@ describe("P10-008 Inbox view (01 §1 InboxViewReq/Res; P9 05 §3.2)", () => {
     expect(JSON.stringify(view)).not.toContain("deploy --token");
   });
 
+  it("keeps __proto__ inert while projecting a prototype-safe validated preview", async () => {
+    const argumentsJson = '{"__proto__":{"polluted":"safe"},"mode":"dry-run"}';
+    const schemaJson =
+      '{"type":"object","required":["__proto__","mode"],"properties":{"__proto__":{"type":"object","required":["polluted"],"properties":{"polluted":{"type":"string","enum":["safe"]}}},"mode":{"type":"string","enum":["dry-run"]}}}';
+    const deps = {
+      ...approvalInboxDeps(
+        "eap:approval-7:0",
+        approvalRecord({ argumentsJson }),
+      ),
+      resolveToolDefinition: () =>
+        Effect.succeed(Option.some({ ...toolDefinition, schemaJson })),
+    };
+
+    const view = await Effect.runPromise(deriveInboxView(p10Root, deps));
+    expect(view.unconsumed[0]?.target).toMatchObject({
+      validatedArgumentsPreview:
+        '{"__proto__":{"polluted":"safe"},"mode":"dry-run"}',
+    });
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
   it("does not resolve a Control cap target or infer an approval from Inbox summary text", async () => {
     let approvalLookups = 0;
     const deps = {

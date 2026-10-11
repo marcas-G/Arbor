@@ -88,6 +88,15 @@ const WRITE_FACE_PATTERNS: ReadonlyArray<{
   { pattern: /sql\.unsafe\s*\(/, label: "direct SQL" },
 ];
 
+/** `Object.create(null)` constructs a prototype-free in-memory mapping; it is
+ * not a repository write face. Remove only that standard intrinsic from this
+ * source scan so arbitrary receiver `.create(...)` calls remain prohibited. */
+const sourceWithoutPrototypeSafeObjectCreation = (source: string): string =>
+  source.replace(
+    /\bObject\s*\.\s*create\s*\(\s*null\s*\)/g,
+    "Object_create(null)",
+  );
+
 describe("p10-architecture (projection-runtime)", () => {
   it("projection-runtime exists with its contract modules", () => {
     for (const relativePath of [
@@ -129,10 +138,27 @@ describe("p10-architecture (projection-runtime)", () => {
   it("zero canonical mutation — no write-face call sites in projection-runtime (GQ3/G8; P10 `02` §3)", () => {
     for (const file of projectionRuntimeFiles()) {
       const violations = WRITE_FACE_PATTERNS.filter((entry) =>
-        entry.pattern.test(file.source),
+        entry.pattern.test(
+          sourceWithoutPrototypeSafeObjectCreation(file.source),
+        ),
       ).map((entry) => entry.label);
       expect(violations, file.path).toEqual([]);
     }
+  });
+
+  it("allows prototype-safe in-memory object construction but still rejects repository create calls", () => {
+    const safeMapping = sourceWithoutPrototypeSafeObjectCreation(
+      "const mapping = Object.create(null);",
+    );
+    const repositoryWrite = sourceWithoutPrototypeSafeObjectCreation(
+      "approvalRepository.create(record);",
+    );
+    const createPattern = WRITE_FACE_PATTERNS.find(
+      (entry) => entry.label === "repository create",
+    )?.pattern;
+    expect(createPattern).toBeDefined();
+    expect(createPattern?.test(safeMapping)).toBe(false);
+    expect(createPattern?.test(repositoryWrite)).toBe(true);
   });
 
   it("the frozen source map and dedup identities are present verbatim (P10 `02` §1/§2; GAP-01 non-descopement)", () => {
