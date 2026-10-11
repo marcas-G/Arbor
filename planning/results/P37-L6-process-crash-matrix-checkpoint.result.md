@@ -29,8 +29,8 @@ Status: **test source / probe checkpoint only; qualification not run**
   — nine isolated process cases across the requested crash groups. The suite
   creates a Project and child Work through public APIs, produces a real
   Artifact/Deliverable, then holds the Deliver action at process-local commit
-  boundaries. Recovery corruption changes only that test DB's exact
-  DeliverMessage result row.
+  boundaries. Receipt corruption and Inbox drift/deletion mutations are
+  confined to the isolated test DB.
 
 ## Matrix coverage checklist
 
