@@ -70,63 +70,69 @@ without coherent durable handoff, but the exact failure Action disposition or
 Attention projection for a deliberately corrupted active binding is not
 uniquely specified.
 
-## Fixed proposal and contract review (2026-10-11)
+## P41 proposal revision for independent review (2026-10-11)
 
-The fixed proposal is
+The coordinator's independent review returned **Blocking = 2**. Its review
+artifact was not present in this worktree; this revision addresses the two
+findings supplied in the delegation and does not claim a replacement review.
+The revised proposal remains DRAFT:
 `planning/proposals/agent-loop-submitted-binding-rejection-terminalization-draft.md`.
-It recommends an exact nonterminal disposition: preserve the Execution Active,
-the Step `ActionsInProgress`, and the Action Pending; atomically persist one
-P9-owned binding-failure fact/event and return `RecoveryBlocked`; project one
-public P10 `ActionRequired` row to the authoritative Execution Workspace. The
-fact, rather than a fabricated `Failed` settlement or `TerminalRejected`
-Action, is the durable reason this exact identity cannot resume. Later
-generations check that fact before model-context/ProviderTurn creation, Provider
-requests, Command replay, or Action processing. Existing Committed receipt and
-canonical state remain immutable evidence.
+Without Stop it keeps P9 `RecoveryBlocked` plus public `ActionRequired`. It now
+adds the existing authorized human `StopExecution` as the safe route to release
+the otherwise occupied active slot. Stop-before-fact detection writes the P9
+fact/event in the same `TransactionScope` as P3 Action/Step quiescence; if the
+fact commits first, the later Stop consumes that same fact. P3 closes the
+current control Action as `TerminalRejected` with a fixed Stop disposition,
+closes later Pending rows as `SkippedEarlySettlement`, and persists
+`SettlementProposed(Interrupted(StopRequested))` under the full current lease
+fence. P2 requires no unresolved side-effect refs and settles only that
+proposal through `RecoveryController`. The Committed receipt/canonical
+selection remain unchanged; the P9 fact and P10 row remain public after
+settlement. No automatic repair, resume, dismissal, or success claim is
+introduced.
 
-Disposition ownership proposed for manual review:
+The two Blocking findings are addressed as follows:
 
-- P3 `08`: classify only the two reproduced mismatches (Submitted
-  DecisionRequest Workspace != Execution Workspace; settled Provider result
-  Manifest != exact Step Manifest), then fail closed before Provider/action/
-  Command/Observation/settlement transitions.
-- P9 `07`: own the new immutable
-  `SubmittedDecisionBindingEscalated` event and durable fact identity, the
-  lease-fenced atomic write, repeatable RecoveryBlocked path, and audit-only
-  classification of already-settled historical orphans.
-- P2 `06`: return/release the current lease without `SettleExecution`, and
-  consult the fact before active-Step redispatch.
-- P10 `02`/`07`: expose the source as one safe `ActionRequired` Attention at
-  `executions.workspace_id`, with stable deduplication and restart/rebuild
-  behavior.
-- DID §5.3/§7.2/§9.3: register the Event/ports and a proposed additive
-  migration 0036 for P9 fact and P10 source projection rows. No existing
-  canonical or receipt row is rewritten; exact active mismatches are classified
-  by recovery after upgrade.
+1. **Migration/version collision:** f80ee91 is DID v1.36 / `user_version=35`
+   (P35). The P36–P39 integrated design tree is
+   `codex/governance-p36-p38-integration@5e5b1296f17cfa10ab90815f24d2d0f1afebcd9d`,
+   DID v1.40; its result records that migration implementations/registration
+   0036–0039 and qualification are not integrated. P40 is separately accepted
+   in external commit `ce1cea5` with physical supplement SHA
+   `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`; its
+   acceptance says owner landing and cumulative migration-runner qualification
+   are still blocked. The fixed allocation is **P41 / migration 0041**, after
+   the ordered 0036–0040 prefix and its integration/qualification. The design
+   target is DID v1.42 after unified DID v1.41. 0041 cannot be independently
+   registered, implemented, run from v35, skipped, or released.
+2. **Stop/quiescence:** permanent `RecoveryBlocked` alone conflicts with the
+   P2 Stop path and leaves the Workspace slot occupied. The P41 package now
+   requires fact-before-Stop and Stop-before-fact ordering; the latter writes
+   the P9 fact/event and P3 Stop closure atomically. For a blocked selection,
+   P3 closes the current Pending Action as `TerminalRejected` with a
+   Stop-specific disposition, closes later Pending rows as
+   `SkippedEarlySettlement`, and persists
+   `SettlementProposed(Interrupted(StopRequested))` under the full lease
+   fence. P2 RecoveryController may settle only after that proposal and an
+   empty unresolved-side-effect source. Attention is retained and no old
+   Provider/Command/action replay occurs. This pins the minimal P3 control
+   Action stop-closure semantics; it does not add a new Action state or
+   settlement tag.
 
-The accepted DID v1.28 EGP contract mechanically rejects DecisionEpisode
-binding/result mismatch, P3 `08` §2/§8 fixes the Step/Manifest identity and
-requires durable Attention for a successor-identity mismatch, and P9 `07` §3
-already routes contradictory legacy evidence to Attention without blind
-replay/direct settlement. However, those clauses do not specify this exact
-non-legacy `ActionsInProgress` disposition or a public DecisionEpisode
-Attention source. The accepted AH10 direct-child AssignWork package (DID v1.33
-§6A.16; P9 `07` §2; P10 `02` §1–2 and `07` Story I) is the closest precedent:
-its unprovable Committed receipt remains Action Pending and RecoveryBlocked,
-with a P9 fact/event projected by P10. Its AssignWork-specific source and
-identity cannot be reused for DecisionEpisode. The fixed proposal therefore
-requires manual owner amendment; the existing contracts are not sufficient for
-direct implementation.
+The fixed package also specifies a P9 post-0041 startup scan before the
+settled-Execution short-circuit. It enumerates exact settled-Failed /
+DecisionEpisode / `ActionsInProgress` / Pending-SelectCurrentWork rows, emits
+audit-only Attention (specific mismatch code if still provable, otherwise
+`SettledExecutionWithPendingDecisionAction`), and never resurrects or rewrites
+them. A two-connection, two-process duplicate fact-writer race must produce one
+immutable fact/event. The pending RED now invokes public `StopExecution` after
+the fact-backed block and asserts that `Interrupted(StopRequested)` frees the
+Execution while Attention remains. Stop-before-fact, crash boundaries, the
+migration audit, and duplicate-writer qualification remain specified, not run.
+The edited test was **not run**. No full functional suite or daemon was run,
+and this tree changes no production or `docs/design/**` files.
 
-The pending test was minimally strengthened to require no new Command, no
-Provider call, one P9 event, and one public Attention row while preserving the
-exact Pending Action/`ActionsInProgress` state. This edited test was **not run**;
-the RED command evidence above predates that assertion change. No production,
-`docs/design/**`, or runtime files changed. No full functional suite or daemon
-was run for this proposal review.
-
-Fixed proposal SHA-256 over its LF Git-clean bytes:
-`5EE261AC50E5FFDDA8E25B4EE9870447E4EA3665E515DD14FAB722F207A6B740`.
+Proposal SHA-256 over LF Git-clean bytes: `C3793AD0CC77565F358C5A3DB70E77D7F1C3F146A4281053603DFD7986BA5724`.
 
 The tests remain under `tests/functional/pending/`; do not count this expected
 failure as default functional coverage or claim a green release batch. No
