@@ -499,6 +499,7 @@ const deliverAndHoldCommittedReceipt = async (marker: string) => {
       provider_turn_id: string;
       logical_action_id: string;
       state: string;
+      observation_source_ref: string | null;
     },
     message: message as { message_id: string },
   };
@@ -1063,6 +1064,174 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     expect(newDaemon.daemonErrors).toEqual([]);
     await newDaemon.crash();
   }, 180_000);
+  it("blocks a Committed receipt when a still-present Inbox row no longer matches", async () => {
+    const marker = `P37-L6-INBOX-MISMATCH-${crypto.randomUUID().slice(0, 8)}`;
+    const prepared = await deliverAndHoldCommittedReceipt(marker);
+    await prepared.fixture.crash();
+    const inboxDb = new DatabaseSync(prepared.fixture.databaseFile);
+    try {
+      const changed = inboxDb
+        .prepare(
+          "UPDATE inbox_entries SET summary = 'drifted before recovery' WHERE entry_key = ?",
+        )
+        .run(`msg:${prepared.message.message_id}`);
+      expect(Number(changed.changes)).toBe(1);
+    } finally {
+      inboxDb.close();
+    }
+    await waitForLeaseExpiry(
+      prepared.fixture.databaseFile,
+      prepared.action.execution_id,
+    );
+    const recovery = await startP37RecoveryDaemon(
+      prepared.fixture,
+      "new",
+      prepared.probes,
+      "AfterDeliverReplayAttentionCommit,P10AfterAttentionRowWriteBeforeConsumerCommit",
+    );
+    const failure = await awaitP37Probe(
+      prepared.probes,
+      (probe) =>
+        probe.role === "new" &&
+        probe.boundary === "AfterDeliverReplayAttentionCommit" &&
+        probe.logicalActionId === prepared.action.logical_action_id,
+    );
+    expect(failure?.failureCode).toBe("PriorReceiptResultMismatch");
+    expect(failure?.messageId).toBe(prepared.message.message_id);
+    await awaitP37Probe(
+      prepared.probes,
+      (probe) =>
+        probe.role === "new" &&
+        probe.boundary === "P10AfterAttentionRowWriteBeforeConsumerCommit" &&
+        probe.attentionFactId === failure?.attentionFactId,
+    );
+    const atFailure = readP37Snapshot(prepared.fixture.databaseFile);
+    expect(atFailure.facts).toHaveLength(1);
+    expect(atFailure.replayEvents).toHaveLength(1);
+    expect(
+      atFailure.commands.filter((row) => row.command_type === "DeliverMessage"),
+    ).toHaveLength(1);
+    expect(atFailure.messages).toHaveLength(1);
+    expect(atFailure.messageEvents).toHaveLength(1);
+    expect(atFailure.inbox).toHaveLength(1);
+    expect((atFailure.inbox[0] as { summary: string }).summary).toBe(
+      "drifted before recovery",
+    );
+    expect((atFailure.actions[0] as { state: string }).state).not.toBe(
+      "Applied",
+    );
+    expect(
+      atFailure.observations.filter(
+        (row) =>
+          (row as { source_ref: string }).source_ref ===
+          prepared.action.observation_source_ref,
+      ),
+    ).toHaveLength(0);
+    await recovery.crash();
+    await waitForLeaseExpiry(
+      prepared.fixture.databaseFile,
+      prepared.action.execution_id,
+    );
+    await restartP37Normally(prepared.fixture);
+    const attention = await waitForPublic(
+      () =>
+        publicDeliverReplayRows(prepared.client, prepared.project.projectId),
+      (rows) =>
+        rows.length === 1 && rows[0]?.dedupKey === failure?.attentionFactId,
+      60_000,
+    );
+    expect(attention).toHaveLength(1);
+    const final = readP37Snapshot(prepared.fixture.databaseFile);
+    expect(final.facts).toHaveLength(1);
+    expect(
+      final.commands.filter((row) => row.command_type === "DeliverMessage"),
+    ).toHaveLength(1);
+    expect(final.messages).toHaveLength(1);
+    expect(final.messageEvents).toHaveLength(1);
+    expect(final.inbox).toHaveLength(1);
+    expect((final.actions[0] as { state: string }).state).not.toBe("Applied");
+    expect(prepared.deliverDecisionCalls).toBe(1);
+  }, 240_000);
+
+  it("converges an exact Committed receipt when its Inbox row was consumed or cleaned up", async () => {
+    const marker = `P37-L6-INBOX-ABSENT-${crypto.randomUUID().slice(0, 8)}`;
+    const prepared = await deliverAndHoldCommittedReceipt(marker);
+    const before = readP37Snapshot(prepared.fixture.databaseFile);
+    expect(
+      before.commands.filter((row) => row.command_type === "DeliverMessage"),
+    ).toHaveLength(1);
+    expect(before.messages).toHaveLength(1);
+    expect(before.messageEvents).toHaveLength(1);
+    expect(before.inbox).toHaveLength(1);
+    await prepared.fixture.crash();
+    const inboxDb = new DatabaseSync(prepared.fixture.databaseFile);
+    try {
+      const deleted = inboxDb
+        .prepare("DELETE FROM inbox_entries WHERE entry_key = ?")
+        .run(`msg:${prepared.message.message_id}`);
+      expect(Number(deleted.changes)).toBe(1);
+    } finally {
+      inboxDb.close();
+    }
+    await waitForLeaseExpiry(
+      prepared.fixture.databaseFile,
+      prepared.action.execution_id,
+    );
+    const recovery = await startP37RecoveryDaemon(
+      prepared.fixture,
+      "new",
+      prepared.probes,
+    );
+    const converged = await waitForPublic(
+      async () => readP37Snapshot(prepared.fixture.databaseFile),
+      (snapshot) =>
+        snapshot.actions.some(
+          (action) =>
+            (action as { logical_action_id: string }).logical_action_id ===
+              prepared.action.logical_action_id &&
+            (action as { state: string }).state === "Applied",
+        ),
+      60_000,
+    );
+    expect(
+      converged.commands.filter((row) => row.command_type === "DeliverMessage"),
+    ).toHaveLength(1);
+    expect(
+      (
+        converged.commands.find(
+          (row) => row.command_type === "DeliverMessage",
+        ) as {
+          command_id: string;
+        }
+      ).command_id,
+    ).toBe(prepared.receipt.command_id);
+    expect((converged.messages[0] as { message_id: string }).message_id).toBe(
+      prepared.message.message_id,
+    );
+    expect(converged.messageEvents).toHaveLength(1);
+    expect(converged.inbox).toHaveLength(0);
+    expect(converged.facts).toHaveLength(0);
+    expect(converged.replayEvents).toHaveLength(0);
+    const applied = converged.actions[0] as {
+      execution_id: string;
+      provider_turn_id: string;
+      logical_action_id: string;
+      observation_source_ref: string;
+    };
+    expect(applied.execution_id).toBe(prepared.action.execution_id);
+    expect(applied.provider_turn_id).toBe(prepared.action.provider_turn_id);
+    expect(applied.logical_action_id).toBe(prepared.action.logical_action_id);
+    expect(
+      converged.observations.filter(
+        (row) =>
+          (row as { source_ref: string }).source_ref ===
+          applied.observation_source_ref,
+      ),
+    ).toHaveLength(1);
+    expect(prepared.deliverDecisionCalls).toBe(1);
+    expect(recovery.daemonErrors).toEqual([]);
+    await recovery.crash();
+  }, 240_000);
   it.each(["before", "after"] as const)(
     "kills %s the P9 DeliverReplay event/fact/outbox commit and retains one public Attention after restart",
     async (crashSide) => {

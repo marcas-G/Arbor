@@ -26,7 +26,7 @@ Status: **test source / probe checkpoint only; qualification not run**
   entry with process-local pause gates for Gateway fenced receipt, Action /
   Observation, P9 fact, and P10 marker/consumer commit boundaries.
 - `tests/functional/pending/p37-delivermessage-process-crash.functional.test.ts`
-  — nine isolated process cases across the requested crash groups. The suite
+  — eleven isolated process cases across the requested crash groups. The suite
   creates a Project and child Work through public APIs, produces a real
   Artifact/Deliverable, then holds the Deliver action at process-local commit
   boundaries. Receipt corruption and Inbox drift/deletion mutations are
@@ -43,6 +43,8 @@ Status: **test source / probe checkpoint only; qualification not run**
 | P10 marker + ACK + P1 offset transaction | before commit: marker/ACK/offset unchanged; after commit: all advance atomically; restart exposes one public row | executable `it.each` before/after with the accepted L5 post-commit probe |
 | Old receipt/effect contradiction | public `ActionRequired`, Action remains pending, no Observation or repeated Provider decision | executable public process case |
 | Gen0 pre-Gateway direct-write Observation | shared-file legacy handler returns Observation but does not persist it; gen1 records `PriorReceiptEffectConflict`; after Inbox deletion the existing P9 fact blocks again with no new command/effect | executable public two-daemon process case |
+| Committed receipt with a still-present but mismatched Inbox row | P9 `PriorReceiptResultMismatch`, one fact/event, Action remains Pending, no new Command or Observation, public `ActionRequired` remains after restart | executable public process case |
+| Committed receipt with Inbox absent after cleanup | exact Message/Event receipt is adopted; original Action Observation converges once without a replacement Command, Message, or Inbox row | executable public process case |
 
 ## Verification and limitations
 
@@ -50,10 +52,10 @@ Status: **test source / probe checkpoint only; qualification not run**
   policy.
 - The initial `pnpm typecheck` against `04e25f1` failed in three existing
   L2/L3 fixture mocks; none pointed at the new source. The test source exposed
-  and corrected a duplicate helper declaration and three SQLite JSON result
-  typing errors, plus probe/direct-handler test input types. The final
-  `pnpm typecheck` passed on the rebased full integration checkpoint
-  `78b7cdaab222721faf3c6e6885d2f2efd4b760e3` with L4/L5 included.
+  and corrected a duplicate helper declaration, SQLite JSON result typing,
+  and probe/direct-handler input types. After rebasing to the full L4/L5
+  checkpoint `78b7cdaab222721faf3c6e6885d2f2efd4b760e3` and adding the two
+  Inbox disposition cases, the final `pnpm typecheck` passed.
 - Targeted Biome, `node --check` for the dedicated daemon child, and
   `git diff --check` passed on the same worktree.
 - The test file remains under `tests/functional/pending/` until L4/L5 integration
