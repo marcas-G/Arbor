@@ -29,6 +29,17 @@ The source relation is in proposed migration 0037 after accepted AH7/P36
 migration 0036 is integrated; the integrated tree currently remains at P35/
 user_version 35. Migration 0037 cannot be released independently of P36.
 
+## Accepted owner amendment — EA-DG-01 (DID v1.39)
+
+Fixed proposal SHA-256:
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+acceptance record `planning/results/EA-DG-01-governance-acceptance.md`.
+P9 `02`/`07` add process-crash boundaries for exact Executable approval
+issuance, human decision, expiry/Stop cancellation, durable wake replay and
+same-Step/action resume while retaining AH7 AP1–AP8 claim/effect contracts.
+Implementation/process qualification remains separately gated. Ordered
+migrations 0036→0037→0038 remain prerequisites; P9 does not rewrite any slot.
+
 ## Governance decisions recorded (GQ1–GQ5; no DID catalog changes)
 
 | GQ | Decision → contract placement |

@@ -1,6 +1,6 @@
 # P1 — 01 Command Contracts
 
-**Authority:** DID v1.6 §4.1, §4.1A, §4.2, §0A.1, §6A.15, §12.3, §12.5, §12.6, §12.10, §12.11; DID v1.36 §4.1C FT-DG-01 CreateProject v2
+**Authority:** DID v1.6 §4.1, §4.1A, §4.2, §0A.1, §6A.15, §12.3, §12.5, §12.6, §12.10, §12.11; DID v1.36 §4.1C FT-DG-01 CreateProject v2; DID v1.39 EA-DG-01 ResolveExecutableApproval
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Implements:** P1 command contracts; P1-DG-02/05 (DID-resolved); P1-DG-10 sub-items (ID generation, `AssignWork` rejections, child-workspace phase); fingerprint algorithm (P1-DG-03).
 
@@ -95,7 +95,16 @@ type VerifiedCommandAuthority =
       readonly commandId: CommandId;
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
       readonly projectId: ProjectId;
-      readonly targetWorkspaceId: WorkspaceId };
+      readonly targetWorkspaceId: WorkspaceId }
+  | { readonly _tag: "ExecutableApprovalDecisionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly approvalId: string;
+      readonly workspaceId: WorkspaceId;
+      readonly executionId: ExecutionId;
+      readonly expectedRevision: number };
 ```
 
 Exact-match rule (all conjuncts required; any mismatch → `AuthorityDenied`
@@ -110,6 +119,10 @@ common(authority, envelope, context, fingerprint):
   ∧ authority.projectId                  == envelope.projectId
 CreateChildWorkspace additionally: authority.parentWorkspaceId == payload.parentWorkspaceId
 AssignWork           additionally: authority.targetWorkspaceId == payload.workspaceId
+ExecutableApproval additionally: authority.approvalId == payload.approvalId
+  ∧ authority.workspaceId == approval.workspaceId
+  ∧ authority.executionId == approval.executionId
+  ∧ authority.expectedRevision == payload.expectedRevision
 ```
 
 - The fact is a **trusted input** produced outside the command pipeline. P1
@@ -449,6 +462,46 @@ deterministic preconditions above.
 ```text
 WorkAssigned
 ```
+
+## 7A. Cross-phase `ResolveExecutableApproval` Command (EA-DG-01)
+
+The approval decision uses the existing P1 CommandGateway/receipt boundary;
+P1's original three phase-owned creation commands remain unchanged.
+
+```ts
+type ResolveExecutableApprovalPayload = {
+  readonly approvalId: string;
+  readonly expectedRevision: number;
+  readonly decision: "Approve" | "Reject";
+  readonly reason: string | null;
+};
+
+Command type: `ResolveExecutableApproval`; Handler `schemaVersion = "1"`.
+
+type ResolveExecutableApprovalResult = {
+  readonly approvalId: string;
+  readonly executionId: ExecutionId;
+  readonly state: "Approved" | "Rejected" | "Expired";
+  readonly revision: number;
+};
+```
+
+P12 resolves `ExecutableApprovalDecisionAuthority` from the authenticated
+human, exact project/workspace/Execution/approval and decision policy before
+Gateway entry. Missing and foreign approval targets return the same safe
+not-found response before receipt lookup; the user-visible route does not
+reveal target existence. For an authorized target, Gateway/Handler validates
+`route_kind='Executable'`, active Execution, Pending state and exact
+`expectedRevision`. If the request is still Pending but `expiresAt <= now`,
+the command commits Expired rather than the requested human decision and
+returns that committed state/revision. Otherwise it CASes Approved or Rejected.
+
+State change, exact Inbox revision consumption, `ExecutableApprovalResolved`
+event and Committed Command receipt share one transaction. At-least-once
+receipt replay returns the committed decision without another revision change,
+Inbox consumption or wake. A stale revision is the existing typed
+`RevisionConflict`. This command cannot read/decide `route_kind='Control'` or
+consume an approval; CAPA `ResolveControlApproval` remains unchanged.
 
 ## 8. Idempotency summary
 

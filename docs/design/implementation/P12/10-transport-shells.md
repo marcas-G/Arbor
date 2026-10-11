@@ -1,6 +1,6 @@
 # P12 — 10 Transport Shells (v1.13 G6)
 
-**Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.36 §4.1C, v1.13 G6; SD v1.13 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
+**Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.36 §4.1C, v1.39 EA-DG-01, v1.13 G6; SD v1.14 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
 **Status:** DRAFT.
 
 **敏感读取边界修订（2026-10-10，P12-SRA-01）：** accepted governance
@@ -45,6 +45,13 @@ daemons : recovery pass driver (`P9/00`), verification/completion consumer loops
 
 - `api-contracts` is the transport-neutral surface P12 binds to (P10 `05` §3).
 - Error presentation uses the frozen `Problem` DTO (DID §10.5).
+- EA-DG-01 `ResolveExecutableApproval` is forwarded through the same
+  authenticated strict external command path. The shell supplies no authority
+  facts and cannot construct a P4 approval binding; P12 authenticates first,
+  invokes the pure resolver, then forwards the typed decision to P1/Gateway.
+  Missing/foreign targets use the same safe not-found response. P10's typed
+  Executable Inbox target is rendered as view data and is never accepted back
+  as an authority payload. `eap:`/`cap:` routing remains strict and distinct.
 - **Search (F9) is an explicit out-of-v1 deferral, not an implemented surface.**
   The view semantics are owned upstream of P12 (P10) and are **unfrozen**; P12
   does not implement, wire, or expose a Search surface. If/when P10 freezes a

@@ -22,6 +22,13 @@ ends at P35/user_version 35. P37 MUST NOT be independently implemented or
 released before P36 integration. Accepted addendum SHA-256:
 `040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
 
+**Accepted EA-DG-01 Executable approval amendment (DID v1.39):** P9 owns the
+restart/crash qualification for approval request issuance, resolution/expiry/
+cancellation wake, and same-action resume. Fixed proposal SHA-256
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+acceptance record `planning/results/EA-DG-01-governance-acceptance.md`.
+This adds no SideEffectSemantics or Execution settlement variant.
+
 ## 1. Recovery order extension
 
 P2's nine-step recovery order remains. During “reconcile external reality” and
@@ -280,7 +287,7 @@ Kill before and after every commit boundary, restart on the same durable DB:
 | AH4 | Provider terminal failure / repair exhaustion → SettlementProposed |
 | AH5 | decode complete → sourced ModelOutput SessionEntry |
 | AH6 | SessionEntry → AgentLoopStep OutputAccepted |
-| AH7 | each action intent/effect/settlement/Observation/cursor transition, including AH7-DG-03 approval claim, no-effect Denied/Interrupted, effect-admission and stop boundaries (`02` §5 supplement) |
+| AH7 | each action intent/effect/settlement/Observation/cursor transition, including AH7-DG-03 approval claim, EA-DG-01 approval issuance/decision/expiry/Stop wake, no-effect Denied/Interrupted, effect-admission and stop boundaries (`02` §§5 and EA supplement) |
 | AH8 | action A committed; before B, ControlBasis becomes stale |
 | AH9 | action proposes settlement; remaining actions not yet marked skipped |
 | AH10 | old-generation FencingRejected receipt → new-generation takeover |
@@ -304,6 +311,16 @@ the `NotAdmitted → MayHaveStarted` commit. Stop/claim/effect-admission races
 are asserted by transaction commit order. After `MayHaveStarted`, recovery
 does not start a new executor call or replay; it confirms/cancels/reconciles,
 then records a known outcome or preserves the unresolved-side-effect gate.
+
+EA-DG-01 qualification adds the production route boundaries: Worker-fenced
+Pending+Inbox+request-fact issuance, P1 human decision plus exact Inbox
+consumption/receipt, Expire/Stop resolution fact plus durable P2 wake, and
+resume of the same Execution/AgentLoopStep/LogicalAction/ToolInvocationId.
+The process matrix distinguishes the two first-issuer `now` values: first
+commit wins; a unique-key loser compares stable binding fields and reads back
+the winner's ApprovalId/expiry/revision. Store-seeded approvals remain
+necessary P4 storage evidence only; they do not qualify production issuance,
+human decision, browser view, wake or same-action recovery.
 
 Every injection asserts stale-generation writes are rejected, stable identities
 prevent duplicate Session entries/external effects, and the state transition
@@ -347,6 +364,9 @@ Implementation completion remains separately gated and requires:
    separately verified migration run.
 6. AH15–AH19 pass on both sides of each commit boundary; no duplicate Inbox
    delivery, Tool effect, inference step or checkpoint occurs.
+7. EA-AP1–EA-AP7 run through the production approval issuer/decision/wake
+   route with real process restart; a test-seeded approval cannot qualify
+   issuance, human decision, Inbox projection or same-action resume.
 
 ## 6. Must Not Decide
 

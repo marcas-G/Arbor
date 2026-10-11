@@ -6,6 +6,8 @@
 consistency review pending.
 **Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
 SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
+Accepted EA-DG-01 approval-issuance/Stop-ordering amendment (DID v1.39),
+proposal SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`.
 
 **Accepted cross-phase application (DID v1.37 AH10):** P7 DeliverMessage is an
 Execution-originated NormalExecutionMutation covered by this existing fence
@@ -68,6 +70,7 @@ Session append
 ProviderTurn settlement
 ToolInvocation intent / approval consumption / effect admission / settlement
 ToolInvocation no-effect Denied / Interrupted settlement
+Executable ActionApproval Pending issuance / Inbox admission / request fact
 Agent-produced canonical command
 ```
 
@@ -151,6 +154,27 @@ Two **independent** checks (DID §9.7):
 - `StopExecution` itself is not classified (`01` §3) and is admissible while
   the Execution is Active.
 - Admission (`AdmitExecution`) is not classified.
+
+### 4.1 Executable approval issuance and Stop ordering (EA-DG-01)
+
+Executable approval issuance is a Worker-originated durable mutation. Its
+single transaction verifies the full live lease tuple and expiry, active
+Execution, `stop_requested_at IS NULL`, and the exact still-Pending
+AgentLoopStep action before it commits the Executable Pending row, P6 Inbox
+admission, `ExecutableApprovalRequested` fact and P2 wake source. If Stop
+commits first, issuance returns `ExecutionStopping` with no row/Inbox/fact. If
+issuance commits first, the authorized StopExecution composition closes that
+unclaimed Pending or Approved Executable row as Cancelled, consumes its exact
+unconsumed Inbox entry and appends the resolution/wake fact in the same Stop
+command transaction. These writes leave `route_kind='Control'` approvals and
+CAPA stop behavior unchanged.
+
+The human StopExecution command uses P2's authenticated command authority and
+does not require a Worker lease. Any later Worker-originated cancellation,
+action result, ToolResult or Observation still uses the complete current lease
+tuple and expiry in the transaction. A Stop that races after P4 claim follows
+§4 and AH7/P4; a Stop after `MayHaveStarted` uses the existing reconciliation
+fence and cannot admit a new effect.
 
 ## 5. Quiescence-control admission and settlement validity
 

@@ -9,7 +9,15 @@
 > Execution/AgentLoopStep after human resolution. Sandbox and executable-tool
 > approval remain separate boundaries.
 
-**Authority:** DID v1.14 G2, v1.13 G4, v1.8 G2; §4.1 (CommandSubmissionContext), §4.1A, §4.2, §4.3, §6.2 (L2), §12.3, §12.10; SD v1.3 §8.1–§8.5; P1 `01` §2A/§4/§9, P2 `01` §2 + `00` R1, P4 `03` §2/§4, P5 `01` §3.1; P1-DG-11.
+> **DID v1.39 EA-DG-01 successor (2026-10-11).** P12 `resolveApproval` also
+> binds Runtime-owned Executable Step/LogicalAction/callRef/ToolInvocation
+> identity and a stable ApprovalId; the Application reads the request store
+> before invoking the pure resolver and preserves the first committed TTL.
+> `ResolveExecutableApproval` receives its own authenticated-human decision
+> authority fact. Resolver remains `R = never`: it does not persist, read
+> approval rows, decide, consume or wake them.
+
+**Authority:** DID v1.14 G2, v1.13 G4, v1.8 G2 and v1.39 EA-DG-01; §4.1 (CommandSubmissionContext), §4.1A, §4.2, §4.3, §6.2 (L2), §12.3, §12.10; SD v1.14 §8.1–§8.5; P1 `01` §2A/§4/§9, P2 `01` §2 + `00` R1, P4 `03` §2/§4, P5 `01` §3.1; P1-DG-11.
 **Status:** DRAFT.
 
 ## 1. Boundary (frozen)
@@ -36,6 +44,16 @@ inputs (facts)  →  Authority Resolver  →  output: exact-bound trusted author
  * provenance. */
 type AuthenticatedPrincipal = Principal
 
+/** Stable action identity assigned by Runtime, never accepted from model output. */
+type ExecutableApprovalIdentity = {
+  logicalStepNo: number
+  repairAttempt: number
+  actionIndex: number
+  logicalActionId: LogicalActionId
+  callRef: string
+  toolInvocationId: ToolInvocationId
+}
+
 AuthorityDecisionInput = {
   principal: AuthenticatedPrincipal      // authenticated, not model-supplied
   submissionContext: CommandSubmissionContext   // External | ExecutionOrigin | System
@@ -53,6 +71,7 @@ AuthorityDecisionInput = {
  * `expiresAt`, and `delegationDepth`, none of which a command envelope carries. */
 InvocationDecisionInput = {
   principal: AuthenticatedPrincipal
+  projectId: ProjectId
   workspaceId: WorkspaceId
   executionId: ExecutionId
   intent: {
@@ -60,6 +79,7 @@ InvocationDecisionInput = {
     toolVersion: string
     argumentsJson: string
     actionDigest: string                             // normalized action + params digest
+    sideEffectSemantics: SideEffectSemantics
     requestedCapabilities: ReadonlyArray<string>
     resolvedRegions: ReadonlyArray<string>           // resourceSpaceIds resolved for this intent
   }
@@ -69,6 +89,10 @@ InvocationDecisionInput = {
   policy: ProjectPolicy | WorkspacePolicy
   delegationDepth: number
   now: string                                        // evaluation instant for expiresAt
+}
+
+type InvocationApprovalDecisionInput = InvocationDecisionInput & {
+  approvalIdentity: ExecutableApprovalIdentity
 }
 ```
 
@@ -107,7 +131,7 @@ interface AuthorityResolverPortService {
   /** P4 `03` §4 production plane: the Exact-Intent approval record
    * (produced here, NEVER consumed — §3). */
   resolveApproval(
-    input: InvocationDecisionInput,
+    input: InvocationApprovalDecisionInput,
   ): Effect.Effect<InvocationApproval, InvocationResolutionError, never>
 }
 
@@ -128,7 +152,8 @@ type AuthorityResolutionError =
       readonly actual: string }
   | { readonly _tag: "UnsupportedOrigin";
       readonly submissionOrigin: string;
-      readonly commandType: string };
+      readonly commandType: string }
+  | { readonly _tag: "ExecutableApprovalNotFound" };
 
 type InvocationResolutionError =
   | { readonly _tag: "NoApplicableGrant";
@@ -151,7 +176,20 @@ type InvocationResolutionError =
       readonly actual: string };
 ```
 
-- `R = never` is the **proof of no I/O / no side effect**: every read is of the declared inputs (`AuthorityDecisionInput` / `InvocationDecisionInput`); the resolver holds no ambient capability.
+For `ResolveExecutableApproval`, the `resolve` entry point may produce the P1
+command-specific `ExecutableApprovalDecisionAuthority`. It binds the
+authenticated human, CommandId/fingerprint, project, exact Executable
+ApprovalId, workspace, active Execution and expected approval revision. The
+decision resolver applies the configured human/parent policy; a `user:`
+principal string alone grants no decision authority. Missing and foreign
+approval targets produce the same safe not-found failure before Gateway
+receipt access. For a visible authorized target, P12 binds the supplied
+expected revision but does not turn a stale revision into not-found; P1's
+Gateway CAS returns the existing typed RevisionConflict. P12 returns the fact
+only; P1/Gateway and P4/P6 own the transaction that decides, consumes the
+Inbox entry and writes the event.
+
+- `R = never` is the **proof of no I/O / no side effect**: every read is of the declared inputs (`AuthorityDecisionInput` / `InvocationDecisionInput` / `InvocationApprovalDecisionInput`); the resolver holds no ambient capability.
 - An **unauthorized / unresolvable** resolution yields **no fact** — the entry point fails with a typed error; the Application surfaces `DomainError.AuthorityDenied` (never a silent default-allow).
 - The command entry point (`resolve`) and the invocation entry points (`resolveInvocation` / `resolveApproval`) are distinct because their inputs are distinct (N-03); one entry point cannot produce both families from a single input shape.
 
@@ -188,7 +226,8 @@ InvocationApproval              P4 `03` §4: Exact-Intent approval
 Command outputs are **exact-bound** to `principal`, `commandId`,
 `semanticRequestFingerprint`, `projectId`, target, and submission origin where applicable;
 invocation outputs are **exact-bound** to `principal`, `workspaceId`, `executionId`, tool
-identity, `resolvedRegions`, and `controlBasisDigest` (plus `actionDigest` for approvals).
+identity, `resolvedRegions`, and `controlBasisDigest` (plus `actionDigest` and
+Runtime-owned Step/LogicalAction/callRef/ToolInvocation identity for approvals).
 The Application performs deterministic exact-match only (P1 §2A) — it does not re-decide
 authority.
 
@@ -199,9 +238,17 @@ and does not name `InvocationApproval`. Producing Exact-Intent approvals is none
 deferred resolver's job (P4 `03` §4: "Producing an approval is the deferred resolver's
 job"), and that resolver is P12. P12 therefore records `InvocationApproval` production as a
 **G2 clarification** (a fourth output family, not a new authority plane): §2A
-`resolveApproval` **produces** the record bound to the exact normalized intent +
-`expiresAt`. It **MUST NOT consume** the approval; atomic single-consumption stays P4
-(P4 `03` §4).
+`resolveApproval` **produces** the Pending fact bound to the exact normalized
+intent and Runtime-owned ExecutableApprovalIdentity. The deterministic
+ApprovalId derives from that stable identity, not from `now` or `expiresAt`.
+The resolver computes candidate first-commit `expiresAt` from policy/`now`
+only when the Application has established that no logical-action row exists;
+the Application looks up first and does not call the resolver to refresh an
+existing row. On a unique-key race, storage compares only immutable binding
+fields and returns the winner's ApprovalId, original expiry and current
+revision even when the losing resolver used a different `now`. P12 holds no
+repository, so it does not persist, look up or consume approvals. Atomic
+single-consumption stays P4 (P4 `03` §4).
 
 ## 4. External Stop / Admit resolution (v1.13 G4)
 

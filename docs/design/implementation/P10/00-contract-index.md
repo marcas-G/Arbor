@@ -14,6 +14,19 @@ F21 rebuild-refusal semantics, and accepted AH7/P36 rules are unchanged.
 Proposed migration 0037 requires P36 integration; it is not independently
 implementable/releasable.
 
+## Accepted owner amendment — EA-DG-01 (DID v1.39)
+
+Fixed proposal SHA-256:
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+acceptance record `planning/results/EA-DG-01-governance-acceptance.md`.
+P10 `01`/`05` add the read-only Inbox Executable approval target projection
+from P6 `eap:` admission and the proven P4 ActionApproval row. It returns the
+exact review fields with bounded schema-redacted argument preview, filters by
+Workspace and fails closed if exact human review data cannot be constructed.
+P10 never decides/consumes approval or writes the Inbox. Control `cap:` and
+CAPA remain unchanged. Qualification requirements are in
+`planning/results/EA-DG-01-contract-landing.result.md`.
+
 ## FT-DG-02 additive contract amendment (2026-10-08)
 
 The accepted `work-detail` read-only View is added to P10's authoritative

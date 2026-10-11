@@ -165,6 +165,23 @@ and after each commit, restart on the same DB, and label the evidence
 | AH7-AP7 | after `MayHaveStarted`, then stop/crash | No new Executor call or replay. Cancel/confirm/reconcile by `SideEffectSemantics`; persist known result once, otherwise retain reconciliation or `OutcomeUnknown(ReconciliationRequired)`. | crash-injected |
 | AH7-AP8 | stale generation at intent/claim, no-effect denial/interruption, effect-admission or settlement | Full trusted lease tuple + expiry rejects the write in the same transaction; old generation causes no post-rejection effect. A previously committed `MayHaveStarted` effect is recovered as possibly occurred, never inferred absent. | crash-injected |
 
+### EA-DG-01 Executable approval issuance / decision / wake boundaries
+
+These additions qualify the production issuer, not a test-seeded approval.
+Each process case uses the exact ActionApproval/Step/LogicalAction binding and
+restarts on the same database. P2 supplies the lease predicate; P6 owns the
+Inbox key; P17/P3 resume the same Execution and action.
+
+| ID | Boundary / interruption | Required recovery assertion | Guarantee |
+|---|---|---|---|
+| EA-AP1 | Worker issuance transaction before/after COMMIT | Pre-COMMIT leaves no Pending row, Inbox entry, request fact or wake source; retry creates one. Post-COMMIT leaves one exact row/Inbox/fact; scheduler does not repoll the action. Full lease tuple, expiry and `stop_requested_at IS NULL` are checked in the write transaction. | crash-injected |
+| EA-AP2 | two first issuers with different `now` values | Winner commits first; unique-key loser reads back and compares stable binding fields only. Both observe identical ApprovalId, first-commit expiry and revision; candidate TTL does not conflict or refresh. A changed stable field fails closed. | crash-injected + store race |
+| EA-AP3 | Approve/Reject command before/after COMMIT | Human authority/route/exact revision is checked; before-COMMIT leaves state/Inbox/event/receipt unchanged; after-COMMIT exactly one state revision, Inbox consumption, resolution event and Command receipt exist. Replay returns the same receipt and wake. | crash-injected |
+| EA-AP4 | expiry commit before/after wake publication | `Pending | Approved → Expired`, exact Inbox consumption if pending, resolution fact and durable P2 wake commit atomically; restart discovers one same-Execution wake. Repeated expiry cannot increment twice. | crash-injected |
+| EA-AP5 | Stop races issuance or pending/approved cancellation | Commit order: Stop first → no issuance; issuance first → same Stop transaction sets stop, `Cancelled`, exact Inbox consumption, resolution fact/wake. Control rows do not change. A stale Worker cannot issue/cancel/action-write. | crash-injected |
+| EA-AP6 | approval resolution wake before/after same-Step re-entry | Pending leaves the same action/cursor fixed; Approved reuses the pinned Provider result and same ToolInvocationId. With current authority still valid, Reject/Expire records one P4 no-effect Denied and one terminal action/cursor result; Cancelled follows Interrupted. No new Provider request. | crash-injected |
+| EA-AP7 | authority revocation and external effect after approval | Revoke before claim → no consume/effect; revoke after claim before `MayHaveStarted` → `ApprovalNoLongerAuthorized`; after `MayHaveStarted` apply AP7 and side-effect reconciliation. Cover effect-completed/settlement-missing for every SideEffectSemantics; no unsafe duplicate or no-effect inference. | crash-injected |
+
 For `ResourceResolutionDenied`, the terminal no-effect record uses empty
 resolved regions and cannot satisfy an approval match. Historical rows migrate
 to `LegacyUnknown`, never `NotAdmitted`; they are excluded from AP3's no-effect

@@ -58,7 +58,20 @@
 3. 变更实验：textVersion bump 后未跑 eval → CI/验证门拒绝（合入条件 = eval 全量绿）。
 4. 诱导性 eval：模型试图以 Report 充当交付/依赖满足 → E3 违禁断言触发。
 
-## 7. 机械断言清单（汇总）
+## 7. Story G — Executable approval Inbox entry (EA-DG-01)
+
+1. Admit one proven Executable Pending ActionApproval with key
+   `eap:<approvalId>:<revision>` in the same transaction; replay the same
+   action/admission twice and assert exactly one unconsumed Inbox entry.
+2. Assert the entry is Governance/human-only: it is not a Message, is not
+   promoted into Agent Session and cannot be interpreted as model instruction.
+3. Approve/Reject, Expire and Stop cancellation consume only the exact
+   `eap:` revision in the same transaction as the state/resolution fact; a
+   crash/re-delivery cannot resurrect or double-consume it.
+4. Admit/consume a `cap:` Control approval in parallel and assert the P6 key
+   routing and CAPA state remain independent.
+
+## 8. 机械断言清单（汇总）
 
 ```text
 - 01 §4 两条 formation 链的每步事件序列与拒绝集与契约逐条一致
@@ -69,11 +82,12 @@
 - depth 判定纯结构计算（无模型参与）的单元证明
 - capability ceiling 四项 validate-only 检查各有正/反例
 - Inbox admission/promotion/consumption 三段各有独立可观测断言
+- EA-DG-01 `eap:` upsert/consume uses the exact route/revision; replay cannot duplicate or promote it; `cap:` remains independent
 - Normal/Critical steer 的中断差异可由 Execution 动作计数判定
 - 既有 P5 验收故事不回归（重构护栏）
 ```
 
-## 8. Must Not Decide
+## 9. Must Not Decide
 
 - No 真实 provider / 真实人类在线作为 gating 条件（human 角色由测试驱动）。
 - No P7/P8 行为进入断言（依赖/验证词出现即越界信号；D2 负断言除外——它断言的是"没有"）。

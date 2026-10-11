@@ -14,6 +14,10 @@ Accepted AH7-DG-03 amendment (2026-10-10); post-landing consistency review
 pending. Source proposal SHA-256:
 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
 
+Accepted EA-DG-01 amendment (2026-10-11), fixed proposal SHA-256
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+decision `planning/results/EA-DG-01-governance-acceptance.md`.
+
 ## 1. Ownership and boundary
 
 `AgentLoopStep` is the durable handoff between a Provider result and the rest of
@@ -222,6 +226,34 @@ stores the process-local `AgentAction` object.
   action remains Pending for P1 `07` receipt-first takeover. In contrast,
   `ExecutionStopping` admits no new normal action across generations and enters
   quiescence/reconciliation.
+- **EA-DG-01 Executable approval pause.** P4's nonterminal `ApprovalRequired`
+  outcome does not append a ToolResult, change the action disposition, or
+  advance `nextActionIndex`. The same Execution remains Active, the
+  AgentLoopStep remains `ActionsInProgress`, the same LogicalActionId/callRef
+  remains Pending, and the lease is released. The durable Executable approval
+  row and Inbox entry are the pause truth; recovery does not issue a Provider
+  request or reconstruct identity from Session text.
+- The owning Application combines P4's resolved-intent handoff with the pinned
+  Step/LogicalAction identity, performs the idempotent Pending+Inbox admission,
+  and returns the existing `ExecutionDriveOutcome.ApprovalRequired` with the
+  stored ApprovalId/revision. A pre-existing Pending row returns the same
+  outcome; a pre-existing Approved row is injected into P4 for that exact
+  action instead of pausing or creating a new request.
+- After Approve, local replay of the same settled Provider result recovers the
+  same LogicalActionId/ToolInvocationId and supplies the Runtime-sourced
+  ApprovalId plus exact Approved revision to P4. P4 claim/consume is the
+  accepted AH7 transaction; only then can the action effect run. When current
+  authority passes, Rejected produces P4 no-effect `Denied(ApprovalRejected)`
+  and Expired produces `Denied(ApprovalExpired)` for that same
+  ToolInvocationId; an earlier P4 current-authority denial takes precedence
+  and leaves the approval unconsumed. The sourced ToolResult,
+  `TerminalRejected` disposition and one cursor advance commit atomically.
+  Stop-cancelled approval produces the existing Interrupted/quiescence result,
+  closes the current action once and applies the existing early-settlement
+  rule to remaining actions.
+- Historical terminal `Denied(ApprovalRequired)` rows remain terminal on
+  replay. Recovery never promotes them to a Pending request. A new
+  approval-required call uses the nonterminal pause above.
 - A P4 no-effect `Denied` ToolResult is terminal for that `LogicalActionId`:
   persist ToolResult status `Denied`, disposition `AuthorizationDenied`,
   action state `TerminalRejected`, Observation source and cursor advance

@@ -22,6 +22,22 @@ Worker-fencing surfaces. Control `ActionApproval` / AssignWork consumption is
 unchanged. No DID version was changed; each owner clause cites this accepted
 amendment and its source digest.
 
+## Accepted owner amendment — EA-DG-01 (2026-10-11)
+
+Decision `ACCEPT_EXECUTABLE_APPROVAL_ISSUANCE_DECISION_RESUME`, fixed proposal
+SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+acceptance and landing audit:
+`planning/results/EA-DG-01-governance-acceptance.md` and
+`planning/results/EA-DG-01-contract-landing.result.md`.
+
+The P4 `01`/`02`/`03`/`06` amendment adds a nonterminal Executable
+`ApprovalRequired` handoff, exact Runtime-owned action binding, exact Approved
+revision in the fenced P4 claim, `ApprovalRejected`, legacy-only replay of
+`Denied(ApprovalRequired)`, and the P4 side of forward migration 0038. MAC
+owns the shared ActionApproval lifecycle; the Control route and CAPA
+AssignWork consume path are unchanged. Migration 0038 depends on integrated
+AH7/P36 0036 and AH10 Deliver 0037; no earlier migration is edited.
+
 ```text
 Detailed Implementation Design v1.18 (frozen)
         ↓ delegates phase-scoped closure
@@ -40,7 +56,7 @@ existing P4 `ToolIntent` / `ToolRuntimePort` path.
 | Doc | Owns |
 |---|---|
 | `01-tool-contracts.md` | `ToolDefinition`, `ToolIntent`, `ToolExecutionContext`, `CanonicalToolObservation`, `SideEffectSemantics`, `ToolInvocationSettlement` |
-| `02-tool-runtime-pipeline.md` | the SD §6.5 pipeline; `ToolRuntimePort.invoke`; `ToolInvocationDenied`; bounded observation |
+| `02-tool-runtime-pipeline.md` | the SD §6.5 pipeline; `ToolRuntimePort.invoke`; exact approval matching; nonterminal `ApprovalRequired`; terminal no-effect Denied; bounded observation |
 | `03-authority-permission-approval.md` | trusted `InvocationAuthority` fact, capability-ceiling exact-match, `InvocationApproval` + atomic consumption |
 | `04-sandbox.md` | `SandboxPort` contract + minimal local executor |
 | `05-resource-admission.md` | validate-only `ResourceOwnership ⊆ ResourceBoundary`; canonical region resolution |

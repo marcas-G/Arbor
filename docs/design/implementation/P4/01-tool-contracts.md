@@ -67,7 +67,8 @@ interface ToolIntent {
   readonly toolVersion: string;
   readonly argumentsJson: string;
   readonly invocationId: ToolInvocationId;   // caller-preallocated
-  readonly approvalId: string | null;        // Exact-Intent Approval, if required
+  readonly approvalId: string | null;        // Runtime-selected Executable approval
+  readonly approvalRevision: number | null;  // exact Approved CAS revision; Runtime-only
 }
 
 interface ToolExecutionContext {
@@ -95,6 +96,9 @@ The lease tuple comes only from the current `ExecutionOrigin` supplied by
 from model arguments, ToolIntent or approval payload. Production fails closed
 if any tuple member is absent. P4 passes the same tuple to each fenced durable
 mutation; it does not extend authority beyond the active Execution.
+The model/provider output cannot supply `approvalId` or `approvalRevision`;
+the handler populates both only from the Runtime-owned Executable approval
+ledger when resuming the same pinned LogicalAction.
 
 ## 4. CanonicalToolObservation
 
@@ -105,7 +109,7 @@ type CanonicalToolObservation =
   | { readonly _tag: "ExpectedFailure"; readonly observation: BoundedObservation }
   | {
       readonly _tag: "Denied";
-      readonly reasonCode: NoEffectDenialCode;
+      readonly reasonCode: PersistedNoEffectDenialCode;
       readonly reason: string;
     }
   | { readonly _tag: "Interrupted" }
@@ -116,6 +120,19 @@ interface BoundedObservation {
   readonly text: string;             // model-visible, size-bounded
   readonly truncated: boolean;
 }
+
+/** Trusted P4 handoff data; P3/Application adds the logical-step/action identity. */
+interface ResolvedExecutableIntentForApproval {
+  readonly intent: ToolIntent;
+  readonly actionDigest: string;
+  readonly resolvedRegions: ReadonlyArray<CanonicalResourceRegion>;
+  readonly sideEffectSemantics: SideEffectSemantics;
+}
+
+type ToolRuntimeOutcome =
+  | CanonicalToolObservation
+  | { readonly _tag: "ApprovalRequired";
+      readonly resolvedIntent: ResolvedExecutableIntentForApproval };
 ```
 
 `NoEffectDenialCode` is closed:
@@ -123,7 +140,7 @@ interface BoundedObservation {
 ```ts
 type NoEffectDenialCode =
   | "InvocationAuthorityDenied"
-  | "ApprovalRequired"
+  | "ApprovalRejected"
   | "ApprovalNotFound"
   | "ApprovalMismatch"
   | "ApprovalExpired"
@@ -131,6 +148,12 @@ type NoEffectDenialCode =
   | "ResourceResolutionDenied"
   | "ResourceAdmissionDenied"
   | "ApprovalNoLongerAuthorized";
+
+/** Historical persisted-row compatibility only; never written by new P4 paths. */
+type LegacyNoEffectDenialCode = "ApprovalRequired";
+type PersistedNoEffectDenialCode =
+  | NoEffectDenialCode
+  | LegacyNoEffectDenialCode;
 ```
 
 The version-1 Denied projection maps each code to a fixed bounded Runtime
@@ -139,6 +162,9 @@ error text, determines replay.
 
 - `Denied` is the model-visible `ToolInvocationDenied` projection (DID §6A.7),
   not an Execution failure.
+- Historical `Denied(ApprovalRequired)` values decode and replay their exact
+  terminal result only. New approval-required calls use the nonterminal
+  `ApprovalRequired` handoff in `02`; they are not new-write denials.
 - Large raw results live behind `resultRef` (Artifact), never in the observation
   (SD §6.6).
 
@@ -155,6 +181,12 @@ type ToolInvocationSettlement =
   | { readonly _tag: "Interrupted" }
   | { readonly _tag: "OutcomeUnknown"; readonly reconciliationRefs: ReadonlyArray<InvocationRef> }
   | { readonly _tag: "RuntimeFailure"; readonly cause: string };
+
+/** Row-decoder union: the legacy code is read/replay-only, never newly written. */
+type PersistedToolInvocationSettlement =
+  | Exclude<ToolInvocationSettlement, { readonly _tag: "Denied" }>
+  | { readonly _tag: "Denied";
+      readonly reasonCode: PersistedNoEffectDenialCode };
 ```
 
 `No result != No effect` (SD §6.5): an `OutcomeUnknown` invocation may still have

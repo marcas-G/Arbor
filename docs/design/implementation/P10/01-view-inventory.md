@@ -1,6 +1,6 @@
 # P10 — 01 View Inventory (authoritative, GQ1)
 
-**Authority:** SD v1.3 §12.1/§12.2/§12.4/§13.9/§10.1 D (full inventory); DID v1.13 G1; S2.4.1–S2.4.3; P9 `05` §3.2 (Inbox as P10 surface).
+**Authority:** SD v1.14 §12.1/§12.2/§12.4/§13.9/§10.1 D (full inventory); DID v1.13 G1, v1.39 EA-DG-01; S2.4.1–S2.4.3; P9 `05` §3.2 (Inbox as P10 surface).
 **Status:** DRAFT.
 
 ## 1. Authoritative view list (SD inventory wins over the DID view summary)
@@ -16,7 +16,7 @@
 | Dependency View | §12.1/§13.9 | must | dependencies + deliverables + work_waits |
 | Transcript | §12.4 note, §10.2 | must (on-demand debug view; human-readable projection, not truth) | session_entries + provider_turns + model_context_manifests |
 | Usage | §12.1, §7.7 | must (observe-only, invariant 45) | provider_turns.usage_json aggregates |
-| Inbox view | P9 `05` §3.2; SD §7.4 | must | inbox_entries (P6-owned semantics; P10 owns view/query/rebuild) |
+| Inbox view | P9 `05` §3.2; SD §7.4 | must | inbox_entries (P6-owned semantics; P10 owns view/query/rebuild); exact Executable `eap:` items join the proven P4 approval binding for human review |
 | Search | §13.9 | **deferred with rationale**: no frozen query semantics exist upstream; introducing an index now would invent semantics — revisit with P12 transport | — |
 | Workspace Summary / Project Overview | §13.9, §10.1 D | must — realized as aggregated renderings of the Tree view (no separate model) | same as Tree |
 

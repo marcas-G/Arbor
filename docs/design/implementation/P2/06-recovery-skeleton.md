@@ -187,3 +187,14 @@ is not replayed; recovery requests portable Summary/frontier rebuild.
 - Provider/Tool `OutcomeUnknown` reconciliation implementation (P3/P4).
 - Projection rebuild (P10).
 - Distributed recovery / multi-host failover (P12).
+
+## 10. EA-DG-01 Executable approval pause recovery
+
+An `ExecutionDriveOutcome.ApprovalRequired` is not a Settlement. The exact
+ActionApproval Pending row and `ExecutableApprovalRequested` fact survive the
+lease release; startup/recovery must not admit a new Execution or issue a
+Provider request for that paused action. After an exact Approved/Rejected/
+Expired/Cancelled resolution fact, P2 dispatches `HumanIntervention` for the
+same active Execution and recovers the same AgentLoopStep/action. Repeated or
+lost wake signals are recovered from the durable approval state/event; no
+second ProviderTurn or LogicalAction is created.

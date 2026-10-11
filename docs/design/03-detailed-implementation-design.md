@@ -1,10 +1,10 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.38\
+**Version:** 1.39\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.37\
+**Supersedes:** v1.38\
 **Date:** 2026-10-11\
-**Depends on:** `Arbor System Design Specification v1.13`
+**Depends on:** `Arbor System Design Specification v1.14`
 
 **Integration reconciliation (2026-10-10):** This version combines two separately
 accepted owner amendments that each landed from DID v1.34 as v1.35 in isolated
@@ -198,6 +198,29 @@ generation fence and legacy replay**
   This is a design landing only; runtime implementation remains separately
   gated. Owner hashes are recorded in
   `planning/results/AH10-deliver-p10-storage-addendum-design-landing.md`.
+
+**Accepted owner amendment (DID v1.38 → v1.39): EA-DG-01 Executable approval issuance/decision/resume**
+
+- P4's new-write outcome for an approval-required Executable intent is the
+  nonterminal `ApprovalRequired` handoff. Historical P4
+  `Denied(ApprovalRequired)` rows remain terminal read/replay evidence and are
+  never promoted into Pending approvals.
+- P1/P6/P10/P12/P17 bind issuance, exact human decision, Inbox and same-
+  Execution wake; P3 keeps the same Provider result, AgentLoopStep,
+  LogicalActionId and ToolInvocationId. MAC `02`/index owns the shared
+  ActionApproval lifecycle including `Cancelled`, while Control and
+  Executable routes remain distinct.
+- Migration 0038 is forward-only after unchanged 0032, integrated P36
+  migration 0036 and AH10 Deliver migration 0037. It leaves all earlier
+  migration bodies and checksums unchanged and preserves route-specific
+  uniqueness and legacy binding provenance.
+- Fixed proposal SHA-256:
+  `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+  accepted by `planning/results/EA-DG-01-governance-acceptance.md`.
+  Owner hashes are recorded in
+  `planning/results/EA-DG-01-contract-landing.result.md`.
+- This acceptance and landing authorize design contracts only. Runtime,
+  database migration execution, tests and release qualification remain gated.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -2841,6 +2864,8 @@ ExecutionSettled
 
 PermissionChanged
 DecisionRecorded
+ExecutableApprovalRequested
+ExecutableApprovalResolved
 ReconciliationEscalated
 AssignWorkTargetBindingEscalated
 DeliverReplayEscalated
@@ -2854,6 +2879,38 @@ correlationId, causationId}`; non-Deliver payloads are unchanged. The AH10
 `DeliverMessage` route adds no MessageSent version or wake event. It adds the
 P9-owned `DeliverReplayEscalated(v1)` fact event for an unprovable legacy or
 receipt-bound handover; P10 consumes it as `DeliverReplayFailure` Attention.
+
+EA-DG-01 adds `ExecutableApprovalRequested(v1)` and
+`ExecutableApprovalResolved(v1)` as durable wake facts. Requested carries the
+approval/route/Workspace/Execution/LogicalAction/ToolInvocation identity,
+request revision, expiry and action digest; it does not copy tool arguments or
+make the approval contents instructions. Resolved carries approval/route/
+Workspace/Execution identity, resulting revision and one of
+`Approved | Rejected | Expired | Cancelled`; the event envelope carries the
+authenticated decision actor when present. The approval row, exact P6 Inbox
+admission/consumption and corresponding event are written in the same
+transaction. P17 resumes only the bound Execution from the durable resolved
+fact/list and never starts a new ProviderTurn.
+
+The EventVersion-1 payloads are:
+
+```ts
+ExecutableApprovalRequested = {
+  approvalId, routeKind: "Executable", workspaceId, executionId,
+  logicalActionId, toolInvocationId, revision, expiresAt, actionDigest
+}
+
+ExecutableApprovalResolved = {
+  approvalId, routeKind: "Executable", workspaceId, executionId,
+  logicalActionId, toolInvocationId, revision,
+  resolution: "Approved" | "Rejected" | "Expired" | "Cancelled",
+  reasonCode?
+}
+```
+
+Raw arguments, secret values and model-written summaries are not copied into
+the event. The exact binding remains in the route-specific ActionApproval row;
+`Resolved` is the durable P2/P17 wake fact.
 
 高频 Provider Turn、Tool Invocation、Lease Renew、stream delta 不进入 Project Domain Event Journal，而进入 Execution Trace / Runtime Records。
 
@@ -3181,6 +3238,18 @@ NonIdempotent → ambiguity 时禁止自动 replay
 ```
 
 Authority/Permission denial 在 ToolRuntime 内是 rejection，但应投影成模型可理解的 `ToolInvocationDenied` Observation，而不是崩溃 Execution。
+
+Approval-required Executable invocation has a separate nonterminal
+`ApprovalRequired` ActionResult/Execution handoff. It is not a
+`CanonicalToolObservation`, a `ToolInvocationSettlement`, or a P4 no-effect
+Denied result. New writes MUST keep the same AgentLoopStep action Pending and
+the cursor fixed until an exact approval decision/expiry/cancellation is
+resolved. The old P4 `Denied(ApprovalRequired)` reason remains accepted only
+by persisted-row decoding and terminal replay; migration MUST NOT reinterpret
+or backfill it as a human approval request. On Approve the same invocation
+re-enters P4; Reject/Expire produce a terminal no-effect Denied result, while
+Stop produces Interrupted. Current authority, resource, ControlBasis, stop,
+and lease checks still apply after any approval.
 
 > **P4（DID v1.8 G1/G4）：** tool authority 是 trusted `InvocationAuthority`
 > fact，不由 ToolRuntime 解析 PermissionGrant / Parent / User；Resource
@@ -3748,8 +3817,19 @@ AgentRuntime 只看：
 
 ```text
 invoke(ToolIntent, ToolExecutionContext)
-→ CanonicalToolObservation
+→ CanonicalToolObservation | ApprovalRequired(ResolvedExecutableIntent)
 ```
+
+For a new approval-required Executable action with no approved exact record,
+P4 returns `ApprovalRequired` with the P4-resolved, trusted tool/version,
+normalized intent, target resource IDs, current ControlBasis and
+ToolInvocationId. It does not persist a ToolInvocation intent/settlement,
+write a terminal `Denied(ApprovalRequired)`, or call Sandbox/Executor. The
+Application combines this handoff with the P3 AgentLoopStep/LogicalAction
+identity, calls the pure P12 resolver and atomically issues the Pending
+Executable ActionApproval plus Inbox entry. An existing matching Pending
+record returns the same pause; an exact Approved record resumes P4 with its
+stored expiry/revision. Control ActionApproval remains a separate route.
 
 ToolRuntime 内部负责：
 
@@ -4849,17 +4929,16 @@ schema downgrade is added. Older binaries refuse `user_version > 32`.
 
 The accepted/planned migration prefix is append-only: `0034` is the accepted
 P10 Attention materialization, `0035` is the accepted F21 resource activation
-Attention source, `0036` is the accepted AH7/P36 schema, and `0037` is the
-proposed AH10 Deliver P9 fact plus P10 projection marker. The integrated AH10
-and mainline trees currently register through P35/user_version 35. P36's owner
-design is accepted and its migration has isolated L1 evidence, but P36 is not
-yet integrated; see the AH7 acceptance/landing and L1 records cited by the
-v1.38 governance decision. Migration `0037` is conditional on integrating
-`0036` and MUST NOT be implemented, installed, or released independently. An
-existing v35 deployment must first receive integrated P36, then P37. The
-target upgrade paths are v33→34→35→36→37, v35→36→37, and v36→37 after P36
-integration. No body, checksum, numbering, or contract of migrations 0034,
-0035, or 0036 is changed by this amendment.
+Attention source, `0036` is the accepted AH7/P36 schema, `0037` is the
+accepted/planned AH10 Deliver P9 fact plus P10 projection marker, and `0038`
+is the EA-DG-01 Executable approval handoff schema. P36 is not yet integrated
+in this governance baseline; migration `0037` is conditional on integrating
+`0036` and MUST NOT be implemented, installed, or released independently.
+Migration `0038` depends on integrated `0036` and `0037` and likewise may not
+be released as a standalone v35 upgrade. The target upgrade paths are
+v33→34→35→36→37→38, v35→36→37→38, v36→37→38 after P36 integration, and
+v37→38. No body, checksum, numbering, or contract of migrations 0032–0037 is
+changed by this amendment.
 
 Migration `0037_ah10_deliver_replay_attention_rows` (`PRAGMA user_version = 37`)
 is additive and forward-only. It creates no fact rows for historical
@@ -4909,6 +4988,67 @@ for display and can seed the marker after journal pruning. Ordinary
 `MessageSent(v1)` and `SendMessage` remain unchanged. Binaries whose schema
 ceiling is v33 refuse `user_version > 33`; P37 must follow the ordered P36
 upgrade and no P37-only v35 release is valid.
+
+Migration `0038_executable_approval_handoff` (`PRAGMA user_version = 38`)
+is forward-only after 0037. It rebuilds the 0032 `action_approvals` table
+without editing migration 0032, retaining every existing column and row while
+adding these nullable route-specific fields:
+
+```text
+logical_step_no, repair_attempt, action_index, logical_action_id,
+call_ref, tool_invocation_id, cancelled_at, cancelled_by,
+cancellation_reason
+```
+
+For new `Executable` rows, project/workspace/execution, Step identity,
+LogicalActionId, callRef and ToolInvocationId are required and
+`binding_proven=1`. Historical Executable rows remain `binding_proven=0` and
+in their 0032 terminal state (`Expired` if unconsumed, `Consumed` if already
+consumed), with `source_state` and `consumed_by` preserved. The migration does
+not infer the missing invocation/Step identity, make a legacy row reusable, or
+reinterpret historical `Denied(ApprovalRequired)` ToolInvocation rows.
+Control rows keep their Control-owned shape and status semantics.
+
+The rebuilt `state` checks add `Cancelled`. `Pending` carries no decision,
+consumption or cancellation facts. `Approved`, `Rejected` and `Consumed`
+require both human decision time and actor. `Expired` and `Cancelled` permit
+both decision fields when preserving an earlier Approve, or neither when
+closing a Pending row; half-populated provenance is invalid. `Cancelled`
+requires its cancellation time, actor and reason. Only `Consumed` carries
+both `consumed_by` and `consumed_at`; those two fields are either both present
+or both absent. An Executable row with `binding_proven=0` is allowed only in
+its preserved legacy terminal `Expired`/`Consumed` state; a proven Executable
+row requires the full binding tuple above.
+
+Migration 0038 drops the old digest-only unique index and installs
+route-specific uniqueness:
+
+```sql
+DROP INDEX action_approvals_exact_action;
+CREATE UNIQUE INDEX action_approvals_control_exact_action
+  ON action_approvals(execution_id, action_digest, control_basis_digest)
+  WHERE route_kind = 'Control' AND execution_id IS NOT NULL;
+CREATE UNIQUE INDEX action_approvals_executable_logical_action
+  ON action_approvals(execution_id, logical_step_no, repair_attempt,
+                      action_index, logical_action_id)
+  WHERE route_kind = 'Executable' AND binding_proven = 1;
+```
+
+This keeps the existing Control exact-action uniqueness and permits different
+LogicalActions in one Execution to request identical action/target/ControlBasis
+semantics. The Executable key deduplicates one logical action; after a unique
+conflict, Application compares route and every stable binding field but
+excludes candidate `expiresAt`, mutable revision, state and decision. The
+loser reads the committed winner's ApprovalId, first-commit expiry and current
+revision. A different candidate `now` therefore never causes a binding
+conflict or TTL refresh. Any other binding mismatch fails closed.
+
+The preceding migration order remains `0034 → 0035 → 0036 → 0037 → 0038`.
+The supported forward upgrade paths include v35→36→37→38, v36→37→38 and
+v37→38; v35 does not skip the conditional P36/P37 upgrades. No earlier
+migration body, checksum, Control row or Deliver projection is modified. A
+binary whose schema ceiling is user_version 37 refuses a database at 38 or
+later.
 
 ## 9.4 Relational vs JSON Rule
 
@@ -5132,6 +5272,20 @@ PRIMARY KEY(command_id, attempt_no)
 - `TerminalRejected` 是 durable command truth，但不产生 Domain Event；
 - semantic stale precondition 改 payload 后必须新 CommandId；
 - `FencingRejected` / `ExecutionStopping` 对 Execution-originated Command terminal。
+
+EA-DG-01 `ResolveExecutableApproval` is an External human command through this
+same Gateway/receipt boundary. P12 resolves the authenticated decision
+authority before receipt lookup; missing/foreign approvals return the same
+safe not-found outcome without target-existence disclosure. For an authorized
+target, one `BEGIN IMMEDIATE` transaction compares route/project/workspace/
+Execution/state/revision, CASes Approve/Reject or commits Expired when the
+deadline wins, consumes the exact P6 Inbox key, appends
+`ExecutableApprovalResolved(v1)` and commits the result receipt. A stale
+authorized revision is `RevisionConflict`. Decision/replay never writes a P4
+ToolInvocation effect or consumes a Control ActionApproval. StopExecution
+atomically closes unclaimed Executable Pending/Approved rows as Cancelled in
+its existing P2-authorized command transaction; all Control route semantics
+remain unchanged.
 
 `domain_events` 同时承担 durable outbox；多 Consumer 通过 `consumer_offsets` 分别推进，不额外维护单一 outbox delivery flag。
 
