@@ -26,8 +26,9 @@ P9 `07` remains the owner of the immutable Deliver failure fact/event and
 exposes its project-scoped fact list for P10 rebuild. The fact's identity,
 failure-code set, event payload, transaction and retry semantics are unchanged.
 The source relation is in proposed migration 0037 after accepted AH7/P36
-migration 0036 is integrated; the integrated tree currently remains at P35/
-user_version 35. Migration 0037 cannot be released independently of P36.
+migration 0036. P36/P37/P38 owner contracts are integrated in the current
+governance baseline, but migration 0036–0038 implementations/registration are
+not. Migration 0037 cannot be implemented or released independently of P36.
 
 ## Accepted owner amendment — EA-DG-01 (DID v1.39)
 
@@ -39,6 +40,21 @@ issuance, human decision, expiry/Stop cancellation, durable wake replay and
 same-Step/action resume while retaining AH7 AP1–AP8 claim/effect contracts.
 Implementation/process qualification remains separately gated. Ordered
 migrations 0036→0037→0038 remain prerequisites; P9 does not rewrite any slot.
+
+## Accepted owner amendment — AH7-DG-02 Reconcilable reality proof / P39 (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P9 `01`/`04`/`07` define escalation only for unresolved `StillUnknown` or
+unprofiled legacy evidence, the existing `ReconciliationEscalated` event/ref
+fingerprint path, replay/recovery ordering, and bounded crash/finality/Stop
+qualification. P4 alone proves reality and owns append-only facts/terminal
+settlement; P9 does not treat an absent ref or unknown result as proof and does
+not admit an Executor replay. P39 `0039` follows owner contracts P36→P37→P38;
+the source migrations are not implemented/registered by this design landing.
+Attention visibility remains bounded by the accepted event-retention horizon.
 
 ## Governance decisions recorded (GQ1–GQ5; no DID catalog changes)
 

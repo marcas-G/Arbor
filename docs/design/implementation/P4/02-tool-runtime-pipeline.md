@@ -170,3 +170,34 @@ unresolved-side-effect gate. No Session text can reconstruct authority.
 - No ownership mutation (G4).
 - No advanced sandboxing (P11).
 - No provider/model-context semantics (P3).
+
+## Accepted AH7-DG-02 recovery semantics (DID v1.40)
+
+P4 recovery preserves the distinction between claim, effect admission, external
+effect and settlement:
+
+```text
+NotAdmitted + no committed effect admission → fresh P4 claim/gates; no reconciliation
+MayHaveStarted + unsettled                 → exact profile reconciliation before any replay
+P4 terminal settlement                    → replay canonical result only; no reconcile/Executor
+```
+
+`NotOccurred`, `Occurred` and `StillUnknown` are proof outcomes from the exact
+versioned P4 profile, bound to invocation, attempt, effect key, RecoveryBinding,
+authority/approval/resource revisions and external source watermark. An
+eventually-consistent miss or unavailable source is `StillUnknown`, never
+`NotOccurred`. Only final authoritative `NotOccurred` can enable one replay
+(attempt 1) of the same ToolInvocation/ProviderTurn/LogicalAction/callRef,
+after a single fenced transaction rechecks full current authority, approval,
+workspace/project policy and verifier/control basis, resource state, lease and
+`stop_requested_at IS NULL`. `Occurred` may settle
+only with reconstructable canonical outcome and bounded observation/result.
+`StillUnknown` keeps the invocation unsettled and forbids Executor admission.
+
+Stop blocks new effect-attempt admission but does not erase known reality or
+block accounting. A current complete, unexpired Worker fence may append the
+reconciliation fact, settle a known result, or write the existing P9 escalation
+after Stop. A stale generation may not write. NonIdempotent shell v3 and
+historical unprofiled shell v2 never blind-replay. `ReconciledNoEffect` is
+reserved for MayHaveStarted plus a selected authoritative NotOccurred fact; it
+does not use `Denied` or change `effect_admission_state`.

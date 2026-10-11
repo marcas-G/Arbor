@@ -27,6 +27,22 @@ P10 never decides/consumes approval or writes the Inbox. Control `cap:` and
 CAPA remain unchanged. Qualification requirements are in
 `planning/results/EA-DG-01-contract-landing.result.md`.
 
+## Accepted owner amendment — AH7-DG-02 Attention projection (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted P39 physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P10 `02` owns the projection of the existing P9
+`ReconciliationEscalated{executionId,invocationRefsFingerprint,refs}` event as
+`ActionRequired`, targeted to `executions.workspace_id`, deduplicated by
+`reconciliation-escalated:<executionId>:<invocationRefsFingerprint>`, with
+the accepted fixed path-free summary. `04` owns atomic marker/offset rebuild
+within P1's retained event horizon; `05` only reflects the existing source in
+the frozen DTO when necessary. P10 does not create or mutate P9 facts, infer
+external reality, or promise indefinite Attention after journal pruning.
+P39 implementation and source migration remain separately gated.
+
 ## FT-DG-02 additive contract amendment (2026-10-08)
 
 The accepted `work-detail` read-only View is added to P10's authoritative

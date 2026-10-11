@@ -87,6 +87,16 @@ deterministic key
 pending; file actions are unavailable.” `occurredAt` is the source intent's
 `createdAt`, stable across event redelivery and rebuild.
 
+The accepted AH7-DG-02 contract also surfaces the existing
+`ReconciliationEscalated` Attention source through this same `rows[{source,
+severity,targetWorkspaceId,dedupKey,summaryRef,occurredAt}]` DTO; it adds no
+request/response field, ViewId or endpoint. Its exact mapping is owned by
+`02`: `ActionRequired`, `executions.workspace_id`, dedup key
+`reconciliation-escalated:<executionId>:<invocationRefsFingerprint>`, and the
+fixed path-free summary “An external tool effect could not be verified;
+recovery is paused.” Its source remains P9's existing event, not a P10-owned
+reconciliation fact.
+
 P10's source-specific activation Attention projection store atomically
 reconciles this key set from the current P1 intent table, lists/replaces the
 project's Pending rows during rebuild, and resets this source for the project.

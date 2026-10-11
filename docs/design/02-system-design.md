@@ -1,10 +1,10 @@
 # Arbor System Design Specification
 
-**Version:** 1.14
+**Version:** 1.15
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.13
+**Supersedes:** v1.14
 
 **Date:** 2026-10-11
 
@@ -100,6 +100,40 @@
   acceptance record: `planning/results/EA-DG-01-governance-acceptance.md`.
 - This is a design-contract landing only. Production implementation and
   qualification remain separately gated.
+
+**Governance changes (v1.14 → v1.15): AH7-DG-02 — Reconcilable reality proof**
+
+- Unrestricted `shell@3` is `NonIdempotent`; historical `shell@2` retains its
+  exact stored definition and is never reclassified by a new catalog. Only a
+  version/hash-bound constrained tool with stable effect identity, an
+  authoritative reality source, and proof that stale effects cannot complete
+  late may be `Reconcilable`.
+- Recovery of `MayHaveStarted` first records one of `NotOccurred`, `Occurred`,
+  or `StillUnknown` from the P4-owned reconciliation port. Unknown is not
+  successful reconciliation and never permits replay. `Occurred` settles only
+  with reconstructable canonical result/observation evidence; only a definitive
+  `NotOccurred` can permit one exact-invocation replay after fresh authority,
+  approval, resource, stop and lease checks.
+- P4 owns immutable recovery binding, per-attempt admission, append-only
+  reconciliation facts, selected-fact terminal provenance and P4/P38 approval
+  verification. P3 owns ProviderTurn/Step/Action/callRef identity and sourced
+  ToolResult/Action/cursor convergence. Stop blocks new attempt admission but
+  does not discard known in-flight facts or prevent their settlement under the
+  current full Worker fence.
+- P9 owns the existing `ReconciliationEscalated` fact/event; P10 owns its
+  ActionRequired Attention projection, deduplication, offset and rebuild. The
+  visible Attention guarantee ends at the existing journal retention horizon.
+- P39 (`0039_ah7_reconciliation_attempts`) is ordered after accepted P36,
+  P37 and P38 owner contracts. Those owner contracts are integrated here; their
+  real migration wiring is not. P39 preflight/sidecar durability and affected
+  legacy-database isolation remain release gates, not a blanket readiness
+  claim.
+- Accepted logical proposal SHA-256:
+  `D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+  accepted P39 physical supplement SHA-256:
+  `D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+  Decision, review and landing hashes are recorded in
+  `planning/results/AH7-DG-02-P39-design-landing.result.md`.
 
 **Governance changes (v1.8 → v1.9): Minimal Architecture Convergence
 (`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`)**
@@ -1089,6 +1123,17 @@ Bounded Model Observation
 No result != No effect
 ```
 
+For `MayHaveStarted`, P4 does not infer reality from the absence of an
+invocation result: it queries the exact versioned reconciliation profile and
+persists an immutable proof fact. `StillUnknown` preserves the unresolved
+effect gate and escalates; it is not a success-shaped stop. P4 may admit at
+most one exact-invocation replay only after authoritative `NotOccurred`,
+external attempt finality, unchanged authority/approval/resource binding, no
+Stop request, and a current lease. `Occurred` is settled only when its
+canonical bounded result can be reconstructed. Generic shell v3 has no such
+profile and is `NonIdempotent`; historical shell v2 remains exact-version
+replay evidence and is not reinterpreted.
+
 ## 6.6 Tool Result 与 Observation
 
 完整 Tool Result / Raw Artifact 与模型实际看到的 Bounded Observation 分离。大输出保留 Artifact Reference，模型只看到完成当前推理需要的信息。
@@ -1559,6 +1604,14 @@ Side-effect semantics：
 - reconcilable → query external reality；
 - non-idempotent / unreconcilable → UNKNOWN + escalation。
 
+`Reconcilable` is a proof-capability, not a tool-name label. The proof is bound
+to the exact ToolInvocation, effect attempt, tool/profile versions, effect
+identity, authority/approval revisions, and resource version. A query that
+cannot prove that a prior attempt is final and cannot act later is
+`StillUnknown`; it must not be treated as `NotOccurred`. Stop prevents a new
+effect admission but does not erase a known in-flight outcome or forbid
+fenced accounting of it.
+
 ## 10.5 Lease / Fencing
 
 Execution identity 与 Worker identity 分离。
@@ -1960,6 +2013,8 @@ Domain Core + Persistence/Event Journal
 75. Model-visible tool surface 必须由 Execution purpose、exact registration readiness、capability 与当前 control facts 解析；静态 catalog 或布尔开关不是最终资格判定。
 76. 同一确定性 failure fingerprint 或 deployment systemic failure 达到 policy 阈值后必须停止 Provider bytes 并形成 durable Attention/circuit state。
 77. ApprovalRequired 是同一 run 的 durable pause，不是 P4 terminal Denied；首写 TTL 不因重放延长，批准后只允许绑定的 ToolInvocation 通过 fenced claim 消费。
+78. `MayHaveStarted` 的外部 reality 只能由绑定确切 attempt/profile/effect identity 的证据建立；`StillUnknown` 不授权重放，`Occurred` 必须可重建 canonical 结果，且 terminal reconciliation settlement 必须指向同 invocation/attempt 的不可变 fact。
+79. Stop 禁止新的 effect-attempt admission，但当前完整且未过期 Worker lease 下的已知事实、settlement 与 escalation 必须能够落账；旧 generation 不得提交。
 
 ---
 

@@ -1,8 +1,8 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.39\
+**Version:** 1.40\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.38\
+**Supersedes:** v1.39\
 **Date:** 2026-10-11\
 **Depends on:** `Arbor System Design Specification v1.14`
 
@@ -181,10 +181,11 @@ generation fence and legacy replay**
   unchanged.
 - The accepted/planned migration prefix is 0034 P10 Attention, 0035 F21,
   0036 AH7/P36, then proposed 0037 Deliver P9 fact + P10 marker. The integrated
-  tree currently ends at P35/user_version 35. P36 is accepted and L1-qualified
-  in the isolated AH7 tree but is not yet integrated. P37 is conditional on
-  P36 integration and MUST NOT be implemented, installed or released
-  independently; v35 upgrades must apply integrated P36 before P37.
+  tree at the time of this v1.38 addendum ended at P35/user_version 35. In the
+  current governance baseline, P36/P37/P38 owner contracts are integrated;
+  real migration implementation/registration remains unintegrated. P37 is
+  ordered after P36 and MUST NOT be implemented, installed or released
+  independently; v35 upgrades must apply P36 before P37.
 - P10's project/event consumer inserts the Deliver marker with its own P1
   event offset in one transaction. Its full rebuild atomically resets P10
   source rows, snapshots and seeds current P9 Deliver facts, and rewinds the
@@ -221,6 +222,39 @@ generation fence and legacy replay**
   `planning/results/EA-DG-01-contract-landing.result.md`.
 - This acceptance and landing authorize design contracts only. Runtime,
   database migration execution, tests and release qualification remain gated.
+
+**Accepted owner amendment (DID v1.39 → v1.40): AH7-DG-02 Reconcilable reality proof and P39 physical contract**
+
+- Exact unrestricted `shell@3` is `NonIdempotent`; exact historical `shell@2`
+  is preserved and is never reclassified. Only a constrained, version/hash-
+  bound tool with stable effect identity, authoritative proof source, and
+  stale-attempt finality may be `Reconcilable`.
+- P4 owns the P39 immutable RecoveryBinding, effect-attempt ledger, append-only
+  reconciliation facts and selected-fact terminal settlement. P3 owns trusted
+  ProviderTurn/Step/LogicalAction/callRef identity and exact ToolResult,
+  Observation/Action/cursor convergence. P9 owns the existing
+  `ReconciliationEscalated` source; P10 owns its ActionRequired projection and
+  rebuild within the accepted event-retention horizon.
+- P39 is the forward-only `0039_ah7_reconciliation_attempts` schema contract.
+  It follows owner contracts P36→P37→P38; those owner contracts are integrated
+  in this design baseline, but their migration implementation/registration is
+  not. P39 must not be implemented or released alone.
+- A mandatory P39 migration preflight refuses affected active P36
+  `NotAdmitted` databases before pending P37/P38/P39 DDL and writes an immutable
+  operator report to an explicitly selected SQLite sidecar. The primary DB
+  remains unchanged and that DB cohort remains isolated pending future
+  governance. Windows/local-FS durability, actual Node SQLite VFS/OS/hardware
+  qualification, network/unknown-filesystem refusal, and report recovery are
+  release gates; design acceptance is not deployment qualification.
+- Accepted logical proposal SHA-256:
+  `D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+  accepted physical supplement SHA-256:
+  `D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+  Acceptance/review and final owner hashes:
+  `planning/results/AH7-DG-02-P39-design-landing.result.md`.
+- This is an owner-contract landing only; it authorizes no production code,
+  migration implementation, tests, real reconciliation claim, or Windows
+  release.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -3213,6 +3247,7 @@ ToolInvocationSettlement
 ├── ExpectedFailure
 ├── Interrupted
 ├── OutcomeUnknown
+├── ReconciledNoEffect(reconciliationFactRef, reasonCode)
 └── RuntimeFailure
 ```
 
@@ -3236,6 +3271,19 @@ Idempotent    → same invocation key replay allowed
 Reconcilable  → unknown 时先 reconcile 再决定 replay
 NonIdempotent → ambiguity 时禁止自动 replay
 ```
+
+For recovery of `MayHaveStarted`, a P4-owned versioned profile binds the exact
+tool definition, effect attempt/key, RecoveryBinding and authoritative reality
+source. Its closed outcomes are `NotOccurred`, `Occurred`, and `StillUnknown`;
+absence of a local result or an eventually-consistent negative query is not
+proof. `StillUnknown` never admits a replay. `Occurred` settles only with a
+reconstructable canonical result. Only authoritative, final `NotOccurred` may
+permit at most one exact-invocation replay after fresh authority, approval,
+resource, stop and full lease-fence revalidation. Stop blocks new admission but
+does not block accounting for known in-flight facts under the current fence.
+Terminal reconciliation-produced Success/ExpectedFailure/ReconciledNoEffect
+selects exactly one immutable fact for the same invocation and attempt; late
+contradictory evidence is append-only and does not rewrite terminal P4/P3 state.
 
 Authority/Permission denial 在 ToolRuntime 内是 rejection，但应投影成模型可理解的 `ToolInvocationDenied` Observation，而不是崩溃 Execution。
 
@@ -4930,17 +4978,22 @@ schema downgrade is added. Older binaries refuse `user_version > 32`.
 The accepted/planned migration prefix is append-only: `0034` is the accepted
 P10 Attention materialization, `0035` is the accepted F21 resource activation
 Attention source, `0036` is the accepted AH7/P36 schema, `0037` is the
-accepted/planned AH10 Deliver P9 fact plus P10 projection marker, and `0038`
-is the EA-DG-01 Executable approval handoff schema. The accepted P36 owner
+accepted/planned AH10 Deliver P9 fact plus P10 projection marker, `0038` is
+the EA-DG-01 Executable approval handoff schema, and `0039` is the accepted
+AH7-DG-02 P39 reconciliation attempt/fact schema. The accepted P36 owner
 contract is integrated in this governance baseline; migration `0036`
 implementation/registration is not integrated in this tree. Migration `0037` is conditional on
 integrating migration `0036` and MUST NOT be implemented, installed, or
 released independently.
 Migration `0038` depends on integrated `0036` and `0037` and likewise may not
-be released as a standalone v35 upgrade. The target upgrade paths are
-v33→34→35→36→37→38, v35→36→37→38, v36→37→38 after P36 integration, and
-v37→38. No body, checksum, numbering, or contract of migrations 0032–0037 is
-changed by this amendment.
+be released as a standalone v35 upgrade. Migration `0039` depends on P36 and
+P38 source contracts and, by the global `user_version` prefix, must follow
+P37; its preflight runs before any pending P37/P38/P39 DDL on a v36–v38 DB.
+The target path after qualification is v33→…→39, v35→…→39, v36→…→39,
+v37→…→39, or v38→39, but none may skip a pending predecessor. The integrated
+owner contracts do not imply migration implementation/registration. No body,
+checksum, numbering, or contract of migrations 0032–0038 is changed by this
+amendment.
 
 Migration `0037_ah10_deliver_replay_attention_rows` (`PRAGMA user_version = 37`)
 is additive and forward-only. It creates no fact rows for historical
@@ -5054,12 +5107,56 @@ references this exact pair. Rebuilding `action_approvals` without this key
 would invalidate the existing FK contract; 0038 changes neither that
 AssignWork binding nor its Control approval semantics.
 
-The preceding migration order remains `0034 → 0035 → 0036 → 0037 → 0038`.
-The supported forward upgrade paths include v35→36→37→38, v36→37→38 and
-v37→38; v35 does not skip the conditional P36/P37 upgrades. No earlier
-migration body, checksum, Control row or Deliver projection is modified. A
-binary whose schema ceiling is user_version 37 refuses a database at 38 or
-later.
+The P38 amendment's migration-order statement remains history for that
+amendment. The current accepted/planned suffix is `0034 → 0035 → 0036 → 0037
+→ 0038 → 0039`. P39 does not permit skipping a pending predecessor; its
+preflight runs before pending P37/P38/P39 DDL. No earlier migration body,
+checksum, Control row or Deliver projection is modified. The existing v37
+binary's refusal at `user_version >= 38` remains unchanged; P39's schema
+ceiling is a separate implementation gate and is not established by this
+design-only amendment.
+
+Migration `0039_ah7_reconciliation_attempts` (`PRAGMA user_version = 39`) is
+the accepted forward-only P39 contract in P4 `06` and P1 `04`. Before any
+pending 0037/0038/0039 transaction, maintenance-mode startup validates
+`--migration-block-report-db <absolute-local-path>` and its dedicated
+sidecar schema/WAL/FULL settings before opening the primary DB. On a v36–v38
+primary, a read-only `BEGIN IMMEDIATE` snapshot detects active P36
+`NotAdmitted` rows whose source binding is unprovable. If found, it commits and
+reads back the stable immutable report under primary→sidecar lock order, rolls
+back the primary snapshot, exits typed `P39_LEGACY_DB_ISOLATED` (78), and does
+not start service runtime. The primary committed rows/schema/approval/P3
+state/user_version remain unchanged. That DB is permanently isolated until
+future governance; no binding is fabricated, approval refunded/transferred,
+row deleted, or invocation retried. A clear snapshot proceeds through
+0037→0038→0039 only while all other primary writers remain stopped.
+
+P39 rebuilds P36 `tool_invocations` with monotone admission and binding state,
+settlement provenance plus `selected_attempt_no/selected_fact_id`, and a
+deferred composite FK to the same invocation/attempt immutable fact. It adds
+`tool_invocation_recovery_bindings`, `tool_invocation_effect_attempts` (only
+attempt 0/1, explicit legacy admission provenance and time precision) and
+append-only `tool_reconciliation_facts`. New terminal reconciliation
+Success/ExpectedFailure/ReconciledNoEffect requires exactly one selected fact;
+ordinary terminal and preserved P36 terminal rows have no selected fact.
+Historical MayHaveStarted gets unknown admission time (never `intent_at`), and
+unprofiled history keeps null profile/effectKey/binding with physical
+`LegacyProfileUnavailable` provenance while its canonical reason remains
+`ProfileUnavailable`. P39 has no down migration; FK check and all DDL/backfill
+share the forward migration transaction.
+
+The operator sidecar uses a unique stable report key and content hash,
+immutable report rows, readback verification and same-key conflict refusal.
+Sidecar and primary DB are distinct SQLite files; lock order is primary then
+sidecar, and uncertain sidecar commit is resolved by key/hash before primary
+rollback or continuation. WAL/SHM are retained together; the named operator
+owns backup/retention. Windows deployment is blocked until the actual Node VFS
+and each supported local filesystem pass process-kill, I/O-fault, VM
+hard-power-off, reopen and integrity qualification. `synchronous=FULL` is
+conditional on VFS, OS and hardware flush behavior; network and unknown
+filesystems fail closed. Exact table/column/check/FK/index/trigger contract is
+owned by P4 `06`; CLI/preflight and migration boundary by P1 `04`/`06` and P14
+`02`/`05`.
 
 ## 9.4 Relational vs JSON Rule
 

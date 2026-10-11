@@ -165,6 +165,26 @@ part of the immutable binding.
 - Producing an approval is the deferred resolver's job; P4 owns the record and
   the atomic single-consumption semantics.
 
+### AH7-DG-02 RecoveryBinding and approval snapshot (DID v1.40)
+
+P39 RecoveryBinding records the approval ID when applicable, exact
+pre-consumption and consumed approval revisions, authenticated subject,
+action/argument digest, target/ControlBasis digest, expiry snapshot, and
+`consumedBy=ToolInvocationId`. These values are read from the trusted P4/P38
+approval ledger and authenticated Invocation context inside the same fenced
+claim/consume transaction that stores the P3 source binding and attempt 0; they
+are never accepted from model arguments or P3's caller-provided approval
+claim. Existing consumption is reusable only for the same invocation and
+identical binding; it is not consumed again, refunded, or transferred.
+
+Before a post-NotOccurred replay, the effect-admission transaction compares the
+stored approval binding with current trusted authority, exact approval
+consumer/revisions and resource/policy snapshot under the current full Worker
+fence. Revocation, expiry, or revision drift cannot be normalized to
+equivalence. It produces the accepted P4 `ReconciledNoEffect` disposition for
+`ApprovalNoLongerAuthorized`; it does not reset MayHaveStarted or issue a new
+approval for the old invocation.
+
 Denial and approval reuse:
 
 - Before consumption, authority/approval/resource denial is persisted as a

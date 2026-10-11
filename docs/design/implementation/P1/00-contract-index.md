@@ -23,6 +23,19 @@ P1 does not resolve human authority itself; P12 supplies the trusted decision
 fact. The existing Control approval and direct-child AssignWork command
 contracts are unchanged.
 
+## Accepted AH7-DG-02 P39 schema/startup amendment (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P1 `04` owns migration ordering, `user_version` and the explicitly configured
+SQLite sidecar-report schema/startup boundary; `06` owns preflight/report,
+crash and platform qualification boundaries. P4 owns invocation/attempt/fact
+DDL. P39 is the ordered 0039 suffix after accepted P36/P37/P38 owner contracts,
+but their real migration implementation/registration is not integrated here.
+No claim of Windows, sidecar power-loss, or migration qualification is made.
+
 ```text
 Detailed Implementation Design v1.6 (frozen)
         ↓ delegates phase-scoped closure

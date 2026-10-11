@@ -346,3 +346,177 @@ winner's ID/expiry/revision.
   owning tool decides).
 - No Execution settlement policy (P2).
 - No retry policy for providers (P3).
+
+## Accepted AH7-DG-02 / P39 persistence contract (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+The exact owner DDL is migration `0039_ah7_reconciliation_attempts`, after
+integrated P36/P37/P38 owner contracts. Their migration implementation is not
+integrated here; P39 cannot be implemented or released as a standalone schema.
+
+### Durable rows
+
+P39 rebuilds `tool_invocations` in one forward-only transaction, preserving
+existing invocation identity, tool/version/tag, arguments, resolved regions,
+approval ID, intent timestamp, settlement payload and result ref. It adds:
+
+| Column | Contract |
+|---|---|
+| `recovery_binding_state` | `Bound`, `LegacyBindingUnproven`, `HistoricalSettled`; historical settled rows remain historical, active P36 rows whose binding cannot be proven are marked unproven |
+| `recovery_binding_sha256` | Nullable unless Bound; composite FK `(invocation_id,digest)` to immutable binding row |
+| `settlement_provenance` | `Ordinary`, `Reconciliation`, `LegacyHistorical`; null exactly while unsettled |
+| `selected_attempt_no`, `selected_fact_id` | Both set only for reconciliation-proven terminal state; composite deferred FK `(invocation_id,attempt_no,fact_id)` to the same immutable fact |
+| `settlement_kind` | Existing terminal values plus `ReconciledNoEffect`; Denied requires `NotAdmitted`; ReconciledNoEffect requires `MayHaveStarted` and a result ref |
+
+Check constraints enforce the closed provenance/selected-field combinations:
+Reconciliation provenance is only Success/ExpectedFailure/ReconciledNoEffect
+from MayHaveStarted; Ordinary or LegacyHistorical has no selected fact;
+settled LegacyBindingUnproven rows are forbidden and HistoricalSettled must
+already be terminal. Settlement columns, provenance and selected fact are
+immutable after terminal. Invocation admission is monotone
+`NotAdmitted→MayHaveStarted`; neither MayHaveStarted nor LegacyUnknown can be
+rewritten as a no-effect denial/interruption.
+
+`tool_invocation_recovery_bindings` has `invocation_id` PK/FK,
+`binding_version=1`, immutable canonical binding JSON, lowercase SHA-256
+digest, created time, and UNIQUE `(invocation_id,binding_sha256)`. Its triggers
+reject update and delete. The binding contains P3-owned ProviderTurn,
+AgentLoopStep, LogicalAction/actionIndex/callRef identity; exact P4 invocation
+and tool definition identity/hash/side-effect tag; canonical args/resource
+snapshot digests and revisions; P4/P38 approval ID, subject, pre/post revision,
+consumer, target/basis and expiry snapshot; and exact profile/effect identity
+or explicit nulls where not applicable. It is never a source of authority.
+
+The canonical `RecoveryBindingV1` key set is exact (null is explicit for
+inapplicable approval/profile fields):
+
+```text
+bindingVersion, digestAlgorithm,
+executionId, invocationId, providerTurnId,
+logicalStepNo, repairAttempt, logicalActionId, actionIndex, callRef,
+toolName, toolVersion, toolDefinitionHash, sideEffectSemantics,
+canonicalArgumentsDigest, targetResourceIdentityDigest,
+resourceBoundaryRevision, environmentRevision,
+authoritySourceRevision, principalId, capability, permissionGrantRevisions,
+workspacePolicyRevision, projectPolicyRevision, controlBasisDigest,
+approvalId, approvalSubject, approvalPreConsumeRevision,
+approvalConsumedRevision, approvalExpiresAt, approvalTargetDigest,
+approvalActionDigest, approvalConsumedBy,
+profileId, profileVersion, profileHash, profileProtocol, effectKey
+```
+
+P3 is the authority for its source-identity fields; the Application transports
+the same tuple; P4 checks it against ToolIntent/ToolExecutionContext and the
+current ExecutionOrigin. P38's trusted ledger is the only source for approval
+subject/revisions/consumer. Profile/effect fields are runtime catalog/adapter
+facts, never model-selected inputs. `digestAlgorithm` and `bindingVersion` are
+persisted with the canonical JSON and hashed by the repository's canonicalizer.
+
+`tool_invocation_effect_attempts` is keyed by `(invocation_id,attempt_no)`;
+attempt is constrained to 0 or 1. It stores admission state, tool-definition
+hash, side-effect tag, nullable profile ID/version/hash/protocol and effect
+key, binding digest, admission timestamp, `admission_source`, and
+`admission_time_precision`. Profile fields are either all null or complete;
+a profile requires a binding. Admission source is `P36Backfill`, `P39Claim`,
+or `P39Admission`; precision is `NotAdmitted`, `TransactionTimestamp`, or
+`UnknownLegacy`. NotAdmitted has null time and NotAdmitted precision; P39
+MayHaveStarted admission has a transaction timestamp; historical P36
+MayHaveStarted/LegacyUnknown has null time and UnknownLegacy precision.
+`intent_at` is never substituted for `admitted_at`. Admission is monotone and
+attempt identity fields are immutable.
+
+`tool_reconciliation_facts` is append-only, keyed by lowercase SHA-256 fact ID,
+with unique exact-redelivery identity. It records invocation/attempt,
+binding/profile/effect key (nullable only for approved historical
+unprofiled provenance), `fact_origin` (`ProfileReconciliation` or
+`P36LegacyUnprofiled`), nullable `legacy_reason` limited to
+`LegacyProfileUnavailable`, disposition (`RecoveryInput` or
+`PostTerminalEvidence`), outcome (`NotOccurred`, `Occurred`, `StillUnknown`),
+closed unknown reason code, evidence/result Artifact refs and observed time.
+Its composite FKs bind to the exact attempt/binding; evidence and result refs
+reference P4 Artifacts. P36 unprofiled facts require StillUnknown /
+ProfileUnavailable / LegacyProfileUnavailable and null binding, profile hash
+and effect key. `NotOccurred` requires evidence; `Occurred` requires result;
+StillUnknown requires one closed reason code. PostTerminalEvidence is only
+StillUnknown/EvidenceBindingMismatch and cannot be selected for settlement.
+No absence/presence-only SQL rule is treated as proof.
+
+Exact physical key/column inventory:
+
+| Relation | Columns | Key / foreign references |
+|---|---|---|
+| `tool_invocation_recovery_bindings` | `invocation_id`, `binding_version`, `canonical_binding_json`, `binding_sha256`, `created_at` | PK invocation; UNIQUE invocation+digest; invocation FK |
+| `tool_invocation_effect_attempts` | `invocation_id`, `attempt_no`, `admission_state`, `tool_definition_hash`, `side_effect_semantics`, `profile_id`, `profile_version`, `profile_hash`, `profile_protocol`, `effect_key`, `binding_sha256`, `admitted_at`, `admission_source`, `admission_time_precision` | PK invocation+attempt; FKs to invocation and same binding digest |
+| `tool_reconciliation_facts` | `fact_id`, `invocation_id`, `attempt_no`, `binding_sha256`, `profile_hash`, `effect_key`, `fact_origin`, `legacy_reason`, `fact_disposition`, `outcome`, `reason_code`, `evidence_ref`, `evidence_sha256`, `result_ref`, `observed_at` | PK fact; FKs to same invocation+attempt/binding and Artifact refs |
+
+Required indexes are `idx_effect_attempts_unsettled(invocation_id,
+admission_state)`, `idx_reconciliation_facts_invocation(invocation_id,
+attempt_no,observed_at)`, unique `reconciliation_facts_invocation_ref`,
+unique `reconciliation_facts_attempt_ref`, and unique
+`reconciliation_facts_exact_redelivery` over invocation/attempt/origin/outcome/
+disposition plus null-normalized binding/profile/effect/reason/legacy/evidence/
+result identity. Required immutable/invariant triggers are
+`recovery_binding_no_update`, `recovery_binding_no_delete`,
+`tool_invocation_binding_immutable`, `tool_invocation_settlement_no_rewrite`,
+`tool_invocation_admission_monotone`, `effect_attempt_admission_monotone`,
+`effect_attempt_identity_immutable`,
+`reconciliation_fact_disposition_matches_terminal`,
+`reconciliation_fact_no_update` and `reconciliation_fact_no_delete`.
+
+The P4 transaction additionally verifies canonical binding digest, exact
+current authority/resource/profile/effect key, current grant/policy/verifier
+and ControlBasis revisions, full current Worker lease tuple and approval
+subject/revision/consumer. These mutable values are re-resolved from trusted
+current sources; the immutable binding digest is not a substitute for current
+authorization. It selects only one
+non-conflicting authoritative RecoveryInput fact for the exact invocation and
+attempt: Success/ExpectedFailure require `Occurred`; ReconciledNoEffect
+requires `NotOccurred`. A second/different fact cannot replace that selected
+fact. A late contradictory fact is appended only as PostTerminalEvidence and
+does not change P4 settlement or P3 projection. P4 does not invent a new P9/P10
+post-terminal notification.
+
+### Claim, admission and recovery transactions
+
+P4's existing P2-facing `ReconciliationSource.pending(executionId)` remains a
+reference enumerator only. `ToolReconciliationPort.reconcile` is a separate
+P4-owned read/confirm/cancel/fence capability and returns the closed P4
+`ToolReconciliationResult` union; it never calls the Executor as a probe.
+The returned proof is checked against the exact RecoveryBinding, attempt,
+profile hash, effect key, source revision/watermark, and evidence/result refs
+before any fact, selected terminal result or new admission is committed.
+External I/O happens outside SQLite; fact insertion, settlement selection and
+P9 escalation use the existing short transaction/fencing boundary.
+
+The claim transaction atomically verifies/writes RecoveryBinding, claims the
+invocation, validates current trusted P38 approval subject/revision and consumes
+it once if required, and creates attempt 0 NotAdmitted under the full current
+Worker fence. Re-entry accepts the same consumed approval only for the same
+ToolInvocation and binding; no refund/transfer/re-consume occurs. The later
+effect-admission transaction changes exactly one attempt from NotAdmitted to
+MayHaveStarted only after rechecking full Worker lease tuple and expiry, stop
+predicate, current grant/policy/verifier/resource revisions, approval binding,
+and tool/profile hashes. No Executor opens before that commit is confirmed.
+
+Reconciliation runs outside SQLite through the P4-owned port; facts, known
+settlement and P9 escalation commit under the current full lease even after
+Stop. Stop only blocks new effect-attempt admission. `StillUnknown` never
+starts an Executor. Final `NotOccurred` permits at most attempt 1 of the same
+invocation after a single transaction revalidates the entire binding and
+`stop_requested_at IS NULL`; changed authority/resource/approval, Stop, or
+attempt limit selects the accepted `ReconciledNoEffect` reason. `Occurred`
+settles only with a reconstructable canonical result/observation. Terminal
+P4 replay is receipt-first and never re-runs reconciliation/Executor or changes
+the selected fact.
+
+P39 backfill never infers a source binding, profile, effect key, approval
+revision or fact. Historical MayHaveStarted has `admission_source=P36Backfill`,
+null `admitted_at`, and `UnknownLegacy` precision; unprofiled history preserves
+null profile/effectKey/binding and uses physical `LegacyProfileUnavailable`
+while the canonical closed reason remains `ProfileUnavailable`. Active P36
+NotAdmitted rows are blocked by P1's mandatory preflight before any pending
+P37/P38/P39 migration and remain unchanged in a permanently isolated DB cohort
+until future governance; P4 does not manufacture a manual settlement.

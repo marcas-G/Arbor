@@ -16,10 +16,10 @@ runtime implementation remains separately gated.
 **Accepted AH10 Deliver P10 storage addendum (DID v1.38):** this document's
 P9 fact/event semantics and identity remain unchanged. The Deliver fact is
 created by P9 and is the durable source for P10's `deliver_replay_attention_rows`
-marker and rebuild. Its forward migration is proposed `0037`, conditional on
-integrating accepted AH7/P36 migration `0036`; the integrated tree currently
-ends at P35/user_version 35. P37 MUST NOT be independently implemented or
-released before P36 integration. Accepted addendum SHA-256:
+marker and rebuild. Its forward migration is `0037`, ordered after P36. P36/P37/P38
+owner contracts are integrated in the current governance baseline, but their
+real migration implementations/registration are not; P37 MUST NOT be
+independently implemented or released ahead of P36. Accepted addendum SHA-256:
 `040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
 
 **Accepted EA-DG-01 Executable approval amendment (DID v1.39):** P9 owns the
@@ -367,6 +367,46 @@ Implementation completion remains separately gated and requires:
 7. EA-AP1–EA-AP7 run through the production approval issuer/decision/wake
    route with real process restart; a test-seeded approval cannot qualify
    issuance, human decision, Inbox projection or same-action resume.
+
+## Accepted AH7-DG-02 Reconcilable recovery / P39 gate (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted P39 physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+
+P9's existing recovery order delegates external truth to the exact P4 profile
+and durable fact. For an unsettled `MayHaveStarted` invocation, P9 invokes
+reconciliation before any replay and then follows only these branches:
+
+| P4 fact/result | P9 action | P3/P10 convergence |
+|---|---|---|
+| `Occurred` + reconstructable canonical outcome/result | Do not invoke Executor; persist/recognize P4 selected same-attempt fact and terminal settlement under current full Worker fence | P3 replays the canonical result to one ToolResult/Observation/Action/cursor |
+| `NotOccurred` + all binding/authority/approval/resource/profile/finality checks still exact; no Stop; attempt 0 | Admit at most the single attempt 1 through P4's atomic fresh gate | Same invocation/ProviderTurn/LogicalAction/callRef and consumed approval; no P9-created identity or second approval consumption |
+| `NotOccurred` but Stop, changed snapshot, or attempt limit | No attempt admission; accept only P4's typed `ReconciledNoEffect` settlement | P3 uses the exact reason→ToolResult/Action/cursor mapping in `08`; Stop maps to existing Interrupted/quiescence |
+| `StillUnknown`, missing profile, stale/unbound/conflicting proof, or unreconstructable result | No Executor; retain unresolved-side-effect gate and write/replay existing P9 escalation through the current lease-fenced recovery path | One `ReconciliationEscalated` identity; P10 ActionRequired row/rebuild within retained event horizon |
+| P4 terminal result exists, P3 handoff missing | Skip P4 reconciliation and Executor; receipt-first converge the selected P4 result/fact | One sourced ToolResult/Action/cursor, no second result/effect |
+
+Stop closes new attempt admission only. Read-only reconciliation may continue;
+known fact, P4 settlement and P9 escalation may commit after Stop only under the
+current complete, unexpired Worker lease tuple and unsettled Execution. An
+expired/stale generation cannot append a fact/event or settle. A profile that
+cannot fence/cancel the old external attempt or establish finality cannot
+claim NotOccurred even if a current lookup is empty.
+
+P4 facts are append-only. A contradictory post-terminal fact is retained only
+as `PostTerminalEvidence`; it cannot replace P4's selected same-attempt fact,
+rewrite terminal settlement, reverse P3 ToolResult/Action/cursor or cause
+automatic replay. The accepted contract does not add a post-terminal P9/P10
+Attention event. P39's active P36 NotAdmitted binding gap is handled before
+pending P37/P38/P39 DDL by P1's immutable SQLite sidecar report and permanent
+database-cohort isolation; P9 does not fabricate a legacy source binding or
+manual settlement.
+
+These owner contracts and qualification matrices are design-only. They do not
+assert that a profile adapter, migration, real external reconciliation, Windows
+SQLite sidecar, or two-daemon crash/restart matrix has been implemented or
+qualified.
 
 ## 6. Must Not Decide
 

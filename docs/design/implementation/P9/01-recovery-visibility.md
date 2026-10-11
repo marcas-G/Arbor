@@ -39,3 +39,21 @@ T4  pre-dispatch check      — the targeted lease/fence predicate ONLY
 - No Attention presentation/UI (P10); the fact event is the whole P9 surface.
 - No settle-rule changes beyond the P2-frozen two deterministic cases.
 - No change to the nine-step order (P2 `06`).
+
+## Accepted AH7-DG-02 escalation source (DID v1.40)
+
+P9 drives the P4-owned proof/recovery contract; P9 does not establish external
+reality. Only `StillUnknown`/unprofiled unresolved effect evidence enters the
+existing `ReconciliationEscalated{executionId, invocationRefsFingerprint,
+refs}` path. P4 owns the immutable attempt/fact and settlement; P9 owns
+RecoveryController trigger/order and the existing event payload/dedup identity.
+Repeated recovery with the same `(executionId, invocationRefsFingerprint)` is
+idempotent. A missing ref, temporary negative lookup or `StillUnknown` is never
+reconciliation success, never an Executor replay permit, and never ordinary
+Execution completion. Known `Occurred` facts and selected terminal results
+converge under the current full Worker fence, including after Stop; stale
+generation writes remain rejected.
+
+P10 owns the `ActionRequired` read-model row and rebuild. Its visibility is
+bounded by the accepted P1 journal retention horizon; this contract does not
+add a durable post-pruning P9 fact store or new event.
