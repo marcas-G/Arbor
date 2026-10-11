@@ -652,7 +652,7 @@ describe("P2 WorkReadmissionGateStore", () => {
         expect(inB._tag).toBe("Failure");
         if (inB._tag === "Failure") {
           expect(JSON.stringify(inB.cause)).toContain(
-            '"reasonCode":"SourceExecutionMissing"',
+            '"reasonCode":"SourceEventExecutionMismatch"',
           );
         }
       }),
@@ -744,6 +744,59 @@ describe("P2 WorkReadmissionGateStore", () => {
       }),
     ));
 
+  it("fails closed for A and B when aggregate is missing even if payload points to B", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* seedOtherWorkspaceExecution;
+        const missingExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789fc";
+        yield* appendReconciliationEvent(missingExecutionId, otherExecutionId);
+        const inA = yield* Effect.exit(
+          queryTarget(projectId, workspaceId, workId),
+        );
+        const inB = yield* Effect.exit(
+          queryTarget(projectId, otherWorkspaceId, otherWorkId),
+        );
+        for (const exit of [inA, inB]) {
+          expect(exit._tag).toBe("Failure");
+          if (exit._tag === "Failure") {
+            expect(JSON.stringify(exit.cause)).toContain(
+              '"reasonCode":"SourceExecutionMissing"',
+            );
+          }
+        }
+      }),
+    ));
+
+  it("fails closed for A and B when aggregate belongs to another Project even if payload points to B", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* seedOtherWorkspaceExecution;
+        yield* seedOtherProjectExecution;
+        yield* appendReconciliationEvent(
+          otherProjectExecutionId,
+          otherExecutionId,
+        );
+        const inA = yield* Effect.exit(
+          queryTarget(projectId, workspaceId, workId),
+        );
+        const inB = yield* Effect.exit(
+          queryTarget(projectId, otherWorkspaceId, otherWorkId),
+        );
+        for (const exit of [inA, inB]) {
+          expect(exit._tag).toBe("Failure");
+          if (exit._tag === "Failure") {
+            expect(JSON.stringify(exit.cause)).toContain(
+              '"reasonCode":"SourceProjectMismatch"',
+            );
+          }
+        }
+      }),
+    ));
+
   it("fails closed when an in-scope ReconciliationEscalated event omits its Execution binding", () =>
     runDb(
       Effect.gen(function* () {
@@ -754,7 +807,7 @@ describe("P2 WorkReadmissionGateStore", () => {
         expect(exit._tag).toBe("Failure");
         if (exit._tag === "Failure") {
           expect(JSON.stringify(exit.cause)).toContain(
-            '"reasonCode":"SourceExecutionMissing"',
+            '"reasonCode":"SourceEventExecutionMismatch"',
           );
         }
       }),
@@ -787,7 +840,7 @@ describe("P2 WorkReadmissionGateStore", () => {
         expect(inB._tag).toBe("Failure");
         if (inB._tag === "Failure") {
           expect(JSON.stringify(inB.cause)).toContain(
-            '"reasonCode":"SourceExecutionMissing"',
+            '"reasonCode":"SourceEventExecutionMismatch"',
           );
         }
       }),
