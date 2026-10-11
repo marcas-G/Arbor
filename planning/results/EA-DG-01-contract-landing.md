@@ -1,6 +1,6 @@
 # EA-DG-01 — Executable Approval Contract Landing
 
-Date: 2026-10-11  
+Date: 2026-10-11
 Status: **Accepted owner contracts landed; independent post-landing review pending**
 
 ## Fixed authority
