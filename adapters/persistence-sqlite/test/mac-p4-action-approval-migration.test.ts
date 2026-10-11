@@ -7,7 +7,7 @@ import {
   ToolInvocationStore,
   TransactionPort,
 } from "@arbor/ports";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -113,6 +113,27 @@ describe("MAC-P4 unified ActionApproval migration", () => {
             "INSERT INTO action_approvals (approval_id, route_kind, project_id, workspace_id, execution_id, subject_ref, stable_action_id, action_version, side_effect_semantics, action_digest, arguments_json, target_ref, target_resource_space_ids_json, control_basis_digest, state, revision, requested_at, expires_at, decided_at, decided_by, decision_reason, consumed_at, consumed_by, binding_proven, source_state) VALUES ('apr_current','Executable','prj_mac4','ws_mac4','exe_mac4','Execution:exe_mac4','shell','1','Reconcilable','current-exec','{}','filesystem','[\"filesystem\"]','current-basis','Approved',1,'2026-10-04T00:00:00.000Z','2999-01-01T00:00:00.000Z','2026-10-04T00:00:01.000Z','user:approver',NULL,NULL,NULL,1,NULL)",
           );
           const invocations = yield* ToolInvocationStore;
+          const migratedLegacy = yield* tx.transact(
+            invocations.findApproval("apr_legacy"),
+          );
+          const migratedLegacyConsume = yield* tx.transact(
+            invocations.consumeApproval(
+              "apr_legacy",
+              "tin_mac4_legacy" as never,
+            ),
+          );
+          const controlThroughLegacy = yield* tx.transact(
+            invocations.findApproval("cap_legacy"),
+          );
+          const controlConsumedThroughLegacy = yield* tx.transact(
+            invocations.consumeApproval(
+              "cap_legacy",
+              "tin_mac4_control" as never,
+            ),
+          );
+          const executableThroughLegacy = yield* tx.transact(
+            invocations.findApproval("apr_current"),
+          );
           const first = yield* tx.transact(
             invocations.consumeApproval("apr_current", "tin_mac4_a" as never),
           );
@@ -130,6 +151,11 @@ describe("MAC-P4 unified ActionApproval migration", () => {
             migrated,
             oldTableCount: Number(oldTables[0]?.n ?? -1),
             current: currentRows[0],
+            migratedLegacy,
+            migratedLegacyConsume,
+            controlThroughLegacy,
+            controlConsumedThroughLegacy,
+            executableThroughLegacy,
             first,
             second,
             executable: executable[0],
@@ -161,12 +187,17 @@ describe("MAC-P4 unified ActionApproval migration", () => {
       action_version: "1",
       binding_proven: 1,
     });
-    expect(result.first).toBe(true);
+    expect(Option.isSome(result.migratedLegacy)).toBe(true);
+    expect(result.migratedLegacyConsume).toBe(false);
+    expect(Option.isNone(result.controlThroughLegacy)).toBe(true);
+    expect(result.controlConsumedThroughLegacy).toBe(false);
+    expect(Option.isNone(result.executableThroughLegacy)).toBe(true);
+    expect(result.first).toBe(false);
     expect(result.second).toBe(false);
     expect(result.executable).toEqual({
-      state: "Consumed",
-      revision: 2,
-      consumed_by: "tin_mac4_a",
+      state: "Approved",
+      revision: 1,
+      consumed_by: null,
     });
   });
 });
