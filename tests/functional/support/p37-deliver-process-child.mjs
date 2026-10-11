@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import {
   main,
@@ -20,7 +21,8 @@ if (role !== "old" && role !== "new") {
   throw new Error("P37 test child needs role=old|new");
 }
 const databaseFile = process.env.ARBOR_DB;
-if (databaseFile === undefined) throw new Error("P37 test child needs ARBOR_DB");
+if (databaseFile === undefined)
+  throw new Error("P37 test child needs ARBOR_DB");
 
 const gateDirectory = join(dirname(databaseFile), "p37-gates");
 const emit = (event) =>
@@ -44,7 +46,7 @@ const waitForGate = async (name, event) => {
 const holdConfiguredBoundary = async (boundary, event) => {
   if (
     process.env.ARBOR_P37_PAUSE_ROLE !== role ||
-    process.env.ARBOR_P37_PAUSE_BOUNDARY !== boundary
+    !process.env.ARBOR_P37_PAUSE_BOUNDARY?.split(",").includes(boundary)
   ) {
     return;
   }
@@ -52,11 +54,43 @@ const holdConfiguredBoundary = async (boundary, event) => {
   await waitForGate(`boundary-${boundary}`, event);
 };
 
+const readActionKind = (logicalActionId) => {
+  if (logicalActionId === undefined) return undefined;
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return db
+      .prepare(
+        "SELECT action_kind FROM agent_loop_step_actions WHERE logical_action_id = ?",
+      )
+      .get(logicalActionId)?.action_kind;
+  } finally {
+    db.close();
+  }
+};
+
 const qualificationProbe = async (event) => {
   if (
-    event.boundary ===
-    "AH10AfterControlHandlerReturnBeforeObservationCommit"
+    event.boundary === "AH7AfterActionIntentCommit" &&
+    event.actionIndex === 0
   ) {
+    const actionKind = readActionKind(event.logicalActionId);
+    const configuredKind = process.env.ARBOR_P37_GATE_ACTION_KIND;
+    if (configuredKind === undefined || configuredKind === actionKind) {
+      emit({ ...event, actionKind });
+      await holdConfiguredBoundary(event.boundary, event);
+    }
+  }
+  if (
+    event.boundary === "AH10AfterControlHandlerReturnBeforeObservationCommit"
+  ) {
+    emit(event);
+    await holdConfiguredBoundary(event.boundary, event);
+  }
+};
+
+const executionLeaseQualificationProbe = async (event) => {
+  if (event.boundary === "AH10AfterLeaseAcquired") emit(event);
+  if (event.boundary === "AH10BeforeLeaseRenewal") {
     emit(event);
     await holdConfiguredBoundary(event.boundary, event);
   }
@@ -69,9 +103,7 @@ const gatewayQualificationProbe = async (event) => {
   }
 };
 
-const recoveryAttentionFactQualificationProbe = async (event) => {
-  // P9 Deliver probes are deliberately accepted by name here so this child
-  // remains useful while the P9 implementation adds the typed event union.
+const deliverReplayQualificationProbe = async (event) => {
   if (event.boundary === "BeforeDeliverReplayAttentionCommit") {
     emit(event);
     await holdConfiguredBoundary(event.boundary, event);
@@ -110,7 +142,8 @@ const config = {
   },
   qualificationProbe,
   gatewayQualificationProbe,
-  recoveryAttentionFactQualificationProbe,
+  executionLeaseQualificationProbe,
+  deliverReplayQualificationProbe,
   attentionProjectionQualificationProbe,
   // Added by the P37 L5 composition seam. Until that implementation is
   // integrated this is intentionally an unknown no-op config property.
