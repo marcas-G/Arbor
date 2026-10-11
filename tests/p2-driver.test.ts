@@ -45,6 +45,8 @@ import {
   runExecution,
 } from "../packages/execution-runtime/src/index.js";
 import {
+  type ControlApprovalRecord,
+  ControlApprovalStore,
   type ExecutableApprovalRecord,
   ExecutableApprovalStore,
   ExecutionDriverPort,
@@ -73,8 +75,10 @@ const makeApp = (
   settlement: ExecutionSettlement,
   options: {
     readonly pendingApproval?: ExecutableApprovalRecord;
+    readonly pendingControlApproval?: ControlApprovalRecord;
     readonly calls?: { dispatch: number; drive: number };
-    readonly omitApprovalStore?: boolean;
+    readonly omitExecutableApprovalStore?: boolean;
+    readonly omitControlApprovalStore?: boolean;
   } = {},
 ) => {
   const base = layer({ filename: ":memory:" });
@@ -102,6 +106,14 @@ const makeApp = (
           : Option.some(options.pendingApproval),
       ),
   } as never);
+  const controlApprovals = Layer.succeed(ControlApprovalStore, {
+    findPendingForExecution: () =>
+      Effect.succeed(
+        options.pendingControlApproval === undefined
+          ? Option.none()
+          : Option.some(options.pendingControlApproval),
+      ),
+  } as never);
   const core = Layer.mergeAll(
     infra,
     repos,
@@ -121,7 +133,12 @@ const makeApp = (
     RuntimeSafetyGateLive(),
     Layer.provide(P2CommandHandlerRegistryLive, repos),
   );
-  const all = options.omitApprovalStore ? core : Layer.merge(core, approvals);
+  const withControlApprovals = options.omitControlApprovalStore
+    ? core
+    : Layer.merge(core, controlApprovals);
+  const all = options.omitExecutableApprovalStore
+    ? withControlApprovals
+    : Layer.merge(withControlApprovals, approvals);
   return {
     layer: Layer.mergeAll(all, Layer.provide(CommandGatewayLive, all)),
     calls,
@@ -352,11 +369,89 @@ describe("P2-014 driver / dispatch / safety", () => {
     expect(result.leases).toBe(0);
   });
 
+  it("keeps a Pending CAPA Control approval paused before dispatch and lease acquisition", async () => {
+    const calls = { dispatch: 0, drive: 0 };
+    const app = makeApp(yieldedSettlement, {
+      calls,
+      pendingControlApproval: {
+        approvalId: "cap_p2_pending_gate",
+        projectId,
+        workspaceId,
+        executionId,
+        stableActionId: "select_current_work",
+        actionDigest: "digest-control-pending-gate",
+        argumentsJson: "{}",
+        targetRef: "work:test",
+        controlBasisDigest: "basis-control-pending-gate",
+        state: "Pending",
+        revision: 3,
+        requestedAt: "2026-10-11T00:00:00.000Z",
+        expiresAt: "2026-10-12T00:00:00.000Z",
+        decidedAt: null,
+        decidedBy: null,
+        decisionReason: null,
+        consumedAt: null,
+        bindingProven: true,
+        consumedBy: null,
+      },
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P12_MIGRATIONS);
+      yield* seed;
+      yield* admit;
+      const result = yield* runExecution(
+        executionId,
+        { _tag: "Recovery" },
+        principal,
+      );
+      const sql = yield* SqlClient;
+      const leases = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM execution_leases WHERE execution_id = ?",
+        [executionId],
+      );
+      return { result, leases: leases[0]?.count ?? -1 };
+    });
+    const result = await run(program, app.layer);
+    expect(result.result).toEqual({
+      _tag: "ApprovalRequired",
+      approvalId: "cap_p2_pending_gate",
+      revision: 3,
+    });
+    expect(calls).toEqual({ dispatch: 0, drive: 0 });
+    expect(result.leases).toBe(0);
+  });
+
   it("fails closed before dispatch when the approval store is missing", async () => {
     const calls = { dispatch: 0, drive: 0 };
     const app = makeApp(yieldedSettlement, {
       calls,
-      omitApprovalStore: true,
+      omitExecutableApprovalStore: true,
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P12_MIGRATIONS);
+      yield* seed;
+      yield* admit;
+      const exit = yield* Effect.exit(
+        runExecution(executionId, { _tag: "Recovery" }, principal),
+      );
+      const sql = yield* SqlClient;
+      const leases = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM execution_leases WHERE execution_id = ?",
+        [executionId],
+      );
+      return { exit, leases: leases[0]?.count ?? -1 };
+    });
+    const result = await run(program, app.layer);
+    expect(result.exit._tag).toBe("Failure");
+    expect(calls).toEqual({ dispatch: 0, drive: 0 });
+    expect(result.leases).toBe(0);
+  });
+
+  it("fails closed before dispatch when the Control approval store is missing", async () => {
+    const calls = { dispatch: 0, drive: 0 };
+    const app = makeApp(yieldedSettlement, {
+      calls,
+      omitControlApprovalStore: true,
     });
     const program = Effect.gen(function* () {
       yield* runMigrations(P12_MIGRATIONS);

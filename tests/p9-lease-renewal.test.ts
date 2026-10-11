@@ -59,7 +59,10 @@ import {
   LeaseService,
   TransactionPort,
 } from "../packages/ports/src/index.js";
-import { NoPendingExecutableApprovalStoreLive } from "../packages/testkit/src/index.js";
+import {
+  NoPendingControlApprovalStoreLive,
+  NoPendingExecutableApprovalStoreLive,
+} from "../packages/testkit/src/index.js";
 import {
   seedCurrentOpenWork,
   workEpisode,
@@ -206,6 +209,7 @@ const makeApp = (
     infra,
     repos,
     fence,
+    NoPendingControlApprovalStoreLive,
     NoPendingExecutableApprovalStoreLive,
     WorkerDispatchPortLive,
     driverLayer,

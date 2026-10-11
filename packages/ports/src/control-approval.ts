@@ -47,6 +47,15 @@ export interface ControlApprovalStoreService {
     ControlApprovalStoreError,
     TransactionScope
   >;
+  /** Trusted P2 gate for CAPA Control approvals. Control visibility/authority
+   * remains separate; this read only preserves an existing Pending pause. */
+  readonly findPendingForExecution: (
+    executionId: ExecutionId,
+  ) => Effect.Effect<
+    Option.Option<ControlApprovalRecord>,
+    ControlApprovalStoreError,
+    TransactionScope
+  >;
   readonly decide: (input: {
     readonly approvalId: string;
     readonly expectedRevision: number;
