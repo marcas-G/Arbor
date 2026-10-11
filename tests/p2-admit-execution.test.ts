@@ -288,7 +288,7 @@ describe("P2-009 AdmitExecution", () => {
     const result = await run(Effect.provide(program, app));
     expect(result).toMatchObject({ executions: 0, receipts: 0 });
     expect(JSON.stringify((result as { result: unknown }).result)).toContain(
-      '"_tag":"ReadmissionGateStoreFailure"',
+      '"_tag":"PersistenceUnavailable"',
     );
   });
 

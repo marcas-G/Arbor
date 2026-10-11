@@ -1,7 +1,6 @@
 import type { ExecutionId } from "@arbor/domain";
 import {
   type ReadmissionGateIntegrityFailure,
-  type ReadmissionGateStoreFailure,
   type ReadmissionSourceKind,
   type ReadmissionTargetMismatch,
   TransactionScope,
@@ -10,6 +9,7 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface TargetRow {
   readonly work_id: string;
@@ -250,12 +250,7 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
     const sql = yield* SqlClient;
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(
-        Effect.mapError(
-          (): ReadmissionGateStoreFailure => ({
-            _tag: "ReadmissionGateStoreFailure",
-            operation: "Query",
-          }),
-        ),
+        Effect.mapError(repositoryFailure("WorkReadmissionGateStore", "query")),
       );
 
     const hasBlockingSource: WorkReadmissionGateStore["Service"]["hasBlockingSource"] =

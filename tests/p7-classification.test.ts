@@ -302,7 +302,7 @@ describe("P7-008 dependency-aware classification (03 §2/§3)", () => {
         expect(exit._tag).toBe("Failure");
         if (exit._tag === "Failure") {
           expect(JSON.stringify(exit.cause)).toContain(
-            '"_tag":"ReadmissionGateStoreFailure"',
+            '"_tag":"PersistenceUnavailable"',
           );
         }
       }),
