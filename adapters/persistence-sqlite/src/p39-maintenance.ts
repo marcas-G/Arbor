@@ -451,7 +451,7 @@ export const validateP39MigrationPrefix = (
 export const requireP39RuntimeSchema = (
   userVersion: number,
 ): Effect.Effect<void, P39MaintenanceFailure> =>
-  userVersion === 39
+  userVersion >= 39
     ? Effect.fail({
         _tag: "P39MaintenanceFailure",
         code: "P39_RUNTIME_START_REFUSED",

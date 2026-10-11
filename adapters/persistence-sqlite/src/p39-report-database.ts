@@ -22,6 +22,7 @@ import {
   P39_REPORT_USER_VERSION,
   type P39MaintenanceFailure,
 } from "./p39-maintenance.js";
+import { validateP39ProtectedDirectory } from "./p39-writer-lock.js";
 
 const failure = (
   code: P39MaintenanceFailure["code"],
@@ -173,8 +174,13 @@ export const validateP39ReportSidecarPath = (
     }
     for (const path of [primary, sidecar]) {
       const filesystemFailure = validateLocalFilesystem(path);
-      if (filesystemFailure !== undefined) {
-        return Effect.fail(filesystemFailure);
+      if (
+        filesystemFailure !== undefined ||
+        !validateP39ProtectedDirectory(dirname(path))
+      ) {
+        return Effect.fail(
+          filesystemFailure ?? failure("P39_REPORT_DB_PATH_INVALID"),
+        );
       }
     }
     if (normalizedPath(primary) === normalizedPath(sidecar)) {
@@ -211,8 +217,13 @@ export const validateP39ReportSidecarPath = (
         return Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
       }
       const filesystemFailure = validateLocalFilesystem(protectedCanonical);
-      if (filesystemFailure !== undefined) {
-        return Effect.fail(filesystemFailure);
+      if (
+        filesystemFailure !== undefined ||
+        !validateP39ProtectedDirectory(dirname(protectedCanonical))
+      ) {
+        return Effect.fail(
+          filesystemFailure ?? failure("P39_REPORT_DB_PATH_INVALID"),
+        );
       }
       const protectedIdentity = fileIdentity(protectedCanonical);
       if (
