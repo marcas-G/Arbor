@@ -333,13 +333,14 @@ const run = (
   appLayer: Layer.Layer<any, any, any>,
   argumentsJson: string,
   approvalId: string | null = null,
+  invocationId: ToolInvocationId = intent(argumentsJson).invocationId,
 ) =>
   Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
         const runtime = yield* ToolRuntimePort;
         return yield* runtime.invoke(
-          { ...intent(argumentsJson), approvalId } as never,
+          { ...intent(argumentsJson), approvalId, invocationId } as never,
           context,
         );
       }),
@@ -466,17 +467,101 @@ describe("P4 tool runtime pipeline", () => {
       '{"target":{"mount":"workspace","path":"."}}',
     );
     expect(result).toMatchObject({
-      _tag: "Denied",
-      reasonCode: "ApprovalRequired",
+      _tag: "ApprovalRequired",
     });
     expect(trace).toEqual({
-      noEffectDenials: ["ApprovalRequired"],
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+    });
+  });
+
+  it("does not accept an arbitrary approval id without a matching approval record", async () => {
+    const approvalExecutor: ToolExecutor = {
+      name: "read",
+      write: false,
+      requiresApproval: () => true,
+      execute: okExecutor.execute,
+    };
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+    };
+    const result = await run(
+      app(false, approvalExecutor, {}, trace),
+      '{"target":{"mount":"workspace","path":"."}}',
+      "iap_unknown_approval",
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Denied",
+      reasonCode: "ApprovalNotFound",
+    });
+    expect(trace).toEqual({
+      noEffectDenials: ["ApprovalNotFound"],
       events: ["denied"],
       approvalConsumer: null,
       intentWrites: 0,
       effectAdmissions: 0,
       approvalConsumes: 0,
     });
+  });
+
+  it("does not reuse a legacy approval consumed by another invocation", async () => {
+    let executorCalls = 0;
+    const approvalExecutor: ToolExecutor = {
+      ...okExecutor,
+      requiresApproval: () => true,
+      execute: (input) => {
+        executorCalls += 1;
+        return okExecutor.execute(input);
+      },
+    };
+    const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
+    const approvalId = "iap_018f2b3c-4d5e-7abc-8def-0123456789a1";
+    const consumedApproval: InvocationApproval = {
+      approvalId,
+      toolName: "read",
+      toolVersion: "2",
+      actionDigest: actionDigestOf(intent(argumentsJson)),
+      targetResourceSpaceIds: ["filesystem"],
+      controlBasisDigest: "d",
+      expiresAt: "2999-01-01T00:00:00.000Z",
+      consumedBy: invocationId,
+    };
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+    };
+    const otherInvocationId = parse(ToolInvocationId)(
+      "tin_018f2b3c-4d5e-7abc-8def-0123456789a2",
+    );
+    const result = await run(
+      app(false, approvalExecutor, {}, trace, consumedApproval),
+      argumentsJson,
+      approvalId,
+      otherInvocationId,
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Denied",
+      reasonCode: "ApprovalConsumedByOtherInvocation",
+    });
+    expect(trace.approvalConsumes).toBe(0);
+    expect(trace.intentWrites).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(executorCalls).toBe(0);
   });
 
   it("settles a post-claim effect-gate denial without opening the executor", async () => {
