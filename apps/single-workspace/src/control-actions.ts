@@ -53,6 +53,7 @@ import {
   type LeaseGeneration,
   type MessageId,
   MessageId as MessageIdSchema,
+  messageEntryKey,
   type OutboundMessage,
   type ProjectId,
   parse,
@@ -84,6 +85,7 @@ import {
   type DecisionRequestStoreService,
   DeliverableRepository,
   type DeliverableRepositoryService,
+  type DeliverReplayFailureCode,
   DependencyRepository,
   type DependencyRepositoryService,
   DomainEventJournal,
@@ -144,7 +146,10 @@ export class SingleWorkspaceControlActionHandlers extends Context.Service<
 export interface SendMessageDependencies {
   readonly gateway: CommandGatewayService;
   readonly commandHandlerRegistry?: CommandHandlerRegistryService;
-  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
+  readonly commandReceipts?: Pick<
+    CommandStoreService,
+    "findResolution" | "hasRetryableAttempt"
+  >;
   readonly blobs: BlobStorePortService;
   readonly clock: ClockService;
   readonly messages: MessageStoreService;
@@ -224,7 +229,8 @@ export interface SelectCurrentWorkDependencies {
 export interface ProposeChildDependencies {
   readonly proposals: FormationProposalStoreService;
   readonly fulfillments?: Pick<FormationFulfillmentStoreService, "put">;
-  readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert">;
+  readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert"> &
+    Partial<Pick<InboxProjectionStoreService, "findByKey">>;
   readonly clock: ClockService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly tx: TransactionPortService;
@@ -250,16 +256,42 @@ export interface ProduceDeliverableDependencies {
 
 export interface DeliverActionDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+  readonly commandReceipts?: Pick<
+    CommandStoreService,
+    "findResolution" | "hasRetryableAttempt"
+  >;
   readonly deliverables: DeliverableRepositoryService;
   readonly works: WorkRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly messages: MessageStoreService;
-  readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert">;
+  readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert"> &
+    Partial<Pick<InboxProjectionStoreService, "findByKey">>;
   readonly journal: DomainEventJournalService;
+  readonly replayAttention?: Pick<
+    RecoveryAttentionFactStoreService,
+    "recordDeliverReplayFailure"
+  >;
+  /** Test-only process-crash seam. Production composition must omit it. */
+  readonly deliverReplayQualificationProbe?: DeliverReplayQualificationProbe;
   readonly clock: ClockService;
   readonly tx: TransactionPortService;
   readonly ids: IdGeneratorService;
 }
+
+export interface DeliverReplayQualificationEvent {
+  readonly boundary:
+    | "BeforeDeliverReplayAttentionCommit"
+    | "AfterDeliverReplayAttentionCommit";
+  readonly executionId: string;
+  readonly logicalActionId: string;
+  readonly messageId: string;
+  readonly failureCode: DeliverReplayFailureCode;
+}
+
+export type DeliverReplayQualificationProbe = (
+  event: DeliverReplayQualificationEvent,
+) => Promise<void>;
 
 export interface VerificationActionDependencies {
   readonly gateway: CommandGatewayService;
@@ -2607,11 +2639,47 @@ export const produceDeliverableHandler = (
     }).pipe(Effect.mapError(actionOperationalFailure("ProduceDeliverable"))),
 });
 
+const isRecord = (
+  value: unknown,
+  key?: string,
+  expected?: unknown,
+): value is Record<string, unknown> => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    key === undefined ||
+    (Object.hasOwn(record, key) && record[key] === expected)
+  );
+};
+
+const exactObject = (
+  actual: unknown,
+  expected: Readonly<Record<string, unknown>>,
+): boolean => {
+  if (!isRecord(actual)) return false;
+  const actualKeys = Object.keys(actual).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return (
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every(
+      (key, index) =>
+        key === expectedKeys[index] && actual[key] === expected[key],
+    )
+  );
+};
+
+const exactDeliverMessage = (
+  actual: import("@arbor/domain").OutboundMessage,
+  expected: Readonly<Record<string, unknown>>,
+): boolean => exactObject(actual, expected);
+
 export const deliverMessageGatewayHandler = (
   dependencies: DeliverActionDependencies,
 ): AgentActionHandler => ({
   action: "Deliver",
-  handle: ({ action, invocation, execution, context }) =>
+  handle: ({ action, invocation, execution, context, logicalActionId }) =>
     Effect.gen(function* () {
       if (action._tag !== "Deliver") {
         return yield* Effect.fail(
@@ -2629,9 +2697,429 @@ export const deliverMessageGatewayHandler = (
       const messageId = parse(MessageIdSchema)(
         `msg_${newUuid7("deliver-message", occurrence)}`,
       );
+      const pinnedLogicalActionId = logicalActionId;
+      const sender = yield* dependencies.tx.transact(
+        dependencies.workspaces.findById(execution.workspaceId),
+      );
+      const deliverable = yield* dependencies.tx.transact(
+        dependencies.deliverables.findById(action.deliverableId),
+      );
+      let deliverableSourceIsExact = false;
+      if (Option.isSome(deliverable)) {
+        const sourceWork = yield* dependencies.tx.transact(
+          dependencies.works.findById(deliverable.value.sourceWorkId),
+        );
+        deliverableSourceIsExact =
+          Option.isSome(sourceWork) &&
+          sourceWork.value.projectId === execution.projectId &&
+          sourceWork.value.workspaceId === execution.workspaceId;
+      }
+      let expectedRecipientWorkspaceId:
+        | import("@arbor/domain").WorkspaceId
+        | null = null;
+      if (
+        Option.isSome(sender) &&
+        sender.value.projectId === execution.projectId &&
+        sender.value.parentWorkspaceId !== null
+      ) {
+        expectedRecipientWorkspaceId = sender.value.parentWorkspaceId;
+      }
+      const planFor = (candidateCommandId: CommandIdType) =>
+        deliverMessagePlan({
+          messageId,
+          commandId: candidateCommandId,
+          projectId: execution.projectId,
+          senderWorkspaceId: execution.workspaceId,
+          deliverableId: action.deliverableId,
+          bodyRef: action.summary,
+          principal: context.principal,
+          actor: context.principal as never,
+        });
+      const failure = (safeMessage: string): AgentActionError =>
+        actionOperationalFailure("Deliver.recovery")(safeMessage);
+      const block = (
+        failureCode: DeliverReplayFailureCode,
+        causedByCommandId?: CommandIdType,
+      ) =>
+        Effect.gen(function* () {
+          const replayAttention = dependencies.replayAttention;
+          if (
+            pinnedLogicalActionId === undefined ||
+            replayAttention === undefined
+          ) {
+            return yield* Effect.fail(
+              failure("durable Deliver replay failure storage is unavailable"),
+            );
+          }
+          const factInput = {
+            projectId: execution.projectId,
+            executionId: execution.executionId,
+            targetWorkspaceId: execution.workspaceId,
+            logicalActionId: pinnedLogicalActionId,
+            messageId,
+            failureCode,
+            firstDetectedAt: yield* dependencies.clock.now(),
+            ...(causedByCommandId === undefined ? {} : { causedByCommandId }),
+          };
+          yield* dependencies.tx.transact(
+            Effect.gen(function* () {
+              yield* replayAttention.recordDeliverReplayFailure(factInput);
+              yield* Effect.promise(
+                () =>
+                  dependencies.deliverReplayQualificationProbe?.({
+                    boundary: "BeforeDeliverReplayAttentionCommit",
+                    executionId: execution.executionId,
+                    logicalActionId: pinnedLogicalActionId,
+                    messageId,
+                    failureCode,
+                  }) ?? Promise.resolve(),
+              );
+            }),
+          );
+          yield* Effect.promise(
+            () =>
+              dependencies.deliverReplayQualificationProbe?.({
+                boundary: "AfterDeliverReplayAttentionCommit",
+                executionId: execution.executionId,
+                logicalActionId: pinnedLogicalActionId,
+                messageId,
+                failureCode,
+              }) ?? Promise.resolve(),
+          );
+          return yield* Effect.fail<AgentActionError>({
+            _tag: "AgentActionRecoveryBlocked",
+            executionId: execution.executionId,
+            logicalActionId: pinnedLogicalActionId,
+          });
+        }).pipe(Effect.mapError(actionOperationalFailure("Deliver.attention")));
+
+      const findInboxByKey = dependencies.inbox.findByKey;
+      if (findInboxByKey === undefined) {
+        return yield* Effect.fail(
+          failure("Deliver Inbox evidence lookup is unavailable"),
+        );
+      }
+
+      const readEffects = () =>
+        Effect.gen(function* () {
+          const message = yield* dependencies.messages.findById(messageId);
+          const inbox = yield* findInboxByKey(
+            expectedRecipientWorkspaceId ?? execution.workspaceId,
+            messageEntryKey(messageId),
+          );
+          const matchingEvents: Array<
+            import("@arbor/domain").DomainEvent<unknown>
+          > = [];
+          let cursor = 0;
+          for (;;) {
+            const batch = yield* dependencies.journal.readAfter(
+              execution.projectId,
+              cursor,
+              512,
+            );
+            for (const event of batch) {
+              if (
+                event.eventType !== "MessageSent" ||
+                (event.aggregateRef !== messageId &&
+                  !isRecord(event.payload, "messageId", messageId))
+              ) {
+                continue;
+              }
+              matchingEvents.push(event);
+            }
+            if (batch.length < 512) break;
+            const last = batch[batch.length - 1];
+            if (last === undefined || Number(last.sequence) <= cursor) {
+              return yield* Effect.fail(
+                failure("MessageSent journal scan did not advance"),
+              );
+            }
+            cursor = Number(last.sequence);
+          }
+          return { message, inbox, events: matchingEvents };
+        });
+
+      const effects = yield* dependencies.tx.transact(readEffects());
+      const hasEffect =
+        Option.isSome(effects.message) ||
+        Option.isSome(effects.inbox) ||
+        effects.events.length > 0;
+      const eventPayload = {
+        messageId,
+        kind: "Deliver",
+        sender: execution.workspaceId,
+        recipient: expectedRecipientWorkspaceId,
+        deliverableId: action.deliverableId,
+        correlationId: null,
+        causationId: null,
+      };
+      const exactRecord =
+        Option.isSome(effects.message) &&
+        expectedRecipientWorkspaceId !== null &&
+        effects.message.value.messageId === messageId &&
+        effects.message.value.senderWorkspaceId === execution.workspaceId &&
+        effects.message.value.sentAt !== "" &&
+        exactDeliverMessage(effects.message.value.message, {
+          kind: "Deliver",
+          recipientWorkspaceId: expectedRecipientWorkspaceId,
+          deliverableId: action.deliverableId,
+          bodyRef: action.summary,
+          urgency: "Normal",
+        });
+      const messageRecord = Option.isSome(effects.message)
+        ? effects.message.value
+        : undefined;
+      const inboxMatchesIfPresent = (admittedAt: string) =>
+        Option.isNone(effects.inbox) ||
+        (effects.inbox.value.recipientWorkspaceId ===
+          expectedRecipientWorkspaceId &&
+          effects.inbox.value.entryKey === messageEntryKey(messageId) &&
+          effects.inbox.value.kind === "Message" &&
+          effects.inbox.value.summary ===
+            `Deliver ${action.deliverableId} from ${execution.workspaceId}` &&
+          effects.inbox.value.correlationId === undefined &&
+          effects.inbox.value.admittedAt === admittedAt);
+      const eventMatches = (cause: CommandIdType) => {
+        if (effects.events.length !== 1 || !exactRecord) return false;
+        const event = effects.events[0];
+        return (
+          event !== undefined &&
+          event.projectId === execution.projectId &&
+          event.aggregateRef === messageId &&
+          event.eventType === "MessageSent" &&
+          event.eventVersion === 1 &&
+          event.causedByCommandId === cause &&
+          messageRecord !== undefined &&
+          event.occurredAt === messageRecord.sentAt &&
+          exactObject(event.payload, eventPayload)
+        );
+      };
+      const recoverableContext =
+        context._tag === "ExecutionOrigin" ? context : undefined;
+      let chosenCommandId = commandId;
+      let committedReceipt:
+        | (Omit<
+            import("@arbor/domain").CommandReceipt<
+              import("@arbor/application").DeliverMessageResult,
+              unknown
+            >,
+            "resolution"
+          > & {
+            readonly resolution: Extract<
+              import("@arbor/domain").CommandReceipt<
+                import("@arbor/application").DeliverMessageResult,
+                unknown
+              >["resolution"],
+              { readonly _tag: "Committed" }
+            >;
+          })
+        | undefined;
+      let rejectedReceipt:
+        | import("@arbor/domain").CommandReceipt<unknown, unknown>
+        | undefined;
+      let fencingRejectedCommandId: CommandIdType | undefined;
+      let retryableCommandId: CommandIdType | undefined;
+      if (recoverableContext !== undefined) {
+        if (
+          dependencies.commandReceipts === undefined ||
+          dependencies.commandHandlerRegistry === undefined
+        ) {
+          return yield* Effect.fail(
+            failure("Deliver receipt recovery dependencies are unavailable"),
+          );
+        }
+        const handler =
+          dependencies.commandHandlerRegistry.lookup("DeliverMessage");
+        if (
+          Option.isNone(handler) ||
+          handler.value.commandType !== "DeliverMessage"
+        ) {
+          return yield* Effect.fail(
+            failure("DeliverMessage receipt decoder is not registered"),
+          );
+        }
+        for (
+          let priorGeneration = 0;
+          priorGeneration <= recoverableContext.fencingGeneration;
+          priorGeneration += 1
+        ) {
+          const candidateCommandId = generationScopedCommandId(
+            "deliver-command",
+            occurrence,
+            {
+              ...recoverableContext,
+              fencingGeneration: priorGeneration as LeaseGeneration,
+            },
+          );
+          const raw = yield* dependencies.tx.transact(
+            dependencies.commandReceipts.findResolution(candidateCommandId),
+          );
+          if (Option.isNone(raw)) {
+            if (
+              priorGeneration < recoverableContext.fencingGeneration &&
+              dependencies.commandReceipts.hasRetryableAttempt === undefined
+            ) {
+              return yield* Effect.fail(
+                failure(
+                  "Deliver retry-attempt lookup is required for cross-generation recovery",
+                ),
+              );
+            }
+            if (
+              dependencies.commandReceipts.hasRetryableAttempt !== undefined &&
+              (yield* dependencies.tx.transact(
+                dependencies.commandReceipts.hasRetryableAttempt(
+                  candidateCommandId,
+                ),
+              )) &&
+              retryableCommandId === undefined
+            ) {
+              retryableCommandId = candidateCommandId;
+            }
+            continue;
+          }
+          if (
+            raw.value.commandId !== candidateCommandId ||
+            raw.value.projectId !== execution.projectId ||
+            raw.value.fingerprintAlgorithmVersion !== 1
+          ) {
+            return yield* block(
+              "PriorReceiptResultMismatch",
+              candidateCommandId,
+            );
+          }
+          if (raw.value.schemaVersion !== handler.value.schemaVersion) {
+            return yield* block(
+              "PriorReceiptDecodeMismatch",
+              candidateCommandId,
+            );
+          }
+          const decoded = yield* decodeRegisteredCommandReceipt<
+            import("@arbor/application").DeliverMessageResult
+          >(raw.value, "DeliverMessage", handler.value.schemaVersion).pipe(
+            Effect.catch(() => Effect.succeed(null)),
+          );
+          if (decoded === null) {
+            return yield* block(
+              "PriorReceiptDecodeMismatch",
+              candidateCommandId,
+            );
+          }
+          const expectedPlan = planFor(candidateCommandId);
+          if (
+            decoded.semanticRequestFingerprint !==
+            expectedPlan.authority.semanticRequestFingerprint
+          ) {
+            return yield* block(
+              "PriorReceiptResultMismatch",
+              candidateCommandId,
+            );
+          }
+          if (decoded.resolution._tag === "Committed") {
+            committedReceipt = decoded as typeof committedReceipt;
+            chosenCommandId = candidateCommandId;
+            break;
+          }
+          if (isFencingRejectedReceipt(decoded.resolution)) {
+            fencingRejectedCommandId = candidateCommandId;
+            continue;
+          }
+          rejectedReceipt = decoded;
+          chosenCommandId = candidateCommandId;
+          break;
+        }
+      }
+
+      if (committedReceipt !== undefined) {
+        const result = committedReceipt.resolution.result;
+        if (
+          expectedRecipientWorkspaceId === null ||
+          result.messageId !== messageId ||
+          result.deliverableId !== action.deliverableId ||
+          result.senderWorkspaceId !== execution.workspaceId ||
+          result.recipientWorkspaceId !== expectedRecipientWorkspaceId ||
+          result.admitted !== true ||
+          !exactRecord ||
+          !deliverableSourceIsExact ||
+          !eventMatches(chosenCommandId) ||
+          !inboxMatchesIfPresent(effects.events[0]?.occurredAt ?? "")
+        ) {
+          return yield* block("PriorReceiptResultMismatch", chosenCommandId);
+        }
+        return {
+          _tag: "Observation" as const,
+          source: "Runtime" as const,
+          observation: {
+            text: `DeliverableDelivered(${action.deliverableId}, ${expectedRecipientWorkspaceId})`,
+            truncated: false,
+          },
+        };
+      }
+
+      if (rejectedReceipt !== undefined) {
+        if (hasEffect) {
+          return yield* block("PriorReceiptEffectConflict", chosenCommandId);
+        }
+        return {
+          _tag: "Observation" as const,
+          source: "Runtime" as const,
+          observation: {
+            text: `DeliverMessage rejected: ${JSON.stringify(rejectedReceipt.resolution)}`,
+            truncated: false,
+          },
+        };
+      }
+
+      if (fencingRejectedCommandId !== undefined && hasEffect) {
+        return yield* block(
+          "RejectedReceiptEffectConflict",
+          fencingRejectedCommandId,
+        );
+      }
+      if (retryableCommandId !== undefined && hasEffect) {
+        return yield* block("PriorReceiptEffectConflict", retryableCommandId);
+      }
+
+      if (committedReceipt === undefined && rejectedReceipt === undefined) {
+        const legacyCommandId = parse(CommandId)(
+          `cmd_${newUuid7("deliver-command", occurrence)}`,
+        );
+        if (hasEffect) {
+          const legacyProof =
+            exactRecord &&
+            deliverableSourceIsExact &&
+            eventMatches(legacyCommandId);
+          if (
+            Option.isSome(effects.inbox) &&
+            (!legacyProof ||
+              !inboxMatchesIfPresent(effects.events[0]?.occurredAt ?? ""))
+          ) {
+            return yield* block("LegacyInboxConflict");
+          }
+          if (effects.events.length === 0 && Option.isSome(effects.message)) {
+            return yield* block("LegacyMessageMissingEvent");
+          }
+          if (Option.isNone(effects.message) && effects.events.length > 0) {
+            return yield* block("LegacyEventMissingMessage");
+          }
+          if (!legacyProof) {
+            return yield* block("LegacyMessageBindingMismatch");
+          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `DeliverableDelivered(${action.deliverableId}, ${expectedRecipientWorkspaceId})`,
+              truncated: false,
+            },
+          };
+        }
+        if (retryableCommandId !== undefined)
+          chosenCommandId = retryableCommandId;
+      }
       const plan = deliverMessagePlan({
         messageId,
-        commandId,
+        commandId: chosenCommandId,
         projectId: execution.projectId,
         senderWorkspaceId: execution.workspaceId,
         deliverableId: action.deliverableId,
@@ -2645,7 +3133,7 @@ export const deliverMessageGatewayHandler = (
       >(
         {
           commandType: "DeliverMessage",
-          commandId,
+          commandId: chosenCommandId,
           projectId: execution.projectId,
           actor: context.principal as never,
           issuedAt: yield* dependencies.clock.now(),
@@ -3063,7 +3551,14 @@ export const makeSingleWorkspaceControlActionHandlers = (
     Partial<WorkspacePlacementDependencies> &
     Partial<Pick<AcceptResultDependencies, "acceptances">> &
     Partial<
-      Pick<DeliverActionDependencies, "deliverables" | "journal" | "ids">
+      Pick<
+        DeliverActionDependencies,
+        | "deliverables"
+        | "journal"
+        | "ids"
+        | "replayAttention"
+        | "deliverReplayQualificationProbe"
+      >
     > &
     Partial<
       Pick<
@@ -3121,6 +3616,12 @@ export const makeSingleWorkspaceControlActionHandlers = (
     handlers.push(
       deliverMessageGatewayHandler({
         gateway: dependencies.gateway,
+        ...(dependencies.commandHandlerRegistry === undefined
+          ? {}
+          : { commandHandlerRegistry: dependencies.commandHandlerRegistry }),
+        ...(dependencies.commandReceipts === undefined
+          ? {}
+          : { commandReceipts: dependencies.commandReceipts }),
         deliverables,
         journal,
         ids,
@@ -3128,6 +3629,15 @@ export const makeSingleWorkspaceControlActionHandlers = (
         workspaces: dependencies.workspaces,
         messages: dependencies.messages,
         inbox: dependencies.inbox,
+        ...(dependencies.replayAttention === undefined
+          ? {}
+          : { replayAttention: dependencies.replayAttention }),
+        ...(dependencies.deliverReplayQualificationProbe === undefined
+          ? {}
+          : {
+              deliverReplayQualificationProbe:
+                dependencies.deliverReplayQualificationProbe,
+            }),
         clock: dependencies.clock,
         tx: dependencies.tx,
       }),
@@ -3161,6 +3671,7 @@ export const makeSingleWorkspaceControlActionHandlers = (
 export interface SingleWorkspaceControlActionQualificationProbes {
   readonly bindingAttention?: AssignWorkBindingAttentionQualificationProbe;
   readonly assignWorkAuthorizedBeforeCommand?: AgentLoopQualificationProbe;
+  readonly deliverReplay?: DeliverReplayQualificationProbe;
 }
 
 const makeSingleWorkspaceControlActionHandlersLayer = (
@@ -3264,6 +3775,9 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
           ...(Option.isSome(bindingAttention)
             ? { bindingAttention: bindingAttention.value }
             : {}),
+          ...(Option.isSome(bindingAttention)
+            ? { replayAttention: bindingAttention.value }
+            : {}),
           ...(Option.isSome(permissionGrants)
             ? { grants: permissionGrants.value }
             : {}),
@@ -3282,6 +3796,12 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
             : {
                 assignWorkAuthorizedBeforeCommandProbe:
                   qualificationProbes.assignWorkAuthorizedBeforeCommand,
+              }),
+          ...(qualificationProbes.deliverReplay === undefined
+            ? {}
+            : {
+                deliverReplayQualificationProbe:
+                  qualificationProbes.deliverReplay,
               }),
         }),
       );

@@ -35,6 +35,12 @@ export interface CommandStoreService {
     CommandStoreError,
     TransactionScope
   >;
+  /** Whether this exact CommandId has any durable retryable attempt. Recovery
+   * checks for a terminal resolution first, then uses this to preserve
+   * transient retry identity across lease generations. */
+  readonly hasRetryableAttempt?: (
+    commandId: CommandId,
+  ) => Effect.Effect<boolean, CommandStoreError, TransactionScope>;
   readonly insertCommitted: (
     commandId: CommandId,
     projectId: ProjectId,

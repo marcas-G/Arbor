@@ -82,6 +82,17 @@ export const CommandStoreLive: Layer.Layer<
             ? Option.none()
             : Option.some(toStoredResolution(row));
         }),
+      hasRetryableAttempt: (commandId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{ found: number }>(
+              "SELECT 1 AS found FROM command_attempts WHERE command_id = ? AND outcome = 'RetryableOperationalFailure' LIMIT 1",
+              [commandId],
+            ),
+          );
+          return rows.length > 0;
+        }),
       insertCommitted: (
         commandId,
         projectId,
