@@ -177,6 +177,38 @@ describe("P37 P10 Attention poll coordinator", () => {
     expect(trace.filter((entry) => entry === "transaction")).toHaveLength(2);
   });
 
+  it("emits the Deliver Attention post-commit qualification boundary after marker, ACK, offset and claim settlement", async () => {
+    const trace: Array<string> = [];
+    await Effect.runPromise(
+      runAttentionPollOnce(
+        "p10-rebuild:attention",
+        policy,
+        makeDeps(trace, {
+          qualificationProbe: (event: {
+            readonly boundary: string;
+            readonly projectId: unknown;
+            readonly attentionFactId: string;
+          }) => {
+            trace.push(
+              `probe:${event.boundary}:${event.projectId}:${event.attentionFactId}`,
+            );
+            return Promise.resolve();
+          },
+        }),
+      ),
+    );
+
+    const committed = trace.indexOf("complete-success");
+    const probe = trace.findIndex((entry) => entry.startsWith("probe:"));
+    expect(trace.indexOf("put-marker")).toBeLessThan(probe);
+    expect(trace.indexOf("ack-queue")).toBeLessThan(probe);
+    expect(trace.indexOf("advance:1")).toBeLessThan(probe);
+    expect(committed).toBeLessThan(probe);
+    expect(trace[probe]).toBe(
+      `probe:P10AfterDeliverAttentionConsumerCommit:${projectId}:${fact.attentionFactId}`,
+    );
+  });
+
   it("fails closed on an exact Deliver type without its P9 fact before decoding or advancing", async () => {
     const trace: Array<string> = [];
     const deps = makeDeps(trace, {

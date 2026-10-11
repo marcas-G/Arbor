@@ -268,6 +268,15 @@ export const makeAttentionProjectionStoreLive = (
                 [fact.attentionFactId],
               ),
             );
+            if (qualificationProbe !== undefined) {
+              yield* Effect.promise(() =>
+                qualificationProbe({
+                  boundary: "P10AfterAttentionRowWriteBeforeConsumerCommit",
+                  projectId: fact.projectId,
+                  attentionFactId: fact.attentionFactId,
+                }),
+              );
+            }
           }),
         listDeliverReplayFailures: (projectId) =>
           Effect.gen(function* () {
