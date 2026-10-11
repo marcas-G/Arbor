@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  CURRENT_MIGRATIONS,
+  P10_ATTENTION_CONSUMER_ID,
   P32_MIGRATIONS,
   P35_MIGRATIONS,
-  P37_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -219,7 +220,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
         const health = yield* HealthPort;
         const beforeMigration = yield* health.readiness();
 
-        yield* runMigrations(P37_MIGRATIONS);
+        yield* runMigrations(CURRENT_MIGRATIONS);
         const afterMigration = yield* health.readiness();
 
         const resolver = yield* AuthorityResolverPort;
@@ -344,12 +345,14 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
     expect(outcome.readiness.dbOpen).toBe(true);
     expect(outcome.readiness.migrationBaseline).toBe(true);
     expect(outcome.readiness.t1RecoveryComplete).toBe(true);
-    // The consumers are now one dynamic aggregator that registers
-    // formation/verification/completion per open project at tick time.
-    expect(outcome.deployment.consumers).toHaveLength(1);
-    expect(outcome.deployment.consumers[0]?.consumerId).toBe(
-      "dynamic-project-consumers",
-    );
+    // Per-project formation/verification/completion stays behind one dynamic
+    // aggregator; the shared P10 Attention poller remains an independent
+    // consumer.
+    expect(
+      outcome.deployment.consumers
+        .map((consumer) => consumer.consumerId)
+        .sort(),
+    ).toEqual(["dynamic-project-consumers", P10_ATTENTION_CONSUMER_ID].sort());
   });
 
   it("B-7: production no longer references the P5 provisional runnable source", () => {

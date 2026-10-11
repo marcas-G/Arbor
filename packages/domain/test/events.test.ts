@@ -11,6 +11,8 @@ import {
 
 const EXPECTED_EVENTS = [
   "ControlApprovalResolved",
+  "ExecutableApprovalRequested",
+  "ExecutableApprovalResolved",
   "ProjectCreated",
   "ProjectPolicyChanged",
   "ProjectRenamed",
@@ -38,6 +40,7 @@ const EXPECTED_EVENTS = [
   "DependencyContractRevised",
   "DeadlockAttentionRequested",
   "ReconciliationEscalated",
+  "DeliverReplayEscalated",
   "WorktreeCreated",
   "WorktreeRetired",
   "DeliverableProduced",

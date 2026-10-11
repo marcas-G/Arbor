@@ -49,7 +49,7 @@ describe("P34 daemon migration wiring", () => {
         ),
       );
       expect(result).toEqual({
-        version: 36,
+        version: 38,
         tables: [
           "assign_work_binding_attention_facts",
           "assign_work_target_bindings",

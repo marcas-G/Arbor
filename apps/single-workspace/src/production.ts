@@ -42,9 +42,9 @@ import {
   sweepRecovery,
 } from "@arbor/execution-runtime";
 import {
+  CURRENT_MIGRATIONS,
   makeProjectAttentionProjectionStore,
   P10_ATTENTION_CONSUMER_ID,
-  P38_MIGRATIONS,
   runMigrations,
 } from "@arbor/persistence-sqlite";
 import {
@@ -968,7 +968,7 @@ export const ProductionDaemonServiceLive = (
       );
 
       const daemon = makeProductionDaemon({
-        migrate: runMigrations(P38_MIGRATIONS),
+        migrate: runMigrations(CURRENT_MIGRATIONS),
         recovery,
         consumers,
         conversationTick,

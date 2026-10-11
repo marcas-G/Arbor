@@ -2077,3 +2077,9 @@ export const P38_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     foreignKeysOff: P38_EXECUTABLE_APPROVAL_MIGRATION.foreignKeysOff,
   },
 ];
+
+/** Current production schema registry and its exact readiness high-water mark. */
+export const CURRENT_MIGRATIONS = P38_MIGRATIONS;
+export const CURRENT_MIGRATION_BASELINE = Math.max(
+  ...CURRENT_MIGRATIONS.map((migration) => migration.id),
+);
