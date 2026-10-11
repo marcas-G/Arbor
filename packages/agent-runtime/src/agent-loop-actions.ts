@@ -1054,6 +1054,9 @@ export const executeAgentLoopActions = (
           revision: authorization.revision,
         };
       }
+      if (authorization._tag === "RecoveryBlocked") {
+        return { _tag: "RecoveryBlocked" };
+      }
       if (authorization._tag === "Denied") {
         const observation = {
           text: JSON.stringify({
