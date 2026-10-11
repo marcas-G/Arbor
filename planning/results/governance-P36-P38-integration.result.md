@@ -165,4 +165,11 @@ integration status; they add no new behavior or migration semantics.
 | `docs/design/implementation/P7/00-contract-index.md` | `8BEC5B0D93489E95668AC9C360DF1931823ECD5A9CB3B03C23C6EEFC0B95F00B` |
 | `docs/design/implementation/P7/02-deliver-primitive.md` | `ADD1FEA5A069DDA16914CB836215B1F5CD6DE052189637B48C4C130374090ABA` |
 
-The correction has not yet received the requested independent re-review.
+The independent review reported semantic Blocking = 0 and governance-scope
+Blocking = 1 because P7 was outside the P37 addendum's original owner list.
+The exact P7 correction is accepted under the user's standing manual-governance
+delegation; decision and owner hashes are in
+`planning/results/AH10-deliver-p7-migration-reference-correction-governance-decision.md`.
+The source accepted P37 addendum SHA is
+`040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
+Independent final re-review of this scope disposition remains pending.
