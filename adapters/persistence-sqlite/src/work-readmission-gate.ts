@@ -522,65 +522,47 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
               const aggregateScope = yield* findExecutionScope(
                 event.aggregate_ref,
               );
-              if (aggregateScope === null) {
-                return yield* Effect.fail(
-                  makeIntegrity(
-                    "SourceExecutionMissing",
-                    event.aggregate_ref as ExecutionId,
-                    "ReconciliationEscalationEvent",
-                  ),
-                );
-              }
-              if (aggregateScope.project_id !== input.projectId) {
-                return yield* Effect.fail(
-                  makeIntegrity(
-                    "SourceProjectMismatch",
-                    event.aggregate_ref as ExecutionId,
-                    "ReconciliationEscalationEvent",
-                  ),
-                );
-              }
-              if (payloadExecutionId === undefined) {
-                if (aggregateScope.workspace_id !== input.workspaceId) continue;
-                return yield* Effect.fail(
-                  makeIntegrity(
-                    "SourceEventExecutionMismatch",
-                    event.aggregate_ref as ExecutionId,
-                    "ReconciliationEscalationEvent",
-                  ),
-                );
-              }
               const payloadScope =
-                yield* findExecutionScope(payloadExecutionId);
-              if (payloadScope === null) {
+                payloadExecutionId === undefined
+                  ? null
+                  : yield* findExecutionScope(payloadExecutionId);
+              const scopes = [aggregateScope, payloadScope].filter(
+                (scope): scope is NonNullable<typeof scope> => scope !== null,
+              );
+              const inProject = scopes.filter(
+                (scope) => scope.project_id === input.projectId,
+              );
+              const inRequestedWorkspace = inProject.find(
+                (scope) => scope.workspace_id === input.workspaceId,
+              );
+              const foreignProject = scopes.find(
+                (scope) => scope.project_id !== input.projectId,
+              );
+              if (inRequestedWorkspace !== undefined) {
                 return yield* Effect.fail(
                   makeIntegrity(
-                    "SourceExecutionMissing",
-                    payloadExecutionId as ExecutionId,
+                    foreignProject === undefined
+                      ? scopes.length < 2
+                        ? "SourceExecutionMissing"
+                        : "SourceEventExecutionMismatch"
+                      : "SourceProjectMismatch",
+                    (foreignProject?.execution_id ??
+                      (aggregateScope?.workspace_id === input.workspaceId
+                        ? event.aggregate_ref
+                        : (payloadExecutionId ??
+                          event.aggregate_ref))) as ExecutionId,
                     "ReconciliationEscalationEvent",
                   ),
                 );
               }
-              if (payloadScope.project_id !== input.projectId) {
-                return yield* Effect.fail(
-                  makeIntegrity(
-                    "SourceProjectMismatch",
-                    payloadExecutionId as ExecutionId,
-                    "ReconciliationEscalationEvent",
-                  ),
-                );
-              }
-              if (
-                aggregateScope.workspace_id !== input.workspaceId &&
-                payloadScope.workspace_id !== input.workspaceId
-              )
-                continue;
+              if (inProject.length > 0) continue;
               return yield* Effect.fail(
                 makeIntegrity(
-                  "SourceEventExecutionMismatch",
-                  (aggregateScope.workspace_id === input.workspaceId
-                    ? event.aggregate_ref
-                    : payloadExecutionId) as ExecutionId,
+                  foreignProject === undefined
+                    ? "SourceExecutionMissing"
+                    : "SourceProjectMismatch",
+                  (foreignProject?.execution_id ??
+                    event.aggregate_ref) as ExecutionId,
                   "ReconciliationEscalationEvent",
                 ),
               );
