@@ -376,6 +376,74 @@ const makePreBindingP32Copy = async (
     if (p35Objects.length !== 0) {
       throw new Error("P32 fixture still contains migration 0035 objects");
     }
+
+    // The live source is at P36, while this compatibility image is P32.
+    // Rebuild only tool_invocations from the independently migrated P32
+    // schema instead of leaving P36's effect-admission column and constraints
+    // behind when lowering user_version. Copy the common historical columns
+    // and preserve their rows; P36-only Denied rows cannot exist in a P32 image.
+    const baselineLayer = sqliteLayer({ filename: baselineFile });
+    await Effect.runPromise(
+      Effect.provide(runMigrations(P32_MIGRATIONS), baselineLayer),
+    );
+    const p32SchemaDb = new DatabaseSync(baselineFile, { readOnly: true });
+    try {
+      const baselineInvocationTable = p32SchemaDb
+        .prepare(
+          `SELECT sql FROM sqlite_master
+            WHERE type = 'table' AND name = 'tool_invocations'`,
+        )
+        .get() as { sql?: string | null } | undefined;
+      if (baselineInvocationTable?.sql == null) {
+        throw new Error("P32 baseline has no tool_invocations table DDL");
+      }
+      const invocationColumns = p32SchemaDb
+        .prepare('PRAGMA table_info("tool_invocations")')
+        .all() as Array<{ name: string }>;
+      if (invocationColumns.length === 0) {
+        throw new Error("P32 baseline tool_invocations has no columns");
+      }
+      const columnList = invocationColumns
+        .map(({ name }) => `"${name.replaceAll('"', '""')}"`)
+        .join(", ");
+      const p36OnlyDenied = db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM tool_invocations WHERE settlement_kind = 'Denied'",
+        )
+        .get() as { count: number };
+      if (p36OnlyDenied.count !== 0) {
+        throw new Error(
+          "P32 fixture cannot preserve P36-only Denied ToolInvocation rows",
+        );
+      }
+      db.exec("PRAGMA foreign_keys = OFF");
+      db.exec(
+        `CREATE TEMP TABLE p32_tool_invocations_rows AS
+          SELECT ${columnList} FROM tool_invocations`,
+      );
+      db.exec("DROP TABLE tool_invocations");
+      db.exec(baselineInvocationTable.sql);
+      db.exec(
+        `INSERT INTO tool_invocations (${columnList})
+          SELECT ${columnList} FROM p32_tool_invocations_rows`,
+      );
+      db.exec("DROP TABLE p32_tool_invocations_rows");
+      const baselineInvocationIndexes = p32SchemaDb
+        .prepare(
+          `SELECT sql FROM sqlite_master
+            WHERE type = 'index' AND tbl_name = 'tool_invocations'
+              AND sql IS NOT NULL
+            ORDER BY name`,
+        )
+        .all() as Array<{ sql: string }>;
+      for (const index of baselineInvocationIndexes) {
+        db.exec(index.sql);
+      }
+      db.exec("PRAGMA foreign_keys = ON");
+    } finally {
+      p32SchemaDb.close();
+    }
+
     const receipt = db
       .prepare("SELECT resolution FROM commands WHERE command_id = ?")
       .get(committedCommandId) as { resolution?: string } | undefined;
@@ -385,11 +453,6 @@ const makePreBindingP32Copy = async (
       );
     }
     const cloneSchema = schemaSnapshot(db);
-    db.close();
-    const baselineLayer = sqliteLayer({ filename: baselineFile });
-    await Effect.runPromise(
-      Effect.provide(runMigrations(P32_MIGRATIONS), baselineLayer),
-    );
     const baselineDb = new DatabaseSync(baselineFile, { readOnly: true });
     try {
       const baselineVersion = baselineDb
@@ -1770,7 +1833,9 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       }
       if (crashSide === "legacy-p32-upgrade") {
         const upgraded = readRows(recoveryDatabaseFile);
-        expect(upgraded.schemaVersion).toBe(35);
+        // The P32 pre-binding image upgrades through P36, whose accepted
+        // ToolInvocation admission migration is the current version 36.
+        expect(upgraded.schemaVersion).toBe(36);
         expect(upgraded.assignWorkTargetBindings).toHaveLength(0);
         expect(
           upgraded.commands.find(
