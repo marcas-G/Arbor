@@ -71,7 +71,13 @@ const intent = {
   approvalId,
 } as const;
 
-const context: ToolExecutionContext = {
+// Intentionally unleased: this pending AH7 oracle diagnoses approval/effect
+// behavior when no current ExecutionOrigin lease is supplied. Keep the call
+// fence-free and the strict committed-state assertions unchanged; adding a
+// synthetic tuple would turn an unleased-race diagnostic into a different
+// scenario. The root owner must decide whether to replace it with a properly
+// seeded two-process lease competition case.
+const context = {
   executionId,
   workspaceId,
   sessionId,
@@ -92,7 +98,7 @@ const context: ToolExecutionContext = {
   },
   controlBasisDigest,
   requestedAt: "2026-10-06T00:00:00.000Z",
-};
+} as unknown as ToolExecutionContext;
 
 const seedExecution = Effect.gen(function* () {
   const sql = yield* SqlClient;

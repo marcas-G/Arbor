@@ -75,6 +75,7 @@ const context: ToolExecutionContext = {
     executionId,
     toolName: intent.toolName,
     toolVersion: intent.toolVersion,
+    sourceRevision: "fixture-authority-revision",
     resourceSpaceIds: [],
     allowedCapabilities: [],
     controlBasisDigest: "ah7-concurrent-basis",
@@ -82,6 +83,12 @@ const context: ToolExecutionContext = {
     delegationDepth: 0,
   },
   controlBasisDigest: "ah7-concurrent-basis",
+  executionFence: {
+    executionId,
+    workerId: "worker:ah7-concurrent",
+    workerIncarnationId: "incarnation:ah7-concurrent",
+    fencingGeneration: 0 as never,
+  },
   requestedAt: "2026-10-06T00:00:00.000Z",
 };
 

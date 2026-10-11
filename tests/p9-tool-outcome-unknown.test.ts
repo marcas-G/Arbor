@@ -29,6 +29,7 @@ import {
 import {
   Actor,
   ExecutionId,
+  LeaseGeneration,
   Principal,
   ProjectId,
   parse,
@@ -57,6 +58,7 @@ import {
   TransactionPort,
   WorkspaceRepository,
   WorkWaitStore,
+  invocationAuthoritySourceRevisionOf,
 } from "../packages/ports/src/index.js";
 import {
   type ToolExecutor,
@@ -295,6 +297,10 @@ const seed = Effect.gen(function* () {
         "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
         [executionId, projectId, workspaceId, sessionId],
       );
+      yield* sql.unsafe(
+        "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
+        [executionId, String(principal), "incarnation:p9-tool-outcome", 0, "2999-01-01T00:00:00.000Z", "t"],
+      );
     }),
   );
 });
@@ -322,6 +328,11 @@ const tierContext = (tier: Tier): ToolExecutionContext => {
       executionId,
       toolName: definition.name,
       toolVersion: "1",
+      sourceRevision: invocationAuthoritySourceRevisionOf({
+        workspacePolicyRevision: 0,
+        activeGrants: [],
+        verifierId: null,
+      }),
       resourceSpaceIds: [],
       allowedCapabilities: definition.capabilityMetadata,
       controlBasisDigest: "d",
@@ -329,6 +340,12 @@ const tierContext = (tier: Tier): ToolExecutionContext => {
       delegationDepth: 0,
     },
     controlBasisDigest: "d",
+    executionFence: {
+      executionId,
+      workerId: String(principal),
+      workerIncarnationId: "incarnation:p9-tool-outcome",
+      fencingGeneration: parse(LeaseGeneration)(0),
+    },
     requestedAt: "t",
   };
 };
@@ -437,7 +454,14 @@ const settleInvocation = Effect.gen(function* () {
   const clock = yield* Clock;
   const now = yield* clock.now();
   yield* tx.transact(
-    store.settle(invocationId, { _tag: "Success" }, null, now),
+    store.settle(
+      invocationId,
+      { _tag: "Success" },
+      null,
+      now,
+      tierContext("Idempotent").executionFence,
+      now,
+    ),
   );
 });
 

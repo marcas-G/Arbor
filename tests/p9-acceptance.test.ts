@@ -71,7 +71,7 @@ import {
   type EventTypeName,
   ExecutionId,
   type ExpectedDeliverable,
-  type LeaseGeneration,
+  LeaseGeneration,
   Principal,
   type ProducerBinding,
   ProjectId,
@@ -134,6 +134,7 @@ import {
   WorkRepository,
   WorkspaceRepository,
   WorkWaitStore,
+  invocationAuthoritySourceRevisionOf,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
@@ -1469,6 +1470,10 @@ const seedStoryE = Effect.gen(function* () {
         "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
         [E_EXECUTION, E_PROJECT, E_WORKSPACE, E_SESSION],
       );
+      yield* sql.unsafe(
+        "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
+        [E_EXECUTION, String(E_PRINCIPAL), "incarnation:p9-story-e", 0, "2999-01-01T00:00:00.000Z", "t"],
+      );
     }),
   );
 });
@@ -1488,6 +1493,11 @@ const eTierContext = (tier: ETier) => {
       executionId: E_EXECUTION,
       toolName: definition.name,
       toolVersion: "1",
+        sourceRevision: invocationAuthoritySourceRevisionOf({
+          workspacePolicyRevision: 0,
+          activeGrants: [],
+          verifierId: null,
+        }),
       resourceSpaceIds: [],
       allowedCapabilities: definition.capabilityMetadata,
       controlBasisDigest: "d",
@@ -1495,6 +1505,12 @@ const eTierContext = (tier: ETier) => {
       delegationDepth: 0,
     },
     controlBasisDigest: "d",
+    executionFence: {
+      executionId: E_EXECUTION,
+      workerId: String(E_PRINCIPAL),
+      workerIncarnationId: "incarnation:p9-story-e",
+      fencingGeneration: parse(LeaseGeneration)(0),
+    },
     requestedAt: "t",
   } as never;
 };
