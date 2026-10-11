@@ -50,6 +50,8 @@ export interface ToolExecutor {
 export interface ToolRuntimeQualificationEvent {
   readonly boundary:
     | "AH7AfterToolIntentCommit"
+    | "AH7BeforeEffectAdmission"
+    | "AH7AfterEffectAdmissionCommit"
     | "AH7AfterToolEffectBeforeSettlement"
     | "AH7BeforeToolSettlementTransaction"
     | "AH7AfterToolSettlementCommit"
@@ -673,8 +675,9 @@ export const ToolRuntimeLive = (
               };
             }
             if (
-              recorded.sideEffectSemantics === "NonIdempotent" ||
-              recorded.sideEffectSemantics === "Reconcilable"
+              recorded.effectAdmissionState !== "NotAdmitted" &&
+              (recorded.sideEffectSemantics === "NonIdempotent" ||
+                recorded.sideEffectSemantics === "Reconcilable")
             ) {
               const reconciliationRefs = [String(intent.invocationId)];
               if (recorded.sideEffectSemantics === "NonIdempotent") {
@@ -950,6 +953,17 @@ export const ToolRuntimeLive = (
               );
             }
           }
+          if (options.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "AH7BeforeEffectAdmission",
+                  executionId: context.executionId,
+                  invocationId: intent.invocationId,
+                  callRef: intent.callRef,
+                }) ?? Promise.resolve(),
+            );
+          }
           const effectAdmission = yield* Effect.match(
             tx.transact(
               store.admitEffect(
@@ -1024,6 +1038,18 @@ export const ToolRuntimeLive = (
               }
             }
             return { _tag: "Interrupted" as const };
+          }
+
+          if (options.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                options.qualificationProbe?.({
+                  boundary: "AH7AfterEffectAdmissionCommit",
+                  executionId: context.executionId,
+                  invocationId: intent.invocationId,
+                  callRef: intent.callRef,
+                }) ?? Promise.resolve(),
+            );
           }
 
           const handle = yield* sandbox

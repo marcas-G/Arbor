@@ -47,6 +47,14 @@ if (process.env.ARBOR_P4_FENCE_NON_IDEMPOTENT === "1") {
 const toolQualificationProbe = async (event) => {
   if (
     role === "old" &&
+    event.boundary === process.env.ARBOR_P4_FENCE_ADMISSION_BOUNDARY
+  ) {
+    emit(event);
+    await waitForGate("tool-admission", event);
+    return;
+  }
+  if (
+    role === "old" &&
     event.boundary === "AH7AfterToolEffectBeforeSettlement"
   ) {
     emit(event);

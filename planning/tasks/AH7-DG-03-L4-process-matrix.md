@@ -48,6 +48,18 @@ COMMIT branches passed the hardened 1/1 targeted run with keepalive/alive
 handshake and exact SIGKILL exit assertions. See
 `planning/results/AH7-DG-03-L4-store-process.result.md`.
 
+The next wave adds the exact `NotAdmitted → MayHaveStarted` boundaries to
+ToolRuntime qualification and uses the real public daemon fixture with a
+`requiresApproval=false` shell invocation. A real two-daemon generation
+takeover killed generation 0 before admission and after the committed marker;
+both cases pass. Before admission, generation 1 resumes the same invocation
+through current authority/fence checks and produces one effect/result. After
+admission, generation 1 fails closed as `OutcomeUnknown` /
+`ReconciliationPending` without starting another effect. See
+`planning/results/AH7-DG-03-L4-effect-admission-takeover.result.md`. This is
+separate from the approved-Executable store claim and does not qualify actual
+external-effect-before-settlement or P3 Observation/Action/cursor crash rows.
+
 After those store-process cases, the production `ProductionFixture` should be
 reused for the P3 ToolResult/Action/cursor and P4 effect/settlement boundaries.
 For those rows use two independent daemons, a current lease generation, the
