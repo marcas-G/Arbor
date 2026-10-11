@@ -122,8 +122,10 @@ tree.
 ## Checks and remaining gates
 
 - Commit ancestry is linear from `f80ee913` through the selected P36→P37→P38
-  commit sequence. Official P36 `34ed1c5`/`5cab270` are ancestors of the
-  integrated HEAD; donor re-landing `9fe9a80` is not.
+  sequence. The official P36 source commits were cherry-picked, so their
+  source SHAs are not ancestors; the mapped landing/record commits
+  `51d30e0`/`46526d5` are ancestors of the integrated HEAD. Donor re-landing
+  `9fe9a80` is not an ancestor.
 - Owner-document `git diff --check f80ee91 HEAD -- docs/design`: PASS.
 - Whole-scope `git diff --check f80ee91 HEAD`: reports existing trailing
   spaces in the exact accepted P36 proposal/decision text and one blank line
