@@ -135,7 +135,7 @@ actual `db929` checkout contains P36 but not P37/P38. A proposal-only P39
 supplement was added at
 `planning/proposals/AH7-DG-02-P39-physical-schema-supplement-draft.md`; its
 SHA-256 is
-`2BE13013986BE7B9D3626892FB31C6B9F364F554980310D44D4705F7A56CEC6C`. It
+`B96C135C5047D3AB9962034E5ED18968675A5E40FFB6D32A268F5295DD4883A4`. It
 proposes versioned canonical
 RecoveryBinding JSON + digest, per-attempt rows, append-only three-outcome facts,
 exact constraints/indexes, illustrative SQLite upgrade envelope, transaction
@@ -163,12 +163,15 @@ or test source was changed:
    may-have-started rows remains the already-accepted D0A
    ReconciliationEscalated→ActionRequired mapping.
 3. Active P36 NotAdmitted rows cannot use that external-effect Attention path.
-   P39 therefore has a pre-DDL refusal gate that leaves the same DB, approval,
-   P3 Action/cursor, schema and `user_version=38` unchanged and emits a durable
-   `{kind,schemaVersion,databaseFingerprint,createdAt,invocationIds}` audit
-   report. P39 proceeds only after existing authorized old-version disposition
-   makes them terminal; if that path is unavailable, migration/release remain
-   blocked and no new Attention event is invented.
+   P39 therefore has a pre-DDL refusal that rolls back/closes the DB and emits
+   a stable JSON report via explicit operator CLI path. That exact DB is
+   permanently isolated from P39, preserved at its old state/version, and
+   never launched with the P39 binary; no old-version manual settlement is
+   invented or implied. The operator retains the original DB/report until
+   separate governance. Read-only inspection found no existing durable
+   migration-report sink: P14 sweep, P9/P10 product Attention, `runMigrations`
+   error, and tempdir local BlobStore do not meet it. Therefore the proposal
+   adds a P1/P14 startup/migration contract plus the P9 legacy gate.
 4. `Bound` now requires a non-null binding digest and deferred composite FK to
    the exact immutable binding row at commit; binding marker/digest and attempt
    identity cannot be rewritten. Invocation/fact ArtifactRefs and invocation-
@@ -181,5 +184,42 @@ or test source was changed:
 Qualification now includes actual schema-38/P36 copies, migration refusal,
 rollback, repeated migration-runner invocation/restart, approval and Action/
 cursor preservation, and post-terminal contradiction checks. No tests or daemon
-processes were run; `git diff --check` is the only validation. The supplement
-remains DRAFT and is not owner landing or implementation authorization.
+processes were run; `git diff --check` is the only validation. The report path
+is required before DB open; POSIX qualified local FS uses file fsync, atomic
+no-replace publish and directory fsync. Windows/network/unqualified volumes
+are blocked before DB open pending platform-specific proof—the current docs do
+not justify claiming the full guarantee. Readiness is split by DB cohort:
+fresh/unaffected DBs may qualify on supported platforms; a blocked legacy DB
+is not counted as upgraded and its AH7 manual recovery remains open. The
+supplement remains DRAFT and is not owner landing or implementation
+authorization.
+
+## Final P39 operator-report / isolation review response
+
+Read-only repo inspection found no reusable durable operator-report sink:
+P14 §4.3 is a post-settlement idempotent sweep, P9/P10 Attention is a product
+event/read model, `runMigrations` only throws `SqliteAdapterError`, main only
+prints stderr, and local BlobStore is OS-tempdir backed with direct writes and
+no fsync/atomic publication contract. Existing JSON outputs are test/assessment
+artifacts, not deployment audit records.
+
+The proposal now fixes option A: `--migration-block-report <absolute-path>` is
+required by P39-targeting startup before constructing/opening the DB client;
+there is no default. Missing/invalid path or unsupported durability produces a
+typed code and exit 78 without a DB read and without a report. On a hit,
+`BEGIN IMMEDIATE` reads a consistent blocker snapshot; after rollback and DB
+close it publishes deterministic JSON to the operator's durable path. Same
+content is idempotent; a differing existing file is never overwritten. The
+deployment operator retains both original DB and report. A hit permanently
+isolates that DB from P39 until separate governance; no old-version settlement
+is presumed, and this does not close AH7 recovery for that data. Readiness is
+per DB cohort, not a blanket release claim.
+
+Durability support is deliberately fail-closed: POSIX only after qualified
+file-fsync + atomic no-replace publication + directory-fsync support; Windows,
+network and unqualified filesystems return `P39_REPORT_DURABILITY_UNSUPPORTED`
+before DB open. Official references reviewed: [Node.js `fs`](https://nodejs.org/api/fs.html),
+[Microsoft `MoveFileExW`](https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-movefileexa),
+and [Microsoft `CreateFile`](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-createfilea).
+The future accepted landing package must update P1 `04`/`06`, P14 `02`/`05`,
+and P9 `07`; no owner docs or code were changed here. No tests were run.

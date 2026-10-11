@@ -479,34 +479,130 @@ with its original invocation ID; P3 does not advance or create a replacement
 invocation. The existing D0A `StillUnknown` recovery path emits the exact P9
 `ReconciliationEscalated` fact/event and P10 `ActionRequired` projection.
 
-### NotAdmitted pre-upgrade refusal gate
+### P39 CLI report contract and permanent legacy-DB isolation
 
-P36 has no persisted RecoveryBinding table/column, so P39 preflight enumerates
-every P36 unsettled `NotAdmitted` invocation. If any exist, the migration
-runner aborts before DDL or `user_version` mutation and returns a structured
-`P39LegacyUnboundNotAdmitted` report containing schema version, stable DB
-fingerprint and exact invocation IDs (never arguments/command text). The
-report shape is `{kind, schemaVersion, databaseFingerprint, createdAt,
-invocationIds}`; `databaseFingerprint` is SHA-256 of a consistent SQLite
-backup snapshot captured before rollback. Only the digest is reported; row
-content and tool arguments are not exported. If the snapshot cannot be
-captured, the gate fails closed. The deployment operator must
-durably persist the report as a release audit artifact before acknowledging
-the refusal. If audit persistence fails, the runner remains failed and release
-remains blocked. The
-source DB, P36 invocation/P38 approval rows, and P3 Action/Step/cursor remain
-unchanged. No SQL cleanup, auto-settle,
-approval refund/transfer, synthetic binding, or replacement invocation is
-permitted. P39 may proceed only after an already-authorized old-version P4/P9
-human disposition makes every listed row terminal. If that existing route
-cannot safely do so, P39 migration and application release stay blocked pending
-a separate P9/P10 governance decision; do not invent a NotAdmitted Attention
-source or misuse `ReconciliationEscalated`.
+The P39-enabled migration/startup path requires the operator to pass
+`--migration-block-report <absolute-path>` before the SQLite client is
+constructed. The option is scoped to a P39-targeting binary; older binaries do
+not need it. There is no default. Missing/invalid destination or unsupported
+durability fails before any DB open/read with typed
+`P39_BLOCK_REPORT_PATH_REQUIRED`, `P39_BLOCK_REPORT_PATH_INVALID`, or
+`P39_REPORT_DURABILITY_UNSUPPORTED`, process exit code `78`, and no report
+because no report sink was validly designated.
 
-This selected fail-closed disposition is the direct safety consequence of the
-accepted D0A rule “exact historical shell@2 re-entry only with a complete
-binding.” An absent binding is not a complete binding; refusing automatic
-re-entry does not change D0A or infer effect success/failure.
+The operator must choose an existing directory on a qualified durable local
+volume. Reject relative paths, OS temp locations (`/tmp`, `%TEMP%`, and their
+resolved aliases), network/UNC destinations, symlink/reparse-point path
+components, a target equal to the DB/WAL/SHM path, and a missing parent
+directory. The tool never creates parent directories or overwrites an
+unrelated file. On POSIX, resolve and pin the existing parent directory once,
+perform temp/create/publish relative to that directory handle, require the
+operator-protected directory to be on a qualified same-volume filesystem, and
+use a basename only (no separators or `..`). The deployment operator owns the
+directory ACL; the report file is created owner-only. The path and raw
+database path are never placed in report content.
+
+If the database is already at `user_version=39` or is a fresh/unaffected DB,
+the migration proceeds normally after the preflight. Otherwise P39 takes one
+`BEGIN IMMEDIATE` consistent SQLite snapshot, reads `user_version` and all P36
+unsettled `NotAdmitted` invocation IDs plus only the P36/P38/P3 identity/state
+fields needed to fingerprint that blocked set, and performs no writes. If the
+set is non-empty, it rolls back and closes the DB before publishing a report.
+The transaction performs no DDL/DML and does not bump `user_version`; SQLite
+may transiently open/manage WAL/SHM lock sidecars, but no P36 schema, committed
+row, approval, or P3 cursor state changes.
+The stable JSON has no timestamp, resource path, command, argument, authority
+secret or raw SQLite error:
+
+```json
+{
+  "schema": "arbor.p39-legacy-db-isolation.v1",
+  "kind": "P39LegacyUnboundNotAdmitted",
+  "observedUserVersion": 38,
+  "targetUserVersion": 39,
+  "databaseFingerprint": "lowercase sha256",
+  "blockedInvocationIds": ["sorted exact IDs"],
+  "contentHash": "lowercase sha256 of canonical JSON without this field"
+}
+```
+
+`databaseFingerprint` is SHA-256 over the existing canonical JSON encoding of
+`{observedUserVersion, sorted blocker rows}` where each row contains only
+invocation ID, execution ID, admission state, unsettled marker, approval ID
+and consumed-by invocation identity, plus P3 Step/Action/cursor identity/state;
+this fingerprints the affected DB state without exporting tool arguments,
+resource paths or principal secrets. Canonical key/array ordering makes
+complete report bytes and `contentHash` identical when the same DB state is
+reported again. Typed stderr diagnostics contain only stable error/exit codes;
+they never echo report or database paths.
+
+On supported POSIX local filesystems, publication happens only after
+rollback/connection close, in the target's own directory/volume: create a
+unique temp file with exclusive create and owner-only permissions; write all
+exact UTF-8 JSON bytes; fsync the file; atomically publish without replacement
+using `renameat2(RENAME_NOREPLACE)` or a qualified equivalent (same-directory
+hard-link the already-fsynced inode to the final name, then unlink the temp
+name); finally fsync the parent directory. If the target
+already contains byte-identical report content, treat publication as idempotent
+and do not rewrite it. If it contains different bytes, fail with
+`P39_REPORT_TARGET_CONFLICT`; never overwrite or delete it. Any write/sync/
+publish failure yields typed `P39_REPORT_PERSIST_FAILED` and nonzero exit `78`;
+the P36 DB remains unchanged and P39 startup is blocked. The deployment
+operator owns durable retention and cleanup of report files; the application
+never rotates, replaces, or deletes them.
+
+#### Platform durability support
+
+P39 v1 report publication is enabled only on a qualified local filesystem where
+file fsync, atomic no-replace publication and directory fsync are all
+implemented and verified. The current Node `fs` interface describes sync as
+OS/device-specific and does not provide a documented no-replace rename plus
+directory-fsync contract on Windows. Win32 `MoveFileExW(MOVEFILE_WRITE_THROUGH)`
+documents write-through completion, including a copy/delete case, and NTFS
+write-through handles flush metadata; that documentation alone does not prove
+the full required atomic no-replace + containing-directory durability bundle.
+Therefore the proposal deliberately blocks P39 startup on Windows with
+`P39_REPORT_DURABILITY_UNSUPPORTED` / exit 78 before DB open, until an accepted
+platform implementation and power-loss qualification prove the complete
+contract. No “best effort” report or stderr-only fallback permits migration.
+Network filesystems and unqualified filesystems are also blocked. This
+conservative Windows block follows the official API boundary: Node documents
+`FileHandle.sync()` as OS/device-specific; Win32 `MoveFileExW(MOVEFILE_WRITE_THROUGH)`
+describes flushed completion including the copy/delete case, and
+`CreateFile(FILE_FLAG_WRITE_THROUGH)` documents metadata flush on NTFS, but
+those statements do not establish the whole atomic-no-replace + parent-directory
+fsync contract required here. References:
+[Node.js `fs`](https://nodejs.org/api/fs.html),
+[Microsoft `MoveFileExW`](https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-movefileexa),
+[Microsoft `CreateFile`](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-createfilea).
+
+#### Isolation disposition
+
+After a preflight hit, report publication succeeds and the process exits with
+typed `P39_LEGACY_DB_ISOLATED` / exit 78. That exact DB is permanently isolated
+from P39: it is not upgraded, no P39 binary is launched against it, and its
+committed schema/data/user_version, P36 invocation/P38 approval/P3
+Action/Step/cursor remain as-is. No binding is fabricated, approval refunded/transferred, row
+deleted, old attempt retried, or replacement ToolInvocation created. The
+database and report remain under operator custody until a separate future
+governance decision authorizes a human disposition. The deployment operator
+who selected the report path owns access control, backup/retention and any
+later cleanup of both original DB and report; the application never rotates,
+replaces or deletes either. This does **not** close human recovery work for
+that DB.
+
+Release readiness is reported by DB cohort: fresh/unaffected DBs may qualify
+for P39 on a supported platform with the report option; any DB with an active
+P36 NotAdmitted row remains explicitly isolated and is not counted as
+upgraded/released. This is the physical safety consequence of D0A’s rule that
+exact historical shell@2 re-entry requires a complete binding; it adds no
+automatic old-row recovery semantics.
+
+The later accepted owner landing must place the CLI/migration gate in P1
+`04-sqlite-schema.md` §5 and `06-recovery-matrix.md` §5, process-startup
+failure/CLI behavior in P14 `02-conversation-execution.md` and `05-acceptance.md`,
+and the exact P36 NotAdmitted no-dispatch/legacy gate in P9
+`07-agent-loop-step-recovery.md`. No owner document is edited by this draft.
 
 The attempt-table SQL intentionally does not require every row labeled
 `Reconcilable` to have a profile: P36 history can legitimately contain
@@ -529,14 +625,17 @@ Illustrative SQLite migration envelope (the inner statements are the schema
 shape above; this is not checked-in migration code):
 
 ```sql
+-- P39 CLI validates --migration-block-report, the absolute target, and
+-- platform durability before constructing/opening the SQLite client.
 PRAGMA foreign_keys = OFF; -- before transaction; required only for table rebuild
 BEGIN IMMEDIATE;
 -- Assert current user_version is 38 and required P36/P38 tables exist.
--- Read-only preflight under this write reservation: if unsettled P36
--- NotAdmitted rows exist, collect IDs, ROLLBACK, persist a structured
--- {kind,schemaVersion,databaseFingerprint,createdAt,invocationIds} report in
--- deployment audit, and return without
--- executing DDL or changing user_version.
+-- Read-only preflight under this write reservation: collect version,
+-- consistent fingerprint, and unsettled P36 NotAdmitted IDs. If non-empty,
+-- ROLLBACK, close SQLite, publish the stable JSON report through the durable
+-- no-replace protocol, then return P39_LEGACY_DB_ISOLATED / exit 78. Do not
+-- execute DDL or change user_version for this permanently isolated DB.
+-- If empty, continue directly in this same transaction (no lock gap).
 -- Create tool_invocations_p39 with the P39 settlement CHECK; copy every P36
 -- row byte-for-byte for its existing values, then replace the old table.
 -- Create binding/attempt/fact tables, indexes and immutability triggers.
@@ -562,7 +661,7 @@ implementation or review evidence.
 |---|---|
 | Valid P38 DB, no unsettled P36 invocations | Upgrade commits; P36 rows and approval ledger unchanged; empty new proof tables |
 | Settled success/failure/denial/interruption/outcome-unknown rows | Upgrade commits; exact old settlement and result refs preserved; attempt 0 copied without inventing a fact |
-| Any unsettled P36 NotAdmitted row | Preflight refuses before schema/user_version write; emits structured `P39LegacyUnboundNotAdmitted` report with DB fingerprint and exact IDs; same DB retains P36 state, P38 approval, P3 Action/cursor; release remains blocked until existing manual disposition is complete |
+| Any unsettled P36 NotAdmitted row | Preflight refuses before schema/user_version write; after rollback/close emits stable structured report with DB fingerprint and sorted IDs; same DB retains committed P36 state/P38 approval/P3 Action/cursor; report and DB are retained and that DB is permanently excluded from P39 until separate governance |
 | Unsettled P36 MayHaveStarted or LegacyUnknown without profile/binding/effect key | Upgrade commits with `LegacyBindingUnproven` marker and nullable attempt identity; a `StillUnknown(ProfileUnavailable)` fact may be stored with `legacy_reason=LegacyProfileUnavailable`; P9/P10 use accepted ReconciliationEscalated path |
 | Duplicate invocation IDs, broken P36 foreign keys, malformed canonical binding/fact hash, or unsupported profile metadata in a new claim | Migration aborts before version bump, or runtime claim rejects atomically; no partial binding/attempt/approval consumption |
 | Orphan legacy invocation result_ref or non-Artifact evidence/result ref | FK preflight/`foreign_key_check` aborts before version bump with exact source row IDs; no ref rewriting or guessed target |
@@ -577,7 +676,9 @@ implementation or review evidence.
 | StillUnknown or old attempt not final | Persist unresolved fact/Attention under current fence; no new effect; late terminal accounting is allowed only by current fence |
 | P10 rebuild while source event retained / after P1 pruning | Rebuild reproduces accepted D0A ActionRequired row/offset within retention horizon; after prune, no indefinite Attention promise |
 | Migration transaction failure at each DDL/backfill stage | Transaction rollback leaves old schema, rows, P38 approvals, and `user_version=38` intact |
-| Same schema-38 DB migration attempted twice / process restarts after commit | First successful migration reaches 39 once; runner recognizes 39 as already applied on second invocation/restart and creates no duplicate attempt/fact/binding; failed preflight leaves version 38 and can be retried only after manual disposition |
+| Same blocked schema-38 DB retried / process restarts | Same report content hash is recognized without rewrite; process still returns P39_LEGACY_DB_ISOLATED and never enters service runtime. P36 DB/user_version stays unchanged |
+| Same report path holds different earlier report | `P39_REPORT_TARGET_CONFLICT`, no overwrite/delete and no P39 DDL; operator retains prior report and must choose a new explicit path for a distinct report |
+| Unblocked schema-38 DB migrates then P39 startup repeats | First migration commits user_version 39; later invocation is runner no-op; P39 CLI report path validation still precedes DB open |
 
 Retention follows the accepted D0A boundary: P39 binding, attempts and facts
 must remain while an invocation can be replayed, reconciled, settled, audited,
@@ -596,8 +697,11 @@ whether the existing D0A `ProfileUnavailable` public reason plus physical
 the closed P4/P3 union and requires separate governance). A contradictory fact
 arriving after terminal P4/P3 state remains append-only audit evidence and
 cannot roll back that state; any new post-terminal Attention event requires
-separate P9/P10 governance. Until these questions are closed, there must be no
-owner-document landing, P39 migration implementation, test implementation, or
-release claim. This draft cannot be used to infer that the green
+separate P9/P10 governance. The new CLI/report contract also requires review of
+its P1/P14/P9 ownership, POSIX durable no-replace publication qualification,
+operator retention responsibility, and the explicit Windows/network-filesystem
+block. Until these questions are closed, there must be no owner-document
+landing, P39 migration implementation, test implementation, or release claim.
+This draft cannot be used to infer that the green
 `C:\Arbor@f80` tree contains P36/P37/P38/P39, or that `db929` contains
 P37/P38/P39.
