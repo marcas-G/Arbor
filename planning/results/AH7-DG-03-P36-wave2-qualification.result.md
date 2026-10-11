@@ -72,6 +72,12 @@ database through startup to P36 and B8 direct P36 readiness. The view request
 uses the configured `user:local` credential; command submission retains the
 `user:governance` human credential. No production auth rule was relaxed.
 
+The P12 selection executes its existing restore-drill test, which writes the
+tracked `planning/results/P12.restore-drill.json` artifact. Its generated diff
+was verified to change only `timestamp` and `restoredDbHash`; those two volatile
+fields were restored to the pre-Wave-2 values. The drill run is not counted as
+a new P12 restore qualification or as a change to that artifact.
+
 ## Selected L4 real-process boundaries
 
 | Qualification | Source → integrated implementation/evidence | Command result |
