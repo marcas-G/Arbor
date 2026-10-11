@@ -119,6 +119,26 @@ The two Blocking findings are addressed as follows:
    Action stop-closure semantics; it does not add a new Action state or
    settlement tag.
 
+The follow-up independent review identified one remaining Blocking: the P41
+Attention source lacked P10 `04` source-specific rebuild semantics. The revised
+proposal now adds this source to the P10 `02`/`05` Attention union and P10 `07`
+Story O, and makes P10 `04` own a durable `submitted_decision_binding_attention_rows`
+marker. Full rebuild resets the marker, takes one consistent P9 fact snapshot,
+seeds one marker per fact, and rewinds the P1 Attention offset to `floor - 1`
+in the same `BEGIN IMMEDIATE` / `TransactionScope`. The P9 event-id value has
+no FK to the prunable journal; the P10 marker is FK-bound to the fact, so a
+pruned event does not prevent fact-backed rebuild. The matrix covers retained
+event replay, duplicate consumption, pruned-event reconstruction, rebuild
+crashes before/after commit, and concurrent P9 fact creation before/after the
+rebuild snapshot. P1 still owns the journal floor.
+
+The same revision clarifies package ownership: P3 returns a typed mismatch or
+pure Stop close plan and has no P9 store dependency. P2 RecoveryController
+invokes the P9 Recovery/Application coordinator, which owns one transaction
+across the P9 fact-store port and P3 `AgentLoopStepStore` mutations. The P10
+rebuild/fact-snapshot and Stop/fact ordering remain proposal qualifications;
+none were run here.
+
 The fixed package also specifies a P9 post-0041 startup scan before the
 settled-Execution short-circuit. It enumerates exact settled-Failed /
 DecisionEpisode / `ActionsInProgress` / Pending-SelectCurrentWork rows, emits
@@ -132,7 +152,8 @@ migration audit, and duplicate-writer qualification remain specified, not run.
 The edited test was **not run**. No full functional suite or daemon was run,
 and this tree changes no production or `docs/design/**` files.
 
-Proposal SHA-256 over LF Git-clean bytes: `C3793AD0CC77565F358C5A3DB70E77D7F1C3F146A4281053603DFD7986BA5724`.
+Proposal SHA-256 over LF Git-clean bytes:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`.
 
 The tests remain under `tests/functional/pending/`; do not count this expected
 failure as default functional coverage or claim a green release batch. No

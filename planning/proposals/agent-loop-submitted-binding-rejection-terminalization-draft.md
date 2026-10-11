@@ -37,13 +37,14 @@ existing authorized path to quiesce that blocked Execution. Stop closes the
 runtime action ledger without changing canonical Work/selection or clearing
 the Attention fact.
 
-The fact's event is owned by P9 as `SubmittedDecisionBindingEscalated`.
-P3 owns the pre-effect exact-binding guard and typed `RecoveryBlocked` result;
-P2 owns returning the current lease without settlement and ordering the durable
-fact check before redispatch and gates RecoveryController settlement on P3
-quiescence; P10 owns the source mapping and public projection. DID owns the
-Event/port/DDL registration. P5/EGP DecisionEpisode creation and settlement
-semantics do not change.
+P9 owns `SubmittedDecisionBindingEscalated` and its durable source fact; P10
+owns the source mapping, marker, query union and rebuild. P3 owns the pre-effect
+exact-binding classifier and pure stop-only Step/Action transition plan, but
+does not import or call a P9 fact store. P2 RecoveryController invokes the P9
+Recovery/Application coordinator, which owns lease/recovery ordering and the
+cross-store transaction described below. DID owns the Event/port/DDL
+registration. P5/EGP DecisionEpisode creation and settlement semantics do not
+change.
 
 ## Baseline and migration-prefix audit
 
@@ -135,24 +136,30 @@ requests or replay-predicate failures are outside this proposal; do not turn
 every `false` replay predicate into this Attention source.
 
 Any mismatch in the submitted DecisionRequest Workspace or pinned Manifest
-uses this proposal. P3 returns typed `RecoveryBlocked` to P2 and performs no
-new ProviderTurn intent, Manifest, provider request, Session append, action
-handler, Command, Observation, or Step/Action/Execution settlement transition.
-If a matching immutable fact already exists, recovery returns `RecoveryBlocked`
-before building new model context or entering `prepareTurn`. It must not
-convert this integrity failure into `Failed`, `OutcomeUnknown`, or
-`SkippedEarlySettlement` during ordinary recovery. Existing committed
-canonical Commands/events and Work selection are preserved as evidence; no
-replacement identity, Command, ProviderTurn, or action is synthesized.
+uses this proposal. P3 returns a typed process-local
+`SubmittedDecisionBindingMismatch` classification to the Recovery/Application
+coordinator and performs no new ProviderTurn intent, Manifest, provider
+request, Session append, action handler, Command, Observation, or
+Step/Action/Execution settlement transition. P3 does not read or write a P9
+fact store. The coordinator records the P9 fact/event and translates the
+classification to `RecoveryBlocked`. If the fact already exists, the
+coordinator blocks before dispatching P3 or building model context/
+`prepareTurn`. This integrity failure must not become `Failed`,
+`OutcomeUnknown`, or `SkippedEarlySettlement` during ordinary recovery.
+Existing committed canonical Commands/events and Work selection remain as
+evidence; no replacement identity, Command, ProviderTurn, or action is
+synthesized.
 
 #### Stop-only quiescence for a fact-blocked DecisionEpisode
 
 The existing authorized `StopExecution` command is the sole v1 resolution of
 the active Execution lock. After Stop is durable, P3 may run a stop-only
-quiescence path for this exact mismatch and `select_current_work` Action. If
-the P9 fact already exists, P3 reuses it. If Stop wins the race and the fact
-does not yet exist, P3 records it through the P9 fact store in the same
-transaction as the P3 close. This is not ordinary action replay:
+quiescence path for this exact mismatch and `select_current_work` Action. P3
+returns the pure close plan. If the P9 fact already exists, the Recovery/
+Application coordinator reuses it. If Stop wins the race and the fact does not
+yet exist, that coordinator writes it through the P9 fact-store port in the
+same transaction as the P3 StepStore mutations. P3 never calls the P9 store.
+This is not ordinary action replay:
 
 1. Require `stopRequestedAt != null`, the same exact binding mismatch and
    active DecisionEpisode/Step/Action identities, plus the complete current
@@ -167,15 +174,17 @@ transaction as the P3 close. This is not ordinary action replay:
    enumerate action order for closure. This never accepts/rewrites the Step
    Manifest. It must not call Provider, execute a control, submit a Command, or
    emit an Observation from that decode.
-3. In one `TransactionScope`, close the exact current Pending control Action as
+3. In one shared `TransactionScope` owned by the Recovery/Application
+   coordinator, close the exact current Pending control Action as
    `TerminalRejected` with disposition
    `StopRequestedAfterSubmittedBindingFailure`; mark any later Pending actions
    `SkippedEarlySettlement`; advance the cursor through the complete pinned
    action list; and transition the Step to
    `SettlementProposed(Interrupted(StopRequested))`. Recheck Stop, fact,
    identity, and full lease fence in that transaction. If this is the first
-   binding-failure detection, append the P9 fact/event in this same transaction.
-   Append no Observation.
+   binding-failure detection, the coordinator appends the P9 fact/event in this
+   same transaction. P3 contributes only its StepStore transition plan and does
+   not depend on a P9 implementation. Append no Observation.
 
 This applies the frozen P3 early-settlement states to the current control
 Action. `TerminalRejected` means this AgentLoop action was closed without
@@ -224,16 +233,31 @@ execution stays blocked until the human Stop request. If Stop commits first,
 the mismatch fact and P3 stop proposal commit together. Concurrent Stop/fact
 writers serialize to one of those orders.
 
+#### Cross-store transaction owner
+
+The P3 Agent Runtime returns a typed mismatch classification and, for Stop, a
+pure Step/Action close plan. It never imports or calls
+`RecoveryAttentionFactStore`. The P9 Recovery/Application coordinator invoked
+by P2 RecoveryController owns the cross-store transaction: it validates the
+full current lease, DecisionRequest/Execution/Step/Action/ProviderTurn mismatch
+and Stop state, then uses one `TransactionScope` to call the P9 fact-store port
+and apply the P3 plan through `AgentLoopStepStore`. For ordinary non-Stop
+mismatch it commits only the P9 fact/event and returns `RecoveryBlocked`; for
+Stop-first it commits the fact/event and Step/Action close/proposal together.
+P3 remains dependent on provider-neutral `ports`; there is no P3→P9
+implementation dependency or concrete store import.
+
 ### P9 `07` — durable source fact/event and repeatable recovery gate
 
 P9 owns one new immutable `submitted_decision_binding_attention_facts` source
-and EventVersion 1 event `SubmittedDecisionBindingEscalated`. The fact is
-written before recovery returns `RecoveryBlocked`, atomically with the event in
-one `TransactionScope`. In that same transaction P9 re-reads the Execution,
-exact Step, exact Action, DecisionRequest, and ProviderTurn/Manifest binding;
-it verifies the same mismatch and the current full lease-holder fence when the
-Execution is Active. If the evidence changed or the fence fails, the whole
-write rolls back and recovery remains fail-closed.
+and EventVersion 1 event `SubmittedDecisionBindingEscalated`. The P2/P9
+Recovery/Application coordinator re-reads the Execution, exact Step, exact
+Action, DecisionRequest, and ProviderTurn/Manifest binding and validates the
+same mismatch plus the current full lease-holder fence when the Execution is
+Active. It then calls the P9 fact-store port in a `TransactionScope`; the fact
+and event always commit/rollback together. For Stop-first, that same scope also
+includes the P3 `AgentLoopStepStore` close plan. If evidence changes or the
+fence fails, all scoped writes roll back and recovery remains fail-closed.
 
 The source identity is the exact action, not the observed corrupt value:
 `(executionId, logicalStepNo, repairAttempt, logicalActionId)`. Derive
@@ -292,9 +316,12 @@ generation 0 and the recovery owner is generation 1 or later.
 
 Use one additive, forward-only P41 migration
 `0041_submitted_decision_binding_attention` (`PRAGMA user_version=41`) for
-`submitted_decision_binding_attention_facts`, the P10 source table
-`submitted_decision_binding_attention_rows`, and their identity/FK/index
-constraints. The fact is unique by
+`submitted_decision_binding_attention_facts` and the P10 source marker table
+`submitted_decision_binding_attention_rows`. The P9 `event_id` is retained as
+an audit identifier but has **no FK to `domain_events`**, so journal pruning
+does not delete or pin the P9 fact. The P10 marker has a primary key on
+`attention_fact_id` and an FK to the P9 fact (plus its owning Workspace); it
+has no source-event FK. The fact is unique by
 `(execution_id, logical_step_no, repair_attempt, logical_action_id)`, references
 its exact Execution, Step, and Action, and stores only the first typed failure
 code. The P10 row is keyed by the immutable P9 `attentionFactId` and is written
@@ -324,7 +351,7 @@ the Execution or retries an action. An unprovable Step/Action identity follows
 the existing P9 insufficient-evidence Attention/ReconciliationRequired path
 and is not guessed into this fact table.
 
-### P10 `02` / `07` — public Attention
+### P10 `00` / `02` / `04` / `05` / `07` — Attention union and rebuild
 
 Add source literal `SubmittedDecisionBindingFailure`, severity `ActionRequired`,
 target `executions.workspace_id`, and `dedupKey = attentionFactId`. Project
@@ -332,19 +359,73 @@ exactly one safe fixed summary per fact:
 
 > A Scheduler decision action could not be safely recovered; review is required.
 
-The event consumer verifies the event against the P9 source row and upserts one
-P10 source-specific row in the same apply-then-advance transaction. P10's
-read-only view consumes that row; its full rebuild repopulates from the durable
-P9 fact table, so pruning the wakeup event cannot erase the Attention. The
-public row uses the existing Attention response shape and fixed safe
-summary/time only; it does not add a wire field for `failureCode`. P9 retains
-that code in its internal source fact. The public row never exposes Work
-candidates, Manifest IDs, Provider content, raw database values, or parser
-text. Existing subtree aggregation bubbles the count once and copies no
-context. P10 rebuild and restart reconstruct the same row from the durable P9
-source fact even if the source event is below the retained journal floor. P10
-writes only its projection and offset. v1 adds no dismiss, repair, or canonical
-mutation path.
+P10 `05` adds only this `AttentionSource` literal to the existing DTO
+vocabulary; the `AttentionReq/Res` fields and transport route do not change.
+P10 `00` indexes the marker and rebuild acceptance surface below.
+
+Add this source to P10 `02`'s Attention source union and the `AttentionReq`
+query union alongside the existing AssignWork, Deliver, F21 and derived
+sources. The row is exactly `source=SubmittedDecisionBindingFailure`,
+`severity=ActionRequired`, `targetWorkspaceId=executions.workspace_id`, and
+`dedupKey=attentionFactId`; use the fixed safe summary above and
+`firstDetectedAt` as `occurredAt`. The public DTO adds no fields and does not
+expose `failureCode`; P9 retains that code. Do not expose Work candidates,
+Manifest IDs, Provider content, corrupt values, or parser/database text.
+Existing subtree aggregation counts the fact once and copies no context.
+
+#### P10 `04` full rebuild source contract
+
+The P10 marker is a materialized row only; the immutable P9 fact list is its
+durable rebuild source. Add a source-specific
+`listSubmittedDecisionBindingFailures(projectId)` read to the P9 fact-store
+port and use it for the `submitted_decision_binding_attention_rows` marker.
+The P9 fact's `event_id` is an audit identifier, not a foreign key; P10 markers
+are FK-bound to the fact and owning Workspace, not to `domain_events`.
+
+For one project, an authorized full P10 rebuild performs in one SQLite
+`BEGIN IMMEDIATE` / `TransactionScope`:
+
+1. reset the P10 Attention projection rows, including this source marker;
+2. read the P1 Attention consumer's retained floor and rewind its offset to
+   `floor - 1` under the existing P9-hardened rule;
+3. read one consistent P9 fact snapshot and insert exactly one marker per
+   `attentionFactId`; and
+4. commit the reset, fact snapshot/marker seed, and offset rewind together.
+
+After commit, replay retained project events in sequence order. The P10 event
+consumer validates each retained `SubmittedDecisionBindingEscalated` against
+its P9 fact and inserts the same marker while advancing the P1 Attention
+offset in that same transaction. A duplicate event or marker key is an
+idempotent no-op. If the original event has been pruned but the P9 fact remains,
+the fact snapshot still restores one Attention marker. P9 facts and P10 markers
+are not auto-deleted or cleared by Stop. The rebuild writes no P9 fact, P1
+event, Execution, Step, Action, Work, Command, receipt, or other canonical
+state, and it does not change P1's journal floor.
+
+P9 fact insertion/event and the P10 reset are serialized by the same SQLite
+writer lock. If the new fact commits before the rebuild snapshot, it is seeded
+and retained-event replay is idempotent. If it commits after the rebuild
+transaction, its event is above the rewound offset and ordinary catch-up adds
+the marker. A pre-commit rebuild crash leaves the previous marker set and
+offset; a post-commit crash leaves the fact-seeded marker and rewound offset
+for restart catch-up. This source obeys P10 `04` reset/snapshot/offset
+atomicity; it does not change F21 source-specific refusal/reconciliation
+semantics or P1 retention ownership.
+
+#### P10 `07` qualification story O
+
+Story O covers union, retention and rebuild: (a) retained event application
+creates one marker/row and advances offset atomically; duplicate delivery
+keeps one marker; (b) full rebuild resets markers, snapshots P9 facts, rewinds
+to `floor - 1`, then replay yields one row; (c) prune the source event while
+retaining the P9 fact, rebuild, and still obtain exactly one public row; (d)
+inject reset/snapshot/seed/rewind failures before and after commit and prove
+whole-transaction rollback or post-commit catch-up; (e) serialize P9 fact
+creation immediately before and after rebuild via independent SQLite
+connections/processes and prove one row/one subtree count, no missed new fact,
+no duplicate event/marker, and unchanged P9 facts/P1 floor. Existing Attention
+sources, union rows, subtree summaries and canonical state remain unchanged.
+v1 adds no Attention dismiss, fact repair, or canonical mutation path.
 
 ## Required qualification before implementation authorization
 
@@ -355,9 +436,9 @@ implementation is separately authorized and qualified.
 | Layer | Required cases and assertions |
 |---|---|
 | P3 module | Workspace and Manifest mismatch each classify as `RecoveryBlocked` before provider/action/command/observation; exact successful matching binding still follows the current receipt-first path. |
-| P2/P3 Stop module | Both orders are deterministic: (a) fact/event commits, then authorized `StopExecution`; (b) Stop commits first, then P2/P3 records fact/event and closes Step/Action atomically. No unresolved P4 side effect is a hard precondition. The P3 close is `TerminalRejected(StopRequestedAfterSubmittedBindingFailure)` for the current Action, `SkippedEarlySettlement` for later Pending rows, and `SettlementProposed(Interrupted(StopRequested))`; no Observation/Applied/Failed/OutcomeUnknown. P2 settles only the persisted proposal through RecoveryController, then releases the active slot. The Attention fact/row survives. |
+| P2/P3/P9 Stop module | Both orders are deterministic: (a) fact/event commits, then authorized `StopExecution`; (b) Stop commits first, then the P9 Recovery/Application coordinator writes fact/event and applies the pure P3 Step/Action close plan in one transaction. No unresolved P4 side effect is a hard precondition. The P3 close is `TerminalRejected(StopRequestedAfterSubmittedBindingFailure)` for the current Action, `SkippedEarlySettlement` for later Pending rows, and `SettlementProposed(Interrupted(StopRequested))`; no Observation/Applied/Failed/OutcomeUnknown. P2 settles only the persisted proposal through RecoveryController, then releases the active slot. The Attention fact/row survives. |
 | P9 store/recovery | Fact+event share a transaction and exact stable identity; same-tuple retry emits one event; conflicting code fails closed; rollback-before-commit yields no partial fact/event; restart-after-commit reads one fact and blocks. Two independent SQLite connections/OS processes recording the same tuple yield one immutable fact and one event; the loser reads the winner. Existing Command receipt and Work rows are unchanged. |
-| P10 | Public Attention query returns one `ActionRequired` row for the owning Workspace, safe summary, stable dedup; subtree count is one; restart and projection rebuild retain one row; no canonical writes. |
+| P10 `02`/`04`/`05`/`07` | Attention union has one source row; consumer validates event↔P9 fact, upserts one marker and advances offset in one transaction; duplicate event is idempotent. Full rebuild resets markers, snapshots P9 facts, seeds marker rows and rewinds P1 offset to `floor−1` in one `BEGIN IMMEDIATE`/`TransactionScope`; pre-commit crash rolls everything back, post-commit/pre-catchup restart retains seed and replays safely. Prune the source event while retaining the P9 fact and prove rebuild still yields one safe `ActionRequired` row/subtree count. Race a new P9 fact on both sides of the rebuild writer lock; no missed fact/duplicate marker and no P9/P1 mutation. DTO shape and transport stay unchanged. |
 | P41 migration prefix | Only after P36/0036 through P40/0040 are integrated in one cumulative runner and their required qualifications pass, register 0041 after 0040 and qualify v35→…→v41 plus supported intermediate prefixes. Assert no direct v35→v41 skip, no standalone 0041 release, and byte/checksum identity for each 0036–0040 migration. |
 | Upgrade fixture | Against the qualified v40 prefix, apply 0041 with each active mismatch and with a v35-era already-`Failed`/AIP/Pending orphan carried through 0036–0040. Active mismatches become blocked with one fact; the settled orphan receives audit-only `SettledExecutionWithPendingDecisionAction` (or the still-provable specific mismatch code), public Attention only; no canonical row/receipt is repaired or resurrected. An unprovable identity follows the existing P9 insufficient-evidence path. |
 | Two-daemon process | For each mismatch, gen0 reaches AH9 with the original Committed SelectCurrentWork receipt. Cover fact-before-Stop, Stop-before-fact, and serialized concurrent ordering. Crash gen0, wait for actual lease expiry, acquire gen1, and kill at both sides of the atomic fact+Step/Action stop-close commit; gen2 must redo the whole transaction or read the proposal. Then kill on both sides of RecoveryController `SettleExecution`; restart converges to `Interrupted(StopRequested)`. Across branches: no new Provider request/ProviderTurn, SelectCurrentWork Command, `CurrentWorkChanged`, Work mutation, or Observation; old receipt is unchanged; one fact/event and public ActionRequired row remain after settlement; late gen0 writes are FencingRejected; no Failed settlement or active-slot leak. |
@@ -373,7 +454,8 @@ suite or start/restart a daemon as part of this proposal review.
 ## Decision boundary
 
 Accepting this exact proposal would authorize only the named P2/P3/P9/P10
-owner amendments, DID §5.3/§7.2/§9.3 registrations targeting DID v1.42 after
+owner amendments, P10 `00`/`02`/`04`/`05`/`07` and DID §5.3/§7.2/§9.3
+registrations targeting DID v1.42 after
 the unified v1.41 P36–P40 landing, migration 0041 after the qualified
 0036–0040 prefix, the pending RED expansion, and the focused
 module/store/projection/two-daemon cases above. It does not authorize 0041
