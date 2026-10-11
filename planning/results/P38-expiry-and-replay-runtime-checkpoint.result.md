@@ -64,20 +64,20 @@ Status: **Static implementation checkpoint with P12 / terminal-replay / resolved
   path. This retains same-Execution/Step/action identity without a global
   terminal-history scan and is at-least-once/idempotent. Added an unrun SQLite
   assertion that a resolved Expired row is rediscovered for its Execution.
-- P2 `runExecution` performs a trusted `findPendingForExecution` read in the
-  same read transaction as the canonical Execution lookup, before Worker
-  dispatch or lease acquisition. A Pending row returns the same typed
-  `ApprovalRequired(approvalId, revision)` outcome and does not enter the
-  driver/P4. The main scheduler's former raw SQL guard was removed; production,
-  main, wake-consumer and any other P2 `runExecution` entry now share this
-  central guard. A P2 negative test asserts zero dispatches, zero driver/P4
-  entries and zero lease rows for Pending. The P2 runner now requires the
-  trusted store service; a missing service fails before dispatch rather than
-  treating absence as "no Pending". The SQLite store checks `user_version`
-  inside this query and safely returns empty before migration 0038, when no
-  approval table can exist. Added a missing-service zero-dispatch/zero-lease
-  test and a pre-0038 schema empty-ledger test. Legacy P2/P3/P9 test fixtures
-  explicitly install the no-pending test store rather than omitting the port.
+- P2 `runExecution` performs trusted Control and Executable
+  `findPendingForExecution` reads in the same transaction as the canonical
+  Execution lookup, before Worker dispatch or lease acquisition. Each route is
+  read through its own store/route selector; a Pending row returns its original
+  `ApprovalRequired(approvalId, revision)` and does not enter the driver/P4.
+  The main scheduler's former raw SQL guard was removed; production, main,
+  wake-consumer and any P2 `runExecution` entry now share this central gate.
+  P2 source tests cover Control-Pending and Executable-Pending independently,
+  both with zero dispatch, driver/P4 and lease rows. The P2 runner requires
+  both trusted store services; either missing service fails before dispatch.
+  The SQLite Executable store safely returns empty before migration 0038, when
+  its table cannot exist. Tests cover both missing-store branches and a
+  pre-0038 empty ledger. Legacy P2/P3/P9 fixtures explicitly install separate
+  no-pending Control and Executable test stores rather than omitting the ports.
 - Added unrun test source for Pending expiry CAS + exact Inbox/wake + replay,
   human decision racing after TTL, already-Approved expiry, and the P4
   claim-committed/effect-not-admitted same-ToolInvocation replay window.

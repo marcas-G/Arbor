@@ -156,6 +156,32 @@ export const ControlApprovalStoreLive: Layer.Layer<
             ? Option.none()
             : Option.some(toRecord(rows[0]));
         }),
+      findPendingForExecution: (executionId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const unified = yield* hasUnifiedLedger;
+          const rows = yield* run(
+            sql.unsafe<Row>(
+              unified
+                ? `SELECT approval_id, project_id, workspace_id, execution_id,
+                          stable_action_id, action_digest, arguments_json,
+                          target_ref, control_basis_digest, state, revision,
+                          requested_at, expires_at, decided_at, decided_by,
+                          decision_reason, consumed_at, consumed_by, binding_proven
+                     FROM action_approvals
+                    WHERE route_kind = 'Control' AND execution_id = ?
+                      AND state = 'Pending'
+                    ORDER BY requested_at, approval_id LIMIT 1`
+                : `SELECT * FROM control_action_approvals
+                    WHERE execution_id = ? AND state = 'Pending'
+                    ORDER BY requested_at, approval_id LIMIT 1`,
+              [executionId],
+            ),
+          );
+          return rows[0] === undefined
+            ? Option.none()
+            : Option.some(toRecord(rows[0]));
+        }),
       decide: (input) =>
         Effect.gen(function* () {
           yield* TransactionScope;

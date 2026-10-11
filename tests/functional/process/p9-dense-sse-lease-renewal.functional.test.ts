@@ -75,6 +75,7 @@ import {
 import { ProviderRuntimeLive } from "../../../packages/provider-runtime/src/index.js";
 import {
   FixedSecretStoreLive,
+  NoPendingControlApprovalStoreLive,
   NoPendingExecutableApprovalStoreLive,
 } from "../../../packages/testkit/src/index.js";
 
@@ -417,6 +418,7 @@ const makeApp = (providerBaseUrl: string, fetcher: OpenAICompatibleFetch) => {
     infra,
     repos,
     fence,
+    NoPendingControlApprovalStoreLive,
     NoPendingExecutableApprovalStoreLive,
     WorkerDispatchPortLive,
     driverLayer,

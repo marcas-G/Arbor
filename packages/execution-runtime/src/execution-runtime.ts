@@ -14,6 +14,7 @@ import type {
 import {
   AgentExecutionStateStore,
   Clock,
+  ControlApprovalStore,
   ExecutableApprovalStore,
   type ExecutionDriverOwnershipLost,
   ExecutionDriverPort,
@@ -160,27 +161,37 @@ export const runExecution = (
     const safety = yield* RuntimeSafetyGate;
     const gateway = yield* CommandGateway;
     const clock = yield* Clock;
+    const controlApprovals = yield* ControlApprovalStore;
     const executableApprovals = yield* ExecutableApprovalStore;
 
-    const { execution, pendingApproval } = yield* tx.transact(
-      Effect.gen(function* () {
-        const execution = yield* repository.findById(executionId);
-        const pendingApproval =
-          yield* executableApprovals.findPendingForExecution(executionId);
-        return { execution, pendingApproval };
-      }),
-    );
+    const { execution, pendingApproval, pendingControlApproval } =
+      yield* tx.transact(
+        Effect.gen(function* () {
+          const execution = yield* repository.findById(executionId);
+          const pendingControlApproval =
+            yield* controlApprovals.findPendingForExecution(executionId);
+          const pendingApproval =
+            yield* executableApprovals.findPendingForExecution(executionId);
+          return { execution, pendingApproval, pendingControlApproval };
+        }),
+      );
     if (Option.isNone(execution)) {
       return yield* Effect.fail({ _tag: "ExecutionNotFound" as const });
     }
     // P2 `06` §10: Pending approval is a durable nonterminal pause. Every
     // execution entry point shares this trusted gate before dispatch or lease
     // acquisition; only a committed resolution can re-enter the same Step.
-    if (Option.isSome(pendingApproval)) {
+    if (
+      Option.isSome(pendingControlApproval) ||
+      Option.isSome(pendingApproval)
+    ) {
+      const pending = Option.isSome(pendingControlApproval)
+        ? pendingControlApproval.value
+        : Option.getOrThrow(pendingApproval);
       return {
         _tag: "ApprovalRequired" as const,
-        approvalId: pendingApproval.value.approvalId,
-        revision: pendingApproval.value.revision,
+        approvalId: pending.approvalId,
+        revision: pending.revision,
       };
     }
     yield* dispatch.dispatch({

@@ -63,6 +63,7 @@ import {
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import {
   FixedSecretStoreLive,
+  NoPendingControlApprovalStoreLive,
   NoPendingExecutableApprovalStoreLive,
 } from "../packages/testkit/src/index.js";
 
@@ -171,6 +172,7 @@ const makeApp = () => {
     infra,
     repos,
     fence,
+    NoPendingControlApprovalStoreLive,
     NoPendingExecutableApprovalStoreLive,
     provider,
     providerRuntime,
