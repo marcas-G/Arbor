@@ -16,6 +16,9 @@ P1 `01`/`03` own the External `ResolveExecutableApproval` command and its
 receipt-first, exact-route/revision transaction; `05` owns the durable
 `ExecutableApprovalRequested/Resolved` journal-source event transaction;
 `04` records forward migration 0038 after 0036 AH7/P36 and 0037 AH10 Deliver.
+The 0038 rebuild must recreate 0033's `action_approvals_id_project` composite
+UNIQUE key because the existing AssignWork target-binding foreign key depends
+on `(approval_id, project_id)`.
 P1 does not resolve human authority itself; P12 supplies the trusted decision
 fact. The existing Control approval and direct-child AssignWork command
 contracts are unchanged.

@@ -36,7 +36,9 @@ revision in the fenced P4 claim, `ApprovalRejected`, legacy-only replay of
 `Denied(ApprovalRequired)`, and the P4 side of forward migration 0038. MAC
 owns the shared ActionApproval lifecycle; the Control route and CAPA
 AssignWork consume path are unchanged. Migration 0038 depends on integrated
-AH7/P36 0036 and AH10 Deliver 0037; no earlier migration is edited.
+AH7/P36 0036 and AH10 Deliver 0037; no earlier migration is edited. Its
+table rebuild preserves 0033's `action_approvals_id_project` composite UNIQUE
+key required by the existing AssignWork target-binding foreign key.
 
 ```text
 Detailed Implementation Design v1.18 (frozen)

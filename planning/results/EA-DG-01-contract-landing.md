@@ -48,17 +48,23 @@ collision or change to P36/P37 semantics.
 - P12: pure invocation/decision resolver inputs and human decision authority.
 - P17: same-Execution wake without new Provider turn or conversation retry.
 
-No unresolved owner conflict against the fixed accepted proposal was found.
-Executable request identity, first-commit TTL, stable-field unique-conflict
-readback, expiration, terminal dispositions, Stop cleanup, legacy retention,
-human authority, and AH7 fenced consumption are allocated to the listed
-owners. This is an owner-contract landing, not evidence of implementation or
-qualification.
+The post-landing review identified one schema-preservation omission: migration
+0038's table rebuild had not explicitly retained the composite unique key
+introduced by 0033 and referenced by AssignWork target bindings. The exact
+documentation repair is recorded in
+`planning/results/EA-DG-01-post-landing-review-repair.md`; it preserves the
+existing key and does not alter 0033 or Control semantics. No new semantic
+decision was needed. Executable request identity, first-commit TTL,
+stable-field unique-conflict readback, expiration, terminal dispositions,
+Stop cleanup, legacy retention, human authority, and AH7 fenced consumption
+remain allocated to the listed owners. This is an owner-contract landing, not
+evidence of implementation or qualification.
 
 ## Landing evidence
 
 - Landing commit: `018f766a5a34f2fa8cc1108f09f10a73594dbd8c`.
-- Post-landing owner file SHA-256 values and scope checks are recorded in
+- Post-landing owner file SHA-256 values, including the follow-up repair, and
+  scope checks are recorded in
   `planning/results/EA-DG-01-contract-landing.result.md`.
 - P36 owner contracts were present in this worktree before the EA landing;
   P37 remains accepted/planned and conditional on P36 integration.
