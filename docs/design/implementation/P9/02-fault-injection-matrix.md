@@ -187,6 +187,33 @@ resolved regions and cannot satisfy an approval match. Historical rows migrate
 to `LegacyUnknown`, never `NotAdmitted`; they are excluded from AP3's no-effect
 conclusion and remain under the §5 side-effect recovery rules.
 
+### AH7-DG-02 exact-reality qualification rows (DID v1.40)
+
+P9's injected recovery must honor P4's durable state and external proof; it
+does not turn `ReconciliationSource.pending` into evidence.
+
+| P4 state / injected seam | P9 recovery assertion |
+|---|---|
+| `NotAdmitted`; kill before claim/admission commit | No Executor/effect; exact P4 Denied or Stop Interrupted only under the accepted P4 transaction; converge one P3 result/Action/cursor |
+| `MayHaveStarted`; kill after admission before visible Executor result | Reconcile exact attempt first; a negative query without finality is StillUnknown, no Executor replay |
+| Effect occurred, P4 settlement absent | `Occurred` plus reconstructable canonical result selects one same-attempt fact/settlement; no second effect |
+| P4 settlement/fact committed, P3 handoff absent | Receipt-first source from selected fact/result; no reconciliation or Executor; one ToolResult/Observation/Action/cursor |
+| P3 handoff before/after COMMIT | Before: no partial ToolResult/Action/cursor; after: replay same observation source and result without duplication |
+| authoritative `NotOccurred`, binding/authority/approval/resource unchanged, no Stop, attempt 0 | At most one same-invocation attempt 1; proof and effectKey are exact and approval is not consumed twice |
+| `Occurred` but result/output cannot be reconstructed | `StillUnknown(ResultEvidenceUnavailable)`; no invented Success or model-visible result |
+| Stale/negative source, profile/effect/binding mismatch, old attempt can finish late | `StillUnknown` with the exact P4 reason; no replay |
+| Grant/policy/verifier/resource/approval revision changes before attempt 1 | No replay; selected P4 `ReconciledNoEffect` reason or StillUnknown if proof itself is not authoritative |
+| Stop before attempt 1 | No new admission; exact StopRequested projection. Stop after MayHaveStarted does not suppress known fact/settlement under current fence |
+| Lease expiry / generation takeover during reconcile | Old generation cannot append fact/settle; current generation may continue same invocation after full lease validation |
+| attempt 1 also proves NotOccurred | `ReplayLimitReached`; no further attempt and no retry loop |
+| distinct late/contradictory fact after terminal | Append only PostTerminalEvidence; terminal selected fact/P4 settlement/P3 ToolResult/Action/cursor unchanged |
+
+Every row binds the exact ToolInvocation, ProviderTurn, LogicalAction, callRef,
+attempt/profile/effect key and selected fact. Stop blocks new attempt admission,
+not current-fence accounting. `shell@3` is NonIdempotent and has no reality
+adapter. Historical shell@2 is never reclassified; an active P36 NotAdmitted
+row without binding is refused by the P39 preflight, not reconstructed here.
+
 ## 6. Provider disconnect (PD) — GQ4 mapping (zero-DID-change)
 
 Disconnect ≜ injected scenario combination of `ProviderUnavailable` (failure

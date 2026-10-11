@@ -31,6 +31,24 @@ on P36 integration.
 | Verifier orphan | Open verification × settled executions (derived condition, P8 `02` §3) | Attention | owner workspace |
 | Vacant producer (P7-GAP-01) | derived: dependencies(Unsatisfied ∧ WorkspaceBound) × works(无 Open Work ∧ ¬Retired) | Attention | consumer workspace (view label `WaitingOnVacantProducer`) |
 
+### Accepted AH7-DG-02 ReconciliationEscalated projection (DID v1.40)
+
+The existing P9 `ReconciliationEscalated{executionId,
+invocationRefsFingerprint,refs}` remains the sole source event. P10 projects it
+as `source=ReconciliationEscalated`, `severity=ActionRequired`,
+`targetWorkspaceId=executions.workspace_id`, and
+`dedupKey=reconciliation-escalated:<executionId>:<invocationRefsFingerprint>`.
+The fixed path-free summary is “An external tool effect could not be verified;
+recovery is paused.” The event contains no command, argument, resource path,
+authority snapshot or raw proof. Repeated source identity produces one row;
+P10 does not inspect an empty external-source lookup or establish reality.
+
+The consumer applies this projection and advances its existing project/event
+offset atomically. Full rebuild replays the existing P9 event only while it is
+retained; this amendment adds no P9 fact-store or marker relation and promises
+no durable Attention beyond the P1 journal-retention horizon. Source/fact
+creation is owned by P9/P4; P10 writes only its read model and offset.
+
 - Normal is the absence of facts (default state, not a row).
 - Human-required approval maps to Action Required when a governance gate awaits human decision (formation approval pending — P6 `01` §4).
 

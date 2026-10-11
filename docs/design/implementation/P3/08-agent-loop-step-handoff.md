@@ -289,6 +289,41 @@ Stop cannot bypass this gate. `OutcomeUnknown` may settle while the action
 record remains `ReconciliationPending` as evidence; it does not pretend that
 `StepEffectsCommitted` occurred.
 
+### Accepted AH7-DG-02 executable recovery handoff (DID v1.40)
+
+P3 is the sole producer of the invocation source binding from the current
+pinned `PreparedModelTurn.manifest.providerTurnId`, durable
+`AgentLoopStepRecord.identity` (`executionId`, `logicalStepNo`, `repairAttempt`),
+exact `AgentLoopStepActionRecord.logicalActionId/actionIndex`, and pinned
+decoded `ToolInvocation.callRef`. It passes the same binding through
+`ExecutableInvocationInput` and Application's `ExecutableToolHandler` to both
+P4 `ToolIntent` and `ToolExecutionContext`. P4 verifies equality and persists
+the immutable digest; P3 never reconstructs it from arguments, Session text or
+tool output. P4/P38 alone supply trusted approval subject/revision/consumer
+facts.
+
+For P4 reconciliation, `Occurred` with a reconstructable canonical result
+converges one P3 ToolResult and Observation/Action/cursor from that result.
+`StillUnknown` leaves the action `ReconciliationPending`, prevents normal
+progression and projects only the typed unresolved outcome; it does not mean
+reconciliation succeeded. `ReconciledNoEffect` carries the P4 fact ref and
+maps exactly as follows:
+
+| P4 reason | P3 ToolResult | Action/cursor | Execution |
+|---|---|---|---|
+| `AuthoritySnapshotChanged`, `ResourceSnapshotChanged`, `ApprovalNoLongerAuthorized` | `Denied`, disposition `ReconciledNoEffect:<reason>` | `TerminalRejected`; advance once | Continue |
+| `StopRequested` | `Interrupted`, disposition `ExecutionStopping` | current `TerminalRejected`, remaining calls `SkippedEarlySettlement`; advance once | `SettlementProposed(Interrupted(StopRequested))` |
+| `ReplayLimitReached` | `Failed`, disposition `ReconciledNoEffect:ReplayLimitReached`; truthful no-effect text | `Applied`; advance once | No global Failed settlement |
+
+Each case persists the exact P4 `reconciliationFactRef` with its ToolResult.
+The ToolResult `observationRef`, AgentLoopStepAction
+`observation_source_ref`, and Session `source_ref` are the same unique
+`observation_${executionId}_${sha256Hex(JSON.stringify({providerTurnId,callRef,resultRef}))}`
+identity. Replaying the same terminal P4 invocation/fact is receipt-first and
+cannot append a second ToolResult/Observation, choose another fact, or advance
+Action/cursor again. Late post-terminal evidence does not roll back terminal
+P4/P3 state.
+
 ## 8. Settlement and successor handoff
 
 `SettlementProposed` stores the full `ExecutionSettlement` before the driver

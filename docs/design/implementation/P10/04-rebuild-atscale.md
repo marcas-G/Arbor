@@ -103,6 +103,21 @@ Dependency. This Deliver path does not change F21's source-specific
 reset/refusal behavior or the accepted AH7/P36 offset rules; P37 remains
 conditional on P36 integration.
 
+## 3.2 AH7-DG-02 ReconciliationEscalated rebuild boundary (DID v1.40)
+
+The accepted P9 `ReconciliationEscalated` source remains event-backed; P39 adds
+no P10 marker or second source table. P10 full rebuild resets this existing
+Attention row with its other event-derived rows and replays the retained P9
+event stream from the P1 retained floor while atomically rewinding/advancing
+the existing project offset. Duplicate
+`(executionId,invocationRefsFingerprint)` is idempotent. P10 cannot rebuild an
+event that has been pruned; the user-visible guarantee ends at the existing
+journal-retention horizon. No indefinite attention storage or late
+post-terminal contradiction notification is added.
+
+P39 `tool_reconciliation_facts` remain P4-owned and are not directly consumed
+as a P10 rebuild source. This preserves the accepted D0A P9→P10 event boundary.
+
 ## 4. Must Not Decide
 
 - No journal pruning/horizon change (P1 `04`).

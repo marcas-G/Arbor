@@ -38,6 +38,19 @@ and landing audit are
 `planning/results/EA-DG-01-governance-acceptance.md` and
 `planning/results/EA-DG-01-contract-landing.result.md`.
 
+## Accepted owner amendment — AH7-DG-02 (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted P39 physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P3 `08` owns Runtime production and forwarding of
+ProviderTurn/AgentLoopStep/LogicalAction/actionIndex/callRef source binding,
+and the exact P4 `ReconciledNoEffect`/StillUnknown → ToolResult/Observation/
+Action/cursor mapping. P4 remains owner of approval facts, external reality
+proof, attempts, facts and settlement; P3 identity and cursor ownership do not
+move. Implementation and crash qualification remain separately gated.
+
 ```text
 Detailed Implementation Design v1.22 (frozen)
         ↓ delegates phase-scoped closure

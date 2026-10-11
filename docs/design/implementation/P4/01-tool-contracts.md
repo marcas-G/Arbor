@@ -1,6 +1,6 @@
 # P4 — 01 Tool Contracts
 
-**Authority:** DID v1.8 §7.6, §6A.7, §9.12; SD v1.3 §6.5/§6.6; G1/G5/G6.
+**Authority:** DID v1.40 §6A.7/§9.12; DID v1.8 §7.6; SD v1.15 §6.5/§6.6; G1/G5/G6.
 **Status:** FROZEN; accepted AH7-DG-03 amendment (2026-10-10). Post-landing
 consistency review pending.
 **Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
@@ -114,6 +114,13 @@ type CanonicalToolObservation =
     }
   | { readonly _tag: "Interrupted" }
   | { readonly _tag: "OutcomeUnknown"; readonly reconciliationRefs: ReadonlyArray<InvocationRef> }
+  | {
+      readonly _tag: "ReconciledNoEffect";
+      readonly reasonCode: ReconciledNoEffectCode;
+      readonly reconciliationFactRef: ReconciliationFactId;
+      readonly observation: BoundedObservation;
+      readonly resultRef: ArtifactRef;
+    }
   | { readonly _tag: "RuntimeFailure"; readonly cause: string };
 
 interface BoundedObservation {
@@ -178,6 +185,11 @@ type ToolInvocationSettlement =
       readonly _tag: "Denied";
       readonly reasonCode: NoEffectDenialCode;
     }
+  | {
+      readonly _tag: "ReconciledNoEffect";
+      readonly reasonCode: ReconciledNoEffectCode;
+      readonly reconciliationFactRef: ReconciliationFactId;
+    }
   | { readonly _tag: "Interrupted" }
   | { readonly _tag: "OutcomeUnknown"; readonly reconciliationRefs: ReadonlyArray<InvocationRef> }
   | { readonly _tag: "RuntimeFailure"; readonly cause: string };
@@ -187,6 +199,34 @@ type PersistedToolInvocationSettlement =
   | Exclude<ToolInvocationSettlement, { readonly _tag: "Denied" }>
   | { readonly _tag: "Denied";
       readonly reasonCode: PersistedNoEffectDenialCode };
+
+type ReconciledNoEffectCode =
+  | "AuthoritySnapshotChanged"
+  | "ResourceSnapshotChanged"
+  | "ApprovalNoLongerAuthorized"
+  | "StopRequested"
+  | "ReplayLimitReached";
+
+type ReconciliationUnknownCode =
+  | "ProfileUnavailable"
+  | "EffectIdentityUnavailable"
+  | "ExternalSourceUnavailable"
+  | "ExternalSourceNotAuthoritative"
+  | "EvidenceStale"
+  | "EvidenceBindingMismatch"
+  | "AttemptNotFinal"
+  | "ResultEvidenceUnavailable"
+  | "ProfileVersionUnavailable";
+
+type ToolReconciliationResult =
+  | { readonly _tag: "NotOccurred"; readonly proof: ReconciliationProofRef }
+  | { readonly _tag: "Occurred";
+      readonly proof: ReconciliationProofRef;
+      readonly settlement: "Success" | "ExpectedFailure";
+      readonly resultRef: ArtifactRef }
+  | { readonly _tag: "StillUnknown";
+      readonly reasonCode: ReconciliationUnknownCode;
+      readonly evidenceRef: ArtifactRef | null };
 ```
 
 `No result != No effect` (SD §6.5): an `OutcomeUnknown` invocation may still have
@@ -197,6 +237,16 @@ produced an external effect and must not be retried blindly.
 `ExpectedFailure` (the tool ran and reported a normal failure) and
 `OutcomeUnknown` (the effect may have happened). `Interrupted` is the existing
 stop/quiescence terminal result; it is not a Denied code.
+
+`ReconciledNoEffect` is a distinct terminal observation/settlement for a
+`MayHaveStarted` invocation only when its same-attempt immutable fact proves
+`NotOccurred`; it is never P4 `Denied` and never resets admission state.
+Reconciliation-produced terminal `Success`, `ExpectedFailure`, or
+`ReconciledNoEffect` carries the selected same-invocation/same-attempt fact
+reference. Ordinary terminal settlements and migrated P36 terminal history do
+not acquire a selected fact. Late contradictory evidence is appended as
+`PostTerminalEvidence` and cannot replace the selected fact or rewrite the
+settlement.
 
 ## 6. Effect channels
 

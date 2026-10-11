@@ -425,6 +425,96 @@ their owning P1/P4/P6/P2 transactions as specified in the EA-DG-01 owner
 contracts. This migration slot contract does not authorize executing the
 migration or changing the preserved dogfood database.
 
+### Accepted AH7-DG-02 P39 migration and operator-report contract (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted P39 physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P4 `06` owns the P39 tool-invocation DDL; this section owns the global
+`user_version`/startup boundary and the operator sidecar database contract.
+
+The accepted/planned suffix is `0036` P36 → `0037` P37 → `0038` P38 →
+`0039_ah7_reconciliation_attempts` P39. P39 depends on P36/P38 schema facts;
+the global version prefix also requires P37. P36–P38 owner contracts are
+integrated in this tree, but the real migration implementation/registration
+for those versions is not. P39 is conditional and cannot be implemented,
+installed or released alone. The actual P39 runner must gate before any
+pending 0037/0038/0039 DDL when the primary DB is at `user_version` 36–38.
+
+Before constructing either SQLite client, the P39-targeting maintenance entry
+requires `--migration-block-report-db <absolute-local-path>`. There is no
+default. The path must be local, non-temporary, distinct from the primary DB
+and all of its sidecars/configured storage, and pass filesystem identity,
+link/reparse/alias and supported-volume checks. Validate an existing sidecar
+read-only first; only the exact reserved application id, schema version,
+object set and schema digest are accepted. Never migrate/overwrite an unknown
+or unrelated file. A new or empty identity-zero database may be initialized
+exclusively with the accepted report table:
+
+```sql
+CREATE TABLE p39_migration_block_reports (
+  report_key        TEXT PRIMARY KEY CHECK
+                      (length(report_key) = 64 AND report_key NOT GLOB '*[^0-9a-f]*'),
+  content_hash      TEXT NOT NULL UNIQUE CHECK
+                      (length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+  report_json       TEXT NOT NULL
+);
+CREATE TRIGGER p39_report_no_update BEFORE UPDATE ON p39_migration_block_reports
+BEGIN SELECT RAISE(ABORT, 'P39 audit report is immutable'); END;
+CREATE TRIGGER p39_report_no_delete BEFORE DELETE ON p39_migration_block_reports
+BEGIN SELECT RAISE(ABORT, 'P39 audit report is retained'); END;
+```
+
+Set and read back sidecar `application_id=0x41523739`, `user_version=1`,
+`journal_mode=WAL`, `synchronous=FULL`, foreign keys and bounded busy timeout.
+`report_key` is SHA-256 of canonical `{schema,targetUserVersion,
+databaseFingerprint}`; `content_hash` hashes exact canonical UTF-8 report JSON
+excluding that hash field. The immutable report contains stable schema/kind,
+observed/target version, blocker-state fingerprint and sorted invocation IDs;
+it contains no DB path, command/argument/resource path, principal or secret.
+Same key and same bytes is idempotent; same key with different bytes is typed
+`P39_REPORT_KEY_CONFLICT` and is never overwritten. On uncertain sidecar
+commit, reopen and query exact key/hash before any continuation; unresolved
+uncertainty fails closed.
+
+The closed maintenance error set is `P39_REPORT_DB_REQUIRED`,
+`P39_REPORT_DB_PATH_INVALID`, `P39_REPORT_DB_SCHEMA_UNSUPPORTED`,
+`P39_REPORT_DB_PRAGMA_MISMATCH`, `P39_REPORT_DB_IO_FAILURE`,
+`P39_REPORT_KEY_CONFLICT`, `P39_REPORT_COMMIT_UNRESOLVED`,
+`P39_PRIMARY_JOURNAL_MODE_UNSUPPORTED`, `P39_REPORT_DURABILITY_UNSUPPORTED`,
+and `P39_LEGACY_DB_ISOLATED`.
+Diagnostics contain stable typed codes only, never the path or row contents.
+
+Deployment maintenance mode stops every primary DB writer across preflight and
+the ordered migration chain. Validate the sidecar first and close its
+validation handle. For a v36–v38 primary, use the P1 adapter's preflight-only
+`disableWAL=true`, require existing `journal_mode=wal` by readback, then take a
+primary `BEGIN IMMEDIATE` consistent snapshot of `user_version` and active P36
+unsettled `NotAdmitted` invocation IDs/fingerprint. This snapshot is read-only
+at the committed application-state/schema/version level; transient SQLite
+WAL/SHM lock metadata may be managed. If blockers exist, while retaining the
+primary reservation acquire sidecar `BEGIN IMMEDIATE`, insert or verify the
+immutable report, read it back, then rollback/close primary and exit
+`P39_LEGACY_DB_ISOLATED` / 78 before pending P37/P38/P39 DDL or service start.
+The primary DB's committed rows, approvals, P3 state and `user_version` remain
+unchanged. That DB cohort stays isolated until future governance; do not
+fabricate binding, refund/transfer approval, delete rows, or retry invocations.
+If no blocker exists, rollback/close the snapshot and apply the ordered
+0037→0038→0039 transactions while maintenance mode continues to exclude other
+writers. The P39 rebuild/backfill/DDL/FK check and `user_version=39` update
+share one forward-only transaction; there is no down migration.
+
+The sidecar and primary use one lock order—primary then sidecar—and must be
+distinct file identities. Retain sidecar DB and SQLite `-wal`/`-shm` together;
+the named operator is responsible for backup and retention using SQLite's
+consistent backup mechanism. Windows deployment is blocked until the actual
+`@effect/sql-sqlite-node`/Node VFS, each supported local filesystem, and
+hardware pass process-kill, injected I/O failure, VM hard-power-off, reopen and
+integrity qualification. `FULL` durability is conditional on VFS/OS/device
+flush behavior. Network and unknown filesystems fail closed before primary DB
+open. No Windows deployment qualification is asserted here.
+
 ## 6. Retention / delete (P1-DG-09)
 
 ```text

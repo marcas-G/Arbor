@@ -197,6 +197,24 @@ NonIdempotent ambiguity → OutcomeUnknown(ReconciliationRequired(refs)),
               Execution not settled Interrupted (No.54, cf. I-1)
 ```
 
+**Accepted AH7-DG-02 successor (DID v1.40):** `Reconcilable` is limited to an
+exact version/hash-bound tool/profile that can establish stable effect
+identity, authoritative `NotOccurred`/`Occurred` evidence, reconstructable
+result and stale-attempt finality. Recovery of `MayHaveStarted` queries that
+profile before any replay. `StillUnknown` is not success and never permits an
+Executor call. Unrestricted `shell@3` is NonIdempotent; historical `shell@2`
+is read/recovery-only by its stored exact version and is never reclassified.
+P9 triggers and records the existing `ReconciliationEscalated` event only for
+unresolved facts; P4 owns the evidence and effect settlement.
+
+The detailed qualification rows include effect-admission before/after kill,
+external-effect/settlement gap, settlement/P3-handoff gap, old-generation
+fencing, source-finality, authority/approval/resource revision changes, Stop,
+one-replay limit, duplicate/contradictory fact and terminal replay. For a
+current full lease after Stop, P9 may continue fact/known-result accounting;
+Stop only bars a new effect-attempt admission. See this file's AH7-DG-02
+matrix in P9 `02` and the exact P4→P3 projection in P3 `08`.
+
 ## 4. Dispatch failure semantics (systematized)
 
 ```text

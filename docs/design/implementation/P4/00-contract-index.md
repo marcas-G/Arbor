@@ -1,6 +1,6 @@
 # P4 — Contract Index
 
-**Authority:** DID v1.18, with P4 phase contracts frozen under DID v1.8 except
+**Authority:** DID v1.40, with P4 phase contracts frozen under DID v1.8 except
 where this index records the v1.18 source-of-truth supersession. These
 documents are **not** a fifth design layer; they are the P4-owned
 implementation contracts authorized by DID §13.
@@ -39,6 +39,20 @@ AssignWork consume path are unchanged. Migration 0038 depends on integrated
 AH7/P36 0036 and AH10 Deliver 0037; no earlier migration is edited. Its
 table rebuild preserves 0033's `action_approvals_id_project` composite UNIQUE
 key required by the existing AssignWork target-binding foreign key.
+
+## Accepted owner amendment — AH7-DG-02 Reconcilable reality proof / P39
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P4 `01` owns the `ReconciledNoEffect` canonical observation/settlement and
+closed proof/reason unions; `02` owns effect/reconcile/replay/Stop ordering;
+`03` owns trusted approval revision/subject binding; `06` owns P39 binding,
+attempt/fact/selected-fact DDL and transaction/fence rules; `08` owns
+shell@3 classification and the constrained-profile gate. P39 is
+`0039_ah7_reconciliation_attempts`, after accepted P36/P37/P38 owner contracts;
+their migration implementations remain unintegrated and separately gated.
 
 ```text
 Detailed Implementation Design v1.18 (frozen)
