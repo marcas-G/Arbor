@@ -259,8 +259,129 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     expect(result.final).toEqual({ settled_at: null, settlement_kind: null });
   });
 
-  it("fails closed for active legacy rows after exact sidecar report readback", async () => {
+  it("keeps writer exclusion through migration and releases it after success", async () => {
     const order: string[] = [];
+    let writerLockHeld = false;
+    const result = await Effect.runPromise(
+      runP39MaintenanceGate({
+        acquireWriterExclusion: () =>
+          Effect.sync(() => {
+            order.push("acquire-writer-exclusion");
+            writerLockHeld = true;
+            return { token: "lease-1" };
+          }),
+        releaseWriterExclusion: (lease) =>
+          Effect.sync(() => {
+            expect(lease.token).toBe("lease-1");
+            order.push("release-writer-exclusion");
+            writerLockHeld = false;
+          }),
+        reservePrimarySnapshot: (lease) =>
+          Effect.sync(() => {
+            expect(lease.token).toBe("lease-1");
+            order.push("reserve-primary-snapshot");
+            return {
+              reservation: "snapshot-1",
+              snapshot: {
+                userVersion: 38,
+                databaseFingerprint: "db-fingerprint",
+                activeNotAdmittedInvocationIds: [],
+              },
+            };
+          }),
+        releasePrimarySnapshot: (lease, reservation) =>
+          Effect.sync(() => {
+            expect(lease.token).toBe("lease-1");
+            expect(reservation.reservation).toBe("snapshot-1");
+            order.push("release-primary-snapshot");
+          }),
+        writeAndReadBackSidecarReport: () =>
+          Effect.die(new Error("no blockers means no sidecar write")),
+        applyOrderedMigrations: (lease) =>
+          Effect.sync(() => {
+            expect(writerLockHeld).toBe(true);
+            expect(lease.token).toBe("lease-1");
+            order.push("apply-ordered-migrations");
+          }),
+      }),
+    );
+
+    expect(result).toBeUndefined();
+    expect(order).toEqual([
+      "acquire-writer-exclusion",
+      "reserve-primary-snapshot",
+      "release-primary-snapshot",
+      "apply-ordered-migrations",
+      "release-writer-exclusion",
+    ]);
+    expect(writerLockHeld).toBe(false);
+  });
+
+  it("retains writer exclusion through migration failure and then releases both reservations", async () => {
+    const order: string[] = [];
+    let writerLockHeld = false;
+    const outcome = await Effect.runPromise(
+      Effect.either(
+        runP39MaintenanceGate({
+          acquireWriterExclusion: () =>
+            Effect.sync(() => {
+              order.push("acquire-writer-exclusion");
+              writerLockHeld = true;
+              return { token: "lease-failure" };
+            }),
+          releaseWriterExclusion: () =>
+            Effect.sync(() => {
+              order.push("release-writer-exclusion");
+              writerLockHeld = false;
+            }),
+          reservePrimarySnapshot: () =>
+            Effect.sync(() => {
+              order.push("reserve-primary-snapshot");
+              return {
+                reservation: "snapshot-failure",
+                snapshot: {
+                  userVersion: 38,
+                  databaseFingerprint: "db-fingerprint",
+                  activeNotAdmittedInvocationIds: [],
+                },
+              };
+            }),
+          releasePrimarySnapshot: () =>
+            Effect.sync(() => {
+              order.push("release-primary-snapshot");
+            }),
+          writeAndReadBackSidecarReport: () =>
+            Effect.die(new Error("no blockers means no sidecar write")),
+          applyOrderedMigrations: () =>
+            Effect.gen(function* () {
+              expect(writerLockHeld).toBe(true);
+              order.push("migration-failed");
+              return yield* Effect.fail({
+                _tag: "SqliteAdapterError" as const,
+                message: "migration failure",
+              });
+            }),
+        }),
+      ),
+    );
+
+    expect(outcome._tag).toBe("Left");
+    if (outcome._tag === "Left") {
+      expect(outcome.left._tag).toBe("SqliteAdapterError");
+    }
+    expect(order).toEqual([
+      "acquire-writer-exclusion",
+      "reserve-primary-snapshot",
+      "release-primary-snapshot",
+      "migration-failed",
+      "release-writer-exclusion",
+    ]);
+    expect(writerLockHeld).toBe(false);
+  });
+
+  it("fails closed for active legacy rows after exact sidecar readback under the same lease", async () => {
+    const order: string[] = [];
+    let writerLockHeld = false;
     let savedReport:
       | {
           readonly invocationIds: ReadonlyArray<string>;
@@ -270,27 +391,45 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     const outcome = await Effect.runPromise(
       Effect.either(
         runP39MaintenanceGate({
-          reservePrimary: () =>
+          acquireWriterExclusion: () =>
             Effect.sync(() => {
-              order.push("reserve-primary");
+              order.push("acquire-writer-exclusion");
+              writerLockHeld = true;
+              return { token: "lease-1" };
+            }),
+          releaseWriterExclusion: (lease) =>
+            Effect.sync(() => {
+              expect(lease.token).toBe("lease-1");
+              order.push("release-writer-exclusion");
+              writerLockHeld = false;
+            }),
+          reservePrimarySnapshot: (lease) =>
+            Effect.sync(() => {
+              expect(lease.token).toBe("lease-1");
+              order.push("reserve-primary-snapshot");
               return {
-                userVersion: 36,
-                databaseFingerprint: "db-fingerprint",
-                activeNotAdmittedInvocationIds: ["tin_b", "tin_a"],
+                reservation: "snapshot-1",
+                snapshot: {
+                  userVersion: 36,
+                  databaseFingerprint: "db-fingerprint",
+                  activeNotAdmittedInvocationIds: ["tin_b", "tin_a"],
+                },
               };
             }),
-          writeAndReadBackSidecarReport: (report) =>
+          releasePrimarySnapshot: (lease, reservation) =>
             Effect.sync(() => {
+              expect(lease.token).toBe("lease-1");
+              expect(reservation.reservation).toBe("snapshot-1");
+              order.push("release-primary-snapshot");
+            }),
+          writeAndReadBackSidecarReport: (lease, reservation, report) =>
+            Effect.sync(() => {
+              expect(writerLockHeld).toBe(true);
+              expect(lease.token).toBe("lease-1");
+              expect(reservation.reservation).toBe("snapshot-1");
               order.push("sidecar-write-readback");
               savedReport = report;
-              return {
-                reportKey: report.reportKey,
-                contentHash: report.contentHash,
-              };
-            }),
-          releasePrimary: () =>
-            Effect.sync(() => {
-              order.push("release-primary");
+              return { reportKey: report.reportKey, contentHash: report.contentHash };
             }),
           applyOrderedMigrations: () =>
             Effect.sync(() => {
@@ -305,10 +444,13 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       expect(outcome.left.code).toBe("P39_LEGACY_DB_ISOLATED");
     }
     expect(order).toEqual([
-      "reserve-primary",
+      "acquire-writer-exclusion",
+      "reserve-primary-snapshot",
       "sidecar-write-readback",
-      "release-primary",
+      "release-primary-snapshot",
+      "release-writer-exclusion",
     ]);
+    expect(writerLockHeld).toBe(false);
     expect(savedReport?.invocationIds).toEqual(["tin_a", "tin_b"]);
     expect(savedReport?.targetUserVersion).toBe(39);
   });
