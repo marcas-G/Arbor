@@ -11,6 +11,7 @@ import {
   type CommandGateway,
   type CommandGatewayQualificationProbe,
   type CommandHandlerRegistry,
+  type AttentionPollPolicyConfig,
   type InputPromotionQualificationProbe,
   type InputPromotionService,
   InputPromotionServiceLive,
@@ -315,6 +316,8 @@ export interface SingleWorkspaceConfig {
   readonly principalRef?: string;
   /** B-7: the per-consumer batch size for the offset-driven loops. */
   readonly consumerBatchSize?: number;
+  /** P12 v1.43 deployment-pinned Attention poll settings. */
+  readonly attentionPollPolicy?: AttentionPollPolicyConfig;
   /** B-7: the content-addressed blob root used by the snapshot-retention ops
    * action (defaults to the local blob adapter root). */
   readonly blobRoot?: string;
@@ -879,6 +882,9 @@ export const buildSingleWorkspaceLayer = (
           : (deploymentFingerprint ?? `legacy:${modelRef}`),
       ...(config.consumerBatchSize !== undefined
         ? { batchSize: config.consumerBatchSize }
+        : {}),
+      ...(config.attentionPollPolicy !== undefined
+        ? { attentionPollPolicy: config.attentionPollPolicy }
         : {}),
       ...(config.executionSettlementQualificationProbe === undefined
         ? {}

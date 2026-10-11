@@ -3,6 +3,7 @@ import type {
   ConsumerLoopError,
   ConsumerLoopResult,
   ConsumerLoopStores,
+  AttentionPollLoopError,
   DependencyCoordinatorDependencies,
   DriftError,
   DriftReport,
@@ -59,11 +60,15 @@ export const recoveryDaemonFromPrincipal = (principal: Principal) => ({
 
 export interface ConsumerLoopDaemon<R = never> {
   readonly consumerId: string;
-  readonly projectId: ProjectId;
+  readonly projectId?: ProjectId;
   readonly batchSize: number;
   /** One offset-driven poll: read the batch after the stored offset, apply,
    * advance atomically (P1 `05` §4; P9 `05` §1). */
-  readonly poll: Effect.Effect<ConsumerLoopResult, ConsumerLoopError, R>;
+  readonly poll: Effect.Effect<
+    ConsumerLoopResult,
+    ConsumerLoopError | AttentionPollLoopError,
+    R
+  >;
 }
 
 export const makeConsumerLoopDaemon = <R>(deps: {

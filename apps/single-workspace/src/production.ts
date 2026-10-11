@@ -7,12 +7,13 @@ import {
   type CommandHandlerRegistry,
   type CompletionConsumerDependencies,
   type ConsumerLoopStores,
+  type AttentionPollPolicyConfig,
   type DependencyCoordinatorDependencies,
   type EnvironmentDriftDeps,
   ensureVerifierSpawned,
   type ParentUserGovernanceFacts,
+  runAttentionPollOnce,
   planSnapshotRetention,
-  pollOnce,
   pruneSnapshots,
   type RetentionPolicy,
   runConversationResponseSettlementSweep,
@@ -47,6 +48,7 @@ import {
 } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
+  AttentionPollStore,
   type AgentExecutionStateStore,
   AttentionProjectionStore,
   BlobStorePort,
@@ -66,7 +68,7 @@ import {
   type ExecutionScheduler,
   FormationFulfillmentStore,
   FormationProposalStore,
-  type IdGenerator,
+  IdGenerator,
   InboxProjectionStore,
   type LeaseService,
   OwnershipWriteService,
@@ -243,6 +245,8 @@ export interface ProductionDaemonConfig {
   readonly projectId?: ProjectId;
   readonly principal: Principal;
   readonly batchSize?: number;
+  /** P12 v1.43 deployment-pinned Attention poll lease, queue and backoff profile. */
+  readonly attentionPollPolicy?: AttentionPollPolicyConfig;
   readonly bindingFingerprint: string;
   readonly configurationRevision: string;
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
@@ -258,6 +262,7 @@ export type ProductionDaemonServices =
   | DomainEventJournal
   | ConsumerOffsetStore
   | ConsumerDeadLetterStore
+  | AttentionPollStore
   | AttentionProjectionStore
   | RecoveryAttentionFactStore
   | ProjectionStore
@@ -305,6 +310,8 @@ export const ProductionDaemonServiceLive = (
     Effect.gen(function* () {
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
+      const ids = yield* IdGenerator;
+      const attentionPoll = yield* AttentionPollStore;
       const journal = yield* DomainEventJournal;
       const offsets = yield* ConsumerOffsetStore;
       const deadLetters = yield* ConsumerDeadLetterStore;
@@ -338,6 +345,17 @@ export const ProductionDaemonServiceLive = (
         offsets,
         deadLetters,
         projection,
+      };
+
+      const attentionPollPolicy = {
+        leaseOwner: yield* ids.generate<string>("AttentionPollOwner"),
+        leaseTtlMs: config.attentionPollPolicy?.leaseTtlMs ?? 30_000,
+        eventBatchSize: config.batchSize ?? 50,
+        queueBatchSize: config.attentionPollPolicy?.queueBatchSize ?? 64,
+        baseBackoffMs: config.attentionPollPolicy?.baseBackoffMs ?? 1_000,
+        maxBackoffMs: config.attentionPollPolicy?.maxBackoffMs ?? 60_000,
+        backoffExponentCap:
+          config.attentionPollPolicy?.backoffExponentCap ?? 6,
       };
 
       const consumers: Array<ConsumerLoopDaemon<ProductionDaemonServices>> = [];
@@ -473,26 +491,6 @@ export const ProductionDaemonServiceLive = (
             continue;
           }
           dynamicConsumers.push(
-            {
-              consumerId: P10_ATTENTION_CONSUMER_ID,
-              projectId,
-              batchSize: config.batchSize ?? 50,
-              poll: pollOnce(
-                P10_ATTENTION_CONSUMER_ID,
-                projectId,
-                config.batchSize ?? 50,
-                {
-                  ...stores,
-                  projection: makeProjectAttentionProjectionStore(
-                    projectId,
-                    recoveryAttentionFacts,
-                    attentionProjection,
-                    activationIntents,
-                  ),
-                  handlers: () => Effect.succeed([]),
-                },
-              ),
-            },
             dependencyCoordinatorDaemon({
               consumerId: "dependency-coordinator",
               projectId,
@@ -601,6 +599,28 @@ export const ProductionDaemonServiceLive = (
             () => spawnOpenVerifiers,
           ),
         ) as never,
+      });
+
+      consumers.push({
+        consumerId: P10_ATTENTION_CONSUMER_ID,
+        batchSize: attentionPollPolicy.eventBatchSize,
+        poll: runAttentionPollOnce(P10_ATTENTION_CONSUMER_ID, attentionPollPolicy, {
+          tx,
+          clock,
+          journal,
+          offsets,
+          deadLetters,
+          pollStore: attentionPoll,
+          recoveryFacts: recoveryAttentionFacts,
+          attentionRows: attentionProjection,
+          projectionForProject: (projectId) =>
+            makeProjectAttentionProjectionStore(
+              projectId,
+              recoveryAttentionFacts,
+              attentionProjection,
+              activationIntents,
+            ),
+        }),
       });
 
       const driftDeps: EnvironmentDriftDeps = {

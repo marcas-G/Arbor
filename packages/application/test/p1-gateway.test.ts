@@ -240,6 +240,8 @@ const buildApp = (
     appendReturningIds: () => Effect.succeed([]),
     readAfter: () => Effect.succeed([]),
     readAfterRaw: () => Effect.succeed([]),
+    decodeRaw: () =>
+      Effect.succeed({ _tag: "Poison", reason: "MalformedEnvelope" }),
     lastSequence: () => Effect.succeed(0),
   };
   let clockTick = 0;

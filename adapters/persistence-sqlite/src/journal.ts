@@ -1,16 +1,20 @@
-import type {
+import {
   Actor,
   CommandId,
-  DomainEvent,
+  EVENT_CATALOG,
   EventId,
-  EventTypeName,
+  EventSequence,
+  parse,
   ProjectId,
+  type DomainEvent,
+  type EventTypeName,
 } from "@arbor/domain";
 import {
   DomainEventJournal,
   IdGenerator,
   type PendingDomainEvent,
   type RawJournalEventCandidate,
+  type RawJournalDecodeResult,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
@@ -53,6 +57,80 @@ const toEvent = (row: EventRow): DomainEvent<unknown> => ({
     : { correlationRef: row.correlation_ref }),
   payload: JSON.parse(row.payload_json),
 });
+
+const decodeRawCandidate = (
+  candidate: RawJournalEventCandidate,
+): RawJournalDecodeResult => {
+  const {
+    eventIdRaw,
+    projectIdRaw,
+    sequenceRaw,
+    eventTypeRaw,
+    eventVersionRaw,
+    occurredAtRaw,
+    aggregateRefRaw,
+    actorRaw,
+    causedByCommandIdRaw,
+    causedByEventIdRaw,
+    correlationRefRaw,
+    payloadJsonRaw,
+  } = candidate;
+  if (
+    typeof eventIdRaw !== "string" ||
+    typeof projectIdRaw !== "string" ||
+    typeof sequenceRaw !== "number" ||
+    !Number.isSafeInteger(sequenceRaw) ||
+    typeof eventVersionRaw !== "number" ||
+    !Number.isSafeInteger(eventVersionRaw) ||
+    typeof occurredAtRaw !== "string" ||
+    typeof aggregateRefRaw !== "string" ||
+    typeof actorRaw !== "string" ||
+    (causedByCommandIdRaw !== null && typeof causedByCommandIdRaw !== "string") ||
+    (causedByEventIdRaw !== null && typeof causedByEventIdRaw !== "string") ||
+    (correlationRefRaw !== null && typeof correlationRefRaw !== "string") ||
+    typeof payloadJsonRaw !== "string"
+  ) {
+    return { _tag: "Poison", reason: "MalformedEnvelope" };
+  }
+  if (
+    typeof eventTypeRaw !== "string" ||
+    !Object.hasOwn(EVENT_CATALOG, eventTypeRaw)
+  ) {
+    return { _tag: "Poison", reason: "UnknownEventType" };
+  }
+
+  let envelope: Omit<DomainEvent<unknown>, "payload">;
+  try {
+    envelope = {
+      eventId: parse(EventId)(eventIdRaw),
+      projectId: parse(ProjectId)(projectIdRaw),
+      sequence: parse(EventSequence)(sequenceRaw),
+      eventType: eventTypeRaw as EventTypeName,
+      eventVersion: eventVersionRaw,
+      occurredAt: occurredAtRaw,
+      aggregateRef: aggregateRefRaw,
+      actor: parse(Actor)(actorRaw),
+      ...(causedByCommandIdRaw === null
+        ? {}
+        : { causedByCommandId: parse(CommandId)(causedByCommandIdRaw) }),
+      ...(causedByEventIdRaw === null
+        ? {}
+        : { causedByEventId: parse(EventId)(causedByEventIdRaw) }),
+      ...(correlationRefRaw === null ? {} : { correlationRef: correlationRefRaw }),
+    };
+  } catch {
+    return { _tag: "Poison", reason: "MalformedEnvelope" };
+  }
+
+  try {
+    const payload = parse(EVENT_CATALOG[eventTypeRaw as EventTypeName])(
+      JSON.parse(payloadJsonRaw),
+    );
+    return { _tag: "Decoded", event: { ...envelope, payload } };
+  } catch {
+    return { _tag: "Poison", reason: "MalformedPayload" };
+  }
+};
 
 export const DomainEventJournalLive: Layer.Layer<
   DomainEventJournal,
@@ -136,6 +214,7 @@ export const DomainEventJournalLive: Layer.Layer<
             ),
           );
         }),
+      decodeRaw: (candidate) => Effect.succeed(decodeRawCandidate(candidate)),
       lastSequence: (projectId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
