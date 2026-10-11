@@ -1,6 +1,6 @@
 # RAI-DG-01 Governance Acceptance and Design Landing
 
-**Decision:** Accepted fixed package; design landing committed; independent post-landing review pending.
+**Decision:** Accepted fixed package; design landing committed; independent post-landing review PASS (Blocking = 0).
 **Date:** 2026-10-12
 **Authority:** The user explicitly authorized Codex to modify existing design
 documents when confidence is sufficient. Under that standing authorization,
@@ -72,5 +72,14 @@ implementation qualification.
 - Exactly the 17 owner files listed above changed in the landing commit; no
   production code or migration changed. No implementation tests were run or
   implementation authorization inferred.
-- Independent post-landing review is pending. This acceptance and landing do
-  not close RAI-DG-01 until that review is complete.
+- Independent post-landing review is complete: **PASS; Blocking = 0**. The
+  reviewer verified proposal v2 against design landing `2fb2823` and audit
+  commit `ba8a4a7`, including all 17/17 owner-file hashes, versions, closed
+  source/code sets, typed gate errors, P10 revision filtering and EGP binding.
+  The reviewer conclusion was delivered in the root task session. The
+  independent proposal-v2 review body is recorded at commit `90f4d9d`
+  (`planning/proposals/RAI-DG-01-readmission-hold-governance-draft.review-v2.md`);
+  that file is the proposal review, not a separately saved post-landing report.
+  No separate post-landing review file was supplied with the reviewer result.
+- The post-landing review confirms the design landing is internally
+  consistent. It does not authorize implementation or qualify runtime behavior.
