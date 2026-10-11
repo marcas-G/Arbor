@@ -610,7 +610,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         yield* insertExecutionRow(
           {
             executionId: "exe_b1",
-            workspaceId: p10Child,
+            workspaceId: p10Leaf,
             focusWorkId: leafWork,
             settlement: {
               _tag: "Interrupted",
@@ -626,7 +626,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         yield* insertExecutionRow(
           {
             executionId: "exe_b2",
-            workspaceId: p10Child,
+            workspaceId: p10Leaf,
             focusWorkId: leafWork,
             settlement: {
               _tag: "OutcomeUnknown",
@@ -643,6 +643,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
           eventId: "evt_00000000-0000-7000-8000-0000000000b3",
           projectId: p10Project,
           eventType: "ReconciliationEscalated",
+          aggregateRef: "exe_b2",
           payload: {
             executionId: "exe_b2",
             invocationRefsFingerprint: "fp1",
@@ -725,12 +726,12 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         });
         expect(bySource.get("RuntimeSafetyEnvelope")).toMatchObject({
           severity: "Attention",
-          targetWorkspaceId: p10Child,
+          targetWorkspaceId: p10Leaf,
           dedupKey: "safety-stop:exe_b1",
         });
         expect(bySource.get("RecoveryEscalation")).toMatchObject({
           severity: "ActionRequired",
-          targetWorkspaceId: p10Child,
+          targetWorkspaceId: p10Leaf,
           dedupKey: "reconciliation-escalated:exe_b2:fp1",
         });
         expect(bySource.get("VerifierOrphan")).toMatchObject({

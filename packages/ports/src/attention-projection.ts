@@ -26,6 +26,8 @@ export interface AssignWorkBindingAttentionProjectionRow {
   readonly occurredAt: string;
   readonly sourceEventId: EventId;
   readonly sourceFactId: string;
+  /** Internal P10 read binding; omitted from Attention response rows. */
+  readonly sourceExecutionId: string;
 }
 
 export interface WorkspaceResourceActivationAttentionProjectionRow {
@@ -46,6 +48,8 @@ export interface DeliverReplayAttentionProjectionRow {
   readonly occurredAt: string;
   readonly sourceEventId: EventId;
   readonly sourceFactId: string;
+  /** Internal P10 read binding; omitted from Attention response rows. */
+  readonly sourceExecutionId: string;
 }
 
 export type AttentionProjectionStoreError =
@@ -84,6 +88,11 @@ export interface AttentionProjectionStoreService {
     AttentionProjectionStoreError,
     TransactionScope
   >;
+  /** Remove valid, superseded Work-revision rows from the P10 active set;
+   * immutable P9 facts/events remain untouched. */
+  readonly reconcileStaleWorkRevisionRows: (
+    projectId: ProjectId,
+  ) => Effect.Effect<void, AttentionProjectionStoreError, TransactionScope>;
   readonly resetProject: (
     projectId: ProjectId,
   ) => Effect.Effect<void, AttentionProjectionStoreError, TransactionScope>;

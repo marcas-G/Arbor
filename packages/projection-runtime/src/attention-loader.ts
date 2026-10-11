@@ -31,7 +31,11 @@ import {
   type WorkOwnerFact,
   type WorkspaceVacancyFact,
 } from "./attention.js";
-import type { ProjectionReadError } from "./errors.js";
+import type {
+  ProjectionIntegrityFailure,
+  ProjectionReadError,
+  ProjectionReadResultError,
+} from "./errors.js";
 
 /** Execution settlement read face (the domain Execution carries no
  * settledAt; the read side supplies it). */
@@ -40,6 +44,56 @@ export interface ExecutionSettlementReadFact {
   readonly workspaceId: WorkspaceId;
   readonly settlement: ExecutionSettlement | null;
   readonly settledAt: string | null;
+  readonly settlementKind?: string | null;
+  readonly settlementMalformed?: boolean;
+}
+
+/** Internal canonical source binding used only to decide whether a
+ * Work-bound Attention source belongs to the current Work revision. The
+ * serialized episode remains opaque here so malformed/unknown versions fail
+ * closed in the projection rather than being guessed by an adapter. */
+export interface AttentionSourceExecutionBinding {
+  readonly executionId: string;
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly episodeJson: string | null;
+  readonly workId: string | null;
+  readonly workProjectId: ProjectId | null;
+  readonly workWorkspaceId: WorkspaceId | null;
+  readonly workRevision: number | null;
+}
+
+type AttentionWorkBoundSourceKind =
+  | "RuntimeSafetyEnvelope"
+  | "ReconciliationEscalated"
+  | "AssignWorkTargetBindingFailure"
+  | "DeliverReplayFailure";
+
+type AttentionSourceIntegrityReason =
+  | "SourceExecutionMissing"
+  | "SourceExecutionNonUnique"
+  | "SourceEpisodeStateMissing"
+  | "SourceEpisodeStateNonUnique"
+  | "EpisodeMalformed"
+  | "EpisodeVersionUnsupported"
+  | "SourceFactEventMismatch"
+  | "SourceEventExecutionMismatch"
+  | "SourceProjectMismatch"
+  | "SourceWorkspaceMismatch"
+  | "SourceTargetMismatch"
+  | "WorkMissing"
+  | "WorkScopeMismatch"
+  | "FutureWorkRevision"
+  | "SettlementMalformed";
+
+export interface AttentionProjectionIntegrityFailure
+  extends ProjectionIntegrityFailure {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly workId?: WorkId;
+  readonly executionId: string;
+  readonly sourceKind: AttentionWorkBoundSourceKind;
+  readonly reasonCode: AttentionSourceIntegrityReason;
 }
 
 /** Read faces the Attention read-model derives from (read-only over
@@ -56,6 +110,13 @@ export interface AttentionReadDeps {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<ExecutionSettlementReadFact>,
+    ProjectionReadError
+  >;
+  readonly listAttentionSourceExecutionBindings: (
+    projectId: ProjectId,
+    executionIds: ReadonlyArray<string>,
+  ) => Effect.Effect<
+    ReadonlyArray<AttentionSourceExecutionBinding>,
     ProjectionReadError
   >;
   readonly listOpenVerifications: () => Effect.Effect<
@@ -110,6 +171,166 @@ const isRuntimeSafetyStop = (settlement: ExecutionSettlement | null): boolean =>
   settlement.result._tag === "ControlledInterruption" &&
   settlement.result.reason === "RuntimeSafetyStop";
 
+const isValidInterruptedSettlement = (
+  settlement: ExecutionSettlement | null,
+): boolean =>
+  settlement !== null &&
+  settlement._tag === "Interrupted" &&
+  (settlement.result._tag === "StopRequested" ||
+    (settlement.result._tag === "ControlledInterruption" &&
+      typeof settlement.result.reason === "string"));
+
+const integrityFailure = (input: {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly executionId: string;
+  readonly sourceKind: AttentionWorkBoundSourceKind;
+  readonly reasonCode: AttentionSourceIntegrityReason;
+  readonly workId?: WorkId;
+}): AttentionProjectionIntegrityFailure => {
+  const safeDetails = {
+    projectId: input.projectId,
+    workspaceId: input.workspaceId,
+    executionId: input.executionId,
+    sourceKind: input.sourceKind,
+    reasonCode: input.reasonCode,
+    ...(input.workId === undefined ? {} : { workId: input.workId }),
+  };
+  return {
+    _tag: "ProjectionIntegrityFailure",
+    code: "projection/unavailable",
+    category: "unavailable",
+    correlationId: null,
+    retryDisposition: "non-retryable",
+    safeDetails,
+    ...input,
+  };
+};
+
+const sameWorkEpisode = (
+  raw: string,
+):
+  | { readonly workId: string; readonly targetWorkRevision: number }
+  | { readonly reason: "EpisodeMalformed" | "EpisodeVersionUnsupported" } => {
+  try {
+    const episode: unknown = JSON.parse(raw);
+    if (typeof episode !== "object" || episode === null) {
+      return { reason: "EpisodeMalformed" };
+    }
+    const value = episode as Record<string, unknown>;
+    if (value._tag !== "WorkEpisode") {
+      return { reason: "EpisodeVersionUnsupported" };
+    }
+    if (
+      typeof value.workId !== "string" ||
+      !Number.isSafeInteger(value.targetWorkRevision) ||
+      Number(value.targetWorkRevision) < 0
+    ) {
+      return { reason: "EpisodeMalformed" };
+    }
+    return {
+      workId: value.workId,
+      targetWorkRevision: Number(value.targetWorkRevision),
+    };
+  } catch {
+    return { reason: "EpisodeMalformed" };
+  }
+};
+
+interface WorkBoundAttentionReference {
+  readonly executionId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly targetWorkspaceId?: WorkspaceId;
+  readonly sourceKind: AttentionWorkBoundSourceKind;
+}
+
+const activeWorkBoundExecutions = (
+  projectId: ProjectId,
+  references: ReadonlyArray<WorkBoundAttentionReference>,
+  deps: AttentionReadDeps,
+): Effect.Effect<ReadonlySet<string>, ProjectionReadResultError> =>
+  Effect.gen(function* () {
+    if (references.length === 0) return new Set<string>();
+    const executionIds = [
+      ...new Set(references.map((source) => source.executionId)),
+    ];
+    const bindings = yield* deps.listAttentionSourceExecutionBindings(
+      projectId,
+      executionIds,
+    );
+    const active = new Set<string>();
+    for (const source of references) {
+      const matching = bindings.filter(
+        (binding) => binding.executionId === source.executionId,
+      );
+      const fail = (
+        reasonCode: AttentionSourceIntegrityReason,
+        workId?: WorkId,
+      ) =>
+        integrityFailure({
+          projectId,
+          workspaceId: source.workspaceId,
+          executionId: source.executionId,
+          sourceKind: source.sourceKind,
+          reasonCode,
+          ...(workId === undefined ? {} : { workId }),
+        });
+      if (matching.length === 0) {
+        return yield* Effect.fail(fail("SourceExecutionMissing"));
+      }
+      if (matching.length !== 1) {
+        return yield* Effect.fail(fail("SourceExecutionNonUnique"));
+      }
+      const binding = matching[0];
+      if (binding === undefined) {
+        return yield* Effect.fail(fail("SourceExecutionMissing"));
+      }
+      if (binding.projectId !== projectId) {
+        return yield* Effect.fail(fail("SourceProjectMismatch"));
+      }
+      if (binding.workspaceId !== source.workspaceId) {
+        return yield* Effect.fail(
+          fail(
+            source.targetWorkspaceId === undefined
+              ? "SourceWorkspaceMismatch"
+              : "SourceTargetMismatch",
+          ),
+        );
+      }
+      if (
+        source.targetWorkspaceId !== undefined &&
+        source.targetWorkspaceId !== binding.workspaceId
+      ) {
+        return yield* Effect.fail(fail("SourceTargetMismatch"));
+      }
+      if (binding.episodeJson === null) {
+        return yield* Effect.fail(fail("SourceEpisodeStateMissing"));
+      }
+      const episode = sameWorkEpisode(binding.episodeJson);
+      if ("reason" in episode) {
+        return yield* Effect.fail(fail(episode.reason));
+      }
+      const workId = episode.workId as WorkId;
+      if (binding.workId === null || binding.workRevision === null) {
+        return yield* Effect.fail(fail("WorkMissing", workId));
+      }
+      if (
+        binding.workId !== episode.workId ||
+        binding.workProjectId !== projectId ||
+        binding.workWorkspaceId !== source.workspaceId
+      ) {
+        return yield* Effect.fail(fail("WorkScopeMismatch", workId));
+      }
+      if (episode.targetWorkRevision > binding.workRevision) {
+        return yield* Effect.fail(fail("FutureWorkRevision", workId));
+      }
+      if (episode.targetWorkRevision === binding.workRevision) {
+        active.add(source.executionId);
+      }
+    }
+    return active;
+  });
+
 /** Extracts the six-source fact inputs from canonical state + journal
  * (read-only). The GAP-01 vacant-producer join is evaluated here on read
  * — a live join over canonical rows, no materialization (P7-GAP-01
@@ -117,7 +338,7 @@ const isRuntimeSafetyStop = (settlement: ExecutionSettlement | null): boolean =>
 export const loadAttentionFacts = (
   projectId: ProjectId,
   deps: AttentionReadDeps,
-): Effect.Effect<AttentionFacts, ProjectionReadError> =>
+): Effect.Effect<AttentionFacts, ProjectionReadResultError> =>
   Effect.gen(function* () {
     const workspaces = yield* deps.listWorkspacesByProject(projectId);
     const executionFacts = yield* deps.listExecutionSettlementFacts(projectId);
@@ -151,6 +372,7 @@ export const loadAttentionFacts = (
     const escalationEvents: Array<EscalationEventFact> = [];
     const assignWorkBindingFailureEvents: Array<AssignWorkBindingFailureEventFact> =
       [];
+    const sourceReferences: Array<WorkBoundAttentionReference> = [];
     for (const event of events) {
       if (event.eventType === "DependencyMarkedUnfulfillable") {
         const payload = asRecord(event.payload);
@@ -182,24 +404,119 @@ export const loadAttentionFacts = (
         const payload = asRecord(event.payload);
         const executionId = String(payload.executionId ?? "");
         const workspaceId = executionWorkspaceOf.get(executionId);
-        if (workspaceId !== undefined) {
-          escalationEvents.push({
-            executionId,
-            invocationRefsFingerprint: String(
-              payload.invocationRefsFingerprint ?? "",
-            ),
-            workspaceId,
-            occurredAt: event.occurredAt,
-          });
+        if (
+          executionId.length === 0 ||
+          event.eventVersion !== 1 ||
+          event.projectId !== projectId ||
+          event.aggregateRef !== executionId
+        ) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: workspaceId ?? ("" as WorkspaceId),
+              executionId,
+              sourceKind: "ReconciliationEscalated",
+              reasonCode: "SourceEventExecutionMismatch",
+            }),
+          );
         }
+        if (workspaceId === undefined) {
+          const candidates = yield* deps.listAttentionSourceExecutionBindings(
+            projectId,
+            [executionId],
+          );
+          if (candidates.length === 0) {
+            return yield* Effect.fail(
+              integrityFailure({
+                projectId,
+                workspaceId: "" as WorkspaceId,
+                executionId,
+                sourceKind: "ReconciliationEscalated",
+                reasonCode: "SourceExecutionMissing",
+              }),
+            );
+          }
+          if (candidates.length !== 1) {
+            return yield* Effect.fail(
+              integrityFailure({
+                projectId,
+                workspaceId: candidates[0]?.workspaceId ?? ("" as WorkspaceId),
+                executionId,
+                sourceKind: "ReconciliationEscalated",
+                reasonCode: "SourceExecutionNonUnique",
+              }),
+            );
+          }
+          const candidate = candidates[0];
+          if (candidate?.projectId !== projectId) {
+            return yield* Effect.fail(
+              integrityFailure({
+                projectId,
+                workspaceId: candidate?.workspaceId ?? ("" as WorkspaceId),
+                executionId,
+                sourceKind: "ReconciliationEscalated",
+                reasonCode: "SourceProjectMismatch",
+              }),
+            );
+          }
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: candidate.workspaceId,
+              executionId,
+              sourceKind: "ReconciliationEscalated",
+              reasonCode: "SourceExecutionMissing",
+            }),
+          );
+        }
+        sourceReferences.push({
+          executionId,
+          workspaceId,
+          sourceKind: "ReconciliationEscalated",
+        });
+        escalationEvents.push({
+          executionId,
+          invocationRefsFingerprint: String(
+            payload.invocationRefsFingerprint ?? "",
+          ),
+          workspaceId,
+          occurredAt: event.occurredAt,
+        });
       } else if (event.eventType === "AssignWorkTargetBindingEscalated") {
-        if (deps.findAssignWorkBindingFailure === undefined) continue;
         const payload = asRecord(event.payload);
         const attentionFactId = String(payload.attentionFactId ?? "");
-        if (attentionFactId.length === 0) continue;
+        const executionId = String(payload.executionId ?? "");
+        const targetWorkspaceId = String(
+          payload.targetWorkspaceId ?? event.aggregateRef,
+        ) as WorkspaceId;
+        if (
+          attentionFactId.length === 0 ||
+          executionId.length === 0 ||
+          deps.findAssignWorkBindingFailure === undefined
+        ) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: targetWorkspaceId,
+              executionId,
+              sourceKind: "AssignWorkTargetBindingFailure",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
+        }
         const source =
           yield* deps.findAssignWorkBindingFailure(attentionFactId);
-        if (Option.isNone(source)) continue;
+        if (Option.isNone(source)) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: targetWorkspaceId,
+              executionId,
+              sourceKind: "AssignWorkTargetBindingFailure",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
+        }
         const fact = source.value;
         if (
           fact.eventId !== event.eventId ||
@@ -211,8 +528,35 @@ export const loadAttentionFacts = (
             String(payload.committedCommandId ?? "") ||
           fact.failureCode !== String(payload.failureCode ?? "")
         ) {
-          continue;
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: fact.targetWorkspaceId,
+              executionId: fact.executionId,
+              sourceKind: "AssignWorkTargetBindingFailure",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
         }
+        if (event.eventType !== "AssignWorkTargetBindingEscalated") {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: fact.targetWorkspaceId,
+              executionId: fact.executionId,
+              sourceKind: "AssignWorkTargetBindingFailure",
+              reasonCode: "SourceEventExecutionMismatch",
+            }),
+          );
+        }
+        sourceReferences.push({
+          executionId: fact.executionId,
+          workspaceId:
+            executionWorkspaceOf.get(fact.executionId) ??
+            fact.targetWorkspaceId,
+          targetWorkspaceId: fact.targetWorkspaceId,
+          sourceKind: "AssignWorkTargetBindingFailure",
+        });
         assignWorkBindingFailureEvents.push({
           attentionFactId: fact.attentionFactId,
           executionId: fact.executionId,
@@ -232,6 +576,39 @@ export const loadAttentionFacts = (
         workspaceId: fact.workspaceId,
         settledAt: fact.settledAt,
       }));
+
+    for (const fact of executionFacts) {
+      if (
+        fact.settlementKind !== "Interrupted" ||
+        (fact.settlementMalformed !== true &&
+          isValidInterruptedSettlement(fact.settlement))
+      ) {
+        continue;
+      }
+      return yield* Effect.fail(
+        integrityFailure({
+          projectId,
+          workspaceId: fact.workspaceId,
+          executionId: fact.executionId,
+          sourceKind: "RuntimeSafetyEnvelope",
+          reasonCode: "SettlementMalformed",
+        }),
+      );
+    }
+
+    for (const fact of safetyStopSettlements) {
+      sourceReferences.push({
+        executionId: fact.executionId,
+        workspaceId: fact.workspaceId,
+        sourceKind: "RuntimeSafetyEnvelope",
+      });
+    }
+
+    const activeExecutions = yield* activeWorkBoundExecutions(
+      projectId,
+      sourceReferences,
+      deps,
+    );
 
     const executionSettlements: ReadonlyArray<ExecutionSettlementFact> =
       executionFacts.map((fact) => ({
@@ -274,9 +651,15 @@ export const loadAttentionFacts = (
     return {
       unfulfillableEvents,
       deadlockEvents,
-      safetyStopSettlements,
-      reconciliationEscalatedEvents: escalationEvents,
-      assignWorkBindingFailureEvents,
+      safetyStopSettlements: safetyStopSettlements.filter((fact) =>
+        activeExecutions.has(fact.executionId),
+      ),
+      reconciliationEscalatedEvents: escalationEvents.filter((fact) =>
+        activeExecutions.has(fact.executionId),
+      ),
+      assignWorkBindingFailureEvents: assignWorkBindingFailureEvents.filter(
+        (fact) => activeExecutions.has(fact.executionId),
+      ),
       openVerifications: openVerificationFacts,
       executionSettlements,
       vacantProducerCandidates,
@@ -291,7 +674,7 @@ export const loadAttentionFacts = (
 export const deriveProjectAttention = (
   projectId: ProjectId,
   deps: AttentionReadDeps,
-): Effect.Effect<ReadonlyArray<AttentionRow>, ProjectionReadError> =>
+): Effect.Effect<ReadonlyArray<AttentionRow>, ProjectionReadResultError> =>
   Effect.gen(function* () {
     const derived = deriveAttentionRows(
       yield* loadAttentionFacts(projectId, deps),
@@ -300,34 +683,58 @@ export const deriveProjectAttention = (
     if (deps.listProjectedAssignWorkBindingFailures !== undefined) {
       const materialized =
         yield* deps.listProjectedAssignWorkBindingFailures(projectId);
+      const active = yield* activeWorkBoundExecutions(
+        projectId,
+        materialized.map((row) => ({
+          executionId: row.sourceExecutionId,
+          workspaceId: row.targetWorkspaceId,
+          targetWorkspaceId: row.targetWorkspaceId,
+          sourceKind: "AssignWorkTargetBindingFailure" as const,
+        })),
+        deps,
+      );
       rows = [
         ...rows.filter(
           (row) => row.source !== "AssignWorkTargetBindingFailure",
         ),
-        ...materialized.map((row) => ({
-          source: row.source,
-          severity: row.severity,
-          targetWorkspaceId: row.targetWorkspaceId,
-          dedupKey: row.dedupKey,
-          summary: row.summary,
-          occurredAt: row.occurredAt,
-        })),
+        ...materialized
+          .filter((row) => active.has(row.sourceExecutionId))
+          .map((row) => ({
+            source: row.source,
+            severity: row.severity,
+            targetWorkspaceId: row.targetWorkspaceId,
+            dedupKey: row.dedupKey,
+            summary: row.summary,
+            occurredAt: row.occurredAt,
+          })),
       ];
     }
     if (deps.listProjectedDeliverReplayFailures !== undefined) {
       const materialized =
         yield* deps.listProjectedDeliverReplayFailures(projectId);
+      const active = yield* activeWorkBoundExecutions(
+        projectId,
+        materialized.map((row) => ({
+          executionId: row.sourceExecutionId,
+          workspaceId: row.targetWorkspaceId,
+          targetWorkspaceId: row.targetWorkspaceId,
+          sourceKind: "DeliverReplayFailure" as const,
+        })),
+        deps,
+      );
       rows = [
         ...rows.filter((row) => row.source !== "DeliverReplayFailure"),
-        ...materialized.map((row) => ({
-          source: row.source,
-          severity: row.severity,
-          targetWorkspaceId: row.targetWorkspaceId,
-          dedupKey: row.dedupKey,
-          summary: row.summary,
-          occurredAt: row.occurredAt,
-          failureCode: row.failureCode,
-        })),
+        ...materialized
+          .filter((row) => active.has(row.sourceExecutionId))
+          .map((row) => ({
+            source: row.source,
+            severity: row.severity,
+            targetWorkspaceId: row.targetWorkspaceId,
+            dedupKey: row.dedupKey,
+            summary: row.summary,
+            occurredAt: row.occurredAt,
+            failureCode: row.failureCode,
+          })),
       ];
     }
     if (deps.listProjectedWorkspaceResourceActivations !== undefined) {

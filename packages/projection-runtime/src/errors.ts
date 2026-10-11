@@ -5,6 +5,19 @@ export interface ProjectionReadError {
   readonly cause: unknown;
 }
 
+export interface ProjectionIntegrityFailure {
+  readonly _tag: "ProjectionIntegrityFailure";
+  readonly code: "projection/unavailable";
+  readonly category: "unavailable";
+  readonly correlationId: null;
+  readonly retryDisposition: "non-retryable";
+  readonly safeDetails: Readonly<Record<string, unknown>>;
+}
+
+export type ProjectionReadResultError =
+  | ProjectionReadError
+  | ProjectionIntegrityFailure;
+
 export const projectionReadError = (cause: unknown): ProjectionReadError => ({
   _tag: "ProjectionReadFailure",
   cause,

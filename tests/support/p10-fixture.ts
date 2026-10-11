@@ -211,20 +211,111 @@ export const makeP10Deps = (): Effect.Effect<
             workspace_id: string;
             settlement_json: string | null;
             settled_at: string | null;
+            settlement_kind: string | null;
           }>(
-            "SELECT execution_id, workspace_id, settlement_json, settled_at FROM executions WHERE project_id = ? ORDER BY execution_id",
+            "SELECT execution_id, workspace_id, settlement_json, settled_at, settlement_kind FROM executions WHERE project_id = ? ORDER BY execution_id",
             [projectId],
           );
-          const facts: Array<ExecutionSettlementReadFact> = rows.map((row) => ({
-            executionId: row.execution_id,
-            workspaceId: row.workspace_id as WorkspaceId,
-            settlement:
-              row.settlement_json === null
-                ? null
-                : (JSON.parse(row.settlement_json) as ExecutionSettlement),
-            settledAt: row.settled_at,
-          }));
+          const facts: Array<ExecutionSettlementReadFact> = rows.map((row) => {
+            let settlement: ExecutionSettlement | null = null;
+            let settlementMalformed =
+              row.settlement_kind !== null && row.settlement_json === null;
+            if (row.settlement_json !== null) {
+              try {
+                settlement = JSON.parse(
+                  row.settlement_json,
+                ) as ExecutionSettlement;
+              } catch {
+                settlementMalformed = true;
+              }
+            }
+            return {
+              executionId: row.execution_id,
+              workspaceId: row.workspace_id as WorkspaceId,
+              settlement,
+              settledAt: row.settled_at,
+              settlementKind: row.settlement_kind,
+              settlementMalformed,
+            };
+          });
           return facts;
+        }),
+      );
+
+    const listAttentionSourceExecutionBindings = (
+      _projectId: ProjectId,
+      executionIds: ReadonlyArray<string>,
+    ) =>
+      inTx(
+        Effect.gen(function* () {
+          if (executionIds.length === 0) return [];
+          const rows = yield* sql.unsafe<{
+            readonly execution_id: string;
+            readonly project_id: string;
+            readonly workspace_id: string;
+            readonly episode_json: string | null;
+          }>(
+            `SELECT e.execution_id, e.project_id, e.workspace_id,
+                    state.episode_json
+               FROM executions AS e
+               LEFT JOIN agent_execution_state AS state
+                 ON state.execution_id = e.execution_id
+              WHERE e.execution_id IN (${executionIds.map(() => "?").join(",")})
+              ORDER BY e.execution_id`,
+            [...executionIds],
+          );
+          const episodeWorkIds = new Map<string, string>();
+          for (const row of rows) {
+            if (row.episode_json === null) continue;
+            try {
+              const episode = JSON.parse(row.episode_json) as {
+                readonly _tag?: unknown;
+                readonly workId?: unknown;
+              };
+              if (
+                episode._tag === "WorkEpisode" &&
+                typeof episode.workId === "string"
+              ) {
+                episodeWorkIds.set(row.execution_id, episode.workId);
+              }
+            } catch {
+              // Return the invalid raw episode for the P10 typed failure.
+            }
+          }
+          const workIds = [...new Set(episodeWorkIds.values())];
+          const workRows =
+            workIds.length === 0
+              ? []
+              : yield* sql.unsafe<{
+                  readonly work_id: string;
+                  readonly project_id: string;
+                  readonly workspace_id: string;
+                  readonly revision: number;
+                }>(
+                  `SELECT work_id, project_id, workspace_id, revision FROM works
+                    WHERE work_id IN (${workIds.map(() => "?").join(",")})`,
+                  workIds,
+                );
+          const worksById = new Map(
+            workRows.map((work) => [work.work_id, work]),
+          );
+          return rows.map((row) => {
+            const workId = episodeWorkIds.get(row.execution_id);
+            const work =
+              workId === undefined ? undefined : worksById.get(workId);
+            return {
+              executionId: row.execution_id,
+              projectId: row.project_id as ProjectId,
+              workspaceId: row.workspace_id as WorkspaceId,
+              episodeJson: row.episode_json,
+              workId: work?.work_id ?? null,
+              workProjectId:
+                (work?.project_id as ProjectId | undefined) ?? null,
+              workWorkspaceId:
+                (work?.workspace_id as WorkspaceId | undefined) ?? null,
+              workRevision: work === undefined ? null : Number(work.revision),
+            };
+          });
         }),
       );
 
@@ -313,6 +404,7 @@ export const makeP10Deps = (): Effect.Effect<
       listWorksByWorkspace: (workspaceId) =>
         inTx(works.listByWorkspace(workspaceId)),
       listExecutionSettlementFacts,
+      listAttentionSourceExecutionBindings,
       listOpenVerifications: () => inTx(verifications.listOpen()),
       listUnsatisfiedDependencies: (projectId) =>
         inTx(dependencies.listUnsatisfiedByProject(projectId)),
@@ -758,12 +850,39 @@ export const insertExecutionRow = (
         seed.settledAt ?? null,
       ],
     );
+    if (seed.focusWorkId !== null && seed.focusWorkId !== undefined) {
+      const workRows = yield* sql.unsafe<{ readonly revision: number }>(
+        "SELECT revision FROM works WHERE work_id = ? AND project_id = ? AND workspace_id = ?",
+        [seed.focusWorkId, projectId, seed.workspaceId],
+      );
+      const revision = workRows[0]?.revision;
+      if (revision !== undefined) {
+        yield* sql.unsafe(
+          `INSERT INTO agent_execution_state (
+             execution_id, focus_json, episode_json, wake_reason,
+             current_mode, active_skill_refs_json, turn_no,
+             recent_directive_refs_json, recent_action_fingerprints_json,
+             updated_at
+           ) VALUES (?, ?, ?, 'Seed', NULL, '[]', 0, '[]', '[]', 't0')`,
+          [
+            seed.executionId,
+            JSON.stringify({ _tag: "Work", workId: seed.focusWorkId }),
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: seed.focusWorkId,
+              targetWorkRevision: Number(revision),
+            }),
+          ],
+        );
+      }
+    }
   });
 
 export const insertEventRow = (input: {
   readonly eventId: string;
   readonly projectId: ProjectId;
   readonly eventType: string;
+  readonly aggregateRef?: string;
   readonly payload: unknown;
   readonly occurredAt: string;
 }): Effect.Effect<void, unknown, SqlClient> =>
@@ -783,7 +902,7 @@ export const insertEventRow = (input: {
         input.eventType,
         1,
         input.occurredAt,
-        input.eventType,
+        input.aggregateRef ?? input.eventType,
         "user:gov",
         null,
         null,
@@ -1047,6 +1166,15 @@ export const insertProposalRow = (input: {
 /** Migrations first (the p1/p7 pattern). */
 export const migrate = Effect.gen(function* () {
   yield* runMigrations(P8_MIGRATIONS);
+  const sql = yield* SqlClient;
+  const columns = yield* sql.unsafe<{ readonly name: string }>(
+    "PRAGMA table_info(agent_execution_state)",
+  );
+  if (!columns.some((column) => column.name === "episode_json")) {
+    yield* sql.unsafe(
+      "ALTER TABLE agent_execution_state ADD COLUMN episode_json TEXT",
+    );
+  }
 });
 
 /** Deferred FKs (projects→workspaces, workspaces→works/sessions) require a
