@@ -56,7 +56,17 @@ export interface AttentionPollLoopDependencies {
     AttentionProjectionStoreService,
     "putDeliverReplayFailure"
   >;
+  /** Test-only boundary after the poll transaction has committed. A blocked
+   * probe lets process qualification kill the daemon after the durable marker,
+   * queue ACK and P1 offset are visible together. */
+  readonly qualificationProbe?: AttentionPollQualificationProbe;
 }
+
+export type AttentionPollQualificationProbe = (event: {
+  readonly boundary: "P10AfterDeliverAttentionConsumerCommit";
+  readonly projectId: ProjectId;
+  readonly attentionFactId: string;
+}) => Promise<void>;
 
 export type AttentionPollLoopError =
   | ConsumerLoopError
@@ -235,6 +245,7 @@ export const runAttentionPollOnce = (
 
     let fromSequence = 0;
     let lastSequence = 0;
+    const deliverFactIdsWithMarker = new Set<string>();
     const data = yield* Effect.result(
       deps.tx.transact(
         Effect.gen(function* () {
@@ -312,6 +323,7 @@ export const runAttentionPollOnce = (
               }
               applicable.push(decoded.event);
               lastSequence = sequence;
+              deliverFactIdsWithMarker.add(fact.attentionFactId);
               continue;
             }
 
@@ -390,18 +402,21 @@ export const runAttentionPollOnce = (
                 attentionPollError("QueueFactMismatch"),
               );
             }
-            const markerResult = yield* Effect.result(
-              deps.attentionRows.putDeliverReplayFailure(fact),
-            );
-            if (Result.isFailure(markerResult)) {
-              if (markerResult.failure._tag === "PersistenceCorruption") {
+            if (!deliverFactIdsWithMarker.has(fact.attentionFactId)) {
+              const markerResult = yield* Effect.result(
+                deps.attentionRows.putDeliverReplayFailure(fact),
+              );
+              if (Result.isFailure(markerResult)) {
+                if (markerResult.failure._tag === "PersistenceCorruption") {
+                  return yield* Effect.fail(
+                    attentionPollError("MarkerBindingMismatch"),
+                  );
+                }
                 return yield* Effect.fail(
-                  attentionPollError("MarkerBindingMismatch"),
+                  markerResult.failure as AttentionPollLoopError,
                 );
               }
-              return yield* Effect.fail(
-                markerResult.failure as AttentionPollLoopError,
-              );
+              deliverFactIdsWithMarker.add(fact.attentionFactId);
             }
             const ackResult = yield* Effect.result(
               deps.recoveryFacts.acknowledgePendingDeliverReplayAttention(
@@ -443,7 +458,21 @@ export const runAttentionPollOnce = (
       ),
     );
 
-    if (Result.isSuccess(data)) return data.success;
+    if (Result.isSuccess(data)) {
+      const qualificationProbe = deps.qualificationProbe;
+      if (qualificationProbe !== undefined) {
+        for (const attentionFactId of deliverFactIdsWithMarker) {
+          yield* Effect.promise(() =>
+            qualificationProbe({
+              boundary: "P10AfterDeliverAttentionConsumerCommit",
+              projectId,
+              attentionFactId,
+            }),
+          );
+        }
+      }
+      return data.success;
+    }
     if (data.failure._tag === "AttentionPollClaimLost") return emptyResult();
     if (data.failure._tag !== "AttentionPollIntegrityFailure") {
       return yield* Effect.fail(data.failure);

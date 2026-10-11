@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type AttentionPollPolicyConfig,
+  type AttentionPollQualificationProbe,
   type AuthorityResolverPort,
   CommandGateway,
   type CommandHandlerRegistry,
@@ -252,6 +253,8 @@ export interface ProductionDaemonConfig {
   readonly executionSettlementQualificationProbe?: ExecutionSettlementQualificationProbe;
   readonly executionLeaseQualificationProbe?: ExecutionLeaseQualificationProbe;
   readonly conversationResponseQualificationProbe?: ConversationResponseQualificationProbe;
+  /** Process-local test seam for the durable Deliver Attention poll boundary. */
+  readonly attentionPollQualificationProbe?: AttentionPollQualificationProbe;
 }
 
 export type ProductionDaemonServices =
@@ -622,6 +625,11 @@ export const ProductionDaemonServiceLive = (
                 attentionProjection,
                 activationIntents,
               ),
+            ...(config.attentionPollQualificationProbe === undefined
+              ? {}
+              : {
+                  qualificationProbe: config.attentionPollQualificationProbe,
+                }),
           },
         ),
       });

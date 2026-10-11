@@ -6,6 +6,7 @@ import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
+  AttentionPollStoreLive,
   AttentionProjectionStoreLive,
   ClockLive,
   ConsumerDeadLetterStoreLive,
@@ -29,6 +30,7 @@ import type {
   TreeViewReq,
   TreeViewRes,
 } from "../../../packages/api-contracts/src/views.js";
+import { runAttentionPollOnce } from "../../../packages/application/src/attention-poll-loop.js";
 import { pollOnce } from "../../../packages/application/src/consumer-loop.js";
 import {
   CommandId,
@@ -38,7 +40,9 @@ import {
   WorkspaceId,
 } from "../../../packages/domain/src/index.js";
 import {
+  AttentionPollStore,
   AttentionProjectionStore,
+  Clock,
   ConsumerDeadLetterStore,
   ConsumerOffsetStore,
   DomainEventJournal,
@@ -101,6 +105,7 @@ const makeApp = (filename = ":memory:") => {
     Layer.provide(TransactionPortLive, infra),
     journal,
     Layer.provide(ConsumerOffsetStoreLive, infra),
+    Layer.provide(AttentionPollStoreLive, infra),
     Layer.provide(ConsumerDeadLetterStoreLive, infra),
     Layer.provide(ProjectionStoreLive, infra),
     Layer.provide(AttentionProjectionStoreLive, infra),
@@ -202,6 +207,23 @@ const seedP9FailureFactAndEvent = (
     );
   });
 
+const seedP9DeliverReplayFailure = () =>
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const source = yield* RecoveryAttentionFactStore;
+    return yield* tx.transact(
+      source.recordDeliverReplayFailure({
+        projectId,
+        executionId,
+        targetWorkspaceId: parentWorkspaceId,
+        logicalActionId,
+        messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
+        failureCode: "LegacyMessageMissingEvent",
+        firstDetectedAt: "2026-10-10T00:00:00.000Z",
+      }),
+    );
+  });
+
 const readOffset = (targetProjectId = projectId) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
@@ -215,6 +237,15 @@ const readAttentionRows = (targetProjectId = projectId) =>
     const attention = yield* AttentionProjectionStore;
     return yield* tx.transact(
       attention.listAssignWorkBindingFailures(targetProjectId),
+    );
+  });
+
+const readDeliverAttentionRows = (targetProjectId = projectId) =>
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const attention = yield* AttentionProjectionStore;
+    return yield* tx.transact(
+      attention.listDeliverReplayFailures(targetProjectId),
     );
   });
 
@@ -234,8 +265,52 @@ const readMaterializedAttentionView = (targetProjectId = projectId) =>
         tx
           .transact(attention.listAssignWorkBindingFailures(projectIdValue))
           .pipe(Effect.mapError(projectionReadError)),
+      listProjectedDeliverReplayFailures: (projectIdValue) =>
+        tx
+          .transact(attention.listDeliverReplayFailures(projectIdValue))
+          .pipe(Effect.mapError(projectionReadError)),
     };
     return yield* deriveProjectAttention(targetProjectId, deps);
+  });
+
+const runP37AttentionPoll = () =>
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const clock = yield* Clock;
+    const journal = yield* DomainEventJournal;
+    const offsets = yield* ConsumerOffsetStore;
+    const deadLetters = yield* ConsumerDeadLetterStore;
+    const pollStore = yield* AttentionPollStore;
+    const attentionRows = yield* AttentionProjectionStore;
+    const sourceFacts = yield* RecoveryAttentionFactStore;
+    return yield* runAttentionPollOnce(
+      consumerId,
+      {
+        leaseOwner: "p37-attention-functional-test",
+        leaseTtlMs: 30_000,
+        eventBatchSize: 10,
+        queueBatchSize: 64,
+        baseBackoffMs: 1_000,
+        maxBackoffMs: 60_000,
+        backoffExponentCap: 6,
+      },
+      {
+        tx,
+        clock,
+        journal,
+        offsets,
+        deadLetters,
+        pollStore,
+        recoveryFacts: sourceFacts,
+        attentionRows,
+        projectionForProject: (projectIdValue) =>
+          makeProjectAttentionProjectionStore(
+            projectIdValue,
+            sourceFacts,
+            attentionRows,
+          ),
+      },
+    );
   });
 
 const runP10AttentionPoll = (targetProjectId = projectId) =>
@@ -363,6 +438,26 @@ const queryPublicAttentionAndTree = async (databaseFile: string) => {
       secondAttention: secondAttention.value.rows,
       treeRoot: tree.value.nodes[0],
     };
+  });
+  return Effect.runPromise(Effect.scoped(Effect.provide(program, app)));
+};
+
+const queryPublicAttention = async (databaseFile: string) => {
+  const app = buildSingleWorkspaceLayer({
+    databaseFile,
+    projectId: firstFixture.projectId,
+  });
+  const program = Effect.gen(function* () {
+    const queries = yield* ProjectionQueryPort;
+    const result = yield* queries.query<AttentionReq, AttentionRes>(
+      "attention",
+      { projectId: firstFixture.projectId },
+    );
+    const tree = yield* queries.query<TreeViewReq, TreeViewRes>(
+      "responsibility-tree",
+      { projectId: firstFixture.projectId },
+    );
+    return { rows: result.value.rows, treeRoot: tree.value.nodes[0] };
   });
   return Effect.runPromise(Effect.scoped(Effect.provide(program, app)));
 };
@@ -534,6 +629,113 @@ describe("AH10/P10 Attention materialization", () => {
     expect(
       subtreeAttentionAggregate(viewRows, () => null).get(parentWorkspaceId),
     ).toEqual({ attention: 0, actionRequired: 1 });
+  });
+
+  it("makes Deliver replay failure ActionRequired and rebuilds from the retained P9 fact after event pruning", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "p37-deliver-attention-"));
+    const databaseFile = join(directory, "arbor.sqlite");
+    try {
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P37_MIGRATIONS);
+        yield* seedSourceOwner(firstFixture);
+        const fact = yield* seedP9DeliverReplayFailure();
+        const poll = yield* runP37AttentionPoll();
+        const firstRows = yield* readDeliverAttentionRows();
+        const firstView = yield* readMaterializedAttentionView();
+        const pending = yield* Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          const facts = yield* RecoveryAttentionFactStore;
+          return yield* tx.transact(
+            facts.listPendingDeliverReplayAttention(projectId, 64),
+          );
+        });
+        const sql = yield* SqlClient;
+        const blockedHandoverRows = {
+          messages: yield* sql.unsafe<{ readonly count: number }>(
+            "SELECT COUNT(*) AS count FROM messages WHERE sender_workspace_id = ? OR recipient_workspace_id = ?",
+            [parentWorkspaceId, parentWorkspaceId],
+          ),
+          inbox: yield* sql.unsafe<{ readonly count: number }>(
+            "SELECT COUNT(*) AS count FROM inbox_entries WHERE workspace_id = ?",
+            [parentWorkspaceId],
+          ),
+          messageSent: yield* sql.unsafe<{ readonly count: number }>(
+            "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'MessageSent' AND project_id = ?",
+            [projectId],
+          ),
+        };
+        // Simulate P1 journal pruning while preserving the P9 fact source.
+        yield* sql.unsafe("DELETE FROM domain_events WHERE event_id = ?", [
+          fact.eventId,
+        ]);
+        yield* sql.unsafe(
+          "DELETE FROM deliver_replay_attention_rows WHERE attention_fact_id = ?",
+          [fact.attentionFactId],
+        );
+        yield* rebuildP10Attention();
+        return {
+          fact,
+          poll,
+          firstRows,
+          firstView,
+          pending,
+          blockedHandoverRows,
+          rebuiltRows: yield* readDeliverAttentionRows(),
+          rebuiltView: yield* readMaterializedAttentionView(),
+        };
+      });
+
+      const result = await Effect.runPromise(
+        Effect.provide(program, makeApp(databaseFile)),
+      );
+      const publicView = await queryPublicAttention(databaseFile);
+      const expectedAttention = {
+        source: "DeliverReplayFailure",
+        severity: "ActionRequired",
+        targetWorkspaceId: parentWorkspaceId,
+        dedupKey: result.fact.attentionFactId,
+        summary:
+          "A Deliver handover could not be reconciled with its exact Message and MessageSent facts; execution recovery is paused.",
+        occurredAt: "2026-10-10T00:00:00.000Z",
+        failureCode: "LegacyMessageMissingEvent",
+      };
+      const expectedPublicAttention = {
+        source: "DeliverReplayFailure",
+        severity: "ActionRequired",
+        targetWorkspaceId: parentWorkspaceId,
+        dedupKey: result.fact.attentionFactId,
+        summaryRef:
+          "A Deliver handover could not be reconciled with its exact Message and MessageSent facts; execution recovery is paused.",
+        occurredAt: "2026-10-10T00:00:00.000Z",
+        failureCode: "LegacyMessageMissingEvent",
+      };
+
+      expect(result.poll.lastSequence).toBe(1);
+      expect(result.firstRows).toHaveLength(1);
+      expect(result.pending).toEqual([]);
+      expect(result.firstView).toEqual([expectedAttention]);
+      expect(result.blockedHandoverRows).toEqual({
+        messages: [{ count: 0 }],
+        inbox: [{ count: 0 }],
+        messageSent: [{ count: 0 }],
+      });
+      expect(result.rebuiltRows).toHaveLength(1);
+      expect(result.rebuiltRows[0]?.dedupKey).toBe(result.fact.attentionFactId);
+      expect(result.rebuiltView).toEqual([expectedAttention]);
+      expect(publicView.rows).toEqual([expectedPublicAttention]);
+      expect(publicView.treeRoot?.subtreeAttention).toEqual({
+        attention: 0,
+        actionRequired: 1,
+      });
+      expect(JSON.stringify(result.rebuiltView)).not.toContain(
+        result.fact.messageId,
+      );
+      expect(JSON.stringify(result.rebuiltView)).not.toContain(
+        result.fact.eventId,
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("rebuilds the fact-backed row without clearing another project's rows", async () => {
