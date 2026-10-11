@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   ExecutionId,
   type LeaseGeneration,
+  Principal,
   ProjectId,
   parse,
   SessionId,
@@ -427,7 +428,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
                 }),
               );
               const authority = {
-                principal: "worker:ah7-dg03",
+                principal: parse(Principal)("worker:ah7-dg03"),
                 workspaceId,
                 executionId,
                 toolName: "write_once",
@@ -540,11 +541,21 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
         releaseAdmission();
         const result = await resultPromise;
 
+        if (result.gate._tag !== "Denied") {
+          throw new Error("authority source mutation was not denied");
+        }
+        if (result.record === null || typeof result.record === "string") {
+          throw new Error("no-effect denial record was not persisted");
+        }
+        if (result.persisted === undefined || result.approval === null) {
+          throw new Error("denial replay snapshot was not captured");
+        }
+
         expect(result.gate).toEqual({
           _tag: "Denied",
           reasonCode: "InvocationAuthorityDenied",
         });
-        expect(result.record?.effectAdmissionState).toBe("NotAdmitted");
+        expect(result.record.effectAdmissionState).toBe("NotAdmitted");
         expect(Option.isSome(result.persisted)).toBe(true);
         if (Option.isSome(result.persisted)) {
           expect(result.persisted.value).toMatchObject({
