@@ -126,3 +126,29 @@ Nonblocking historical shell clarification: only `MayHaveStarted` /
 binding may re-enter the exact retained v2 definition under fresh gates; that
 definition stays available until such rows terminate. It may never silently
 switch to shell@3.
+
+## P39 physical-schema supplement status
+
+Parent direction paused the accepted DG02 owner-document landing because the
+logical D0A package did not freeze every physical P39 field/constraint and the
+actual `db929` checkout contains P36 but not P37/P38. A proposal-only P39
+supplement was added at
+`planning/proposals/AH7-DG-02-P39-physical-schema-supplement-draft.md`; its
+SHA-256 is
+`723F6BC2897C3F7340B47397BB94639D6B758B9DD47A163B5540D18C0DCBDAB6`. It
+proposes versioned canonical
+RecoveryBinding JSON + digest, per-attempt rows, append-only three-outcome facts,
+exact constraints/indexes, illustrative SQLite upgrade envelope, transaction
+failure rollback matrix, immutable/late/conflicting proof handling, and the
+accepted P36→P37→P38→P39 ordering. The qualification matrix now contains
+proposal-gated migration/backfill/FK/rollback/binding/attempt/fact/atomicity
+gates.
+
+An unresolved rollout choice is explicitly raised rather than chosen: for
+extant P36 `NotAdmitted` rows with no persisted binding, either require a
+preflight with zero such active rows, or retain them as fail-closed and
+non-reenterable. The D0A package allows exact historical shell@2 re-entry only
+with a complete binding, but does not select how rollout handles rows for
+which that binding is unavailable. Accordingly no owner docs, production,
+migration, or tests were edited/implemented. No tests or daemon processes were
+run. `git diff --check` is the only validation.
