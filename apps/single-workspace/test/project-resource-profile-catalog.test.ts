@@ -343,11 +343,8 @@ describe("host ProjectResourceProfilePort", () => {
     }
   });
 
-  it("does not use the local-principal fallback for a non-loopback no-auth bind", async () => {
-    const root = tempRoot();
-    const directory = join(root, "private-directory-name");
-    mkdirSync(directory);
-    const handle = await startWebTransport({
+  it("rejects non-loopback no-auth configuration before listening", async () => {
+    const start = startWebTransport({
       http: {
         handle: () =>
           Effect.succeed({
@@ -360,21 +357,41 @@ describe("host ProjectResourceProfilePort", () => {
       authenticatorConfigured: false,
       sql: { unsafe: () => Effect.succeed([]) } as never,
       projectDirectory: { list: () => Effect.succeed([]) } as never,
-      projectResourceProfiles: makeProjectResourceProfilePort([
-        profile(directory, "opaque-ref", "Friendly workspace"),
-      ]),
+      projectResourceProfiles: makeProjectResourceProfilePort([]),
       host: "0.0.0.0",
       port: 0,
       pollIntervalMs: 60_000,
     });
+    await expect(start).rejects.toThrow(
+      "a non-loopback listener requires an explicitly configured authenticator",
+    );
+  });
+
+  it("still permits a non-loopback bind with an explicitly configured authenticator", async () => {
+    const handle = await startWebTransport({
+      http: {
+        handle: () =>
+          Effect.succeed({
+            ok: true,
+            status: 404,
+            problem: { code: "unused" },
+          }),
+      } as never,
+      webSocket: { handleFrame: () => Effect.succeed({ ok: true }) } as never,
+      authenticator: makeStaticAuthenticator({
+        token: parse(Principal)("user:remote-test"),
+      }),
+      authenticatorConfigured: true,
+      sql: { unsafe: () => Effect.succeed([]) } as never,
+      projectDirectory: { list: () => Effect.succeed([]) } as never,
+      projectResourceProfiles: makeProjectResourceProfilePort([]),
+      host: "0.0.0.0",
+      port: 0,
+      pollIntervalMs: 60_000,
+    });
+
     try {
-      const response = await fetch(
-        `http://127.0.0.1:${handle.port}/project-resources`,
-      );
-      expect(response.status).toBe(503);
-      const body = await response.text();
-      expect(body).not.toContain(directory);
-      expect(body).not.toContain("opaque-ref");
+      expect(handle.port).toBeGreaterThan(0);
     } finally {
       await handle.close();
     }
