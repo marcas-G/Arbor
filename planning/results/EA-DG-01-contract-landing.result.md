@@ -1,6 +1,6 @@
 # EA-DG-01 — Executable Approval Contract Landing Result
 
-Date: 2026-10-11  
+Date: 2026-10-11
 Status: **Design owner landing recorded; independent post-landing review pending**
 
 ## Identity and scope
