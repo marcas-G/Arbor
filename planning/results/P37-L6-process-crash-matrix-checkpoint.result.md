@@ -5,8 +5,8 @@ Status: **test source / probe checkpoint only; qualification not run**
 
 ## Baseline and scope
 
-- Independent worktree based on the P37 L2/L3 integration checkpoint
-  `04e25f14...` (L2 storage and L3 Gateway route present).
+- Independent worktree rebased to the P37 L2/L3 integration checkpoint
+  `80f10551...` (L2 storage and L3 Gateway route present).
 - The current accepted v6 P9 contract makes `DeliverReplayEscalated`, its
   immutable P9 fact and its pending outbox row one `BEGIN IMMEDIATE` transaction.
 - The current accepted P10 contract requires marker-before-ACK, with the marker
@@ -14,6 +14,11 @@ Status: **test source / probe checkpoint only; qualification not run**
   uses the frozen safe row and deduplicates by `attentionFactId`.
 - All commit pauses live in the dedicated functional process child. Production
   composition does not read the test environment variables or install probes.
+- For the legacy direct-write negative branch, the historical handler is called
+  explicitly by the test runner against the same file DB while gen0 is paused
+  before its Gateway handler. The returned Observation is inspected in memory;
+  the daemon does not persist it. Every process kill/restart is performed on
+  the independent daemon child processes.
 
 ## Source added
 
@@ -21,30 +26,34 @@ Status: **test source / probe checkpoint only; qualification not run**
   entry with process-local pause gates for Gateway fenced receipt, Action /
   Observation, P9 fact, and P10 marker/consumer commit boundaries.
 - `tests/functional/pending/p37-delivermessage-process-crash.functional.test.ts`
-  — six isolated matrix cases covering the requested crash groups.
+  — nine isolated process cases across the requested crash groups. The suite
+  creates a Project and child Work through public APIs, produces a real
+  Artifact/Deliverable, then holds the Deliver action at process-local commit
+  boundaries. Recovery corruption changes only that test DB's exact
+  DeliverMessage result row.
 
 ## Matrix coverage checklist
 
 | Case | Required assertion | Source status |
 |---|---|---|
-| Old gen0 FencingRejected before commit | no receipt/effect survives; gen1 commits using same MessageId and stable LogicalAction/ProviderTurn with its generation CommandId | `it.todo`; needs public Deliver seed and process runner |
-| Old gen0 FencingRejected after commit | exact old rejection is read before gen1 committed route; one final Message/Event/Inbox | `it.todo`; needs public Deliver seed and process runner |
-| Committed DeliverMessage, Action/Observation Pending | receipt-first recovery; one Message/Event/Inbox/Observation and one Provider request | `it.todo`; P37 route/action probe exists in child |
-| P9 fact + event + outbox transaction | before commit: none durable; after commit: all durable once | `it.todo`; recovery implementation must expose both transaction probes |
-| P10 marker + ACK + P1 offset transaction | before commit: none advanced; after commit: all advanced and exactly one public Attention row | `it.todo`; needs L5 consumer and post-commit probe integration |
-| Old receipt/effect contradiction | public `ActionRequired`, Action remains pending, no Observation or replay | `it.todo`; needs public Deliver seed and L4 failure path |
+| Old gen0 FencingRejected before commit | no receipt/effect survives; gen1 commits once with the same LogicalAction/ProviderTurn/Message identity and a generation-specific CommandId | executable `it.each` before side |
+| Old gen0 FencingRejected after commit | exact old rejection is present before gen1 commit; one final Message/Event/Inbox | executable `it.each` after side |
+| Committed DeliverMessage, Action/Observation Pending | receipt-first recovery; one Message/Event/Inbox/Observation and one Deliver Provider decision | executable public process case |
+| P9 fact + event + outbox transaction | before commit: none durable; after commit: fact/event/queue durable once; restart yields one Attention row | executable `it.each` before/after with the accepted L4 composition probe |
+| P10 marker + ACK + P1 offset transaction | before commit: marker/ACK/offset unchanged; after commit: all advance atomically; restart exposes one public row | executable `it.each` before/after with the accepted L5 post-commit probe |
+| Old receipt/effect contradiction | public `ActionRequired`, Action remains pending, no Observation or repeated Provider decision | executable public process case |
+| Gen0 pre-Gateway direct-write Observation | shared-file legacy handler returns Observation but does not persist it; gen1 records `PriorReceiptEffectConflict`; after Inbox deletion the existing P9 fact blocks again with no new command/effect | executable public two-daemon process case |
 
 ## Verification and limitations
 
 - No Vitest, daemon, browser, or full gate was run, per the requested execution
   policy.
-- `pnpm typecheck` was attempted against the initial `04e25f1` base and failed
-  in three existing L2/L3 fixture mocks (`adapters/persistence-sqlite/test/
-  ownership.test.ts:758` and `tests/p10-activation-attention-reconciliation.
-  test.ts:360,402`); none pointed at the new test source. The task owner then
-  supplied combined checkpoint `80f1055`, which includes fixture integration
-  updates. Static typecheck will be repeated on that base before handoff.
-- The test file remains under `tests/functional/pending/`; no case is counted as
-  implemented or passing. The runner and exact coherent SQLite snapshot oracle
-  remain TODOs because the L4/L5 interface work is being integrated separately.
+- The initial `pnpm typecheck` against `04e25f1` failed in three existing
+  L2/L3 fixture mocks; none pointed at the new source. The test source exposed
+  and corrected a duplicate helper declaration and three SQLite JSON result
+  typing errors, plus probe/direct-handler test input types. The final
+  `pnpm typecheck` passed on the rebased `80f1055` baseline before L4/L5
+  integration. Repeat against the coordinator's fully integrated checkpoint.
+- The test file remains under `tests/functional/pending/` until L4/L5 integration
+  and the centralized execution turn. No matrix case is counted as passing.
 - This result is a source checkpoint, not L6 or P37 qualification.
