@@ -85,6 +85,15 @@ export interface ToolIntent {
   readonly approvalId: string | null;
 }
 
+/** Runtime-owned active ExecutionOrigin lease holder used to fence every
+ * worker-originated durable ToolInvocation write. */
+export interface ToolExecutionFence {
+  readonly executionId: ExecutionId;
+  readonly workerId: string;
+  readonly workerIncarnationId: string;
+  readonly fencingGeneration: LeaseGeneration;
+}
+
 export interface ToolExecutionContext {
   readonly executionId: ExecutionId;
   readonly workspaceId: WorkspaceId;
@@ -99,12 +108,7 @@ export interface ToolExecutionContext {
   readonly delegationDepth?: number;
   /** P2 authoritative Worker holder used only for P4 durable settlement.
    * Production ExecutionOrigin callers always provide the complete triple. */
-  readonly executionFence?: {
-    readonly executionId: ExecutionId;
-    readonly workerId: string;
-    readonly workerIncarnationId: string;
-    readonly fencingGeneration: LeaseGeneration;
-  };
+  readonly executionFence: ToolExecutionFence;
   /** Runtime-sourced Executable approval handoff. Model decoders never
    * populate this field; P3 reconstructs it from the current Step/action. */
   readonly executableApproval?: {
@@ -332,7 +336,7 @@ export interface ToolInvocationRecord extends ToolInvocationIntent {
 export interface ToolInvocationStoreService {
   readonly recordIntent: (
     invocation: ToolInvocationIntent,
-    executionFence?: ToolExecutionContext["executionFence"],
+    executionFence: ToolExecutionFence,
     fenceNow?: string,
   ) => Effect.Effect<
     "Recorded" | "ExecutionStopping",
@@ -344,7 +348,7 @@ export interface ToolInvocationStoreService {
     settlement: ToolInvocationSettlement,
     resultRef: string | null,
     settledAt: string,
-    executionFence?: ToolExecutionContext["executionFence"],
+    executionFence: ToolExecutionFence,
     fenceNow?: string,
   ) => Effect.Effect<boolean, ToolInvocationStoreError, TransactionScope>;
   /** P4 legacy InvocationApproval route only. If a unified action_approvals
@@ -354,7 +358,7 @@ export interface ToolInvocationStoreService {
   readonly consumeApproval: (
     approvalId: string,
     invocationId: ToolInvocationId,
-    executionFence?: ToolExecutionContext["executionFence"],
+    executionFence: ToolExecutionFence,
     fenceNow?: string,
   ) => Effect.Effect<
     boolean | "ExecutionStopping",
@@ -365,7 +369,7 @@ export interface ToolInvocationStoreService {
     invocation: ToolInvocationIntent,
     reasonCode: NoEffectDenialCode,
     settledAt: string,
-    executionFence?: ToolExecutionContext["executionFence"],
+    executionFence: ToolExecutionFence,
     fenceNow?: string,
   ) => Effect.Effect<
     ToolInvocationRecord | "ExecutionStopping",
@@ -375,14 +379,14 @@ export interface ToolInvocationStoreService {
   readonly recordNoEffectInterruption: (
     invocationId: ToolInvocationId,
     settledAt: string,
-    executionFence?: ToolExecutionContext["executionFence"],
+    executionFence: ToolExecutionFence,
     fenceNow?: string,
   ) => Effect.Effect<boolean, ToolInvocationStoreError, TransactionScope>;
   readonly admitEffect: (
     invocationId: ToolInvocationId,
     currentAuthority: InvocationAuthority,
     now: string,
-    executionFence?: ToolExecutionContext["executionFence"],
+    executionFence: ToolExecutionFence,
   ) => Effect.Effect<
     ToolEffectAdmissionResult,
     ToolInvocationStoreError,

@@ -9,7 +9,7 @@ import {
   invocationAuthoritySourceRevisionOf,
   type LeaseFencingRejected,
   type NoEffectDenialCode,
-  type ToolExecutionContext,
+  type ToolExecutionFence,
   type ToolInvocationIntent,
   type ToolInvocationRecord,
   type ToolInvocationSettlement,
@@ -120,6 +120,34 @@ const assertSameIntent = (
     JSON.stringify(incoming.resolvedRegions) &&
   existing.approvalId === incoming.approvalId;
 
+const requireExecutionFence = (
+  executionFence: unknown,
+  operation: string,
+): Effect.Effect<
+  ToolExecutionFence,
+  ToolInvocationStoreError,
+  TransactionScope
+> =>
+  typeof executionFence === "object" &&
+  executionFence !== null &&
+  typeof (executionFence as ToolExecutionFence).executionId === "string" &&
+  (executionFence as ToolExecutionFence).executionId.length > 0 &&
+  typeof (executionFence as ToolExecutionFence).workerId === "string" &&
+  (executionFence as ToolExecutionFence).workerId.length > 0 &&
+  typeof (executionFence as ToolExecutionFence).workerIncarnationId ===
+    "string" &&
+  (executionFence as ToolExecutionFence).workerIncarnationId.length > 0 &&
+  Number.isInteger((executionFence as ToolExecutionFence).fencingGeneration) &&
+  (executionFence as ToolExecutionFence).fencingGeneration >= 0
+    ? Effect.succeed(executionFence as ToolExecutionFence)
+    : Effect.fail(
+        persistenceCorruption(
+          "ToolInvocationStore",
+          operation,
+          "required ExecutionOrigin fence is missing or incomplete",
+        ),
+      );
+
 export const ToolInvocationStoreLive: Layer.Layer<
   ToolInvocationStore,
   never,
@@ -142,17 +170,20 @@ export const ToolInvocationStoreLive: Layer.Layer<
     });
     const checkFenceAndStop = (
       executionId: ExecutionId,
-      executionFence: ToolExecutionContext["executionFence"],
+      executionFence: ToolExecutionFence,
       fenceNow: string,
     ): Effect.Effect<FenceGate, ToolInvocationStoreError, TransactionScope> =>
       Effect.gen(function* () {
         yield* TransactionScope;
-        if (executionFence === undefined) return "Current" as const;
-        if (executionFence.executionId !== executionId) {
+        const fence = yield* requireExecutionFence(
+          executionFence,
+          "check-fence",
+        );
+        if (fence.executionId !== executionId) {
           return yield* Effect.fail<LeaseFencingRejected>({
             _tag: "LeaseFencingRejected",
             executionId,
-            generation: executionFence.fencingGeneration,
+            generation: fence.fencingGeneration,
           });
         }
         const rows = yield* run(
@@ -168,9 +199,9 @@ export const ToolInvocationStoreLive: Layer.Layer<
                 AND l.expires_at > ?`,
             [
               executionId,
-              executionFence.workerId,
-              executionFence.workerIncarnationId,
-              executionFence.fencingGeneration,
+              fence.workerId,
+              fence.workerIncarnationId,
+              fence.fencingGeneration,
               fenceNow,
             ],
           ),
@@ -180,7 +211,7 @@ export const ToolInvocationStoreLive: Layer.Layer<
           return yield* Effect.fail<LeaseFencingRejected>({
             _tag: "LeaseFencingRejected",
             executionId,
-            generation: executionFence.fencingGeneration,
+            generation: fence.fencingGeneration,
           });
         }
         return row.stop_requested_at === null
@@ -384,6 +415,10 @@ export const ToolInvocationStoreLive: Layer.Layer<
       ) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          yield* requireExecutionFence(
+            executionFence,
+            "record-no-effect-interruption",
+          );
           const rows = yield* run(
             sql.unsafe<InvocationRow>(
               "SELECT * FROM tool_invocations WHERE invocation_id = ?",
@@ -427,6 +462,7 @@ export const ToolInvocationStoreLive: Layer.Layer<
       admitEffect: (invocationId, currentAuthority, now, executionFence) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          yield* requireExecutionFence(executionFence, "admit-effect");
           const rows = yield* run(
             sql.unsafe<InvocationRow>(
               "SELECT * FROM tool_invocations WHERE invocation_id = ?",
@@ -635,37 +671,36 @@ export const ToolInvocationStoreLive: Layer.Layer<
       ) =>
         Effect.gen(function* () {
           yield* TransactionScope;
-          if (executionFence !== undefined) {
-            const fenced = yield* run(
-              sql.unsafe<{ readonly ok: number }>(
-                `SELECT 1 AS ok
-                   FROM tool_invocations i
-                   JOIN executions e ON e.execution_id = i.execution_id
-                   JOIN execution_leases l ON l.execution_id = e.execution_id
-                  WHERE i.invocation_id = ?
-                    AND i.execution_id = ?
-                    AND e.settled_at IS NULL
-                    AND l.worker_id = ?
-                    AND l.worker_incarnation_id = ?
-                    AND l.generation = ?
-                    AND l.expires_at > ?`,
-                [
-                  invocationId,
-                  executionFence.executionId,
-                  executionFence.workerId,
-                  executionFence.workerIncarnationId,
-                  executionFence.fencingGeneration,
-                  fenceNow ?? settledAt,
-                ],
-              ),
-            );
-            if (fenced.length === 0) {
-              return yield* Effect.fail<LeaseFencingRejected>({
-                _tag: "LeaseFencingRejected",
-                executionId: executionFence.executionId,
-                generation: executionFence.fencingGeneration,
-              });
-            }
+          const fence = yield* requireExecutionFence(executionFence, "settle");
+          const fenced = yield* run(
+            sql.unsafe<{ readonly ok: number }>(
+              `SELECT 1 AS ok
+                 FROM tool_invocations i
+                 JOIN executions e ON e.execution_id = i.execution_id
+                 JOIN execution_leases l ON l.execution_id = e.execution_id
+                WHERE i.invocation_id = ?
+                  AND i.execution_id = ?
+                  AND e.settled_at IS NULL
+                  AND l.worker_id = ?
+                  AND l.worker_incarnation_id = ?
+                  AND l.generation = ?
+                  AND l.expires_at > ?`,
+              [
+                invocationId,
+                fence.executionId,
+                fence.workerId,
+                fence.workerIncarnationId,
+                fence.fencingGeneration,
+                fenceNow ?? settledAt,
+              ],
+            ),
+          );
+          if (fenced.length === 0) {
+            return yield* Effect.fail<LeaseFencingRejected>({
+              _tag: "LeaseFencingRejected",
+              executionId: fence.executionId,
+              generation: fence.fencingGeneration,
+            });
           }
           const rows = yield* run(
             sql.unsafe(
@@ -684,30 +719,32 @@ export const ToolInvocationStoreLive: Layer.Layer<
       consumeApproval: (approvalId, invocationId, executionFence, fenceNow) =>
         Effect.gen(function* () {
           yield* TransactionScope;
-          if (executionFence !== undefined) {
-            const invocationRows = yield* run(
-              sql.unsafe<{ execution_id: string }>(
-                "SELECT execution_id FROM tool_invocations WHERE invocation_id = ?",
-                [invocationId],
+          const fence = yield* requireExecutionFence(
+            executionFence,
+            "consume-approval",
+          );
+          const invocationRows = yield* run(
+            sql.unsafe<{ execution_id: string }>(
+              "SELECT execution_id FROM tool_invocations WHERE invocation_id = ?",
+              [invocationId],
+            ),
+          );
+          const invocation = invocationRows[0];
+          if (invocation === undefined) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "ToolInvocationStore",
+                "consume-approval",
+                "approval cannot be consumed before its ToolInvocation intent",
               ),
             );
-            const invocation = invocationRows[0];
-            if (invocation === undefined) {
-              return yield* Effect.fail(
-                persistenceCorruption(
-                  "ToolInvocationStore",
-                  "consume-approval",
-                  "approval cannot be consumed before its ToolInvocation intent",
-                ),
-              );
-            }
-            const gate = yield* checkFenceAndStop(
-              invocation.execution_id as ExecutionId,
-              executionFence,
-              fenceNow ?? new Date().toISOString(),
-            );
-            if (gate === "ExecutionStopping") return gate;
           }
+          const gate = yield* checkFenceAndStop(
+            invocation.execution_id as ExecutionId,
+            fence,
+            fenceNow ?? new Date().toISOString(),
+          );
+          if (gate === "ExecutionStopping") return gate;
           const unified = yield* hasUnifiedLedger;
           if (unified) return false;
           const rows = yield* run(

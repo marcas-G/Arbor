@@ -189,6 +189,22 @@ const isLeaseFencingRejected = (
   "_tag" in cause &&
   cause._tag === "LeaseFencingRejected";
 
+const hasCompleteExecutionFence = (fence: unknown): boolean => {
+  if (typeof fence !== "object" || fence === null) return false;
+  const value = fence as Record<string, unknown>;
+  return (
+    typeof value.executionId === "string" &&
+    value.executionId.length > 0 &&
+    typeof value.workerId === "string" &&
+    value.workerId.length > 0 &&
+    typeof value.workerIncarnationId === "string" &&
+    value.workerIncarnationId.length > 0 &&
+    typeof value.fencingGeneration === "number" &&
+    Number.isInteger(value.fencingGeneration) &&
+    value.fencingGeneration >= 0
+  );
+};
+
 export const ToolRuntimeLive = (
   executors: ReadonlyArray<ToolExecutor>,
   options: {
@@ -244,6 +260,14 @@ export const ToolRuntimeLive = (
 
       const invoke = (intent: ToolIntent, context: ToolExecutionContext) =>
         Effect.gen(function* () {
+          if (!hasCompleteExecutionFence(context.executionFence)) {
+            return yield* Effect.fail<ToolRuntimeError>(
+              operationalFailure(
+                "IntentJournal",
+                String(intent.invocationId),
+              )({ _tag: "ExecutionFenceUnavailable" }),
+            );
+          }
           const definitionOption = yield* definitions.definition(
             intent.toolName,
             intent.toolVersion,
@@ -961,14 +985,6 @@ export const ToolRuntimeLive = (
                     context.executableApproval !== undefined &&
                     Option.isSome(executableApprovals)
                   ) {
-                    if (context.executionFence === undefined) {
-                      return yield* Effect.fail(
-                        operationalFailure(
-                          "ApprovalLookup",
-                          String(intent.invocationId),
-                        )({ _tag: "ExecutableApprovalFenceUnavailable" }),
-                      );
-                    }
                     if (approvalAlreadyConsumedBySelf) {
                       return "Claimed" as const;
                     }
@@ -1098,10 +1114,7 @@ export const ToolRuntimeLive = (
                 }) ?? Promise.resolve(),
             );
           }
-          if (
-            context.executionFence !== undefined &&
-            effectAuthority.sourceRevision === undefined
-          ) {
+          if (effectAuthority.sourceRevision === undefined) {
             return yield* recordNoEffectDenial(
               definition.sideEffectSemantics,
               regions,
@@ -1391,10 +1404,7 @@ export const ToolRuntimeLive = (
           const settlementWrite = yield* Effect.match(
             tx.transact(
               Effect.gen(function* () {
-                const fenceNow =
-                  context.executionFence === undefined
-                    ? undefined
-                    : yield* clock.now();
+                const fenceNow = yield* clock.now();
                 const applied = yield* store.settle(
                   intent.invocationId,
                   outcome.settlement,
