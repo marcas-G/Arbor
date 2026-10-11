@@ -149,7 +149,8 @@ export type ProjectionQueryWiringServices =
   | ProviderTurnStore
   | ToolCatalogPort;
 
-const approvedToolHashFromManifest = (input: {
+/** @internal Pure reader seam for the P10 manifest-binding projection tests. */
+export const approvedToolHashFromManifest = (input: {
   readonly manifestJson: string;
   readonly providerTurnId: string;
   readonly executionId: string;
