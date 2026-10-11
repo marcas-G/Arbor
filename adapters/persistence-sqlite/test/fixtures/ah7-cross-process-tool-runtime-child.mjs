@@ -16,6 +16,7 @@ import {
   SandboxPort,
   ToolDefinitionStore,
   ToolRuntimePort,
+  invocationAuthoritySourceRevisionOf,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { ToolRuntimeLive } from "../../../../packages/tool-runtime/dist/index.js";
@@ -79,12 +80,23 @@ const context = {
   projectId,
   actor,
   authenticatedPrincipal: principal,
+  executionFence: {
+    executionId,
+    workerId: principal,
+    workerIncarnationId: "incarnation:ah7-cross-connection",
+    fencingGeneration: 0,
+  },
   authority: {
     principal,
     workspaceId,
     executionId,
     toolName: intent.toolName,
     toolVersion: intent.toolVersion,
+    sourceRevision: invocationAuthoritySourceRevisionOf({
+      workspacePolicyRevision: 0,
+      activeGrants: [],
+      verifierId: null,
+    }),
     resourceSpaceIds: [],
     allowedCapabilities: [],
     controlBasisDigest: "ah7-cross-process-basis",

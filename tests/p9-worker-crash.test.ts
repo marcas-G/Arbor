@@ -417,23 +417,39 @@ const openProviderTurn = (turnId: ProviderTurnId) =>
     );
   });
 
-const recordToolIntent = (invocationId: ToolInvocationId) =>
+const toolExecutionFence = (workerId: string, generation: LeaseGeneration) => ({
+  executionId,
+  workerId,
+  workerIncarnationId: "inc-a",
+  fencingGeneration: generation,
+});
+
+const recordToolIntent = (
+  invocationId: ToolInvocationId,
+  fence: ReturnType<typeof toolExecutionFence>,
+) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const tools = yield* ToolInvocationStore;
+    const clock = yield* Clock;
+    const now = yield* clock.now();
     yield* tx.transact(
-      tools.recordIntent({
-        invocationId,
-        executionId,
-        workspaceId,
-        toolName: "shell",
-        toolVersion: "1",
-        sideEffectSemantics: "NonIdempotent",
-        argumentsJson: "{}",
-        resolvedRegions: [],
-        approvalId: null,
-        intentAt: "t",
-      }),
+      tools.recordIntent(
+        {
+          invocationId,
+          executionId,
+          workspaceId,
+          toolName: "shell",
+          toolVersion: "1",
+          sideEffectSemantics: "NonIdempotent",
+          argumentsJson: "{}",
+          resolvedRegions: [],
+          approvalId: null,
+          intentAt: now,
+        },
+        fence,
+        now,
+      ),
     );
   });
 
@@ -495,7 +511,10 @@ const workerRun = (
     const lease = yield* acquireLease(workerId);
     yield* kill("W2");
     yield* openProviderTurn(turnId);
-    yield* recordToolIntent(invocationId);
+    yield* recordToolIntent(
+      invocationId,
+      toolExecutionFence(workerId, lease.generation),
+    );
     yield* kill("W3");
     yield* kill("W5");
     const settlement = completed;
@@ -890,7 +909,10 @@ describe("p9-resurrection (R1–R6, 02 §2)", () => {
       Effect.gen(function* () {
         yield* boot;
         const first = yield* acquireLease("worker:a");
-        yield* recordToolIntent(invocationId);
+        yield* recordToolIntent(
+          invocationId,
+          toolExecutionFence("worker:a", first.generation),
+        );
         yield* expireInPlace("worker:a", first.generation);
         const next = yield* acquireLease("worker:b");
         const tx = yield* TransactionPort;
@@ -899,7 +921,14 @@ describe("p9-resurrection (R1–R6, 02 §2)", () => {
           .transact(
             withLeaseFence(
               first.generation,
-              tools.settle(invocationId, { _tag: "Success" }, null, "t"),
+              tools.settle(
+                invocationId,
+                { _tag: "Success" },
+                null,
+                "t",
+                toolExecutionFence("worker:a", first.generation),
+                "t",
+              ),
             ),
           )
           .pipe(Effect.flip);
@@ -995,7 +1024,10 @@ describe("p9-resurrection (R1–R6, 02 §2)", () => {
                 entryKind: "Observation",
                 payload: { late: true },
               });
-              yield* recordToolIntent(invocationId);
+              yield* recordToolIntent(
+                invocationId,
+                toolExecutionFence("worker:b", generations.current),
+              );
               yield* Effect.die(new Error("harness-kill:R6-pre-commit"));
             }),
           ),

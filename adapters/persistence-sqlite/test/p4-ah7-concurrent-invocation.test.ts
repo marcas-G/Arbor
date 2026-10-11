@@ -1,6 +1,7 @@
 import {
   Actor,
   ExecutionId,
+  LeaseGeneration,
   Principal,
   ProjectId,
   parse,
@@ -17,6 +18,7 @@ import {
   ToolDefinitionStore,
   type ToolExecutionContext,
   ToolRuntimePort,
+  invocationAuthoritySourceRevisionOf,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -25,7 +27,7 @@ import type { ToolExecutor } from "../../../packages/tool-runtime/src/index.js";
 import { ToolRuntimeLive } from "../../../packages/tool-runtime/src/index.js";
 import {
   layer,
-  P4_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
@@ -44,6 +46,12 @@ const invocationId = parse(ToolInvocationId)(
 );
 const principal = parse(Principal)("worker:ah7-sqlite-concurrent");
 const actor = parse(Actor)("worker:ah7-sqlite-concurrent");
+const executionFence = {
+  executionId,
+  workerId: String(principal),
+  workerIncarnationId: "incarnation:ah7-sqlite-concurrent",
+  fencingGeneration: parse(LeaseGeneration)(0),
+};
 
 const definition: ToolDefinition = {
   name: "write_once",
@@ -79,6 +87,11 @@ const context: ToolExecutionContext = {
     executionId,
     toolName: intent.toolName,
     toolVersion: intent.toolVersion,
+    sourceRevision: invocationAuthoritySourceRevisionOf({
+      workspacePolicyRevision: 0,
+      activeGrants: [],
+      verifierId: null,
+    }),
     resourceSpaceIds: [],
     allowedCapabilities: [],
     controlBasisDigest: "ah7-sqlite-concurrent-basis",
@@ -86,6 +99,7 @@ const context: ToolExecutionContext = {
     delegationDepth: 0,
   },
   controlBasisDigest: "ah7-sqlite-concurrent-basis",
+  executionFence,
   requestedAt: "2026-10-06T00:00:00.000Z",
 };
 
@@ -134,14 +148,17 @@ const seedExecution = Effect.gen(function* () {
         ],
       );
       yield* sql.unsafe(
-        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
+        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
+        [executionId, projectId, workspaceId, sessionId],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
         [
           executionId,
-          projectId,
-          "workspace",
-          workspaceId,
-          "coordination",
-          sessionId,
+          executionFence.workerId,
+          executionFence.workerIncarnationId,
+          0,
+          "2999-01-01T00:00:00.000Z",
           "t",
         ],
       );
@@ -207,7 +224,7 @@ describe("AH7 SQLite concurrent ToolInvocationId reentry", () => {
     );
 
     const program = Effect.gen(function* () {
-      yield* runMigrations(P4_MIGRATIONS);
+      yield* runMigrations(P36_MIGRATIONS);
       yield* seedExecution;
       const invoke = () =>
         Effect.match(

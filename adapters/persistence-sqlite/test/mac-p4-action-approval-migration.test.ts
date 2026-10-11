@@ -15,12 +15,19 @@ import {
   layer,
   P31_MIGRATIONS,
   P32_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
 } from "../src/index.js";
 
 const directories: string[] = [];
+const macFence = {
+  executionId: "exe_mac4" as never,
+  workerId: "worker:mac-p4",
+  workerIncarnationId: "incarnation:mac-p4",
+  fencingGeneration: 0 as never,
+};
 
 const currentControl: ControlApprovalRecord = {
   approvalId: "cap_current",
@@ -74,6 +81,9 @@ describe("MAC-P4 unified ActionApproval migration", () => {
                 "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, episode_kind, episode_ref, episode_revision, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES ('exe_mac4','prj_mac4','workspace','ws_mac4','InboxEpisode','test',0,NULL,NULL,'ses_mac4','t',NULL,NULL,NULL,NULL)",
               );
               yield* sql.unsafe(
+                "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES ('exe_mac4','worker:mac-p4','incarnation:mac-p4',0,'2999-01-01T00:00:00.000Z','t')",
+              );
+              yield* sql.unsafe(
                 "INSERT INTO control_action_approvals (approval_id, project_id, workspace_id, execution_id, stable_action_id, action_digest, arguments_json, target_ref, control_basis_digest, state, revision, requested_at, expires_at, decided_at, decided_by, decision_reason, consumed_at) VALUES ('cap_legacy','prj_mac4','ws_mac4','exe_mac4','core.control.assign-work','legacy-control','{}','ws_mac4','legacy-basis','Pending',0,'t','2999-01-01T00:00:00.000Z',NULL,NULL,NULL,NULL)",
               );
               yield* sql.unsafe(
@@ -84,6 +94,7 @@ describe("MAC-P4 unified ActionApproval migration", () => {
 
           yield* runMigrations(P32_MIGRATIONS);
           yield* runMigrations(P32_MIGRATIONS);
+          yield* runMigrations(P36_MIGRATIONS);
 
           const migrated = yield* sql.unsafe<{
             approval_id: string;
@@ -113,6 +124,31 @@ describe("MAC-P4 unified ActionApproval migration", () => {
             "INSERT INTO action_approvals (approval_id, route_kind, project_id, workspace_id, execution_id, subject_ref, stable_action_id, action_version, side_effect_semantics, action_digest, arguments_json, target_ref, target_resource_space_ids_json, control_basis_digest, state, revision, requested_at, expires_at, decided_at, decided_by, decision_reason, consumed_at, consumed_by, binding_proven, source_state) VALUES ('apr_current','Executable','prj_mac4','ws_mac4','exe_mac4','Execution:exe_mac4','shell','1','Reconcilable','current-exec','{}','filesystem','[\"filesystem\"]','current-basis','Approved',1,'2026-10-04T00:00:00.000Z','2999-01-01T00:00:00.000Z','2026-10-04T00:00:01.000Z','user:approver',NULL,NULL,NULL,1,NULL)",
           );
           const invocations = yield* ToolInvocationStore;
+          for (const [invocationId, approvalId] of [
+            ["tin_mac4_legacy", "apr_legacy"],
+            ["tin_mac4_control", "cap_legacy"],
+            ["tin_mac4_a", "apr_current"],
+            ["tin_mac4_b", "apr_current"],
+          ] as const) {
+            yield* tx.transact(
+              invocations.recordIntent(
+                {
+                  invocationId: invocationId as never,
+                  executionId: macFence.executionId,
+                  workspaceId: "ws_mac4" as never,
+                  toolName: "shell",
+                  toolVersion: "1",
+                  sideEffectSemantics: "Reconcilable",
+                  argumentsJson: "{}",
+                  resolvedRegions: [],
+                  approvalId,
+                  intentAt: "2026-10-04T00:00:00.000Z",
+                },
+                macFence,
+                "2026-10-04T00:00:00.000Z",
+              ),
+            );
+          }
           const migratedLegacy = yield* tx.transact(
             invocations.findApproval("apr_legacy"),
           );
@@ -120,6 +156,8 @@ describe("MAC-P4 unified ActionApproval migration", () => {
             invocations.consumeApproval(
               "apr_legacy",
               "tin_mac4_legacy" as never,
+              macFence,
+              "2026-10-04T00:00:00.000Z",
             ),
           );
           const controlThroughLegacy = yield* tx.transact(
@@ -129,16 +167,28 @@ describe("MAC-P4 unified ActionApproval migration", () => {
             invocations.consumeApproval(
               "cap_legacy",
               "tin_mac4_control" as never,
+              macFence,
+              "2026-10-04T00:00:00.000Z",
             ),
           );
           const executableThroughLegacy = yield* tx.transact(
             invocations.findApproval("apr_current"),
           );
           const first = yield* tx.transact(
-            invocations.consumeApproval("apr_current", "tin_mac4_a" as never),
+            invocations.consumeApproval(
+              "apr_current",
+              "tin_mac4_a" as never,
+              macFence,
+              "2026-10-04T00:00:00.000Z",
+            ),
           );
           const second = yield* tx.transact(
-            invocations.consumeApproval("apr_current", "tin_mac4_b" as never),
+            invocations.consumeApproval(
+              "apr_current",
+              "tin_mac4_b" as never,
+              macFence,
+              "2026-10-04T00:00:00.000Z",
+            ),
           );
           const executable = yield* sql.unsafe<{
             state: string;
