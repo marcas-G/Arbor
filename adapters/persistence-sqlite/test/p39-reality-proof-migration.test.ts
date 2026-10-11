@@ -1,15 +1,25 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { sha256Hex } from "@arbor/ports";
 import { layer } from "../src/client.js";
 import { runMigrations, splitStatements } from "../src/migrate.js";
 import * as migrations from "../src/migrations.js";
 import {
   P39_REPORT_DATABASE_DDL,
+  readP39BlockReports,
+  requireP39RuntimeSchema,
   runP39MaintenanceGate,
+  validateP39MigrationPrefix,
   writeP39BlockReportAndReadBack,
 } from "../src/p39-maintenance.js";
+import {
+  validateP39ReportSidecarDatabase,
+  validateP39ReportSidecarPath,
+} from "../src/p39-report-database.js";
 
 const withClient = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
   Effect.runPromise(Effect.provide(program, layer({ filename: ":memory:" })));
@@ -43,15 +53,16 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
         for (const statement of splitStatements(P39_REPORT_DATABASE_DDL)) {
           yield* sql.unsafe(statement);
         }
+        const databaseFingerprint = "f".repeat(64);
         const body = JSON.stringify({
           schema: "p39-migration-block-report/v1",
           kind: "LegacyActiveNotAdmitted",
           observedUserVersion: 36,
           targetUserVersion: 39,
+          databaseFingerprint,
           blockerStateFingerprint: "a".repeat(64),
-          invocationIds: ["tin_legacy"],
+          blockedInvocationIds: ["tin_legacy"],
         });
-        const databaseFingerprint = "db-fingerprint";
         const report = {
           reportKey: sha256Hex(
             JSON.stringify({
@@ -65,7 +76,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
           observedUserVersion: 36,
           targetUserVersion: 39 as const,
           databaseFingerprint,
-          invocationIds: ["tin_legacy"],
+          blockedInvocationIds: ["tin_legacy"],
           blockerStateFingerprint: "a".repeat(64),
         };
         const stored = yield* writeP39BlockReportAndReadBack(report);
@@ -73,19 +84,26 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
         const update = yield* Effect.exit(
           sql.unsafe(
             "UPDATE p39_migration_block_reports SET report_json = '{}' WHERE report_key = ?",
-            ["a".repeat(64)],
+            [report.reportKey],
           ),
         );
         const remove = yield* Effect.exit(
           sql.unsafe(
             "DELETE FROM p39_migration_block_reports WHERE report_key = ?",
-            ["a".repeat(64)],
+            [report.reportKey],
           ),
         );
         const rows = yield* sql.unsafe<{ report_key: string }>(
           "SELECT report_key FROM p39_migration_block_reports",
         );
-        return { stored, duplicate, update, remove, rows, reportKey: report.reportKey };
+        return {
+          stored,
+          duplicate,
+          update,
+          remove,
+          rows,
+          reportKey: report.reportKey,
+        };
       }),
     );
     expect(result.stored).toEqual({
@@ -98,6 +116,93 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     expect(result.rows.map(({ report_key }) => report_key)).toEqual([
       result.reportKey,
     ]);
+  });
+
+  it("reads back verified blocker report JSON for the operator", async () => {
+    const result = await withClient(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        for (const statement of splitStatements(P39_REPORT_DATABASE_DDL)) {
+          yield* sql.unsafe(statement);
+        }
+        const databaseFingerprint = "f".repeat(64);
+        const body = JSON.stringify({
+          schema: "p39-migration-block-report/v1",
+          kind: "LegacyActiveNotAdmitted",
+          observedUserVersion: 38,
+          targetUserVersion: 39,
+          databaseFingerprint,
+          blockerStateFingerprint: "a".repeat(64),
+          blockedInvocationIds: ["tin_legacy"],
+        });
+        const report = {
+          reportKey: sha256Hex(
+            JSON.stringify({
+              schema: "p39-migration-block-report/v1",
+              targetUserVersion: 39,
+              databaseFingerprint,
+            }),
+          ),
+          contentHash: sha256Hex(body),
+          reportJson: body,
+          observedUserVersion: 38,
+          targetUserVersion: 39 as const,
+          databaseFingerprint,
+          blockedInvocationIds: ["tin_legacy"],
+          blockerStateFingerprint: "a".repeat(64),
+        };
+        yield* writeP39BlockReportAndReadBack(report);
+        return yield* readP39BlockReports();
+      }),
+    );
+
+    expect(result).toHaveLength(1);
+    expect(JSON.parse(result[0]?.reportJson ?? "{}")).toMatchObject({
+      kind: "LegacyActiveNotAdmitted",
+      observedUserVersion: 38,
+      blockedInvocationIds: ["tin_legacy"],
+    });
+    expect(result[0]?.contentHash).toBe(sha256Hex(result[0]?.reportJson ?? ""));
+  });
+
+  it("initializes and revalidates only the exact reserved sidecar schema", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "arbor-p39-sidecar-"));
+    const primary = join(directory, "primary.sqlite");
+    const sidecar = join(directory, "reports.sqlite");
+    try {
+      const normalized = await Effect.runPromise(
+        validateP39ReportSidecarPath(primary, sidecar),
+      );
+      expect(normalized.endsWith("reports.sqlite")).toBe(true);
+      await Effect.runPromise(
+        validateP39ReportSidecarDatabase(primary, sidecar),
+      );
+      await Effect.runPromise(
+        validateP39ReportSidecarDatabase(primary, sidecar),
+      );
+      const samePath = await Effect.runPromise(
+        Effect.flip(validateP39ReportSidecarPath(primary, primary)),
+      );
+      expect(samePath.code).toBe("P39_REPORT_DB_PATH_INVALID");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("requires the exact 0037→0038→0039 suffix and refuses service at user_version 39", async () => {
+    const exact = await Effect.runPromise(
+      validateP39MigrationPrefix(36, [{ id: 37 }, { id: 38 }, { id: 39 }]),
+    );
+    const skipped = await Effect.runPromise(
+      Effect.flip(validateP39MigrationPrefix(36, [{ id: 39 }])),
+    );
+    const service = await Effect.runPromise(
+      Effect.flip(requireP39RuntimeSchema(39)),
+    );
+
+    expect(exact.map(({ id }) => id)).toEqual([37, 38, 39]);
+    expect(skipped.code).toBe("P39_MIGRATION_PREFIX_INVALID");
+    expect(service.code).toBe("P39_RUNTIME_START_REFUSED");
   });
 
   it("creates the immutable fact ledger and defers selected-fact provenance to COMMIT", async () => {
@@ -155,9 +260,21 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     );
     expect(result.selectedFactForeignKey).toEqual(
       expect.arrayContaining([
-        { table: "tool_reconciliation_facts", from: "invocation_id", to: "invocation_id" },
-        { table: "tool_reconciliation_facts", from: "selected_attempt_no", to: "attempt_no" },
-        { table: "tool_reconciliation_facts", from: "selected_fact_id", to: "fact_id" },
+        {
+          table: "tool_reconciliation_facts",
+          from: "invocation_id",
+          to: "invocation_id",
+        },
+        {
+          table: "tool_reconciliation_facts",
+          from: "selected_attempt_no",
+          to: "attempt_no",
+        },
+        {
+          table: "tool_reconciliation_facts",
+          from: "selected_fact_id",
+          to: "fact_id",
+        },
       ]),
     );
   });
@@ -186,7 +303,18 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
             settlement_json, result_ref
           ) VALUES (?,?,?,?,?,?,?,?,?,'MayHaveStarted','Bound',?,NULL,NULL,NULL,
                     't0',NULL,NULL,NULL,NULL)`,
-          [invocationId, "exe_fake", "ws_fake", "shell", "3", "Reconcilable", "{}", "[]", null, bindingSha256],
+          [
+            invocationId,
+            "exe_fake",
+            "ws_fake",
+            "shell",
+            "3",
+            "Reconcilable",
+            "{}",
+            "[]",
+            null,
+            bindingSha256,
+          ],
         );
         yield* sql.unsafe(
           `INSERT INTO tool_invocation_recovery_bindings
@@ -202,7 +330,13 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
             admission_source,admission_time_precision
           ) VALUES (?,0,'MayHaveStarted',?,'Reconcilable','profile','1',?,'v1',?,?,'t1',
                     'P39Admission','TransactionTimestamp')`,
-          [invocationId, "d".repeat(64), profileHash, "effect-1", bindingSha256],
+          [
+            invocationId,
+            "d".repeat(64),
+            profileHash,
+            "effect-1",
+            bindingSha256,
+          ],
         );
         yield* sql.unsafe(
           `INSERT INTO artifacts (artifact_id,kind,blob_ref,byte_size,content_hash,
@@ -218,7 +352,14 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
             evidence_ref,evidence_sha256,result_ref,observed_at
           ) VALUES (?,?,0,?,?,?,'ProfileReconciliation',NULL,'RecoveryInput',
                     'NotOccurred',NULL,'art_p39_evidence',?,NULL,'t2')`,
-          ["f".repeat(64), invocationId, bindingSha256, profileHash, "effect-1", evidenceHash],
+          [
+            "f".repeat(64),
+            invocationId,
+            bindingSha256,
+            profileHash,
+            "effect-1",
+            evidenceHash,
+          ],
         );
         yield* sql.unsafe("PRAGMA foreign_keys = ON");
 
@@ -244,6 +385,40 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
             ),
           ),
         );
+        const afterRejected = yield* sql.unsafe<{
+          readonly settled_at: string | null;
+          readonly settlement_kind: string | null;
+        }>(
+          "SELECT settled_at, settlement_kind FROM tool_invocations WHERE invocation_id = ?",
+          [invocationId],
+        );
+        yield* sql.unsafe(
+          `INSERT INTO tool_reconciliation_facts (
+            fact_id,invocation_id,attempt_no,binding_sha256,profile_hash,effect_key,
+            fact_origin,legacy_reason,fact_disposition,outcome,reason_code,
+            evidence_ref,evidence_sha256,result_ref,observed_at
+          ) VALUES (?,?,0,?,?,?,'ProfileReconciliation',NULL,'RecoveryInput',
+                    'Occurred',NULL,'art_p39_evidence',?, 'art_p39_result','t4')`,
+          [
+            "g".repeat(64),
+            invocationId,
+            bindingSha256,
+            profileHash,
+            "effect-1",
+            evidenceHash,
+          ],
+        );
+        const expectedFailure = yield* Effect.exit(
+          sql.withTransaction(
+            sql.unsafe(
+              `UPDATE tool_invocations SET settled_at='t5', settlement_kind='ExpectedFailure',
+                 settlement_json='{}', result_ref=NULL,
+                 settlement_provenance='Reconciliation', selected_attempt_no=0,
+                 selected_fact_id=? WHERE invocation_id=?`,
+              ["g".repeat(64), invocationId],
+            ),
+          ),
+        );
         const final = yield* sql.unsafe<{
           readonly settled_at: string | null;
           readonly settlement_kind: string | null;
@@ -251,18 +426,32 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
           "SELECT settled_at, settlement_kind FROM tool_invocations WHERE invocation_id = ?",
           [invocationId],
         );
-        return { fabricatedSuccess, crossAttemptSelection, final: final[0] };
+        return {
+          fabricatedSuccess,
+          crossAttemptSelection,
+          afterRejected: afterRejected[0],
+          expectedFailure,
+          final: final[0],
+        };
       }),
     );
     expect(result.fabricatedSuccess._tag).toBe("Failure");
     expect(result.crossAttemptSelection._tag).toBe("Failure");
-    expect(result.final).toEqual({ settled_at: null, settlement_kind: null });
+    expect(result.expectedFailure._tag).toBe("Success");
+    expect(result.afterRejected).toEqual({
+      settled_at: null,
+      settlement_kind: null,
+    });
+    expect(result.final).toEqual({
+      settled_at: "t5",
+      settlement_kind: "ExpectedFailure",
+    });
   });
 
   it("keeps writer exclusion through migration and releases it after success", async () => {
     const order: string[] = [];
     let writerLockHeld = false;
-    const result = await Effect.runPromise(
+    const result = await withClient(
       runP39MaintenanceGate({
         acquireWriterExclusion: () =>
           Effect.sync(() => {
@@ -285,7 +474,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
               snapshot: {
                 userVersion: 38,
                 databaseFingerprint: "db-fingerprint",
-                activeNotAdmittedInvocationIds: [],
+                activeNotAdmittedInvocations: [],
               },
             };
           }),
@@ -310,18 +499,55 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     expect(order).toEqual([
       "acquire-writer-exclusion",
       "reserve-primary-snapshot",
-      "release-primary-snapshot",
       "apply-ordered-migrations",
+      "release-primary-snapshot",
       "release-writer-exclusion",
     ]);
     expect(writerLockHeld).toBe(false);
   });
 
+  it("treats a repeated P39 maintenance invocation at user_version 39 as a no-op", async () => {
+    const order: string[] = [];
+    const result = await withClient(
+      runP39MaintenanceGate({
+        acquireWriterExclusion: () =>
+          Effect.sync(() => {
+            order.push("acquire-lock");
+            return { token: "repeat-lease" };
+          }),
+        releaseWriterExclusion: () =>
+          Effect.sync(() => {
+            order.push("release-lock");
+          }),
+        reservePrimarySnapshot: () =>
+          Effect.sync(() => ({
+            reservation: "already-p39",
+            snapshot: {
+              userVersion: 39,
+              databaseFingerprint: "f".repeat(64),
+              activeNotAdmittedInvocations: [],
+            },
+          })),
+        releasePrimarySnapshot: () =>
+          Effect.sync(() => {
+            order.push("release-primary");
+          }),
+        writeAndReadBackSidecarReport: () =>
+          Effect.die(new Error("P39 no-op must not write a blocker report")),
+        applyOrderedMigrations: () =>
+          Effect.die(new Error("P39 no-op must not rerun migration SQL")),
+      }),
+    );
+
+    expect(result).toBeUndefined();
+    expect(order).toEqual(["acquire-lock", "release-primary", "release-lock"]);
+  });
+
   it("retains writer exclusion through migration failure and then releases both reservations", async () => {
     const order: string[] = [];
     let writerLockHeld = false;
-    const outcome = await Effect.runPromise(
-      Effect.either(
+    const outcome = await withClient(
+      Effect.flip(
         runP39MaintenanceGate({
           acquireWriterExclusion: () =>
             Effect.sync(() => {
@@ -342,7 +568,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
                 snapshot: {
                   userVersion: 38,
                   databaseFingerprint: "db-fingerprint",
-                  activeNotAdmittedInvocationIds: [],
+                  activeNotAdmittedInvocations: [],
                 },
               };
             }),
@@ -365,15 +591,12 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       ),
     );
 
-    expect(outcome._tag).toBe("Left");
-    if (outcome._tag === "Left") {
-      expect(outcome.left._tag).toBe("SqliteAdapterError");
-    }
+    expect(outcome._tag).toBe("SqliteAdapterError");
     expect(order).toEqual([
       "acquire-writer-exclusion",
       "reserve-primary-snapshot",
-      "release-primary-snapshot",
       "migration-failed",
+      "release-primary-snapshot",
       "release-writer-exclusion",
     ]);
     expect(writerLockHeld).toBe(false);
@@ -384,12 +607,12 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     let writerLockHeld = false;
     let savedReport:
       | {
-          readonly invocationIds: ReadonlyArray<string>;
+          readonly blockedInvocationIds: ReadonlyArray<string>;
           readonly targetUserVersion: 39;
         }
       | undefined;
-    const outcome = await Effect.runPromise(
-      Effect.either(
+    const outcome = await withClient(
+      Effect.flip(
         runP39MaintenanceGate({
           acquireWriterExclusion: () =>
             Effect.sync(() => {
@@ -412,7 +635,24 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
                 snapshot: {
                   userVersion: 36,
                   databaseFingerprint: "db-fingerprint",
-                  activeNotAdmittedInvocationIds: ["tin_b", "tin_a"],
+                  activeNotAdmittedInvocations: [
+                    {
+                      invocationId: "tin_b",
+                      executionId: "exe_b",
+                      sideEffectSemantics: "Reconcilable",
+                      effectAdmissionState: "NotAdmitted",
+                      unsettled: true,
+                      approvalId: null,
+                    },
+                    {
+                      invocationId: "tin_a",
+                      executionId: "exe_a",
+                      sideEffectSemantics: "NonIdempotent",
+                      effectAdmissionState: "NotAdmitted",
+                      unsettled: true,
+                      approvalId: "approval_a",
+                    },
+                  ],
                 },
               };
             }),
@@ -429,7 +669,10 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
               expect(reservation.reservation).toBe("snapshot-1");
               order.push("sidecar-write-readback");
               savedReport = report;
-              return { reportKey: report.reportKey, contentHash: report.contentHash };
+              return {
+                reportKey: report.reportKey,
+                contentHash: report.contentHash,
+              };
             }),
           applyOrderedMigrations: () =>
             Effect.sync(() => {
@@ -439,10 +682,9 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       ),
     );
 
-    expect(outcome._tag).toBe("Left");
-    if (outcome._tag === "Left") {
-      expect(outcome.left.code).toBe("P39_LEGACY_DB_ISOLATED");
-    }
+    if (!("code" in outcome))
+      throw new Error("maintenance gate unexpectedly succeeded");
+    expect(outcome.code).toBe("P39_LEGACY_DB_ISOLATED");
     expect(order).toEqual([
       "acquire-writer-exclusion",
       "reserve-primary-snapshot",
@@ -451,7 +693,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       "release-writer-exclusion",
     ]);
     expect(writerLockHeld).toBe(false);
-    expect(savedReport?.invocationIds).toEqual(["tin_a", "tin_b"]);
+    expect(savedReport?.blockedInvocationIds).toEqual(["tin_a", "tin_b"]);
     expect(savedReport?.targetUserVersion).toBe(39);
   });
 });

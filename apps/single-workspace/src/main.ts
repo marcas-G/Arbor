@@ -8,6 +8,14 @@ import {
   startupRecovery,
 } from "@arbor/execution-runtime";
 import {
+  acquireP39RuntimeWriterPermit,
+  type P39WriterLockFailure,
+  p39WriterLockFilename,
+  p39WriterLockLayer,
+  releaseP39WriterPermit,
+  type SqliteAdapterError,
+} from "@arbor/persistence-sqlite";
+import {
   Clock,
   ExecutableApprovalStore,
   ExecutionRepository,
@@ -18,6 +26,7 @@ import {
   secretRef,
   TransactionPort,
 } from "@arbor/ports";
+import type { Scope } from "effect";
 import { Duration, Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
@@ -394,7 +403,8 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
 /** One bounded daemon cycle: start (migrate + T1) -> scheduler/loop ->
  * consumer polls -> recovery sweep. Used by the smoke test and `--once`. */
 export const runDaemonOnce = (config: ProductionDaemonRunConfig = {}) =>
-  Effect.scoped(
+  withP39RuntimeWriterPermit(
+    config.databaseFile ?? process.env.ARBOR_DB ?? "./arbor-slice.db",
     Effect.gen(function* () {
       const { deployment, schedulerTick, conversationTick } =
         yield* runProductionDaemon(config);
@@ -408,7 +418,8 @@ export const runDaemonOnce = (config: ProductionDaemonRunConfig = {}) =>
 /** The long-running production daemon: start, then tick forever until
  * interrupted (the stop signal). */
 export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
-  Effect.scoped(
+  withP39RuntimeWriterPermit(
+    config.databaseFile ?? process.env.ARBOR_DB ?? "./arbor-slice.db",
     Effect.gen(function* () {
       const { deployment, schedulerTick, conversationTick } =
         yield* runProductionDaemon(config);
@@ -423,6 +434,32 @@ export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
       );
     }),
   );
+
+/** Hold the shared SQLite lock database read transaction for the whole daemon
+ * lifetime. A maintenance process takes the corresponding EXCLUSIVE lock,
+ * waits for existing daemons to exit, then prevents another daemon from
+ * opening the primary database until its ordered migration transaction ends. */
+const withP39RuntimeWriterPermit = <A, E, R>(
+  primaryDatabaseFilename: string,
+  use: Effect.Effect<A, E, R>,
+): Effect.Effect<
+  A,
+  E | P39WriterLockFailure | SqliteAdapterError,
+  Exclude<R, Scope.Scope>
+> => {
+  const lockFilename = p39WriterLockFilename(primaryDatabaseFilename);
+  if (typeof lockFilename !== "string") return Effect.fail(lockFilename);
+  return Effect.scoped(
+    Effect.provide(
+      Effect.acquireUseRelease(
+        acquireP39RuntimeWriterPermit(),
+        () => use,
+        releaseP39WriterPermit,
+      ),
+      p39WriterLockLayer(lockFilename),
+    ),
+  );
+};
 
 export type { SingleWorkspaceServices };
 
