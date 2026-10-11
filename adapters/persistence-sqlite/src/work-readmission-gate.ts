@@ -29,6 +29,7 @@ interface ExecutionRow {
   readonly settlement_kind: string | null;
   readonly settlement_json: string | null;
   readonly settled_at: string | null;
+  readonly stop_requested_at: string | null;
   readonly episode_json: string | null;
 }
 
@@ -178,7 +179,12 @@ const runtimeSafetyStop = (row: ExecutionRow): boolean => {
     throw new Error("SettlementMalformed");
   }
   const result = record(value.result);
-  if (result?._tag === "StopRequested") return false;
+  if (result?._tag === "StopRequested") {
+    if (row.stop_requested_at === null) {
+      throw new Error("SettlementMalformed");
+    }
+    return false;
+  }
   if (
     result?._tag !== "ControlledInterruption" ||
     typeof result.reason !== "string"
@@ -311,7 +317,8 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
               `SELECT e.execution_id, e.project_id, e.binding_kind,
                       e.workspace_id, e.episode_kind, e.episode_ref,
                       e.episode_revision, e.settlement_kind,
-                      e.settlement_json, e.settled_at, s.episode_json
+                      e.settlement_json, e.settled_at, e.stop_requested_at,
+                      s.episode_json
                  FROM executions AS e
                  LEFT JOIN agent_execution_state AS s
                    ON s.execution_id = e.execution_id
