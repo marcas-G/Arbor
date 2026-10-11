@@ -1,4 +1,5 @@
 import type {
+  CommandId,
   ExecutionId,
   Principal,
   ProjectId,
@@ -75,6 +76,19 @@ export interface ExecutableApprovalRequest extends ExecutableApprovalBinding {
   readonly executionFence: NonNullable<ToolExecutionContext["executionFence"]>;
 }
 
+/** Exact immutable consumption snapshot captured in the P4 fenced claim
+ * transaction. P39 persists this receipt into RecoveryBinding before any
+ * effect admission. */
+export interface ExecutableApprovalConsumptionReceipt {
+  readonly approvalId: string;
+  readonly preConsumeRevision: number;
+  readonly consumedRevision: number;
+  readonly approvalDigest: string;
+  readonly binding: ExecutableApprovalBinding;
+  readonly expiresAt: string;
+  readonly consumedBy: ToolInvocationId;
+}
+
 export interface ExecutableApprovalStoreService {
   /** Read-only replay lookup. A prior lease holder can observe the bound row,
    * but this operation cannot decide, consume, wake, or admit an effect. Any
@@ -95,6 +109,43 @@ export interface ExecutableApprovalStoreService {
     request: ExecutableApprovalRequest,
   ) => Effect.Effect<
     ExecutableApprovalRecord | "ExecutionStopping",
+    ToolInvocationStoreError | LeaseFencingRejected,
+    TransactionScope
+  >;
+  readonly findById: (
+    approvalId: string,
+  ) => Effect.Effect<
+    Option.Option<ExecutableApprovalRecord>,
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
+  readonly decide: (input: {
+    readonly approvalId: string;
+    readonly commandId: CommandId;
+    readonly expectedRevision: number;
+    readonly decision: "Approve" | "Reject";
+    readonly decidedAt: string;
+    readonly decidedBy: Principal;
+    readonly reason: string | null;
+  }) => Effect.Effect<
+    Option.Option<ExecutableApprovalRecord>,
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
+  /** Called inside the same fenced transaction as ToolInvocation intent
+   * admission. It consumes only the exact Approved revision and immutable
+   * invocation binding. */
+  readonly consumeApproved: (input: {
+    readonly approvalId: string;
+    readonly expectedRevision: number;
+    readonly consumedBy: ToolInvocationId;
+    readonly consumedAt: string;
+    readonly binding: ExecutableApprovalBinding;
+    readonly executionFence: NonNullable<
+      ToolExecutionContext["executionFence"]
+    >;
+  }) => Effect.Effect<
+    ExecutableApprovalConsumptionReceipt | false | "ExecutionStopping",
     ToolInvocationStoreError | LeaseFencingRejected,
     TransactionScope
   >;

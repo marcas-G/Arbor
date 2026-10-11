@@ -256,6 +256,11 @@ export type AgentActionError =
 
 export type ExecutableInvocationOutcome =
   | {
+      readonly _tag: "ApprovalRequired";
+      readonly approvalId: string;
+      readonly revision: number;
+    }
+  | {
       readonly _tag: "Observation";
       readonly source: "Runtime" | "Tool";
       readonly observation: BoundedObservation;
@@ -272,6 +277,13 @@ export interface ExecutableInvocationInput {
   readonly execution: Execution;
   readonly context: CommandSubmissionContext;
   readonly controlBasis: ControlBasis;
+  readonly action?: {
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly actionIndex: number;
+    readonly logicalActionId: string;
+  };
+  readonly executionFence?: import("@arbor/ports").AgentLoopStepFence;
 }
 
 export interface ExecutableInvocationHandler {

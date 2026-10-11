@@ -105,6 +105,14 @@ export interface ToolExecutionContext {
     readonly workerIncarnationId: string;
     readonly fencingGeneration: LeaseGeneration;
   };
+  /** Runtime-sourced Executable approval handoff. Model decoders never
+   * populate this field; P3 reconstructs it from the current Step/action. */
+  readonly executableApproval?: {
+    readonly approvalId: string;
+    readonly expectedRevision: number;
+    readonly state: import("./executable-approval.js").ExecutableApprovalState;
+    readonly binding: import("./executable-approval.js").ExecutableApprovalBinding;
+  };
   readonly requestedAt: string;
 }
 
@@ -166,6 +174,17 @@ export type CanonicalToolObservation =
       readonly _tag: "Denied";
       readonly reasonCode: NoEffectDenialCode;
       readonly reason: string;
+    }
+  | {
+      /** Nonterminal P4 handoff. No ToolInvocation row is written. The
+       * Application binds P3 identity and persists the approval + Inbox. */
+      readonly _tag: "ApprovalRequired";
+      readonly authority: InvocationAuthority;
+      readonly targetResourceSpaceIds: ReadonlyArray<string>;
+      readonly actionDigest: string;
+      readonly requestedCapabilities: ReadonlyArray<string>;
+      readonly sideEffectSemantics: SideEffectSemantics;
+      readonly controlBasisDigest: string;
     }
   | { readonly _tag: "Interrupted" }
   | {

@@ -5,6 +5,8 @@ import {
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
+  ExecutableApprovalStore,
+  executableApprovalBindingMatches,
   type LeaseFencingRejected,
   type NoEffectDenialCode,
   ProjectEnvironmentPort,
@@ -24,7 +26,7 @@ import {
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-import { matchApproval } from "./approval.js";
+import { actionDigestOf, matchApproval } from "./approval.js";
 import { checkInvocationAuthority } from "./authority.js";
 import { validateToolInput } from "./validation.js";
 
@@ -196,6 +198,9 @@ export const ToolRuntimeLive = (
       const sandbox = yield* SandboxPort;
       const admission = yield* ResourceAdmission;
       const store = yield* ToolInvocationStore;
+      const executableApprovals = yield* Effect.serviceOption(
+        ExecutableApprovalStore,
+      );
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
       const environment = yield* ProjectEnvironmentPort;
@@ -344,7 +349,9 @@ export const ToolRuntimeLive = (
                       sideEffectSemantics,
                       argumentsJson: intent.argumentsJson,
                       resolvedRegions,
-                      approvalId: intent.approvalId,
+                      approvalId:
+                        context.executableApproval?.approvalId ??
+                        intent.approvalId,
                       intentAt: now,
                     },
                     reasonCode,
@@ -512,16 +519,50 @@ export const ToolRuntimeLive = (
 
           const needsApproval = executor.requiresApproval(intent);
           let approvalAlreadyConsumedBySelf = false;
+          if (!needsApproval && context.executableApproval !== undefined) {
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              regions,
+              "ApprovalMismatch",
+            );
+          }
           if (needsApproval) {
-            if (intent.approvalId === null) {
-              return yield* recordNoEffectDenial(
-                definition.sideEffectSemantics,
-                regions,
-                "ApprovalRequired",
+            if (context.executableApproval === undefined) {
+              if (intent.approvalId !== null) {
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
+                  regions,
+                  "ApprovalMismatch",
+                );
+              }
+              return {
+                _tag: "ApprovalRequired" as const,
+                authority: resolvedAuthority,
+                targetResourceSpaceIds: regions.map(
+                  (region) => region.resourceSpaceId,
+                ),
+                actionDigest: actionDigestOf(intent),
+                requestedCapabilities: definition.capabilityMetadata,
+                sideEffectSemantics: definition.sideEffectSemantics,
+                controlBasisDigest: context.controlBasisDigest,
+              };
+            }
+            if (Option.isNone(executableApprovals)) {
+              return yield* Effect.fail(
+                operationalFailure(
+                  "ApprovalLookup",
+                  String(intent.invocationId),
+                )({
+                  _tag: "ExecutableApprovalStoreUnavailable",
+                }),
               );
             }
-            const approval = yield* tx
-              .transact(store.findApproval(intent.approvalId))
+            const exactExecutableApproval = yield* tx
+              .transact(
+                executableApprovals.value.findById(
+                  context.executableApproval.approvalId,
+                ),
+              )
               .pipe(
                 Effect.mapError(
                   operationalFailure(
@@ -530,47 +571,107 @@ export const ToolRuntimeLive = (
                   ),
                 ),
               );
-            if (Option.isNone(approval)) {
-              return yield* recordNoEffectDenial(
-                definition.sideEffectSemantics,
-                regions,
-                "ApprovalNotFound",
-              );
-            }
-            if (approval.value.consumedBy === intent.invocationId) {
-              const recorded = yield* tx
-                .transact(store.findById(intent.invocationId))
-                .pipe(
-                  Effect.mapError(
-                    operationalFailure(
-                      "ApprovalLookup",
-                      String(intent.invocationId),
-                    ),
+            if (Option.isSome(exactExecutableApproval)) {
+              const currentApproval = exactExecutableApproval.value;
+              if (currentApproval.state === "Pending") {
+                if (
+                  context.executableApproval.state !== "Pending" ||
+                  currentApproval.revision !==
+                    context.executableApproval.expectedRevision ||
+                  !executableApprovalBindingMatches(
+                    currentApproval,
+                    context.executableApproval.binding,
+                  )
+                ) {
+                  return yield* recordNoEffectDenial(
+                    definition.sideEffectSemantics,
+                    regions,
+                    "ApprovalMismatch",
+                  );
+                }
+                return {
+                  _tag: "ApprovalRequired" as const,
+                  authority: resolvedAuthority,
+                  targetResourceSpaceIds: regions.map(
+                    (region) => region.resourceSpaceId,
                   ),
-                );
-              if (Option.isNone(recorded)) {
+                  actionDigest: actionDigestOf(intent),
+                  requestedCapabilities: definition.capabilityMetadata,
+                  sideEffectSemantics: definition.sideEffectSemantics,
+                  controlBasisDigest: context.controlBasisDigest,
+                };
+              }
+              if (currentApproval.state === "Cancelled") {
+                return { _tag: "Interrupted" as const };
+              }
+              if (
+                currentApproval.state === "Rejected" ||
+                currentApproval.state === "Expired" ||
+                currentApproval.expiresAt <= now
+              ) {
                 return yield* recordNoEffectDenial(
                   definition.sideEffectSemantics,
                   regions,
-                  "ApprovalConsumedByOtherInvocation",
+                  currentApproval.expiresAt <= now ||
+                    currentApproval.state === "Expired"
+                    ? "ApprovalExpired"
+                    : "ApprovalMismatch",
                 );
               }
-              approvalAlreadyConsumedBySelf = true;
+              if (
+                currentApproval.state === "Consumed" &&
+                currentApproval.consumedBy === intent.invocationId
+              ) {
+                const priorInvocation = yield* tx
+                  .transact(store.findById(intent.invocationId))
+                  .pipe(
+                    Effect.mapError(
+                      operationalFailure(
+                        "ApprovalLookup",
+                        String(intent.invocationId),
+                      ),
+                    ),
+                  );
+                if (Option.isSome(priorInvocation)) {
+                  approvalAlreadyConsumedBySelf = true;
+                }
+              }
             }
-            const matched = matchApproval({
-              approval: approval.value,
-              intent,
-              definition,
-              context,
-              regions,
-              now,
-              replayOfRecordedInvocation: approvalAlreadyConsumedBySelf,
-            });
-            if (matched._tag === "Denied") {
+            if (
+              Option.isNone(exactExecutableApproval) ||
+              exactExecutableApproval.value.routeKind !== "Executable" ||
+              (exactExecutableApproval.value.state !==
+                context.executableApproval.state &&
+                !approvalAlreadyConsumedBySelf) ||
+              !(
+                (exactExecutableApproval.value.state === "Approved" &&
+                  exactExecutableApproval.value.revision ===
+                    context.executableApproval.expectedRevision) ||
+                (approvalAlreadyConsumedBySelf &&
+                  exactExecutableApproval.value.state === "Consumed" &&
+                  exactExecutableApproval.value.revision ===
+                    context.executableApproval.expectedRevision + 1)
+              ) ||
+              exactExecutableApproval.value.expiresAt <= now ||
+              !executableApprovalBindingMatches(
+                exactExecutableApproval.value,
+                context.executableApproval.binding,
+              )
+            ) {
               return yield* recordNoEffectDenial(
                 definition.sideEffectSemantics,
                 regions,
-                approvalDenialCode(matched.reason),
+                exactExecutableApproval._tag === "Some" &&
+                  exactExecutableApproval.value.expiresAt <= now
+                  ? "ApprovalExpired"
+                  : "ApprovalMismatch",
+              );
+            }
+            if (intent.approvalId !== null) {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                "ApprovalMismatch",
               );
             }
           }
@@ -768,7 +869,8 @@ export const ToolRuntimeLive = (
               sideEffectSemantics: definition.sideEffectSemantics,
               argumentsJson: intent.argumentsJson,
               resolvedRegions: regions,
-              approvalId: intent.approvalId,
+              approvalId:
+                context.executableApproval?.approvalId ?? intent.approvalId,
               intentAt: now,
             } as const;
             const claimStopped = { _tag: "AH7ClaimStopped" as const };
@@ -784,7 +886,37 @@ export const ToolRuntimeLive = (
                   if (recordedIntent === "ExecutionStopping") {
                     return "ExecutionStopping" as const;
                   }
-                  if (needsApproval && intent.approvalId !== null) {
+                  if (
+                    needsApproval &&
+                    context.executableApproval !== undefined &&
+                    Option.isSome(executableApprovals)
+                  ) {
+                    if (context.executionFence === undefined) {
+                      return yield* Effect.fail(
+                        operationalFailure(
+                          "ApprovalLookup",
+                          String(intent.invocationId),
+                        )({ _tag: "ExecutableApprovalFenceUnavailable" }),
+                      );
+                    }
+                    if (approvalAlreadyConsumedBySelf) {
+                      return "Claimed" as const;
+                    }
+                    const consumed =
+                      yield* executableApprovals.value.consumeApproved({
+                        approvalId: context.executableApproval.approvalId,
+                        expectedRevision:
+                          context.executableApproval.expectedRevision,
+                        consumedBy: intent.invocationId,
+                        consumedAt: now,
+                        binding: context.executableApproval.binding,
+                        executionFence: context.executionFence,
+                      });
+                    if (consumed === "ExecutionStopping") {
+                      return yield* Effect.fail(claimStopped);
+                    }
+                    if (!consumed) return yield* Effect.fail(approvalClaimLost);
+                  } else if (needsApproval && intent.approvalId !== null) {
                     const consumed = yield* store.consumeApproval(
                       intent.approvalId,
                       intent.invocationId,

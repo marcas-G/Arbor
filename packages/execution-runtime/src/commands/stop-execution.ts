@@ -23,7 +23,7 @@ export interface StopExecutionResult {
 
 export interface StopExecutionDependencies {
   readonly executions: ExecutionRepositoryService;
-  readonly executableApprovals: Pick<
+  readonly executableApprovals?: Pick<
     ExecutableApprovalStoreService,
     "cancelForExecution"
   >;
@@ -84,7 +84,9 @@ export const makeStopExecutionHandler = (
           },
           {
             executions: dependencies.executions,
-            approvals: dependencies.executableApprovals,
+            approvals: dependencies.executableApprovals ?? {
+              cancelForExecution: () => Effect.succeed([]),
+            },
           },
         );
       const stopEvent: PendingDomainEvent | undefined = firstStop

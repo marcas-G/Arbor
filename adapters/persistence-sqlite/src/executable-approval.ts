@@ -2,6 +2,7 @@ import type { Actor, Principal, ToolInvocationId } from "@arbor/domain";
 import {
   DomainEventJournal,
   type ExecutableApprovalBinding,
+  type ExecutableApprovalConsumptionReceipt,
   type ExecutableApprovalKey,
   type ExecutableApprovalRecord,
   type ExecutableApprovalRequest,
@@ -119,6 +120,30 @@ const immutableBindingOf = (
   controlBasisDigest: row.controlBasisDigest,
 });
 
+const consumptionReceiptOf = (
+  record: ExecutableApprovalRecord,
+  preConsumeRevision: number,
+): ExecutableApprovalConsumptionReceipt => {
+  const binding = immutableBindingOf(record);
+  const digestInput = {
+    approvalId: record.approvalId,
+    preConsumeRevision,
+    consumedRevision: record.revision,
+    binding,
+    expiresAt: record.expiresAt,
+    consumedBy: record.consumedBy,
+  };
+  return {
+    approvalId: record.approvalId,
+    preConsumeRevision,
+    consumedRevision: record.revision,
+    approvalDigest: sha256Hex(JSON.stringify(digestInput)),
+    binding,
+    expiresAt: record.expiresAt,
+    consumedBy: record.consumedBy as ToolInvocationId,
+  };
+};
+
 const keyWhere =
   "route_kind = 'Executable' AND binding_proven = 1 AND execution_id = ? AND logical_step_no = ? AND repair_attempt = ? AND action_index = ? AND logical_action_id = ?";
 
@@ -183,6 +208,19 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
           );
         }
         return Option.some(toApproval(row));
+      });
+
+    const findById = (approvalId: string) =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        const rows = yield* run(
+          sql.unsafe<ApprovalRow>(
+            "SELECT * FROM action_approvals WHERE approval_id = ? AND route_kind = 'Executable' AND binding_proven = 1",
+            [approvalId],
+          ),
+        );
+        const row = rows[0];
+        return row === undefined ? Option.none() : Option.some(toApproval(row));
       });
 
     const validateWorkerAndAction = (
@@ -305,6 +343,147 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
 
     return ExecutableApprovalStore.of({
       findByActionKey,
+      findById,
+      decide: (input) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const before = yield* findById(input.approvalId);
+          if (Option.isNone(before)) return Option.none();
+          const changed = yield* run(
+            sql.unsafe<ApprovalRow>(
+              `UPDATE action_approvals
+                  SET state = ?, revision = revision + 1, decided_at = ?,
+                      decided_by = ?, decision_reason = ?
+                WHERE approval_id = ? AND route_kind = 'Executable'
+                  AND binding_proven = 1 AND revision = ? AND state = 'Pending'
+                RETURNING *`,
+              [
+                input.decision === "Approve" ? "Approved" : "Rejected",
+                input.decidedAt,
+                input.decidedBy,
+                input.reason,
+                input.approvalId,
+                input.expectedRevision,
+              ],
+            ),
+          );
+          const row = changed[0];
+          if (row === undefined) return Option.none();
+          const record = toApproval(row);
+          const inboxKey = `eap:${record.approvalId}:${input.expectedRevision}`;
+          const inboxRows = yield* run(
+            sql.unsafe<{ consumed_at: string | null }>(
+              "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
+              [record.workspaceId, inboxKey],
+            ),
+          );
+          if (inboxRows.length !== 1 || inboxRows[0]?.consumed_at !== null) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "ToolInvocationStore",
+                "executable-approval-decide",
+                "approval decision has no exact unconsumed Inbox entry",
+              ),
+            );
+          }
+          yield* inbox
+            .markConsumed(record.workspaceId, inboxKey)
+            .pipe(Effect.mapError(failure));
+          yield* journal
+            .append([
+              {
+                projectId: record.projectId,
+                eventType: "ExecutableApprovalResolved",
+                eventVersion: 1,
+                occurredAt: input.decidedAt,
+                aggregateRef: record.approvalId,
+                actor: input.decidedBy as unknown as Actor,
+                causedByCommandId: input.commandId,
+                correlationRef: record.logicalActionId,
+                payload: {
+                  approvalId: record.approvalId,
+                  routeKind: "Executable",
+                  executionId: record.executionId,
+                  workspaceId: record.workspaceId,
+                  logicalActionId: record.logicalActionId,
+                  toolInvocationId: record.toolInvocationId,
+                  revision: record.revision,
+                  resolution: record.state,
+                },
+              },
+            ])
+            .pipe(
+              Effect.provideService(IdGenerator, ids),
+              Effect.mapError(failure),
+            );
+          return Option.some(record);
+        }),
+      consumeApproved: (input) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const current = yield* findById(input.approvalId);
+          if (Option.isNone(current)) return false;
+          const record = current.value;
+          if (
+            !executableApprovalBindingMatches(
+              immutableBindingOf(record),
+              input.binding,
+            )
+          ) {
+            return false;
+          }
+          if (
+            record.state === "Consumed" &&
+            record.consumedBy === input.consumedBy &&
+            record.revision === input.expectedRevision + 1
+          ) {
+            const invocation = yield* run(
+              sql.unsafe<{ invocation_id: string }>(
+                "SELECT invocation_id FROM tool_invocations WHERE invocation_id = ? AND execution_id = ?",
+                [input.consumedBy, record.executionId],
+              ),
+            );
+            return invocation.length === 1
+              ? consumptionReceiptOf(record, input.expectedRevision)
+              : false;
+          }
+          if (
+            record.state !== "Approved" ||
+            record.revision !== input.expectedRevision ||
+            record.expiresAt <= input.consumedAt
+          ) {
+            return false;
+          }
+          const ready = yield* validateWorkerAndAction({
+            ...input.binding,
+            approvalId: input.approvalId,
+            requestedAt: input.consumedAt,
+            expiresAt: record.expiresAt,
+            executionFence: input.executionFence,
+          });
+          if (ready === "ExecutionStopping") return ready;
+          const consumed = yield* run(
+            sql.unsafe<ApprovalRow>(
+              `UPDATE action_approvals
+                  SET state = 'Consumed', revision = revision + 1,
+                      consumed_at = ?, consumed_by = ?
+                WHERE approval_id = ? AND route_kind = 'Executable'
+                  AND binding_proven = 1 AND revision = ?
+                  AND state = 'Approved' AND consumed_by IS NULL
+                RETURNING *`,
+              [
+                input.consumedAt,
+                input.consumedBy,
+                input.approvalId,
+                input.expectedRevision,
+              ],
+            ),
+          );
+          const row = consumed[0];
+          return row === undefined
+            ? false
+            : consumptionReceiptOf(toApproval(row), input.expectedRevision);
+        }),
       putPendingExact: (request) =>
         Effect.gen(function* () {
           yield* TransactionScope;

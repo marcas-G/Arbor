@@ -89,7 +89,7 @@ import {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P37_MIGRATIONS,
+  P38_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -736,8 +736,10 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(repos, infra),
   );
   const executableInvocation = Layer.provide(
-    ExecutableToolHandlerLive,
-    Layer.mergeAll(toolRuntime, infra, toolCatalog, repos),
+    ExecutableToolHandlerLive(
+      config.governance ?? { authenticatedHumans: [], directParentOf: [] },
+    ),
+    Layer.mergeAll(toolRuntime, infra, toolCatalog, repos, authorityResolver),
   );
   const turnProfiles = Layer.provide(
     TurnProfileResolverLive,
@@ -962,6 +964,6 @@ export {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P37_MIGRATIONS as CURRENT_MIGRATIONS,
+  P38_MIGRATIONS as CURRENT_MIGRATIONS,
   runMigrations,
 };

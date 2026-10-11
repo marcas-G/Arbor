@@ -3,11 +3,22 @@ import type {
   ExecutableInvocationHandler,
   ExecutableInvocationOutcome,
 } from "@arbor/agent-runtime";
+import type { ParentUserGovernanceFacts } from "@arbor/application";
+import {
+  AuthorityResolverPort,
+  issueExecutableApproval,
+} from "@arbor/application";
 import { parse, ToolInvocationId } from "@arbor/domain";
 import {
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
+  type ExecutableApprovalBinding,
+  ExecutableApprovalStore,
+  type ExecutableApprovalStoreService,
+  executableApprovalBindingMatches,
+  type InvocationAuthority,
+  PermissionGrantRepository,
   sha256Hex,
   ToolCatalogPort,
   type ToolCatalogPortService,
@@ -17,6 +28,7 @@ import {
   ToolInvocationStore,
   ToolRuntimePort,
   TransactionPort,
+  WorkspaceRepository,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
 
@@ -31,7 +43,10 @@ const bounded = (text: string, limit = 2000): BoundedObservation => ({
 });
 
 export const toExecutableOutcome = (
-  result: CanonicalToolObservation,
+  result: Exclude<
+    CanonicalToolObservation,
+    { readonly _tag: "ApprovalRequired" }
+  >,
 ): ExecutableInvocationOutcome => {
   switch (result._tag) {
     case "Success":
@@ -113,8 +128,29 @@ export const makeExecutableToolHandler = (
   legacyLookup?: (
     id: ToolInvocationId,
   ) => Effect.Effect<Option.Option<ToolInvocationRecord>, unknown>,
+  approvalDependencies?: {
+    readonly store: ExecutableApprovalStoreService;
+    readonly transaction: import("@arbor/ports").TransactionPortService;
+    readonly resolveCandidate: (input: {
+      readonly binding: ExecutableApprovalBinding;
+      readonly authority: InvocationAuthority;
+      readonly requestedAt: string;
+      readonly requestedCapabilities: ReadonlyArray<string>;
+      readonly delegationDepth: number;
+    }) => Effect.Effect<
+      { readonly approvalId: string; readonly expiresAt: string },
+      unknown
+    >;
+  },
 ): ExecutableInvocationHandler => ({
-  handle: ({ invocation, execution, context, controlBasis }) =>
+  handle: ({
+    invocation,
+    execution,
+    context,
+    controlBasis,
+    action,
+    executionFence: actionFence,
+  }) =>
     Effect.gen(function* () {
       const requestedAt = yield* clock.now();
       const executionFence =
@@ -186,6 +222,29 @@ export const makeExecutableToolHandler = (
         invocationId,
         approvalId: null,
       };
+      let currentApproval:
+        | import("@arbor/ports").ExecutableApprovalRecord
+        | undefined;
+      if (action !== undefined && approvalDependencies !== undefined) {
+        const existing = yield* approvalDependencies.transaction
+          .transact(
+            approvalDependencies.store.findByActionKey({
+              executionId: execution.executionId,
+              logicalStepNo: action.logicalStepNo,
+              repairAttempt: action.repairAttempt,
+              actionIndex: action.actionIndex,
+              logicalActionId: action.logicalActionId,
+            }),
+          )
+          .pipe(
+            Effect.mapError((cause) => ({
+              _tag: "AgentActionOperationalFailure" as const,
+              operation: "ExecutableApprovalReplayLookup",
+              cause,
+            })),
+          );
+        if (Option.isSome(existing)) currentApproval = existing.value;
+      }
       const controlBasisDigest = sha256Hex(JSON.stringify(controlBasis));
       const toolContext: ToolExecutionContext = {
         executionId: execution.executionId,
@@ -199,6 +258,19 @@ export const makeExecutableToolHandler = (
         delegationDepth:
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,
+        ...(currentApproval === undefined
+          ? {}
+          : {
+              executableApproval: {
+                approvalId: currentApproval.approvalId,
+                expectedRevision:
+                  currentApproval.state === "Consumed"
+                    ? currentApproval.revision - 1
+                    : currentApproval.revision,
+                state: currentApproval.state,
+                binding: currentApproval,
+              },
+            }),
       };
       const invoked = yield* Effect.match(tools.invoke(intent, toolContext), {
         onFailure: (cause) => ({ ok: false as const, cause }),
@@ -234,6 +306,97 @@ export const makeExecutableToolHandler = (
         });
       }
       const result = invoked.value;
+      if (result._tag === "ApprovalRequired") {
+        if (
+          action === undefined ||
+          actionFence === undefined ||
+          approvalDependencies === undefined
+        ) {
+          return yield* Effect.fail({
+            _tag: "AgentActionOperationalFailure" as const,
+            operation: "ExecutableApproval.P3BindingUnavailable",
+            cause:
+              "P4 requested approval without a durable P3 action identity and lease fence",
+          });
+        }
+        const binding: ExecutableApprovalBinding = {
+          projectId: execution.projectId,
+          workspaceId: execution.workspaceId,
+          executionId: execution.executionId,
+          subject: context.principal,
+          logicalStepNo: action.logicalStepNo,
+          repairAttempt: action.repairAttempt,
+          actionIndex: action.actionIndex,
+          logicalActionId: action.logicalActionId,
+          callRef: invocation.callRef,
+          toolInvocationId: intent.invocationId,
+          toolName: invocation.toolName,
+          toolVersion,
+          sideEffectSemantics: result.sideEffectSemantics,
+          argumentsJson: invocation.argumentsJson,
+          actionDigest: result.actionDigest,
+          targetResourceSpaceIds: result.targetResourceSpaceIds,
+          controlBasisDigest: result.controlBasisDigest,
+        };
+        const issued = yield* issueExecutableApproval(
+          {
+            binding,
+            authority: result.authority,
+            requestedAt,
+            executionFence: actionFence,
+          },
+          {
+            store: approvalDependencies.store,
+            transaction: approvalDependencies.transaction,
+            resolveCandidate: (candidateBinding, candidateRequestedAt) =>
+              approvalDependencies
+                .resolveCandidate({
+                  binding: candidateBinding,
+                  authority: result.authority,
+                  requestedAt: candidateRequestedAt,
+                  requestedCapabilities: result.requestedCapabilities,
+                  delegationDepth:
+                    execution.binding._tag === "ExecutionBoundAgentBinding"
+                      ? 1
+                      : 0,
+                })
+                .pipe(
+                  Effect.mapError((cause) => ({
+                    _tag: "AgentActionOperationalFailure" as const,
+                    operation: "ExecutableApproval.P12Resolve",
+                    cause,
+                  })),
+                ),
+          },
+        ).pipe(
+          Effect.mapError((cause) => ({
+            _tag: "AgentActionOperationalFailure" as const,
+            operation: "ExecutableApproval.Issue",
+            cause,
+          })),
+        );
+        if (issued === "ExecutionStopping") {
+          return {
+            _tag: "Observation",
+            source: "Runtime",
+            observation: bounded("tool invocation interrupted"),
+            status: "Interrupted",
+            disposition: "ExecutionStopping",
+          };
+        }
+        if (!executableApprovalBindingMatches(issued, binding)) {
+          return yield* Effect.fail({
+            _tag: "AgentActionOperationalFailure" as const,
+            operation: "ExecutableApproval.BindingConflict",
+            cause: { _tag: "ExecutableApprovalBindingConflict" },
+          });
+        }
+        return {
+          _tag: "ApprovalRequired",
+          approvalId: issued.approvalId,
+          revision: issued.revision,
+        };
+      }
       const outcome = toExecutableOutcome(result);
       return outcome._tag === "Observation"
         ? { ...outcome, invocationId: intent.invocationId }
@@ -241,26 +404,101 @@ export const makeExecutableToolHandler = (
     }),
 });
 
-export const ExecutableToolHandlerLive: Layer.Layer<
+export const ExecutableToolHandlerLive = (
+  governance: ParentUserGovernanceFacts = {
+    authenticatedHumans: [],
+    directParentOf: [],
+  },
+): Layer.Layer<
   ExecutableToolHandler,
   never,
   | ToolRuntimePort
   | Clock
   | ToolCatalogPort
   | ToolInvocationStore
+  | ExecutableApprovalStore
   | TransactionPort
-> = Layer.effect(
-  ExecutableToolHandler,
-  Effect.gen(function* () {
-    const tools = yield* ToolRuntimePort;
-    const clock = yield* Clock;
-    const catalog = yield* ToolCatalogPort;
-    const invocations = yield* ToolInvocationStore;
-    const tx = yield* TransactionPort;
-    return ExecutableToolHandler.of(
-      makeExecutableToolHandler(tools, clock, catalog, (id) =>
-        tx.transact(invocations.findById(id)),
-      ),
-    );
-  }),
-);
+  | AuthorityResolverPort
+  | PermissionGrantRepository
+  | WorkspaceRepository
+> =>
+  Layer.effect(
+    ExecutableToolHandler,
+    Effect.gen(function* () {
+      const tools = yield* ToolRuntimePort;
+      const clock = yield* Clock;
+      const catalog = yield* ToolCatalogPort;
+      const invocations = yield* ToolInvocationStore;
+      const approvals = yield* ExecutableApprovalStore;
+      const tx = yield* TransactionPort;
+      const authorityResolver = yield* AuthorityResolverPort;
+      const grants = yield* PermissionGrantRepository;
+      const workspaces = yield* WorkspaceRepository;
+      return ExecutableToolHandler.of(
+        makeExecutableToolHandler(
+          tools,
+          clock,
+          catalog,
+          (id) => tx.transact(invocations.findById(id)),
+          {
+            store: approvals,
+            transaction: tx,
+            resolveCandidate: (input) =>
+              Effect.gen(function* () {
+                const snapshot = yield* tx.transact(
+                  Effect.gen(function* () {
+                    const workspace = yield* workspaces.findById(
+                      input.binding.workspaceId,
+                    );
+                    const activeGrants = yield* grants.activeGrants(
+                      input.binding.projectId,
+                    );
+                    return { workspace, activeGrants };
+                  }),
+                );
+                if (Option.isNone(snapshot.workspace)) {
+                  return yield* Effect.fail({
+                    _tag: "ExecutableApprovalAuthorityResolutionFailed",
+                    reason:
+                      "workspace disappeared before P12 approval resolution",
+                  });
+                }
+                const candidate = yield* authorityResolver.resolveApproval({
+                  principal: input.authority.principal,
+                  projectId: input.binding.projectId,
+                  workspaceId: input.binding.workspaceId,
+                  executionId: input.binding.executionId,
+                  intent: {
+                    toolName: input.binding.toolName,
+                    toolVersion: input.binding.toolVersion,
+                    argumentsJson: input.binding.argumentsJson,
+                    actionDigest: input.binding.actionDigest,
+                    sideEffectSemantics: input.binding.sideEffectSemantics,
+                    requestedCapabilities: input.requestedCapabilities,
+                    resolvedRegions: input.binding.targetResourceSpaceIds,
+                  },
+                  controlBasisDigest: input.binding.controlBasisDigest,
+                  grants: snapshot.activeGrants,
+                  governance,
+                  policy: snapshot.workspace.value.workspacePolicy,
+                  delegationDepth: input.delegationDepth,
+                  now: input.requestedAt,
+                  approvalIdentity: {
+                    logicalStepNo: input.binding.logicalStepNo,
+                    repairAttempt: input.binding.repairAttempt,
+                    actionIndex: input.binding.actionIndex,
+                    logicalActionId: input.binding.logicalActionId,
+                    callRef: input.binding.callRef,
+                    toolInvocationId: input.binding.toolInvocationId,
+                  },
+                });
+                return {
+                  approvalId: candidate.approvalId,
+                  expiresAt: candidate.expiresAt,
+                };
+              }),
+          },
+        ),
+      );
+    }),
+  );

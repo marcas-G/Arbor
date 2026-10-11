@@ -5,7 +5,7 @@ import {
   ExecutableApprovalStoreLive,
   InboxProjectionStoreLive,
   layer,
-  P36_MIGRATIONS,
+  P38_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
 } from "../../../adapters/persistence-sqlite/src/index.js";
@@ -15,8 +15,8 @@ import {
   TransactionPort,
 } from "../../../packages/ports/src/index.js";
 
-describe("EA-DG-01 SQLite approval-store red boundary", () => {
-  it("reads an exact logical-action approval from the registered P36 schema", async () => {
+describe("EA-DG-01 SQLite approval store", () => {
+  it("reads an exact logical-action approval from the cumulative P38 schema", async () => {
     const db = layer({ filename: ":memory:" });
     const ids = Layer.succeed(IdGenerator, {
       generate: <T>(_kind: string) => Effect.succeed("id_test" as T),
@@ -40,7 +40,7 @@ describe("EA-DG-01 SQLite approval-store red boundary", () => {
     );
 
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
+      yield* runMigrations(P38_MIGRATIONS);
       const tx = yield* TransactionPort;
       const approvals = yield* ExecutableApprovalStore;
       return yield* tx.transact(
@@ -57,8 +57,6 @@ describe("EA-DG-01 SQLite approval-store red boundary", () => {
     const result = await Effect.runPromise(
       Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
     );
-    // Expected RED at the P36 checkpoint: the store queries the 0038 binding
-    // columns, which do not exist before 0038. No P37 schema is simulated here.
     expect(Option.isNone(result as Option.Option<unknown>)).toBe(true);
   });
 });

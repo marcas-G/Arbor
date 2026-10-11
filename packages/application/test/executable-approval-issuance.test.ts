@@ -92,6 +92,9 @@ describe("Executable approval issuance", () => {
     });
     const store: ExecutableApprovalStoreService = {
       findByActionKey: () => Effect.succeed(Option.none()),
+      findById: () => Effect.succeed(Option.none()),
+      decide: () => Effect.succeed(Option.none()),
+      consumeApproved: () => Effect.succeed(false),
       cancelForExecution: () => Effect.succeed([]),
       putPendingExact: (request) => {
         persisted = request;
@@ -156,6 +159,9 @@ describe("Executable approval issuance", () => {
     let pendingWrites = 0;
     const store: ExecutableApprovalStoreService = {
       findByActionKey: () => Effect.succeed(Option.some(committed)),
+      findById: () => Effect.succeed(Option.some(committed)),
+      decide: () => Effect.succeed(Option.none()),
+      consumeApproved: () => Effect.succeed(false),
       cancelForExecution: () => Effect.succeed([]),
       putPendingExact: () => {
         pendingWrites += 1;
@@ -208,6 +214,9 @@ describe("Executable approval issuance", () => {
     });
     const store: ExecutableApprovalStoreService = {
       findByActionKey: () => Effect.succeed(Option.some(committed)),
+      findById: () => Effect.succeed(Option.some(committed)),
+      decide: () => Effect.succeed(Option.none()),
+      consumeApproved: () => Effect.succeed(false),
       cancelForExecution: () => Effect.succeed([]),
       putPendingExact: () => Effect.die("must not write on binding conflict"),
     };

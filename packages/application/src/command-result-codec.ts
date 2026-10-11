@@ -399,6 +399,15 @@ const resultDecoders: ResultDecoderRegistry = {
         revision: nonNegativeInteger,
       }),
   },
+  ResolveExecutableApproval: {
+    "1": (value) =>
+      objectWith(value, {
+        approvalId: stringValue,
+        executionId: stringValue,
+        state: oneOf("Approved", "Rejected"),
+        revision: nonNegativeInteger,
+      }),
+  },
   SteerWork: {
     "1": (value) =>
       objectWith(value, {

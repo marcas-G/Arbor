@@ -1,7 +1,7 @@
-/** P38 EA-DG-01 migration body. Deliberately not included in
- * P4_MIGRATIONS/P36_MIGRATIONS until the 0037 prerequisite is integrated. The
- * runner must set foreign_keys=OFF before its migration transaction because
- * 0033 assigns a composite FK to action_approvals(approval_id, project_id). */
+/** P38 EA-DG-01 migration body. Registered only in the cumulative
+ * P38_MIGRATIONS prefix after 0037. The runner must set foreign_keys=OFF
+ * before its migration transaction because 0033 assigns a composite FK to
+ * action_approvals(approval_id, project_id). */
 export const P38_EXECUTABLE_APPROVAL_MIGRATION = {
   migrationVersion: 38,
   requiresUserVersion: 37,

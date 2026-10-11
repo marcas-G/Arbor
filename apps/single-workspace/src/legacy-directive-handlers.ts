@@ -86,6 +86,11 @@ const toOutcome = (
       };
     case "Denied":
       return observation("Runtime", `tool denied: ${result.reason}`);
+    case "ApprovalRequired":
+      return observation(
+        "Runtime",
+        "executable approval handoff requires the AgentLoop action route",
+      );
     case "Interrupted":
       return observation("Runtime", "tool invocation interrupted");
     case "OutcomeUnknown":

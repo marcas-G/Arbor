@@ -1,4 +1,5 @@
 import type { MigrationFile } from "./migrate.js";
+import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "./p38-executable-approval-migration.js";
 
 const DDL = `
 CREATE TABLE projects (
@@ -2062,5 +2063,17 @@ export const P37_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     id: 37,
     name: "ah10_deliver_replay_attention_rows",
     sql: P37_DELIVER_REPLAY_DDL,
+  },
+];
+
+/** EA-DG-01 P38 forward migration. P37/0037 must already be present in the
+ * cumulative prefix; the runner preserves the accepted FK-off rebuild. */
+export const P38_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P37_MIGRATIONS,
+  {
+    id: P38_EXECUTABLE_APPROVAL_MIGRATION.migrationVersion,
+    name: "executable_approval_handoff",
+    sql: P38_EXECUTABLE_APPROVAL_MIGRATION.sql,
+    foreignKeysOff: P38_EXECUTABLE_APPROVAL_MIGRATION.foreignKeysOff,
   },
 ];

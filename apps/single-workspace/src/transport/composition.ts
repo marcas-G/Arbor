@@ -40,6 +40,7 @@ import type {
 import {
   AttentionProjectionStore,
   Clock,
+  ExecutableApprovalStore,
   ExecutionRepository,
   ExecutionScheduler,
   IdGenerator,
@@ -132,18 +133,31 @@ export const makeRepositoryInputsLoader = (
     const executions = yield* ExecutionRepository;
     const works = yield* WorkRepository;
     const grants = yield* PermissionGrantRepository;
+    const executableApprovals = yield* Effect.serviceOption(
+      ExecutableApprovalStore,
+    );
 
     return (envelope: DecodedExternalCommandEnvelope) =>
       Effect.gen(function* () {
         const projectId = envelope.projectId;
         const payload = envelope.payload;
+        const approvalId = payloadString(payload, "approvalId");
+        const executableApproval =
+          approvalId === null || Option.isNone(executableApprovals)
+            ? Option.none()
+            : yield* tx.transact(
+                executableApprovals.value.findById(approvalId),
+              );
         const workspaceId = (payloadString(payload, "workspaceId") ??
           payloadString(payload, "targetWorkspaceId") ??
-          payloadString(payload, "parentWorkspaceId")) as WorkspaceId | null;
-        const executionId = payloadString(
-          payload,
-          "executionId",
-        ) as ExecutionId | null;
+          payloadString(payload, "parentWorkspaceId") ??
+          (Option.isSome(executableApproval)
+            ? executableApproval.value.workspaceId
+            : null)) as WorkspaceId | null;
+        const executionId = (payloadString(payload, "executionId") ??
+          (Option.isSome(executableApproval)
+            ? executableApproval.value.executionId
+            : null)) as ExecutionId | null;
         const workId = payloadString(payload, "workId") as WorkId | null;
 
         const workspace =
@@ -191,6 +205,18 @@ export const makeRepositoryInputsLoader = (
                   projectId: work.value.projectId,
                   workspaceId: work.value.workspaceId,
                   lifecycle: work.value.lifecycle,
+                },
+              }
+            : {}),
+          ...(Option.isSome(executableApproval)
+            ? {
+                executableApproval: {
+                  approvalId: executableApproval.value.approvalId,
+                  projectId: executableApproval.value.projectId,
+                  workspaceId: executableApproval.value.workspaceId,
+                  executionId: executableApproval.value.executionId,
+                  state: executableApproval.value.state,
+                  revision: executableApproval.value.revision,
                 },
               }
             : {}),

@@ -68,6 +68,14 @@ export interface CanonicalAuthorityFacts {
   readonly workspace?: CanonicalWorkspaceSnapshot;
   readonly execution?: CanonicalExecutionSnapshot;
   readonly work?: CanonicalWorkSnapshot;
+  readonly executableApproval?: {
+    readonly approvalId: string;
+    readonly projectId: ProjectId;
+    readonly workspaceId: WorkspaceId;
+    readonly executionId: ExecutionId;
+    readonly state: string;
+    readonly revision: number;
+  };
 }
 
 /** P12 `02` §2: parent/child/user override facts (SD §8.1 authority model).
@@ -101,6 +109,7 @@ export interface AuthorityDecisionInput {
  * carries. */
 export interface InvocationDecisionInput {
   readonly principal: AuthenticatedPrincipal;
+  readonly projectId?: ProjectId;
   readonly workspaceId: WorkspaceId;
   readonly executionId: ExecutionId;
   readonly intent: {
@@ -108,6 +117,7 @@ export interface InvocationDecisionInput {
     readonly toolVersion: string;
     readonly argumentsJson: string;
     readonly actionDigest: string;
+    readonly sideEffectSemantics?: import("@arbor/ports").SideEffectSemantics;
     readonly requestedCapabilities: ReadonlyArray<string>;
     readonly resolvedRegions: ReadonlyArray<string>;
   };
@@ -116,6 +126,14 @@ export interface InvocationDecisionInput {
   readonly governance: ParentUserGovernanceFacts;
   readonly policy: ProjectPolicy | WorkspacePolicy;
   readonly delegationDepth: number;
+  readonly approvalIdentity?: {
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly actionIndex: number;
+    readonly logicalActionId: string;
+    readonly callRef: string;
+    readonly toolInvocationId: import("@arbor/domain").ToolInvocationId;
+  };
   /** Canonical runtime role projected from durable execution binding. */
   readonly executionRole?: "Verifier";
   readonly now: string;
@@ -226,6 +244,13 @@ const payloadRecord = (payload: unknown): Record<string, unknown> =>
 const payloadString = (payload: unknown, key: string): string | null => {
   const value = payloadRecord(payload)[key];
   return typeof value === "string" ? value : null;
+};
+
+const payloadNumber = (payload: unknown, key: string): number | null => {
+  const value = payloadRecord(payload)[key];
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? value
+    : null;
 };
 
 const isAuthenticatedHuman = (input: {
@@ -606,6 +631,37 @@ const governanceCommandFact = (
         approvalId,
       });
     }
+    case "ResolveExecutableApproval": {
+      const approvalId = payloadString(payload, "approvalId");
+      const expectedRevision = payloadNumber(payload, "expectedRevision");
+      const approval = input.canonicalFacts.executableApproval;
+      if (
+        !isAuthenticatedHuman({ principal, governance: input.governance }) ||
+        approvalId === null ||
+        expectedRevision === null ||
+        approval === undefined ||
+        approval.approvalId !== approvalId ||
+        approval.projectId !== projectId ||
+        approval.state !== "Pending" ||
+        approval.revision !== expectedRevision
+      ) {
+        return Effect.fail(
+          denyCommand(input, "ResolveExecutableApproval", "Denied"),
+        );
+      }
+      const error = guarded("ResolveExecutableApproval", approval.workspaceId);
+      if (error !== null) return Effect.fail(error);
+      return Effect.succeed({
+        _tag: "ExecutableApprovalDecisionAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        approvalId,
+        workspaceId: approval.workspaceId,
+        executionId: approval.executionId,
+      });
+    }
     case "SteerWork": {
       // P6 `04`: human steer — the fact binds the exact workspace + work.
       const steerWorkspaceId = payloadString(
@@ -835,17 +891,29 @@ const resolveInvocation = (
   });
 
 const deterministicApprovalId = (input: InvocationDecisionInput): string =>
-  [
-    "apr",
-    input.principal,
-    input.workspaceId,
-    input.executionId,
-    input.intent.toolName,
-    input.intent.toolVersion,
-    input.intent.actionDigest,
-    input.controlBasisDigest,
-    input.intent.resolvedRegions.join(","),
-  ].join(":");
+  input.approvalIdentity === undefined
+    ? [
+        "apr",
+        input.principal,
+        input.workspaceId,
+        input.executionId,
+        input.intent.toolName,
+        input.intent.toolVersion,
+        input.intent.actionDigest,
+        input.controlBasisDigest,
+        input.intent.resolvedRegions.join(","),
+      ].join(":")
+    : [
+        "eap",
+        input.projectId ?? "unknown-project",
+        input.executionId,
+        input.approvalIdentity.logicalStepNo,
+        input.approvalIdentity.repairAttempt,
+        input.approvalIdentity.actionIndex,
+        input.approvalIdentity.logicalActionId,
+        input.approvalIdentity.callRef,
+        input.approvalIdentity.toolInvocationId,
+      ].join(":");
 
 const resolveApproval = (
   input: InvocationDecisionInput,
