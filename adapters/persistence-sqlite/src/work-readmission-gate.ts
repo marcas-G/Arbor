@@ -160,29 +160,26 @@ const exactEpisode = (
 };
 
 const runtimeSafetyStop = (row: ExecutionRow): boolean => {
-  if (row.settled_at === null || row.settlement_kind === null) return false;
+  if (row.settled_at === null || row.settlement_kind !== "Interrupted")
+    return false;
   let value: Record<string, unknown> | null;
   try {
     value = record(decodeJson(row.settlement_json ?? ""));
   } catch {
-    if (row.settlement_kind === "Interrupted")
-      throw new Error("SettlementMalformed");
-    return false;
+    throw new Error("SettlementMalformed");
   }
-  if (value === null) {
-    if (row.settlement_kind === "Interrupted")
-      throw new Error("SettlementMalformed");
-    return false;
-  }
-  if (row.settlement_kind !== value._tag) {
+  if (value === null || value._tag !== "Interrupted") {
     throw new Error("SettlementMalformed");
   }
   const result = record(value.result);
-  return (
-    value._tag === "Interrupted" &&
-    result?._tag === "ControlledInterruption" &&
-    result.reason === "RuntimeSafetyStop"
-  );
+  if (result?._tag === "StopRequested") return false;
+  if (
+    result?._tag !== "ControlledInterruption" ||
+    typeof result.reason !== "string"
+  ) {
+    throw new Error("SettlementMalformed");
+  }
+  return result.reason === "RuntimeSafetyStop";
 };
 
 const outcomeUnknown = (row: ExecutionRow): boolean => {
@@ -200,7 +197,10 @@ const outcomeUnknown = (row: ExecutionRow): boolean => {
     value?._tag === "OutcomeUnknown" &&
     reconciliation?._tag === "ReconciliationRequired" &&
     Array.isArray(reconciliation.invocationRefs) &&
-    reconciliation.invocationRefs.length > 0;
+    reconciliation.invocationRefs.length > 0 &&
+    reconciliation.invocationRefs.every(
+      (ref) => typeof ref === "string" && ref.length > 0,
+    );
   if (!valid) throw new Error("SettlementMalformed");
   return true;
 };
@@ -459,12 +459,12 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
             ) {
               continue;
             }
-            const byAggregate = executionsById.get(event.aggregate_ref);
             let payload: Record<string, unknown> | null = null;
             try {
               payload = record(decodeJson(event.payload_json));
             } catch {
-              if (byAggregate !== undefined) {
+              const byAggregate = executionsById.get(event.aggregate_ref);
+              if (byAggregate?.workspace_id === input.workspaceId) {
                 return yield* Effect.fail(
                   makeIntegrity(
                     "SourceEventExecutionMismatch",
@@ -476,17 +476,28 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
               continue;
             }
             const executionId = payload?.executionId;
-            const candidateExecutionId =
-              typeof executionId === "string"
-                ? executionId
-                : byAggregate?.execution_id;
-            if (candidateExecutionId === undefined) continue;
-            const execution = executionsById.get(candidateExecutionId);
-            if (execution === undefined) {
-              if (event.aggregate_ref === candidateExecutionId) {
+            const payloadExecutionId =
+              typeof executionId === "string" ? executionId : undefined;
+            const aggregateExecution = executionsById.get(event.aggregate_ref);
+            const payloadExecution =
+              payloadExecutionId === undefined
+                ? undefined
+                : executionsById.get(payloadExecutionId);
+            const inRequestedWorkspace =
+              aggregateExecution?.workspace_id === input.workspaceId ||
+              payloadExecution?.workspace_id === input.workspaceId;
+            const identitiesMatch =
+              payloadExecutionId !== undefined &&
+              event.aggregate_ref === payloadExecutionId;
+            if (!identitiesMatch) {
+              if (inRequestedWorkspace) {
+                const candidateExecutionId =
+                  aggregateExecution?.workspace_id === input.workspaceId
+                    ? aggregateExecution.execution_id
+                    : (payloadExecution?.execution_id ?? event.aggregate_ref);
                 return yield* Effect.fail(
                   makeIntegrity(
-                    "SourceExecutionMissing",
+                    "SourceEventExecutionMismatch",
                     candidateExecutionId as ExecutionId,
                     "ReconciliationEscalationEvent",
                   ),
@@ -494,22 +505,27 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
               }
               continue;
             }
-            if (execution.workspace_id !== input.workspaceId) continue;
-            if (
-              event.aggregate_ref !== candidateExecutionId ||
-              executionId !== candidateExecutionId ||
-              Number(event.event_version) !== 1
-            ) {
+            if (!inRequestedWorkspace) continue;
+            if (Number(event.event_version) !== 1) {
               return yield* Effect.fail(
                 makeIntegrity(
                   "SourceEventExecutionMismatch",
-                  candidateExecutionId as ExecutionId,
+                  payloadExecutionId as ExecutionId,
+                  "ReconciliationEscalationEvent",
+                ),
+              );
+            }
+            if (payloadExecution === undefined) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceExecutionMissing",
+                  payloadExecutionId as ExecutionId,
                   "ReconciliationEscalationEvent",
                 ),
               );
             }
             candidates.push({
-              executionId: candidateExecutionId as ExecutionId,
+              executionId: payloadExecutionId as ExecutionId,
               kind: "ReconciliationEscalationEvent",
               event,
             });
