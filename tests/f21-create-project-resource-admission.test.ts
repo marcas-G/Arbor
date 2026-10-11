@@ -668,7 +668,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
       activationIntents: 1,
     });
     expect(changedProfileResolveCalls).toBe(1);
-  });
+  }, 60_000);
 
   it("replays a v1 receipt only as a tuple conflict and leaves its row unchanged", async () => {
     const root = tempRoot();

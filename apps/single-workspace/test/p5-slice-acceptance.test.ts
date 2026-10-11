@@ -437,7 +437,15 @@ describe("I0 executable/control vertical slice", () => {
     ).toMatchObject({
       command: "echo hello",
     });
-    expect(result.invocations[0]?.settlement_kind).toBe("Success");
+    expect(
+      result.invocations[0]?.settlement_kind,
+      JSON.stringify({
+        invocation: result.invocations[0],
+        observations: result.entries
+          .filter((entry) => entry.entry_kind === "Observation")
+          .map((entry) => JSON.parse(entry.payload_json) as unknown),
+      }),
+    ).toBe("Success");
     expect(
       JSON.parse(result.invocations[0]?.resolved_regions_json ?? "[]"),
     ).not.toHaveLength(0);
