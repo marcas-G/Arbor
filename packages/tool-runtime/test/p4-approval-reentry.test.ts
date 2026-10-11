@@ -10,6 +10,10 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  type ExecutableApprovalBinding,
+  type ExecutableApprovalRecord,
+  ExecutableApprovalStore,
+  type ExecutableApprovalStoreService,
   type InvocationApproval,
   ProjectEnvironmentPort,
   ResourceAdmission,
@@ -228,5 +232,250 @@ describe("P4 exact approval recovery for the same ToolInvocationId", () => {
     expect(intentWrites).toBe(0);
     expect(approvalConsumeAttempts).toBe(0);
     expect(settlementWrites).toBe(1);
+  });
+
+  it("replays the Runtime approvalId after claim commit and before effect admission", async () => {
+    const runtimeApprovalId = "eap_p4_same_invocation";
+    const p38Intent = { ...intent, approvalId: runtimeApprovalId };
+    const binding: ExecutableApprovalBinding = {
+      projectId,
+      workspaceId,
+      executionId,
+      logicalStepNo: 4,
+      repairAttempt: 0,
+      actionIndex: 0,
+      logicalActionId: "lac_p4_same_invocation",
+      subject: principal,
+      callRef: intent.callRef,
+      toolInvocationId: invocationId,
+      toolName: toolDefinition.name,
+      toolVersion: toolDefinition.version,
+      sideEffectSemantics: toolDefinition.sideEffectSemantics,
+      argumentsJson: intent.argumentsJson,
+      actionDigest: actionDigestOf(intent),
+      targetResourceSpaceIds: [],
+      controlBasisDigest: context.controlBasisDigest,
+    };
+    let approval: ExecutableApprovalRecord = {
+      ...binding,
+      approvalId: runtimeApprovalId,
+      routeKind: "Executable",
+      revision: 1,
+      requestedAt: "2026-10-05T00:00:00.000Z",
+      expiresAt: "2999-01-01T00:00:00.000Z",
+      state: "Approved",
+      decidedAt: "2026-10-05T00:00:01.000Z",
+      decidedBy: principal,
+      decisionReason: null,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancellationReason: null,
+      consumedAt: null,
+      consumedBy: null,
+    };
+    const executableContext: ToolExecutionContext = {
+      ...context,
+      authority: {
+        ...(context.authority as NonNullable<
+          ToolExecutionContext["authority"]
+        >),
+        sourceRevision: "authority-revision-p38",
+      },
+      executionFence: {
+        executionId,
+        workerId: "worker-p38",
+        workerIncarnationId: "incarnation-p38",
+        fencingGeneration: 7 as never,
+      },
+      executableApproval: {
+        approvalId: runtimeApprovalId,
+        expectedRevision: 1,
+        state: "Approved",
+        binding,
+      },
+    };
+    let recorded: ToolInvocationRecord | undefined;
+    let intentApprovalId: string | null = null;
+    let consumeCalls = 0;
+    let executorCalls = 0;
+    let settlementCalls = 0;
+    let interruptAfterClaim = true;
+    const executor: ToolExecutor = {
+      name: "read",
+      write: false,
+      requiresApproval: () => true,
+      execute: () => {
+        executorCalls += 1;
+        return Effect.succeed({
+          settlement: { _tag: "Success" },
+          observation: {
+            text: "recovered after approval claim",
+            truncated: false,
+          },
+          resultRef: null,
+        });
+      },
+    };
+    const tx = Layer.succeed(TransactionPort, {
+      transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
+        Effect.provideService(body, TransactionScope, {
+          session: { id: "p38-approval-reentry" },
+        }),
+    });
+    const p38Approvals: ExecutableApprovalStoreService = {
+      findByActionKey: () => Effect.succeed(Option.none()),
+      findById: () => Effect.succeed(Option.some(approval)),
+      putPendingExact: () => Effect.die(new Error("unexpected approval issue")),
+      decide: () => Effect.succeed(Option.none()),
+      expireDue: () => Effect.succeed([]),
+      cancelForExecution: () => Effect.succeed([]),
+      consumeApproved: (input) => {
+        consumeCalls += 1;
+        if (
+          approval.state === "Approved" &&
+          input.expectedRevision === approval.revision &&
+          input.consumedBy === invocationId
+        ) {
+          approval = {
+            ...approval,
+            state: "Consumed",
+            revision: approval.revision + 1,
+            consumedAt: input.consumedAt,
+            consumedBy: input.consumedBy,
+          };
+        }
+        return Effect.succeed({
+          approvalId: runtimeApprovalId,
+          preConsumeRevision: 1,
+          consumedRevision: 2,
+          approvalDigest: "digest:p38-consumed",
+          binding,
+          expiresAt: "2999-01-01T00:00:00.000Z",
+          consumedBy: invocationId,
+        });
+      },
+    };
+    const toolInvocations = {
+      recordIntent: (next: import("@arbor/ports").ToolInvocationIntent) => {
+        intentApprovalId = next.approvalId;
+        if (recorded === undefined) {
+          recorded = {
+            ...next,
+            effectAdmissionState: "NotAdmitted",
+            settledAt: null,
+            settlement: null,
+            resultRef: null,
+          };
+        }
+        return Effect.succeed("Recorded" as const);
+      },
+      settle: (
+        _id: ToolInvocationRecord["invocationId"],
+        settlement: ToolInvocationRecord["settlement"],
+      ) => {
+        settlementCalls += 1;
+        if (recorded !== undefined && settlement !== null) {
+          recorded = {
+            ...recorded,
+            settledAt: "2026-10-05T00:00:02.000Z",
+            settlement,
+          };
+        }
+        return Effect.succeed(true);
+      },
+      consumeApproval: () =>
+        Effect.die(new Error("legacy approval route used")),
+      recordNoEffectDenial: () => Effect.die(new Error("unexpected denial")),
+      recordNoEffectInterruption: () => Effect.succeed(false),
+      admitEffect: () => {
+        if (recorded !== undefined) {
+          recorded = { ...recorded, effectAdmissionState: "MayHaveStarted" };
+        }
+        return Effect.succeed({ _tag: "Admitted" as const });
+      },
+      findApproval: () => Effect.succeed(Option.none()),
+      findById: () =>
+        Effect.succeed(
+          recorded === undefined ? Option.none() : Option.some(recorded),
+        ),
+      findUnsettled: () =>
+        Effect.succeed(recorded === undefined ? [] : [recorded]),
+    };
+    const dependencies = Layer.mergeAll(
+      tx,
+      Layer.succeed(ToolDefinitionStore, {
+        definition: () => Effect.succeed(Option.some(toolDefinition)),
+        all: () => Effect.succeed([toolDefinition]),
+      }),
+      Layer.succeed(SandboxPort, {
+        open: () =>
+          Effect.succeed({
+            handleId: "sandbox-p38",
+            rootPath: "/repo",
+            writableRegions: [],
+          }),
+        close: () => Effect.void,
+      }),
+      Layer.succeed(ResourceAdmission, {
+        admit: () => Effect.succeed({ _tag: "Admitted" as const }),
+      }),
+      Layer.succeed(ProjectEnvironmentPort, {
+        resolve: (_targetProjectId, addresses) =>
+          Effect.succeed({
+            regions: addresses.map((address) => ({
+              resourceSpaceId: "filesystem",
+              normalizedRegion: address,
+            })),
+            observedEnvironmentRevision: "env-p38",
+          }),
+      }),
+      Layer.succeed(Clock, {
+        now: () => Effect.succeed("2026-10-05T00:00:02.000Z"),
+      }),
+      Layer.succeed(ToolInvocationStore, toolInvocations as never),
+      Layer.succeed(ExecutableApprovalStore, p38Approvals),
+    );
+    const runtimeLayer = Layer.provide(
+      ToolRuntimeLive([executor], {
+        qualificationProbe: async (event) => {
+          if (
+            interruptAfterClaim &&
+            event.boundary === "AH7AfterToolIntentCommit"
+          ) {
+            interruptAfterClaim = false;
+            throw new Error("simulated interruption after durable claim");
+          }
+        },
+      }),
+      dependencies,
+    );
+    const app = Layer.mergeAll(dependencies, runtimeLayer);
+    const first = await Effect.runPromiseExit(
+      Effect.provide(
+        Effect.gen(function* () {
+          const runtime = yield* ToolRuntimePort;
+          return yield* runtime.invoke(p38Intent, executableContext);
+        }),
+        app,
+      ),
+    );
+    expect(first._tag).toBe("Failure");
+    expect(intentApprovalId).toBe(runtimeApprovalId);
+    expect(approval.state).toBe("Consumed");
+    expect(executorCalls).toBe(0);
+
+    const replay = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const runtime = yield* ToolRuntimePort;
+          return yield* runtime.invoke(p38Intent, executableContext);
+        }),
+        app,
+      ),
+    );
+    expect(replay._tag).toBe("Success");
+    expect(consumeCalls).toBe(1);
+    expect(executorCalls).toBe(1);
+    expect(settlementCalls).toBe(1);
   });
 });

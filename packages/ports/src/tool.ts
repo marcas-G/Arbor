@@ -144,6 +144,7 @@ export interface BoundedObservation {
 export type NoEffectDenialCode =
   | "InvocationAuthorityDenied"
   | "ApprovalRequired"
+  | "ApprovalRejected"
   | "ApprovalNotFound"
   | "ApprovalMismatch"
   | "ApprovalExpired"

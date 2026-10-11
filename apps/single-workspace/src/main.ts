@@ -8,6 +8,8 @@ import {
   startupRecovery,
 } from "@arbor/execution-runtime";
 import {
+  Clock,
+  ExecutableApprovalStore,
   ExecutionRepository,
   type ModelDeployment,
   ProjectDirectory,
@@ -209,6 +211,16 @@ const isWorkspaceId = (value: string): boolean =>
 export const runOnce = (workspaceId: string, principalRef = "runtime:system") =>
   Effect.gen(function* () {
     yield* runMigrations(CURRENT_MIGRATIONS);
+    const tx = yield* TransactionPort;
+    const clock = yield* Clock;
+    const executableApprovals = yield* ExecutableApprovalStore;
+    const now = yield* clock.now();
+    yield* tx.transact(
+      executableApprovals.expireDue({
+        now,
+        expiredBy: parse(Principal)(principalRef),
+      }),
+    );
     yield* startupRecovery(parse(Principal)(principalRef));
     return yield* evaluateAndSelect(
       parse(WorkspaceId)(workspaceId),

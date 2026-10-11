@@ -134,6 +134,8 @@ const denialReason = (reasonCode: NoEffectDenialCode): string => {
       return "tool authority denied";
     case "ApprovalRequired":
       return "approval required";
+    case "ApprovalRejected":
+      return "approval rejected";
     case "ApprovalNotFound":
       return "approval not found";
     case "ApprovalMismatch":
@@ -547,6 +549,13 @@ export const ToolRuntimeLive = (
                 controlBasisDigest: context.controlBasisDigest,
               };
             }
+            if (intent.approvalId !== context.executableApproval.approvalId) {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                "ApprovalMismatch",
+              );
+            }
             if (Option.isNone(executableApprovals)) {
               return yield* Effect.fail(
                 operationalFailure(
@@ -615,7 +624,7 @@ export const ToolRuntimeLive = (
                   currentApproval.expiresAt <= now ||
                     currentApproval.state === "Expired"
                     ? "ApprovalExpired"
-                    : "ApprovalMismatch",
+                    : "ApprovalRejected",
                 );
               }
               if (
@@ -667,7 +676,7 @@ export const ToolRuntimeLive = (
                   : "ApprovalMismatch",
               );
             }
-            if (intent.approvalId !== null) {
+            if (intent.approvalId !== context.executableApproval.approvalId) {
               return yield* recordNoEffectDenial(
                 definition.sideEffectSemantics,
                 regions,
@@ -1054,7 +1063,11 @@ export const ToolRuntimeLive = (
                 : "InvocationAuthorityDenied",
             );
           }
-          if (needsApproval && intent.approvalId !== null) {
+          if (
+            needsApproval &&
+            intent.approvalId !== null &&
+            context.executableApproval === undefined
+          ) {
             const approval = yield* tx
               .transact(store.findApproval(intent.approvalId))
               .pipe(

@@ -36,6 +36,7 @@ describe("EA-DG-01 Executable approval issuance boundary", () => {
       },
       decide: () => Effect.succeed(Option.none()),
       consumeApproved: () => Effect.succeed(false),
+      expireDue: () => Effect.succeed([]),
       cancelForExecution: () => Effect.succeed([]),
     };
     const tx = {
