@@ -1,6 +1,6 @@
 # AH7-DG-01 / P39-P40 ReconciledNoEffect Compatibility Addendum — Acceptance Record
 
-Date: 2026-10-11  
+Date: 2026-10-11
 Status: **fixed compatibility addendum accepted for owner-contract landing; implementation and release remain unauthorized**
 
 ## Fixed accepted package
