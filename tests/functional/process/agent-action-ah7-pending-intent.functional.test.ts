@@ -28,7 +28,10 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
   for (const boundary of [
     "AH7AfterActionIntentCommit",
     "AH7AfterToolIntentCommit",
+    "AH7BeforeToolSettlementTransaction",
+    "AH7BeforeToolSettlementCommit",
     "AH7AfterToolSettlementCommit",
+    "AH7BeforeActionResultCommit",
     "AH7AfterActionResultCommit",
   ] as const) {
     it(`reuses the same action and tool identity after ${boundary}`, async () => {
@@ -198,6 +201,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         executionId: expect.stringMatching(/^exe_/u),
         callRef: expect.any(String),
         ...(boundary === "AH7AfterActionIntentCommit" ||
+        boundary === "AH7BeforeActionResultCommit" ||
         boundary === "AH7AfterActionResultCommit"
           ? {
               providerTurnId: expect.stringMatching(/^ptn_/u),
@@ -225,6 +229,13 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
       const targetArtifacts = crashed.artifacts.filter(
         (artifact) => artifact.invocation_id === targetInvocationId,
       );
+      const p4SettlementCommitted =
+        boundary === "AH7AfterToolSettlementCommit" ||
+        boundary === "AH7BeforeActionResultCommit" ||
+        boundary === "AH7AfterActionResultCommit";
+      const resultArtifactCommitted =
+        boundary !== "AH7AfterActionIntentCommit" &&
+        boundary !== "AH7AfterToolIntentCommit";
       expect(targetSteps).toEqual([
         expect.objectContaining({
           execution_id: hit?.executionId,
@@ -255,21 +266,14 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
                 execution_id: hit?.executionId,
                 tool_name: "read",
                 side_effect_semantics: "ReadOnly",
-                settled_at:
-                  boundary === "AH7AfterToolSettlementCommit" ||
-                  boundary === "AH7AfterActionResultCommit"
-                    ? expect.any(String)
-                    : null,
+                settled_at: p4SettlementCommitted ? expect.any(String) : null,
               }),
             ],
       );
       expect(targetToolResults).toHaveLength(
         boundary === "AH7AfterActionResultCommit" ? 1 : 0,
       );
-      if (
-        boundary === "AH7AfterToolSettlementCommit" ||
-        boundary === "AH7AfterActionResultCommit"
-      ) {
+      if (resultArtifactCommitted) {
         expect(targetArtifacts).toHaveLength(1);
       } else {
         expect(targetArtifacts).toEqual([]);
@@ -332,6 +336,17 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
           observation_source_ref: expect.stringMatching(/^observation_/u),
         }),
       ]);
+      const recoveredActionRecord = recovered.actions.find(
+        (action) => action.logical_action_id === logicalActionId,
+      );
+      const recoveredActionStep = recovered.steps.find(
+        (step) =>
+          step.execution_id === hit?.executionId &&
+          step.logical_step_no === recoveredActionRecord?.logical_step_no,
+      );
+      expect(recoveredActionStep?.provider_turn_id).toBe(
+        targetSteps[0]?.provider_turn_id,
+      );
       expect(recoveredTargetInvocations).toEqual([
         expect.objectContaining({
           execution_id: hit?.executionId,
@@ -347,16 +362,30 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         );
       }
       expect(recoveredTargetToolResults).toHaveLength(1);
-      if (
-        boundary === "AH7AfterToolSettlementCommit" ||
-        boundary === "AH7AfterActionResultCommit"
-      ) {
+      if (resultArtifactCommitted) {
         expect(recoveredTargetArtifacts).toEqual(targetArtifacts);
+      }
+      if (p4SettlementCommitted) {
         expect(recoveredTargetInvocations).toEqual(targetInvocations);
       }
       expect(recoveredTargetToolResults[0]).toMatchObject({
         source_kind: "AgentLoopAction",
       });
+      const recoveredToolResult = JSON.parse(
+        String(recoveredTargetToolResults[0]?.payload_json),
+      ) as { callRef?: string; observationRef?: string };
+      expect(recoveredToolResult).toMatchObject({
+        callRef: hit?.callRef,
+        observationRef: recoveredTargetActions[0]?.observation_source_ref,
+      });
+      expect(recoveredTargetToolResults[0]?.source_ref).toBe(
+        recoveredToolResult.observationRef,
+      );
+      expect(
+        recovered.toolResults.filter(
+          (result) => result.source_ref === recoveredToolResult.observationRef,
+        ),
+      ).toHaveLength(1);
       expect(
         JSON.stringify(recoveredTargetToolResults[0]).includes(
           hit?.callRef ?? "",

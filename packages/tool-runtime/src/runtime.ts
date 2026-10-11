@@ -54,6 +54,7 @@ export interface ToolRuntimeQualificationEvent {
     | "AH7AfterEffectAdmissionCommit"
     | "AH7AfterToolEffectBeforeSettlement"
     | "AH7BeforeToolSettlementTransaction"
+    | "AH7BeforeToolSettlementCommit"
     | "AH7AfterToolSettlementCommit"
     | "AH7ToolSettlementFenceRejected"
     | "AH7AfterEffectAuthorityResolvedBeforeAdmission";
@@ -1192,6 +1193,17 @@ export const ToolRuntimeLive = (
                   context.executionFence,
                   fenceNow,
                 );
+                if (applied && options.qualificationProbe !== undefined) {
+                  yield* Effect.promise(
+                    () =>
+                      options.qualificationProbe?.({
+                        boundary: "AH7BeforeToolSettlementCommit",
+                        executionId: context.executionId,
+                        invocationId: intent.invocationId,
+                        callRef: intent.callRef,
+                      }) ?? Promise.resolve(),
+                  );
+                }
                 return {
                   applied,
                   current: applied

@@ -12,6 +12,7 @@ export interface AgentLoopQualificationProbeEvent {
     | "AH4RepairAfterSettlementProposal"
     | "AH56AfterOutputAcceptedCommit"
     | "AH7AfterActionIntentCommit"
+    | "AH7BeforeActionResultCommit"
     | "AH7AfterActionResultCommit"
     | "AH10AfterControlHandlerReturnBeforeObservationCommit"
     | "AH10AfterAssignWorkAuthorizedBeforeCommandSubmission"

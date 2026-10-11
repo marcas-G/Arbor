@@ -627,7 +627,7 @@ export const executeAgentLoopActions = (
                   },
                   loopStepFence,
                 );
-                return yield* loopSteps.transition(
+                const advancedStep = yield* loopSteps.transition(
                   {
                     identity: actionsStep.identity,
                     expectedRevision: actionsStep.revision,
@@ -644,6 +644,20 @@ export const executeAgentLoopActions = (
                   },
                   loopStepFence,
                 );
+                if (dependencies.qualificationProbe !== undefined) {
+                  yield* Effect.promise(
+                    () =>
+                      dependencies.qualificationProbe?.({
+                        boundary: "AH7BeforeActionResultCommit",
+                        providerTurnId: preparedTurn.manifest.providerTurnId,
+                        executionId: input.execution.executionId,
+                        logicalActionId: pendingAction.logicalActionId,
+                        callRef: invocation.callRef,
+                        actionIndex,
+                      }) ?? Promise.resolve(),
+                  );
+                }
+                return advancedStep;
               }),
             )
             .pipe(Effect.mapError(failure));
