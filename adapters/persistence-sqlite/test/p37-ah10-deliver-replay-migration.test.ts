@@ -14,17 +14,19 @@ import {
 const runDb = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
   Effect.runPromise(Effect.scoped(Effect.provide(program, layer({ filename: ":memory:" }))));
 
+const prefixes = [
+  { label: "v33", migrations: P33_MIGRATIONS },
+  { label: "v34", migrations: P34_MIGRATIONS },
+  { label: "v35", migrations: P35_MIGRATIONS },
+  { label: "v36", migrations: P36_MIGRATIONS },
+];
+
 describe("P37 AH10 DeliverReplay migration", () => {
-  it.each([
-    ["v33", P33_MIGRATIONS],
-    ["v34", P34_MIGRATIONS],
-    ["v35", P35_MIGRATIONS],
-    ["v36", P36_MIGRATIONS],
-  ])("upgrades %s through the ordered prefix to v37", (_label, prefix) =>
+  it.each(prefixes)("upgrades $label through the ordered prefix to v37", ({ migrations }) =>
     runDb(
       Effect.gen(function* () {
         const sql = yield* SqlClient;
-        yield* runMigrations(prefix);
+        yield* runMigrations(migrations);
         const applied = yield* runMigrations(P37_MIGRATIONS);
         const version = yield* sql.unsafe<{ user_version: number }>("PRAGMA user_version");
         const tables = yield* sql.unsafe<{ name: string }>(

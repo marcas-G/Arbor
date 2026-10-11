@@ -47,6 +47,7 @@ import {
 } from "@arbor/model-context";
 import {
   AcceptanceRepositoryLive,
+  AttentionPollStoreLive,
   AgentExecutionStateStoreLive,
   AgentLoopStepStoreLive,
   ArtifactMetadataRepositoryLive,
@@ -603,6 +604,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(ProviderDeploymentBreakerLive, infra),
     Layer.provide(ConsumerOffsetStoreLive, infra),
     Layer.provide(ConsumerDeadLetterStoreLive, infra),
+    Layer.provide(AttentionPollStoreLive, infra),
     Layer.provide(
       makeAttentionProjectionStoreLive(
         config.attentionProjectionQualificationProbe,
