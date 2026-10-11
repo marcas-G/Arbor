@@ -477,6 +477,20 @@ describe("P2 WorkReadmissionGateStore", () => {
           sourceKind: "DeliverReplayFact",
           executionId,
         });
+        const sql = yield* SqlClient;
+        yield* tx.transact(
+          sql.unsafe(
+            "DELETE FROM agent_execution_state WHERE execution_id = ?",
+            [executionId],
+          ),
+        );
+        const missingEpisode = yield* Effect.exit(query());
+        expect(missingEpisode._tag).toBe("Failure");
+        if (missingEpisode._tag === "Failure") {
+          expect(JSON.stringify(missingEpisode.cause)).toContain(
+            '"reasonCode":"SourceEpisodeStateMissing"',
+          );
+        }
       }),
     ));
 
@@ -550,12 +564,49 @@ describe("P2 WorkReadmissionGateStore", () => {
     ),
   );
 
-  it("keeps valid StopRequested interruption outside the RuntimeSafetyStop hold", () =>
+  it("keeps StopRequested settlement outside the gate even without Episode state", () =>
     runDb(
       Effect.gen(function* () {
         yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed({ _tag: "Interrupted", result: { _tag: "StopRequested" } });
+        const sql = yield* SqlClient;
+        const tx = yield* TransactionPort;
+        yield* tx.transact(
+          sql.unsafe(
+            "DELETE FROM agent_execution_state WHERE execution_id = ?",
+            [executionId],
+          ),
+        );
         expect(Option.isNone(yield* query())).toBe(true);
+      }),
+    ));
+
+  it("fails closed when a RuntimeSafetyStop source has no Episode state", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed({
+          _tag: "Interrupted",
+          result: {
+            _tag: "ControlledInterruption",
+            reason: "RuntimeSafetyStop",
+          },
+        });
+        const sql = yield* SqlClient;
+        const tx = yield* TransactionPort;
+        yield* tx.transact(
+          sql.unsafe(
+            "DELETE FROM agent_execution_state WHERE execution_id = ?",
+            [executionId],
+          ),
+        );
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SourceEpisodeStateMissing"',
+          );
+        }
       }),
     ));
 
