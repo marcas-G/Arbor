@@ -518,15 +518,34 @@ export const loadAttentionFacts = (
           );
         }
         const fact = source.value;
+        const payloadKeys = Object.keys(payload).sort();
+        const expectedPayloadKeys = [
+          "attentionFactId",
+          "committedCommandId",
+          "executionId",
+          "failureCode",
+          "logicalActionId",
+          "targetWorkspaceId",
+        ];
         if (
           fact.eventId !== event.eventId ||
           fact.projectId !== projectId ||
+          event.eventVersion !== 1 ||
+          event.actor !== "system:recovery" ||
+          event.causedByEventId !== undefined ||
+          event.aggregateRef !== fact.targetWorkspaceId ||
+          event.correlationRef !== fact.logicalActionId ||
+          event.causedByCommandId !== fact.committedCommandId ||
+          event.occurredAt !== fact.firstDetectedAt ||
           fact.executionId !== String(payload.executionId ?? "") ||
           fact.targetWorkspaceId !== String(payload.targetWorkspaceId ?? "") ||
           fact.logicalActionId !== String(payload.logicalActionId ?? "") ||
           fact.committedCommandId !==
             String(payload.committedCommandId ?? "") ||
-          fact.failureCode !== String(payload.failureCode ?? "")
+          fact.failureCode !== String(payload.failureCode ?? "") ||
+          String(payload.attentionFactId ?? "") !== fact.attentionFactId ||
+          payloadKeys.length !== expectedPayloadKeys.length ||
+          payloadKeys.some((key, index) => key !== expectedPayloadKeys[index])
         ) {
           return yield* Effect.fail(
             integrityFailure({
@@ -535,17 +554,6 @@ export const loadAttentionFacts = (
               executionId: fact.executionId,
               sourceKind: "AssignWorkTargetBindingFailure",
               reasonCode: "SourceFactEventMismatch",
-            }),
-          );
-        }
-        if (event.eventType !== "AssignWorkTargetBindingEscalated") {
-          return yield* Effect.fail(
-            integrityFailure({
-              projectId,
-              workspaceId: fact.targetWorkspaceId,
-              executionId: fact.executionId,
-              sourceKind: "AssignWorkTargetBindingFailure",
-              reasonCode: "SourceEventExecutionMismatch",
             }),
           );
         }
