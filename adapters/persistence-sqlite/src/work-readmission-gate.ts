@@ -389,15 +389,44 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
             )
               continue;
             if (execution.settlement_kind === "Interrupted") {
-              candidates.push({
-                executionId: execution.execution_id as ExecutionId,
-                kind: "RuntimeSafetyStopSettlement",
-              });
+              // Interrupted is broader than the RAI source: in particular,
+              // ordinary StopRequested recovery settlements are not holds.
+              // Decode the settlement before demanding Work Episode state so
+              // a non-source Execution admitted but never dispatched remains
+              // outside this gate.
+              try {
+                if (runtimeSafetyStop(execution)) {
+                  candidates.push({
+                    executionId: execution.execution_id as ExecutionId,
+                    kind: "RuntimeSafetyStopSettlement",
+                  });
+                }
+              } catch {
+                return yield* Effect.fail(
+                  makeIntegrity(
+                    "SettlementMalformed",
+                    execution.execution_id as ExecutionId,
+                    "RuntimeSafetyStopSettlement",
+                  ),
+                );
+              }
             } else if (execution.settlement_kind === "OutcomeUnknown") {
-              candidates.push({
-                executionId: execution.execution_id as ExecutionId,
-                kind: "OutcomeUnknownSettlement",
-              });
+              try {
+                if (outcomeUnknown(execution)) {
+                  candidates.push({
+                    executionId: execution.execution_id as ExecutionId,
+                    kind: "OutcomeUnknownSettlement",
+                  });
+                }
+              } catch {
+                return yield* Effect.fail(
+                  makeIntegrity(
+                    "SettlementMalformed",
+                    execution.execution_id as ExecutionId,
+                    "OutcomeUnknownSettlement",
+                  ),
+                );
+              }
             }
           }
 
@@ -689,31 +718,6 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
                   candidate.kind,
                 ),
               );
-            }
-            if (candidate.kind === "RuntimeSafetyStopSettlement") {
-              try {
-                if (!runtimeSafetyStop(execution)) continue;
-              } catch {
-                return yield* Effect.fail(
-                  makeIntegrity(
-                    "SettlementMalformed",
-                    candidate.executionId,
-                    candidate.kind,
-                  ),
-                );
-              }
-            } else if (candidate.kind === "OutcomeUnknownSettlement") {
-              try {
-                if (!outcomeUnknown(execution)) continue;
-              } catch {
-                return yield* Effect.fail(
-                  makeIntegrity(
-                    "SettlementMalformed",
-                    candidate.executionId,
-                    candidate.kind,
-                  ),
-                );
-              }
             }
             const sourceWorkRows = yield* run(
               sql.unsafe<TargetRow>(
