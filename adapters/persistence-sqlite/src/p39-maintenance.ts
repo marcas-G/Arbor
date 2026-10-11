@@ -2,6 +2,7 @@ import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import type { SqliteAdapterError } from "./errors.js";
 
 export const P39_REPORT_APPLICATION_ID = 0x41523739;
 export const P39_REPORT_USER_VERSION = 1;
@@ -37,20 +38,52 @@ export interface P39MigrationBlockReport {
   readonly blockerStateFingerprint: string;
 }
 
+/** Opaque proof that the maintenance adapter holds a process-independent
+ * writer-quiescence primitive for this token's lifetime. It must cover every
+ * primary-database writer across the ordered migration chain; an expiring
+ * process-local lease or the short SQLite snapshot reservation is insufficient. */
+export interface P39WriterExclusionLease {
+  readonly token: string;
+}
+
+export interface P39PrimarySnapshotReservation {
+  readonly reservation: string;
+  readonly snapshot: P39PreflightSnapshot;
+}
+
 export interface P39MaintenancePort {
-  /** Holds the primary BEGIN IMMEDIATE reservation until releasePrimary. */
-  readonly reservePrimary: () => Effect.Effect<P39PreflightSnapshot, P39MaintenanceFailure>;
+  /** Stops/quiesces all primary writers, including other OS processes. */
+  readonly acquireWriterExclusion: () => Effect.Effect<
+    P39WriterExclusionLease,
+    P39MaintenanceFailure
+  >;
+  /** Releases writer exclusion only after the ordered chain succeeds/fails. */
+  readonly releaseWriterExclusion: (
+    lease: P39WriterExclusionLease,
+  ) => Effect.Effect<void, P39MaintenanceFailure>;
+  /** Takes the short, read-only P1 snapshot while writer exclusion is held. */
+  readonly reservePrimarySnapshot: (
+    lease: P39WriterExclusionLease,
+  ) => Effect.Effect<P39PrimarySnapshotReservation, P39MaintenanceFailure>;
+  readonly releasePrimarySnapshot: (
+    lease: P39WriterExclusionLease,
+    reservation: P39PrimarySnapshotReservation,
+  ) => Effect.Effect<void, P39MaintenanceFailure>;
   /** Writes using the separate, operator-selected sidecar and reads back the
-   * exact immutable report key/hash before returning. */
+   * exact immutable report key/hash before returning, while both the primary
+   * snapshot reservation and writer-exclusion lease remain held. */
   readonly writeAndReadBackSidecarReport: (
+    lease: P39WriterExclusionLease,
+    reservation: P39PrimarySnapshotReservation,
     report: P39MigrationBlockReport,
   ) => Effect.Effect<
     { readonly reportKey: string; readonly contentHash: string },
     P39MaintenanceFailure
   >;
-  readonly releasePrimary: () => Effect.Effect<void, P39MaintenanceFailure>;
-  /** Must be the ordered P36→P37→P38→P39 maintenance migration chain. */
-  readonly applyOrderedMigrations: () => Effect.Effect<void, P39MaintenanceFailure>;
+  /** Must run while the same writer-exclusion lease is still held. */
+  readonly applyOrderedMigrations: (
+    lease: P39WriterExclusionLease,
+  ) => Effect.Effect<void, SqlError | SqliteAdapterError | P39MaintenanceFailure>;
 }
 
 export interface P39MaintenanceFailure {
@@ -207,35 +240,59 @@ export const writeP39BlockReportAndReadBack = (
       );
   });
 
-/** Side-effect ordering for the P39 maintenance gate. A blocker must be
- * durably reported and read back while the primary reservation is held; only
- * then is the reservation released and the typed isolation failure returned.
- * No Runtime startup path calls this helper. */
+/** Side-effect ordering for the P39 maintenance gate. The cross-process writer
+ * exclusion lease covers the preflight and complete 0037→0038→0039 chain. The
+ * shorter primary snapshot reservation is released before migration, but the
+ * lease remains held until migration succeeds or fails. A blocker is reported
+ * and read back while both lease and primary reservation are held, then the
+ * snapshot is released and a typed isolation failure returned. No Runtime
+ * startup path calls this helper. */
 export const runP39MaintenanceGate = (
   port: P39MaintenancePort,
-): Effect.Effect<void, P39MaintenanceFailure> =>
-  Effect.gen(function* () {
-    const snapshot = yield* port.reservePrimary();
-    if (snapshot.activeNotAdmittedInvocationIds.length > 0) {
-      const report = makeReport(snapshot);
-      const saved = yield* port
-        .writeAndReadBackSidecarReport(report)
-        .pipe(Effect.ensuring(port.releasePrimary().pipe(Effect.orDie)));
-      if (
-        saved.reportKey !== report.reportKey ||
-        saved.contentHash !== report.contentHash
-      ) {
-        return yield* Effect.fail({
-          _tag: "P39MaintenanceFailure",
-          code: "P39_REPORT_COMMIT_UNRESOLVED",
-        });
-      }
-      return yield* Effect.fail({
-        _tag: "P39MaintenanceFailure",
-        code: "P39_LEGACY_DB_ISOLATED",
-      });
-    }
+): Effect.Effect<
+  void,
+  P39MaintenanceFailure | SqlError | SqliteAdapterError
+> =>
+  Effect.acquireUseRelease(
+    port.acquireWriterExclusion(),
+    (lease) =>
+      Effect.gen(function* () {
+        const preflight = yield* Effect.acquireUseRelease(
+          port.reservePrimarySnapshot(lease),
+          (reservation) =>
+            Effect.gen(function* () {
+              const snapshot = reservation.snapshot;
+              if (snapshot.activeNotAdmittedInvocationIds.length === 0) {
+                return { blocked: false as const };
+              }
+              const report = makeReport(snapshot);
+              const saved = yield* port.writeAndReadBackSidecarReport(
+                lease,
+                reservation,
+                report,
+              );
+              if (
+                saved.reportKey !== report.reportKey ||
+                saved.contentHash !== report.contentHash
+              ) {
+                return yield* Effect.fail({
+                  _tag: "P39MaintenanceFailure" as const,
+                  code: "P39_REPORT_COMMIT_UNRESOLVED" as const,
+                });
+              }
+              return { blocked: true as const };
+            }),
+          (reservation) =>
+            port.releasePrimarySnapshot(lease, reservation).pipe(Effect.orDie),
+        );
 
-    yield* port.releasePrimary();
-    yield* port.applyOrderedMigrations();
-  });
+        if (preflight.blocked) {
+          return yield* Effect.fail({
+            _tag: "P39MaintenanceFailure",
+            code: "P39_LEGACY_DB_ISOLATED",
+          });
+        }
+        yield* port.applyOrderedMigrations(lease);
+      }),
+    (lease) => port.releaseWriterExclusion(lease).pipe(Effect.orDie),
+  );
