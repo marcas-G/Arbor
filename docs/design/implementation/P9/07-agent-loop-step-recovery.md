@@ -413,3 +413,62 @@ qualified.
 - No new Provider failure or Tool side-effect tag.
 - No direct SQL repair procedure for operators.
 - No implementation authorization.
+
+## Accepted AH7-DG-01 / P39-P40 replay-evidence Attention (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+RNO compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+
+When P4 returns a closed replay-evidence failure for the same current P3
+action, P9 leaves the action Pending/`ActionsInProgress`, writes no ToolResult
+and advances no P3 cursor; the Application uses the existing RecoveryBlocked
+handoff. Under the complete current lease, P9 records the missing/conflicting
+evidence fact and `ToolObservationReplayEvidenceEscalated(v1)` atomically.
+This does not mutate P4 terminal settlement, P39 proof/selected fact, approval,
+P3 source or execution truth.
+
+The P40-era fact table is:
+
+```sql
+CREATE TABLE tool_observation_replay_attention_facts (
+  attention_fact_id   TEXT PRIMARY KEY,
+  event_id            TEXT NOT NULL UNIQUE REFERENCES domain_events(event_id),
+  project_id          TEXT NOT NULL,
+  execution_id        TEXT NOT NULL,
+  target_workspace_id TEXT NOT NULL,
+  logical_action_id   TEXT NOT NULL,
+  provider_turn_id    TEXT NOT NULL,
+  call_ref            TEXT NOT NULL,
+  invocation_id       TEXT NOT NULL REFERENCES tool_invocations(invocation_id),
+  failure_code        TEXT NOT NULL CHECK (failure_code IN (
+    'Missing','UnsupportedVersion','Malformed','HashMismatch',
+    'SettlementMismatch','IntentMismatch','ResultRefMismatch','UnexpectedResultRef'
+  )),
+  first_detected_at   TEXT NOT NULL,
+  UNIQUE (execution_id, invocation_id),
+  UNIQUE (attention_fact_id, project_id, target_workspace_id, event_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id)
+);
+CREATE INDEX tool_observation_replay_fact_target
+  ON tool_observation_replay_attention_facts
+    (project_id, target_workspace_id, first_detected_at);
+```
+
+`attention_fact_id` is `att_` plus lowercase SHA-256 of canonical UTF-8 JSON
+`{"executionId":...,"invocationId":...,"version":1}` with fixed key order,
+no whitespace and no trailing newline. Event payload is exactly
+`{attentionFactId, executionId, targetWorkspaceId, logicalActionId,
+providerTurnId, callRef, invocationId, failureCode}`; envelope uses the
+Execution project, target Workspace aggregate, LogicalAction correlation,
+`system:recovery`, and no Command cause. Raw observation/tool/Artifact/error
+data is excluded. Same tuple/same bound code is idempotent; conflict is a
+typed invariant failure.
+
+Fact/event share one current-fence `TransactionScope`: pre-COMMIT crash leaves
+neither; post-COMMIT retry returns the same immutable fact/event. P9 rechecks
+the full lease and expiry at this write boundary; stale generation writes no
+fact/event. `ReconciliationEscalated` remains the separate unresolved-effect
+signal and is not reused for terminal observation corruption.

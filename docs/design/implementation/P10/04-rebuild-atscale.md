@@ -118,6 +118,27 @@ post-terminal contradiction notification is added.
 P39 `tool_reconciliation_facts` remain P4-owned and are not directly consumed
 as a P10 rebuild source. This preserves the accepted D0A P9→P10 event boundary.
 
+## 3.3 AH7-DG-01 / P39-P40 replay-evidence marker rebuild (DID v1.41)
+
+Accepted P40 physical hash:
+`5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+accepted P39/P40 compatibility addendum hash
+`8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830` and
+matrix hash `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+
+`tool_observation_replay_attention_rows` is an event-backed P10 materialized
+marker for the P9 `ToolObservationReplayEvidenceEscalated` fact/event. It uses
+the same per-project P1 Attention consumer offset as all existing sources; row
+write and offset advance are one transaction. Before-commit crash leaves
+neither marker nor offset advance; after-commit restart/replay leaves one row.
+`AttentionProjectionStore.resetProject` includes this marker; a full P10
+rebuild resets it and rewinds the shared offset to `floor-1` atomically, then
+replays retained P9 events. No P9 fact snapshot/level-triggered seed is added:
+after event pruning, this source is visible only within the accepted retained
+journal horizon. Below-floor reset/rebuild preserves current rows and returns
+the existing `ConsumerRebuildRefused` contract; it does not silently repair or
+change P39/P4/P3 state.
+
 ## 4. Must Not Decide
 
 - No journal pruning/horizon change (P1 `04`).

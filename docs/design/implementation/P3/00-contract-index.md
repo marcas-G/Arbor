@@ -51,6 +51,19 @@ Action/cursor mapping. P4 remains owner of approval facts, external reality
 proof, attempts, facts and settlement; P3 identity and cursor ownership do not
 move. Implementation and crash qualification remain separately gated.
 
+## Accepted owner amendment — AH7-DG-01 / P39-P40 terminal RNO replay (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+P39/P40 compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+P3 `08` owns unchanged ProviderTurn/AgentLoopStep/action/callRef source
+identity and atomic ToolResult/Observation/Action/cursor convergence. P4's
+P40 envelope is the only replay authority for P39 `ReconciledNoEffect`;
+`ReconciliationFactRef`, P4 ArtifactRef and P3 content hash/source ref remain
+distinct. P39 selected-fact identity does not move. Missing valid-fence RNO
+evidence blocks P3 projection; stale generations remain ownership loss only.
+
 ```text
 Detailed Implementation Design v1.22 (frozen)
         ↓ delegates phase-scoped closure

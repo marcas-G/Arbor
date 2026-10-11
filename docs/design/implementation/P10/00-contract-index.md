@@ -43,6 +43,20 @@ the frozen DTO when necessary. P10 does not create or mutate P9 facts, infer
 external reality, or promise indefinite Attention after journal pruning.
 P39 implementation and source migration remain separately gated.
 
+## Accepted AH7-DG-01 / P39-P40 replay-evidence Attention source (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+RNO compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+P10 `02` owns the `ToolObservationReplayEvidenceFailure` source mapping and
+source-specific marker relation; `04` owns its shared Attention offset,
+retention-horizon reset/rebuild; `05` owns the closed AttentionSource/API query
+union; `07` owns the future crash/rebuild acceptance matrix. P9 emits only
+missing/corrupt-evidence facts; P10 never projects ordinary valid RNO outcomes
+or mutates P39/P4/P3 canonical state. Failure code is internal-only; the fixed
+path-free summary is the only public detail.
+
 ## FT-DG-02 additive contract amendment (2026-10-08)
 
 The accepted `work-detail` read-only View is added to P10's authoritative

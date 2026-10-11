@@ -97,6 +97,14 @@ fixed path-free summary “An external tool effect could not be verified;
 recovery is paused.” Its source remains P9's existing event, not a P10-owned
 reconciliation fact.
 
+Accepted AH7-DG-01/P39-P40 compatibility adds exactly one member to the
+transport-neutral closed `AttentionSource` union and `ATTENTION_SOURCES`:
+`ToolObservationReplayEvidenceFailure`. `AttentionReq`/`rows` gains no field,
+ViewId, endpoint or action. Its `summaryRef` is the fixed P10 `02` safe summary;
+the P9 `failureCode` remains internal projection detail and is not returned in
+the public API/read-model enum or DTO. P10/P12 continue to use the same frozen
+transport boundary.
+
 P10's source-specific activation Attention projection store atomically
 reconciles this key set from the current P1 intent table, lists/replaces the
 project's Pending rows during rebuild, and resets this source for the project.

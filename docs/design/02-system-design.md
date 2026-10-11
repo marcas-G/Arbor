@@ -1,16 +1,17 @@
 # Arbor System Design Specification
 
-**Version:** 1.15
+**Version:** 1.16
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.14
+**Supersedes:** v1.15
 
 **Date:** 2026-10-11
 
 **Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.3`
-**Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量  
-**Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型  
+**Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
+
+**Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
 
 **Governance changes (v1.9 → v1.10): FT-DG-02 — Completed Work public view**
@@ -134,6 +135,35 @@
   `D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
   Decision, review and landing hashes are recorded in
   `planning/results/AH7-DG-02-P39-design-landing.result.md`.
+
+**Governance changes (v1.15 → v1.16): AH7-DG-01 — terminal ToolObservation replay**
+
+- A terminal P4 invocation and its exact first-returned bounded
+  `CanonicalToolObservation` form one durable immutable outcome. Same-action
+  re-entry under the same trusted invocation replays that outcome; it never
+  re-runs Executor to reconstruct text or downgrades known Success,
+  ExpectedFailure, RuntimeFailure or P39 `ReconciledNoEffect` to
+  `OutcomeUnknown` because P40 observation evidence is absent.
+- A valid current Worker fence is checked before terminal evidence reads.
+  Missing/conflicting evidence under a valid fence blocks that Action and
+  escalates a source-specific P9 fact/event to P10 Action Required. An
+  expired/superseded fence is ownership loss only: it reads/projects no winner
+  Observation and creates no replay-evidence Attention.
+- DG03 no-effect `Denied/NotAdmitted` keeps its closed reason code and existing
+  deterministic projection, has no DG01/P40 observation envelope or Artifact
+  result ref, and is never translated to ExpectedFailure. Approval consumption
+  and the four `SideEffectSemantics` recovery rules are unchanged.
+- Accepted logical SHA-256 `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+  accepted P40 physical SHA-256
+  `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+  accepted P39/P40 compatibility addendum SHA-256
+  `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830` and
+  matrix SHA-256
+  `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+  Acceptance: `planning/results/AH7-DG-01-P39-P40-compatibility-addendum-acceptance.record.md`.
+- This design landing authorizes no production implementation or migration
+  execution. P36–P40 prefix, serialized migration runner, P39 Windows/sidecar
+  durability and AH7 phase closure remain unqualified.
 
 **Governance changes (v1.8 → v1.9): Minimal Architecture Convergence
 (`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`)**
@@ -1134,9 +1164,20 @@ canonical bounded result can be reconstructed. Generic shell v3 has no such
 profile and is `NonIdempotent`; historical shell v2 remains exact-version
 replay evidence and is not reinterpreted.
 
+For a terminal invocation, its first-returned bounded observation is P4
+durable outcome evidence paired atomically with settlement. The valid current
+Worker fence is checked before reading it. A same-action invocation replays
+the exact saved observation without invoking Executor; missing/corrupt evidence
+under a valid fence blocks that action and produces replay-evidence Attention,
+while a stale fence produces ownership loss only. P39 `ReconciledNoEffect` is
+the accepted sixth compatibility branch of the same P40 version-1 envelope:
+its bound is the exact selected same-attempt `NotOccurred` P39 fact and its P4
+Artifact/result ref, not an inferred result. DG03 `Denied/NotAdmitted` remains
+the no-envelope exception using its closed reason code and fixed projection.
+
 ## 6.6 Tool Result 与 Observation
 
-完整 Tool Result / Raw Artifact 与模型实际看到的 Bounded Observation 分离。大输出保留 Artifact Reference，模型只看到完成当前推理需要的信息。
+完整 Tool Result / Raw Artifact 与模型实际看到的 Bounded Observation 分离。大输出保留 Artifact Reference，模型只看到完成当前推理需要的信息。所有 P40 envelope 内联且独立于 `result_ref` / Blob / Artifact；P39 `ReconciledNoEffect` 的 P4 ArtifactRef、P39 NotOccurred fact refs 与 P3 bounded-output hash 是不同身份。后来的 Artifact 内容不得替代历史 Observation/truncated 证据。
 
 ## 6.7 Organizational actions
 
@@ -2015,6 +2056,7 @@ Domain Core + Persistence/Event Journal
 77. ApprovalRequired 是同一 run 的 durable pause，不是 P4 terminal Denied；首写 TTL 不因重放延长，批准后只允许绑定的 ToolInvocation 通过 fenced claim 消费。
 78. `MayHaveStarted` 的外部 reality 只能由绑定确切 attempt/profile/effect identity 的证据建立；`StillUnknown` 不授权重放，`Occurred` 必须可重建 canonical 结果，且 terminal reconciliation settlement 必须指向同 invocation/attempt 的不可变 fact。
 79. Stop 禁止新的 effect-attempt admission，但当前完整且未过期 Worker lease 下的已知事实、settlement 与 escalation 必须能够落账；旧 generation 不得提交。
+80. P4 evidence-bearing terminal settlement 与首次返回的 bounded `CanonicalToolObservation` 必须原子、不可变配对；有效 lease 下重入只回放该事实或 fail closed，不重做 Executor、不降级已知结果。P39 `ReconciledNoEffect` 必须与同 invocation/attempt 的 selected `NotOccurred` fact、P4 ArtifactRef 和精确 Observation 配对。无效 lease 不读/投影赢家证据或写 replay-evidence Attention；DG03 `Denied/NotAdmitted` 保持封闭原因码投影且豁免 P40 evidence fields。
 
 ---
 

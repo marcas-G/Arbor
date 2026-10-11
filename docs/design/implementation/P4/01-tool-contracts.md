@@ -248,6 +248,42 @@ not acquire a selected fact. Late contradictory evidence is appended as
 `PostTerminalEvidence` and cannot replace the selected fact or rewrite the
 settlement.
 
+## Accepted AH7-DG-01 / P39-P40 canonical Observation envelope (DID v1.41)
+
+The accepted v1 envelope covers six evidence-bearing tags: Success,
+ExpectedFailure, Interrupted, OutcomeUnknown, RuntimeFailure, and P39
+`ReconciledNoEffect`. The codec version is
+`p4-canonical-tool-observation-v1`; canonical schema-key/array order is fixed,
+the body is UTF-8 JSON ≤16,384 bytes, and the digest is
+`SHA-256(UTF8(version + LF + body))`. The exact first P4 return is the value
+committed beside settlement; re-entry preserves its stored `text` and
+`truncated`, never rerunning `bounded()`.
+
+Existing caps remain: bounded text ≤2,000 UTF-16 code units; valid non-null
+ArtifactId ≤40 ASCII bytes; RuntimeFailure cause ≤1,024 UTF-8 bytes; unknown
+reconciliation refs 1–8 items, each ≤128 UTF-8 bytes. Existing P4 first-write
+closure applies before the terminal commit: Success bad ref uses the fixed
+omission text/`truncated=true` without auto-Artifact; RuntimeFailure oversized
+cause uses the fixed closed omitted-detail code while preserving its tag;
+over-limit OutcomeUnknown refs keep the invocation unsettled and go through
+the unresolved-effect gate. No known outcome is discarded or relabeled to fit
+the envelope.
+
+P39 `ReconciledNoEffect` adds exactly the accepted P39 fields to this same v1
+union: closed `reasonCode`, selected `reconciliationFactRef`, bounded
+`observation`, and P4 Artifact `resultRef`. It is valid only for
+`MayHaveStarted` with P39 `Reconciliation` provenance, a bound RecoveryBinding,
+and the selected same-invocation/same-attempt `RecoveryInput/NotOccurred` fact.
+The fact's `result_ref` remains NULL; P4 row `result_ref` and Observation
+`resultRef` are the exact non-NULL P4 ArtifactRef. P39 reason, selected fact,
+Artifact and P3 payload hash are distinct values; late/mismatched facts never
+rewrite selection or terminal Observation.
+
+DG03 `Denied/NotAdmitted` remains outside the v1 observation envelope. Its
+closed `NoEffectDenialCode` + `projectionVersion:1` choose the same
+deterministic fixed denial projection; its P40 observation fields and
+`result_ref` are NULL. It is neither RNO nor ExpectedFailure.
+
 ## 6. Effect channels
 
 ```text

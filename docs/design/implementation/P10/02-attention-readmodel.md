@@ -27,6 +27,7 @@ on P36 integration.
 | Recovery escalation | ReconciliationEscalated event | Action Required (unreconcilable side effect — SD §12.3 explicit) | execution workspace |
 | AssignWork binding failure | `AssignWorkTargetBindingEscalated` + P9 `assign_work_binding_attention_facts` row | Action Required | affected Execution's owning/Parent Workspace (`executions.workspace_id`) |
 | Deliver replay failure | P10 `deliver_replay_attention_rows` marker joined to P9 `deliver_replay_attention_facts`; P9 emits `DeliverReplayEscalated` | Action Required | Deliver Execution Workspace (`targetWorkspaceId=executions.workspace_id`) |
+| Tool Observation replay-evidence failure | P10 `tool_observation_replay_attention_rows` marker joined to P9 `tool_observation_replay_attention_facts`; P9 emits `ToolObservationReplayEvidenceEscalated` | Action Required | exact Execution Workspace (`targetWorkspaceId=executions.workspace_id`) |
 | Workspace resource activation pending | P1 `WorkspaceResourceActivationIntent(Pending)` + `WorkspaceResourceActivationChanged` v1 | Action Required | the exact root Workspace in the intent |
 | Verifier orphan | Open verification × settled executions (derived condition, P8 `02` §3) | Attention | owner workspace |
 | Vacant producer (P7-GAP-01) | derived: dependencies(Unsatisfied ∧ WorkspaceBound) × works(无 Open Work ∧ ¬Retired) | Attention | consumer workspace (view label `WaitingOnVacantProducer`) |
@@ -153,3 +154,85 @@ freshness watermark/barrier behavior.
 ## 4. Must Not Decide
 
 - No new attention severities beyond SD's three; no automatic escalation actions; no notification transport (P12).
+
+## Accepted AH7-DG-01 / P39-P40 replay-evidence source (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+RNO compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+
+The P9 source is `ToolObservationReplayEvidenceEscalated(v1)`;
+P10 projects it as `source=ToolObservationReplayEvidenceFailure`,
+`severity=ActionRequired`, `targetWorkspaceId=executions.workspace_id`, and
+`dedupKey=attentionFactId`. The fixed path-free summary is:
+“A terminal tool outcome could not be replayed from durable observation
+evidence; recovery is paused.” The closed P9 failure code is stored only in the
+internal projection row and is not added to the public Attention DTO. No raw
+tool output, Observation, Artifact, cause, path, parser/OS text or secret is
+projected. This is separate from `ReconciliationEscalated`: valid P39 RNO is
+not an Attention source; only missing/conflicting P40 evidence escalates.
+
+P10 owns this dedicated marker table, not a widening of the AssignWork-specific
+FK/table:
+
+```sql
+CREATE TABLE tool_observation_replay_attention_rows (
+  project_id          TEXT NOT NULL,
+  dedup_key           TEXT NOT NULL,
+  source              TEXT NOT NULL DEFAULT 'ToolObservationReplayEvidenceFailure'
+                      CHECK (source = 'ToolObservationReplayEvidenceFailure'),
+  severity            TEXT NOT NULL DEFAULT 'ActionRequired'
+                      CHECK (severity = 'ActionRequired'),
+  target_workspace_id TEXT NOT NULL,
+  summary             TEXT NOT NULL DEFAULT 'A terminal tool outcome could not be replayed from durable observation evidence; recovery is paused.'
+                      CHECK (summary = 'A terminal tool outcome could not be replayed from durable observation evidence; recovery is paused.'),
+  failure_code        TEXT NOT NULL CHECK (failure_code IN (
+    'Missing','UnsupportedVersion','Malformed','HashMismatch',
+    'SettlementMismatch','IntentMismatch','ResultRefMismatch','UnexpectedResultRef'
+  )),
+  occurred_at         TEXT NOT NULL,
+  source_event_id     TEXT NOT NULL UNIQUE REFERENCES domain_events(event_id),
+  source_fact_id      TEXT NOT NULL,
+  PRIMARY KEY (project_id, dedup_key),
+  CHECK (dedup_key = source_fact_id),
+  FOREIGN KEY (source_fact_id, project_id, target_workspace_id, source_event_id)
+    REFERENCES tool_observation_replay_attention_facts
+      (attention_fact_id, project_id, target_workspace_id, event_id),
+  FOREIGN KEY (target_workspace_id, project_id)
+    REFERENCES workspaces(workspace_id, project_id)
+);
+CREATE INDEX tool_observation_replay_row_target
+  ON tool_observation_replay_attention_rows
+    (project_id, target_workspace_id, occurred_at);
+```
+
+The query unions the marker into the existing Attention result before severity
+counting/bubbling, with no additional wire field:
+
+```sql
+SELECT
+  projected.source AS source,
+  projected.severity AS severity,
+  projected.target_workspace_id AS target_workspace_id,
+  projected.dedup_key AS dedup_key,
+  projected.summary AS summary_ref,
+  projected.occurred_at AS occurred_at
+FROM tool_observation_replay_attention_rows AS projected
+WHERE projected.project_id = ?;
+```
+
+`failure_code` is deliberately omitted from the DTO projection.
+
+The query unions this source with existing Attention sources without adding a
+DTO detail field; it maps fixed source/severity/summary, owning Workspace,
+`attentionFactId` dedup and occurrence time. Subtree counts derive from
+deduplicated rows. P9 immutable fact/event and P10 row plus the existing
+per-project `P10_ATTENTION_CONSUMER_ID` advance in one transaction. Duplicate
+event/fact is one row; conflicting identity is projection corruption. Full P10
+rebuild clears this marker with other Attention source rows and rewinds the
+same shared offset to `floor-1` in the accepted atomic reset; replay is
+event-backed only within P1's retained horizon. Do not seed P40 rows directly
+from the P9 fact snapshot after the event is pruned, and do not alter
+`ConsumerRebuildRefused` below the retained floor. No dismissal/repair action,
+canonical mutation or notification transport is added.

@@ -57,3 +57,24 @@ generation writes remain rejected.
 P10 owns the `ActionRequired` read-model row and rebuild. Its visibility is
 bounded by the accepted P1 journal retention horizon; this contract does not
 add a durable post-pruning P9 fact store or new event.
+
+## Accepted AH7-DG-01 replay-evidence failure fact (DID v1.41)
+
+An exact current P3 action whose P4 terminal Settlement/Observation envelope
+is missing or inconsistent under a valid lease stops at RecoveryBlocked. P9
+records the source-specific `ToolObservationReplayEvidenceEscalated(v1)` event
+and immutable fact atomically. Its identity is `(executionId, invocationId)`;
+the bound LogicalActionId/ProviderTurn/callRef and closed P40 failureCode must
+match on duplicate delivery. Fact ID is `att_` + SHA-256 lowercase hex of
+canonical UTF-8 JSON `{"executionId":...,"invocationId":...,"version":1}`
+with fixed key order/no whitespace/no trailing newline.
+
+The event payload is exactly
+`{attentionFactId, executionId, targetWorkspaceId, logicalActionId,
+providerTurnId, callRef, invocationId, failureCode}`. Envelope: project from
+Execution, `aggregateRef=targetWorkspaceId`,
+`correlationRef=logicalActionId`, `actor=system:recovery`, no Command cause.
+No tool args/output, Artifact content, observation bytes, cause, parser/OS
+detail or secret is stored. The P9 write transaction rechecks the complete
+current lease/expiry; stale generations write no fact/event. This event is not
+`ReconciliationEscalated` and does not imply an unresolved external effect.

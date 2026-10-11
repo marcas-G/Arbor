@@ -331,3 +331,17 @@ additive to this historical ten-face matrix and authorized by DID v1.21 ALS-I1.
 - No per-dispatch full recovery (GQ3; restated in 03 §2).
 - Injection infrastructure shape, crash-simulation mechanism, retry counts,
   TTL/sweep/batch numeric values: empirical, task-level (scope-extraction §C (planning/proposals/P9/00-scope-extraction.md)).
+
+## Accepted AH7-DG-01 / P39-P40 RNO evidence-recovery boundaries (DID v1.41)
+
+Accepted compatibility matrix SHA-256:
+`AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+These are future owner qualification cases; no test or process qualification
+is claimed by this design landing.
+
+| Boundary | Before-commit kill | After-commit/restart | Required oracle |
+|---|---|---|---|
+| P4 P39 RNO terminal + P40 Observation envelope | Neither P39 terminal selection nor P40 version/body/hash/P4 Artifact linkage commits; old P39 selected fact remains eligible for same valid reconciliation path | One immutable P39 `selected_fact_id`/P4 RNO settlement and exact P40 Observation body/hash/ref survive; restart does not reconcile or execute again | `MayHaveStarted`, same-attempt selected `NotOccurred` fact, unchanged reason/fact/Artifact identities |
+| P3 RNO ToolResult handoff | ToolResult, Session source Observation, AgentLoopStepAction disposition and cursor all roll back in the existing one transaction; P4/P39 terminal winner remains | All four P3 facts persist exactly once; restart reads source winner and does not append/advance again | Original P4 `text`/`truncated`, same P3 bounded-payload result hash/source formula, no second Provider/P4 reconcile/Executor |
+| Legacy P39 RNO with P40 evidence absent | P9 replay-evidence fact/event neither commits if its transaction is killed before COMMIT | Retry under same valid current identity yields one `Missing` fact/event; P10 marker/offset is handled by the P10 matrix | No ToolResult/Action/cursor write; P39 selected fact/settlement/ref untouched |
+| Stale lease on missing/corrupt RNO row | No observation/fact read or P9/P10 write | Later current generation revalidates; stale generation remains ownership-lost | `LeaseFencingRejected` only, no replay-evidence Attention from stale holder |

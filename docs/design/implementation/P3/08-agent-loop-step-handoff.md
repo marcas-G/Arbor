@@ -324,6 +324,37 @@ cannot append a second ToolResult/Observation, choose another fact, or advance
 Action/cursor again. Late post-terminal evidence does not roll back terminal
 P4/P3 state.
 
+### Accepted AH7-DG-01 / P39-P40 ReconciledNoEffect Observation replay (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+
+For the same pinned `(executionId, providerTurnId, actionIndex, callRef,
+toolName, inputHash)`, P3 invokes the same P4 ToolInvocationId and accepts only
+P4's fenced canonical winner Observation. P39 RNO continues to use its exact
+P39 `selected_fact_id`/attempt and reason mapping. P3's existing
+`ToolResult.resultRef` bounded-payload hash, `observationRef` formula, and
+Session `source_ref` = ToolResult `observationRef` = AgentLoopStepAction
+`observation_source_ref` remain unchanged; none is the P39 fact ID or P4
+Artifact ID.
+
+P3 commits Session ToolResult, source Observation, Action disposition and
+cursor in its existing atomic handoff transaction. A kill before COMMIT leaves
+all P3 writes absent while the P4/P39 terminal winner remains; restart replays
+the original text/truncated once without reconciling/executing again. A kill
+after COMMIT leaves all P3 facts present; restart reads the exact existing
+source winner and does not append or advance again. A P3 projection loser
+under a valid fence adopts the committed winner, never its local candidate.
+
+For a pre-P40 RNO terminal row with missing P40 evidence, a still-Pending P3
+action under a valid generation follows `Missing`→RecoveryBlocked/P9/P10 and
+writes no ToolResult, Observation, Action disposition or cursor advance. It
+does not rerun reconciliation or Executor. An already durably Applied exact
+P3 source follows accepted DG01 §4 natural convergence without duplication.
+Stale generations are fenced before reading/projecting either P4 or P3 winner.
+
 ## 8. Settlement and successor handoff
 
 `SettlementProposed` stores the full `ExecutionSettlement` before the driver
