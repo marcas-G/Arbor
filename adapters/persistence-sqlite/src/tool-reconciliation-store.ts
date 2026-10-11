@@ -1,14 +1,17 @@
 import type { ToolInvocationId } from "@arbor/domain";
 import {
+  reconciliationFactId,
   ToolReconciliationFactStore,
   TransactionScope,
-  reconciliationFactId,
   validateToolReconciliationResult,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
-import { persistenceCorruption, repositoryFailure } from "./repository-error.js";
+import {
+  persistenceCorruption,
+  repositoryFailure,
+} from "./repository-error.js";
 
 interface InvocationRow {
   readonly recovery_binding_state: string;
@@ -35,10 +38,7 @@ export const ToolReconciliationFactStoreLive: Layer.Layer<
   ToolReconciliationFactStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = repositoryFailure(
-      "ToolReconciliationFactStore",
-      "record",
-    );
+    const failure = repositoryFailure("ToolReconciliationFactStore", "record");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
 
@@ -46,7 +46,10 @@ export const ToolReconciliationFactStoreLive: Layer.Layer<
       record: (request, result, observedAt) =>
         Effect.gen(function* () {
           yield* TransactionScope;
-          if (!observedAt.trim() || !validateToolReconciliationResult(request, result)) {
+          if (
+            !observedAt.trim() ||
+            !validateToolReconciliationResult(request, result)
+          ) {
             return yield* Effect.fail(
               persistenceCorruption(
                 "ToolReconciliationFactStore",
@@ -172,7 +175,8 @@ export const ToolReconciliationFactStoreLive: Layer.Layer<
           const outcome = result._tag;
           const reasonCode =
             result._tag === "StillUnknown" ? result.reasonCode : null;
-          const resultRef = result._tag === "Occurred" ? result.resultRef : null;
+          const resultRef =
+            result._tag === "Occurred" ? result.resultRef : null;
           yield* run(
             sql.unsafe(
               `INSERT INTO tool_reconciliation_facts (
@@ -195,7 +199,9 @@ export const ToolReconciliationFactStoreLive: Layer.Layer<
                 evidenceRef,
                 evidenceSha256,
                 resultRef,
-                result._tag === "StillUnknown" ? observedAt : result.proof.observedAt,
+                result._tag === "StillUnknown"
+                  ? observedAt
+                  : result.proof.observedAt,
               ],
             ),
           );
@@ -203,7 +209,9 @@ export const ToolReconciliationFactStoreLive: Layer.Layer<
           const facts = yield* run(
             sql.unsafe<{
               readonly fact_id: string;
-              readonly fact_disposition: "RecoveryInput" | "PostTerminalEvidence";
+              readonly fact_disposition:
+                | "RecoveryInput"
+                | "PostTerminalEvidence";
               readonly outcome: "NotOccurred" | "Occurred" | "StillUnknown";
             }>(
               `SELECT fact_id, fact_disposition, outcome

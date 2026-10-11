@@ -1,8 +1,8 @@
 import {
   ToolReconciliationFactStore,
-  TransactionPort,
   type ToolReconciliationRequest,
   type ToolReconciliationResult,
+  TransactionPort,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -58,7 +58,18 @@ describe("P39 ToolReconciliationFactStore", () => {
             settlement_json, result_ref
           ) VALUES (?,?,?,?,?,?,?,?,?,'MayHaveStarted','Bound',?,NULL,NULL,NULL,
                     't0',NULL,NULL,NULL,NULL)`,
-          [invocationId, "exe_fake", "ws_fake", "shell", "3", "Reconcilable", "{}", "[]", null, bindingSha256],
+          [
+            invocationId,
+            "exe_fake",
+            "ws_fake",
+            "shell",
+            "3",
+            "Reconcilable",
+            "{}",
+            "[]",
+            null,
+            bindingSha256,
+          ],
         );
         yield* sql.unsafe(
           `INSERT INTO tool_invocation_recovery_bindings
@@ -74,7 +85,13 @@ describe("P39 ToolReconciliationFactStore", () => {
             admission_source,admission_time_precision
           ) VALUES (?,0,'MayHaveStarted',?,'Reconcilable','profile','1',?,'v1',?,?,'t1',
                     'P39Admission','TransactionTimestamp')`,
-          [invocationId, "e".repeat(64), profileHash, "effect-1", bindingSha256],
+          [
+            invocationId,
+            "e".repeat(64),
+            profileHash,
+            "effect-1",
+            bindingSha256,
+          ],
         );
         yield* sql.unsafe(
           `INSERT INTO artifacts (artifact_id,kind,blob_ref,byte_size,content_hash,

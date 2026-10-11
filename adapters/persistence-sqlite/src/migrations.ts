@@ -1961,35 +1961,15 @@ export const P35_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   },
 ];
 
-/** AH7-DG-02 P39 owner migration descriptor. Deliberately not composed into
- * P36_MIGRATIONS or any CURRENT_MIGRATIONS alias: production must install
- * 0036→0037→0038→0039 under the maintenance preflight and remain stopped at
- * version 39 until P40 is available. Isolated DDL tests may apply this
- * descriptor after a P36 fixture; that does not qualify or authorize a
- * P39-only runtime. */
+/** AH7-DG-02 P39 owner migration descriptor. It is applied by the privileged
+ * maintenance path after the P37/P38 descriptors; the P39 runtime remains
+ * stopped at version 39 until P40 is available. */
 export const P39_RECONCILIATION_MIGRATION: MigrationFile = {
   id: 39,
   name: "ah7_reconciliation_attempts",
   sql: P39_RECONCILIATION_DDL,
   foreignKeysOff: true,
 };
-
-/** Privileged maintenance runner registry. This deliberately contains only
- * the P39 descriptor in this isolated P39 tree because the accepted 0037/0038
- * implementation modules are dependencies that must be integrated before a
- * version-36 database can advance. Add those descriptors and pinned hashes
- * here during integration; the maintenance command cannot accept caller SQL. */
-export const P39_MAINTENANCE_MIGRATION_MANIFEST: Readonly<
-  Record<number, { readonly name: string; readonly sha256: string }>
-> = Object.freeze({
-  39: Object.freeze({
-    name: "ah7_reconciliation_attempts",
-    sha256: "b363ee081d18536b1c606a6432b171fbed1a7fc48ef935388111b490a56fab20",
-  }),
-});
-
-export const P39_MAINTENANCE_MIGRATIONS: ReadonlyArray<MigrationFile> =
-  Object.freeze([Object.freeze(P39_RECONCILIATION_MIGRATION)]);
 
 /** AH7-DG-03 accepted forward migration; preserves legacy rows as
  * LegacyUnknown and advances the production SQLite baseline to user_version 36. */
@@ -2114,3 +2094,34 @@ export const CURRENT_MIGRATIONS = P38_MIGRATIONS;
 export const CURRENT_MIGRATION_BASELINE = Math.max(
   ...CURRENT_MIGRATIONS.map((migration) => migration.id),
 );
+/** Trusted maintenance-only suffix. IDs and SQL pins are ordered after P36;
+ * the ordinary P39 runtime still starts only through version 38 and refuses
+ * schema 39 until the P40 implementation is available. */
+export const P39_MAINTENANCE_MIGRATIONS: ReadonlyArray<MigrationFile> =
+  Object.freeze([
+    ...P37_MIGRATIONS.filter(({ id }) => id === 37).map((migration) =>
+      Object.freeze(migration),
+    ),
+    ...P38_MIGRATIONS.filter(({ id }) => id === 38).map((migration) =>
+      Object.freeze(migration),
+    ),
+    Object.freeze(P39_RECONCILIATION_MIGRATION),
+  ]);
+
+/** Pin every executable SQL body in the privileged migration path. */
+export const P39_MAINTENANCE_MIGRATION_MANIFEST: Readonly<
+  Record<number, { readonly name: string; readonly sha256: string }>
+> = Object.freeze({
+  37: Object.freeze({
+    name: "ah10_deliver_replay_attention_rows",
+    sha256: "0d23988891b3a19a36b6a836a9697d674667681dde2123be4dcae6659e39e737",
+  }),
+  38: Object.freeze({
+    name: "executable_approval_handoff",
+    sha256: "fa109e056d88c49dada808a7b0bcc9edce4595d1812990c0fa4facd0b248110d",
+  }),
+  39: Object.freeze({
+    name: "ah7_reconciliation_attempts",
+    sha256: "b363ee081d18536b1c606a6432b171fbed1a7fc48ef935388111b490a56fab20",
+  }),
+});

@@ -60,6 +60,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     expect(migration.name).toBe("ah7_reconciliation_attempts");
     expect(migrations.P36_MIGRATIONS.map(({ id }) => id).at(-1)).toBe(36);
     const maintenanceMigrations = migrations.P39_MAINTENANCE_MIGRATIONS;
+    expect(maintenanceMigrations.map(({ id }) => id)).toEqual([37, 38, 39]);
     expect(Object.isFrozen(maintenanceMigrations)).toBe(true);
     expect(Object.isFrozen(migration)).toBe(true);
     for (const approved of maintenanceMigrations) {
