@@ -3003,17 +3003,6 @@ export const deliverMessageGatewayHandler = (
       ) {
         expectedRecipientWorkspaceId = sender.value.parentWorkspaceId;
       }
-      const planFor = (candidateCommandId: CommandIdType) =>
-        deliverMessagePlan({
-          messageId,
-          commandId: candidateCommandId,
-          projectId: execution.projectId,
-          senderWorkspaceId: execution.workspaceId,
-          deliverableId: action.deliverableId,
-          bodyRef: action.summary,
-          principal: context.principal,
-          actor: context.principal as never,
-        });
       const failure = (safeMessage: string): AgentActionError =>
         actionOperationalFailure("Deliver.recovery")(safeMessage);
       const block = (
@@ -3272,16 +3261,6 @@ export const deliverMessageGatewayHandler = (
           if (decoded === null) {
             return yield* block(
               "PriorReceiptDecodeMismatch",
-              candidateCommandId,
-            );
-          }
-          const expectedPlan = planFor(candidateCommandId);
-          if (
-            decoded.semanticRequestFingerprint !==
-            expectedPlan.authority.semanticRequestFingerprint
-          ) {
-            return yield* block(
-              "PriorReceiptResultMismatch",
               candidateCommandId,
             );
           }
