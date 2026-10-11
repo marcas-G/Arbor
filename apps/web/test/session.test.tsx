@@ -9,6 +9,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -210,25 +211,63 @@ describe("P13-007 memory-only session (frozen contract 01 §4)", () => {
 
 describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
   it("a 401 unauthenticated view problem blocks content and offers re-login", async () => {
-    const fetchMock = stubFetch((url) =>
-      Promise.resolve(
-        url === "/projects"
-          ? directoryResponse()
-          : jsonResponse(401, {
-              ok: false,
-              status: 401,
-              problem: unauthenticatedProblem,
-            }),
-      ),
-    );
+    let resolveTreeResponse!: (response: Response) => void;
+    let treeResponseState: "pending" | "resolved" = "pending";
+    const pendingTreeResponse = new Promise<Response>((resolve) => {
+      resolveTreeResponse = resolve;
+    });
+    const fetchMock = stubFetch((url) => {
+      if (url === "/projects") return Promise.resolve(directoryResponse());
+      if (url === "/views/responsibility-tree") return pendingTreeResponse;
+      return Promise.resolve(viewResponse(url));
+    });
     render(<App />);
     await login();
     await switchProject("prj_demo");
     const treeButtons = screen.getAllByRole("button", { name: "树" });
     fireEvent.click(treeButtons[0] as HTMLElement);
-    await waitFor(() => expect(screen.getByText("未认证")).toBeTruthy());
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url]) => url === "/views/responsibility-tree",
+        ),
+      ).toBe(true),
+    );
+    expect(treeResponseState).toBe("pending");
+    await act(async () => {
+      treeResponseState = "resolved";
+      resolveTreeResponse(
+        jsonResponse(401, {
+          ok: false,
+          status: 401,
+          problem: unauthenticatedProblem,
+        }),
+      );
+    });
+    const fetchSnapshot = () =>
+      fetchMock.mock.calls.map(([url, init]) => ({
+        url,
+        method: init.method ?? "GET",
+        authorization:
+          (init.headers as Record<string, string> | undefined)
+            ?.Authorization === "Bearer tok_1"
+            ? "test-token-present"
+            : "missing-or-other",
+      }));
+    try {
+      await waitFor(() => expect(screen.getByText("未认证")).toBeTruthy());
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `${detail}\nDOM: ${document.body.innerHTML}\n` +
+          `fetch requests: ${JSON.stringify(fetchSnapshot())}\n` +
+          `tree response: ${treeResponseState}`,
+      );
+    }
     expect(screen.queryByRole("heading", { name: "工作台" })).toBeNull();
-    const call = fetchMock.mock.calls.find(([url]) => /^\/views\//.test(url));
+    const call = fetchMock.mock.calls.find(
+      ([url]) => url === "/views/responsibility-tree",
+    );
     expect(call).toBeDefined();
     const [url, init] = call as unknown as [string, RequestInit];
     expect(url).toMatch(/^\/views\//);
