@@ -50,6 +50,7 @@ interface ApprovalSnapshot {
 }
 
 const fixtures: ProductionFixture[] = [];
+const EXECUTABLE_APPROVAL_ENTRY_KEY = /^eap:(.+):(\d+)$/u;
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
@@ -166,17 +167,20 @@ const startExecutableApproval = async (marker: string) => {
     (value) =>
       value.unconsumed.some(
         (entry) =>
-          entry.kind === "Governance" && /^eap:[^:]+:0$/u.test(entry.entryKey),
+          entry.kind === "Governance" &&
+          EXECUTABLE_APPROVAL_ENTRY_KEY.test(entry.entryKey),
       ),
     60_000,
   );
   const entry = inbox.unconsumed.find(
     (candidate) =>
       candidate.kind === "Governance" &&
-      /^eap:[^:]+:0$/u.test(candidate.entryKey),
+      EXECUTABLE_APPROVAL_ENTRY_KEY.test(candidate.entryKey),
   );
   const match =
-    entry === undefined ? null : /^eap:([^:]+):(\d+)$/u.exec(entry.entryKey);
+    entry === undefined
+      ? null
+      : EXECUTABLE_APPROVAL_ENTRY_KEY.exec(entry.entryKey);
   if (match === null || match[1] === undefined || match[2] === undefined) {
     throw new Error(
       `public Inbox exposed no exact Executable approval for ${marker}`,
