@@ -132,6 +132,18 @@ export interface ExecutableApprovalStoreService {
     ToolInvocationStoreError,
     TransactionScope
   >;
+  /** Expire a bounded set of due Pending/Approved rows. Each row is a
+   * revision-CAS against state + expiresAt; Inbox consumption and the durable
+   * Resolved wake event share this transaction. */
+  readonly expireDue: (input: {
+    readonly now: string;
+    readonly expiredBy: Principal;
+    readonly batchSize?: number;
+  }) => Effect.Effect<
+    ReadonlyArray<ExecutableApprovalRecord>,
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
   /** Called inside the same fenced transaction as ToolInvocation intent
    * admission. It consumes only the exact Approved revision and immutable
    * invocation binding. */

@@ -395,7 +395,7 @@ const resultDecoders: ResultDecoderRegistry = {
       objectWith(value, {
         approvalId: stringValue,
         executionId: stringValue,
-        state: oneOf("Approved", "Rejected"),
+        state: oneOf("Approved", "Rejected", "Expired"),
         revision: nonNegativeInteger,
       }),
   },

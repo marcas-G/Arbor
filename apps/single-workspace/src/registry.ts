@@ -76,6 +76,7 @@ const executableApprovalStoreUnavailable: ExecutableApprovalStoreService = {
     Effect.die(new Error("ExecutableApprovalStoreUnavailable")),
   decide: () => Effect.succeed(Option.none()),
   consumeApproved: () => Effect.succeed(false),
+  expireDue: () => Effect.succeed([]),
   cancelForExecution: () => Effect.succeed([]),
 };
 
@@ -260,6 +261,10 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
         : []),
       makeResolveExecutableApprovalHandler({
         approvals: executableApprovals,
+        executions,
+        now: Option.isSome(clock)
+          ? clock.value.now
+          : () => Effect.sync(() => new Date().toISOString()),
       }) as unknown as CommandHandler<unknown, unknown>,
       makeSteerWorkHandler({
         works,

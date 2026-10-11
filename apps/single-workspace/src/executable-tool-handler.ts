@@ -214,7 +214,7 @@ export const makeExecutableToolHandler = (
           invocationId = oldId;
         }
       }
-      const intent: ToolIntent = {
+      let intent: ToolIntent = {
         callRef: invocation.callRef,
         toolName: invocation.toolName,
         toolVersion,
@@ -244,6 +244,11 @@ export const makeExecutableToolHandler = (
             })),
           );
         if (Option.isSome(existing)) currentApproval = existing.value;
+      }
+      if (currentApproval !== undefined) {
+        // This value comes only from the trusted Executable ActionApproval
+        // lookup; no model-facing argument can set it.
+        intent = { ...intent, approvalId: currentApproval.approvalId };
       }
       const controlBasisDigest = sha256Hex(JSON.stringify(controlBasis));
       const toolContext: ToolExecutionContext = {

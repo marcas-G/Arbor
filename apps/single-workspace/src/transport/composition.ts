@@ -195,6 +195,7 @@ export const makeRepositoryInputsLoader = (
                   executionId: execution.value.executionId,
                   projectId: execution.value.projectId,
                   workspaceId: execution.value.workspaceId,
+                  status: execution.value.state.status,
                 },
               }
             : {}),

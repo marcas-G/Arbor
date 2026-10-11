@@ -98,6 +98,7 @@ export type VerifiedCommandAuthority =
       readonly approvalId: string;
       readonly workspaceId: WorkspaceId;
       readonly executionId: ExecutionId;
+      readonly expectedRevision: number;
     }
   | {
       /** P14 `01` §1: human chat-turn submission — root-only exact binding

@@ -352,15 +352,22 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
           const changed = yield* run(
             sql.unsafe<ApprovalRow>(
               `UPDATE action_approvals
-                  SET state = ?, revision = revision + 1, decided_at = ?,
-                      decided_by = ?, decision_reason = ?
+                  SET state = CASE WHEN expires_at <= ? THEN 'Expired' ELSE ? END,
+                      revision = revision + 1,
+                      decided_at = CASE WHEN expires_at <= ? THEN decided_at ELSE ? END,
+                      decided_by = CASE WHEN expires_at <= ? THEN decided_by ELSE ? END,
+                      decision_reason = CASE WHEN expires_at <= ? THEN decision_reason ELSE ? END
                 WHERE approval_id = ? AND route_kind = 'Executable'
                   AND binding_proven = 1 AND revision = ? AND state = 'Pending'
                 RETURNING *`,
               [
+                input.decidedAt,
                 input.decision === "Approve" ? "Approved" : "Rejected",
                 input.decidedAt,
+                input.decidedAt,
+                input.decidedAt,
                 input.decidedBy,
+                input.decidedAt,
                 input.reason,
                 input.approvalId,
                 input.expectedRevision,
@@ -409,6 +416,9 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
                   toolInvocationId: record.toolInvocationId,
                   revision: record.revision,
                   resolution: record.state,
+                  ...(record.state === "Expired"
+                    ? { reasonCode: "TTLExpired" }
+                    : {}),
                 },
               },
             ])
@@ -417,6 +427,121 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
               Effect.mapError(failure),
             );
           return Option.some(record);
+        }),
+      expireDue: (input) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const batchSize = Math.max(
+            1,
+            Math.min(1000, Math.floor(input.batchSize ?? 100)),
+          );
+          const candidates = yield* run(
+            sql.unsafe<ApprovalRow>(
+              `SELECT * FROM action_approvals
+                WHERE route_kind = 'Executable' AND binding_proven = 1
+                  AND state IN ('Pending','Approved')
+                  AND expires_at <= ? AND consumed_by IS NULL
+                ORDER BY expires_at, approval_id
+                LIMIT ?`,
+              [input.now, batchSize],
+            ),
+          );
+          const expired: Array<ExecutableApprovalRecord> = [];
+          for (const candidate of candidates) {
+            if (
+              candidate.project_id === null ||
+              candidate.workspace_id === null ||
+              candidate.execution_id === null ||
+              candidate.logical_step_no === null ||
+              candidate.repair_attempt === null ||
+              candidate.action_index === null ||
+              candidate.logical_action_id === null ||
+              candidate.call_ref === null ||
+              candidate.tool_invocation_id === null
+            ) {
+              return yield* Effect.fail(
+                persistenceCorruption(
+                  "ToolInvocationStore",
+                  "executable-approval-expire",
+                  "proven Executable approval has an incomplete binding",
+                ),
+              );
+            }
+            const inboxKey = `eap:${candidate.approval_id}:0`;
+            const inboxRows = yield* run(
+              sql.unsafe<{ consumed_at: string | null }>(
+                "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
+                [candidate.workspace_id, inboxKey],
+              ),
+            );
+            if (
+              inboxRows.length !== 1 ||
+              (candidate.state === "Pending"
+                ? inboxRows[0]?.consumed_at !== null
+                : inboxRows[0]?.consumed_at === null)
+            ) {
+              return yield* Effect.fail(
+                persistenceCorruption(
+                  "ToolInvocationStore",
+                  "executable-approval-expire",
+                  "approval expiry has no exact Inbox revision to resolve",
+                ),
+              );
+            }
+            const changed = yield* run(
+              sql.unsafe<ApprovalRow>(
+                `UPDATE action_approvals
+                    SET state = 'Expired', revision = revision + 1
+                  WHERE approval_id = ? AND route_kind = 'Executable'
+                    AND binding_proven = 1 AND revision = ?
+                    AND state = ? AND expires_at <= ? AND consumed_by IS NULL
+                  RETURNING *`,
+                [
+                  candidate.approval_id,
+                  candidate.revision,
+                  candidate.state,
+                  input.now,
+                ],
+              ),
+            );
+            const row = changed[0];
+            if (row === undefined) continue;
+            const record = toApproval(row);
+            if (candidate.state === "Pending") {
+              yield* inbox
+                .markConsumed(record.workspaceId, inboxKey)
+                .pipe(Effect.mapError(failure));
+            }
+            yield* journal
+              .append([
+                {
+                  projectId: record.projectId,
+                  eventType: "ExecutableApprovalResolved",
+                  eventVersion: 1,
+                  occurredAt: input.now,
+                  aggregateRef: record.approvalId,
+                  actor: input.expiredBy as unknown as Actor,
+                  correlationRef: record.logicalActionId,
+                  payload: {
+                    approvalId: record.approvalId,
+                    routeKind: "Executable",
+                    executionId: record.executionId,
+                    workspaceId: record.workspaceId,
+                    logicalActionId: record.logicalActionId,
+                    toolInvocationId: record.toolInvocationId,
+                    revision: record.revision,
+                    resolution: "Expired",
+                    reasonCode: "TTLExpired",
+                  },
+                },
+              ])
+              .pipe(
+                Effect.provideService(IdGenerator, ids),
+                Effect.mapError(failure),
+              );
+            expired.push(record);
+          }
+          return expired;
         }),
       consumeApproved: (input) =>
         Effect.gen(function* () {
@@ -694,11 +819,59 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
             );
             const row = changed[0];
             if (row === undefined) {
+              const latestRows = yield* run(
+                sql.unsafe<ApprovalRow>(
+                  `SELECT * FROM action_approvals
+                    WHERE approval_id = ? AND route_kind = 'Executable'
+                      AND binding_proven = 1 AND project_id = ?
+                      AND execution_id = ?`,
+                  [
+                    candidate.approval_id,
+                    candidate.project_id,
+                    input.executionId,
+                  ],
+                ),
+              );
+              const latest = latestRows[0];
+              if (latest === undefined) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "ToolInvocationStore",
+                    "executable-approval-cancel",
+                    "approval disappeared during Stop/Expire CAS",
+                  ),
+                );
+              }
+              const latestApproval = toApproval(latest);
+              if (
+                !executableApprovalBindingMatches(
+                  immutableBindingOf(toApproval(candidate)),
+                  immutableBindingOf(latestApproval),
+                )
+              ) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "ToolInvocationStore",
+                    "executable-approval-cancel",
+                    "approval binding changed during Stop/Expire CAS",
+                  ),
+                );
+              }
+              // Resolve/Expire/Consume won the same exact-revision CAS before
+              // Stop. Its Inbox and wake fact already committed, so Stop keeps
+              // its own stop transaction and does not emit a duplicate event.
+              if (
+                ["Rejected", "Expired", "Consumed", "Cancelled"].includes(
+                  latestApproval.state,
+                )
+              ) {
+                continue;
+              }
               return yield* Effect.fail(
                 persistenceCorruption(
                   "ToolInvocationStore",
                   "executable-approval-cancel",
-                  "approval changed inside StopExecution transaction",
+                  "approval CAS lost without an exact terminal winner",
                 ),
               );
             }

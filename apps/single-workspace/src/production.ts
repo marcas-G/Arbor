@@ -64,6 +64,7 @@ import {
   DomainEventJournal,
   EnvironmentResolverPort,
   EnvironmentRevisionStore,
+  ExecutableApprovalStore,
   type ExecutionDriverPort,
   ExecutionRepository,
   type ExecutionScheduler,
@@ -289,6 +290,7 @@ export type ProductionDaemonServices =
   | FormationProposalStore
   | FormationFulfillmentStore
   | InboxProjectionStore
+  | ExecutableApprovalStore
   | WorkflowSignalConsumer
   | EnvironmentResolverPort
   | RecordEnvironmentChange
@@ -313,6 +315,7 @@ export const ProductionDaemonServiceLive = (
     Effect.gen(function* () {
       const tx = yield* TransactionPort;
       const clock = yield* Clock;
+      const executableApprovals = yield* ExecutableApprovalStore;
       const ids = yield* IdGenerator;
       const attentionPoll = yield* AttentionPollStore;
       const journal = yield* DomainEventJournal;
@@ -341,6 +344,19 @@ export const ProductionDaemonServiceLive = (
       const changes = yield* RecordEnvironmentChange;
       const revisions = yield* EnvironmentRevisionStore;
       const blobs = yield* BlobStorePort;
+
+      const expireExecutableApprovals = Effect.gen(function* () {
+        const now = yield* clock.now();
+        yield* tx.transact(
+          executableApprovals.expireDue({
+            now,
+            expiredBy: config.principal,
+            ...(config.batchSize === undefined
+              ? {}
+              : { batchSize: config.batchSize }),
+          }),
+        );
+      }).pipe(Effect.orDie);
 
       const stores: ConsumerLoopStores = {
         tx,
@@ -714,14 +730,20 @@ export const ProductionDaemonServiceLive = (
 
       const recovery: RecoveryDaemon<ProductionDaemonServices> = {
         startup: Effect.asVoid(
-          Effect.flatMap(startupRecovery(config.principal), () =>
-            Effect.flatMap(
-              recoverProjectResourceActivations,
-              () => t1.markComplete,
+          Effect.flatMap(expireExecutableApprovals, () =>
+            Effect.flatMap(startupRecovery(config.principal), () =>
+              Effect.flatMap(
+                recoverProjectResourceActivations,
+                () => t1.markComplete,
+              ),
             ),
           ),
         ),
-        sweep: Effect.asVoid(sweepRecovery(config.principal)),
+        sweep: Effect.asVoid(
+          Effect.flatMap(expireExecutableApprovals, () =>
+            sweepRecovery(config.principal),
+          ),
+        ),
       };
 
       const conversationTick = Effect.asVoid(

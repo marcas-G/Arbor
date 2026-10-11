@@ -53,6 +53,7 @@ export interface CanonicalExecutionSnapshot {
   readonly executionId: ExecutionId;
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
+  readonly status?: "Active" | "Settled";
 }
 
 export interface CanonicalWorkSnapshot {
@@ -635,22 +636,29 @@ const governanceCommandFact = (
       const approvalId = payloadString(payload, "approvalId");
       const expectedRevision = payloadNumber(payload, "expectedRevision");
       const approval = input.canonicalFacts.executableApproval;
+      const execution = input.canonicalFacts.execution;
       if (
-        !isAuthenticatedHuman({ principal, governance: input.governance }) ||
+        (!input.governance.authenticatedHumans.includes(principal) &&
+          !governanceAuthorizes(
+            input.governance,
+            principal,
+            approval?.workspaceId ?? null,
+          )) ||
         approvalId === null ||
         expectedRevision === null ||
         approval === undefined ||
         approval.approvalId !== approvalId ||
         approval.projectId !== projectId ||
-        approval.state !== "Pending" ||
-        approval.revision !== expectedRevision
+        execution === undefined ||
+        execution.executionId !== approval.executionId ||
+        execution.projectId !== projectId ||
+        execution.workspaceId !== approval.workspaceId ||
+        execution.status !== "Active"
       ) {
         return Effect.fail(
           denyCommand(input, "ResolveExecutableApproval", "Denied"),
         );
       }
-      const error = guarded("ResolveExecutableApproval", approval.workspaceId);
-      if (error !== null) return Effect.fail(error);
       return Effect.succeed({
         _tag: "ExecutableApprovalDecisionAuthority",
         principal,
@@ -660,6 +668,7 @@ const governanceCommandFact = (
         approvalId,
         workspaceId: approval.workspaceId,
         executionId: approval.executionId,
+        expectedRevision,
       });
     }
     case "SteerWork": {
