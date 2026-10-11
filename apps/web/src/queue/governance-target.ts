@@ -28,8 +28,71 @@ export interface ControlApprovalTarget {
   readonly approvalRevision: number;
 }
 
+/** Display-only projection of P10's exact Executable Inbox target. */
+export interface ExecutableApprovalTarget {
+  readonly kind: "ExecutableApproval";
+  readonly approvalId: string;
+  readonly revision: number;
+  readonly executionId: string;
+  readonly toolName: string;
+  readonly toolVersion: string;
+  readonly validatedArgumentsPreview: string;
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
+  readonly capabilities: ReadonlyArray<string>;
+  readonly sideEffectSemantics:
+    | "ReadOnly"
+    | "Idempotent"
+    | "Reconcilable"
+    | "NonIdempotent";
+  readonly expiresAt: string;
+  readonly actionDigest: string;
+}
+
 const GOVERNANCE_ENTRY_KEY = /^gov:(fpr_[^:\s]+):(\d+)$/;
 const CONTROL_APPROVAL_ENTRY_KEY = /^cap:(cap_[^:\s]+):(\d+)$/;
+// ApprovalId is opaque and may itself contain colons (P12's stable eap ID).
+// Bind the final numeric segment as Inbox revision and preserve the full ID.
+const EXECUTABLE_APPROVAL_ENTRY_KEY = /^eap:(.+):(\d+)$/;
+const EXECUTABLE_SIDE_EFFECTS = new Set([
+  "ReadOnly",
+  "Idempotent",
+  "Reconcilable",
+  "NonIdempotent",
+]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0;
+
+const isStringArray = (value: unknown): value is ReadonlyArray<string> =>
+  Array.isArray(value) && value.every(isNonEmptyString);
+
+const isExecutableApprovalTarget = (
+  value: unknown,
+): value is ExecutableApprovalTarget => {
+  if (!isRecord(value)) return false;
+  return (
+    value.kind === "ExecutableApproval" &&
+    typeof value.approvalId === "string" &&
+    value.approvalId.length > 0 &&
+    typeof value.revision === "number" &&
+    Number.isSafeInteger(value.revision) &&
+    value.revision >= 0 &&
+    isNonEmptyString(value.executionId) &&
+    isNonEmptyString(value.toolName) &&
+    isNonEmptyString(value.toolVersion) &&
+    isNonEmptyString(value.validatedArgumentsPreview) &&
+    isStringArray(value.targetResourceSpaceIds) &&
+    isStringArray(value.capabilities) &&
+    typeof value.sideEffectSemantics === "string" &&
+    EXECUTABLE_SIDE_EFFECTS.has(value.sideEffectSemantics) &&
+    typeof value.expiresAt === "string" &&
+    Number.isFinite(Date.parse(value.expiresAt)) &&
+    isNonEmptyString(value.actionDigest)
+  );
+};
 
 export const isGovernanceKind = (kind: string): boolean =>
   kind === "Governance";
@@ -67,4 +130,33 @@ export const parseControlApprovalEntryKey = (
     approvalId: match[1],
     approvalRevision: Number(match[2]),
   };
+};
+
+/**
+ * Strictly bind the opaque `eap:` Inbox key to P10's server-projected target.
+ * A key alone is never enough to render an approval form, and a cap: target
+ * can never be interpreted as Executable.
+ */
+export const parseExecutableApprovalEntry = (
+  entryKey: string,
+  kind: string,
+  target: unknown,
+): ExecutableApprovalTarget | null => {
+  if (kind !== "Governance") return null;
+  const match = EXECUTABLE_APPROVAL_ENTRY_KEY.exec(entryKey);
+  if (match === null || match[1] === undefined || match[2] === undefined) {
+    return null;
+  }
+  const approvalRevision = Number(match[2]);
+  if (!Number.isSafeInteger(approvalRevision) || approvalRevision < 0) {
+    return null;
+  }
+  if (
+    !isExecutableApprovalTarget(target) ||
+    target.approvalId !== match[1] ||
+    target.revision !== approvalRevision
+  ) {
+    return null;
+  }
+  return target;
 };
