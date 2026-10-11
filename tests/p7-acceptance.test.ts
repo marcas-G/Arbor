@@ -131,6 +131,10 @@ import {
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import {
+  NoHoldWorkReadmissionGateStoreLive,
+  NoHoldWorkReadmissionGateStoreService,
+} from "../packages/testkit/src/index.js";
+import {
   makeP7CommandHandlers,
   p7Project,
   p7RootWorkspace,
@@ -313,6 +317,7 @@ const StoryRegistryLive: Layer.Layer<
         sessions,
         executions,
         workWaits,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
       }),
       ...makeP7CommandHandlers({
         proposals,
@@ -371,6 +376,7 @@ const makeStoryApp = () => {
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),

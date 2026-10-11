@@ -78,6 +78,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 import { ReconciliationSourceLive } from "../../packages/tool-runtime/src/index.js";
 
 export const p7TestActor = parse(Actor)("user:gov");
@@ -161,6 +162,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
         workspaces,
         sessions,
         executions,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
         workWaits,
       }),
       ...makeP7CommandHandlers({

@@ -69,6 +69,7 @@ import {
   deriveProjectAttention,
   projectionReadError,
 } from "../../packages/projection-runtime/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../../packages/testkit/src/index.js";
 
 export const p10Project = parse(ProjectId)(
   "prj_00000000-0000-7000-8000-000000000010",
@@ -101,6 +102,7 @@ export const makeP10App = () => {
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(DependencyRepositoryLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(EvidenceRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),

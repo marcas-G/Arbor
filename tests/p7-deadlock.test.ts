@@ -47,6 +47,7 @@ import {
   WorkRepository,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 import {
   makeP7App,
   p7Project,
@@ -159,7 +160,7 @@ const makeDeadlockApp = () => {
     waits,
     Layer.provide(
       DependencyAwareRunnableWorkSourceLive,
-      Layer.mergeAll(base, waits),
+      Layer.mergeAll(base, waits, NoHoldWorkReadmissionGateStoreLive),
     ),
   );
 };

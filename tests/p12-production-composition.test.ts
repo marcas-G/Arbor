@@ -6,7 +6,6 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   CURRENT_MIGRATIONS,
   P10_ATTENTION_CONSUMER_ID,
-  P32_MIGRATIONS,
   P35_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
@@ -137,7 +136,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
     const outcome = await runWith(
       join(dir, "slice.db"),
       Effect.gen(function* () {
-        yield* runMigrations(P32_MIGRATIONS);
+        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* p7SeedProject;
         // one Open work on the seeded root workspace
         const gateway = yield* CommandGateway;

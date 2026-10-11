@@ -130,6 +130,7 @@ import {
   rebuildOnDetectedDrift,
   reconcileInbox,
 } from "../packages/projection-runtime/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 import {
   makeP7App,
   p7Project,
@@ -1396,6 +1397,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
         Layer.provide(ConsumerOffsetStoreLive, infra),
         Layer.provide(ConsumerDeadLetterStoreLive, infra),
         Layer.provide(ProjectionStoreLive, infra),
+        NoHoldWorkReadmissionGateStoreLive,
       );
       return Layer.mergeAll(
         infra,

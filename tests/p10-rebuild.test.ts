@@ -56,6 +56,7 @@ import {
   retainAttentionRows,
   retainTranscriptWindow,
 } from "../packages/projection-runtime/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 
 import type { P10FixtureDeps } from "./support/p10-fixture.js";
 import {
@@ -108,6 +109,7 @@ const makeRebuildApp = () => {
     Layer.provide(ConsumerOffsetStoreLive, infra),
     Layer.provide(ConsumerDeadLetterStoreLive, infra),
     Layer.provide(ProjectionStoreLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
   );
   return Layer.mergeAll(
     infra,

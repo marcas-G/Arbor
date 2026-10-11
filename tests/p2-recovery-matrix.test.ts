@@ -51,6 +51,7 @@ import {
   SessionRepository,
   TransactionPort,
 } from "../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 import {
   seedCurrentOpenWork,
   workEpisode,
@@ -75,6 +76,7 @@ const makeApp = () => {
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),

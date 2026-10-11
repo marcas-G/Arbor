@@ -63,6 +63,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../packages/testkit/src/index.js";
 import { workEpisode } from "./support/execution-episode-fixtures.js";
 import {
   p6Project,
@@ -127,6 +128,7 @@ const CriticalSteerRegistryLive: Layer.Layer<
         sessions,
         executions,
         workWaits,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
       }),
     ];
     return CommandHandlerRegistry.of({
