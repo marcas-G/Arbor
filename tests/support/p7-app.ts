@@ -26,6 +26,7 @@ import {
   WorkWaitStoreLive,
 } from "../../adapters/persistence-sqlite/src/index.js";
 import { makeRecordDecisionHandler } from "../../packages/application/src/commands/record-decision.js";
+import { makeDeliverMessageHandler } from "../../packages/application/src/commands/deliver-message.js";
 import { makeSendMessageHandler } from "../../packages/application/src/commands/send-message.js";
 import { makeSteerWorkHandler } from "../../packages/application/src/commands/steer-work.js";
 import { CommandHandlerRegistry } from "../../packages/application/src/gateway.js";
@@ -35,6 +36,7 @@ import {
   type CommandHandler,
   type CreateProjectPayload,
   FenceStopCheckInertLive,
+  FenceStopCheck,
   makeP1CommandHandlers,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
@@ -101,6 +103,7 @@ export const makeP7CommandHandlers = (dependencies: {
   readonly messages: typeof MessageStore.Service;
   readonly workspaces: typeof WorkspaceRepository.Service;
   readonly works: typeof WorkRepository.Service;
+  readonly deliverables: typeof DeliverableRepository.Service;
 }): ReadonlyArray<CommandHandler<unknown, unknown>> => [
   makeRecordDecisionHandler({
     proposals: dependencies.proposals,
@@ -108,6 +111,13 @@ export const makeP7CommandHandlers = (dependencies: {
     originatingWorkspaceOf: (record) => record.parentWorkspaceId,
   }) as unknown as CommandHandler<unknown, unknown>,
   makeSendMessageHandler({
+    workspaces: dependencies.workspaces,
+    messages: dependencies.messages,
+    inbox: dependencies.inbox,
+  }) as unknown as CommandHandler<unknown, unknown>,
+  makeDeliverMessageHandler({
+    deliverables: dependencies.deliverables,
+    works: dependencies.works,
     workspaces: dependencies.workspaces,
     messages: dependencies.messages,
     inbox: dependencies.inbox,
@@ -130,6 +140,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
   | FormationProposalStore
   | InboxProjectionStore
   | MessageStore
+  | DeliverableRepository
 > = Layer.effect(
   CommandHandlerRegistry,
   Effect.gen(function* () {
@@ -142,6 +153,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
     const proposals = yield* FormationProposalStore;
     const inbox = yield* InboxProjectionStore;
     const messages = yield* MessageStore;
+    const deliverables = yield* DeliverableRepository;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
       ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
       ...makeP2CommandHandlers({
@@ -157,6 +169,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
         messages,
         workspaces,
         works,
+        deliverables,
       }),
     ];
     return CommandHandlerRegistry.of({
@@ -175,6 +188,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
  * (scheduler timers) so test bodies can seed directly. */
 export const makeP7App = (
   filename = ":memory:",
+  fenceStopCheck: Layer.Layer<FenceStopCheck> = FenceStopCheckInertLive,
 ): Layer.Layer<
   | CommandGateway
   | SqlClient
@@ -244,7 +258,7 @@ export const makeP7App = (
         Layer.provide(TransactionPortLive, infra),
       ),
     ),
-    FenceStopCheckInertLive,
+    fenceStopCheck,
   );
   return Layer.mergeAll(
     gatewayDeps,

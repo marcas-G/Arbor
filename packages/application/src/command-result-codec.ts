@@ -341,6 +341,16 @@ const resultDecoders: ResultDecoderRegistry = {
           }),
       }),
   },
+  DeliverMessage: {
+    "1": (value) =>
+      objectWith(value, {
+        messageId: id("MessageId"),
+        deliverableId: id("DeliverableId"),
+        senderWorkspaceId: id("WorkspaceId"),
+        recipientWorkspaceId: id("WorkspaceId"),
+        admitted: literal(true),
+      }),
+  },
   DeclareDependency: {
     "1": (value) =>
       objectWith(value, {

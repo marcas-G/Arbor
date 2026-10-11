@@ -8,6 +8,7 @@ import {
   makeCompleteWorkHandler,
   makeConcludeVerificationHandler,
   makeDeclareDependencyHandler,
+  makeDeliverMessageHandler,
   makeGrantPermissionHandler,
   makeP1CommandHandlers,
   makeP15CommandHandlers,
@@ -75,6 +76,7 @@ describe("external command codec registry parity", () => {
       makeCompleteWorkHandler,
       makeConcludeVerificationHandler,
       makeDeclareDependencyHandler,
+      makeDeliverMessageHandler,
       makeGrantPermissionHandler,
       makeProduceDeliverableHandler,
       makeRecordDecisionHandler,
@@ -113,7 +115,7 @@ describe("external command codec registry parity", () => {
     }
 
     const registry = makeCommandInputContractRegistry(productionHandlerTypes);
-    expect(registry.commandTypes).toHaveLength(26);
+    expect(registry.commandTypes).toHaveLength(27);
     expect(new Set(registry.commandTypes).size).toBe(26);
     expect(registry.commandTypes.toSorted()).toEqual(
       productionHandlerTypes.toSorted(),
@@ -189,10 +191,10 @@ describe("external command codec registry parity", () => {
     const fullRegistry = makeCommandInputContractRegistry(withApproval);
     const reducedRegistry = makeCommandInputContractRegistry(withoutApproval);
 
-    expect(withApproval).toHaveLength(26);
-    expect(fullRegistry.commandTypes).toHaveLength(26);
-    expect(withoutApproval).toHaveLength(25);
-    expect(reducedRegistry.commandTypes).toHaveLength(25);
+    expect(withApproval).toHaveLength(27);
+    expect(fullRegistry.commandTypes).toHaveLength(27);
+    expect(withoutApproval).toHaveLength(26);
+    expect(reducedRegistry.commandTypes).toHaveLength(26);
     expect(reducedRegistry.lookup("ResolveControlApproval")).toBeUndefined();
     expect(withApproval.toSorted()).toEqual(
       CommandInputContractRegistry.commandTypes.toSorted(),

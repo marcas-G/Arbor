@@ -61,6 +61,13 @@ const resultByCommand = {
     admitted: true,
     promotion: { closesCorrelation: null, triggersReevaluation: false },
   },
+  DeliverMessage: {
+    messageId: id("msg_"),
+    deliverableId: id("del_"),
+    senderWorkspaceId: id("ws_"),
+    recipientWorkspaceId: id("ws_"),
+    admitted: true,
+  },
   DeclareDependency: {
     dependencyId: id("dep_"),
     consumerWorkId: id("wrk_"),
@@ -222,6 +229,30 @@ describe("registered command receipt runtime decoders", () => {
         }
       }
     }
+  });
+
+  it("strictly decodes DeliverMessage/1 and rejects extra fields", () => {
+    const contract = CommandInputContractRegistry.lookup("DeliverMessage");
+    expect(contract).toBeDefined();
+    const payload = {
+      messageId: id("msg_"),
+      senderWorkspaceId: id("ws_"),
+      deliverableId: id("del_"),
+      bodyRef: "blob:deliver-summary",
+    };
+    expect(contract?.decodePayload(payload)).toEqual({ ok: true, value: payload });
+    expect(
+      contract?.decodePayload({ ...payload, recipientWorkspaceId: id("ws_") }),
+    ).toMatchObject({
+      ok: false,
+      issues: [{ rule: "unknown-field" }],
+    });
+    expect(
+      contract?.decodePayload({ ...payload, bodyRef: "x".repeat(4097) }),
+    ).toMatchObject({
+      ok: false,
+      issues: [{ path: ["bodyRef"], rule: "range" }],
+    });
   });
 
   it("decodes complete rejection fields and rejects missing, extra, or inherited tags", async () => {

@@ -18,6 +18,7 @@ import {
   type ConcludeVerificationResult,
   type DeclareDependencyPayload,
   type DeclareDependencyResult,
+  deliverMessagePlan,
   decodeRegisteredCommandReceipt,
   deriveFormationIds,
   isChildWorkspaceProposal,
@@ -248,6 +249,7 @@ export interface ProduceDeliverableDependencies {
 }
 
 export interface DeliverActionDependencies {
+  readonly gateway: CommandGatewayService;
   readonly deliverables: DeliverableRepositoryService;
   readonly works: WorkRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
@@ -2605,8 +2607,83 @@ export const produceDeliverableHandler = (
     }).pipe(Effect.mapError(actionOperationalFailure("ProduceDeliverable"))),
 });
 
-export const deliverHandler = (
+export const deliverMessageGatewayHandler = (
   dependencies: DeliverActionDependencies,
+): AgentActionHandler => ({
+  action: "Deliver",
+  handle: ({ action, invocation, execution, context }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "Deliver") {
+        return yield* Effect.fail(
+          actionOperationalFailure("Deliver.dispatch")(
+            "Deliver handler received a different AgentAction",
+          ),
+        );
+      }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const commandId = generationScopedCommandId(
+        "deliver-command",
+        occurrence,
+        context,
+      );
+      const messageId = parse(MessageIdSchema)(
+        `msg_${newUuid7("deliver-message", occurrence)}`,
+      );
+      const plan = deliverMessagePlan({
+        messageId,
+        commandId,
+        projectId: execution.projectId,
+        senderWorkspaceId: execution.workspaceId,
+        deliverableId: action.deliverableId,
+        bodyRef: action.summary,
+        principal: context.principal,
+        actor: context.principal as never,
+      });
+      const receipt = yield* dependencies.gateway.execute<
+        import("@arbor/application").DeliverMessagePayload,
+        import("@arbor/application").DeliverMessageResult
+      >(
+        {
+          commandType: "DeliverMessage",
+          commandId,
+          projectId: execution.projectId,
+          actor: context.principal as never,
+          issuedAt: yield* dependencies.clock.now(),
+          payload: plan.payload,
+        },
+        context,
+        plan.authority,
+      );
+      if (receipt.resolution._tag !== "Committed") {
+        const reason =
+          receipt.resolution._tag === "TerminalRejected"
+            ? JSON.stringify(receipt.resolution.error)
+            : "operational DeliverMessage failure";
+        return {
+          _tag: "Observation" as const,
+          source: "Runtime" as const,
+          observation: {
+            text: `DeliverMessage rejected: ${reason}`,
+            truncated: false,
+          },
+        };
+      }
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: `DeliverableDelivered(${action.deliverableId}, ${receipt.resolution.result.recipientWorkspaceId})`,
+          truncated: false,
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("Deliver"))),
+});
+
+/** Historical direct-write handler retained only so the pending AH10
+ * regression fixture can continue to reproduce the pre-Gateway bypass. The
+ * production action registry below uses deliverMessageGatewayHandler. */
+export const deliverHandler = (
+  dependencies: Omit<DeliverActionDependencies, "gateway">,
 ): AgentActionHandler => ({
   action: "Deliver",
   handle: ({ action, invocation, execution, context }) =>
@@ -3042,7 +3119,8 @@ export const makeSingleWorkspaceControlActionHandlers = (
     ids !== undefined
   ) {
     handlers.push(
-      deliverHandler({
+      deliverMessageGatewayHandler({
+        gateway: dependencies.gateway,
         deliverables,
         journal,
         ids,
