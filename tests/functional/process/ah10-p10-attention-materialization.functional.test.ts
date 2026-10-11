@@ -161,6 +161,14 @@ const seedSourceOwner = (fixture: typeof firstFixture | typeof secondFixture) =>
           [fixture.parentWorkspaceId, fixture.projectId, fixture.sessionId],
         );
         yield* sql.unsafe(
+          `INSERT INTO works (
+            work_id, project_id, workspace_id, objective, why, constraints,
+            completion_expectation, verification_mission, provenance,
+            lifecycle, revision, created_at, updated_at
+          ) VALUES (?, ?, ?, 'attention source', 'fixture', '[]', 'green', '{}', '{}', 'Open', 0, 't0', 't0')`,
+          [fixture.workId, fixture.projectId, fixture.parentWorkspaceId],
+        );
+        yield* sql.unsafe(
           `INSERT INTO commands (
             command_id, project_id, semantic_request_fingerprint,
             schema_version, fingerprint_algorithm_version, resolution,
@@ -181,6 +189,21 @@ const seedSourceOwner = (fixture: typeof firstFixture | typeof secondFixture) =>
             fixture.parentWorkspaceId,
             fixture.workId,
             fixture.sessionId,
+          ],
+        );
+        yield* sql.unsafe(
+          `INSERT INTO agent_execution_state (
+            execution_id, episode_json, wake_reason, current_mode,
+            active_skill_refs_json, turn_no, recent_directive_refs_json,
+            recent_action_fingerprints_json, updated_at
+          ) VALUES (?, ?, 'Seed', NULL, '[]', 0, '[]', '[]', 't0')`,
+          [
+            fixture.executionId,
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: fixture.workId,
+              targetWorkRevision: 0,
+            }),
           ],
         );
       }),
@@ -253,10 +276,48 @@ const readMaterializedAttentionView = (targetProjectId = projectId) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const attention = yield* AttentionProjectionStore;
+    const sql = yield* SqlClient;
     const deps: AttentionReadDeps = {
       listWorkspacesByProject: () => Effect.succeed([]),
       listWorksByWorkspace: () => Effect.succeed([]),
       listExecutionSettlementFacts: () => Effect.succeed([]),
+      listAttentionSourceExecutionBindings: (targetProjectId, executionIds) =>
+        Effect.gen(function* () {
+          const bindings = [];
+          for (const sourceExecutionId of executionIds) {
+            const fixture = [firstFixture, secondFixture].find(
+              (candidate) =>
+                candidate.executionId === sourceExecutionId &&
+                candidate.projectId === targetProjectId,
+            );
+            if (fixture === undefined) continue;
+            const workRows = yield* sql.unsafe<{
+              readonly project_id: string;
+              readonly workspace_id: string;
+              readonly revision: number;
+            }>(
+              "SELECT project_id, workspace_id, revision FROM works WHERE work_id = ?",
+              [fixture.workId],
+            );
+            const work = workRows[0];
+            if (work === undefined) continue;
+            bindings.push({
+              executionId: sourceExecutionId,
+              projectId: targetProjectId,
+              workspaceId: fixture.parentWorkspaceId,
+              episodeJson: JSON.stringify({
+                _tag: "WorkEpisode",
+                workId: fixture.workId,
+                targetWorkRevision: 0,
+              }),
+              workId: fixture.workId,
+              workProjectId: work.project_id as never,
+              workWorkspaceId: work.workspace_id as never,
+              workRevision: Number(work.revision),
+            });
+          }
+          return bindings;
+        }).pipe(Effect.mapError(projectionReadError)),
       listOpenVerifications: () => Effect.succeed([]),
       listUnsatisfiedDependencies: () => Effect.succeed([]),
       findDependency: () => Effect.succeed(Option.none()),
@@ -612,6 +673,7 @@ describe("AH10/P10 Attention materialization", () => {
         occurredAt: "2026-10-10T00:00:00.000Z",
         sourceEventId: fact.eventId,
         sourceFactId: fact.attentionFactId,
+        sourceExecutionId: executionId,
       },
     ]);
     expect(viewRows).toEqual([
@@ -733,6 +795,90 @@ describe("AH10/P10 Attention materialization", () => {
       expect(JSON.stringify(result.rebuiltView)).not.toContain(
         result.fact.eventId,
       );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps stale materialized sources out across WorkSteered lag, rebuild, and SQLite reopen", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "rai-p10-work-revision-"));
+    const databaseFile = join(directory, "arbor.sqlite");
+    try {
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P37_MIGRATIONS);
+        yield* seedSourceOwner(firstFixture);
+        yield* seedP9FailureFactAndEvent(firstFixture);
+        yield* seedP9DeliverReplayFailure();
+        yield* runP37AttentionPoll();
+        const before = yield* readMaterializedAttentionView();
+        const tx = yield* TransactionPort;
+        const sql = yield* SqlClient;
+        const journal = yield* DomainEventJournal;
+        yield* sql.unsafe("UPDATE works SET revision = 1 WHERE work_id = ?", [
+          workId,
+        ]);
+        const afterSteerBeforeCatchup = yield* readMaterializedAttentionView();
+        yield* tx.transact(
+          journal.append([
+            {
+              projectId,
+              eventType: "WorkSteered",
+              eventVersion: 1,
+              occurredAt: "2026-10-11T00:00:00.000Z",
+              aggregateRef: workId,
+              actor: "user:test" as never,
+              payload: {
+                _tag: "WorkSteered",
+                workId,
+                fromRevision: 0,
+                toRevision: 1,
+                severity: "Normal",
+              },
+            },
+          ]),
+        );
+        yield* runP37AttentionPoll();
+        const rowsAfterCatchup = yield* readAttentionRows();
+        const deliverRowsAfterCatchup = yield* readDeliverAttentionRows();
+        const retainedSources = yield* sql.unsafe<{
+          readonly assign_count: number;
+          readonly deliver_count: number;
+        }>(
+          `SELECT
+             (SELECT COUNT(*) FROM assign_work_binding_attention_facts WHERE project_id = ?) AS assign_count,
+             (SELECT COUNT(*) FROM deliver_replay_attention_facts WHERE project_id = ?) AS deliver_count`,
+          [projectId, projectId],
+        );
+        yield* rebuildP10Attention();
+        return {
+          before,
+          afterSteerBeforeCatchup,
+          rowsAfterCatchup,
+          deliverRowsAfterCatchup,
+          retainedSources: retainedSources[0],
+          rowsAfterRebuild: yield* readAttentionRows(),
+          deliverRowsAfterRebuild: yield* readDeliverAttentionRows(),
+        };
+      });
+      const result = await Effect.runPromise(
+        Effect.provide(program, makeApp(databaseFile)),
+      );
+      expect(result.before.map((row) => row.source)).toEqual([
+        "AssignWorkTargetBindingFailure",
+        "DeliverReplayFailure",
+      ]);
+      expect(result.afterSteerBeforeCatchup).toEqual([]);
+      expect(result.rowsAfterCatchup).toEqual([]);
+      expect(result.deliverRowsAfterCatchup).toEqual([]);
+      expect(result.retainedSources).toEqual({
+        assign_count: 1,
+        deliver_count: 1,
+      });
+      expect(result.rowsAfterRebuild).toEqual([]);
+      expect(result.deliverRowsAfterRebuild).toEqual([]);
+
+      const afterReopen = await queryPublicAttention(databaseFile);
+      expect(afterReopen.rows).toEqual([]);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

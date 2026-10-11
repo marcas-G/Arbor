@@ -38,6 +38,7 @@ const workspaceId = parse(WorkspaceId)(
   "ws_00000000-0000-7000-8000-000000000020",
 );
 const revision = parse(ResourceBoundaryRevision)(0);
+const workId = "wrk_00000000-0000-7000-8000-000000000020";
 const sourceEventId = "evt_00000000-0000-7000-8000-000000000020";
 const activationEventId = "evt_00000000-0000-7000-8000-000000000021";
 const sourceFactId = "attention-fact-unrelated";
@@ -112,6 +113,14 @@ const seedOtherAttentionSource = Effect.gen(function* () {
   yield* sql.withTransaction(
     Effect.gen(function* () {
       yield* sql.unsafe(
+        `INSERT INTO works (
+          work_id, project_id, workspace_id, objective, why, constraints,
+          completion_expectation, verification_mission, provenance, lifecycle,
+          revision, created_at, updated_at
+        ) VALUES (?, ?, ?, 'test', 'test', '[]', 'green', '{}', '{}', 'Open', 0, 't0', 't0')`,
+        [workId, projectId, workspaceId],
+      );
+      yield* sql.unsafe(
         `INSERT INTO commands (
           command_id, project_id, semantic_request_fingerprint, schema_version,
           fingerprint_algorithm_version, resolution, result_json,
@@ -127,9 +136,24 @@ const seedOtherAttentionSource = Effect.gen(function* () {
           session_id, admitted_at,
           stop_requested_at, settlement_kind, settlement_json, settled_at
         ) VALUES ('exe_00000000-0000-7000-8000-000000000020', ?,
-          'execution_bound', ?, NULL, NULL, NULL, NULL, 'test',
+          'workspace', ?, 'WorkEpisode', ?, 0, NULL, NULL,
           'ses_00000000-0000-7000-8000-000000000020', 't1', NULL, NULL, NULL, NULL)`,
-        [projectId, workspaceId],
+        [projectId, workspaceId, workId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO agent_execution_state (
+          execution_id, episode_json, wake_reason, current_mode,
+          active_skill_refs_json, turn_no, recent_directive_refs_json,
+          recent_action_fingerprints_json, updated_at
+        ) VALUES ('exe_00000000-0000-7000-8000-000000000020', ?, 'Seed', NULL,
+          '[]', 0, '[]', '[]', 't1')`,
+        [
+          JSON.stringify({
+            _tag: "WorkEpisode",
+            workId,
+            targetWorkRevision: 0,
+          }),
+        ],
       );
       yield* sql.unsafe(
         `INSERT INTO domain_events (
@@ -226,6 +250,23 @@ const attentionReadDeps = (): Effect.Effect<
       listWorkspacesByProject: () => empty([]),
       listWorksByWorkspace: () => empty([]),
       listExecutionSettlementFacts: () => empty([]),
+      listAttentionSourceExecutionBindings: (targetProjectId, executionIds) =>
+        Effect.succeed(
+          executionIds.map((executionId) => ({
+            executionId,
+            projectId: targetProjectId,
+            workspaceId,
+            episodeJson: JSON.stringify({
+              _tag: "WorkEpisode",
+              workId,
+              targetWorkRevision: 0,
+            }),
+            workId,
+            workProjectId: targetProjectId,
+            workWorkspaceId: workspaceId,
+            workRevision: 0,
+          })),
+        ),
       listOpenVerifications: () => empty([]),
       listUnsatisfiedDependencies: () => empty([]),
       findDependency: () => empty(Option.none()),
@@ -263,6 +304,43 @@ const activationWakeup = (
 });
 
 describe("F21 Wave2 P10 source-only Activation Attention reconciliation", () => {
+  it("removes stale AssignWork projection rows while retaining their P9 event and fact", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        yield* runMigrations(P35_MIGRATIONS);
+        yield* seedCanonicalProject;
+        yield* seedOtherAttentionSource;
+        const tx = yield* TransactionPort;
+        const sql = yield* SqlClient;
+        const attention = yield* AttentionProjectionStore;
+        const before = yield* readOtherSource();
+        yield* sql.unsafe("UPDATE works SET revision = 1 WHERE work_id = ?", [
+          workId,
+        ]);
+        yield* tx.transact(attention.reconcileStaleWorkRevisionRows(projectId));
+        const after = yield* readOtherSource();
+        const facts = yield* sql.unsafe<{ readonly count: number }>(
+          "SELECT COUNT(*) AS count FROM assign_work_binding_attention_facts WHERE project_id = ?",
+          [projectId],
+        );
+        const events = yield* sql.unsafe<{ readonly count: number }>(
+          "SELECT COUNT(*) AS count FROM domain_events WHERE project_id = ? AND event_type = 'AssignWorkTargetBindingEscalated'",
+          [projectId],
+        );
+        return {
+          before,
+          after,
+          factCount: Number(facts[0]?.count ?? 0),
+          eventCount: Number(events[0]?.count ?? 0),
+        };
+      }),
+    );
+    expect(result.before).toHaveLength(1);
+    expect(result.after).toEqual([]);
+    expect(result.factCount).toBe(1);
+    expect(result.eventCount).toBe(1);
+  });
+
   it("repairs an absent row below the pruned floor, is idempotent, and preserves other Attention sources", async () => {
     const result = await run(
       Effect.gen(function* () {

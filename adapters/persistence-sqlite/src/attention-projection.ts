@@ -30,6 +30,7 @@ interface AttentionProjectionDbRow {
   readonly occurred_at: string;
   readonly source_event_id: string;
   readonly source_fact_id: string;
+  readonly source_execution_id: string;
 }
 
 interface WorkspaceResourceActivationAttentionDbRow {
@@ -47,6 +48,7 @@ interface DeliverReplayAttentionDbRow {
   readonly occurred_at: string;
   readonly source_event_id: string;
   readonly source_fact_id: string;
+  readonly source_execution_id: string;
 }
 
 export type AttentionProjectionQualificationEvent =
@@ -79,6 +81,7 @@ const fromDb = (
   occurredAt: row.occurred_at,
   sourceEventId: row.source_event_id as never,
   sourceFactId: row.source_fact_id,
+  sourceExecutionId: row.source_execution_id,
 });
 
 const activationRowFromDb = (
@@ -106,6 +109,7 @@ const deliverReplayRowFromDb = (
   occurredAt: row.occurred_at,
   sourceEventId: row.source_event_id as never,
   sourceFactId: row.source_fact_id,
+  sourceExecutionId: row.source_execution_id,
 });
 
 const sameRow = (
@@ -168,6 +172,7 @@ export const makeAttentionProjectionStoreLive = (
               occurredAt,
               sourceEventId: fact.eventId as never,
               sourceFactId: fact.attentionFactId,
+              sourceExecutionId: fact.executionId,
             };
             yield* run(
               sql.unsafe(
@@ -289,7 +294,8 @@ export const makeAttentionProjectionStoreLive = (
                         fact.failure_code AS failure_code,
                         fact.first_detected_at AS occurred_at,
                         fact.event_id AS source_event_id,
-                        fact.attention_fact_id AS source_fact_id
+                        fact.attention_fact_id AS source_fact_id,
+                        fact.execution_id AS source_execution_id
                    FROM deliver_replay_attention_rows AS projected
                    JOIN deliver_replay_attention_facts AS fact
                      ON fact.attention_fact_id = projected.attention_fact_id
@@ -304,11 +310,16 @@ export const makeAttentionProjectionStoreLive = (
           Effect.map(
             run(
               sql.unsafe<AttentionProjectionDbRow>(
-                `SELECT project_id, dedup_key, source, severity,
-                      target_workspace_id, summary, failure_code, occurred_at,
-                      source_event_id, source_fact_id
-                 FROM attention_projection_rows
-                WHERE project_id = ? ORDER BY occurred_at, dedup_key`,
+                `SELECT projected.project_id, projected.dedup_key,
+                      projected.source, projected.severity,
+                      projected.target_workspace_id, projected.summary,
+                      projected.failure_code, projected.occurred_at,
+                      projected.source_event_id, projected.source_fact_id,
+                      fact.execution_id AS source_execution_id
+                 FROM attention_projection_rows AS projected
+                 JOIN assign_work_binding_attention_facts AS fact
+                   ON fact.attention_fact_id = projected.source_fact_id
+                WHERE projected.project_id = ? ORDER BY occurred_at, dedup_key`,
                 [projectId],
               ),
             ),
@@ -390,6 +401,77 @@ export const makeAttentionProjectionStoreLive = (
                   }),
                 );
               }
+            }
+          }),
+        reconcileStaleWorkRevisionRows: (projectId) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const staleExecution = `
+              SELECT e.execution_id
+                FROM executions AS e
+                JOIN agent_execution_state AS state
+                  ON state.execution_id = e.execution_id
+                JOIN works AS work
+                  ON work.work_id = CASE
+                       WHEN json_valid(state.episode_json)
+                       THEN json_extract(state.episode_json, '$.workId')
+                       ELSE NULL
+                     END
+                 AND work.project_id = e.project_id
+                 AND work.workspace_id = e.workspace_id
+               WHERE e.project_id = ?
+                 AND json_valid(state.episode_json)
+                 AND CASE WHEN json_valid(state.episode_json)
+                          THEN json_extract(state.episode_json, '$._tag')
+                          ELSE NULL END = 'WorkEpisode'
+                 AND CASE WHEN json_valid(state.episode_json)
+                          THEN json_type(state.episode_json, '$.targetWorkRevision')
+                          ELSE NULL END = 'integer'
+                 AND CAST(CASE WHEN json_valid(state.episode_json)
+                               THEN json_extract(state.episode_json, '$.targetWorkRevision')
+                               ELSE NULL END AS INTEGER) < work.revision`;
+            yield* run(
+              sql.unsafe(
+                `DELETE FROM attention_projection_rows
+                  WHERE project_id = ?
+                    AND source = 'AssignWorkTargetBindingFailure'
+                    AND source_fact_id IN (
+                      SELECT fact.attention_fact_id
+                        FROM assign_work_binding_attention_facts AS fact
+                        JOIN executions AS e
+                          ON e.execution_id = fact.execution_id
+                         AND e.project_id = fact.project_id
+                         AND e.workspace_id = fact.target_workspace_id
+                       WHERE fact.project_id = ?
+                         AND fact.execution_id IN (${staleExecution})
+                    )`,
+                [projectId, projectId, projectId],
+              ),
+            );
+            const deliverTable = yield* run(
+              sql.unsafe<{ readonly name: string }>(
+                `SELECT name FROM sqlite_master
+                  WHERE type = 'table'
+                    AND name = 'deliver_replay_attention_rows'`,
+              ),
+            );
+            if (deliverTable.length > 0) {
+              yield* run(
+                sql.unsafe(
+                  `DELETE FROM deliver_replay_attention_rows
+                    WHERE attention_fact_id IN (
+                      SELECT fact.attention_fact_id
+                        FROM deliver_replay_attention_facts AS fact
+                        JOIN executions AS e
+                          ON e.execution_id = fact.execution_id
+                         AND e.project_id = fact.project_id
+                         AND e.workspace_id = fact.target_workspace_id
+                       WHERE fact.project_id = ?
+                         AND fact.execution_id IN (${staleExecution})
+                    )`,
+                  [projectId, projectId],
+                ),
+              );
             }
           }),
         listWorkspaceResourceActivationPending: (projectId) =>
@@ -500,12 +582,28 @@ export const makeProjectAttentionProjectionStore = (
     | "putDeliverReplayFailure"
     | "resetProject"
     | "reconcileWorkspaceResourceActivation"
+    | "reconcileStaleWorkRevisionRows"
   >,
   activationIntents?: Pick<WorkspaceResourceActivationStoreService, "listAll">,
 ): ProjectionStoreService => ({
   apply: (batch: ReadonlyArray<DomainEvent<unknown>>) =>
     Effect.gen(function* () {
       for (const event of batch) {
+        if (event.eventType === "WorkSteered") {
+          if (event.projectId !== projectId) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "P10 Attention consumer received a WorkSteered event for another project",
+            });
+          }
+          yield* attentionRows
+            .reconcileStaleWorkRevisionRows(projectId)
+            .pipe(Effect.mapError(projectionFailure));
+          continue;
+        }
         if (event.eventType === "WorkspaceResourceActivationChanged") {
           if (event.projectId !== projectId) {
             return yield* Effect.fail<ConsumerOffsetStoreError>({
@@ -708,6 +806,9 @@ export const makeProjectAttentionProjectionStore = (
           .acknowledgePendingDeliverReplayAttention(fact.attentionFactId)
           .pipe(Effect.mapError(projectionFailure));
       }
+      yield* attentionRows
+        .reconcileStaleWorkRevisionRows(projectId)
+        .pipe(Effect.mapError(projectionFailure));
       if (activationIntents === undefined) return;
       const intents = yield* activationIntents
         .listAll()

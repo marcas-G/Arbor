@@ -1,6 +1,12 @@
-import { Effect } from "effect";
+import { Cause, Effect, Exit } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { parse, WorkId, WorkspaceId } from "../packages/domain/dist/index.js";
+import {
+  ProjectId,
+  parse,
+  WorkId,
+  WorkspaceId,
+} from "../packages/domain/dist/index.js";
 import type {
   AttentionFacts,
   AttentionRow,
@@ -492,7 +498,7 @@ const seedAttention = seedCanonical(
     yield* insertExecutionRow(
       {
         executionId: "exe_s1",
-        workspaceId: p10Child,
+        workspaceId: p10Leaf,
         focusWorkId: W_LEAF_LIVE,
         settlement: {
           _tag: "Interrupted",
@@ -510,7 +516,7 @@ const seedAttention = seedCanonical(
     yield* insertExecutionRow(
       {
         executionId: "exe_r1",
-        workspaceId: p10Child,
+        workspaceId: p10Leaf,
         focusWorkId: W_LEAF_LIVE,
         settlement: {
           _tag: "OutcomeUnknown",
@@ -527,6 +533,7 @@ const seedAttention = seedCanonical(
       eventId: "evt_00000000-0000-7000-8000-00000000r01",
       projectId: p10Project,
       eventType: "ReconciliationEscalated",
+      aggregateRef: "exe_r1",
       payload: {
         executionId: "exe_r1",
         invocationRefsFingerprint: "fp1",
@@ -621,7 +628,7 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
         expect(safety).toHaveLength(1);
         expect(safety[0]).toMatchObject({
           severity: "Attention",
-          targetWorkspaceId: p10Child,
+          targetWorkspaceId: p10Leaf,
           dedupKey: "safety-stop:exe_s1",
         });
 
@@ -629,7 +636,7 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
         expect(escalation).toHaveLength(1);
         expect(escalation[0]).toMatchObject({
           severity: "ActionRequired",
-          targetWorkspaceId: p10Child,
+          targetWorkspaceId: p10Leaf,
           dedupKey: "reconciliation-escalated:exe_r1:fp1",
         });
 
@@ -658,5 +665,290 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
       }),
       makeP10App(),
     );
+  });
+
+  it("omits old Work Episode Attention immediately across lag/re-read and fails closed on a cross-Workspace binding", async () => {
+    const result = await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedAttention;
+        const sql = yield* SqlClient;
+        const deps = yield* makeP10Deps();
+        const beforeSteer = yield* deriveProjectAttention(
+          p10Project,
+          deps.attention,
+        );
+        const rootSummary = (rows: ReadonlyArray<AttentionRow>) =>
+          subtreeAttentionAggregate(rows, (workspaceId) =>
+            workspaceId === p10Leaf
+              ? p10Child
+              : workspaceId === p10Child
+                ? p10Root
+                : null,
+          ).get(p10Root);
+        const beforeSummary = rootSummary(beforeSteer);
+        const staleAttentionBefore = beforeSteer.filter(
+          (row) => row.source === "RuntimeSafetyEnvelope",
+        ).length;
+        const staleActionRequiredBefore = beforeSteer.filter(
+          (row) => row.source === "ReconciliationEscalated",
+        ).length;
+
+        // A committed Steer advances the canonical Work while P10 has not
+        // consumed the WorkSteered wakeup. Its old source facts remain.
+        yield* sql.unsafe("UPDATE works SET revision = 1 WHERE work_id = ?", [
+          W_LEAF_LIVE,
+        ]);
+        yield* insertEventRow({
+          eventId: "evt_00000000-0000-7000-8000-00000000st1",
+          projectId: p10Project,
+          eventType: "WorkSteered",
+          payload: { workId: W_LEAF_LIVE, revision: 1 },
+          occurredAt: "t9",
+        });
+        const first = yield* deriveProjectAttention(p10Project, deps.attention);
+        const second = yield* deriveProjectAttention(
+          p10Project,
+          deps.attention,
+        );
+        const sourceAudit = yield* sql.unsafe<{ readonly count: number }>(
+          `SELECT COUNT(*) AS count FROM domain_events
+            WHERE project_id = ? AND event_type = 'ReconciliationEscalated'`,
+          [p10Project],
+        );
+        const oldSafetySettlement = yield* sql.unsafe<{
+          readonly count: number;
+        }>(
+          "SELECT COUNT(*) AS count FROM executions WHERE execution_id = 'exe_s1' AND settlement_kind = 'Interrupted'",
+        );
+
+        // The source execution is in the child Workspace, while its episode
+        // is corrupted to point at a Work owned by a different child.
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = 'exe_s1'",
+          [
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: W_CONS_LIVE,
+              targetWorkRevision: 0,
+            }),
+          ],
+        );
+        const corrupted = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = 'exe_s1'",
+          [JSON.stringify({ _tag: "WorkEpisodeV9", workId: W_LEAF_LIVE })],
+        );
+        const unknownVersion = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE executions SET settlement_json = 'not-json' WHERE execution_id = 'exe_s1'",
+        );
+        const malformedSettlement = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE executions SET settlement_json = ? WHERE execution_id = 'exe_s1'",
+          [
+            JSON.stringify({
+              _tag: "Interrupted",
+              result: {
+                _tag: "ControlledInterruption",
+                reason: "RuntimeSafetyStop",
+              },
+            }),
+          ],
+        );
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = 'exe_s1'",
+          [
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: W_LEAF_LIVE,
+              targetWorkRevision: 0,
+            }),
+          ],
+        );
+        yield* sql.unsafe(
+          "UPDATE domain_events SET aggregate_ref = 'exe_wrong' WHERE event_id = 'evt_00000000-0000-7000-8000-00000000r01'",
+        );
+        const eventMismatch = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE domain_events SET aggregate_ref = 'exe_r1' WHERE event_id = 'evt_00000000-0000-7000-8000-00000000r01'",
+        );
+        yield* insertEventRow({
+          eventId: "evt_00000000-0000-7000-8000-00000000r02",
+          projectId: p10Project,
+          eventType: "ReconciliationEscalated",
+          aggregateRef: "exe_missing",
+          payload: {
+            executionId: "exe_missing",
+            invocationRefsFingerprint: "fp-missing",
+            refs: ["ref-missing"],
+          },
+          occurredAt: "t10",
+        });
+        const missingExecution = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "DELETE FROM domain_events WHERE event_id = 'evt_00000000-0000-7000-8000-00000000r02'",
+        );
+        const foreignProject = parse(ProjectId)(
+          "prj_00000000-0000-7000-8000-000000000099",
+        );
+        const foreignWorkspace = parse(WorkspaceId)(
+          "ws_00000000-0000-7000-8000-000000000099",
+        );
+        const foreignWork = parse(WorkId)(
+          "wrk_00000000-0000-7000-8000-000000000099",
+        );
+        yield* seedCanonical(
+          Effect.gen(function* () {
+            yield* insertProjectRootRow(foreignWorkspace, foreignProject);
+            yield* insertWorkspaceRow(
+              {
+                workspaceId: foreignWorkspace,
+                parentWorkspaceId: null,
+                name: "foreign",
+              },
+              foreignProject,
+            );
+            yield* insertWorkRow(
+              {
+                workId: foreignWork,
+                workspaceId: foreignWorkspace,
+                objective: "foreign source",
+              },
+              foreignProject,
+            );
+            yield* insertExecutionRow(
+              {
+                executionId: "exe_foreign",
+                workspaceId: foreignWorkspace,
+                focusWorkId: foreignWork,
+              },
+              foreignProject,
+            );
+          }),
+        );
+        yield* insertEventRow({
+          eventId: "evt_00000000-0000-7000-8000-00000000r03",
+          projectId: p10Project,
+          eventType: "ReconciliationEscalated",
+          aggregateRef: "exe_foreign",
+          payload: {
+            executionId: "exe_foreign",
+            invocationRefsFingerprint: "fp-foreign",
+            refs: ["ref-foreign"],
+          },
+          occurredAt: "t11",
+        });
+        const foreignExecution = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        return {
+          beforeSummary,
+          staleAttentionBefore,
+          staleActionRequiredBefore,
+          first,
+          second,
+          eventCount: Number(sourceAudit[0]?.count ?? 0),
+          settlementCount: Number(oldSafetySettlement[0]?.count ?? 0),
+          corrupted,
+          unknownVersion,
+          malformedSettlement,
+          eventMismatch,
+          missingExecution,
+          foreignExecution,
+        };
+      }),
+      makeP10App(),
+    );
+    expect(result.staleAttentionBefore).toBe(1);
+    expect(result.staleActionRequiredBefore).toBe(1);
+    for (const rows of [result.first, result.second]) {
+      expect(rows.some((row) => row.source === "RuntimeSafetyEnvelope")).toBe(
+        false,
+      );
+      expect(rows.some((row) => row.source === "ReconciliationEscalated")).toBe(
+        false,
+      );
+      // A child-only stale source cannot bubble into the parent summary.
+      const summary = subtreeAttentionAggregate(rows, (workspaceId) =>
+        workspaceId === p10Leaf
+          ? p10Child
+          : workspaceId === p10Child
+            ? p10Root
+            : null,
+      ).get(p10Root);
+      expect(summary?.attention).toBe(
+        (result.beforeSummary?.attention ?? 0) - result.staleAttentionBefore,
+      );
+      expect(summary?.actionRequired).toBe(
+        (result.beforeSummary?.actionRequired ?? 0) -
+          result.staleActionRequiredBefore,
+      );
+    }
+    expect(result.eventCount).toBe(1);
+    expect(result.settlementCount).toBe(1);
+    expect(Exit.isFailure(result.corrupted)).toBe(true);
+    if (Exit.isFailure(result.corrupted)) {
+      expect(Cause.squash(result.corrupted.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "WorkScopeMismatch",
+        executionId: "exe_s1",
+        workId: W_CONS_LIVE,
+      });
+      expect(
+        JSON.stringify(Cause.squash(result.corrupted.cause)),
+      ).not.toContain("SQLite");
+    }
+    expect(Exit.isFailure(result.unknownVersion)).toBe(true);
+    if (Exit.isFailure(result.unknownVersion)) {
+      expect(Cause.squash(result.unknownVersion.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "EpisodeVersionUnsupported",
+        executionId: "exe_s1",
+      });
+    }
+    expect(Exit.isFailure(result.malformedSettlement)).toBe(true);
+    if (Exit.isFailure(result.malformedSettlement)) {
+      expect(Cause.squash(result.malformedSettlement.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "SettlementMalformed",
+        executionId: "exe_s1",
+      });
+    }
+    expect(Exit.isFailure(result.eventMismatch)).toBe(true);
+    if (Exit.isFailure(result.eventMismatch)) {
+      expect(Cause.squash(result.eventMismatch.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "SourceEventExecutionMismatch",
+        executionId: "exe_r1",
+      });
+    }
+    expect(Exit.isFailure(result.missingExecution)).toBe(true);
+    if (Exit.isFailure(result.missingExecution)) {
+      expect(Cause.squash(result.missingExecution.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "SourceExecutionMissing",
+        executionId: "exe_missing",
+      });
+    }
+    expect(Exit.isFailure(result.foreignExecution)).toBe(true);
+    if (Exit.isFailure(result.foreignExecution)) {
+      expect(Cause.squash(result.foreignExecution.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "SourceProjectMismatch",
+        executionId: "exe_foreign",
+        workspaceId: "ws_00000000-0000-7000-8000-000000000099",
+      });
+    }
   });
 });

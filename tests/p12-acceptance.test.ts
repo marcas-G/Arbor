@@ -1849,6 +1849,23 @@ describe("p12-acceptance story 9 — §8.16A six dimensions", () => {
             settledAt: "t",
           },
         ]),
+      listAttentionSourceExecutionBindings: (targetProjectId, executionIds) =>
+        Effect.succeed(
+          executionIds.map((executionId) => ({
+            executionId,
+            projectId: targetProjectId,
+            workspaceId: safetyWorkspaceId,
+            episodeJson: JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: "work-runtime-safety",
+              targetWorkRevision: 0,
+            }),
+            workId: "work-runtime-safety",
+            workProjectId: targetProjectId,
+            workWorkspaceId: safetyWorkspaceId,
+            workRevision: 0,
+          })),
+        ),
       listOpenVerifications: () => Effect.succeed([]),
       listUnsatisfiedDependencies: () => Effect.succeed([]),
       findDependency: () => Effect.succeed(Option.none()),

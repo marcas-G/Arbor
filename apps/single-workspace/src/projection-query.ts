@@ -35,6 +35,7 @@ import {
 } from "@arbor/ports";
 import type {
   AttentionReadDeps,
+  AttentionSourceExecutionBinding,
   ConversationHistoryCursor,
   ConversationHistoryPage,
   CurrentWorkDeps,
@@ -258,20 +259,133 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
             workspace_id: string;
             settlement_json: string | null;
             settled_at: string | null;
+            settlement_kind: string | null;
           }>(
-            "SELECT execution_id, workspace_id, settlement_json, settled_at FROM executions WHERE project_id = ? ORDER BY execution_id",
+            "SELECT execution_id, workspace_id, settlement_json, settled_at, settlement_kind FROM executions WHERE project_id = ? ORDER BY execution_id",
             [projectId],
           );
-          const facts: Array<ExecutionSettlementReadFact> = rows.map((row) => ({
-            executionId: row.execution_id,
-            workspaceId: row.workspace_id as WorkspaceId,
-            settlement:
-              row.settlement_json === null
-                ? null
-                : (JSON.parse(row.settlement_json) as ExecutionSettlement),
-            settledAt: row.settled_at,
-          }));
+          const facts: Array<ExecutionSettlementReadFact> = rows.map((row) => {
+            let settlement: ExecutionSettlement | null = null;
+            let settlementMalformed =
+              row.settlement_kind !== null && row.settlement_json === null;
+            if (row.settlement_json !== null) {
+              try {
+                settlement = JSON.parse(
+                  row.settlement_json,
+                ) as ExecutionSettlement;
+              } catch {
+                settlementMalformed = true;
+              }
+            }
+            return {
+              executionId: row.execution_id,
+              workspaceId: row.workspace_id as WorkspaceId,
+              settlement,
+              settledAt: row.settled_at,
+              settlementKind: row.settlement_kind,
+              settlementMalformed,
+            };
+          });
           return facts;
+        }),
+      );
+
+    const listAttentionSourceExecutionBindings = (
+      _projectId: ProjectId,
+      executionIds: ReadonlyArray<string>,
+    ) =>
+      inTx(
+        Effect.gen(function* () {
+          if (executionIds.length === 0) {
+            return [] as ReadonlyArray<AttentionSourceExecutionBinding>;
+          }
+          const executions = yield* sql.unsafe<{
+            readonly execution_id: string;
+            readonly project_id: string;
+            readonly workspace_id: string;
+            readonly episode_json: string | null;
+          }>(
+            `SELECT e.execution_id, e.project_id, e.workspace_id,
+                    state.episode_json
+               FROM executions AS e
+               LEFT JOIN agent_execution_state AS state
+                 ON state.execution_id = e.execution_id
+              WHERE e.execution_id IN (${executionIds.map(() => "?").join(",")})
+              ORDER BY e.execution_id`,
+            [...executionIds],
+          );
+          const workIds = new Set<string>();
+          for (const row of executions) {
+            if (row.episode_json === null) continue;
+            try {
+              const episode: unknown = JSON.parse(row.episode_json);
+              if (
+                typeof episode === "object" &&
+                episode !== null &&
+                (episode as { readonly _tag?: unknown })._tag ===
+                  "WorkEpisode" &&
+                typeof (episode as { readonly workId?: unknown }).workId ===
+                  "string"
+              ) {
+                workIds.add((episode as { readonly workId: string }).workId);
+              }
+            } catch {
+              // P10 validates the original opaque episode and returns its
+              // bounded ProjectionIntegrityFailure; malformed text is never
+              // used as a query selector.
+            }
+          }
+          const workRows =
+            workIds.size === 0
+              ? []
+              : yield* sql.unsafe<{
+                  readonly work_id: string;
+                  readonly project_id: string;
+                  readonly workspace_id: string;
+                  readonly revision: number;
+                }>(
+                  `SELECT work_id, project_id, workspace_id, revision
+                     FROM works
+                    WHERE work_id IN (${[...workIds].map(() => "?").join(",")})`,
+                  [...workIds],
+                );
+          const workById = new Map(workRows.map((row) => [row.work_id, row]));
+          return executions.map((row) => {
+            let episodeWorkId: string | null = null;
+            if (row.episode_json !== null) {
+              try {
+                const episode: unknown = JSON.parse(row.episode_json);
+                if (
+                  typeof episode === "object" &&
+                  episode !== null &&
+                  (episode as { readonly _tag?: unknown })._tag ===
+                    "WorkEpisode" &&
+                  typeof (episode as { readonly workId?: unknown }).workId ===
+                    "string"
+                ) {
+                  episodeWorkId = (episode as { readonly workId: string })
+                    .workId;
+                }
+              } catch {
+                // Preserve the invalid episode as null data for the P10
+                // validator; do not infer another Work binding.
+              }
+            }
+            const work =
+              episodeWorkId === null ? undefined : workById.get(episodeWorkId);
+            return {
+              executionId: row.execution_id,
+              projectId: row.project_id as ProjectId,
+              workspaceId: row.workspace_id as WorkspaceId,
+              episodeJson: row.episode_json,
+              workId: work?.work_id ?? null,
+              workProjectId:
+                (work?.project_id as ProjectId | undefined) ?? null,
+              workWorkspaceId:
+                (work?.workspace_id as WorkspaceId | undefined) ?? null,
+              workRevision: work === undefined ? null : Number(work.revision),
+            };
+          });
         }),
       );
 
@@ -360,6 +474,7 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
       listWorksByWorkspace: (workspaceId) =>
         inTx(works.listByWorkspace(workspaceId)),
       listExecutionSettlementFacts,
+      listAttentionSourceExecutionBindings,
       listOpenVerifications: () => inTx(verifications.listOpen()),
       listUnsatisfiedDependencies: (projectId) =>
         inTx(dependencies.listUnsatisfiedByProject(projectId)),
