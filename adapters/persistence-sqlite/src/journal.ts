@@ -123,9 +123,10 @@ const decodeRawCandidate = (
   }
 
   try {
-    const payload = parse(EVENT_CATALOG[eventTypeRaw as EventTypeName])(
-      JSON.parse(payloadJsonRaw),
-    );
+    // Match the existing readAfter decoder: registered event-type lookup plus
+    // JSON parsing, without retroactively imposing the current schema on
+    // persisted payloads whose event version is independently classified.
+    const payload = JSON.parse(payloadJsonRaw);
     return { _tag: "Decoded", event: { ...envelope, payload } };
   } catch {
     return { _tag: "Poison", reason: "MalformedPayload" };
