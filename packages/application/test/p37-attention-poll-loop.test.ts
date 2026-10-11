@@ -147,6 +147,7 @@ const makeDeps = (
     projectionForProject: () => ({
       apply: (events: ReadonlyArray<unknown>) => {
         trace.push(`apply:${events.length}`);
+        markerIds.add(fact.attentionFactId);
         return Effect.void;
       },
     }),
