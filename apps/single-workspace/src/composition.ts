@@ -104,6 +104,7 @@ import {
   runMigrations,
   SchedulerTimerStoreLive,
   SessionRepositoryLive,
+  sqliteAdapterError,
   ToolInvocationStoreLive,
   TransactionPortLive,
   VerificationRepositoryLive,
@@ -180,7 +181,10 @@ import {
 } from "@arbor/tool-runtime";
 import { WorkerDispatchPortLive } from "@arbor/worker-local";
 import { Effect, Layer } from "effect";
-import type { SqlClient as SqlClientService } from "effect/unstable/sql/SqlClient";
+import {
+  SqlClient,
+  type SqlClient as SqlClientService,
+} from "effect/unstable/sql/SqlClient";
 import { ControlActionAuthorizerLive } from "./control-action-authorizer.js";
 import {
   type AssignWorkBindingAttentionQualificationProbe,
@@ -957,7 +961,33 @@ export const buildSingleWorkspaceLayer = (
     snapshotRetention,
     usage,
   );
-  return all as Layer.Layer<SingleWorkspaceServices>;
+  const latestSupportedSchema = P38_MIGRATIONS.reduce(
+    (latest, migration) => Math.max(latest, migration.id),
+    0,
+  );
+  const currentSchemaGate = Layer.provide(
+    Layer.effectDiscard(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        const versions = yield* sql.unsafe<{ user_version: number }>(
+          "PRAGMA user_version",
+        );
+        const current = Number(versions[0]?.user_version ?? 0);
+        if (current > latestSupportedSchema) {
+          return yield* Effect.die(
+            sqliteAdapterError(
+              `database user_version ${current} is newer than latest migration ${latestSupportedSchema}`,
+            ),
+          );
+        }
+      }),
+    ),
+    base,
+  );
+  return Layer.provide(
+    all,
+    currentSchemaGate,
+  ) as Layer.Layer<SingleWorkspaceServices>;
 };
 
 export {
