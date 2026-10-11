@@ -44,10 +44,8 @@ SIGKILLs the child, inspects from a separate read connection, then starts a
 fresh child to retry/replay. This can prove real SQLite process crash atomicity
 for claim/Denied/Interrupted; it must not be reported as a production daemon or
 external-effect qualification. The six claim/Denied/Interrupted before/after-
-COMMIT branches have a pre-hardening 1/1 targeted run, but independent review
-found the child could naturally exit before SIGKILL and the parent did not
-assert the kill signal. A keepalive/alive handshake and exact SIGKILL exit
-assertions are now required; rerun is pending. See
+COMMIT branches passed the hardened 1/1 targeted run with keepalive/alive
+handshake and exact SIGKILL exit assertions. See
 `planning/results/AH7-DG-03-L4-store-process.result.md`.
 
 After those store-process cases, the production `ProductionFixture` should be
