@@ -544,74 +544,8 @@ export const ToolRuntimeLive = (
           }
           if (needsApproval) {
             if (context.executableApproval === undefined) {
-              if (intent.approvalId !== null) {
-                return yield* recordNoEffectDenial(
-                  definition.sideEffectSemantics,
-                  regions,
-                  "ApprovalMismatch",
-                );
-              }
-              return {
-                _tag: "ApprovalRequired" as const,
-                authority: resolvedAuthority,
-                targetResourceSpaceIds: regions.map(
-                  (region) => region.resourceSpaceId,
-                ),
-                actionDigest: actionDigestOf(intent),
-                requestedCapabilities: definition.capabilityMetadata,
-                sideEffectSemantics: definition.sideEffectSemantics,
-                controlBasisDigest: context.controlBasisDigest,
-              };
-            }
-            if (intent.approvalId !== context.executableApproval.approvalId) {
-              return yield* recordNoEffectDenial(
-                definition.sideEffectSemantics,
-                regions,
-                "ApprovalMismatch",
-              );
-            }
-            if (Option.isNone(executableApprovals)) {
-              return yield* Effect.fail(
-                operationalFailure(
-                  "ApprovalLookup",
-                  String(intent.invocationId),
-                )({
-                  _tag: "ExecutableApprovalStoreUnavailable",
-                }),
-              );
-            }
-            const exactExecutableApproval = yield* tx
-              .transact(
-                executableApprovals.value.findById(
-                  context.executableApproval.approvalId,
-                ),
-              )
-              .pipe(
-                Effect.mapError(
-                  operationalFailure(
-                    "ApprovalLookup",
-                    String(intent.invocationId),
-                  ),
-                ),
-              );
-            if (Option.isSome(exactExecutableApproval)) {
-              const currentApproval = exactExecutableApproval.value;
-              if (currentApproval.state === "Pending") {
-                if (
-                  context.executableApproval.state !== "Pending" ||
-                  currentApproval.revision !==
-                    context.executableApproval.expectedRevision ||
-                  !executableApprovalBindingMatches(
-                    currentApproval,
-                    context.executableApproval.binding,
-                  )
-                ) {
-                  return yield* recordNoEffectDenial(
-                    definition.sideEffectSemantics,
-                    regions,
-                    "ApprovalMismatch",
-                  );
-                }
+              const legacyApprovalId = intent.approvalId;
+              if (legacyApprovalId === null) {
                 return {
                   _tag: "ApprovalRequired" as const,
                   authority: resolvedAuthority,
@@ -624,24 +558,24 @@ export const ToolRuntimeLive = (
                   controlBasisDigest: context.controlBasisDigest,
                 };
               }
-              if (currentApproval.state === "Cancelled") {
-                return { _tag: "Interrupted" as const };
-              }
-              const terminalDenial = executableApprovalTerminalDenial(
-                currentApproval,
-                now,
-              );
-              if (terminalDenial !== null) {
+              const legacyApproval = yield* tx
+                .transact(store.findApproval(legacyApprovalId))
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "ApprovalLookup",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              if (Option.isNone(legacyApproval)) {
                 return yield* recordNoEffectDenial(
                   definition.sideEffectSemantics,
                   regions,
-                  terminalDenial,
+                  "ApprovalNotFound",
                 );
               }
-              if (
-                currentApproval.state === "Consumed" &&
-                currentApproval.consumedBy === intent.invocationId
-              ) {
+              if (legacyApproval.value.consumedBy === intent.invocationId) {
                 const priorInvocation = yield* tx
                   .transact(store.findById(intent.invocationId))
                   .pipe(
@@ -652,47 +586,163 @@ export const ToolRuntimeLive = (
                       ),
                     ),
                   );
-                if (Option.isSome(priorInvocation)) {
-                  approvalAlreadyConsumedBySelf = true;
+                if (Option.isNone(priorInvocation)) {
+                  return yield* recordNoEffectDenial(
+                    definition.sideEffectSemantics,
+                    regions,
+                    "ApprovalConsumedByOtherInvocation",
+                  );
+                }
+                approvalAlreadyConsumedBySelf = true;
+              }
+              const matched = matchApproval({
+                approval: legacyApproval.value,
+                intent,
+                definition,
+                context,
+                regions,
+                now,
+                replayOfRecordedInvocation: approvalAlreadyConsumedBySelf,
+              });
+              if (matched._tag === "Denied") {
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
+                  regions,
+                  approvalDenialCode(matched.reason),
+                );
+              }
+            } else {
+              if (intent.approvalId !== context.executableApproval.approvalId) {
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
+                  regions,
+                  "ApprovalMismatch",
+                );
+              }
+              if (Option.isNone(executableApprovals)) {
+                return yield* Effect.fail(
+                  operationalFailure(
+                    "ApprovalLookup",
+                    String(intent.invocationId),
+                  )({
+                    _tag: "ExecutableApprovalStoreUnavailable",
+                  }),
+                );
+              }
+              const exactExecutableApproval = yield* tx
+                .transact(
+                  executableApprovals.value.findById(
+                    context.executableApproval.approvalId,
+                  ),
+                )
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "ApprovalLookup",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              if (Option.isSome(exactExecutableApproval)) {
+                const currentApproval = exactExecutableApproval.value;
+                if (currentApproval.state === "Pending") {
+                  if (
+                    context.executableApproval.state !== "Pending" ||
+                    currentApproval.revision !==
+                      context.executableApproval.expectedRevision ||
+                    !executableApprovalBindingMatches(
+                      currentApproval,
+                      context.executableApproval.binding,
+                    )
+                  ) {
+                    return yield* recordNoEffectDenial(
+                      definition.sideEffectSemantics,
+                      regions,
+                      "ApprovalMismatch",
+                    );
+                  }
+                  return {
+                    _tag: "ApprovalRequired" as const,
+                    authority: resolvedAuthority,
+                    targetResourceSpaceIds: regions.map(
+                      (region) => region.resourceSpaceId,
+                    ),
+                    actionDigest: actionDigestOf(intent),
+                    requestedCapabilities: definition.capabilityMetadata,
+                    sideEffectSemantics: definition.sideEffectSemantics,
+                    controlBasisDigest: context.controlBasisDigest,
+                  };
+                }
+                if (currentApproval.state === "Cancelled") {
+                  return { _tag: "Interrupted" as const };
+                }
+                const terminalDenial = executableApprovalTerminalDenial(
+                  currentApproval,
+                  now,
+                );
+                if (terminalDenial !== null) {
+                  return yield* recordNoEffectDenial(
+                    definition.sideEffectSemantics,
+                    regions,
+                    terminalDenial,
+                  );
+                }
+                if (
+                  currentApproval.state === "Consumed" &&
+                  currentApproval.consumedBy === intent.invocationId
+                ) {
+                  const priorInvocation = yield* tx
+                    .transact(store.findById(intent.invocationId))
+                    .pipe(
+                      Effect.mapError(
+                        operationalFailure(
+                          "ApprovalLookup",
+                          String(intent.invocationId),
+                        ),
+                      ),
+                    );
+                  if (Option.isSome(priorInvocation)) {
+                    approvalAlreadyConsumedBySelf = true;
+                  }
                 }
               }
-            }
-            if (
-              Option.isNone(exactExecutableApproval) ||
-              exactExecutableApproval.value.routeKind !== "Executable" ||
-              (exactExecutableApproval.value.state !==
-                context.executableApproval.state &&
-                !approvalAlreadyConsumedBySelf) ||
-              !(
-                (exactExecutableApproval.value.state === "Approved" &&
-                  exactExecutableApproval.value.revision ===
-                    context.executableApproval.expectedRevision) ||
-                (approvalAlreadyConsumedBySelf &&
-                  exactExecutableApproval.value.state === "Consumed" &&
-                  exactExecutableApproval.value.revision ===
-                    context.executableApproval.expectedRevision + 1)
-              ) ||
-              exactExecutableApproval.value.expiresAt <= now ||
-              !executableApprovalBindingMatches(
-                exactExecutableApproval.value,
-                context.executableApproval.binding,
-              )
-            ) {
-              return yield* recordNoEffectDenial(
-                definition.sideEffectSemantics,
-                regions,
-                exactExecutableApproval._tag === "Some" &&
-                  exactExecutableApproval.value.expiresAt <= now
-                  ? "ApprovalExpired"
-                  : "ApprovalMismatch",
-              );
-            }
-            if (intent.approvalId !== context.executableApproval.approvalId) {
-              return yield* recordNoEffectDenial(
-                definition.sideEffectSemantics,
-                regions,
-                "ApprovalMismatch",
-              );
+              if (
+                Option.isNone(exactExecutableApproval) ||
+                exactExecutableApproval.value.routeKind !== "Executable" ||
+                (exactExecutableApproval.value.state !==
+                  context.executableApproval.state &&
+                  !approvalAlreadyConsumedBySelf) ||
+                !(
+                  (exactExecutableApproval.value.state === "Approved" &&
+                    exactExecutableApproval.value.revision ===
+                      context.executableApproval.expectedRevision) ||
+                  (approvalAlreadyConsumedBySelf &&
+                    exactExecutableApproval.value.state === "Consumed" &&
+                    exactExecutableApproval.value.revision ===
+                      context.executableApproval.expectedRevision + 1)
+                ) ||
+                exactExecutableApproval.value.expiresAt <= now ||
+                !executableApprovalBindingMatches(
+                  exactExecutableApproval.value,
+                  context.executableApproval.binding,
+                )
+              ) {
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
+                  regions,
+                  exactExecutableApproval._tag === "Some" &&
+                    exactExecutableApproval.value.expiresAt <= now
+                    ? "ApprovalExpired"
+                    : "ApprovalMismatch",
+                );
+              }
+              if (intent.approvalId !== context.executableApproval.approvalId) {
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
+                  regions,
+                  "ApprovalMismatch",
+                );
+              }
             }
           }
 
@@ -936,7 +986,11 @@ export const ToolRuntimeLive = (
                       return yield* Effect.fail(claimStopped);
                     }
                     if (!consumed) return yield* Effect.fail(approvalClaimLost);
-                  } else if (needsApproval && intent.approvalId !== null) {
+                  } else if (
+                    needsApproval &&
+                    intent.approvalId !== null &&
+                    !approvalAlreadyConsumedBySelf
+                  ) {
                     const consumed = yield* store.consumeApproval(
                       intent.approvalId,
                       intent.invocationId,

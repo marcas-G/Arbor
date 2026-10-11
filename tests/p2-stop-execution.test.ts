@@ -41,6 +41,7 @@ import {
   P2CommandHandlerRegistryLive,
   type StopExecutionPayload,
 } from "../packages/execution-runtime/src/index.js";
+import { ExecutableApprovalStore } from "../packages/ports/dist/index.js";
 import {
   seedCurrentOpenWork,
   workEpisode,
@@ -75,6 +76,9 @@ const makeApp = () => {
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
+    Layer.succeed(ExecutableApprovalStore, {
+      cancelForExecution: () => Effect.succeed([]),
+    } as never),
   );
   const all = Layer.mergeAll(
     infra,
