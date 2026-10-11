@@ -3,8 +3,6 @@ import {
   AttentionPollStore,
   type AttentionPollStoreError,
   type AttentionPollStoreService,
-  type AttentionPollClaim,
-  type AttentionPollFailureCode,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
@@ -36,7 +34,10 @@ const safeBackoffDelay = (
 ): number => {
   const exponent = Math.min(Math.max(0, failedAttempts - 1), exponentCap);
   const multiplier = 2 ** exponent;
-  if (!Number.isFinite(multiplier) || baseBackoffMs > maxBackoffMs / multiplier) {
+  if (
+    !Number.isFinite(multiplier) ||
+    baseBackoffMs > maxBackoffMs / multiplier
+  ) {
     return maxBackoffMs;
   }
   return Math.min(maxBackoffMs, baseBackoffMs * multiplier);
@@ -71,9 +72,7 @@ export const AttentionPollStoreLive: Layer.Layer<
     const sql = yield* SqlClient;
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(
-        Effect.mapError(
-          repositoryFailure("AttentionPollStore", "dispatcher"),
-        ),
+        Effect.mapError(repositoryFailure("AttentionPollStore", "dispatcher")),
       );
 
     const readDispatch = () =>
@@ -168,7 +167,11 @@ export const AttentionPollStoreLive: Layer.Layer<
           }
 
           if (dispatch.active_project_id !== null) {
-            yield* finalizeExpired(dispatch.active_project_id, input.now, input);
+            yield* finalizeExpired(
+              dispatch.active_project_id,
+              input.now,
+              input,
+            );
           }
 
           yield* run(
@@ -228,13 +231,19 @@ export const AttentionPollStoreLive: Layer.Layer<
                           claim_started_at = NULL, lease_expires_at = NULL
                     WHERE singleton = 1 AND lease_generation = ?
                       AND active_project_id = ? AND lease_expires_at <= ?`,
-                  [dispatch.lease_generation, dispatch.active_project_id, input.now],
+                  [
+                    dispatch.lease_generation,
+                    dispatch.active_project_id,
+                    input.now,
+                  ],
                 ),
               );
             }
             return { _tag: "NoClaim" as const };
           }
-          const leaseExpiresAt = new Date(nowMs + input.leaseTtlMs).toISOString();
+          const leaseExpiresAt = new Date(
+            nowMs + input.leaseTtlMs,
+          ).toISOString();
           const claimRows = yield* run(
             sql.unsafe<{
               readonly lease_generation: number;
@@ -302,7 +311,12 @@ export const AttentionPollStoreLive: Layer.Layer<
                 WHERE singleton = 1 AND active_project_id = ?
                   AND lease_owner = ? AND lease_generation = ?
                   AND lease_expires_at > ?`,
-              [claim.projectId, claim.leaseOwner, claim.leaseGeneration, completedAt],
+              [
+                claim.projectId,
+                claim.leaseOwner,
+                claim.leaseGeneration,
+                completedAt,
+              ],
             ),
           );
           if (current.length !== 1) return false;
@@ -323,7 +337,12 @@ export const AttentionPollStoreLive: Layer.Layer<
                 WHERE singleton = 1 AND active_project_id = ?
                   AND lease_owner = ? AND lease_generation = ?
                   AND lease_expires_at > ?`,
-              [claim.projectId, claim.leaseOwner, claim.leaseGeneration, completedAt],
+              [
+                claim.projectId,
+                claim.leaseOwner,
+                claim.leaseGeneration,
+                completedAt,
+              ],
             ),
           );
           return true;
@@ -331,12 +350,16 @@ export const AttentionPollStoreLive: Layer.Layer<
       recordFailure: (claim, failureCode, failedAt, backoff) =>
         Effect.gen(function* () {
           yield* TransactionScope;
-          if (!validBackoff(backoff) || !Number.isFinite(timestampMs(failedAt))) {
+          if (
+            !validBackoff(backoff) ||
+            !Number.isFinite(timestampMs(failedAt))
+          ) {
             return yield* Effect.fail<AttentionPollStoreError>({
               _tag: "PersistenceCorruption",
               repository: "AttentionPollStore",
               operation: "failure",
-              reason: "invalid Attention poll failure time or backoff parameters",
+              reason:
+                "invalid Attention poll failure time or backoff parameters",
             });
           }
           const current = yield* run(
@@ -361,7 +384,8 @@ export const AttentionPollStoreLive: Layer.Layer<
               [claim.projectId],
             ),
           );
-          const attempts = Number(state[0]?.consecutive_failed_attempts ?? 0) + 1;
+          const attempts =
+            Number(state[0]?.consecutive_failed_attempts ?? 0) + 1;
           const delay = safeBackoffDelay(
             attempts,
             backoff.baseBackoffMs,
@@ -374,7 +398,13 @@ export const AttentionPollStoreLive: Layer.Layer<
                   SET consecutive_failed_attempts = ?, next_eligible_at = ?,
                       last_failure_code = ?, last_failure_at = ?
                 WHERE project_id = ?`,
-              [attempts, addDelay(failedAt, delay), failureCode, failedAt, claim.projectId],
+              [
+                attempts,
+                addDelay(failedAt, delay),
+                failureCode,
+                failedAt,
+                claim.projectId,
+              ],
             ),
           );
           yield* run(

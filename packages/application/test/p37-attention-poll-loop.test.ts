@@ -65,13 +65,16 @@ const policy = {
   backoffExponentCap: 6,
 };
 
-const makeDeps = (trace: Array<string>, overrides: Record<string, unknown> = {}) => {
+const makeDeps = (
+  trace: Array<string>,
+  overrides: Record<string, unknown> = {},
+) => {
   const markerIds = new Set<string>();
   const tx = {
     transact: (body: Effect.Effect<unknown, unknown, TransactionScope>) =>
-      Effect.gen(function* () {
+      Effect.suspend(() => {
         trace.push("transaction");
-        return yield* Effect.provideService(body, TransactionScope, {
+        return Effect.provideService(body, TransactionScope, {
           session: { id: "test" },
         });
       }),
@@ -102,10 +105,11 @@ const makeDeps = (trace: Array<string>, overrides: Record<string, unknown> = {})
       },
     },
     offsets: {
-      read: () => Effect.sync(() => {
-        trace.push("read-offset");
-        return 0;
-      }),
+      read: () =>
+        Effect.sync(() => {
+          trace.push("read-offset");
+          return 0;
+        }),
       advance: (_consumerId: string, _projectId: unknown, sequence: number) => {
         trace.push(`advance:${sequence}`);
         return Effect.void;
@@ -157,11 +161,19 @@ describe("P37 P10 Attention poll coordinator", () => {
       runAttentionPollOnce("p10-rebuild:attention", policy, makeDeps(trace)),
     );
 
-    expect(trace.indexOf("read-raw")).toBeLessThan(trace.indexOf("lookup-fact"));
-    expect(trace.indexOf("lookup-fact")).toBeLessThan(trace.indexOf("decode-raw"));
-    expect(trace.indexOf("put-marker")).toBeLessThan(trace.indexOf("ack-queue"));
+    expect(trace.indexOf("read-raw")).toBeLessThan(
+      trace.indexOf("lookup-fact"),
+    );
+    expect(trace.indexOf("lookup-fact")).toBeLessThan(
+      trace.indexOf("decode-raw"),
+    );
+    expect(trace.indexOf("put-marker")).toBeLessThan(
+      trace.indexOf("ack-queue"),
+    );
     expect(trace.indexOf("ack-queue")).toBeLessThan(trace.indexOf("advance:1"));
-    expect(trace.indexOf("advance:1")).toBeLessThan(trace.indexOf("complete-success"));
+    expect(trace.indexOf("advance:1")).toBeLessThan(
+      trace.indexOf("complete-success"),
+    );
     expect(trace.filter((entry) => entry === "transaction")).toHaveLength(2);
   });
 
@@ -183,12 +195,16 @@ describe("P37 P10 Attention poll coordinator", () => {
         },
         decodeRaw: () => {
           trace.push("decode-raw");
-          return Effect.die("Deliver payload must not be decoded before P9 lookup");
+          return Effect.die(
+            "Deliver payload must not be decoded before P9 lookup",
+          );
         },
       },
     });
 
-    await Effect.runPromise(runAttentionPollOnce("p10-rebuild:attention", policy, deps));
+    await Effect.runPromise(
+      runAttentionPollOnce("p10-rebuild:attention", policy, deps),
+    );
     expect(trace).toContain("record-failure:MissingP9Fact");
     expect(trace).not.toContain("decode-raw");
     expect(trace).not.toContain("advance:1");

@@ -1,26 +1,27 @@
 import {
+  AttentionProjectionStore,
+  DomainEventJournal,
+  type IdGenerator,
+  RecoveryAttentionFactStore,
+  TransactionPort,
+} from "@arbor/ports";
+import { Effect, Exit, Layer } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
+import { describe, expect, it } from "vitest";
+import {
   AttentionProjectionStoreLive,
   DomainEventJournalLive,
   IdGeneratorLive,
   layer,
   makeRecoveryAttentionFactStoreLive,
+  P37_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
-  P37_MIGRATIONS,
 } from "../src/index.js";
-import { Effect, Exit, Layer } from "effect";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
-import {
-  AttentionProjectionStore,
-  DomainEventJournal,
-  RecoveryAttentionFactStore,
-  TransactionPort,
-} from "@arbor/ports";
 
-const projectId = "prj_deliver_replay_test";
-const workspaceId = "ws_deliver_replay_test";
-const executionId = "exe_deliver_replay_test";
+const projectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789ac";
+const workspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789ac";
+const executionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789ac";
 
 const makeApp = () => {
   const sqlite = layer({ filename: ":memory:" });
@@ -44,6 +45,7 @@ const runDb = <A>(
     unknown,
     | SqlClient
     | AttentionProjectionStore
+    | IdGenerator
     | DomainEventJournal
     | RecoveryAttentionFactStore
     | TransactionPort
@@ -114,7 +116,9 @@ describe("P37 DeliverReplay durable outbox", () => {
           failureCode: "LegacyMessageMissingEvent" as const,
           firstDetectedAt: "2026-10-11T00:00:00.000Z",
         };
-        const first = yield* tx.transact(facts.recordDeliverReplayFailure(input));
+        const first = yield* tx.transact(
+          facts.recordDeliverReplayFailure(input),
+        );
         const duplicate = yield* tx.transact(
           facts.recordDeliverReplayFailure({
             ...input,
@@ -159,8 +163,7 @@ describe("P37 DeliverReplay durable outbox", () => {
         );
         expect(Number(requeued[0]?.queued)).toBe(1);
       }),
-    ),
-  );
+    ));
 
   it("rejects queue deletion until the P10 fact marker exists", () =>
     runDb(
@@ -194,6 +197,56 @@ describe("P37 DeliverReplay durable outbox", () => {
         expect(Exit.isFailure(attempt)).toBe(true);
         expect(Number(queued[0]?.queued)).toBe(1);
       }),
-    ),
-  );
+    ));
+
+  it("preserves untagged registered P9 event payloads through raw decoding", () =>
+    runDb(
+      Effect.gen(function* () {
+        const tx = yield* TransactionPort;
+        const journal = yield* DomainEventJournal;
+        yield* runMigrations(P37_MIGRATIONS);
+        yield* seedExecution;
+        const payload = {
+          attentionFactId: "att_legacy_payload_shape",
+          executionId,
+          targetWorkspaceId: workspaceId,
+          logicalActionId: "act_legacy_payload_shape",
+          committedCommandId: "cmd_legacy_payload_shape",
+          failureCode: "MissingBinding",
+        };
+        const eventIds = yield* tx.transact(
+          journal.appendReturningIds([
+            {
+              projectId: projectId as never,
+              eventType: "AssignWorkTargetBindingEscalated",
+              eventVersion: 1,
+              occurredAt: "2026-10-11T00:00:00.000Z",
+              aggregateRef: workspaceId,
+              actor: "system:recovery" as never,
+              correlationRef: payload.logicalActionId,
+              payload,
+            },
+          ]),
+        );
+        const candidates = yield* tx.transact(
+          journal.readAfterRaw(projectId as never, 0, 10),
+        );
+        expect(candidates[0]?.eventIdRaw).toBe(eventIds[0]);
+        const candidate = candidates[0];
+        if (!candidate) throw new Error("Expected one raw candidate");
+        const decoded = yield* journal.decodeRaw(candidate);
+        if (decoded._tag === "Poison") {
+          throw new Error(
+            `raw event decoder rejected ${decoded.reason}: ${JSON.stringify(candidates[0])}`,
+          );
+        }
+        expect(decoded).toMatchObject({ _tag: "Decoded" });
+        if (decoded._tag === "Decoded") {
+          expect(decoded.event.eventType).toBe(
+            "AssignWorkTargetBindingEscalated",
+          );
+          expect(decoded.event.payload).toEqual(payload);
+        }
+      }),
+    ));
 });

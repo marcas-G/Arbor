@@ -1,9 +1,9 @@
 import type {
+  AttentionPollLoopError,
   CompletionConsumerDependencies,
   ConsumerLoopError,
   ConsumerLoopResult,
   ConsumerLoopStores,
-  AttentionPollLoopError,
   DependencyCoordinatorDependencies,
   DriftError,
   DriftReport,

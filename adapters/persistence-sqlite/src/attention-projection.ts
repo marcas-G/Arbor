@@ -2,12 +2,11 @@ import type { DomainEvent, ProjectId } from "@arbor/domain";
 import {
   type AssignWorkBindingAttentionFact,
   type AssignWorkBindingAttentionProjectionRow,
-  type DeliverReplayAttentionFact,
-  type DeliverReplayAttentionProjectionRow,
   AttentionProjectionStore,
   type AttentionProjectionStoreError,
   type AttentionProjectionStoreService,
   type ConsumerOffsetStoreError,
+  type DeliverReplayAttentionProjectionRow,
   type ProjectionStoreService,
   type RecoveryAttentionFactStoreService,
   TransactionScope,
@@ -258,7 +257,8 @@ export const makeAttentionProjectionStoreLive = (
                 _tag: "PersistenceCorruption",
                 repository: "AttentionProjectionStore",
                 operation: "deliver-replay-marker",
-                reason: "Deliver marker input does not match its durable P9 fact",
+                reason:
+                  "Deliver marker input does not match its durable P9 fact",
               });
             }
             yield* run(
@@ -548,7 +548,8 @@ export const makeProjectAttentionProjectionStore = (
               _tag: "PersistenceCorruption",
               repository: "ConsumerOffsetStore",
               operation: "p10-attention-apply",
-              reason: "P10 Attention consumer received a Deliver event for another project",
+              reason:
+                "P10 Attention consumer received a Deliver event for another project",
             });
           }
           const payload = payloadRecord(event.payload);
@@ -562,7 +563,10 @@ export const makeProjectAttentionProjectionStore = (
             "targetWorkspaceId",
           ];
           const attentionFactId = payload.attentionFactId;
-          if (typeof attentionFactId !== "string" || attentionFactId.length === 0) {
+          if (
+            typeof attentionFactId !== "string" ||
+            attentionFactId.length === 0
+          ) {
             return yield* Effect.fail<ConsumerOffsetStoreError>({
               _tag: "PersistenceCorruption",
               repository: "ConsumerOffsetStore",
@@ -593,7 +597,8 @@ export const makeProjectAttentionProjectionStore = (
             event.correlationRef !== fact.logicalActionId ||
             event.occurredAt !== fact.firstDetectedAt ||
             fact.executionId !== String(payload.executionId ?? "") ||
-            fact.targetWorkspaceId !== String(payload.targetWorkspaceId ?? "") ||
+            fact.targetWorkspaceId !==
+              String(payload.targetWorkspaceId ?? "") ||
             fact.logicalActionId !== String(payload.logicalActionId ?? "") ||
             fact.messageId !== String(payload.messageId ?? "") ||
             fact.failureCode !== String(payload.failureCode ?? "") ||
@@ -604,7 +609,8 @@ export const makeProjectAttentionProjectionStore = (
               _tag: "PersistenceCorruption",
               repository: "ConsumerOffsetStore",
               operation: "p10-attention-apply",
-              reason: "Deliver replay event does not exactly match its immutable P9 fact",
+              reason:
+                "Deliver replay event does not exactly match its immutable P9 fact",
             });
           }
           yield* attentionRows

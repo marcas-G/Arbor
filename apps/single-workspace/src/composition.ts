@@ -6,12 +6,12 @@ import {
   ControlToolRegistryLive,
 } from "@arbor/agent-runtime";
 import {
+  type AttentionPollPolicyConfig,
   type AuthorityResolverPort,
   AuthorityResolverPortLive,
   type CommandGateway,
   type CommandGatewayQualificationProbe,
   type CommandHandlerRegistry,
-  type AttentionPollPolicyConfig,
   type InputPromotionQualificationProbe,
   type InputPromotionService,
   InputPromotionServiceLive,
@@ -48,11 +48,11 @@ import {
 } from "@arbor/model-context";
 import {
   AcceptanceRepositoryLive,
-  AttentionPollStoreLive,
   AgentExecutionStateStoreLive,
   AgentLoopStepStoreLive,
   ArtifactMetadataRepositoryLive,
   AssignWorkTargetBindingRepositoryLive,
+  AttentionPollStoreLive,
   type AttentionProjectionQualificationProbe,
   ClockLive,
   CommandStoreLive,

@@ -1,21 +1,21 @@
 import type { DomainEvent, ProjectId } from "@arbor/domain";
-import {
-  type AttentionPollFailureCode,
-  type AttentionPollStoreError,
-  type AttentionPollStoreService,
-  type AttentionProjectionStoreError,
-  type AttentionProjectionStoreService,
-  type ClockService,
-  type ConsumerDeadLetterStoreService,
-  type ConsumerOffsetStoreService,
-  type DomainEventJournalService,
-  type ProjectionStoreService,
-  type RawJournalEventCandidate,
-  type RecoveryAttentionFactStoreService,
-  type RecoveryAttentionFactStoreError,
-  type TransactionPortService,
+import type {
+  AttentionPollFailureCode,
+  AttentionPollStoreError,
+  AttentionPollStoreService,
+  AttentionProjectionStoreError,
+  AttentionProjectionStoreService,
+  ClockService,
+  ConsumerDeadLetterStoreService,
+  ConsumerOffsetStoreService,
+  DomainEventJournalService,
+  ProjectionStoreService,
+  RawJournalEventCandidate,
+  RecoveryAttentionFactStoreError,
+  RecoveryAttentionFactStoreService,
+  TransactionPortService,
 } from "@arbor/ports";
-import { Effect, Option } from "effect";
+import { Effect, Option, Result } from "effect";
 import type { ConsumerLoopError, ConsumerLoopResult } from "./consumer-loop.js";
 
 export interface AttentionPollRuntimePolicy {
@@ -36,7 +36,10 @@ export type AttentionPollPolicyConfig = Omit<
 export interface AttentionPollLoopDependencies {
   readonly tx: Pick<TransactionPortService, "transact">;
   readonly clock: Pick<ClockService, "now">;
-  readonly journal: Pick<DomainEventJournalService, "readAfterRaw" | "decodeRaw">;
+  readonly journal: Pick<
+    DomainEventJournalService,
+    "readAfterRaw" | "decodeRaw"
+  >;
   readonly offsets: ConsumerOffsetStoreService;
   readonly deadLetters: ConsumerDeadLetterStoreService;
   readonly projectionForProject: (
@@ -101,7 +104,11 @@ const rawDeliverPayloadMatches = (
   } catch {
     return false;
   }
-  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+  if (
+    typeof payload !== "object" ||
+    payload === null ||
+    Array.isArray(payload)
+  ) {
     return false;
   }
   const record = payload as Record<string, unknown>;
@@ -141,7 +148,7 @@ const exactDeliverEnvelope = (
   },
   event: DomainEvent<unknown>,
   projectId: ProjectId,
-): AttentionPollFailureCode | null => {
+): Exclude<AttentionPollFailureCode, "PollLeaseExpired"> | null => {
   if (fact.projectId !== projectId) return "FactProjectMismatch";
   if (
     event.eventType !== "DeliverReplayEscalated" ||
@@ -228,7 +235,7 @@ export const runAttentionPollOnce = (
 
     let fromSequence = 0;
     let lastSequence = 0;
-    const data = yield* Effect.either(
+    const data = yield* Effect.result(
       deps.tx.transact(
         Effect.gen(function* () {
           const dataStartedAt = yield* deps.clock.now();
@@ -264,8 +271,10 @@ export const runAttentionPollOnce = (
               );
             }
 
-            const sourceFact = yield* deps.recoveryFacts
-              .findDeliverReplayFailureByEventId(candidate.eventIdRaw);
+            const sourceFact =
+              yield* deps.recoveryFacts.findDeliverReplayFailureByEventId(
+                candidate.eventIdRaw,
+              );
             if (Option.isSome(sourceFact)) {
               const fact = sourceFact.value;
               if (fact.projectId !== projectId) {
@@ -288,12 +297,14 @@ export const runAttentionPollOnce = (
               if (mismatch !== null) {
                 return yield* Effect.fail(attentionPollError(mismatch));
               }
-              const applyResult = yield* Effect.either(
+              const applyResult = yield* Effect.result(
                 deps.projectionForProject(projectId).apply([decoded.event]),
               );
-              if (isLeft(applyResult)) {
-                if (isRetryableOperational(applyResult.left)) {
-                  return yield* Effect.fail(applyResult.left as ConsumerLoopError);
+              if (Result.isFailure(applyResult)) {
+                if (isRetryableOperational(applyResult.failure)) {
+                  return yield* Effect.fail(
+                    applyResult.failure as ConsumerLoopError,
+                  );
                 }
                 return yield* Effect.fail(
                   attentionPollError("MarkerBindingMismatch"),
@@ -345,12 +356,14 @@ export const runAttentionPollOnce = (
               continue;
             }
 
-            const applyResult = yield* Effect.either(
+            const applyResult = yield* Effect.result(
               deps.projectionForProject(projectId).apply([decoded.event]),
             );
-            if (isLeft(applyResult)) {
-              if (isRetryableOperational(applyResult.left)) {
-                return yield* Effect.fail(applyResult.left as ConsumerLoopError);
+            if (Result.isFailure(applyResult)) {
+              if (isRetryableOperational(applyResult.failure)) {
+                return yield* Effect.fail(
+                  applyResult.failure as ConsumerLoopError,
+                );
               }
               yield* deps.deadLetters.quarantine(
                 consumerId,
@@ -366,41 +379,47 @@ export const runAttentionPollOnce = (
             lastSequence = sequence;
           }
 
-          const pending = yield* deps.recoveryFacts.listPendingDeliverReplayAttention(
-            projectId,
-            policy.queueBatchSize,
-          );
+          const pending =
+            yield* deps.recoveryFacts.listPendingDeliverReplayAttention(
+              projectId,
+              policy.queueBatchSize,
+            );
           for (const fact of pending) {
             if (fact.projectId !== projectId) {
               return yield* Effect.fail(
                 attentionPollError("QueueFactMismatch"),
               );
             }
-            const markerResult = yield* Effect.either(
+            const markerResult = yield* Effect.result(
               deps.attentionRows.putDeliverReplayFailure(fact),
             );
-            if (isLeft(markerResult)) {
-              if (markerResult.left._tag === "PersistenceCorruption") {
+            if (Result.isFailure(markerResult)) {
+              if (markerResult.failure._tag === "PersistenceCorruption") {
                 return yield* Effect.fail(
                   attentionPollError("MarkerBindingMismatch"),
                 );
               }
-                return yield* Effect.fail(markerResult.left as AttentionPollLoopError);
+              return yield* Effect.fail(
+                markerResult.failure as AttentionPollLoopError,
+              );
             }
-            const ackResult = yield* Effect.either(
+            const ackResult = yield* Effect.result(
               deps.recoveryFacts.acknowledgePendingDeliverReplayAttention(
                 fact.attentionFactId,
               ),
             );
-            if (isLeft(ackResult)) {
+            if (Result.isFailure(ackResult)) {
               if (
-                ackResult.left._tag === "RecoveryAttentionFactInvariantConflict"
+                ackResult.failure._tag ===
+                "RecoveryAttentionFactInvariantConflict"
               ) {
                 return yield* Effect.fail(
                   attentionPollError("QueueDeleteWithoutMarker"),
                 );
               }
-              return yield* Effect.fail(ackResult.left as AttentionPollLoopError);
+              return yield* Effect.fail(
+                ackResult.failure as AttentionPollLoopError,
+              );
             }
           }
 
@@ -424,16 +443,16 @@ export const runAttentionPollOnce = (
       ),
     );
 
-    if (data._tag === "Right") return data.right;
-    if (data.left._tag === "AttentionPollClaimLost") return emptyResult();
-    if (data.left._tag !== "AttentionPollIntegrityFailure") {
-      return yield* Effect.fail(data.left);
+    if (Result.isSuccess(data)) return data.success;
+    if (data.failure._tag === "AttentionPollClaimLost") return emptyResult();
+    if (data.failure._tag !== "AttentionPollIntegrityFailure") {
+      return yield* Effect.fail(data.failure);
     }
     const failedAt = yield* deps.clock.now();
     yield* deps.tx.transact(
       deps.pollStore.recordFailure(
         claimResult.claim,
-        data.left.failureCode,
+        data.failure.failureCode,
         failedAt,
         {
           baseBackoffMs: policy.baseBackoffMs,
@@ -447,11 +466,6 @@ export const runAttentionPollOnce = (
       lastSequence: fromSequence,
       applied: 0,
       quarantined: 0,
-      records: [`AttentionPollIntegrityFailure:${data.left.failureCode}`],
+      records: [`AttentionPollIntegrityFailure:${data.failure.failureCode}`],
     };
   });
-
-const isLeft = <E, A>(
-  value: { readonly _tag: "Left"; readonly left: E } | { readonly _tag: "Right"; readonly right: A },
-): value is { readonly _tag: "Left"; readonly left: E } =>
-  value._tag === "Left";

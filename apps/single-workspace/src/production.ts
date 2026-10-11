@@ -2,20 +2,20 @@ import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type AttentionPollPolicyConfig,
   type AuthorityResolverPort,
   CommandGateway,
   type CommandHandlerRegistry,
   type CompletionConsumerDependencies,
   type ConsumerLoopStores,
-  type AttentionPollPolicyConfig,
   type DependencyCoordinatorDependencies,
   type EnvironmentDriftDeps,
   ensureVerifierSpawned,
   type ParentUserGovernanceFacts,
-  runAttentionPollOnce,
   planSnapshotRetention,
   pruneSnapshots,
   type RetentionPolicy,
+  runAttentionPollOnce,
   runConversationResponseSettlementSweep,
   runConversationResponseTrigger,
   runVerificationConsumer,
@@ -48,8 +48,8 @@ import {
 } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
-  AttentionPollStore,
   type AgentExecutionStateStore,
+  AttentionPollStore,
   AttentionProjectionStore,
   BlobStorePort,
   Clock,
@@ -354,8 +354,7 @@ export const ProductionDaemonServiceLive = (
         queueBatchSize: config.attentionPollPolicy?.queueBatchSize ?? 64,
         baseBackoffMs: config.attentionPollPolicy?.baseBackoffMs ?? 1_000,
         maxBackoffMs: config.attentionPollPolicy?.maxBackoffMs ?? 60_000,
-        backoffExponentCap:
-          config.attentionPollPolicy?.backoffExponentCap ?? 6,
+        backoffExponentCap: config.attentionPollPolicy?.backoffExponentCap ?? 6,
       };
 
       const consumers: Array<ConsumerLoopDaemon<ProductionDaemonServices>> = [];
@@ -604,23 +603,27 @@ export const ProductionDaemonServiceLive = (
       consumers.push({
         consumerId: P10_ATTENTION_CONSUMER_ID,
         batchSize: attentionPollPolicy.eventBatchSize,
-        poll: runAttentionPollOnce(P10_ATTENTION_CONSUMER_ID, attentionPollPolicy, {
-          tx,
-          clock,
-          journal,
-          offsets,
-          deadLetters,
-          pollStore: attentionPoll,
-          recoveryFacts: recoveryAttentionFacts,
-          attentionRows: attentionProjection,
-          projectionForProject: (projectId) =>
-            makeProjectAttentionProjectionStore(
-              projectId,
-              recoveryAttentionFacts,
-              attentionProjection,
-              activationIntents,
-            ),
-        }),
+        poll: runAttentionPollOnce(
+          P10_ATTENTION_CONSUMER_ID,
+          attentionPollPolicy,
+          {
+            tx,
+            clock,
+            journal,
+            offsets,
+            deadLetters,
+            pollStore: attentionPoll,
+            recoveryFacts: recoveryAttentionFacts,
+            attentionRows: attentionProjection,
+            projectionForProject: (projectId) =>
+              makeProjectAttentionProjectionStore(
+                projectId,
+                recoveryAttentionFacts,
+                attentionProjection,
+                activationIntents,
+              ),
+          },
+        ),
       });
 
       const driftDeps: EnvironmentDriftDeps = {

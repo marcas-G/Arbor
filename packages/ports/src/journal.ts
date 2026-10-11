@@ -48,7 +48,10 @@ export type RawJournalDecodeResult =
     }
   | {
       readonly _tag: "Poison";
-      readonly reason: "MalformedEnvelope" | "UnknownEventType" | "MalformedPayload";
+      readonly reason:
+        | "MalformedEnvelope"
+        | "UnknownEventType"
+        | "MalformedPayload";
     };
 
 export interface DomainEventJournalService {

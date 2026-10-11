@@ -258,11 +258,7 @@ export interface RecoveryAttentionFactStoreService {
   >;
   readonly acknowledgePendingDeliverReplayAttention: (
     attentionFactId: string,
-  ) => Effect.Effect<
-    void,
-    RecoveryAttentionFactStoreError,
-    TransactionScope
-  >;
+  ) => Effect.Effect<void, RecoveryAttentionFactStoreError, TransactionScope>;
 }
 
 export class RecoveryAttentionFactStore extends Context.Service<
