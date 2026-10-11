@@ -55,6 +55,75 @@ const toState = (row: Row): AgentExecutionState => {
       };
 };
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const hasExactKeys = (
+  value: Readonly<Record<string, unknown>>,
+  keys: ReadonlyArray<string>,
+): boolean => {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
+};
+
+const decodeEpisodeIdentity = (value: unknown): AgentEpisodeIdentity | null => {
+  if (!isRecord(value) || typeof value._tag !== "string") return null;
+  switch (value._tag) {
+    case "WorkEpisode":
+      return hasExactKeys(value, ["_tag", "workId", "targetWorkRevision"]) &&
+        typeof value.workId === "string" &&
+        typeof value.targetWorkRevision === "number" &&
+        Number.isSafeInteger(value.targetWorkRevision) &&
+        value.targetWorkRevision >= 0
+        ? (value as unknown as AgentEpisodeIdentity)
+        : null;
+    case "ConversationResponseEpisode":
+      return hasExactKeys(value, [
+        "_tag",
+        "messageId",
+        "responseJobRevision",
+      ]) &&
+        typeof value.messageId === "string" &&
+        typeof value.responseJobRevision === "number" &&
+        Number.isSafeInteger(value.responseJobRevision) &&
+        value.responseJobRevision >= 0
+        ? (value as unknown as AgentEpisodeIdentity)
+        : null;
+    case "InboxEpisode":
+      return hasExactKeys(value, ["_tag", "entryKey", "inputKind"]) &&
+        typeof value.entryKey === "string" &&
+        typeof value.inputKind === "string"
+        ? (value as unknown as AgentEpisodeIdentity)
+        : null;
+    case "DecisionEpisode":
+      return hasExactKeys(value, [
+        "_tag",
+        "decisionId",
+        "decisionKind",
+        "requestRevision",
+      ]) &&
+        typeof value.decisionId === "string" &&
+        value.decisionKind === "SelectCurrentWork" &&
+        typeof value.requestRevision === "number" &&
+        Number.isSafeInteger(value.requestRevision) &&
+        value.requestRevision >= 0
+        ? (value as unknown as AgentEpisodeIdentity)
+        : null;
+    case "ExecutionBoundEpisode":
+    case "LegacyAmbiguousEpisode":
+      return hasExactKeys(value, ["_tag", "executionId"]) &&
+        typeof value.executionId === "string"
+        ? (value as unknown as AgentEpisodeIdentity)
+        : null;
+    default:
+      return null;
+  }
+};
+
 export const AgentExecutionStateStoreLive: Layer.Layer<
   AgentExecutionStateStore,
   never,
@@ -77,7 +146,26 @@ export const AgentExecutionStateStoreLive: Layer.Layer<
             ),
           );
           const row = rows[0];
-          return row === undefined ? Option.none() : Option.some(toState(row));
+          if (row === undefined) return Option.none();
+          const state = yield* Effect.try({
+            try: () => {
+              const decoded = toState(row);
+              if (
+                decoded.episode !== undefined &&
+                decodeEpisodeIdentity(decoded.episode) === null
+              ) {
+                throw new Error("invalid episode identity");
+              }
+              return decoded;
+            },
+            catch: () =>
+              persistenceCorruption(
+                "ExecutionRepository",
+                "agent-state-decode",
+                "stored AgentExecutionState is malformed",
+              ),
+          });
+          return Option.some(state);
         }),
       upsert: (state) =>
         Effect.gen(function* () {

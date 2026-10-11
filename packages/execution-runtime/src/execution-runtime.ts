@@ -5,6 +5,8 @@ import {
   type VerifiedRuntimeCommandAuthority,
 } from "@arbor/application";
 import type {
+  AgentEpisodeIdentity,
+  AgentExecutionState,
   CommandSubmissionContext,
   ExecutionId,
   LeaseGeneration,
@@ -57,6 +59,85 @@ const WORKER_ID = "worker:local";
 /** P12 `06` §2: the in-process worker incarnation. A daemon restart mints a
  * new incarnation so an old process cannot be mistaken for the current one. */
 const WORKER_INCARNATION_ID = "wic_local_process";
+
+const episodeIdentityMatches = (
+  stored: AgentEpisodeIdentity,
+  expected: AgentEpisodeIdentity,
+): boolean => {
+  if (stored._tag !== expected._tag) return false;
+  switch (expected._tag) {
+    case "WorkEpisode":
+      return (
+        stored._tag === "WorkEpisode" &&
+        stored.workId === expected.workId &&
+        stored.targetWorkRevision === expected.targetWorkRevision
+      );
+    case "ConversationResponseEpisode":
+      return (
+        stored._tag === "ConversationResponseEpisode" &&
+        stored.messageId === expected.messageId &&
+        stored.responseJobRevision === expected.responseJobRevision
+      );
+    case "InboxEpisode":
+      return (
+        stored._tag === "InboxEpisode" &&
+        stored.entryKey === expected.entryKey &&
+        stored.inputKind === expected.inputKind
+      );
+    case "DecisionEpisode":
+      return (
+        stored._tag === "DecisionEpisode" &&
+        stored.decisionId === expected.decisionId &&
+        stored.decisionKind === expected.decisionKind &&
+        stored.requestRevision === expected.requestRevision
+      );
+    case "ExecutionBoundEpisode":
+      return (
+        stored._tag === "ExecutionBoundEpisode" &&
+        stored.executionId === expected.executionId
+      );
+    case "LegacyAmbiguousEpisode":
+      return (
+        stored._tag === "LegacyAmbiguousEpisode" &&
+        stored.executionId === expected.executionId
+      );
+  }
+};
+
+const executionEpisodeIdentity = (
+  execution: import("@arbor/domain").Execution,
+): AgentEpisodeIdentity =>
+  execution.binding._tag === "ExecutionBoundAgentBinding"
+    ? { _tag: "ExecutionBoundEpisode", executionId: execution.executionId }
+    : (execution.binding.episode ?? {
+        _tag: "LegacyAmbiguousEpisode",
+        executionId: execution.executionId,
+      });
+
+const initialAgentExecutionState = (
+  executionId: ExecutionId,
+  episode: AgentEpisodeIdentity,
+  wakeReason: WakeReason,
+  updatedAt: string,
+): AgentExecutionState => ({
+  executionId,
+  episode,
+  wakeReason,
+  currentMode: null,
+  activeSkillRefs: [],
+  turnNo: 0,
+  recentDirectiveRefs: [],
+  recentActionFingerprints: [],
+  updatedAt,
+});
+
+const agentStateBindingFailure = {
+  _tag: "PersistenceCorruption" as const,
+  repository: "ExecutionRepository" as const,
+  operation: "agent-state-episode-binding",
+  reason:
+    "stored AgentExecutionState does not match canonical Execution Episode",
+};
 
 /** P2 `03` §7 / P9 `03` §1: the renewal CAS failed (stale generation / no
  * live lease) — the worker lost ownership, must stop durable mutation and
@@ -199,8 +280,35 @@ export const runExecution = (
       workspaceId: execution.value.workspaceId,
       workerKind: "Agent",
     });
-    const lease = yield* tx.transact(
-      leases.acquire(executionId, WORKER_ID, WORKER_INCARNATION_ID),
+    const { lease, agentExecutionState } = yield* tx.transact(
+      Effect.gen(function* () {
+        const lease = yield* leases.acquire(
+          executionId,
+          WORKER_ID,
+          WORKER_INCARNATION_ID,
+        );
+        const existingState = yield* states.find(executionId);
+        const episode = executionEpisodeIdentity(execution.value);
+        if (Option.isSome(existingState)) {
+          const state = existingState.value;
+          if (
+            state.executionId !== executionId ||
+            state.episode === undefined ||
+            !episodeIdentityMatches(state.episode, episode)
+          ) {
+            return yield* Effect.fail(agentStateBindingFailure);
+          }
+          return { lease, agentExecutionState: state };
+        }
+        const state = initialAgentExecutionState(
+          executionId,
+          episode,
+          wakeReason,
+          yield* clock.now(),
+        );
+        yield* states.upsert(state);
+        return { lease, agentExecutionState: state };
+      }),
     );
     if (leaseQualificationProbe !== undefined) {
       yield* Effect.promise(() =>
@@ -211,30 +319,13 @@ export const runExecution = (
         }),
       );
     }
-    const state = yield* tx.transact(states.find(executionId));
-    const stateUpdatedAt = yield* clock.now();
-    const episode =
-      execution.value.binding._tag === "ExecutionBoundAgentBinding"
-        ? ({ _tag: "ExecutionBoundEpisode", executionId } as const)
-        : (execution.value.binding.episode ??
-          ({ _tag: "LegacyAmbiguousEpisode", executionId } as const));
     // P9 `03` §1: race the drive against the renewal loop — the first to
     // complete wins; a lost renewal (LeaseLost) interrupts the drive so no
     // durable mutation is attempted, and no ordinary retry occurs.
     const outcome = yield* Effect.raceFirst(
       driver.drive({
         execution: execution.value,
-        agentExecutionState: Option.getOrElse(state, () => ({
-          executionId,
-          episode,
-          wakeReason,
-          currentMode: null,
-          activeSkillRefs: [],
-          turnNo: 0,
-          recentDirectiveRefs: [],
-          recentActionFingerprints: [],
-          updatedAt: stateUpdatedAt,
-        })),
+        agentExecutionState,
         wakeReason,
         context: {
           _tag: "ExecutionOrigin",
