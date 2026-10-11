@@ -50,7 +50,10 @@ describe("P39 exact-attempt reconciliation proof boundary", () => {
       ...proof,
       visibilityScopeSha256: "e".repeat(64),
     } as ReconciliationProofRef;
-    const noFinality = { ...proof, finality: undefined } as unknown as ReconciliationProofRef;
+    const noFinality = {
+      ...proof,
+      finality: undefined,
+    } as unknown as ReconciliationProofRef;
 
     expect(
       validateToolReconciliationResult(request, {

@@ -1,8 +1,8 @@
 import type { ToolInvocationId } from "@arbor/domain";
 import { Context, type Effect } from "effect";
 import type { RepositoryFailure } from "./errors.js";
-import type { TransactionScope } from "./session.js";
 import { sha256Hex } from "./provider-extension.js";
+import type { TransactionScope } from "./session.js";
 
 export type ReconciliationUnknownCode =
   | "ProfileUnavailable"
