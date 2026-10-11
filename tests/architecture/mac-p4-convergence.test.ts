@@ -33,7 +33,16 @@ describe("MAC-P4 final active-runtime convergence", () => {
     expect(migrations).toContain("DROP TABLE invocation_approvals");
     expect(migrations).toContain("DROP TABLE control_action_approvals");
     expect(migrations).toContain("binding_proven");
-    expect(composition).toContain("P37_MIGRATIONS as CURRENT_MIGRATIONS");
-    expect(production).toContain("runMigrations(P37_MIGRATIONS)");
+    expect(migrations).toMatch(
+      /export const P37_MIGRATIONS:[\s\S]*?id: 37,[\s\S]*?export const P38_MIGRATIONS:[\s\S]*?\.\.\.P37_MIGRATIONS,[\s\S]*?id: P38_EXECUTABLE_APPROVAL_MIGRATION\.migrationVersion/,
+    );
+    expect(
+      source(
+        "adapters/persistence-sqlite/src/p38-executable-approval-migration.ts",
+      ),
+    ).toContain("migrationVersion: 38");
+    expect(composition).toContain("P38_MIGRATIONS.reduce(");
+    expect(composition).toContain("P38_MIGRATIONS as CURRENT_MIGRATIONS");
+    expect(production).toContain("runMigrations(P38_MIGRATIONS)");
   });
 });
