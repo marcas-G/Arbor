@@ -1,6 +1,6 @@
 # AH7-DG-01 / P39 ReconciledNoEffect Compatibility — Landing Stop Report
 
-Date: 2026-10-11  
+Date: 2026-10-11
 Status: **P40 owner landing stopped; new P39/P40 observation-evidence design gap requires governance**
 
 ## Fixed inputs and baseline
