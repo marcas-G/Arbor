@@ -193,6 +193,67 @@ const run = <A>(program: Effect.Effect<A, unknown, AppServices>): Promise<A> =>
   Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp())));
 
 describe("P12-002 authority resolver production plane", () => {
+  it("does not treat a user: principal as human authority for executable decisions", async () => {
+    const approvalFacts = {
+      projectId: PROJECT,
+      workspace: {
+        workspaceId: WORKSPACE,
+        projectId: PROJECT,
+        parentWorkspaceId: null,
+      },
+      execution: {
+        executionId: EXECUTION,
+        projectId: PROJECT,
+        workspaceId: WORKSPACE,
+        status: "Active" as const,
+      },
+      executableApproval: {
+        approvalId: "eap_p12_authority" as never,
+        projectId: PROJECT,
+        workspaceId: WORKSPACE,
+        executionId: EXECUTION,
+        state: "Pending",
+        revision: 0,
+      },
+    };
+    const envelope = {
+      commandType: "ResolveExecutableApproval",
+      commandId: COMMAND,
+      projectId: PROJECT,
+      actor: parse(Actor)("user:spoofable"),
+      issuedAt: ISSUED_AT,
+      payload: { approvalId: "eap_p12_authority", expectedRevision: 0 },
+    };
+    const untrusted = await runResolver(
+      Effect.flip(
+        resolveFact(
+          decisionInput({
+            principal: parse(Principal)("user:spoofable"),
+            submissionContext: externalContext(
+              parse(Principal)("user:spoofable"),
+            ),
+            envelope,
+            canonicalFacts: approvalFacts,
+          }),
+        ),
+      ),
+    );
+    expect(untrusted._tag).toBe("NoApplicableGrant");
+
+    const trusted = await runResolver(
+      resolveFact(
+        decisionInput({
+          principal: HUMAN,
+          submissionContext: externalContext(HUMAN),
+          envelope: { ...envelope, actor: parse(Actor)(HUMAN) },
+          canonicalFacts: approvalFacts,
+          governance: { authenticatedHumans: [HUMAN], directParentOf: [] },
+        }),
+      ),
+    );
+    expect(trusted._tag).toBe("ExecutableApprovalDecisionAuthority");
+  });
+
   it("resolver produces exact-bound facts; no CommandGateway/mutation/approval/tool path", async () => {
     const fact = await runResolver(
       resolveFact(

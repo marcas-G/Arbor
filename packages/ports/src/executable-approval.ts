@@ -132,6 +132,14 @@ export interface ExecutableApprovalStoreService {
     ToolInvocationStoreError,
     TransactionScope
   >;
+  /** Recovery fallback for a resolution committed before P2 wake delivery.
+   * Returns human/TTL/Stop terminal outcomes in stable order; callers must
+   * re-dispatch only the exact still-active Execution. */
+  readonly listResolved: () => Effect.Effect<
+    ReadonlyArray<ExecutableApprovalRecord>,
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
   /** Expire a bounded set of due Pending/Approved rows. Each row is a
    * revision-CAS against state + expiresAt; Inbox consumption and the durable
    * Resolved wake event share this transaction. */

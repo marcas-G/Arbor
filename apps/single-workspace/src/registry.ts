@@ -75,6 +75,7 @@ const executableApprovalStoreUnavailable: ExecutableApprovalStoreService = {
   putPendingExact: () =>
     Effect.die(new Error("ExecutableApprovalStoreUnavailable")),
   decide: () => Effect.succeed(Option.none()),
+  listResolved: () => Effect.succeed([]),
   consumeApproved: () => Effect.succeed(false),
   expireDue: () => Effect.succeed([]),
   cancelForExecution: () => Effect.succeed([]),
