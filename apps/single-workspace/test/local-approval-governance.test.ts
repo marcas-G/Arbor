@@ -32,4 +32,13 @@ describe("local executable-approval governance bootstrap", () => {
 
     expect(resolveCompositionGovernance({ governance })).toBe(governance);
   });
+
+  it("keeps an explicitly empty governance list fail-closed", () => {
+    const governance = {
+      authenticatedHumans: [],
+      directParentOf: [],
+    } as const;
+
+    expect(resolveCompositionGovernance({ governance })).toBe(governance);
+  });
 });

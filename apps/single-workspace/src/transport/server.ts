@@ -370,6 +370,12 @@ const readLocalProjectResourceProfiles = async (
 export const startWebTransport = async (
   config: WebTransportConfig,
 ): Promise<WebTransportHandle> => {
+  if (!config.authenticatorConfigured && !isLoopbackListenerHost(config.host)) {
+    throw new Error(
+      "web transport: a non-loopback listener requires an explicitly configured authenticator",
+    );
+  }
+
   const fanout = makeInvalidationFanout();
   const lastWatermark = { value: 0 };
 
