@@ -41,8 +41,23 @@ describe("MAC-P4 final active-runtime convergence", () => {
         "adapters/persistence-sqlite/src/p38-executable-approval-migration.ts",
       ),
     ).toContain("migrationVersion: 38");
-    expect(composition).toContain("P38_MIGRATIONS.reduce(");
-    expect(composition).toContain("P38_MIGRATIONS as CURRENT_MIGRATIONS");
-    expect(production).toContain("runMigrations(P38_MIGRATIONS)");
+    expect(migrations).toContain(
+      "export const CURRENT_MIGRATIONS = P38_MIGRATIONS;",
+    );
+    expect(migrations).toContain(
+      "export const CURRENT_MIGRATION_BASELINE = Math.max(",
+    );
+    expect(migrations).not.toContain("P39_MAINTENANCE_MIGRATIONS");
+    expect(composition).toContain(
+      "const latestSupportedSchema = CURRENT_MIGRATION_BASELINE;",
+    );
+    expect(composition).toContain("if (current > latestSupportedSchema)");
+    expect(composition).toContain("sqliteAdapterError(");
+    expect(composition).not.toMatch(/P39|p39WriterLock/);
+    expect(production).toContain("runMigrations(CURRENT_MIGRATIONS)");
+    expect(production).not.toMatch(/P39|p39WriterLock/);
+    expect(source("apps/single-workspace/src/main.ts")).not.toMatch(
+      /P39|p39WriterLock/,
+    );
   });
 });
