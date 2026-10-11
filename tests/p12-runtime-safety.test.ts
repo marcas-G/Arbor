@@ -57,6 +57,7 @@ import {
   RuntimeSafetyGate,
   type RuntimeSafetyGateService,
   TransactionPort,
+  WorkReadmissionGateStore,
 } from "../packages/ports/src/index.js";
 import {
   type AttentionReadDeps,
@@ -598,12 +599,17 @@ interface ScenarioResult {
   readonly settlementKind: string | null;
   readonly workLifecycle: string | null;
   readonly settledEventPayload: string;
+  readonly agentExecutionEpisodeJson: string | null;
+  readonly readmissionHold: unknown;
+  readonly runtimeFailure?: unknown;
 }
 
 const runScenario = async (
   safetyPolicy: RuntimeSafetyPolicy,
   providerTurns: ReadonlyArray<ReadonlyArray<CanonicalProviderEvent>>,
   providerFailures?: ReadonlyArray<ProviderFailureKind>,
+  initialEpisodeJson?: string,
+  leaseOccupied = false,
 ): Promise<ScenarioResult> => {
   const dir = mkdtempSync(join(tmpdir(), "p12-safety-"));
   const projectResourceProfiles = makeProjectResourceProfilePort(
@@ -684,13 +690,60 @@ const runScenario = async (
           { _tag: "Work", workId },
           principal,
         );
+        const sql = yield* SqlClient;
+        if (leaseOccupied) {
+          yield* sql.unsafe(
+            `INSERT INTO execution_leases (
+              execution_id, worker_id, worker_incarnation_id, generation,
+              expires_at, updated_at
+            ) VALUES (?, 'worker:other', 'wic_other', 9, '2999-01-01T00:00:00.000Z', 'seed')`,
+            [scenarioExecutionId],
+          );
+        }
+        if (initialEpisodeJson !== undefined || leaseOccupied) {
+          if (initialEpisodeJson !== undefined) {
+            yield* sql.unsafe(
+              `INSERT INTO agent_execution_state (
+              execution_id, episode_json, wake_reason, current_mode,
+              active_skill_refs_json, turn_no, recent_directive_refs_json,
+              recent_action_fingerprints_json, updated_at
+            ) VALUES (?, ?, 'WorkSelected', NULL, '[]', 0, '[]', '[]', 'seed')`,
+              [scenarioExecutionId, initialEpisodeJson],
+            );
+          }
+          const runOutcome = yield* Effect.match(
+            runExecution(
+              scenarioExecutionId,
+              { _tag: "WorkSelected" },
+              principal,
+            ),
+            {
+              onFailure: (error) => ({ _tag: "Failure" as const, error }),
+              onSuccess: (result) => ({ _tag: "Success" as const, result }),
+            },
+          );
+          const states = yield* sql.unsafe<{ episode_json: string }>(
+            "SELECT episode_json FROM agent_execution_state WHERE execution_id = ?",
+            [scenarioExecutionId],
+          );
+          return {
+            settlementTag: "NotSettled",
+            settlementReason: null,
+            settlementKind: null,
+            workLifecycle: "Open",
+            settledEventPayload: "",
+            agentExecutionEpisodeJson: states[0]?.episode_json ?? null,
+            readmissionHold: null,
+            runtimeFailure:
+              runOutcome._tag === "Failure" ? runOutcome.error : null,
+          };
+        }
         const settled = yield* runExecution(
           scenarioExecutionId,
           { _tag: "WorkSelected" },
           principal,
         );
 
-        const sql = yield* SqlClient;
         const executions = yield* sql.unsafe<{
           settlement_kind: string | null;
           settlement_json: string | null;
@@ -705,6 +758,21 @@ const runScenario = async (
         const events = yield* sql.unsafe<{ payload_json: string }>(
           "SELECT payload_json FROM domain_events WHERE event_type = 'ExecutionSettled'",
         );
+        const agentStates = yield* sql.unsafe<{
+          episode_json: string;
+        }>(
+          "SELECT episode_json FROM agent_execution_state WHERE execution_id = ?",
+          [scenarioExecutionId],
+        );
+        const readmissionGate = yield* WorkReadmissionGateStore;
+        const readmissionHold = yield* tx0.transact(
+          readmissionGate.hasBlockingSource({
+            projectId,
+            workspaceId,
+            workId,
+            workRevision: parse(WorkRevision)(0),
+          }),
+        );
         const settlement =
           settled._tag === "Interrupted"
             ? settled.result._tag === "ControlledInterruption"
@@ -717,6 +785,10 @@ const runScenario = async (
           settlementKind: executions[0]?.settlement_kind ?? null,
           workLifecycle: works[0]?.lifecycle ?? null,
           settledEventPayload: events[0]?.payload_json ?? "",
+          agentExecutionEpisodeJson: agentStates[0]?.episode_json ?? null,
+          readmissionHold: Option.isSome(readmissionHold)
+            ? readmissionHold.value
+            : null,
         };
       }),
       app,
@@ -764,6 +836,80 @@ describe("P12-008 end-to-end violation -> Interrupted(RuntimeSafetyStop), Work O
       expect(result.settledEventPayload).toContain("RuntimeSafetyStop");
     });
   }
+
+  it("persists the exact Work Episode before RuntimeSafetyStop so readmission holds the same revision", async () => {
+    const result = await runScenario(policy({ rateLimit: 0 }), waitTurns);
+    expect(result.agentExecutionEpisodeJson).not.toBeNull();
+    expect(JSON.parse(result.agentExecutionEpisodeJson ?? "null")).toEqual({
+      _tag: "WorkEpisode",
+      workId,
+      targetWorkRevision: 0,
+    });
+    expect(result.readmissionHold).toEqual({
+      sourceKind: "RuntimeSafetyStopSettlement",
+      executionId: scenarioExecutionId,
+    });
+  });
+
+  it("fails closed without overwriting an existing state bound to another Work revision", async () => {
+    const initialEpisode = JSON.stringify({
+      _tag: "WorkEpisode",
+      workId,
+      targetWorkRevision: 1,
+    });
+    const result = await runScenario(
+      policy({ rateLimit: 0 }),
+      waitTurns,
+      undefined,
+      initialEpisode,
+    );
+    expect(result.runtimeFailure).toMatchObject({
+      _tag: "PersistenceCorruption",
+      repository: "ExecutionRepository",
+      operation: "agent-state-episode-binding",
+    });
+    expect(JSON.parse(result.agentExecutionEpisodeJson ?? "null")).toEqual({
+      _tag: "WorkEpisode",
+      workId,
+      targetWorkRevision: 1,
+    });
+  });
+
+  it("fails closed without overwriting a malformed Episode state", async () => {
+    const malformedEpisode = JSON.stringify({
+      _tag: "WorkEpisode",
+      workId,
+      targetWorkRevision: "0",
+    });
+    const result = await runScenario(
+      policy({ rateLimit: 0 }),
+      waitTurns,
+      undefined,
+      malformedEpisode,
+    );
+    expect(result.runtimeFailure).toMatchObject({
+      _tag: "PersistenceCorruption",
+      repository: "ExecutionRepository",
+      operation: "agent-state-decode",
+    });
+    expect(result.agentExecutionEpisodeJson).toBe(malformedEpisode);
+  });
+
+  it("does not create AgentExecutionState when the current lease is held by another worker", async () => {
+    const result = await runScenario(
+      policy(),
+      waitTurns,
+      undefined,
+      undefined,
+      true,
+    );
+    expect(result.runtimeFailure).toMatchObject({
+      _tag: "LeaseFencingRejected",
+      executionId: scenarioExecutionId,
+      generation: 9,
+    });
+    expect(result.agentExecutionEpisodeJson).toBeNull();
+  });
 
   it("the RuntimeSafetyStop settlement is derived as an Attention fact (Attention emitted)", async () => {
     const deps: AttentionReadDeps = {
