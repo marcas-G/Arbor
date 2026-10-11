@@ -182,6 +182,7 @@ import type { SqlClient as SqlClientService } from "effect/unstable/sql/SqlClien
 import { ControlActionAuthorizerLive } from "./control-action-authorizer.js";
 import {
   type AssignWorkBindingAttentionQualificationProbe,
+  type DeliverReplayQualificationProbe,
   SingleWorkspaceControlActionHandlers,
   SingleWorkspaceControlActionHandlersLive,
   SingleWorkspaceControlActionHandlersWithQualificationProbes,
@@ -333,6 +334,8 @@ export interface SingleWorkspaceConfig {
   readonly gatewayQualificationProbe?: CommandGatewayQualificationProbe;
   readonly assignWorkBindingAttentionQualificationProbe?: AssignWorkBindingAttentionQualificationProbe;
   readonly recoveryAttentionFactQualificationProbe?: RecoveryAttentionFactQualificationProbe;
+  /** Test-only P9 Deliver replay pause point. Ordinary startup leaves this absent. */
+  readonly deliverReplayQualificationProbe?: DeliverReplayQualificationProbe;
   /** Test-only P10 consumer pause point after row write but before commit. */
   readonly attentionProjectionQualificationProbe?: AttentionProjectionQualificationProbe;
   /** Test-only process-local probe around P11 activation transaction commit. */
@@ -686,7 +689,8 @@ export const buildSingleWorkspaceLayer = (
   const controlActionHandlers = Layer.provide(
     config.assignWorkBindingAttentionQualificationProbe === undefined &&
       config.qualificationProbe === undefined &&
-      config.assignWorkAuthorizedBeforeCommandProbe === undefined
+      config.assignWorkAuthorizedBeforeCommandProbe === undefined &&
+      config.deliverReplayQualificationProbe === undefined
       ? SingleWorkspaceControlActionHandlersLive
       : SingleWorkspaceControlActionHandlersWithQualificationProbes({
           ...(config.assignWorkBindingAttentionQualificationProbe === undefined
@@ -701,6 +705,9 @@ export const buildSingleWorkspaceLayer = (
                 assignWorkAuthorizedBeforeCommand:
                   config.assignWorkAuthorizedBeforeCommandProbe,
               }),
+          ...(config.deliverReplayQualificationProbe === undefined
+            ? {}
+            : { deliverReplay: config.deliverReplayQualificationProbe }),
         }),
     Layer.mergeAll(repos, infra, gateway, registry, workspacePlacement),
   );
