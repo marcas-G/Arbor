@@ -58,6 +58,7 @@ interface Snapshot {
     episode_revision: number | null;
     settled_at: string | null;
     settlement_kind: string | null;
+    settlement_json: string | null;
   }>;
   readonly steps: Array<{
     execution_id: string;
@@ -161,7 +162,7 @@ const readRows = (databaseFile: string): Snapshot => {
       executions: db
         .prepare(
           `SELECT execution_id, binding_kind, episode_kind, episode_ref,
-                  episode_revision, settled_at, settlement_kind
+                  episode_revision, settled_at, settlement_kind, settlement_json
              FROM executions ORDER BY admitted_at`,
         )
         .all() as Snapshot["executions"],
@@ -877,6 +878,139 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
         state: "Pending",
         observation_source_ref: null,
       });
+
+      const callsBeforeStop = fixture.providerCalls.length;
+      await client.command(project.projectId, "StopExecution", {
+        executionId: oldAction.executionId,
+      });
+      const stoppedRows = await waitForPublic(
+        async () => readRows(fixture.databaseFile),
+        (rows) => {
+          const execution = rows.executions.find(
+            (candidate) => candidate.execution_id === oldAction.executionId,
+          );
+          const step = rows.steps.find(
+            (candidate) => candidate.execution_id === oldAction.executionId,
+          );
+          const action = rows.actions.find(
+            (candidate) =>
+              candidate.logical_action_id === oldAction.logicalActionId,
+          );
+          return (
+            execution?.settled_at !== null &&
+            execution?.settlement_kind === "Interrupted" &&
+            step?.state === "SettlementProposed" &&
+            action?.state === "TerminalRejected"
+          );
+        },
+        20_000,
+      );
+      const stoppedExecution = stoppedRows.executions.find(
+        (execution) => execution.execution_id === oldAction.executionId,
+      );
+      const stoppedStep = stoppedRows.steps.find(
+        (step) => step.execution_id === oldAction.executionId,
+      );
+      const stoppedAction = stoppedRows.actions.find(
+        (action) => action.logical_action_id === oldAction.logicalActionId,
+      );
+      expect(JSON.parse(stoppedExecution?.settlement_json ?? "null")).toEqual({
+        _tag: "Interrupted",
+        result: { _tag: "StopRequested" },
+      });
+      expect(stoppedStep).toMatchObject({
+        state: "SettlementProposed",
+        next_action_index: 1,
+      });
+      expect(stoppedAction).toMatchObject({
+        logical_action_id: oldAction.logicalActionId,
+        state: "TerminalRejected",
+        observation_source_ref: null,
+      });
+      expect(
+        stoppedRows.observations.filter((observation) =>
+          observation.source_ref.startsWith(
+            `observation_${oldAction.executionId}_`,
+          ),
+        ),
+      ).toHaveLength(0);
+      expect(fixture.providerCalls).toHaveLength(callsBeforeStop);
+      expect(selectionCalls(fixture)).toHaveLength(1);
+      expect(stoppedRows.providerTurns).toEqual(corrupted.providerTurns);
+      expect(stoppedRows.manifests).toEqual(corrupted.manifests);
+      expect(stoppedRows.decisions).toEqual(corrupted.decisions);
+      expect(stoppedRows.works).toEqual(corrupted.works);
+      expect(stoppedRows.workspaces).toEqual(corrupted.workspaces);
+      expect(stoppedRows.actions).toHaveLength(corrupted.actions.length);
+      expect(
+        stoppedRows.actions.filter(
+          (action) => action.logical_action_id !== oldAction.logicalActionId,
+        ),
+      ).toEqual(
+        corrupted.actions.filter(
+          (action) => action.logical_action_id !== oldAction.logicalActionId,
+        ),
+      );
+      expect(
+        selectReceipt(
+          stoppedRows,
+          project.rootWorkspaceId,
+          selectedWorkId,
+          (oldWorkspace?.revision ?? 0) + 1,
+        ),
+      ).toEqual(originalReceipt);
+      expect(
+        stoppedRows.events.filter(
+          (event) => event.event_type === "CurrentWorkChanged",
+        ),
+      ).toEqual(
+        finalRows.events.filter(
+          (event) => event.event_type === "CurrentWorkChanged",
+        ),
+      );
+      const stoppedBindingEvents = stoppedRows.events.filter((event) => {
+        if (event.event_type !== "SubmittedDecisionBindingEscalated") {
+          return false;
+        }
+        const payload = JSON.parse(event.payload_json) as {
+          executionId?: string;
+        };
+        return payload.executionId === oldAction.executionId;
+      });
+      expect(stoppedBindingEvents).toHaveLength(1);
+      expect(
+        events.filter(
+          (event) =>
+            event.executionId === oldAction.executionId &&
+            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.actionKind === "select_current_work",
+        ),
+      ).toHaveLength(1);
+      const attentionAfterStop = await waitForPublic(
+        () =>
+          client.view<{
+            rows: ReadonlyArray<{
+              source: string;
+              severity: string;
+              targetWorkspaceId: string;
+              dedupKey: string;
+            }>;
+          }>("attention", { projectId: project.projectId }),
+        (response) =>
+          response.rows.some(
+            (row) =>
+              row.source === "SubmittedDecisionBindingFailure" &&
+              row.targetWorkspaceId === project.rootWorkspaceId,
+          ),
+        15_000,
+      );
+      expect(
+        attentionAfterStop.rows.filter(
+          (row) =>
+            row.source === "SubmittedDecisionBindingFailure" &&
+            row.targetWorkspaceId === project.rootWorkspaceId,
+        ),
+      ).toEqual(bindingAttention);
       await newDaemon.crash();
     },
     180_000,
