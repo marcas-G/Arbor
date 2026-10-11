@@ -4931,9 +4931,11 @@ The accepted/planned migration prefix is append-only: `0034` is the accepted
 P10 Attention materialization, `0035` is the accepted F21 resource activation
 Attention source, `0036` is the accepted AH7/P36 schema, `0037` is the
 accepted/planned AH10 Deliver P9 fact plus P10 projection marker, and `0038`
-is the EA-DG-01 Executable approval handoff schema. P36 is not yet integrated
-in this governance baseline; migration `0037` is conditional on integrating
-`0036` and MUST NOT be implemented, installed, or released independently.
+is the EA-DG-01 Executable approval handoff schema. The accepted P36 owner
+contract is integrated in this governance baseline; migration `0036`
+implementation/registration is not integrated in this tree. Migration `0037` is conditional on
+integrating migration `0036` and MUST NOT be implemented, installed, or
+released independently.
 Migration `0038` depends on integrated `0036` and `0037` and likewise may not
 be released as a standalone v35 upgrade. The target upgrade paths are
 v33→34→35→36→37→38, v35→36→37→38, v36→37→38 after P36 integration, and

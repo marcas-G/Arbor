@@ -74,15 +74,17 @@ no migration was implemented or run.
 ## EA 37-owner-file digest check
 
 The EA landing record's 37 owner files were compared with the integrated tree.
-36 hashes match the repaired EA landing manifest. The one expected difference
-is P9 `00` above, caused by carrying forward the official P36 authority
-reference. The table below records all 37 SHA-256 values for this integrated
-tree.
+At the initial P36–P38 integration, 36 hashes matched the repaired EA landing
+manifest; P9 `00` differed as described above. The review disposition below
+also clarifies DID §9.3's integrated-owner versus unintegrated-migration status,
+so the current tree has two expected differences from the EA-only manifest:
+P9 `00` and the DID v1.39 file. The table records the current SHA-256 values
+for all 37 EA owner files.
 
 | Owner file | Integrated SHA-256 |
 |---|---|
 | `docs/design/02-system-design.md` | `3C77A61E3EBCAD40D58DF075FB12F994881A079987C00FD21C516819AA4363E6` |
-| `docs/design/03-detailed-implementation-design.md` | `0460084E149D31A0379975486E4A43A7681ECAB7CCF4319E54C4F7789F67AF43` |
+| `docs/design/03-detailed-implementation-design.md` | `95725F895663E29556E1FB03666951CAB9AD971D48FAB7A97A60F1B4B5283FBD` |
 | `docs/design/implementation/MAC/00-contract-index.md` | `441D188029576F904424D35316D63D359CB3EF4C0161266F201CBDA25C073E09` |
 | `docs/design/implementation/MAC/02-action-approval-error-boundary.md` | `356FE87C59F48932810D41F94171734D1B0BE1D66BF6C16F1A797146192170AE` |
 | `docs/design/implementation/P1/00-contract-index.md` | `B3426A325155D743E73608A455AE0157C26AEEF94E8591D2AE4C1D4606FD45AF` |
@@ -141,3 +143,26 @@ tree.
   re-review are still open. P37 design landing review is recorded, but its
   runtime/migration qualification remains separately gated. No P36–P38
   runtime or migration qualification is claimed by this result.
+
+## Independent review disposition
+
+The integration review reported Blocking = 1: P7 `02` still attributed the
+DeliverReplay fact table to migration 0034, although 0034 is P10 Attention
+materialization and the accepted DID v1.38 addendum assigns the Deliver fact
+and P10 marker to proposed P37 / migration 0037 after P36 / migration 0036.
+The exact accepted addendum is `040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
+
+Disposition: P7 `02` now marks the former 0034 statement superseded and records
+the accepted 0037-after-0036 sequence. P7 `00` now indexes the v1.38 storage
+addendum. DID §9.3 now distinguishes the integrated P36 owner contract from
+the migration 0036 implementation/registration, which remains unintegrated.
+These are documentation corrections to the accepted P37 addendum and current
+integration status; they add no new behavior or migration semantics.
+
+| Updated owner | SHA-256 after review disposition |
+|---|---|
+| `docs/design/03-detailed-implementation-design.md` | `95725F895663E29556E1FB03666951CAB9AD971D48FAB7A97A60F1B4B5283FBD` |
+| `docs/design/implementation/P7/00-contract-index.md` | `8BEC5B0D93489E95668AC9C360DF1931823ECD5A9CB3B03C23C6EEFC0B95F00B` |
+| `docs/design/implementation/P7/02-deliver-primitive.md` | `ADD1FEA5A069DDA16914CB836215B1F5CD6DE052189637B48C4C130374090ABA` |
+
+The correction has not yet received the requested independent re-review.
