@@ -337,6 +337,17 @@ describe("P10-008 Inbox view (01 §1 InboxViewReq/Res; P9 05 §3.2)", () => {
       Effect.runPromise(deriveInboxView(p10Root, deps)),
     ).rejects.toThrow("ExecutableApprovalReviewUnavailable");
   });
+
+  it("fails closed without a durable manifest hash proof and returns no approval target", async () => {
+    const deps = {
+      ...approvalInboxDeps("eap:approval-7:0"),
+      findToolDefinitionHash: () => Effect.succeed(Option.none()),
+    };
+    const result = await Effect.runPromise(
+      Effect.exit(deriveInboxView(p10Root, deps)),
+    );
+    expect(result._tag).toBe("Failure");
+  });
 });
 
 describe("P10-008 Inbox state reconciliation (04 §2 — audit face)", () => {

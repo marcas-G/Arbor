@@ -15,6 +15,7 @@ import {
 } from "../support/public-client.js";
 
 let fixture: ProductionFixture | undefined;
+const EXECUTABLE_APPROVAL_ENTRY_KEY = /^eap:.+:\d+$/u;
 
 test.afterEach(async () => {
   await fixture?.stop();
@@ -123,25 +124,78 @@ test.skip("P38 executable approval can be resolved from the browser Queue and re
     decision: "Approve",
     reason: "start the Work before its separately gated shell action",
   });
-  await waitForPublic(
+  const approvalInbox = await waitForPublic(
     () =>
       client.view<{
-        unconsumed: Array<{ entryKey: string; kind: string }>;
+        unconsumed: Array<{
+          entryKey: string;
+          kind: string;
+          summary: string;
+          target?: {
+            readonly kind: string;
+            readonly approvalId: string;
+            readonly revision: number;
+            readonly toolName: string;
+            readonly capabilities: ReadonlyArray<string>;
+            readonly sideEffectSemantics: string;
+            readonly actionDigest: string;
+            readonly validatedArgumentsPreview: string;
+          };
+        }>;
       }>("inbox-view", { workspaceId: project.rootWorkspaceId }),
     (value) =>
       value.unconsumed.some(
         (entry) =>
-          entry.kind === "Governance" && /^eap:[^:]+:0$/u.test(entry.entryKey),
+          entry.kind === "Governance" &&
+          EXECUTABLE_APPROVAL_ENTRY_KEY.test(entry.entryKey) &&
+          entry.target?.kind === "ExecutableApproval",
       ),
     60_000,
   );
+  const approvalEntry = approvalInbox.unconsumed.find(
+    (entry) =>
+      entry.kind === "Governance" &&
+      EXECUTABLE_APPROVAL_ENTRY_KEY.test(entry.entryKey) &&
+      entry.target?.kind === "ExecutableApproval",
+  );
+  const entryIdentity =
+    approvalEntry === undefined
+      ? null
+      : /^eap:(.+):(\d+)$/u.exec(approvalEntry.entryKey);
+  if (
+    approvalEntry === undefined ||
+    approvalEntry.target === undefined ||
+    entryIdentity === null ||
+    entryIdentity[1] !== approvalEntry.target.approvalId ||
+    Number(entryIdentity[2]) !== approvalEntry.target.revision
+  ) {
+    throw new Error(
+      "Public Inbox returned no exact Executable approval target",
+    );
+  }
+  const executableTarget = approvalEntry.target;
+  expect(JSON.stringify(executableTarget)).not.toContain(marker);
+  expect(approvalEntry.summary).toBe("Executable approval requires review");
 
   await page.goto(`${fixture.baseUrl}/p/${project.projectId}`);
   await page.getByRole("button", { name: "待处理" }).click();
   await expect(
     page.getByRole("heading", { name: "待处理", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText(marker).first()).toBeVisible({ timeout: 30_000 });
+  // Free-form command arguments carry this marker and must remain redacted.
+  // Locate the public review card by its safe target metadata instead.
+  await expect(
+    page.getByRole("heading", { name: executableTarget.toolName, exact: true }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    page.getByText(executableTarget.actionDigest, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(executableTarget.capabilities.join("、"), { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(executableTarget.sideEffectSemantics, { exact: true }),
+  ).toBeVisible();
   await page.getByLabel("审批决定").selectOption("Approve");
   await page.getByRole("button", { name: "批准并继续" }).click();
 
