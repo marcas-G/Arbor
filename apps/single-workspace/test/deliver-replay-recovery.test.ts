@@ -104,8 +104,9 @@ const legacyMessage = {
   message: {
     kind: "Deliver",
     recipientWorkspaceId,
-    deliverableId,
     bodyRef: summary,
+    correlationId: undefined,
+    causationId: undefined,
     urgency: "Normal",
   },
 };
@@ -141,6 +142,8 @@ const baseDependencies = (options: {
   readonly priorFact?: DeliverReplayAttentionFact;
   readonly existingEffect?: boolean;
   readonly priorReceipt?: StoredCommandResolution;
+  readonly messageBodyRef?: string;
+  readonly messageEventDeliverableId?: string;
 }) => {
   let gatewayCalls = 0;
   let failureWrites = 0;
@@ -228,7 +231,15 @@ const baseDependencies = (options: {
       findById: () => {
         effectReads += 1;
         return Effect.succeed(
-          options.existingEffect ? Option.some(legacyMessage) : Option.none(),
+          options.existingEffect
+            ? Option.some({
+                ...legacyMessage,
+                message: {
+                  ...legacyMessage.message,
+                  bodyRef: options.messageBodyRef ?? summary,
+                },
+              })
+            : Option.none(),
         );
       },
     },
@@ -241,7 +252,21 @@ const baseDependencies = (options: {
     },
     journal: {
       readAfter: () =>
-        Effect.succeed(options.existingEffect ? [legacyEvent] : []),
+        Effect.succeed(
+          options.existingEffect
+            ? [
+                options.messageEventDeliverableId === undefined
+                  ? legacyEvent
+                  : {
+                      ...legacyEvent,
+                      payload: {
+                        ...legacyEvent.payload,
+                        deliverableId: options.messageEventDeliverableId,
+                      },
+                    },
+              ]
+            : [],
+        ),
     },
     replayAttention,
     clock: { now: () => Effect.succeed("2026-10-11T00:00:02.000Z") },
@@ -292,6 +317,57 @@ describe("P37 Deliver receipt recovery", () => {
         ...committedResult,
         deliverableId: `del_${newUuid7("p37-deliver-recovery", "other-deliverable")}`,
       }),
+    });
+    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
+    const exit = await Effect.runPromiseExit(handler.handle(input(1)));
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(failure)).toBe(true);
+      if (Option.isSome(failure)) {
+        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+      }
+    }
+    expect(fixture.counts()).toMatchObject({
+      gatewayCalls: 0,
+      failureWrites: 1,
+      failureCodes: ["PriorReceiptResultMismatch"],
+    });
+  });
+
+  it("keeps a prior Committed receipt blocked when the stored Message row drifts", async () => {
+    const fixture = baseDependencies({
+      existingEffect: true,
+      priorReceipt: committedPriorReceipt(),
+      messageBodyRef: "drifted Message bodyRef",
+    });
+    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
+    const exit = await Effect.runPromiseExit(handler.handle(input(1)));
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(failure)).toBe(true);
+      if (Option.isSome(failure)) {
+        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+      }
+    }
+    expect(fixture.counts()).toMatchObject({
+      gatewayCalls: 0,
+      failureWrites: 1,
+      failureCodes: ["PriorReceiptResultMismatch"],
+    });
+  });
+
+  it("keeps a prior Committed receipt blocked when MessageSent binds another Deliverable", async () => {
+    const fixture = baseDependencies({
+      existingEffect: true,
+      priorReceipt: committedPriorReceipt(),
+      messageEventDeliverableId: `del_${newUuid7(
+        "p37-deliver-recovery",
+        "event-other-deliverable",
+      )}`,
     });
     const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
     const exit = await Effect.runPromiseExit(handler.handle(input(1)));
