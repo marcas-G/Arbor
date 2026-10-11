@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -40,6 +40,7 @@ import {
   type AdmitExecutionPayload,
   P2CommandHandlerRegistryLive,
 } from "../packages/execution-runtime/src/index.js";
+import { WorkReadmissionGateStore } from "../packages/ports/src/index.js";
 import {
   seedCurrentOpenWork,
   workEpisode,
@@ -59,7 +60,7 @@ const systemContext: CommandSubmissionContext = {
   causationRef: "scheduler",
 };
 
-const makeApp = () => {
+const makeApp = (held = false) => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const repos = Layer.mergeAll(
@@ -71,6 +72,19 @@ const makeApp = () => {
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
+    Layer.succeed(WorkReadmissionGateStore, {
+      hasBlockingSource: () =>
+        Effect.succeed(
+          held
+            ? Option.some({
+                sourceKind: "RuntimeSafetyStopSettlement" as const,
+                executionId: parse(ExecutionId)(
+                  "exe_018f2b3c-4d5e-7abc-8def-0123456789ad",
+                ) as ExecutionId,
+              })
+            : Option.none(),
+        ),
+    }),
   );
   const all = Layer.mergeAll(
     infra,
@@ -191,6 +205,48 @@ const run = (program: Effect.Effect<unknown, unknown, never>) =>
   Effect.runPromise(program as Effect.Effect<unknown, never, never>);
 
 describe("P2-009 AdmitExecution", () => {
+  it("rechecks the Work hold in the admission transaction and commits no Execution or receipt", async () => {
+    const app = makeApp(true);
+    const commandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789ae",
+    );
+    const executionId = parse(ExecutionId)(
+      "exe_018f2b3c-4d5e-7abc-8def-0123456789ae",
+    ) as ExecutionId;
+    const payload = payloadMain(executionId);
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P2_MIGRATIONS);
+      yield* seed;
+      const gw = yield* CommandGateway;
+      const result = yield* Effect.exit(
+        gw.execute(
+          envelope(commandId, payload),
+          systemContext,
+          authority(commandId, payload),
+        ),
+      );
+      const sql = yield* SqlClient;
+      const executions = yield* sql.unsafe<{ readonly count: number }>(
+        "SELECT COUNT(*) AS count FROM executions WHERE execution_id = ?",
+        [executionId],
+      );
+      const receipts = yield* sql.unsafe<{ readonly count: number }>(
+        "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+        [commandId],
+      );
+      return {
+        result,
+        executions: Number(executions[0]?.count),
+        receipts: Number(receipts[0]?.count),
+      };
+    });
+    const result = await run(Effect.provide(program, app));
+    expect(result).toMatchObject({ executions: 0, receipts: 0 });
+    expect(JSON.stringify((result as { result: unknown }).result)).toContain(
+      '"_tag":"WorkReadmissionHeld"',
+    );
+  });
+
   it("admits a WorkspaceMain execution and emits ExecutionAdmitted", async () => {
     const app = makeApp();
     const commandId = parse(CommandId)(

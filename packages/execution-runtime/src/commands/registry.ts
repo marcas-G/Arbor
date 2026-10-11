@@ -7,6 +7,7 @@ import {
   ExecutionRepository,
   ProjectRepository,
   SessionRepository,
+  WorkReadmissionGateStore,
   WorkspaceRepository,
   WorkWaitStore,
 } from "@arbor/ports";
@@ -20,6 +21,7 @@ export interface P2CommandDependencies {
   readonly workspaces: import("@arbor/ports").WorkspaceRepositoryService;
   readonly sessions: import("@arbor/ports").SessionRepositoryService;
   readonly executions: import("@arbor/ports").ExecutionRepositoryService;
+  readonly readmissionGate?: import("@arbor/ports").WorkReadmissionGateStoreService;
   readonly workWaits: import("@arbor/ports").WorkWaitStoreService;
   readonly executableApprovals?: Pick<
     import("@arbor/ports").ExecutableApprovalStoreService,
@@ -30,6 +32,13 @@ export interface P2CommandDependencies {
 export const makeP2CommandHandlers = (
   dependencies: P2CommandDependencies,
 ): ReadonlyArray<CommandHandler<unknown, unknown>> => {
+  const readmissionGate = dependencies.readmissionGate ?? {
+    hasBlockingSource: () =>
+      Effect.fail({
+        _tag: "ReadmissionGateStoreFailure" as const,
+        operation: "Query" as const,
+      }),
+  };
   const executableApprovals = dependencies.executableApprovals ?? {
     // Test/legacy compositions without the P38 port fail closed on Stop;
     // production SingleWorkspace composition always supplies the real store.
@@ -44,10 +53,10 @@ export const makeP2CommandHandlers = (
       }),
   };
   return [
-    makeAdmitExecutionHandler(dependencies) as unknown as CommandHandler<
-      unknown,
-      unknown
-    >,
+    makeAdmitExecutionHandler({
+      ...dependencies,
+      readmissionGate,
+    }) as unknown as CommandHandler<unknown, unknown>,
     makeStopExecutionHandler({
       executions: dependencies.executions,
       executableApprovals,
@@ -74,6 +83,9 @@ export const P2CommandHandlerRegistryLive: Layer.Layer<
     const workspaces = yield* WorkspaceRepository;
     const sessions = yield* SessionRepository;
     const executions = yield* ExecutionRepository;
+    const readmissionGate = yield* Effect.serviceOption(
+      WorkReadmissionGateStore,
+    );
     const workWaits = yield* WorkWaitStore;
     const executableApprovals = yield* Effect.serviceOption(
       ExecutableApprovalStore,
@@ -86,6 +98,9 @@ export const P2CommandHandlerRegistryLive: Layer.Layer<
       workspaces,
       sessions,
       executions,
+      ...(Option.isSome(readmissionGate)
+        ? { readmissionGate: readmissionGate.value }
+        : {}),
       workWaits,
       ...(Option.isSome(executableApprovals)
         ? { executableApprovals: executableApprovals.value }

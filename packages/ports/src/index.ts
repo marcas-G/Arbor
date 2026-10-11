@@ -27,6 +27,7 @@ export * from "./projection-query.js";
 export * from "./provider.js";
 export * from "./provider-extension.js";
 export * from "./provider-policy.js";
+export * from "./readmission-gate.js";
 export * from "./repositories.js";
 export * from "./resources.js";
 export * from "./runtime.js";

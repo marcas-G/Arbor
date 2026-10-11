@@ -109,6 +109,7 @@ import {
   ToolInvocationStoreLive,
   TransactionPortLive,
   VerificationRepositoryLive,
+  WorkReadmissionGateStoreLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   type WorkspaceResourceActivationQualificationProbe,
@@ -155,6 +156,7 @@ import {
   SkillRegistry,
   type ToolCatalogPort,
   type TransactionPort,
+  type WorkReadmissionGateStore,
   type WorkRepository,
   type WorkspaceKnowledgePort,
   type WorkspacePlacementPort,
@@ -397,6 +399,7 @@ export type SingleWorkspaceServices =
   | ExecutionScheduler
   | RunnableWorkSource
   | WorkWaitStore
+  | WorkReadmissionGateStore
   | DecisionRequestStore
   | ExecutionDriverPort
   | CommandHandlerRegistry
@@ -606,6 +609,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(WorkspaceResourceActivationStoreLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(WorkReadmissionGateStoreLive, infra),
     Layer.provide(LocalPlanStoreLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(AgentExecutionStateStoreLive, infra),
