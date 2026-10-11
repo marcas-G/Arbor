@@ -1,8 +1,16 @@
-import type { Actor, CommandId, ExecutionId, Principal, ProjectId } from "@arbor/domain";
+import type {
+  Actor,
+  CommandId,
+  ExecutionId,
+  Principal,
+  ProjectId,
+} from "@arbor/domain";
 import type {
   ExecutableApprovalStoreService,
+  ExecutionRepositoryError,
   ExecutionRepositoryService,
   PendingDomainEvent,
+  ToolInvocationStoreError,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect } from "effect";
@@ -18,7 +26,10 @@ export interface StopExecutableApprovalsInput {
 
 export interface StopExecutableApprovalsDependencies {
   readonly executions: Pick<ExecutionRepositoryService, "requestStop">;
-  readonly approvals: Pick<ExecutableApprovalStoreService, "cancelForExecution">;
+  readonly approvals: Pick<
+    ExecutableApprovalStoreService,
+    "cancelForExecution"
+  >;
 }
 
 /** Common Application stop path for every authorized StopExecution mutation.
@@ -29,7 +40,11 @@ export interface StopExecutableApprovalsDependencies {
 export const stopExecutionAndCancelExecutableApprovals = (
   input: StopExecutableApprovalsInput,
   dependencies: StopExecutableApprovalsDependencies,
-): Effect.Effect<ReadonlyArray<PendingDomainEvent>, unknown, TransactionScope> =>
+): Effect.Effect<
+  ReadonlyArray<PendingDomainEvent>,
+  ExecutionRepositoryError | ToolInvocationStoreError,
+  TransactionScope
+> =>
   Effect.gen(function* () {
     yield* dependencies.executions.requestStop(
       input.executionId,
@@ -41,25 +56,27 @@ export const stopExecutionAndCancelExecutableApprovals = (
       cancelledBy: input.actorPrincipal,
       reason: "StopRequested",
     });
-    return cancelled.map((approval): PendingDomainEvent => ({
-      projectId: input.projectId,
-      eventType: "ExecutableApprovalResolved",
-      eventVersion: 1,
-      occurredAt: input.stopRequestedAt,
-      aggregateRef: approval.approvalId,
-      actor: input.actor,
-      causedByCommandId: input.commandId,
-      correlationRef: approval.logicalActionId,
-      payload: {
-        approvalId: approval.approvalId,
-        routeKind: "Executable",
-        workspaceId: approval.workspaceId,
-        executionId: approval.executionId,
-        logicalActionId: approval.logicalActionId,
-        toolInvocationId: approval.toolInvocationId,
-        revision: approval.revision,
-        resolution: "Cancelled",
-        reasonCode: "StopRequested",
-      },
-    }));
+    return cancelled.map(
+      (approval): PendingDomainEvent => ({
+        projectId: input.projectId,
+        eventType: "ExecutableApprovalResolved",
+        eventVersion: 1,
+        occurredAt: input.stopRequestedAt,
+        aggregateRef: approval.approvalId,
+        actor: input.actor,
+        causedByCommandId: input.commandId,
+        correlationRef: approval.logicalActionId,
+        payload: {
+          approvalId: approval.approvalId,
+          routeKind: "Executable",
+          workspaceId: approval.workspaceId,
+          executionId: approval.executionId,
+          logicalActionId: approval.logicalActionId,
+          toolInvocationId: approval.toolInvocationId,
+          revision: approval.revision,
+          resolution: "Cancelled",
+          reasonCode: "StopRequested",
+        },
+      }),
+    );
   });

@@ -1,24 +1,25 @@
 import type { Actor, Principal, ToolInvocationId } from "@arbor/domain";
 import {
   DomainEventJournal,
-  ExecutableApprovalStore,
   type ExecutableApprovalBinding,
   type ExecutableApprovalKey,
   type ExecutableApprovalRecord,
   type ExecutableApprovalRequest,
-  InboxProjectionStore,
-  IdGenerator,
-  sha256Hex,
-  TransactionScope,
-} from "@arbor/ports";
-import {
+  ExecutableApprovalStore,
   executableApprovalBindingMatches,
   executableApprovalKeyOf,
+  IdGenerator,
+  InboxProjectionStore,
+  sha256Hex,
+  TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
-import { persistenceCorruption, repositoryFailure } from "./repository-error.js";
+import {
+  persistenceCorruption,
+  repositoryFailure,
+} from "./repository-error.js";
 
 interface ApprovalRow {
   readonly approval_id: string;
@@ -132,7 +133,10 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
     const inbox = yield* InboxProjectionStore;
     const journal = yield* DomainEventJournal;
     const ids = yield* IdGenerator;
-    const failure = repositoryFailure("ToolInvocationStore", "executable-approval");
+    const failure = repositoryFailure(
+      "ToolInvocationStore",
+      "executable-approval",
+    );
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
 
@@ -230,7 +234,10 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
             generation: fence.fencingGeneration,
           });
         }
-        if (execution.settled_at !== null || execution.stop_requested_at !== null) {
+        if (
+          execution.settled_at !== null ||
+          execution.stop_requested_at !== null
+        ) {
           return "ExecutionStopping" as const;
         }
         if (
@@ -400,7 +407,9 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
             return toApproval(insertedRow);
           }
 
-          const winner = yield* findByActionKey(executableApprovalKeyOf(request));
+          const winner = yield* findByActionKey(
+            executableApprovalKeyOf(request),
+          );
           if (
             Option.isNone(winner) ||
             !executableApprovalBindingMatches(
