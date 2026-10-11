@@ -1,4 +1,8 @@
-import { spawnSync } from "node:child_process";
+import {
+  type SpawnSyncOptionsWithStringEncoding,
+  type SpawnSyncReturns,
+  spawnSync,
+} from "node:child_process";
 import { Effect } from "effect";
 import {
   bounded,
@@ -10,6 +14,12 @@ import { resolveSandboxTarget } from "../sandbox-target.js";
 /** P4 `08` §4 (G6). Deterministic policy evaluation; concrete lists are
  * configurable but the mechanism is contract. */
 export type ShellPolicyDecision = "Allow" | "RequireApproval" | "Deny";
+
+type ShellSpawnSync = (
+  executable: string,
+  args: readonly string[],
+  options: SpawnSyncOptionsWithStringEncoding,
+) => SpawnSyncReturns<string>;
 
 const DENY = /\b(sudo|mkfs|shutdown|reboot|rm\s+-rf\s+\/)\b/;
 const REQUIRE_APPROVAL = /\b(rm|mv|chmod|chown|dd|truncate|git\s+push)\b/;
@@ -34,7 +44,9 @@ const destructive = (intent: { readonly argumentsJson: string }): boolean => {
 };
 
 /** P4 `08` §4. Reconcilable: reconcile before replay on ambiguity. */
-export const shellExecutor: ToolExecutor = {
+export const createShellExecutor = (
+  runSpawnSync: ShellSpawnSync = spawnSync,
+): ToolExecutor => ({
   name: "shell",
   write: true,
   requiresApproval: destructive,
@@ -72,7 +84,7 @@ export const shellExecutor: ToolExecutor = {
         process.platform === "win32"
           ? ["-NoProfile", "-NonInteractive", "-Command", args.command]
           : ["-lc", args.command];
-      const result = spawnSync(executable, shellArgs, {
+      const result = runSpawnSync(executable, shellArgs, {
         cwd,
         timeout: args.timeoutMs ?? 10_000,
         encoding: "utf8",
@@ -97,4 +109,6 @@ export const shellExecutor: ToolExecutor = {
         resultRef: null,
       };
     }),
-};
+});
+
+export const shellExecutor = createShellExecutor();
