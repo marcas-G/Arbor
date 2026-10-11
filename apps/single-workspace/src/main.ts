@@ -9,7 +9,9 @@ import {
 } from "@arbor/execution-runtime";
 import {
   acquireP39RuntimeWriterPermit,
+  type P39MaintenanceFailure,
   type P39WriterLockFailure,
+  p39UnsupportedDeployment,
   p39WriterLockLayer,
   prepareP39PrimaryDatabasePath,
   releaseP39WriterPermit,
@@ -444,11 +446,13 @@ const withP39RuntimeWriterPermit = <A, E, R>(
   use: Effect.Effect<A, E, R>,
 ): Effect.Effect<
   A,
-  E | P39WriterLockFailure | SqliteAdapterError,
+  E | P39MaintenanceFailure | P39WriterLockFailure | SqliteAdapterError,
   Exclude<R, Scope.Scope>
 > => {
   const prepared = prepareP39PrimaryDatabasePath(primaryDatabaseFilename);
-  if (!("databaseFilename" in prepared)) return Effect.fail(prepared);
+  if (!("databaseFilename" in prepared)) {
+    return Effect.fail(p39UnsupportedDeployment(prepared.code));
+  }
   return Effect.scoped(
     Effect.provide(
       Effect.acquireUseRelease(
@@ -457,6 +461,17 @@ const withP39RuntimeWriterPermit = <A, E, R>(
         releaseP39WriterPermit,
       ),
       p39WriterLockLayer(prepared.writerLockFilename),
+    ),
+  ).pipe(
+    Effect.mapError((cause) =>
+      typeof cause === "object" &&
+      cause !== null &&
+      "_tag" in cause &&
+      cause._tag === "P39WriterLockFailure" &&
+      (cause.code === "P39_WRITER_LOCK_PATH_INVALID" ||
+        cause.code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT")
+        ? p39UnsupportedDeployment(cause.code)
+        : cause,
     ),
   );
 };

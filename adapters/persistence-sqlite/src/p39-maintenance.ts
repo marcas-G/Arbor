@@ -126,6 +126,19 @@ export interface P39MaintenanceFailure {
   readonly cause?: unknown;
 }
 
+/** Public deployment failures carry only a bounded diagnostic code. Raw paths,
+ * ACL text and OS exception messages are intentionally not exposed. */
+export const p39UnsupportedDeployment = (
+  reasonCode: string,
+): P39MaintenanceFailure => ({
+  _tag: "P39MaintenanceFailure",
+  code: "P39_UNSUPPORTED_DEPLOYMENT",
+  cause: {
+    _tag: "P39UnsupportedDeploymentDiagnostic",
+    reasonCode,
+  },
+});
+
 const canonicalJson = (value: unknown): string => JSON.stringify(value);
 
 const makeReport = (

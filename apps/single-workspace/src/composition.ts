@@ -99,6 +99,7 @@ import {
   ProjectToolRegistryLive,
   ProviderDeploymentBreakerLive,
   ProviderTurnStoreLive,
+  p39UnsupportedDeployment,
   p39WriterLockFilename,
   p39WriterLockLayer,
   prepareP39PrimaryDatabasePath,
@@ -441,17 +442,7 @@ export const buildSingleWorkspaceLayer = (
     preparedDatabase !== undefined &&
     !("databaseFilename" in preparedDatabase)
   ) {
-    if (preparedDatabase.code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT") {
-      throw {
-        _tag: "P39MaintenanceFailure",
-        code: "P39_UNSUPPORTED_DEPLOYMENT",
-      };
-    }
-    throw {
-      _tag: "P39MaintenanceFailure",
-      code: "P39_UNSUPPORTED_DEPLOYMENT",
-      cause: preparedDatabase,
-    };
+    throw p39UnsupportedDeployment(preparedDatabase.code);
   }
   const primaryDatabaseFilename =
     preparedDatabase?.databaseFilename ?? config.databaseFile;
