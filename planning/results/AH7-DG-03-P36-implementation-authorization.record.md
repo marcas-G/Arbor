@@ -26,7 +26,7 @@ The twelve recorded owner-file hashes are:
 | `docs/design/implementation/P4/00-contract-index.md` | `D67E8A5A67881006C210B3945BD549EB21D459DC070298E926F0182B99FDE7BB` |
 | `docs/design/implementation/P4/01-tool-contracts.md` | `BFB1CC249F4F951A70E118C01EED2BEE0FB9E89FD63D6D4EAAEDA7512F651B66` |
 | `docs/design/implementation/P4/02-tool-runtime-pipeline.md` | `CBE1B98F8817236070A9655D558061B04E2C92E37FEBC281F99206B6E98C3161` |
-| `docs/design/implementation/P4/03-authority-permission-approval.md` | `B305CB94F807E13798B68E4F91FBD5A2884A541D220DD667FEE88A222B325896` |
+| `docs/design/implementation/P4/03-authority-permission-approval.md` | `B305CB94F807E13798B68E4F91BBD5A2884A541D220DD667FEE88A222B325896` |
 | `docs/design/implementation/P4/06-invocation-persistence-reconciliation.md` | `BECA6E537C23E6EC464D86B51D2A6AFB705C9B778F52FF67C891CE336D684FC7` |
 | `docs/design/implementation/P9/00-contract-index.md` | `D24AA70DDA356F7CBC62014E32105F91E03CC3CB6A9FE1D79948A83F4D3815B7` |
 | `docs/design/implementation/P9/02-fault-injection-matrix.md` | `ABFFE821E2813B9BCEB4A81C932BFEB94B68A4D3D4AF391711B1C46139F762D0` |
