@@ -2,8 +2,10 @@
 
 Status: **L2 implementation checkpoint; not a phase-closure claim.**
 
-Worktree: `C:\Users\ThinkPad\.codex\worktrees\p37-storage-l2\Arbor`  
-Base: P36 candidate checkpoint `9d45463b0c2b2296628fa80d33aa2a79a570da89`  
+Worktree: `C:\Users\ThinkPad\.codex\worktrees\p37-storage-l2\Arbor`
+
+Base: P36 candidate checkpoint `9d45463b0c2b2296628fa80d33aa2a79a570da89`
+
 Pre-result source checkpoint: `dc9cc6f1cb336ae7107307feda87188872ae7a07`
 
 ## Scope implemented
