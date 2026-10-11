@@ -25,10 +25,10 @@ and the accepted D0A/D2FF source documents cited there.
 
 - Proposal:
   `planning/proposals/AH7-DG-01-P39-P40-ReconciledNoEffect-compatibility-addendum-draft.md`
-  LF SHA-256: `EB3F45E9091E4CB452E85F5DC6A6955A8E92BEC634C484A679AB53E46E432A95`
+  LF SHA-256: `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`
 - SQL/source/replay/legacy/kill matrix:
   `planning/proposals/AH7-DG-01-P39-P40-ReconciledNoEffect-compatibility-matrix.md`
-  LF SHA-256: `213EE56DBE2372FA8349B54A5A87E51F3738989BDBAC0AD93DB095C5B05DD1C5`
+  LF SHA-256: `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`
 
 The proposed compatibility reuses the accepted P40 version-1, 16 KiB hashed
 Observation envelope for P39 `ReconciledNoEffect`, while preserving P39's
@@ -39,9 +39,14 @@ Legacy P39 terminal rows remain unchanged; missing evidence blocks a still-
 Pending action without ToolResult/cursor projection. The proposal also blocks
 Runtime startup/release at P39-only `user_version=39` and requires a binary
 with the expanded v1 Observation decoder before opening `user_version=40`;
-P36–P40 prefix,
-serialized cross-process migration runner and P39 Windows/sidecar gates remain
-unqualified.
+P36–P40 prefix, serialized cross-process migration runner and P39
+Windows/sidecar gates remain unqualified. The owner map assigns the startup gate
+to P1 `04`/`06`, the RNO union/codec/trigger/hash to P4 `01`/`02`/`06`, the
+source formula to P3 `08`, the fact/event to P9 `07`, the closed Attention source
+and marker/rebuild/API surface to P10 `02`/`04`/`05`/`07`, and the
+non-reconstruction rule to P4 `07`. The matrix distinguishes P3 handoff
+COMMIT-before/after crash/restart and adds legacy Missing→P9/P10 marker/offset
+atomicity and retained-horizon rebuild.
 
 This is a new compatibility semantic package, not an amendment silently
 covered by either accepted proposal. No owner/design files were changed; no

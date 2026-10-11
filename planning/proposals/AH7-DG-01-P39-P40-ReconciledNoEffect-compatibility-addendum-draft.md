@@ -167,11 +167,22 @@ qualification requirements, not evidence run by this addendum.
 ## 7. Compatibility owners and acceptance boundary
 
 After this addendum is separately accepted, owner landing may update only the
-P40 P4 trigger/tag matrix and the P4/P3/P9/P10 clauses needed to preserve the
-same `ReconciledNoEffect` exact outcome. It must preserve P36 Denied/approval,
-P37 Deliver, P38 EA, P39 RecoveryBinding/selected-fact/sidecar, and all five
-AH7-DG-01 tags exactly. The P40 physical slot remains P36→P37→P38→P39→P40;
-no migration code or implementation qualification is authorized here.
+following owned contracts needed to preserve the same `ReconciledNoEffect`
+exact outcome:
+
+| Owner | Additive contract only after acceptance |
+|---|---|
+| P1 `04-sqlite-schema.md` + `06-recovery-matrix.md` | P39-only `user_version=39` is maintenance-only/not service-startable; P39→P40 cumulative migration boundary, serialization requirement and transaction/crash recovery. |
+| P4 `01-tool-contracts.md` / `02-tool-runtime-pipeline.md` / `06-invocation-persistence-reconciliation.md` | Six-tag v1 envelope; RNO P39 settlement/proof/Artifact/Observation correspondence, codec/hash, terminal SQL trigger/CAS/fence, no selection rewrite. |
+| P3 `08-agent-loop-step-handoff.md` | Preserve P3 source formula and exact ToolResult/Session Observation/Action/cursor transaction and replay behavior. |
+| P9 `07-agent-loop-step-recovery.md` | Existing source-specific replay-evidence fact/event identity, fence checks, commit/dedup and recovery order; P39 proof facts untouched. |
+| P10 `02-attention-readmodel.md`, `04-rebuild-atscale.md`, `07-acceptance.md`, and `05-surface-actions-transport.md` / API closed-source owner | Existing P9 event → one dedicated marker, closed `AttentionSource`/API union, shared offset atomicity, retained-horizon rebuild, fixed safe summary; no public failure detail. |
+| P4 `07-blob-artifact.md` | Artifact remains an immutable result/ref object; it is not used to reconstruct missing P40 bounded Observation bytes or `truncated`. |
+
+The landing must preserve P36 Denied/approval, P37 Deliver, P38 EA,
+P39 RecoveryBinding/selected-fact/sidecar, and all five AH7-DG-01 evidence
+branches exactly. The P40 physical slot remains P36→P37→P38→P39→P40. No
+migration code or implementation qualification is authorized here.
 
 **Review scope requested:** determine whether this same-envelope P39 RNO branch
 is compatible with all four accepted packages above, especially exact
