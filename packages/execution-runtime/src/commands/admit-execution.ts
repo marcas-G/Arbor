@@ -15,7 +15,12 @@ import type {
   ExecutionRepositoryService,
   PendingDomainEvent,
   ProjectRepositoryService,
+  ReadmissionGateIntegrityFailure,
+  ReadmissionGateStoreFailure,
+  ReadmissionTargetMismatch,
   SessionRepositoryService,
+  WorkReadmissionGateStoreService,
+  WorkReadmissionHeld,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -52,7 +57,14 @@ export interface AdmitExecutionDependencies {
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
   readonly executions: ExecutionRepositoryService;
+  readonly readmissionGate: WorkReadmissionGateStoreService;
 }
+
+type AdmitExecutionHandlerFailure =
+  | ReadmissionTargetMismatch
+  | ReadmissionGateIntegrityFailure
+  | ReadmissionGateStoreFailure
+  | WorkReadmissionHeld;
 
 export const makeAdmitExecutionHandler = (
   dependencies: AdmitExecutionDependencies,
@@ -100,6 +112,24 @@ export const makeAdmitExecutionHandler = (
           entity: "Workspace",
           lifecycle: currentWorkspace.lifecycle,
         });
+      }
+
+      if (
+        payload._tag === "WorkspaceMain" &&
+        payload.episode?._tag === "WorkEpisode"
+      ) {
+        const hold = yield* dependencies.readmissionGate.hasBlockingSource({
+          projectId: envelope.projectId,
+          workspaceId: payload.workspaceId,
+          workId: payload.episode.workId,
+          workRevision: payload.episode.targetWorkRevision,
+        });
+        if (Option.isSome(hold)) {
+          return yield* Effect.fail<AdmitExecutionHandlerFailure>({
+            _tag: "WorkReadmissionHeld",
+            ...hold.value,
+          });
+        }
       }
 
       const isMain = payload._tag === "WorkspaceMain";

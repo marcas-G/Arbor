@@ -61,6 +61,7 @@ import {
   SessionRepository,
   VerificationRepository,
   type VerificationRepositoryService,
+  WorkReadmissionGateStore,
   WorkRepository,
   WorkspaceRepository,
   WorkspaceResourceActivationStore,
@@ -137,6 +138,9 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
       () => executableApprovalStoreUnavailable,
     );
     const workWaits = yield* WorkWaitStore;
+    const readmissionGate = yield* Effect.serviceOption(
+      WorkReadmissionGateStore,
+    );
     const proposals = yield* FormationProposalStore;
     const fulfillments = yield* Effect.serviceOption(FormationFulfillmentStore);
     const inbox = yield* InboxProjectionStore;
@@ -200,6 +204,9 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
         sessions,
         executions,
         workWaits,
+        ...(Option.isSome(readmissionGate)
+          ? { readmissionGate: readmissionGate.value }
+          : {}),
         executableApprovals,
       }),
       makeSendMessageHandler({

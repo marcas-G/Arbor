@@ -29,6 +29,9 @@ import type {
   PermissionGrantRepositoryError,
   ProjectRepositoryError,
   ProjectToolRegistryError,
+  ReadmissionGateIntegrityFailure,
+  ReadmissionGateStoreFailure,
+  ReadmissionTargetMismatch,
   ResourceOwnershipRepositoryError,
   SchedulerTimerStoreError,
   SessionRepositoryError,
@@ -36,6 +39,7 @@ import type {
   TransactionOperationalFailure,
   TransactionScope,
   VerificationRepositoryError,
+  WorkReadmissionHeld,
   WorkRepositoryError,
   WorkspaceRepositoryError,
   WorkspaceResourceActivationStoreError,
@@ -111,7 +115,11 @@ export type CommandHandlerError =
   | VerificationRepositoryError
   | AcceptanceRepositoryError
   | EvidenceRepositoryError
-  | AssignWorkTargetBindingStoreError;
+  | AssignWorkTargetBindingStoreError
+  | ReadmissionTargetMismatch
+  | ReadmissionGateIntegrityFailure
+  | ReadmissionGateStoreFailure
+  | WorkReadmissionHeld;
 
 export interface CommandHandler<C, R> {
   readonly commandType: string;

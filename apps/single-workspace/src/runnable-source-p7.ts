@@ -5,6 +5,7 @@ import {
   type RunnableWorkSourceError,
   TransactionPort,
   TransactionScope,
+  WorkReadmissionGateStore,
   WorkRepository,
   WorkspaceRepository,
   type WorkWait,
@@ -42,6 +43,9 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
     const works = yield* WorkRepository;
     const dependencies = yield* DependencyRepository;
     const waits = yield* WorkWaitStore;
+    const readmissionGate = yield* Effect.serviceOption(
+      WorkReadmissionGateStore,
+    );
     const tx = yield* TransactionPort;
 
     const waitReferencesDependency = (
@@ -68,6 +72,24 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
           const workspace = yield* workspaces.findById(workspaceId);
           const open = yield* works.listByWorkspace(workspaceId, "Open");
           const openIds = open.map((work) => work.workId);
+          const held = new Set<WorkId>();
+          if (Option.isSome(workspace) && open.length > 0) {
+            if (Option.isNone(readmissionGate)) {
+              return yield* Effect.fail({
+                _tag: "ReadmissionGateStoreFailure" as const,
+                operation: "Query" as const,
+              });
+            }
+            for (const work of open) {
+              const source = yield* readmissionGate.value.hasBlockingSource({
+                projectId: workspace.value.projectId,
+                workspaceId,
+                workId: work.workId,
+                workRevision: work.revision,
+              });
+              if (Option.isSome(source)) held.add(work.workId);
+            }
+          }
 
           const activeWaits = yield* waits.listActive();
           const activeWaitsByWork = new Map<WorkId, ReadonlyArray<WorkWait>>();
@@ -102,11 +124,15 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
             ? workspace.value.currentWorkId
             : null;
           const current: Option.Option<WorkId> =
-            pointed !== null && openIds.includes(pointed) && !waiting(pointed)
+            pointed !== null &&
+            openIds.includes(pointed) &&
+            !waiting(pointed) &&
+            !held.has(pointed)
               ? Option.some(pointed)
               : Option.none();
           const runnable = openIds
             .filter((workId) => !waiting(workId))
+            .filter((workId) => !held.has(workId))
             .filter(
               (workId) => !Option.isSome(current) || workId !== current.value,
             )

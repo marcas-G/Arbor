@@ -22,6 +22,7 @@ import {
   RunnableWorkSource,
   type SchedulerDecision,
   TransactionPort,
+  WorkReadmissionGateStore,
 } from "../packages/ports/src/index.js";
 import {
   makeP7App,
@@ -58,16 +59,28 @@ const otherWorkspace = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789f1",
 );
 
-const makeClassificationApp = () => {
+const makeClassificationApp = (
+  heldWorkIds: ReadonlySet<WorkId> = new Set(),
+) => {
   const base = makeP7App();
   const waits = Layer.provide(WorkWaitStoreLive, base);
+  const readmissionGate = Layer.succeed(WorkReadmissionGateStore, {
+    hasBlockingSource: ({ workId }) =>
+      Effect.succeed(
+        heldWorkIds.has(workId)
+          ? Option.some({
+              sourceKind: "RuntimeSafetyStopSettlement" as const,
+              executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789c1" as never,
+            })
+          : Option.none(),
+      ),
+  });
+  const dependencies = Layer.mergeAll(base, waits, readmissionGate);
   return Layer.mergeAll(
     base,
     waits,
-    Layer.provide(
-      DependencyAwareRunnableWorkSourceLive,
-      Layer.mergeAll(base, waits),
-    ),
+    readmissionGate,
+    Layer.provide(DependencyAwareRunnableWorkSourceLive, dependencies),
   );
 };
 
@@ -258,6 +271,22 @@ describe("P7-008 dependency-aware classification (03 §2/§3)", () => {
         ).toEqual({ _tag: "AdmitWork", workId: WORK_CLEAN });
       }),
       makeClassificationApp(),
+    );
+  });
+
+  it("excludes the exact held revision from both current and runnable", async () => {
+    await runP7(
+      Effect.gen(function* () {
+        yield* seedWorks([
+          [WORK_CLEAN, CMD_CLEAN],
+          [WORK_DEP_ONLY, CMD_DEP_ONLY],
+        ]);
+        yield* setCurrentWork(WORK_CLEAN);
+        const classified = yield* classifyRoot;
+        expect(classified.current).toEqual(Option.none());
+        expect([...classified.runnable]).toEqual([WORK_DEP_ONLY]);
+      }),
+      makeClassificationApp(new Set([WORK_CLEAN])),
     );
   });
 });
