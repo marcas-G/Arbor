@@ -16,7 +16,8 @@ it as part of proposal drafting. No test in this matrix has been run here.
 | Case | Durable pre-crash state | Required external evidence | Recovery action | Required durable convergence |
 |---|---|---|---|---|
 | Generic shell v3, no profile | P4 `MayHaveStarted`; effect may have occurred | None available by contract | Never re-execute; `StillUnknown(ProfileUnavailable)` | P9 Attention/fact, OutcomeUnknown gate; one typed ToolResult/Action source if projected; no second marker |
-| Historical shell v2, no persisted profile/effect key | Stored `Reconcilable`, profile absent | No valid retrospective proof | Never reinterpret under new catalog; `StillUnknown(LegacyProfileUnavailable)` | Original ToolInvocation stays auditable; P9 Attention; no executor |
+| Historical shell v2, `MayHaveStarted` / `LegacyUnknown`, no persisted profile/effect key | Stored `Reconcilable`, profile absent | No valid retrospective proof | Never reinterpret under new catalog; `StillUnknown(LegacyProfileUnavailable)` | Original ToolInvocation stays auditable; P9 Attention; no executor |
+| Historical shell v2, exact `NotAdmitted` definition/binding still available | Intent exists, effect admission absent | P4 marker proves no executor was admitted | Re-enter only exact shell@2 under current fresh authority/resource/approval/lease/stop gate | Keep exact v2 definition until these rows terminate; never substitute v3 or reclassify |
 | Registered profile, crash after admission but before executor | attempt N `MayHaveStarted` | Exact final `NotOccurred` proof; old attempt externally fenced/quiescent | Revalidate exact binding; at most one attempt N+1 if authority/resource/approval unchanged and not stopping | Same invocation/callRef/ProviderTurn; one effect key; append-only proof fact |
 | Registered profile, effect occurred before P4 settlement | attempt N `MayHaveStarted` | Exact terminal `Occurred` proof plus reconstructable settlement/observation/result ref | Do not execute again; settle from proof | P4 settlement + fact; one P3 ToolResult with observationRef equal Action/Session source |
 | Positive effect proof, result/output cannot be reconstructed | attempt N `MayHaveStarted` | Occurred is known, canonical outcome is not | `StillUnknown(ResultEvidenceUnavailable)` | Attention/OutcomeUnknown; no fake Success, no result fabrication, no replay |
@@ -24,6 +25,8 @@ it as part of proposal drafting. No test in this matrix has been run here.
 | Authoritative NotOccurred, but permission/grant/policy/approval snapshot changed | attempt N `MayHaveStarted` | Bound NotOccurred proof; current replay gate fails | No retry; terminal `ReconciledNoEffect` with closed suppression reason | Preserve consumed approval binding; no executor; typed ToolResult/action disposition |
 | Authoritative NotOccurred, ResourceBoundary / region / environment revision changed | attempt N `MayHaveStarted` | Bound NotOccurred proof; current target no longer exact | No retry; `ReconciledNoEffect(ResourceSnapshotChanged)` | No widened target; no executor |
 | StopExecution after MayHaveStarted; reconcile proves NotOccurred | attempt N `MayHaveStarted`, stop requested | Bound terminal NotOccurred proof | No replay during quiescence; `ReconciledNoEffect(StopRequested)` → existing Interrupted projection | No effect, one cursor convergence, no new executor |
+| StopExecution after MayHaveStarted; reconcile proves Occurred | attempt N in flight, stop requested | Bound terminal Occurred + reconstructable canonical result | Record P4 settlement/fact under current fence; no new attempt; P3 records known ToolResult then existing stop/quiescence settles remaining execution | Known effect is never dropped or relabeled Unknown merely because stop was requested |
+| StopExecution after MayHaveStarted; StillUnknown | attempt N unresolved, stop requested | Inconclusive/absent source | No new attempt; commit StillUnknown fact/Attention under current fence; remain ReconciliationPending/OutcomeUnknown, never plain Interrupted | No new external effect; unresolved-side-effect gate remains |
 | Attempt 1 also proves NotOccurred | two attempts, same invocation/effectKey | Finality proof for attempt 1 | Stop automatic retries at v1 limit; `ReconciledNoEffect(ReplayLimitReached)` | No retry loop; next human/model decision uses a new logical invocation |
 | Old daemon can still complete external I/O after negative query | attempt N unresolved | No cancellation/fence/finality proof | `StillUnknown(AttemptNotFinal)` | New daemon must not replay even if current query says “absent” |
 | P4 settlement committed, P3 ToolResult/action/cursor missing | terminal P4 result + fact | No new external lookup required | Rebuild P3 projection only | Same resultRef/fact; unique ToolResult observationRef == Action source == Session source |
@@ -34,6 +37,72 @@ subject/capability/target, workspace/project policy revision, approval
 expiry/revocation/consumer, resource-boundary revision, region/address,
 profile hash and Worker lease generation. Any mismatch blocks replay; it is not
 resolved by treating a similar current grant/profile as equivalent.
+
+## Runtime identity and approval binding owner matrix
+
+| Value | Trusted producer / owner | Interface hop | P4 durable use |
+|---|---|---|---|
+| ProviderTurnId | P3 pinned `PreparedModelTurn.manifest` | `AgentLoopActions` → P3 `ExecutableInvocationInput.sourceBinding` → Application `ExecutableToolHandler` → P4 `ToolIntent.sourceBinding` | Immutable RecoveryBinding and reconciliation fact; never model reconstructed |
+| Step identity | P3 durable `AgentLoopStepRecord.identity` (`executionId`, `logicalStepNo`, `repairAttempt`) | Same sourceBinding | Cross-check binding digest; P3 remains owner of cursor |
+| LogicalActionId/actionIndex | P3 durable `AgentLoopStepActionRecord` | Same sourceBinding | Exact fact/action correlation; P4 may not manufacture another ActionId |
+| callRef/ExecutionId | Pinned P3 decoded ToolInvocation + current ExecutionOrigin | Existing ToolIntent plus sourceBinding; invocation ID uses existing `(executionId,callRef)` allocator | P4 verifies stable re-entry and persists binding at claim |
+| Worker lease triple | P1/P2 `ExecutionOrigin` of current worker | Existing `ToolExecutionContext` only | Current full fence on attempts, facts, settlement and Attention handoff; no stop-null requirement for accounting after Stop |
+| Approval subject/revision | P4 trusted InvocationApproval record + authenticated principal/current ControlBasis | P4-owned `MatchedInvocationApproval` from exact P4 match; never model/P3-authored | Claim transaction re-reads exact expected revision, subject, tool/action/args/target/basis/expiry/state then consumes by same ToolInvocationId; stores pre/post revisions and binding hash |
+| Authority/resource versions | P4 trusted InvocationAuthority resolver + ResourceAdmission/ProjectEnvironment | P4 ToolRuntime, not ToolIntent args | Binding holds sourceRevision, grant ids+revisions, policy/boundary/environment revisions, canonical resource snapshot; retry requires exact current match |
+
+Required migration owner is P4 `tool_invocations`/effect-attempt/fact schema; P3's
+identity tables and ownership do not move. Legacy rows without source binding are
+not backfilled from Session text. A losing approval CAS rolls back the claim; a
+same-invocation recovery verifies the original consumed-by/revision binding and
+never consumes again.
+
+## ReconciledNoEffect P4→P3 projection
+
+This variant is distinct from P4 `Denied`, which remains valid only for
+`NotAdmitted`. P4 `CanonicalToolObservation` and `ToolInvocationSettlement` both
+carry `ReconciledNoEffect{reasonCode,reconciliationFactRef}` with the closed
+codes below. The P3 Executable handler passes that exact union to
+AgentLoopActions; it may not synthesize a generic `Denied` result at P4:
+
+| P4 reasonCode | P3 ToolResult status / disposition | AgentLoop action/cursor | Execution |
+|---|---|---|---|
+| `AuthoritySnapshotChanged`, `ResourceSnapshotChanged`, `ApprovalNoLongerAuthorized` | `Denied` / `ReconciledNoEffect:<reasonCode>` | `TerminalRejected`; advance once; same Observation source | Continue normally; no P4 Denied rewrite |
+| `StopRequested` | `Interrupted` / `ExecutionStopping` | current `TerminalRejected`, rest `SkippedEarlySettlement`, advance once | `SettlementProposed(Interrupted(StopRequested))` |
+| `ReplayLimitReached` | `Failed` / `ReconciledNoEffect:ReplayLimitReached` | `Applied`; advance once with truthful “effect not performed; automatic retry limit reached” observation | No fabricated Success or global Failed settlement |
+
+Every branch carries `reconciliationFactRef`; Session ToolResult
+`observationRef`, P3 Action `observation_source_ref`, and Session `source_ref`
+are exact same deterministic identity and unique. Same fact replay yields no
+second result/action/cursor.
+
+The exact ref formula is P3's existing
+`observation_${executionId}_${sha256Hex(JSON.stringify({providerTurnId,callRef,resultRef}))}`.
+P4 `ReconciledNoEffect` carries an Artifact `resultRef` for the typed bounded
+payload; P3 preserves that result ref and the reconciliation fact ref in the
+ToolResult's result/disposition references. The P3 action source identity is
+formed from the P3-owned ProviderTurn/callRef and exact resultRef; P4 cannot
+invent any of those ids.
+
+## P9 fact → P10 Attention projection / rebuild owner matrix
+
+Only `StillUnknown`/no-profile unresolved effects escalate. P9 RecoveryController
+reuses the existing durable `ReconciliationEscalated` event, with exact existing
+identity `(executionId, invocationRefsFingerprint)` and refs. It does not emit
+command text, profile parameters, authority snapshot, resource paths or raw
+evidence. P10's source mapping is fixed:
+
+| P9 event/fact | P10 Attention source | Severity | Target | Dedup key | Fixed path-free summary |
+|---|---|---|---|---|---|
+| `ReconciliationEscalated{executionId, invocationRefsFingerprint, refs}` | `ReconciliationEscalated` | `ActionRequired` | `executions.workspace_id` | `reconciliation-escalated:<executionId>:<invocationRefsFingerprint>` | “An external tool effect could not be verified; recovery is paused.” |
+
+P9 commits the event/fact under the existing recovery commit/authority path;
+repeated passes with the same execution/ref fingerprint do not duplicate it.
+P10 owns the `Attention` row and event-consumer offset: apply row + advance offset
+atomically; read-model rebuild resets Attention rows and rewinds the Attention
+offset to the retained floor minus one in the P10 rebuild transaction, then
+replays retained events. This proposal **does not** promise the Attention row
+survives P1 journal pruning; beyond-retention visibility would require a separate
+P9 durable fact-store/P10 rebuild-source design decision, not an implicit table.
 
 ## Ordered qualification waves after separate governance acceptance
 
