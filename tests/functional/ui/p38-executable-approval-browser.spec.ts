@@ -22,7 +22,7 @@ test.afterEach(async () => {
   fixture = undefined;
 });
 
-test.skip("P38 executable approval can be resolved from the browser Queue and resumes the same action", async ({
+test("P38 executable approval can be resolved from the browser Queue and resumes the same action", async ({
   page,
 }) => {
   const marker = `P38-BROWSER-${crypto.randomUUID().slice(0, 8)}`;
