@@ -14,6 +14,16 @@ the existing Message handover; no Deliverable mutation, MessageSent v1 schema
 version, Message kind, or Inbox kind is added. Accepted proposal SHA-256:
 `75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`.
 
+**Accepted owner addendum (DID v1.38): AH10 Deliver P10 source storage and
+migration order.** The P9 `DeliverReplayEscalated` fact and P10 source-specific
+marker are assigned to proposed cumulative migration 0037 after P36 migration
+0036; migration 0034 remains the accepted P10 Attention materialization. The
+P36 owner contract is integrated in this governance tree, while migration
+implementations/registrations 0036 and 0037 are not integrated in this tree and
+remain separately gated. Accepted
+addendum SHA-256:
+`040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
+
 ## Documents
 
 | Doc | Owns |
