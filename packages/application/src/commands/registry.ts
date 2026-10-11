@@ -4,6 +4,7 @@ import {
   type ClockService,
   type ControlApprovalStoreService,
   type ConversationResponseJobStoreService,
+  type ExecutableApprovalStoreService,
   type ExecutionRepositoryService,
   type InboxProjectionStoreService,
   type PermissionGrantRepositoryService,
@@ -76,6 +77,10 @@ export interface P15CommandDependencies {
     "listForWorkspace" | "transition"
   >;
   readonly inbox: Pick<InboxProjectionStoreService, "markConsumed">;
+  readonly executableApprovals: Pick<
+    ExecutableApprovalStoreService,
+    "cancelForExecution"
+  >;
 }
 
 export const makeP15CommandHandlers = (
@@ -89,6 +94,7 @@ export const makeP15CommandHandlers = (
     executions: dependencies.executions,
     responseJobs: dependencies.responseJobs,
     inbox: dependencies.inbox,
+    executableApprovals: dependencies.executableApprovals,
   }) as unknown as CommandHandler<unknown, unknown>,
 ];
 

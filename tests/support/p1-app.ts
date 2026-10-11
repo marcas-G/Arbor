@@ -100,6 +100,9 @@ export const makeP1App = (
           executions,
           responseJobs,
           inbox,
+          executableApprovals: {
+            cancelForExecution: () => Effect.succeed([]),
+          },
         }),
       ];
       return CommandHandlerRegistry.of({
