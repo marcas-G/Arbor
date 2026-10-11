@@ -31,6 +31,7 @@ export type ControlAuthorizationDecision =
       readonly approvalId: string;
       readonly revision: number;
     }
+  | { readonly _tag: "RecoveryBlocked" }
   | { readonly _tag: "Denied"; readonly reason: string };
 
 export interface ControlActionAuthorizerService {

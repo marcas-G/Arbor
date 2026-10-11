@@ -190,12 +190,14 @@ export const ControlActionAuthorizerLive: Layer.Layer<
             const prior = yield* tx.transact(
               commands.findResolution(priorCommandId),
             );
+            if (Option.isNone(prior)) continue;
             if (
-              Option.isSome(prior) &&
-              prior.value.commandId === priorCommandId &&
-              prior.value.projectId === input.execution.projectId &&
-              prior.value.resolution === "Committed"
+              prior.value.commandId !== priorCommandId ||
+              prior.value.projectId !== input.execution.projectId
             ) {
+              return { _tag: "RecoveryBlocked" as const };
+            }
+            if (prior.value.resolution === "Committed") {
               if (currentWorkspaceAssignWork) {
                 const approval = yield* tx.transact(
                   approvals.findById(approvalId),
@@ -252,7 +254,7 @@ export const ControlActionAuthorizerLive: Layer.Layer<
                     },
                   };
                 }
-                continue;
+                return { _tag: "RecoveryBlocked" as const };
               }
               return {
                 _tag: "Authorized" as const,
