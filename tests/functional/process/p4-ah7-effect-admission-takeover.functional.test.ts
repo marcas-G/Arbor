@@ -160,13 +160,20 @@ describe("P4 AH7 effect-admission generation takeover", () => {
     {
       boundary: "AH7BeforeEffectAdmission",
       admission: "NotAdmitted",
+      sideEffectSemantics: "Reconcilable",
     },
     {
       boundary: "AH7AfterEffectAdmissionCommit",
       admission: "MayHaveStarted",
+      sideEffectSemantics: "Reconcilable",
+    },
+    {
+      boundary: "AH7AfterEffectAdmissionCommit",
+      admission: "MayHaveStarted",
+      sideEffectSemantics: "NonIdempotent",
     },
   ] as const) {
-    it(`fences crash recovery at ${scenario.boundary}`, async () => {
+    it(`fences ${scenario.sideEffectSemantics} recovery at ${scenario.boundary}`, async () => {
       const marker = `AH7-ADMIT-${crypto.randomUUID().slice(0, 8)}`;
       const steerMarker = `AH7-ADMIT-STEER-${marker}`;
       const effectFile = `ah7-admission-${marker}.txt`;
@@ -184,6 +191,9 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         daemonEnvironment: {
           ARBOR_P4_FENCE_ROLE: "old",
           ARBOR_P4_FENCE_ADMISSION_BOUNDARY: scenario.boundary,
+          ...(scenario.sideEffectSemantics === "NonIdempotent"
+            ? { ARBOR_P4_FENCE_NON_IDEMPOTENT: "1" }
+            : {}),
         },
         onDaemonStdout: (line) => recordProbe(events, line),
         reply: (call) => {
@@ -360,7 +370,7 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         invocation_id: invocationId,
         execution_id: executionId,
         tool_name: "shell",
-        side_effect_semantics: "Reconcilable",
+        side_effect_semantics: scenario.sideEffectSemantics,
         approval_id: null,
         effect_admission_state: scenario.admission,
         settled_at: null,
@@ -511,8 +521,14 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         expect(recovered.invocation).toMatchObject({
           invocation_id: invocationId,
           effect_admission_state: "MayHaveStarted",
-          settled_at: null,
-          settlement_kind: null,
+          settled_at:
+            scenario.sideEffectSemantics === "NonIdempotent"
+              ? expect.any(String)
+              : null,
+          settlement_kind:
+            scenario.sideEffectSemantics === "NonIdempotent"
+              ? "OutcomeUnknown"
+              : null,
           approval_id: null,
         });
         expect(recovered.action).toMatchObject({

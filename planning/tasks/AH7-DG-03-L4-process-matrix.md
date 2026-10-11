@@ -48,26 +48,33 @@ COMMIT branches passed the hardened 1/1 targeted run with keepalive/alive
 handshake and exact SIGKILL exit assertions. See
 `planning/results/AH7-DG-03-L4-store-process.result.md`.
 
-The next wave adds the exact `NotAdmitted → MayHaveStarted` boundaries to
-ToolRuntime qualification and uses the real public daemon fixture with a
-`requiresApproval=false` shell invocation. A real two-daemon generation
-takeover killed generation 0 before admission and after the committed marker;
-both cases pass. Before admission, generation 1 resumes the same invocation
-through current authority/fence checks and produces one effect/result. After
-admission, generation 1 fails closed as `OutcomeUnknown` /
-`ReconciliationPending` without starting another effect. See
-`planning/results/AH7-DG-03-L4-effect-admission-takeover.result.md`. This is
-separate from the approved-Executable store claim and does not qualify actual
-external-effect-before-settlement or P3 Observation/Action/cursor crash rows.
+The exact `NotAdmitted → MayHaveStarted` boundaries are qualified using the
+real public daemon fixture and a `requiresApproval=false` shell invocation.
+The Reconcilable and NonIdempotent branches distinguish known pre-effect from
+MayHaveStarted ambiguity. See
+`planning/results/AH7-DG-03-L4-effect-admission-takeover.result.md`.
 
-After those store-process cases, the production `ProductionFixture` should be
-reused for the P3 ToolResult/Action/cursor and P4 effect/settlement boundaries.
-For those rows use two independent daemons, a current lease generation, the
-existing `AH7AfterToolIntentCommit`,
-`AH7AfterToolEffectBeforeSettlement`, `AH7AfterToolSettlementCommit`, and
-`AH7AfterActionResultCommit` probes, plus the local StopExecution contract.
-Report store-process, one-daemon restart, two-daemon takeover, and external
-effect counts as distinct evidence categories.
+The following effect, settlement, Observation, Action and cursor rows are also
+qualified; see
+`planning/results/AH7-DG-03-L4-effect-settlement-observation.result.md`:
+
+- Idempotent patch external effect followed by P4 settlement crash/restart;
+  same-identity replay preserves each file marker exactly once.
+- P4 settlement process crash before transaction, after the settlement write
+  but before COMMIT, and after COMMIT.
+- P3 Session ToolResult + Action + cursor crash after writes/before COMMIT and
+  after COMMIT. The exact ToolResult `observationRef` equals the persisted
+  Action `observation_source_ref` and Session source, exactly once.
+- Actual NonIdempotent effect before settlement under two-daemon lease
+  takeover: old generation is fenced, the marker is not replayed and the new
+  generation converges to OutcomeUnknown without a success Observation.
+- MayHaveStarted recovery is separately qualified for Reconcilable and
+  NonIdempotent; neither starts a new Executor call.
+
+These remain separate evidence categories: store-process, one-daemon
+crash/restart, two-daemon takeover, and external effect count. AH7 remains open
+for active Reconcilable reality reconciliation, further side-effect/action
+permutations and approved Executable routing.
 
 ## Approval-flow qualification boundary
 

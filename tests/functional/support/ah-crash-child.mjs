@@ -24,8 +24,11 @@ if (
   targetBoundary !== "AH12BeforeSuccessCommit" &&
   targetBoundary !== "AH12AfterSuccessCommit" &&
   targetBoundary !== "AH7AfterActionIntentCommit" &&
+  targetBoundary !== "AH7BeforeActionResultCommit" &&
   targetBoundary !== "AH7AfterActionResultCommit" &&
   targetBoundary !== "AH7AfterToolIntentCommit" &&
+  targetBoundary !== "AH7BeforeToolSettlementTransaction" &&
+  targetBoundary !== "AH7BeforeToolSettlementCommit" &&
   targetBoundary !== "AH7AfterToolEffectBeforeSettlement" &&
   targetBoundary !== "AH7AfterToolSettlementCommit" &&
   targetBoundary !== "disabled" &&
