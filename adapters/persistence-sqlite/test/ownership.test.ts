@@ -759,6 +759,12 @@ describe("ownership write service", () => {
       append: () => Effect.fail(journalFailure),
       appendReturningIds: () => Effect.fail(journalFailure),
       readAfter: () => Effect.succeed([]),
+      readAfterRaw: () => Effect.succeed([]),
+      decodeRaw: () =>
+        Effect.succeed({
+          _tag: "Poison" as const,
+          reason: "MalformedEnvelope" as const,
+        }),
       lastSequence: () => Effect.succeed(0),
     });
     const program = Effect.gen(function* () {

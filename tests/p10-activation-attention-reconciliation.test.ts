@@ -357,7 +357,14 @@ describe("F21 Wave2 P10 source-only Activation Attention reconciliation", () => 
         );
         const p10Projection = makeProjectAttentionProjectionStore(
           projectId,
-          { findAssignWorkBindingFailure: () => Effect.succeed(Option.none()) },
+          {
+            findAssignWorkBindingFailure: () => Effect.succeed(Option.none()),
+            findDeliverReplayFailure: () => Effect.succeed(Option.none()),
+            listDeliverReplayFailures: () => Effect.succeed([]),
+            listPendingDeliverReplayAttention: () => Effect.succeed([]),
+            acknowledgePendingDeliverReplayAttention: () =>
+              Effect.succeed(undefined),
+          },
           attention,
           activations,
         );
@@ -399,7 +406,14 @@ describe("F21 Wave2 P10 source-only Activation Attention reconciliation", () => 
         );
         const p10Projection = makeProjectAttentionProjectionStore(
           projectId,
-          { findAssignWorkBindingFailure: () => Effect.succeed(Option.none()) },
+          {
+            findAssignWorkBindingFailure: () => Effect.succeed(Option.none()),
+            findDeliverReplayFailure: () => Effect.succeed(Option.none()),
+            listDeliverReplayFailures: () => Effect.succeed([]),
+            listPendingDeliverReplayAttention: () => Effect.succeed([]),
+            acknowledgePendingDeliverReplayAttention: () =>
+              Effect.succeed(undefined),
+          },
           attention,
           activations,
         );
