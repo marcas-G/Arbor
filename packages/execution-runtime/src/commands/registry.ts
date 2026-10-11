@@ -3,6 +3,7 @@ import {
   CommandHandlerRegistry,
 } from "@arbor/application";
 import {
+  ExecutableApprovalStore,
   ExecutionRepository,
   ProjectRepository,
   SessionRepository,
@@ -20,6 +21,10 @@ export interface P2CommandDependencies {
   readonly sessions: import("@arbor/ports").SessionRepositoryService;
   readonly executions: import("@arbor/ports").ExecutionRepositoryService;
   readonly workWaits: import("@arbor/ports").WorkWaitStoreService;
+  readonly executableApprovals?: Pick<
+    import("@arbor/ports").ExecutableApprovalStoreService,
+    "cancelForExecution"
+  >;
 }
 
 export const makeP2CommandHandlers = (
@@ -55,12 +60,21 @@ export const P2CommandHandlerRegistryLive: Layer.Layer<
     const sessions = yield* SessionRepository;
     const executions = yield* ExecutionRepository;
     const workWaits = yield* WorkWaitStore;
+    const executableApprovals = yield* Effect.serviceOption(
+      ExecutableApprovalStore,
+    );
+    // P38 remains absent from production composition until 0037→0038 is
+    // registered. When the ordered store is supplied, StopExecution composes
+    // its cancellation in the same Gateway TransactionScope.
     const handlers = makeP2CommandHandlers({
       projects,
       workspaces,
       sessions,
       executions,
       workWaits,
+      ...(Option.isSome(executableApprovals)
+        ? { executableApprovals: executableApprovals.value }
+        : {}),
     });
     return CommandHandlerRegistry.of({
       lookup: (commandType) => {

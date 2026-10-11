@@ -252,22 +252,33 @@ export const ExecutableApprovalRequested = Schema.TaggedStruct(
   "ExecutableApprovalRequested",
   {
     approvalId: Schema.String,
+    routeKind: Schema.Literals(["Executable"]),
     executionId: Schema.String,
     workspaceId: Schema.String,
     logicalActionId: Schema.String,
+    toolInvocationId: Schema.String,
     revision: Schema.Number,
     expiresAt: Schema.String,
+    actionDigest: Schema.String,
   },
 );
 export const ExecutableApprovalResolved = Schema.TaggedStruct(
   "ExecutableApprovalResolved",
   {
     approvalId: Schema.String,
+    routeKind: Schema.Literals(["Executable"]),
     executionId: Schema.String,
     workspaceId: Schema.String,
     logicalActionId: Schema.String,
+    toolInvocationId: Schema.String,
     revision: Schema.Number,
-    outcome: Schema.Literals(["Approved", "Rejected", "Expired", "Cancelled"]),
+    resolution: Schema.Literals([
+      "Approved",
+      "Rejected",
+      "Expired",
+      "Cancelled",
+    ]),
+    reasonCode: Schema.optional(Schema.String),
   },
 );
 

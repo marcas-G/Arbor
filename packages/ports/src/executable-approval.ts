@@ -75,6 +75,10 @@ export interface ExecutableApprovalRequest extends ExecutableApprovalBinding {
 }
 
 export interface ExecutableApprovalStoreService {
+  /** Read-only replay lookup. A prior lease holder can observe the bound row,
+   * but this operation cannot decide, consume, wake, or admit an effect. Any
+   * Approved result must still pass the caller's current P4 lease/authority
+   * claim before progression. */
   readonly findByActionKey: (
     key: ExecutableApprovalKey,
   ) => Effect.Effect<
@@ -91,6 +95,19 @@ export interface ExecutableApprovalStoreService {
   ) => Effect.Effect<
     ExecutableApprovalRecord | "ExecutionStopping",
     ToolInvocationStoreError | LeaseFencingRejected,
+    TransactionScope
+  >;
+  /** Authorized StopExecution composition calls this after committing the
+   * stop flag in the same TransactionScope. It closes only unclaimed proven
+   * Executable approvals and consumes their original revision-0 Inbox key. */
+  readonly cancelForExecution: (input: {
+    readonly executionId: ExecutionId;
+    readonly cancelledAt: string;
+    readonly cancelledBy: Principal;
+    readonly reason: "StopRequested";
+  }) => Effect.Effect<
+    ReadonlyArray<ExecutableApprovalRecord>,
+    ToolInvocationStoreError,
     TransactionScope
   >;
 }

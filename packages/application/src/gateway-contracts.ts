@@ -33,6 +33,7 @@ import type {
   SessionRepositoryError,
   TransactionOperationalFailure,
   TransactionScope,
+  ToolInvocationStoreError,
   VerificationRepositoryError,
   WorkRepositoryError,
   WorkspaceRepositoryError,
@@ -100,6 +101,7 @@ export type CommandHandlerError =
   | HumanMessageStoreError
   | ConversationJobStoreError
   | ControlApprovalStoreError
+  | ToolInvocationStoreError
   | DependencyRepositoryError
   | DeliverableRepositoryError
   | VerificationRepositoryError

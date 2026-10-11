@@ -41,7 +41,11 @@ export type ExecutableApprovalIssuanceResult =
   | ExecutableApprovalRecord
   | "ExecutionStopping";
 
-/** Application-side issuance composition. Storage is required to linearize
+/** Application-side issuance composition. Existing-row lookup is read-only;
+ * returning an Approved row is not effect authorization. The caller must pass
+ * the same ToolInvocationId and current full Worker fence through P4's claim
+ * before any action can advance. New writes are fenced by the storage port.
+ * Storage is required to linearize
  * Pending-row, Inbox admission, request event and P2 wake source in one
  * transaction. The P38 SQLite implementation supplies that port after 0038. */
 export const issueExecutableApproval = (
