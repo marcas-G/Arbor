@@ -731,8 +731,7 @@ export const ToolInvocationStoreLive: Layer.Layer<
                           expires_at, consumed_by
                      FROM action_approvals
                     WHERE approval_id = ? AND ${legacyP4UnifiedApprovalShape}
-                      AND ((source_state IS NULL AND state IN ('Approved','Consumed'))
-                        OR (source_state = 'Approved' AND state = 'Expired')
+                      AND ((source_state = 'Approved' AND state = 'Expired')
                         OR (source_state = 'Consumed' AND state = 'Consumed'))`
                 : "SELECT * FROM invocation_approvals WHERE approval_id = ?",
               [approvalId],
