@@ -366,6 +366,18 @@ export const LegacyLegacyDirectiveHandlersLive: Layer.Layer<
               reason: "not an InvokeTool",
             };
           }
+          if (
+            context._tag !== "ExecutionOrigin" ||
+            context.workerId === undefined ||
+            context.workerIncarnationId === undefined
+          ) {
+            return yield* Effect.fail({
+              _tag: "AgentActionOperationalFailure" as const,
+              operation: "ToolRuntime.LeaseFenceUnavailable",
+              cause:
+                "legacy InvokeTool requires a complete ExecutionOrigin lease-holder triple",
+            });
+          }
           const requestedAt = yield* clock.now();
           const toolVersion = "1";
           const intent: ToolIntent = {
@@ -396,18 +408,12 @@ export const LegacyLegacyDirectiveHandlersLive: Layer.Layer<
               delegationDepth: 0,
             },
             controlBasisDigest: "slice",
-            ...(context._tag === "ExecutionOrigin" &&
-            context.workerId !== undefined &&
-            context.workerIncarnationId !== undefined
-              ? {
-                  executionFence: {
-                    executionId: execution.executionId,
-                    workerId: context.workerId,
-                    workerIncarnationId: context.workerIncarnationId,
-                    fencingGeneration: context.fencingGeneration,
-                  },
-                }
-              : {}),
+            executionFence: {
+              executionId: execution.executionId,
+              workerId: context.workerId,
+              workerIncarnationId: context.workerIncarnationId,
+              fencingGeneration: context.fencingGeneration,
+            },
             requestedAt,
           };
           const result = yield* tools.invoke(intent, toolContext);

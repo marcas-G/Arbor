@@ -164,7 +164,7 @@ export const makeExecutableToolHandler = (
               fencingGeneration: context.fencingGeneration,
             }
           : undefined;
-      if (context._tag === "ExecutionOrigin" && executionFence === undefined) {
+      if (executionFence === undefined) {
         return yield* Effect.fail({
           _tag: "AgentActionOperationalFailure" as const,
           operation: "ToolRuntime.LeaseFenceUnavailable",
@@ -259,7 +259,7 @@ export const makeExecutableToolHandler = (
         actor: context.principal as never,
         authenticatedPrincipal: context.principal,
         controlBasisDigest,
-        ...(executionFence === undefined ? {} : { executionFence }),
+        executionFence,
         delegationDepth:
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,
