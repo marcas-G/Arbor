@@ -9,6 +9,8 @@ import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
+import { Principal, parse } from "../../../packages/domain/dist/index.js";
+import { runExecution } from "../../../packages/execution-runtime/dist/index.js";
 import { SHELL_DEFINITION } from "../../../packages/tool-runtime/dist/catalog.js";
 
 const role = process.env.ARBOR_P4_FENCE_ROLE;
@@ -20,10 +22,14 @@ if (databaseFile === undefined) {
   throw new Error("P4 fencing child needs ARBOR_DB");
 }
 const gateDirectory = join(dirname(databaseFile), "p4-fence-gates");
+const explicitExecutionTarget =
+  process.env.ARBOR_P4_FENCE_EXPLICIT_EXECUTION_ID;
+const explicitExecutionIds = new Set();
+const reportedLiveLeaseSkips = new Set();
 
 const emit = (event) =>
   process.stdout.write(
-    `${JSON.stringify({ tag: "P4_FENCE_PROBE", role, ...event })}\n`,
+    `${JSON.stringify({ tag: "P4_FENCE_PROBE", role, pid: process.pid, ...event })}\n`,
   );
 
 const waitForGate = async (name, event) => {
@@ -71,6 +77,22 @@ const toolQualificationProbe = async (event) => {
 };
 
 const executionLeaseQualificationProbe = async (event) => {
+  if (event.boundary === "AH10LeaseAcquisitionRejected") {
+    emit({
+      ...event,
+      source: explicitExecutionIds.has(event.executionId)
+        ? "test-runExecution"
+        : "scheduler",
+    });
+    return;
+  }
+  if (event.boundary === "AH10PreDispatchSkippedLiveLease") {
+    if (!reportedLiveLeaseSkips.has(event.executionId)) {
+      reportedLiveLeaseSkips.add(event.executionId);
+      emit(event);
+    }
+    return;
+  }
   if (event.boundary === "AH10AfterLeaseAcquired") {
     emit(event);
     if (role === "new" && process.env.ARBOR_P4_FENCE_PAUSE_NEW === "1") {
@@ -102,6 +124,49 @@ const config = {
   toolQualificationProbe,
   executionLeaseQualificationProbe,
 };
+
+if (role === "new" && explicitExecutionTarget !== undefined) {
+  void (async () => {
+    await waitForGate("explicit-runExecution", {
+      executionId: explicitExecutionTarget,
+    });
+    explicitExecutionIds.add(explicitExecutionTarget);
+    try {
+      await Effect.runPromise(
+        Effect.provide(
+          runExecution(
+            explicitExecutionTarget,
+            { _tag: "Recovery" },
+            parse(Principal)("runtime:system"),
+            undefined,
+            undefined,
+            executionLeaseQualificationProbe,
+          ),
+          main(config),
+        ),
+      );
+      emit({
+        boundary: "AH10ExplicitRunExecutionUnexpectedSuccess",
+        executionId: explicitExecutionTarget,
+      });
+    } catch (error) {
+      const errorText = `${String(error)} ${JSON.stringify(error)}`;
+      if (!errorText.includes("LeaseFencingRejected")) {
+        emit({
+          boundary: "AH10ExplicitRunExecutionError",
+          executionId: explicitExecutionTarget,
+          error: errorText,
+        });
+      }
+    }
+  })().catch((error) => {
+    emit({
+      boundary: "AH10ExplicitRunExecutionError",
+      executionId: explicitExecutionTarget,
+      error: String(error),
+    });
+  });
+}
 
 await Effect.runPromise(
   Effect.provide(Effect.scoped(runDaemonForever(config)), main(config)),
