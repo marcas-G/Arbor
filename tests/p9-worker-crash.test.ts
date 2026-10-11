@@ -10,6 +10,7 @@ import {
   LeaseServiceLive,
   layer,
   P12_MIGRATIONS,
+  P36_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   runMigrations,
@@ -514,7 +515,10 @@ const run = <A>(program: Effect.Effect<A, any, any>): Promise<A> =>
   );
 
 const boot = Effect.gen(function* () {
+  // Preserve the historical P12 fixture start, then upgrade before the
+  // current P4 ToolInvocation store reads/writes its P36 admission state.
   yield* runMigrations(P12_MIGRATIONS);
+  yield* runMigrations(P36_MIGRATIONS);
   yield* seed;
 });
 
