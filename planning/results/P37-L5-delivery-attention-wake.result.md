@@ -9,8 +9,9 @@ Status: **implementation checkpoint; functional and process qualification pendin
 - The P10 Attention poll now exposes an optional process-local qualification
   boundary after its data transaction commits. Each affected Deliver fact is
   reported once, after marker, outbox ACK, P1 offset and successful poll-claim
-  settlement are durable. Production daemon configuration passes this hook
-  only when a test/qualification harness supplies it.
+  settlement are durable. `SingleWorkspaceConfig` conditionally forwards the
+  optional hook to `ProductionDaemonServiceLive`; ordinary production startup
+  leaves it absent.
 - The SQLite Deliver marker writer reuses the existing P10 pre-commit probe
   after validating and inserting/verifying the source-specific marker. This
   gives process qualification an exact marker-written-before-transaction-commit
@@ -31,6 +32,22 @@ Status: **implementation checkpoint; functional and process qualification pendin
 Successful Deliver parent wake remains driven by the existing committed
 `MessageSent(v1)` WorkflowSignalConsumer mapping to `ChildDelivered`; this
 change adds no separate wake row or competing wake source.
+
+The L6 process child supplies the optional config hook and pauses at the exact
+post-commit callback:
+
+```js
+const attentionPollQualificationProbe = async (event) => {
+  if (event.boundary === "P10AfterDeliverAttentionConsumerCommit") {
+    emit(event);
+    await holdConfiguredBoundary(event.boundary, event);
+  }
+};
+```
+
+That source is in `tests/functional/support/p37-deliver-process-child.mjs` in
+the L6 worktree. Its child config passes `attentionPollQualificationProbe`;
+the composition field now carries that callback into the running P10 poll.
 
 ## Static verification
 

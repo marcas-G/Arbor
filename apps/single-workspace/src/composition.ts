@@ -7,6 +7,7 @@ import {
 } from "@arbor/agent-runtime";
 import {
   type AttentionPollPolicyConfig,
+  type AttentionPollQualificationProbe,
   type AuthorityResolverPort,
   AuthorityResolverPortLive,
   type CommandGateway,
@@ -338,6 +339,8 @@ export interface SingleWorkspaceConfig {
   readonly deliverReplayQualificationProbe?: DeliverReplayQualificationProbe;
   /** Test-only P10 consumer pause point after row write but before commit. */
   readonly attentionProjectionQualificationProbe?: AttentionProjectionQualificationProbe;
+  /** Test-only P10 poll pause point after its marker/ACK/offset transaction commits. */
+  readonly attentionPollQualificationProbe?: AttentionPollQualificationProbe;
   /** Test-only process-local probe around P11 activation transaction commit. */
   readonly workspaceResourceActivationQualificationProbe?: WorkspaceResourceActivationQualificationProbe;
   /** Test-only process-local P12 pause after the CreateProject receipt commits,
@@ -893,6 +896,12 @@ export const buildSingleWorkspaceLayer = (
       ...(config.attentionPollPolicy !== undefined
         ? { attentionPollPolicy: config.attentionPollPolicy }
         : {}),
+      ...(config.attentionPollQualificationProbe === undefined
+        ? {}
+        : {
+            attentionPollQualificationProbe:
+              config.attentionPollQualificationProbe,
+          }),
       ...(config.executionSettlementQualificationProbe === undefined
         ? {}
         : {
