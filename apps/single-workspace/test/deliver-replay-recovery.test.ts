@@ -9,6 +9,7 @@ import {
   type DeliverReplayAttentionFact,
   type RecordDeliverReplayFailureInput,
   type RecoveryAttentionFactStoreService,
+  type StoredCommandResolution,
   sha256Hex,
 } from "@arbor/ports";
 import { Cause, Effect, Exit, Option } from "effect";
@@ -22,9 +23,9 @@ const occurrence = `${providerTurnId}:${outputPosition}`;
 const messageId = `msg_${newUuid7("deliver-message", occurrence)}` as MessageId;
 const executionId = "exe_deliver-recovery-test";
 const projectId = "prj_deliver-recovery-test";
-const senderWorkspaceId = "ws_deliver-child";
-const recipientWorkspaceId = "ws_deliver-parent";
-const deliverableId = "del_deliver-recovery-test";
+const senderWorkspaceId = `ws_${newUuid7("p37-deliver-recovery", "sender")}`;
+const recipientWorkspaceId = `ws_${newUuid7("p37-deliver-recovery", "recipient")}`;
+const deliverableId = `del_${newUuid7("p37-deliver-recovery", "deliverable")}`;
 const summary = "The child result is ready.";
 
 const input = (generation: number): AgentActionHandlerInput =>
@@ -65,6 +66,31 @@ const input = (generation: number): AgentActionHandlerInput =>
   }) as AgentActionHandlerInput;
 
 const legacyCommandId = `cmd_${newUuid7("deliver-command", occurrence)}`;
+const committedResult = {
+  messageId,
+  deliverableId,
+  senderWorkspaceId,
+  recipientWorkspaceId,
+  admitted: true,
+};
+const committedPriorReceipt = (
+  result: unknown = committedResult,
+): StoredCommandResolution =>
+  ({
+    commandId: legacyCommandId,
+    projectId,
+    // The prior generation's immutable fingerprint is not the current
+    // generation's candidate fingerprint. Exact effect proof below remains
+    // authoritative for whether this receipt may converge the Action.
+    semanticRequestFingerprint: "a".repeat(64),
+    schemaVersion: "1",
+    fingerprintAlgorithmVersion: 1,
+    resolution: "Committed",
+    resultJson: JSON.stringify(result),
+    terminalErrorJson: null,
+    createdAt: "2026-10-11T00:00:00.000Z",
+    settledAt: sentAt,
+  }) as StoredCommandResolution;
 const sentAt = "2026-10-11T00:00:01.000Z";
 const legacyMessage = {
   messageId,
@@ -109,6 +135,7 @@ const legacyInbox = {
 const baseDependencies = (options: {
   readonly priorFact?: DeliverReplayAttentionFact;
   readonly existingEffect?: boolean;
+  readonly priorReceipt?: StoredCommandResolution;
 }) => {
   let gatewayCalls = 0;
   let failureWrites = 0;
@@ -155,7 +182,12 @@ const baseDependencies = (options: {
         Option.some({ commandType: "DeliverMessage", schemaVersion: "1" }),
     } as unknown as CommandHandlerRegistryService,
     commandReceipts: {
-      findResolution: () => Effect.succeed(Option.none()),
+      findResolution: (commandId: string) =>
+        Effect.succeed(
+          options.priorReceipt?.commandId === commandId
+            ? Option.some(options.priorReceipt)
+            : Option.none(),
+        ),
       hasRetryableAttempt: () => Effect.succeed(false),
     },
     deliverables: {
@@ -226,6 +258,54 @@ const baseDependencies = (options: {
 };
 
 describe("P37 Deliver receipt recovery", () => {
+  it("receipt-first converges an exact prior-generation delivery despite a different candidate fingerprint", async () => {
+    const fixture = baseDependencies({
+      existingEffect: true,
+      priorReceipt: committedPriorReceipt(),
+    });
+    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
+    const result = await Effect.runPromise(handler.handle(input(1)));
+
+    expect(result).toMatchObject({
+      _tag: "Observation",
+      observation: {
+        text: `DeliverableDelivered(${deliverableId}, ${recipientWorkspaceId})`,
+      },
+    });
+    expect(fixture.counts()).toMatchObject({
+      gatewayCalls: 0,
+      failureWrites: 0,
+      failureCodes: [],
+    });
+    expect(fixture.counts().effectReads).toBeGreaterThan(0);
+  });
+
+  it("keeps a prior Committed receipt blocked when its result disagrees with exact effects", async () => {
+    const fixture = baseDependencies({
+      existingEffect: true,
+      priorReceipt: committedPriorReceipt({
+        ...committedResult,
+        deliverableId: `del_${newUuid7("p37-deliver-recovery", "other-deliverable")}`,
+      }),
+    });
+    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
+    const exit = await Effect.runPromiseExit(handler.handle(input(1)));
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(failure)).toBe(true);
+      if (Option.isSome(failure)) {
+        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+      }
+    }
+    expect(fixture.counts()).toMatchObject({
+      gatewayCalls: 0,
+      failureWrites: 1,
+      failureCodes: ["PriorReceiptResultMismatch"],
+    });
+  });
+
   it("does not adopt gen0 direct-write evidence from a later lease generation", async () => {
     const fixture = baseDependencies({ existingEffect: true });
     const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
