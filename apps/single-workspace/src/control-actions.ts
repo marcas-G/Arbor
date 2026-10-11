@@ -270,7 +270,7 @@ export interface DeliverActionDependencies {
   readonly journal: DomainEventJournalService;
   readonly replayAttention?: Pick<
     RecoveryAttentionFactStoreService,
-    "recordDeliverReplayFailure"
+    "recordDeliverReplayFailure" | "findDeliverReplayFailure"
   >;
   /** Test-only process-crash seam. Production composition must omit it. */
   readonly deliverReplayQualificationProbe?: DeliverReplayQualificationProbe;
@@ -2698,6 +2698,50 @@ export const deliverMessageGatewayHandler = (
         `msg_${newUuid7("deliver-message", occurrence)}`,
       );
       const pinnedLogicalActionId = logicalActionId;
+      const replayAttention = dependencies.replayAttention;
+      if (
+        pinnedLogicalActionId === undefined ||
+        replayAttention === undefined
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure("Deliver.recovery")(
+            "Deliver replay failure identity and store are required",
+          ),
+        );
+      }
+      const expectedAttentionFactId = `att_${sha256Hex(
+        JSON.stringify({
+          version: 1,
+          executionId: execution.executionId,
+          logicalActionId: pinnedLogicalActionId,
+          messageId,
+        }),
+      )}`;
+      const priorReplayFailure = yield* dependencies.tx.transact(
+        replayAttention.findDeliverReplayFailure(expectedAttentionFactId),
+      );
+      if (Option.isSome(priorReplayFailure)) {
+        const fact = priorReplayFailure.value;
+        if (
+          fact.attentionFactId !== expectedAttentionFactId ||
+          fact.projectId !== execution.projectId ||
+          fact.executionId !== execution.executionId ||
+          fact.targetWorkspaceId !== execution.workspaceId ||
+          fact.logicalActionId !== pinnedLogicalActionId ||
+          fact.messageId !== messageId
+        ) {
+          return yield* Effect.fail(
+            actionOperationalFailure("Deliver.recovery")(
+              "stored Deliver replay failure has conflicting identity",
+            ),
+          );
+        }
+        return yield* Effect.fail<AgentActionError>({
+          _tag: "AgentActionRecoveryBlocked",
+          executionId: execution.executionId,
+          logicalActionId: pinnedLogicalActionId,
+        });
+      }
       const sender = yield* dependencies.tx.transact(
         dependencies.workspaces.findById(execution.workspaceId),
       );
@@ -2742,15 +2786,6 @@ export const deliverMessageGatewayHandler = (
         causedByCommandId?: CommandIdType,
       ) =>
         Effect.gen(function* () {
-          const replayAttention = dependencies.replayAttention;
-          if (
-            pinnedLogicalActionId === undefined ||
-            replayAttention === undefined
-          ) {
-            return yield* Effect.fail(
-              failure("durable Deliver replay failure storage is unavailable"),
-            );
-          }
           const factInput = {
             projectId: execution.projectId,
             executionId: execution.executionId,
@@ -3078,6 +3113,14 @@ export const deliverMessageGatewayHandler = (
       }
       if (retryableCommandId !== undefined && hasEffect) {
         return yield* block("PriorReceiptEffectConflict", retryableCommandId);
+      }
+
+      if (
+        hasEffect &&
+        recoverableContext !== undefined &&
+        recoverableContext.fencingGeneration > 0
+      ) {
+        return yield* block("PriorReceiptEffectConflict");
       }
 
       if (committedReceipt === undefined && rejectedReceipt === undefined) {
