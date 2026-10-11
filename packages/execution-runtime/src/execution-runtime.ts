@@ -160,22 +160,13 @@ export const runExecution = (
     const safety = yield* RuntimeSafetyGate;
     const gateway = yield* CommandGateway;
     const clock = yield* Clock;
-    const executableApprovals = yield* Effect.serviceOption(
-      ExecutableApprovalStore,
-    );
+    const executableApprovals = yield* ExecutableApprovalStore;
 
     const { execution, pendingApproval } = yield* tx.transact(
       Effect.gen(function* () {
         const execution = yield* repository.findById(executionId);
-        // Earlier isolated runtime fixtures without migration 0038 have no
-        // approval ledger. The production P38 composition always installs the
-        // real store (or a fail-closed unavailable sentinel).
         const pendingApproval =
-          executableApprovals._tag === "Some"
-            ? yield* executableApprovals.value.findPendingForExecution(
-                executionId,
-              )
-            : Option.none();
+          yield* executableApprovals.findPendingForExecution(executionId);
         return { execution, pendingApproval };
       }),
     );

@@ -74,6 +74,7 @@ const makeApp = (
   options: {
     readonly pendingApproval?: ExecutableApprovalRecord;
     readonly calls?: { dispatch: number; drive: number };
+    readonly omitApprovalStore?: boolean;
   } = {},
 ) => {
   const base = layer({ filename: ":memory:" });
@@ -101,11 +102,10 @@ const makeApp = (
           : Option.some(options.pendingApproval),
       ),
   } as never);
-  const all = Layer.mergeAll(
+  const core = Layer.mergeAll(
     infra,
     repos,
     fence,
-    approvals,
     Layer.succeed(WorkerDispatchPort, {
       dispatch: () => {
         calls.dispatch += 1;
@@ -121,6 +121,7 @@ const makeApp = (
     RuntimeSafetyGateLive(),
     Layer.provide(P2CommandHandlerRegistryLive, repos),
   );
+  const all = options.omitApprovalStore ? core : Layer.merge(core, approvals);
   return {
     layer: Layer.mergeAll(all, Layer.provide(CommandGatewayLive, all)),
     calls,
@@ -347,6 +348,32 @@ describe("P2-014 driver / dispatch / safety", () => {
       approvalId: "eap_p2_pending_gate",
       revision: 0,
     });
+    expect(calls).toEqual({ dispatch: 0, drive: 0 });
+    expect(result.leases).toBe(0);
+  });
+
+  it("fails closed before dispatch when the approval store is missing", async () => {
+    const calls = { dispatch: 0, drive: 0 };
+    const app = makeApp(yieldedSettlement, {
+      calls,
+      omitApprovalStore: true,
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P12_MIGRATIONS);
+      yield* seed;
+      yield* admit;
+      const exit = yield* Effect.exit(
+        runExecution(executionId, { _tag: "Recovery" }, principal),
+      );
+      const sql = yield* SqlClient;
+      const leases = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM execution_leases WHERE execution_id = ?",
+        [executionId],
+      );
+      return { exit, leases: leases[0]?.count ?? -1 };
+    });
+    const result = await run(program, app.layer);
+    expect(result.exit._tag).toBe("Failure");
     expect(calls).toEqual({ dispatch: 0, drive: 0 });
     expect(result.leases).toBe(0);
   });
