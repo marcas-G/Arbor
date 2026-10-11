@@ -1,5 +1,9 @@
+import { Actor, parse } from "@arbor/domain";
 import {
-  type DomainEventJournal,
+  type AssignWorkBindingFailureCode,
+  type DeliverReplayFailureCode,
+  DomainEventJournal,
+  type IdGenerator,
   RecoveryAttentionFactStore,
   TransactionPort,
   WorkReadmissionGateStore,
@@ -23,6 +27,10 @@ const workspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789c1";
 const sessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789c1";
 const workId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789c1";
 const executionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789c1";
+const otherWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789c2";
+const otherSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789c2";
+const otherWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789c2";
+const otherExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789c2";
 
 const makeApp = () => {
   const sqlite = layer({ filename: ":memory:" });
@@ -49,6 +57,7 @@ const runDb = <A>(
     | WorkReadmissionGateStore
     | RecoveryAttentionFactStore
     | DomainEventJournal
+    | IdGenerator
   >,
 ) => Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp())));
 
@@ -128,6 +137,100 @@ const seed = (settlement: unknown = null) =>
           ],
         );
       }),
+    );
+  });
+
+const seedOtherWorkspaceExecution = Effect.gen(function* () {
+  const sql = yield* SqlClient;
+  const tx = yield* TransactionPort;
+  yield* tx.transact(
+    Effect.gen(function* () {
+      yield* sql.unsafe(
+        `INSERT INTO sessions (
+          session_id, binding_kind, workspace_id, execution_id,
+          context_epoch, created_at
+        ) VALUES (?, 'WorkspacePrimary', ?, NULL, 0, 't0')`,
+        [otherSessionId, otherWorkspaceId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO workspaces (
+          workspace_id, project_id, parent_workspace_id, name,
+          responsibility_definition, responsibility_revision,
+          resource_boundary, resource_boundary_revision, agent_binding,
+          primary_session_id, current_work_id, workspace_policy,
+          workspace_policy_revision, revision, lifecycle, created_at, updated_at
+        ) VALUES (?, ?, ?, 'Other', '{}', 0, '{}', 0, '{}', ?, ?, '{}', 0, 0, 'Active', 't0', 't0')`,
+        [otherWorkspaceId, projectId, workspaceId, otherSessionId, otherWorkId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO works (
+          work_id, project_id, workspace_id, objective, why, constraints,
+          completion_expectation, verification_mission, provenance,
+          lifecycle, revision, created_at, updated_at
+        ) VALUES (?, ?, ?, 'other objective', 'why', '[]', 'done', '{}', '{}', 'Open', 0, 't0', 't0')`,
+        [otherWorkId, projectId, otherWorkspaceId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO executions (
+          execution_id, project_id, binding_kind, workspace_id,
+          episode_kind, episode_ref, episode_revision, parent_execution_id,
+          mission, session_id, admitted_at, stop_requested_at,
+          settlement_kind, settlement_json, settled_at
+        ) VALUES (?, ?, 'workspace', ?, 'WorkEpisode', ?, 0,
+          NULL, NULL, ?, 't0', NULL, NULL, NULL, NULL)`,
+        [
+          otherExecutionId,
+          projectId,
+          otherWorkspaceId,
+          otherWorkId,
+          otherSessionId,
+        ],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO agent_execution_state (
+          execution_id, episode_json, wake_reason, current_mode,
+          active_skill_refs_json, turn_no, recent_directive_refs_json,
+          recent_action_fingerprints_json, updated_at
+        ) VALUES (?, ?, 'Initial', NULL, '[]', 0, '[]', '[]', 't0')`,
+        [
+          otherExecutionId,
+          JSON.stringify({
+            _tag: "WorkEpisode",
+            workId: otherWorkId,
+            targetWorkRevision: 0,
+          }),
+        ],
+      );
+    }),
+  );
+});
+
+const appendReconciliationEvent = (
+  aggregateRef: string,
+  payloadExecutionId?: string,
+) =>
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const journal = yield* DomainEventJournal;
+    const payload = {
+      ...(payloadExecutionId === undefined
+        ? {}
+        : { executionId: payloadExecutionId }),
+      invocationRefsFingerprint: "invocation-fingerprint",
+      refs: ["invocation-ref"],
+    };
+    yield* tx.transact(
+      journal.append([
+        {
+          projectId: projectId as never,
+          eventType: "ReconciliationEscalated",
+          eventVersion: 1,
+          occurredAt: "t1",
+          aggregateRef,
+          actor: parse(Actor)("system:recovery"),
+          payload,
+        },
+      ]),
     );
   });
 
@@ -229,6 +332,215 @@ describe("P2 WorkReadmissionGateStore", () => {
           expect(encoded).toContain('"reasonCode":"EpisodeMalformed"');
           expect(encoded).not.toContain("not-json");
         }
+      }),
+    ));
+
+  it("holds exact Work on the canonical OutcomeUnknown reconciliation settlement", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed({
+          _tag: "OutcomeUnknown",
+          reconciliation: {
+            _tag: "ReconciliationRequired",
+            invocationRefs: ["invocation-ref"],
+          },
+        });
+        const held = yield* query();
+        expect(Option.isSome(held) && held.value).toEqual({
+          sourceKind: "OutcomeUnknownSettlement",
+          executionId,
+        });
+      }),
+    ));
+
+  it.each([
+    null,
+    { _tag: "UnexpectedInterruption" },
+    { _tag: "ControlledInterruption", reason: 42 },
+  ])("fails closed for malformed Interrupted settlement result %j", (result) =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed({ _tag: "Interrupted", result });
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SettlementMalformed"',
+          );
+        }
+      }),
+    ),
+  );
+
+  it("keeps valid StopRequested interruption outside the RuntimeSafetyStop hold", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed({ _tag: "Interrupted", result: { _tag: "StopRequested" } });
+        expect(Option.isNone(yield* query())).toBe(true);
+      }),
+    ));
+
+  it("fails closed when ReconciliationEscalated aggregate and payload bind different Executions", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* seedOtherWorkspaceExecution;
+        yield* appendReconciliationEvent(executionId, otherExecutionId);
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SourceEventExecutionMismatch"',
+          );
+          expect(JSON.stringify(exit.cause)).toContain(
+            `"executionId":"${executionId}"`,
+          );
+        }
+      }),
+    ));
+
+  it("fails closed when a ReconciliationEscalated payload binds this Workspace but aggregate_ref points elsewhere", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* seedOtherWorkspaceExecution;
+        yield* appendReconciliationEvent(otherExecutionId, executionId);
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SourceEventExecutionMismatch"',
+          );
+          expect(JSON.stringify(exit.cause)).toContain(
+            `"executionId":"${executionId}"`,
+          );
+        }
+      }),
+    ));
+
+  it("fails closed when ReconciliationEscalated payload points to a missing Execution", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* appendReconciliationEvent(
+          executionId,
+          "exe_018f2b3c-4d5e-7abc-8def-0123456789ff",
+        );
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SourceEventExecutionMismatch"',
+          );
+        }
+      }),
+    ));
+
+  it("fails closed when an in-scope ReconciliationEscalated event omits its Execution binding", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* appendReconciliationEvent(executionId);
+        const exit = yield* Effect.exit(query());
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"reasonCode":"SourceEventExecutionMismatch"',
+          );
+        }
+      }),
+    ));
+
+  it("ignores a valid ReconciliationEscalated event whose exact Execution belongs to another Workspace", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* seedOtherWorkspaceExecution;
+        yield* appendReconciliationEvent(otherExecutionId, otherExecutionId);
+        expect(Option.isNone(yield* query())).toBe(true);
+      }),
+    ));
+
+  it("recognizes every closed DeliverReplay and AssignWork binding failure code", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        const sql = yield* SqlClient;
+        const tx = yield* TransactionPort;
+        const facts = yield* RecoveryAttentionFactStore;
+        const committedCommandId = "cmd_readmission_inventory";
+        yield* tx.transact(
+          sql.unsafe(
+            `INSERT INTO commands (
+              command_id, project_id, semantic_request_fingerprint,
+              schema_version, fingerprint_algorithm_version, resolution,
+              result_json, terminal_error_json, created_at, settled_at
+            ) VALUES (?, ?, 'fingerprint', '1', 1, 'Committed', '{}', NULL, 't0', 't0')`,
+            [committedCommandId, projectId],
+          ),
+        );
+        const deliverCodes = [
+          "LegacyMessageMissingEvent",
+          "LegacyEventMissingMessage",
+          "LegacyMessageBindingMismatch",
+          "LegacyInboxConflict",
+          "PriorReceiptDecodeMismatch",
+          "PriorReceiptResultMismatch",
+          "RejectedReceiptEffectConflict",
+          "PriorReceiptEffectConflict",
+        ] as const satisfies ReadonlyArray<DeliverReplayFailureCode>;
+        const assignCodes = [
+          "LegacyUnbound",
+          "MissingBinding",
+          "DuplicateBinding",
+          "MalformedBinding",
+          "RefMismatch",
+          "AuthorityMismatch",
+          "ForeignTarget",
+          "PlacementMismatch",
+          "SourceActionMismatch",
+          "ReceiptMismatch",
+          "WorkMismatch",
+          "ProvenanceMismatch",
+          "EventMismatch",
+          "CommitLifecycleMismatch",
+        ] as const satisfies ReadonlyArray<AssignWorkBindingFailureCode>;
+        yield* tx.transact(
+          Effect.gen(function* () {
+            for (const [index, failureCode] of deliverCodes.entries()) {
+              yield* facts.recordDeliverReplayFailure({
+                projectId: projectId as never,
+                executionId: executionId as never,
+                targetWorkspaceId: workspaceId as never,
+                logicalActionId: `act_deliver_inventory_${index}`,
+                messageId: `msg_deliver_inventory_${index}`,
+                failureCode,
+                firstDetectedAt: `t${index + 1}`,
+              });
+            }
+            for (const [index, failureCode] of assignCodes.entries()) {
+              yield* facts.recordAssignWorkBindingFailure({
+                projectId: projectId as never,
+                executionId: executionId as never,
+                targetWorkspaceId: workspaceId as never,
+                logicalActionId: `act_assign_inventory_${index}`,
+                committedCommandId: committedCommandId as never,
+                failureCode,
+                firstDetectedAt: `t${index + 20}`,
+              });
+            }
+          }),
+        );
+        expect(Option.isSome(yield* query())).toBe(true);
       }),
     ));
 });

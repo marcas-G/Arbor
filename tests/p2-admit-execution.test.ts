@@ -60,10 +60,10 @@ const systemContext: CommandSubmissionContext = {
   causationRef: "scheduler",
 };
 
-const makeApp = (held = false) => {
+const makeApp = (held = false, includeReadmissionGate = true) => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
-  const repos = Layer.mergeAll(
+  const repositoryLayers = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
@@ -72,20 +72,23 @@ const makeApp = (held = false) => {
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
-    Layer.succeed(WorkReadmissionGateStore, {
-      hasBlockingSource: () =>
-        Effect.succeed(
-          held
-            ? Option.some({
-                sourceKind: "RuntimeSafetyStopSettlement" as const,
-                executionId: parse(ExecutionId)(
-                  "exe_018f2b3c-4d5e-7abc-8def-0123456789ad",
-                ) as ExecutionId,
-              })
-            : Option.none(),
-        ),
-    }),
   );
+  const gate = Layer.succeed(WorkReadmissionGateStore, {
+    hasBlockingSource: () =>
+      Effect.succeed(
+        held
+          ? Option.some({
+              sourceKind: "RuntimeSafetyStopSettlement" as const,
+              executionId: parse(ExecutionId)(
+                "exe_018f2b3c-4d5e-7abc-8def-0123456789ad",
+              ) as ExecutionId,
+            })
+          : Option.none(),
+      ),
+  });
+  const repos = includeReadmissionGate
+    ? Layer.mergeAll(repositoryLayers, gate)
+    : repositoryLayers;
   const all = Layer.mergeAll(
     infra,
     repos,
@@ -244,6 +247,48 @@ describe("P2-009 AdmitExecution", () => {
     expect(result).toMatchObject({ executions: 0, receipts: 0 });
     expect(JSON.stringify((result as { result: unknown }).result)).toContain(
       '"_tag":"WorkReadmissionHeld"',
+    );
+  });
+
+  it("fails closed when WorkspaceMain admission lacks the readmission gate service", async () => {
+    const app = makeApp(false, false);
+    const commandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789af",
+    );
+    const executionId = parse(ExecutionId)(
+      "exe_018f2b3c-4d5e-7abc-8def-0123456789af",
+    ) as ExecutionId;
+    const payload = payloadMain(executionId);
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P2_MIGRATIONS);
+      yield* seed;
+      const gw = yield* CommandGateway;
+      const result = yield* Effect.exit(
+        gw.execute(
+          envelope(commandId, payload),
+          systemContext,
+          authority(commandId, payload),
+        ),
+      );
+      const sql = yield* SqlClient;
+      const executions = yield* sql.unsafe<{ readonly count: number }>(
+        "SELECT COUNT(*) AS count FROM executions WHERE execution_id = ?",
+        [executionId],
+      );
+      const receipts = yield* sql.unsafe<{ readonly count: number }>(
+        "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
+        [commandId],
+      );
+      return {
+        result,
+        executions: Number(executions[0]?.count),
+        receipts: Number(receipts[0]?.count),
+      };
+    });
+    const result = await run(Effect.provide(program, app));
+    expect(result).toMatchObject({ executions: 0, receipts: 0 });
+    expect(JSON.stringify((result as { result: unknown }).result)).toContain(
+      '"_tag":"ReadmissionGateStoreFailure"',
     );
   });
 

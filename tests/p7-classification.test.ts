@@ -61,6 +61,7 @@ const otherWorkspace = parse(WorkspaceId)(
 
 const makeClassificationApp = (
   heldWorkIds: ReadonlySet<WorkId> = new Set(),
+  includeReadmissionGate = true,
 ) => {
   const base = makeP7App();
   const waits = Layer.provide(WorkWaitStoreLive, base);
@@ -75,13 +76,16 @@ const makeClassificationApp = (
           : Option.none(),
       ),
   });
-  const dependencies = Layer.mergeAll(base, waits, readmissionGate);
-  return Layer.mergeAll(
-    base,
-    waits,
-    readmissionGate,
-    Layer.provide(DependencyAwareRunnableWorkSourceLive, dependencies),
+  const dependencies = includeReadmissionGate
+    ? Layer.mergeAll(base, waits, readmissionGate)
+    : Layer.mergeAll(base, waits);
+  const classifier = Layer.provide(
+    DependencyAwareRunnableWorkSourceLive,
+    dependencies,
   );
+  return includeReadmissionGate
+    ? Layer.mergeAll(base, waits, readmissionGate, classifier)
+    : Layer.mergeAll(base, waits, classifier);
 };
 
 const seedWork = (workId: WorkId, commandId: CommandId) =>
@@ -287,6 +291,22 @@ describe("P7-008 dependency-aware classification (03 §2/§3)", () => {
         expect([...classified.runnable]).toEqual([WORK_DEP_ONLY]);
       }),
       makeClassificationApp(new Set([WORK_CLEAN])),
+    );
+  });
+
+  it("fails closed when an Open Work exists but the readmission gate port is missing", async () => {
+    await runP7(
+      Effect.gen(function* () {
+        yield* seedWorks([[WORK_CLEAN, CMD_CLEAN]]);
+        const exit = yield* Effect.exit(classifyRoot);
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"_tag":"ReadmissionGateStoreFailure"',
+          );
+        }
+      }),
+      makeClassificationApp(new Set(), false),
     );
   });
 });
