@@ -413,8 +413,12 @@ only 0032's route-blind digest uniqueness with separate Control and
 Executable-logical-action partial indexes. Existing 0032 rows retain route,
 `binding_proven`, source state, terminal Expired/Consumed disposition and
 consumer identity; no binding is inferred and no prior migration or 0037
-Deliver source row is rewritten. The exact DDL delta and legacy constraints
-are owned by DID §9.3 and P4 `03`/`06`.
+Deliver source row is rewritten. The rebuild also recreates the existing
+`action_approvals_id_project UNIQUE(approval_id, project_id)` key from 0033;
+`assign_work_target_bindings(action_approval_id, project_id)` depends on that
+exact composite parent key. This is preservation of the existing AssignWork
+foreign-key contract, not a new approval identity or Control behavior. The
+exact DDL delta and legacy constraints are owned by DID §9.3 and P4 `03`/`06`.
 
 The decision/Inbox/wake facts for request, Resolve, Expire and Stop remain in
 their owning P1/P4/P6/P2 transactions as specified in the EA-DG-01 owner

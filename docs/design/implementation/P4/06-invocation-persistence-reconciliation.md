@@ -220,9 +220,13 @@ Migration 0038 (DID §9.3) rebuilds the existing 0032 table without rewriting
 adds the `Cancelled` state with constraints that preserve earlier approval
 decisions. The 0032 exact-action index is replaced by a Control exact-action
 index and an Executable `(execution_id, logical_step_no, repair_attempt,
-action_index, logical_action_id)` unique index. Legacy 0032 Executable rows
-retain `binding_proven=0`, their terminal `Expired`/`Consumed` state,
-`source_state` and any `consumed_by`; they are never upgraded or reused.
+action_index, logical_action_id)` unique index. It also recreates 0033's
+`action_approvals_id_project UNIQUE(approval_id, project_id)` key because the
+existing `assign_work_target_bindings(action_approval_id, project_id)` foreign
+key references that composite pair. This preserves the existing AssignWork
+binding and Control semantics; 0038 does not alter 0033. Legacy 0032
+Executable rows retain `binding_proven=0`, their terminal `Expired`/`Consumed`
+state, `source_state` and any `consumed_by`; they are never upgraded or reused.
 Migration 0038 follows 0036 AH7 and 0037 AH10 in order; it modifies neither.
 
 The Application composes the following short transactions:

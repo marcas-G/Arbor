@@ -23,13 +23,13 @@ Status: **Design owner landing recorded; independent post-landing review pending
 | Owner file | SHA-256 |
 |---|---|
 | `docs/design/02-system-design.md` | `3C77A61E3EBCAD40D58DF075FB12F994881A079987C00FD21C516819AA4363E6` |
-| `docs/design/03-detailed-implementation-design.md` | `FD12BCD79845D9A5C5CBD27B87A7892D2395FA50DD59A9090494EB0268EFEFC3` |
+| `docs/design/03-detailed-implementation-design.md` | `0460084E149D31A0379975486E4A43A7681ECAB7CCF4319E54C4F7789F67AF43` |
 | `docs/design/implementation/MAC/00-contract-index.md` | `441D188029576F904424D35316D63D359CB3EF4C0161266F201CBDA25C073E09` |
 | `docs/design/implementation/MAC/02-action-approval-error-boundary.md` | `356FE87C59F48932810D41F94171734D1B0BE1D66BF6C16F1A797146192170AE` |
-| `docs/design/implementation/P1/00-contract-index.md` | `0F3ED88D3EF2D9D01D8229A98B93DA321A88B1D6A986D81649E420BBA035FF49` |
+| `docs/design/implementation/P1/00-contract-index.md` | `B3426A325155D743E73608A455AE0157C26AEEF94E8591D2AE4C1D4606FD45AF` |
 | `docs/design/implementation/P1/01-command-contracts.md` | `A5666AC326A8EC98E6F18D5288C718CCA9C4BE8881AA1575F0E4955552FF37F8` |
 | `docs/design/implementation/P1/03-transaction-model.md` | `506F00A12D6F6A13452031E4DABA5F8D884AF0159071CCBA0D9DA855CB01E87B` |
-| `docs/design/implementation/P1/04-sqlite-schema.md` | `B925753C1007291EB274276E983DF5C43AAAF5035D516F2EDA916B8010C4CF61` |
+| `docs/design/implementation/P1/04-sqlite-schema.md` | `BDFC45FF41B46784C1174B2C392656989DD7B31C0C6433CCAE242F752EA53F98` |
 | `docs/design/implementation/P1/05-event-journal.md` | `950558B45B3B44CDF99DA940EC9B39F7A1A3593081BCF85EF0D667BEA1177E3A` |
 | `docs/design/implementation/P10/00-contract-index.md` | `1349D6F222D7D473B247F8B4F6DC9145F8ABE4D963538101ABFA0D92AA64A311` |
 | `docs/design/implementation/P10/01-view-inventory.md` | `5E13028334710ED0AD9A14A4BABAE7B44185717C15ABDCB073F885238F8273B7` |
@@ -48,11 +48,11 @@ Status: **Design owner landing recorded; independent post-landing review pending
 | `docs/design/implementation/P2/06-recovery-skeleton.md` | `6F4307A347F9AD352D9A64DD19F8D3D186AFFB882F7F43681C5C442A8D824391` |
 | `docs/design/implementation/P3/00-contract-index.md` | `3C53D73326A19C06522FAD9A3811A8D07F46B42196557CAD2B06488DAA65E97C` |
 | `docs/design/implementation/P3/08-agent-loop-step-handoff.md` | `6903AF3E9EA8D9007BBE1560D5843CB0497E4093565A44550DC2ACF5894E4517` |
-| `docs/design/implementation/P4/00-contract-index.md` | `137A8E03B5C04815B2654852A71E408DF7202D8DB97B97B253C8C3A8F83B84A9` |
+| `docs/design/implementation/P4/00-contract-index.md` | `E4EFF560A034B3C59D0D5CB3001EBF5B0A8F2E4055BD977D3FFBB002C6682766` |
 | `docs/design/implementation/P4/01-tool-contracts.md` | `34FBF1177982C972274ED67AB6EC8CE1E6ACC067290F27EC2D3B3EF72E59C4FA` |
 | `docs/design/implementation/P4/02-tool-runtime-pipeline.md` | `F13F448B89F3280E75AD950200D19995F958C5B5FE29D5B23DFB40462E3D6793` |
 | `docs/design/implementation/P4/03-authority-permission-approval.md` | `D58C9ADC54B73467C674B7DD2DA896D0FC056176F48BE6FA754772C80DB2A242` |
-| `docs/design/implementation/P4/06-invocation-persistence-reconciliation.md` | `C6B80B4D451A614731C716041002089C82EA356EF8318D2C2A4A23D03A97F9B4` |
+| `docs/design/implementation/P4/06-invocation-persistence-reconciliation.md` | `513A79F92710A0D21232465CDF49E4B1678BD061CD5FEC5BC69A1BCA86EAD400` |
 | `docs/design/implementation/P6/00-contract-index.md` | `3FE68C73531BDA0E9D24908D03E0926DC7C50CF5E46F218CFAE239A6518A9FC1` |
 | `docs/design/implementation/P6/02-communication-protocol.md` | `66243BEA99EE5BEBFB7C156B134A21252C9EABFC245B28A4E42203FB1B071476` |
 | `docs/design/implementation/P6/06-acceptance.md` | `AF1EAADE638E4FB26769B19C00EA5391CE1AB61AA3B349E4927690510B820279` |
@@ -65,7 +65,12 @@ Status: **Design owner landing recorded; independent post-landing review pending
 - `git diff --check`: PASS for the design diff before commit.
 - Owner changes are exactly the 37 files above; one section-order correction
   in P2 preserves the existing `Out of scope` section number.
-- No unaccepted semantic conflict was identified during owner mapping.
+- A post-landing reviewer identified a missing preservation clause for
+  0033's `action_approvals_id_project` composite unique key, required by the
+  existing AssignWork target-binding FK. The follow-up repair and owner-file
+  hashes are recorded in
+  `planning/results/EA-DG-01-post-landing-review-repair.md`; no new semantic
+  decision was needed and neither 0033 nor Control semantics changed.
 - No tests/builds were run. No production or test files were changed, and no
   push/merge was performed.
 - Required next gate: independent post-landing consistency review. Any issue

@@ -5032,6 +5032,8 @@ CREATE UNIQUE INDEX action_approvals_executable_logical_action
   ON action_approvals(execution_id, logical_step_no, repair_attempt,
                       action_index, logical_action_id)
   WHERE route_kind = 'Executable' AND binding_proven = 1;
+CREATE UNIQUE INDEX action_approvals_id_project
+  ON action_approvals(approval_id, project_id);
 ```
 
 This keeps the existing Control exact-action uniqueness and permits different
@@ -5042,6 +5044,13 @@ excludes candidate `expiresAt`, mutable revision, state and decision. The
 loser reads the committed winner's ApprovalId, first-commit expiry and current
 revision. A different candidate `now` therefore never causes a binding
 conflict or TTL refresh. Any other binding mismatch fails closed.
+
+`action_approvals_id_project` is the unchanged composite UNIQUE key introduced
+by migration 0033; 0038 must recreate it on the rebuilt table. The
+`assign_work_target_bindings(action_approval_id, project_id)` foreign key
+references this exact pair. Rebuilding `action_approvals` without this key
+would invalidate the existing FK contract; 0038 changes neither that
+AssignWork binding nor its Control approval semantics.
 
 The preceding migration order remains `0034 → 0035 → 0036 → 0037 → 0038`.
 The supported forward upgrade paths include v35→36→37→38, v36→37→38 and
