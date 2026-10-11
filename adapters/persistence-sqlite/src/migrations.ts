@@ -1974,6 +1974,23 @@ export const P39_RECONCILIATION_MIGRATION: MigrationFile = {
   foreignKeysOff: true,
 };
 
+/** Privileged maintenance runner registry. This deliberately contains only
+ * the P39 descriptor in this isolated P39 tree because the accepted 0037/0038
+ * implementation modules are dependencies that must be integrated before a
+ * version-36 database can advance. Add those descriptors and pinned hashes
+ * here during integration; the maintenance command cannot accept caller SQL. */
+export const P39_MAINTENANCE_MIGRATION_MANIFEST: Readonly<
+  Record<number, { readonly name: string; readonly sha256: string }>
+> = Object.freeze({
+  39: Object.freeze({
+    name: "ah7_reconciliation_attempts",
+    sha256: "b363ee081d18536b1c606a6432b171fbed1a7fc48ef935388111b490a56fab20",
+  }),
+});
+
+export const P39_MAINTENANCE_MIGRATIONS: ReadonlyArray<MigrationFile> =
+  Object.freeze([Object.freeze(P39_RECONCILIATION_MIGRATION)]);
+
 /** AH7-DG-03 accepted forward migration; preserves legacy rows as
  * LegacyUnknown and advances the production SQLite baseline to user_version 36. */
 export const P36_MIGRATIONS: ReadonlyArray<MigrationFile> = [

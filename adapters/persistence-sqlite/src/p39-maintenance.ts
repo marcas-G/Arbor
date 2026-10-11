@@ -299,42 +299,6 @@ export const writeP39BlockReportAndReadBack = (
       );
     const committed = yield* Effect.result(writeAttempt);
     if (committed._tag === "Success") return committed.success;
-
-    // `withTransaction` can report an error after SQLite committed but before
-    // the caller received the acknowledgement. Resolve that uncertainty by
-    // the stable key and exact hash/bytes before deciding whether to stop.
-    const recovered = yield* sql
-      .unsafe<SidecarReportRow>(
-        `SELECT report_key, content_hash, report_json
-           FROM p39_migration_block_reports
-          WHERE report_key = ? OR content_hash = ?`,
-        [report.reportKey, report.contentHash],
-      )
-      .pipe(
-        Effect.mapError(
-          (cause): P39MaintenanceFailure => ({
-            _tag: "P39MaintenanceFailure",
-            code: "P39_REPORT_COMMIT_UNRESOLVED",
-            cause,
-          }),
-        ),
-      );
-    const winner = recovered.find(
-      ({ report_key }) => report_key === report.reportKey,
-    );
-    if (
-      winner !== undefined &&
-      winner.content_hash === report.contentHash &&
-      winner.report_json === report.reportJson
-    ) {
-      return { reportKey: winner.report_key, contentHash: winner.content_hash };
-    }
-    if (recovered.length > 0) {
-      return yield* Effect.fail({
-        _tag: "P39MaintenanceFailure" as const,
-        code: "P39_REPORT_KEY_CONFLICT" as const,
-      });
-    }
     return yield* Effect.fail({
       _tag: "P39MaintenanceFailure" as const,
       code: "P39_REPORT_COMMIT_UNRESOLVED" as const,

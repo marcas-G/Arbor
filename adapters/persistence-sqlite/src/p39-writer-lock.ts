@@ -1,6 +1,17 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+  statfsSync,
+  statSync,
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { sha256Hex } from "@arbor/ports";
 import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Context, Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -60,11 +71,12 @@ export const p39WriterLockFilename = (
   }
   try {
     const resolved = resolve(primaryDatabaseFilename);
-    const canonical = existsSync(resolved)
-      ? realpathSync.native(resolved)
-      : resolved;
+    if (!existsSync(resolved)) return invalidLockPath();
+    const canonical = realpathSync.native(resolved);
+    const normalizePath = normalizeForPlatform;
     if (
       canonical.startsWith("\\\\") ||
+      normalizePath(resolved) !== normalizePath(canonical) ||
       (process.platform === "win32" &&
         !/^(?:\\\\\?\\)?[a-z]:\\/iu.test(canonical))
     ) {
@@ -73,12 +85,169 @@ export const p39WriterLockFilename = (
         code: "P39_WRITER_LOCK_PATH_INVALID",
       };
     }
-    return `${canonical}.p39-maintenance-lock.sqlite`;
+    const stat = statSync(canonical, { bigint: true });
+    if (
+      !stat.isFile() ||
+      stat.dev === 0n ||
+      stat.ino === 0n ||
+      stat.nlink !== 1n
+    ) {
+      return invalidLockPath();
+    }
+    const stateRoot =
+      process.platform === "win32"
+        ? process.env.LOCALAPPDATA
+        : (process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"));
+    if (stateRoot === undefined || !isAbsolute(stateRoot)) {
+      return invalidLockPath();
+    }
+    const requestedLockRoot = join(stateRoot, "Arbor", "p39-maintenance-locks");
+    mkdirSync(requestedLockRoot, { recursive: true, mode: 0o700 });
+    const lockRoot = realpathSync.native(requestedLockRoot);
+    if (
+      normalizePath(requestedLockRoot) !== normalizePath(lockRoot) ||
+      isTemporaryPath(lockRoot) ||
+      !isSupportedLocalFilesystem(lockRoot)
+    ) {
+      return invalidLockPath();
+    }
+    return join(lockRoot, `${sha256Hex(`${stat.dev}:${stat.ino}`)}.sqlite`);
   } catch {
-    return {
-      _tag: "P39WriterLockFailure",
-      code: "P39_WRITER_LOCK_PATH_INVALID",
-    };
+    return invalidLockPath();
+  }
+};
+
+export interface P39PreparedPrimaryDatabasePath {
+  readonly databaseFilename: string;
+  readonly writerLockFilename: string;
+}
+
+/** Prepare a new zero-byte SQLite file only after the parent volume is known
+ * local and supported. This gives every daemon/maintenance process the same
+ * device+file-id lock key, including their first startup. */
+export const prepareP39PrimaryDatabasePath = (
+  filename: string,
+): P39PreparedPrimaryDatabasePath | P39WriterLockFailure => {
+  if (
+    filename === ":memory:" ||
+    filename.trim().length === 0 ||
+    filename.startsWith("file:")
+  ) {
+    return invalidLockPath();
+  }
+  try {
+    const resolved = resolve(filename);
+    const parent = dirname(resolved);
+    if (!existsSync(parent)) return invalidLockPath();
+    const canonicalParent = realpathSync.native(parent);
+    if (
+      normalizeForPlatform(parent) !== normalizeForPlatform(canonicalParent) ||
+      canonicalParent.startsWith("\\\\") ||
+      (process.platform === "win32" &&
+        !/^(?:\\\\\?\\)?[a-z]:\\/iu.test(canonicalParent)) ||
+      !isSupportedLocalFilesystem(canonicalParent, true)
+    ) {
+      return invalidLockPath();
+    }
+    if (!existsSync(resolved)) {
+      try {
+        const descriptor = openSync(resolved, "wx", 0o600);
+        closeSync(descriptor);
+      } catch (cause) {
+        if (
+          typeof cause !== "object" ||
+          cause === null ||
+          !("code" in cause) ||
+          cause.code !== "EEXIST"
+        ) {
+          return invalidLockPath();
+        }
+      }
+    }
+    const canonical = realpathSync.native(resolved);
+    if (normalizeForPlatform(resolved) !== normalizeForPlatform(canonical)) {
+      return invalidLockPath();
+    }
+    const stat = statSync(canonical, { bigint: true });
+    if (
+      !stat.isFile() ||
+      stat.dev === 0n ||
+      stat.ino === 0n ||
+      stat.nlink !== 1n
+    ) {
+      return invalidLockPath();
+    }
+    const lockFilename = p39WriterLockFilename(canonical);
+    return typeof lockFilename === "string"
+      ? { databaseFilename: canonical, writerLockFilename: lockFilename }
+      : lockFilename;
+  } catch {
+    return invalidLockPath();
+  }
+};
+
+const invalidLockPath = (): P39WriterLockFailure => ({
+  _tag: "P39WriterLockFailure",
+  code: "P39_WRITER_LOCK_PATH_INVALID",
+});
+
+const normalizeForPlatform = (path: string): string => {
+  const normalized =
+    process.platform === "win32" ? path.replace(/^\\\\\?\\/u, "") : path;
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+};
+
+const isTemporaryPath = (path: string): boolean => {
+  const relativePath = relative(
+    normalizeForPlatform(resolve(tmpdir())),
+    normalizeForPlatform(path),
+  );
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith(`..${sep}`) &&
+      relativePath !== ".." &&
+      !isAbsolute(relativePath))
+  );
+};
+
+const isSupportedLocalFilesystem = (
+  path: string,
+  allowTemporaryFs = false,
+): boolean => {
+  try {
+    if (process.platform === "win32") {
+      const encoded = Buffer.from(path, "utf8").toString("base64");
+      const script = [
+        `$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'))`,
+        "$r=[IO.Path]::GetPathRoot($p)",
+        "if($r.StartsWith(([string][char]92)+([char]92)+'?'+([char]92))){$r=$r.Substring(4)}",
+        "$d=[IO.DriveInfo]::new($r)",
+        "Write-Output ($d.DriveType.ToString()+'|'+$d.DriveFormat)",
+      ].join(";");
+      const output = execFileSync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", script],
+        { encoding: "utf8", timeout: 5000, windowsHide: true },
+      ).trim();
+      const [driveType, driveFormat] = output.split("|");
+      return (
+        (driveType === "Fixed" || driveType === "Removable") &&
+        ["NTFS", "ReFS", "exFAT", "FAT", "FAT32"].includes(driveFormat ?? "")
+      );
+    }
+    const filesystemType = statfsSync(path).type;
+    const supportedLocalTypes = new Set([
+      0x0000ef53, // ext2/3/4
+      0x58465342, // XFS
+      0x9123683e, // Btrfs
+      0xf2f52010, // F2FS
+      0x2011bab0, // exFAT
+      0x00004d44, // FAT
+      ...(allowTemporaryFs ? [0x01021994] : []), // tmpfs (primary test data only)
+    ]);
+    return supportedLocalTypes.has(filesystemType);
+  } catch {
+    return false;
   }
 };
 
