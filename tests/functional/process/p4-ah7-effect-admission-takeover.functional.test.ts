@@ -156,14 +156,35 @@ const readRows = (
             WHERE execution_id = ?
             ORDER BY logical_step_no, repair_attempt`,
         )
-        .all(executionId) as AdmissionRows["steps"],
+        .all(executionId)
+        .map((row) => ({
+          logical_step_no: Number(row.logical_step_no),
+          repair_attempt: Number(row.repair_attempt),
+          provider_turn_id: String(row.provider_turn_id),
+          state: String(row.state),
+          next_action_index: Number(row.next_action_index),
+          decoded_output_hash:
+            row.decoded_output_hash === null
+              ? null
+              : String(row.decoded_output_hash),
+          model_output_session_sequence:
+            row.model_output_session_sequence === null
+              ? null
+              : Number(row.model_output_session_sequence),
+        })),
       providerTurns: db
         .prepare(
           `SELECT provider_turn_id, settled_at, finish_reason
              FROM provider_turns WHERE execution_id = ?
             ORDER BY provider_turn_id`,
         )
-        .all(executionId) as AdmissionRows["providerTurns"],
+        .all(executionId)
+        .map((row) => ({
+          provider_turn_id: String(row.provider_turn_id),
+          settled_at: row.settled_at === null ? null : String(row.settled_at),
+          finish_reason:
+            row.finish_reason === null ? null : String(row.finish_reason),
+        })),
       providerAttempts: db
         .prepare(
           `SELECT a.provider_turn_id, a.attempt_no, a.outcome, a.settled_at
@@ -172,7 +193,13 @@ const readRows = (
             WHERE t.execution_id = ?
             ORDER BY a.provider_turn_id, a.attempt_no`,
         )
-        .all(executionId) as AdmissionRows["providerAttempts"],
+        .all(executionId)
+        .map((row) => ({
+          provider_turn_id: String(row.provider_turn_id),
+          attempt_no: Number(row.attempt_no),
+          outcome: String(row.outcome),
+          settled_at: row.settled_at === null ? null : String(row.settled_at),
+        })),
       modelOutputSources: db
         .prepare(
           `SELECT sequence, source_ref, content_hash
@@ -184,7 +211,12 @@ const readRows = (
               AND source_kind = 'ProviderTurn'
             ORDER BY sequence`,
         )
-        .all(executionId) as AdmissionRows["modelOutputSources"],
+        .all(executionId)
+        .map((row) => ({
+          sequence: Number(row.sequence),
+          source_ref: String(row.source_ref),
+          content_hash: String(row.content_hash),
+        })),
       action: db
         .prepare(
           `SELECT logical_action_id, call_ref, action_kind, state,

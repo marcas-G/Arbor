@@ -56,7 +56,7 @@ const readExecutionProviderTurns = (
 };
 
 const isToolResultFor = (
-  row: { readonly payload_json: unknown },
+  row: Readonly<Record<string, unknown>>,
   invocationId: string,
   callRef: string,
 ): boolean => {
@@ -418,7 +418,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
               (step) =>
                 step.execution_id === targetExecutionId &&
                 step.logical_step_no ===
-                  (crashedSourceStep?.logical_step_no ?? -1) + 1,
+                  Number(crashedSourceStep?.logical_step_no ?? -1) + 1,
             );
             return (
               value.actions.some(
