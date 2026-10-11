@@ -11,6 +11,7 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  invocationAuthoritySourceRevisionOf,
   ProjectEnvironmentPort,
   ResourceAdmission,
   SandboxPort,
@@ -31,7 +32,7 @@ import {
 } from "../../../packages/tool-runtime/src/index.js";
 import {
   layer,
-  P12_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
@@ -122,13 +123,15 @@ const seed = Effect.gen(function* () {
         ],
       );
       yield* sql.unsafe(
-        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
+        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, episode_kind, episode_ref, episode_revision, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,?,?,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
         [
           executionId,
           projectId,
           "workspace",
           workspaceId,
-          "coordination",
+          "ConversationResponseEpisode",
+          "p4-fence-expiry",
+          0,
           sessionId,
           "t",
         ],
@@ -168,6 +171,11 @@ const context = {
     principal,
     workspaceId,
     executionId,
+    sourceRevision: invocationAuthoritySourceRevisionOf({
+      workspacePolicyRevision: 0,
+      activeGrants: [],
+      verifierId: null,
+    }),
     toolName: intent.toolName,
     toolVersion: intent.toolVersion,
     resourceSpaceIds: [],
@@ -301,7 +309,9 @@ describe("P4 settlement fence expiry time", () => {
     );
 
     const program = Effect.gen(function* () {
-      yield* runMigrations(P12_MIGRATIONS);
+      // This P4 runtime/store test requires the production P36 invocation
+      // admission schema; P12 stops at the pre-AH7 tool_invocations table.
+      yield* runMigrations(P36_MIGRATIONS);
       yield* seed;
       const runtime = yield* ToolRuntimePort;
       const base = yield* BaseTransactionPort;
@@ -313,7 +323,20 @@ describe("P4 settlement fence expiry time", () => {
           onSuccess: (value) => ({ _tag: "Observed" as const, value }),
         }),
       );
-      yield* Effect.promise(() => settlementTimestampSampled);
+      yield* Effect.raceFirst(
+        Effect.promise(() => settlementTimestampSampled).pipe(
+          Effect.as("SettlementTimestampSampled" as const),
+        ),
+        Fiber.join(invocation).pipe(
+          Effect.flatMap((outcome) =>
+            Effect.fail(
+              new Error(
+                `P4 invocation completed before settlement timestamp probe: ${JSON.stringify(outcome)}`,
+              ),
+            ),
+          ),
+        ),
+      );
 
       const lock = yield* Effect.forkChild(
         base.transact(
