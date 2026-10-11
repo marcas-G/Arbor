@@ -3003,6 +3003,17 @@ export const deliverMessageGatewayHandler = (
       ) {
         expectedRecipientWorkspaceId = sender.value.parentWorkspaceId;
       }
+      const planFor = (candidateCommandId: CommandIdType) =>
+        deliverMessagePlan({
+          messageId,
+          commandId: candidateCommandId,
+          projectId: execution.projectId,
+          senderWorkspaceId: execution.workspaceId,
+          deliverableId: action.deliverableId,
+          bodyRef: action.summary,
+          principal: context.principal,
+          actor: context.principal as never,
+        });
       const failure = (safeMessage: string): AgentActionError =>
         actionOperationalFailure("Deliver.recovery")(safeMessage);
       const block = (
@@ -3261,6 +3272,22 @@ export const deliverMessageGatewayHandler = (
           if (decoded === null) {
             return yield* block(
               "PriorReceiptDecodeMismatch",
+              candidateCommandId,
+            );
+          }
+          // A Committed receipt from the current generation is the immutable
+          // request for this same CommandId, so its fingerprint must still
+          // match. A prior-generation receipt is a receipt-first handoff: its
+          // fingerprint binds the old request and is not compared to the
+          // current generation's candidate request. Its CommandId, trusted
+          // schema, result, and canonical effects remain verified below.
+          if (
+            priorGeneration === recoverableContext.fencingGeneration &&
+            decoded.semanticRequestFingerprint !==
+              planFor(candidateCommandId).authority.semanticRequestFingerprint
+          ) {
+            return yield* block(
+              "PriorReceiptResultMismatch",
               candidateCommandId,
             );
           }

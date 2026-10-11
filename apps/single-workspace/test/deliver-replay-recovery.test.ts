@@ -66,6 +66,10 @@ const input = (generation: number): AgentActionHandlerInput =>
   }) as AgentActionHandlerInput;
 
 const legacyCommandId = `cmd_${newUuid7("deliver-command", occurrence)}`;
+const generationOneCommandId = `cmd_${newUuid7(
+  "deliver-command",
+  `${occurrence}:generation:1`,
+)}`;
 const committedResult = {
   messageId,
   deliverableId,
@@ -75,9 +79,10 @@ const committedResult = {
 };
 const committedPriorReceipt = (
   result: unknown = committedResult,
+  commandId = legacyCommandId,
 ): StoredCommandResolution =>
   ({
-    commandId: legacyCommandId,
+    commandId,
     projectId,
     // The prior generation's immutable fingerprint is not the current
     // generation's candidate fingerprint. Exact effect proof below remains
@@ -287,6 +292,32 @@ describe("P37 Deliver receipt recovery", () => {
         ...committedResult,
         deliverableId: `del_${newUuid7("p37-deliver-recovery", "other-deliverable")}`,
       }),
+    });
+    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
+    const exit = await Effect.runPromiseExit(handler.handle(input(1)));
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      const failure = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(failure)).toBe(true);
+      if (Option.isSome(failure)) {
+        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+      }
+    }
+    expect(fixture.counts()).toMatchObject({
+      gatewayCalls: 0,
+      failureWrites: 1,
+      failureCodes: ["PriorReceiptResultMismatch"],
+    });
+  });
+
+  it("keeps same-generation fingerprint drift blocked for the same CommandId", async () => {
+    const fixture = baseDependencies({
+      existingEffect: true,
+      priorReceipt: committedPriorReceipt(
+        committedResult,
+        generationOneCommandId,
+      ),
     });
     const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
     const exit = await Effect.runPromiseExit(handler.handle(input(1)));
