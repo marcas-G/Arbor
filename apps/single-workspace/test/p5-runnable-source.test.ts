@@ -34,6 +34,7 @@ import {
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { NoHoldWorkReadmissionGateStoreLive } from "../../../packages/testkit/src/index.js";
 import { DependencyAwareRunnableWorkSourceLive } from "../src/runnable-source-p7.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
@@ -73,6 +74,7 @@ const buildClassifyApp = (databaseFile: string) => {
     Layer.provide(WorkRepositoryLive, base),
     Layer.provide(WorkWaitStoreLive, base),
     Layer.provide(DependencyRepositoryLive, base),
+    NoHoldWorkReadmissionGateStoreLive,
   );
   return Layer.mergeAll(
     stores,

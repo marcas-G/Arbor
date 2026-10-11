@@ -60,6 +60,7 @@ import {
   TransactionPort,
 } from "../packages/ports/src/index.js";
 import {
+  NoHoldWorkReadmissionGateStoreLive,
   NoPendingControlApprovalStoreLive,
   NoPendingExecutableApprovalStoreLive,
 } from "../packages/testkit/src/index.js";
@@ -194,6 +195,7 @@ const makeApp = (
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
   const repos = Layer.mergeAll(
     tx,
+    NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),

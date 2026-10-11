@@ -121,6 +121,7 @@ import {
   WorkspaceResourceActivationStore,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../packages/testkit/src/index.js";
 import {
   seedCurrentOpenWork,
   workEpisode,
@@ -271,6 +272,7 @@ const AcceptanceRegistryLive: Layer.Layer<
         sessions,
         executions,
         workWaits,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
       }),
       makeRecordDecisionHandler({
         proposals,

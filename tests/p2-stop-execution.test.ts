@@ -42,6 +42,7 @@ import {
   type StopExecutionPayload,
 } from "../packages/execution-runtime/src/index.js";
 import { ExecutableApprovalStore } from "../packages/ports/dist/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 import {
   seedCurrentOpenWork,
   workEpisode,
@@ -69,6 +70,7 @@ const makeApp = () => {
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),

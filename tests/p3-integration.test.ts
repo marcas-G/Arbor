@@ -63,6 +63,7 @@ import {
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import {
   FixedSecretStoreLive,
+  NoHoldWorkReadmissionGateStoreLive,
   NoPendingControlApprovalStoreLive,
   NoPendingExecutableApprovalStoreLive,
 } from "../packages/testkit/src/index.js";
@@ -142,6 +143,7 @@ const makeApp = () => {
   );
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),

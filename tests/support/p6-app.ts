@@ -59,6 +59,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 
 export const p6TestActor = parse(Actor)("user:gov");
 export const p6TestPrincipal = parse(Principal)("user:gov");
@@ -132,6 +133,7 @@ const P6CommandHandlerRegistryLive: Layer.Layer<
         sessions,
         executions,
         workWaits,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
       }),
       ...makeP6CommandHandlers({
         proposals,
