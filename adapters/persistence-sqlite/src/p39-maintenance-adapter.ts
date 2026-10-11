@@ -17,6 +17,7 @@ import {
   type P39MigrationBlockReport,
   type P39PreflightSnapshot,
   type P39WriterExclusionLease,
+  p39UnsupportedDeployment,
   readP39BlockReports,
   runP39MaintenanceGate,
   validateP39MigrationPrefix,
@@ -259,7 +260,7 @@ export const runP39SqliteMaintenance = (
         return cause;
       }),
     );
-  });
+  }).pipe(Effect.mapError(normalizeP39DeploymentFailure));
 
 interface LegacyBlockedInvocationRow {
   readonly invocation_id: string;
@@ -288,6 +289,45 @@ const failure = (
   code,
   ...(cause === undefined ? {} : { cause }),
 });
+
+const normalizeP39DeploymentFailure = (
+  cause:
+    | P39MaintenanceFailure
+    | P39WriterLockFailure
+    | SqliteAdapterError
+    | SqlError,
+): P39MaintenanceFailure | SqliteAdapterError | SqlError => {
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "_tag" in cause &&
+    cause._tag === "P39WriterLockFailure"
+  ) {
+    const lockFailure = cause as P39WriterLockFailure;
+    if (
+      lockFailure.code === "P39_WRITER_LOCK_PATH_INVALID" ||
+      lockFailure.code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT"
+    ) {
+      return p39UnsupportedDeployment(lockFailure.code);
+    }
+  }
+  if (
+    typeof cause === "object" &&
+    cause !== null &&
+    "_tag" in cause &&
+    cause._tag === "P39MaintenanceFailure"
+  ) {
+    const maintenanceFailure = cause as P39MaintenanceFailure;
+    if (
+      maintenanceFailure.code === "P39_UNSUPPORTED_DEPLOYMENT" ||
+      maintenanceFailure.code === "P39_REPORT_DB_PATH_INVALID" ||
+      maintenanceFailure.code === "P39_WRITER_LOCK_PATH_INVALID"
+    ) {
+      return p39UnsupportedDeployment(maintenanceFailure.code);
+    }
+  }
+  return cause as P39MaintenanceFailure | SqliteAdapterError | SqlError;
+};
 
 const toBlocker = (row: LegacyBlockedInvocationRow) => ({
   invocationId: row.invocation_id,
