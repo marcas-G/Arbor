@@ -1,7 +1,4 @@
-import {
-  AttentionPollStore,
-  TransactionPort,
-} from "@arbor/ports";
+import { AttentionPollStore, TransactionPort } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -64,8 +61,7 @@ describe("P37 Attention poll claim store", () => {
         expect(result).toEqual({ _tag: "NoClaim" });
         expect(after).toEqual(before);
       }),
-    ),
-  );
+    ));
 
   it("does not let a stale generation persist failure or release a newer claim", () =>
     runDb(
@@ -110,15 +106,16 @@ describe("P37 Attention poll claim store", () => {
         const after = yield* sql.unsafe(
           "SELECT * FROM p10_attention_dispatch_state WHERE singleton = 1",
         );
-        const schedule = yield* sql.unsafe<{ readonly consecutive_failed_attempts: number }>(
+        const schedule = yield* sql.unsafe<{
+          readonly consecutive_failed_attempts: number;
+        }>(
           "SELECT consecutive_failed_attempts FROM p10_attention_project_poll_state WHERE project_id = 'prj_claimed'",
         );
         expect(result).toBe(false);
         expect(after).toEqual(before);
         expect(Number(schedule[0]?.consecutive_failed_attempts)).toBe(0);
       }),
-    ),
-  );
+    ));
 
   it("does not let an expired, not-yet-taken-over claim persist failure or release", () =>
     runDb(
@@ -173,6 +170,5 @@ describe("P37 Attention poll claim store", () => {
         expect(afterDispatch).toEqual(beforeDispatch);
         expect(afterSchedule).toEqual(beforeSchedule);
       }),
-    ),
-  );
+    ));
 });

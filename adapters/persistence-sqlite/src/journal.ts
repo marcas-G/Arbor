@@ -1,20 +1,18 @@
-import {
+import type {
   Actor,
   CommandId,
-  EVENT_CATALOG,
+  DomainEvent,
   EventId,
-  EventSequence,
-  parse,
+  EventTypeName,
   ProjectId,
-  type DomainEvent,
-  type EventTypeName,
 } from "@arbor/domain";
+import { EVENT_CATALOG } from "@arbor/domain";
 import {
   DomainEventJournal,
   IdGenerator,
   type PendingDomainEvent,
-  type RawJournalEventCandidate,
   type RawJournalDecodeResult,
+  type RawJournalEventCandidate,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
@@ -85,7 +83,8 @@ const decodeRawCandidate = (
     typeof occurredAtRaw !== "string" ||
     typeof aggregateRefRaw !== "string" ||
     typeof actorRaw !== "string" ||
-    (causedByCommandIdRaw !== null && typeof causedByCommandIdRaw !== "string") ||
+    (causedByCommandIdRaw !== null &&
+      typeof causedByCommandIdRaw !== "string") ||
     (causedByEventIdRaw !== null && typeof causedByEventIdRaw !== "string") ||
     (correlationRefRaw !== null && typeof correlationRefRaw !== "string") ||
     typeof payloadJsonRaw !== "string"
@@ -99,28 +98,28 @@ const decodeRawCandidate = (
     return { _tag: "Poison", reason: "UnknownEventType" };
   }
 
-  let envelope: Omit<DomainEvent<unknown>, "payload">;
-  try {
-    envelope = {
-      eventId: parse(EventId)(eventIdRaw),
-      projectId: parse(ProjectId)(projectIdRaw),
-      sequence: parse(EventSequence)(sequenceRaw),
-      eventType: eventTypeRaw as EventTypeName,
-      eventVersion: eventVersionRaw,
-      occurredAt: occurredAtRaw,
-      aggregateRef: aggregateRefRaw,
-      actor: parse(Actor)(actorRaw),
-      ...(causedByCommandIdRaw === null
-        ? {}
-        : { causedByCommandId: parse(CommandId)(causedByCommandIdRaw) }),
-      ...(causedByEventIdRaw === null
-        ? {}
-        : { causedByEventId: parse(EventId)(causedByEventIdRaw) }),
-      ...(correlationRefRaw === null ? {} : { correlationRef: correlationRefRaw }),
-    };
-  } catch {
-    return { _tag: "Poison", reason: "MalformedEnvelope" };
-  }
+  // Preserve the established P1 row decoder's typed-column projection. Event
+  // IDs have historically been cast from stored values, not reparsed through
+  // the entity-ID codec.
+  const envelope: Omit<DomainEvent<unknown>, "payload"> = {
+    eventId: eventIdRaw as EventId,
+    projectId: projectIdRaw as ProjectId,
+    sequence: sequenceRaw as DomainEvent<unknown>["sequence"],
+    eventType: eventTypeRaw as EventTypeName,
+    eventVersion: eventVersionRaw,
+    occurredAt: occurredAtRaw,
+    aggregateRef: aggregateRefRaw,
+    actor: actorRaw as Actor,
+    ...(causedByCommandIdRaw === null
+      ? {}
+      : { causedByCommandId: causedByCommandIdRaw as CommandId }),
+    ...(causedByEventIdRaw === null
+      ? {}
+      : { causedByEventId: causedByEventIdRaw as EventId }),
+    ...(correlationRefRaw === null
+      ? {}
+      : { correlationRef: correlationRefRaw }),
+  };
 
   try {
     // Match the existing readAfter decoder: registered event-type lookup plus

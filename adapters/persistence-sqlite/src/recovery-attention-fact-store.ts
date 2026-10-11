@@ -288,7 +288,8 @@ export const makeRecoveryAttentionFactStoreLive = (
               ) {
                 return yield* Effect.fail<RecoveryAttentionFactStoreError>({
                   _tag: "RecoveryAttentionFactInvariantConflict",
-                  reason: "existing Deliver replay fact has a conflicting identity",
+                  reason:
+                    "existing Deliver replay fact has a conflicting identity",
                 });
               }
               yield* insertPending(fact);
@@ -324,7 +325,8 @@ export const makeRecoveryAttentionFactStoreLive = (
             if (eventId === undefined) {
               return yield* Effect.fail<RecoveryAttentionFactStoreError>({
                 _tag: "RecoveryAttentionFactInvariantConflict",
-                reason: "event journal did not return the Deliver replay event id",
+                reason:
+                  "event journal did not return the Deliver replay event id",
               });
             }
             const witnesses = yield* runDeliver(
@@ -356,14 +358,16 @@ export const makeRecoveryAttentionFactStoreLive = (
               witness.occurred_at !== input.firstDetectedAt ||
               witness.aggregate_ref !== input.targetWorkspaceId ||
               witness.actor !== "system:recovery" ||
-              witness.caused_by_command_id !== (input.causedByCommandId ?? null) ||
+              witness.caused_by_command_id !==
+                (input.causedByCommandId ?? null) ||
               witness.caused_by_event_id !== null ||
               witness.correlation_ref !== input.logicalActionId ||
               witness.payload_json !== JSON.stringify(payload)
             ) {
               return yield* Effect.fail<RecoveryAttentionFactStoreError>({
                 _tag: "RecoveryAttentionFactInvariantConflict",
-                reason: "stored Deliver replay event witness conflicts with its fact",
+                reason:
+                  "stored Deliver replay event witness conflicts with its fact",
               });
             }
             const fact: DeliverReplayAttentionFact = {
