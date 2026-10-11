@@ -1,25 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect, Exit, Layer } from "effect";
-import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
-import { DomainEventJournalLive } from "../../../adapters/persistence-sqlite/src/index.js";
-import { deliverHandler } from "../../../apps/single-workspace/src/control-actions.js";
-import type { AgentActionHandlerInput } from "../../../packages/agent-runtime/src/index.js";
 import { newUuid7 } from "../../../packages/application/src/index.js";
-import {
-  Clock,
-  DeliverableRepository,
-  DomainEventJournal,
-  IdGenerator,
-  InboxProjectionStore,
-  MessageStore,
-  TransactionPort,
-  WorkRepository,
-  WorkspaceRepository,
-} from "../../../packages/ports/src/index.js";
-import { makeP7App, runP7 } from "../../support/p7-app.js";
 import {
   type CapturedProviderCall,
   type ProductionFixture,
@@ -36,9 +19,9 @@ import {
 
 /*
  * P37 L6 is process-crash qualification, not a module/store test. The cases
- * below stay isolated in pending/ until the P37 L4/L5 implementations and
- * commit probes are integrated. The shared scenario helpers will use this
- * dedicated test child with two OS daemons and one file-backed SQLite DB.
+ * below stay isolated in pending/ until the coordinator schedules the
+ * centralized runtime qualification batch. Process-only qualification hooks
+ * live in the dedicated test child and are absent from ordinary startup.
  *
  * Required common oracle for every completed case:
  *   - identical LogicalActionId, ProviderTurnId and MessageId before/after;
@@ -48,10 +31,9 @@ import {
  *   - reads are captured in one SQLite read transaction and public Attention
  *     is checked over the ordinary public view path.
  *
- * TODO(P37 L4): finish the public Work seed/recovery matrix cases; the fixture,
- * process gates and coherent SQLite snapshot below are executable. Do not move
- * this pending file into the default qualification suite until all six cases
- * replace their TODOs with real assertions.
+ * The profile-specific P12 capacity cases live in a separate pending file;
+ * their gate is profile selection, because accepted P12 forbids invented
+ * capacity ceilings.
  */
 
 const fixtures: ProductionFixture[] = [];
@@ -89,6 +71,7 @@ interface P37Probe {
   readonly commandId?: string;
   readonly actionKind?: string;
   readonly callRef?: string;
+  readonly legacyObservationText?: string;
   readonly messageId?: string;
   readonly attentionFactId?: string;
   readonly failureCode?: string;
@@ -262,6 +245,24 @@ const readP37Snapshot = (databaseFile: string) => {
     db.close();
   }
 };
+
+const findDeliverReplayFact = (
+  snapshot: ReturnType<typeof readP37Snapshot>,
+  logicalActionId: string,
+  messageId: string,
+) =>
+  snapshot.facts.find(
+    (row) =>
+      (row as { logical_action_id: string }).logical_action_id ===
+        logicalActionId &&
+      (row as { message_id: string }).message_id === messageId,
+  ) as
+    | {
+        attention_fact_id: string;
+        logical_action_id: string;
+        message_id: string;
+      }
+    | undefined;
 
 const seedDeliverableWaitingForDelivery = async (marker: string) => {
   const probes: P37Probe[] = [];
@@ -585,99 +586,6 @@ const publicDeliverReplayRows = async (
   const attention = await readPublicAttention(client, projectId);
   return attention.rows.filter((row) => row.source === "DeliverReplayFailure");
 };
-
-const executeLegacyDirectDeliver = async (input: {
-  readonly databaseFile: string;
-  readonly executionId: string;
-  readonly projectId: string;
-  readonly workspaceId: string;
-  readonly sessionId: string;
-  readonly workId: string;
-  readonly deliverableId: string;
-  readonly providerTurnId: string;
-  readonly logicalActionId: string;
-  readonly callRef: string;
-  readonly summary: string;
-}) => {
-  const base = makeP7App(input.databaseFile);
-  const journal = Layer.provide(
-    DomainEventJournalLive,
-    base as unknown as Layer.Layer<SqlClient | IdGenerator>,
-  );
-  const app = Layer.mergeAll(base, journal);
-  const activeExecution = {
-    executionId: input.executionId,
-    projectId: input.projectId,
-    workspaceId: input.workspaceId,
-    sessionId: input.sessionId,
-    binding: {
-      _tag: "WorkspaceExecution" as const,
-      workspaceId: input.workspaceId,
-      episode: {
-        _tag: "WorkEpisode" as const,
-        workId: input.workId,
-        targetWorkRevision: 0,
-      },
-    },
-    admittedAt: "t",
-    stopRequestedAt: null,
-    state: { status: "Active" as const, settlement: null },
-  };
-  return runP7(
-    Effect.gen(function* () {
-      const handler = deliverHandler({
-        deliverables: yield* DeliverableRepository,
-        journal: yield* DomainEventJournal,
-        ids: yield* IdGenerator,
-        works: yield* WorkRepository,
-        workspaces: yield* WorkspaceRepository,
-        messages: yield* MessageStore,
-        inbox: yield* InboxProjectionStore,
-        clock: yield* Clock,
-        tx: yield* TransactionPort,
-      });
-      return yield* Effect.exit(
-        handler.handle({
-          action: {
-            _tag: "Deliver",
-            deliverableId: input.deliverableId,
-            summary: input.summary,
-          },
-          invocation: {
-            providerTurnId: input.providerTurnId,
-            outputPosition: 0,
-            callRef: input.callRef,
-            toolName: "deliver",
-            argumentsJson: JSON.stringify({
-              deliverableId: input.deliverableId,
-              summary: input.summary,
-            }),
-          },
-          execution: activeExecution,
-          context: {
-            _tag: "ExecutionOrigin",
-            principal: "agent:deliver-child",
-            executionId: input.executionId,
-            fencingGeneration: 0,
-          },
-          logicalActionId: input.logicalActionId,
-        } as AgentActionHandlerInput),
-      );
-    }),
-    app,
-  );
-};
-
-// These types are intentionally retained in the pending file: the later L6
-// test bodies use the ordinary public client to check the ActionRequired row.
-void readPublicAttention;
-void makePublicClient;
-void awaitP37Probe;
-void releaseP37Gate;
-void readP37Snapshot;
-void startP37Fixture;
-void seedDeliverableWaitingForDelivery;
-void manualWait;
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
@@ -1098,12 +1006,23 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     );
     expect(failure?.failureCode).toBe("PriorReceiptResultMismatch");
     expect(failure?.messageId).toBe(prepared.message.message_id);
+    const p9FactSnapshot = readP37Snapshot(prepared.fixture.databaseFile);
+    const p9Fact = findDeliverReplayFact(
+      p9FactSnapshot,
+      prepared.action.logical_action_id,
+      prepared.message.message_id,
+    );
+    if (p9Fact === undefined) {
+      throw new Error(
+        "P37 Inbox mismatch fact is absent after its commit probe",
+      );
+    }
     await awaitP37Probe(
       prepared.probes,
       (probe) =>
         probe.role === "new" &&
         probe.boundary === "P10AfterAttentionRowWriteBeforeConsumerCommit" &&
-        probe.attentionFactId === failure?.attentionFactId,
+        probe.attentionFactId === p9Fact.attention_fact_id,
     );
     const atFailure = readP37Snapshot(prepared.fixture.databaseFile);
     expect(atFailure.facts).toHaveLength(1);
@@ -1133,11 +1052,26 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       prepared.action.execution_id,
     );
     await restartP37Normally(prepared.fixture);
+    const finalWithFact = await waitForPublic(
+      async () => readP37Snapshot(prepared.fixture.databaseFile),
+      (snapshot) =>
+        findDeliverReplayFact(
+          snapshot,
+          prepared.action.logical_action_id,
+          prepared.message.message_id,
+        ) !== undefined,
+      60_000,
+    );
+    const stableFactId = findDeliverReplayFact(
+      finalWithFact,
+      prepared.action.logical_action_id,
+      prepared.message.message_id,
+    )?.attention_fact_id;
+    expect(stableFactId).toBe(p9Fact.attention_fact_id);
     const attention = await waitForPublic(
       () =>
         publicDeliverReplayRows(prepared.client, prepared.project.projectId),
-      (rows) =>
-        rows.length === 1 && rows[0]?.dedupKey === failure?.attentionFactId,
+      (rows) => rows.length === 1 && rows[0]?.dedupKey === stableFactId,
       60_000,
     );
     expect(attention).toHaveLength(1);
@@ -1256,18 +1190,24 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       expect(p9Probe?.logicalActionId).toBe(prepared.action.logical_action_id);
       expect(p9Probe?.messageId).toBe(prepared.message.message_id);
       let atBoundary = readP37Snapshot(prepared.fixture.databaseFile);
+      let attentionFactId = findDeliverReplayFact(
+        atBoundary,
+        prepared.action.logical_action_id,
+        prepared.message.message_id,
+      )?.attention_fact_id;
       if (crashSide === "before") {
         expect(atBoundary.facts).toHaveLength(0);
         expect(atBoundary.replayEvents).toHaveLength(0);
         expect(atBoundary.pendingFacts).toHaveLength(0);
       } else {
+        expect(attentionFactId).toBeDefined();
         await awaitP37Probe(
           prepared.probes,
           (probe) =>
             probe.role === "new" &&
             probe.boundary ===
               "P10AfterAttentionRowWriteBeforeConsumerCommit" &&
-            probe.attentionFactId === p9Probe?.attentionFactId,
+            probe.attentionFactId === attentionFactId,
         );
         atBoundary = readP37Snapshot(prepared.fixture.databaseFile);
         expect(atBoundary.facts).toHaveLength(1);
@@ -1283,21 +1223,37 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         );
       }
       await restartP37Normally(prepared.fixture);
+      const finalWithFact = await waitForPublic(
+        async () => readP37Snapshot(prepared.fixture.databaseFile),
+        (snapshot) =>
+          findDeliverReplayFact(
+            snapshot,
+            prepared.action.logical_action_id,
+            prepared.message.message_id,
+          ) !== undefined,
+        60_000,
+      );
+      attentionFactId = findDeliverReplayFact(
+        finalWithFact,
+        prepared.action.logical_action_id,
+        prepared.message.message_id,
+      )?.attention_fact_id;
+      expect(attentionFactId).toBeDefined();
       const attentionRows = await waitForPublic(
         () =>
           publicDeliverReplayRows(prepared.client, prepared.project.projectId),
-        (rows) => rows.some((row) => row.dedupKey === p9Probe?.attentionFactId),
+        (rows) => rows.some((row) => row.dedupKey === attentionFactId),
         60_000,
       );
       const exactRows = attentionRows.filter(
-        (row) => row.dedupKey === p9Probe?.attentionFactId,
+        (row) => row.dedupKey === attentionFactId,
       );
       expect(exactRows).toHaveLength(1);
       expect(exactRows[0]).toMatchObject({
         source: "DeliverReplayFailure",
         severity: "ActionRequired",
         targetWorkspaceId: prepared.producer.workspaceId,
-        dedupKey: p9Probe?.attentionFactId,
+        dedupKey: attentionFactId,
         summaryRef:
           "A Deliver handover could not be reconciled with its exact Message and MessageSent facts; execution recovery is paused.",
       });
@@ -1325,6 +1281,11 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         ARBOR_P37_PAUSE_ROLE: "old",
         ARBOR_P37_PAUSE_BOUNDARY: "AH7AfterActionIntentCommit",
         ARBOR_P37_GATE_ACTION_KIND: "deliver",
+        ARBOR_P37_LEGACY_DIRECT_ROLE: "old",
+        ARBOR_P37_LEGACY_DELIVERABLE_ID: String(
+          seed.deliverable.deliverable_id,
+        ),
+        ARBOR_P37_LEGACY_SUMMARY: `Delivered ${marker}`,
       },
     });
     await seed.client.command(seed.project.projectId, "SteerWork", {
@@ -1341,61 +1302,24 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       seed.probes,
       (probe) =>
         probe.role === "old" &&
-        probe.boundary === "AH7AfterActionIntentCommit" &&
+        probe.boundary === "P37LegacyDirectObservationReturned" &&
         probe.actionKind === "deliver",
     );
     if (
       oldAction?.executionId === undefined ||
       oldAction.providerTurnId === undefined ||
       oldAction.logicalActionId === undefined ||
-      oldAction.callRef === undefined
+      oldAction.callRef === undefined ||
+      oldAction.legacyObservationText === undefined
     ) {
       throw new Error("P37 gen0 direct-write action identity is incomplete");
     }
+    expect(oldAction.legacyObservationText).toContain(
+      `DeliverableDelivered(${seed.deliverable.deliverable_id}, `,
+    );
     const executionId = oldAction.executionId;
     const providerTurnId = oldAction.providerTurnId;
     const logicalActionId = oldAction.logicalActionId;
-    const callRef = oldAction.callRef;
-    const beforeLegacyWrite = readP37Snapshot(seed.fixture.databaseFile);
-    const execution = beforeLegacyWrite.executions.find(
-      (row) => (row as { execution_id: string }).execution_id === executionId,
-    ) as
-      | {
-          project_id: string;
-          workspace_id: string;
-          episode_ref: string;
-          session_id: string;
-        }
-      | undefined;
-    if (execution === undefined) {
-      throw new Error(`P37 live Execution ${executionId} is absent`);
-    }
-    const workId = seed.seededWork.workId;
-    if (workId === undefined) {
-      throw new Error(`P37 source Work is absent for ${marker}`);
-    }
-    const legacyOutcome = await executeLegacyDirectDeliver({
-      databaseFile: seed.fixture.databaseFile,
-      executionId,
-      projectId: String(execution.project_id),
-      workspaceId: seed.producer.workspaceId,
-      sessionId: String(execution.session_id),
-      workId,
-      deliverableId: String(seed.deliverable.deliverable_id),
-      providerTurnId,
-      logicalActionId,
-      callRef,
-      summary: `Delivered ${marker}`,
-    });
-    expect(Exit.isSuccess(legacyOutcome)).toBe(true);
-    if (Exit.isSuccess(legacyOutcome)) {
-      expect(legacyOutcome.value._tag).toBe("Observation");
-      if (legacyOutcome.value._tag === "Observation") {
-        expect(legacyOutcome.value.observation.text).toContain(
-          `DeliverableDelivered(${seed.deliverable.deliverable_id}, `,
-        );
-      }
-    }
     const directWrite = readP37Snapshot(seed.fixture.databaseFile);
     expect(
       directWrite.commands.filter(
@@ -1427,12 +1351,21 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     );
     expect(failure?.failureCode).toBe("PriorReceiptEffectConflict");
     expect(failure?.messageId).toBe(expectedDeliverMessageId(providerTurnId));
+    const p9FactSnapshot = readP37Snapshot(seed.fixture.databaseFile);
+    const p9Fact = findDeliverReplayFact(
+      p9FactSnapshot,
+      logicalActionId,
+      expectedDeliverMessageId(providerTurnId),
+    );
+    if (p9Fact === undefined) {
+      throw new Error("P37 P9 post-commit probe has no committed fact row");
+    }
     await awaitP37Probe(
       seed.probes,
       (probe) =>
         probe.role === "new" &&
         probe.boundary === "P10AfterAttentionRowWriteBeforeConsumerCommit" &&
-        probe.attentionFactId === failure?.attentionFactId,
+        probe.attentionFactId === p9Fact.attention_fact_id,
     );
     const failureCommitted = readP37Snapshot(seed.fixture.databaseFile);
     expect(failureCommitted.facts).toHaveLength(1);
@@ -1459,16 +1392,31 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     }
     await waitForLeaseExpiry(seed.fixture.databaseFile, executionId);
     await restartP37Normally(seed.fixture);
+    const finalWithFact = await waitForPublic(
+      async () => readP37Snapshot(seed.fixture.databaseFile),
+      (snapshot) =>
+        findDeliverReplayFact(
+          snapshot,
+          logicalActionId,
+          expectedDeliverMessageId(providerTurnId),
+        ) !== undefined,
+      60_000,
+    );
+    const stableFactId = findDeliverReplayFact(
+      finalWithFact,
+      logicalActionId,
+      expectedDeliverMessageId(providerTurnId),
+    )?.attention_fact_id;
+    expect(stableFactId).toBe(p9Fact.attention_fact_id);
     const attentionRows = await waitForPublic(
       () => publicDeliverReplayRows(seed.client, seed.project.projectId),
-      (rows) =>
-        rows.length === 1 && rows[0]?.dedupKey === failure?.attentionFactId,
+      (rows) => rows.length === 1 && rows[0]?.dedupKey === stableFactId,
       60_000,
     );
     expect(attentionRows).toHaveLength(1);
     expect(attentionRows[0]).toMatchObject({
       severity: "ActionRequired",
-      dedupKey: failure?.attentionFactId,
+      dedupKey: stableFactId,
     });
     const final = readP37Snapshot(seed.fixture.databaseFile);
     expect(final.facts).toHaveLength(1);

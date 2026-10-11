@@ -1,7 +1,20 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
+import {
+  ClockLive,
+  DeliverableRepositoryLive,
+  DomainEventJournalLive,
+  IdGeneratorLive,
+  InboxProjectionStoreLive,
+  layer,
+  MessageStoreLive,
+  TransactionPortLive,
+  WorkRepositoryLive,
+  WorkspaceRepositoryLive,
+} from "../../../adapters/persistence-sqlite/dist/index.js";
+import { deliverHandler } from "../../../apps/single-workspace/dist/control-actions.js";
 import {
   main,
   runDaemonForever,
@@ -10,6 +23,17 @@ import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
 } from "../../../apps/single-workspace/dist/project-resource-profiles.js";
+import {
+  Clock,
+  DeliverableRepository,
+  DomainEventJournal,
+  IdGenerator,
+  InboxProjectionStore,
+  MessageStore,
+  TransactionPort,
+  WorkRepository,
+  WorkspaceRepository,
+} from "../../../packages/ports/dist/index.js";
 import { createFunctionalDaemonListenReporter } from "./functional-daemon-lifecycle.mjs";
 
 // This entry is used only by P37 functional child processes. Production
@@ -68,6 +92,110 @@ const readActionKind = (logicalActionId) => {
   }
 };
 
+const executeLegacyDirectDeliver = async (event) => {
+  const deliverableId = process.env.ARBOR_P37_LEGACY_DELIVERABLE_ID;
+  const summary = process.env.ARBOR_P37_LEGACY_SUMMARY;
+  if (
+    deliverableId === undefined ||
+    summary === undefined ||
+    event.executionId === undefined ||
+    event.providerTurnId === undefined ||
+    event.logicalActionId === undefined ||
+    event.callRef === undefined ||
+    event.actionIndex === undefined
+  ) {
+    throw new Error(
+      "P37 legacy direct-write test child is missing pinned action data",
+    );
+  }
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  let execution;
+  try {
+    execution = db
+      .prepare(
+        `SELECT execution_id, project_id, workspace_id, episode_ref,
+                episode_revision, session_id, admitted_at, stop_requested_at,
+                settlement_kind
+           FROM executions WHERE execution_id = ?`,
+      )
+      .get(event.executionId);
+  } finally {
+    db.close();
+  }
+  if (execution === undefined || execution.settlement_kind !== null) {
+    throw new Error(
+      "P37 legacy direct-write test child found no Active Execution",
+    );
+  }
+  const sqlite = layer({ filename: databaseFile });
+  const infra = Layer.mergeAll(sqlite, ClockLive, IdGeneratorLive);
+  const journal = Layer.provide(DomainEventJournalLive, infra);
+  const repositories = Layer.mergeAll(
+    Layer.provide(DeliverableRepositoryLive, infra),
+    Layer.provide(InboxProjectionStoreLive, infra),
+    Layer.provide(MessageStoreLive, infra),
+    Layer.provide(TransactionPortLive, infra),
+    Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(WorkspaceRepositoryLive, infra),
+  );
+  const app = Layer.mergeAll(infra, journal, repositories);
+  return Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        Effect.gen(function* () {
+          const handler = deliverHandler({
+            deliverables: yield* DeliverableRepository,
+            journal: yield* DomainEventJournal,
+            ids: yield* IdGenerator,
+            works: yield* WorkRepository,
+            workspaces: yield* WorkspaceRepository,
+            messages: yield* MessageStore,
+            inbox: yield* InboxProjectionStore,
+            clock: yield* Clock,
+            tx: yield* TransactionPort,
+          });
+          return yield* handler.handle({
+            action: { _tag: "Deliver", deliverableId, summary },
+            invocation: {
+              providerTurnId: event.providerTurnId,
+              outputPosition: event.actionIndex,
+              callRef: event.callRef,
+              toolName: "deliver",
+              argumentsJson: JSON.stringify({ deliverableId, summary }),
+            },
+            execution: {
+              executionId: execution.execution_id,
+              projectId: execution.project_id,
+              workspaceId: execution.workspace_id,
+              sessionId: execution.session_id,
+              binding: {
+                _tag: "WorkspaceExecution",
+                workspaceId: execution.workspace_id,
+                episode: {
+                  _tag: "WorkEpisode",
+                  workId: execution.episode_ref,
+                  targetWorkRevision: Number(execution.episode_revision),
+                },
+              },
+              admittedAt: execution.admitted_at,
+              stopRequestedAt: execution.stop_requested_at,
+              state: { status: "Active", settlement: null },
+            },
+            context: {
+              _tag: "ExecutionOrigin",
+              principal: "agent:deliver-child",
+              executionId: execution.execution_id,
+              fencingGeneration: 0,
+            },
+            logicalActionId: event.logicalActionId,
+          });
+        }),
+        app,
+      ),
+    ),
+  );
+};
+
 const qualificationProbe = async (event) => {
   if (
     event.boundary === "AH7AfterActionIntentCommit" &&
@@ -76,6 +204,23 @@ const qualificationProbe = async (event) => {
     const actionKind = readActionKind(event.logicalActionId);
     const configuredKind = process.env.ARBOR_P37_GATE_ACTION_KIND;
     if (configuredKind === undefined || configuredKind === actionKind) {
+      if (
+        role === process.env.ARBOR_P37_LEGACY_DIRECT_ROLE &&
+        actionKind === "deliver"
+      ) {
+        const legacyObservation = await executeLegacyDirectDeliver(event);
+        emit({
+          boundary: "P37LegacyDirectObservationReturned",
+          executionId: event.executionId,
+          providerTurnId: event.providerTurnId,
+          logicalActionId: event.logicalActionId,
+          callRef: event.callRef,
+          actionKind,
+          legacyObservationText: legacyObservation.observation.text,
+        });
+        await holdConfiguredBoundary(event.boundary, event);
+        return;
+      }
       emit({ ...event, actionKind });
       await holdConfiguredBoundary(event.boundary, event);
     }
@@ -145,8 +290,8 @@ const config = {
   executionLeaseQualificationProbe,
   deliverReplayQualificationProbe,
   attentionProjectionQualificationProbe,
-  // Added by the P37 L5 composition seam. Until that implementation is
-  // integrated this is intentionally an unknown no-op config property.
+  // This test-only child installs the post-commit probe explicitly;
+  // production startup omits it.
   attentionPollQualificationProbe,
 };
 
