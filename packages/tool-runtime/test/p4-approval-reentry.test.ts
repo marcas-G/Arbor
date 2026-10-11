@@ -341,6 +341,7 @@ describe("P4 exact approval recovery for the same ToolInvocationId", () => {
     const p38Approvals: ExecutableApprovalStoreService = {
       findByActionKey: () => Effect.succeed(Option.none()),
       findById: () => Effect.succeed(Option.some(approval)),
+      findPendingForExecution: () => Effect.succeed(Option.none()),
       putPendingExact: () => Effect.die(new Error("unexpected approval issue")),
       decide: () => Effect.succeed(Option.none()),
       listResolved: () => Effect.succeed([]),

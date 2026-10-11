@@ -64,6 +64,14 @@ Status: **Static implementation checkpoint with P12 / terminal-replay / resolved
   path. This retains same-Execution/Step/action identity without a global
   terminal-history scan and is at-least-once/idempotent. Added an unrun SQLite
   assertion that a resolved Expired row is rediscovered for its Execution.
+- P2 `runExecution` performs a trusted `findPendingForExecution` read in the
+  same read transaction as the canonical Execution lookup, before Worker
+  dispatch or lease acquisition. A Pending row returns the same typed
+  `ApprovalRequired(approvalId, revision)` outcome and does not enter the
+  driver/P4. The main scheduler's former raw SQL guard was removed; production,
+  main, wake-consumer and any other P2 `runExecution` entry now share this
+  central guard. A P2 negative test asserts zero dispatches, zero driver/P4
+  entries and zero lease rows for Pending.
 - Added unrun test source for Pending expiry CAS + exact Inbox/wake + replay,
   human decision racing after TTL, already-Approved expiry, and the P4
   claim-committed/effect-not-admitted same-ToolInvocation replay window.

@@ -261,17 +261,8 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           if (!(yield* preDispatchCheck(executionId))) {
             return;
           }
-          // ApprovalRequired releases the lease but deliberately keeps the
-          // Execution active. Only the approval resolution consumer may wake
-          // it; an ordinary scheduler tick must not poll a human decision.
-          const sql = yield* SqlClient;
-          const pendingApproval = yield* sql.unsafe<{ present: number }>(
-            "SELECT 1 AS present FROM action_approvals WHERE execution_id = ? AND state = 'Pending' LIMIT 1",
-            [executionId],
-          );
-          if (pendingApproval.length > 0) {
-            return;
-          }
+          // runExecution owns the shared P38 Pending-approval gate before
+          // worker dispatch and lease acquisition; do not duplicate it here.
           yield* runExecution(
             executionId,
             { _tag: "Recovery" },

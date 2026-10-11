@@ -14,6 +14,7 @@ import type {
 import {
   AgentExecutionStateStore,
   Clock,
+  ExecutableApprovalStore,
   type ExecutionDriverOwnershipLost,
   ExecutionDriverPort,
   ExecutionRepository,
@@ -159,10 +160,37 @@ export const runExecution = (
     const safety = yield* RuntimeSafetyGate;
     const gateway = yield* CommandGateway;
     const clock = yield* Clock;
+    const executableApprovals = yield* Effect.serviceOption(
+      ExecutableApprovalStore,
+    );
 
-    const execution = yield* tx.transact(repository.findById(executionId));
+    const { execution, pendingApproval } = yield* tx.transact(
+      Effect.gen(function* () {
+        const execution = yield* repository.findById(executionId);
+        // Earlier isolated runtime fixtures without migration 0038 have no
+        // approval ledger. The production P38 composition always installs the
+        // real store (or a fail-closed unavailable sentinel).
+        const pendingApproval =
+          executableApprovals._tag === "Some"
+            ? yield* executableApprovals.value.findPendingForExecution(
+                executionId,
+              )
+            : Option.none();
+        return { execution, pendingApproval };
+      }),
+    );
     if (Option.isNone(execution)) {
       return yield* Effect.fail({ _tag: "ExecutionNotFound" as const });
+    }
+    // P2 `06` §10: Pending approval is a durable nonterminal pause. Every
+    // execution entry point shares this trusted gate before dispatch or lease
+    // acquisition; only a committed resolution can re-enter the same Step.
+    if (Option.isSome(pendingApproval)) {
+      return {
+        _tag: "ApprovalRequired" as const,
+        approvalId: pendingApproval.value.approvalId,
+        revision: pendingApproval.value.revision,
+      };
     }
     yield* dispatch.dispatch({
       executionId,

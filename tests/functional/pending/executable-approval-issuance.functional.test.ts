@@ -17,6 +17,7 @@ describe("EA-DG-01 Executable approval issuance boundary", () => {
     const store: ExecutableApprovalStoreService = {
       findByActionKey: () => Effect.succeed(Option.none()),
       findById: () => Effect.succeed(Option.none()),
+      findPendingForExecution: () => Effect.succeed(Option.none()),
       putPendingExact: (request) => {
         persisted = {
           ...request,

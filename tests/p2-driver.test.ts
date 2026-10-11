@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -18,7 +18,6 @@ import {
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { WorkerDispatchPortLive } from "../adapters/worker-local/src/index.js";
 import {
   CommandGateway,
   CommandGatewayLive,
@@ -45,8 +44,13 @@ import {
   RuntimeSafetyGateLive,
   runExecution,
 } from "../packages/execution-runtime/src/index.js";
-import { RuntimeSafetyGate } from "../packages/ports/src/index.js";
-import { FakeDriverLive } from "../packages/testkit/src/index.js";
+import {
+  type ExecutableApprovalRecord,
+  ExecutableApprovalStore,
+  ExecutionDriverPort,
+  RuntimeSafetyGate,
+  WorkerDispatchPort,
+} from "../packages/ports/src/index.js";
 import {
   seedCurrentOpenWork,
   workEpisode,
@@ -65,7 +69,13 @@ const executionId = parse(ExecutionId)(
 ) as ExecutionId;
 const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 
-const makeApp = (settlement: ExecutionSettlement) => {
+const makeApp = (
+  settlement: ExecutionSettlement,
+  options: {
+    readonly pendingApproval?: ExecutableApprovalRecord;
+    readonly calls?: { dispatch: number; drive: number };
+  } = {},
+) => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
@@ -82,16 +92,39 @@ const makeApp = (settlement: ExecutionSettlement) => {
     repo,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
   );
+  const calls = options.calls ?? { dispatch: 0, drive: 0 };
+  const approvals = Layer.succeed(ExecutableApprovalStore, {
+    findPendingForExecution: () =>
+      Effect.succeed(
+        options.pendingApproval === undefined
+          ? Option.none()
+          : Option.some(options.pendingApproval),
+      ),
+  } as never);
   const all = Layer.mergeAll(
     infra,
     repos,
     fence,
-    WorkerDispatchPortLive,
-    FakeDriverLive(settlement),
+    approvals,
+    Layer.succeed(WorkerDispatchPort, {
+      dispatch: () => {
+        calls.dispatch += 1;
+        return Effect.succeed({ dispatchId: "dispatch", acceptedAt: "t" });
+      },
+    }),
+    Layer.succeed(ExecutionDriverPort, {
+      drive: () => {
+        calls.drive += 1;
+        return Effect.succeed(settlement);
+      },
+    }),
     RuntimeSafetyGateLive(),
     Layer.provide(P2CommandHandlerRegistryLive, repos),
   );
-  return Layer.mergeAll(all, Layer.provide(CommandGatewayLive, all));
+  return {
+    layer: Layer.mergeAll(all, Layer.provide(CommandGatewayLive, all)),
+    calls,
+  };
 };
 
 const seed = Effect.gen(function* () {
@@ -224,7 +257,7 @@ describe("P2-014 driver / dispatch / safety", () => {
         settledAt: rows[0]?.settled_at,
       };
     });
-    const r = await run(program, app);
+    const r = await run(program, app.layer);
     expect((r as { settlement: { _tag: string } }).settlement._tag).toBe(
       "Completed",
     );
@@ -250,7 +283,71 @@ describe("P2-014 driver / dispatch / safety", () => {
       }
       return decisions;
     });
-    const decisions = await run(program, app);
+    const decisions = await run(program, app.layer);
     expect(decisions).toEqual(["Continue", "Continue", "Continue", "Stop"]);
+  });
+
+  it("keeps a Pending executable approval paused before dispatch and lease acquisition", async () => {
+    const calls = { dispatch: 0, drive: 0 };
+    const app = makeApp(yieldedSettlement, {
+      calls,
+      pendingApproval: {
+        approvalId: "eap_p2_pending_gate",
+        routeKind: "Executable",
+        executionId,
+        logicalStepNo: 0,
+        repairAttempt: 0,
+        actionIndex: 0,
+        logicalActionId: "lac_p2_pending_gate",
+        projectId,
+        workspaceId,
+        subject: principal,
+        callRef: "call_pending_gate",
+        toolInvocationId: "tin_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+        toolName: "read",
+        toolVersion: "1",
+        sideEffectSemantics: "Idempotent",
+        argumentsJson: "{}",
+        actionDigest: "digest-pending-gate",
+        targetResourceSpaceIds: [],
+        controlBasisDigest: "basis-pending-gate",
+        revision: 0,
+        requestedAt: "2026-10-11T00:00:00.000Z",
+        expiresAt: "2026-10-12T00:00:00.000Z",
+        state: "Pending",
+        decidedAt: null,
+        decidedBy: null,
+        decisionReason: null,
+        cancelledAt: null,
+        cancelledBy: null,
+        cancellationReason: null,
+        consumedAt: null,
+        consumedBy: null,
+      },
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P12_MIGRATIONS);
+      yield* seed;
+      yield* admit;
+      const result = yield* runExecution(
+        executionId,
+        { _tag: "Recovery" },
+        principal,
+      );
+      const sql = yield* SqlClient;
+      const leases = yield* sql.unsafe<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM execution_leases WHERE execution_id = ?",
+        [executionId],
+      );
+      return { result, leases: leases[0]?.count ?? -1 };
+    });
+    const result = await run(program, app.layer);
+    expect(result.result).toEqual({
+      _tag: "ApprovalRequired",
+      approvalId: "eap_p2_pending_gate",
+      revision: 0,
+    });
+    expect(calls).toEqual({ dispatch: 0, drive: 0 });
+    expect(result.leases).toBe(0);
   });
 });
