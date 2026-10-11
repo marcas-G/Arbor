@@ -135,7 +135,7 @@ actual `db929` checkout contains P36 but not P37/P38. A proposal-only P39
 supplement was added at
 `planning/proposals/AH7-DG-02-P39-physical-schema-supplement-draft.md`; its
 SHA-256 is
-`B016DE0EE42EAA2A5CA8A94E537846F82190E4CBE4E66E370BFC1A56F4939868`. It
+`2BE13013986BE7B9D3626892FB31C6B9F364F554980310D44D4705F7A56CEC6C`. It
 proposes versioned canonical
 RecoveryBinding JSON + digest, per-attempt rows, append-only three-outcome facts,
 exact constraints/indexes, illustrative SQLite upgrade envelope, transaction
@@ -144,20 +144,42 @@ accepted P36→P37→P38→P39 ordering. The qualification matrix now contains
 proposal-gated migration/backfill/FK/rollback/binding/attempt/fact/atomicity
 gates.
 
-The selected safety disposition is to preserve every unsettled P36 row without
-a persisted complete binding as `LegacyBindingUnproven`, never auto-reenter,
-and preserve any consumed approval on its original invocation without refund
-or transfer. This is the direct consequence of D0A's “complete binding required
-for exact shell@2 re-entry.” Settled legacy rows use `HistoricalSettled`; new
-claims are `Bound` only with a verified immutable binding in the same claim
-transaction. Migration may retain these rows, but application release is
-blocked until each active row is visible and has an authorized human
-disposition. Existing P9 `07` requires Attention for insufficient legacy
-evidence, but the accepted DG02 package does not define an exact P9 source/P10
-projection for this NotAdmitted/no-effect marker. The proposal therefore
-forbids misusing `ReconciliationEscalated` or inventing an Attention mapping;
-if the existing route cannot surface it, a new P9/P10 Design Gap blocks
-release. Qualification now requires a copied real schema-38/P36 SQLite DB,
-including consumed approval and P3 Action/cursor state, migration, repeated
-restart/runner invocation, and proof of zero reentry/effect. No tests or daemon
-processes were run; only `git diff --check` is run.
+## Independent review response (Blocking=3)
+
+The P39 proposal/matrix were revised only; no owner docs, production, migration,
+or test source was changed:
+
+1. P36 has no `admitted_at`. Backfilled MayHaveStarted/LegacyUnknown attempts
+   now preserve `admitted_at=NULL`, `admission_source=P36Backfill`, and
+   `admission_time_precision=UnknownLegacy`; P36 `intent_at` is never used as an
+   admission-time proxy. New P39 admission records a transaction-captured time
+   with `TransactionTimestamp`, explicitly not exact commit wall time.
+2. Legacy unprofiled attempts now have a representable `P36LegacyUnprofiled`
+   StillUnknown fact with NULL binding/profile/effectKey and physical
+   `legacy_reason=LegacyProfileUnavailable`; public canonical reason remains
+   accepted D0A `ProfileUnavailable`, so no fake hash/key or public union
+   extension is silently introduced. The alternative public reason-code
+   extension is explicitly flagged as separate governance. P9/P10 for these
+   may-have-started rows remains the already-accepted D0A
+   ReconciliationEscalated→ActionRequired mapping.
+3. Active P36 NotAdmitted rows cannot use that external-effect Attention path.
+   P39 therefore has a pre-DDL refusal gate that leaves the same DB, approval,
+   P3 Action/cursor, schema and `user_version=38` unchanged and emits a durable
+   `{kind,schemaVersion,databaseFingerprint,createdAt,invocationIds}` audit
+   report. P39 proceeds only after existing authorized old-version disposition
+   makes them terminal; if that path is unavailable, migration/release remain
+   blocked and no new Attention event is invented.
+4. `Bound` now requires a non-null binding digest and deferred composite FK to
+   the exact immutable binding row at commit; binding marker/digest and attempt
+   identity cannot be rewritten. Invocation/fact ArtifactRefs and invocation-
+   scoped settlement fact references have explicit FK targets. Terminal
+   settlement cannot be rewritten; contradictory late facts append as
+   `PostTerminalEvidence` / `StillUnknown(EvidenceBindingMismatch)` without
+   changing P4/P3 terminal state or replaying. Any new post-terminal
+   user-visible Attention remains a separate P9/P10 gap.
+
+Qualification now includes actual schema-38/P36 copies, migration refusal,
+rollback, repeated migration-runner invocation/restart, approval and Action/
+cursor preservation, and post-terminal contradiction checks. No tests or daemon
+processes were run; `git diff --check` is the only validation. The supplement
+remains DRAFT and is not owner landing or implementation authorization.

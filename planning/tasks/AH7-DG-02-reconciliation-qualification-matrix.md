@@ -16,7 +16,7 @@ it as part of proposal drafting. No test in this matrix has been run here.
 | Case | Durable pre-crash state | Required external evidence | Recovery action | Required durable convergence |
 |---|---|---|---|---|
 | Generic shell v3, no profile | P4 `MayHaveStarted`; effect may have occurred | None available by contract | Never re-execute; `StillUnknown(ProfileUnavailable)` | P9 Attention/fact, OutcomeUnknown gate; one typed ToolResult/Action source if projected; no second marker |
-| Historical shell v2, `MayHaveStarted` / `LegacyUnknown`, no persisted profile/effect key | Stored `Reconcilable`, profile absent | No valid retrospective proof | Never reinterpret under new catalog; `StillUnknown(LegacyProfileUnavailable)` | Original ToolInvocation stays auditable; P9 Attention; no executor |
+| Historical shell v2, `MayHaveStarted` / `LegacyUnknown`, no persisted profile/effect key | Stored `Reconcilable`, profile absent | No valid retrospective proof | Never reinterpret under new catalog; canonical `StillUnknown(ProfileUnavailable)` with physical provenance `LegacyProfileUnavailable` | Original ToolInvocation stays auditable; P9 Attention; no executor |
 | Historical shell v2, exact `NotAdmitted` definition/binding still available | Intent exists, effect admission absent | P4 marker proves no executor was admitted | Re-enter only exact shell@2 under current fresh authority/resource/approval/lease/stop gate | Keep exact v2 definition until these rows terminate; never substitute v3 or reclassify |
 | Registered profile, crash after admission but before executor | attempt N `MayHaveStarted` | Exact final `NotOccurred` proof; old attempt externally fenced/quiescent | Revalidate exact binding; at most one attempt N+1 if authority/resource/approval unchanged and not stopping | Same invocation/callRef/ProviderTurn; one effect key; append-only proof fact |
 | Registered profile, effect occurred before P4 settlement | attempt N `MayHaveStarted` | Exact terminal `Occurred` proof plus reconstructable settlement/observation/result ref | Do not execute again; settle from proof | P4 settlement + fact; one P3 ToolResult with observationRef equal Action/Session source |
@@ -37,6 +37,12 @@ subject/capability/target, workspace/project policy revision, approval
 expiry/revocation/consumer, resource-boundary revision, region/address,
 profile hash and Worker lease generation. Any mismatch blocks replay; it is not
 resolved by treating a similar current grant/profile as equivalent.
+
+The logical exact-shell@2 re-entry row above applies only when a complete
+Runtime-owned binding is already available and verified. The P39 physical
+supplement adds a pre-upgrade refusal for active P36 NotAdmitted rows, whose
+P36 schema persisted no such binding; that legacy migration gate is not
+permission to reconstruct or graft one.
 
 ## Runtime identity and approval binding owner matrix
 
@@ -164,15 +170,17 @@ write migration/tests now.
 | Gate | Deterministic evidence required | Must not claim |
 |---|---|---|
 | Migration prerequisite | Refuse any schema version other than P38/user_version 38; verify P36 invocation state and P38 approval ledger exist; set user_version 39 only after successful transactional upgrade | P39 can ship before P37/P38 or this `db929` checkout already has them |
-| Legacy backfill | One attempt-0 row per P36 invocation with exact NotAdmitted/MayHaveStarted/LegacyUnknown; settled rows marked HistoricalSettled; every unsettled row without persisted binding marked LegacyBindingUnproven; no inferred binding/profile/effect key/fact; approvals and P3 Action/Step/cursor unchanged | Historical evidence was recovered from Session text or current catalog |
+| Legacy backfill | P36 `MayHaveStarted`/`LegacyUnknown` use `admission_source=P36Backfill`, null `admitted_at`, `admission_time_precision=UnknownLegacy`; never copy `intent_at`. Settled rows `HistoricalSettled`; no inferred binding/profile/effect key/fact; approvals and P3 Action/Step/cursor unchanged | Intent time is treated as effect-admission time or old source/provenance is lost |
 | FK and rollback | Inject failure after each DDL/copy/backfill phase; transaction rollback preserves schema, rows, P38 approvals, and version 38; run `foreign_key_check` on success | A post-commit down migration can erase facts safely |
 | Binding integrity | Canonical RecoveryBinding digest verified; duplicate/mismatched P3 identity, action/callRef, resource snapshot or P38 approval subject/revision fails claim before effect admission | P4 trusts model/caller-supplied approval or source identities |
 | Attempt constraints | Unique `(invocationId, attemptNo)`, only attempt 0/1; CAS permits only NotAdmitted→MayHaveStarted; legacy no-profile rows remain representable but cannot pass new Reconcilable admission | Any row label alone proves admission or proof |
 | Fact integrity | Append-only trigger, deterministic fact identity, exact attempt/binding/profile/effect key match, duplicate identical proof idempotent, conflicting/late proof preserved and classified StillUnknown | A conflicting proof overwrites prior facts or implies NotOccurred |
 | Atomic handoff | Kill around claim+approval+attempt0, admission, fact+settlement, and P9 event writes; before/after commit outcomes match the accepted transaction boundaries | Approval is consumed twice or an uncommitted MayHaveStarted effect is reported as admitted |
-| Legacy unbound disposition | `LegacyBindingUnproven` remains non-reenterable/no-executor; approval is not refunded or transferred; verify the row remains auditable, existing P3 Action/cursor is unchanged, and no replacement ToolInvocation is created | Missing binding is synthesized or unbound NotAdmitted is converted to Denied/Interrupted/ReconciledNoEffect |
-| P9/P10 human visibility release gate | Confirm the existing P9 insufficient-legacy-evidence Attention/manual-recovery path can identify this exact marker and expose it in P10; if no exact accepted source exists, stop release and raise P9/P10 design gap | `ReconciliationEscalated` is emitted for NotAdmitted/no-effect or a new Attention source is invented in implementation |
-| Real historical DB qualification | Copy a real schema-38/P36 SQLite DB containing settled, active NotAdmitted with consumed approval, and MayHaveStarted rows; migrate the copy, restart twice, verify exact row/approval/P3 state, marker, no effect/re-entry, and migration-runner replay/no-op | In-memory-only schema fixture stands in for historical upgrade, or retry consumes the old approval |
+| Legacy unprofiled proof | Persist `StillUnknown/ProfileUnavailable` with `fact_origin=P36LegacyUnprofiled`, `legacy_reason=LegacyProfileUnavailable`, and NULL binding/profile/effectKey; verify accepted P9 `ReconciliationEscalated` + P10 ActionRequired exact query/rebuild/dedup | Hash/key is fabricated or a new public P4/P3 reason code is silently added |
+| Legacy NotAdmitted preflight | With any unsettled P36 NotAdmitted row, migration returns structured report `{kind,schemaVersion,databaseFingerprint,createdAt,invocationIds}` and rolls back before DDL/version bump; report is durably archived; original invocation, consumed approval, P3 Action/Step/cursor remain unchanged. Proceed only after existing authorized old-version disposition makes it terminal | Row is migrated then silently skipped, or approval refunded/transferred |
+| Bound physical integrity | `Bound` requires nonnull binding digest and deferred composite FK to exact immutable `(invocationId,bindingSha256)` row at transaction commit; state/digest and binding row cannot be rewritten; mismatched/missing binding fails transaction; refs target artifacts/fact tables | Marker alone can assert Bound or a dangling ref can settle |
+| Terminal conflict | Append contradictory post-terminal evidence as `PostTerminalEvidence`; P4 settlement and P3 ToolResult/Action/cursor remain byte-identical; no replay. If user-visible alert lacks an accepted source, stop for P9/P10 governance | Late fact rewrites terminal truth or is mislabeled RecoveryInput |
+| Real historical DB qualification | Copy a real schema-38/P36 SQLite DB containing settled, active NotAdmitted with consumed approval, and MayHaveStarted rows. First migrate attempt with active NotAdmitted refuses and preserves DB; terminally disposition that row only through existing authorized old-version path, rerun P39, restart twice, verify marker/time provenance/FKs/approval/P3 state and runner no-op | In-memory-only schema fixture stands in for historical upgrade, migration deletes legacy evidence, or retry consumes old approval |
 
 This phase permits proposal review only. No SQLite fixture was migrated and no
 test was run while preparing the supplement.
