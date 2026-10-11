@@ -221,6 +221,7 @@ import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
 import { ToolAuthorityResolverLive } from "./tool-authority-resolver.js";
 import {
   type AuthenticatorService,
+  LOCAL_PRINCIPAL,
   makeLocalAuthenticator,
 } from "./transport/auth.js";
 import type { CreateProjectPostCommitBeforeActivationQualificationProbe } from "./transport/composition.js";
@@ -358,6 +359,21 @@ export interface SingleWorkspaceConfig {
   readonly providerQualificationProbe?: ProviderRuntimeConfig["qualificationProbe"];
 }
 
+/** Resolve the human membership fact owned by Composition Root. Only the
+ * implicit no-authenticator deployment is the loopback local single-user
+ * identity; any configured authenticator needs explicit governance membership
+ * (or a direct-parent edge), and explicit governance always remains exact. */
+export const resolveCompositionGovernance = (
+  config: Pick<SingleWorkspaceConfig, "authenticator" | "governance">,
+): ParentUserGovernanceFacts =>
+  config.governance ??
+  (config.authenticator === undefined
+    ? {
+        authenticatedHumans: [parse(Principal)(LOCAL_PRINCIPAL)],
+        directParentOf: [],
+      }
+    : { authenticatedHumans: [], directParentOf: [] });
+
 export type SingleWorkspaceServices =
   | CommandGateway
   | CommandStore
@@ -407,6 +423,7 @@ export type SingleWorkspaceServices =
 export const buildSingleWorkspaceLayer = (
   config: SingleWorkspaceConfig,
 ): Layer.Layer<SingleWorkspaceServices> => {
+  const governance = resolveCompositionGovernance(config);
   const base = layer({ filename: config.databaseFile });
   const infra = Layer.mergeAll(
     base,
@@ -664,9 +681,7 @@ export const buildSingleWorkspaceLayer = (
   );
   const authorityResolver = AuthorityResolverPortLive;
   const toolAuthority = Layer.provide(
-    ToolAuthorityResolverLive(
-      config.governance ?? { authenticatedHumans: [], directParentOf: [] },
-    ),
+    ToolAuthorityResolverLive(governance),
     Layer.mergeAll(repos, authorityResolver),
   );
   const artifactService = Layer.provide(
@@ -740,9 +755,7 @@ export const buildSingleWorkspaceLayer = (
     Layer.mergeAll(repos, infra),
   );
   const executableInvocation = Layer.provide(
-    ExecutableToolHandlerLive(
-      config.governance ?? { authenticatedHumans: [], directParentOf: [] },
-    ),
+    ExecutableToolHandlerLive(governance),
     Layer.mergeAll(toolRuntime, infra, toolCatalog, repos, authorityResolver),
   );
   const turnProfiles = Layer.provide(
@@ -887,7 +900,7 @@ export const buildSingleWorkspaceLayer = (
       // Local single-user form: no configured authenticator = localhost
       // desktop process (every request is the local principal, no login).
       config.authenticator ?? makeLocalAuthenticator(),
-      config.governance ?? { authenticatedHumans: [], directParentOf: [] },
+      governance,
       config.authenticator !== undefined,
       config.createProjectPostCommitBeforeActivationQualificationProbe,
     ),
