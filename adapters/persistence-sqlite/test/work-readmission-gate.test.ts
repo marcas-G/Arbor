@@ -31,6 +31,10 @@ const otherWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789c2";
 const otherSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789c2";
 const otherWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789c2";
 const otherExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789c2";
+const thirdWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789c4";
+const thirdSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789c4";
+const thirdWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789c4";
+const thirdExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789c4";
 const otherProjectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789c2";
 const otherProjectWorkspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789c3";
 const otherProjectSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789c3";
@@ -209,6 +213,71 @@ const seedOtherWorkspaceExecution = Effect.gen(function* () {
   );
 });
 
+const seedThirdWorkspaceExecution = Effect.gen(function* () {
+  const sql = yield* SqlClient;
+  const tx = yield* TransactionPort;
+  yield* tx.transact(
+    Effect.gen(function* () {
+      yield* sql.unsafe(
+        `INSERT INTO sessions (
+          session_id, binding_kind, workspace_id, execution_id,
+          context_epoch, created_at
+        ) VALUES (?, 'WorkspacePrimary', ?, NULL, 0, 't0')`,
+        [thirdSessionId, thirdWorkspaceId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO workspaces (
+          workspace_id, project_id, parent_workspace_id, name,
+          responsibility_definition, responsibility_revision,
+          resource_boundary, resource_boundary_revision, agent_binding,
+          primary_session_id, current_work_id, workspace_policy,
+          workspace_policy_revision, revision, lifecycle, created_at, updated_at
+        ) VALUES (?, ?, ?, 'Third', '{}', 0, '{}', 0, '{}', ?, ?, '{}', 0, 0, 'Active', 't0', 't0')`,
+        [thirdWorkspaceId, projectId, workspaceId, thirdSessionId, thirdWorkId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO works (
+          work_id, project_id, workspace_id, objective, why, constraints,
+          completion_expectation, verification_mission, provenance,
+          lifecycle, revision, created_at, updated_at
+        ) VALUES (?, ?, ?, 'third objective', 'why', '[]', 'done', '{}', '{}', 'Open', 0, 't0', 't0')`,
+        [thirdWorkId, projectId, thirdWorkspaceId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO executions (
+          execution_id, project_id, binding_kind, workspace_id,
+          episode_kind, episode_ref, episode_revision, parent_execution_id,
+          mission, session_id, admitted_at, stop_requested_at,
+          settlement_kind, settlement_json, settled_at
+        ) VALUES (?, ?, 'workspace', ?, 'WorkEpisode', ?, 0,
+          NULL, NULL, ?, 't0', NULL, NULL, NULL, NULL)`,
+        [
+          thirdExecutionId,
+          projectId,
+          thirdWorkspaceId,
+          thirdWorkId,
+          thirdSessionId,
+        ],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO agent_execution_state (
+          execution_id, episode_json, wake_reason, current_mode,
+          active_skill_refs_json, turn_no, recent_directive_refs_json,
+          recent_action_fingerprints_json, updated_at
+        ) VALUES (?, ?, 'Initial', NULL, '[]', 0, '[]', '[]', 't0')`,
+        [
+          thirdExecutionId,
+          JSON.stringify({
+            _tag: "WorkEpisode",
+            workId: thirdWorkId,
+            targetWorkRevision: 0,
+          }),
+        ],
+      );
+    }),
+  );
+});
+
 const seedOtherProjectExecution = Effect.gen(function* () {
   const sql = yield* SqlClient;
   const tx = yield* TransactionPort;
@@ -302,15 +371,40 @@ const appendReconciliationEvent = (
     );
   });
 
+const appendMalformedReconciliationEvent = (aggregateRef: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const tx = yield* TransactionPort;
+    yield* tx.transact(
+      sql.unsafe(
+        `INSERT INTO domain_events (
+          event_id, project_id, sequence, event_type, event_version,
+          occurred_at, aggregate_ref, actor, caused_by_command_id,
+          caused_by_event_id, correlation_ref, payload_json
+        ) VALUES ('evt_readmission_malformed', ?, 1, 'ReconciliationEscalated',
+          1, 't1', ?, 'system:recovery', NULL, NULL, NULL, '{broken-json')`,
+        [projectId, aggregateRef],
+      ),
+    );
+  });
+
 const query = (workRevision = 0) =>
+  queryTarget(projectId, workspaceId, workId, workRevision);
+
+const queryTarget = (
+  requestedProjectId: string,
+  requestedWorkspaceId: string,
+  requestedWorkId: string,
+  workRevision = 0,
+) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const gate = yield* WorkReadmissionGateStore;
     return yield* tx.transact(
       gate.hasBlockingSource({
-        projectId: projectId as never,
-        workspaceId: workspaceId as never,
-        workId: workId as never,
+        projectId: requestedProjectId as never,
+        workspaceId: requestedWorkspaceId as never,
+        workId: requestedWorkId as never,
         workRevision: workRevision as never,
       }),
     );
@@ -465,7 +559,39 @@ describe("P2 WorkReadmissionGateStore", () => {
             '"reasonCode":"SourceEventExecutionMismatch"',
           );
           expect(JSON.stringify(exit.cause)).toContain(
-            `"executionId":"${otherExecutionId}"`,
+            `"executionId":"${executionId}"`,
+          );
+        }
+      }),
+    ));
+
+  it("does not let a B/C mismatch block A, while each referenced Workspace fails closed", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* seedOtherWorkspaceExecution;
+        yield* seedThirdWorkspaceExecution;
+        yield* appendReconciliationEvent(otherExecutionId, thirdExecutionId);
+        expect(
+          Option.isNone(yield* queryTarget(projectId, workspaceId, workId)),
+        ).toBe(true);
+        const inB = yield* Effect.exit(
+          queryTarget(projectId, otherWorkspaceId, otherWorkId),
+        );
+        const inC = yield* Effect.exit(
+          queryTarget(projectId, thirdWorkspaceId, thirdWorkId),
+        );
+        expect(inB._tag).toBe("Failure");
+        expect(inC._tag).toBe("Failure");
+        if (inB._tag === "Failure") {
+          expect(JSON.stringify(inB.cause)).toContain(
+            '"reasonCode":"SourceEventExecutionMismatch"',
+          );
+        }
+        if (inC._tag === "Failure") {
+          expect(JSON.stringify(inC.cause)).toContain(
+            '"reasonCode":"SourceEventExecutionMismatch"',
           );
         }
       }),
@@ -504,7 +630,7 @@ describe("P2 WorkReadmissionGateStore", () => {
         expect(exit._tag).toBe("Failure");
         if (exit._tag === "Failure") {
           expect(JSON.stringify(exit.cause)).toContain(
-            '"reasonCode":"SourceEventExecutionMismatch"',
+            '"reasonCode":"SourceExecutionMissing"',
           );
         }
       }),
@@ -577,6 +703,50 @@ describe("P2 WorkReadmissionGateStore", () => {
         yield* seedOtherWorkspaceExecution;
         yield* appendReconciliationEvent(otherExecutionId, otherExecutionId);
         expect(Option.isNone(yield* query())).toBe(true);
+      }),
+    ));
+
+  it("scopes a missing ReconciliationEscalated payload identity to its aggregate Workspace", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* seedOtherWorkspaceExecution;
+        yield* appendReconciliationEvent(otherExecutionId);
+        expect(
+          Option.isNone(yield* queryTarget(projectId, workspaceId, workId)),
+        ).toBe(true);
+        const inB = yield* Effect.exit(
+          queryTarget(projectId, otherWorkspaceId, otherWorkId),
+        );
+        expect(inB._tag).toBe("Failure");
+        if (inB._tag === "Failure") {
+          expect(JSON.stringify(inB.cause)).toContain(
+            '"reasonCode":"SourceEventExecutionMismatch"',
+          );
+        }
+      }),
+    ));
+
+  it("scopes an unparseable ReconciliationEscalated payload by aggregate Execution", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* seed();
+        yield* seedOtherWorkspaceExecution;
+        yield* appendMalformedReconciliationEvent(otherExecutionId);
+        expect(
+          Option.isNone(yield* queryTarget(projectId, workspaceId, workId)),
+        ).toBe(true);
+        const inB = yield* Effect.exit(
+          queryTarget(projectId, otherWorkspaceId, otherWorkId),
+        );
+        expect(inB._tag).toBe("Failure");
+        if (inB._tag === "Failure") {
+          expect(JSON.stringify(inB.cause)).toContain(
+            '"reasonCode":"SourceEventExecutionMismatch"',
+          );
+        }
       }),
     ));
 
