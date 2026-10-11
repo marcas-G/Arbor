@@ -161,8 +161,8 @@ const seedOtherAttentionSource = Effect.gen(function* () {
           occurred_at, aggregate_ref, actor, caused_by_command_id,
           caused_by_event_id, correlation_ref, payload_json
         ) VALUES (?, ?, 5, 'AssignWorkTargetBindingEscalated', 1, 't2', ?,
-          'system:test', 'cmd_00000000-0000-7000-8000-000000000020',
-          NULL, NULL, '{}')`,
+          'system:recovery', 'cmd_00000000-0000-7000-8000-000000000020',
+          NULL, 'action-unrelated', '{}')`,
         [sourceEventId, projectId, workspaceId],
       );
       yield* sql.unsafe(

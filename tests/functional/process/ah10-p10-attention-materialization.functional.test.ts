@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -276,6 +276,8 @@ const readMaterializedAttentionView = (targetProjectId = projectId) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const attention = yield* AttentionProjectionStore;
+    const sourceFacts = yield* RecoveryAttentionFactStore;
+    const journal = yield* DomainEventJournal;
     const sql = yield* SqlClient;
     const deps: AttentionReadDeps = {
       listWorkspacesByProject: () => Effect.succeed([]),
@@ -321,7 +323,21 @@ const readMaterializedAttentionView = (targetProjectId = projectId) =>
       listOpenVerifications: () => Effect.succeed([]),
       listUnsatisfiedDependencies: () => Effect.succeed([]),
       findDependency: () => Effect.succeed(Option.none()),
-      readEvents: () => Effect.succeed([]),
+      readEvents: (projectIdValue) =>
+        tx
+          .transact(
+            Effect.gen(function* () {
+              const last = yield* journal.lastSequence(projectIdValue);
+              return last === 0
+                ? []
+                : yield* journal.readAfter(projectIdValue, 0, last);
+            }),
+          )
+          .pipe(Effect.mapError(projectionReadError)),
+      findAssignWorkBindingFailure: (attentionFactId) =>
+        tx
+          .transact(sourceFacts.findAssignWorkBindingFailure(attentionFactId))
+          .pipe(Effect.mapError(projectionReadError)),
       listProjectedAssignWorkBindingFailures: (projectIdValue) =>
         tx
           .transact(attention.listAssignWorkBindingFailures(projectIdValue))
@@ -537,6 +553,12 @@ describe("AH10/P10 Attention materialization", () => {
       field: "caused_by_command_id",
       value: "cmd_018f2b3c-4d5e-7abc-8def-0123456789ff",
     },
+    {
+      field: "caused_by_event_id",
+      value: "evt_018f2b3c-4d5e-7abc-8def-0123456789ff",
+    },
+    { field: "actor", value: "user:forged" },
+    { field: "event_version", value: 2 },
     { field: "occurred_at", value: "2026-10-10T00:00:00.000Z-mismatch" },
   ])(
     "fails closed when P9 event envelope field $field conflicts with its fact",
@@ -551,8 +573,27 @@ describe("AH10/P10 Attention materialization", () => {
           [value, fact.eventId],
         );
         const failed = yield* Effect.exit(runP10AttentionPoll());
+        const queryFailure = yield* Effect.exit(
+          readMaterializedAttentionView(),
+        );
+        const tx = yield* TransactionPort;
+        const journal = yield* DomainEventJournal;
+        const attentionRows = yield* AttentionProjectionStore;
+        const sourceFacts = yield* RecoveryAttentionFactStore;
+        const events = yield* tx.transact(journal.readAfter(projectId, 0, 10));
+        const directApplyFailed = yield* Effect.exit(
+          tx.transact(
+            makeProjectAttentionProjectionStore(
+              projectId,
+              sourceFacts,
+              attentionRows,
+            ).apply(events),
+          ),
+        );
         return {
           failed,
+          queryFailure,
+          directApplyFailed,
           offset: yield* readOffset(),
           rows: yield* readAttentionRows(),
         };
@@ -561,8 +602,19 @@ describe("AH10/P10 Attention materialization", () => {
       const result = await Effect.runPromise(
         Effect.provide(program, makeApp()),
       );
-      expect(Exit.isFailure(result.failed)).toBe(true);
-      expect(result.offset).toBe(0);
+      if (field !== "event_version") {
+        expect(Exit.isFailure(result.failed)).toBe(true);
+      }
+      expect(Exit.isFailure(result.queryFailure)).toBe(true);
+      if (Exit.isFailure(result.queryFailure)) {
+        expect(Cause.squash(result.queryFailure.cause)).toMatchObject({
+          _tag: "ProjectionIntegrityFailure",
+          reasonCode: "SourceFactEventMismatch",
+          executionId,
+        });
+      }
+      expect(Exit.isFailure(result.directApplyFailed)).toBe(true);
+      expect(result.offset).toBe(field === "event_version" ? 1 : 0);
       expect(result.rows).toEqual([]);
     },
   );

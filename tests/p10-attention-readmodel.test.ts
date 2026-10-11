@@ -9,6 +9,7 @@ import {
 } from "../packages/domain/dist/index.js";
 import type {
   AttentionFacts,
+  AttentionReadDeps,
   AttentionRow,
 } from "../packages/projection-runtime/src/index.js";
 import {
@@ -674,6 +675,23 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
         yield* seedAttention;
         const sql = yield* SqlClient;
         const deps = yield* makeP10Deps();
+        const duplicateBindingDeps: AttentionReadDeps = {
+          ...deps.attention,
+          listAttentionSourceExecutionBindings: (projectId, executionIds) =>
+            deps.attention
+              .listAttentionSourceExecutionBindings(projectId, executionIds)
+              .pipe(
+                Effect.map((bindings) => [
+                  ...bindings,
+                  ...bindings.filter(
+                    (binding) => binding.executionId === "exe_s1",
+                  ),
+                ]),
+              ),
+        };
+        const duplicateBinding = yield* Effect.exit(
+          deriveProjectAttention(p10Project, duplicateBindingDeps),
+        );
         const beforeSteer = yield* deriveProjectAttention(
           p10Project,
           deps.attention,
@@ -710,6 +728,57 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
         const second = yield* deriveProjectAttention(
           p10Project,
           deps.attention,
+        );
+        yield* sql.unsafe(
+          "DELETE FROM agent_execution_state WHERE execution_id = 'exe_s1'",
+        );
+        const missingEpisodeState = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          `INSERT INTO agent_execution_state (
+             execution_id, focus_json, episode_json, wake_reason,
+             current_mode, active_skill_refs_json, turn_no,
+             recent_directive_refs_json, recent_action_fingerprints_json,
+             updated_at
+           ) VALUES ('exe_s1', ?, ?, 'Seed', NULL, '[]', 0, '[]', '[]', 't0')`,
+          [
+            JSON.stringify({ _tag: "Work", workId: W_LEAF_LIVE }),
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: W_LEAF_LIVE,
+              targetWorkRevision: 0,
+            }),
+          ],
+        );
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = '{malformed' WHERE execution_id = 'exe_s1'",
+        );
+        const malformedEpisode = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = 'exe_s1'",
+          [
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: W_LEAF_LIVE,
+              targetWorkRevision: 2,
+            }),
+          ],
+        );
+        const futureEpisode = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = 'exe_s1'",
+          [
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: W_LEAF_LIVE,
+              targetWorkRevision: 0,
+            }),
+          ],
         );
         const sourceAudit = yield* sql.unsafe<{ readonly count: number }>(
           `SELECT COUNT(*) AS count FROM domain_events
@@ -854,10 +923,14 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
         );
         return {
           beforeSummary,
+          duplicateBinding,
           staleAttentionBefore,
           staleActionRequiredBefore,
           first,
           second,
+          missingEpisodeState,
+          malformedEpisode,
+          futureEpisode,
           eventCount: Number(sourceAudit[0]?.count ?? 0),
           settlementCount: Number(oldSafetySettlement[0]?.count ?? 0),
           corrupted,
@@ -897,6 +970,28 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
     }
     expect(result.eventCount).toBe(1);
     expect(result.settlementCount).toBe(1);
+    expect(Exit.isFailure(result.duplicateBinding)).toBe(true);
+    if (Exit.isFailure(result.duplicateBinding)) {
+      expect(Cause.squash(result.duplicateBinding.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "SourceExecutionNonUnique",
+        executionId: "exe_s1",
+      });
+    }
+    for (const [exit, reasonCode] of [
+      [result.missingEpisodeState, "SourceEpisodeStateMissing"],
+      [result.malformedEpisode, "EpisodeMalformed"],
+      [result.futureEpisode, "FutureWorkRevision"],
+    ] as const) {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          _tag: "ProjectionIntegrityFailure",
+          reasonCode,
+          executionId: "exe_s1",
+        });
+      }
+    }
     expect(Exit.isFailure(result.corrupted)).toBe(true);
     if (Exit.isFailure(result.corrupted)) {
       expect(Cause.squash(result.corrupted.cause)).toMatchObject({
