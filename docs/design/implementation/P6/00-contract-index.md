@@ -10,6 +10,18 @@
 **Authority:** DID v1.9 §11 P6, G3 (v1.9), G5 (v1.7); SD v1.3 §7.2–§7.5, §8.1–§8.3, §13.5, §14; Scenarios v1.2 S1.4, S2; P1 `01`/`02`, P2 `01`/`05`, P3 `03`, P4 `02`, P5 `03`.
 **Status:** FROZEN — manual governance adoption (D1–D4 confirmed with binding constraints); four-way review Blocking=0.
 
+## Accepted owner amendment — EA-DG-01 (2026-10-11)
+
+Decision `ACCEPT_EXECUTABLE_APPROVAL_ISSUANCE_DECISION_RESUME`, fixed proposal
+SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`.
+P6 `02` §4.1 owns `eap:<approvalId>:<revision>` upsert-by-key admission and
+exact-key consumption for Executable approvals. The item is a human-only
+Governance Inbox entry, never a Message/Agent Session promotion. Control's
+`cap:` route and the existing CAPA flow remain unchanged. Acceptance and
+landing audit are recorded in
+`planning/results/EA-DG-01-governance-acceptance.md` and
+`planning/results/EA-DG-01-contract-landing.result.md`.
+
 ## Documents
 
 | Doc | Owns |

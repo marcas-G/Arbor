@@ -4,6 +4,22 @@
 fifth design layer; they are the P1-owned implementation contracts authorized
 by DID §13.
 
+## Accepted owner amendment — EA-DG-01 (2026-10-11)
+
+Decision `ACCEPT_EXECUTABLE_APPROVAL_ISSUANCE_DECISION_RESUME`, fixed proposal
+SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+acceptance and landing audit:
+`planning/results/EA-DG-01-governance-acceptance.md` and
+`planning/results/EA-DG-01-contract-landing.result.md`.
+
+P1 `01`/`03` own the External `ResolveExecutableApproval` command and its
+receipt-first, exact-route/revision transaction; `05` owns the durable
+`ExecutableApprovalRequested/Resolved` journal-source event transaction;
+`04` records forward migration 0038 after 0036 AH7/P36 and 0037 AH10 Deliver.
+P1 does not resolve human authority itself; P12 supplies the trusted decision
+fact. The existing Control approval and direct-child AssignWork command
+contracts are unchanged.
+
 ```text
 Detailed Implementation Design v1.6 (frozen)
         ↓ delegates phase-scoped closure

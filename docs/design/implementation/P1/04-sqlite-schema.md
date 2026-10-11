@@ -397,6 +397,30 @@ inert and tested with a stub.
   require PRAGMA foreign_keys=OFF outside the transaction (documented exception).
 ```
 
+### EA-DG-01 migration contract — 0038
+
+The ordered accepted/planned suffix is `0036` AH7/P36,
+`0037` AH10 Deliver P9/P10, then `0038` Executable approval handoff.
+Migration 0037 is conditional on integrated 0036; 0038 is conditional on both
+0036 and 0037. Supported suffix paths are v35→36→37→38,
+v36→37→38, and v37→38. A v35 database must not skip either prerequisite.
+
+Migration `0038_executable_approval_handoff` is a forward-only rebuild of the
+0032 unified `action_approvals` table. It adds exact Executable Step/action/
+call/invocation identity fields and cancellation provenance, permits the
+shared MAC `Cancelled` terminal state with provenance checks, and replaces
+only 0032's route-blind digest uniqueness with separate Control and
+Executable-logical-action partial indexes. Existing 0032 rows retain route,
+`binding_proven`, source state, terminal Expired/Consumed disposition and
+consumer identity; no binding is inferred and no prior migration or 0037
+Deliver source row is rewritten. The exact DDL delta and legacy constraints
+are owned by DID §9.3 and P4 `03`/`06`.
+
+The decision/Inbox/wake facts for request, Resolve, Expire and Stop remain in
+their owning P1/P4/P6/P2 transactions as specified in the EA-DG-01 owner
+contracts. This migration slot contract does not authorize executing the
+migration or changing the preserved dogfood database.
+
 ## 6. Retention / delete (P1-DG-09)
 
 ```text

@@ -108,6 +108,17 @@ the same AgentLoopStep after `ResolveControlApproval`. `assign_work` is visible
 to WorkspaceWork under this gate; RootConversation exposure remains blocked by
 RGI-DG-01.
 
+**DID v1.39 EA-DG-01 successor:** for a WorkspaceWork profile that exposes an
+approval-required Executable tool, P4's nonterminal `ApprovalRequired` is a
+distinct internal route using `eap:<approvalId>:<revision>` and
+`ResolveExecutableApproval`. The same Execution/AgentLoopStep/LogicalAction/
+ToolInvocationId pauses and resumes without a new ProviderTurn or conversation
+attempt. The model cannot select the approval identity, and current
+PermissionGrant/resource/ControlBasis/fence checks run again after approval.
+This amendment does not add an Executable or Work tool to RootConversation;
+its CRAC/P17 v1 allowlist remains unchanged. Control `cap:` approvals keep the
+existing CAPA decision and Command consumption path.
+
 ## 6. Removal gate
 
 P17 is incomplete until all production calls consume ResolvedTurnProfile and

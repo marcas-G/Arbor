@@ -26,6 +26,18 @@ the current action; `ExecutionStopping` closes the action batch as
 `Interrupted(StopRequested)`. This amendment does not change the AgentLoopStep
 identity or provider-result authority.
 
+## Accepted owner amendment — EA-DG-01 (2026-10-11)
+
+Decision `ACCEPT_EXECUTABLE_APPROVAL_ISSUANCE_DECISION_RESUME`, fixed proposal
+SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`.
+P3 `08` freezes the Executable `ApprovalRequired` pause: same active
+Execution/AgentLoopStep/LogicalAction remains Pending, cursor does not advance,
+lease is released, and the pinned Provider result is replayed locally after
+Approve/Reject/Expire/Cancel. It does not create a new ProviderTurn. Acceptance
+and landing audit are
+`planning/results/EA-DG-01-governance-acceptance.md` and
+`planning/results/EA-DG-01-contract-landing.result.md`.
+
 ```text
 Detailed Implementation Design v1.22 (frozen)
         ↓ delegates phase-scoped closure

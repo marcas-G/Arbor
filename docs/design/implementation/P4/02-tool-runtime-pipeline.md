@@ -1,10 +1,13 @@
 # P4 — 02 Tool Runtime Pipeline
 
-**Authority:** SD v1.3 §6.5/§6.6/§6.7; DID v1.8 §7.6/§6A.7.
+**Authority:** SD v1.14 §6.5/§6.6/§6.7/§8.4; DID v1.39 §7.6/§6A.7.
 **Status:** FROZEN; accepted AH7-DG-03 amendment (2026-10-10). Post-landing
 consistency review pending.
 **Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
 SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
+Accepted EA-DG-01 amendment: proposal SHA-256
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`; see
+`planning/results/EA-DG-01-governance-acceptance.md`.
 
 ## 1. Frozen pipeline order (SD §6.5)
 
@@ -30,6 +33,14 @@ approval in one fenced transaction. A no-effect authority/approval/resource
 denial is persisted through `recordNoEffectDenial`; it is a terminal record,
 not an executable intent. No SQLite transaction spans Sandbox/Execute.
 
+For a new approval-required intent with no approved record or the exact
+request still Pending, step 4 returns `ToolRuntimeOutcome.ApprovalRequired`
+with the trusted resolved intent and stops before Resource Admission,
+invocation claim, ToolInvocation settlement, Sandbox or Executor. The
+Application adds P3 action identity and issues/reads the exact Pending record;
+the action remains Pending. ApprovalRequired is not a CanonicalToolObservation
+or new Denied settlement.
+
 ## 2. `ToolRuntimePort.invoke`
 
 ```ts
@@ -37,7 +48,7 @@ interface ToolRuntimePortService {
   readonly invoke: (
     intent: ToolIntent,
     context: ToolExecutionContext,
-  ) => Effect.Effect<CanonicalToolObservation, ToolRuntimeError>;
+  ) => Effect.Effect<ToolRuntimeOutcome, ToolRuntimeError>;
 }
 ```
 
@@ -51,15 +62,24 @@ Steps:
 3. **Responsibility authority** — deterministic exact-match against the trusted
    `InvocationAuthority` (`03` §2).
 4. **Permission / Approval match** — capability-ceiling check and exact
-   `InvocationApproval` match (`03` §3–§4). Whether an approval is required is
+   `InvocationApproval` match (`03` §3–§4). Whether approval is required is
    evaluated **per intent** by the tool's policy predicate (e.g. `shell`
-   destructive classification), not by a static per-tool flag. A denial before
-   consumption persists a no-effect Denied result and leaves a valid approval
-   unused.
+   destructive classification), not by a static per-tool flag. If required
+   and no exact record exists, or the exact record is Pending, P4 returns the
+   nonterminal `ApprovalRequired` handoff with the resolved trusted intent. It
+   writes no P4 intent/settlement, no ToolResult and no terminal Denied; the
+   Application issues/deduplicates the Pending request and durably pauses the
+   same action. A new write never uses `Denied(ApprovalRequired)`. The old
+   reason remains decoder/replay compatibility only. Rejected/Expired rows
+   become the corresponding typed no-effect Denied result; a Stop-cancelled
+  row follows P2 Interrupted/quiescence semantics. Because current authority
+  is resolved at step 3 first, an authority denial takes precedence over the
+  row's Rejected/Expired result and still leaves an unconsumed approval unused.
 5. **Resource admission** — validate-only ownership check (`05` §3).
-6. **Fenced invocation claim** — for an approval-required call, persist the
-   exact intent and conditionally consume the exact approval in one transaction
-   after checking the full Worker fence and `stop_requested_at IS NULL`. A
+6. **Fenced invocation claim** — for an approved call, persist the exact intent
+   and conditionally consume the exact Executable approval at the supplied
+   Approved revision in one transaction after checking the full Worker fence
+   and `stop_requested_at IS NULL`. A
    no-approval call persists its intent under the same fence/stop predicate. If
    stop wins before commit, return `ExecutionStopping` without intent or
    approval consumption. A lost consume CAS rolls back the new intent and
@@ -89,6 +109,9 @@ Steps:
   including when no prior intent row exists. It never marks effect admission.
 - `ExecutionStopping` is not an authority denial and is not in
   `NoEffectDenialCode`; it follows P2 quiescence.
+- Historical `Denied(ApprovalRequired)` rows replay as their stored terminal
+  result and remain terminal; no migration or re-entry promotes them into a
+  Pending request.
 
 ## 4. Organizational actions are not tools
 

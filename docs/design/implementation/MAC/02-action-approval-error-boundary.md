@@ -44,8 +44,21 @@ ResourceBoundary, ownership or sandbox.
 Executable and internal-control exact approvals share one semantic lifecycle:
 
 ```text
-Pending | Approved | Rejected | Consumed | Expired
+Pending | Approved | Rejected | Consumed | Expired | Cancelled
 ```
+
+The only state transitions are:
+
+```text
+Pending(r)  → Approved(r+1) | Rejected(r+1) | Expired(r+1) | Cancelled(r+1)
+Approved(r) → Consumed(r+1) | Expired(r+1) | Cancelled(r+1)
+Rejected / Expired / Consumed / Cancelled are terminal
+```
+
+`Consumed` is written by the exact route's effect/command claim transaction.
+`Cancelled` is a Runtime closure (for this package, authorized StopExecution)
+and is distinct from a human Reject or time Expire; it preserves any prior
+human Approve decision provenance.
 
 The durable intent binds:
 
@@ -59,6 +72,31 @@ route kind and side-effect semantics
 expiry
 single-consumption revision
 ```
+
+For an Executable approval, the binding additionally includes the Runtime-owned
+Execution, AgentLoopStep identity, LogicalActionId, callRef and exact
+ToolInvocationId. `expiresAt` is the TTL selected by the first successful
+Pending commit, not part of the stable binding comparison: concurrent/replay
+issuers with the same stable binding read and reuse the committed ApprovalId,
+expiry and revision; a different stable field fails closed. A different
+LogicalActionId may request the same semantic tool action within one
+Execution.
+
+`ApprovalRequired` is a typed nonterminal ActionResult/Execution pause. The
+same Execution/AgentLoopStep/action remains Pending and no P4 terminal
+`Denied(ApprovalRequired)` is written for a new request. Human Approve/Reject,
+Runtime Expire, or Stop cancellation resolves the exact row/revision and wakes
+the same action. P4 rechecks authority and consumes only the exact Approved
+revision in the fenced claim. Reject/Expire then close the action with a typed
+no-effect result; Stop uses Interrupted/quiescence semantics.
+
+`Denied(ApprovalRequired)` written by older P4 runtimes remains terminal
+read/replay evidence only. It is never migrated to Pending or resumed as a
+new approval request. `Cancelled` is distinct from human Reject and TTL Expire;
+it records Runtime cancellation provenance while preserving any earlier human
+Approve decision. The status transition and state/decision/consumption DDL
+constraints are route-neutral, but the `Executable` and `Control` request,
+decision, inbox keys and claim transactions stay strictly route-specific.
 
 Standing PermissionGrant remains independent and revocable. Physical merger of
 `invocation_approvals` and `control_action_approvals` is MAC-P4 final

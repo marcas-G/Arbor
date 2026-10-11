@@ -1,6 +1,6 @@
 # P10 — 05 Query Surface, User Actions, Transport Boundary (GQ4/GQ6)
 
-**Authority:** DID v1.13 G4/G6, §7.2 (ProjectionQueryPort), §10.4.1 (projection-runtime deps domain+ports; api-contracts deps domain), §10.5 (Problem DTO); SD v1.3 §12.5, §13.10; P8 `05` (P14 consume-only); P6 `04` (Steer), P2 `01` (Stop).
+**Authority:** DID v1.13 G4/G6, v1.39 EA-DG-01, §7.2 (ProjectionQueryPort), §10.4.1 (projection-runtime deps domain+ports; api-contracts deps domain), §10.5 (Problem DTO); SD v1.14 §12.5, §13.10; P8 `05` (P14 consume-only); P6 `04` (Steer), P2 `01` (Stop).
 **Status:** FROZEN — DID v1.17 D-1 additive read-model successor (TR-WPU-B/C/D).
 
 **FT-DG-02 additive contract amendment (2026-10-08):** `work-detail` is added
@@ -34,9 +34,48 @@ VerificationReq    = { workId }                                → { verificatio
 DependencyReq      = { projectId | workspaceId }               → rows[{dependencyId, consumerWorkId, binding, state, satisfiedBy?}]
 TranscriptReq      = { workspaceId, sessionId?, cursor?, limit } → { entries[{kind, summaryRef, at}], nextCursor? }   // first production read path over session_entries
 UsageReq           = { projectId, groupBy: "workspace"|"subtree"|"project" } → rows[{workspaceId, tokens, cost, turns }]
-InboxViewReq       = { workspaceId }                           → { unconsumed[{entryKey, kind, summary, watermark}] }
+InboxViewReq       = { workspaceId }                           → { unconsumed[InboxEntryView] }
 WorkDetailReq      = { projectId, workspaceId, workId }        → { workId, projectId, workspaceId, objective, why, completionExpectation, lifecycle, revision, acceptedResult? }
 ```
+
+For an Executable approval entry, `InboxEntryView` includes a typed
+`ExecutableApprovalInboxTarget` projection:
+
+```ts
+type InboxEntryView = {
+  readonly entryKey: string;
+  readonly kind: string;
+  readonly summary: string;
+  readonly watermark: number;
+  readonly target?: ExecutableApprovalInboxTarget;
+};
+
+type ExecutableApprovalInboxTarget = {
+  readonly kind: "ExecutableApproval";
+  readonly approvalId: string;
+  readonly revision: number;
+  readonly executionId: string;
+  readonly toolName: string;
+  readonly toolVersion: string;
+  readonly validatedArgumentsPreview: string; // bounded, schema-redacted
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
+  readonly capabilities: ReadonlyArray<string>;
+  readonly sideEffectSemantics: "ReadOnly" | "Idempotent" | "Reconcilable" | "NonIdempotent";
+  readonly expiresAt: string;
+  readonly actionDigest: string;
+};
+```
+
+P10 reads the exact `eap:<approvalId>:<revision>` Inbox key and its proven
+`route_kind='Executable'` ActionApproval binding from read-only ports. It
+returns no approval target for `cap:` Control entries. `validatedArgumentsPreview`
+is derived from validated stored arguments and the versioned tool schema; it
+is bounded and redacts schema-designated secrets. The projection must show
+enough validated action/target detail to support a human decision; if exact
+review cannot be produced, it fails closed and does not present Approve.
+This DTO is display data only: it is not authority and cannot be posted back
+as an approval binding. P10 writes nothing and does not decide or consume the
+Inbox entry.
 
 The additive `AttentionSource` literal `WorkspaceResourceActivationPending`
 is owned by P10 `02` and is the only new wire-vocabulary member in this

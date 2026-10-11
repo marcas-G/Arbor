@@ -1,12 +1,12 @@
 # Arbor System Design Specification
 
-**Version:** 1.13
+**Version:** 1.14
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.12
+**Supersedes:** v1.13
 
-**Date:** 2026-10-10
+**Date:** 2026-10-11
 
 **Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.3`
 **Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量  
@@ -82,6 +82,24 @@
 - Functional-scope candidate SHA-256:
   `274885C110E3B277753B49F6BAD023619ADFCF52D866CC86F01F27F7FDA85DD0`.
   This landing does not claim full FT-DG-01 closure or qualification.
+
+**Governance changes (v1.13 → v1.14): EA-DG-01 — Executable approval handoff**
+
+- Approval-required Executable calls resolve through the shared MAC
+  ActionApproval lifecycle and a route-specific `Executable` human decision
+  path. Pending approval pauses the same active Execution/AgentLoopStep and
+  exact action; it is not a PermissionGrant or a widening of Sandbox or
+  ResourceBoundary.
+- The approval binds the Runtime-owned Step/LogicalAction/callRef/
+  ToolInvocation identity, tool/version, normalized arguments, canonical
+  resources, ControlBasis and first-commit expiry. Approval/rejection/expiry/
+  cancellation never changes current authorization or consumes a Control
+  ActionApproval.
+- Accepted proposal SHA-256:
+  `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+  acceptance record: `planning/results/EA-DG-01-governance-acceptance.md`.
+- This is a design-contract landing only. Production implementation and
+  qualification remain separately gated.
 
 **Governance changes (v1.8 → v1.9): Minimal Architecture Convergence
 (`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`)**
@@ -1061,6 +1079,8 @@ Bounded Model Observation
 
 - Success；
 - Expected Tool Failure；
+- ApprovalRequired（durable pause of the same Execution/action, not a terminal Denied）；
+- Denied（actual terminal no-effect authorization/decision result）；
 - Interrupted；
 - Outcome Unknown；
 - Runtime Defect。
@@ -1260,7 +1280,9 @@ Project Policy 定义最高约束；Workspace / Work / Execution 只能进一步
 
 临时 Permission Grant 必须有 Scope：Execution / Work / Workspace / Project；临时 Grant 默认不可继续递归委托，避免 privilege amplification。
 
-高风险“一次性批准”不使用模糊的 `once tool permission`，而使用 **Exact-Intent Approval**：批准必须绑定具体 Tool definition/version、规范化后的动作/参数摘要、目标 canonical resources、当时有效的 control basis 与 expiry。实际 Invocation 与批准内容不一致、关键控制 revision 已变化或批准已过期时，必须重新审批。批准只能被一个匹配的 ToolInvocation 原子消费。
+高风险“一次性批准”不使用模糊的 `once tool permission`，而使用 **Exact-Intent Approval**：批准必须绑定具体 Tool definition/version、规范化后的动作/参数摘要、目标 canonical resources、当时有效的 control basis、Runtime-owned AgentLoopStep/LogicalAction/callRef/ToolInvocationId 与首写 expiry。实际 Invocation 与批准内容不一致、关键控制 revision 已变化或批准已过期时，必须重新审批。批准只能被它绑定的一个 ToolInvocation 原子消费。
+
+当当前授权成立但该精确 Executable intent 需要人类批准时，Runtime 持久化 Pending ActionApproval 和对应 Governance Inbox 项，并暂停同一 Execution/AgentLoopStep；Action 保持 Pending，Provider 决策不重采样。人类 Approve、Reject，或 Runtime Expire/Stop 后都恢复同一 Action 身份。批准只表示对该 intent 的一次性同意，恢复时仍重新检查 PermissionGrant、资源、ControlBasis、stop 与 lease fence。Reject/Expire/撤权形成类型化无副作用结果；Stop 形成 Interrupted。审批不授予 standing capability，不扩大 Sandbox/ResourceBoundary。
 
 ```text
 Delegation must not amplify authority.
@@ -1917,7 +1939,7 @@ Domain Core + Persistence/Event Journal
 54. Stop/Critical Steer 提交后禁止该 Execution 开始新的 effectful action；未解决副作用必须 Reconcile 或使 Execution 进入 OutcomeUnknown。
 55. Dependency 除 Satisfied 外还可终结为 Withdrawn 或 Unfulfillable；不能让已知不可能满足的依赖静默永久等待。
 56. Effectful Model decision 必须绑定 ControlBasis；关键控制 revision 已变化时旧决策不得执行。
-57. 一次性高风险 Approval 必须绑定 exact normalized intent，并原子消费；参数/资源/控制基准变化后必须重新审批。
+57. 一次性高风险 Approval 必须绑定 exact normalized intent 与 Runtime-owned action/invocation identity，并在 fenced claim 中原子消费；参数/资源/控制基准变化后不得复用旧批准。
 58. Runtime Safety Envelope 与用户 Cost Budget 分离；前者始终存在但不得自行 Cancel Work。
 59. CompleteWork/CancelWork 若结束 Current Work，必须在同一事务清除 currentWorkId。
 60. Durability guarantee 以声明的 failure envelope、backup 与 RPO/RTO 为准，不由具体数据库名称隐式推出。
@@ -1937,6 +1959,7 @@ Domain Core + Persistence/Event Journal
 74. Approval、reconciliation、compaction 与可恢复 interruption 属于同一 run 的 pause/resume，不得伪装成新 HumanMessage 或新 Conversation attempt。
 75. Model-visible tool surface 必须由 Execution purpose、exact registration readiness、capability 与当前 control facts 解析；静态 catalog 或布尔开关不是最终资格判定。
 76. 同一确定性 failure fingerprint 或 deployment systemic failure 达到 policy 阈值后必须停止 Provider bytes 并形成 durable Attention/circuit state。
+77. ApprovalRequired 是同一 run 的 durable pause，不是 P4 terminal Denied；首写 TTL 不因重放延长，批准后只允许绑定的 ToolInvocation 通过 fenced claim 消费。
 
 ---
 

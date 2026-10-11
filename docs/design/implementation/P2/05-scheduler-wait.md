@@ -69,6 +69,13 @@ type WakeReason =
 Every Workspace Execution carries a typed `WakeReason`; the continuation
 program/context selection is customized by it (DID §8.18).
 
+EA-DG-01 uses the existing `HumanIntervention` wake reason for a durable
+`ExecutableApprovalResolved` fact. It wakes the exact still-active Execution
+whose AgentLoopStep/action is Pending; it is not a runnable-Work reevaluation,
+new AdmitExecution, new ExecutionId or new ProviderTurn. Repeated event/wake
+delivery re-dispatches the same Execution idempotently. The approval row plus
+resolved event are the durable wake source after restart.
+
 ## 4. Deterministic re-evaluation
 
 ```text

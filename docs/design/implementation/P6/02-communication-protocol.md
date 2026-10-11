@@ -1,6 +1,6 @@
 # P6 — 02 Communication Protocol
 
-**Authority:** DID v1.9 §4.2, §1.8(Message), §2 表(Inbox), §5.4, §12.10 表, §8.4A; SD v1.3 §7.1–§7.5, §13.5, 不变量 20/21/31/36; P3 `03` §3. Resolved D2.
+**Authority:** DID v1.9 §4.2, §1.8(Message), §2 表(Inbox), §5.4, §12.10 表, §8.4A and v1.39 EA-DG-01; SD v1.14 §7.1–§7.5, §13.5, 不变量 20/21/31/36; P3 `03` §3. Resolved D2.
 **Status:** FROZEN (manual governance adoption).
 
 ## 1. P6 的 Message 语义子集（D2 冻结闭合）
@@ -96,6 +96,25 @@ Promotion 不调用模型（Receive != Promote != Consume）。**P7 之前的 pr
 ### Consumption（cognitive，Agent 侧）
 
 Context Builder 只选择与 Current Work、Interrupt 或高价值事项相关的未消费输入（SD §7.4：Inbox != Next Context）；消费标记是 Session 认知事件，不是 canonical mutation。
+
+### Executable approval queue entries (EA-DG-01)
+
+An Executable human approval is a route-specific Governance Inbox entry, not a
+Message and not a `RequestGovernance` model action. Its exact key is
+`eap:<approvalId>:<revision>`; `cap:<approvalId>:<revision>` remains the
+Control/CAPA route. P4/Application admission upserts the entry by this key in
+the same transaction as the proven Executable Pending ActionApproval. Replaying
+the same logical action reads the existing row and does not add a second
+entry or refresh the approval TTL.
+
+Executable approval entries are human-only: they are excluded from promotion
+into Agent Session and do not become model instructions. Approve/Reject,
+automatic Expire, or Stop Cancel consumes only the exact displayed Inbox key
+in the same transaction as its ActionApproval state change and durable
+resolution fact. Consumer redelivery is idempotent and cannot resurrect a
+consumed entry. The resolved fact is the durable P2 wake source for the same
+Execution; Inbox admission/consumption never creates a new Execution or
+ProviderTurn.
 
 ### Wake
 

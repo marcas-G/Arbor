@@ -26,6 +26,11 @@
 | C20 | Web shows retry/attention/cancelled explicitly; missing Assistant is not treated as infinite processing |
 | C21 | model-visible controls pass CAPA authorization before handlers; wrong subject/target/expiry deny |
 | C22 | ApprovalRequired pauses before mutation; Approve/Reject resume the same Execution/AgentLoopStep and consume one exact approval |
+| C23 | Executable approval route is `eap:`/ResolveExecutableApproval, distinct from C22 Control `cap:`; where WorkspaceWork exposes a required tool, approval pauses/resumes the same Execution/Step/action without another ProviderTurn or ConversationAttempt; RootConversation remains zero executable/Work tools |
+
+C23 is the additive EA-DG-01 owner-contract qualification seam; it does not
+retroactively reopen P17's formally closed phase or claim runtime/browser
+qualification. Those remain in the EA-DG-01 implementation gate.
 
 ## Live qualification
 

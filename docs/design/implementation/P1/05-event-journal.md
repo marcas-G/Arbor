@@ -61,6 +61,33 @@ DomainEventJournal.append(drafts)
 
 `domain_events` is the durable outbox (DID §9.9); no separate delivery flag.
 
+### EA-DG-01 approval workflow fact events
+
+`ExecutableApprovalRequested(v1)` and `ExecutableApprovalResolved(v1)` are
+P1-journaled source facts owned by the EA-DG-01 route. They do not imply a
+canonical Work/Permission mutation. Request issuance may originate in the
+Worker Application boundary without a Command receipt; its ActionApproval row,
+exact P6 Inbox admission, source event and P2 wake fact share one
+`TransactionScope` with the complete P2 Worker lease fence/expiry and
+`stop_requested_at IS NULL`. The row's stable logical-action key and revision
+CAS make request-event append idempotent: only the transaction that inserts
+the new Pending row appends the request fact.
+
+`ResolveExecutableApproval` resolution appends its source event in the same
+transaction as the P4 row transition, P6 exact Inbox consumption and P1
+Committed receipt. Automatic Expire appends the same typed resolution fact
+with no human CommandId in the transaction that changes state, consumes the
+exact Inbox item if unconsumed and records the durable P2 wake. Stop
+cancellation appends the cancellation fact with the authorized StopExecution
+CommandId and Stop row transition. `aggregateRef` is the ApprovalId and
+`correlationRef` is the LogicalActionId; request actor is the authenticated
+ExecutionOrigin principal, decision actor is the authenticated human, and
+Expiry actor is the Runtime actor. `causedByCommandId` is present for human
+Resolve and Stop commands and absent for Worker request issuance/automatic
+Expiry. Raw arguments/secrets are excluded.
+Duplicate delivery cannot increment the approval revision or wake a different
+action.
+
 ### FT-DG-01 OPEN-3 activation status event (EventVersion 1)
 
 `WorkspaceResourceActivationChanged` is a new event type whose first and

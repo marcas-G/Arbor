@@ -30,6 +30,19 @@ Detailed Implementation Design v1.7 (frozen)
 docs/design/implementation/P2/**   (these contracts)
 ```
 
+## Accepted owner amendment — EA-DG-01 (2026-10-11)
+
+Decision `ACCEPT_EXECUTABLE_APPROVAL_ISSUANCE_DECISION_RESUME`, fixed proposal
+SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`.
+P2 `03` §4.1 freezes the full Worker-fenced issuance transaction and
+Stop/issuance commit ordering; `05` uses the existing `HumanIntervention` wake
+and `06` recovers a durable ApprovalRequired pause to the same active
+Execution after resolution. External Stop retains authenticated P2 command
+authority without a Worker-lease requirement. Control/CAPA behavior is
+unchanged. Acceptance:
+`planning/results/EA-DG-01-governance-acceptance.md`;
+landing audit: `planning/results/EA-DG-01-contract-landing.result.md`.
+
 DID §13 points at `docs/design/implementation/P2/**`; a conflict resolves in
 favor of the DID.
 
