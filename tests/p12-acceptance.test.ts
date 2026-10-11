@@ -34,8 +34,8 @@ import {
   MessageStoreLive,
   P11_MIGRATIONS,
   P12_MIGRATIONS,
-  P26_MIGRATIONS,
   P35_MIGRATIONS,
+  P38_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
@@ -768,7 +768,9 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P26_MIGRATIONS);
+            // The production slice now wires the unified P32+ approval ledger;
+            // run the current schema before exercising its approval store.
+            yield* runMigrations(P38_MIGRATIONS);
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               secretEnvelope("CreateProject", secretProjectPayload(), "1"),

@@ -62,6 +62,8 @@ import {
   ControlApprovalStoreLive,
   ConversationAttemptStoreLive,
   ConversationResponseJobStoreLive,
+  CURRENT_MIGRATION_BASELINE,
+  CURRENT_MIGRATIONS,
   DecisionRequestStoreLive,
   DeliverableRepositoryLive,
   DependencyRepositoryLive,
@@ -89,7 +91,6 @@ import {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P38_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -974,10 +975,7 @@ export const buildSingleWorkspaceLayer = (
     snapshotRetention,
     usage,
   );
-  const latestSupportedSchema = P38_MIGRATIONS.reduce(
-    (latest, migration) => Math.max(latest, migration.id),
-    0,
-  );
+  const latestSupportedSchema = CURRENT_MIGRATION_BASELINE;
   const currentSchemaGate = Layer.provide(
     Layer.effectDiscard(
       Effect.gen(function* () {
@@ -1004,12 +1002,12 @@ export const buildSingleWorkspaceLayer = (
 };
 
 export {
+  CURRENT_MIGRATIONS,
   P12_MIGRATIONS,
   P16_MIGRATIONS,
   P17_MIGRATIONS,
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P38_MIGRATIONS as CURRENT_MIGRATIONS,
   runMigrations,
 };
