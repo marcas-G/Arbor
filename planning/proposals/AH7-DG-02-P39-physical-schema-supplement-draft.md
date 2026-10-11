@@ -83,7 +83,11 @@ CREATE TABLE tool_invocations_p39 (
                            (recovery_binding_state IN
                              ('Bound','LegacyBindingUnproven','HistoricalSettled')),
   recovery_binding_sha256 TEXT,
-  reconciliation_fact_id TEXT,
+  settlement_provenance TEXT CHECK
+                           (settlement_provenance IN
+                             ('Ordinary','Reconciliation','LegacyHistorical')),
+  selected_attempt_no    INTEGER,
+  selected_fact_id       TEXT,
   intent_at              TEXT NOT NULL,
   settled_at             TEXT,
   settlement_kind        TEXT CHECK (settlement_kind IN
@@ -92,6 +96,23 @@ CREATE TABLE tool_invocations_p39 (
   settlement_json        TEXT,
   result_ref              TEXT REFERENCES artifacts(artifact_id),
   CHECK ((settled_at IS NULL) = (settlement_kind IS NULL)),
+  CHECK ((settled_at IS NULL) = (settlement_provenance IS NULL)),
+  CHECK (
+    (settlement_provenance = 'Reconciliation'
+      AND selected_attempt_no IS NOT NULL AND selected_fact_id IS NOT NULL)
+    OR
+    (settlement_provenance IN ('Ordinary','LegacyHistorical')
+      AND selected_attempt_no IS NULL AND selected_fact_id IS NULL)
+    OR
+    (settlement_provenance IS NULL AND settled_at IS NULL
+      AND selected_attempt_no IS NULL AND selected_fact_id IS NULL)
+  ),
+  CHECK (settlement_provenance <> 'Reconciliation' OR
+         settlement_kind IN ('Success','ExpectedFailure','ReconciledNoEffect')),
+  CHECK (settlement_provenance <> 'Reconciliation' OR
+         effect_admission_state = 'MayHaveStarted'),
+  CHECK (settlement_kind <> 'ReconciledNoEffect' OR
+         settlement_provenance = 'Reconciliation'),
   CHECK (recovery_binding_state <> 'HistoricalSettled' OR settled_at IS NOT NULL),
   CHECK (recovery_binding_state <> 'LegacyBindingUnproven' OR settled_at IS NULL),
   CHECK ((recovery_binding_state = 'Bound') =
@@ -99,11 +120,9 @@ CREATE TABLE tool_invocations_p39 (
   FOREIGN KEY (invocation_id, recovery_binding_sha256)
     REFERENCES tool_invocation_recovery_bindings(invocation_id, binding_sha256)
     DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY (invocation_id, reconciliation_fact_id)
-    REFERENCES tool_reconciliation_facts(invocation_id, fact_id)
+  FOREIGN KEY (invocation_id, selected_attempt_no, selected_fact_id)
+    REFERENCES tool_reconciliation_facts(invocation_id, attempt_no, fact_id)
     DEFERRABLE INITIALLY DEFERRED,
-  CHECK ((settlement_kind = 'ReconciledNoEffect') =
-         (reconciliation_fact_id IS NOT NULL)),
   CHECK (settlement_kind <> 'Denied' OR
          (effect_admission_state = 'NotAdmitted' AND result_ref IS NULL)),
   CHECK (settlement_kind <> 'ReconciledNoEffect' OR
@@ -242,6 +261,8 @@ CREATE INDEX idx_reconciliation_facts_invocation
   ON tool_reconciliation_facts(invocation_id, attempt_no, observed_at);
 CREATE UNIQUE INDEX reconciliation_facts_invocation_ref
   ON tool_reconciliation_facts(invocation_id, fact_id);
+CREATE UNIQUE INDEX reconciliation_facts_attempt_ref
+  ON tool_reconciliation_facts(invocation_id, attempt_no, fact_id);
 CREATE UNIQUE INDEX reconciliation_facts_exact_redelivery
   ON tool_reconciliation_facts(
     invocation_id, attempt_no, fact_origin, outcome, fact_disposition,
@@ -265,13 +286,16 @@ WHEN NEW.recovery_binding_state IS NOT OLD.recovery_binding_state
 BEGIN SELECT RAISE(ABORT, 'recovery binding state is immutable'); END;
 CREATE TRIGGER tool_invocation_settlement_no_rewrite
 BEFORE UPDATE OF settled_at, settlement_kind, settlement_json,
-                 result_ref, reconciliation_fact_id ON tool_invocations
+                 result_ref, settlement_provenance,
+                 selected_attempt_no, selected_fact_id ON tool_invocations
 WHEN OLD.settled_at IS NOT NULL AND (
      NEW.settled_at IS NOT OLD.settled_at
   OR NEW.settlement_kind IS NOT OLD.settlement_kind
   OR NEW.settlement_json IS NOT OLD.settlement_json
   OR NEW.result_ref IS NOT OLD.result_ref
-  OR NEW.reconciliation_fact_id IS NOT OLD.reconciliation_fact_id)
+  OR NEW.settlement_provenance IS NOT OLD.settlement_provenance
+  OR NEW.selected_attempt_no IS NOT OLD.selected_attempt_no
+  OR NEW.selected_fact_id IS NOT OLD.selected_fact_id)
 BEGIN SELECT RAISE(ABORT, 'terminal settlement is immutable'); END;
 CREATE TRIGGER tool_invocation_admission_monotone
 BEFORE UPDATE OF effect_admission_state ON tool_invocations
@@ -327,8 +351,23 @@ the rebuilt invocation table is exactly
 
 Physical reference/consistency rules are explicit: `tool_invocations.result_ref`
 and reconciliation fact `evidence_ref`/`result_ref` are P4 `ArtifactRef`s and
-reference `artifacts(artifact_id)`; P4 `ReconciledNoEffect` stores its exact
-`reconciliation_fact_id` as a deferred FK to `tool_reconciliation_facts(fact_id)`.
+reference `artifacts(artifact_id)`. The invocation persists
+`settlement_provenance`, `selected_attempt_no`, and `selected_fact_id`:
+`Ordinary` terminal results have null selected fields; `LegacyHistorical`
+preserves settled P36 history with no retroactive fact; every P4
+reconciliation-produced terminal `Success`, `ExpectedFailure`, or
+`ReconciledNoEffect` must be `Reconciliation` and hold a non-null selected
+attempt/fact. A deferred composite FK
+`(invocation_id,selected_attempt_no,selected_fact_id)` points to the same
+immutable reconciliation fact. The P4 settlement transaction additionally
+requires `Occurred` for reconciliation-derived Success/ExpectedFailure and
+`NotOccurred` for ReconciledNoEffect; SQLite DDL cannot express that cross-row
+union check by itself. Before selecting, the P4 transaction requires exactly
+one non-conflicting authoritative `RecoveryInput` fact for that invocation and
+attempt. Multiple distinct facts/proofs for an attempt are ambiguous and remain
+StillUnknown; none is selected for terminal settlement. This selection is
+invocation-unique; a second/ambiguous fact cannot replace it.
+
 Attempt/fact binding references use the composite `(invocation_id,
 binding_sha256)` FK, not a digest-only FK. For `recovery_binding_state='Bound'`,
 the invocation's non-null digest plus deferred composite FK requires a matching
@@ -340,18 +379,28 @@ insert invocation, binding, attempt and approval-consumption facts in one
 transaction while making a missing/mismatched binding fail at commit.
 
 Terminal P4 settlement is immutable: its trigger rejects any later change to
-settled time/kind/payload/result/fact reference. A new contradictory proof
+settled time/kind/payload/result/provenance/selected attempt/selected fact. A new contradictory proof
 after terminal is appended only as `fact_disposition='PostTerminalEvidence'`;
 it cannot become a `RecoveryInput`, replace the selected terminal fact, undo P4
 settlement, roll back P3 ToolResult/Action/cursor, or cause replay. If that
 late contradiction is confirmed against the selected fact, the appended fact
 is `StillUnknown/EvidenceBindingMismatch`; identical redelivery returns the
 existing fact, while the contradictory fact is retained separately. P4 does
-not change `reconciliation_fact_id` or any terminal settlement field, and P3
+not change `selected_fact_id` or any terminal settlement field, and P3
 does not reverse Action/ToolResult/cursor. If that late contradiction must
 create new user-visible Attention, D0A does not define that post-terminal
 notification; it is a separate P9/P10 Design Gap. This proposal does not invent
 a second event or mutate terminal truth.
+
+Terminal replay qualification is receipt-first: the same P4 invocation and
+same selected attempt/fact returns the existing settlement and reconstructs the
+same P3 ToolResult/Action/cursor; it may not select a second fact or rewrite
+the selected fact. A different fact after terminal is only appended as
+`PostTerminalEvidence`, never treated as a second settlement proposal.
+`StillUnknown` is not a terminal reconciliation settlement of the P4
+invocation: per D0A the invocation remains `MayHaveStarted`/unsettled, P9
+records the escalation, and any Execution `OutcomeUnknown` is not a
+replacement terminal ToolInvocation fact-selection result.
 
 Legacy unprofiled StillUnknown facts use the closed physical
 `legacy_reason='LegacyProfileUnavailable'` marker and null binding/profile/
@@ -443,7 +492,10 @@ P39 backfills exactly one attempt-0 row for each existing P36 invocation:
 - Settled P36 records retain their exact settlement/result refs. The new
   `ReconciledNoEffect` variant is not backfilled onto any historical row.
 - Settled P36 rows receive `recovery_binding_state='HistoricalSettled'`;
-  unsettled P36 MayHaveStarted/LegacyUnknown rows lacking a complete persisted
+  they also receive `settlement_provenance='LegacyHistorical'` and null
+  `selected_attempt_no`/`selected_fact_id`; P39 does not invent retrospective
+  reconciliation facts for them.
+- Unsettled P36 MayHaveStarted/LegacyUnknown rows lacking a complete persisted
   binding receive `recovery_binding_state='LegacyBindingUnproven'`. Active
   NotAdmitted rows without binding are rejected by the pre-upgrade gate below.
   New P39 rows are `Bound` only when the same claim transaction
@@ -479,130 +531,188 @@ with its original invocation ID; P3 does not advance or create a replacement
 invocation. The existing D0A `StillUnknown` recovery path emits the exact P9
 `ReconciliationEscalated` fact/event and P10 `ActionRequired` projection.
 
-### P39 CLI report contract and permanent legacy-DB isolation
+### P39 CLI sidecar-audit contract and permanent legacy-DB isolation
 
-The P39-enabled migration/startup path requires the operator to pass
-`--migration-block-report <absolute-path>` before the SQLite client is
-constructed. The option is scoped to a P39-targeting binary; older binaries do
-not need it. There is no default. Missing/invalid destination or unsupported
-durability fails before any DB open/read with typed
-`P39_BLOCK_REPORT_PATH_REQUIRED`, `P39_BLOCK_REPORT_PATH_INVALID`, or
-`P39_REPORT_DURABILITY_UNSUPPORTED`, process exit code `78`, and no report
-because no report sink was validly designated.
+P39-targeting maintenance/migration startup requires the operator-specified
+`--migration-block-report-db <absolute-local-path>` before constructing either
+SQLite client. There is no default. The path must not resolve to the primary
+DB, its WAL/SHM sidecars, another configured storage file, a relative path,
+OS temp location, network/UNC share, symlink/reparse path, or unqualified
+volume. Compare normalized paths and, when both files exist, filesystem file
+identity (device/inode or Windows volume+file ID) to reject hardlink/alias
+collisions; require sidecar link-count one and fail closed if distinct file
+identity/link count cannot be established. The
+operator-protected parent directory must exist and have no untrusted writers.
 
-The operator must choose an existing directory on a qualified durable local
-volume. Reject relative paths, OS temp locations (`/tmp`, `%TEMP%`, and their
-resolved aliases), network/UNC destinations, symlink/reparse-point path
-components, a target equal to the DB/WAL/SHM path, and a missing parent
-directory. The tool never creates parent directories or overwrites an
-unrelated file. On POSIX, resolve and pin the existing parent directory once,
-perform temp/create/publish relative to that directory handle, require the
-operator-protected directory to be on a qualified same-volume filesystem, and
-use a basename only (no separators or `..`). The deployment operator owns the
-directory ACL; the report file is created owner-only. The path and raw
-database path are never placed in report content.
+An existing sidecar is opened read-only first. Validate exact P39
+`application_id`, `user_version`, table/index/trigger shape, and schema digest
+before any WAL/config/schema write; unknown schema fails before primary DB open.
+A nonexistent sidecar is created with exclusive-create semantics and
+initialized transactionally. A pre-existing zero-byte/empty SQLite file may be
+initialized only if it has no user objects, `application_id=0`, and
+`user_version=0`; any other unknown/unrelated file is never overwritten or
+repurposed. After opening read-write, verify the actual database file identity
+still matches the prevalidated distinct path before setting WAL or writing.
+Typed errors use exit `78`: missing option `P39_REPORT_DB_REQUIRED`, invalid
+path/alias `P39_REPORT_DB_PATH_INVALID`, unknown schema
+`P39_REPORT_DB_SCHEMA_UNSUPPORTED`, pragma readback mismatch
+`P39_REPORT_DB_PRAGMA_MISMATCH`, sidecar I/O failure
+`P39_REPORT_DB_IO_FAILURE`, and same report key with different bytes
+`P39_REPORT_KEY_CONFLICT`. Diagnostics contain only stable codes, never paths
+or DB row contents. If sidecar COMMIT outcome cannot be resolved by reopen and
+query, use `P39_REPORT_COMMIT_UNRESOLVED`; never continue to P39 migration.
+If the P36 primary DB does not already use P1's required WAL mode and the
+preflight-only connection cannot verify it without changing persistent state,
+fail with `P39_PRIMARY_JOURNAL_MODE_UNSUPPORTED` before any P37/P38/P39
+migration.
 
-If the database is already at `user_version=39` or is a fresh/unaffected DB,
-the migration proceeds normally after the preflight. Otherwise P39 takes one
-`BEGIN IMMEDIATE` consistent SQLite snapshot, reads `user_version` and all P36
-unsettled `NotAdmitted` invocation IDs plus only the P36/P38/P3 identity/state
-fields needed to fingerprint that blocked set, and performs no writes. If the
-set is non-empty, it rolls back and closes the DB before publishing a report.
-The transaction performs no DDL/DML and does not bump `user_version`; SQLite
-may transiently open/manage WAL/SHM lock sidecars, but no P36 schema, committed
-row, approval, or P3 cursor state changes.
-The stable JSON has no timestamp, resource path, command, argument, authority
-secret or raw SQLite error:
+The sidecar is an operator-owned SQLite audit DB using the same P1 SQLite
+adapter/Node VFS as Arbor, not a JSON file or BlobStore. Initialize/verify
+`PRAGMA journal_mode=WAL` (readback must equal `wal`),
+`PRAGMA synchronous=FULL` (readback must equal `2`), foreign keys and bounded
+busy timeout on every connection. Use reserved sidecar identity
+`application_id=0x41523739` and sidecar `user_version=1`. The proposed table is:
 
-```json
-{
-  "schema": "arbor.p39-legacy-db-isolation.v1",
-  "kind": "P39LegacyUnboundNotAdmitted",
-  "observedUserVersion": 38,
-  "targetUserVersion": 39,
-  "databaseFingerprint": "lowercase sha256",
-  "blockedInvocationIds": ["sorted exact IDs"],
-  "contentHash": "lowercase sha256 of canonical JSON without this field"
-}
+```sql
+CREATE TABLE p39_migration_block_reports (
+  report_key        TEXT PRIMARY KEY CHECK
+                      (length(report_key) = 64 AND report_key NOT GLOB '*[^0-9a-f]*'),
+  content_hash      TEXT NOT NULL UNIQUE CHECK
+                      (length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+  report_json       TEXT NOT NULL
+);
+
+CREATE TRIGGER p39_report_no_update
+BEFORE UPDATE ON p39_migration_block_reports
+BEGIN SELECT RAISE(ABORT, 'P39 audit report is immutable'); END;
+CREATE TRIGGER p39_report_no_delete
+BEFORE DELETE ON p39_migration_block_reports
+BEGIN SELECT RAISE(ABORT, 'P39 audit report is retained'); END;
 ```
 
-`databaseFingerprint` is SHA-256 over the existing canonical JSON encoding of
-`{observedUserVersion, sorted blocker rows}` where each row contains only
-invocation ID, execution ID, admission state, unsettled marker, approval ID
-and consumed-by invocation identity, plus P3 Step/Action/cursor identity/state;
-this fingerprints the affected DB state without exporting tool arguments,
-resource paths or principal secrets. Canonical key/array ordering makes
-complete report bytes and `contentHash` identical when the same DB state is
-reported again. Typed stderr diagnostics contain only stable error/exit codes;
-they never echo report or database paths.
+`report_key = SHA256(canonicalJSON({schema, targetUserVersion,
+databaseFingerprint}))`; `content_hash` is SHA-256 of the exact canonical UTF-8
+report JSON excluding that field. Reports have no timestamp, DB path, command or
+argument, resource path or authority secret. A sidecar with a different schema
+is not migrated or overwritten; stop with `P39_REPORT_DB_SCHEMA_UNSUPPORTED`.
+For a new sidecar only, create schema/version in one SQLite transaction; after
+restart, accept it only if the exact identity/version/object set verifies.
 
-On supported POSIX local filesystems, publication happens only after
-rollback/connection close, in the target's own directory/volume: create a
-unique temp file with exclusive create and owner-only permissions; write all
-exact UTF-8 JSON bytes; fsync the file; atomically publish without replacement
-using `renameat2(RENAME_NOREPLACE)` or a qualified equivalent (same-directory
-hard-link the already-fsynced inode to the final name, then unlink the temp
-name); finally fsync the parent directory. If the target
-already contains byte-identical report content, treat publication as idempotent
-and do not rewrite it. If it contains different bytes, fail with
-`P39_REPORT_TARGET_CONFLICT`; never overwrite or delete it. Any write/sync/
-publish failure yields typed `P39_REPORT_PERSIST_FAILED` and nonzero exit `78`;
-the P36 DB remains unchanged and P39 startup is blocked. The deployment
-operator owns durable retention and cleanup of report files; the application
-never rotates, replaces, or deletes them.
+The report row contains stable schema/kind, observed/target version, SHA-256
+fingerprint of the canonical P36 blocker-state projection, sorted exact
+`blockedInvocationIds`, and content hash. Fingerprint inputs available before
+P37/P38 are limited to observed `user_version` and P36 invocation ID, execution
+ID, side-effect semantics, admission state, unsettled marker and approval ID.
+Do not persist raw P4 command/argument/resource or principal data.
+Re-evaluation of an unchanged DB snapshot yields the same `report_key`, exact
+JSON bytes and `content_hash`.
 
-#### Platform durability support
+#### Main/sidecar transaction and lock order
 
-P39 v1 report publication is enabled only on a qualified local filesystem where
-file fsync, atomic no-replace publication and directory fsync are all
-implemented and verified. The current Node `fs` interface describes sync as
-OS/device-specific and does not provide a documented no-replace rename plus
-directory-fsync contract on Windows. Win32 `MoveFileExW(MOVEFILE_WRITE_THROUGH)`
-documents write-through completion, including a copy/delete case, and NTFS
-write-through handles flush metadata; that documentation alone does not prove
-the full required atomic no-replace + containing-directory durability bundle.
-Therefore the proposal deliberately blocks P39 startup on Windows with
-`P39_REPORT_DURABILITY_UNSUPPORTED` / exit 78 before DB open, until an accepted
-platform implementation and power-loss qualification prove the complete
-contract. No “best effort” report or stderr-only fallback permits migration.
-Network filesystems and unqualified filesystems are also blocked. This
-conservative Windows block follows the official API boundary: Node documents
-`FileHandle.sync()` as OS/device-specific; Win32 `MoveFileExW(MOVEFILE_WRITE_THROUGH)`
-describes flushed completion including the copy/delete case, and
-`CreateFile(FILE_FLAG_WRITE_THROUGH)` documents metadata flush on NTFS, but
-those statements do not establish the whole atomic-no-replace + parent-directory
-fsync contract required here. References:
-[Node.js `fs`](https://nodejs.org/api/fs.html),
-[Microsoft `MoveFileExW`](https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-movefileexa),
-[Microsoft `CreateFile`](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-createfilea).
+1. Parse/validate the CLI sidecar path and open/verify the sidecar schema before
+   opening the primary DB. Validate sidecar `journal_mode=WAL` and
+   `synchronous=FULL` by readback, then close/release that validation handle.
+   Never use the sidecar file as the primary DB.
+2. Enter deployment maintenance mode: all existing writers/daemons for the
+   primary DB are stopped and remain stopped until migration either finishes
+   or exits isolated. Without this operator precondition, fail before main DB
+   mutation; SQLite lock alone covers only each transaction.
+3. Before applying any pending P37, P38 or P39 migration, if current
+   `user_version` is 36–38, open the primary with the P1 SQLite adapter while
+   suppressing automatic journal-mode changes (`disableWAL=true` on this
+   preflight-only connection), read back `PRAGMA journal_mode`, and fail closed
+   without mutation unless it is already `wal`. Then begin primary
+   `BEGIN IMMEDIATE`; read current version and detect all P36 unsettled
+   `NotAdmitted` invocation IDs, computing the stable fingerprint from that
+   same snapshot. Connection-local busy_timeout/foreign_keys/synchronous
+   settings are allowed; no primary schema/page/user_version/application-row
+   write is allowed. SQLite may create/manage WAL/SHM lock sidecars while
+   opening/locking an already-WAL DB; those are SQLite runtime metadata, not a
+   committed P36/P37/P38 migration.
+   For `user_version < 36`, P36 schema is absent and old rows are converted to
+   `LegacyUnknown`; normal ordered migration proceeds. For version 39, P39 is
+   already applied.
+4. If no blockers exist, rollback/close the read-only preflight transaction
+   and proceed with the ordered P37→P38→P39 migration transactions while
+   deployment maintenance mode continues to exclude all other writers. No
+   sidecar report row is added. The primary lock is not claimed to span these
+   distinct ordered migration transactions; writer quiescence is the required
+   no-TOCTOU precondition.
+5. If blockers exist, before any pending P37/P38/P39 DDL and while still
+   holding the primary `BEGIN IMMEDIATE`, begin
+   a sidecar `BEGIN IMMEDIATE`. Select by `report_key`: absent → insert exact
+   JSON and content hash; identical row → idempotent no-op; same key with a
+   different hash/bytes → `P39_REPORT_KEY_CONFLICT`, do not replace it. Commit
+   sidecar and read the row back by key; verify exact bytes and both hashes.
+6. After sidecar success/readback, rollback primary transaction and close both
+   clients. Since preflight ran before all pending P37/P38/P39 migrations, the
+   original observed committed schema/data/approval/P3 cursor/user_version
+   remain unchanged. SQLite may update transient WAL/SHM lock metadata for its
+   existing WAL mode. Exit `P39_LEGACY_DB_ISOLATED` / 78. No P39 service
+   runtime is launched.
 
-#### Isolation disposition
+All processes use the same lock order, primary DB then sidecar, and path equality
+is rejected to avoid self-deadlock. If sidecar commit outcome is uncertain,
+keep the primary write reservation, reopen/query the sidecar by stable key and
+hash, then: exact persisted row → treat as success and rollback/isolate primary;
+no row → retry the identical sidecar transaction within bounded policy; row
+with different bytes, inaccessible/corrupt DB, or unresolved commit outcome →
+rollback primary and fail closed with a typed nonzero error. On process restart,
+the same unchanged primary snapshot recomputes the same key and verifies the
+same sidecar row; it never assumes a lost response means no commit.
 
-After a preflight hit, report publication succeeds and the process exits with
-typed `P39_LEGACY_DB_ISOLATED` / exit 78. That exact DB is permanently isolated
-from P39: it is not upgraded, no P39 binary is launched against it, and its
-committed schema/data/user_version, P36 invocation/P38 approval/P3
-Action/Step/cursor remain as-is. No binding is fabricated, approval refunded/transferred, row
-deleted, old attempt retried, or replacement ToolInvocation created. The
-database and report remain under operator custody until a separate future
-governance decision authorizes a human disposition. The deployment operator
-who selected the report path owns access control, backup/retention and any
-later cleanup of both original DB and report; the application never rotates,
-replaces or deletes either. This does **not** close human recovery work for
-that DB.
+#### Sidecar durability, Windows and retention
 
-Release readiness is reported by DB cohort: fresh/unaffected DBs may qualify
-for P39 on a supported platform with the report option; any DB with an active
-P36 NotAdmitted row remains explicitly isolated and is not counted as
-upgraded/released. This is the physical safety consequence of D0A’s rule that
-exact historical shell@2 re-entry requires a complete binding; it adds no
+SQLite WAL `synchronous=FULL` commits the sidecar WAL through the configured
+SQLite VFS `xSync` path. The durability claim is conditional on the local
+filesystem, OS and device honoring SQLite locking/flush semantics; SQLite itself
+warns that broken OS/device sync behavior can violate power-loss durability.
+Keep the sidecar DB and any SQLite-managed `-wal`/`-shm` files together; never
+manually delete/rename/copy only the main sidecar file while a WAL may contain
+committed rows. The named deployment operator is responsible for access
+control, backup and retention. Archive through SQLite's backup API (which
+captures a consistent committed snapshot), not file-copying only the main DB.
+The application never rotates, deletes or truncates report history.
+
+This sidecar design supports a Windows local-disk path only after qualification
+of the actual `@effect/sql-sqlite-node`/Node VFS path, filesystem and hardware.
+Release gate requires repeated report commit/readback/restart, process kills at
+each sidecar transaction boundary, injected disk-full/access-denied/flush and
+busy failures, and VM hard-power-off/reopen/integrity checks on each supported
+Windows local filesystem. `WAL` + `FULL` is not a promise against hardware or
+VFS that lies about flushes. Until this matrix passes, Windows and all network
+or unknown filesystems return `P39_REPORT_DURABILITY_UNSUPPORTED` before the
+primary DB is opened. Primary sources:
+[SQLite WAL](https://www.sqlite.org/wal.html),
+[SQLite PRAGMA synchronous](https://www.sqlite.org/pragma.html#pragma_synchronous),
+[SQLite atomic commit assumptions](https://www.sqlite.org/atomiccommit.html),
+[Effect SQLite Node driver](https://github.com/Effect-TS/effect/tree/main/packages/sql/sqlite-node),
+[Node SQLite](https://nodejs.org/api/sqlite.html),
+[Windows `FlushFileBuffers`](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers).
+
+#### Permanent legacy-DB isolation
+
+After sidecar commit/readback, the P39 maintenance command exits
+`P39_LEGACY_DB_ISOLATED` / 78. That exact primary DB is permanently excluded
+from P39 until a separate future governance decision: no binding is fabricated,
+approval refunded/transferred, row deleted, attempt retried, or replacement
+ToolInvocation created. P39-enabled service runtime is not started against that
+DB. The primary committed schema/data/user_version and P36/P38/P3 canonical
+state remain unchanged by the P39 block. This does not close human recovery
+work for the DB.
+
+Release readiness is reported by DB cohort: unaffected/fresh databases may
+qualify after this sidecar and SQLite/OS durability matrix; any DB with an
+active P36 NotAdmitted row is permanently isolated and is not counted as
+upgraded/released. This remains the physical safety consequence of D0A's rule
+that exact historical shell@2 re-entry requires a complete binding; it adds no
 automatic old-row recovery semantics.
 
-The later accepted owner landing must place the CLI/migration gate in P1
-`04-sqlite-schema.md` §5 and `06-recovery-matrix.md` §5, process-startup
-failure/CLI behavior in P14 `02-conversation-execution.md` and `05-acceptance.md`,
-and the exact P36 NotAdmitted no-dispatch/legacy gate in P9
-`07-agent-loop-step-recovery.md`. No owner document is edited by this draft.
+The later accepted owner landing must put the sidecar CLI/migration contract in
+P1 `04-sqlite-schema.md` §5 and `06-recovery-matrix.md` §5, process startup and
+operator CLI behavior in P14 `02-conversation-execution.md` and `05-acceptance.md`,
+and the AH7 legacy/no-dispatch gate in P9 `07-agent-loop-step-recovery.md`. No
+owner document is edited by this proposal.
 
 The attempt-table SQL intentionally does not require every row labeled
 `Reconcilable` to have a profile: P36 history can legitimately contain
@@ -625,27 +735,26 @@ Illustrative SQLite migration envelope (the inner statements are the schema
 shape above; this is not checked-in migration code):
 
 ```sql
--- P39 CLI validates --migration-block-report, the absolute target, and
--- platform durability before constructing/opening the SQLite client.
-PRAGMA foreign_keys = OFF; -- before transaction; required only for table rebuild
+-- P39 CLI validates --migration-block-report-db and sidecar identity/schema/
+-- WAL/FULL before constructing/opening the primary SQLite client.
+-- In deployment maintenance mode, for primary user_version 36..38:
+-- Open preflight with disableWAL=true; assert journal_mode is already wal so
+-- inspection does not mutate the primary DB's persistent journal mode.
 BEGIN IMMEDIATE;
--- Assert current user_version is 38 and required P36/P38 tables exist.
--- Read-only preflight under this write reservation: collect version,
--- consistent fingerprint, and unsettled P36 NotAdmitted IDs. If non-empty,
--- ROLLBACK, close SQLite, publish the stable JSON report through the durable
--- no-replace protocol, then return P39_LEGACY_DB_ISOLATED / exit 78. Do not
--- execute DDL or change user_version for this permanently isolated DB.
--- If empty, continue directly in this same transaction (no lock gap).
--- Create tool_invocations_p39 with the P39 settlement CHECK; copy every P36
--- row byte-for-byte for its existing values, then replace the old table.
--- Create binding/attempt/fact tables, indexes and immutability triggers.
--- INSERT one attempt-0 row per copied invocation using its exact P36 admission
--- state; leave sourceBinding/profile/effectKey null rather than infer them.
--- Set recovery_binding_state=HistoricalSettled for settled P36 rows and
--- LegacyBindingUnproven for unsettled MayHaveStarted/LegacyUnknown rows.
--- Backfill admission_source=P36Backfill; NotAdmitted precision=NotAdmitted;
--- MayHaveStarted/LegacyUnknown precision=UnknownLegacy, admitted_at=NULL.
-PRAGMA foreign_key_check;
+-- Read only: observe version and P36 unsettled NotAdmitted rows/fingerprint.
+-- If blocked, write/readback the report in sidecar BEGIN IMMEDIATE, then
+-- ROLLBACK/close primary and sidecar and exit P39_LEGACY_DB_ISOLATED.
+-- Otherwise ROLLBACK/close this preflight transaction; do not write main DB.
+-- Keep every other writer stopped while the ordered migration runner executes.
+
+-- Using a new migration connection after P37/P38 commit at user_version 38:
+PRAGMA foreign_keys = OFF; -- before P39 table-rebuild transaction
+BEGIN IMMEDIATE;
+-- Create tool_invocations_p39; copy each P36 row preserving existing values.
+-- Create recovery-binding/attempt/fact tables, indexes and triggers.
+-- Backfill attempt0/admission provenance and historical settlement markers;
+-- do not infer source bindings, profiles, facts or admission times.
+PRAGMA foreign_key_check; -- fail transaction if any row is returned
 PRAGMA user_version = 39;
 COMMIT;
 PRAGMA foreign_keys = ON;
@@ -677,7 +786,7 @@ implementation or review evidence.
 | P10 rebuild while source event retained / after P1 pruning | Rebuild reproduces accepted D0A ActionRequired row/offset within retention horizon; after prune, no indefinite Attention promise |
 | Migration transaction failure at each DDL/backfill stage | Transaction rollback leaves old schema, rows, P38 approvals, and `user_version=38` intact |
 | Same blocked schema-38 DB retried / process restarts | Same report content hash is recognized without rewrite; process still returns P39_LEGACY_DB_ISOLATED and never enters service runtime. P36 DB/user_version stays unchanged |
-| Same report path holds different earlier report | `P39_REPORT_TARGET_CONFLICT`, no overwrite/delete and no P39 DDL; operator retains prior report and must choose a new explicit path for a distinct report |
+| Same report key exists with different content | `P39_REPORT_KEY_CONFLICT`; preserve the existing immutable sidecar row, do not update/delete, and do not run P39 DDL |
 | Unblocked schema-38 DB migrates then P39 startup repeats | First migration commits user_version 39; later invocation is runner no-op; P39 CLI report path validation still precedes DB open |
 
 Retention follows the accepted D0A boundary: P39 binding, attempts and facts
@@ -697,10 +806,14 @@ whether the existing D0A `ProfileUnavailable` public reason plus physical
 the closed P4/P3 union and requires separate governance). A contradictory fact
 arriving after terminal P4/P3 state remains append-only audit evidence and
 cannot roll back that state; any new post-terminal Attention event requires
-separate P9/P10 governance. The new CLI/report contract also requires review of
-its P1/P14/P9 ownership, POSIX durable no-replace publication qualification,
-operator retention responsibility, and the explicit Windows/network-filesystem
-block. Until these questions are closed, there must be no owner-document
+separate P9/P10 governance. The new CLI/sidecar contract also requires review
+of its P1/P14/P9 ownership, P39 preflight ordering before P37/P38, main→sidecar
+lock order/maintenance writer-quiescence precondition, sidecar schema/key/
+retention, and Windows local-VFS power-loss qualification (network/unknown
+filesystems remain blocked). Reconciliation-derived terminal
+Success/ExpectedFailure/ReconciledNoEffect must agree with the exact selected
+same-attempt fact; P36 historical terminal rows remain unselected. Until these
+questions are closed, there must be no owner-document
 landing, P39 migration implementation, test implementation, or release claim.
 This draft cannot be used to infer that the green
 `C:\Arbor@f80` tree contains P36/P37/P38/P39, or that `db929` contains
