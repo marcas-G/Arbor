@@ -307,19 +307,25 @@ const resolveApproval = async (
 const waitForResumedAction = async (
   snapshot: () => ApprovalSnapshot,
   terminalState: "Consumed" | "Rejected" | "Expired",
-) =>
-  waitForPublic(
+) => {
+  const expectedActionState =
+    terminalState === "Consumed" ? "Applied" : "TerminalRejected";
+  const expectedSettlement =
+    terminalState === "Consumed" ? "Success" : "Denied";
+  const expectedEffectCount = terminalState === "Consumed" ? 1 : 0;
+  return waitForPublic(
     async () => snapshot(),
     (value) =>
       value.approval?.state === terminalState &&
-      value.action?.state === "Applied" &&
-      value.invocation?.settlement_kind ===
-        (terminalState === "Consumed" ? "Success" : "Denied"),
+      value.action?.state === expectedActionState &&
+      value.invocation?.settlement_kind === expectedSettlement &&
+      value.effectCount === expectedEffectCount,
     45_000,
   );
+};
 
 describe("pending P38 public Executable approval qualification", () => {
-  it.skip("approves over the public API and resumes the same Execution/AgentLoopStep", async () => {
+  it("approves over the public API and resumes the same Execution/AgentLoopStep", async () => {
     const marker = `P38-APPROVE-${crypto.randomUUID().slice(0, 8)}`;
     const run = await startExecutableApproval(marker);
     const approved = await resolveApproval(
@@ -353,7 +359,7 @@ describe("pending P38 public Executable approval qualification", () => {
     expect(resumed.effectCount).toBe(1);
   });
 
-  it.skip.each(["Reject", "Expire"] as const)(
+  it.each(["Reject", "Expire"] as const)(
     "%s is terminal, resumes the original action without admitting the shell effect",
     async (resolution) => {
       const marker = `P38-${resolution.toUpperCase()}-${crypto.randomUUID().slice(0, 8)}`;
@@ -397,7 +403,7 @@ describe("pending P38 public Executable approval qualification", () => {
       expect(resumed.step?.provider_turn_id).toBe(
         run.before.step?.provider_turn_id,
       );
-      expect(resumed.action?.state).toBe("Applied");
+      expect(resumed.action?.state).toBe("TerminalRejected");
       expect(resumed.invocation).toMatchObject({
         invocation_id: run.before.approval?.tool_invocation_id,
         approval_id: run.approvalId,
@@ -407,7 +413,7 @@ describe("pending P38 public Executable approval qualification", () => {
     },
   );
 
-  it.skip("survives restart with two daemons and consumes one approval/effect", async () => {
+  it("survives restart with two daemons and consumes one approval/effect", async () => {
     const marker = `P38-TAKEOVER-${crypto.randomUUID().slice(0, 8)}`;
     const run = await startExecutableApproval(marker);
     await resolveApproval(
