@@ -1970,3 +1970,97 @@ export const P36_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     foreignKeysOff: true,
   },
 ];
+
+/** AH10 DeliverReplay durable fact, projection marker and fair Attention poll
+ * state; user_version 37. This is forward-only after P36. */
+export const P37_DELIVER_REPLAY_DDL = `
+CREATE TABLE deliver_replay_attention_facts (
+  attention_fact_id       TEXT PRIMARY KEY,
+  event_id                TEXT NOT NULL UNIQUE,
+  project_id              TEXT NOT NULL,
+  execution_id            TEXT NOT NULL,
+  target_workspace_id     TEXT NOT NULL,
+  logical_action_id       TEXT NOT NULL,
+  message_id              TEXT NOT NULL,
+  failure_code            TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyMessageMissingEvent','LegacyEventMissingMessage',
+    'LegacyMessageBindingMismatch','LegacyInboxConflict',
+    'PriorReceiptDecodeMismatch','PriorReceiptResultMismatch',
+    'RejectedReceiptEffectConflict','PriorReceiptEffectConflict'
+  )),
+  first_detected_at       TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id, message_id),
+  UNIQUE (attention_fact_id, project_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id)
+);
+CREATE INDEX deliver_replay_attention_target
+  ON deliver_replay_attention_facts(project_id, target_workspace_id, first_detected_at);
+CREATE INDEX deliver_replay_attention_project_fact
+  ON deliver_replay_attention_facts(project_id, attention_fact_id);
+
+CREATE TABLE deliver_replay_attention_pending (
+  queue_sequence     INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id         TEXT NOT NULL,
+  attention_fact_id  TEXT NOT NULL UNIQUE,
+  enqueued_at        TEXT NOT NULL,
+  FOREIGN KEY (attention_fact_id, project_id)
+    REFERENCES deliver_replay_attention_facts(attention_fact_id, project_id)
+);
+CREATE INDEX deliver_replay_attention_pending_project_order
+  ON deliver_replay_attention_pending(project_id, queue_sequence);
+
+CREATE TABLE deliver_replay_attention_rows (
+  attention_fact_id TEXT PRIMARY KEY
+    REFERENCES deliver_replay_attention_facts(attention_fact_id)
+);
+
+CREATE TRIGGER deliver_replay_pending_delete_requires_marker
+BEFORE DELETE ON deliver_replay_attention_pending
+FOR EACH ROW
+WHEN NOT EXISTS (
+  SELECT 1 FROM deliver_replay_attention_rows
+   WHERE attention_fact_id = OLD.attention_fact_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'DeliverReplay pending item requires a P10 marker');
+END;
+
+CREATE TABLE p10_attention_project_poll_state (
+  project_id                    TEXT PRIMARY KEY,
+  last_attempt_sequence          INTEGER NOT NULL DEFAULT 0 CHECK (last_attempt_sequence >= 0),
+  consecutive_failed_attempts   INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failed_attempts >= 0),
+  next_eligible_at               TEXT NOT NULL,
+  last_failure_code              TEXT CHECK (last_failure_code IS NULL OR last_failure_code IN (
+    'PollLeaseExpired','JournalIdentityUnprovable','MissingP9Fact',
+    'FactTupleMismatch','FactProjectMismatch','EventBindingMismatch',
+    'QueueFactMismatch','MarkerBindingMismatch','QueueDeleteWithoutMarker'
+  )),
+  last_failure_at                 TEXT
+);
+CREATE INDEX p10_attention_project_due
+  ON p10_attention_project_poll_state(next_eligible_at,last_attempt_sequence,project_id);
+CREATE TABLE p10_attention_dispatch_state (
+  singleton                INTEGER PRIMARY KEY CHECK (singleton = 1),
+  next_attempt_sequence    INTEGER NOT NULL CHECK (next_attempt_sequence >= 1),
+  active_project_id        TEXT,
+  lease_owner              TEXT,
+  lease_generation         INTEGER NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
+  claim_started_at         TEXT,
+  lease_expires_at         TEXT,
+  CHECK ((active_project_id IS NULL) = (lease_owner IS NULL)),
+  CHECK ((lease_owner IS NULL) = (claim_started_at IS NULL)),
+  CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL))
+);
+INSERT INTO p10_attention_dispatch_state(singleton,next_attempt_sequence)
+VALUES (1,1);
+`;
+
+export const P37_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P36_MIGRATIONS,
+  {
+    id: 37,
+    name: "ah10_deliver_replay_attention_rows",
+    sql: P37_DELIVER_REPLAY_DDL,
+  },
+];

@@ -42,7 +42,7 @@ import {
 import {
   makeProjectAttentionProjectionStore,
   P10_ATTENTION_CONSUMER_ID,
-  P36_MIGRATIONS,
+  P37_MIGRATIONS,
   runMigrations,
 } from "@arbor/persistence-sqlite";
 import {
@@ -885,7 +885,7 @@ export const ProductionDaemonServiceLive = (
       );
 
       const daemon = makeProductionDaemon({
-        migrate: runMigrations(P36_MIGRATIONS),
+        migrate: runMigrations(P37_MIGRATIONS),
         recovery,
         consumers,
         conversationTick,

@@ -306,6 +306,8 @@ export const ProjectionQueryPortLive: Layer.Layer<
         inTx(bindingAttention.findAssignWorkBindingFailure(attentionFactId)),
       listProjectedAssignWorkBindingFailures: (projectId) =>
         inTx(attentionProjection.listAssignWorkBindingFailures(projectId)),
+      listProjectedDeliverReplayFailures: (projectId) =>
+        inTx(attentionProjection.listDeliverReplayFailures(projectId)),
       listProjectedWorkspaceResourceActivations: (projectId) =>
         inTx(
           attentionProjection.listWorkspaceResourceActivationPending(projectId),

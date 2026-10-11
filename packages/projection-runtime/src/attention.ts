@@ -15,6 +15,7 @@ export type AttentionSource =
   | "RuntimeSafetyEnvelope"
   | "ReconciliationEscalated"
   | "AssignWorkTargetBindingFailure"
+  | "DeliverReplayFailure"
   | "WorkspaceResourceActivationPending"
   | "VerifierOrphan"
   | "WaitingOnVacantProducer";
@@ -29,6 +30,7 @@ export interface AttentionRow {
   /** Event-carried sources carry occurredAt; state-derived joins
    * (vacant producer) have no event timestamp and render null. */
   readonly occurredAt: string | null;
+  readonly failureCode?: string;
 }
 
 // --- fact inputs (extracted journal rows / canonical-state joins) ---
