@@ -2,6 +2,8 @@
 
 状态：**DRAFT / 物理合同补充；未接受、未授权落地**
 
+修订：**2 — DG03 Denied/NotAdmitted terminal compatibility**
+
 日期：2026-10-11
 
 依赖已接受语义提案 SHA-256（LF）：
@@ -24,7 +26,8 @@ P40 `tool_observation_evidence` 只能出现在完整前缀之后：
 P36 AH7-DG-03 → P37 AH10 → P38 EA → P39 AH7-DG-02 (conditional) → P40 AH7-DG-01
 ```
 
-这些 migration id/order 来自当前协调授权。P36–P39 的 owner DDL 与 commit 仍须先各自
+这些 migration id/order 来自当前协调授权。P40 假定 P36 已加入 `Denied` settlement
+和 `effect_admission_state`，其中 `Denied` 必须是 `NotAdmitted`；P36–P39 的 owner DDL 与 commit 仍须先各自
 集成；本稿不把条件性的 P39 视为当前 f80 基线已有的 migration。P40 不可作为单独
 release、不能从 `user_version=35` 跳过 P36–P39 运行，也不进入 phase-local
 `P4_MIGRATIONS`。集成时仅能由包含已集成 P39 的 cumulative production migration array
@@ -36,9 +39,12 @@ DG03 的 accepted proposal source commit 是
 `5cab270642f3a738f1da3dcb846ce734d477f8b2`，独立 implementation branch head 是
 `codex/ah7-approval-settlement-governance@db929654128b8e864d3733b95088f4edda0e4c43`。
 它们均不在 f80 的祖先链（merge-base `6fcbc17e27b694f201792aedd6c2ec368508b542`）。
-P40 depends on that prefix integration; no DG03 Denied/Interrupted clauses are duplicated
-here. After the prefix merge, owner consistency review must confirm P40 still matches the
-accepted DG03 P4 terminal Denied/Interrupted representation.
+P40 depends on that prefix integration. Its trigger has an explicit DG03-owned
+`Denied/NotAdmitted` branch: the immutable closed denial `reasonCode` and version-1
+deterministic denial projection remain replay authority; DG01 evidence fields are all NULL
+and `result_ref` is NULL. The five DG01 evidence-bearing tags remain subject to the complete
+observation envelope. `Denied` is never represented as `ExpectedFailure`. Post-prefix owner
+consistency review must confirm the P40 branch uses the exact accepted DG03 denial schema.
 
 ### P40 runner and rollback
 
@@ -90,8 +96,10 @@ ALTER TABLE tool_invocations ADD COLUMN observation_sha256 TEXT
 The three fields are all-null or all-present. A SQLite table-level `CHECK` cannot be added
 to the existing table without rebuilding it, so P40 adds triggers after the nullable
 columns. Existing terminal rows are grandfathered because P40 does not update/reinsert
-them; new terminal inserts/transitions must carry the full evidence tuple. `Pending` intent
-rows must have no observation fields. Candidate trigger contract:
+them. New Success/ExpectedFailure/Interrupted/OutcomeUnknown/RuntimeFailure terminal
+inserts/transitions must carry the full evidence tuple; the DG03 `Denied/NotAdmitted`
+branch must leave all three fields NULL and preserve its closed denial reason/projection.
+`Pending` intent rows must have no observation fields. Candidate trigger contract:
 
 ```sql
 CREATE TRIGGER tool_invocations_observation_insert_guard
@@ -102,11 +110,28 @@ WHEN
      NEW.result_ref IS NOT NULL OR NEW.observation_format_version IS NOT NULL OR
      NEW.observation_json IS NOT NULL OR NEW.observation_sha256 IS NOT NULL))
   OR
-  (NEW.settled_at IS NOT NULL AND NOT (
-    NEW.settlement_kind IS NOT NULL
-    AND NEW.settlement_json IS NOT NULL
-    AND
-    NEW.observation_format_version = 'p4-canonical-tool-observation-v1'
+  (NEW.settled_at IS NOT NULL AND COALESCE(CASE
+    WHEN NEW.settlement_kind = 'Denied' THEN COALESCE((
+      NEW.effect_admission_state = 'NotAdmitted'
+      AND NEW.result_ref IS NULL
+      AND NEW.observation_format_version IS NULL
+      AND NEW.observation_json IS NULL
+      AND NEW.observation_sha256 IS NULL
+      AND json_valid(NEW.settlement_json)
+      AND json_extract(NEW.settlement_json, '$._tag') = 'Denied'
+      AND json_extract(NEW.settlement_json, '$.projectionVersion') = 1
+      AND json_type(NEW.settlement_json, '$.reasonCode') = 'text'
+      AND json_extract(NEW.settlement_json, '$.reasonCode') IN (
+        'InvocationAuthorityDenied','ApprovalRequired','ApprovalNotFound',
+        'ApprovalMismatch','ApprovalExpired','ApprovalConsumedByOtherInvocation',
+        'ResourceResolutionDenied','ResourceAdmissionDenied','ApprovalNoLongerAuthorized'
+      )
+    ), 0)
+    WHEN NEW.settlement_kind IN
+      ('Success','ExpectedFailure','Interrupted','OutcomeUnknown','RuntimeFailure')
+    THEN COALESCE((
+    NEW.settlement_json IS NOT NULL
+    AND NEW.observation_format_version = 'p4-canonical-tool-observation-v1'
     AND NEW.observation_json IS NOT NULL
     AND NEW.observation_sha256 IS NOT NULL
     AND json_valid(NEW.settlement_json)
@@ -145,13 +170,15 @@ WHEN
             json_extract(CAST(NEW.observation_json AS TEXT), '$.cause'))
       ELSE 0
     END
-  ))
+    ), 0)
+    ELSE 0
+  END, 0) = 0)
 BEGIN
   SELECT RAISE(ABORT, 'tool invocation observation evidence invariant');
 END;
 
 CREATE TRIGGER tool_invocations_observation_update_guard
-BEFORE UPDATE OF settled_at, settlement_kind, settlement_json, result_ref,
+BEFORE UPDATE OF settled_at, settlement_kind, settlement_json, result_ref, effect_admission_state,
   observation_format_version, observation_json, observation_sha256
 ON tool_invocations
 WHEN
@@ -160,11 +187,28 @@ WHEN
      NEW.result_ref IS NOT NULL OR NEW.observation_format_version IS NOT NULL OR
      NEW.observation_json IS NOT NULL OR NEW.observation_sha256 IS NOT NULL))
   OR
-  (OLD.settled_at IS NULL AND NEW.settled_at IS NOT NULL AND NOT (
-    NEW.settlement_kind IS NOT NULL
-    AND NEW.settlement_json IS NOT NULL
-    AND
-    NEW.observation_format_version = 'p4-canonical-tool-observation-v1'
+  (OLD.settled_at IS NULL AND NEW.settled_at IS NOT NULL AND COALESCE(CASE
+    WHEN NEW.settlement_kind = 'Denied' THEN COALESCE((
+      NEW.effect_admission_state = 'NotAdmitted'
+      AND NEW.result_ref IS NULL
+      AND NEW.observation_format_version IS NULL
+      AND NEW.observation_json IS NULL
+      AND NEW.observation_sha256 IS NULL
+      AND json_valid(NEW.settlement_json)
+      AND json_extract(NEW.settlement_json, '$._tag') = 'Denied'
+      AND json_extract(NEW.settlement_json, '$.projectionVersion') = 1
+      AND json_type(NEW.settlement_json, '$.reasonCode') = 'text'
+      AND json_extract(NEW.settlement_json, '$.reasonCode') IN (
+        'InvocationAuthorityDenied','ApprovalRequired','ApprovalNotFound',
+        'ApprovalMismatch','ApprovalExpired','ApprovalConsumedByOtherInvocation',
+        'ResourceResolutionDenied','ResourceAdmissionDenied','ApprovalNoLongerAuthorized'
+      )
+    ), 0)
+    WHEN NEW.settlement_kind IN
+      ('Success','ExpectedFailure','Interrupted','OutcomeUnknown','RuntimeFailure')
+    THEN COALESCE((
+    NEW.settlement_json IS NOT NULL
+    AND NEW.observation_format_version = 'p4-canonical-tool-observation-v1'
     AND NEW.observation_json IS NOT NULL
     AND NEW.observation_sha256 IS NOT NULL
     AND json_valid(NEW.settlement_json)
@@ -203,12 +247,15 @@ WHEN
             json_extract(CAST(NEW.observation_json AS TEXT), '$.cause'))
       ELSE 0
     END
-  ))
+    ), 0)
+    ELSE 0
+  END, 0) = 0)
   OR
   (OLD.settled_at IS NOT NULL AND (
     NEW.settled_at IS NOT OLD.settled_at OR
     NEW.settlement_kind IS NOT OLD.settlement_kind OR
     NEW.settlement_json IS NOT OLD.settlement_json OR
+    NEW.effect_admission_state IS NOT OLD.effect_admission_state OR
     NEW.result_ref IS NOT OLD.result_ref OR
     NEW.observation_format_version IS NOT OLD.observation_format_version OR
     NEW.observation_json IS NOT OLD.observation_json OR
@@ -219,9 +266,13 @@ BEGIN
 END;
 ```
 
-The listed SQL guards enforce this bounded subset; the P4 application codec MUST also
-validate the full accepted settlement/observation schemas and artifact identity before
-commit/replay. In particular:
+The listed SQL guards enforce this bounded subset; every validation branch is wrapped in
+`COALESCE(...,0)` so SQLite NULL/unknown from missing JSON paths cannot turn an invalid row
+into a passing trigger condition. The P4 application codec MUST also validate the full
+accepted settlement/observation schemas and artifact identity before commit/replay. For
+DG03 `Denied`, that codec validates the complete stored settlement/intent identity and
+uses the accepted projectionVersion-1 code-to-fixed-observation mapping; it must not consult
+mutable current policy or arbitrary error text. In particular:
 
 - `Success`: `observation_json.$.resultRef` is JSON null iff row `result_ref` is SQL NULL;
   otherwise it is the exact row string and a valid P4 ArtifactId/Artifact reference.
@@ -234,6 +285,11 @@ commit/replay. In particular:
   (≤2,000 UTF-16 code units), with the stored boolean `truncated` unchanged on replay.
 - `Interrupted`: exact tag only; its existing Application projection remains the P3
   terminal/nonterminal path specified by the accepted logical proposal.
+- DG03 `Denied`: no DG01 observation envelope; `effect_admission_state='NotAdmitted'`,
+  closed `reasonCode`, immutable `projectionVersion=1` settlement identity, and all three
+  DG01 evidence fields plus `result_ref` NULL. P4 replays the existing deterministic
+  reasonCode-to-fixed-observation mapping and P3's existing Denied result/action projection;
+  it is never translated to `ExpectedFailure` and never enters DG01 replay-evidence Attention.
 
 Application canonicalization MUST additionally preserve the accepted cap disposition before
 the first settlement/return: oversized Success `resultRef` is omitted using the accepted
@@ -245,19 +301,21 @@ unsettled and return the accepted typed uncertain-effect path into existing reco
 No first-write Success/ExpectedFailure/RuntimeFailure fact may be erased or rewritten as
 OutcomeUnknown to fit storage.
 
-| Canonical tag | Settlement and observation fields | `result_ref` / Artifact rule | P3 projection facts that must replay unchanged |
+| P4 result / settlement tag | Settlement and observation fields | `result_ref` / Artifact rule | P3 projection facts that must replay unchanged |
 |---|---|---|---|
+| DG03 `Denied` (outside the DG01 canonical-observation union) | closed `reasonCode` plus exact `projectionVersion:1`; no `CanonicalToolObservation` evidence row | all three DG01 columns and row `result_ref` NULL; `effect_admission_state=NotAdmitted`; no Artifact | stored code selects the same DG03 v1 fixed bounded denial projection; ToolResult status `Denied`, disposition `AuthorizationDenied`, action `TerminalRejected`, exact source/cursor once. |
 | `Success` | settlement `{_tag:"Success"}`; observation has bounded `text`, `truncated`, and null-or-valid Artifact `resultRef` | row ref equals observation ref; non-null ref must decode as ArtifactId and resolve to valid Artifact metadata. Auto-Artifact only when executor resultRef was originally null. No loser Artifact; no Artifact read to reconstruct text. | `Succeeded`, exact text/truncated/invocationId/source; only valid non-null ref becomes artifactRef. Invalid legacy ref → `ResultRefMismatch`. |
 | `ExpectedFailure` | settlement `{_tag:"ExpectedFailure"}`; original bounded text/truncated | SQL `result_ref` null, no Artifact; discard executor-private resultRef | `Failed`, exact bounded text/truncated and no artifactRefs. Legacy non-null ref → `UnexpectedResultRef`. |
 | `Interrupted` | exact `{_tag:"Interrupted"}` settlement and observation; no text/truncated in P4 ADT | SQL `result_ref` null, no Artifact | existing Application text `tool invocation interrupted`, `truncated=false`; legacy non-null ref → `UnexpectedResultRef`. |
 | `OutcomeUnknown` | exact settlement refs and same ordered observation `reconciliationRefs` (1–8; each ≤128 UTF-8 bytes); no bounded text | SQL `result_ref` null, no Artifact. Legacy oversized refs → `Malformed`. | Existing terminal ToolResult/status/source/hash, Action `ReconciliationPending`, fixed text `Control action settled the execution (OutcomeUnknown)`, `truncated=false`, no artifacts. |
 | `RuntimeFailure` | exact same settlement/observation `cause` (≤1,024 UTF-8 bytes after canonicalization) | SQL `result_ref` null, no Artifact | `Failed`; existing renderer text from cause, `truncated=false`; legacy oversized cause → `Malformed`. |
 
-Across all tags, row settlement kind and both `_tag`s agree. P3 source remains the accepted
+Across the five DG01 evidence-bearing tags, row settlement kind and both `_tag`s agree. The
+DG03 Denied branch has no observation `_tag`; its `reasonCode` and projection version are
+instead the replay authority. P3 source remains the accepted
 exact `(executionId, providerTurnId, actionIndex, callRef, toolName, inputHash)` source, and
 the P4 invocation/result identity is not inferred from returned text, current tool state,
-Artifact bytes or Session text. Legacy terminal rows lacking any new evidence field remain
-nullable and immutable; same-action replay fail-closes as `Missing` (or the exact typed
+Artifact bytes or Session text. Legacy terminal rows for one of the five DG01 evidence-bearing tags lacking any new evidence field remain nullable and immutable; same-action replay fail-closes as `Missing` (or the exact typed
 version/hash/shape/settlement/intent/ref code) into RecoveryBlocked/P9 fact/P10 Attention,
 without re-executor, ToolResult, cursor advance, evidence rewrite or Artifact projection.
 When an existing row has a recognized non-Success settlement tag and non-null `result_ref`,
@@ -420,10 +478,10 @@ bounded observation evidence.
 
 | Owner | Physical clauses to review before owner landing |
 |---|---|
-| P4 `06` + global P40 migration | `tool_invocations` BLOB fields/checks/triggers, no backfill, terminal immutability, rollback/retry and prefix-only migration registration. |
-| P4 `01/02/06/07` | BLOB encoding/hash byte contract, five tag/settlement/result_ref/artifact consistency, winner CAS, fence-before-read, auto Artifact created only by winner. |
+| P4 `06` + global P40 migration | `tool_invocations` BLOB fields/checks/triggers, five evidence-bearing tags plus DG03 Denied/NotAdmitted NULL-evidence branch, no backfill, terminal/effect-state immutability, rollback/retry and prefix-only migration registration. |
+| P4 `01/02/06/07` | BLOB encoding/hash byte contract, five tag/settlement/result_ref/artifact consistency and DG03 fixed reasonCode projection exception, winner CAS, fence-before-read, auto Artifact created only by winner. |
 | P9 `07` + event catalog / store | fact/event DDL, exact tuple and hash serialization, fixed failure codes/payload/envelope, current-fence checks, atomicity and no secret leakage. |
-| P10 `02/04/07` + read ports | source-specific marker table/DTO mapping; fixed source/severity/summary and internal-only failure code; shared offset, apply-then-advance, reset/rebuild/refused-floor behavior. |
+| P10 `02/04/07`, `AttentionSource`/`ATTENTION_SOURCES`, API and read-model enum/query owners | source-specific marker table/DTO union mapping; fixed source/severity/summary and internal-only failure code; shared offset, apply-then-advance, reset/rebuild/refused-floor behavior; add the source to each owning closed enum/map without exposing failure details. |
 | P2/P3 indexes | P4/P3 stale-generation ownership-loss and current-generation winner convergence remain the accepted lease/source contract. |
 
 Open independent-review confirmations before owner landing:

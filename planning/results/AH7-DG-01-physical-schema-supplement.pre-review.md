@@ -9,23 +9,33 @@ SHA-256 `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`, on b
 landing, migrations, production code, tests, daemon runs, or AH7 closure.
 
 Proposal path: `planning/proposals/AH7-DG-01-physical-schema-supplement-draft.md`
-Proposal LF SHA-256: `58FB3DBC6D8EF5AB9A0274F9E39FA68B3F9EF6B65A9E0469B23591701AEB1159`
+Proposal LF SHA-256: `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`
 
 The proposal fixes P40 as a cumulative-only migration after P36 AH7-DG-03, P37 AH10, P38 EA,
 and conditional P39 AH7-DG-02. It includes inline bounded UTF-8 BLOB evidence (16,384-byte
-cap), tag-specific settlement/result-ref/Artifact/P3 replay mapping, nullable untouched
-legacy evidence with fail-closed first replay, terminal immutability, winner-CAS/fence rules,
-P9 fact/event DDL, and a P10 source-specific Action Required marker table with row/offset/
-reset/rebuild atomicity. The P10 failure code is internal-only; the fixed path-free summary
-is the only user-facing detail and excludes tool output, causes, paths and secrets.
+cap), five DG01 evidence-bearing tag/result-ref/Artifact/P3 replay mappings, plus an explicit
+DG03 `Denied/NotAdmitted` exception: preserve closed `reasonCode` + `projectionVersion:1`
+deterministic replay, require all DG01 evidence fields and result_ref NULL, and never map
+Denied to ExpectedFailure. Trigger NULL checks use COALESCE fail-closed semantics. Legacy
+DG01 evidence remains nullable/untouched and first replay fails closed. The proposal also
+includes terminal immutability, winner-CAS/fence rules, P9 fact/event DDL, and a P10
+source-specific Action Required marker table with row/offset/reset/rebuild atomicity. The
+P10 failure code is internal-only; the fixed path-free summary is the only user-facing detail
+and excludes tool output, causes, paths and secrets.
 
 AH7-DG-03 remains an external dependency: its accepted owner/design work is on a distinct
-branch and is not integrated into baseline f80. The proposal neither duplicates nor claims
-to solve Denied persistence; after prefix integration, the P4 Denied/Interrupted consistency
-check required by the accepted DG03 contract remains outstanding.
+branch and is not integrated into baseline f80. The proposal does not repeat or resolve the
+DG03 denial semantics; it adds only the P40 physical compatibility branch after prefix
+integration. Owner landing must verify the reason-code/projection columns and closed code set
+against DG03's accepted contract.
 
 No new product/runtime behavior gap was discovered beyond the already accepted logical
-proposal. This physical supplement makes explicit additional decisions that require their
+proposal. The independent review found that the first P40 trigger draft's five-tag-only
+`ELSE 0` path would reject accepted DG03 Denied rows; rev5 adds the NotAdmitted/reasonCode
+exception with no DG01 evidence, wraps JSON-path validation in COALESCE to fail closed on
+NULL, and records P10's AttentionSource/ATTENTION_SOURCES/API
+read-model enum additions in the owner map. This physical supplement makes explicit
+additional decisions that require their
 own independent review/acceptance before owner landing: exact P9 attention-fact ID byte
 serialization/event envelope; P10 source literal and fixed summary/query-owner confirmation;
 and cumulative migration registration plus single-runner startup enforcement for P36–P40.
