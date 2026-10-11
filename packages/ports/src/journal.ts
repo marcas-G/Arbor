@@ -24,6 +24,23 @@ export interface PendingDomainEvent {
   readonly payload: unknown;
 }
 
+/** P1/05 DeliverReplay preflight view. Values intentionally remain unknown so
+ * source identity can be checked before any event decoding occurs. */
+export interface RawJournalEventCandidate {
+  readonly eventIdRaw: unknown;
+  readonly projectIdRaw: unknown;
+  readonly sequenceRaw: unknown;
+  readonly eventTypeRaw: unknown;
+  readonly eventVersionRaw: unknown;
+  readonly occurredAtRaw: unknown;
+  readonly aggregateRefRaw: unknown;
+  readonly actorRaw: unknown;
+  readonly causedByCommandIdRaw: unknown;
+  readonly causedByEventIdRaw: unknown;
+  readonly correlationRefRaw: unknown;
+  readonly payloadJsonRaw: unknown;
+}
+
 export interface DomainEventJournalService {
   readonly append: (
     drafts: ReadonlyArray<PendingDomainEvent>,
@@ -45,6 +62,15 @@ export interface DomainEventJournalService {
     limit: number,
   ) => Effect.Effect<
     ReadonlyArray<DomainEvent<unknown>>,
+    DomainEventJournalError,
+    TransactionScope
+  >;
+  readonly readAfterRaw: (
+    projectId: ProjectId,
+    sequence: number,
+    limit: number,
+  ) => Effect.Effect<
+    ReadonlyArray<RawJournalEventCandidate>,
     DomainEventJournalError,
     TransactionScope
   >;

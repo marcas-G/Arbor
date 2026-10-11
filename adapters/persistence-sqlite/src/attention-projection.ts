@@ -2,6 +2,8 @@ import type { DomainEvent, ProjectId } from "@arbor/domain";
 import {
   type AssignWorkBindingAttentionFact,
   type AssignWorkBindingAttentionProjectionRow,
+  type DeliverReplayAttentionFact,
+  type DeliverReplayAttentionProjectionRow,
   AttentionProjectionStore,
   type AttentionProjectionStoreError,
   type AttentionProjectionStoreService,
@@ -36,6 +38,16 @@ interface WorkspaceResourceActivationAttentionDbRow {
   readonly workspace_id: string;
   readonly resource_boundary_revision: number;
   readonly occurred_at: string;
+}
+
+interface DeliverReplayAttentionDbRow {
+  readonly project_id: string;
+  readonly dedup_key: string;
+  readonly target_workspace_id: string;
+  readonly failure_code: DeliverReplayAttentionProjectionRow["failureCode"];
+  readonly occurred_at: string;
+  readonly source_event_id: string;
+  readonly source_fact_id: string;
 }
 
 export type AttentionProjectionQualificationEvent =
@@ -79,6 +91,22 @@ const activationRowFromDb = (
     row.resource_boundary_revision,
   ) as WorkspaceResourceActivationAttentionProjectionRow["resourceBoundaryRevision"],
   occurredAt: row.occurred_at,
+});
+
+const deliverReplayRowFromDb = (
+  row: DeliverReplayAttentionDbRow,
+): DeliverReplayAttentionProjectionRow => ({
+  projectId: row.project_id as ProjectId,
+  dedupKey: row.dedup_key,
+  source: "DeliverReplayFailure",
+  severity: "ActionRequired",
+  targetWorkspaceId: row.target_workspace_id as never,
+  summary:
+    "A Deliver handover could not be reconciled with its exact Message and MessageSent facts; execution recovery is paused.",
+  failureCode: row.failure_code,
+  occurredAt: row.occurred_at,
+  sourceEventId: row.source_event_id as never,
+  sourceFactId: row.source_fact_id,
 });
 
 const sameRow = (
@@ -193,6 +221,76 @@ export const makeAttentionProjectionStoreLive = (
               });
             }
           }),
+        putDeliverReplayFailure: (fact) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const stored = yield* run(
+              sql.unsafe<{
+                readonly event_id: string;
+                readonly project_id: string;
+                readonly execution_id: string;
+                readonly target_workspace_id: string;
+                readonly logical_action_id: string;
+                readonly message_id: string;
+                readonly failure_code: string;
+                readonly first_detected_at: string;
+              }>(
+                `SELECT event_id, project_id, execution_id, target_workspace_id,
+                        logical_action_id, message_id, failure_code, first_detected_at
+                   FROM deliver_replay_attention_facts
+                  WHERE attention_fact_id = ?`,
+                [fact.attentionFactId],
+              ),
+            );
+            const row = stored[0];
+            if (
+              row === undefined ||
+              row.event_id !== fact.eventId ||
+              row.project_id !== fact.projectId ||
+              row.execution_id !== fact.executionId ||
+              row.target_workspace_id !== fact.targetWorkspaceId ||
+              row.logical_action_id !== fact.logicalActionId ||
+              row.message_id !== fact.messageId ||
+              row.failure_code !== fact.failureCode ||
+              row.first_detected_at !== fact.firstDetectedAt
+            ) {
+              return yield* Effect.fail<AttentionProjectionStoreError>({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "deliver-replay-marker",
+                reason: "Deliver marker input does not match its durable P9 fact",
+              });
+            }
+            yield* run(
+              sql.unsafe(
+                `INSERT INTO deliver_replay_attention_rows (attention_fact_id)
+                 VALUES (?) ON CONFLICT(attention_fact_id) DO NOTHING`,
+                [fact.attentionFactId],
+              ),
+            );
+          }),
+        listDeliverReplayFailures: (projectId) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const rows = yield* run(
+              sql.unsafe<DeliverReplayAttentionDbRow>(
+                `SELECT fact.project_id AS project_id,
+                        fact.attention_fact_id AS dedup_key,
+                        fact.target_workspace_id AS target_workspace_id,
+                        fact.failure_code AS failure_code,
+                        fact.first_detected_at AS occurred_at,
+                        fact.event_id AS source_event_id,
+                        fact.attention_fact_id AS source_fact_id
+                   FROM deliver_replay_attention_rows AS projected
+                   JOIN deliver_replay_attention_facts AS fact
+                     ON fact.attention_fact_id = projected.attention_fact_id
+                  WHERE fact.project_id = ?
+                  ORDER BY fact.first_detected_at, fact.attention_fact_id`,
+                [projectId],
+              ),
+            );
+            return rows.map(deliverReplayRowFromDb);
+          }),
         listAssignWorkBindingFailures: (projectId) =>
           Effect.map(
             run(
@@ -303,6 +401,16 @@ export const makeAttentionProjectionStoreLive = (
           Effect.gen(function* () {
             yield* run(
               sql.unsafe(
+                `DELETE FROM deliver_replay_attention_rows
+                  WHERE attention_fact_id IN (
+                    SELECT attention_fact_id FROM deliver_replay_attention_facts
+                     WHERE project_id = ?
+                  )`,
+                [projectId],
+              ),
+            );
+            yield* run(
+              sql.unsafe(
                 "DELETE FROM attention_projection_rows WHERE project_id = ?",
                 [projectId],
               ),
@@ -371,11 +479,16 @@ export const makeProjectAttentionProjectionStore = (
   projectId: ProjectId,
   sourceFacts: Pick<
     RecoveryAttentionFactStoreService,
-    "findAssignWorkBindingFailure"
+    | "findAssignWorkBindingFailure"
+    | "findDeliverReplayFailure"
+    | "listDeliverReplayFailures"
+    | "listPendingDeliverReplayAttention"
+    | "acknowledgePendingDeliverReplayAttention"
   >,
   attentionRows: Pick<
     AttentionProjectionStoreService,
     | "putAssignWorkBindingFailure"
+    | "putDeliverReplayFailure"
     | "resetProject"
     | "reconcileWorkspaceResourceActivation"
   >,
@@ -426,6 +539,64 @@ export const makeProjectAttentionProjectionStore = (
             .pipe(Effect.mapError(projectionFailure));
           yield* attentionRows
             .reconcileWorkspaceResourceActivation(projectId, intents)
+            .pipe(Effect.mapError(projectionFailure));
+          continue;
+        }
+        if (event.eventType === "DeliverReplayEscalated") {
+          if (event.projectId !== projectId) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason: "P10 Attention consumer received a Deliver event for another project",
+            });
+          }
+          const payload = payloadRecord(event.payload);
+          const attentionFactId = payload.attentionFactId;
+          if (typeof attentionFactId !== "string" || attentionFactId.length === 0) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason: "Deliver replay event is missing its attentionFactId",
+            });
+          }
+          const found = yield* sourceFacts
+            .findDeliverReplayFailure(attentionFactId)
+            .pipe(Effect.mapError(projectionFailure));
+          if (Option.isNone(found)) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason: "Deliver replay event has no matching immutable P9 fact",
+            });
+          }
+          const fact = found.value;
+          if (
+            fact.eventId !== event.eventId ||
+            fact.projectId !== projectId ||
+            event.eventType !== "DeliverReplayEscalated" ||
+            event.eventVersion !== 1 ||
+            event.actor !== "system:recovery" ||
+            event.aggregateRef !== fact.targetWorkspaceId ||
+            event.correlationRef !== fact.logicalActionId ||
+            event.occurredAt !== fact.firstDetectedAt ||
+            fact.executionId !== String(payload.executionId ?? "") ||
+            fact.targetWorkspaceId !== String(payload.targetWorkspaceId ?? "") ||
+            fact.logicalActionId !== String(payload.logicalActionId ?? "") ||
+            fact.messageId !== String(payload.messageId ?? "") ||
+            fact.failureCode !== String(payload.failureCode ?? "")
+          ) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason: "Deliver replay event does not exactly match its immutable P9 fact",
+            });
+          }
+          yield* attentionRows
+            .putDeliverReplayFailure(fact)
             .pipe(Effect.mapError(projectionFailure));
           continue;
         }
@@ -494,6 +665,22 @@ export const makeProjectAttentionProjectionStore = (
       yield* attentionRows
         .resetProject(projectId)
         .pipe(Effect.mapError(projectionFailure));
+      const deliverFacts = yield* sourceFacts
+        .listDeliverReplayFailures(projectId)
+        .pipe(Effect.mapError(projectionFailure));
+      for (const fact of deliverFacts) {
+        yield* attentionRows
+          .putDeliverReplayFailure(fact)
+          .pipe(Effect.mapError(projectionFailure));
+      }
+      const pending = yield* sourceFacts
+        .listPendingDeliverReplayAttention(projectId, Number.MAX_SAFE_INTEGER)
+        .pipe(Effect.mapError(projectionFailure));
+      for (const fact of pending) {
+        yield* sourceFacts
+          .acknowledgePendingDeliverReplayAttention(fact.attentionFactId)
+          .pipe(Effect.mapError(projectionFailure));
+      }
       if (activationIntents === undefined) return;
       const intents = yield* activationIntents
         .listAll()

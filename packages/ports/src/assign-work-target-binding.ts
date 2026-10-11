@@ -165,6 +165,33 @@ export interface AssignWorkBindingAttentionFact {
   readonly eventId: string;
 }
 
+export type DeliverReplayFailureCode =
+  | "LegacyMessageMissingEvent"
+  | "LegacyEventMissingMessage"
+  | "LegacyMessageBindingMismatch"
+  | "LegacyInboxConflict"
+  | "PriorReceiptDecodeMismatch"
+  | "PriorReceiptResultMismatch"
+  | "RejectedReceiptEffectConflict"
+  | "PriorReceiptEffectConflict";
+
+export interface DeliverReplayAttentionFact {
+  readonly attentionFactId: string;
+  readonly eventId: string;
+  readonly projectId: ProjectId;
+  readonly executionId: ExecutionId;
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly logicalActionId: string;
+  readonly messageId: string;
+  readonly failureCode: DeliverReplayFailureCode;
+  readonly firstDetectedAt: string;
+}
+
+export type RecordDeliverReplayFailureInput = Omit<
+  DeliverReplayAttentionFact,
+  "attentionFactId" | "eventId"
+> & { readonly causedByCommandId?: CommandId };
+
 export type RecordAssignWorkBindingFailureInput = Omit<
   AssignWorkBindingAttentionFact,
   "attentionFactId" | "eventId"
@@ -190,6 +217,49 @@ export interface RecoveryAttentionFactStoreService {
     attentionFactId: string,
   ) => Effect.Effect<
     Option.Option<AssignWorkBindingAttentionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly recordDeliverReplayFailure: (
+    fact: RecordDeliverReplayFailureInput,
+  ) => Effect.Effect<
+    DeliverReplayAttentionFact,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly findDeliverReplayFailure: (
+    attentionFactId: string,
+  ) => Effect.Effect<
+    Option.Option<DeliverReplayAttentionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly findDeliverReplayFailureByEventId: (
+    eventId: string,
+  ) => Effect.Effect<
+    Option.Option<DeliverReplayAttentionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly listDeliverReplayFailures: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<DeliverReplayAttentionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly listPendingDeliverReplayAttention: (
+    projectId: ProjectId,
+    limit: number,
+  ) => Effect.Effect<
+    ReadonlyArray<DeliverReplayAttentionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly acknowledgePendingDeliverReplayAttention: (
+    attentionFactId: string,
+  ) => Effect.Effect<
+    void,
     RecoveryAttentionFactStoreError,
     TransactionScope
   >;

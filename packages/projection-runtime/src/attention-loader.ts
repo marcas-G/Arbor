@@ -12,6 +12,7 @@ import type {
 import type {
   AssignWorkBindingAttentionFact,
   AssignWorkBindingAttentionProjectionRow,
+  DeliverReplayAttentionProjectionRow,
   WorkspaceResourceActivationAttentionProjectionRow,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -82,6 +83,12 @@ export interface AttentionReadDeps {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<AssignWorkBindingAttentionProjectionRow>,
+    ProjectionReadError
+  >;
+  readonly listProjectedDeliverReplayFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<DeliverReplayAttentionProjectionRow>,
     ProjectionReadError
   >;
   readonly listProjectedWorkspaceResourceActivations?: (
@@ -304,6 +311,22 @@ export const deriveProjectAttention = (
           dedupKey: row.dedupKey,
           summary: row.summary,
           occurredAt: row.occurredAt,
+        })),
+      ];
+    }
+    if (deps.listProjectedDeliverReplayFailures !== undefined) {
+      const materialized =
+        yield* deps.listProjectedDeliverReplayFailures(projectId);
+      rows = [
+        ...rows.filter((row) => row.source !== "DeliverReplayFailure"),
+        ...materialized.map((row) => ({
+          source: row.source,
+          severity: row.severity,
+          targetWorkspaceId: row.targetWorkspaceId,
+          dedupKey: row.dedupKey,
+          summary: row.summary,
+          occurredAt: row.occurredAt,
+          failureCode: row.failureCode,
         })),
       ];
     }

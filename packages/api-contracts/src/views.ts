@@ -60,6 +60,7 @@ export type AttentionSource =
   | "RuntimeSafetyEnvelope"
   | "RecoveryEscalation"
   | "AssignWorkTargetBindingFailure"
+  | "DeliverReplayFailure"
   | "VerifierOrphan"
   | "VacantProducer";
 
@@ -69,6 +70,7 @@ export const ATTENTION_SOURCES: ReadonlyArray<AttentionSource> = [
   "RuntimeSafetyEnvelope",
   "RecoveryEscalation",
   "AssignWorkTargetBindingFailure",
+  "DeliverReplayFailure",
   "VerifierOrphan",
   "VacantProducer",
 ];
@@ -168,6 +170,7 @@ export interface AttentionRow {
   readonly dedupKey: string;
   readonly summaryRef: string;
   readonly occurredAt: string;
+  readonly failureCode?: string;
 }
 
 export interface AttentionRes {

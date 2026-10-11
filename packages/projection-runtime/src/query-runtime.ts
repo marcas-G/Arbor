@@ -219,6 +219,9 @@ const planView = (
                 dedupKey: row.dedupKey,
                 summaryRef: row.summary,
                 occurredAt: row.occurredAt ?? "",
+                ...(row.failureCode === undefined
+                  ? {}
+                  : { failureCode: row.failureCode }),
               })),
             }),
           ),

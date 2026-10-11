@@ -10,6 +10,7 @@ import {
   DomainEventJournal,
   IdGenerator,
   type PendingDomainEvent,
+  type RawJournalEventCandidate,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
@@ -115,6 +116,25 @@ export const DomainEventJournalLive: Layer.Layer<
             ),
           );
           return rows.map(toEvent);
+        }),
+      readAfterRaw: (projectId, sequence, limit) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          return yield* run(
+            sql.unsafe<RawJournalEventCandidate>(
+              `SELECT event_id AS eventIdRaw, project_id AS projectIdRaw,
+                      sequence AS sequenceRaw, event_type AS eventTypeRaw,
+                      event_version AS eventVersionRaw, occurred_at AS occurredAtRaw,
+                      aggregate_ref AS aggregateRefRaw, actor AS actorRaw,
+                      caused_by_command_id AS causedByCommandIdRaw,
+                      caused_by_event_id AS causedByEventIdRaw,
+                      correlation_ref AS correlationRefRaw, payload_json AS payloadJsonRaw
+                 FROM domain_events
+                WHERE project_id = ? AND sequence > ?
+                ORDER BY sequence LIMIT ?`,
+              [projectId, sequence, limit],
+            ),
+          );
         }),
       lastSequence: (projectId) =>
         Effect.gen(function* () {
