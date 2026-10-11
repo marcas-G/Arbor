@@ -1,4 +1,4 @@
-import { Principal, parse } from "@arbor/domain";
+import { ExecutionId, Principal, parse } from "@arbor/domain";
 import {
   type DomainEventJournal,
   ExecutableApprovalStore,
@@ -22,7 +22,7 @@ import {
 const approvalId = "eap_expiry_test";
 const projectId = "prj_expiry_test";
 const workspaceId = "ws_expiry_test";
-const executionId = "exe_expiry_test";
+const executionId = parse(ExecutionId)("exe_expiry_test");
 const logicalActionId = "lac_expiry_test";
 const toolInvocationId = "tin_expiry_test";
 const expiredAt = "2026-10-11T00:15:00.000Z";
@@ -147,7 +147,7 @@ describe("EA-DG-01 executable approval expiration", () => {
             expiredBy: parse(Principal)("runtime:system"),
           }),
         );
-        const recovered = yield* tx.transact(store.listResolved());
+        const recovered = yield* tx.transact(store.listResolved(executionId));
         const lateDecision = yield* tx.transact(
           store.decide({
             approvalId,

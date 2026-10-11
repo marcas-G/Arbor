@@ -428,15 +428,17 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
             );
           return Option.some(record);
         }),
-      listResolved: () =>
+      listResolved: (executionId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           const rows = yield* run(
             sql.unsafe<ApprovalRow>(
               `SELECT * FROM action_approvals
                 WHERE route_kind = 'Executable' AND binding_proven = 1
+                  AND execution_id = ?
                   AND state IN ('Approved','Rejected','Expired','Cancelled')
                 ORDER BY COALESCE(decided_at, cancelled_at, expires_at), approval_id`,
+              [executionId],
             ),
           );
           return rows.map(toApproval);

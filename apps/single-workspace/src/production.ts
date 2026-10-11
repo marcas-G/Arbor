@@ -938,31 +938,30 @@ export const ProductionDaemonServiceLive = (
           // P17's resolved-approval recovery source: resolution journal/wake
           // commits can outlive a process crash before delivery. Expire first,
           // then re-read terminal truth and replay the exact active Execution.
-          const resolvedExecutableApprovals = yield* tx.transact(
-            Effect.gen(function* () {
-              yield* executableApprovals.expireDue({
-                now: approvalNow,
-                expiredBy: config.principal,
-                ...(config.batchSize === undefined
-                  ? {}
-                  : { batchSize: config.batchSize }),
-              });
-              return yield* executableApprovals.listResolved();
+          yield* tx.transact(
+            executableApprovals.expireDue({
+              now: approvalNow,
+              expiredBy: config.principal,
+              ...(config.batchSize === undefined
+                ? {}
+                : { batchSize: config.batchSize }),
             }),
           );
-          for (const approval of resolvedExecutableApprovals) {
-            const execution = yield* tx.transact(
-              executions.findById(approval.executionId),
+          for (const execution of unsettled) {
+            if (execution.state.status !== "Active") continue;
+            const resolvedForExecution = yield* tx.transact(
+              executableApprovals.listResolved(execution.executionId),
             );
             if (
-              Option.isSome(execution) &&
-              execution.value.executionId === approval.executionId &&
-              execution.value.projectId === approval.projectId &&
-              execution.value.workspaceId === approval.workspaceId &&
-              execution.value.state.status === "Active"
+              resolvedForExecution.some(
+                (approval) =>
+                  approval.executionId === execution.executionId &&
+                  approval.projectId === execution.projectId &&
+                  approval.workspaceId === execution.workspaceId,
+              )
             ) {
               const approvalWake: WakeReason = { _tag: "HumanIntervention" };
-              yield* runIfDispatchable(approval.executionId, approvalWake);
+              yield* runIfDispatchable(execution.executionId, approvalWake);
             }
           }
         }),

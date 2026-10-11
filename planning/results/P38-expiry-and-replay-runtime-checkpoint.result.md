@@ -56,12 +56,14 @@ Status: **Static implementation checkpoint with P12 / terminal-replay / resolved
   `expiresAt` is later than `now`; TTL only maps Pending/Approved rows to
   `ApprovalExpired`. Added an unrun P4 regression for Reject-after-TTL and
   Approved-after-TTL.
-- `ExecutableApprovalStore.listResolved` exposes durable terminal rows as the
-  resolved-request recovery source. The production recovery tick first scans
-  due TTL rows, then reads resolved rows and wakes only the exact still-Active
-  bound Execution through the existing P2 `HumanIntervention` run path. This
-  retains same-Execution/Step/action identity and is at-least-once/idempotent.
-  Added an unrun SQLite assertion that a resolved Expired row is rediscovered.
+- `ExecutableApprovalStore.listResolved(executionId)` exposes that exact
+  Execution's durable terminal rows as the resolved-request recovery source.
+  The production recovery tick first scans due TTL rows, then queries each
+  active unsettled Execution separately and wakes only an exact project /
+  workspace / Execution match through the existing P2 `HumanIntervention` run
+  path. This retains same-Execution/Step/action identity without a global
+  terminal-history scan and is at-least-once/idempotent. Added an unrun SQLite
+  assertion that a resolved Expired row is rediscovered for its Execution.
 - Added unrun test source for Pending expiry CAS + exact Inbox/wake + replay,
   human decision racing after TTL, already-Approved expiry, and the P4
   claim-committed/effect-not-admitted same-ToolInvocation replay window.
