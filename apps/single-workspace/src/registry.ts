@@ -14,6 +14,7 @@ import {
   makeRecordDecisionHandler,
   makeRecordVerificationEvidenceHandler,
   makeResolveControlApprovalHandler,
+  makeResolveExecutableApprovalHandler,
   makeResumeConversationResponseHandler,
   makeRevokePermissionHandler,
   makeSatisfyDependencyHandler,
@@ -42,6 +43,7 @@ import {
   EnvironmentRevisionStore,
   EvidenceRepository,
   ExecutableApprovalStore,
+  type ExecutableApprovalStoreService,
   ExecutionRepository,
   FormationFulfillmentStore,
   FormationProposalStore,
@@ -67,6 +69,16 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 
+const executableApprovalStoreUnavailable: ExecutableApprovalStoreService = {
+  findByActionKey: () => Effect.succeed(Option.none()),
+  findById: () => Effect.succeed(Option.none()),
+  putPendingExact: () =>
+    Effect.die(new Error("ExecutableApprovalStoreUnavailable")),
+  decide: () => Effect.succeed(Option.none()),
+  consumeApproved: () => Effect.succeed(false),
+  cancelForExecution: () => Effect.succeed([]),
+};
+
 /**
  * The slice's command handler registry: P1 commands (CreateProject /
  * CreateChildWorkspace / AssignWork) + P2 runtime commands (AdmitExecution /
@@ -88,7 +100,6 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
   | EnvironmentRevisionStore
   | EvidenceRepository
   | ExecutionRepository
-  | ExecutableApprovalStore
   | WorkWaitStore
   | FormationProposalStore
   | InboxProjectionStore
@@ -114,7 +125,13 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
     const works = yield* WorkRepository;
     const clock = yield* Effect.serviceOption(Clock);
     const executions = yield* ExecutionRepository;
-    const executableApprovals = yield* ExecutableApprovalStore;
+    const executableApprovalsService = yield* Effect.serviceOption(
+      ExecutableApprovalStore,
+    );
+    const executableApprovals = Option.getOrElse(
+      executableApprovalsService,
+      () => executableApprovalStoreUnavailable,
+    );
     const workWaits = yield* WorkWaitStore;
     const proposals = yield* FormationProposalStore;
     const fulfillments = yield* Effect.serviceOption(FormationFulfillmentStore);
@@ -241,6 +258,9 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
             }) as unknown as CommandHandler<unknown, unknown>,
           ]
         : []),
+      makeResolveExecutableApprovalHandler({
+        approvals: executableApprovals,
+      }) as unknown as CommandHandler<unknown, unknown>,
       makeSteerWorkHandler({
         works,
         inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,

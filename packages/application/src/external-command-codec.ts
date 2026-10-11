@@ -36,6 +36,7 @@ import type {
 } from "./commands/project-management.js";
 import type { RecordDecisionPayload } from "./commands/record-decision.js";
 import type { ResolveControlApprovalPayload } from "./commands/resolve-control-approval.js";
+import type { ResolveExecutableApprovalPayload } from "./commands/resolve-executable-approval.js";
 import type { RevokePermissionPayload } from "./commands/revoke-permission.js";
 import type { SatisfyDependencyPayload } from "./commands/satisfy-dependency.js";
 import type { SelectCurrentWorkPayload } from "./commands/select-current-work.js";
@@ -61,6 +62,7 @@ export type RegisteredCommandType =
   | "SatisfyDependency"
   | "RecordDecision"
   | "ResolveControlApproval"
+  | "ResolveExecutableApproval"
   | "SteerWork"
   | "AcceptWorkOutcome"
   | "CompleteWork"
@@ -149,6 +151,7 @@ export interface ExternalCommandPayloadMap {
   readonly SatisfyDependency: SatisfyDependencyPayload;
   readonly RecordDecision: RecordDecisionPayload;
   readonly ResolveControlApproval: ResolveControlApprovalPayload;
+  readonly ResolveExecutableApproval: ResolveExecutableApprovalPayload;
   readonly SteerWork: SteerWorkPayload;
   readonly AcceptWorkOutcome: AcceptWorkOutcomePayload;
   readonly CompleteWork: CompleteWorkPayload;
@@ -621,6 +624,12 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
     decision: enumRule("Approve", "Reject"),
     reason: nullable(string),
   }),
+  ResolveExecutableApproval: object({
+    approvalId: nonEmptyString,
+    expectedRevision: revision,
+    decision: enumRule("Approve", "Reject"),
+    reason: nullable(string),
+  }),
   SteerWork: object({
     workId: id("WorkId"),
     workspaceId: id("WorkspaceId"),
@@ -741,6 +750,7 @@ const externalOriginPolicies: Readonly<
   SatisfyDependency: "reject external; dependency coordinator",
   RecordDecision: "external human governance",
   ResolveControlApproval: "external human approval",
+  ResolveExecutableApproval: "external human approval",
   SteerWork: "external human",
   AcceptWorkOutcome:
     "external root-parent/human; parent-agent remains typed internal",
@@ -780,7 +790,9 @@ export const makeCommandInputContractRegistry = (
   const registeredSet = new Set(registeredHandlerTypes);
   const knownTypes = new Set<string>(COMMAND_TYPES);
   const requiredTypes = COMMAND_TYPES.filter(
-    (commandType) => commandType !== "ResolveControlApproval",
+    (commandType) =>
+      commandType !== "ResolveControlApproval" &&
+      commandType !== "ResolveExecutableApproval",
   );
   if (
     registeredSet.size !== registeredHandlerTypes.length ||

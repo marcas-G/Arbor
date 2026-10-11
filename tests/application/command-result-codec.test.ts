@@ -107,6 +107,12 @@ const resultByCommand = {
     state: "Approved",
     revision: 1,
   },
+  ResolveExecutableApproval: {
+    approvalId: "eap_test",
+    executionId: id("exe_"),
+    state: "Approved",
+    revision: 1,
+  },
   SteerWork: {
     workId: id("wrk_"),
     workspaceId: id("ws_"),

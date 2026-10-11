@@ -717,6 +717,19 @@ export const executeAgentLoopActions = (
             execution: input.execution,
             context: input.context,
             controlBasis: preparedTurn.manifest.controlBasis,
+            ...(loopAction === undefined
+              ? {}
+              : {
+                  action: {
+                    logicalStepNo: loopAction.identity.logicalStepNo,
+                    repairAttempt: loopAction.identity.repairAttempt,
+                    actionIndex: loopAction.actionIndex,
+                    logicalActionId: loopAction.logicalActionId,
+                  },
+                }),
+            ...(loopStepFence === undefined
+              ? {}
+              : { executionFence: loopStepFence }),
           }),
           {
             onFailure: (cause) => ({ ok: false as const, cause }),
@@ -756,6 +769,13 @@ export const executeAgentLoopActions = (
           return {
             _tag: "Settle",
             settlement: executed.outcome.settlement,
+          };
+        }
+        if (executed.outcome._tag === "ApprovalRequired") {
+          return {
+            _tag: "ApprovalRequired",
+            approvalId: executed.outcome.approvalId,
+            revision: executed.outcome.revision,
           };
         }
         if (executed.outcome.status === "Interrupted") {

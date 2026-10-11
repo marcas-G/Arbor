@@ -69,6 +69,7 @@ export const ToolAuthorityResolverLive = (
             const authority = yield* resolver
               .resolveInvocation({
                 principal: input.context.authenticatedPrincipal,
+                projectId: input.context.projectId,
                 workspaceId: input.context.workspaceId,
                 executionId: input.context.executionId,
                 intent: {
@@ -76,6 +77,7 @@ export const ToolAuthorityResolverLive = (
                   toolVersion: input.intent.toolVersion,
                   argumentsJson: input.intent.argumentsJson,
                   actionDigest,
+                  sideEffectSemantics: input.definition.sideEffectSemantics,
                   requestedCapabilities: input.definition.capabilityMetadata,
                   resolvedRegions: input.regions.map(
                     (region) => region.resourceSpaceId,
