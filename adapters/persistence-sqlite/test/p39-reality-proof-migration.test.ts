@@ -1,4 +1,11 @@
-import { linkSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  linkSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256Hex } from "@arbor/ports";
@@ -23,6 +30,7 @@ import {
 import {
   p39WriterLockFilename,
   prepareP39PrimaryDatabasePath,
+  validateP39ProtectedDirectory,
 } from "../src/p39-writer-lock.js";
 
 const withClient = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
@@ -258,6 +266,53 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     }
   });
 
+  it("uses a primary-shared lock path across user-root settings and rejects symlink aliases", () => {
+    const directory = mkdtempSync(
+      join(process.cwd(), ".p39-writer-alias-test-"),
+    );
+    const primary = join(directory, "primary.sqlite");
+    const alias = join(directory, "primary-alias.sqlite");
+    const savedLocalAppData = process.env.LOCALAPPDATA;
+    const savedXdgStateHome = process.env.XDG_STATE_HOME;
+    try {
+      const prepared = prepareP39PrimaryDatabasePath(primary);
+      expect("databaseFilename" in prepared).toBe(true);
+      if (!("databaseFilename" in prepared)) return;
+      process.env.LOCALAPPDATA = join(directory, "account-a-state");
+      process.env.XDG_STATE_HOME = join(directory, "account-a-state");
+      const accountAPath = p39WriterLockFilename(primary);
+      process.env.LOCALAPPDATA = join(directory, "account-b-state");
+      process.env.XDG_STATE_HOME = join(directory, "account-b-state");
+      const accountBPath = p39WriterLockFilename(primary);
+      expect(accountBPath).toBe(accountAPath);
+      expect(accountAPath).toBe(prepared.writerLockFilename);
+
+      if (process.platform === "win32") linkSync(primary, alias);
+      else symlinkSync(primary, alias);
+      expect(typeof p39WriterLockFilename(alias)).not.toBe("string");
+    } finally {
+      if (savedLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+      else process.env.LOCALAPPDATA = savedLocalAppData;
+      if (savedXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+      else process.env.XDG_STATE_HOME = savedXdgStateHome;
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when a lock or sidecar parent is world-writable", () => {
+    if (process.platform === "win32") return;
+    const directory = mkdtempSync(
+      join(process.cwd(), ".p39-unprotected-parent-test-"),
+    );
+    try {
+      chmodSync(directory, 0o777);
+      expect(validateP39ProtectedDirectory(directory)).toBe(false);
+    } finally {
+      chmodSync(directory, 0o700);
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("requires the exact 0037→0038→0039 suffix and refuses service at user_version 39", async () => {
     const exact = await Effect.runPromise(
       validateP39MigrationPrefix(36, [{ id: 37 }, { id: 38 }, { id: 39 }]),
@@ -268,10 +323,14 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     const service = await Effect.runPromise(
       Effect.flip(requireP39RuntimeSchema(39)),
     );
+    const p40ServiceOnP39Runtime = await Effect.runPromise(
+      Effect.flip(requireP39RuntimeSchema(40)),
+    );
 
     expect(exact.map(({ id }) => id)).toEqual([37, 38, 39]);
     expect(skipped.code).toBe("P39_MIGRATION_PREFIX_INVALID");
     expect(service.code).toBe("P39_RUNTIME_START_REFUSED");
+    expect(p40ServiceOnP39Runtime.code).toBe("P39_RUNTIME_START_REFUSED");
   });
 
   it("creates the immutable fact ledger and defers selected-fact provenance to COMMIT", async () => {
