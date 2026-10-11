@@ -934,6 +934,37 @@ export const ProductionDaemonServiceLive = (
               yield* runIfDispatchable(approval.executionId, approvalWake);
             }
           }
+
+          // P17's resolved-approval recovery source: resolution journal/wake
+          // commits can outlive a process crash before delivery. Expire first,
+          // then re-read terminal truth and replay the exact active Execution.
+          const resolvedExecutableApprovals = yield* tx.transact(
+            Effect.gen(function* () {
+              yield* executableApprovals.expireDue({
+                now: approvalNow,
+                expiredBy: config.principal,
+                ...(config.batchSize === undefined
+                  ? {}
+                  : { batchSize: config.batchSize }),
+              });
+              return yield* executableApprovals.listResolved();
+            }),
+          );
+          for (const approval of resolvedExecutableApprovals) {
+            const execution = yield* tx.transact(
+              executions.findById(approval.executionId),
+            );
+            if (
+              Option.isSome(execution) &&
+              execution.value.executionId === approval.executionId &&
+              execution.value.projectId === approval.projectId &&
+              execution.value.workspaceId === approval.workspaceId &&
+              execution.value.state.status === "Active"
+            ) {
+              const approvalWake: WakeReason = { _tag: "HumanIntervention" };
+              yield* runIfDispatchable(approval.executionId, approvalWake);
+            }
+          }
         }),
       );
 

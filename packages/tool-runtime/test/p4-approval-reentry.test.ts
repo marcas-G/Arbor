@@ -31,6 +31,7 @@ import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   actionDigestOf,
+  executableApprovalTerminalDenial,
   type ToolExecutor,
   ToolRuntimeLive,
 } from "../src/index.js";
@@ -124,6 +125,21 @@ const pendingInvocation: ToolInvocationRecord = {
 };
 
 describe("P4 exact approval recovery for the same ToolInvocationId", () => {
+  it("preserves a committed Reject after its historical TTL passes", () => {
+    expect(
+      executableApprovalTerminalDenial(
+        { state: "Rejected", expiresAt: "2026-10-05T00:00:01.000Z" },
+        "2026-10-12T00:00:00.000Z",
+      ),
+    ).toBe("ApprovalRejected");
+    expect(
+      executableApprovalTerminalDenial(
+        { state: "Approved", expiresAt: "2026-10-05T00:00:01.000Z" },
+        "2026-10-12T00:00:00.000Z",
+      ),
+    ).toBe("ApprovalExpired");
+  });
+
   it("does not treat this invocation's consumed approval as another invocation's consumption", async () => {
     let executorCalls = 0;
     let intentWrites = 0;
@@ -327,6 +343,7 @@ describe("P4 exact approval recovery for the same ToolInvocationId", () => {
       findById: () => Effect.succeed(Option.some(approval)),
       putPendingExact: () => Effect.die(new Error("unexpected approval issue")),
       decide: () => Effect.succeed(Option.none()),
+      listResolved: () => Effect.succeed([]),
       expireDue: () => Effect.succeed([]),
       cancelForExecution: () => Effect.succeed([]),
       consumeApproved: (input) => {

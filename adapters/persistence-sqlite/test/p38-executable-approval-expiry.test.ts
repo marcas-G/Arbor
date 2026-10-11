@@ -147,6 +147,7 @@ describe("EA-DG-01 executable approval expiration", () => {
             expiredBy: parse(Principal)("runtime:system"),
           }),
         );
+        const recovered = yield* tx.transact(store.listResolved());
         const lateDecision = yield* tx.transact(
           store.decide({
             approvalId,
@@ -177,6 +178,9 @@ describe("EA-DG-01 executable approval expiration", () => {
           ["Expired", 1],
         ]);
         expect(replay).toEqual([]);
+        expect(recovered.map((row) => [row.state, row.revision])).toEqual([
+          ["Expired", 1],
+        ]);
         expect(Option.isNone(lateDecision)).toBe(true);
         expect(rows).toEqual([{ state: "Expired", revision: 1 }]);
         expect(inbox[0]?.consumed_at).toBe(expiryObservedAt);

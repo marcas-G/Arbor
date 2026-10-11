@@ -5,6 +5,7 @@ import {
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
+  type ExecutableApprovalRecord,
   ExecutableApprovalStore,
   executableApprovalBindingMatches,
   type LeaseFencingRejected,
@@ -151,6 +152,19 @@ const denialReason = (reasonCode: NoEffectDenialCode): string => {
     case "ApprovalNoLongerAuthorized":
       return "approval is no longer authorized";
   }
+};
+
+/** Preserve an already-committed human Reject across later replay. Expiry is
+ * a transition from Pending/Approved, never a reinterpretation of Rejected. */
+export const executableApprovalTerminalDenial = (
+  approval: Pick<ExecutableApprovalRecord, "state" | "expiresAt">,
+  now: string,
+): "ApprovalRejected" | "ApprovalExpired" | null => {
+  if (approval.state === "Rejected") return "ApprovalRejected";
+  if (approval.state === "Expired" || approval.expiresAt <= now) {
+    return "ApprovalExpired";
+  }
+  return null;
 };
 
 const denied = (reasonCode: NoEffectDenialCode): CanonicalToolObservation => ({
@@ -613,18 +627,15 @@ export const ToolRuntimeLive = (
               if (currentApproval.state === "Cancelled") {
                 return { _tag: "Interrupted" as const };
               }
-              if (
-                currentApproval.state === "Rejected" ||
-                currentApproval.state === "Expired" ||
-                currentApproval.expiresAt <= now
-              ) {
+              const terminalDenial = executableApprovalTerminalDenial(
+                currentApproval,
+                now,
+              );
+              if (terminalDenial !== null) {
                 return yield* recordNoEffectDenial(
                   definition.sideEffectSemantics,
                   regions,
-                  currentApproval.expiresAt <= now ||
-                    currentApproval.state === "Expired"
-                    ? "ApprovalExpired"
-                    : "ApprovalRejected",
+                  terminalDenial,
                 );
               }
               if (

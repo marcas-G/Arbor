@@ -1,7 +1,7 @@
 # P38 Expiry and Replay Runtime Checkpoint
 
 Date: 2026-10-11
-Status: **Static implementation checkpoint committed; runtime qualification open**
+Status: **Static implementation checkpoint with P12 / terminal-replay / resolved-recovery corrections; runtime qualification open**
 
 ## Identity and baseline
 
@@ -48,6 +48,20 @@ Status: **Static implementation checkpoint committed; runtime qualification open
 - P4 uses the accepted typed `ApprovalRejected` no-effect denial for Reject
   and `ApprovalExpired` for expiry. Rejected/Expired actions terminalize the
   same pending P3 action; Stop cancellation remains Interrupted.
+- P12 `ResolveExecutableApproval` authority explicitly requires configured
+  `authenticatedHumans` membership or the exact direct-parent policy edge; a
+  `user:` principal string is not itself authority. Added a P12 resolver test
+  for both an untrusted `user:` principal and configured human membership.
+- P4 preserves a committed `Rejected` terminal outcome even when its historic
+  `expiresAt` is later than `now`; TTL only maps Pending/Approved rows to
+  `ApprovalExpired`. Added an unrun P4 regression for Reject-after-TTL and
+  Approved-after-TTL.
+- `ExecutableApprovalStore.listResolved` exposes durable terminal rows as the
+  resolved-request recovery source. The production recovery tick first scans
+  due TTL rows, then reads resolved rows and wakes only the exact still-Active
+  bound Execution through the existing P2 `HumanIntervention` run path. This
+  retains same-Execution/Step/action identity and is at-least-once/idempotent.
+  Added an unrun SQLite assertion that a resolved Expired row is rediscovered.
 - Added unrun test source for Pending expiry CAS + exact Inbox/wake + replay,
   human decision racing after TTL, already-Approved expiry, and the P4
   claim-committed/effect-not-admitted same-ToolInvocation replay window.
@@ -55,7 +69,7 @@ Status: **Static implementation checkpoint committed; runtime qualification open
 ## Static verification and limits
 
 - `pnpm typecheck`: PASS (production TypeScript and test-source compilation).
-- Targeted Biome on 22 changed implementation/test files: PASS.
+- Targeted Biome on 10 changed implementation/test files: PASS.
 - `git diff --check`: PASS.
 - No Vitest, daemon, migration execution, browser journey, full gate, or
   two-daemon process qualification was run.
