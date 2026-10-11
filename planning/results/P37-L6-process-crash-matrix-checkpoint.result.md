@@ -52,8 +52,10 @@ Status: **test source / probe checkpoint only; qualification not run**
   L2/L3 fixture mocks; none pointed at the new source. The test source exposed
   and corrected a duplicate helper declaration and three SQLite JSON result
   typing errors, plus probe/direct-handler test input types. The final
-  `pnpm typecheck` passed on the rebased `80f1055` baseline before L4/L5
-  integration. Repeat against the coordinator's fully integrated checkpoint.
+  `pnpm typecheck` passed on the rebased full integration checkpoint
+  `78b7cdaab222721faf3c6e6885d2f2efd4b760e3` with L4/L5 included.
+- Targeted Biome, `node --check` for the dedicated daemon child, and
+  `git diff --check` passed on the same worktree.
 - The test file remains under `tests/functional/pending/` until L4/L5 integration
   and the centralized execution turn. No matrix case is counted as passing.
 - This result is a source checkpoint, not L6 or P37 qualification.
