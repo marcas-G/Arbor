@@ -71,7 +71,13 @@ Status: **Static implementation checkpoint with P12 / terminal-replay / resolved
   driver/P4. The main scheduler's former raw SQL guard was removed; production,
   main, wake-consumer and any other P2 `runExecution` entry now share this
   central guard. A P2 negative test asserts zero dispatches, zero driver/P4
-  entries and zero lease rows for Pending.
+  entries and zero lease rows for Pending. The P2 runner now requires the
+  trusted store service; a missing service fails before dispatch rather than
+  treating absence as "no Pending". The SQLite store checks `user_version`
+  inside this query and safely returns empty before migration 0038, when no
+  approval table can exist. Added a missing-service zero-dispatch/zero-lease
+  test and a pre-0038 schema empty-ledger test. Legacy P2/P3/P9 test fixtures
+  explicitly install the no-pending test store rather than omitting the port.
 - Added unrun test source for Pending expiry CAS + exact Inbox/wake + replay,
   human decision racing after TTL, already-Approved expiry, and the P4
   claim-committed/effect-not-admitted same-ToolInvocation replay window.

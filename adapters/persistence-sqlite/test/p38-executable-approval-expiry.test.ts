@@ -14,6 +14,7 @@ import {
   ExecutableApprovalStoreLive,
   InboxProjectionStoreLive,
   layer,
+  P12_MIGRATIONS,
   P38_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
@@ -120,6 +121,21 @@ const runDb = <A>(
 ) => Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp())));
 
 describe("EA-DG-01 executable approval expiration", () => {
+  it("treats pre-0038 schema as an empty approval ledger", () =>
+    runDb(
+      Effect.gen(function* () {
+        const tx = yield* TransactionPort;
+        const store = yield* ExecutableApprovalStore;
+        yield* runMigrations(P12_MIGRATIONS);
+        const pending = yield* tx.transact(
+          store.findPendingForExecution(
+            parse(ExecutionId)("exe_pre_0038_gate"),
+          ),
+        );
+        expect(Option.isNone(pending)).toBe(true);
+      }),
+    ));
+
   it("expires Pending by exact CAS, consumes its Inbox key and journals one wake", () =>
     runDb(
       Effect.gen(function* () {

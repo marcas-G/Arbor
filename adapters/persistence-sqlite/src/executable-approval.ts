@@ -179,6 +179,14 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
     > =>
       Effect.gen(function* () {
         yield* TransactionScope;
+        const versions = yield* run(
+          sql.unsafe<{ user_version: number }>("PRAGMA user_version"),
+        );
+        // P38's composition may be used by an earlier P36/P37 database while
+        // migrations are rolling forward. Before 0038 no Executable rows can
+        // exist, and querying action_approvals would fail because the table is
+        // not registered yet; treat that schema generation as empty only here.
+        if ((versions[0]?.user_version ?? 0) < 38) return Option.none();
         const rows = yield* run(
           sql.unsafe<ApprovalRow>(
             `SELECT * FROM action_approvals WHERE ${keyWhere}`,
@@ -231,6 +239,10 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
     const findPendingForExecution = (executionId: ExecutionId) =>
       Effect.gen(function* () {
         yield* TransactionScope;
+        const versions = yield* run(
+          sql.unsafe<{ user_version: number }>("PRAGMA user_version"),
+        );
+        if ((versions[0]?.user_version ?? 0) < 38) return Option.none();
         const rows = yield* run(
           sql.unsafe<ApprovalRow>(
             `SELECT * FROM action_approvals
