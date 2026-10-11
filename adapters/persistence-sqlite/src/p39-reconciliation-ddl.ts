@@ -297,8 +297,10 @@ WHEN NEW.settlement_provenance = 'Reconciliation' AND NOT EXISTS (
     AND f.binding_sha256 = NEW.recovery_binding_sha256
     AND f.fact_origin = 'ProfileReconciliation'
     AND f.fact_disposition = 'RecoveryInput'
-    AND ((NEW.settlement_kind IN ('Success','ExpectedFailure')
+    AND ((NEW.settlement_kind = 'Success'
           AND f.outcome = 'Occurred' AND f.result_ref = NEW.result_ref)
+      OR (NEW.settlement_kind = 'ExpectedFailure'
+          AND f.outcome = 'Occurred')
       OR (NEW.settlement_kind = 'ReconciledNoEffect'
           AND f.outcome = 'NotOccurred' AND f.result_ref IS NULL
           AND NEW.result_ref IS NOT NULL)))
@@ -315,8 +317,10 @@ WHEN NEW.settlement_provenance = 'Reconciliation' AND NOT EXISTS (
     AND f.binding_sha256 = NEW.recovery_binding_sha256
     AND f.fact_origin = 'ProfileReconciliation'
     AND f.fact_disposition = 'RecoveryInput'
-    AND ((NEW.settlement_kind IN ('Success','ExpectedFailure')
+    AND ((NEW.settlement_kind = 'Success'
           AND f.outcome = 'Occurred' AND f.result_ref = NEW.result_ref)
+      OR (NEW.settlement_kind = 'ExpectedFailure'
+          AND f.outcome = 'Occurred')
       OR (NEW.settlement_kind = 'ReconciledNoEffect'
           AND f.outcome = 'NotOccurred' AND f.result_ref IS NULL
           AND NEW.result_ref IS NOT NULL)))
