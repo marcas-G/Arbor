@@ -57,6 +57,20 @@ missing/corrupt-evidence facts; P10 never projects ordinary valid RNO outcomes
 or mutates P39/P4/P3 canonical state. Failure code is internal-only; the fixed
 path-free summary is the only public detail.
 
+## Accepted AH10 Submitted DecisionEpisode binding Attention (DID v1.42)
+
+Fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance/landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+P10 `02`/`05` add the `SubmittedDecisionBindingFailure` source without DTO
+field or route changes; `04` owns the source marker reset, P9 fact snapshot and
+P1 offset rewind in one transaction (including reconstruction after event
+pruning); `07` Story P owns retention, duplicate-delivery, crash and concurrent
+fact/rebuild qualification. P9 fact/event remains immutable; P10 does not
+clear it. Migration 0041 is conditional on integrated/qualified 0036–0040 and
+is not authorized for implementation by this design landing.
+
 ## FT-DG-02 additive contract amendment (2026-10-08)
 
 The accepted `work-detail` read-only View is added to P10's authoritative

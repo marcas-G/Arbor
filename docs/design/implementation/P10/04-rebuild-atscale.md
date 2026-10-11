@@ -139,6 +139,48 @@ journal horizon. Below-floor reset/rebuild preserves current rows and returns
 the existing `ConsumerRebuildRefused` contract; it does not silently repair or
 change P39/P4/P3 state.
 
+## 3.4 AH10 Submitted DecisionEpisode binding Attention rebuild (DID v1.42)
+
+Accepted fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance/landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+
+`submitted_decision_binding_attention_rows` is a P10 materialized marker; the
+immutable P9 `submitted_decision_binding_attention_facts` list is its durable
+rebuild source. This source specifically adds P9-fact snapshot seeding to
+P10 `04` (unlike the retention-bounded P40 event-only source). For one project,
+an authorized full Attention rebuild runs one SQLite `BEGIN IMMEDIATE` /
+`TransactionScope` that atomically:
+
+1. resets all Attention source rows, including this marker;
+2. reads the P1 Attention retained floor and rewinds the shared offset to
+   `floor - 1` under the existing P9-hardened rule;
+3. reads one consistent P9 binding-failure fact snapshot and seeds exactly one
+   marker per `attentionFactId`; and
+4. commits reset, snapshot/seed and offset rewind together.
+
+Then replay retained events in sequence order. The consumer validates a
+`SubmittedDecisionBindingEscalated` event against its exact immutable P9 fact,
+upserts the same marker, and advances the P1 Attention offset in one
+transaction. Duplicate event/marker consumption is idempotent. If the source
+event has been pruned but the P9 fact remains, full rebuild still reconstructs
+one Attention row because the fact's `event_id` is audit-only and neither it nor
+the P10 marker has an FK to `domain_events`; P10 marker remains FK-bound to the
+P9 fact. Below-floor refusal behavior remains unchanged.
+
+A pre-commit crash rolls back marker reset, snapshot/seed and offset rewind;
+the previous projection remains. A post-commit/pre-catchup crash preserves
+the fact-seeded marker and rewound offset; restart replay converges without
+duplicates. SQLite writer serialization defines fact/rebuild races: a P9 fact
+committed before the snapshot is seeded and replay is idempotent; a fact
+committed after rebuild commit lies above the rewound offset and normal catchup
+adds the marker. Qualify concurrent writers on each side of the rebuild
+transaction, including when source events are pruned. P10 changes no P9 fact,
+P1 event/floor, Execution, Step, Action, Work, Command, receipt or canonical
+state. This source does not alter F21 reconciliation/refusal semantics or P1
+retention ownership.
+
 ## 4. Must Not Decide
 
 - No journal pruning/horizon change (P1 `04`).

@@ -155,6 +155,25 @@ and this tree changes no production or `docs/design/**` files.
 Proposal SHA-256 over LF Git-clean bytes:
 `10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`.
 
+## P41 governance acceptance and owner landing
+
+Manual governance accepted the fixed proposal at LF SHA-256
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A` under
+the standing 2026-10-01 manual-governance delegation. The independent review
+was reported Blocking=0; its separate review artifact/hash was not present in
+the unified tree and is not fabricated here. The audit record is
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+
+The design owners now target DID v1.42 / P41 / migration 0041, conditional on
+integration and qualification of the entire P36/0036 through P40/0040 prefix.
+The landing keeps the existing Stop/fact/quiescence contract, exact failed
+orphan audit trigger, P10 source union and P10 `04` full rebuild transaction.
+P10 source reset, one P9 fact snapshot/marker seed and P1 `floor-1` offset
+rewind share one TransactionScope; pruned event recovery is fact-backed.
+No implementation, migration runner, production/test change, daemon run, or
+runtime qualification is authorized or claimed. The pending RED remains
+pending and its edited assertions were not run.
+
 The tests remain under `tests/functional/pending/`; do not count this expected
 failure as default functional coverage or claim a green release batch. No
 production or `docs/design/**` files were changed.

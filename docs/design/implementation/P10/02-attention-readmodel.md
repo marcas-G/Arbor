@@ -236,3 +236,35 @@ event-backed only within P1's retained horizon. Do not seed P40 rows directly
 from the P9 fact snapshot after the event is pruned, and do not alter
 `ConsumerRebuildRefused` below the retained floor. No dismissal/repair action,
 canonical mutation or notification transport is added.
+
+## Accepted AH10 Submitted DecisionEpisode binding Attention (DID v1.42)
+
+Accepted fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance/landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+
+Add one source to the closed mapping:
+
+| Source | Fact carrier | Severity | Target |
+|---|---|---|---|
+| Submitted DecisionEpisode binding failure | P10 `submitted_decision_binding_attention_rows` marker joined to the P9 `submitted_decision_binding_attention_facts`; P9 emits `SubmittedDecisionBindingEscalated(v1)` | Action Required | exact Execution Workspace (`executions.workspace_id`) |
+
+The public row is exactly source `SubmittedDecisionBindingFailure`, severity
+`ActionRequired`, target `executions.workspace_id`, and dedup key
+`attentionFactId`. Its fixed safe summary is “A Scheduler decision action
+could not be safely recovered; review is required.” Use the P9
+`first_detected_at` as occurrence time. The public DTO exposes no failure code,
+Work candidates, Manifest ids, provider text, corrupt value or parser/database
+detail. Subtree aggregation counts the immutable fact once. P10 adds no
+dismissal, repair or canonical mutation.
+
+P10 owns the marker table, FK-bound to the P9 fact and owning Workspace but not
+to the prunable `domain_events` row. Event application validates the exact P9
+fact/event pair and atomically upserts one marker with the existing P1
+per-project Attention offset. Exact duplicate delivery is an idempotent
+no-op; conflicting fact/event binding is projection corruption. The P9 event
+id on the fact is audit-only, so pruning does not remove the durable rebuild
+source. P10 `04` owns the full-rebuild contract; this row participates in the
+same reset/snapshot/seed/offset transaction without changing F21 refusal
+semantics or P1 retention ownership.

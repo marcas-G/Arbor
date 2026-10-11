@@ -428,9 +428,46 @@ Every link has a stable role/identity and immutable ProviderTurn/Manifest.
 Replacement success resumes the existing action phase; replacement overflow is
 terminal. `repairAttempt` is unchanged.
 
+### Accepted AH10 Submitted DecisionEpisode binding failure (DID v1.42)
+
+Fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance/landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+
+For the exact DecisionEpisode `select_current_work` action, P3 validates that
+the submitted DecisionRequest Workspace and the settled Provider result's own
+Manifest match the authoritative Execution/Step binding before replay. Either
+Workspace or Manifest mismatch returns a typed
+`SubmittedDecisionBindingMismatch` classification and performs no model
+context/Provider request, action handler, Gateway Command, Observation, or
+ordinary Step/Action/Execution transition. P3 does not read or write P9 facts.
+
+If the existing authorized StopExecution is durable, P3 may return a pure
+stop-only close plan after revalidating the same identities and full current
+unexpired lease. The unresolved P4 side-effect gate must be clear. The plan
+uses the frozen early-settlement states: current Pending control Action becomes
+`TerminalRejected` with disposition
+`StopRequestedAfterSubmittedBindingFailure`; later Pending actions become
+`SkippedEarlySettlement`; the cursor reaches the end of the complete pinned
+action list; and the Step becomes
+`SettlementProposed(Interrupted(StopRequested))`. No Observation is emitted.
+On a Manifest mismatch, only the ProviderTurn's internally matching immutable
+Manifest and pinned decoder may be read to enumerate/action-identity-check the
+already persisted ledger; the mismatched Step Manifest is not accepted or
+rewritten, and no decoded control may execute.
+
+P9 Recovery/Application composition—not P3—owns the single TransactionScope
+that atomically writes/reuses the durable P9 fact/event and applies this pure
+P3 plan through `AgentLoopStepStore` when Stop wins before fact creation. P3
+adds no state, settlement variant, event, package dependency or direct P9-store
+dependency. This proposal SHA is design-only and grants no implementation
+authorization.
+
 ## 11. Must Not Decide
 
 - No Provider transport changes beyond the atomic success/store read contract.
 - No new tool side-effect taxonomy; P4 remains authoritative.
 - No new Execution settlement variants.
-- No implementation beyond the separately authorized v1.23 bounded overflow chain.
+- No implementation beyond separately authorized contracts; P41 landing does
+  not authorize P41 code/migration implementation or qualification.

@@ -64,6 +64,21 @@ P40 envelope is the only replay authority for P39 `ReconciledNoEffect`;
 distinct. P39 selected-fact identity does not move. Missing valid-fence RNO
 evidence blocks P3 projection; stale generations remain ownership loss only.
 
+## Accepted owner amendment — AH10 Submitted DecisionEpisode binding failure (DID v1.42)
+
+Fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance/landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+P3 `08` classifies only the exact submitted DecisionRequest Workspace and
+settled Provider-result Manifest mismatches before any new Provider, action,
+Command, Observation or ordinary transition. For an authorized Stop it returns
+only the pure close plan expressed with existing `TerminalRejected`,
+`SkippedEarlySettlement`, and `SettlementProposed(Interrupted(StopRequested))`
+states. P3 never reads/writes the P9 fact store; Recovery/Application
+composition owns the cross-store transaction. No new P3 state, event,
+settlement variant, package edge, or implementation authorization is added.
+
 ```text
 Detailed Implementation Design v1.22 (frozen)
         ↓ delegates phase-scoped closure
@@ -94,6 +109,9 @@ mode. TurnProfile/Context/settlement are derived from exact EpisodeBinding.
 `WorkspaceCoordination`, `workspace-coordination-context-v1`, and any branch
 that infers conversation or tools from missing WorkId are historical. Plan is
 optional tool-maintained progress state and never an output/authority contract.
+P41 does not change EGP DecisionEpisode creation or settlement; it only adds
+the downstream exact binding-integrity recovery disposition owned by P3 `08`,
+P9 `07`, and P2 `06`.
 
 ## Documents
 
