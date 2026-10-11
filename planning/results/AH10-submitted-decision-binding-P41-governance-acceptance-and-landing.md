@@ -32,16 +32,15 @@ commits `cb7f898cb88817d2e2d448b3c8820b7e88e0b6bd`,
 `920b611819563be99d8308fb4d21afed38ad81c8`, and
 `e845e54779726e5a279cdfa47798e2a190950ac6`: proposal, result, and the isolated
 pending RED. No P39 baseline commit, production source, actual migration, or
-test implementation was imported. The planning artifacts have these final
-LF SHA-256 values:
+qualification implementation was imported. Only the pending RED extension was
+imported; it remains under `tests/functional/pending/` and was not run. The
+proposal/result/RED LF SHA-256 inventory at owner landing is:
 
 | Planning artifact | LF SHA-256 |
 |---|---|
 | Fixed proposal | `10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A` |
 | Result record | `E25247B99EBB1368BE0707A3148758FE12BE6D23EABE0ACEBB02C0AF756D56E4` |
 | Pending RED | `8C4ABE98A74ED239AD729E6FDCEE190A20E2A868B1DF1B4CE238EAFF37F11B0C` |
-
-The pending RED remains under `tests/functional/pending/`; its edits were not run.
 
 P36/0036 through P40/0040 are accepted owner/design contracts in the unified
 tree but are not thereby claimed implemented, registered, integrated in a
@@ -116,9 +115,10 @@ recorded after owner edits:
 
 The fixed proposal LF SHA was recomputed from the working file and matches the
 accepted value above. Owner hashes above were computed after normalization.
-The source-only diff audit and owner consistency review are complete;
-`git diff --check HEAD^ HEAD` passes after LF normalization. No full test/check
-suite, pending RED, daemon, migration runner, production implementation, or push
-is run by this landing. Independent
-post-landing review is pending; this record does not claim P41 implementation
-or AH10 closure.
+The independent post-landing review is complete: **Blocking = 0; all 12 owner
+hashes matched** the recorded LF SHA-256 values. The P41 design landing is
+therefore closed. The source-only diff audit and owner consistency review are
+complete; `git diff --check HEAD^ HEAD` passes after LF normalization. No full
+test/check suite, pending RED, daemon, migration runner, production
+implementation, or push was run. This closure does not claim P41 implementation
+or AH10 implementation/qualification closure.
