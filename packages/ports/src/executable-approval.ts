@@ -119,6 +119,15 @@ export interface ExecutableApprovalStoreService {
     ToolInvocationStoreError,
     TransactionScope
   >;
+  /** Trusted P2 admission gate: a Pending proven Executable approval keeps
+   * this Execution paused before dispatch/lease acquisition. */
+  readonly findPendingForExecution: (
+    executionId: ExecutionId,
+  ) => Effect.Effect<
+    Option.Option<ExecutableApprovalRecord>,
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
   readonly decide: (input: {
     readonly approvalId: string;
     readonly commandId: CommandId;

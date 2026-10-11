@@ -1,4 +1,9 @@
-import type { Actor, Principal, ToolInvocationId } from "@arbor/domain";
+import type {
+  Actor,
+  ExecutionId,
+  Principal,
+  ToolInvocationId,
+} from "@arbor/domain";
 import {
   DomainEventJournal,
   type ExecutableApprovalBinding,
@@ -223,6 +228,23 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
         return row === undefined ? Option.none() : Option.some(toApproval(row));
       });
 
+    const findPendingForExecution = (executionId: ExecutionId) =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        const rows = yield* run(
+          sql.unsafe<ApprovalRow>(
+            `SELECT * FROM action_approvals
+              WHERE execution_id = ? AND route_kind = 'Executable'
+                AND binding_proven = 1 AND state = 'Pending'
+              ORDER BY logical_step_no, repair_attempt, action_index, approval_id
+              LIMIT 1`,
+            [executionId],
+          ),
+        );
+        const row = rows[0];
+        return row === undefined ? Option.none() : Option.some(toApproval(row));
+      });
+
     const validateWorkerAndAction = (
       request: ExecutableApprovalRequest,
     ): Effect.Effect<
@@ -344,6 +366,7 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
     return ExecutableApprovalStore.of({
       findByActionKey,
       findById,
+      findPendingForExecution,
       decide: (input) =>
         Effect.gen(function* () {
           yield* TransactionScope;

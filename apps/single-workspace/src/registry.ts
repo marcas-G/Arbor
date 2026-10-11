@@ -72,6 +72,8 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 const executableApprovalStoreUnavailable: ExecutableApprovalStoreService = {
   findByActionKey: () => Effect.succeed(Option.none()),
   findById: () => Effect.succeed(Option.none()),
+  findPendingForExecution: () =>
+    Effect.die(new Error("ExecutableApprovalStoreUnavailable")),
   putPendingExact: () =>
     Effect.die(new Error("ExecutableApprovalStoreUnavailable")),
   decide: () => Effect.succeed(Option.none()),
