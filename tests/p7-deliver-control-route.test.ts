@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
-import { deliverHandler } from "../apps/single-workspace/src/control-actions.js";
+import { makeSingleWorkspaceControlActionHandlers } from "../apps/single-workspace/src/control-actions.js";
 import type { CommandGatewayService } from "../packages/application/src/index.js";
 import {
   DeliverableId,
@@ -69,8 +69,9 @@ describe("Deliver control Gateway route", () => {
         });
       },
     } as unknown as CommandGatewayService;
-    const handler = deliverHandler({
+    const handler = makeSingleWorkspaceControlActionHandlers({
       gateway,
+      blobs: {} as never,
       deliverables: {} as never,
       works: {} as never,
       workspaces: {} as never,
@@ -80,7 +81,11 @@ describe("Deliver control Gateway route", () => {
       clock: { now: () => Effect.succeed("t") },
       tx: {} as never,
       ids: {} as never,
-    });
+      proposals: {} as never,
+    } as never).find((candidate) => candidate.action === "Deliver");
+    if (handler === undefined) {
+      throw new Error("production control action registry omitted Deliver");
+    }
 
     await Effect.runPromise(
       Effect.gen(function* () {
