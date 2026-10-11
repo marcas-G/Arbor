@@ -594,6 +594,7 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
           readonly workspaceId: string;
         };
         return Effect.succeed({
+          commandId: envelope.commandId,
           resolution: {
             _tag: "Committed" as const,
             result: {
@@ -651,6 +652,7 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
     const receipts = new Map<
       string,
       {
+        readonly commandId: CommandId;
         readonly resolution: {
           readonly _tag: string;
           readonly error?: unknown;
@@ -677,6 +679,7 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
 
         if (generation === 0) {
           const rejected = {
+            commandId: envelope.commandId,
             resolution: {
               _tag: "TerminalRejected" as const,
               error: { _tag: "FencingRejected" as const },
@@ -688,6 +691,7 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
 
         committedWorkEffects += 1;
         const committed = {
+          commandId: envelope.commandId,
           resolution: {
             _tag: "Committed" as const,
             result: {
@@ -727,6 +731,7 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
     const receipts = new Map<
       string,
       {
+        readonly commandId: CommandId;
         readonly resolution: {
           readonly _tag: string;
           readonly result: {
@@ -753,6 +758,7 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
         committedWorkEffects += 1;
         const payload = envelope.payload as { readonly workId: WorkId };
         const committed = {
+          commandId: envelope.commandId,
           resolution: {
             _tag: "Committed" as const,
             result: {
