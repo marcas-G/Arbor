@@ -33,6 +33,12 @@ const LEGACY_PROJECT = "prj_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const LEGACY_SESSION = "ses_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const UNSETTLED_INVOCATION = "tin_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const SETTLED_INVOCATION = "tin_118f2b3c-4d5e-7abc-8def-0123456789a1";
+const legacyFence = {
+  executionId: LEGACY_EXECUTION as never,
+  workerId: "worker:p36-migration",
+  workerIncarnationId: "incarnation:p36-migration",
+  fencingGeneration: 0 as never,
+};
 
 const seedLegacyInvocationRows = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -72,6 +78,17 @@ const seedLegacyInvocationRows = Effect.gen(function* () {
         ) VALUES (?, ?, 'workspace', ?, 'WorkEpisode', 'wrk_fixture', 0,
           NULL, NULL, ?, 't0', NULL, NULL, NULL, NULL)`,
         [LEGACY_EXECUTION, LEGACY_PROJECT, LEGACY_WORKSPACE, LEGACY_SESSION],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO execution_leases (
+          execution_id, worker_id, worker_incarnation_id, generation,
+          expires_at, updated_at
+        ) VALUES (?, ?, ?, 0, '2999-01-01T00:00:00.000Z', 't0')`,
+        [
+          LEGACY_EXECUTION,
+          legacyFence.workerId,
+          legacyFence.workerIncarnationId,
+        ],
       );
       yield* sql.unsafe(
         `INSERT INTO tool_invocations (
@@ -153,6 +170,8 @@ describe("AH7-DG-03 P36 ToolInvocation state migration", () => {
               intentAt: "t1",
             },
             "InvocationAuthorityDenied" as never,
+            "t3",
+            legacyFence,
             "t3",
           ),
         ),

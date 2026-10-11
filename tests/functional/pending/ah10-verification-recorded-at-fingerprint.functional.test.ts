@@ -199,24 +199,40 @@ describe("pending AH10 RecordVerificationEvidence recordedAt retry fingerprint",
 
       const invocationStore = yield* ToolInvocationStore;
       yield* tx.transact(
-        invocationStore.recordIntent({
-          invocationId: toolInvocationId,
-          executionId: verifierExecutionId,
-          workspaceId: p7RootWorkspace,
-          toolName: "read",
-          toolVersion: "1",
-          sideEffectSemantics: "ReadOnly",
-          argumentsJson: "{}",
-          resolvedRegions: [],
-          approvalId: null,
-          intentAt: "2026-10-07T00:00:01.000Z",
-        }),
+        invocationStore.recordIntent(
+          {
+            invocationId: toolInvocationId,
+            executionId: verifierExecutionId,
+            workspaceId: p7RootWorkspace,
+            toolName: "read",
+            toolVersion: "1",
+            sideEffectSemantics: "ReadOnly",
+            argumentsJson: "{}",
+            resolvedRegions: [],
+            approvalId: null,
+            intentAt: "2026-10-07T00:00:01.000Z",
+          },
+          {
+            executionId: verifierExecutionId,
+            workerId: "worker:verifier",
+            workerIncarnationId: "incarnation:record-at",
+            fencingGeneration: lease.generation,
+          },
+          "2026-10-07T00:00:01.000Z",
+        ),
       );
       yield* tx.transact(
         invocationStore.settle(
           toolInvocationId,
           { _tag: "Success" },
           null,
+          "2026-10-07T00:00:02.000Z",
+          {
+            executionId: verifierExecutionId,
+            workerId: "worker:verifier",
+            workerIncarnationId: "incarnation:record-at",
+            fencingGeneration: lease.generation,
+          },
           "2026-10-07T00:00:02.000Z",
         ),
       );

@@ -1,5 +1,6 @@
 import {
   ExecutionId,
+  LeaseGeneration,
   parse,
   ToolInvocationId,
   WorkspaceId,
@@ -10,7 +11,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   layer,
-  P4_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
@@ -27,6 +28,13 @@ const executionId = parse(ExecutionId)(
 const invocationId = parse(ToolInvocationId)(
   "tin_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
+const executionFence = {
+  executionId,
+  workerId: "worker:p4-invocation-store",
+  workerIncarnationId: "incarnation:p4-invocation-store",
+  fencingGeneration: parse(LeaseGeneration)(0),
+};
+const fenceNow = "2026-10-12T00:00:00.000Z";
 
 const makeApp = () => {
   const base = layer({ filename: ":memory:" });
@@ -83,14 +91,17 @@ const seed = Effect.gen(function* () {
         ],
       );
       yield* sql.unsafe(
-        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
+        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
+        [executionId, projectId, workspaceId, sessionId],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
         [
           executionId,
-          projectId,
-          "workspace",
-          workspaceId,
-          "coordination",
-          sessionId,
+          executionFence.workerId,
+          executionFence.workerIncarnationId,
+          0,
+          "2999-01-01T00:00:00.000Z",
           "t",
         ],
       );
@@ -102,27 +113,38 @@ describe("P4 tool invocation store", () => {
   it("persists intent before settlement and detects a dangling intent", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P4_MIGRATIONS);
+      yield* runMigrations(P36_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const store = yield* ToolInvocationStore;
       yield* tx.transact(
-        store.recordIntent({
-          invocationId,
-          executionId,
-          workspaceId,
-          toolName: "shell",
-          toolVersion: "1",
-          sideEffectSemantics: "Reconcilable",
-          argumentsJson: '{"command":"ls"}',
-          resolvedRegions: [],
-          approvalId: null,
-          intentAt: "t1",
-        }),
+        store.recordIntent(
+          {
+            invocationId,
+            executionId,
+            workspaceId,
+            toolName: "shell",
+            toolVersion: "1",
+            sideEffectSemantics: "Reconcilable",
+            argumentsJson: '{"command":"ls"}',
+            resolvedRegions: [],
+            approvalId: null,
+            intentAt: "t1",
+          },
+          executionFence,
+          fenceNow,
+        ),
       );
       const dangling = yield* tx.transact(store.findUnsettled(executionId));
       const firstSettlementApplied = yield* tx.transact(
-        store.settle(invocationId, { _tag: "Success" }, null, "t2"),
+        store.settle(
+          invocationId,
+          { _tag: "Success" },
+          null,
+          "t2",
+          executionFence,
+          fenceNow,
+        ),
       );
       const duplicateSettlementApplied = yield* tx.transact(
         store.settle(
@@ -130,6 +152,8 @@ describe("P4 tool invocation store", () => {
           { _tag: "OutcomeUnknown", reconciliationRefs: [invocationId] },
           null,
           "t3",
+          executionFence,
+          fenceNow,
         ),
       );
       const after = yield* tx.transact(store.findUnsettled(executionId));

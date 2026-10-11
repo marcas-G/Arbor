@@ -399,8 +399,27 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
           const tx = yield* TransactionPort;
           const store = yield* ToolInvocationStore;
           yield* tx.transact(
+            store.recordIntent(intent(invocationA, true, approvalId), fence, fenceNow),
+          );
+          yield* tx.transact(
+            store.recordIntent(
+              intent(invocationB, true, executableApprovalId),
+              fence,
+              fenceNow,
+            ),
+          );
+          yield* tx.transact(
+            store.recordIntent(
+              intent(invocationC, true, unprovenExecutableHistoryId),
+              fence,
+              fenceNow,
+            ),
+          );
+          yield* tx.transact(
             store.recordIntent(
               intent(invocationG, true, nullSourceConsumedApprovalId),
+              fence,
+              fenceNow,
             ),
           );
           const priorInvocation = yield* tx.transact(
@@ -419,16 +438,31 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
             store.findApproval(nullSourceConsumedApprovalId),
           );
           const legacyConsumed = yield* tx.transact(
-            store.consumeApproval(approvalId, invocationA),
+            store.consumeApproval(approvalId, invocationA, fence, fenceNow),
           );
           const executableConsumedThroughLegacy = yield* tx.transact(
-            store.consumeApproval(executableApprovalId, invocationB),
+            store.consumeApproval(
+              executableApprovalId,
+              invocationB,
+              fence,
+              fenceNow,
+            ),
           );
           const unprovenHistoryConsumedThroughLegacy = yield* tx.transact(
-            store.consumeApproval(unprovenExecutableHistoryId, invocationC),
+            store.consumeApproval(
+              unprovenExecutableHistoryId,
+              invocationC,
+              fence,
+              fenceNow,
+            ),
           );
           const nullSourceConsumedThroughLegacy = yield* tx.transact(
-            store.consumeApproval(nullSourceConsumedApprovalId, invocationG),
+            store.consumeApproval(
+              nullSourceConsumedApprovalId,
+              invocationG,
+              fence,
+              fenceNow,
+            ),
           );
           const sql = yield* SqlClient;
           const rows = yield* sql.unsafe<{

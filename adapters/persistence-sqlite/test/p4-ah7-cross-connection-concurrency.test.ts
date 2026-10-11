@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   Actor,
   ExecutionId,
+  LeaseGeneration,
   Principal,
   ProjectId,
   parse,
@@ -25,6 +26,7 @@ import {
   ToolInvocationStore,
   ToolRuntimePort,
   TransactionPort,
+  invocationAuthoritySourceRevisionOf,
 } from "@arbor/ports";
 import type * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Effect, Layer, Option } from "effect";
@@ -54,6 +56,12 @@ const invocationId = parse(ToolInvocationId)(
 );
 const principal = parse(Principal)("worker:ah7-cross-connection");
 const actor = parse(Actor)("worker:ah7-cross-connection");
+const executionFence = {
+  executionId,
+  workerId: String(principal),
+  workerIncarnationId: "incarnation:ah7-cross-connection",
+  fencingGeneration: parse(LeaseGeneration)(0),
+};
 const marker = "AH7_NONIDEMPOTENT_CROSS_CONNECTION_EFFECT";
 const processEffectMarker = "AH7_NONIDEMPOTENT_CROSS_PROCESS_EFFECT";
 
@@ -91,6 +99,11 @@ const context: ToolExecutionContext = {
     executionId,
     toolName: intent.toolName,
     toolVersion: intent.toolVersion,
+    sourceRevision: invocationAuthoritySourceRevisionOf({
+      workspacePolicyRevision: 0,
+      activeGrants: [],
+      verifierId: null,
+    }),
     resourceSpaceIds: [],
     allowedCapabilities: [],
     controlBasisDigest: "ah7-cross-connection-basis",
@@ -98,6 +111,7 @@ const context: ToolExecutionContext = {
     delegationDepth: 0,
   },
   controlBasisDigest: "ah7-cross-connection-basis",
+  executionFence,
   requestedAt: "2026-10-07T00:00:00.000Z",
 };
 
@@ -233,6 +247,17 @@ const seedDatabase = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* sql.unsafe(
+        "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
+        [
+          executionId,
+          executionFence.workerId,
+          executionFence.workerIncarnationId,
+          0,
+          "2999-01-01T00:00:00.000Z",
+          "t",
+        ],
+      );
     }),
   );
 });
@@ -258,7 +283,13 @@ const runIntentInsert = (app: StoreLayer) =>
           Effect.gen(function* () {
             const tx = yield* TransactionPort;
             const store = yield* ToolInvocationStore;
-            return yield* tx.transact(store.recordIntent(invocationIntent));
+            return yield* tx.transact(
+              store.recordIntent(
+                invocationIntent,
+                executionFence,
+                "2026-10-07T00:00:01.000Z",
+              ),
+            );
           }),
           {
             onFailure: (error) => ({ _tag: "Rejected" as const, error }),

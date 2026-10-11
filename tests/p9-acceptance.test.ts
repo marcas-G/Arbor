@@ -126,6 +126,7 @@ import {
   type SchedulerTimer,
   SessionRepository,
   ToolDefinitionStore,
+  type ToolExecutionContext,
   ToolInvocationStore,
   ToolRuntimePort,
   TransactionPort,
@@ -266,7 +267,10 @@ const invocationRowOf = (invocationId: string) =>
     return rows[0] ?? null;
   });
 
-const settleInvocation = (invocationId: string) =>
+const settleInvocation = (
+  invocationId: string,
+  executionFence: NonNullable<ToolExecutionContext["executionFence"]>,
+) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const tools = yield* ToolInvocationStore;
@@ -279,6 +283,8 @@ const settleInvocation = (invocationId: string) =>
           _tag: "Success",
         },
         null,
+        now,
+        executionFence,
         now,
       ),
     );
@@ -729,24 +735,36 @@ const cOpenProviderTurn = Effect.gen(function* () {
   );
 });
 
-const cRecordToolIntent = Effect.gen(function* () {
-  const tx = yield* TransactionPort;
-  const tools = yield* ToolInvocationStore;
-  yield* tx.transact(
-    tools.recordIntent({
-      invocationId: C_INVOCATION,
-      executionId: C_EXECUTION,
-      workspaceId: C_WORKSPACE,
-      toolName: "shell",
-      toolVersion: "1",
-      sideEffectSemantics: "NonIdempotent",
-      argumentsJson: "{}",
-      resolvedRegions: [],
-      approvalId: null,
-      intentAt: "t",
-    }),
-  );
+const cToolFence = (workerId: string, generation: LeaseGeneration) => ({
+  executionId: C_EXECUTION,
+  workerId,
+  workerIncarnationId: "inc-a",
+  fencingGeneration: generation,
 });
+
+const cRecordToolIntent = (executionFence: ReturnType<typeof cToolFence>) =>
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const tools = yield* ToolInvocationStore;
+    yield* tx.transact(
+      tools.recordIntent(
+        {
+          invocationId: C_INVOCATION,
+          executionId: C_EXECUTION,
+          workspaceId: C_WORKSPACE,
+          toolName: "shell",
+          toolVersion: "1",
+          sideEffectSemantics: "NonIdempotent",
+          argumentsJson: "{}",
+          resolvedRegions: [],
+          approvalId: null,
+          intentAt: "t",
+        },
+        executionFence,
+        "t",
+      ),
+    );
+  });
 
 const cSideEffectCounters = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -1245,6 +1263,12 @@ const E_EXECUTION = parse(ExecutionId)(
 ) as ExecutionId;
 const E_ACTOR = parse(Actor)("user:story-e");
 const E_PRINCIPAL = parse(Principal)("runtime:system");
+const E_TOOL_FENCE = {
+  executionId: E_EXECUTION,
+  workerId: String(E_PRINCIPAL),
+  workerIncarnationId: "incarnation:p9-story-e",
+  fencingGeneration: parse(LeaseGeneration)(0),
+};
 
 type ETier = "ReadOnly" | "Idempotent" | "Reconcilable" | "NonIdempotent";
 type ECrashMode = "before-effect" | "after-effect" | "none";
@@ -1472,7 +1496,14 @@ const seedStoryE = Effect.gen(function* () {
       );
       yield* sql.unsafe(
         "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
-        [E_EXECUTION, String(E_PRINCIPAL), "incarnation:p9-story-e", 0, "2999-01-01T00:00:00.000Z", "t"],
+        [
+          E_EXECUTION,
+          String(E_PRINCIPAL),
+          "incarnation:p9-story-e",
+          0,
+          "2999-01-01T00:00:00.000Z",
+          "t",
+        ],
       );
     }),
   );
@@ -1493,11 +1524,11 @@ const eTierContext = (tier: ETier) => {
       executionId: E_EXECUTION,
       toolName: definition.name,
       toolVersion: "1",
-        sourceRevision: invocationAuthoritySourceRevisionOf({
-          workspacePolicyRevision: 0,
-          activeGrants: [],
-          verifierId: null,
-        }),
+      sourceRevision: invocationAuthoritySourceRevisionOf({
+        workspacePolicyRevision: 0,
+        activeGrants: [],
+        verifierId: null,
+      }),
       resourceSpaceIds: [],
       allowedCapabilities: definition.capabilityMetadata,
       controlBasisDigest: "d",
@@ -2214,13 +2245,37 @@ describe("p9-acceptance", () => {
         // Idempotent settlement write replays as a no-op — still one row),
         // Reconcilable settles after reconcile; NonIdempotent stays
         // escalated — the execution NEVER takes plain Interrupted.
-        yield* settleInvocation("tin_sb_ro");
-        yield* settleInvocation("tin_sb_idem");
+        const leases = yield* LeaseService;
+        const settlementWorkerId = "worker:p9-story-b-settlement";
+        const settlementIncarnationId = "incarnation:p9-story-b-settlement";
+        const settlementLease = yield* tx.transact(
+          leases.acquire(
+            EXE_SB_PENDING as never as ExecutionId,
+            settlementWorkerId,
+            settlementIncarnationId,
+          ),
+        );
+        const settlementFence = {
+          executionId: EXE_SB_PENDING as never as ExecutionId,
+          workerId: settlementWorkerId,
+          workerIncarnationId: settlementIncarnationId,
+          fencingGeneration: settlementLease.generation,
+        };
+        yield* settleInvocation("tin_sb_ro", settlementFence);
+        yield* settleInvocation("tin_sb_idem", settlementFence);
         const idemRowOnce = yield* invocationRowOf("tin_sb_idem");
-        yield* settleInvocation("tin_sb_idem");
+        yield* settleInvocation("tin_sb_idem", settlementFence);
         const idemRowTwice = yield* invocationRowOf("tin_sb_idem");
         expect(idemRowTwice).toEqual(idemRowOnce);
-        yield* settleInvocation("tin_sb_rec");
+        yield* settleInvocation("tin_sb_rec", settlementFence);
+        yield* tx.transact(
+          leases.release(
+            EXE_SB_PENDING as never as ExecutionId,
+            settlementWorkerId,
+            settlementIncarnationId,
+            settlementLease.generation,
+          ),
+        );
         expect(
           yield* sqlCount(
             "SELECT COUNT(*) AS count FROM tool_invocations WHERE invocation_id = 'tin_sb_idem'",
@@ -2305,13 +2360,20 @@ describe("p9-acceptance", () => {
           ),
         ).toBe(1);
         // Surface 4: stale ToolInvocation settlement.
-        yield* cRecordToolIntent;
+        yield* cRecordToolIntent(cToolFence("worker:b", current.generation));
         const tools = yield* ToolInvocationStore;
         const r4 = yield* tx
           .transact(
             cWithLeaseFence(
               old.generation,
-              tools.settle(C_INVOCATION, { _tag: "Success" }, null, "t"),
+              tools.settle(
+                C_INVOCATION,
+                { _tag: "Success" },
+                null,
+                "t",
+                cToolFence("worker:a", old.generation),
+                "t",
+              ),
             ),
           )
           .pipe(Effect.flip);
@@ -2645,11 +2707,11 @@ describe("p9-acceptance", () => {
         expect(danglingRo).toHaveLength(1);
         // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
         expect(danglingRo[0]!.sideEffectSemantics).toBe("ReadOnly");
-        yield* settleInvocation(E_RO_CRASH);
+        yield* settleInvocation(E_RO_CRASH, E_TOOL_FENCE);
         mode.ReadOnly = "none";
         const roRetry = yield* eInvoke("ReadOnly", E_RO_RETRY);
         expect(roRetry._tag).toBe("Success");
-        yield* settleInvocation(E_RO_RETRY);
+        yield* settleInvocation(E_RO_RETRY, E_TOOL_FENCE);
         expect(probe.effects).toHaveLength(1);
         // Idempotent: crash after the effect; the same-identity settlement
         // write replays as a no-op — exactly one row, one external effect.
@@ -2657,9 +2719,9 @@ describe("p9-acceptance", () => {
         expect((defectOf(idemCrash) as Error).message).toBe(
           "harness-kill:Idempotent:post-effect",
         );
-        yield* settleInvocation(E_IDEM);
+        yield* settleInvocation(E_IDEM, E_TOOL_FENCE);
         const idemRowOnce = yield* invocationRowOf(E_IDEM);
-        yield* settleInvocation(E_IDEM);
+        yield* settleInvocation(E_IDEM, E_TOOL_FENCE);
         const idemRowTwice = yield* invocationRowOf(E_IDEM);
         expect(idemRowTwice).toEqual(idemRowOnce);
         expect(
@@ -2674,33 +2736,33 @@ describe("p9-acceptance", () => {
         expect((defectOf(nonCrash) as Error).message).toBe(
           "harness-kill:NonIdempotent:post-effect",
         );
-        yield* eRequestStop;
-        const pass1 = yield* runRecovery(E_PRINCIPAL);
-        expect(pass1.settled).toEqual([]);
-        expect(pass1.escalated).toEqual([E_EXECUTION]);
-        expect(yield* eEscalationFacts).toBe(1);
-        expect(probe.effects).toHaveLength(3);
-        // Reconcilable: while it dangles the stop path still escalates;
-        // reconcile-then-settle is the only unlock.
+        // Reconcilable runs while the Execution is still admitting effects;
+        // the later Stop is fenced against new invocation admission.
         const recCrash = yield* eInvoke("Reconcilable", E_REC);
         expect((defectOf(recCrash) as Error).message).toBe(
           "harness-kill:Reconcilable:post-effect",
         );
+        yield* eRequestStop;
         const pendingAll = yield* ePending;
         expect([...pendingAll].map(String).sort()).toEqual(
           [String(E_NON), String(E_REC)].sort(),
         );
+        const pass1 = yield* runRecovery(E_PRINCIPAL);
+        expect(pass1.settled).toEqual([]);
+        expect(pass1.escalated).toEqual([E_EXECUTION]);
+        // Both unresolved side effects share one initial escalation fact.
+        expect(yield* eEscalationFacts).toBe(1);
+        expect(probe.effects).toHaveLength(4);
+        // Reconcilable: reconcile-then-settle is the only unlock.
+        yield* settleInvocation(E_REC, E_TOOL_FENCE);
         const pass2 = yield* runRecovery(E_PRINCIPAL);
         expect(pass2.settled).toEqual([]);
         expect(pass2.escalated).toEqual([E_EXECUTION]);
-        // The [non, rec] fingerprint differs from the seeded [non] fact →
-        // exactly one additional durable Attention fact.
+        // The remaining [non] fingerprint adds one fact and then dedupes.
         expect(yield* eEscalationFacts).toBe(2);
-        yield* settleInvocation(E_REC);
         const pass3 = yield* runRecovery(E_PRINCIPAL);
         expect(pass3.settled).toEqual([]);
         expect(pass3.escalated).toEqual([E_EXECUTION]);
-        // The [non] fingerprint already has its fact → no third mint.
         expect(yield* eEscalationFacts).toBe(2);
         // Final tier ledger: no replay ever (one row per identity), the
         // NonIdempotent invocation stays reconciling, the Execution never
