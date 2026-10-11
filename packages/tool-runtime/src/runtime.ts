@@ -260,12 +260,22 @@ export const ToolRuntimeLive = (
 
       const invoke = (intent: ToolIntent, context: ToolExecutionContext) =>
         Effect.gen(function* () {
-          if (!hasCompleteExecutionFence(context.executionFence)) {
+          const completeFence = hasCompleteExecutionFence(
+            context.executionFence,
+          );
+          if (
+            !completeFence ||
+            context.executionFence.executionId !== context.executionId
+          ) {
             return yield* Effect.fail<ToolRuntimeError>(
               operationalFailure(
                 "IntentJournal",
                 String(intent.invocationId),
-              )({ _tag: "ExecutionFenceUnavailable" }),
+              )({
+                _tag: completeFence
+                  ? "ExecutionFenceExecutionMismatch"
+                  : "ExecutionFenceUnavailable",
+              }),
             );
           }
           const definitionOption = yield* definitions.definition(
