@@ -1,3 +1,5 @@
+import type { ExecutableApprovalInboxTarget } from "@arbor/api-contracts";
+
 /**
  * W-00 proof ③ — Governance Queue action-target feasibility (FROZEN
  * conclusion).
@@ -29,24 +31,7 @@ export interface ControlApprovalTarget {
 }
 
 /** Display-only projection of P10's exact Executable Inbox target. */
-export interface ExecutableApprovalTarget {
-  readonly kind: "ExecutableApproval";
-  readonly approvalId: string;
-  readonly revision: number;
-  readonly executionId: string;
-  readonly toolName: string;
-  readonly toolVersion: string;
-  readonly validatedArgumentsPreview: string;
-  readonly targetResourceSpaceIds: ReadonlyArray<string>;
-  readonly capabilities: ReadonlyArray<string>;
-  readonly sideEffectSemantics:
-    | "ReadOnly"
-    | "Idempotent"
-    | "Reconcilable"
-    | "NonIdempotent";
-  readonly expiresAt: string;
-  readonly actionDigest: string;
-}
+export type ExecutableApprovalTarget = ExecutableApprovalInboxTarget;
 
 const GOVERNANCE_ENTRY_KEY = /^gov:(fpr_[^:\s]+):(\d+)$/;
 const CONTROL_APPROVAL_ENTRY_KEY = /^cap:(cap_[^:\s]+):(\d+)$/;

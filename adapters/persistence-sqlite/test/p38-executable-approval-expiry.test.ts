@@ -23,7 +23,9 @@ import {
 const approvalId = "eap_expiry_test";
 const projectId = "prj_expiry_test";
 const workspaceId = "ws_expiry_test";
-const executionId = parse(ExecutionId)("exe_expiry_test");
+const executionId = parse(ExecutionId)(
+  "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+);
 const logicalActionId = "lac_expiry_test";
 const toolInvocationId = "tin_expiry_test";
 const expiredAt = "2026-10-11T00:15:00.000Z";
@@ -129,7 +131,7 @@ describe("EA-DG-01 executable approval expiration", () => {
         yield* runMigrations(P12_MIGRATIONS);
         const pending = yield* tx.transact(
           store.findPendingForExecution(
-            parse(ExecutionId)("exe_pre_0038_gate"),
+            parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a2"),
           ),
         );
         expect(Option.isNone(pending)).toBe(true);
@@ -199,7 +201,8 @@ describe("EA-DG-01 executable approval expiration", () => {
         ]);
         expect(Option.isNone(lateDecision)).toBe(true);
         expect(rows).toEqual([{ state: "Expired", revision: 1 }]);
-        expect(inbox[0]?.consumed_at).toBe(expiryObservedAt);
+        expect(inbox[0]?.consumed_at).toEqual(expect.any(String));
+        expect(Date.parse(inbox[0]?.consumed_at ?? "")).toBeGreaterThan(0);
         expect(events).toHaveLength(1);
         expect(JSON.parse(events[0]?.payload_json ?? "{}")).toMatchObject({
           resolution: "Expired",

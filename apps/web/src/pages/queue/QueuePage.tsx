@@ -233,7 +233,7 @@ export function QueuePage({
         target: parseExecutableApprovalEntry(
           entry.entryKey,
           entry.kind,
-          (entry as typeof entry & { readonly target?: unknown }).target,
+          entry.target,
         ),
       }))
       .filter(
