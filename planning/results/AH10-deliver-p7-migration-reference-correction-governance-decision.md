@@ -1,7 +1,7 @@
 # AH10 Deliver P7 Migration Reference Correction — Governance Decision
 
-Date: 2026-10-11  
-Decision: `ACCEPT_P7_DELIVER_MIGRATION_REFERENCE_CORRECTION`  
+Date: 2026-10-11
+Decision: `ACCEPT_P7_DELIVER_MIGRATION_REFERENCE_CORRECTION`
 Status: **Exact documentation correction accepted; independent final re-review pending**
 
 ## Fixed source contract
