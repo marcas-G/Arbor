@@ -206,6 +206,7 @@ const approvalInboxDeps = (
     Effect.succeed(
       approvalId === record.approvalId ? Option.some(record) : Option.none(),
     ),
+  findToolDefinitionHash: () => Effect.succeed(Option.some("shell-v2-hash")),
   resolveToolDefinition: () => Effect.succeed(Option.some(toolDefinition)),
 });
 
@@ -322,6 +323,18 @@ describe("P10-008 Inbox view (01 §1 InboxViewReq/Res; P9 05 §3.2)", () => {
       Effect.runPromise(
         deriveInboxView(p10Root, approvalInboxDeps("eap:approval-7:1")),
       ),
+    ).rejects.toThrow("ExecutableApprovalReviewUnavailable");
+  });
+
+  it("fails closed when the current same-name/version catalog hash differs from the originating manifest", async () => {
+    const deps = {
+      ...approvalInboxDeps("eap:approval-7:0"),
+      findToolDefinitionHash: () => Effect.succeed(Option.some("hash-A")),
+      resolveToolDefinition: () =>
+        Effect.succeed(Option.some({ ...toolDefinition, hash: "hash-B" })),
+    };
+    await expect(
+      Effect.runPromise(deriveInboxView(p10Root, deps)),
     ).rejects.toThrow("ExecutableApprovalReviewUnavailable");
   });
 });
