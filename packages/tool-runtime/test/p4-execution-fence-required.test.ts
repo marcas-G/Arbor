@@ -64,7 +64,7 @@ const runtimeLayer = (definitionCalls: number[]) => {
   return Layer.provide(ToolRuntimeLive([executor]), dependencies);
 };
 
-const incompleteContexts: ReadonlyArray<ToolExecutionContext> = [
+const invalidContexts: ReadonlyArray<ToolExecutionContext> = [
   {
     executionId,
     workspaceId,
@@ -86,10 +86,28 @@ const incompleteContexts: ReadonlyArray<ToolExecutionContext> = [
     requestedAt: "2026-01-01T00:00:00.000Z",
     executionFence: { executionId },
   } as unknown as ToolExecutionContext,
+  {
+    executionId,
+    workspaceId,
+    sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+    projectId: parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+    actor: parse(Actor)("worker:test"),
+    authenticatedPrincipal: parse(Principal)("worker:test"),
+    controlBasisDigest: "digest",
+    requestedAt: "2026-01-01T00:00:00.000Z",
+    executionFence: {
+      executionId: parse(ExecutionId)(
+        "exe_018f2b3c-4d5e-7abc-8def-0123456789ff",
+      ),
+      workerId: "worker:test",
+      workerIncarnationId: "incarnation:test",
+      fencingGeneration: 0,
+    },
+  } as ToolExecutionContext,
 ];
 
-describe("P4 requires a complete ExecutionOrigin fence", () => {
-  it.each(incompleteContexts)(
+describe("P4 requires a context-bound ExecutionOrigin fence", () => {
+  it.each(invalidContexts)(
     "fails before definition resolution or any tool effect",
     async (context) => {
       const definitionCalls: number[] = [];
