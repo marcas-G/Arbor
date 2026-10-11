@@ -48,10 +48,14 @@ const invocationE =
   "tin_318f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
 const invocationF =
   "tin_418f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
+const invocationG =
+  "tin_518f2b3c-4d5e-7abc-8def-0123456789a1" as ToolInvocationId;
 const approvalId = "apr_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const executableApprovalId = "eap_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const unprovenExecutableHistoryId =
   "eap_legacy_018f2b3c-4d5e-7abc-8def-0123456789a1";
+const nullSourceConsumedApprovalId =
+  "iap_null_source_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const workerId = "worker:ah7-dg03";
 const workerIncarnationId = "incarnation:ah7-dg03";
 const fence = {
@@ -64,6 +68,7 @@ const fenceNow = "2026-10-11T00:00:01.000Z";
 const intent = (
   id: ToolInvocationId,
   withApproval: boolean,
+  approvalRef = approvalId,
 ): ToolInvocationIntent => ({
   invocationId: id,
   executionId,
@@ -73,7 +78,7 @@ const intent = (
   sideEffectSemantics: "NonIdempotent",
   argumentsJson: "{}",
   resolvedRegions: [],
-  approvalId: withApproval ? approvalId : null,
+  approvalId: withApproval ? approvalRef : null,
   intentAt: fenceNow,
 });
 
@@ -182,6 +187,24 @@ const seedUnprovenExecutableHistory = Effect.gen(function* () {
       't0', '1970-01-01T00:00:00.000Z', NULL, NULL,
       'MigrationUnprovableSubject', NULL, NULL, 0, 'Approved')`,
     [unprovenExecutableHistoryId, projectId, workspaceId, executionId],
+  );
+});
+
+const seedNullSourceConsumedApproval = Effect.gen(function* () {
+  const sql = yield* SqlClient;
+  yield* sql.unsafe(
+    `INSERT INTO action_approvals (
+      approval_id, route_kind, project_id, workspace_id, execution_id,
+      subject_ref, stable_action_id, action_version, side_effect_semantics,
+      action_digest, arguments_json, target_ref, target_resource_space_ids_json,
+      control_basis_digest, state, revision, requested_at, expires_at,
+      decided_at, decided_by, decision_reason, consumed_at, consumed_by,
+      binding_proven, source_state
+    ) VALUES (?, 'Executable', NULL, NULL, NULL, 'legacy:unbound',
+      'write_once', '1', 'LegacyUnknown', 'digest-null-consumed', '{}', '[]',
+      '[]', 'basis-null-consumed', 'Consumed', 2, 't0',
+      '2999-01-01T00:00:00.000Z', 't0', 'human:test', NULL, 't0', ?, 0, NULL)`,
+    [nullSourceConsumedApprovalId, invocationG],
   );
 });
 
@@ -372,8 +395,17 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
           yield* runMigrations(migration36);
           yield* seedExecutableApproval;
           yield* seedUnprovenExecutableHistory;
+          yield* seedNullSourceConsumedApproval;
           const tx = yield* TransactionPort;
           const store = yield* ToolInvocationStore;
+          yield* tx.transact(
+            store.recordIntent(
+              intent(invocationG, true, nullSourceConsumedApprovalId),
+            ),
+          );
+          const priorInvocation = yield* tx.transact(
+            store.findById(invocationG),
+          );
           const legacyBefore = yield* tx.transact(
             store.findApproval(approvalId),
           );
@@ -382,6 +414,9 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
           );
           const unprovenHistoryThroughLegacy = yield* tx.transact(
             store.findApproval(unprovenExecutableHistoryId),
+          );
+          const nullSourceHistoryThroughLegacy = yield* tx.transact(
+            store.findApproval(nullSourceConsumedApprovalId),
           );
           const legacyConsumed = yield* tx.transact(
             store.consumeApproval(approvalId, invocationA),
@@ -392,6 +427,9 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
           const unprovenHistoryConsumedThroughLegacy = yield* tx.transact(
             store.consumeApproval(unprovenExecutableHistoryId, invocationC),
           );
+          const nullSourceConsumedThroughLegacy = yield* tx.transact(
+            store.consumeApproval(nullSourceConsumedApprovalId, invocationG),
+          );
           const sql = yield* SqlClient;
           const rows = yield* sql.unsafe<{
             approval_id: string;
@@ -401,17 +439,25 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
           }>(
             `SELECT approval_id, binding_proven, state, consumed_by
                FROM action_approvals
-              WHERE approval_id IN (?, ?, ?)
+              WHERE approval_id IN (?, ?, ?, ?)
               ORDER BY approval_id`,
-            [approvalId, executableApprovalId, unprovenExecutableHistoryId],
+            [
+              approvalId,
+              executableApprovalId,
+              unprovenExecutableHistoryId,
+              nullSourceConsumedApprovalId,
+            ],
           );
           return {
+            priorInvocation,
             legacyBefore,
             executableThroughLegacy,
             unprovenHistoryThroughLegacy,
+            nullSourceHistoryThroughLegacy,
             legacyConsumed,
             executableConsumedThroughLegacy,
             unprovenHistoryConsumedThroughLegacy,
+            nullSourceConsumedThroughLegacy,
             rows,
           };
         }),
@@ -419,12 +465,15 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
       ),
     );
 
+    expect(Option.isSome(result.priorInvocation)).toBe(true);
     expect(Option.isSome(result.legacyBefore)).toBe(true);
     expect(Option.isNone(result.executableThroughLegacy)).toBe(true);
     expect(Option.isNone(result.unprovenHistoryThroughLegacy)).toBe(true);
+    expect(Option.isNone(result.nullSourceHistoryThroughLegacy)).toBe(true);
     expect(result.legacyConsumed).toBe(false);
     expect(result.executableConsumedThroughLegacy).toBe(false);
     expect(result.unprovenHistoryConsumedThroughLegacy).toBe(false);
+    expect(result.nullSourceConsumedThroughLegacy).toBe(false);
     expect(result.rows).toContainEqual({
       approval_id: approvalId,
       binding_proven: 0,
@@ -442,6 +491,12 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
       binding_proven: 0,
       state: "Expired",
       consumed_by: null,
+    });
+    expect(result.rows).toContainEqual({
+      approval_id: nullSourceConsumedApprovalId,
+      binding_proven: 0,
+      state: "Consumed",
+      consumed_by: invocationG,
     });
   });
 
