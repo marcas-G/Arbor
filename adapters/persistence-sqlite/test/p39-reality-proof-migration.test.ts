@@ -3,6 +3,7 @@ import {
   linkSync,
   mkdtempSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -28,6 +29,7 @@ import {
   validateP39ReportSidecarPath,
 } from "../src/p39-report-database.js";
 import {
+  p39SameOperatingSystemIdentity,
   p39WriterLockFilename,
   prepareP39PrimaryDatabasePath,
   validateP39ProtectedDirectory,
@@ -201,9 +203,13 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       await Effect.runPromise(
         validateP39ReportSidecarDatabase(primary, sidecar),
       );
+      const sidecarIdentityBefore = statSync(sidecar, { bigint: true });
       await Effect.runPromise(
         validateP39ReportSidecarDatabase(primary, sidecar),
       );
+      const sidecarIdentityAfter = statSync(sidecar, { bigint: true });
+      expect(sidecarIdentityAfter.dev).toBe(sidecarIdentityBefore.dev);
+      expect(sidecarIdentityAfter.ino).toBe(sidecarIdentityBefore.ino);
       const samePath = await Effect.runPromise(
         Effect.flip(validateP39ReportSidecarPath(primary, primary)),
       );
@@ -311,6 +317,16 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       chmodSync(directory, 0o700);
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("accepts same-owner deployment identity and rejects another OS account", () => {
+    expect(
+      p39SameOperatingSystemIdentity("sid:S-1-5-21-100", "sid:S-1-5-21-100"),
+    ).toBe(true);
+    expect(
+      p39SameOperatingSystemIdentity("sid:S-1-5-21-100", "sid:S-1-5-21-200"),
+    ).toBe(false);
+    expect(p39SameOperatingSystemIdentity("uid:1000", "uid:1001")).toBe(false);
   });
 
   it("requires the exact 0037→0038→0039 suffix and refuses service at user_version 39", async () => {

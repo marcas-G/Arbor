@@ -99,6 +99,7 @@ import {
   ProjectToolRegistryLive,
   ProviderDeploymentBreakerLive,
   ProviderTurnStoreLive,
+  p39WriterLockFilename,
   p39WriterLockLayer,
   prepareP39PrimaryDatabasePath,
   RecordEnvironmentChangeLive,
@@ -440,6 +441,15 @@ export const buildSingleWorkspaceLayer = (
     preparedDatabase !== undefined &&
     !("databaseFilename" in preparedDatabase)
   ) {
+    if (
+      preparedDatabase !== undefined &&
+      preparedDatabase.code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT"
+    ) {
+      throw {
+        _tag: "P39MaintenanceFailure",
+        code: "P39_UNSUPPORTED_DEPLOYMENT",
+      };
+    }
     throw new Error(
       "P39 startup requires a supported local primary database path",
     );
@@ -1003,6 +1013,18 @@ export const buildSingleWorkspaceLayer = (
   const currentSchemaGate = Layer.provide(
     Layer.effectDiscard(
       Effect.gen(function* () {
+        if (preparedDatabase !== undefined) {
+          const currentLockPath = p39WriterLockFilename(primaryDatabaseFilename);
+          if (
+            typeof currentLockPath !== "string" ||
+            currentLockPath !== preparedDatabase.writerLockFilename
+          ) {
+            return yield* Effect.die({
+              _tag: "P39MaintenanceFailure",
+              code: "P39_UNSUPPORTED_DEPLOYMENT",
+            });
+          }
+        }
         const sql = yield* SqlClient;
         const versions = yield* sql.unsafe<{ user_version: number }>(
           "PRAGMA user_version",

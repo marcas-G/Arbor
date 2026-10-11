@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, realpathSync, statfsSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  openSync,
+  realpathSync,
+  statfsSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import {
   basename,
@@ -22,7 +30,10 @@ import {
   P39_REPORT_USER_VERSION,
   type P39MaintenanceFailure,
 } from "./p39-maintenance.js";
-import { validateP39ProtectedDirectory } from "./p39-writer-lock.js";
+import {
+  validateP39ProtectedDirectory,
+  validateP39ProtectedFile,
+} from "./p39-writer-lock.js";
 
 const failure = (
   code: P39MaintenanceFailure["code"],
@@ -73,9 +84,10 @@ const fileIdentity = (path: string): string | P39MaintenanceFailure => {
       !stat.isFile() ||
       stat.dev === 0n ||
       stat.ino === 0n ||
-      stat.nlink !== 1n
+      stat.nlink !== 1n ||
+      !validateP39ProtectedFile(path)
     ) {
-      return failure("P39_REPORT_DB_PATH_INVALID");
+      return failure("P39_UNSUPPORTED_DEPLOYMENT");
     }
     return `${stat.dev}:${stat.ino}`;
   } catch (cause) {
@@ -179,7 +191,7 @@ export const validateP39ReportSidecarPath = (
         !validateP39ProtectedDirectory(dirname(path))
       ) {
         return Effect.fail(
-          filesystemFailure ?? failure("P39_REPORT_DB_PATH_INVALID"),
+          filesystemFailure ?? failure("P39_UNSUPPORTED_DEPLOYMENT"),
         );
       }
     }
@@ -222,7 +234,7 @@ export const validateP39ReportSidecarPath = (
         !validateP39ProtectedDirectory(dirname(protectedCanonical))
       ) {
         return Effect.fail(
-          filesystemFailure ?? failure("P39_REPORT_DB_PATH_INVALID"),
+          filesystemFailure ?? failure("P39_UNSUPPORTED_DEPLOYMENT"),
         );
       }
       const protectedIdentity = fileIdentity(protectedCanonical);
@@ -376,6 +388,28 @@ export const validateP39ReportSidecarDatabase = (
       sidecarFilename,
       protectedStoreFilenames,
     );
+    if (!existsSync(path)) {
+      try {
+        const descriptor = openSync(path, "wx", 0o600);
+        closeSync(descriptor);
+        if (process.platform !== "win32") chmodSync(path, 0o600);
+      } catch (cause) {
+        if (
+          typeof cause !== "object" ||
+          cause === null ||
+          !("code" in cause) ||
+          cause.code !== "EEXIST"
+        ) {
+          return yield* Effect.fail(
+            failure("P39_UNSUPPORTED_DEPLOYMENT", cause),
+          );
+        }
+      }
+    }
+    const originalIdentity = fileIdentity(path);
+    if (typeof originalIdentity !== "string") {
+      return yield* Effect.fail(originalIdentity);
+    }
     yield* Effect.scoped(
       Effect.provide(
         p39ReportSetup.pipe(
@@ -396,8 +430,12 @@ export const validateP39ReportSidecarDatabase = (
       path,
       protectedStoreFilenames,
     );
-    if (finalPath !== path) {
-      return yield* Effect.fail(failure("P39_REPORT_DB_PATH_INVALID"));
+    const finalIdentity = fileIdentity(finalPath);
+    if (typeof finalIdentity !== "string") {
+      return yield* Effect.fail(finalIdentity);
+    }
+    if (finalPath !== path || finalIdentity !== originalIdentity) {
+      return yield* Effect.fail(failure("P39_UNSUPPORTED_DEPLOYMENT"));
     }
   }).pipe(
     Effect.mapError((cause: P39MaintenanceFailure | SqliteAdapterError) =>

@@ -53,6 +53,7 @@ interface P39SqliteMaintenanceAdapterOptions {
   readonly primary: P39MaintenanceSqlClient;
   readonly writerLock: P39WriterLockClientService;
   readonly primaryFilename: string;
+  readonly writerLockFilename: string;
   readonly writeAndReadBackSidecarReport: (
     report: P39MigrationBlockReport,
   ) => Effect.Effect<
@@ -97,24 +98,28 @@ export const runP39SqliteMaintenance = (
         code: "P39_MIGRATION_PREFIX_INVALID" as const,
       });
     }
+    const primaryPath = realpathSync.native(resolvedPrimaryPath);
+    const lockPath = p39WriterLockFilename(primaryPath);
+    if (typeof lockPath !== "string") {
+      return yield* Effect.fail(
+        failure(
+          lockPath.code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT"
+            ? "P39_UNSUPPORTED_DEPLOYMENT"
+            : "P39_WRITER_LOCK_PATH_INVALID",
+          lockPath,
+        ),
+      );
+    }
     const sidecarPath = yield* validateP39ReportSidecarPath(
       resolvedPrimaryPath,
       options.sidecarFilename,
       options.protectedStoreFilenames,
     );
-    const primaryPath = realpathSync.native(resolvedPrimaryPath);
     yield* validateP39ReportSidecarDatabase(
       primaryPath,
       sidecarPath,
       options.protectedStoreFilenames,
     );
-    const lockPath = p39WriterLockFilename(primaryPath);
-    if (typeof lockPath !== "string") {
-      return yield* Effect.fail({
-        _tag: "P39MaintenanceFailure" as const,
-        code: lockPath.code,
-      });
-    }
     const primaryService = Layer.provide(
       Layer.effect(
         P39PrimarySqlClient,
@@ -163,6 +168,7 @@ export const runP39SqliteMaintenance = (
         primary,
         writerLock,
         primaryFilename: primaryPath,
+        writerLockFilename: lockPath,
         writeAndReadBackSidecarReport: (report) =>
           Effect.gen(function* () {
             const attempted = yield* Effect.result(writeReport(report));
@@ -312,6 +318,15 @@ const makeP39SqliteMaintenancePort = (
       Effect.gen(function* () {
         if (lease.token !== writerLockPermit?.token) {
           return yield* Effect.fail(failure("P39_WRITER_LOCK_ACQUIRE_FAILED"));
+        }
+        const currentLockPath = p39WriterLockFilename(options.primaryFilename);
+        if (
+          typeof currentLockPath !== "string" ||
+          currentLockPath !== options.writerLockFilename
+        ) {
+          return yield* Effect.fail(
+            failure("P39_UNSUPPORTED_DEPLOYMENT", currentLockPath),
+          );
         }
         const acquireSnapshot = Effect.gen(function* () {
           const journal = yield* sql.unsafe<{ journal_mode: string }>(
