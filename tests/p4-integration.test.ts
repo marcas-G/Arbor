@@ -9,7 +9,7 @@ import {
   ArtifactMetadataRepositoryLive,
   ClockLive,
   layer,
-  P4_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
@@ -19,6 +19,7 @@ import { SandboxPortLive } from "../adapters/sandbox-local/src/index.js";
 import {
   Actor,
   ExecutionId,
+  LeaseGeneration,
   Principal,
   ProjectId,
   parse,
@@ -36,6 +37,7 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
+  invocationAuthoritySourceRevisionOf,
 } from "../packages/ports/src/index.js";
 import {
   ArtifactServiceLive,
@@ -67,6 +69,11 @@ const authority = {
   executionId,
   toolName: "read",
   toolVersion: "2",
+  sourceRevision: invocationAuthoritySourceRevisionOf({
+    workspacePolicyRevision: 0,
+    activeGrants: [],
+    verifierId: null,
+  }),
   resourceSpaceIds: ["filesystem"],
   allowedCapabilities: ["fs:read"],
   controlBasisDigest: "d",
@@ -82,6 +89,12 @@ const context = {
   authenticatedPrincipal: principal,
   authority,
   controlBasisDigest: "d",
+  executionFence: {
+    executionId,
+    workerId: String(principal),
+    workerIncarnationId: "incarnation:p4-integration",
+    fencingGeneration: parse(LeaseGeneration)(0),
+  },
   requestedAt: "t",
 } as import("../packages/ports/src/index.js").ToolExecutionContext;
 const intent = (toolName: string, argumentsJson: string) => ({
@@ -141,14 +154,22 @@ const seed = Effect.gen(function* () {
         ],
       );
       yield* sql.unsafe(
-        "INSERT OR IGNORE INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
+        "INSERT OR IGNORE INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
         [
           executionId,
           projectId,
-          "workspace",
           workspaceId,
-          "coordination",
           sessionId,
+        ],
+      );
+      yield* sql.unsafe(
+        "INSERT OR IGNORE INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
+        [
+          executionId,
+          String(principal),
+          "incarnation:p4-integration",
+          0,
+          "2999-01-01T00:00:00.000Z",
           "t",
         ],
       );
@@ -206,7 +227,7 @@ const run = (
   Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P4_MIGRATIONS);
+        yield* runMigrations(P36_MIGRATIONS);
         yield* seed;
         const runtime = yield* ToolRuntimePort;
         return yield* runtime.invoke(
@@ -226,7 +247,7 @@ describe("P4 integration — tool runtime end to end", () => {
   // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   const migrate = (app: Layer.Layer<any, any, any>) =>
     Effect.runPromise(
-      Effect.provide(runMigrations(P4_MIGRATIONS), app) as Effect.Effect<
+      Effect.provide(runMigrations(P36_MIGRATIONS), app) as Effect.Effect<
         number,
         unknown,
         never

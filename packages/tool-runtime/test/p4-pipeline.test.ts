@@ -53,6 +53,7 @@ const authority = {
   executionId,
   toolName: "read",
   toolVersion: "2",
+  sourceRevision: "fixture-authority-revision",
   resourceSpaceIds: ["filesystem"],
   allowedCapabilities: ["fs:read"],
   controlBasisDigest: "d",
@@ -68,6 +69,12 @@ const context = {
   authenticatedPrincipal: principal,
   authority,
   controlBasisDigest: "d",
+  executionFence: {
+    executionId,
+    workerId: "worker:p4-pipeline",
+    workerIncarnationId: "incarnation:p4-pipeline",
+    fencingGeneration: 0 as never,
+  },
   requestedAt: "t",
 } as import("@arbor/ports").ToolExecutionContext;
 const intent = (argumentsJson: string) => ({

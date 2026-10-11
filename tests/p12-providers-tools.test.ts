@@ -15,6 +15,7 @@ import { selectProviderLayer } from "../apps/single-workspace/src/composition.js
 import {
   Actor,
   ExecutionId,
+  LeaseGeneration,
   Principal,
   ProjectId,
   ProviderTurnId,
@@ -394,6 +395,7 @@ const authority = {
   executionId,
   toolName: "list",
   toolVersion: "2",
+  sourceRevision: "fixture-authority-revision",
   resourceSpaceIds: ["filesystem"],
   allowedCapabilities: ["fs:read"],
   controlBasisDigest: "d",
@@ -410,6 +412,12 @@ const toolContext = {
   authenticatedPrincipal: principal,
   authority,
   controlBasisDigest: "d",
+  executionFence: {
+    executionId,
+    workerId: String(principal),
+    workerIncarnationId: "incarnation:p12-providers-tools",
+    fencingGeneration: parse(LeaseGeneration)(0),
+  },
   requestedAt: "t",
 } as ToolExecutionContext;
 

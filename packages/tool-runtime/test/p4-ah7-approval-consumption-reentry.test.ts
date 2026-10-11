@@ -81,6 +81,7 @@ const context: ToolExecutionContext = {
     executionId,
     toolName: "read",
     toolVersion: "1",
+    sourceRevision: "fixture-authority-revision",
     resourceSpaceIds: [],
     allowedCapabilities: [],
     controlBasisDigest: "ah7-approval-basis",
@@ -88,6 +89,12 @@ const context: ToolExecutionContext = {
     delegationDepth: 0,
   },
   controlBasisDigest: "ah7-approval-basis",
+  executionFence: {
+    executionId,
+    workerId: "worker:ah7-approval-reentry",
+    workerIncarnationId: "incarnation:ah7-approval-reentry",
+    fencingGeneration: 0 as never,
+  },
   requestedAt: "2026-10-06T00:00:00.000Z",
 };
 
