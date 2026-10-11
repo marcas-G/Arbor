@@ -54,7 +54,7 @@ counted as reconciliation qualification. No new test was added.
 
 - Fixed governance draft:
   `planning/proposals/AH7-DG-02-reconcilable-tool-reality-fixed-decision-draft.md`
-  SHA-256 `B8E9084C8273E0DCE5AA8D0CAA8CFF33499F85A5EF7C6AE9C91AA92F710DB7ED`
+  SHA-256 `D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`
 - Layered qualification matrix:
   `planning/tasks/AH7-DG-02-reconciliation-qualification-matrix.md`
 
@@ -73,3 +73,56 @@ SideEffectSemantics tag and does not rewrite frozen docs.
 - Manual acceptance: **none**. The proposal is a recommendation only; a
   separate human acceptance and landing review are required before design or
   implementation changes.
+
+## Independent review response (Blocking=4)
+
+The fixed draft/matrix were revised for all four blockers; this remains a
+proposal and makes no accepted design or production changes:
+
+1. Stop prohibits **new attempt admission only**. Read-only reconciliation and
+   known in-flight Occurred/NotOccurred/StillUnknown accounting may still be
+   durably recorded after Stop under the current full Worker lease fence;
+   these fact/settlement writes do not require `stop_requested_at IS NULL`.
+   Known Occurred settles once; known NotOccurred is not replayed and maps to
+   `ReconciledNoEffect(StopRequested)` plus the existing Interrupted quiescence
+   result; StillUnknown keeps the unresolved gate/Attention and is never plain
+   Interrupted. A stale/expired generation cannot write facts or settlement.
+2. The P3→Application→P4 identity path is explicit:
+   `PreparedModelTurn.manifest.providerTurnId`, P3
+   `AgentLoopStepRecord.identity` (`executionId`, `logicalStepNo`, `repairAttempt`),
+   durable `AgentLoopStepActionRecord.logicalActionId/actionIndex`, and pinned
+   `ToolInvocation.callRef` are copied in Runtime-owned
+   `ExecutableInvocationInput.sourceBinding` to both P4 `ToolIntent.sourceBinding`
+   and `ToolExecutionContext.sourceBinding`. P4 owns binding persistence/migration
+   and exact re-entry checks. Approval subject/revision is trusted only from the
+   P4 durable ledger: claim CAS re-reads exact revision, authenticated subject,
+   action/args/target/basis, expiry and state before consume and atomically records
+   the same consumed-by ToolInvocation plus pre/post revisions.
+3. P9 reuses the exact existing
+   `ReconciliationEscalated{executionId,invocationRefsFingerprint,refs}` event;
+   P10 owns the materialized projection. Exact mapping is
+   `source=ReconciliationEscalated`, `severity=ActionRequired`, target
+   `executions.workspace_id`, dedup key
+   `reconciliation-escalated:<executionId>:<invocationRefsFingerprint>`, fixed
+   path-free summary “An external tool effect could not be verified; recovery
+   is paused.”, and event `occurredAt`. P10 apply+offset are atomic; rebuild
+   resets rows and rewinds Attention offset to retained-floor−1 in the same
+   transaction before replaying retained events. User visibility is explicitly
+   limited to the P1 journal retention horizon; indefinite post-prune Attention
+   would need a new accepted source-store design.
+4. `ReconciledNoEffect` is a closed P4 **CanonicalToolObservation and
+   ToolInvocationSettlement** variant with exact five-code union plus required
+   `reconciliationFactRef` and result ArtifactRef. It is never P4 Denied and
+   never resets `MayHaveStarted`. P3 maps authority/resource/approval changes to
+   Denied/TerminalRejected, StopRequested to Interrupted/quiescence, and replay
+   limit to Failed/Applied. ToolResult uses the exact existing source formula
+   `observation_${executionId}_${sha256Hex(JSON.stringify({providerTurnId,callRef,resultRef}))}`;
+   this same ref is Session AgentLoopAction `source.ref`, ToolResult
+   `observationRef`, and AgentLoopStepAction `observation_source_ref`.
+
+Nonblocking historical shell clarification: only `MayHaveStarted` /
+`LegacyUnknown` shell@2 rows lacking a historical profile are blanket
+`StillUnknown`/no-replay. A shell@2 row with exact `NotAdmitted` and complete
+binding may re-enter the exact retained v2 definition under fresh gates; that
+definition stays available until such rows terminate. It may never silently
+switch to shell@3.
