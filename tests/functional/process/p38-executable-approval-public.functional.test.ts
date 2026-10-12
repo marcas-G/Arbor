@@ -80,8 +80,8 @@ const startExecutableApproval = async (
   const effectLog = `p38-effects-${marker}.log`;
   const command =
     process.platform === "win32"
-      ? `Add-Content -LiteralPath '${effectLog}' -Value '${marker}'; if (Test-Path -LiteralPath 'proof.txt') { mv -LiteralPath 'proof.txt' -Destination '${destination}' }; Write-Output '${marker}'`
-      : `printf '%s\\n' '${marker}' >> '${effectLog}'; if [ -f proof.txt ]; then mv proof.txt '${destination}'; fi; printf '%s\\n' '${marker}'`;
+      ? `if (Test-Path -LiteralPath 'proof.txt') { Add-Content -LiteralPath '${effectLog}' -Value '${marker}'; mv -LiteralPath 'proof.txt' -Destination '${destination}'; Write-Output '${marker}' }`
+      : `if [ -f proof.txt ]; then printf '%s\\n' '${marker}' >> '${effectLog}' && mv proof.txt '${destination}' && printf '%s\\n' '${marker}'; fi`;
 
   const fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
