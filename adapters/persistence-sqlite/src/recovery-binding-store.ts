@@ -1,9 +1,12 @@
 import type { ToolInvocationId } from "@arbor/domain";
 import {
+  canonicalizeRecoveryBindingV1,
   Option,
+  recoveryBindingV1Digest,
   P39RecoveryEvidenceStore,
   TransactionScope,
   verifyRecoveryBindingV1,
+  type RecoveryBindingV1,
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
@@ -78,6 +81,16 @@ const isOutcome = (
   value === "Occurred" ||
   value === "StillUnknown";
 
+interface BindingRow {
+  readonly recovery_binding_state: string;
+  readonly recovery_binding_sha256: string | null;
+  readonly effect_admission_state: string;
+  readonly settled_at: string | null;
+  readonly binding_version: number | null;
+  readonly canonical_binding_json: string | null;
+  readonly binding_sha256: string | null;
+}
+
 export const P39RecoveryEvidenceStoreLive: Layer.Layer<
   P39RecoveryEvidenceStore,
   never,
@@ -102,7 +115,214 @@ export const P39RecoveryEvidenceStoreLive: Layer.Layer<
         ),
       );
 
+    const findBinding = (invocationId: ToolInvocationId) =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        const rows = yield* run(
+          sql.unsafe<BindingRow>(
+            `SELECT i.recovery_binding_state,
+                    i.recovery_binding_sha256,
+                    i.effect_admission_state,
+                    i.settled_at,
+                    b.binding_version,
+                    b.canonical_binding_json,
+                    b.binding_sha256
+               FROM tool_invocations AS i
+               LEFT JOIN tool_invocation_recovery_bindings AS b
+                 ON b.invocation_id = i.invocation_id
+              WHERE i.invocation_id = ?`,
+            [invocationId],
+          ),
+        );
+        const row = rows[0];
+        if (row === undefined) return Option.none();
+        if (
+          row.recovery_binding_state !== "Bound" ||
+          row.recovery_binding_sha256 === null ||
+          row.binding_version !== 1 ||
+          row.canonical_binding_json === null ||
+          row.binding_sha256 !== row.recovery_binding_sha256
+        ) {
+          if (
+            row.recovery_binding_state === "LegacyBindingUnproven" &&
+            row.recovery_binding_sha256 === null &&
+            row.binding_version === null &&
+            row.canonical_binding_json === null &&
+            row.binding_sha256 === null
+          ) {
+            return Option.none();
+          }
+          return yield* corrupt(
+            "invocation recovery-binding state does not match its immutable V1 row",
+          );
+        }
+        const verified = verifyRecoveryBindingV1({
+          invocationId,
+          canonicalJson: row.canonical_binding_json,
+          bindingSha256: row.binding_sha256,
+        });
+        if (verified === null) {
+          return yield* corrupt(
+            "persisted RecoveryBindingV1 canonical bytes or SHA-256 are invalid",
+          );
+        }
+        return Option.some(verified);
+      });
+
     return P39RecoveryEvidenceStore.of({
+      bindClaim: (input: { binding: RecoveryBindingV1; createdAt: string }) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          if (!input.createdAt.trim()) {
+            return yield* corrupt("RecoveryBindingV1 createdAt is empty");
+          }
+          let canonicalJson: string;
+          let bindingSha256: string;
+          try {
+            canonicalJson = canonicalizeRecoveryBindingV1(input.binding);
+            bindingSha256 = recoveryBindingV1Digest(input.binding);
+          } catch (cause) {
+            return yield* corrupt(
+              `RecoveryBindingV1 schema or digest construction failed: ${String(cause)}`,
+            );
+          }
+          const existing = yield* findBinding(input.binding.invocationId);
+          if (Option.isSome(existing)) {
+            if (
+              existing.value.canonicalJson !== canonicalJson ||
+              existing.value.bindingSha256 !== bindingSha256
+            ) {
+              return yield* corrupt(
+                "same invocation already has a different immutable RecoveryBindingV1",
+              );
+            }
+            const attempts = yield* run(
+              sql.unsafe<{
+                readonly admission_state: string;
+                readonly admission_source: string;
+                readonly admission_time_precision: string;
+                readonly binding_sha256: string | null;
+              }>(
+                `SELECT admission_state, admission_source,
+                        admission_time_precision, binding_sha256
+                   FROM tool_invocation_effect_attempts
+                  WHERE invocation_id = ? AND attempt_no = 0`,
+                [input.binding.invocationId],
+              ),
+            );
+            const attempt0 = attempts[0];
+            if (
+              attempt0?.admission_state !== "NotAdmitted" ||
+              attempt0.admission_source !== "P39Claim" ||
+              attempt0.admission_time_precision !== "NotAdmitted" ||
+              attempt0.binding_sha256 !== bindingSha256
+            ) {
+              return yield* corrupt(
+                "bound invocation is missing its exact attempt-0 claim row",
+              );
+            }
+            return "AlreadyBound" as const;
+          }
+
+          const invocations = yield* run(
+            sql.unsafe<{
+              readonly recovery_binding_state: string;
+              readonly recovery_binding_sha256: string | null;
+              readonly effect_admission_state: string;
+              readonly settled_at: string | null;
+              readonly tool_name: string;
+              readonly tool_version: string;
+              readonly side_effect_semantics: string;
+            }>(
+              `SELECT recovery_binding_state, recovery_binding_sha256,
+                      effect_admission_state, settled_at, tool_name,
+                      tool_version, side_effect_semantics
+                 FROM tool_invocations WHERE invocation_id = ?`,
+              [input.binding.invocationId],
+            ),
+          );
+          const invocation = invocations[0];
+          if (
+            invocation === undefined ||
+            invocation.recovery_binding_state !== "LegacyBindingUnproven" ||
+            invocation.recovery_binding_sha256 !== null ||
+            invocation.effect_admission_state !== "NotAdmitted" ||
+            invocation.settled_at !== null ||
+            invocation.tool_name !== input.binding.toolName ||
+            invocation.tool_version !== input.binding.toolVersion ||
+            invocation.side_effect_semantics !==
+              input.binding.sideEffectSemantics
+          ) {
+            return yield* corrupt(
+              "new RecoveryBindingV1 claim does not match an active NotAdmitted invocation",
+            );
+          }
+
+          const priorAttempts = yield* run(
+            sql.unsafe<{ readonly invocation_id: string }>(
+              `SELECT invocation_id FROM tool_invocation_effect_attempts
+                WHERE invocation_id = ? AND attempt_no = 0`,
+              [input.binding.invocationId],
+            ),
+          );
+          if (priorAttempts.length > 0) {
+            return yield* corrupt(
+              "unbound invocation already has an attempt-0 row",
+            );
+          }
+
+          yield* run(
+            sql.unsafe(
+              `INSERT INTO tool_invocation_recovery_bindings (
+                 invocation_id, binding_version, canonical_binding_json,
+                 binding_sha256, created_at
+               ) VALUES (?,1,?,?,?)`,
+              [
+                input.binding.invocationId,
+                canonicalJson,
+                bindingSha256,
+                input.createdAt,
+              ],
+            ),
+          );
+          yield* run(
+            sql.unsafe(
+              `UPDATE tool_invocations
+                  SET recovery_binding_state = 'Bound',
+                      recovery_binding_sha256 = ?
+                WHERE invocation_id = ?
+                  AND recovery_binding_state = 'LegacyBindingUnproven'
+                  AND recovery_binding_sha256 IS NULL
+                  AND effect_admission_state = 'NotAdmitted'
+                  AND settled_at IS NULL`,
+              [bindingSha256, input.binding.invocationId],
+            ),
+          );
+          yield* run(
+            sql.unsafe(
+              `INSERT INTO tool_invocation_effect_attempts (
+                 invocation_id, attempt_no, admission_state,
+                 tool_definition_hash, side_effect_semantics, profile_id,
+                 profile_version, profile_hash, profile_protocol, effect_key,
+                 binding_sha256, admitted_at, admission_source,
+                 admission_time_precision
+               ) VALUES (?,0,'NotAdmitted',?,?,?,?,?,?,?, ?,NULL,'P39Claim','NotAdmitted')`,
+              [
+                input.binding.invocationId,
+                input.binding.toolDefinitionHash,
+                input.binding.sideEffectSemantics,
+                input.binding.profileId,
+                input.binding.profileVersion,
+                input.binding.profileHash,
+                input.binding.profileProtocol,
+                input.binding.effectKey,
+                bindingSha256,
+              ],
+            ),
+          );
+          return "Bound" as const;
+        }),
+      findBinding,
       findSelected: (invocationId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
