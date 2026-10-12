@@ -29,7 +29,11 @@ import {
   SessionId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
-import { makeP1App, runP1 } from "./support/p1-app.js";
+import {
+  ensureProjectResourceSourceTestColumn,
+  makeP1App,
+  runP1,
+} from "./support/p1-app.js";
 
 const actor = parse(Actor)("user:test");
 const principal = parse(Principal)("user:test");
@@ -165,6 +169,7 @@ describe("P1-011 CreateChildWorkspace", () => {
     const app = makeP1App();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
+      yield* ensureProjectResourceSourceTestColumn();
       yield* seedProject;
       const gw = yield* CommandGateway;
       const payload = childPayload();
@@ -211,6 +216,7 @@ describe("P1-011 CreateChildWorkspace", () => {
     const app = makeP1App();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
+      yield* ensureProjectResourceSourceTestColumn();
       yield* seedProject;
       const gw = yield* CommandGateway;
       const missingParent = parse(WorkspaceId)(
@@ -244,6 +250,7 @@ describe("P1-011 CreateChildWorkspace", () => {
     const app = makeP1App();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
+      yield* ensureProjectResourceSourceTestColumn();
       yield* seedProject;
       const gw = yield* CommandGateway;
       const payload = childPayload();
@@ -274,6 +281,7 @@ describe("P1-011 CreateChildWorkspace", () => {
     const app = makeP1App();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
+      yield* ensureProjectResourceSourceTestColumn();
       yield* seedProject;
       const sql = yield* SqlClient;
       yield* sql.unsafe(

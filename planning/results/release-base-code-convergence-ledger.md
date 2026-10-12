@@ -17,7 +17,7 @@ merged. The accepted combined-design owner package was overlaid separately in
 | Blocked final implementation | accepted final `a1fe1f20…`; B0 review | Final net tree diff only, committed as `5c010bb`; no intermediate branch commits were replayed |
 | P40 checkpoint | `73f2a9d…` | Excluded; ledger-only pending accepted implementation prefix |
 | P41 physical WIP | `8a39cce…` | Excluded; WIP was not cherry-picked or merged |
-| F21 source attribution | `265178bad9…` | Not imported by these convergence commits; preserve for separate source-attribution audit |
+| F21 source attribution | accepted semantic-port package; integration commits `c58a5b93`, `8f34c93d`, `9fff6f14` | Ported with the CreateProject resource-source contract, idempotent gated 0042 descriptor, and final evidence record |
 
 ## Conflict and overlap ledger
 
@@ -37,7 +37,7 @@ merged. The accepted combined-design owner package was overlaid separately in
 | 0039 / P39 | RecoveryBinding V1 + DeniedUnbound code is present behind the separate P39 maintenance suffix; it is not in `CURRENT_MIGRATIONS` |
 | 0040 / P40 | Not ported; current migration remains P38 |
 | 0041 / P41 | Not ported; current migration remains P38 |
-| 0042 / F21 | Not imported by this convergence slice; do not infer it from a P40/P41 checkpoint |
+| 0042 / F21 | Descriptor and source-attribution code are present, but 0042 remains unregistered because the cumulative 0039–0041 prefix is not integrated |
 | 0043 / Blocked | Descriptor/store exported for implementation tests only; requires user version 42, is absent from `CURRENT_MIGRATIONS`, and was not run against any existing database |
 
 Verified source expression remains `CURRENT_MIGRATIONS = P38_MIGRATIONS`.
@@ -53,8 +53,11 @@ deployment, or live instance was touched.
 - P39 atomic receipt/binding/attempt-zero claim test: 2/2 passed.
 - Blocked target: 10 files, 27/27 passed, including SQLite `runDaemonOnce`
   restart 2/2.
+- F21 source-attribution target: 9 files, 51/51 passed; preserve-only CreateProject
+  v1 receipt: 1/1 passed.
 - Web Work Detail render target: 27/27 passed.
-- Minimal project TypeScript build and Biome over 63 changed TS/TSX files
-  passed; `git diff --check` passed.
+- `pnpm typecheck` passed after the accepted F21 port; Biome over the F21
+  integration TS/TSX delta (21 files) passed; earlier Blocked/P39 Biome and
+  minimal TypeScript gates passed; `git diff --check` passed.
 - No full functional suite, full workspace build, migration on an existing
   database, deployment, or live process was run.

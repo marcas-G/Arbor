@@ -156,12 +156,7 @@ const definition = {
   interfaces: [],
 };
 
-export const seedProject = (args: {
-  readonly projectId: ProjectId;
-  readonly rootWorkspaceId: WorkspaceId;
-  readonly sessionId: SessionId;
-  readonly commandId: CommandId;
-}) =>
+export const ensureProjectResourceSourceTestColumn = () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     const projectColumns = yield* sql.unsafe<{ name: string }>(
@@ -174,6 +169,16 @@ export const seedProject = (args: {
         `ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL DEFAULT '{"_tag":"LegacyUnknown"}' CHECK (json_valid(resource_source_json))`,
       );
     }
+  });
+
+export const seedProject = (args: {
+  readonly projectId: ProjectId;
+  readonly rootWorkspaceId: WorkspaceId;
+  readonly sessionId: SessionId;
+  readonly commandId: CommandId;
+}) =>
+  Effect.gen(function* () {
+    yield* ensureProjectResourceSourceTestColumn();
     const gateway = yield* CommandGateway;
     const payload: CreateProjectPayload = {
       name: "Arbor",
