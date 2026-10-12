@@ -1,7 +1,8 @@
 # P39 Windows ACL test environment
 
 Date: 2026-10-13
-Base: `f56dd8691a08d6cd4d05cda3ac52777150ff3933`
+Source fix base: `f56dd8691a08d6cd4d05cda3ac52777150ff3933`
+Integrated fix commit: `8d23d150` (`test: fix P39 Windows ACL qualification fixtures`)
 
 ## Change
 
@@ -32,6 +33,11 @@ service was changed.
 - Blocked WorkEpisode restart qualification: 2/2 passed.
 - `pnpm typecheck`: passed.
 - Biome on all seven changed TypeScript/config files: passed.
+- The writer test left one untracked artifact in the integration worktree root:
+  `.arbor-p39-writer-650dffe795249f18518b610197aee7e4be03ac33c51c5534dae26d499e2ea7aa.sqlite`.
+  It was confirmed test-generated, not tracked or ignored, and removed after
+  the test process exited; the worktree is clean.
 
-The complete workspace `pnpm check` was not rerun. These results address the
-Windows ACL environment failures and do not establish a full release check.
+These targeted results address the Windows ACL environment failures and do
+not establish a full release check; the integrated branch full check is run
+separately after this record is committed.
