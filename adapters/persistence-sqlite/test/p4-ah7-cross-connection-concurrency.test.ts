@@ -395,6 +395,43 @@ const durableCounts = (app: StoreLayer) =>
     ),
   );
 
+const durableInvocationDiagnostic = (app: StoreLayer) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          return yield* sql.unsafe<{
+            invocation_id: string;
+            execution_id: string;
+            effect_admission_state: string;
+            settled_at: string | null;
+            settlement_kind: string | null;
+            settlement_json: string | null;
+            result_ref: string | null;
+            lease_worker_id: string | null;
+            lease_worker_incarnation_id: string | null;
+            lease_generation: number | null;
+            lease_expires_at: string | null;
+          }>(
+            `SELECT i.invocation_id, i.execution_id,
+                    i.effect_admission_state, i.settled_at,
+                    i.settlement_kind, i.settlement_json, i.result_ref,
+                    l.worker_id AS lease_worker_id,
+                    l.worker_incarnation_id AS lease_worker_incarnation_id,
+                    l.generation AS lease_generation,
+                    l.expires_at AS lease_expires_at
+               FROM tool_invocations i
+               LEFT JOIN execution_leases l ON l.execution_id = i.execution_id
+              WHERE i.invocation_id = ?`,
+            [invocationId],
+          );
+        }),
+        app,
+      ),
+    ),
+  );
+
 const connectionIdentity = (app: StoreLayer) =>
   Effect.runPromise(
     Effect.scoped(
@@ -705,9 +742,43 @@ describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () =
       "result",
     ]);
     const outcomes = readyResults.map((result) => result.result);
-    expect(
-      outcomes.filter((result) => result?.outcome === "Success"),
-    ).toHaveLength(1);
+    const successfulOutcomes = outcomes.filter(
+      (result) => result?.outcome === "Success",
+    );
+    const effects = readFileSync(effectLogPath, "utf8")
+      .split(/\r?\n/u)
+      .filter((line) => line.length > 0);
+    const rows = await durableCounts(infrastructure);
+    if (
+      successfulOutcomes.length !== 1 ||
+      effects.length !== 1 ||
+      effects[0] !== processEffectMarker ||
+      rows[0]?.intents !== 1 ||
+      rows[0]?.settled !== 1 ||
+      rows[0]?.settlement_kind !== "Success"
+    ) {
+      const canonicalInvocation =
+        await durableInvocationDiagnostic(infrastructure);
+      console.error(
+        "AH7 same-holder cross-process barrier failure diagnostic",
+        JSON.stringify(
+          {
+            workers: readyResults.map((result) => ({
+              worker: result.worker,
+              pid: result.pid,
+              result: result.result,
+              error: result.error,
+            })),
+            injectedFence: executionFence,
+            canonicalInvocation,
+            effectMarkers: effects,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    expect(successfulOutcomes).toHaveLength(1);
     const nonSuccess = outcomes.filter(
       (result) => result?.outcome !== "Success",
     );
@@ -719,11 +790,7 @@ describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () =
         (loser?.outcome === "Rejected" && loser.stage === "IntentJournal"),
     ).toBe(true);
 
-    const effects = readFileSync(effectLogPath, "utf8")
-      .split(/\r?\n/u)
-      .filter((line) => line.length > 0);
     expect(effects).toEqual([processEffectMarker]);
-    const rows = await durableCounts(infrastructure);
     expect(rows[0]).toMatchObject({
       intents: 1,
       settled: 1,
