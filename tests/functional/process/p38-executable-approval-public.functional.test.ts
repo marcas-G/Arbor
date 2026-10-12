@@ -51,6 +51,7 @@ interface ApprovalSnapshot {
       }
     | undefined;
   readonly effectCount: number;
+  readonly matchingInvocationCount: number;
 }
 
 const fixtures: ProductionFixture[] = [];
@@ -312,7 +313,29 @@ const readApprovalSnapshot = (
     const effectCount = effectText
       .split(/\r?\n/u)
       .filter((line) => line.length > 0).length;
-    return { approval, step, action, invocation, effectCount };
+    const matchingInvocationCount =
+      approval === undefined
+        ? 0
+        : Number(
+            (
+              db
+                .prepare(
+                  `SELECT COUNT(*) AS count FROM tool_invocations
+                    WHERE execution_id = ? AND approval_id = ?`,
+                )
+                .get(approval.execution_id, approvalId) as {
+                readonly count: number;
+              }
+            ).count,
+          );
+    return {
+      approval,
+      step,
+      action,
+      invocation,
+      effectCount,
+      matchingInvocationCount,
+    };
   } finally {
     db.close();
   }
@@ -542,6 +565,7 @@ describe("pending P38 public Executable approval qualification", () => {
     });
     expect(claimed.action?.state).toBe("Pending");
     expect(claimed.effectCount).toBe(0);
+    expect(claimed.matchingInvocationCount).toBe(1);
 
     const peer = await run.fixture.startAdditionalDaemon({
       entry: p4FenceChild,
@@ -570,6 +594,7 @@ describe("pending P38 public Executable approval qualification", () => {
         run.before.step?.provider_turn_id,
       );
       expect(recovered.effectCount).toBe(1);
+      expect(recovered.matchingInvocationCount).toBe(1);
       expect(run.fixture.daemonErrors).toEqual([]);
       expect(peer.daemonErrors).toEqual([]);
     } finally {
@@ -637,6 +662,7 @@ describe("pending P38 public Executable approval qualification", () => {
       settlement_kind: null,
     });
     expect(afterEffect.effectCount).toBe(1);
+    expect(afterEffect.matchingInvocationCount).toBe(1);
 
     const peer = await run.fixture.startAdditionalDaemon({
       entry: p4FenceChild,
@@ -659,7 +685,8 @@ describe("pending P38 public Executable approval qualification", () => {
         (snapshot) =>
           snapshot.approval?.state === "Consumed" &&
           snapshot.invocation?.settlement_kind === "OutcomeUnknown" &&
-          snapshot.effectCount === 1,
+          snapshot.effectCount === 1 &&
+          snapshot.matchingInvocationCount === 1,
         60_000,
       );
       expect(recovered.approval).toMatchObject({
