@@ -33,10 +33,27 @@ cross-source deduplication was introduced.
   `recovery.escalated` (after the initial workspace build).
 - `tests/p9-worker-crash.test.ts` + `tests/p9-recovery-visibility.test.ts`:
   **15/15 PASS**.
+- The W5 test asserts exactly one durable `ReconciliationEscalated` row with
+  the expected aggregate/execution ID, exact invocation refs, and matching
+  `invocationRefsFingerprint` (not merely an in-memory result count).
 - `pnpm typecheck`: PASS.
-- `pnpm build`: PASS.
+- `pnpm build`: PASS on the source fix commit before the additional assertion.
 - Biome on the changed runtime and regression test files: PASS.
 - `git diff --check`: PASS.
+
+Integration validation after cherry-picking onto `60cb569f` (fix commit
+`4a10e8ce`, assertion/evidence follow-up recorded separately):
+
+- Worker-crash + recovery-visibility: **15/15 PASS**, including the exact
+  durable event assertion above.
+- P9 acceptance Story B selection: **2/2 PASS**.
+- P9 tool-outcome-unknown `TT4/NonIdempotent` selection: **1 failure** before
+  the expected crash injection; observed
+  `Cannot read properties of undefined (reading 'map')` instead of
+  `harness-kill:tool-post-effect`. This was outside the W5 test and its one-line
+  recovery-result change; no fix is claimed here.
+- `pnpm typecheck`: PASS; Biome on `recovery.ts` and `p9-worker-crash.test.ts`:
+  PASS.
 
 No full `pnpm check`, daemon/process suite, live environment, or existing
 database was used.
