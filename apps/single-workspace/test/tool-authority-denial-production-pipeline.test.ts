@@ -14,6 +14,7 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  type NoEffectDenialCode,
   PermissionGrantRepository,
   ProjectEnvironmentPort,
   ProjectRepository,
@@ -21,6 +22,7 @@ import {
   SandboxPort,
   ToolCatalogPort,
   ToolInvocationStore,
+  type ToolInvocationIntent,
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
@@ -122,6 +124,18 @@ const makeProductionPipeline = (projectLookupOperationalFailure: boolean) => {
       recordIntent: () => Effect.void,
       settle: () => Effect.succeed(true),
       consumeApproval: () => Effect.succeed(true),
+      recordNoEffectDenial: (
+        invocation: ToolInvocationIntent,
+        reasonCode: NoEffectDenialCode,
+        settledAt: string,
+      ) =>
+        Effect.succeed({
+          ...invocation,
+          effectAdmissionState: "NotAdmitted" as const,
+          settlement: { _tag: "Denied" as const, reasonCode },
+          settledAt,
+          resultRef: null,
+        }),
       findApproval: () => Effect.succeed(Option.none()),
       findById: () => Effect.succeed(Option.none()),
       findUnsettled: () => Effect.succeed([]),
@@ -191,66 +205,66 @@ type ExecutablePipelineLayer = Layer.Layer<
 >;
 
 const invokeExecutable = (layer: ExecutablePipelineLayer) =>
-  Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const runtime = yield* ToolRuntimePort;
-        const clock = yield* Clock;
-        return yield* makeExecutableToolHandler(runtime, clock, {
-          visibleRefs: () =>
-            Effect.succeed([
-              {
-                name: PATCH_DEFINITION.name,
-                version: PATCH_DEFINITION.version,
-                hash: PATCH_DEFINITION.hash,
-              },
-            ]),
-          resolveForModel: () =>
-            Effect.die("unused in executable observation test"),
-        }).handle({
-          invocation: {
-            providerTurnId: "ptn_authority-denial" as never,
-            outputPosition: 0,
-            callRef: "call-authority-denial",
-            toolName: PATCH_DEFINITION.name,
-            argumentsJson: JSON.stringify({
-              target: { mount: "workspace", path: "." },
-              unifiedDiff: "--- a/file\n+++ b/file\n@@\n-old\n+new\n",
-            }),
-          },
-          execution: {
-            executionId,
-            projectId,
-            workspaceId,
-            sessionId,
-            binding: {
-              _tag: "WorkspaceExecution",
-              workspaceId,
-              focus: { _tag: "Work", workId },
+  Effect.provide(
+    Effect.gen(function* () {
+      const runtime = yield* ToolRuntimePort;
+      const clock = yield* Clock;
+      return yield* makeExecutableToolHandler(runtime, clock, {
+        visibleRefs: () =>
+          Effect.succeed([
+            {
+              name: PATCH_DEFINITION.name,
+              version: PATCH_DEFINITION.version,
+              hash: PATCH_DEFINITION.hash,
             },
-            admittedAt: now,
-            stopRequestedAt: null,
-            state: { status: "Active", settlement: null },
+          ]),
+        resolveForModel: () =>
+          Effect.die("unused in executable observation test"),
+      }).handle({
+        invocation: {
+          providerTurnId: "ptn_authority-denial" as never,
+          outputPosition: 0,
+          callRef: "call-authority-denial",
+          toolName: PATCH_DEFINITION.name,
+          argumentsJson: JSON.stringify({
+            target: { mount: "workspace", path: "." },
+            unifiedDiff: "--- a/file\n+++ b/file\n@@\n-old\n+new\n",
+          }),
+        },
+        execution: {
+          executionId,
+          projectId,
+          workspaceId,
+          sessionId,
+          binding: {
+            _tag: "WorkspaceExecution",
+            workspaceId,
+            focus: { _tag: "Work", workId },
           },
-          context: {
-            _tag: "ExecutionOrigin",
-            principal,
-            executionId,
-            workerId: "worker:authority-denial-test",
-            workerIncarnationId: "incarnation:authority-denial-test",
-            fencingGeneration: 0 as never,
-          },
-          controlBasis: {} as never,
-        });
-      }),
-      layer,
-    ),
+          admittedAt: now,
+          stopRequestedAt: null,
+          state: { status: "Active", settlement: null },
+        },
+        context: {
+          _tag: "ExecutionOrigin",
+          principal,
+          executionId,
+          workerId: "worker:authority-denial-test",
+          workerIncarnationId: "incarnation:authority-denial-test",
+          fencingGeneration: 0 as never,
+        },
+        controlBasis: {} as never,
+      });
+    }),
+    layer,
   );
 
 describe("production authority denial executable path", () => {
   it("turns policy denial into a Denied observation and keeps resolver faults operational", async () => {
     const deniedPipeline = makeProductionPipeline(false);
-    const observation = await invokeExecutable(deniedPipeline.layer);
+    const observation = await Effect.runPromise(
+      invokeExecutable(deniedPipeline.layer),
+    );
 
     expect(observation).toMatchObject({
       _tag: "Observation",
