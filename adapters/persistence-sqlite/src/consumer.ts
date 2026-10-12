@@ -245,7 +245,10 @@ export const rebuildProjection = (
       );
     const floor = Number(floorRows[0]?.floor ?? 0);
     const offset = yield* tx.transact(offsets.read(consumerId, projectId));
-    if (offset < floor) {
+    // Rebuild atomically rewinds to floor - 1 before catch-up; that committed
+    // cursor is also the only valid restart point after a crash in this gap.
+    const minimumSafeOffset = Math.max(floor - 1, 0);
+    if (offset < minimumSafeOffset) {
       return yield* Effect.fail<ConsumerRebuildRefused>({
         _tag: "ConsumerRebuildRefused",
         offset,

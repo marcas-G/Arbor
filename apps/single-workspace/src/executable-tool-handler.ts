@@ -107,6 +107,28 @@ export const toExecutableOutcome = (
         observation: bounded(`tool runtime failure: ${result.cause}`),
         status: "Failed",
       };
+    case "ReconciledNoEffect": {
+      const status =
+        result.reasonCode === "StopRequested"
+          ? "Interrupted"
+          : result.reasonCode === "ReplayLimitReached"
+            ? "Failed"
+            : "Denied";
+      const disposition =
+        result.reasonCode === "StopRequested"
+          ? "ExecutionStopping"
+          : `ReconciledNoEffect:${result.reasonCode}`;
+      return {
+        _tag: "Observation",
+        source: "Tool",
+        observation: result.observation,
+        status,
+        disposition,
+        resultRef: result.resultRef,
+        artifactRefs: [result.resultRef],
+        reconciliationFactRef: result.reconciliationFactRef,
+      };
+    }
   }
 };
 
@@ -160,6 +182,8 @@ export const makeExecutableToolHandler = (
     recoveryBindingIdentity,
     recoveryBindingPolicyRevisions,
     executionFence: actionFence,
+    providerTurnId,
+    logicalActionId,
   }) =>
     Effect.gen(function* () {
       const requestedAt = yield* clock.now();
@@ -275,6 +299,8 @@ export const makeExecutableToolHandler = (
         ...(recoveryBindingPolicyRevisions === undefined
           ? {}
           : { recoveryBindingPolicyRevisions }),
+        ...(providerTurnId === undefined ? {} : { providerTurnId }),
+        ...(logicalActionId === undefined ? {} : { logicalActionId }),
         executionFence,
         delegationDepth:
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
@@ -298,6 +324,13 @@ export const makeExecutableToolHandler = (
         onSuccess: (value) => ({ ok: true as const, value }),
       });
       if (!invoked.ok) {
+        if (invoked.cause._tag === "ToolObservationRecoveryBlocked") {
+          return yield* Effect.fail({
+            _tag: "AgentActionRecoveryBlocked" as const,
+            executionId: invoked.cause.executionId,
+            logicalActionId: invoked.cause.logicalActionId,
+          });
+        }
         if (
           "effectDisposition" in invoked.cause &&
           invoked.cause.effectDisposition === "OutcomeUncertain"

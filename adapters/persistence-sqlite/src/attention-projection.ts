@@ -9,6 +9,8 @@ import {
   type DeliverReplayAttentionProjectionRow,
   type ProjectionStoreService,
   type RecoveryAttentionFactStoreService,
+  type ToolObservationReplayAttentionFactStoreService,
+  type ToolObservationReplayAttentionProjectionRow,
   TransactionScope,
   type WorkspaceResourceActivationAttentionProjectionRow,
   type WorkspaceResourceActivationIntent,
@@ -49,6 +51,19 @@ interface DeliverReplayAttentionDbRow {
   readonly source_event_id: string;
   readonly source_fact_id: string;
   readonly source_execution_id: string;
+}
+
+interface ToolObservationReplayAttentionDbRow {
+  readonly project_id: string;
+  readonly dedup_key: string;
+  readonly source: "ToolObservationReplayEvidenceFailure";
+  readonly severity: "ActionRequired";
+  readonly target_workspace_id: string;
+  readonly summary: ToolObservationReplayAttentionProjectionRow["summary"];
+  readonly failure_code: ToolObservationReplayAttentionProjectionRow["failureCode"];
+  readonly occurred_at: string;
+  readonly source_event_id: string;
+  readonly source_fact_id: string;
 }
 
 export type AttentionProjectionQualificationEvent =
@@ -110,6 +125,21 @@ const deliverReplayRowFromDb = (
   sourceEventId: row.source_event_id as never,
   sourceFactId: row.source_fact_id,
   sourceExecutionId: row.source_execution_id,
+});
+
+const toolObservationRowFromDb = (
+  row: ToolObservationReplayAttentionDbRow,
+): ToolObservationReplayAttentionProjectionRow => ({
+  projectId: row.project_id as ProjectId,
+  dedupKey: row.dedup_key,
+  source: row.source,
+  severity: row.severity,
+  targetWorkspaceId: row.target_workspace_id as never,
+  summary: row.summary,
+  failureCode: row.failure_code,
+  occurredAt: row.occurred_at,
+  sourceEventId: row.source_event_id as never,
+  sourceFactId: row.source_fact_id,
 });
 
 const sameRow = (
@@ -325,6 +355,107 @@ export const makeAttentionProjectionStoreLive = (
             ),
             (rows) => rows.map(fromDb),
           ),
+        putToolObservationReplayFailure: (fact, occurredAt) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const owners = yield* run(
+              sql.unsafe<{ workspace_id: string }>(
+                "SELECT workspace_id FROM executions WHERE execution_id = ? AND project_id = ?",
+                [fact.executionId, fact.projectId],
+              ),
+            );
+            const targetWorkspaceId = owners[0]?.workspace_id;
+            if (
+              targetWorkspaceId === undefined ||
+              targetWorkspaceId !== fact.targetWorkspaceId
+            ) {
+              return yield* Effect.fail<AttentionProjectionStoreError>({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "tool-observation-target",
+                reason:
+                  "P9 tool observation replay fact target does not match the owning Execution workspace",
+              });
+            }
+            const row: ToolObservationReplayAttentionProjectionRow = {
+              projectId: fact.projectId,
+              dedupKey: fact.attentionFactId,
+              source: "ToolObservationReplayEvidenceFailure",
+              severity: "ActionRequired",
+              targetWorkspaceId: targetWorkspaceId as never,
+              summary:
+                "A terminal tool outcome could not be replayed from durable observation evidence; recovery is paused.",
+              failureCode: fact.failureCode,
+              occurredAt,
+              sourceEventId: fact.eventId,
+              sourceFactId: fact.attentionFactId,
+            };
+            yield* run(
+              sql.unsafe(
+                `INSERT INTO tool_observation_replay_attention_rows (
+                  project_id, dedup_key, source, severity, target_workspace_id,
+                  summary, failure_code, occurred_at, source_event_id, source_fact_id
+                ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(project_id, dedup_key) DO NOTHING`,
+                [
+                  row.projectId,
+                  row.dedupKey,
+                  row.source,
+                  row.severity,
+                  row.targetWorkspaceId,
+                  row.summary,
+                  row.failureCode,
+                  row.occurredAt,
+                  row.sourceEventId,
+                  row.sourceFactId,
+                ],
+              ),
+            );
+            const rows = yield* run(
+              sql.unsafe<ToolObservationReplayAttentionDbRow>(
+                `SELECT project_id, dedup_key, source, severity,
+                        target_workspace_id, summary, failure_code, occurred_at,
+                        source_event_id, source_fact_id
+                   FROM tool_observation_replay_attention_rows
+                  WHERE project_id = ? AND dedup_key = ?`,
+                [row.projectId, row.dedupKey],
+              ),
+            );
+            const stored = rows[0];
+            if (
+              stored === undefined ||
+              JSON.stringify(toolObservationRowFromDb(stored)) !==
+                JSON.stringify(row)
+            ) {
+              return yield* Effect.fail<AttentionProjectionStoreError>({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "tool-observation-rows",
+                reason:
+                  "P10 replay-evidence dedup identity is already bound to another source row",
+              });
+            }
+          }),
+        listToolObservationReplayFailures: (projectId) =>
+          Effect.gen(function* () {
+            const exists = yield* run(
+              sql.unsafe<{ readonly n: number }>(
+                "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'tool_observation_replay_attention_rows'",
+              ),
+            );
+            if (Number(exists[0]?.n ?? 0) !== 1) return [];
+            const rows = yield* run(
+              sql.unsafe<ToolObservationReplayAttentionDbRow>(
+                `SELECT project_id, dedup_key, source, severity,
+                        target_workspace_id, summary, failure_code, occurred_at,
+                        source_event_id, source_fact_id
+                   FROM tool_observation_replay_attention_rows
+                  WHERE project_id = ? ORDER BY occurred_at, dedup_key`,
+                [projectId],
+              ),
+            );
+            return rows.map(toolObservationRowFromDb);
+          }),
         reconcileWorkspaceResourceActivation: (projectId, intents) =>
           Effect.gen(function* () {
             yield* TransactionScope;
@@ -521,6 +652,21 @@ export const makeAttentionProjectionStoreLive = (
                 ),
               );
             }
+            const replayTable = yield* run(
+              sql.unsafe<{ name: string }>(
+                `SELECT name FROM sqlite_master
+                  WHERE type = 'table'
+                    AND name = 'tool_observation_replay_attention_rows'`,
+              ),
+            );
+            if (replayTable.length > 0) {
+              yield* run(
+                sql.unsafe(
+                  "DELETE FROM tool_observation_replay_attention_rows WHERE project_id = ?",
+                  [projectId],
+                ),
+              );
+            }
           }),
       });
     }),
@@ -580,11 +726,16 @@ export const makeProjectAttentionProjectionStore = (
     AttentionProjectionStoreService,
     | "putAssignWorkBindingFailure"
     | "putDeliverReplayFailure"
+    | "putToolObservationReplayFailure"
     | "resetProject"
     | "reconcileWorkspaceResourceActivation"
     | "reconcileStaleWorkRevisionRows"
   >,
   activationIntents?: Pick<WorkspaceResourceActivationStoreService, "listAll">,
+  toolObservationFacts?: Pick<
+    ToolObservationReplayAttentionFactStoreService,
+    "findById"
+  >,
 ): ProjectionStoreService => ({
   apply: (batch: ReadonlyArray<DomainEvent<unknown>>) =>
     Effect.gen(function* () {
@@ -722,6 +873,73 @@ export const makeProjectAttentionProjectionStore = (
           }
           yield* attentionRows
             .putDeliverReplayFailure(fact)
+            .pipe(Effect.mapError(projectionFailure));
+          continue;
+        }
+        if (event.eventType === "ToolObservationReplayEvidenceEscalated") {
+          if (event.projectId !== projectId) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "P10 Attention consumer received a tool observation replay event for another project",
+            });
+          }
+          if (
+            toolObservationFacts === undefined ||
+            attentionRows.putToolObservationReplayFailure === undefined
+          ) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "P10 tool observation replay event has no exact P9 fact or P10 marker store",
+            });
+          }
+          const payload = payloadRecord(event.payload);
+          const attentionFactId = String(payload.attentionFactId ?? "");
+          const found = yield* toolObservationFacts
+            .findById(attentionFactId)
+            .pipe(Effect.mapError(projectionFailure));
+          if (Option.isNone(found)) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "tool observation replay event has no matching immutable P9 fact",
+            });
+          }
+          const fact = found.value;
+          if (
+            fact.eventId !== event.eventId ||
+            fact.projectId !== projectId ||
+            event.aggregateRef !== fact.targetWorkspaceId ||
+            event.correlationRef !== fact.logicalActionId ||
+            event.causedByCommandId !== undefined ||
+            event.occurredAt !== fact.firstDetectedAt ||
+            fact.attentionFactId !== attentionFactId ||
+            fact.executionId !== String(payload.executionId ?? "") ||
+            fact.targetWorkspaceId !==
+              String(payload.targetWorkspaceId ?? "") ||
+            fact.logicalActionId !== String(payload.logicalActionId ?? "") ||
+            fact.providerTurnId !== String(payload.providerTurnId ?? "") ||
+            fact.callRef !== String(payload.callRef ?? "") ||
+            fact.invocationId !== String(payload.invocationId ?? "") ||
+            fact.failureCode !== String(payload.failureCode ?? "")
+          ) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "tool observation replay event does not exactly match its immutable P9 fact",
+            });
+          }
+          yield* attentionRows
+            .putToolObservationReplayFailure(fact, event.occurredAt)
             .pipe(Effect.mapError(projectionFailure));
           continue;
         }

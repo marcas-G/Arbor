@@ -318,6 +318,7 @@ export type ExecutableInvocationOutcome =
       readonly artifactRefs?: ReadonlyArray<string>;
       readonly invocationId?: import("@arbor/domain").ToolInvocationId;
       readonly terminalDenial?: TerminalActionDenial;
+      readonly reconciliationFactRef?: string;
     }
   | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
 
@@ -336,6 +337,8 @@ export interface ExecutableInvocationInput {
   readonly recoveryBindingIdentity?: RecoveryBindingSourceIdentity;
   readonly recoveryBindingPolicyRevisions?: RecoveryBindingPolicyRevisions;
   readonly executionFence?: import("@arbor/ports").AgentLoopStepFence;
+  readonly providerTurnId?: string;
+  readonly logicalActionId?: string;
 }
 
 export interface ExecutableInvocationHandler {

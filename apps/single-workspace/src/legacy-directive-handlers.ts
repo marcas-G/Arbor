@@ -97,6 +97,12 @@ const toOutcome = (
       return observation("Runtime", "tool outcome unknown");
     case "RuntimeFailure":
       return observation("Runtime", `tool runtime failure: ${result.cause}`);
+    case "ReconciledNoEffect":
+      return {
+        _tag: "Observation",
+        source: "Tool",
+        observation: result.observation,
+      };
   }
 };
 

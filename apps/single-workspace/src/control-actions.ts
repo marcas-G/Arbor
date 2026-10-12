@@ -3551,7 +3551,8 @@ const toolResultMatchesSettlement = (
     case "Failed":
       return (
         settlement._tag === "ExpectedFailure" ||
-        settlement._tag === "RuntimeFailure"
+        settlement._tag === "RuntimeFailure" ||
+        settlement._tag === "ReconciledNoEffect"
       );
     case "Interrupted":
       return settlement._tag === "Interrupted";

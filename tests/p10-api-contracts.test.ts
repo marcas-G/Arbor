@@ -319,6 +319,7 @@ describe("P10-002 per-view DTO cores (05 §1 frozen shapes)", () => {
       "RecoveryEscalation",
       "AssignWorkTargetBindingFailure",
       "DeliverReplayFailure",
+      "ToolObservationReplayEvidenceFailure",
       "VerifierOrphan",
       "VacantProducer",
     ]);

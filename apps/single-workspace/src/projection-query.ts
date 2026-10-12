@@ -527,6 +527,12 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
             );
           }),
         ),
+      listProjectedToolObservationReplayFailures: (projectId) =>
+        attentionProjection.listToolObservationReplayFailures === undefined
+          ? Effect.succeed([])
+          : inTx(
+              attentionProjection.listToolObservationReplayFailures(projectId),
+            ),
     };
 
     const tree: TreeViewDeps = {

@@ -31,7 +31,7 @@ import {
   TransactionScope,
   WorkspaceRepository,
 } from "@arbor/ports";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   actionDigestOf,
@@ -129,6 +129,7 @@ interface PipelineTrace {
   environmentResolutions?: number;
   resourceAdmissionCalls?: number;
   p39BindingCalls?: number;
+  p39SelectedReads?: number;
 }
 
 const app = (
@@ -357,6 +358,7 @@ const app = (
           : Effect.succeed(
               Option.some({
                 projectId,
+                resourceBoundaryRevision: 0,
                 resourceBoundary: {
                   addresses: [{ _tag: "GitWorktree", path: "/repo/a" }],
                 },
@@ -463,7 +465,12 @@ const app = (
             return Effect.succeed("Bound" as const);
           },
           findBinding: () => Effect.succeed(Option.none()),
-          findSelected: () => Effect.succeed(Option.none()),
+          findSelected: () => {
+            if (trace !== undefined) {
+              trace.p39SelectedReads = (trace.p39SelectedReads ?? 0) + 1;
+            }
+            return Effect.succeed(Option.none());
+          },
           findTerminalUnboundDenial: (id: typeof invocationId) =>
             Effect.succeed(
               p39DeniedReplay !== undefined &&
@@ -634,6 +641,76 @@ describe("P4 tool runtime pipeline", () => {
       '{"target":{"mount":"workspace","path":"."}}',
     );
     expect(result._tag).toBe("Success");
+  });
+
+  it("fails closed when P39 does not return authenticated selected evidence for RNO", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+    };
+    const rnoExecutor: ToolExecutor = {
+      ...okExecutor,
+      execute: () =>
+        Effect.succeed({
+          settlement: {
+            _tag: "ReconciledNoEffect",
+            reasonCode: "ReplayLimitReached",
+            reconciliationFactRef: "f".repeat(64),
+          },
+          observation: {
+            text: "P39 selected outcome is absent",
+            truncated: false,
+          },
+          resultRef: null,
+        } as never),
+    };
+    const result = await Effect.runPromiseExit(
+      Effect.provide(
+        Effect.gen(function* () {
+          const runtime = yield* ToolRuntimePort;
+          return yield* runtime.invoke(
+            intent(
+              JSON.stringify({ target: { mount: "workspace", path: "." } }),
+            ) as never,
+            {
+              ...context,
+              authority: {
+                ...authority,
+                sourceRevision: JSON.stringify({
+                  workspacePolicyRevision: 0,
+                  activeGrants: [],
+                  verifierId: null,
+                }),
+              },
+              providerTurnId:
+                "ptn_018f2b3c-4d5e-7abc-8def-0123456789a2" as never,
+              logicalActionId: "lac_p40_missing_selected",
+              recoveryBindingIdentity: {
+                executionId,
+                providerTurnId:
+                  "ptn_018f2b3c-4d5e-7abc-8def-0123456789a2" as never,
+                logicalStepNo: 0,
+                repairAttempt: 0,
+                logicalActionId: "lac_p40_missing_selected",
+                actionIndex: 0,
+                callRef: "c",
+              },
+              recoveryBindingPolicyRevisions: {
+                workspacePolicyRevision: 0,
+                projectPolicyRevision: 0,
+              },
+            } as never,
+          );
+        }),
+        app(false, rnoExecutor, {}, trace, undefined, false, undefined, "rev"),
+      ),
+    );
+    expect(Exit.isFailure(result)).toBe(true);
+    expect(trace.p39SelectedReads).toBe(1);
   });
 
   it("returns the canonical OutcomeUnknown when settlement CAS updates zero rows", async () => {

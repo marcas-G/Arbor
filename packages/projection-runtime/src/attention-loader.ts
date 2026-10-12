@@ -14,6 +14,7 @@ import type {
   AssignWorkBindingAttentionFact,
   AssignWorkBindingAttentionProjectionRow,
   DeliverReplayAttentionProjectionRow,
+  ToolObservationReplayAttentionProjectionRow,
   WorkspaceResourceActivationAttentionProjectionRow,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -170,6 +171,12 @@ export interface AttentionReadDeps {
     workId: WorkId,
     workRevision: number,
   ) => Effect.Effect<boolean, ProjectionReadError>;
+  readonly listProjectedToolObservationReplayFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<ToolObservationReplayAttentionProjectionRow>,
+    ProjectionReadError
+  >;
 }
 
 const asRecord = (payload: unknown): Record<string, unknown> =>
@@ -800,6 +807,21 @@ export const deriveProjectAttention = (
           dedupKey: `resource-activation:${row.projectId}:${row.workspaceId}:${row.resourceBoundaryRevision}`,
           summary:
             "Project resource activation is pending; file actions are unavailable.",
+          occurredAt: row.occurredAt,
+        })),
+      ];
+    }
+    if (deps.listProjectedToolObservationReplayFailures !== undefined) {
+      const replayRows =
+        yield* deps.listProjectedToolObservationReplayFailures(projectId);
+      rows = [
+        ...rows,
+        ...replayRows.map((row) => ({
+          source: row.source,
+          severity: row.severity,
+          targetWorkspaceId: row.targetWorkspaceId,
+          dedupKey: row.dedupKey,
+          summary: row.summary,
           occurredAt: row.occurredAt,
         })),
       ];

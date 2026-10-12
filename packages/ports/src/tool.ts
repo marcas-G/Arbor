@@ -132,6 +132,9 @@ export interface ToolExecutionContext {
   /** Policy revisions from the same P3-prepared ControlBasis whose digest is
    * `controlBasisDigest`; required when P39 V1 binding is enabled. */
   readonly recoveryBindingPolicyRevisions?: RecoveryBindingPolicyRevisions;
+  /** Exact P3 source identity for durable replay-failure escalation. */
+  readonly providerTurnId?: string;
+  readonly logicalActionId?: string;
   readonly delegationDepth?: number;
   /** P2 authoritative Worker holder used only for P4 durable settlement.
    * Production ExecutionOrigin callers always provide the complete triple. */
@@ -224,7 +227,19 @@ export type CanonicalToolObservation =
       readonly _tag: "OutcomeUnknown";
       readonly reconciliationRefs: ReadonlyArray<InvocationRef>;
     }
-  | { readonly _tag: "RuntimeFailure"; readonly cause: string };
+  | { readonly _tag: "RuntimeFailure"; readonly cause: string }
+  | {
+      readonly _tag: "ReconciledNoEffect";
+      readonly reasonCode:
+        | "AuthoritySnapshotChanged"
+        | "ResourceSnapshotChanged"
+        | "ApprovalNoLongerAuthorized"
+        | "StopRequested"
+        | "ReplayLimitReached";
+      readonly reconciliationFactRef: string;
+      readonly observation: BoundedObservation;
+      readonly resultRef: string;
+    };
 
 export type ToolInvocationSettlement =
   | { readonly _tag: "Success" }
@@ -235,7 +250,17 @@ export type ToolInvocationSettlement =
       readonly _tag: "OutcomeUnknown";
       readonly reconciliationRefs: ReadonlyArray<InvocationRef>;
     }
-  | { readonly _tag: "RuntimeFailure"; readonly cause: string };
+  | { readonly _tag: "RuntimeFailure"; readonly cause: string }
+  | {
+      readonly _tag: "ReconciledNoEffect";
+      readonly reasonCode:
+        | "AuthoritySnapshotChanged"
+        | "ResourceSnapshotChanged"
+        | "ApprovalNoLongerAuthorized"
+        | "StopRequested"
+        | "ReplayLimitReached";
+      readonly reconciliationFactRef: string;
+    };
 
 export interface ToolRuntimePortService {
   readonly invoke: (

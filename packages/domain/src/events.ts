@@ -150,6 +150,19 @@ export const DeliverReplayEscalated = Schema.Struct({
     "PriorReceiptEffectConflict",
   ]),
 });
+export const ToolObservationReplayEvidenceEscalated = Schema.TaggedStruct(
+  "ToolObservationReplayEvidenceEscalated",
+  {
+    attentionFactId: Schema.String,
+    executionId: Schema.String,
+    targetWorkspaceId: Schema.String,
+    logicalActionId: Schema.String,
+    providerTurnId: Schema.String,
+    callRef: Schema.String,
+    invocationId: Schema.String,
+    failureCode: Schema.String,
+  },
+);
 export const DeadlockAttentionRequested = Schema.TaggedStruct(
   "DeadlockAttentionRequested",
   {
@@ -329,6 +342,7 @@ export const DomainEventPayload = Schema.Union([
   ReconciliationEscalated,
   AssignWorkTargetBindingEscalated,
   DeliverReplayEscalated,
+  ToolObservationReplayEvidenceEscalated,
   DependencyWithdrawn,
   DependencyMarkedUnfulfillable,
   DeliverableProduced,
@@ -386,6 +400,7 @@ export const EVENT_CATALOG = {
   ReconciliationEscalated,
   AssignWorkTargetBindingEscalated,
   DeliverReplayEscalated,
+  ToolObservationReplayEvidenceEscalated,
   DeliverableProduced,
   MessageSent,
   VerificationStarted,

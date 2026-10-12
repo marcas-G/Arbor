@@ -169,6 +169,7 @@ describe("p10-architecture (projection-runtime)", () => {
       '"RuntimeSafetyEnvelope"',
       '"ReconciliationEscalated"',
       '"AssignWorkTargetBindingFailure"',
+      '"ToolObservationReplayEvidenceFailure"',
       '"VerifierOrphan"',
       '"WaitingOnVacantProducer"',
     ]) {

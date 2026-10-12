@@ -1,7 +1,12 @@
 import { Effect, Exit } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { layer, type MigrationFile, runMigrations } from "../src/index.js";
+import {
+  layer,
+  type MigrationFile,
+  runMigrations,
+  splitStatements,
+} from "../src/index.js";
 
 const init: MigrationFile = {
   id: 1,
@@ -15,6 +20,17 @@ const withClient = <A, E>(
   Effect.runPromise(Effect.provide(program, layer({ filename: ":memory:" })));
 
 describe("sqlite adapter migration runner", () => {
+  it("keeps semicolons inside SQL string literals in the same statement", () => {
+    expect(
+      splitStatements(
+        "CREATE TABLE t (summary TEXT DEFAULT 'first; second'); INSERT INTO t VALUES ('a;b')",
+      ),
+    ).toEqual([
+      "CREATE TABLE t (summary TEXT DEFAULT 'first; second')",
+      "INSERT INTO t VALUES ('a;b')",
+    ]);
+  });
+
   it("applies pending migrations and sets user_version", async () => {
     const result = await withClient(
       Effect.gen(function* () {
