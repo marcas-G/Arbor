@@ -490,10 +490,28 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
       readEvents,
       findAssignWorkBindingFailure: (attentionFactId) =>
         inTx(bindingAttention.findAssignWorkBindingFailure(attentionFactId)),
+      findSubmittedDecisionBindingFailure: (attentionFactId) =>
+        bindingAttention.findSubmittedDecisionBindingFailure === undefined
+          ? Effect.succeed(Option.none())
+          : inTx(
+              bindingAttention.findSubmittedDecisionBindingFailure(
+                attentionFactId,
+              ),
+            ),
       listProjectedAssignWorkBindingFailures: (projectId) =>
         inTx(attentionProjection.listAssignWorkBindingFailures(projectId)),
       listProjectedDeliverReplayFailures: (projectId) =>
         inTx(attentionProjection.listDeliverReplayFailures(projectId)),
+      ...(attentionProjection.listSubmittedDecisionBindingFailures === undefined
+        ? {}
+        : {
+            listProjectedSubmittedDecisionBindingFailures: (projectId) =>
+              inTx(
+                attentionProjection.listSubmittedDecisionBindingFailures?.(
+                  projectId,
+                ) ?? Effect.succeed([]),
+              ),
+          }),
       listProjectedWorkspaceResourceActivations: (projectId) =>
         inTx(
           attentionProjection.listWorkspaceResourceActivationPending(projectId),

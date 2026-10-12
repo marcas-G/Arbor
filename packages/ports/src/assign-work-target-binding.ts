@@ -335,6 +335,30 @@ export interface RecoveryAttentionFactStoreService {
   >;
 }
 
+export type SubmittedDecisionBindingFailureCode =
+  | "DecisionRequestWorkspaceMismatch"
+  | "StepManifestMismatch"
+  | "SettledExecutionWithPendingDecisionAction";
+
+export interface SubmittedDecisionBindingAttentionFact {
+  readonly attentionFactId: string;
+  readonly eventId: string;
+  readonly projectId: ProjectId;
+  readonly executionId: ExecutionId;
+  readonly workspaceId: WorkspaceId;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly providerTurnId: ProviderTurnId;
+  readonly logicalActionId: string;
+  readonly failureCode: SubmittedDecisionBindingFailureCode;
+  readonly firstDetectedAt: string;
+}
+
+/** Fully identified immutable fact; the Runtime owns event creation and binds
+ * its exact journal id before asking persistence to store the witness. */
+export type RecordSubmittedDecisionBindingFailureInput =
+  SubmittedDecisionBindingAttentionFact;
+
 export class RecoveryAttentionFactStore extends Context.Service<
   RecoveryAttentionFactStore,
   RecoveryAttentionFactStoreService

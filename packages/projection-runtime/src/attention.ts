@@ -22,6 +22,7 @@ export type AttentionSource =
   | "AssignWorkTargetBindingFailure"
   | "DeliverReplayFailure"
   | "ToolObservationReplayEvidenceFailure"
+  | "SubmittedDecisionBindingFailure"
   | "WorkspaceResourceActivationPending"
   | "WorkEpisodeBlocked"
   | "VerifierOrphan"
@@ -90,6 +91,13 @@ export interface AssignWorkBindingFailureEventFact {
   readonly occurredAt: string;
 }
 
+export interface SubmittedDecisionBindingFailureEventFact {
+  readonly attentionFactId: string;
+  readonly executionId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly firstDetectedAt: string;
+}
+
 /** Open verification fact (owner workspace = owning workspace of the
  * target Work, P8 `02` §3). */
 export interface OpenVerificationFact {
@@ -134,6 +142,7 @@ export interface AttentionFacts {
   readonly safetyStopSettlements: ReadonlyArray<SafetyStopFact>;
   readonly reconciliationEscalatedEvents: ReadonlyArray<EscalationEventFact>;
   readonly assignWorkBindingFailureEvents?: ReadonlyArray<AssignWorkBindingFailureEventFact>;
+  readonly submittedDecisionBindingFailureEvents?: ReadonlyArray<SubmittedDecisionBindingFailureEventFact>;
   readonly openVerifications: ReadonlyArray<OpenVerificationFact>;
   readonly executionSettlements: ReadonlyArray<ExecutionSettlementFact>;
   readonly vacantProducerCandidates: ReadonlyArray<VacantProducerCandidateFact>;
@@ -305,6 +314,18 @@ export const deriveAttentionRows = (
       dedupKey: fact.attentionFactId,
       summary: `A committed AssignWork could not be proven to match its exact target; recovery is paused. (${fact.failureCode})`,
       occurredAt: fact.occurredAt,
+    });
+  }
+
+  for (const fact of facts.submittedDecisionBindingFailureEvents ?? []) {
+    rows.push({
+      source: "SubmittedDecisionBindingFailure",
+      severity: "ActionRequired",
+      targetWorkspaceId: fact.workspaceId,
+      dedupKey: fact.attentionFactId,
+      summary:
+        "A Scheduler decision action could not be safely recovered; review is required.",
+      occurredAt: fact.firstDetectedAt,
     });
   }
 

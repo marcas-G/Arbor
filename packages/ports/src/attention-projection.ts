@@ -10,6 +10,7 @@ import type {
   AssignWorkBindingFailureCode,
   DeliverReplayAttentionFact,
   DeliverReplayFailureCode,
+  SubmittedDecisionBindingAttentionFact,
 } from "./assign-work-target-binding.js";
 import type { RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
@@ -43,6 +44,13 @@ export interface AssignWorkBindingAttentionProjectionRow {
   readonly sourceFactId: string;
   /** Internal P10 read binding; omitted from Attention response rows. */
   readonly sourceExecutionId: string;
+}
+
+export interface SubmittedDecisionBindingAttentionProjectionRow {
+  readonly projectId: ProjectId;
+  readonly attentionFactId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly firstDetectedAt: string;
 }
 
 export interface WorkspaceResourceActivationAttentionProjectionRow {
@@ -100,6 +108,16 @@ export interface AttentionProjectionStoreService {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<ToolObservationReplayAttentionProjectionRow>,
+    AttentionProjectionStoreError,
+    TransactionScope
+  >;
+  readonly putSubmittedDecisionBindingFailure?: (
+    fact: SubmittedDecisionBindingAttentionFact,
+  ) => Effect.Effect<void, AttentionProjectionStoreError, TransactionScope>;
+  readonly listSubmittedDecisionBindingFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<SubmittedDecisionBindingAttentionProjectionRow>,
     AttentionProjectionStoreError,
     TransactionScope
   >;

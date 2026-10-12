@@ -110,6 +110,20 @@ interface Snapshot {
   }>;
 }
 
+interface SubmittedBindingFactRow {
+  readonly attention_fact_id: string;
+  readonly execution_id: string;
+  readonly project_id: string;
+  readonly workspace_id: string;
+  readonly logical_step_no: number;
+  readonly repair_attempt: number;
+  readonly provider_turn_id: string;
+  readonly logical_action_id: string;
+  readonly failure_code: string;
+  readonly first_detected_at: string;
+  readonly event_id: string;
+}
+
 const fixtures: ProductionFixture[] = [];
 const ah10Child = resolve("tests/functional/support/ah10-process-child.mjs");
 
@@ -200,7 +214,7 @@ const readRows = (databaseFile: string): Snapshot => {
         .all() as Snapshot["observations"],
       events: db
         .prepare(
-          "SELECT event_type, aggregate_ref, payload_json FROM domain_events WHERE event_type = 'CurrentWorkChanged' ORDER BY sequence",
+          "SELECT event_type, aggregate_ref, payload_json FROM domain_events ORDER BY sequence",
         )
         .all() as Snapshot["events"],
       attempts: db
@@ -212,6 +226,52 @@ const readRows = (databaseFile: string): Snapshot => {
     };
   } finally {
     db.close();
+  }
+};
+
+const readSubmittedBindingFacts = (
+  databaseFile: string,
+  executionId: string,
+): SubmittedBindingFactRow[] => {
+  const database = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    return database
+      .prepare(
+        `SELECT attention_fact_id, execution_id, project_id, workspace_id,
+                logical_step_no, repair_attempt, provider_turn_id,
+                logical_action_id, failure_code, first_detected_at, event_id
+           FROM submitted_decision_binding_attention_facts
+          WHERE execution_id = ? ORDER BY logical_step_no, repair_attempt,
+                   logical_action_id`,
+      )
+      .all(executionId) as unknown as SubmittedBindingFactRow[];
+  } finally {
+    database.close();
+  }
+};
+
+const recordUnresolvedP4EffectIntent = (
+  databaseFile: string,
+  executionId: string,
+  workspaceId: string,
+): string => {
+  const invocationId = functionalId("tin");
+  const database = new DatabaseSync(databaseFile);
+  try {
+    database
+      .prepare(
+        `INSERT INTO tool_invocations (
+           invocation_id, execution_id, workspace_id, tool_name, tool_version,
+           side_effect_semantics, arguments_json, resolved_regions_json,
+           approval_id, effect_admission_state, intent_at, settled_at,
+           settlement_kind, settlement_json, result_ref
+         ) VALUES (?, ?, ?, 'test-reconcilable', '1', 'Reconcilable',
+                   '{}', '[]', NULL, 'MayHaveStarted', ?, NULL, NULL, NULL, NULL)`,
+      )
+      .run(invocationId, executionId, workspaceId, new Date().toISOString());
+    return invocationId;
+  } finally {
+    database.close();
   }
 };
 
@@ -284,9 +344,58 @@ const workAssignment = (label: string, marker: string) => ({
 });
 
 describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
-  it.each(["workspace", "manifest"] as const)(
-    "does not resume a Committed SelectCurrentWork action with a corrupted %s binding",
-    async (corruption) => {
+  it.each([
+    {
+      corruption: "workspace",
+      unresolvedP4Effect: false,
+      stopFirst: false,
+      settledOrphan: false,
+      failStopCloseWrite: false,
+    },
+    {
+      corruption: "manifest",
+      unresolvedP4Effect: false,
+      stopFirst: false,
+      settledOrphan: false,
+      failStopCloseWrite: false,
+    },
+    {
+      corruption: "workspace",
+      unresolvedP4Effect: true,
+      stopFirst: false,
+      settledOrphan: false,
+      failStopCloseWrite: false,
+    },
+    {
+      corruption: "workspace",
+      unresolvedP4Effect: false,
+      stopFirst: true,
+      settledOrphan: false,
+      failStopCloseWrite: false,
+    },
+    {
+      corruption: "workspace",
+      unresolvedP4Effect: false,
+      stopFirst: false,
+      settledOrphan: true,
+      failStopCloseWrite: false,
+    },
+    {
+      corruption: "workspace",
+      unresolvedP4Effect: false,
+      stopFirst: true,
+      settledOrphan: false,
+      failStopCloseWrite: true,
+    },
+  ] as const)(
+    "freezes a corrupted $corruption binding (unresolved P4 effect: $unresolvedP4Effect, Stop first: $stopFirst, settled orphan: $settledOrphan, abort close write: $failStopCloseWrite)",
+    async ({
+      corruption,
+      unresolvedP4Effect,
+      stopFirst,
+      settledOrphan,
+      failStopCloseWrite,
+    }) => {
       const marker = `AH10-submitted-binding-${corruption}-${crypto.randomUUID().slice(0, 8)}`;
       const events: Probe[] = [];
       let assignmentsSent = false;
@@ -615,7 +724,77 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
         db.close();
       }
 
+      if (settledOrphan) {
+        const legacy = new DatabaseSync(fixture.databaseFile);
+        try {
+          legacy
+            .prepare(
+              `UPDATE executions
+                  SET settlement_kind = 'Failed', settlement_json = ?,
+                      settled_at = ?
+                WHERE execution_id = ?`,
+            )
+            .run(
+              JSON.stringify({ _tag: "Failed", reason: "legacy fixture" }),
+              new Date().toISOString(),
+              oldAction.executionId,
+            );
+        } finally {
+          legacy.close();
+        }
+      }
       const corrupted = readRows(fixture.databaseFile);
+      let beforeRestart = corrupted;
+      if (stopFirst) {
+        await client.command(project.projectId, "StopExecution", {
+          executionId: oldAction.executionId,
+        });
+        beforeRestart = readRows(fixture.databaseFile);
+        expect(
+          beforeRestart.executions.find(
+            (execution) => execution.execution_id === oldAction.executionId,
+          ),
+        ).toMatchObject({ settled_at: null, settlement_kind: null });
+        expect(
+          beforeRestart.steps.find(
+            (step) =>
+              step.execution_id === oldAction.executionId &&
+              step.logical_step_no === 0 &&
+              step.repair_attempt === 0 &&
+              step.provider_turn_id === oldAction.providerTurnId,
+          ),
+        ).toEqual(
+          corrupted.steps.find(
+            (step) =>
+              step.execution_id === oldAction.executionId &&
+              step.logical_step_no === 0 &&
+              step.repair_attempt === 0 &&
+              step.provider_turn_id === oldAction.providerTurnId,
+          ),
+        );
+        expect(
+          readSubmittedBindingFacts(
+            fixture.databaseFile,
+            oldAction.executionId,
+          ),
+        ).toEqual([]);
+        if (failStopCloseWrite) {
+          const fault = new DatabaseSync(fixture.databaseFile);
+          try {
+            fault.exec(`
+              CREATE TRIGGER p41_abort_stop_close
+              BEFORE UPDATE OF state ON agent_loop_steps
+              WHEN OLD.execution_id = '${oldAction.executionId}'
+                AND NEW.state = 'SettlementProposed'
+              BEGIN
+                SELECT RAISE(ABORT, 'p41_stop_close_abort');
+              END;
+            `);
+          } finally {
+            fault.close();
+          }
+        }
+      }
       expect(
         selectReceipt(
           corrupted,
@@ -664,11 +843,11 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
 
       await fixture.crash();
       const afterOldKill = readRows(fixture.databaseFile);
-      expect(afterOldKill.commands).toEqual(corrupted.commands);
-      expect(afterOldKill.events).toEqual(corrupted.events);
-      expect(afterOldKill.decisions).toEqual(corrupted.decisions);
-      expect(afterOldKill.actions).toEqual(corrupted.actions);
-      expect(afterOldKill.observations).toEqual(corrupted.observations);
+      expect(afterOldKill.commands).toEqual(beforeRestart.commands);
+      expect(afterOldKill.events).toEqual(beforeRestart.events);
+      expect(afterOldKill.decisions).toEqual(beforeRestart.decisions);
+      expect(afterOldKill.actions).toEqual(beforeRestart.actions);
+      expect(afterOldKill.observations).toEqual(beforeRestart.observations);
       await waitForPublic(
         async () =>
           readRows(fixture.databaseFile).leases.find(
@@ -688,20 +867,105 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
         },
         onStdout: (line) => pushProbe(events, line),
       });
-      await waitForPublic(
-        async () =>
-          events.find(
-            (event) =>
-              event.role === "new" &&
-              event.boundary === "AH10AfterLeaseAcquired" &&
-              event.executionId === oldAction.executionId,
+      if (failStopCloseWrite) {
+        await waitForPublic(
+          async () =>
+            events.find(
+              (event) =>
+                event.role === "new" &&
+                event.boundary === "AH10AfterLeaseAcquired" &&
+                event.executionId === oldAction.executionId &&
+                event.fencingGeneration === 1,
+            ),
+          (event) => event !== undefined,
+          45_000,
+        );
+        await waitForPublic(
+          async () => newDaemon.daemonErrors,
+          (errors) =>
+            errors.some((error) => error.includes("p41_stop_close_abort")),
+          20_000,
+        );
+        const rolledBack = readRows(fixture.databaseFile);
+        expect(
+          readSubmittedBindingFacts(
+            fixture.databaseFile,
+            oldAction.executionId,
           ),
-        (event) => event !== undefined && event.fencingGeneration === 1,
-        45_000,
-      );
+        ).toEqual([]);
+        expect(
+          rolledBack.events.filter(
+            (event) =>
+              event.event_type === "SubmittedDecisionBindingEscalated" &&
+              event.aggregate_ref === project.rootWorkspaceId,
+          ),
+        ).toEqual([]);
+        expect(
+          rolledBack.steps.find(
+            (step) =>
+              step.execution_id === oldAction.executionId &&
+              step.logical_step_no === 0 &&
+              step.repair_attempt === 0 &&
+              step.provider_turn_id === oldAction.providerTurnId,
+          ),
+        ).toEqual(
+          beforeRestart.steps.find(
+            (step) => step.execution_id === oldAction.executionId,
+          ),
+        );
+        expect(
+          rolledBack.actions.find(
+            (action) => action.logical_action_id === oldAction.logicalActionId,
+          ),
+        ).toEqual(
+          beforeRestart.actions.find(
+            (action) => action.logical_action_id === oldAction.logicalActionId,
+          ),
+        );
+        expect(
+          rolledBack.executions.find(
+            (execution) => execution.execution_id === oldAction.executionId,
+          ),
+        ).toEqual(
+          beforeRestart.executions.find(
+            (execution) => execution.execution_id === oldAction.executionId,
+          ),
+        );
+        const fault = new DatabaseSync(fixture.databaseFile);
+        try {
+          fault.exec("DROP TRIGGER p41_abort_stop_close");
+        } finally {
+          fault.close();
+        }
+      }
+      if (!stopFirst && !settledOrphan) {
+        await waitForPublic(
+          async () =>
+            events.find(
+              (event) =>
+                event.role === "new" &&
+                event.boundary === "AH10AfterLeaseAcquired" &&
+                event.executionId === oldAction.executionId,
+            ),
+          (event) => event !== undefined && event.fencingGeneration === 1,
+          45_000,
+        );
+      }
       const result = await waitForPublic(
         async () => ({
           rows: readRows(fixture.databaseFile),
+          facts: readSubmittedBindingFacts(
+            fixture.databaseFile,
+            oldAction.executionId,
+          ),
+          attention: await client.view<{
+            rows: Array<{
+              source: string;
+              severity: string;
+              targetWorkspaceId: string;
+              dedupKey: string;
+            }>;
+          }>("attention", { projectId: project.projectId }),
           actionIntent: events.find(
             (event) =>
               event.role === "new" &&
@@ -711,13 +975,25 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
               event.actionIndex === 0,
           ),
         }),
-        ({ rows, actionIntent }) =>
-          actionIntent !== undefined ||
-          rows.executions.some(
-            (execution) =>
-              execution.execution_id === oldAction.executionId &&
-              execution.settled_at !== null,
-          ),
+        ({ rows, facts, attention, actionIntent }) =>
+          facts.length === 1 &&
+          (!stopFirst ||
+            (rows.executions.some(
+              (execution) =>
+                execution.execution_id === oldAction.executionId &&
+                execution.settlement_kind === "Interrupted",
+            ) &&
+              rows.leases.find(
+                (lease) => lease.execution_id === oldAction.executionId,
+              )?.generation === 1)) &&
+          attention.rows.some(
+            (row) =>
+              row.source === "SubmittedDecisionBindingFailure" &&
+              row.severity === "ActionRequired" &&
+              row.targetWorkspaceId === project.rootWorkspaceId &&
+              row.dedupKey === facts[0]?.attention_fact_id,
+          ) &&
+          actionIntent === undefined,
         20_000,
       );
 
@@ -769,30 +1045,252 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
           (attempt) => attempt.provider_turn_id === oldAction.providerTurnId,
         ),
       ).toEqual(pinnedProviderAttempts);
-      expect(finalRows.events).toEqual(corrupted.events);
       expect(targetExecutionObservations).toHaveLength(0);
       expect(result.actionIntent).toBeUndefined();
 
-      const orphanedFailedExecution =
-        targetExecution?.settled_at !== null &&
-        targetExecution?.settlement_kind === "Failed" &&
-        targetStep?.state === "ActionsInProgress" &&
-        targetStep.settlement_json === null &&
-        targetAction?.state === "Pending" &&
-        targetAction.observation_source_ref === null;
-      if (orphanedFailedExecution) {
-        throw new Error(
-          `AH10 binding rejection orphaned a failed Execution: ${JSON.stringify(
-            {
-              execution: targetExecution,
-              step: targetStep,
-              action: targetAction,
-              observations: targetExecutionObservations,
-            },
-          )}`,
+      // The mismatch is RecoveryBlocked: it may not mutate the exact
+      // Execution/Step/Action tuple while its P9 fact and P10 Attention stay
+      // durable. This path has only a P3 SelectCurrentWork control action, so
+      // the unresolved P4 side-effect gate is clear before the user requests
+      // Stop.
+      if (settledOrphan) {
+        expect(targetExecution).toEqual(
+          corrupted.executions.find(
+            (execution) => execution.execution_id === oldAction.executionId,
+          ),
         );
+        expect(targetStep).toEqual(
+          corrupted.steps.find(
+            (step) =>
+              step.execution_id === oldAction.executionId &&
+              step.logical_step_no === 0 &&
+              step.repair_attempt === 0 &&
+              step.provider_turn_id === oldAction.providerTurnId,
+          ),
+        );
+        expect(targetAction).toEqual(
+          corrupted.actions.find(
+            (action) => action.logical_action_id === oldAction.logicalActionId,
+          ),
+        );
+        expect(targetStep?.state).toBe("ActionsInProgress");
+        expect(targetAction?.state).toBe("Pending");
+        expect(targetAction?.observation_source_ref).toBeNull();
+        expect(finalRows.commands).toEqual(corrupted.commands);
+        expect(finalRows.works).toEqual(corrupted.works);
+        expect(finalRows.workspaces).toEqual(corrupted.workspaces);
+        expect(targetExecutionObservations).toHaveLength(0);
+        await newDaemon.crash();
+        return;
       }
-      expect(orphanedFailedExecution).toBe(false);
+      if (stopFirst) {
+        expect(targetExecution?.settlement_kind).toBe("Interrupted");
+        expect(targetStep?.state).toBe("SettlementProposed");
+        expect(targetAction?.state).toBe("TerminalRejected");
+      } else {
+        expect(targetExecution?.settled_at).toBeNull();
+        expect(targetStep).toEqual(
+          corrupted.steps.find(
+            (step) =>
+              step.execution_id === oldAction.executionId &&
+              step.logical_step_no === 0 &&
+              step.repair_attempt === 0 &&
+              step.provider_turn_id === oldAction.providerTurnId,
+          ),
+        );
+        expect(targetAction).toEqual(
+          corrupted.actions.find(
+            (action) => action.logical_action_id === oldAction.logicalActionId,
+          ),
+        );
+        expect(targetStep?.state).toBe("ActionsInProgress");
+        expect(targetAction?.state).toBe("Pending");
+        expect(targetAction?.observation_source_ref).toBeNull();
+      }
+
+      const fact = result.facts[0];
+      expect(result.facts).toHaveLength(1);
+      expect(fact).toMatchObject({
+        execution_id: oldAction.executionId,
+        project_id: project.projectId,
+        workspace_id: project.rootWorkspaceId,
+        logical_step_no: 0,
+        repair_attempt: 0,
+        provider_turn_id: oldAction.providerTurnId,
+        logical_action_id: oldAction.logicalActionId,
+        failure_code:
+          corruption === "workspace"
+            ? "DecisionRequestWorkspaceMismatch"
+            : "StepManifestMismatch",
+      });
+      expect(fact?.event_id).not.toBe("");
+      expect(
+        finalRows.events.filter(
+          (event) =>
+            event.event_type === "SubmittedDecisionBindingEscalated" &&
+            event.aggregate_ref === project.rootWorkspaceId,
+        ),
+      ).toHaveLength(1);
+      expect(result.attention.rows).toContainEqual(
+        expect.objectContaining({
+          source: "SubmittedDecisionBindingFailure",
+          severity: "ActionRequired",
+          targetWorkspaceId: project.rootWorkspaceId,
+          dedupKey: fact?.attention_fact_id,
+        }),
+      );
+
+      if (unresolvedP4Effect) {
+        const unresolvedInvocationId = recordUnresolvedP4EffectIntent(
+          fixture.databaseFile,
+          oldAction.executionId,
+          project.rootWorkspaceId,
+        );
+        await client.command(project.projectId, "StopExecution", {
+          executionId: oldAction.executionId,
+        });
+        const afterStopRequest = readRows(fixture.databaseFile);
+        expect(
+          afterStopRequest.executions.find(
+            (execution) => execution.execution_id === oldAction.executionId,
+          ),
+        ).toMatchObject({ settled_at: null, settlement_kind: null });
+        expect(
+          afterStopRequest.steps.find(
+            (step) =>
+              step.execution_id === oldAction.executionId &&
+              step.logical_step_no === 0 &&
+              step.repair_attempt === 0 &&
+              step.provider_turn_id === oldAction.providerTurnId,
+          ),
+        ).toEqual(targetStep);
+        expect(
+          afterStopRequest.actions.find(
+            (action) => action.logical_action_id === oldAction.logicalActionId,
+          ),
+        ).toEqual(targetAction);
+        expect(
+          readSubmittedBindingFacts(
+            fixture.databaseFile,
+            oldAction.executionId,
+          ),
+        ).toEqual(result.facts);
+        const unresolved = new DatabaseSync(fixture.databaseFile, {
+          readOnly: true,
+        });
+        try {
+          expect(
+            unresolved
+              .prepare(
+                `SELECT effect_admission_state, settled_at
+                   FROM tool_invocations WHERE invocation_id = ?`,
+              )
+              .get(unresolvedInvocationId),
+          ).toMatchObject({
+            effect_admission_state: "MayHaveStarted",
+            settled_at: null,
+          });
+        } finally {
+          unresolved.close();
+        }
+        expect(
+          (
+            await client.view<{
+              rows: Array<{ source: string; dedupKey: string }>;
+            }>("attention", { projectId: project.projectId })
+          ).rows,
+        ).toContainEqual(
+          expect.objectContaining({
+            source: "SubmittedDecisionBindingFailure",
+            dedupKey: fact?.attention_fact_id,
+          }),
+        );
+        await newDaemon.crash();
+        return;
+      }
+
+      if (!stopFirst) {
+        await client.command(project.projectId, "StopExecution", {
+          executionId: oldAction.executionId,
+        });
+      }
+      const afterStop = await waitForPublic(
+        async () => ({
+          rows: readRows(fixture.databaseFile),
+          facts: readSubmittedBindingFacts(
+            fixture.databaseFile,
+            oldAction.executionId,
+          ),
+        }),
+        ({ rows }) =>
+          rows.executions.some(
+            (execution) =>
+              execution.execution_id === oldAction.executionId &&
+              execution.settlement_kind === "Interrupted",
+          ),
+        20_000,
+      );
+      const stoppedExecution = afterStop.rows.executions.find(
+        (execution) => execution.execution_id === oldAction.executionId,
+      );
+      const stoppedStep = afterStop.rows.steps.find(
+        (step) =>
+          step.execution_id === oldAction.executionId &&
+          step.logical_step_no === 0 &&
+          step.repair_attempt === 0 &&
+          step.provider_turn_id === oldAction.providerTurnId,
+      );
+      const stoppedAction = afterStop.rows.actions.find(
+        (action) => action.logical_action_id === oldAction.logicalActionId,
+      );
+      expect(stoppedExecution?.settlement_kind).toBe("Interrupted");
+      expect(stoppedStep?.state).toBe("SettlementProposed");
+      expect(stoppedStep?.settlement_json).toContain("StopRequested");
+      expect(stoppedAction?.state).toBe("TerminalRejected");
+      expect(stoppedAction?.observation_source_ref).toBeNull();
+      expect(afterStop.facts).toEqual(result.facts);
+      expect(
+        (
+          await client.view<{
+            rows: Array<{ source: string; dedupKey: string }>;
+          }>("attention", { projectId: project.projectId })
+        ).rows,
+      ).toContainEqual(
+        expect.objectContaining({
+          source: "SubmittedDecisionBindingFailure",
+          dedupKey: fact?.attention_fact_id,
+        }),
+      );
+      if (
+        corruption === "workspace" &&
+        !unresolvedP4Effect &&
+        !settledOrphan &&
+        !failStopCloseWrite
+      ) {
+        await newDaemon.crash();
+        await fixture.restart();
+        const rebuiltFacts = readSubmittedBindingFacts(
+          fixture.databaseFile,
+          oldAction.executionId,
+        );
+        const rebuiltEvents = readRows(fixture.databaseFile).events.filter(
+          (event) =>
+            event.event_type === "SubmittedDecisionBindingEscalated" &&
+            event.aggregate_ref === project.rootWorkspaceId,
+        );
+        const rebuiltAttention = await client.view<{
+          rows: Array<{ source: string; dedupKey: string }>;
+        }>("attention", { projectId: project.projectId });
+        expect(rebuiltFacts).toEqual(result.facts);
+        expect(rebuiltEvents).toHaveLength(1);
+        expect(
+          rebuiltAttention.rows.filter(
+            (row) =>
+              row.source === "SubmittedDecisionBindingFailure" &&
+              row.dedupKey === fact?.attention_fact_id,
+          ),
+        ).toHaveLength(1);
+      }
       await newDaemon.crash();
     },
     180_000,

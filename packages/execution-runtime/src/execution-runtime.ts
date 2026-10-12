@@ -1,4 +1,8 @@
 import {
+  planSubmittedDecisionStopClose,
+  reconstructSubmittedDecisionStopCloseActions,
+} from "@arbor/agent-runtime";
+import {
   CommandGateway,
   type CommandRejection,
   semanticRequestFingerprint,
@@ -13,10 +17,13 @@ import type {
   Principal,
   WakeReason,
 } from "@arbor/domain";
+import { executionEpisode } from "@arbor/domain";
 import {
   AgentExecutionStateStore,
+  AgentLoopStepStore,
   Clock,
   ControlApprovalStore,
+  DecisionRequestStore,
   ExecutableApprovalStore,
   type ExecutionDriverOwnershipLost,
   ExecutionDriverPort,
@@ -25,12 +32,17 @@ import {
   type LeaseFencingRejected,
   type LeaseRecord,
   LeaseService,
+  ProviderTurnStore,
+  ReconciliationSource,
+  RecoveryAttentionFactStore,
   RuntimeSafetyGate,
+  SessionRepository,
   type TransactionOperationalFailure,
   TransactionPort,
   WorkerDispatchPort,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
+import { recordSubmittedDecisionBindingFailure } from "./submitted-decision-binding-failure.js";
 
 /** Empirical TTL value (P2 `03` §8 keeps lease duration non-contract); only
  * the TTL/3 renewal-cadence convention is contract (P9 `03` §1). */
@@ -256,6 +268,12 @@ export const runExecution = (
     const dispatch = yield* WorkerDispatchPort;
     const driver = yield* ExecutionDriverPort;
     const safety = yield* RuntimeSafetyGate;
+    const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
+    const loopSteps = yield* Effect.serviceOption(AgentLoopStepStore);
+    const providerTurns = yield* Effect.serviceOption(ProviderTurnStore);
+    const sessions = yield* Effect.serviceOption(SessionRepository);
+    const decisions = yield* Effect.serviceOption(DecisionRequestStore);
+    const reconciliation = yield* Effect.serviceOption(ReconciliationSource);
     const gateway = yield* CommandGateway;
     const clock = yield* Clock;
     const controlApprovals = yield* ControlApprovalStore;
@@ -348,6 +366,31 @@ export const runExecution = (
         }),
       );
     }
+    const submittedDecisionBindingFacts =
+      recoveryAttentionFacts.listSubmittedDecisionBindingFailures === undefined
+        ? []
+        : yield* tx.transact(
+            recoveryAttentionFacts.listSubmittedDecisionBindingFailures(
+              execution.value.projectId,
+            ),
+          );
+    if (
+      submittedDecisionBindingFacts.some(
+        (fact) => fact.executionId === executionId,
+      )
+    ) {
+      yield* tx
+        .transact(
+          leases.release(
+            executionId,
+            lease.workerId,
+            lease.workerIncarnationId,
+            lease.generation,
+          ),
+        )
+        .pipe(Effect.ignore);
+      return { _tag: "RecoveryBlocked" as const };
+    }
     // P9 `03` §1: race the drive against the renewal loop — the first to
     // complete wins; a lost renewal (LeaseLost) interrupts the drive so no
     // durable mutation is attempted, and no ordinary retry occurs.
@@ -397,6 +440,194 @@ export const runExecution = (
       lease.workerIncarnationId,
       lease.generation,
     );
+    if (outcome._tag === "SubmittedDecisionBindingMismatch") {
+      const detectedAt = yield* clock.now();
+      const recordBindingFailure =
+        recoveryAttentionFacts.recordSubmittedDecisionBindingFailure;
+      const submittedDecisionBindingAvailable =
+        recoveryAttentionFacts.isSubmittedDecisionBindingAvailable === undefined
+          ? false
+          : yield* tx.transact(
+              recoveryAttentionFacts.isSubmittedDecisionBindingAvailable(),
+            );
+      if (
+        recordBindingFailure !== undefined &&
+        submittedDecisionBindingAvailable
+      ) {
+        yield* tx.transact(
+          Effect.gen(function* () {
+            // Revalidate the complete lease tuple in the same transaction as
+            // the immutable P9 fact and event write.
+            yield* leases.renew(
+              executionId,
+              lease.workerId,
+              lease.workerIncarnationId,
+              lease.generation,
+            );
+            const current = yield* repository.findById(executionId);
+            if (
+              Option.isNone(current) ||
+              current.value.projectId !== execution.value.projectId ||
+              current.value.workspaceId !== execution.value.workspaceId
+            ) {
+              return;
+            }
+            yield* recordSubmittedDecisionBindingFailure(
+              recoveryAttentionFacts,
+              {
+                projectId: execution.value.projectId,
+                executionId,
+                workspaceId: current.value.workspaceId,
+                logicalStepNo: outcome.logicalStepNo,
+                repairAttempt: outcome.repairAttempt,
+                providerTurnId: outcome.providerTurnId,
+                logicalActionId: outcome.logicalActionId,
+                failureCode: outcome.failureCode,
+                firstDetectedAt: detectedAt,
+                causedByCommandId: null,
+              },
+            );
+            if (
+              Option.isNone(current) ||
+              current.value.stopRequestedAt === null ||
+              current.value.state.status !== "Active" ||
+              !Option.isSome(loopSteps) ||
+              !Option.isSome(providerTurns) ||
+              !Option.isSome(sessions) ||
+              !Option.isSome(decisions) ||
+              !Option.isSome(reconciliation)
+            ) {
+              return;
+            }
+            const unresolved = yield* reconciliation.value.pending(executionId);
+            if (unresolved.length > 0) return;
+            const currentEpisode = executionEpisode(current.value);
+            if (currentEpisode?._tag !== "DecisionEpisode") return;
+            const request = yield* decisions.value.findById(
+              currentEpisode.decisionId,
+            );
+            const identity = {
+              executionId,
+              logicalStepNo: outcome.logicalStepNo,
+              repairAttempt: outcome.repairAttempt,
+            };
+            const foundStep = yield* loopSteps.value.find(identity);
+            if (Option.isNone(foundStep)) return;
+            const step = foundStep.value;
+            if (
+              step.providerTurnId !== outcome.providerTurnId ||
+              step.state !== "ActionsInProgress"
+            ) {
+              return;
+            }
+            const existingActions = yield* loopSteps.value.listActions(
+              step.identity,
+            );
+            const currentAction = existingActions.find(
+              (action) => action.actionIndex === step.nextActionIndex,
+            );
+            if (
+              currentAction?.logicalActionId !== outcome.logicalActionId ||
+              currentAction.state !== "Pending"
+            ) {
+              return;
+            }
+            const providerResult = yield* providerTurns.value.findSettledResult(
+              step.providerTurnId,
+            );
+            if (
+              outcome.failureCode === "DecisionRequestWorkspaceMismatch" &&
+              (Option.isNone(request) ||
+                request.value.state._tag !== "Submitted" ||
+                request.value.workspaceId === current.value.workspaceId ||
+                request.value.revision !== currentEpisode.requestRevision + 1 ||
+                !request.value.candidateWorkIds.includes(
+                  request.value.state.selectedWorkId,
+                ))
+            ) {
+              return;
+            }
+            if (
+              outcome.failureCode === "StepManifestMismatch" &&
+              (providerResult._tag !== "SettledSuccess" ||
+                providerResult.manifestId === step.manifestId)
+            ) {
+              return;
+            }
+            const outputEntries =
+              step.modelOutputSessionSequence === undefined
+                ? []
+                : yield* sessions.value.listEntries(
+                    current.value.sessionId,
+                    step.modelOutputSessionSequence - 1,
+                    1,
+                  );
+            const actionIdentities =
+              reconstructSubmittedDecisionStopCloseActions({
+                executionId: String(executionId),
+                sessionId: String(current.value.sessionId),
+                step,
+                providerResult,
+                modelOutputEntry: outputEntries[0],
+                existingActions,
+              });
+            if (actionIdentities === undefined) return;
+            const plan = planSubmittedDecisionStopClose({
+              step,
+              actions: actionIdentities,
+              firstDetectedActionId: outcome.logicalActionId,
+              updatedAt: detectedAt,
+            });
+            if (plan._tag !== "Ready") return;
+            const fence = {
+              executionId,
+              workerId: lease.workerId,
+              workerIncarnationId: lease.workerIncarnationId,
+              fencingGeneration: lease.generation,
+            };
+            for (const nextAction of plan.actions) {
+              const existing = existingActions.find(
+                (action) => action.actionIndex === nextAction.actionIndex,
+              );
+              if (existing === undefined) {
+                yield* loopSteps.value.createAction(nextAction, fence);
+              } else {
+                yield* loopSteps.value.transitionAction(
+                  {
+                    identity: existing.identity,
+                    actionIndex: existing.actionIndex,
+                    expectedRevision: existing.revision,
+                    expectedState: "Pending",
+                    next: nextAction,
+                  },
+                  fence,
+                );
+              }
+            }
+            yield* loopSteps.value.transition(
+              {
+                identity: step.identity,
+                expectedRevision: step.revision,
+                expectedState: "ActionsInProgress",
+                next: plan.step,
+              },
+              fence,
+            );
+          }),
+        );
+      }
+      yield* tx
+        .transact(
+          leases.release(
+            executionId,
+            lease.workerId,
+            lease.workerIncarnationId,
+            lease.generation,
+          ),
+        )
+        .pipe(Effect.ignore);
+      return { _tag: "RecoveryBlocked" as const };
+    }
     if (
       outcome._tag === "ApprovalRequired" ||
       outcome._tag === "RecoveryBlocked"
