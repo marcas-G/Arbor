@@ -1,596 +1,28 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { newUuid7 } from "../../../packages/application/src/index.js";
+import type { P37Probe } from "../support/p37-deliver-process-fixture.js";
 import {
-  type CapturedProviderCall,
-  type ProductionFixture,
-  type ScriptedProviderResponse,
-  startProductionFixture,
-} from "../support/production-fixture.js";
-import type { PublicClient } from "../support/public-client.js";
-import {
-  createFunctionalProject,
-  makePublicClient,
-  proposeAndApproveChildWithInitialWork,
-  waitForPublic,
-} from "../support/public-client.js";
-
-/*
- * P37 L6 is process-crash qualification, not a module/store test. The cases
- * below stay isolated in pending/ until the coordinator schedules the
- * centralized runtime qualification batch. Process-only qualification hooks
- * live in the dedicated test child and are absent from ordinary startup.
- *
- * Required common oracle for every completed case:
- *   - identical LogicalActionId, ProviderTurnId and MessageId before/after;
- *   - CommandId changes with fencing generation when the route is resubmitted;
- *   - one canonical Message, exact MessageSent event, Inbox admission,
- *     Observation and Provider request at most once;
- *   - reads are captured in one SQLite read transaction and public Attention
- *     is checked over the ordinary public view path.
- *
- * The profile-specific P12 capacity cases live in a separate pending file;
- * their gate is profile selection, because accepted P12 forbids invented
- * capacity ceilings.
- */
-
-const fixtures: ProductionFixture[] = [];
-const p37Child = resolve(
-  "tests/functional/support/p37-deliver-process-child.mjs",
-);
-const manualWait = (reason: string) => ({
-  _tag: "ToolCall" as const,
-  name: "wait",
-  arguments: {
-    reason,
-    waitSpec: { mode: "Any" as const, conditions: [{ _tag: "Manual" }] },
-  },
-});
-const deliverOccurrence = (providerTurnId: string) => `${providerTurnId}:0`;
-const expectedDeliverCommandId = (
-  providerTurnId: string,
-  generation: number,
-) => {
-  const occurrence = deliverOccurrence(providerTurnId);
-  const seed =
-    generation === 0 ? occurrence : `${occurrence}:generation:${generation}`;
-  return `cmd_${newUuid7("deliver-command", seed)}`;
-};
-const expectedDeliverMessageId = (providerTurnId: string) =>
-  `msg_${newUuid7("deliver-message", deliverOccurrence(providerTurnId))}`;
-
-interface P37Probe {
-  readonly tag: "P37_DELIVER_PROBE";
-  readonly role: "old" | "new";
-  readonly boundary: string;
-  readonly executionId?: string;
-  readonly providerTurnId?: string;
-  readonly logicalActionId?: string;
-  readonly commandId?: string;
-  readonly actionKind?: string;
-  readonly callRef?: string;
-  readonly legacyObservationText?: string;
-  readonly messageId?: string;
-  readonly attentionFactId?: string;
-  readonly failureCode?: string;
-  readonly projectId?: string;
-  readonly fencingGeneration?: number;
-}
-
-const startP37Fixture = (input: {
-  readonly reply: (
-    call: CapturedProviderCall,
-    index: number,
-  ) => ScriptedProviderResponse;
-  readonly onProbe: (probe: P37Probe) => void;
-}) =>
-  startProductionFixture({
-    isolatedPortHandshake: true,
-    admitWorkspaceDirectory: true,
-    firstDaemonEntry: p37Child,
-    daemonEnvironment: { ARBOR_P37_ROLE: "old" },
-    reply: input.reply,
-    onDaemonStdout: (line) => {
-      try {
-        const probe = JSON.parse(line) as P37Probe;
-        if (probe.tag === "P37_DELIVER_PROBE") input.onProbe(probe);
-      } catch {
-        // The fixture retains stderr; unrelated stdout is not a P37 signal.
-      }
-    },
-  });
-
-const releaseP37Gate = (
-  fixture: ProductionFixture,
-  role: "old" | "new",
-  name: string,
-) => {
-  mkdirSync(resolve(fixture.directory, "p37-gates"), { recursive: true });
-  writeFileSync(
-    resolve(fixture.directory, "p37-gates", `${role}-${name}.release`),
-    "release",
-  );
-};
-
-const awaitP37Probe = (
-  probes: ReadonlyArray<P37Probe>,
-  predicate: (probe: P37Probe) => boolean,
-) =>
-  waitForPublic(
-    async () => probes.find(predicate),
-    (probe) => probe !== undefined,
-  );
-
-const readPublicAttention = (client: PublicClient, projectId: string) =>
-  client.view<{ readonly rows: ReadonlyArray<Record<string, unknown>> }>(
-    "attention",
-    { projectId },
-  );
-
-const readP37Snapshot = (databaseFile: string) => {
-  const db = new DatabaseSync(databaseFile, { readOnly: true });
-  try {
-    db.exec("BEGIN");
-    const commands = db
-      .prepare(
-        "SELECT command_id, command_type, project_id, resolution, result_json, terminal_error_json FROM commands ORDER BY created_at, command_id",
-      )
-      .all();
-    const messages = db
-      .prepare(
-        "SELECT message_id, project_id, sender_workspace_id, recipient_workspace_id, kind, deliverable_id, body_ref, correlation_id, causation_id FROM messages WHERE kind = 'Deliver' ORDER BY created_at, message_id",
-      )
-      .all();
-    const deliverables = db
-      .prepare(
-        "SELECT deliverable_id, source_work_id, kind FROM deliverables ORDER BY created_at, deliverable_id",
-      )
-      .all();
-    const messageEvents = db
-      .prepare(
-        "SELECT event_id, project_id, event_type, aggregate_ref, correlation_ref, caused_by_command_id, payload_json FROM domain_events WHERE event_type = 'MessageSent' ORDER BY sequence",
-      )
-      .all();
-    const replayEvents = db
-      .prepare(
-        "SELECT event_id, project_id, event_type, aggregate_ref, correlation_ref, caused_by_command_id, payload_json FROM domain_events WHERE event_type = 'DeliverReplayEscalated' ORDER BY sequence",
-      )
-      .all();
-    const inbox = db
-      .prepare(
-        `SELECT workspace_id, entry_key, kind, summary, correlation_id, admitted_at
-           FROM inbox_entries
-          WHERE entry_key IN (
-            SELECT 'msg:' || message_id FROM messages WHERE kind = 'Deliver'
-          )
-          ORDER BY workspace_id, entry_key`,
-      )
-      .all();
-    const actions = db
-      .prepare(
-        `SELECT a.execution_id, s.provider_turn_id, a.logical_action_id,
-                a.action_index, a.observation_source_ref, a.call_ref,
-                a.action_kind, a.state
-           FROM agent_loop_step_actions a
-           JOIN agent_loop_steps s
-             ON s.execution_id = a.execution_id
-            AND s.logical_step_no = a.logical_step_no
-            AND s.repair_attempt = a.repair_attempt
-          WHERE a.action_kind = 'deliver' ORDER BY a.action_index`,
-      )
-      .all();
-    const observations = db
-      .prepare(
-        `SELECT source_ref, payload_json FROM session_entries
-          WHERE source_kind = 'AgentLoopAction' AND entry_kind = 'Observation'
-          ORDER BY sequence`,
-      )
-      .all();
-    const facts = db
-      .prepare(
-        `SELECT attention_fact_id, event_id, project_id, execution_id,
-                target_workspace_id, logical_action_id, message_id,
-                failure_code, first_detected_at
-           FROM deliver_replay_attention_facts ORDER BY attention_fact_id`,
-      )
-      .all();
-    const pendingFacts = db
-      .prepare(
-        "SELECT queue_sequence, attention_fact_id FROM deliver_replay_attention_pending ORDER BY queue_sequence",
-      )
-      .all();
-    const markers = db
-      .prepare(
-        "SELECT attention_fact_id FROM deliver_replay_attention_rows ORDER BY attention_fact_id",
-      )
-      .all();
-    const attentionOffsets = db
-      .prepare(
-        "SELECT consumer_id, project_id, last_sequence FROM consumer_offsets WHERE consumer_id = 'p10-rebuild:attention' ORDER BY project_id",
-      )
-      .all();
-    const leases = db
-      .prepare(
-        "SELECT execution_id, generation, expires_at FROM execution_leases ORDER BY execution_id",
-      )
-      .all();
-    const executions = db
-      .prepare(
-        `SELECT execution_id, project_id, workspace_id, episode_kind,
-                episode_ref, episode_revision, session_id, admitted_at,
-                stop_requested_at, settlement_kind
-           FROM executions ORDER BY admitted_at, execution_id`,
-      )
-      .all();
-    return {
-      commands,
-      messages,
-      deliverables,
-      messageEvents,
-      replayEvents,
-      inbox,
-      actions,
-      observations,
-      facts,
-      pendingFacts,
-      markers,
-      attentionOffsets,
-      leases,
-      executions,
-    };
-  } finally {
-    db.exec("COMMIT");
-    db.close();
-  }
-};
-
-const findDeliverReplayFact = (
-  snapshot: ReturnType<typeof readP37Snapshot>,
-  logicalActionId: string,
-  messageId: string,
-) =>
-  snapshot.facts.find(
-    (row) =>
-      (row as { logical_action_id: string }).logical_action_id ===
-        logicalActionId &&
-      (row as { message_id: string }).message_id === messageId,
-  ) as
-    | {
-        attention_fact_id: string;
-        logical_action_id: string;
-        message_id: string;
-      }
-    | undefined;
-
-const seedDeliverableWaitingForDelivery = async (marker: string) => {
-  const probes: P37Probe[] = [];
-  let seedWaitIssued = false;
-  let deliverArmed = false;
-  let deliverDecisionCalls = 0;
-  let workspacePath = "";
-  const reply = (call: CapturedProviderCall): ScriptedProviderResponse => {
-    const context = JSON.stringify(call.messages);
-    const available = new Set(
-      call.tools
-        .map((tool) => tool.function?.name)
-        .filter((name): name is string => name !== undefined),
-    );
-    const latestUser = [...call.messages]
-      .reverse()
-      .find((message) => message.role === "user")?.content;
-    if (
-      available.has("propose_workspace") &&
-      !available.has("claim_completion") &&
-      latestUser?.includes(marker) === true
-    ) {
-      return {
-        _tag: "ToolCall",
-        name: "propose_workspace",
-        arguments: {
-          name: `p37-producer-${marker}`,
-          rationale: "P37 L6 process crash fixture",
-          responsibilityDraft: {
-            purpose: `produce ${marker}`,
-            ownedResponsibilities: [marker],
-            obligations: ["produce and deliver a formal result"],
-            includes: [],
-            excludes: [],
-            interfaces: [],
-          },
-          resourceBoundaryDraft: {
-            addresses: [{ _tag: "FileTree", path: workspacePath }],
-          },
-          initialWork: {
-            objective: `Produce and deliver ${marker}.`,
-            why: "qualify DeliverMessage process recovery",
-            constraints: ["use the admitted functional proof file"],
-            completionExpectation: "one Deliver handover",
-            verificationMission: {
-              goal: `Verify ${marker} handover`,
-              criteria: [
-                {
-                  criterionId: "p37-one-handover",
-                  requirement: "one exact Deliver Message is committed",
-                  required: true,
-                },
-              ],
-              riskRequirements: [],
-            },
-          },
-        },
-      };
-    }
-    if (context.includes(`objective: Produce and deliver ${marker}`)) {
-      const artifactId = /art_[0-9a-f-]{36}/u.exec(context)?.[0];
-      const deliverableId = /del_[0-9a-f-]{36}/u.exec(context)?.[0];
-      if (artifactId === undefined) {
-        return {
-          _tag: "ToolCall",
-          name: "read",
-          arguments: {
-            target: { mount: "workspace", path: "proof.txt" },
-            limit: 200,
-          },
-        };
-      }
-      if (deliverableId === undefined) {
-        return {
-          _tag: "ToolCall",
-          name: "produce_deliverable",
-          arguments: {
-            kind: "p37-process-report",
-            artifacts: [{ role: "result", artifactId }],
-          },
-        };
-      }
-      if (!deliverArmed) {
-        seedWaitIssued = true;
-        return manualWait(`P37 seed waits before Deliver ${marker}`);
-      }
-      if (!context.includes("DeliverableDelivered(")) {
-        deliverDecisionCalls += 1;
-        return {
-          _tag: "ToolCall",
-          name: "deliver",
-          arguments: {
-            deliverableId,
-            summary: `Delivered ${marker}`,
-          },
-        };
-      }
-      return manualWait(`P37 delivery settled ${marker}`);
-    }
-    return { _tag: "HttpError", status: 422 };
-  };
-  const fixture = await startP37Fixture({
-    reply,
-    onProbe: (probe) => probes.push(probe),
-  });
-  fixtures.push(fixture);
-  workspacePath = fixture.workspaceDirectory;
-  const client = makePublicClient(fixture.baseUrl);
-  const project = await createFunctionalProject(
-    client,
-    fixture.workspaceDirectory,
-    `P37 Deliver ${marker}`,
-    { resourceSelection: "Profile" },
-  );
-  const producer = await proposeAndApproveChildWithInitialWork(
-    client,
-    project,
-    marker,
-    `Please propose a producer workspace for ${marker}.`,
-    {
-      name: `p37-producer-${marker}`,
-      rationale: "P37 L6 process crash fixture",
-      responsibilityDraft: {
-        purpose: `produce ${marker}`,
-        ownedResponsibilities: [marker],
-        obligations: ["produce and deliver a formal result"],
-        includes: [],
-        excludes: [],
-        interfaces: [],
-      },
-      resourceBoundaryDraft: {
-        addresses: [{ _tag: "FileTree", path: fixture.workspaceDirectory }],
-      },
-      initialWork: { objective: `Produce and deliver ${marker}.` },
-    },
-  );
-  const seededWork = await waitForPublic(
-    () =>
-      client.view<{
-        workId?: string;
-        revision: number;
-        status: string;
-        activeExecution?: { executionId: string };
-      } | null>("current-work", { workspaceId: producer.workspaceId }),
-    (work) =>
-      seedWaitIssued &&
-      work?.workId === producer.currentWork.workId &&
-      work.status === "Open" &&
-      work.activeExecution === undefined,
-  );
-  if (seededWork === null || seededWork.workId === undefined) {
-    throw new Error(`P37 seed Work did not reach Manual wait for ${marker}`);
-  }
-  const before = readP37Snapshot(fixture.databaseFile);
-  const deliverable = before.deliverables.find(
-    (row) => row.source_work_id === seededWork.workId,
-  );
-  if (deliverable === undefined) {
-    throw new Error(`P37 seed Deliverable is absent for ${marker}`);
-  }
-  return {
-    fixture,
-    client,
-    project,
-    producer,
-    seededWork,
-    deliverable,
-    probes,
-    armDeliver: () => {
-      deliverArmed = true;
-    },
-    get deliverDecisionCalls() {
-      return deliverDecisionCalls;
-    },
-  };
-};
-
-const deliverAndHoldCommittedReceipt = async (marker: string) => {
-  const seed = await seedDeliverableWaitingForDelivery(marker);
-  seed.armDeliver();
-  await seed.fixture.crash();
-  await seed.fixture.restart({
-    entry: p37Child,
-    daemonEnvironment: {
-      ARBOR_P37_ROLE: "old",
-      ARBOR_P37_PAUSE_ROLE: "old",
-      ARBOR_P37_PAUSE_BOUNDARY:
-        "AH10AfterControlHandlerReturnBeforeObservationCommit",
-      ARBOR_P37_GATE_ACTION_KIND: "deliver",
-    },
-  });
-  await seed.client.command(seed.project.projectId, "SteerWork", {
-    workId: seed.seededWork.workId,
-    workspaceId: seed.producer.workspaceId,
-    expectedWorkRevision: seed.seededWork.revision,
-    steer: {
-      severity: "Normal",
-      guidance: `Resume the measured Deliver action ${marker}.`,
-    },
-    provenance: { source: "HumanInput" },
-  });
-  const held = await awaitP37Probe(
-    seed.probes,
-    (probe) =>
-      probe.role === "old" &&
-      probe.boundary === "AH10AfterControlHandlerReturnBeforeObservationCommit",
-  );
-  if (held?.executionId === undefined) {
-    throw new Error(`P37 committed Deliver action did not pause for ${marker}`);
-  }
-  const snapshot = readP37Snapshot(seed.fixture.databaseFile);
-  const receipt = snapshot.commands.find(
-    (row) =>
-      row.command_type === "DeliverMessage" && row.resolution === "Committed",
-  );
-  const action = snapshot.actions.find(
-    (row) =>
-      (row as { logical_action_id?: string }).logical_action_id ===
-      held.logicalActionId,
-  );
-  const message = snapshot.messages.find(
-    (row) => (row as { message_id?: string }).message_id !== undefined,
-  );
-  if (receipt === undefined || action === undefined || message === undefined) {
-    throw new Error(
-      `P37 committed receipt/effect/action seed is incomplete for ${marker}`,
-    );
-  }
-  return {
-    ...seed,
-    held,
-    receipt: receipt as { command_id: string },
-    action: action as {
-      execution_id: string;
-      provider_turn_id: string;
-      logical_action_id: string;
-      state: string;
-      observation_source_ref: string | null;
-    },
-    message: message as { message_id: string },
-  };
-};
-
-const corruptDeliverReceiptResult = (
-  databaseFile: string,
-  commandId: string,
-) => {
-  const db = new DatabaseSync(databaseFile);
-  try {
-    const result = db
-      .prepare("UPDATE commands SET result_json = '{}' WHERE command_id = ?")
-      .run(commandId);
-    if (Number(result.changes) !== 1) {
-      throw new Error(`P37 could not corrupt exact receipt ${commandId}`);
-    }
-  } finally {
-    db.close();
-  }
-};
-
-const prepareContradictoryCommittedReceipt = async (marker: string) => {
-  const prepared = await deliverAndHoldCommittedReceipt(marker);
-  await prepared.fixture.crash();
-  corruptDeliverReceiptResult(
-    prepared.fixture.databaseFile,
-    prepared.receipt.command_id,
-  );
-  return prepared;
-};
-
-const waitForLeaseExpiry = async (databaseFile: string, executionId: string) =>
-  waitForPublic(
-    async () =>
-      readP37Snapshot(databaseFile).leases.find(
-        (lease) =>
-          (lease as { execution_id: string }).execution_id === executionId,
-      ),
-    (lease) =>
-      lease !== undefined &&
-      Date.parse((lease as { expires_at: string }).expires_at) <= Date.now(),
-    40_000,
-  );
-
-const startP37RecoveryDaemon = (
-  fixture: ProductionFixture,
-  role: "new",
-  probes: P37Probe[],
-  boundaries?: string,
-) =>
-  fixture.startAdditionalDaemon({
-    entry: p37Child,
-    daemonEnvironment: {
-      ARBOR_P37_ROLE: role,
-      ...(boundaries === undefined
-        ? {}
-        : {
-            ARBOR_P37_PAUSE_ROLE: role,
-            ARBOR_P37_PAUSE_BOUNDARY: boundaries,
-          }),
-    },
-    onStdout: (line) => {
-      try {
-        const probe = JSON.parse(line) as P37Probe;
-        if (probe.tag === "P37_DELIVER_PROBE") probes.push(probe);
-      } catch {
-        // The fixture retains stderr; unrelated stdout is not a P37 signal.
-      }
-    },
-  });
-
-const restartP37Normally = async (fixture: ProductionFixture) =>
-  fixture.restart({
-    entry: p37Child,
-    daemonEnvironment: { ARBOR_P37_ROLE: "new" },
-  });
-
-const publicDeliverReplayRows = async (
-  client: PublicClient,
-  projectId: string,
-) => {
-  const attention = await readPublicAttention(client, projectId);
-  return attention.rows.filter((row) => row.source === "DeliverReplayFailure");
-};
+  awaitP37Probe,
+  deliverAndHoldCommittedReceipt,
+  expectedDeliverCommandId,
+  expectedDeliverMessageId,
+  findDeliverReplayFact,
+  fixtures,
+  p37Child,
+  prepareContradictoryCommittedReceipt,
+  publicDeliverReplayRows,
+  readP37Snapshot,
+  releaseP37Gate,
+  restartP37Normally,
+  seedDeliverableWaitingForDelivery,
+  startP37RecoveryDaemon,
+  waitForLeaseExpiry,
+} from "../support/p37-deliver-process-fixture.js";
+import { makePublicClient, waitForPublic } from "../support/public-client.js";
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
-
 describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
   it.each(["before", "after"] as const)(
     "kills gen0 %s its FencingRejected receipt commit; gen1 commits the same logical delivery once",
@@ -637,7 +69,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         throw new Error("P37 gen0 Deliver action intent probe is absent");
       }
       expect(oldAction.providerTurnId).toMatch(/^ptn_/u);
-      expect(oldAction.logicalActionId).toMatch(/^act_/u);
+      expect(oldAction.logicalActionId).toMatch(/^lac_/u);
 
       await waitForPublic(
         async () =>
@@ -716,6 +148,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
             probe.role === "old" &&
             probe.boundary ===
               "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
+            probe.actionKind === "deliver" &&
+            probe.logicalActionId === oldAction.logicalActionId &&
             probe.executionId === oldAction.executionId,
         );
         expect(afterCommit?.logicalActionId).toBe(oldAction.logicalActionId);
@@ -748,10 +182,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
           row.resolution === "TerminalRejected" &&
           String(row.terminal_error_json).includes("FencingRejected"),
       );
-      const committed = newActionTurn.commands.filter(
-        (row) =>
-          row.command_type === "DeliverMessage" &&
-          row.resolution === "Committed",
+      const committed = newActionTurn.deliverMessageReceipts.filter(
+        (row) => row.resolution === "Committed",
       );
       expect(oldRejects).toHaveLength(crashSide === "before" ? 0 : 1);
       expect(committed).toHaveLength(1);
@@ -832,7 +264,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       (probe) =>
         probe.role === "old" &&
         probe.boundary ===
-          "AH10AfterControlHandlerReturnBeforeObservationCommit",
+          "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
+        probe.actionKind === "deliver",
     );
     const executionId = beforeObservation?.executionId;
     expect(executionId).toMatch(/^exe_/u);
@@ -840,9 +273,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       throw new Error("P37 old ExecutionId missing");
 
     const committedBeforeKill = readP37Snapshot(fixture.databaseFile);
-    const receipt = committedBeforeKill.commands.filter(
-      (row) =>
-        row.command_type === "DeliverMessage" && row.resolution === "Committed",
+    const receipt = committedBeforeKill.deliverMessageReceipts.filter(
+      (row) => row.resolution === "Committed",
     );
     expect(receipt).toHaveLength(1);
     expect(committedBeforeKill.messages).toHaveLength(1);
@@ -927,9 +359,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         }),
       60_000,
     );
-    const recoveredReceipt = recovered.commands.filter(
-      (row) =>
-        row.command_type === "DeliverMessage" && row.resolution === "Committed",
+    const recoveredReceipt = recovered.deliverMessageReceipts.filter(
+      (row) => row.resolution === "Committed",
     );
     expect(recoveredReceipt).toHaveLength(1);
     expect((recoveredReceipt[0] as { command_id: string }).command_id).toBe(
@@ -1027,9 +458,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     const atFailure = readP37Snapshot(prepared.fixture.databaseFile);
     expect(atFailure.facts).toHaveLength(1);
     expect(atFailure.replayEvents).toHaveLength(1);
-    expect(
-      atFailure.commands.filter((row) => row.command_type === "DeliverMessage"),
-    ).toHaveLength(1);
+    expect(atFailure.deliverMessageReceipts).toHaveLength(1);
     expect(atFailure.messages).toHaveLength(1);
     expect(atFailure.messageEvents).toHaveLength(1);
     expect(atFailure.inbox).toHaveLength(1);
@@ -1077,9 +506,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     expect(attention).toHaveLength(1);
     const final = readP37Snapshot(prepared.fixture.databaseFile);
     expect(final.facts).toHaveLength(1);
-    expect(
-      final.commands.filter((row) => row.command_type === "DeliverMessage"),
-    ).toHaveLength(1);
+    expect(final.deliverMessageReceipts).toHaveLength(1);
     expect(final.messages).toHaveLength(1);
     expect(final.messageEvents).toHaveLength(1);
     expect(final.inbox).toHaveLength(1);
@@ -1091,9 +518,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     const marker = `P37-L6-INBOX-ABSENT-${crypto.randomUUID().slice(0, 8)}`;
     const prepared = await deliverAndHoldCommittedReceipt(marker);
     const before = readP37Snapshot(prepared.fixture.databaseFile);
-    expect(
-      before.commands.filter((row) => row.command_type === "DeliverMessage"),
-    ).toHaveLength(1);
+    expect(before.deliverMessageReceipts).toHaveLength(1);
     expect(before.messages).toHaveLength(1);
     expect(before.messageEvents).toHaveLength(1);
     expect(before.inbox).toHaveLength(1);
@@ -1127,14 +552,10 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         ),
       60_000,
     );
-    expect(
-      converged.commands.filter((row) => row.command_type === "DeliverMessage"),
-    ).toHaveLength(1);
+    expect(converged.deliverMessageReceipts).toHaveLength(1);
     expect(
       (
-        converged.commands.find(
-          (row) => row.command_type === "DeliverMessage",
-        ) as {
+        converged.deliverMessageReceipts[0] as {
           command_id: string;
         }
       ).command_id,
@@ -1321,11 +742,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     const providerTurnId = oldAction.providerTurnId;
     const logicalActionId = oldAction.logicalActionId;
     const directWrite = readP37Snapshot(seed.fixture.databaseFile);
-    expect(
-      directWrite.commands.filter(
-        (row) => row.command_type === "DeliverMessage",
-      ),
-    ).toHaveLength(0);
+    expect(directWrite.deliverMessageReceipts).toHaveLength(0);
     expect(directWrite.messages).toHaveLength(1);
     expect(directWrite.messageEvents).toHaveLength(1);
     expect(directWrite.inbox).toHaveLength(1);
@@ -1370,11 +787,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     const failureCommitted = readP37Snapshot(seed.fixture.databaseFile);
     expect(failureCommitted.facts).toHaveLength(1);
     expect(failureCommitted.replayEvents).toHaveLength(1);
-    expect(
-      failureCommitted.commands.filter(
-        (row) => row.command_type === "DeliverMessage",
-      ),
-    ).toHaveLength(0);
+    expect(failureCommitted.deliverMessageReceipts).toHaveLength(0);
     expect(failureCommitted.messages).toHaveLength(1);
     expect(failureCommitted.messageEvents).toHaveLength(1);
     expect(failureCommitted.pendingFacts).toHaveLength(1);
@@ -1424,9 +837,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     expect(final.messages).toHaveLength(1);
     expect(final.messageEvents).toHaveLength(1);
     expect(final.inbox).toHaveLength(0);
-    expect(
-      final.commands.filter((row) => row.command_type === "DeliverMessage"),
-    ).toHaveLength(0);
+    expect(final.deliverMessageReceipts).toHaveLength(0);
     expect((final.actions[0] as { state: string }).state).not.toBe("Applied");
     expect(seed.deliverDecisionCalls).toBe(1);
   }, 240_000);
@@ -1557,9 +968,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     expect(originalFactId).toBeTruthy();
     const beforeDrift = readP37Snapshot(prepared.fixture.databaseFile);
     expect(beforeDrift.facts).toHaveLength(1);
-    const deliverCommandCount = beforeDrift.commands.filter(
-      (row) => row.command_type === "DeliverMessage",
-    ).length;
+    const deliverCommandCount = beforeDrift.deliverMessageReceipts.length;
     const inboxDb = new DatabaseSync(prepared.fixture.databaseFile);
     try {
       const changed = inboxDb
@@ -1598,9 +1007,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     };
     expect(action.state).not.toBe("Applied");
     expect(action.observation_source_ref).toBeNull();
-    expect(
-      final.commands.filter((row) => row.command_type === "DeliverMessage"),
-    ).toHaveLength(deliverCommandCount);
+    expect(final.deliverMessageReceipts).toHaveLength(deliverCommandCount);
     expect((final.inbox[0] as { summary: string }).summary).toBe(
       "drifted after fact commit",
     );
