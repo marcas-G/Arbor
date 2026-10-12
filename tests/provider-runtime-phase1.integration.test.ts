@@ -98,11 +98,15 @@ const manifestJsonFor = (turnId: ProviderTurnId) =>
     },
   });
 
-const DEFAULT_POLICY: ProviderRuntimeExecutionPolicy = {
-  connectTimeoutMs: 500,
-  firstEventTimeoutMs: 500,
-  streamIdleTimeoutMs: 500,
-  turnTimeoutMs: 2_000,
+const SEMANTIC_TEST_POLICY: ProviderRuntimeExecutionPolicy = {
+  // These integration cases exercise cancellation, protocol/error mapping,
+  // retry evidence, and persistence—not deadline thresholds. Keep their
+  // watchdogs bounded, but leave enough room for a loaded multi-worker check.
+  // Deadline behavior is asserted with explicit policies below.
+  connectTimeoutMs: 10_000,
+  firstEventTimeoutMs: 10_000,
+  streamIdleTimeoutMs: 10_000,
+  turnTimeoutMs: 20_000,
   maxAttempts: 2,
   retryBackoffMs: 0,
 };
@@ -205,7 +209,7 @@ const seed = Effect.gen(function* () {
 
 const makeHarness = (
   client: OpenAISdkClient,
-  policy: ProviderRuntimeExecutionPolicy = DEFAULT_POLICY,
+  policy: ProviderRuntimeExecutionPolicy = SEMANTIC_TEST_POLICY,
   options: {
     readonly controlledClock?: boolean;
     readonly onClockSleep?: () => void;
@@ -366,7 +370,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       },
     });
     const harness = makeHarness(controlled, {
-      ...DEFAULT_POLICY,
+      ...SEMANTIC_TEST_POLICY,
       turnTimeoutMs: 10_000,
       firstEventTimeoutMs: 10_000,
       streamIdleTimeoutMs: 10_000,
@@ -462,7 +466,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
         sessionId,
         compiledRequestHash: "compiled-request-hash-is-not-manifest-id",
       });
-      expect(callEvidence?.policy).toEqual(DEFAULT_POLICY);
+      expect(callEvidence?.policy).toEqual(SEMANTIC_TEST_POLICY);
       expect(readAttempt(harness.databaseFile)?.outcome).toBe("Success");
     } finally {
       rmSync(harness.root, { recursive: true, force: true });
@@ -485,7 +489,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
           yield { type: "completed", finishReason: "stop" };
         },
       }),
-      { ...DEFAULT_POLICY, maxAttempts: 2, retryBackoffMs: 0 },
+      { ...SEMANTIC_TEST_POLICY, maxAttempts: 2, retryBackoffMs: 0 },
     );
     try {
       await initialize(harness);
@@ -521,7 +525,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
           });
         },
       }),
-      { ...DEFAULT_POLICY, maxAttempts: 3, retryBackoffMs: 0 },
+      { ...SEMANTIC_TEST_POLICY, maxAttempts: 3, retryBackoffMs: 0 },
     );
     try {
       await initialize(harness);
@@ -572,7 +576,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
           yield { type: "completed", finishReason: "stop" };
         },
       }),
-      { ...DEFAULT_POLICY, maxAttempts: 2, retryBackoffMs: 0 },
+      { ...SEMANTIC_TEST_POLICY, maxAttempts: 2, retryBackoffMs: 0 },
     );
     try {
       await initialize(harness);
@@ -672,7 +676,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
                 modelRef: request.modelRef,
                 outputContractRef: request.outputContractRef,
                 manifestId,
-                executionPolicy: DEFAULT_POLICY,
+                executionPolicy: SEMANTIC_TEST_POLICY,
                 turnDeadlineAt: "2999-01-01T00:00:00.000Z",
               },
               manifestJsonFor(providerTurnId),
@@ -1057,7 +1061,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
     const sdk = makeHttpProviderClient({ runtime, captures: [] });
     expect(sdk.externalEffectPossible).toBe(true);
     const policy = {
-      ...DEFAULT_POLICY,
+      ...SEMANTIC_TEST_POLICY,
       maxAttempts: 3,
       retryBackoffMs: 0,
     } satisfies ProviderRuntimeExecutionPolicy;
@@ -1267,7 +1271,6 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       outputCeiling: 2_048,
     };
     const policy = {
-      ...DEFAULT_POLICY,
       connectTimeoutMs: 35,
       firstEventTimeoutMs: 300,
       streamIdleTimeoutMs: 300,
@@ -1494,7 +1497,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
           void context;
         },
       }),
-      { ...DEFAULT_POLICY, retryBackoffMs: 500 },
+      { ...SEMANTIC_TEST_POLICY, retryBackoffMs: 500 },
     );
     try {
       await initialize(harness);
@@ -1557,8 +1560,10 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
         },
       }),
       {
-        ...DEFAULT_POLICY,
+        ...SEMANTIC_TEST_POLICY,
         connectTimeoutMs: 500,
+        firstEventTimeoutMs: 500,
+        streamIdleTimeoutMs: 500,
         turnTimeoutMs: 120,
         maxAttempts: 3,
         retryBackoffMs: 500,
