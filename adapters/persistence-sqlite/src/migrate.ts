@@ -54,16 +54,6 @@ export const runMigrations = (
       "PRAGMA user_version",
     );
     const current = Number(versionRows[0]?.user_version ?? 0);
-    const requiredVersion = migrations.find(
-      (migration) => migration.requiresUserVersion !== undefined,
-    )?.requiresUserVersion;
-    if (requiredVersion !== undefined && current !== requiredVersion) {
-      return yield* Effect.fail(
-        sqliteAdapterError(
-          `migration requires database user_version ${requiredVersion}, found ${current}`,
-        ),
-      );
-    }
     const latest = migrations.reduce(
       (max, migration) => Math.max(max, migration.id),
       0,
@@ -78,6 +68,17 @@ export const runMigrations = (
     const pending = [...migrations]
       .filter((migration) => migration.id > current)
       .sort((a, b) => a.id - b.id);
+    const gatedMigration = pending.find(
+      (migration) => migration.requiresUserVersion !== undefined,
+    );
+    const requiredVersion = gatedMigration?.requiresUserVersion;
+    if (requiredVersion !== undefined && current !== requiredVersion) {
+      return yield* Effect.fail(
+        sqliteAdapterError(
+          `migration requires database user_version ${requiredVersion}, found ${current}`,
+        ),
+      );
+    }
     for (const migration of pending) {
       const apply = Effect.gen(function* () {
         for (const statement of splitStatements(migration.sql)) {

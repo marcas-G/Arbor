@@ -1,6 +1,7 @@
 # F21 Project Resource Source Attribution Port
 
-Status: implementation slice complete; awaiting independent B0 review.
+Status: implementation slice complete; initial review blocker repaired; awaiting
+independent B0 re-review.
 
 Base: `ce58e0ceac7c0b0e0f48a586c0bcd70c01ce1cd4`.
 Accepted package: `B50C8251D77981B2A57A4E3A15741D2024C1FEF97D8151534DB38F0DA1BB49C0`;
@@ -16,8 +17,8 @@ combined governance baseline DID v1.44.
   `PersistenceCorruption`; ProjectDirectory returns the decoded source through
   its port, HTTP response, and Web DTO.
 - Added standalone migration descriptor 0042. Its `requiresUserVersion: 41`
-  precondition is enforced by the runner; historical rows receive only
-  `LegacyUnknown`.
+  precondition is enforced only while that migration is pending; historical
+  rows receive only `LegacyUnknown`, and an already-applied 0042 is idempotent.
 - Updated test-local P1/P6/P7 project seed schema, repository/Directory tests,
   and transport DTO coverage. The current CreateProject result decoder remains
   schema v2; the existing preserve-only v1 receipt test passes.
@@ -31,7 +32,8 @@ preserved database.
 
 - `pnpm build` — PASS.
 - Biome on all changed source/test files — PASS.
-- Focused SQLite/domain/API/P1/P6/P7 tests — 9 files, 51/51 PASS.
+- Focused SQLite/domain/API/P1/P6/P7 tests — 9 files, 51/51 PASS (including
+  exact-version rejection at 38/39/40, migration at 41, and no-op replay at 42).
 - Preserve-only CreateProject v1 receipt test — 1/1 PASS.
 - `pnpm typecheck` is blocked by pre-existing integration-base test typing
   errors (P39 migration test, existing implicit-any test callbacks, and
