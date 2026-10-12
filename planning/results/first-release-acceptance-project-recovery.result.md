@@ -33,3 +33,15 @@
 ## 范围
 
 P15 Rename/Close 外部命令改动因与冻结起源规则冲突而未合入。P39–P42 未并入。此次恢复不构成完整 S1–S4 或完整功能旅程通过声明。
+
+## 前端提示收敛后续部署
+
+- 前端修复提交：`27c621572dd3256a96c5a16656c720f21300a832`；release 当前 HEAD：`8d3576155992389980673c70615f61496ff4e1a2`。构建资源为 `/assets/index-DjC2DDjX.js`。
+- Web 测试 33 files / 241 tests 通过；Web typecheck/build 与根级 `pnpm typecheck` 通过。
+- 同一隔离数据库启动的 daemon PID `16328` 仍就绪，服务地址仍为 `http://127.0.0.1:8787`。
+- 全新上下文只读打开用户 Project 后没有 Pending/Unknown 提示。同一 SPA 的 client-only 模拟先显示 Pending，再从真实 `/views/attention` 读到 0 rows，Pending/Unknown banner 清除；在 Workbench 与 Attention 间导航后仍清除。`/commands` 被拦截一次且转发数为 `0`；没有 Provider 调用或用户数据写入。HTTP 响应均为 200，浏览器 page error 为 0。
+- 截图：
+  - `C:\Users\ThinkPad\AppData\Roaming\ArborFirstRelease\acceptance\13-user-project-fresh-after-notice-fix.png`
+  - `C:\Users\ThinkPad\AppData\Roaming\ArborFirstRelease\acceptance\14-simulated-project-attention-empty.png`
+  - `C:\Users\ThinkPad\AppData\Roaming\ArborFirstRelease\acceptance\15-simulated-same-spa-workbench.png`
+  - `C:\Users\ThinkPad\AppData\Roaming\ArborFirstRelease\acceptance\16-simulated-same-spa-attention.png`
