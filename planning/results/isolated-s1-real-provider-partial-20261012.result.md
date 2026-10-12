@@ -93,6 +93,19 @@ VerifierOrphan evidence above; it is not a snapshot of the final journey state.*
 The live database and isolated evidence directory were retained after daemon
 shutdown for diagnosis.
 
+## Isolated daemon stop evidence
+
+Immediately before stopping, PID 15592 was `node.exe` running
+`apps/single-workspace/dist/main.js`; it was the sole listener on
+`127.0.0.1:8791`, and `GET /project-resources` returned HTTP 200. The separate
+`127.0.0.1:8787` listener was PID 8956 and was not touched. After stopping PID
+15592, the process was absent and port 8791 had no listener. The isolated DB
+file and evidence directory remained present, with all 19 numbered PNGs
+(screenshots 20–38) retained. The stop did not remove or alter the Project or
+Work records. The daemon exposes no public shutdown route or registered
+process-signal handler; the process was stopped at the OS level after exact
+PID/listener verification.
+
 ## Disposition
 
 This result is a partial real-provider/browser observation only. It does not
