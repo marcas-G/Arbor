@@ -23,6 +23,7 @@ import {
   P12_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
+  ResourceOwnershipRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -95,6 +96,7 @@ import type {
   MessageStore,
   PermissionGrantRepository,
   ProjectRepository,
+  ResourceOwnershipRepository,
   SessionRepository,
   TransactionPort,
   WorkRepository,
@@ -267,6 +269,7 @@ type DbServices =
   | CommandHandlerRegistry
   | TransactionPort
   | ProjectRepository
+  | ResourceOwnershipRepository
   | WorkspaceRepository
   | ExecutionRepository
   | WorkRepository
@@ -287,6 +290,7 @@ const makeApp = (): Layer.Layer<DbServices> => {
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),
+    Layer.provide(ResourceOwnershipRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
