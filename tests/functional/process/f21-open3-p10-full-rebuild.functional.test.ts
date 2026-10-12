@@ -36,6 +36,7 @@ import {
   TransactionPort,
   WorkspaceResourceActivationStore,
 } from "../../../packages/ports/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "../../support/legacy-project-resource-source.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-012345670020");
 const workspaceId = parse(WorkspaceId)(
@@ -79,6 +80,7 @@ const seedDatabase = async (databaseFile: string, pinnedRoot: string) => {
           ) VALUES (?, 'P10 full rebuild', ?, '{}', 0, '{}', 'local', 'Open', 0, 't0', 't0')`,
           [projectId, workspaceId],
         );
+        yield* ensureLegacyProjectResourceSourceFixture();
         yield* sql.unsafe(
           `INSERT INTO workspaces (
             workspace_id, project_id, parent_workspace_id, name,

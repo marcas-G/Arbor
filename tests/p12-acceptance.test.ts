@@ -264,6 +264,7 @@ import {
   ToolDefinitionStoreLive,
   ToolRuntimeLive,
 } from "../packages/tool-runtime/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 // P12-013 acceptance: the `14` §1 end-to-end story across contracts `01`–`10`,
 // `12`, `13`. Mechanical evidence only; the per-contract suites carry the
@@ -1181,6 +1182,7 @@ const rwSeed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* ensureLegacyProjectResourceSourceFixture();
       yield* sql.unsafe(
         "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,?,NULL,?,?)",
         [rwSessionId, "WorkspacePrimary", rwWorkspaceId, 0, "t"],

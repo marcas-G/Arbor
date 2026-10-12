@@ -156,16 +156,6 @@ const makeApp = (
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;
-  const projectColumns = yield* sql.unsafe<{ readonly name: string }>(
-    "PRAGMA table_info(projects)",
-  );
-  if (
-    !projectColumns.some((column) => column.name === "resource_source_json")
-  ) {
-    yield* sql.unsafe(
-      `ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL DEFAULT '{"_tag":"LegacyUnknown"}' CHECK (json_valid(resource_source_json))`,
-    );
-  }
   yield* sql.withTransaction(
     Effect.gen(function* () {
       yield* sql.unsafe(

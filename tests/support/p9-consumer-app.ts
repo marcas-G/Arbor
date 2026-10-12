@@ -73,6 +73,7 @@ import {
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
 import { ReconciliationSourceLive } from "../../packages/tool-runtime/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
 
 /** P9-010/P9-012 fixture: the P7/P8 consumers wired onto the P1 consumer
  * infrastructure. One app exposing the gateway (P1 + P2 + SatisfyDependency
@@ -323,4 +324,5 @@ export const runP9Consumer = <A>(
 
 export const p9Boot = Effect.gen(function* () {
   yield* runMigrations(P9_CONSUMER_MIGRATIONS);
+  yield* ensureLegacyProjectResourceSourceFixture();
 });

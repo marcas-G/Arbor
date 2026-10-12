@@ -56,6 +56,7 @@ import {
   WorkRepository,
   WorkspaceRepository,
 } from "../../packages/ports/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
 
 export const testActor = parse(Actor)("user:test");
 export const testPrincipal = parse(Principal)("user:test");
@@ -156,20 +157,8 @@ const definition = {
   interfaces: [],
 };
 
-export const ensureProjectResourceSourceTestColumn = () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const projectColumns = yield* sql.unsafe<{ name: string }>(
-      "PRAGMA table_info(projects)",
-    );
-    if (
-      !projectColumns.some((column) => column.name === "resource_source_json")
-    ) {
-      yield* sql.unsafe(
-        `ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL DEFAULT '{"_tag":"LegacyUnknown"}' CHECK (json_valid(resource_source_json))`,
-      );
-    }
-  });
+export const ensureProjectResourceSourceTestColumn =
+  ensureLegacyProjectResourceSourceFixture;
 
 export const seedProject = (args: {
   readonly projectId: ProjectId;

@@ -126,6 +126,7 @@ import {
   seedCurrentOpenWork,
   workEpisode,
 } from "./support/execution-episode-fixtures.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 const ACTOR = parse(Actor)("user:gov");
 const PRINCIPAL = parse(Principal)("user:gov");
@@ -374,6 +375,7 @@ const runAcceptance = <A, R>(
   );
 
 const seedProject = Effect.gen(function* () {
+  yield* ensureLegacyProjectResourceSourceFixture();
   const gateway = yield* CommandGateway;
   const payload = {
     name: "p6-acceptance",
