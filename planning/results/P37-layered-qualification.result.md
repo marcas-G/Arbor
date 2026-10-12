@@ -3,7 +3,7 @@
 Date: 2026-10-12
 Baseline: `0580e454729da39e9ed7eec187938ce9528122fd`
 Worktree: `C:\Users\ThinkPad\.codex\worktrees\delivery-layered-qualification\Arbor`
-Status: **Layer 1 PASS; L6 and F19 pending**
+Status: **Layer 1 PASS; resumed L6 matrix 11/11 PASS; F19 public delivery/wake 2/2 PASS; broader release gates open**
 
 ## Baseline and owner
 
@@ -87,7 +87,10 @@ Static verification for the three changed test files:
 
 ## Remaining layers
 
-- P37 L6 pending real-process crash/restart matrix: not yet run.
-- F19 public cross-Work delivery/wake journey: not yet run.
+- L6 resumed process matrix evidence and F19 public journey evidence are
+  recorded in `P37-L6-process-crash-matrix.result.md`.
+- The L6 file is now under `tests/functional/process/`; Vitest's default
+  process include selects its eight test definitions, including three
+  parameterized definitions that expand to the unchanged 11 cases.
 - Full `pnpm check`, full `pnpm test:functional`, and F20 clean-clone smoke:
-  intentionally not run in this staged pass.
+  were not run in this staged pass and are not implied by the targeted passes.
