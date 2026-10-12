@@ -98,8 +98,8 @@ export function GrantPermissionForm({
                   executionId: values.subjectRef.trim(),
                 },
         capability: values.capability,
-        target: values.target.trim(),
-        expiresAt: new Date(values.expiresAt).toISOString(),
+        target: values.target,
+        expiresAt: values.expiresAt,
       });
     })();
   };

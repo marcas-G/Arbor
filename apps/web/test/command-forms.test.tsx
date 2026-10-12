@@ -728,7 +728,7 @@ describe("GrantPermissionForm", () => {
       target: { value: "ws_9" },
     });
     fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
-      target: { value: "2099-10-12T08:30:00.000Z" },
+      target: { value: "2099-10-12T08:30:00+08:00" },
     });
     fireEvent.click(screen.getByRole("button", { name: "授予" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
@@ -743,7 +743,7 @@ describe("GrantPermissionForm", () => {
       principal: "human:admin",
     });
     expect(payload.issuer).toBe("human:admin");
-    expect(payload.expiresAt).toBe("2099-10-12T08:30:00.000Z");
+    expect(payload.expiresAt).toBe("2099-10-12T08:30:00+08:00");
     expect(String(payload.permissionGrantId)).toMatch(/^pgr_[0-9a-f-]{36}$/);
   });
 
@@ -785,6 +785,35 @@ describe("GrantPermissionForm", () => {
     expect(payload.target).toBe("ws_9");
     expect(payload.expiresAt).toBe("2099-10-12T08:30:00.000Z");
   });
+
+  it.each([
+    ["timezone-free expiry", "ws_9", "2099-10-12T08:30:00", /时区/],
+    ["calendar-invalid expiry", "ws_9", "2099-02-30T08:30:00Z", /时区/],
+    ["padded expiry", "ws_9", " 2099-10-12T08:30:00Z", /时区/],
+    ["padded target", " ws_9 ", "2099-10-12T08:30:00Z", /首尾空格/],
+  ] as const)(
+    "does not submit a %s",
+    async (_caseName, target, expiresAt, expectedError) => {
+      const fetchMock = stubFetch(() => Promise.resolve(committed()));
+      render(
+        <GrantPermissionForm
+          actor="human:admin"
+          projectId="prj_1"
+          onSubmitted={vi.fn()}
+        />,
+      );
+      fireEvent.change(screen.getByLabelText(/target（必填/), {
+        target: { value: target },
+      });
+      fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
+        target: { value: expiresAt },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "授予" }));
+
+      await waitFor(() => expect(fetchMock.mock.calls.length).toBe(0));
+      expect(screen.getByText(expectedError)).toBeTruthy();
+    },
+  );
 });
 
 describe("RevokePermissionForm", () => {
