@@ -11,6 +11,7 @@ import type {
   DeliverReplayAttentionFact,
   DeliverReplayFailureCode,
   SubmittedDecisionBindingAttentionFact,
+  SubmittedDecisionBindingFailureCode,
 } from "./assign-work-target-binding.js";
 import type { RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
@@ -46,13 +47,6 @@ export interface AssignWorkBindingAttentionProjectionRow {
   readonly sourceExecutionId: string;
 }
 
-export interface SubmittedDecisionBindingAttentionProjectionRow {
-  readonly projectId: ProjectId;
-  readonly attentionFactId: string;
-  readonly workspaceId: WorkspaceId;
-  readonly firstDetectedAt: string;
-}
-
 export interface WorkspaceResourceActivationAttentionProjectionRow {
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
@@ -75,10 +69,29 @@ export interface DeliverReplayAttentionProjectionRow {
   readonly sourceExecutionId: string;
 }
 
+export interface SubmittedDecisionBindingAttentionProjectionRow {
+  readonly projectId: ProjectId;
+  readonly dedupKey: string;
+  readonly source: "SubmittedDecisionBindingFailure";
+  readonly severity: "ActionRequired";
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly summary: string;
+  readonly failureCode: SubmittedDecisionBindingFailureCode;
+  readonly occurredAt: string;
+  readonly sourceEventId: EventId;
+  readonly sourceFactId: string;
+  readonly sourceExecutionId: string;
+}
+
 export type AttentionProjectionStoreError =
   RepositoryFailure<"AttentionProjectionStore">;
 
 export interface AttentionProjectionStoreService {
+  readonly isSubmittedDecisionBindingAvailable?: () => Effect.Effect<
+    boolean,
+    AttentionProjectionStoreError,
+    TransactionScope
+  >;
   readonly putAssignWorkBindingFailure: (
     fact: AssignWorkBindingAttentionFact,
     occurredAt: string,
