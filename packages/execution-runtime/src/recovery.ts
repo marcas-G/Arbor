@@ -238,7 +238,6 @@ export const runRecovery = (principal: Principal) =>
         reconciliation.pending(execution.executionId),
       );
       if (pending.length > 0) {
-        escalated.push(execution.executionId);
         // P9 `01` §1.2 / `04` §1: durable Attention fact — dedup key
         // executionId + invocationRefs fingerprint; repeated passes are
         // no-ops (INSERT OR IGNORE semantics via journal idempotency key).
