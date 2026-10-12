@@ -163,6 +163,23 @@ export const ToolObservationReplayEvidenceEscalated = Schema.TaggedStruct(
     failureCode: Schema.String,
   },
 );
+export const SubmittedDecisionBindingEscalated = Schema.TaggedStruct(
+  "SubmittedDecisionBindingEscalated",
+  {
+    attentionFactId: Schema.String,
+    executionId: Schema.String,
+    workspaceId: Schema.String,
+    logicalStepNo: Schema.Number,
+    repairAttempt: Schema.Number,
+    providerTurnId: Schema.String,
+    logicalActionId: Schema.String,
+    failureCode: Schema.Literals([
+      "DecisionRequestWorkspaceMismatch",
+      "StepManifestMismatch",
+      "SettledExecutionWithPendingDecisionAction",
+    ]),
+  },
+);
 export const DeadlockAttentionRequested = Schema.TaggedStruct(
   "DeadlockAttentionRequested",
   {
@@ -343,6 +360,7 @@ export const DomainEventPayload = Schema.Union([
   AssignWorkTargetBindingEscalated,
   DeliverReplayEscalated,
   ToolObservationReplayEvidenceEscalated,
+  SubmittedDecisionBindingEscalated,
   DependencyWithdrawn,
   DependencyMarkedUnfulfillable,
   DeliverableProduced,
@@ -401,6 +419,7 @@ export const EVENT_CATALOG = {
   AssignWorkTargetBindingEscalated,
   DeliverReplayEscalated,
   ToolObservationReplayEvidenceEscalated,
+  SubmittedDecisionBindingEscalated,
   DeliverableProduced,
   MessageSent,
   VerificationStarted,

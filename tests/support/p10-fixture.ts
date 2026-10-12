@@ -92,8 +92,8 @@ export const p10Flagged = parse(WorkspaceId)(
 
 /** sqlite infra + the P7 classification source; no command gateway (fixtures
  * seed canonical rows directly via SQL — the p8-ddl precedent). */
-export const makeP10App = () => {
-  const base = layer({ filename: ":memory:" });
+export const makeP10App = (filename = ":memory:") => {
+  const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const stores = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),

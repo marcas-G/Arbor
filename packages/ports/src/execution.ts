@@ -116,6 +116,11 @@ export interface ExecutionRepositoryService {
     ExecutionRepositoryError,
     TransactionScope
   >;
+  readonly findSettledExecutions?: () => Effect.Effect<
+    ReadonlyArray<Execution>,
+    ExecutionRepositoryError,
+    TransactionScope
+  >;
 }
 
 export class ExecutionRepository extends Context.Service<
@@ -208,6 +213,16 @@ export interface ExecutionDriverPortService {
 export type ExecutionDriveOutcome =
   | ExecutionSettlement
   | { readonly _tag: "RecoveryBlocked" }
+  | {
+      readonly _tag: "SubmittedDecisionBindingMismatch";
+      readonly failureCode:
+        | "DecisionRequestWorkspaceMismatch"
+        | "StepManifestMismatch";
+      readonly logicalStepNo: number;
+      readonly repairAttempt: number;
+      readonly providerTurnId: import("@arbor/domain").ProviderTurnId;
+      readonly logicalActionId: string;
+    }
   | {
       readonly _tag: "ApprovalRequired";
       readonly approvalId: string;

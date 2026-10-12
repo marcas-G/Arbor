@@ -262,6 +262,38 @@ describe("P10-004 Attention read-model — six sources / severity / target / ded
     ]);
   });
 
+  it("Submitted DecisionEpisode binding failures map to safe Action Required with fact-id dedup", () => {
+    const attentionFactId = `att_${"b".repeat(64)}`;
+    const rows = deriveAttentionRows({
+      ...sixSourceFacts,
+      submittedDecisionBindingFailureEvents: [
+        {
+          attentionFactId,
+          executionId: "exe_submitted_decision_binding",
+          workspaceId: WS_A,
+          firstDetectedAt: "t7",
+        },
+        {
+          attentionFactId,
+          executionId: "exe_submitted_decision_binding",
+          workspaceId: WS_A,
+          firstDetectedAt: "t7",
+        },
+      ],
+    });
+    expect(rowsOf("SubmittedDecisionBindingFailure", rows)).toEqual([
+      {
+        source: "SubmittedDecisionBindingFailure",
+        severity: "ActionRequired",
+        targetWorkspaceId: WS_A,
+        dedupKey: attentionFactId,
+        summary:
+          "A Scheduler decision action could not be safely recovered; review is required.",
+        occurredAt: "t7",
+      },
+    ]);
+  });
+
   it("GAP-01 predicate edge: active producer WITH Open Work does not report", () => {
     const rows = deriveAttentionRows({
       ...sixSourceFacts,

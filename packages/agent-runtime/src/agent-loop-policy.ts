@@ -33,7 +33,17 @@ export type ModelDecisionOutcome =
       readonly loopStep?: AgentLoopStepRecord;
       readonly conversation?: boolean;
     }
-  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
+  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement }
+  | {
+      readonly _tag: "SubmittedDecisionBindingMismatch";
+      readonly failureCode:
+        | "DecisionRequestWorkspaceMismatch"
+        | "StepManifestMismatch";
+      readonly logicalStepNo: number;
+      readonly repairAttempt: number;
+      readonly providerTurnId: import("@arbor/domain").ProviderTurnId;
+      readonly logicalActionId: string;
+    };
 
 export const safetyStop = (reason: string): ExecutionSettlement => ({
   _tag: "Interrupted",

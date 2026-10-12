@@ -15,6 +15,8 @@ import type {
   AssignWorkBindingAttentionProjectionRow,
   DeliverReplayAttentionProjectionRow,
   ToolObservationReplayAttentionProjectionRow,
+  SubmittedDecisionBindingAttentionFact,
+  SubmittedDecisionBindingAttentionProjectionRow,
   WorkspaceResourceActivationAttentionProjectionRow,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -28,6 +30,7 @@ import {
   type ExecutionSettlementFact,
   type OpenVerificationFact,
   type SafetyStopFact,
+  type SubmittedDecisionBindingFailureEventFact,
   type UnfulfillableEventFact,
   type VacantProducerCandidateFact,
   type WorkOwnerFact,
@@ -140,6 +143,12 @@ export interface AttentionReadDeps {
     Option.Option<AssignWorkBindingAttentionFact>,
     ProjectionReadError
   >;
+  readonly findSubmittedDecisionBindingFailure?: (
+    attentionFactId: string,
+  ) => Effect.Effect<
+    Option.Option<SubmittedDecisionBindingAttentionFact>,
+    ProjectionReadError
+  >;
   /** Production P10 materialization. Other historical Attention sources
    * continue to use their existing read derivation. */
   readonly listProjectedAssignWorkBindingFailures?: (
@@ -152,6 +161,12 @@ export interface AttentionReadDeps {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<DeliverReplayAttentionProjectionRow>,
+    ProjectionReadError
+  >;
+  readonly listProjectedSubmittedDecisionBindingFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<SubmittedDecisionBindingAttentionProjectionRow>,
     ProjectionReadError
   >;
   readonly listProjectedWorkspaceResourceActivations?: (
@@ -419,6 +434,8 @@ export const loadAttentionFacts = (
     const assignWorkBindingFailureEvents: Array<AssignWorkBindingFailureEventFact> =
       [];
     const sourceReferences: Array<WorkBoundAttentionReference> = [];
+    const submittedDecisionBindingFailureEvents: Array<SubmittedDecisionBindingFailureEventFact> =
+      [];
     for (const event of events) {
       if (event.eventType === "DependencyMarkedUnfulfillable") {
         const payload = asRecord(event.payload);
@@ -620,6 +637,35 @@ export const loadAttentionFacts = (
           failureCode: fact.failureCode,
           occurredAt: event.occurredAt,
         });
+      } else if (event.eventType === "SubmittedDecisionBindingEscalated") {
+        if (deps.findSubmittedDecisionBindingFailure === undefined) continue;
+        const payload = asRecord(event.payload);
+        const attentionFactId = String(payload.attentionFactId ?? "");
+        if (attentionFactId.length === 0) continue;
+        const source =
+          yield* deps.findSubmittedDecisionBindingFailure(attentionFactId);
+        if (Option.isNone(source)) continue;
+        const fact = source.value;
+        if (
+          fact.eventId !== event.eventId ||
+          fact.projectId !== projectId ||
+          fact.attentionFactId !== attentionFactId ||
+          fact.executionId !== String(payload.executionId ?? "") ||
+          fact.workspaceId !== String(payload.workspaceId ?? "") ||
+          fact.logicalStepNo !== Number(payload.logicalStepNo) ||
+          fact.repairAttempt !== Number(payload.repairAttempt) ||
+          fact.providerTurnId !== String(payload.providerTurnId ?? "") ||
+          fact.logicalActionId !== String(payload.logicalActionId ?? "") ||
+          fact.failureCode !== String(payload.failureCode ?? "")
+        ) {
+          continue;
+        }
+        submittedDecisionBindingFailureEvents.push({
+          attentionFactId: fact.attentionFactId,
+          executionId: fact.executionId,
+          workspaceId: fact.workspaceId,
+          firstDetectedAt: fact.firstDetectedAt,
+        });
       }
     }
 
@@ -716,6 +762,7 @@ export const loadAttentionFacts = (
       assignWorkBindingFailureEvents: assignWorkBindingFailureEvents.filter(
         (fact) => activeExecutions.has(fact.executionId),
       ),
+      submittedDecisionBindingFailureEvents,
       openVerifications: openVerificationFacts,
       executionSettlements,
       vacantProducerCandidates,
@@ -793,6 +840,24 @@ export const deriveProjectAttention = (
             occurredAt: row.occurredAt,
             failureCode: row.failureCode,
           })),
+      ];
+    }
+    if (deps.listProjectedSubmittedDecisionBindingFailures !== undefined) {
+      const materialized =
+        yield* deps.listProjectedSubmittedDecisionBindingFailures(projectId);
+      rows = [
+        ...rows.filter(
+          (row) => row.source !== "SubmittedDecisionBindingFailure",
+        ),
+        ...materialized.map((row) => ({
+          source: "SubmittedDecisionBindingFailure" as const,
+          severity: "ActionRequired" as const,
+          targetWorkspaceId: row.workspaceId,
+          dedupKey: row.attentionFactId,
+          summary:
+            "A Scheduler decision action could not be safely recovered; review is required.",
+          occurredAt: row.firstDetectedAt,
+        })),
       ];
     }
     if (deps.listProjectedWorkspaceResourceActivations !== undefined) {

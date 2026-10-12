@@ -184,6 +184,42 @@ interface SubmittedDecisionReplayInput {
     | undefined;
 }
 
+export type SubmittedDecisionBindingFailureCode =
+  | "DecisionRequestWorkspaceMismatch"
+  | "StepManifestMismatch";
+
+/** Classifies only the two frozen AH10 integrity failures. Other invalid or
+ * incomplete replay evidence remains on the existing fail-closed path. */
+export const classifySubmittedDecisionBindingFailure = (
+  input: SubmittedDecisionReplayInput,
+): SubmittedDecisionBindingFailureCode | undefined => {
+  const { request, step, pendingAction, providerResult } = input;
+  if (
+    request.state._tag !== "Submitted" ||
+    step === undefined ||
+    step.providerTurnId !== input.providerTurnId ||
+    step.state !== "ActionsInProgress" ||
+    pendingAction === undefined ||
+    pendingAction.actionIndex !== step.nextActionIndex ||
+    pendingAction.routeKind !== "Control" ||
+    pendingAction.actionKind !== "select_current_work" ||
+    pendingAction.state !== "Pending"
+  ) {
+    return undefined;
+  }
+  if (request.workspaceId !== input.executionWorkspaceId) {
+    return "DecisionRequestWorkspaceMismatch";
+  }
+  if (
+    step.manifestId !== undefined &&
+    providerResult?._tag === "SettledSuccess" &&
+    providerResult.manifestId !== step.manifestId
+  ) {
+    return "StepManifestMismatch";
+  }
+  return undefined;
+};
+
 /** A terminal DecisionRequest may be reused only to recover this exact
  * already-pinned SelectCurrentWork action. All new or otherwise ambiguous
  * DecisionEpisodes remain Pending-only. */
@@ -4065,9 +4101,14 @@ export const runModelDecision = (
                   );
                 }
               } else {
+                if (loopSteps === undefined) {
+                  return yield* Effect.fail(
+                    failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                  );
+                }
                 yield* tx
                   .transact(
-                    loopSteps!.ensureProviderTurnLink(
+                    loopSteps.ensureProviderTurnLink(
                       {
                         identity: loopStepIdentity,
                         overflowOrdinal: 0,
@@ -4180,6 +4221,44 @@ export const runModelDecision = (
                   }
                 : undefined,
           });
+          const bindingFailure = classifySubmittedDecisionBindingFailure({
+            executionWorkspaceId: String(input.execution.workspaceId),
+            episode: boundEpisode,
+            request: request.value,
+            workspace: Option.isSome(workspace)
+              ? {
+                  currentWorkId:
+                    workspace.value.currentWorkId === null
+                      ? null
+                      : String(workspace.value.currentWorkId),
+                  revision: Number(workspace.value.revision),
+                }
+              : undefined,
+            step: loopStep,
+            pendingAction: pendingSelectionAction,
+            providerTurnId: String(providerTurnId),
+            providerResult:
+              pinnedProviderResult?._tag === "SettledSuccess"
+                ? {
+                    _tag: "SettledSuccess",
+                    manifestId: String(pinnedProviderResult.manifestId),
+                  }
+                : undefined,
+          });
+          if (
+            bindingFailure !== undefined &&
+            loopStep !== undefined &&
+            pendingSelectionAction !== undefined
+          ) {
+            return {
+              _tag: "SubmittedDecisionBindingMismatch",
+              failureCode: bindingFailure,
+              logicalStepNo: loopStep.identity.logicalStepNo,
+              repairAttempt: loopStep.identity.repairAttempt,
+              providerTurnId: loopStep.providerTurnId,
+              logicalActionId: pendingSelectionAction.logicalActionId,
+            };
+          }
           if (!replayingPinnedSelection) {
             return yield* proposeSettlement({
               _tag: "Failed",

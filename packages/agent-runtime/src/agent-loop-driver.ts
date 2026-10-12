@@ -348,6 +348,9 @@ export const AgentLoopDriverLive = (
             if (modelDecision._tag === "Settle") {
               return modelDecision.settlement;
             }
+            if (modelDecision._tag === "SubmittedDecisionBindingMismatch") {
+              return modelDecision;
+            }
             const preparedTurn = modelDecision.turn;
             const decodedOutput = modelDecision.output;
             let currentLoopStep = yield* recordAcceptedModelOutput({
