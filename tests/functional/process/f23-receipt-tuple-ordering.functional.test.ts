@@ -13,14 +13,16 @@ import {
 
 const fixtures: ProductionFixture[] = [];
 
-const seedCorruptCommittedReceipt = (
+const seedReceipt = (
   db: DatabaseSync,
   input: {
     readonly commandId: string;
     readonly projectId: string;
     readonly actor: string;
     readonly payload: unknown;
-    readonly resultJson: string;
+    readonly resultJson: string | null;
+    readonly terminalErrorJson?: string;
+    readonly resolution?: "Committed" | "TerminalRejected";
   },
 ) => {
   const fingerprint = semanticRequestFingerprint({
@@ -35,12 +37,14 @@ const seedCorruptCommittedReceipt = (
        command_id, project_id, semantic_request_fingerprint, schema_version,
        fingerprint_algorithm_version, resolution, result_json,
        terminal_error_json, created_at, settled_at
-     ) VALUES (?, ?, ?, '1', 1, 'Committed', ?, NULL, ?, ?)`,
+     ) VALUES (?, ?, ?, '1', 1, ?, ?, ?, ?, ?)`,
   ).run(
     input.commandId,
     input.projectId,
     fingerprint,
+    input.resolution ?? "Committed",
     input.resultJson,
+    input.terminalErrorJson ?? null,
     "2026-10-10T00:00:00.000Z",
     "2026-10-10T00:00:00.000Z",
   );
@@ -137,7 +141,7 @@ describe("F23 Gateway receipt tuple comparison before stored JSON decode", () =>
     const rawMalformedResult = `{"messageId":"${messageId}","secret":"${sentinel}`;
     const db = new DatabaseSync(fixture.databaseFile);
     try {
-      const oldFingerprint = seedCorruptCommittedReceipt(db, {
+      const oldFingerprint = seedReceipt(db, {
         commandId,
         projectId: project.projectId,
         actor,
@@ -216,7 +220,7 @@ describe("F23 Gateway receipt tuple comparison before stored JSON decode", () =>
     const rawMalformedResult = `{"messageId":"${payload.messageId}","secret":"${sentinel}`;
     const db = new DatabaseSync(fixture.databaseFile);
     try {
-      const storedFingerprint = seedCorruptCommittedReceipt(db, {
+      const storedFingerprint = seedReceipt(db, {
         commandId,
         projectId: project.projectId,
         actor,
@@ -247,6 +251,135 @@ describe("F23 Gateway receipt tuple comparison before stored JSON decode", () =>
       expect(response.status).toBeLessThan(600);
       expect(bodyText).not.toContain(sentinel);
       expect(bodyText).not.toContain(rawMalformedResult);
+      expect(receiptBytesSnapshot(db, commandId)).toEqual(receiptBefore);
+      expect(sideEffectSnapshot(db, commandId)).toEqual(sideEffectsBefore);
+      expect(fixture.daemonErrors).toEqual([]);
+    } finally {
+      db.close();
+    }
+  }, 45_000);
+
+  it("fails closed for an exact tuple with a wrong-shape Committed result", async () => {
+    const sentinel = `F23-WRONG-RESULT-SHAPE-${crypto.randomUUID()}`;
+    const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
+      reply: () => ({ _tag: "HttpError", status: 500 }),
+    });
+    fixtures.push(fixture);
+    const client = makePublicClient(fixture.baseUrl);
+    const project = await createFunctionalProject(
+      client,
+      fixture.workspaceDirectory,
+      "F23 exact tuple wrong result shape",
+    );
+    const actor = "user:local";
+    const commandId = functionalId("cmd");
+    const payload = {
+      messageId: functionalId("msg"),
+      targetWorkspaceId: project.rootWorkspaceId,
+      bodyRef: "body-ref-wrong-result-shape",
+    };
+    const db = new DatabaseSync(fixture.databaseFile);
+    try {
+      seedReceipt(db, {
+        commandId,
+        projectId: project.projectId,
+        actor,
+        payload,
+        resultJson: JSON.stringify({ unexpected: sentinel }),
+      });
+      const receiptBefore = receiptBytesSnapshot(db, commandId);
+      const sideEffectsBefore = sideEffectSnapshot(db, commandId);
+
+      const response = await postExternalHumanMessage(fixture.baseUrl, {
+        commandId,
+        projectId: project.projectId,
+        actor,
+        payload,
+      });
+      const bodyText = await response.text();
+      const responseBody = JSON.parse(bodyText) as {
+        readonly problem?: {
+          readonly code?: string;
+          readonly category?: string;
+          readonly retryDisposition?: string;
+        };
+      };
+
+      expect(response.status).toBe(503);
+      expect(responseBody.problem).toMatchObject({
+        code: "persistence/corruption",
+        category: "unavailable",
+        retryDisposition: "non-retryable",
+      });
+      expect(bodyText).not.toContain(sentinel);
+      expect(receiptBytesSnapshot(db, commandId)).toEqual(receiptBefore);
+      expect(sideEffectSnapshot(db, commandId)).toEqual(sideEffectsBefore);
+      expect(fixture.daemonErrors).toEqual([]);
+    } finally {
+      db.close();
+    }
+  }, 45_000);
+
+  it("fails closed for an exact tuple with a wrong-shape TerminalRejected error", async () => {
+    const sentinel = `F23-WRONG-REJECTION-SHAPE-${crypto.randomUUID()}`;
+    const fixture = await startProductionFixture({
+      isolatedPortHandshake: true,
+      reply: () => ({ _tag: "HttpError", status: 500 }),
+    });
+    fixtures.push(fixture);
+    const client = makePublicClient(fixture.baseUrl);
+    const project = await createFunctionalProject(
+      client,
+      fixture.workspaceDirectory,
+      "F23 exact tuple wrong rejection shape",
+    );
+    const actor = "user:local";
+    const commandId = functionalId("cmd");
+    const payload = {
+      messageId: functionalId("msg"),
+      targetWorkspaceId: project.rootWorkspaceId,
+      bodyRef: "body-ref-wrong-rejection-shape",
+    };
+    const db = new DatabaseSync(fixture.databaseFile);
+    try {
+      seedReceipt(db, {
+        commandId,
+        projectId: project.projectId,
+        actor,
+        payload,
+        resolution: "TerminalRejected",
+        resultJson: null,
+        terminalErrorJson: JSON.stringify({
+          _tag: "AuthorityDenied",
+          unexpected: sentinel,
+        }),
+      });
+      const receiptBefore = receiptBytesSnapshot(db, commandId);
+      const sideEffectsBefore = sideEffectSnapshot(db, commandId);
+
+      const response = await postExternalHumanMessage(fixture.baseUrl, {
+        commandId,
+        projectId: project.projectId,
+        actor,
+        payload,
+      });
+      const bodyText = await response.text();
+      const responseBody = JSON.parse(bodyText) as {
+        readonly problem?: {
+          readonly code?: string;
+          readonly category?: string;
+          readonly retryDisposition?: string;
+        };
+      };
+
+      expect(response.status).toBe(503);
+      expect(responseBody.problem).toMatchObject({
+        code: "persistence/corruption",
+        category: "unavailable",
+        retryDisposition: "non-retryable",
+      });
+      expect(bodyText).not.toContain(sentinel);
       expect(receiptBytesSnapshot(db, commandId)).toEqual(receiptBefore);
       expect(sideEffectSnapshot(db, commandId)).toEqual(sideEffectsBefore);
       expect(fixture.daemonErrors).toEqual([]);

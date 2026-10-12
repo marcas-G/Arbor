@@ -237,6 +237,43 @@ describe("registered command receipt runtime decoders", () => {
     }
   });
 
+  it("rejects missing and unknown fields for every registered result DTO", async () => {
+    for (const commandType of CommandInputContractRegistry.commandTypes) {
+      const schemaVersion = commandType === "CreateProject" ? "2" : "1";
+      const validResult = resultByCommand[commandType];
+      const firstRequiredField = Object.keys(validResult)[0];
+      expect(firstRequiredField, commandType).toBeDefined();
+
+      const withUnknownField = {
+        ...validResult,
+        __unownedReceiptField: "must-not-be-ignored",
+      };
+      const withoutRequiredField = { ...validResult } as Record<
+        string,
+        unknown
+      >;
+      if (firstRequiredField !== undefined) {
+        delete withoutRequiredField[firstRequiredField];
+      }
+
+      for (const candidate of [withUnknownField, withoutRequiredField]) {
+        const exit = await Effect.runPromiseExit(
+          decodeRegisteredCommandReceipt(
+            storedReceipt(
+              "Committed",
+              JSON.stringify(candidate),
+              null,
+              schemaVersion,
+            ),
+            commandType,
+            schemaVersion,
+          ),
+        );
+        expect(Exit.isFailure(exit), commandType).toBe(true);
+      }
+    }
+  });
+
   it("strictly decodes DeliverMessage/1 and rejects extra fields", () => {
     const contract = CommandInputContractRegistry.lookup("DeliverMessage");
     expect(contract).toBeDefined();
@@ -407,6 +444,30 @@ describe("registered command receipt runtime decoders", () => {
       ),
     );
     expect(Exit.isFailure(inheritedTagExit)).toBe(true);
+  });
+
+  it("fails closed for prior-consumer receipts from an unsupported schema version", async () => {
+    const priorConsumerCommandTypes = [
+      "AssignWork",
+      "AcceptWorkOutcome",
+      "SendMessage",
+      "SelectCurrentWork",
+      "DeclareDependency",
+      "ProduceDeliverable",
+    ] as const;
+
+    for (const commandType of priorConsumerCommandTypes) {
+      const stored = storedReceipt(
+        "Committed",
+        JSON.stringify(resultByCommand[commandType]),
+        null,
+        "0",
+      );
+      const exit = await Effect.runPromiseExit(
+        decodeRegisteredCommandReceipt(stored, commandType, "1"),
+      );
+      expect(Exit.isFailure(exit), commandType).toBe(true);
+    }
   });
 
   it("does not resolve inherited object properties as stored result schema versions", async () => {
