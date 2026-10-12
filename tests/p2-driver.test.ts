@@ -10,6 +10,7 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
+  makeRecoveryAttentionFactStoreLive,
   P12_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
@@ -84,13 +85,19 @@ const makeApp = (
 ) => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const journal = Layer.provide(DomainEventJournalLive, infra);
+  const recoveryAttentionFacts = Layer.provide(
+    makeRecoveryAttentionFactStoreLive(),
+    Layer.merge(infra, journal),
+  );
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    journal,
+    recoveryAttentionFacts,
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
@@ -149,6 +156,16 @@ const makeApp = (
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;
+  const projectColumns = yield* sql.unsafe<{ readonly name: string }>(
+    "PRAGMA table_info(projects)",
+  );
+  if (
+    !projectColumns.some((column) => column.name === "resource_source_json")
+  ) {
+    yield* sql.unsafe(
+      `ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL DEFAULT '{"_tag":"LegacyUnknown"}' CHECK (json_valid(resource_source_json))`,
+    );
+  }
   yield* sql.withTransaction(
     Effect.gen(function* () {
       yield* sql.unsafe(
