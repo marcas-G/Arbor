@@ -518,12 +518,18 @@ test("CreateProject reports its committed receipt when an identical Profile is a
         .prepare(
           "SELECT workspace_id FROM resource_ownership WHERE released_at IS NULL",
         )
-        .all() as ReadonlyArray<{ workspace_id: string }>,
+        .all()
+        .map((row) =>
+          typeof row.workspace_id === "string" ? row.workspace_id : null,
+        ),
       events: db
         .prepare(
           "SELECT event_type FROM domain_events WHERE project_id = ? ORDER BY sequence",
         )
-        .all(second.projectId) as ReadonlyArray<{ event_type: string }>,
+        .all(second.projectId)
+        .map((row) =>
+          typeof row.event_type === "string" ? row.event_type : null,
+        ),
     }));
     expect(persisted.command?.resolution).toBe("Committed");
     expect(JSON.parse(persisted.command?.result_json ?? "null")).toEqual({
@@ -534,8 +540,8 @@ test("CreateProject reports its committed receipt when an identical Profile is a
     expect(persisted.projectCount.count).toBe(2);
     expect(persisted.workspaceCount.count).toBe(2);
     expect(persisted.secondIntent).toEqual({ status: "Pending" });
-    expect(persisted.claims).toEqual([{ workspace_id: first.workspaceId }]);
-    expect(persisted.events.map((event) => event.event_type)).toEqual([
+    expect(persisted.claims).toEqual([first.workspaceId]);
+    expect(persisted.events).toEqual([
       "ProjectCreated",
       "WorkspaceCreated",
       "WorkspaceResourceActivationChanged",
@@ -1176,8 +1182,14 @@ test("P12 keeps one Pending Attention across repeated failed restarts then exact
       body: JSON.stringify(envelope),
     });
     const replayBody = await replay.json();
+    const replayReceipt =
+      typeof replayBody === "object" &&
+      replayBody !== null &&
+      "body" in replayBody
+        ? replayBody.body
+        : undefined;
     expect(replay.status).toBe(200);
-    expect(replayBody.body).toEqual({
+    expect(replayReceipt).toEqual({
       commandId,
       resolution: "Committed",
       result: {
