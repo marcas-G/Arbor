@@ -786,11 +786,25 @@ describe("p9-worker-crash (W1–W5, 02 §1)", () => {
         const exec = yield* executionState;
         const tx = yield* TransactionPort;
         const repo = yield* ExecutionRepository;
+        const sql = yield* SqlClient;
         const now = yield* clockNow;
         yield* tx.transact(repo.requestStop(executionId, now));
         const recovery = yield* runRecovery(principal);
         const execAfter = yield* executionState;
-        const escalations = yield* eventsOf("ReconciliationEscalated");
+        const escalationRows = yield* sql.unsafe<{
+          readonly aggregate_ref: string;
+          readonly payload_json: string;
+        }>(
+          "SELECT aggregate_ref, payload_json FROM domain_events WHERE event_type = 'ReconciliationEscalated'",
+        );
+        const escalations = escalationRows.map((row) => ({
+          aggregateRef: row.aggregate_ref,
+          payload: JSON.parse(row.payload_json) as {
+            readonly executionId: string;
+            readonly invocationRefsFingerprint: string;
+            readonly refs: ReadonlyArray<string>;
+          },
+        }));
         return { exit, exec, recovery, execAfter, escalations };
       }),
     );
@@ -803,7 +817,16 @@ describe("p9-worker-crash (W1–W5, 02 §1)", () => {
     expect(r.recovery.escalated).toEqual([executionId]);
     expect(r.execAfter?.settled_at).toBeNull();
     expect(r.execAfter?.settlement_kind).not.toBe("Interrupted");
-    expect(r.escalations).toBeGreaterThanOrEqual(1);
+    expect(r.escalations).toEqual([
+      {
+        aggregateRef: executionId,
+        payload: {
+          executionId,
+          invocationRefsFingerprint: String(toolInvocationId(1)),
+          refs: [String(toolInvocationId(1))],
+        },
+      },
+    ]);
   });
 });
 
