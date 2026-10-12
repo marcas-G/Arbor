@@ -11,6 +11,7 @@ import {
   InboxProjectionStoreLive,
   layer,
   MessageStoreLive,
+  makeAttentionProjectionStoreLive,
   makeRecoveryAttentionFactStoreLive,
   P8_MIGRATIONS,
   runMigrations,
@@ -95,7 +96,10 @@ export const p10Flagged = parse(WorkspaceId)(
  * seed canonical rows directly via SQL — the p8-ddl precedent). */
 export const makeP10App = (
   filename = ":memory:",
-  options: { readonly includeSubmittedDecisionFactStore?: boolean } = {},
+  options: {
+    readonly includeSubmittedDecisionFactStore?: boolean;
+    readonly includeSubmittedDecisionMarkerStore?: boolean;
+  } = {},
 ) => {
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
@@ -105,6 +109,9 @@ export const makeP10App = (
         makeRecoveryAttentionFactStoreLive(),
         Layer.mergeAll(infra, journal),
       )
+    : undefined;
+  const submittedDecisionMarkers = options.includeSubmittedDecisionMarkerStore
+    ? Layer.provide(makeAttentionProjectionStoreLive(), infra)
     : undefined;
   const stores = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
@@ -121,6 +128,9 @@ export const makeP10App = (
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
     ...(submittedDecisionFacts === undefined ? [] : [submittedDecisionFacts]),
+    ...(submittedDecisionMarkers === undefined
+      ? []
+      : [submittedDecisionMarkers]),
   );
   return Layer.mergeAll(
     infra,
