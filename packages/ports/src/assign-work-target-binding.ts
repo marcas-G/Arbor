@@ -221,30 +221,6 @@ export type RecordAssignWorkBindingFailureInput = Omit<
   "attentionFactId" | "eventId"
 >;
 
-export type SubmittedDecisionBindingFailureCode =
-  | "DecisionRequestWorkspaceMismatch"
-  | "StepManifestMismatch"
-  | "SettledExecutionWithPendingDecisionAction";
-
-export interface SubmittedDecisionBindingAttentionFact {
-  readonly attentionFactId: string;
-  readonly eventId: string;
-  readonly projectId: ProjectId;
-  readonly executionId: ExecutionId;
-  readonly workspaceId: WorkspaceId;
-  readonly logicalStepNo: number;
-  readonly repairAttempt: number;
-  readonly providerTurnId: ProviderTurnId;
-  readonly logicalActionId: string;
-  readonly failureCode: SubmittedDecisionBindingFailureCode;
-  readonly firstDetectedAt: string;
-}
-
-/** Fully identified, already event-bound immutable fact to persist. This
- * storage port does not create the business event or derive the fact identity. */
-export type RecordSubmittedDecisionBindingFailureInput =
-  SubmittedDecisionBindingAttentionFact;
-
 export type RecoveryAttentionFactStoreError =
   | RepositoryFailure<"RecoveryAttentionFactStore">
   | DomainEventJournalError
