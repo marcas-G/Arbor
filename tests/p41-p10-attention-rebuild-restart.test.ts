@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect, Option } from "effect";
+import { Effect, Exit, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -102,16 +102,16 @@ describe("P41 P10 Attention rebuild after SQLite reopen", () => {
         database.close();
       }
 
-      const firstRows = await runP10(
+      const first = await runP10(
         Effect.gen(function* () {
           yield* runMigrations(P8_MIGRATIONS);
           const tx = yield* TransactionPort;
           const facts = yield* RecoveryAttentionFactStore;
-          yield* tx.transact(
+          const fact = yield* tx.transact(
             recordSubmittedDecisionBindingFailure(facts, factInput),
           );
           const deps = yield* makeP10Deps();
-          return yield* deriveProjectAttention(projectId, {
+          const rows = yield* deriveProjectAttention(projectId, {
             ...deps.attention,
             findSubmittedDecisionBindingFailure: (attentionFactId) =>
               tx
@@ -122,9 +122,87 @@ describe("P41 P10 Attention rebuild after SQLite reopen", () => {
                 )
                 .pipe(Effect.mapError(projectionReadError)),
           });
+          return { rows, fact };
         }),
         makeP10App(filename, { includeSubmittedDecisionFactStore: true }),
       );
+
+      let originalEventPayload: string | undefined;
+      let originalEventCorrelation: string | null | undefined;
+      const corruptEvent = new DatabaseSync(filename);
+      try {
+        const eventRow = corruptEvent
+          .prepare(
+            "SELECT payload_json, correlation_ref FROM domain_events WHERE event_id = ?",
+          )
+          .get(first.fact.eventId) as
+          | { payload_json: string; correlation_ref: string | null }
+          | undefined;
+        if (eventRow === undefined)
+          throw new Error("P41 event was not retained");
+        const payload = JSON.parse(eventRow.payload_json) as Record<
+          string,
+          unknown
+        >;
+        originalEventPayload = eventRow.payload_json;
+        originalEventCorrelation = eventRow.correlation_ref;
+        payload.attentionFactId = `att_${"f".repeat(64)}`;
+        corruptEvent
+          .prepare(
+            `UPDATE domain_events SET payload_json = ?, correlation_ref = ?
+              WHERE event_id = ?`,
+          )
+          .run(
+            JSON.stringify(payload),
+            "lac_p41_wrong_correlation",
+            first.fact.eventId,
+          );
+      } finally {
+        corruptEvent.close();
+      }
+
+      const integrityFailure = await runP10(
+        Effect.gen(function* () {
+          yield* runMigrations(P8_MIGRATIONS);
+          const tx = yield* TransactionPort;
+          const facts = yield* RecoveryAttentionFactStore;
+          const deps = yield* makeP10Deps();
+          return yield* Effect.exit(
+            deriveProjectAttention(projectId, {
+              ...deps.attention,
+              findSubmittedDecisionBindingFailure: (attentionFactId) =>
+                tx
+                  .transact(
+                    facts.findSubmittedDecisionBindingFailure?.(
+                      attentionFactId,
+                    ) ?? Effect.succeed(Option.none()),
+                  )
+                  .pipe(Effect.mapError(projectionReadError)),
+            }),
+          );
+        }),
+        makeP10App(filename, { includeSubmittedDecisionFactStore: true }),
+      );
+      expect(Exit.isFailure(integrityFailure)).toBe(true);
+
+      if (originalEventPayload === undefined) {
+        throw new Error("original P41 event payload was not captured");
+      }
+      const restoreEvent = new DatabaseSync(filename);
+      try {
+        restoreEvent
+          .prepare(
+            `UPDATE domain_events SET payload_json = ?, correlation_ref = ?
+              WHERE event_id = ?`,
+          )
+          .run(
+            originalEventPayload,
+            originalEventCorrelation,
+            first.fact.eventId,
+          );
+      } finally {
+        restoreEvent.close();
+      }
 
       const rebuiltRows = await runP10(
         Effect.gen(function* () {
@@ -147,7 +225,7 @@ describe("P41 P10 Attention rebuild after SQLite reopen", () => {
         makeP10App(filename, { includeSubmittedDecisionFactStore: true }),
       );
 
-      const firstSubmittedRows = firstRows.filter(
+      const firstSubmittedRows = first.rows.filter(
         (row) => row.source === "SubmittedDecisionBindingFailure",
       );
       const rebuiltSubmittedRows = rebuiltRows.filter(
