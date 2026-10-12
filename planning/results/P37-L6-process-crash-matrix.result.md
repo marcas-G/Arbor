@@ -3,7 +3,7 @@
 Date: 2026-10-12 (Asia/Shanghai)
 Baseline: `ed5fba00ee60e169cadf0df12395179862abd1e8`
 Worktree: `C:\Users\ThinkPad\.codex\worktrees\p37-delivermessage-closure`
-Status: **First run 0/11; rerun 1 7/11; rerun 2 9/11; two final local cases 2/2; full P37 L6 unqualified**
+Status: **L6 resumed matrix 11/11 PASS across rerun 3 + rerun 4; F19 2/2 PASS; default-process source integrated; broader release gates remain open**
 
 ## Run
 
@@ -229,3 +229,42 @@ This local pass validates the corrected boundaries but does not qualify the
 other nine cases after the final edits. Root has reserved the next P37 window
 for one full unfiltered 11-case run. Until that run passes, P37 L6, F19 and
 default `pnpm test:functional` remain open.
+
+## Interrupted-run recovery qualification
+
+Date: 2026-10-12 (Asia/Shanghai)
+Source baseline before suite relocation: `d578cb46e174c64068259134bae914fc277d560e`.
+The P37 test source matched `72e578f` byte-for-byte before relocation. Root
+confirmed the interrupted Vitest and P37 daemon processes were no longer
+running. The interrupted rerun-3 raw log was retained unchanged; it contains
+eight per-case `✓` records and no final Vitest summary. Those eight cases were
+not repeated.
+
+The source and Web production builds both passed. Vitest dry-list selected the
+P10 parameterized test definition and the final Inbox-drift test definition;
+the first expands to the `before` and `after` cases, for exactly three tests.
+Only those three were run, once, with `--retry=0`. Result: **3 passed, 8
+skipped (11 total), exit 0**, duration 180.44 s. The raw output and each
+fixture database path are retained in
+`planning/results/P37-L6-process-crash-matrix-rerun-4-remaining3.raw.log`.
+
+Together, rerun 3's eight observed passes and rerun 4's three passing
+remaining cases qualify all 11 unchanged matrix cases at the same source
+baseline; this is a resumed split run, not a claim that one uninterrupted
+11-case command completed. The earlier 0/11, 7/11, and 9/11 records remain
+historical evidence; their diagnosed fixture gate/seed causes were repaired.
+
+## F19 public delivery/wake qualification and default-suite integration
+
+The forward delivery/satisfaction case and dependency-first wake case ran
+once through `vitest.functional.config.ts`, serially, with `--retry=0`:
+**2 files / 2 tests passed**, duration 27.63 s. Raw output is
+`planning/results/P37-F19-public-delivery-rerun-1.raw.log`.
+
+After both qualifications passed, the unchanged 11-case test file was moved
+from `tests/functional/pending/` to `tests/functional/process/`, which is
+already included by the default process configuration. Vitest dry-list sees
+the file's eight test definitions; the three `it.each` definitions expand to
+11 parameterized cases. No case, assertion, or timeout was removed or changed.
+The dedicated L6 config remains local and is not part of the source commit.
+No production source or design document changed.
