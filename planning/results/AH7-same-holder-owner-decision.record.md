@@ -79,6 +79,16 @@ evidence; no additional process source is required for this accepted
 replacement oracle. The default clone-holder test remains unchanged until the
 owning-document landing package is independently reviewed and confirmed.
 
+The static same-holder test census also found five additional/default-runtime
+functions with the same unsupported oracle: one mock-store Runtime concurrency
+case in `packages/tool-runtime`, one SQLite Runtime concurrency case, two
+same-fence Runtime cases in the cross-connection file (separate connections and
+two OS children), and one currently skipped post-effect overlap case whose
+current child still receives a full fence. The first cross-connection case
+only races `recordIntent` and does not invoke ToolRuntime. The landing package
+lists each case and proposes keeping only Store CAS coverage in default core;
+no test classification has yet changed.
+
 ## Owning-document landing state
 
 The accepted proposal did not contain exact owning-document paths, landing
