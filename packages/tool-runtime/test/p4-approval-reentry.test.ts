@@ -26,6 +26,7 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
+  WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
@@ -201,6 +202,20 @@ describe("P4 exact approval recovery for the same ToolInvocationId", () => {
             observedEnvironmentRevision: "env-ah7",
           }),
       }),
+      Layer.succeed(WorkspaceRepository, {
+        findById: (id: WorkspaceId) => {
+          expect(id).toBe(workspaceId);
+          return Effect.succeed(
+            Option.some({
+              projectId,
+              resourceBoundaryRevision: 0,
+              resourceBoundary: {
+                addresses: [{ _tag: "GitWorktree" as const, path: "/repo" }],
+              },
+            }),
+          );
+        },
+      } as never),
       Layer.succeed(Clock, {
         now: () => Effect.succeed("2026-10-05T00:00:00.000Z"),
       }),
@@ -454,6 +469,20 @@ describe("P4 exact approval recovery for the same ToolInvocationId", () => {
             observedEnvironmentRevision: "env-p38",
           }),
       }),
+      Layer.succeed(WorkspaceRepository, {
+        findById: (id: WorkspaceId) => {
+          expect(id).toBe(workspaceId);
+          return Effect.succeed(
+            Option.some({
+              projectId,
+              resourceBoundaryRevision: 0,
+              resourceBoundary: {
+                addresses: [{ _tag: "GitWorktree" as const, path: "/repo" }],
+              },
+            }),
+          );
+        },
+      } as never),
       Layer.succeed(Clock, {
         now: () => Effect.succeed("2026-10-05T00:00:02.000Z"),
       }),
