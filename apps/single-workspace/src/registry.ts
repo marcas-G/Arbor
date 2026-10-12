@@ -271,7 +271,10 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
             MessageStoreService,
             "append" | "closeCorrelation" | "isCorrelationClosed"
           >,
-          inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+          inbox: inbox as Pick<
+            InboxProjectionStoreService,
+            "admitUpsert" | "admitUpsertSequenced"
+          >,
         }) as unknown as CommandHandler<unknown, unknown>,
         makeDeliverMessageHandler({
           deliverables,

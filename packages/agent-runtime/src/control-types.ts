@@ -6,6 +6,7 @@ import type {
   ExecutionSettlement,
   MessageId,
   MessageKind,
+  TerminalActionDenial,
   VerificationVerdict,
   WaitSpec,
   WorkId,
@@ -53,6 +54,19 @@ export type AgentAction =
   | { readonly _tag: "ReadWorkspace"; readonly workspaceRef: string }
   | { readonly _tag: "AcceptResult"; readonly resultRef: string }
   | {
+      readonly _tag: "ResolveWorkBlocker";
+      readonly resolutions: readonly [
+        {
+          readonly blockerId: string;
+          readonly successfulActionRefs: readonly [string, ...string[]];
+        },
+        ...{
+          readonly blockerId: string;
+          readonly successfulActionRefs: readonly [string, ...string[]];
+        }[],
+      ];
+    }
+  | {
       readonly _tag: "UpdatePlan";
       readonly items: ReadonlyArray<{
         readonly itemId: string;
@@ -82,8 +96,14 @@ export type AgentAction =
     }
   | {
       readonly _tag: "Wait";
+      readonly disposition: "Yielded";
       readonly reason: string;
       readonly waitSpec: WaitSpec;
+    }
+  | {
+      readonly _tag: "Wait";
+      readonly disposition: "Blocked";
+      readonly request: string;
     }
   | {
       readonly _tag: "SendMessage";
@@ -204,8 +224,12 @@ export type AgentActionOutcome =
         readonly commandId: CommandId;
         readonly consumedRevision: number;
       };
+      readonly durableActionCommit?: {
+        readonly loopStep: import("@arbor/ports").AgentLoopStepRecord;
+      };
     }
-  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
+  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement }
+  | { readonly _tag: "BlockedWorkEpisodeRequest"; readonly request: string };
 
 export interface AgentActionHandlerInput {
   readonly action: AgentAction;
@@ -214,6 +238,14 @@ export interface AgentActionHandlerInput {
   readonly context: CommandSubmissionContext;
   /** Durable AgentLoopStep identity for this pinned control action. */
   readonly logicalActionId?: string;
+  readonly actionContext?: {
+    readonly identity: import("@arbor/ports").AgentLoopStepIdentity;
+    readonly actionIndex: number;
+    readonly providerTurnId: import("@arbor/domain").ProviderTurnId;
+    readonly callRef: string;
+    readonly contextEpoch: import("@arbor/domain").ContextEpochNumber;
+  };
+  readonly loopStepFence?: import("@arbor/ports").AgentLoopStepFence;
   /** Exact process-local authorization evidence from the trusted authorizer. */
   readonly assignWorkEvidence?: import("@arbor/ports").AssignWorkControlAuthorizationEvidence;
   readonly assignWorkReplay?: boolean;
@@ -285,6 +317,7 @@ export type ExecutableInvocationOutcome =
       readonly resultRef?: string;
       readonly artifactRefs?: ReadonlyArray<string>;
       readonly invocationId?: import("@arbor/domain").ToolInvocationId;
+      readonly terminalDenial?: TerminalActionDenial;
     }
   | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement };
 

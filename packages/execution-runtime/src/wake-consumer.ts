@@ -7,6 +7,7 @@ import {
 } from "@arbor/application";
 import type {
   CommandSubmissionContext,
+  InboxEntry,
   Principal,
   WakeReason,
   WorkspaceId,
@@ -35,6 +36,18 @@ const systemContext = (principal: Principal): CommandSubmissionContext => ({
   principal,
   causationRef: "execution-scheduler",
 });
+
+/** The existing InboxEpisode boundary admits only canonical important-input
+ * kinds. WorkBlocked is a typed Parent input, not an Agent Session message. */
+export const selectWorkspaceInboxEpisode = (
+  entries: ReadonlyArray<InboxEntry>,
+): InboxEntry | undefined =>
+  entries.find(
+    (entry) =>
+      entry.kind === "Message" ||
+      entry.kind === "SpecialistSettled" ||
+      entry.kind === "WorkBlocked",
+  );
 
 /**
  * P2 production wake consumer. The scheduler remains the only decision
@@ -128,9 +141,8 @@ export const consumeWorkspaceWake = (
       const now = yield* clock.now();
       const inboxEntry =
         decision._tag === "Idle"
-          ? (yield* tx.transact(inbox.listUnconsumed(workspaceId))).find(
-              (entry) =>
-                entry.kind === "Message" || entry.kind === "SpecialistSettled",
+          ? selectWorkspaceInboxEpisode(
+              yield* tx.transact(inbox.listUnconsumed(workspaceId)),
             )
           : undefined;
       if (decision._tag === "Idle" && inboxEntry === undefined) {

@@ -103,6 +103,10 @@ export interface InboxProjectionStoreService {
   readonly admitUpsert: (
     entry: InboxEntry,
   ) => Effect.Effect<void, InboxProjectionStoreError, TransactionScope>;
+  /** Opt-in admission that advances the P43 monotonic Workspace sequence. */
+  readonly admitUpsertSequenced: (
+    entry: InboxEntry,
+  ) => Effect.Effect<void, InboxProjectionStoreError, TransactionScope>;
   readonly listUnconsumed: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<
@@ -126,6 +130,10 @@ export interface InboxProjectionStoreService {
   readonly countByKey: (
     workspaceId: WorkspaceId,
     entryKey: string,
+  ) => Effect.Effect<number, InboxProjectionStoreError, TransactionScope>;
+  /** Stable Inbox high-water mark; consumed rows remain part of the sequence. */
+  readonly currentSequence: (
+    workspaceId: WorkspaceId,
   ) => Effect.Effect<number, InboxProjectionStoreError, TransactionScope>;
 }
 

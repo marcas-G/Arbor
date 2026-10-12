@@ -23,6 +23,16 @@ export interface P2CommandDependencies {
   readonly executions: import("@arbor/ports").ExecutionRepositoryService;
   readonly readmissionGate?: import("@arbor/ports").WorkReadmissionGateStoreService;
   readonly workWaits: import("@arbor/ports").WorkWaitStoreService;
+  readonly blockers?: import("@arbor/ports").WorkBlockerStoreService;
+  readonly works?: Pick<
+    import("@arbor/ports").WorkRepositoryService,
+    "findById"
+  >;
+  readonly inbox?: Pick<
+    import("@arbor/ports").InboxProjectionStoreService,
+    "currentSequence"
+  >;
+  readonly blockedEvidence?: import("@arbor/application").BlockedEvidenceDependencies;
   readonly executableApprovals?: Pick<
     import("@arbor/ports").ExecutableApprovalStoreService,
     "cancelForExecution"

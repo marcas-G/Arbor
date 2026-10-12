@@ -163,6 +163,32 @@ export const InboxProjectionStoreLive: Layer.Layer<
             ),
           );
         }),
+      admitUpsertSequenced: (entry) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const inserted = yield* run(
+            sql.unsafe<{ entry_key: string }>(
+              "INSERT INTO inbox_entries (workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(workspace_id, entry_key) DO NOTHING RETURNING entry_key",
+              [
+                entry.recipientWorkspaceId,
+                entry.entryKey,
+                entry.kind,
+                entry.summary,
+                entry.correlationId ?? null,
+                entry.admittedAt,
+              ],
+            ),
+          );
+          // Duplicate delivery is a no-op for both the entry and high-water mark.
+          if (inserted.length > 0) {
+            yield* run(
+              sql.unsafe(
+                "INSERT INTO inbox_workspace_sequences (workspace_id, last_sequence) VALUES (?,1) ON CONFLICT(workspace_id) DO UPDATE SET last_sequence = last_sequence + 1",
+                [entry.recipientWorkspaceId],
+              ),
+            );
+          }
+        }),
       listUnconsumed: (workspaceId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
@@ -208,6 +234,17 @@ export const InboxProjectionStoreLive: Layer.Layer<
             ),
           );
           return Number(rows[0]?.count ?? 0);
+        }),
+      currentSequence: (workspaceId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{ last_sequence: number }>(
+              "SELECT last_sequence FROM inbox_workspace_sequences WHERE workspace_id = ?",
+              [workspaceId],
+            ),
+          );
+          return Number(rows[0]?.last_sequence ?? 0);
         }),
     });
   }),

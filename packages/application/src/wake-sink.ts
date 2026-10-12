@@ -55,6 +55,18 @@ const matchesSignalledDependency = (
       condition.dependencyId === dependencyId,
   );
 
+const matchesAdvancedInbox = (
+  conditions: ReadonlyArray<WakeCondition>,
+  workspaceId: WorkspaceId,
+  sequence: number,
+): boolean =>
+  conditions.some(
+    (condition) =>
+      condition._tag === "InboxAdvanced" &&
+      condition.workspaceId === workspaceId &&
+      sequence > condition.observedSequence,
+  );
+
 /** Deliver one wake signal (06 §3): clear → reevaluate. The clears commit
  * in their own transaction; `reevaluate` runs after that transaction (the
  * scheduler transacts internally and the sqlite port rejects nested
@@ -69,14 +81,25 @@ export const deliverWakeSignal = (
     const wakeReason: WakeReason = { _tag: signal.reason };
     const clearedWaits = yield* deps.tx.transact(
       Effect.gen(function* () {
-        // Clear semantics apply only to a dependency revision advance
-        // (06 §2); InputArrived/ChildDelivered reevaluate without clearing.
-        if (signal.reason !== "DependencySatisfied") {
+        // Waits clear only when the signal proves the exact observed fact
+        // advanced. Generic InputArrived does not release unrelated waits.
+        if (
+          signal.reason !== "DependencySatisfied" &&
+          signal.reason !== "InputArrived"
+        ) {
           return 0;
         }
         const detail = signal.detail ?? {};
-        const { dependencyId } = detail;
-        if (typeof dependencyId !== "string") {
+        const { dependencyId, inboxSequence } = detail;
+        const dependencySignal =
+          signal.reason === "DependencySatisfied" &&
+          typeof dependencyId === "string";
+        const inboxSignal =
+          signal.reason === "InputArrived" &&
+          typeof inboxSequence === "number" &&
+          Number.isSafeInteger(inboxSequence) &&
+          inboxSequence >= 0;
+        if (!dependencySignal && !inboxSignal) {
           // Malformed delivery record: no wait can match; the reevaluate
           // below still satisfies the at-least-once contract.
           return 0;
@@ -87,10 +110,17 @@ export const deliverWakeSignal = (
           const wait = yield* deps.waits.findByWork(work.workId);
           if (
             Option.isSome(wait) &&
-            matchesSignalledDependency(
-              wait.value.waitSpec.conditions,
-              dependencyId,
-            )
+            ((dependencySignal &&
+              matchesSignalledDependency(
+                wait.value.waitSpec.conditions,
+                dependencyId as string,
+              )) ||
+              (inboxSignal &&
+                matchesAdvancedInbox(
+                  wait.value.waitSpec.conditions,
+                  signal.workspaceId,
+                  inboxSequence as number,
+                )))
           ) {
             yield* deps.waits.clear(work.workId);
             cleared += 1;

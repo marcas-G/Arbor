@@ -26,6 +26,88 @@ const sendHandler: AgentActionHandler = {
 };
 
 describe("I0 ControlToolRegistry", () => {
+  it("keeps WorkBlocker resolution hidden until its durable handler is registered", () => {
+    const unavailable = makeControlToolRegistry();
+    expect(
+      unavailable
+        .definitions()
+        .some((tool) => tool.name === "resolve_work_blocker"),
+    ).toBe(false);
+    const registered = makeControlToolRegistry([
+      {
+        action: "ResolveWorkBlocker",
+        handle: () =>
+          Effect.succeed({
+            _tag: "Observation",
+            source: "Runtime",
+            observation: { text: "resolved", truncated: false },
+          }),
+      },
+    ]);
+    expect(
+      registered
+        .definitions()
+        .some((tool) => tool.name === "resolve_work_blocker"),
+    ).toBe(true);
+  });
+
+  it("fails closed on Blocked wait unless the WorkBlocker recovery handler is active", async () => {
+    const action = {
+      _tag: "Wait" as const,
+      disposition: "Blocked" as const,
+      request: "need the resource boundary updated",
+    };
+    const execution = {
+      executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+      binding: {
+        _tag: "WorkspaceExecution",
+        workspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
+        episode: {
+          _tag: "WorkEpisode",
+          workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          targetWorkRevision: 0,
+        },
+      },
+    } as never;
+    const invocationValue = invocation("wait", {});
+    const unavailable = makeControlToolRegistry();
+    await expect(
+      Effect.runPromise(
+        unavailable.handle({
+          action,
+          invocation: invocationValue,
+          execution,
+          context: {} as never,
+        }),
+      ),
+    ).rejects.toMatchObject({ _tag: "AgentActionRejected" });
+
+    const available = makeControlToolRegistry([
+      {
+        action: "ResolveWorkBlocker",
+        handle: () =>
+          Effect.succeed({
+            _tag: "Observation",
+            source: "Runtime",
+            observation: { text: "resolved", truncated: false },
+          }),
+      },
+    ]);
+    await expect(
+      Effect.runPromise(
+        available.handle({
+          action,
+          invocation: invocationValue,
+          execution,
+          context: {} as never,
+        }),
+      ),
+    ).resolves.toMatchObject({
+      _tag: "BlockedWorkEpisodeRequest",
+      request: action.request,
+    });
+  });
+
   it("exposes only registered control identities and classifies by registry identity", () => {
     const registry = makeControlToolRegistry([sendHandler]);
     expect(registry.definitions().map((tool) => tool.name)).toEqual([
@@ -104,6 +186,7 @@ describe("I0 ControlToolRegistry", () => {
     const valid = Effect.runSync(
       registry.decode(
         invocation("wait", {
+          disposition: "Yielded",
           reason: "await response",
           waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
         }),
@@ -111,6 +194,7 @@ describe("I0 ControlToolRegistry", () => {
     );
     expect(valid.action).toEqual({
       _tag: "Wait",
+      disposition: "Yielded",
       reason: "await response",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
     });

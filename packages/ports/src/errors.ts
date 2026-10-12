@@ -72,6 +72,7 @@ export interface ResourceResolutionStale {
 
 export type ExecutionRepositoryError = RepositoryFailure<"ExecutionRepository">;
 export type WorkWaitStoreError = RepositoryFailure<"WorkWaitStore">;
+export type WorkBlockerStoreError = RepositoryFailure<"WorkBlockerStore">;
 export type LocalPlanStoreError = RepositoryFailure<"LocalPlanStore">;
 /** @deprecated MAC compatibility alias; active code uses LocalPlanStoreError. */
 export type WorkPlanStoreError = LocalPlanStoreError;

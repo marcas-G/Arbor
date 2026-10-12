@@ -1,4 +1,5 @@
 import type { ExecutionBoundAgentBinding } from "./authority.js";
+import type { BlockedActionRef, Sha256 } from "./blocker.js";
 import type {
   DecisionId,
   ExecutionId,
@@ -136,6 +137,19 @@ export const conversationResponseEpisode = (
 
 export type CompletedResult =
   | {
+      /** A Work Episode reached a terminal, evidenced no-effect blocker. */
+      readonly _tag: "Blocked";
+      readonly workId: WorkId;
+      readonly targetWorkRevision: WorkRevision;
+      readonly blockerId: Sha256;
+      readonly waitFor: WaitSpec;
+      readonly request: string;
+      readonly failedActionRefs: readonly [
+        BlockedActionRef,
+        ...BlockedActionRef[],
+      ];
+    }
+  | {
       readonly _tag: "Yielded";
       readonly reason: string;
       readonly waitSpec: WaitSpec;
@@ -267,7 +281,10 @@ export const settlementMatchesEpisode = (
     case "WorkEpisode":
       return (
         settlement.result._tag === "Yielded" ||
-        settlement.result._tag === "CompletionClaimed"
+        settlement.result._tag === "CompletionClaimed" ||
+        (settlement.result._tag === "Blocked" &&
+          settlement.result.workId === episode.workId &&
+          settlement.result.targetWorkRevision === episode.targetWorkRevision)
       );
     case "ConversationResponseEpisode":
       return (

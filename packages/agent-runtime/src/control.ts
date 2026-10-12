@@ -102,6 +102,9 @@ import { decodeControlInvocation } from "./control-decoder.js";
 export const makeControlToolRegistry = (
   handlers: ReadonlyArray<AgentActionHandler> = [],
 ): ControlToolRegistryService => {
+  const blockedWorkEpisodeEnabled = handlers.some(
+    (handler) => handler.action === "ResolveWorkBlocker",
+  );
   const waitHandler: AgentActionHandler = {
     action: "Wait",
     handle: ({ action, execution }) => {
@@ -119,6 +122,21 @@ export const makeControlToolRegistry = (
           safeMessage:
             "Wait requires an active Work binding for durable WorkWait registration",
           correction: "ChooseAlternative",
+        });
+      }
+      if (action.disposition === "Blocked") {
+        if (!blockedWorkEpisodeEnabled) {
+          return Effect.fail({
+            _tag: "AgentActionRejected",
+            code: "action/not-applicable",
+            safeMessage:
+              "Blocked recovery is unavailable on this runtime because the durable WorkBlocker ledger is not active",
+            correction: "ChooseAlternative",
+          });
+        }
+        return Effect.succeed({
+          _tag: "BlockedWorkEpisodeRequest",
+          request: action.request,
         });
       }
       return Effect.succeed({
@@ -144,6 +162,7 @@ export const makeControlToolRegistry = (
   const allDefinitions = controlToolDefinitions();
   const definitionAction: Readonly<Record<string, AgentAction["_tag"]>> = {
     "core.control.wait": "Wait",
+    "core.control.resolve-work-blocker": "ResolveWorkBlocker",
     "core.control.assign-work": "AssignWork",
     "core.control.list-workspaces": "ListWorkspaces",
     "core.control.read-workspace": "ReadWorkspace",

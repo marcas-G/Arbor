@@ -29,6 +29,7 @@ import {
   verificationMinimal,
   verificationTypical,
   verificationUnknownEnum,
+  workDetailBlocked,
   workDetailMinimal,
   workDetailTypical,
   workDetailUnknownEnum,
@@ -152,6 +153,20 @@ describe("work-detail", () => {
     rerender(<WorkDetailView view={workDetailUnknownEnum} />);
     expect(screen.getByText("Paused")).toBeTruthy();
     expectMutedBadge("Paused");
+  });
+
+  it("renders a safe blocked explanation without presenting it as Complete or Accepted", () => {
+    render(<WorkDetailView view={workDetailBlocked} />);
+    expect(screen.getByRole("status", { name: "工作受阻" })).toBeTruthy();
+    expect(screen.getByText("本轮执行已阻断")).toBeTruthy();
+    expect(screen.getByRole("listitem").textContent).toContain(
+      "HandlerRejected",
+    );
+    expect(
+      screen.getByText("检查所需权限后，提供新指导以继续本工作。"),
+    ).toBeTruthy();
+    expect(screen.queryByText("已完成")).toBeNull();
+    expect(screen.queryByText("验收结果")).toBeNull();
   });
 });
 

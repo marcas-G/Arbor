@@ -219,6 +219,20 @@ const isWorkspaceId = (value: string): boolean =>
     value,
   );
 
+/** The default daemon re-discovers durable Open-work targets on every tick.
+ * A configured workspace intentionally narrows scheduling authority to that
+ * workspace; Parent Inbox rows are processed only by their owning/global
+ * scheduler, never by a child-scoped daemon. */
+export const schedulerWorkspaceTargets = (
+  rows: ReadonlyArray<{ readonly workspace_id: string }>,
+  configuredWorkspaceId?: WorkspaceId,
+): ReadonlyArray<WorkspaceId> => {
+  if (configuredWorkspaceId !== undefined) return [configuredWorkspaceId];
+  return [...new Set(rows.map((row) => row.workspace_id))]
+    .filter(isWorkspaceId)
+    .map((id) => parse(WorkspaceId)(id));
+};
+
 export const runOnce = (workspaceId: string, principalRef = "runtime:system") =>
   Effect.gen(function* () {
     yield* runMigrations(CURRENT_MIGRATIONS);
@@ -292,9 +306,16 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           ).pipe(Effect.catchTag("LeaseFencingRejected", () => Effect.void));
         });
       if (config.workspaceId !== undefined) {
-        yield* evaluateAndSelect(config.workspaceId, principal, {
-          _tag: "Recovery",
-        });
+        // The scoped scheduler still owns only this workspace, but must use
+        // the Inbox-aware wake boundary so a durable WorkBlocked Parent entry
+        // is re-admitted after restart just like it is in global mode.
+        yield* consumeWorkspaceWake(
+          config.workspaceId,
+          { _tag: "Recovery" },
+          principal,
+          config.executionSettlementQualificationProbe,
+          config.executionLeaseQualificationProbe,
+        );
         yield* resumeActiveExecution(config.workspaceId);
         return;
       }
@@ -309,11 +330,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           UNION
          SELECT root_workspace_id AS workspace_id FROM projects WHERE lifecycle = 'Open'`,
       );
-      for (const row of rows) {
-        if (!isWorkspaceId(row.workspace_id)) {
-          continue;
-        }
-        const workspaceId = parse(WorkspaceId)(row.workspace_id);
+      for (const workspaceId of schedulerWorkspaceTargets(rows)) {
         yield* consumeWorkspaceWake(
           workspaceId,
           { _tag: "Recovery" },

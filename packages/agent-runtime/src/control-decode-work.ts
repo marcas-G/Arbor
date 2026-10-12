@@ -2,6 +2,7 @@ import {
   ArtifactId,
   DeliverableId,
   parse,
+  Sha256,
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
@@ -466,6 +467,84 @@ export const decodeDeclareDependencyControl = (
           kind: deliverable.kind,
           requiredArtifactRoles: roles,
         },
+      },
+    };
+  });
+
+export const decodeResolveWorkBlockerControl = (
+  invocation: ToolInvocation,
+  object: Record<string, unknown>,
+): Effect.Effect<ControlToolInvocation, ControlToolDecodeError> =>
+  Effect.gen(function* () {
+    if (
+      !hasOnlyControlFields(object, ["resolutions"]) ||
+      !Array.isArray(object.resolutions) ||
+      object.resolutions.length === 0
+    ) {
+      return yield* invalidControlArguments(
+        invocation.toolName,
+        "resolve_work_blocker requires a non-empty resolutions array",
+      );
+    }
+    const resolutions: Array<{
+      readonly blockerId: string;
+      readonly successfulActionRefs: readonly [string, ...string[]];
+    }> = [];
+    for (const candidate of object.resolutions) {
+      if (
+        typeof candidate !== "object" ||
+        candidate === null ||
+        Array.isArray(candidate)
+      ) {
+        return yield* invalidControlArguments(
+          invocation.toolName,
+          "each resolution must be a closed object",
+        );
+      }
+      const item = candidate as Record<string, unknown>;
+      if (!hasOnlyControlFields(item, ["blockerId", "successfulActionRefs"])) {
+        return yield* invalidControlArguments(
+          invocation.toolName,
+          "resolution contains unsupported fields",
+        );
+      }
+      const blockerId = parseControlField(
+        invocation.toolName,
+        parse(Sha256),
+        item.blockerId,
+      );
+      const refs = stringList(item.successfulActionRefs);
+      if (
+        blockerId === null ||
+        refs === null ||
+        refs.length === 0 ||
+        refs.some((ref) => ref.trim().length === 0 || ref.length > 256)
+      ) {
+        return yield* invalidControlArguments(
+          invocation.toolName,
+          "resolution requires a SHA-256 blockerId and non-empty successfulActionRefs",
+        );
+      }
+      resolutions.push({
+        blockerId,
+        successfulActionRefs: refs as readonly [string, ...string[]],
+      });
+    }
+    const firstResolution = resolutions[0];
+    if (firstResolution === undefined) {
+      return yield* invalidControlArguments(
+        invocation.toolName,
+        "resolve_work_blocker requires a non-empty resolutions array",
+      );
+    }
+    return {
+      invocation,
+      action: {
+        _tag: "ResolveWorkBlocker",
+        resolutions: [firstResolution, ...resolutions.slice(1)] as Extract<
+          AgentAction,
+          { readonly _tag: "ResolveWorkBlocker" }
+        >["resolutions"],
       },
     };
   });

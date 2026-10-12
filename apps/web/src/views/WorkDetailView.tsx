@@ -15,6 +15,7 @@ const lifecycleLabel = (view: WorkDetailRes): string => {
 /** Read-only rendering of the canonical Work Detail projection. */
 export function WorkDetailView({ view }: { readonly view: WorkDetailRes }) {
   const accepted = view.acceptedResult;
+  const blocked = view.blockedEpisode;
   return (
     <Card title="工作目标">
       <div className="arbor-view-stack">
@@ -33,6 +34,47 @@ export function WorkDetailView({ view }: { readonly view: WorkDetailRes }) {
             {view.completionExpectation || <Empty>未提供完成标准</Empty>}
           </span>
         </div>
+        {blocked === undefined ? null : (
+          <section aria-label="工作受阻" role="status">
+            <h3>本轮执行已阻断</h3>
+            <p>
+              工作仍保持进行中；系统不会自动重试、完成或验收。可以在上方治理动作中提供新指导。
+            </p>
+            <div className="arbor-kv">
+              <span className="arbor-kv-label">执行记录</span>
+              <Mono>{blocked.sourceExecutionId}</Mono>
+            </div>
+            {blocked.blockers.map((blocker) => (
+              <article key={blocker.blockerId}>
+                <div className="arbor-badge-row">
+                  <EnumBadge label="需要处理" />
+                  <Mono>{blocker.blockerId}</Mono>
+                </div>
+                <p>{blocker.recoveryGuidance}</p>
+                <h4>未解决的拒绝动作</h4>
+                <ul>
+                  {blocker.failedActions.map((action) => (
+                    <li key={action.actionId}>
+                      <span>
+                        {action.actionKind === "Executable"
+                          ? "可执行工具"
+                          : "权限/资源准入"}
+                        ：{action.denialCategory}
+                      </span>
+                      <div>
+                        <span>动作 </span>
+                        <Mono>{action.actionId}</Mono>
+                        <span> · 观察 </span>
+                        <Mono>{action.observationRef}</Mono>
+                      </div>
+                      <p>{action.request}</p>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </section>
+        )}
         {accepted === undefined ? (
           <Empty>尚无本修订版本的验收记录</Empty>
         ) : (

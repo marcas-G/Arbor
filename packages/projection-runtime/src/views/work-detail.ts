@@ -1,8 +1,11 @@
 import type {
   Acceptance,
+  ExecutionSettlement,
   ProjectId,
+  TerminalActionDenial,
   Verification,
   Work,
+  WorkBlocker,
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
@@ -35,6 +38,29 @@ export interface WorkDetailView extends WorkDetailRequest {
   readonly lifecycle: Work["lifecycle"];
   readonly revision: Work["revision"];
   readonly acceptedResult?: AcceptedWorkResultView;
+  readonly blockedEpisode?: BlockedWorkEpisodeView;
+}
+
+export interface BlockedWorkEpisodeView {
+  readonly sourceExecutionId: WorkBlocker["openCycleId"];
+  readonly blockers: ReadonlyArray<{
+    readonly blockerId: WorkBlocker["blockerId"];
+    readonly disposition: "Blocked";
+    readonly failedActions: ReadonlyArray<{
+      readonly actionId: string;
+      readonly actionKind: "Executable" | "P4NoEffectDenied";
+      readonly status: "Denied";
+      readonly denialCategory:
+        | Extract<
+            TerminalActionDenial,
+            { readonly _tag: "P4NoEffectDenied" }
+          >["reasonCode"]
+        | "HandlerRejected";
+      readonly request: string;
+      readonly observationRef: string;
+    }>;
+    readonly recoveryGuidance: string;
+  }>;
 }
 
 export interface WorkDetailDeps {
@@ -48,6 +74,13 @@ export interface WorkDetailDeps {
   readonly findVerification: (
     verificationId: Verification["verificationId"],
   ) => Effect.Effect<Option.Option<Verification>, ProjectionReadError>;
+  readonly listWorkBlockersByWorkRevision?: (
+    workId: WorkId,
+    revision: number,
+  ) => Effect.Effect<ReadonlyArray<WorkBlocker>, ProjectionReadError>;
+  readonly findExecutionSettlement?: (
+    executionId: WorkBlocker["openCycleId"],
+  ) => Effect.Effect<Option.Option<ExecutionSettlement>, ProjectionReadError>;
 }
 
 const notFound: ProjectionNotFound = {
@@ -125,6 +158,89 @@ export const deriveWorkDetail = (
     if (work.lifecycle === "Completed" && acceptedResult === undefined) {
       return yield* Effect.fail(integrityFailure);
     }
+    let blockedEpisode: BlockedWorkEpisodeView | undefined;
+    if (
+      work.lifecycle === "Open" &&
+      deps.listWorkBlockersByWorkRevision !== undefined
+    ) {
+      const blockers = yield* deps.listWorkBlockersByWorkRevision(
+        work.workId,
+        work.revision,
+      );
+      const current = blockers.filter(
+        (blocker) =>
+          blocker.state === "Open" &&
+          blocker.projectId === work.projectId &&
+          blocker.workspaceId === work.workspaceId &&
+          blocker.workId === work.workId &&
+          blocker.targetWorkRevision === work.revision,
+      );
+      if (current.length > 0) {
+        if (
+          current.some(
+            (blocker) => blocker.openCycleId !== current[0]?.openCycleId,
+          )
+        ) {
+          return yield* Effect.fail(integrityFailure);
+        }
+        if (deps.findExecutionSettlement === undefined) {
+          return yield* Effect.fail(integrityFailure);
+        }
+        const projected: Array<BlockedWorkEpisodeView["blockers"][number]> = [];
+        for (const blocker of current) {
+          const settlement = yield* deps.findExecutionSettlement(
+            blocker.openCycleId,
+          );
+          const blockedResult =
+            Option.isSome(settlement) &&
+            settlement.value._tag === "Completed" &&
+            settlement.value.result._tag === "Blocked"
+              ? settlement.value.result
+              : undefined;
+          const request = (
+            blockedResult as unknown as
+              | { readonly request?: unknown }
+              | undefined
+          )?.request;
+          if (
+            blockedResult === undefined ||
+            blockedResult.blockerId !== blocker.blockerId ||
+            blockedResult.workId !== work.workId ||
+            blockedResult.targetWorkRevision !== work.revision ||
+            request !== blocker.latestRequestRef ||
+            JSON.stringify(blockedResult.failedActionRefs) !==
+              JSON.stringify(blocker.failedActionRefs)
+          ) {
+            return yield* Effect.fail(integrityFailure);
+          }
+          projected.push({
+            blockerId: blocker.blockerId,
+            disposition: "Blocked" as const,
+            failedActions: blocker.failedActionRefs.map((action) => ({
+              actionId: action.logicalActionId,
+              actionKind:
+                action.terminalDenial._tag === "P4NoEffectDenied"
+                  ? "P4NoEffectDenied"
+                  : action.terminalDenial.routeKind,
+              status: "Denied" as const,
+              denialCategory:
+                action.terminalDenial._tag === "P4NoEffectDenied"
+                  ? action.terminalDenial.reasonCode
+                  : "HandlerRejected",
+              request: request as string,
+              observationRef: action.observationSourceRef,
+            })),
+            recoveryGuidance:
+              "Review the denied action and update or resolve the Work through an authorized Work control.",
+          });
+        }
+        blockedEpisode = {
+          sourceExecutionId: current[0]
+            ?.openCycleId as WorkBlocker["openCycleId"],
+          blockers: projected,
+        };
+      }
+    }
     return {
       workId: work.workId,
       projectId: work.projectId,
@@ -135,5 +251,6 @@ export const deriveWorkDetail = (
       lifecycle: work.lifecycle,
       revision: work.revision,
       ...(acceptedResult === undefined ? {} : { acceptedResult }),
+      ...(blockedEpisode === undefined ? {} : { blockedEpisode }),
     };
   });

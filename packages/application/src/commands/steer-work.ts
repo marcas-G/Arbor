@@ -8,6 +8,7 @@ import {
 import type {
   InboxProjectionStoreService,
   PendingDomainEvent,
+  WorkBlockerStoreService,
   WorkRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -47,7 +48,12 @@ export interface SteerWorkResult {
 
 export interface SteerWorkDependencies {
   readonly works: Pick<WorkRepositoryService, "findById" | "refineIfRevision">;
-  readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert">;
+  readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert"> &
+    Partial<Pick<InboxProjectionStoreService, "admitUpsertSequenced">>;
+  readonly blockers?: Pick<
+    WorkBlockerStoreService,
+    "listByWorkRevision" | "supersede"
+  >;
 }
 
 export const makeSteerWorkHandler = (
@@ -152,15 +158,50 @@ export const makeSteerWorkHandler = (
         }),
       ];
 
+      if (dependencies.blockers !== undefined) {
+        const currentBlockers = yield* dependencies.blockers.listByWorkRevision(
+          payload.workId,
+          work.revision,
+        );
+        yield* dependencies.blockers.supersede(payload.workId, work.revision);
+        for (const blocker of currentBlockers) {
+          if (blocker.state !== "Open") continue;
+          events.push({
+            projectId: envelope.projectId,
+            eventType: "WorkBlockerSuperseded",
+            eventVersion: 1,
+            occurredAt: envelope.issuedAt,
+            aggregateRef: payload.workId,
+            actor: envelope.actor,
+            causedByCommandId: envelope.commandId,
+            payload: {
+              blockerId: blocker.blockerId,
+              workId: payload.workId,
+              previousWorkRevision: work.revision,
+              currentWorkRevision: next.revision,
+              supersededAt: envelope.issuedAt,
+            },
+          });
+        }
+      }
+
       // P6 `04` §3: admission goes to the target Workspace Inbox only —
       // never a Session write. Promotion semantics belong to the next task.
-      yield* dependencies.inbox.admitUpsert({
+      const inboxEntry = {
         recipientWorkspaceId: payload.workspaceId,
         entryKey: `steer:${payload.workId}:${next.revision}`,
         kind: "HumanInput",
         summary: `${payload.steer.severity} steer: ${payload.steer.guidance}`,
         admittedAt: envelope.issuedAt,
-      });
+      } as const;
+      if (
+        dependencies.blockers !== undefined &&
+        dependencies.inbox.admitUpsertSequenced !== undefined
+      ) {
+        yield* dependencies.inbox.admitUpsertSequenced(inboxEntry);
+      } else {
+        yield* dependencies.inbox.admitUpsert(inboxEntry);
+      }
 
       return commandOk({
         result: {

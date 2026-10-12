@@ -19,6 +19,7 @@ import {
   probeDrift,
   runFormationConsumer,
   verificationConsumerLoop,
+  workflowSignalAtomicConsumerHandler,
   workflowSignalConsumerLoop,
 } from "@arbor/application";
 import type { Principal, ProjectId, ResourceAddress } from "@arbor/domain";
@@ -182,7 +183,10 @@ export const workflowSignalConsumerDaemon = (deps: {
   readonly projectId: ProjectId;
   readonly batchSize: number;
   readonly stores: ConsumerLoopStores;
-  readonly consumer: Pick<WorkflowSignalConsumerService, "consume">;
+  readonly consumer: Pick<
+    WorkflowSignalConsumerService,
+    "consume" | "applyBlockedWorkEpisodeAtomically"
+  >;
 }): ConsumerLoopDaemon =>
   makeConsumerLoopDaemon({
     consumerId: deps.consumerId,
@@ -191,6 +195,7 @@ export const workflowSignalConsumerDaemon = (deps: {
     poll: pollOnce(deps.consumerId, deps.projectId, deps.batchSize, {
       ...deps.stores,
       handlers: workflowSignalConsumerLoop(deps.consumer),
+      atomicHandler: workflowSignalAtomicConsumerHandler(deps.consumer),
     }),
   });
 

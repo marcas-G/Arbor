@@ -39,6 +39,7 @@ export * from "./snapshot-fingerprint.js";
 export * from "./tool.js";
 export * from "./tool-reconciliation.js";
 export * from "./verification-store.js";
+export * from "./work-blocker.js";
 export * from "./work-plan.js";
 export * from "./worker-transport.js";
 export * from "./workspace-knowledge.js";

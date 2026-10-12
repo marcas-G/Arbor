@@ -358,6 +358,10 @@ export const AgentLoopDriverLive = (
                 ? {}
                 : { currentLoopStep: modelDecision.loopStep }),
               ...(loopSteps === undefined ? {} : { loopSteps }),
+              ...(providerTurns === undefined ? {} : { providerTurns }),
+              ...(Option.isSome(inboxOption)
+                ? { inboxSequence: inboxOption.value }
+                : {}),
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
               sessions,
