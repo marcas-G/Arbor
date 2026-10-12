@@ -26,6 +26,7 @@ import {
   recoveryBindingV1Digest,
   type SandboxHandle,
   SandboxPort,
+  type SelectedP39RecoveryEvidence,
   ToolAuthorityResolver,
   type ToolDefinition,
   ToolDefinitionStore,
@@ -33,6 +34,9 @@ import {
   type ToolIntent,
   type ToolInvocationSettlement,
   ToolInvocationStore,
+  ToolObservationEvidenceStore,
+  ToolObservationReplayAttentionFactStore,
+  type ToolObservationReplayFailureCode,
   type ToolRuntimeError,
   ToolRuntimePort,
   TransactionPort,
@@ -44,11 +48,23 @@ import { actionDigestOf, matchApproval } from "./approval.js";
 import { checkInvocationAuthority } from "./authority.js";
 import { validateToolInput } from "./validation.js";
 
-export interface ToolExecutionResult {
-  readonly settlement: ToolInvocationSettlement;
-  readonly observation: BoundedObservation;
-  readonly resultRef: string | null;
-}
+export type ToolExecutionResult =
+  | {
+      readonly settlement: Extract<
+        ToolInvocationSettlement,
+        { readonly _tag: "ReconciledNoEffect" }
+      >;
+      readonly observation: BoundedObservation;
+      readonly resultRef: string | null;
+    }
+  | {
+      readonly settlement: Exclude<
+        ToolInvocationSettlement,
+        { readonly _tag: "ReconciledNoEffect" }
+      >;
+      readonly observation: BoundedObservation;
+      readonly resultRef: string | null;
+    };
 
 export interface ToolExecutor {
   readonly name: string;
@@ -447,6 +463,58 @@ const isP39ResourceResolutionStale = (
   "_tag" in cause &&
   cause._tag === P39_RESOURCE_RESOLUTION_STALE._tag;
 
+const matchesAuthenticatedP39Evidence = (input: {
+  readonly selected: SelectedP39RecoveryEvidence;
+  readonly intent: ToolIntent;
+  readonly context: ToolExecutionContext;
+  readonly factId: string;
+}): boolean => {
+  const { selected, intent, context, factId } = input;
+  const binding = selected.binding.value;
+  const sourceIdentity = context.recoveryBindingIdentity;
+  const policyRevisions = context.recoveryBindingPolicyRevisions;
+  return (
+    sourceIdentity !== undefined &&
+    policyRevisions !== undefined &&
+    binding.executionId === sourceIdentity.executionId &&
+    binding.providerTurnId === sourceIdentity.providerTurnId &&
+    binding.logicalStepNo === sourceIdentity.logicalStepNo &&
+    binding.repairAttempt === sourceIdentity.repairAttempt &&
+    binding.logicalActionId === sourceIdentity.logicalActionId &&
+    binding.actionIndex === sourceIdentity.actionIndex &&
+    binding.callRef === sourceIdentity.callRef &&
+    binding.workspacePolicyRevision ===
+      policyRevisions.workspacePolicyRevision &&
+    binding.projectPolicyRevision === policyRevisions.projectPolicyRevision &&
+    sourceIdentity.executionId === context.executionId &&
+    sourceIdentity.providerTurnId === context.providerTurnId &&
+    sourceIdentity.logicalActionId === context.logicalActionId &&
+    sourceIdentity.callRef === intent.callRef &&
+    binding.executionId === context.executionId &&
+    binding.invocationId === intent.invocationId &&
+    binding.callRef === intent.callRef &&
+    binding.toolName === intent.toolName &&
+    binding.toolVersion === intent.toolVersion &&
+    binding.approvalId === intent.approvalId &&
+    binding.controlBasisDigest === context.controlBasisDigest &&
+    selected.attempt.invocationId === intent.invocationId &&
+    selected.attempt.admissionState === "MayHaveStarted" &&
+    selected.attempt.admissionSource === "P39Admission" &&
+    selected.attempt.admissionTimePrecision === "TransactionTimestamp" &&
+    selected.attempt.bindingSha256 === selected.binding.bindingSha256 &&
+    selected.fact.factId === factId &&
+    selected.fact.invocationId === intent.invocationId &&
+    selected.fact.attemptNo === selected.attempt.attemptNo &&
+    selected.fact.bindingSha256 === selected.binding.bindingSha256 &&
+    selected.fact.profileHash === selected.attempt.profileHash &&
+    selected.fact.effectKey === selected.attempt.effectKey &&
+    selected.fact.factOrigin === "ProfileReconciliation" &&
+    selected.fact.factDisposition === "RecoveryInput" &&
+    selected.fact.legacyReason === null &&
+    selected.fact.reasonCode === null &&
+    selected.fact.outcome === "NotOccurred"
+  );
+};
 export const ToolRuntimeLive = (
   executors: ReadonlyArray<ToolExecutor>,
   options: {
@@ -487,6 +555,15 @@ export const ToolRuntimeLive = (
         ToolAuthorityResolver,
       );
       const artifactService = yield* Effect.serviceOption(ArtifactService);
+      const observationEvidence = yield* Effect.serviceOption(
+        ToolObservationEvidenceStore,
+      );
+      const replayAttentionFacts = yield* Effect.serviceOption(
+        ToolObservationReplayAttentionFactStore,
+      );
+      const p39RecoveryEvidence = yield* Effect.serviceOption(
+        P39RecoveryEvidenceStore,
+      );
 
       const operationalFailure =
         (
@@ -503,6 +580,249 @@ export const ToolRuntimeLive = (
           invocationRef,
           cause,
         });
+
+      const replayFailureCode = (
+        cause: unknown,
+      ): ToolObservationReplayFailureCode | undefined =>
+        typeof cause === "object" &&
+        cause !== null &&
+        "_tag" in cause &&
+        cause._tag === "ToolObservationReplayEvidenceFailure" &&
+        "failureCode" in cause
+          ? (cause.failureCode as ToolObservationReplayFailureCode)
+          : undefined;
+
+      const recordReplayFailure = (
+        intent: ToolIntent,
+        context: ToolExecutionContext,
+        failureCode: ToolObservationReplayFailureCode,
+        detectedAt: string,
+      ): Effect.Effect<never, ToolRuntimeError> =>
+        Effect.gen(function* () {
+          const fence = context.executionFence;
+          if (
+            fence === undefined ||
+            context.providerTurnId === undefined ||
+            context.logicalActionId === undefined ||
+            Option.isNone(replayAttentionFacts)
+          ) {
+            return yield* Effect.fail<ToolRuntimeError>(
+              operationalFailure(
+                "SettlementJournal",
+                String(intent.invocationId),
+              )({
+                _tag: "ToolObservationReplayEscalationUnavailable",
+              }),
+            );
+          }
+          yield* tx
+            .transact(
+              replayAttentionFacts.value.recordFailure({
+                projectId: context.projectId,
+                executionId: context.executionId,
+                targetWorkspaceId: context.workspaceId,
+                logicalActionId: context.logicalActionId,
+                providerTurnId: context.providerTurnId,
+                callRef: intent.callRef,
+                invocationId: intent.invocationId,
+                failureCode,
+                firstDetectedAt: detectedAt,
+                executionFence: fence,
+              }),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                isLeaseFencingRejected(cause)
+                  ? cause
+                  : operationalFailure(
+                      "SettlementJournal",
+                      String(intent.invocationId),
+                    )(cause),
+              ),
+            );
+          return yield* Effect.fail<ToolRuntimeError>({
+            _tag: "ToolObservationRecoveryBlocked",
+            executionId: context.executionId,
+            logicalActionId: context.logicalActionId,
+          });
+        });
+
+      const decodeRecordedEvidence = (
+        intent: ToolIntent,
+        context: ToolExecutionContext,
+        recorded: {
+          readonly invocationId: string;
+          readonly executionId: string;
+          readonly workspaceId: string;
+          readonly toolName: string;
+          readonly toolVersion: string;
+          readonly sideEffectSemantics: import("@arbor/ports").SideEffectSemantics;
+          readonly argumentsJson: string;
+          readonly resolvedRegions: ReadonlyArray<CanonicalResourceRegion>;
+          readonly approvalId: string | null;
+          readonly intentAt: string;
+        },
+      ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
+        Effect.gen(function* () {
+          if (Option.isNone(observationEvidence)) {
+            return yield* Effect.fail(
+              operationalFailure(
+                "SettlementJournal",
+                String(intent.invocationId),
+              )({
+                _tag: "ToolObservationEvidenceStoreUnavailable",
+              }),
+            );
+          }
+          const fence = context.executionFence;
+          if (fence === undefined) {
+            return yield* Effect.fail<ToolRuntimeError>(
+              operationalFailure(
+                "SettlementJournal",
+                String(intent.invocationId),
+              )({
+                _tag: "ToolObservationEvidenceReplayFenceUnavailable",
+              }),
+            );
+          }
+          const invocation = {
+            invocationId: recorded.invocationId as ToolIntent["invocationId"],
+            executionId:
+              recorded.executionId as ToolExecutionContext["executionId"],
+            workspaceId:
+              recorded.workspaceId as ToolExecutionContext["workspaceId"],
+            toolName: recorded.toolName,
+            toolVersion: recorded.toolVersion,
+            sideEffectSemantics: recorded.sideEffectSemantics,
+            argumentsJson: recorded.argumentsJson,
+            resolvedRegions: recorded.resolvedRegions,
+            approvalId: recorded.approvalId,
+            intentAt: recorded.intentAt,
+          } as const;
+          const read = yield* Effect.match(
+            tx.transact(
+              observationEvidence.value.read(
+                invocation,
+                fence,
+                yield* clock.now(),
+              ),
+            ),
+            {
+              onFailure: (cause) => ({ ok: false as const, cause }),
+              onSuccess: (evidence) => ({ ok: true as const, evidence }),
+            },
+          );
+          if (!read.ok) {
+            if (isLeaseFencingRejected(read.cause)) {
+              return yield* Effect.fail<ToolRuntimeError>(read.cause);
+            }
+            const failureCode = replayFailureCode(read.cause);
+            if (failureCode !== undefined) {
+              return yield* recordReplayFailure(
+                intent,
+                context,
+                failureCode,
+                yield* clock.now(),
+              );
+            }
+            return yield* Effect.fail<ToolRuntimeError>(
+              operationalFailure(
+                "SettlementJournal",
+                String(intent.invocationId),
+              )(read.cause),
+            );
+          }
+          const observation = read.evidence
+            .observation as CanonicalToolObservation;
+          if (observation._tag === "ReconciledNoEffect") {
+            if (Option.isNone(p39RecoveryEvidence)) {
+              return yield* recordReplayFailure(
+                intent,
+                context,
+                "SettlementMismatch",
+                yield* clock.now(),
+              );
+            }
+            const selected = yield* Effect.match(
+              tx.transact(
+                p39RecoveryEvidence.value.findSelected(intent.invocationId),
+              ),
+              {
+                onFailure: (cause) => ({ ok: false as const, cause }),
+                onSuccess: (value) => ({ ok: true as const, value }),
+              },
+            );
+            if (!selected.ok) {
+              if (isLeaseFencingRejected(selected.cause)) {
+                return yield* Effect.fail<ToolRuntimeError>(selected.cause);
+              }
+              return yield* recordReplayFailure(
+                intent,
+                context,
+                "SettlementMismatch",
+                yield* clock.now(),
+              );
+            }
+            if (
+              Option.isNone(selected.value) ||
+              (Option.isSome(selected.value) &&
+                !matchesAuthenticatedP39Evidence({
+                  selected: selected.value.value,
+                  intent,
+                  context,
+                  factId: observation.reconciliationFactRef,
+                }))
+            ) {
+              return yield* recordReplayFailure(
+                intent,
+                context,
+                "SettlementMismatch",
+                yield* clock.now(),
+              );
+            }
+          }
+          return observation;
+        });
+
+      const findInvocationFenced = (
+        invocationId: ToolIntent["invocationId"],
+        context: ToolExecutionContext,
+        stage: import("@arbor/ports").ToolRuntimeOperationalStage,
+      ) =>
+        tx
+          .transact(
+            Effect.gen(function* () {
+              if (Option.isSome(observationEvidence)) {
+                const fence = context.executionFence;
+                if (fence === undefined) {
+                  return yield* Effect.fail<ToolRuntimeError>(
+                    operationalFailure(
+                      stage,
+                      String(invocationId),
+                    )({
+                      _tag: "ToolObservationEvidenceReplayFenceUnavailable",
+                    }),
+                  );
+                }
+                yield* observationEvidence.value.assertCurrentFence(
+                  fence,
+                  yield* clock.now(),
+                );
+              }
+              return yield* store.findById(invocationId);
+            }),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              isLeaseFencingRejected(cause) ||
+              (typeof cause === "object" &&
+                cause !== null &&
+                "_tag" in cause &&
+                cause._tag === "ToolRuntimeOperationalFailure")
+                ? (cause as ToolRuntimeError)
+                : operationalFailure(stage, String(invocationId))(cause),
+            ),
+          );
 
       const invoke = (
         intent: ToolIntent,
@@ -653,16 +973,11 @@ export const ToolRuntimeLive = (
           ) =>
             Effect.gen(function* () {
               const settledAt = yield* clock.now();
-              const current = yield* tx
-                .transact(store.findById(intent.invocationId))
-                .pipe(
-                  Effect.mapError(
-                    operationalFailure(
-                      "IntentJournal",
-                      String(intent.invocationId),
-                    ),
-                  ),
-                );
+              const current = yield* findInvocationFenced(
+                intent.invocationId,
+                context,
+                "IntentJournal",
+              );
               if (Option.isSome(current)) {
                 const record = current.value;
                 const exact =
@@ -679,8 +994,18 @@ export const ToolRuntimeLive = (
                   if (record.settlement._tag === "Denied") {
                     return denied(record.settlement.reasonCode);
                   }
-                  if (record.settlement._tag === "Interrupted") {
+                  if (
+                    record.settlement._tag === "Interrupted" &&
+                    Option.isNone(observationEvidence)
+                  ) {
                     return { _tag: "Interrupted" as const };
+                  }
+                  if (Option.isSome(observationEvidence)) {
+                    return yield* decodeRecordedEvidence(
+                      intent,
+                      context,
+                      record,
+                    );
                   }
                   if (
                     record.settlement._tag === "Success" &&
@@ -1284,16 +1609,11 @@ export const ToolRuntimeLive = (
             );
           }
 
-          const prior = yield* tx
-            .transact(store.findById(intent.invocationId))
-            .pipe(
-              Effect.mapError(
-                operationalFailure(
-                  "IntentJournal",
-                  String(intent.invocationId),
-                ),
-              ),
-            );
+          const prior = yield* findInvocationFenced(
+            intent.invocationId,
+            context,
+            "IntentJournal",
+          );
           if (Option.isSome(prior)) {
             const recorded = prior.value;
             const sameIntent =
@@ -1403,8 +1723,14 @@ export const ToolRuntimeLive = (
               if (recorded.settlement._tag === "Denied") {
                 return denied(recorded.settlement.reasonCode);
               }
-              if (recorded.settlement._tag === "Interrupted") {
+              if (
+                recorded.settlement._tag === "Interrupted" &&
+                Option.isNone(observationEvidence)
+              ) {
                 return { _tag: "Interrupted" as const };
+              }
+              if (Option.isSome(observationEvidence)) {
+                return yield* decodeRecordedEvidence(intent, context, recorded);
               }
               if (
                 recorded.settlement._tag === "Success" &&
@@ -1940,16 +2266,11 @@ export const ToolRuntimeLive = (
                 ),
               );
             if (!interrupted) {
-              const current = yield* tx
-                .transact(store.findById(intent.invocationId))
-                .pipe(
-                  Effect.mapError(
-                    operationalFailure(
-                      "IntentJournal",
-                      String(intent.invocationId),
-                    ),
-                  ),
-                );
+              const current = yield* findInvocationFenced(
+                intent.invocationId,
+                context,
+                "IntentJournal",
+              );
               if (
                 Option.isSome(current) &&
                 current.value.effectAdmissionState !== "NotAdmitted"
@@ -2060,33 +2381,104 @@ export const ToolRuntimeLive = (
             );
           }
 
-          const resultRef =
+          let authenticatedRecoveryEvidence:
+            | SelectedP39RecoveryEvidence
+            | undefined;
+          if (outcome.settlement._tag === "ReconciledNoEffect") {
+            const rejectUnverifiedSelection = (
+              cause: unknown,
+            ): Effect.Effect<never, ToolRuntimeError> =>
+              Effect.fail({
+                _tag: "ToolRuntimeOperationalFailure",
+                stage: "SettlementJournal",
+                effectDisposition: "OutcomeUncertain",
+                invocationRef: String(intent.invocationId),
+                cause: {
+                  _tag: "P40AuthenticatedRecoveryEvidenceUnavailable",
+                  cause,
+                },
+              });
+            if (Option.isNone(p39RecoveryEvidence)) {
+              return yield* rejectUnverifiedSelection({
+                _tag: "P39RecoveryEvidenceStoreUnavailable",
+              });
+            }
+            const selectedRead = yield* Effect.match(
+              tx.transact(
+                p39RecoveryEvidence.value.findSelected(intent.invocationId),
+              ),
+              {
+                onFailure: (cause) => ({ ok: false as const, cause }),
+                onSuccess: (value) => ({ ok: true as const, value }),
+              },
+            );
+            if (!selectedRead.ok) {
+              return yield* rejectUnverifiedSelection(selectedRead.cause);
+            }
+            if (Option.isNone(selectedRead.value)) {
+              return yield* rejectUnverifiedSelection({
+                _tag: "P39SelectedRecoveryEvidenceMissing",
+              });
+            }
+            const selected = selectedRead.value.value;
+            if (
+              !matchesAuthenticatedP39Evidence({
+                selected,
+                intent,
+                context,
+                factId: outcome.settlement.reconciliationFactRef,
+              })
+            ) {
+              return yield* rejectUnverifiedSelection({
+                _tag: "P39SelectedRecoveryEvidenceMismatch",
+              });
+            }
+            authenticatedRecoveryEvidence = selected;
+          }
+
+          let resultRef = outcome.resultRef;
+          if (
+            Option.isNone(observationEvidence) &&
+            outcome.settlement._tag === "ReconciledNoEffect"
+          ) {
+            return yield* Effect.fail<ToolRuntimeError>(
+              operationalFailure(
+                "SettlementJournal",
+                String(intent.invocationId),
+              )({
+                _tag: "P40ObservationEvidenceStoreUnavailable",
+              }),
+            );
+          }
+          if (
+            Option.isNone(observationEvidence) &&
             outcome.settlement._tag === "Success" &&
-            outcome.resultRef === null &&
+            resultRef === null &&
             Option.isSome(artifactService)
-              ? String(
-                  (yield* tx
-                    .transact(
-                      artifactService.value.store(
-                        new TextEncoder().encode(outcome.observation.text),
-                        `tool-result:${intent.toolName}`,
-                        {
-                          invocationId: intent.invocationId,
-                          executionId: context.executionId,
-                        },
-                        now,
-                      ),
-                    )
-                    .pipe(
-                      Effect.mapError(
-                        operationalFailure(
-                          "SettlementJournal",
-                          String(intent.invocationId),
-                        ),
-                      ),
-                    )).artifactId,
+          ) {
+            resultRef = String(
+              (yield* tx
+                .transact(
+                  artifactService.value.store(
+                    new TextEncoder().encode(outcome.observation.text),
+                    `tool-result:${intent.toolName}`,
+                    {
+                      invocationId: intent.invocationId,
+                      executionId: context.executionId,
+                    },
+                    now,
+                  ),
                 )
-              : outcome.resultRef;
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "SettlementJournal",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                )).artifactId,
+            );
+          }
 
           const settledAt = yield* clock.now();
           if (options.qualificationProbe !== undefined) {
@@ -2099,6 +2491,198 @@ export const ToolRuntimeLive = (
                   callRef: intent.callRef,
                 }) ?? Promise.resolve(),
             );
+          }
+          if (
+            Option.isSome(observationEvidence) &&
+            outcome.settlement._tag !== "Denied"
+          ) {
+            if (context.executionFence === undefined) {
+              return yield* Effect.fail<ToolRuntimeError>(
+                operationalFailure(
+                  "SettlementJournal",
+                  String(intent.invocationId),
+                )({
+                  _tag: "P40ObservationEvidenceFenceUnavailable",
+                }),
+              );
+            }
+            const p4Intent = yield* findInvocationFenced(
+              intent.invocationId,
+              context,
+              "SettlementJournal",
+            );
+            if (Option.isNone(p4Intent)) {
+              return yield* Effect.fail<ToolRuntimeError>(
+                operationalFailure(
+                  "SettlementJournal",
+                  String(intent.invocationId),
+                )({
+                  _tag: "P4IntentMissingAtObservationSettlement",
+                }),
+              );
+            }
+            const record = p4Intent.value;
+            const invocation = {
+              invocationId: record.invocationId,
+              executionId: record.executionId,
+              workspaceId: record.workspaceId,
+              toolName: record.toolName,
+              toolVersion: record.toolVersion,
+              sideEffectSemantics: record.sideEffectSemantics,
+              argumentsJson: record.argumentsJson,
+              resolvedRegions: record.resolvedRegions,
+              approvalId: record.approvalId,
+              intentAt: record.intentAt,
+            } as const;
+            const candidateObservation: CanonicalToolObservation = (() => {
+              switch (outcome.settlement._tag) {
+                case "Success":
+                  return {
+                    _tag: "Success",
+                    observation: outcome.observation,
+                    resultRef,
+                  };
+                case "ExpectedFailure":
+                  return {
+                    _tag: "ExpectedFailure",
+                    observation: outcome.observation,
+                  };
+                case "Interrupted":
+                  return { _tag: "Interrupted" };
+                case "OutcomeUnknown":
+                  return {
+                    _tag: "OutcomeUnknown",
+                    reconciliationRefs: outcome.settlement.reconciliationRefs,
+                  };
+                case "RuntimeFailure":
+                  return {
+                    _tag: "RuntimeFailure",
+                    cause: outcome.settlement.cause,
+                  };
+                case "ReconciledNoEffect":
+                  return {
+                    _tag: "ReconciledNoEffect",
+                    reasonCode: outcome.settlement.reasonCode,
+                    reconciliationFactRef:
+                      outcome.settlement.reconciliationFactRef,
+                    observation: outcome.observation,
+                    resultRef: resultRef ?? "",
+                  };
+              }
+            })();
+            const candidate = {
+              invocation,
+              settlement: outcome.settlement,
+              resultRef,
+              observation: candidateObservation,
+              ...(authenticatedRecoveryEvidence === undefined
+                ? {}
+                : {
+                    reconciliationSelection: {
+                      attemptNo:
+                        authenticatedRecoveryEvidence.attempt.attemptNo,
+                      factId: authenticatedRecoveryEvidence.fact.factId,
+                    },
+                    authenticatedRecoveryEvidence,
+                  }),
+              ...(Option.isSome(artifactService) && resultRef === null
+                ? {
+                    materializeResultRef: () =>
+                      artifactService.value
+                        .store(
+                          new TextEncoder().encode(outcome.observation.text),
+                          `tool-result:${intent.toolName}`,
+                          {
+                            invocationId: intent.invocationId,
+                            executionId: context.executionId,
+                          },
+                          now,
+                        )
+                        .pipe(
+                          Effect.map((artifact) => String(artifact.artifactId)),
+                        ),
+                  }
+                : {}),
+              settledAt,
+              executionFence: context.executionFence,
+              fenceNow: yield* clock.now(),
+            } as const;
+            const p40Write = yield* Effect.match(
+              tx.transact(
+                Effect.gen(function* () {
+                  const result =
+                    yield* observationEvidence.value.settleOrReadWinner(
+                      candidate,
+                    );
+                  if (
+                    result._tag === "Applied" &&
+                    options.qualificationProbe !== undefined
+                  ) {
+                    yield* Effect.promise(
+                      () =>
+                        options.qualificationProbe?.({
+                          boundary: "AH7BeforeToolSettlementCommit",
+                          executionId: context.executionId,
+                          invocationId: intent.invocationId,
+                          callRef: intent.callRef,
+                        }) ?? Promise.resolve(),
+                    );
+                  }
+                  return result;
+                }),
+              ),
+              {
+                onFailure: (cause) => ({ ok: false as const, cause }),
+                onSuccess: (value) => ({ ok: true as const, value }),
+              },
+            );
+            if (!p40Write.ok) {
+              if (isLeaseFencingRejected(p40Write.cause)) {
+                return yield* Effect.fail<ToolRuntimeError>(p40Write.cause);
+              }
+              const failureCode = replayFailureCode(p40Write.cause);
+              if (failureCode !== undefined) {
+                const afterFailure = yield* findInvocationFenced(
+                  intent.invocationId,
+                  context,
+                  "SettlementJournal",
+                );
+                if (
+                  (Option.isSome(afterFailure) &&
+                    afterFailure.value.settlement !== null) ||
+                  record.settledAt !== null
+                ) {
+                  return yield* recordReplayFailure(
+                    intent,
+                    context,
+                    failureCode,
+                    yield* clock.now(),
+                  );
+                }
+              }
+              return yield* Effect.fail<ToolRuntimeError>(
+                operationalFailure(
+                  "SettlementJournal",
+                  String(intent.invocationId),
+                )(p40Write.cause),
+              );
+            }
+            if (
+              p40Write.value._tag === "Applied" &&
+              options.qualificationProbe !== undefined
+            ) {
+              yield* Effect.promise(
+                () =>
+                  options.qualificationProbe?.({
+                    boundary: "AH7AfterToolSettlementCommit",
+                    executionId: context.executionId,
+                    invocationId: intent.invocationId,
+                    callRef: intent.callRef,
+                  }) ?? Promise.resolve(),
+              );
+            }
+            return p40Write.value.evidence
+              .observation as CanonicalToolObservation;
           }
           const settlementWrite = yield* Effect.match(
             tx.transact(
@@ -2222,6 +2806,15 @@ export const ToolRuntimeLive = (
                 return {
                   _tag: "RuntimeFailure",
                   cause: outcome.settlement.cause,
+                };
+              case "ReconciledNoEffect":
+                return {
+                  _tag: "ReconciledNoEffect",
+                  reasonCode: outcome.settlement.reasonCode,
+                  reconciliationFactRef:
+                    outcome.settlement.reconciliationFactRef,
+                  observation: outcome.observation,
+                  resultRef: resultRef ?? "",
                 };
             }
           })();

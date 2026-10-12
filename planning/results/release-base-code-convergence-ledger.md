@@ -15,7 +15,7 @@ merged. The accepted combined-design owner package was overlaid separately in
 | P8 | accepted source `b15855c7…` + review `6aaa…`; integration `c8dd386`, `c729dd0` | Ported retry verification; shared runtime conflicts retained both P8 and release P38 behavior |
 | P39 V1 + DeniedUnbound | accepted final `60df2fe…` + review `bd5…`; integration sequence ending `72fe6e2`, qualification/fixes `bc405af` | Semantic port; V2 visibility and unaccepted fallback/draft material excluded |
 | Blocked final implementation | accepted final `a1fe1f20…`; B0 review | Final net tree diff only, committed as `5c010bb`; no intermediate branch commits were replayed |
-| P40 checkpoint | `73f2a9d…` | Excluded; ledger-only pending accepted implementation prefix |
+| P40 authenticated observation replay | accepted final snapshot `52632fbb…` + B0 | Ported as one final-tree semantic slice; authenticated P39 selection, P4 observation evidence store/codec, P3 handoff, and P9/P10 recovery projection are included |
 | P41 physical WIP | `8a39cce…` | Excluded; WIP was not cherry-picked or merged |
 | F21 source attribution | accepted semantic-port package; integration commits `c58a5b93`, `8f34c93d`, `9fff6f14` | Ported with the CreateProject resource-source contract, idempotent gated 0042 descriptor, and final evidence record |
 
@@ -35,7 +35,7 @@ merged. The accepted combined-design owner package was overlaid separately in
 | Version / descriptor | Current state on this branch |
 |---|---|
 | 0039 / P39 | RecoveryBinding V1 + DeniedUnbound code is present behind the separate P39 maintenance suffix; it is not in `CURRENT_MIGRATIONS` |
-| 0040 / P40 | Not ported; current migration remains P38 |
+| 0040 / P40 | Descriptor and observation replay code are present, but 0040 remains standalone/unregistered; current migration remains P38 |
 | 0041 / P41 | Not ported; current migration remains P38 |
 | 0042 / F21 | Descriptor and source-attribution code are present, but 0042 remains unregistered because the cumulative 0039–0041 prefix is not integrated |
 | 0043 / Blocked | Descriptor/store exported for implementation tests only; requires user version 42, is absent from `CURRENT_MIGRATIONS`, and was not run against any existing database |
@@ -55,9 +55,12 @@ deployment, or live instance was touched.
   restart 2/2.
 - F21 source-attribution target: 9 files, 51/51 passed; preserve-only CreateProject
   v1 receipt: 1/1 passed.
+- P40 targeted qualification: 12 files, 71/71 passed (the four non-P40 domain
+  event catalog cases were filtered from that combined run); the full domain
+  event test file passed 5/5 separately.
 - Web Work Detail render target: 27/27 passed.
-- `pnpm typecheck` passed after the accepted F21 port; Biome over the F21
-  integration TS/TSX delta (21 files) passed; earlier Blocked/P39 Biome and
+- `pnpm typecheck` passed after the accepted F21/P40 ports; Biome over the P40
+  integration TS/TSX delta (41 files) passed; earlier Blocked/P39/F21 Biome and
   minimal TypeScript gates passed; `git diff --check` passed.
 - No full functional suite, full workspace build, migration on an existing
   database, deployment, or live process was run.

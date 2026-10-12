@@ -49,6 +49,9 @@ export type SessionItem =
       readonly callRef: string;
       readonly toolName: string;
       readonly invocationId?: string;
+      /** P39 selected proof identity; distinct from P3 hashes and P4 Artifacts. */
+      readonly reconciliationFactRef?: string;
+      readonly disposition?: string;
       readonly status: PortableToolResultStatus;
       readonly observationRef: string;
       readonly modelOutputRef: string;

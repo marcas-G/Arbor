@@ -255,6 +255,11 @@ export interface ToolRuntimeCleanupFailure {
 export type ToolRuntimeError =
   | ToolRuntimeOperationalFailure
   | ToolRuntimeCleanupFailure
+  | {
+      readonly _tag: "ToolObservationRecoveryBlocked";
+      readonly executionId: ExecutionId;
+      readonly logicalActionId: string;
+    }
   | LeaseFencingRejected;
 export interface SandboxError {
   readonly _tag: "SandboxError";

@@ -21,6 +21,7 @@ export type AttentionSource =
   | "ReconciliationEscalated"
   | "AssignWorkTargetBindingFailure"
   | "DeliverReplayFailure"
+  | "ToolObservationReplayEvidenceFailure"
   | "WorkspaceResourceActivationPending"
   | "WorkEpisodeBlocked"
   | "VerifierOrphan"

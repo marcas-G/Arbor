@@ -13,7 +13,22 @@ import type {
 } from "./assign-work-target-binding.js";
 import type { RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
+import type { ToolObservationReplayFailureCode } from "./tool-observation-evidence.js";
+import type { ToolObservationReplayAttentionFact } from "./tool-observation-replay-attention.js";
 import type { WorkspaceResourceActivationIntent } from "./workspace-resource-activation.js";
+
+export interface ToolObservationReplayAttentionProjectionRow {
+  readonly projectId: ProjectId;
+  readonly dedupKey: string;
+  readonly source: "ToolObservationReplayEvidenceFailure";
+  readonly severity: "ActionRequired";
+  readonly targetWorkspaceId: WorkspaceId;
+  readonly summary: "A terminal tool outcome could not be replayed from durable observation evidence; recovery is paused.";
+  readonly failureCode: ToolObservationReplayFailureCode;
+  readonly occurredAt: string;
+  readonly sourceEventId: EventId;
+  readonly sourceFactId: string;
+}
 
 export interface AssignWorkBindingAttentionProjectionRow {
   readonly projectId: ProjectId;
@@ -74,6 +89,17 @@ export interface AttentionProjectionStoreService {
     projectId: ProjectId,
   ) => Effect.Effect<
     ReadonlyArray<DeliverReplayAttentionProjectionRow>,
+    AttentionProjectionStoreError,
+    TransactionScope
+  >;
+  readonly putToolObservationReplayFailure?: (
+    fact: ToolObservationReplayAttentionFact,
+    occurredAt: string,
+  ) => Effect.Effect<void, AttentionProjectionStoreError, TransactionScope>;
+  readonly listToolObservationReplayFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<ToolObservationReplayAttentionProjectionRow>,
     AttentionProjectionStoreError,
     TransactionScope
   >;

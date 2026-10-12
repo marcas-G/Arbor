@@ -184,6 +184,77 @@ describe("SCRC typed Session store", () => {
     });
   });
 
+  it("retains the P39 reconciliation fact separately from P3 and P4 result references on ToolResult", async () => {
+    const reconciliationFactRef = "f".repeat(64);
+    const p4ArtifactRef = "art_018f2b3c-4d5e-7abc-8def-0123456789b2";
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P19_MIGRATIONS);
+      yield* seed;
+      const tx = yield* TransactionPort;
+      const executions = yield* ExecutionRepository;
+      const sessions = yield* SessionRepository;
+      yield* tx.transact(executions.tryAdmitMainExecution(execution));
+      yield* tx.transact(
+        executions.tryAcquireLease(
+          executionId,
+          "worker:scrc-rno",
+          "inc:scrc-rno",
+          "2999-01-01T00:00:00.000Z",
+        ),
+      );
+      const fence = {
+        executionId,
+        workerId: "worker:scrc-rno",
+        workerIncarnationId: "inc:scrc-rno",
+        fencingGeneration: 0 as never,
+      };
+      yield* tx.transact(
+        sessions.appendItemIdempotent(
+          sessionId,
+          {
+            item: {
+              _tag: "ToolResult",
+              callRef: "call-rno",
+              toolName: "write_once",
+              status: "Denied",
+              disposition: "ReconciledNoEffect:AuthoritySnapshotChanged",
+              reconciliationFactRef,
+              observationRef: "observation-p3-hash",
+              modelOutputRef: p4ArtifactRef,
+              outputText: "the effect did not occur",
+              truncated: false,
+              artifactRefs: [p4ArtifactRef],
+            },
+            contextEpoch: 0 as never,
+            source: {
+              kind: "AgentLoopAction",
+              ref: "observation-p3-hash",
+            },
+            contentHash: "rno-item-content-hash",
+          },
+          fence,
+        ),
+      );
+      return yield* tx.transact(
+        sessions.listActiveFrontier(sessionId, 0 as never, 20),
+      );
+    });
+    const frontier = await Effect.runPromise(Effect.provide(program, app()));
+    expect(frontier).toHaveLength(1);
+    expect(frontier[0]?.item).toMatchObject({
+      _tag: "ToolResult",
+      reconciliationFactRef,
+      disposition: "ReconciledNoEffect:AuthoritySnapshotChanged",
+      observationRef: "observation-p3-hash",
+      modelOutputRef: p4ArtifactRef,
+      artifactRefs: [p4ArtifactRef],
+    });
+    expect(frontier[0]?.item).not.toHaveProperty(
+      "reconciliationFactRef",
+      p4ArtifactRef,
+    );
+  });
+
   it("atomically commits a checkpoint and epoch with idempotent replay", async () => {
     const program = Effect.gen(function* () {
       yield* runMigrations(P19_MIGRATIONS);

@@ -14,7 +14,33 @@ export interface MigrationFile {
 export const splitStatements = (sql: string): ReadonlyArray<string> => {
   const statements: string[] = [];
   let current = "";
-  for (const character of sql) {
+  let quote: "'" | '"' | "`" | "[" | null = null;
+  for (let index = 0; index < sql.length; index += 1) {
+    const character = sql[index];
+    if (character === undefined) continue;
+    if (quote !== null) {
+      current += character;
+      const closing = quote === "[" ? "]" : quote;
+      if (character === closing) {
+        if (sql[index + 1] === closing && quote !== "[") {
+          current += sql[index + 1];
+          index += 1;
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === "[") {
+      quote = "[";
+      current += character;
+      continue;
+    }
     if (character !== ";") {
       current += character;
       continue;

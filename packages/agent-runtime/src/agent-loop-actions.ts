@@ -524,7 +524,11 @@ export const executeAgentLoopActions = (
           readonly status: import("@arbor/ports").PortableToolResultStatus;
           readonly disposition: string;
           readonly outputText: string;
+          readonly truncated?: boolean;
           readonly canonicalRefs?: ReadonlyArray<string>;
+          readonly modelOutputRef?: string;
+          readonly artifactRefs?: ReadonlyArray<string>;
+          readonly reconciliationFactRef?: string;
         },
         fence: AgentLoopStepFence,
       ) =>
@@ -551,12 +555,20 @@ export const executeAgentLoopActions = (
                     _tag: "ToolResult" as const,
                     callRef: targetInvocation.callRef,
                     toolName: targetInvocation.toolName,
+                    ...(terminal.reconciliationFactRef === undefined
+                      ? {}
+                      : {
+                          reconciliationFactRef: terminal.reconciliationFactRef,
+                        }),
+                    ...(terminal.reconciliationFactRef === undefined
+                      ? {}
+                      : { disposition: terminal.disposition }),
                     status: terminal.status,
                     observationRef: observationSourceRef,
-                    modelOutputRef: resultRef,
+                    modelOutputRef: terminal.modelOutputRef ?? resultRef,
                     outputText: terminal.outputText,
-                    truncated: false,
-                    artifactRefs: [],
+                    truncated: terminal.truncated ?? false,
+                    artifactRefs: terminal.artifactRefs ?? [],
                   }
                 : {
                     _tag: "ControlResult" as const,
@@ -587,8 +599,17 @@ export const executeAgentLoopActions = (
               source: targetRoute._tag === "Executable" ? "Tool" : "Runtime",
               observation: {
                 text: terminal.outputText,
-                truncated: false,
+                truncated: terminal.truncated ?? false,
               },
+              ...(terminal.reconciliationFactRef === undefined
+                ? {}
+                : { reconciliationFactRef: terminal.reconciliationFactRef }),
+              ...(terminal.modelOutputRef === undefined
+                ? {}
+                : { modelOutputRef: terminal.modelOutputRef }),
+              ...(terminal.artifactRefs === undefined
+                ? {}
+                : { artifactRefs: terminal.artifactRefs }),
             } as const;
             yield* sessions.appendEntryIdempotent(
               input.execution.sessionId,
@@ -611,6 +632,10 @@ export const executeAgentLoopActions = (
         readonly disposition: string;
         readonly outputText: string;
         readonly terminalDenial?: TerminalActionDenial;
+        readonly truncated?: boolean;
+        readonly modelOutputRef?: string;
+        readonly artifactRefs?: ReadonlyArray<string>;
+        readonly reconciliationFactRef?: string;
       }): Effect.Effect<void, ExecutionDriverError> =>
         Effect.gen(function* () {
           if (
@@ -650,7 +675,21 @@ export const executeAgentLoopActions = (
                     status: terminal.status,
                     disposition: terminal.disposition,
                     outputText: terminal.outputText,
+                    ...(terminal.truncated === undefined
+                      ? {}
+                      : { truncated: terminal.truncated }),
                     canonicalRefs: [settlementRef],
+                    ...(terminal.modelOutputRef === undefined
+                      ? {}
+                      : { modelOutputRef: terminal.modelOutputRef }),
+                    ...(terminal.artifactRefs === undefined
+                      ? {}
+                      : { artifactRefs: terminal.artifactRefs }),
+                    ...(terminal.reconciliationFactRef === undefined
+                      ? {}
+                      : {
+                          reconciliationFactRef: terminal.reconciliationFactRef,
+                        }),
                   },
                   loopStepFence,
                 );
@@ -832,6 +871,7 @@ export const executeAgentLoopActions = (
           readonly artifactRefs?: ReadonlyArray<string>;
           readonly invocationId?: import("@arbor/domain").ToolInvocationId;
           readonly terminalDenial?: TerminalActionDenial;
+          readonly reconciliationFactRef?: string;
         } = {},
       ): Effect.Effect<boolean, ExecutionDriverError> =>
         Effect.gen(function* () {
@@ -888,6 +928,15 @@ export const executeAgentLoopActions = (
                           ...(resultMetadata.invocationId === undefined
                             ? {}
                             : { invocationId: resultMetadata.invocationId }),
+                          ...(resultMetadata.reconciliationFactRef === undefined
+                            ? {}
+                            : {
+                                reconciliationFactRef:
+                                  resultMetadata.reconciliationFactRef,
+                              }),
+                          ...(resultMetadata.reconciliationFactRef === undefined
+                            ? {}
+                            : { disposition }),
                           status,
                           observationRef: observationSourceRef,
                           modelOutputRef: resultMetadata.resultRef ?? resultRef,
@@ -920,11 +969,20 @@ export const executeAgentLoopActions = (
                     loopStepFence,
                   );
                 } else {
+                  const durablePayload = {
+                    ...payload,
+                    ...(resultMetadata.reconciliationFactRef === undefined
+                      ? {}
+                      : {
+                          reconciliationFactRef:
+                            resultMetadata.reconciliationFactRef,
+                        }),
+                  };
                   yield* sessions.appendEntryIdempotent(
                     input.execution.sessionId,
                     { kind: "AgentLoopAction", ref: observationSourceRef },
-                    { entryKind: "Observation", payload },
-                    sha256Hex(JSON.stringify(payload)),
+                    { entryKind: "Observation", payload: durablePayload },
+                    sha256Hex(JSON.stringify(durablePayload)),
                     loopStepFence,
                   );
                 }
@@ -1077,6 +1135,10 @@ export const executeAgentLoopActions = (
             ...(loopStepFence === undefined
               ? {}
               : { executionFence: loopStepFence }),
+            providerTurnId: preparedTurn.manifest.providerTurnId,
+            ...(loopAction === undefined
+              ? {}
+              : { logicalActionId: loopAction.logicalActionId }),
           }),
           {
             onFailure: (cause) => ({ ok: false as const, cause }),
@@ -1084,6 +1146,9 @@ export const executeAgentLoopActions = (
           },
         );
         if (!executed.ok) {
+          if (executed.cause._tag === "AgentActionRecoveryBlocked") {
+            return { _tag: "RecoveryBlocked" };
+          }
           if (
             executed.cause._tag === "AgentActionOperationalFailure" &&
             isLeaseFencingRejected(executed.cause.cause)
@@ -1134,6 +1199,31 @@ export const executeAgentLoopActions = (
           };
         }
         if (executed.outcome.status === "Interrupted") {
+          if (
+            executed.outcome.reconciliationFactRef !== undefined &&
+            executed.outcome.disposition === "ExecutionStopping"
+          ) {
+            const settlement: ExecutionSettlement = {
+              _tag: "Interrupted",
+              result: { _tag: "StopRequested" },
+            };
+            yield* persistTerminalAction({
+              settlement,
+              actionState: "TerminalRejected",
+              status: "Interrupted",
+              disposition: "ExecutionStopping",
+              outputText: executed.outcome.observation.text,
+              truncated: executed.outcome.observation.truncated,
+              ...(executed.outcome.resultRef === undefined
+                ? {}
+                : { modelOutputRef: executed.outcome.resultRef }),
+              ...(executed.outcome.artifactRefs === undefined
+                ? {}
+                : { artifactRefs: executed.outcome.artifactRefs }),
+              reconciliationFactRef: executed.outcome.reconciliationFactRef,
+            });
+            return { _tag: "Settle", settlement };
+          }
           const settlement: ExecutionSettlement = {
             _tag: "Interrupted",
             result: { _tag: "StopRequested" },
@@ -1165,6 +1255,11 @@ export const executeAgentLoopActions = (
             ...(executed.outcome.terminalDenial === undefined
               ? {}
               : { terminalDenial: executed.outcome.terminalDenial }),
+            ...(executed.outcome.reconciliationFactRef === undefined
+              ? {}
+              : {
+                  reconciliationFactRef: executed.outcome.reconciliationFactRef,
+                }),
           },
         );
         if (!persisted) {

@@ -14,6 +14,7 @@ import {
   ensureVerifierSpawned,
   type ParentUserGovernanceFacts,
   planSnapshotRetention,
+  pollOnce,
   pruneSnapshots,
   type RetentionPolicy,
   runAttentionPollOnce,
@@ -87,6 +88,7 @@ import {
   type ResourceOwnershipRepository,
   type RuntimeSafetyGate,
   type SchedulerTimerStore,
+  ToolObservationReplayAttentionFactStore,
   TransactionPort,
   VerificationRepository,
   type WorkerDispatchPort,
@@ -336,6 +338,9 @@ export const ProductionDaemonServiceLive = (
       const activationIntents = yield* WorkspaceResourceActivationStore;
       const ownershipWrite = yield* OwnershipWriteService;
       const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
+      const toolObservationReplayAttentionFacts = yield* Effect.serviceOption(
+        ToolObservationReplayAttentionFactStore,
+      );
       const verifications = yield* VerificationRepository;
       const acceptances = yield* AcceptanceRepository;
       const dependencies = yield* DependencyRepository;
@@ -519,6 +524,29 @@ export const ProductionDaemonServiceLive = (
             continue;
           }
           dynamicConsumers.push(
+            {
+              consumerId: P10_ATTENTION_CONSUMER_ID,
+              projectId,
+              batchSize: config.batchSize ?? 50,
+              poll: pollOnce(
+                P10_ATTENTION_CONSUMER_ID,
+                projectId,
+                config.batchSize ?? 50,
+                {
+                  ...stores,
+                  projection: makeProjectAttentionProjectionStore(
+                    projectId,
+                    recoveryAttentionFacts,
+                    attentionProjection,
+                    activationIntents,
+                    Option.isSome(toolObservationReplayAttentionFacts)
+                      ? toolObservationReplayAttentionFacts.value
+                      : undefined,
+                  ),
+                  handlers: () => Effect.succeed([]),
+                },
+              ),
+            },
             dependencyCoordinatorDaemon({
               consumerId: "dependency-coordinator",
               projectId,
