@@ -244,6 +244,13 @@ interface ExecutionDriverPortService {
   `SettleExecution` (ExecutionOrigin, fenced). The driver never writes
   canonical state directly.
 
+**Single-flight driver use.** Dispatch is only a wake intent. The production
+P2 `runExecution` path invokes `ExecutionDriverPort.drive` only after its own
+successful `LeaseService.acquire` for that Execution. A live-lease acquisition
+rejection does not call the driver or reuse another run's `ExecutionOrigin`.
+The lease tuple is not an application-level token for starting a parallel
+driver.
+
 ### RuntimeSafetyGate (P2-owned, DID v1.7 G4)
 
 ```ts

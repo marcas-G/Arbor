@@ -54,6 +54,14 @@ updated_at
 > incarnation of the same `WorkerId` cannot re-validate. `generation` remains
 > monotonic; all other lease semantics are unchanged.
 
+**ExecutionOrigin provenance.** A production Worker drive receives its
+`ExecutionOrigin` from the `LeaseRecord` returned by that drive's successful
+`LeaseService.acquire`. Dispatch/wake, a stored lease row, or a tuple copied
+from another caller does not create a second lease owner. A second driver may
+start only after its own successful acquisition; live-lease rejection leaves
+the current driver as the sole authorized writer, while expiry/takeover uses
+the existing monotonic generation rule.
+
 ## 3. Fence validation
 
 Fencing protects **all** Worker-originated durable writes (DID §6.3):
