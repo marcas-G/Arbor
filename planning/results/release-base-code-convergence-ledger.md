@@ -16,7 +16,7 @@ merged. The accepted combined-design owner package was overlaid separately in
 | P39 V1 + DeniedUnbound | accepted final `60df2fe…` + review `bd5…`; integration sequence ending `72fe6e2`, qualification/fixes `bc405af` | Semantic port; V2 visibility and unaccepted fallback/draft material excluded |
 | Blocked final implementation | accepted final `a1fe1f20…`; B0 review | Final net tree diff only, committed as `5c010bb`; no intermediate branch commits were replayed |
 | P40 authenticated observation replay | accepted final snapshot `52632fbb…` + B0 | Ported as one final-tree semantic slice; authenticated P39 selection, P4 observation evidence store/codec, P3 handoff, and P9/P10 recovery projection are included |
-| P41 / 0041 storage | accepted storage source `83fea00c…` + B0; integration `9003b049` | Physical fact codec/store and standalone 0041 descriptor ported; P41 runtime behavior remains unported |
+| P41 / 0041 storage + behavior | accepted final source `81f12e95…` + B0; storage `9003b049`/`1a9cdba5`; behavior/rebuild `fd2b1174`, `2c43179b`, `e82bb55c`, `3d1f0d61`, `086aac40` | Physical fact store, submitted Decision stop/recovery, P10 marker projection, and rebuild-from-facts ported; P41 remains dormant until the cumulative prefix is authorized |
 | P41 physical WIP | `8a39cce…` | Excluded; WIP was not cherry-picked or merged |
 | F21 source attribution | accepted semantic-port package; integration commits `c58a5b93`, `8f34c93d`, `9fff6f14` | Ported with the CreateProject resource-source contract, idempotent gated 0042 descriptor, and final evidence record |
 
@@ -61,6 +61,11 @@ deployment, or live instance was touched.
   event test file passed 5/5 separately.
 - P41 storage/codec target: 7/7 passed, including fail-closed absent-table
   record/read/list and file-backed reopen checks.
+- P41 behavior target: 8 files, 37 tests passed; P41 storage/codec 7/7 also
+  passed. P2 ordinary execution was qualified with a P12-only fixture and no
+  0041 table after gating P41 fact reads to a stopped DecisionEpisode route.
+- P41 `pnpm typecheck` and `pnpm build` passed; Biome over the P41 behavior
+  integration TS/TSX delta (32 files) passed.
 - Web Work Detail render target: 27/27 passed.
 - `pnpm typecheck` passed after the accepted F21/P40 ports; Biome over the P40
   integration TS/TSX delta (41 files) and P41 storage delta (7 files) passed;

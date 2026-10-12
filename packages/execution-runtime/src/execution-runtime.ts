@@ -366,14 +366,26 @@ export const runExecution = (
         }),
       );
     }
+    const submittedDecisionEpisode = executionEpisode(execution.value);
+    const submittedDecisionStopRecovery =
+      execution.value.stopRequestedAt !== null &&
+      submittedDecisionEpisode?._tag === "DecisionEpisode";
+    const submittedDecisionBindingAvailable =
+      submittedDecisionStopRecovery &&
+      recoveryAttentionFacts.isSubmittedDecisionBindingAvailable !== undefined
+        ? yield* tx.transact(
+            recoveryAttentionFacts.isSubmittedDecisionBindingAvailable(),
+          )
+        : false;
     const submittedDecisionBindingFacts =
-      recoveryAttentionFacts.listSubmittedDecisionBindingFailures === undefined
-        ? []
-        : yield* tx.transact(
+      submittedDecisionBindingAvailable &&
+      recoveryAttentionFacts.listSubmittedDecisionBindingFailures !== undefined
+        ? yield* tx.transact(
             recoveryAttentionFacts.listSubmittedDecisionBindingFailures(
               execution.value.projectId,
             ),
-          );
+          )
+        : [];
     if (
       submittedDecisionBindingFacts.some(
         (fact) => fact.executionId === executionId,

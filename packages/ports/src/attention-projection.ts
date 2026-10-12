@@ -71,6 +71,9 @@ export interface DeliverReplayAttentionProjectionRow {
 
 export interface SubmittedDecisionBindingAttentionProjectionRow {
   readonly projectId: ProjectId;
+  readonly attentionFactId: string;
+  readonly workspaceId: WorkspaceId;
+  readonly firstDetectedAt: string;
   readonly dedupKey: string;
   readonly source: "SubmittedDecisionBindingFailure";
   readonly severity: "ActionRequired";

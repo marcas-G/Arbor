@@ -14,9 +14,9 @@ import type {
   AssignWorkBindingAttentionFact,
   AssignWorkBindingAttentionProjectionRow,
   DeliverReplayAttentionProjectionRow,
-  ToolObservationReplayAttentionProjectionRow,
   SubmittedDecisionBindingAttentionFact,
   SubmittedDecisionBindingAttentionProjectionRow,
+  ToolObservationReplayAttentionProjectionRow,
   WorkspaceResourceActivationAttentionProjectionRow,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
