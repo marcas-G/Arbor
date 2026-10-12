@@ -257,8 +257,9 @@ const concludeVerificationResult: Validator = (value) =>
   })();
 
 type ResultDecoderRegistry = Readonly<
-  Record<RegisteredCommandType, Readonly<Record<string, Validator>>>
+  Record<ReceiptCommandType, Readonly<Record<string, Validator>>>
 >;
+type ReceiptCommandType = RegisteredCommandType | "UpdateResourceBoundary";
 
 /** Strict JSON DTO decoders for the current registered Handler/result pairs.
  * Command-specific result shape remains owned by each command contract. */
@@ -288,6 +289,15 @@ const resultDecoders: ResultDecoderRegistry = {
         workspaceId: id("WorkspaceId"),
         lifecycle: literal("Open"),
         revision: workRevision,
+      }),
+  },
+  UpdateResourceBoundary: {
+    "1": (value) =>
+      objectWith(value, {
+        workspaceId: id("WorkspaceId"),
+        revision,
+        resourceBoundaryRevision: revision,
+        releasedClaimIds: arrayOf(stringValue),
       }),
   },
   RenameProject: {
@@ -610,7 +620,7 @@ export const decodeRegisteredCommandReceipt = <R>(
     ) {
       return Effect.fail(corruption());
     }
-    const byVersion = resultDecoders[commandType as RegisteredCommandType];
+    const byVersion = resultDecoders[commandType as ReceiptCommandType];
     if (!Object.hasOwn(byVersion, schemaVersion)) {
       return Effect.fail(corruption());
     }

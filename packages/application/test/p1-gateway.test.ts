@@ -26,6 +26,7 @@ import {
   type PendingDomainEvent,
   ProjectRepository,
   type ProjectRepositoryService,
+  type ResourceOwnershipRepositoryService,
   type StoredCommandResolution,
   TransactionPort,
   TransactionScope,
@@ -42,6 +43,7 @@ import {
   FenceStopCheckInertLive,
   type FenceStopOutcome,
   type GatewayEnvelope,
+  makeUpdateResourceBoundaryHandler,
   projectAdmissionOf,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
@@ -948,5 +950,129 @@ describe("command authority (P1-DG-11)", () => {
     expect(projectAdmissionOf("StopExecution")).toBe("ClosedAllowed");
     expect(projectAdmissionOf("SettleExecution")).toBe("ClosedAllowed");
     expect(projectAdmissionOf("RevokePermission")).toBe("ClosedAllowed");
+  });
+
+  it("commits boundary, exact claim release, events and receipt once, then replays same id", async () => {
+    const targetWorkspaceId = parse(WorkspaceId)(
+      "ws_018f2b3c-4d5e-7abc-8def-0123456789ab",
+    );
+    const payload = {
+      workspaceId: targetWorkspaceId,
+      expectedWorkspaceRevision: 1 as never,
+    };
+    const released: string[] = [];
+    const boundaryWrites: unknown[][] = [];
+    const claim = {
+      claimId: "claim-acceptance-only",
+      workspaceId: targetWorkspaceId,
+      region: {
+        resourceSpaceId: "local",
+        normalizedRegion: { kind: "FileTree", path: "C:/acceptance" },
+      },
+      sourceAddressSnapshot: { _tag: "FileTree", path: "C:/acceptance" },
+      resourceBoundaryRevision: 0,
+      resolvedAtEnvironmentRevision: "env1",
+      createdAt: "t0",
+      releasedAt: null,
+    };
+    const workspace = {
+      workspaceId: targetWorkspaceId,
+      projectId,
+      parentWorkspaceId: null,
+      name: "acceptance",
+      responsibilityDefinition: {
+        purpose: "acceptance",
+        ownedResponsibilities: [],
+        obligations: [],
+        includes: [],
+        excludes: [],
+        interfaces: [],
+      },
+      responsibilityRevision: 0,
+      resourceBoundary: {
+        basisResponsibilityRevision: 0,
+        addresses: [{ _tag: "FileTree", path: "C:/acceptance" }],
+      },
+      resourceBoundaryRevision: 0,
+      agentBinding: {
+        _tag: "ResponsibilityBoundAgentBinding",
+        workspaceId: targetWorkspaceId,
+      },
+      primarySessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789ab",
+      currentWorkId: null,
+      workspacePolicy: {},
+      workspacePolicyRevision: 0,
+      revision: 1,
+      lifecycle: "Active",
+    };
+    const workspaces = {
+      findById: () => Effect.succeed(Option.some(workspace as never)),
+      updateResourceBoundaryIfRevision: (...args: unknown[]) =>
+        Effect.sync(() => boundaryWrites.push(args)),
+    } as never;
+    const ownership: Pick<
+      ResourceOwnershipRepositoryService,
+      "listActiveByWorkspace" | "releaseClaim"
+    > = {
+      listActiveByWorkspace: (id) =>
+        Effect.succeed(id === targetWorkspaceId ? [claim as never] : []),
+      releaseClaim: (id) => Effect.sync(() => released.push(id)),
+    };
+    const updateHandler = makeUpdateResourceBoundaryHandler({
+      workspaces,
+      ownership,
+    }) as unknown as CommandHandler<unknown, unknown>;
+    const { app, state } = buildApp([updateHandler]);
+    const fingerprint = fpFor(payload, "UpdateResourceBoundary");
+    const authority = {
+      _tag: "UpdateResourceBoundaryAuthority" as const,
+      principal,
+      commandId,
+      semanticRequestFingerprint: fingerprint,
+      projectId,
+      targetWorkspaceId,
+    } satisfies VerifiedCommandAuthority;
+    const localContext: CommandSubmissionContext = {
+      _tag: "System",
+      principal,
+      causationRef: "trusted-local-resource-boundary-admin",
+    };
+    const command = envelope(payload, "UpdateResourceBoundary");
+    const receipts = await run(
+      Effect.gen(function* () {
+        const gw = yield* CommandGateway;
+        const denied = yield* gw.execute(
+          { ...command, commandId: otherCommandId },
+          localContext,
+          {
+            ...authority,
+            commandId: otherCommandId,
+            targetWorkspaceId:
+              "ws_018f2b3c-4d5e-7abc-8def-0123456789ac" as never,
+          },
+        );
+        const first = yield* gw.execute(command, localContext, authority);
+        const replay = yield* gw.execute(command, localContext, authority);
+        return { denied, first, replay };
+      }),
+      app,
+    );
+
+    expect(receipts.denied.resolution._tag).toBe("TerminalRejected");
+    if (receipts.denied.resolution._tag === "TerminalRejected") {
+      expect(receipts.denied.resolution.error._tag).toBe("AuthorityDenied");
+    }
+    expect(receipts.first.resolution._tag).toBe("Committed");
+    expect(receipts.replay.resolution._tag).toBe("Committed");
+    expect(released).toEqual(["claim-acceptance-only"]);
+    expect(boundaryWrites).toHaveLength(1);
+    expect(state.appended.map((event) => event.eventType)).toEqual([
+      "ResourceBoundaryChanged",
+      "ResourceOwnershipChanged",
+    ]);
+    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
+    expect(
+      state.attempts.filter((attempt) => attempt.outcome === "Committed"),
+    ).toHaveLength(1);
   });
 });

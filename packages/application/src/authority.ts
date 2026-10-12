@@ -51,6 +51,15 @@ export type VerifiedCommandAuthority =
       readonly targetWorkspaceId: WorkspaceId;
     }
   | {
+      /** Trusted local-admin maintenance face for shrink-to-empty only. */
+      readonly _tag: "UpdateResourceBoundaryAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+    }
+  | {
       /** DID §1.4 / §8.18A; P5 `01` §3.1. The caller must forward the scheduler
        * evaluator's exact `workId`; the handler applies, never selects. */
       readonly _tag: "SelectCurrentWorkAuthority";

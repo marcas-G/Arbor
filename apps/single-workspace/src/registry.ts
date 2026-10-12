@@ -58,6 +58,7 @@ import {
   type PermissionGrantRepositoryService,
   ProjectRepository,
   ProjectResourceProfilePort,
+  ResourceOwnershipRepository,
   SessionRepository,
   VerificationRepository,
   type VerificationRepositoryService,
@@ -112,6 +113,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
   | VerificationRepository
   | AcceptanceRepository
   | PermissionGrantRepository
+  | ResourceOwnershipRepository
   | HumanMessageStore
   | ConversationResponseJobStore
   | SqlClient
@@ -120,6 +122,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
   Effect.gen(function* () {
     const projects = yield* ProjectRepository;
     const workspaces = yield* WorkspaceRepository;
+    const resourceOwnership = yield* ResourceOwnershipRepository;
     const sessions = yield* SessionRepository;
     const activations = yield* Effect.serviceOption(
       WorkspaceResourceActivationStore,
@@ -169,6 +172,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
           ? { activations: activations.value }
           : {}),
         works,
+        resourceOwnership,
         ...(Option.isSome(projectResourceProfiles)
           ? { projectResourceProfiles: projectResourceProfiles.value }
           : {}),
