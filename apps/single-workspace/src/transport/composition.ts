@@ -1,4 +1,8 @@
-import type { ViewRequestMap, ViewResponseMap } from "@arbor/api-contracts";
+import type {
+  AttentionRes,
+  ViewRequestMap,
+  ViewResponseMap,
+} from "@arbor/api-contracts";
 import type {
   AuthorityDecisionInput,
   AuthorityResolverPortService,
@@ -18,15 +22,19 @@ import {
   CommandHandlerRegistry,
   CommandInputContractRegistry,
   decodeExternalCommand,
+  FINGERPRINT_ALGORITHM_VERSION,
   semanticRequestFingerprint,
 } from "@arbor/application";
 import type {
+  CommandId,
   CommandReceipt,
   ExecutionId,
   PermissionGrant,
   Principal,
+  ProjectId,
   ProjectPolicy,
   QueryResult,
+  VerificationId,
   ViewId,
   WorkId,
   WorkspaceId,
@@ -36,10 +44,12 @@ import { makeProjectPolicy } from "@arbor/domain";
 import type {
   ProjectionQueryError,
   ProjectionQueryPortService,
+  StoredCommandResolution,
 } from "@arbor/ports";
 import {
   AttentionProjectionStore,
   Clock,
+  CommandStore,
   ExecutableApprovalStore,
   ExecutionRepository,
   ExecutionScheduler,
@@ -50,6 +60,7 @@ import {
   ProjectRepository,
   ResourceOwnershipRepository,
   TransactionPort,
+  VerificationRepository,
   WorkRepository,
   WorkspaceRepository,
   WorkspaceResourceActivationStore,
@@ -65,6 +76,7 @@ import {
   authorityDeniedProblem,
   failureResponse,
   invalidCommandPayloadProblem,
+  makeProblem,
   problemFromCommandFailure,
   problemFromUnknownFailure,
 } from "./errors.js";
@@ -92,9 +104,107 @@ export const viewQueryFaceFromPort = (
   query: <V extends ViewId>(
     view: V,
     request: ViewRequestMap[V],
+    barrier?: import("@arbor/domain").FreshnessRequirement,
+    _principal?: Principal,
   ): Effect.Effect<QueryResult<ViewResponseMap[V]>, ProjectionQueryError> =>
-    port.query<ViewRequestMap[V], ViewResponseMap[V]>(view, request),
+    port.query<ViewRequestMap[V], ViewResponseMap[V]>(view, request, barrier),
 });
+
+/** Read-only P10 affordance projection. It reuses the exact RetryVerification
+ * AuthorityResolver with canonical repository facts, but never invokes the
+ * Gateway or persists an authority/approval. */
+export const viewQueryFaceWithRetryAvailability = (
+  port: ProjectionQueryPortService,
+  resolver: AuthorityResolverPortService,
+  loadInputs: (
+    envelope: DecodedExternalCommandEnvelope,
+  ) => Effect.Effect<AuthorityInputs, never>,
+): ViewQueryFace => {
+  const base = viewQueryFaceFromPort(port);
+  const canRetry = (
+    projectId: ProjectId,
+    principal: Principal,
+    row: AttentionRes["rows"][number],
+  ): Effect.Effect<boolean, never> => {
+    if (
+      row.source !== "VerifierOrphan" ||
+      row.workId === undefined ||
+      row.verificationId === undefined ||
+      row.targetWorkRevision === undefined
+    ) {
+      return Effect.succeed(false);
+    }
+    const payload = {
+      workId: row.workId,
+      verificationId: row.verificationId,
+      expectedWorkRevision: row.targetWorkRevision,
+    };
+    const envelope = {
+      commandType: "RetryVerification",
+      commandId: "cmd_retry_preview" as CommandId,
+      projectId,
+      actor: principal as unknown as import("@arbor/domain").Actor,
+      issuedAt: "1970-01-01T00:00:00.000Z",
+      payload,
+    } as DecodedExternalCommandEnvelope;
+    const fingerprint = semanticRequestFingerprint({
+      commandType: "RetryVerification",
+      projectId,
+      actor: String(principal),
+      schemaVersion: "RetryVerification/availability-v1",
+      payload,
+    });
+    const gatewayEnvelope: GatewayEnvelope<unknown> = envelope;
+    return Effect.flatMap(loadInputs(envelope), (inputs) =>
+      Effect.match(
+        resolver.resolve({
+          principal,
+          submissionContext: { _tag: "External", principal },
+          envelope: gatewayEnvelope,
+          semanticRequestFingerprint: fingerprint,
+          canonicalFacts: inputs.canonicalFacts,
+          grants: inputs.grants,
+          governance: inputs.governance,
+          policy: inputs.policy,
+        }),
+        {
+          onFailure: () => false,
+          onSuccess: (fact) => fact._tag === "RetryVerificationAuthority",
+        },
+      ),
+    );
+  };
+
+  return {
+    query: <V extends ViewId>(
+      view: V,
+      request: ViewRequestMap[V],
+      barrier?: import("@arbor/domain").FreshnessRequirement,
+      principal?: Principal,
+    ): Effect.Effect<QueryResult<ViewResponseMap[V]>, ProjectionQueryError> => {
+      const result = base.query(view, request, barrier);
+      if (view !== "attention" || principal === undefined) return result;
+      const projectId = (request as ViewRequestMap["attention"]).projectId;
+      return Effect.flatMap(result, (queryResult) => {
+        const attention = queryResult.value as AttentionRes;
+        return Effect.map(
+          Effect.forEach(attention.rows, (row) =>
+            Effect.map(canRetry(projectId, principal, row), (allowed) =>
+              allowed
+                ? { ...row, availableActions: ["RetryVerification"] as const }
+                : row,
+            ),
+          ),
+          (rows) =>
+            ({
+              ...queryResult,
+              value: { ...attention, rows },
+            }) as unknown as QueryResult<ViewResponseMap[V]>,
+        );
+      });
+    },
+  };
+};
 
 const payloadRecord = (payload: unknown): Record<string, unknown> =>
   typeof payload === "object" && payload !== null
@@ -112,6 +222,7 @@ export type AuthorityInputsServices =
   | WorkspaceRepository
   | ExecutionRepository
   | WorkRepository
+  | VerificationRepository
   | PermissionGrantRepository;
 
 /** The production facts loader: repository snapshots + the `PermissionGrant`
@@ -132,6 +243,7 @@ export const makeRepositoryInputsLoader = (
     const workspaces = yield* WorkspaceRepository;
     const executions = yield* ExecutionRepository;
     const works = yield* WorkRepository;
+    const verifications = yield* VerificationRepository;
     const grants = yield* PermissionGrantRepository;
     const executableApprovals = yield* Effect.serviceOption(
       ExecutableApprovalStore,
@@ -172,6 +284,52 @@ export const makeRepositoryInputsLoader = (
           workId === null
             ? Option.none()
             : yield* tx.transact(works.findById(workId));
+        const verificationId = payloadString(
+          payload,
+          "verificationId",
+        ) as VerificationId | null;
+        const verification =
+          verificationId === null ||
+          envelope.commandType !== "RetryVerification"
+            ? Option.none()
+            : yield* tx.transact(verifications.findById(verificationId));
+        const verifierExecutions =
+          Option.isSome(verification) &&
+          envelope.commandType === "RetryVerification"
+            ? yield* Effect.forEach(
+                verification.value.verificationExecutionIds,
+                (id) =>
+                  Effect.gen(function* () {
+                    const execution = yield* tx.transact(
+                      executions.findById(id),
+                    );
+                    const bound = yield* tx.transact(
+                      verifications.findByExecutionId(id),
+                    );
+                    return {
+                      executionId: id,
+                      projectId: Option.isSome(execution)
+                        ? execution.value.projectId
+                        : projectId,
+                      workspaceId: Option.isSome(execution)
+                        ? execution.value.workspaceId
+                        : (verification.value.ownerWorkspaceId ??
+                          ("" as WorkspaceId)),
+                      status: Option.isSome(execution)
+                        ? execution.value.state.status
+                        : ("Missing" as const),
+                      executionBound:
+                        Option.isSome(execution) &&
+                        execution.value.binding._tag ===
+                          "ExecutionBoundAgentBinding",
+                      boundToVerification:
+                        Option.isSome(bound) &&
+                        bound.value.verificationId ===
+                          verification.value.verificationId,
+                    };
+                  }),
+              )
+            : [];
         const project = yield* tx.transact(projects.findById(projectId));
         const activeGrants = yield* tx.transact(grants.activeGrants(projectId));
 
@@ -206,6 +364,20 @@ export const makeRepositoryInputsLoader = (
                   projectId: work.value.projectId,
                   workspaceId: work.value.workspaceId,
                   lifecycle: work.value.lifecycle,
+                  revision: work.value.revision,
+                },
+              }
+            : {}),
+          ...(Option.isSome(verification)
+            ? {
+                retryVerification: {
+                  verificationId: verification.value.verificationId,
+                  workId: verification.value.workId,
+                  targetWorkRevision: verification.value.targetWorkRevision,
+                  state: verification.value.state.status,
+                  ownerWorkspaceId:
+                    verification.value.ownerWorkspaceId ?? ("" as WorkspaceId),
+                  verifierExecutions,
                 },
               }
             : {}),
@@ -240,6 +412,12 @@ export interface ExternalSubmissionDeps {
   readonly loadInputs: (
     envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<AuthorityInputs, never>;
+  /** Optional receipt-first lookup used only for exact RetryVerification
+   * replay. The caller is authenticated and the envelope/fingerprint/schema
+   * tuple is checked before a replay-only authority reaches Gateway. */
+  readonly findCommandResolution?: (
+    commandId: CommandId,
+  ) => Effect.Effect<Option.Option<StoredCommandResolution>, never>;
   readonly afterCommitted?: (
     envelope: DecodedExternalCommandEnvelope,
   ) => Effect.Effect<void, unknown>;
@@ -345,30 +523,77 @@ export const makeExternalSubmission = (
           authorityDeniedProblem(`UnsupportedOrigin:${envelope.commandType}`),
         );
       }
-      const inputs = yield* deps.loadInputs(envelope);
-      const decision: AuthorityDecisionInput = {
-        principal,
-        submissionContext,
-        envelope: gatewayEnvelope,
-        semanticRequestFingerprint: fingerprint,
-        canonicalFacts: inputs.canonicalFacts,
-        grants: inputs.grants,
-        governance: inputs.governance,
-        policy: inputs.policy,
-      };
-      const resolved = yield* Effect.match(deps.resolver.resolve(decision), {
-        onFailure: (error) => ({ _tag: "denied" as const, error }),
-        onSuccess: (fact) => ({ _tag: "fact" as const, fact }),
-      });
-      if (resolved._tag === "denied") {
-        return failureResponse(
-          authorityDeniedProblem(
-            `${resolved.error._tag}:${envelope.commandType}`,
-          ),
-        );
+      let authority: import("@arbor/application").CommandAuthorityFact;
+      const priorResolution =
+        deps.findCommandResolution !== undefined
+          ? yield* deps.findCommandResolution(envelope.commandId)
+          : Option.none<StoredCommandResolution>();
+      const exactPriorRequest =
+        Option.isSome(priorResolution) &&
+        priorResolution.value.commandId === envelope.commandId &&
+        priorResolution.value.projectId === envelope.projectId &&
+        priorResolution.value.semanticRequestFingerprint === fingerprint &&
+        priorResolution.value.schemaVersion === handler.value.schemaVersion &&
+        priorResolution.value.fingerprintAlgorithmVersion ===
+          FINGERPRINT_ALGORITHM_VERSION;
+      if (Option.isSome(priorResolution)) {
+        if (!exactPriorRequest) {
+          return failureResponse(
+            makeProblem(
+              "command/idempotency-conflict",
+              "stale",
+              "non-retryable",
+              {
+                commandId: envelope.commandId,
+              },
+            ),
+          );
+        }
+      }
+      if (
+        exactPriorRequest &&
+        envelope.commandType === "RetryVerification" &&
+        submissionContext._tag === "External"
+      ) {
+        const payload =
+          envelope.payload as import("@arbor/application").RetryVerificationPayload;
+        authority = {
+          _tag: "RetryVerificationReceiptReplayAuthority",
+          principal,
+          commandId: envelope.commandId,
+          semanticRequestFingerprint: fingerprint,
+          projectId: envelope.projectId,
+          workId: payload.workId,
+          verificationId: payload.verificationId,
+          expectedWorkRevision: payload.expectedWorkRevision,
+        };
+      } else {
+        const inputs = yield* deps.loadInputs(envelope);
+        const decision: AuthorityDecisionInput = {
+          principal,
+          submissionContext,
+          envelope: gatewayEnvelope,
+          semanticRequestFingerprint: fingerprint,
+          canonicalFacts: inputs.canonicalFacts,
+          grants: inputs.grants,
+          governance: inputs.governance,
+          policy: inputs.policy,
+        };
+        const resolved = yield* Effect.match(deps.resolver.resolve(decision), {
+          onFailure: (error) => ({ _tag: "denied" as const, error }),
+          onSuccess: (fact) => ({ _tag: "fact" as const, fact }),
+        });
+        if (resolved._tag === "denied") {
+          return failureResponse(
+            authorityDeniedProblem(
+              `${resolved.error._tag}:${envelope.commandType}`,
+            ),
+          );
+        }
+        authority = resolved.fact;
       }
       const executed = yield* Effect.match(
-        deps.gateway.execute(gatewayEnvelope, submissionContext, resolved.fact),
+        deps.gateway.execute(gatewayEnvelope, submissionContext, authority),
         {
           onFailure: (error) => ({ _tag: "failure" as const, error }),
           onSuccess: (receipt) => ({ _tag: "receipt" as const, receipt }),
@@ -447,6 +672,7 @@ export const makeExternalSubmissionFromServices = (
   | AuthorityResolverPort
   | CommandGateway
   | CommandHandlerRegistry
+  | CommandStore
 > =>
   Effect.gen(function* () {
     const resolver = yield* AuthorityResolverPort;
@@ -469,6 +695,9 @@ export const makeExternalSubmissionFromServices = (
                 );
           };
     const tx = yield* TransactionPort;
+    const commandStore = yield* CommandStore;
+    const findCommandResolution = (commandId: CommandId) =>
+      tx.transact(commandStore.findResolution(commandId)).pipe(Effect.orDie);
     const workspaces = yield* WorkspaceRepository;
     const activationIntentsOption = yield* Effect.serviceOption(
       WorkspaceResourceActivationStore,
@@ -501,6 +730,7 @@ export const makeExternalSubmissionFromServices = (
         gateway,
         registry,
         loadInputs,
+        findCommandResolution,
         ...(afterGatewayCommitBeforeCreateProjectActivation !== undefined
           ? { afterGatewayCommitBeforeCreateProjectActivation }
           : {}),
@@ -647,6 +877,7 @@ export const makeExternalSubmissionFromServices = (
       gateway,
       registry,
       loadInputs,
+      findCommandResolution,
       ...(afterGatewayCommitBeforeCreateProjectActivation !== undefined
         ? { afterGatewayCommitBeforeCreateProjectActivation }
         : {}),

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import {
   type AttentionPollPolicyConfig,
   type AttentionPollQualificationProbe,
-  type AuthorityResolverPort,
+  AuthorityResolverPort,
   CommandGateway,
   type CommandHandlerRegistry,
   type CompletionConsumerDependencies,
@@ -54,6 +54,7 @@ import {
   AttentionProjectionStore,
   BlobStorePort,
   Clock,
+  type CommandStore,
   ConsumerDeadLetterStore,
   ConsumerOffsetStore,
   ControlApprovalStore,
@@ -124,11 +125,12 @@ import {
   makeCliShell,
   makeExternalSubmissionFromServices,
   makeHttpShell,
+  makeRepositoryInputsLoader,
   makeTransportCore,
   makeWebShell,
   makeWebSocketShell,
   type TransportCore,
-  viewQueryFaceFromPort,
+  viewQueryFaceWithRetryAvailability,
   type WebShell,
   type WebSocketShell,
 } from "./transport/index.js";
@@ -170,6 +172,7 @@ export type TransportBoundaryServices =
   | ProjectionQueryPort
   | AuthorityResolverPort
   | CommandGateway
+  | CommandStore
   | CommandHandlerRegistry
   | TransactionPort
   | ProjectRepository
@@ -177,6 +180,7 @@ export type TransportBoundaryServices =
   | WorkspaceResourceActivationStore
   | ExecutionRepository
   | WorkRepository
+  | VerificationRepository
   | PermissionGrantRepository
   | Clock
   | IdGenerator
@@ -198,12 +202,18 @@ export const TransportBoundaryLive = (
     TransportBoundary,
     Effect.gen(function* () {
       const queryPort = yield* ProjectionQueryPort;
+      const resolver = yield* AuthorityResolverPort;
+      const loadInputs = yield* makeRepositoryInputsLoader(governance);
       const submission = yield* makeExternalSubmissionFromServices(
         governance,
         postCommitBeforeActivationProbe,
       );
       const core = makeTransportCore({
-        views: viewQueryFaceFromPort(queryPort),
+        views: viewQueryFaceWithRetryAvailability(
+          queryPort,
+          resolver,
+          loadInputs,
+        ),
         authenticator,
         submission,
       });
@@ -568,17 +578,20 @@ export const ProductionDaemonServiceLive = (
         const consumerSql = yield* SqlClient;
         const rows = yield* consumerSql.unsafe<{
           verification_id: string;
-          work_id: string;
           project_id: string;
         }>(
-          "SELECT verification_id, work_id, project_id FROM verifications WHERE state = 'Open' ORDER BY created_at, verification_id",
+          "SELECT verification_id, project_id FROM verifications WHERE state = 'Open' ORDER BY created_at, verification_id",
         );
         for (const row of rows) {
           const verification = yield* tx.transact(
             verifications.findById(row.verification_id as never),
           );
-          const work = yield* tx.transact(works.findById(row.work_id as never));
-          if (Option.isNone(verification) || Option.isNone(work)) continue;
+          if (Option.isNone(verification)) continue;
+          // P8 G4: execution ownership is frozen on the Verification row.
+          // A later Work/Workspace ownership move must not retarget a pending
+          // verifier spawn to a different owner.
+          const ownerWorkspaceId = verification.value.ownerWorkspaceId;
+          if (ownerWorkspaceId === undefined) continue;
           const verifierExecutionId =
             verification.value.verificationExecutionIds[0];
           if (verifierExecutionId === undefined) continue;
@@ -590,7 +603,7 @@ export const ProductionDaemonServiceLive = (
             {
               verification: verification.value,
               projectId: row.project_id as never,
-              ownerWorkspaceId: work.value.workspaceId,
+              ownerWorkspaceId,
               verifierExecutionId,
               missionDigest: `${mission.goal} [criteria=${mission.criteria.length} required=${required}]`,
             },

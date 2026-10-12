@@ -219,7 +219,7 @@ import { makeProjectResourceProfilePort } from "./project-resource-profiles.js";
 import { ProjectionQueryPortLive } from "./projection-query.js";
 import { INLINE_SECRET_REF } from "./provider-config.js";
 import { PROVIDER_REGISTRY_TABLE } from "./provider-registry.table.js";
-import { SingleWorkspaceCommandHandlerRegistryLive } from "./registry.js";
+import { makeSingleWorkspaceCommandHandlerRegistryLive } from "./registry.js";
 import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
 import { ToolAuthorityResolverLive } from "./tool-authority-resolver.js";
 import {
@@ -714,7 +714,9 @@ export const buildSingleWorkspaceLayer = (
     config.projectResourceProfiles ?? makeProjectResourceProfilePort([]),
   );
   const registry = Layer.provide(
-    SingleWorkspaceCommandHandlerRegistryLive,
+    makeSingleWorkspaceCommandHandlerRegistryLive(
+      config.governance ?? { authenticatedHumans: [], directParentOf: [] },
+    ),
     Layer.mergeAll(repos, infra, projectResourceProfilePort),
   );
   const gateway = Layer.provide(

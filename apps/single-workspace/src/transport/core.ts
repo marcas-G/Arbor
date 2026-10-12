@@ -42,6 +42,13 @@ export interface TransportCore {
     view: V,
     request: ViewRequestMap[V],
   ) => Effect.Effect<TransportResponse<QueryResult<ViewResponseMap[V]>>>;
+  /** HTTP-only continuation: authenticate credentials again and pass the
+   * resulting principal to the composition-owned view decorator. */
+  readonly queryViewAuthenticated: <V extends ViewId>(
+    view: V,
+    request: ViewRequestMap[V],
+    credential: TransportCredential | null,
+  ) => Effect.Effect<TransportResponse<QueryResult<ViewResponseMap[V]>>>;
   readonly submitCommand: (
     credential: TransportCredential | null,
     rawEnvelope: unknown,
@@ -71,6 +78,34 @@ export const makeTransportCore = (deps: TransportCoreDeps): TransportCore => ({
       onFailure: (error) => failureResponse(problemFromProjectionError(error)),
       onSuccess: (body) => ({ ok: true as const, status: 200, body }),
     })) as TransportCore["queryView"],
+  queryViewAuthenticated: (<V extends ViewId>(
+    view: V,
+    request: ViewRequestMap[V],
+    credential: TransportCredential | null,
+  ) =>
+    Effect.matchEffect(deps.authenticator.authenticate(credential), {
+      onFailure: () =>
+        Effect.succeed(failureResponse(unauthenticatedProblem())),
+      onSuccess: (principal) =>
+        String(principal) !== LOCAL_PRINCIPAL
+          ? Effect.succeed(
+              failureResponse(
+                makeProblem(
+                  "auth/unsupported-principal",
+                  "forbidden",
+                  "non-retryable",
+                ),
+              ),
+            )
+          : Effect.match(
+              deps.views.query(view, request, undefined, principal),
+              {
+                onFailure: (error) =>
+                  failureResponse(problemFromProjectionError(error)),
+                onSuccess: (body) => ({ ok: true as const, status: 200, body }),
+              },
+            ),
+    })) as TransportCore["queryViewAuthenticated"],
   submitCommand: (credential, rawEnvelope) =>
     Effect.matchEffect(deps.authenticator.authenticate(credential), {
       onFailure: () =>

@@ -10,6 +10,7 @@ import type {
   AssignWorkApprovalCommandEvidence,
   AssignWorkCommandEvidence,
   AssignWorkTargetBindingStoreError,
+  BlobStoreError,
   CommandStoreError,
   ControlApprovalStoreError,
   ConversationJobStoreError,
@@ -65,6 +66,10 @@ export interface GatewayEnvelope<C> {
   readonly causationRef?: string;
   readonly correlationRef?: string;
   readonly payload: C;
+  /** Process-local Authority Resolver result attached by CommandGateway only
+   * after exact submission/fingerprint validation. Never accepted on wire or
+   * included in semantic payload fingerprints. */
+  readonly resolvedAuthority?: CommandAuthorityFact;
   /** Trusted in-process ControlAction evidence; never part of model output. */
   readonly assignWorkEvidence?: AssignWorkCommandEvidence;
   /** Exact ActionApproval evidence for current-Workspace AssignWork; consumed
@@ -115,6 +120,7 @@ export type CommandHandlerError =
   | VerificationRepositoryError
   | AcceptanceRepositoryError
   | EvidenceRepositoryError
+  | BlobStoreError
   | AssignWorkTargetBindingStoreError
   | ReadmissionTargetMismatch
   | ReadmissionGateIntegrityFailure

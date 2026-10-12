@@ -61,6 +61,23 @@ export interface CanonicalWorkSnapshot {
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
   readonly lifecycle: "Open" | "Completed" | "Cancelled";
+  readonly revision?: number;
+}
+
+export interface CanonicalRetryVerificationSnapshot {
+  readonly verificationId: VerificationId;
+  readonly workId: WorkId;
+  readonly targetWorkRevision: number;
+  readonly state: "Open" | "Concluded";
+  readonly ownerWorkspaceId: WorkspaceId;
+  readonly verifierExecutions: ReadonlyArray<{
+    readonly executionId: ExecutionId;
+    readonly projectId: ProjectId;
+    readonly workspaceId: WorkspaceId;
+    readonly status: "Active" | "Settled" | "Missing";
+    readonly executionBound: boolean;
+    readonly boundToVerification: boolean;
+  }>;
 }
 
 export interface CanonicalAuthorityFacts {
@@ -69,6 +86,7 @@ export interface CanonicalAuthorityFacts {
   readonly workspace?: CanonicalWorkspaceSnapshot;
   readonly execution?: CanonicalExecutionSnapshot;
   readonly work?: CanonicalWorkSnapshot;
+  readonly retryVerification?: CanonicalRetryVerificationSnapshot;
   readonly executableApproval?: {
     readonly approvalId: string;
     readonly projectId: ProjectId;
@@ -555,6 +573,77 @@ const governanceCommandFact = (
         projectId,
         targetWorkspaceId,
         messageId,
+      });
+    }
+    case "RetryVerification": {
+      // P8 / P12 human-only governance: deliberately bypass authorizeCommand
+      // so PermissionGrants (including wildcard grants) cannot confer this
+      // recovery authority.
+      if (input.submissionContext._tag !== "External") {
+        return Effect.fail({
+          _tag: "UnsupportedOrigin",
+          submissionOrigin: input.submissionContext._tag,
+          commandType,
+        });
+      }
+      const payloadWorkId = payloadString(payload, "workId") as WorkId | null;
+      const verificationId = payloadString(
+        payload,
+        "verificationId",
+      ) as VerificationId | null;
+      const expectedRevision = payloadNumber(payload, "expectedWorkRevision");
+      const facts = input.canonicalFacts;
+      const work = facts.work;
+      const retry = facts.retryVerification;
+      const ownerWorkspaceId = work?.workspaceId ?? null;
+      const exact =
+        payloadWorkId !== null &&
+        verificationId !== null &&
+        expectedRevision !== null &&
+        work !== undefined &&
+        work.projectId === projectId &&
+        work.workId === payloadWorkId &&
+        work.lifecycle === "Open" &&
+        work.revision === expectedRevision &&
+        retry !== undefined &&
+        retry.verificationId === verificationId &&
+        retry.workId === payloadWorkId &&
+        retry.targetWorkRevision === expectedRevision &&
+        retry.state === "Open" &&
+        retry.verifierExecutions.length > 0 &&
+        retry.verifierExecutions.every(
+          (execution) =>
+            execution.projectId === projectId &&
+            execution.workspaceId === retry.ownerWorkspaceId &&
+            execution.status === "Settled" &&
+            execution.executionBound &&
+            execution.boundToVerification,
+        );
+      if (!exact || ownerWorkspaceId === null || retry === undefined) {
+        return Effect.fail(denyCommand(input, "RetryVerification", "Denied"));
+      }
+      const isRoot = facts.project?.rootWorkspaceId === ownerWorkspaceId;
+      const humanAuthorized = isRoot
+        ? isAuthenticatedHuman(input)
+        : isAuthenticatedHuman(input) &&
+          governanceAuthorizes(input.governance, principal, ownerWorkspaceId);
+      if (!humanAuthorized) {
+        return Effect.fail(denyCommand(input, "RetryVerification", "Denied"));
+      }
+      return Effect.succeed({
+        _tag: "RetryVerificationAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        targetWorkspaceId: ownerWorkspaceId,
+        currentOwnerId: ownerWorkspaceId,
+        workId: payloadWorkId as WorkId,
+        expectedWorkRevision: expectedRevision as number,
+        verificationId,
+        settledVerifierExecutionIds: retry.verifierExecutions
+          .map((execution) => execution.executionId)
+          .toSorted(),
       });
     }
     case "ResumeConversationResponse":

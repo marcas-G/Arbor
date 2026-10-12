@@ -42,6 +42,7 @@ import type {
 import type { RecordDecisionPayload } from "./commands/record-decision.js";
 import type { ResolveControlApprovalPayload } from "./commands/resolve-control-approval.js";
 import type { ResolveExecutableApprovalPayload } from "./commands/resolve-executable-approval.js";
+import type { RetryVerificationPayload } from "./commands/retry-verification.js";
 import type { RevokePermissionPayload } from "./commands/revoke-permission.js";
 import type { SatisfyDependencyPayload } from "./commands/satisfy-dependency.js";
 import type { SelectCurrentWorkPayload } from "./commands/select-current-work.js";
@@ -74,6 +75,7 @@ export type RegisteredCommandType =
   | "StartVerification"
   | "RecordVerificationEvidence"
   | "ConcludeVerification"
+  | "RetryVerification"
   | "GrantPermission"
   | "RevokePermission"
   | "SubmitHumanMessage"
@@ -164,6 +166,7 @@ export interface ExternalCommandPayloadMap {
   readonly StartVerification: StartVerificationPayload;
   readonly RecordVerificationEvidence: RecordVerificationEvidencePayload;
   readonly ConcludeVerification: ConcludeVerificationPayload;
+  readonly RetryVerification: RetryVerificationPayload;
   readonly GrantPermission: GrantPermissionPayload;
   readonly RevokePermission: RevokePermissionPayload;
   readonly SubmitHumanMessage: SubmitHumanMessagePayload;
@@ -704,6 +707,14 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
     summaryRef: string,
     conclusionReason: optional(literal("Orphaned")),
   }),
+  RetryVerification: object({
+    workId: id("WorkId"),
+    verificationId: id("VerificationId"),
+    expectedWorkRevision: workRevision,
+    summaryContent: boundedString(1, 4096),
+    successorVerificationId: id("VerificationId"),
+    verifierExecutionId: id("ExecutionId"),
+  }),
   GrantPermission: object({
     permissionGrantId: id("PermissionGrantId"),
     issuer: nonEmptyString,
@@ -770,6 +781,7 @@ const externalOriginPolicies: Readonly<
   StartVerification: "reject external; Verification consumer/runtime",
   RecordVerificationEvidence: "reject external; Verification consumer/runtime",
   ConcludeVerification: "reject external; Verification consumer/runtime",
+  RetryVerification: "external authenticated human",
   GrantPermission: "external only when P12 authority resolves the principal",
   RevokePermission: "external only when P12 authority resolves the principal",
   SubmitHumanMessage: "external authenticated human",

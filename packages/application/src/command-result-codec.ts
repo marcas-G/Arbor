@@ -468,6 +468,16 @@ const resultDecoders: ResultDecoderRegistry = {
       }),
   },
   ConcludeVerification: { "1": concludeVerificationResult },
+  RetryVerification: {
+    "1": (value) =>
+      objectWith(value, {
+        workId: id("WorkId"),
+        orphanedVerificationId: id("VerificationId"),
+        successorVerificationId: id("VerificationId"),
+        verifierExecutionId: id("ExecutionId"),
+        state: literal("OrphanedAndRetried"),
+      }),
+  },
   GrantPermission: {
     "1": (value) =>
       objectWith(value, {

@@ -74,9 +74,10 @@ export const makeHttpShell = (core: TransportCore): HttpShell => {
       return Effect.succeed(failureResponse(unknownViewProblem(view)));
     }
     const body = asRecord(request.body) ?? {};
-    return core.queryView(
+    return core.queryViewAuthenticated(
       view,
       body as ViewRequestMap[ViewId],
+      bearerCredential(request.authorization),
     ) as Effect.Effect<TransportResponse<unknown>>;
   };
 

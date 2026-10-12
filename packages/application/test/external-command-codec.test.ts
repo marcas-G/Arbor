@@ -197,6 +197,85 @@ describe("external wire-v1 command payload codec", () => {
     expect(result.value.payload).toMatchObject({ messageId: `msg_${UUID_V7}` });
   });
 
+  it("decodes the authenticated-human RetryVerification command and rejects authority/BlobRef fields", () => {
+    const payload = {
+      workId: `wrk_${UUID_V7}`,
+      verificationId: `ver_${UUID_V7}`,
+      expectedWorkRevision: 1,
+      summaryContent: "The bound verifier settled without concluding.",
+      successorVerificationId: `ver_${UUID_V7.replace(/.$/, "c")}`,
+      verifierExecutionId: `exe_${UUID_V7.replace(/.$/, "d")}`,
+    };
+    expect(decodeCommandPayload("RetryVerification" as never, payload).ok).toBe(
+      true,
+    );
+    expect(
+      CommandInputContractRegistry.lookup("RetryVerification" as never),
+    ).toMatchObject({
+      commandType: "RetryVerification",
+      externalOriginAllowed: true,
+    });
+    expect(
+      decodeExternalCommand({
+        commandType: "RetryVerification",
+        commandId: `cmd_${UUID_V7}`,
+        projectId: `prj_${UUID_V7}`,
+        actor: "user:local",
+        issuedAt: "2026-10-12T00:00:00.000Z",
+        payload,
+      }).ok,
+    ).toBe(true);
+    expect(
+      decodeCommandPayload("RetryVerification" as never, {
+        ...payload,
+        authority: { _tag: "OrphanConclusionAuthority" },
+        summaryRef: "client-authored-ref",
+      }),
+    ).toMatchObject({
+      ok: false,
+      issues: [{ path: ["<unknown-field>"], rule: "unknown-field" }],
+    });
+  });
+
+  it("registers the strict human RetryVerification payload without authority or BlobRef", () => {
+    const payload = {
+      workId: `wrk_${UUID_V7}`,
+      verificationId: `ver_${UUID_V7}`,
+      expectedWorkRevision: 1,
+      summaryContent: "The prior verifier settled before conclusion.",
+      successorVerificationId: `ver_${UUID_V7.replace(/.$/, "c")}`,
+      verifierExecutionId: `exe_${UUID_V7.replace(/.$/, "d")}`,
+    };
+    const decoded = decodeCommandPayload("RetryVerification" as never, payload);
+    expect(decoded.ok).toBe(true);
+    expect(
+      CommandInputContractRegistry.lookup("RetryVerification" as never),
+    ).toMatchObject({
+      commandType: "RetryVerification",
+      externalOriginAllowed: true,
+    });
+    expect(
+      decodeExternalCommand({
+        commandType: "RetryVerification",
+        commandId: `cmd_${UUID_V7}`,
+        projectId: `prj_${UUID_V7}`,
+        actor: "user:local",
+        issuedAt: "2026-10-12T00:00:00.000Z",
+        payload,
+      }).ok,
+    ).toBe(true);
+    expect(
+      decodeCommandPayload("RetryVerification" as never, {
+        ...payload,
+        authority: { _tag: "OrphanConclusionAuthority" },
+        summaryRef: "blob:caller-controlled",
+      }),
+    ).toMatchObject({
+      ok: false,
+      issues: [{ path: ["<unknown-field>"], rule: "unknown-field" }],
+    });
+  });
+
   it("keeps the frozen shell envelope closed", () => {
     const result = decodeExternalCommand({
       commandType: "SubmitHumanMessage",

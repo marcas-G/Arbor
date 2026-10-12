@@ -18,6 +18,7 @@ import {
   makeResolveControlApprovalHandler,
   makeResolveExecutableApprovalHandler,
   makeResumeConversationResponseHandler,
+  makeRetryVerificationHandler,
   makeRevokePermissionHandler,
   makeSatisfyDependencyHandler,
   makeSelectCurrentWorkHandler,
@@ -112,6 +113,7 @@ describe("external command codec registry parity", () => {
       makeProduceDeliverableHandler,
       makeRecordDecisionHandler,
       makeRecordVerificationEvidenceHandler,
+      makeRetryVerificationHandler,
       makeResolveControlApprovalHandler,
       makeResolveExecutableApprovalHandler,
       makeResumeConversationResponseHandler,
@@ -147,17 +149,26 @@ describe("external command codec registry parity", () => {
     }
 
     const registry = makeCommandInputContractRegistry(productionHandlerTypes);
-    expect(registry.commandTypes).toHaveLength(28);
-    expect(new Set(registry.commandTypes).size).toBe(28);
+    expect(registry.commandTypes).toHaveLength(29);
+    expect(new Set(registry.commandTypes).size).toBe(29);
     expect(
       registry.commandTypes
-        .filter((commandType) => commandType !== "DeliverMessage")
+        .filter(
+          (commandType) =>
+            commandType !== "DeliverMessage" &&
+            commandType !== "RetryVerification",
+        )
         .toSorted(),
     ).toEqual(legacyCommandTypes.toSorted());
     expect(registry.lookup("DeliverMessage")).toMatchObject({
       commandType: "DeliverMessage",
       externalWireCodecVersion: 1,
       externalOriginAllowed: false,
+    });
+    expect(registry.lookup("RetryVerification")).toMatchObject({
+      commandType: "RetryVerification",
+      externalOriginAllowed: true,
+      externalOriginPolicy: "external authenticated human",
     });
     expect(registry.commandTypes.toSorted()).toEqual(
       productionHandlerTypes.toSorted(),
@@ -234,10 +245,10 @@ describe("external command codec registry parity", () => {
     const fullRegistry = makeCommandInputContractRegistry(withApproval);
     const reducedRegistry = makeCommandInputContractRegistry(withoutApproval);
 
-    expect(withApproval).toHaveLength(28);
-    expect(fullRegistry.commandTypes).toHaveLength(28);
-    expect(withoutApproval).toHaveLength(27);
-    expect(reducedRegistry.commandTypes).toHaveLength(27);
+    expect(withApproval).toHaveLength(29);
+    expect(fullRegistry.commandTypes).toHaveLength(29);
+    expect(withoutApproval).toHaveLength(28);
+    expect(reducedRegistry.commandTypes).toHaveLength(28);
     expect(reducedRegistry.lookup("ResolveControlApproval")).toBeUndefined();
     expect(withApproval.toSorted()).toEqual(
       CommandInputContractRegistry.commandTypes.toSorted(),

@@ -31,6 +31,11 @@ export interface AttentionRow {
    * (vacant producer) have no event timestamp and render null. */
   readonly occurredAt: string | null;
   readonly failureCode?: string;
+  /** Present only for VerifierOrphan; preserves the exact Work/Verification
+   * target for a possible human retry command. */
+  readonly workId?: WorkId;
+  readonly verificationId?: string;
+  readonly targetWorkRevision?: number;
 }
 
 // --- fact inputs (extracted journal rows / canonical-state joins) ---
@@ -82,6 +87,8 @@ export interface AssignWorkBindingFailureEventFact {
  * target Work, P8 `02` §3). */
 export interface OpenVerificationFact {
   readonly verificationId: string;
+  readonly workId: WorkId;
+  readonly targetWorkRevision: number;
   readonly ownerWorkspaceId: WorkspaceId;
   readonly executionIds: ReadonlyArray<string>;
 }
@@ -298,6 +305,9 @@ export const deriveAttentionRows = (
       dedupKey: verifierOrphanDedupKey(verification.verificationId),
       summary: `open verification ${verification.verificationId} has no active verifier execution (settle-without-conclude)`,
       occurredAt: becameOrphanAt,
+      workId: verification.workId,
+      verificationId: verification.verificationId,
+      targetWorkRevision: verification.targetWorkRevision,
     });
   }
 

@@ -291,7 +291,10 @@ export const makeCommandGatewayLive = (
               }
             }
 
-            const outcome = yield* handler.execute(envelope, context);
+            const outcome = yield* handler.execute(
+              { ...envelope, resolvedAuthority: authority },
+              context,
+            );
             const settledAt = yield* clock.now();
             if (!outcome.ok) {
               const rejection: CommandRejection = outcome.error;

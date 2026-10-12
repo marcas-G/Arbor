@@ -2,6 +2,7 @@ import type {
   FreshnessRequirement,
   ProjectId,
   QueryResult,
+  VerificationId,
   ViewId,
   Work,
   WorkId,
@@ -222,6 +223,13 @@ const planView = (
                 ...(row.failureCode === undefined
                   ? {}
                   : { failureCode: row.failureCode }),
+                ...(row.workId === undefined ? {} : { workId: row.workId }),
+                ...(row.verificationId === undefined
+                  ? {}
+                  : { verificationId: row.verificationId as VerificationId }),
+                ...(row.targetWorkRevision === undefined
+                  ? {}
+                  : { targetWorkRevision: row.targetWorkRevision }),
               })),
             }),
           ),
