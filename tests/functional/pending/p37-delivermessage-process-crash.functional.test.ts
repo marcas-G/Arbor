@@ -12,6 +12,7 @@ import {
   prepareContradictoryCommittedReceipt,
   publicDeliverReplayRows,
   readP37Snapshot,
+  recordP37Probe,
   releaseP37Gate,
   restartP37Normally,
   seedDeliverableWaitingForDelivery,
@@ -20,8 +21,20 @@ import {
 } from "../support/p37-deliver-process-fixture.js";
 import { makePublicClient, waitForPublic } from "../support/public-client.js";
 
-afterEach(async () => {
-  for (const fixture of fixtures.splice(0)) await fixture.stop();
+afterEach(async ({ task }) => {
+  for (const fixture of fixtures.splice(0)) {
+    await fixture.stop();
+    process.stdout.write(
+      `${JSON.stringify({
+        tag: "P37_L6_FIXTURE_ARTIFACT",
+        test: task.name,
+        directory: fixture.directory,
+        databaseFile: fixture.databaseFile,
+        daemonErrors: fixture.daemonErrors,
+        daemonProcessSnapshot: fixture.daemonProcessSnapshot(),
+      })}\n`,
+    );
+  }
 });
 describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
   it.each(["before", "after"] as const)(
@@ -34,6 +47,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       await fixture.crash();
       const oldBoundaries = [
         "AH7AfterActionIntentCommit",
+        "AH10BeforeLeaseRenewal",
         crashSide === "before"
           ? "AH10BeforeFencedReceiptCommit"
           : "AH10AfterControlHandlerReturnBeforeObservationCommit",
@@ -71,6 +85,15 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       expect(oldAction.providerTurnId).toMatch(/^ptn_/u);
       expect(oldAction.logicalActionId).toMatch(/^lac_/u);
 
+      const oldRenewal = await awaitP37Probe(
+        probes,
+        (probe) =>
+          probe.role === "old" &&
+          probe.boundary === "AH10BeforeLeaseRenewal" &&
+          probe.executionId === oldAction.executionId,
+      );
+      expect(oldRenewal?.executionId).toBe(oldAction.executionId);
+
       await waitForPublic(
         async () =>
           readP37Snapshot(fixture.databaseFile).leases.find(
@@ -95,7 +118,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         onStdout: (line) => {
           try {
             const probe = JSON.parse(line) as P37Probe;
-            if (probe.tag === "P37_DELIVER_PROBE") probes.push(probe);
+            if (probe.tag === "P37_DELIVER_PROBE")
+              recordP37Probe(probes, probe);
           } catch {
             // The fixture retains stderr; unrelated stdout is not a P37 signal.
           }
@@ -121,6 +145,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       expect(newAction?.logicalActionId).toBe(oldAction.logicalActionId);
 
       releaseP37Gate(fixture, "old", "boundary-AH7AfterActionIntentCommit");
+      releaseP37Gate(fixture, "old", "boundary-AH10BeforeLeaseRenewal");
       let oldPrecommitCommandId: string | undefined;
       if (crashSide === "before") {
         const oldPrecommit = await awaitP37Probe(
@@ -318,7 +343,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       onStdout: (line) => {
         try {
           const probe = JSON.parse(line) as P37Probe;
-          if (probe.tag === "P37_DELIVER_PROBE") probes.push(probe);
+          if (probe.tag === "P37_DELIVER_PROBE") recordP37Probe(probes, probe);
         } catch {
           // The fixture retains stderr; unrelated stdout is not a P37 signal.
         }
