@@ -70,3 +70,27 @@ Key records at or referenced from the audit baseline:
 - `docs/design/implementation/P9/07-agent-loop-step-recovery.md` — frozen AH recovery and legacy-adoption acceptance contract.
 
 Historical results do not erase later failures. In particular, the Story C fixture migration record (`planning/results/AH7-DG03-P9-runtime-fixture-compatibility.result.md`) reports a focused pass but explicitly did not run full gates; the provider deadline record (`planning/results/provider-runtime-deadline-test-oracle.result.md`) reports focused and prior full-check passes. Both must be reconciled against the release integrator's newer full-run RED before claiming a green candidate. Keep exact SHA, command, test counts, and failure disposition with every new gate result.
+
+## 2026-10-12 integration status addendum
+
+This matrix remains an audit of its named historical baseline. For the separate
+v19-derived integration candidate, see
+[`full-delivery-integration-ledger.md`](../results/full-delivery-integration-ledger.md).
+The candidate includes the accepted AH7 owner-boundary landing and independent
+review; this is governance evidence, not closure of AH7's process qualification.
+P38 now has integrated source and targeted evidence for two crash boundaries,
+Stop/TTL transaction order, and the cumulative 0037→0038 adapter fixture. P38
+remains OPEN because those focused cases do not qualify the full process/browser
+journey, public reject/expiry layer, all migration negatives, or P39 receipt
+handoff.
+
+P37 qualification is now integrated from source `c816633` with its complete
+helper/gate ancestry. The unchanged L6 matrix passed across rerun 3's eight
+observed cases and rerun 4's three remaining cases; F19 forward and reverse
+delivery/wake passed 2/2. This is resumed split-run evidence, not one
+uninterrupted 11-case run. The L6 file is now in default process discovery.
+F23 malformed-receipt tests are integrated as source, but their local Vitest
+invocation was interrupted and does not count as PASS. P39 maintenance and
+P40/P41 sources were not integrated. No Vitest, daemon, browser, or full gate
+was run during this integration; the full-release blocker row above remains in
+force.

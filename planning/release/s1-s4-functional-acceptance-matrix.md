@@ -163,3 +163,17 @@ Mechanical invariants in S2-DP14/17/18/20, S3-DP23/28/29/30/36, S4-DP37/41/43 st
 - Historical broad gate: `planning/results/P36-integrated-full-qualification.result.md` and `planning/results/P36-integrated-full-qualification.review.md`.
 - P37/P38 staged evidence: `planning/results/P37-layered-qualification.result.md`, `planning/results/P37-L6-process-crash-matrix-checkpoint.result.md`, `planning/results/P38-layered-executable-approval-qualification.result.md`, `planning/results/P38-expiry-and-replay-runtime-checkpoint.result.md`.
 - Existing functional journey audit: `planning/results/functional-release-coverage-audit.result.md`, `planning/results/FT-functional-oracle-audit.result.md`, `planning/results/S1-S4-black-box-validation.result.md`.
+
+## 2026-10-12 integration status addendum
+
+This matrix remains the read-only coverage audit for its stated `24598bb`
+baseline. Later source integration is tracked in
+[`full-delivery-integration-ledger.md`](../results/full-delivery-integration-ledger.md).
+The integrated AH7 docs and focused P38 process/migration results do not close
+AH7/P38 or provide broad S1–S4 acceptance. P37's unchanged L6 matrix now has
+integrated split-run qualification: rerun 3's eight observed passes plus
+rerun 4's three remaining passes, with F19 forward/reverse delivery 2/2. The
+full default functional suite remains unrun on this candidate. F23 test source
+is present, but its Vitest invocation was interrupted and is not a pass. No
+full gate or model evaluation was run on the integration candidate, so the
+historical `PB@24598` and `Model eval missing` labels are unchanged.
