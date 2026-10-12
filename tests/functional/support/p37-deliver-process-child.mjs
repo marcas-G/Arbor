@@ -228,8 +228,12 @@ const qualificationProbe = async (event) => {
   if (
     event.boundary === "AH10AfterControlHandlerReturnBeforeObservationCommit"
   ) {
-    emit(event);
-    await holdConfiguredBoundary(event.boundary, event);
+    const actionKind = readActionKind(event.logicalActionId);
+    const configuredKind = process.env.ARBOR_P37_GATE_ACTION_KIND;
+    if (configuredKind === undefined || configuredKind === actionKind) {
+      emit({ ...event, actionKind });
+      await holdConfiguredBoundary(event.boundary, { ...event, actionKind });
+    }
   }
 };
 

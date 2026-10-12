@@ -89,6 +89,34 @@ export interface P37Probe {
   readonly fencingGeneration?: number;
 }
 
+const p37LoggedBoundaries = new Set([
+  "AH10AfterLeaseAcquired",
+  "AH10BeforeLeaseRenewal",
+  "AH10BeforeFencedReceiptCommit",
+  "AH10AfterControlHandlerReturnBeforeObservationCommit",
+  "P37LegacyDirectObservationReturned",
+  "BeforeDeliverReplayAttentionCommit",
+  "AfterDeliverReplayAttentionCommit",
+  "P10AfterAttentionRowWriteBeforeConsumerCommit",
+  "P10AfterDeliverAttentionConsumerCommit",
+]);
+
+export const recordP37Probe = (probes: P37Probe[], probe: P37Probe) => {
+  probes.push(probe);
+  if (
+    !p37LoggedBoundaries.has(probe.boundary) &&
+    !(
+      probe.boundary === "AH7AfterActionIntentCommit" &&
+      probe.actionKind === "deliver"
+    )
+  ) {
+    return;
+  }
+  process.stdout.write(
+    `${JSON.stringify({ tag: "P37_L6_BOUNDARY", probe })}\n`,
+  );
+};
+
 const appendSafeDaemonStdout = (lines: string[], line: string) => {
   try {
     const event = JSON.parse(line) as Record<string, unknown>;
@@ -153,6 +181,7 @@ const startP37Fixture = (input: {
     isolatedPortHandshake: true,
     admitWorkspaceDirectory: true,
     firstDaemonEntry: p37Child,
+    preserveDirectoryOnStop: true,
     daemonEnvironment: {
       ARBOR_P37_ROLE: "old",
       ...(input.maxNoProgressTurns === undefined
@@ -740,6 +769,12 @@ export const seedDeliverableWaitingForDelivery = async (
       !available.has("claim_completion") &&
       latestUser?.includes(marker) === true
     ) {
+      if (context.includes("ProposalRecorded(")) {
+        return {
+          _tag: "Text",
+          text: `Producer proposal recorded for ${marker}.`,
+        };
+      }
       return {
         _tag: "ToolCall",
         name: "propose_workspace",
@@ -821,7 +856,7 @@ export const seedDeliverableWaitingForDelivery = async (
   };
   const fixture = await startP37Fixture({
     reply,
-    onProbe: (probe) => probes.push(probe),
+    onProbe: (probe) => recordP37Probe(probes, probe),
     stdoutLines: daemonStdoutLines,
     ...(options.startDeliverImmediately === true
       ? { startDeliverImmediately: true }
@@ -933,36 +968,112 @@ export const deliverAndHoldCommittedReceipt = async (marker: string) => {
     },
     provenance: { source: "HumanInput" },
   });
+  const intent = await awaitP37Probe(
+    seed.probes,
+    (probe) =>
+      probe.role === "old" &&
+      probe.boundary === "AH7AfterActionIntentCommit" &&
+      probe.actionKind === "deliver" &&
+      probe.executionId !== undefined &&
+      readP37Snapshot(seed.fixture.databaseFile).executions.some(
+        (execution) =>
+          execution.execution_id === probe.executionId &&
+          execution.workspace_id === seed.producer.workspaceId &&
+          execution.episode_kind === "WorkEpisode" &&
+          execution.episode_ref === seed.seededWork.workId,
+      ),
+  );
+  if (
+    intent?.executionId === undefined ||
+    intent.logicalActionId === undefined ||
+    intent.providerTurnId === undefined
+  ) {
+    throw new Error(
+      `P37 Deliver intent was not bound to its seeded Work for ${marker}`,
+    );
+  }
   const held = await awaitP37Probe(
     seed.probes,
     (probe) =>
       probe.role === "old" &&
-      probe.boundary === "AH10AfterControlHandlerReturnBeforeObservationCommit",
+      probe.boundary ===
+        "AH10AfterControlHandlerReturnBeforeObservationCommit" &&
+      probe.executionId === intent.executionId &&
+      probe.logicalActionId === intent.logicalActionId,
   );
-  if (held?.executionId === undefined) {
+  if (held?.executionId !== intent.executionId) {
     throw new Error(`P37 committed Deliver action did not pause for ${marker}`);
   }
   const snapshot = readP37Snapshot(seed.fixture.databaseFile);
-  const receipt = snapshot.deliverMessageReceipts.find(
-    (row) => row.resolution === "Committed",
+  const expectedCommandId = expectedDeliverCommandId(intent.providerTurnId, 0);
+  const expectedMessageId = expectedDeliverMessageId(intent.providerTurnId);
+  const matchingReceipts = snapshot.deliverMessageReceipts.filter(
+    (row) =>
+      row.resolution === "Committed" &&
+      row.command_id === expectedCommandId &&
+      row.message_id === expectedMessageId,
   );
-  const action = snapshot.actions.find(
+  const matchingActions = snapshot.actions.filter(
     (row) =>
       (row as { logical_action_id?: string }).logical_action_id ===
-      held.logicalActionId,
+        intent.logicalActionId &&
+      (row as { execution_id?: string }).execution_id === intent.executionId,
   );
-  const message = snapshot.messages.find(
-    (row) => (row as { message_id?: string }).message_id !== undefined,
+  const matchingMessages = snapshot.messages.filter(
+    (row) => (row as { message_id?: string }).message_id === expectedMessageId,
   );
-  if (receipt === undefined || action === undefined || message === undefined) {
+  const matchingEvents = snapshot.messageEvents.filter(
+    (row) => row.aggregate_ref === expectedMessageId,
+  );
+  const matchingInbox = snapshot.inbox.filter(
+    (row) =>
+      row.entry_key === `msg:${expectedMessageId}` &&
+      row.workspace_id === seed.project.rootWorkspaceId,
+  );
+  if (
+    matchingReceipts.length !== 1 ||
+    snapshot.deliverMessageReceipts.length !== 1 ||
+    matchingActions.length !== 1 ||
+    snapshot.actions.length !== 1 ||
+    matchingMessages.length !== 1 ||
+    snapshot.messages.length !== 1 ||
+    matchingEvents.length !== 1 ||
+    matchingInbox.length !== 1 ||
+    snapshot.inbox.length !== 1 ||
+    seed.deliverDecisionCalls !== 1
+  ) {
     throw new Error(
-      `P37 committed receipt/effect/action seed is incomplete for ${marker}`,
+      `P37 exact Deliver receipt/effect seed mismatch for ${marker}: ${JSON.stringify(
+        {
+          executionId: intent.executionId,
+          logicalActionId: intent.logicalActionId,
+          providerTurnId: intent.providerTurnId,
+          commandId: expectedCommandId,
+          messageId: expectedMessageId,
+          receipts: matchingReceipts.length,
+          actions: matchingActions.length,
+          messages: matchingMessages.length,
+          messageEvents: matchingEvents.length,
+          inboxEntries: matchingInbox.length,
+          deliverDecisionCalls: seed.deliverDecisionCalls,
+          totalDeliverReceipts: snapshot.deliverMessageReceipts.length,
+          totalDeliverActions: snapshot.actions.length,
+          totalDeliverMessages: snapshot.messages.length,
+          totalDeliverInboxEntries: snapshot.inbox.length,
+        },
+      )}`,
     );
+  }
+  const receipt = matchingReceipts[0];
+  const action = matchingActions[0];
+  const message = matchingMessages[0];
+  if (receipt === undefined || action === undefined || message === undefined) {
+    throw new Error(`P37 exact Deliver seed disappeared for ${marker}`);
   }
   return {
     ...seed,
     held,
-    receipt: receipt as { command_id: string },
+    receipt: receipt as { command_id: string; message_id: string },
     action: action as {
       execution_id: string;
       provider_turn_id: string;
@@ -1112,7 +1223,7 @@ export const startP37RecoveryDaemon = (
             ).length;
             if (count >= 256 && oldest >= 0) probes.splice(oldest, 1);
           }
-          probes.push(probe);
+          recordP37Probe(probes, probe);
         }
       } catch {
         // The fixture retains stderr; unrelated stdout is not a P37 signal.
