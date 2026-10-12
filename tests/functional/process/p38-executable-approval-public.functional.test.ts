@@ -64,6 +64,7 @@ interface ApprovalFixtureQualificationOptions {
   readonly firstDaemonEntry?: string;
   readonly daemonEnvironment?: Readonly<Record<string, string>>;
   readonly onDaemonStdout?: (line: string) => void;
+  readonly preserveDirectoryOnStop?: boolean;
 }
 
 afterEach(async () => {
@@ -92,6 +93,9 @@ const startExecutableApproval = async (
     ...(qualification.onDaemonStdout === undefined
       ? {}
       : { onDaemonStdout: qualification.onDaemonStdout }),
+    ...(qualification.preserveDirectoryOnStop === true
+      ? { preserveDirectoryOnStop: true }
+      : {}),
     reply: (call) => {
       const names = new Set(
         call.tools
@@ -155,6 +159,11 @@ const startExecutableApproval = async (
     },
   });
   fixtures.push(fixture);
+  if (qualification.preserveDirectoryOnStop === true) {
+    console.info(
+      `P38 retained process fixture: marker=${marker} directory=${fixture.directory} database=${fixture.databaseFile} workspace=${fixture.workspaceDirectory}`,
+    );
+  }
 
   const client = makePublicClient(fixture.baseUrl);
   const project = await createFunctionalProject(
@@ -516,6 +525,7 @@ describe("pending P38 public Executable approval qualification", () => {
     }> = [];
     const run = await startExecutableApproval(marker, {
       firstDaemonEntry: p4FenceChild,
+      preserveDirectoryOnStop: true,
       daemonEnvironment: {
         ARBOR_P4_FENCE_ROLE: "old",
         ARBOR_P4_FENCE_ADMISSION_BOUNDARY: "AH7AfterToolIntentCommit",
@@ -548,6 +558,9 @@ describe("pending P38 public Executable approval qualification", () => {
       (event) => event !== undefined,
       60_000,
     );
+    if (probe === undefined) {
+      throw new Error("P38 claim-commit crash probe was absent");
+    }
     expect(probe.executionId).toBe(run.before.approval?.execution_id);
     expect(probe.invocationId).toBe(run.before.approval?.tool_invocation_id);
 
@@ -613,6 +626,7 @@ describe("pending P38 public Executable approval qualification", () => {
     }> = [];
     const run = await startExecutableApproval(marker, {
       firstDaemonEntry: p4FenceChild,
+      preserveDirectoryOnStop: true,
       daemonEnvironment: {
         ARBOR_P4_FENCE_ROLE: "old",
         ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
@@ -645,6 +659,9 @@ describe("pending P38 public Executable approval qualification", () => {
       (event) => event !== undefined,
       60_000,
     );
+    if (probe === undefined) {
+      throw new Error("P38 post-effect crash probe was absent");
+    }
     expect(probe.executionId).toBe(run.before.approval?.execution_id);
     expect(probe.invocationId).toBe(run.before.approval?.tool_invocation_id);
 

@@ -92,12 +92,27 @@ CAS. A durable P39 RecoveryBinding handoff is not yet retained by the P4
 runtime caller at this baseline. These are open qualification/integration
 items, not evidence that frozen semantics should be changed.
 
-Static migration audit also found an implementation defect awaiting fixture
-confirmation: the 0038 source `action_approvals` table from 0032 has no
-`cancelled_at`, `cancelled_by`, or `cancellation_reason` columns, while the
-0038 rebuild currently selects all three from that old table. The P38 target
-table owns those fields, but historical source evidence cannot populate them;
-after the positive 0037→0038 fixture confirms the failing SQL, map these
-destination fields to SQL `NULL` and make the legacy consumed-Control negative
-fixture assert its intended constraint failure rather than any migration
-failure.
+**Superseded static hypothesis:** an earlier audit suspected the 0038 rebuild
+selected the three cancellation-provenance fields from the historical 0032
+table. The fixture evidence below disproved that hypothesis.
+
+**0038 migration audit correction (2026-10-12):** the rebuild inserts `NULL`
+for the P38 cancellation-provenance destination fields; it does not select
+those fields from the historical 0032 table. No 0038 missing-column defect was
+established, and the SQL remains unchanged. The historical-upgrade owner ran
+the enhanced cumulative P37→P38 migration fixture once after build: 1/1 PASS.
+It asserts migration input `user_version=37`, P37 high-water=37, absence of the
+three cancellation fields before 0038, the id-38 descriptor and source table,
+the completed target fields/version=38, repeated migration as a no-op, legacy
+approval preservation, the 0033 composite FK, and clean `foreign_key_check`.
+Exact fixture run: worktree `C:\Arbor-historical-db-upgrade-v19`, test-source
+commit `cf47d1f471c30bb2d8abdb1849121abd0deb3456`, result-evidence commit
+`327298eb3d9473c12603b7bb3c0114cbe354d335`; the report and raw Vitest summary
+are `planning/results/P38-cumulative-history-upgrade-fixture.result.md` and
+`planning/results/P38-cumulative-history-upgrade-fixture.enhanced.raw.txt` on
+that branch. Vitest suppresses passing-case console output; the enhanced
+oracle assertions, not raw log detail, provide the schema evidence.
+This is targeted in-memory SQLite fixture evidence; it is not process,
+deployment, or release qualification. Preserve the initial contradictory
+static hypothesis in its audit history, but do not change migration SQL on
+that basis.
