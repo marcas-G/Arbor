@@ -11,6 +11,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { useEffect } from "react";
@@ -168,6 +169,82 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
       screen.queryByRole("textbox", { name: /provider|model|runtime/i }),
     ).toBeNull();
   });
+
+  it.each([
+    {
+      button: "重命名项目",
+      pending: "正在提交项目更名…",
+      reason: "NoApplicableGrant:RenameProject",
+      rename: true,
+    },
+    {
+      button: "归档项目",
+      pending: "正在提交项目归档…",
+      reason: "NoApplicableGrant:CloseProject",
+      rename: false,
+    },
+  ] as const)(
+    "shows pending state and authority failure feedback for $button",
+    async ({ button, pending, reason, rename: isRename }) => {
+      let finishCommand: ((value: unknown) => void) | undefined;
+      fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+        if (String(input) === "/projects") {
+          return {
+            status: 200,
+            json: async () => ({
+              ok: true,
+              body: {
+                projects: [
+                  {
+                    projectId: "prj_1",
+                    name: "Arbor",
+                    lifecycle: "Open",
+                    revision: 3,
+                  },
+                ],
+              },
+            }),
+          };
+        }
+        return await new Promise((resolve) => {
+          finishCommand = resolve;
+        });
+      });
+      renderSettings();
+      const project = screen.getByLabelText("项目");
+      if (isRename) {
+        fireEvent.change(
+          await within(project).findByRole("textbox", { name: "项目名称" }),
+          {
+            target: { value: "Arbor Next" },
+          },
+        );
+      }
+      const action = await within(project).findByRole("button", {
+        name: button,
+      });
+      fireEvent.click(action);
+      expect(action).toHaveProperty("disabled", true);
+      expect(await within(project).findByText(pending)).toBeTruthy();
+      finishCommand?.({
+        status: 403,
+        json: async () => ({
+          ok: false,
+          problem: {
+            code: "authority/denied",
+            category: "forbidden",
+            message: "authority/denied",
+            correlationId: null,
+            retryDisposition: "non-retryable",
+            safeDetails: { reason },
+          },
+        }),
+      });
+      expect(await within(project).findByRole("alert")).toBeTruthy();
+      await waitFor(() => expect(action).toHaveProperty("disabled", false));
+      expect(within(project).getByText(reason)).toBeTruthy();
+    },
+  );
 
   it("saves only the existing local Workbench layout preference", () => {
     renderSettings();

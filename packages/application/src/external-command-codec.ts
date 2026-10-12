@@ -92,6 +92,7 @@ export type ExternalOriginPolicy =
   | "reject external under P13 U-3"
   | "human/parent external; runtime remains typed internal"
   | "reject external; ExecutionOrigin/RecoveryController"
+  | "authenticated local human external governance; exact actor/principal and ProjectGovernanceAuthority; no Agent origin"
   | "reject external; producer Agent"
   | "reject external; dependency coordinator"
   | "external human governance"
@@ -746,8 +747,10 @@ const externalOriginPolicies: Readonly<
   CreateProject: "human/bootstrap",
   CreateChildWorkspace: "reject external",
   AssignWork: "reject external; agent-originated",
-  RenameProject: "reject external",
-  CloseProject: "reject external",
+  RenameProject:
+    "authenticated local human external governance; exact actor/principal and ProjectGovernanceAuthority; no Agent origin",
+  CloseProject:
+    "authenticated local human external governance; exact actor/principal and ProjectGovernanceAuthority; no Agent origin",
   SelectCurrentWork: "reject external; scheduler-originated",
   AdmitExecution: "reject external under P13 U-3",
   StopExecution: "human/parent external; runtime remains typed internal",

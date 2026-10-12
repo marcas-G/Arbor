@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Route } from "../../api/router.js";
 import { fetchProjectDirectory } from "../../api/transport.js";
+import { FormFeedback } from "../../commands/forms/FormFeedback.js";
 import { GrantPermissionForm } from "../../commands/forms/GrantPermissionForm.js";
 import { useCommandSubmission } from "../../commands/useCommandSubmission.js";
 import { Button } from "../../components/Button.js";
@@ -88,6 +89,16 @@ function ProjectSection({
       void directory.refetch();
     },
   });
+  const submitRename = () =>
+    void rename.submit("RenameProject", projectId, {
+      name: name.trim(),
+      expectedRevision: current?.revision ?? 0,
+    });
+  const submitClose = () =>
+    void close.submit("CloseProject", projectId, {
+      expectedRevision: current?.revision ?? 0,
+      confirmed: true,
+    });
   return (
     <section className={styles.section} aria-label="项目">
       <h2 className={styles.sectionTitle}>项目</h2>
@@ -117,30 +128,32 @@ function ProjectSection({
               disabled={
                 name.trim().length === 0 || rename.state.phase === "submitting"
               }
-              onClick={() => {
-                void rename.submit("RenameProject", projectId, {
-                  name: name.trim(),
-                  expectedRevision: current.revision,
-                });
-              }}
+              onClick={submitRename}
             >
               重命名项目
             </Button>
+            {rename.state.phase === "submitting" ? (
+              <p className={styles.note} role="status">
+                正在提交项目更名…
+              </p>
+            ) : null}
+            <FormFeedback state={rename.state} onRetry={submitRename} />
             <p className={styles.note}>
               归档后不会删除历史，但不再接收新任务或新对话。
             </p>
             <Button
               variant="danger"
               disabled={close.state.phase === "submitting"}
-              onClick={() => {
-                void close.submit("CloseProject", projectId, {
-                  expectedRevision: current.revision,
-                  confirmed: true,
-                });
-              }}
+              onClick={submitClose}
             >
               归档项目
             </Button>
+            {close.state.phase === "submitting" ? (
+              <p className={styles.note} role="status">
+                正在提交项目归档…
+              </p>
+            ) : null}
+            <FormFeedback state={close.state} onRetry={submitClose} />
           </div>
         </Card>
       ) : null}
