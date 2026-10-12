@@ -22,6 +22,7 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
+  WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
@@ -173,6 +174,20 @@ describe("AH7 exact approval reentry before the tool effect", () => {
             observedEnvironmentRevision: "ah7-env",
           }),
       }),
+      Layer.succeed(WorkspaceRepository, {
+        findById: (id: WorkspaceId) => {
+          expect(id).toBe(workspaceId);
+          return Effect.succeed(
+            Option.some({
+              projectId,
+              resourceBoundaryRevision: 0,
+              resourceBoundary: {
+                addresses: [{ _tag: "GitWorktree" as const, path: "/repo" }],
+              },
+            }),
+          );
+        },
+      } as never),
       Layer.succeed(Clock, {
         now: () => Effect.succeed("2026-10-06T00:00:00.000Z"),
       }),
