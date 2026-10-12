@@ -711,9 +711,9 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
         executionId: id("ExecutionId"),
       }),
     }),
-    capability: string,
-    target: nullable(string),
-    expiresAt: nullable(string),
+    capability: nonEmptyString,
+    target: nonEmptyString,
+    expiresAt: nonEmptyString,
   }),
   RevokePermission: object({ permissionGrantId: id("PermissionGrantId") }),
   SubmitHumanMessage: object({

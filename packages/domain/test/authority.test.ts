@@ -67,10 +67,24 @@ describe("permission grant lifecycle", () => {
       ),
       scope: "tool:patch",
       issuer,
-      lifetime: "until-revoked",
+      lifetime: "PT1H",
+      subject: { _tag: "WorkspaceAgent", workspaceId },
+      capability: "tool:patch",
+      target: workspaceId,
+      validFrom: "2026-10-12T00:00:00.000Z",
+      expiresAt: "2026-10-12T01:00:00.000Z",
+      revision: 0,
     });
     expect(grant.state).toBe("Active");
     expect(isPermissionActive(grant)).toBe(true);
+    expect(grant).toMatchObject({
+      subject: { _tag: "WorkspaceAgent", workspaceId },
+      capability: "tool:patch",
+      target: workspaceId,
+      validFrom: "2026-10-12T00:00:00.000Z",
+      expiresAt: "2026-10-12T01:00:00.000Z",
+      revision: 0,
+    });
 
     const revoked = revokePermission(grant, { authorized: true });
     expect(revoked.ok).toBe(true);
@@ -86,7 +100,13 @@ describe("permission grant lifecycle", () => {
       ),
       scope: "tool:patch",
       issuer,
-      lifetime: "until-revoked",
+      lifetime: "PT1H",
+      subject: { _tag: "WorkspaceAgent", workspaceId },
+      capability: "tool:patch",
+      target: workspaceId,
+      validFrom: "2026-10-12T00:00:00.000Z",
+      expiresAt: "2026-10-12T01:00:00.000Z",
+      revision: 0,
     });
     const result = revokePermission(grant, { authorized: false });
     expect(result.ok).toBe(false);
@@ -102,7 +122,13 @@ describe("permission grant lifecycle", () => {
       ),
       scope: "tool:patch",
       issuer,
-      lifetime: "until-revoked",
+      lifetime: "PT1H",
+      subject: { _tag: "WorkspaceAgent", workspaceId },
+      capability: "tool:patch",
+      target: workspaceId,
+      validFrom: "2026-10-12T00:00:00.000Z",
+      expiresAt: "2026-10-12T01:00:00.000Z",
+      revision: 0,
     });
     const revoked = revokePermission(grant, { authorized: true });
     expect(revoked.ok).toBe(true);

@@ -26,8 +26,8 @@ export interface GrantPermissionPayload {
   readonly issuer: Principal;
   readonly subject: PermissionSubject;
   readonly capability: string;
-  readonly target: string | null;
-  readonly expiresAt: string | null;
+  readonly target: string;
+  readonly expiresAt: string;
 }
 
 export interface GrantPermissionResult {
@@ -54,6 +54,14 @@ export const makeGrantPermissionHandler = (
   execute: (envelope, context) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
+      const target =
+        typeof payload.target === "string" ? payload.target.trim() : "";
+      const capability =
+        typeof payload.capability === "string" ? payload.capability.trim() : "";
+      const expiresAtText =
+        typeof payload.expiresAt === "string" ? payload.expiresAt : "";
+      const expiresAt = Date.parse(expiresAtText);
+      const issuedAt = Date.parse(envelope.issuedAt);
       const subjectValid =
         (payload.subject._tag === "HumanPrincipal" &&
           payload.subject.principal.startsWith("user:")) ||
@@ -63,28 +71,27 @@ export const makeGrantPermissionHandler = (
           payload.subject.executionId.startsWith("exe_"));
       if (
         !subjectValid ||
-        payload.capability.trim().length === 0 ||
+        capability.length === 0 ||
+        target.length === 0 ||
         payload.issuer !== context.principal ||
-        (payload.expiresAt !== null &&
-          Date.parse(payload.expiresAt) <= Date.parse(envelope.issuedAt))
+        !Number.isFinite(expiresAt) ||
+        !Number.isFinite(issuedAt) ||
+        expiresAt <= issuedAt
       ) {
         return commandErr({
           _tag: "AuthorityDenied",
           reason:
-            "GrantPermission requires an exact subject, non-empty capability, issuer=current principal, and future expiry",
+            "GrantPermission requires an exact subject, capability, target, issuer=current principal, and future expiry",
         });
       }
       const grant = grantPermission({
         permissionGrantId: payload.permissionGrantId,
-        scope:
-          payload.target === null
-            ? payload.capability
-            : `${payload.capability}@${payload.target}`,
+        scope: `${capability}@${target}`,
         issuer: payload.issuer,
-        lifetime: payload.expiresAt ?? "until-revoked",
+        lifetime: payload.expiresAt,
         subject: payload.subject,
-        capability: payload.capability,
-        target: payload.target,
+        capability,
+        target,
         validFrom: envelope.issuedAt,
         expiresAt: payload.expiresAt,
         revision: 0,

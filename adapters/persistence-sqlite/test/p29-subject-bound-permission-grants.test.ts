@@ -43,6 +43,8 @@ describe("CAPA migration 0029 subject-bound PermissionGrant", () => {
           const workspaceId = parse(WorkspaceId)(
             "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
           );
+          const validFrom = new Date(Date.now() - 60_000).toISOString();
+          const expiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
           const grants = yield* PermissionGrantRepository;
           const tx = yield* TransactionPort;
           yield* tx.transact(
@@ -53,12 +55,12 @@ describe("CAPA migration 0029 subject-bound PermissionGrant", () => {
                 ),
                 scope: `AssignWork@${workspaceId}`,
                 issuer: "user:admin" as never,
-                lifetime: "until-revoked",
+                lifetime: "PT1H",
                 subject: { _tag: "WorkspaceAgent", workspaceId },
                 capability: "AssignWork",
                 target: workspaceId,
-                validFrom: "2026-10-03T00:00:00.000Z",
-                expiresAt: null,
+                validFrom,
+                expiresAt,
                 revision: 0,
                 state: "Active",
               },
@@ -71,8 +73,8 @@ describe("CAPA migration 0029 subject-bound PermissionGrant", () => {
             subject: { _tag: "WorkspaceAgent", workspaceId },
             capability: "AssignWork",
             target: workspaceId,
-            validFrom: "2026-10-03T00:00:00.000Z",
-            expiresAt: null,
+            validFrom,
+            expiresAt,
             revision: 0,
           });
         }),

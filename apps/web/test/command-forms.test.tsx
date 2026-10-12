@@ -724,8 +724,11 @@ describe("GrantPermissionForm", () => {
     fireEvent.change(screen.getByLabelText("capability"), {
       target: { value: "RecordDecision" },
     });
-    fireEvent.change(screen.getByLabelText(/target（可选）/), {
+    fireEvent.change(screen.getByLabelText(/target（必填/), {
       target: { value: "ws_9" },
+    });
+    fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
+      target: { value: "2099-10-12T08:30:00.000Z" },
     });
     fireEvent.click(screen.getByRole("button", { name: "授予" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
@@ -740,11 +743,11 @@ describe("GrantPermissionForm", () => {
       principal: "human:admin",
     });
     expect(payload.issuer).toBe("human:admin");
-    expect(payload.expiresAt).toBeNull();
+    expect(payload.expiresAt).toBe("2099-10-12T08:30:00.000Z");
     expect(String(payload.permissionGrantId)).toMatch(/^pgr_[0-9a-f-]{36}$/);
   });
 
-  it("supports free-text capability and optional target omission", async () => {
+  it("requires a target and future expiry for a free-text capability", async () => {
     const fetchMock = stubFetch(() => Promise.resolve(committed()));
     render(
       <GrantPermissionForm
@@ -760,13 +763,27 @@ describe("GrantPermissionForm", () => {
       target: { value: "RegisterProjectTool" },
     });
     fireEvent.click(screen.getByRole("button", { name: "授予" }));
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(0));
+    expect(screen.getByText("授权目标必填；请填写精确的资源 ID")).toBeTruthy();
+    expect(
+      screen.getByText("过期时间必填；GrantPermission 必须有有效期"),
+    ).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText(/target（必填/), {
+      target: { value: "ws_9" },
+    });
+    fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
+      target: { value: "2099-10-12T08:30:00.000Z" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "授予" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const payload = payloadOf(readCall(fetchMock).envelope) as Record<
       string,
       unknown
     >;
     expect(payload.capability).toBe("RegisterProjectTool");
-    expect(payload.target).toBeNull();
+    expect(payload.target).toBe("ws_9");
+    expect(payload.expiresAt).toBe("2099-10-12T08:30:00.000Z");
   });
 });
 

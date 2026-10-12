@@ -98,11 +98,8 @@ export function GrantPermissionForm({
                   executionId: values.subjectRef.trim(),
                 },
         capability: values.capability,
-        target: values.target.trim().length === 0 ? null : values.target.trim(),
-        expiresAt:
-          values.expiresAt.trim().length === 0
-            ? null
-            : new Date(values.expiresAt).toISOString(),
+        target: values.target.trim(),
+        expiresAt: new Date(values.expiresAt).toISOString(),
       });
     })();
   };
@@ -157,17 +154,22 @@ export function GrantPermissionForm({
         ) : null}
         <Field
           control="input"
-          label="target（可选）"
-          placeholder="如 ws_…；留空 = 不限目标"
+          label="target（必填，精确绑定）"
+          placeholder="精确资源 ID；fs:write 请填写目标 Workspace ID"
           value={target}
           onChange={(next) => {
             setValue("target", next);
           }}
         />
+        {formState.errors.target ? (
+          <p className="arbor-command-error">
+            {formState.errors.target.message}
+          </p>
+        ) : null}
         <Field
           control="input"
-          label="过期时间（可选）"
-          placeholder="2026-10-04T00:00:00Z；留空 = 直到撤销"
+          label="过期时间（必填）"
+          placeholder="未来 ISO 时间，例如 2026-10-12T08:30:00Z"
           value={expiresAt}
           onChange={(next) => {
             setValue("expiresAt", next);

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   layer,
   P12_MIGRATIONS,
+  P29_MIGRATIONS,
   PermissionGrantRepositoryLive,
   runMigrations,
   TransactionPortLive,
@@ -608,7 +609,7 @@ describe("P12-002 authority resolver production plane", () => {
   it("GrantPermission / RevokePermission handlers are the only durable writers (CI-1) and emit PermissionChanged", async () => {
     await run(
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P29_MIGRATIONS);
         const tx = yield* TransactionPort;
         const repo = yield* PermissionGrantRepository;
         const grantHandler = makeGrantPermissionHandler({ grants: repo });
@@ -640,7 +641,15 @@ describe("P12-002 authority resolver production plane", () => {
           expect(granted.value.events).toHaveLength(1);
           expect(granted.value.events[0]?.eventType).toBe("PermissionChanged");
         }
-        expect((yield* tx.transact(repo.activeGrants(PROJECT))).length).toBe(1);
+        const activeGrant = yield* tx.transact(repo.activeGrants(PROJECT));
+        expect(activeGrant).toHaveLength(1);
+        expect(activeGrant[0]).toMatchObject({
+          subject: { _tag: "WorkspaceAgent", workspaceId: WORKSPACE },
+          capability: "AssignWork",
+          target: WORKSPACE,
+          validFrom: ISSUED_AT,
+          expiresAt: "2026-09-23T00:00:00.000Z",
+        });
 
         const revoked = yield* tx.transact(
           revokeHandler.execute(
@@ -663,4 +672,56 @@ describe("P12-002 authority resolver production plane", () => {
       }),
     );
   });
+
+  it.each([
+    ["null target", { target: null }],
+    ["null expiry", { expiresAt: null }],
+    ["expired expiry", { expiresAt: "2026-09-21T23:59:59.999Z" }],
+  ] as const)(
+    "rejects %s before writing a PermissionGrant",
+    async (_caseName, override) => {
+      let writes = 0;
+      const handler = makeGrantPermissionHandler({
+        grants: {
+          put: () =>
+            Effect.sync(() => {
+              writes += 1;
+            }),
+        } as never,
+      });
+      const payload = {
+        permissionGrantId: GRANT,
+        issuer: HUMAN,
+        subject: { _tag: "WorkspaceAgent", workspaceId: WORKSPACE },
+        capability: "fs:write",
+        target: WORKSPACE,
+        expiresAt: "2026-09-23T00:00:00.000Z",
+        ...override,
+      };
+      const result = await run(
+        Effect.gen(function* () {
+          const tx = yield* TransactionPort;
+          return yield* tx.transact(
+            handler.execute(
+              {
+                commandType: "GrantPermission",
+                commandId: COMMAND,
+                projectId: PROJECT,
+                actor: ACTOR,
+                issuedAt: ISSUED_AT,
+                payload,
+              } as never,
+              externalContext(HUMAN),
+            ),
+          );
+        }),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AuthorityDenied" },
+      });
+      expect(writes).toBe(0);
+    },
+  );
 });

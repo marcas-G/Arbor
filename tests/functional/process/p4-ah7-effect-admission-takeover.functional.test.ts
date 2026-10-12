@@ -400,7 +400,7 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         },
         capability: "shell:exec",
         target: project.rootWorkspaceId,
-        expiresAt: null,
+        expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
       });
       await submitHumanMessage(
         client,

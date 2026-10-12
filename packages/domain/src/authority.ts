@@ -71,12 +71,12 @@ export interface GrantPermissionInput {
   readonly scope: string;
   readonly issuer: Principal;
   readonly lifetime: string;
-  readonly subject?: PermissionSubject;
-  readonly capability?: string;
-  readonly target?: string | null;
-  readonly validFrom?: string;
-  readonly expiresAt?: string | null;
-  readonly revision?: number;
+  readonly subject: PermissionSubject;
+  readonly capability: string;
+  readonly target: string;
+  readonly validFrom: string;
+  readonly expiresAt: string;
+  readonly revision: number;
 }
 
 export const grantPermission = (
@@ -86,12 +86,12 @@ export const grantPermission = (
   scope: input.scope,
   issuer: input.issuer,
   lifetime: input.lifetime,
-  ...(input.subject === undefined ? {} : { subject: input.subject }),
-  ...(input.capability === undefined ? {} : { capability: input.capability }),
-  ...(input.target === undefined ? {} : { target: input.target }),
-  ...(input.validFrom === undefined ? {} : { validFrom: input.validFrom }),
-  ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
-  ...(input.revision === undefined ? {} : { revision: input.revision }),
+  subject: input.subject,
+  capability: input.capability,
+  target: input.target,
+  validFrom: input.validFrom,
+  expiresAt: input.expiresAt,
+  revision: input.revision,
   state: "Active",
 });
 

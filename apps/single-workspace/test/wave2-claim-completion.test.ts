@@ -121,7 +121,7 @@ const seed = Effect.gen(function* () {
         ],
       );
       yield* sql.unsafe(
-        "INSERT INTO permission_grants (permission_grant_id, project_id, scope, issuer, lifetime, state, subject_kind, subject_ref, capability, target, valid_from, expires_at, revision) VALUES ('pgr_spawn_test',?,?,?,'until-revoked','Active','WorkspaceAgent',?,'core.control.spawn-specialist',?,'2020-01-01T00:00:00.000Z',NULL,0)",
+        "INSERT INTO permission_grants (permission_grant_id, project_id, scope, issuer, lifetime, state, subject_kind, subject_ref, capability, target, valid_from, expires_at, revision) VALUES ('pgr_spawn_test',?,?,?,'PT24H','Active','WorkspaceAgent',?,'core.control.spawn-specialist',?,'2026-10-03T00:00:00.000Z','2026-10-04T00:00:00.000Z',0)",
         [
           projectId,
           `core.control.spawn-specialist@${workspaceId}`,

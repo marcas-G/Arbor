@@ -585,11 +585,11 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
                  valid_from, expires_at, revision
                ) VALUES (
                  'pgr_018f2b3c-4d5e-7abc-8def-0123456789a1', ?,
-                 'Write', 'human:test', 'until-revoked', 'Active',
-                 'WorkspaceAgent', ?, 'Write', 'filesystem',
-                 '2026-10-11T00:00:00.000Z', NULL, 0
+                 'Write@' || ?, 'human:test', 'PT24H', 'Active',
+                 'WorkspaceAgent', ?, 'Write', ?,
+                 '2026-10-11T00:00:00.000Z', '2999-01-01T00:00:00.000Z', 0
                )`,
-                [projectId, workspaceId],
+                [projectId, workspaceId, workspaceId, workspaceId],
               );
 
               yield* tx.transact(

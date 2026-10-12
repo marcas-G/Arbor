@@ -260,7 +260,7 @@ describe("AH7 general two-action interleaving", () => {
       },
       capability: "fs:write",
       target: project.rootWorkspaceId,
-      expiresAt: null,
+      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
     });
     await client.command(project.projectId, "ResolveControlApproval", {
       approvalId: approval.approvalId,

@@ -206,7 +206,7 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
       subject: { _tag: "WorkspaceAgent", workspaceId: project.rootWorkspaceId },
       capability: "shell:exec",
       target: project.rootWorkspaceId,
-      expiresAt: null,
+      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
     });
     await submitHumanMessage(
       client,

@@ -67,13 +67,18 @@ export const grantPermissionSchema = z.object({
   subjectKind: z.enum(["HumanPrincipal", "WorkspaceAgent", "Execution"]),
   subjectRef: z.string().trim().min(1, "授权主体必填"),
   capability: z.string().trim().min(1, "capability 必填"),
-  target: z.string().trim(),
+  target: z.string().trim().min(1, "授权目标必填；请填写精确的资源 ID"),
   expiresAt: z
     .string()
     .trim()
+    .min(1, "过期时间必填；GrantPermission 必须有有效期")
     .refine(
-      (value) => value.length === 0 || !Number.isNaN(Date.parse(value)),
-      "请输入 ISO 时间或留空",
+      (value) => Number.isFinite(Date.parse(value)),
+      "请输入有效的 ISO 时间",
+    )
+    .refine(
+      (value) => Date.parse(value) > Date.now(),
+      "过期时间必须晚于当前时间",
     ),
 });
 

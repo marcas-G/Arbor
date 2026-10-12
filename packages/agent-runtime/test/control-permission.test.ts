@@ -12,7 +12,7 @@ const grant: PermissionGrant = {
   permissionGrantId: "pgr_test" as never,
   scope: "core.control.assign-work@ws_test",
   issuer: "user:admin" as never,
-  lifetime: "until-revoked",
+  lifetime: "PT24H",
   subject: { _tag: "WorkspaceAgent", workspaceId: "ws_test" as never },
   capability: "core.control.assign-work",
   target: "ws_test",
