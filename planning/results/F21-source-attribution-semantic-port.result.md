@@ -1,7 +1,8 @@
 # F21 Project Resource Source Attribution Port
 
-Status: implementation slice complete; initial review blocker repaired; awaiting
-independent B0 re-review.
+Status: implementation slice complete; independent B0 review PASS.
+
+Reviewed implementation commit: `f672c3d2325794da145021b66d2ad615df39f43f`.
 
 Base: `ce58e0ceac7c0b0e0f48a586c0bcd70c01ce1cd4`.
 Accepted package: `B50C8251D77981B2A57A4E3A15741D2024C1FEF97D8151534DB38F0DA1BB49C0`;
@@ -39,6 +40,11 @@ preserved database.
   errors (P39 migration test, existing implicit-any test callbacks, and
   unrelated RetryVerification/P10/P12 fixtures); this slice introduced no
   additional type errors in the build or listed diagnostics.
+- Independent static B0 review: PASS at the reviewed implementation commit.
+  The review confirmed the gate applies only to pending migrations: 38/39/40
+  reject, 41 applies, and a repeat at 42 is a no-op. Source mapping, strict
+  decoding, P38 registration state, local fixture schema, and API propagation
+  also passed.
 
 This result does not claim full F21, FT-DG-01, full functional, daemon, release,
 or live-database qualification.
