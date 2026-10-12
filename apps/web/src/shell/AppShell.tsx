@@ -12,7 +12,7 @@ import {
   parseRoute,
   type Route,
 } from "../api/router.js";
-import { fetchProjectDirectory } from "../api/transport.js";
+import { fetchProjectDirectory, fetchView } from "../api/transport.js";
 import { CreateProjectForm } from "../commands/forms/CreateProjectForm.js";
 import type { CommandReceiptView } from "../commands/submitCommand.js";
 import { Empty } from "../components/Empty.js";
@@ -38,8 +38,56 @@ export function AppShell({
   const path = usePath();
   const route = parseRoute(path);
   const session = useSession();
+  const queryClient = useQueryClient();
   const connected = session.token !== null;
   const [projectPanelOpen, setProjectPanelOpen] = useState(false);
+  const [resourceActivationNotice, setResourceActivationNotice] = useState<{
+    readonly projectId: string;
+    readonly state: "Pending" | "Unknown";
+  } | null>(null);
+  const projectCreated = (receipt: CommandReceiptView): void => {
+    if (receipt.resolution !== "Committed") return;
+    const result = receipt.result as
+      | { readonly projectId?: string; readonly rootWorkspaceId?: string }
+      | undefined;
+    const projectId = result?.projectId;
+    const rootWorkspaceId = result?.rootWorkspaceId;
+    if (projectId === undefined) return;
+    session.setProjectId(projectId);
+    void queryClient.invalidateQueries({ queryKey: ["project-directory"] });
+    setProjectPanelOpen(false);
+    void (async () => {
+      const attention =
+        session.token === null
+          ? null
+          : await fetchView(
+              "attention",
+              { projectId: projectId as never },
+              { token: session.token },
+            );
+      const pending =
+        rootWorkspaceId !== undefined &&
+        attention?.ok === true &&
+        attention.dto.rows.some(
+          (row) =>
+            row.source === "WorkspaceResourceActivationPending" &&
+            row.targetWorkspaceId === rootWorkspaceId,
+        );
+      const statusUnknown =
+        rootWorkspaceId === undefined || attention?.ok !== true;
+      setResourceActivationNotice(
+        pending
+          ? { projectId, state: "Pending" }
+          : statusUnknown
+            ? { projectId, state: "Unknown" }
+            : null,
+      );
+      navigate({
+        name: pending || statusUnknown ? "attention" : "workbench",
+        projectId,
+      });
+    })();
+  };
 
   useEffect(() => {
     if (
@@ -67,9 +115,17 @@ export function AppShell({
           onOpenProjects={() => setProjectPanelOpen(true)}
         />
         <main className={styles.content}>
+          {resourceActivationNotice !== null &&
+          route?.projectId === resourceActivationNotice.projectId ? (
+            <div className={styles.resourceActivationNotice} role="status">
+              {resourceActivationNotice.state === "Pending"
+                ? "项目已创建，但资源尚未激活，文件操作暂不可用。该创建命令已经提交，请勿重复创建；可在关注事项中查看待处理状态。"
+                : "项目已创建，但当前无法确认资源激活状态。该创建命令已经提交，请勿重复创建；请刷新关注事项确认状态。"}
+            </div>
+          ) : null}
           {!connected ? null : route === null ? (
             connected && (path === "/" || path === "") ? (
-              <BootstrapPage />
+              <BootstrapPage onSubmitted={projectCreated} />
             ) : (
               <RouteNotFound path={path} connected={connected} />
             )
@@ -87,6 +143,7 @@ export function AppShell({
         open={projectPanelOpen}
         route={route}
         onClose={() => setProjectPanelOpen(false)}
+        onProjectCreated={projectCreated}
       />
     </div>
   );
@@ -290,10 +347,12 @@ function ProjectPanel({
   open,
   route,
   onClose,
+  onProjectCreated,
 }: {
   readonly open: boolean;
   readonly route: Route | null;
   readonly onClose: () => void;
+  readonly onProjectCreated: (receipt: CommandReceiptView) => void;
 }) {
   const session = useSession();
   const queryClient = useQueryClient();
@@ -319,15 +378,9 @@ function ProjectPanel({
   };
   const projectCreated = (receipt: CommandReceiptView): void => {
     if (receipt.resolution !== "Committed") return;
-    const result = receipt.result as
-      | { readonly projectId?: string }
-      | undefined;
-    const projectId = result?.projectId;
-    if (projectId === undefined) return;
-    session.setProjectId(projectId);
     void queryClient.invalidateQueries({ queryKey: ["project-directory"] });
     close();
-    navigate({ name: "workbench", projectId });
+    onProjectCreated(receipt);
   };
 
   return (

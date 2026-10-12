@@ -74,6 +74,54 @@ test("F21 browser Profile selection reaches file evidence, Verification PASS, an
   await expect(page.getByText("没有等你处理的事项")).toBeVisible({
     timeout: 30_000,
   });
+
+  // The host Profile still resolves to the same directory, now exclusively
+  // claimed by the first Project. A second Project remains a durable created
+  // Project with Pending activation and Attention; the UI must not show a
+  // retryable Network failure that could invite a duplicate submission.
+  await page.getByRole("button", { name: /当前项目/u }).click();
+  await page.getByRole("button", { name: "新建项目" }).click();
+  await page.getByLabel("项目名称").fill("F21 同 Profile 资源冲突");
+  await page.getByRole("button", { name: "创建项目" }).click();
+  await expect(page).toHaveURL(/\/p\/prj_[A-Za-z0-9-]+\/attention$/u);
+  await expect(
+    page.getByRole("status").filter({
+      hasText: "项目已创建，但资源尚未激活，文件操作暂不可用",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Project resource activation is pending").first(),
+  ).toBeVisible();
+
+  // A failed Attention read cannot make a committed project look like a
+  // normal, resource-ready Workbench either.
+  await page.route("**/views/attention", async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        problem: {
+          code: "view/unavailable",
+          category: "unavailable",
+          message: "view unavailable",
+          correlationId: null,
+          retryDisposition: "retryable",
+          safeDetails: {},
+        },
+      }),
+    });
+  });
+  await page.getByRole("button", { name: /当前项目/u }).click();
+  await page.getByRole("button", { name: "新建项目" }).click();
+  await page.getByLabel("项目名称").fill("F21 关注事项读取失败");
+  await page.getByRole("button", { name: "创建项目" }).click();
+  await expect(page).toHaveURL(/\/p\/prj_[A-Za-z0-9-]+\/attention$/u);
+  await expect(
+    page.getByRole("status").filter({
+      hasText: "项目已创建，但当前无法确认资源激活状态",
+    }),
+  ).toBeVisible();
   expect(fixture.daemonErrors).toEqual([]);
 });
 

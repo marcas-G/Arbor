@@ -6,30 +6,17 @@
  * navigate.
  */
 import type { ReactNode } from "react";
-import { navigate } from "../../api/router.js";
 import { CreateProjectForm } from "../../commands/forms/CreateProjectForm.js";
 import type { CommandReceiptView } from "../../commands/submitCommand.js";
 import { Icon } from "../../components/Icon.js";
 import { useSession } from "../../session/SessionContext.js";
 
-interface CreateProjectResultView {
-  readonly projectId?: string;
-}
-
-export function BootstrapPage(): ReactNode {
+export function BootstrapPage({
+  onSubmitted,
+}: {
+  readonly onSubmitted: (receipt: CommandReceiptView) => void;
+}): ReactNode {
   const session = useSession();
-  const onSubmitted = (receipt: CommandReceiptView): void => {
-    if (receipt.resolution !== "Committed") {
-      return;
-    }
-    const result = receipt.result as CreateProjectResultView | undefined;
-    const projectId = result?.projectId;
-    if (projectId === undefined) {
-      return;
-    }
-    session.setProjectId(projectId);
-    navigate({ name: "workbench", projectId });
-  };
   return (
     <div className="arbor-bootstrap">
       <section className="arbor-bootstrap-intro">
