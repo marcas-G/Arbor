@@ -1,0 +1,9 @@
+
+ RUN  v5.0.1 C:/Arbor-historical-db-upgrade-v19
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  09:30:11
+   Duration  2.16s (import 69%, tests 15%, transform 15%, worker 1%)
+
