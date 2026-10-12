@@ -69,6 +69,7 @@ import {
   workEpisode,
   yieldedSettlement,
 } from "./support/execution-episode-fixtures.js";
+import { makeP41OptionalTestServices } from "./support/p41-optional-test-services.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -193,11 +194,13 @@ const makeApp = (
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
+  const journal = Layer.provide(DomainEventJournalLive, infra);
   const repos = Layer.mergeAll(
     tx,
     NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    journal,
+    makeP41OptionalTestServices(Layer.merge(infra, journal)),
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),

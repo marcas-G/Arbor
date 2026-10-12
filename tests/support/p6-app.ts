@@ -61,6 +61,7 @@ import {
 } from "../../packages/ports/src/index.js";
 import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
+import { makeP41OptionalTestServices } from "./p41-optional-test-services.js";
 
 export const p6TestActor = parse(Actor)("user:gov");
 export const p6TestPrincipal = parse(Principal)("user:gov");
@@ -171,6 +172,7 @@ export const makeP6App = (
 > => {
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const journal = Layer.provide(DomainEventJournalLive, infra);
   const registry = Layer.provide(
     P6CommandHandlerRegistryLive,
     Layer.mergeAll(
@@ -189,9 +191,10 @@ export const makeP6App = (
   const gatewayDeps = Layer.mergeAll(
     infra,
     registry,
+    journal,
+    makeP41OptionalTestServices(Layer.merge(infra, journal)),
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(FormationProposalStoreLive, infra),
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),

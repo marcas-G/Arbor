@@ -70,6 +70,7 @@ import { ReconciliationSourceLive } from "../packages/tool-runtime/src/index.js"
 import { yieldedSettlement } from "./support/execution-episode-fixtures.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 import { labeled } from "./support/p9-harness-api.js";
+import { makeP41OptionalTestServices } from "./support/p41-optional-test-services.js";
 
 /**
  * P9-006 — worker crash (W1–W5) + old-worker resurrection (R1–R6) injection
@@ -145,11 +146,13 @@ const P9CommandHandlerRegistryLive: Layer.Layer<
 const makeApp = () => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const journal = Layer.provide(DomainEventJournalLive, infra);
   const execRepo = Layer.provide(ExecutionRepositoryLive, infra);
   const stores = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    journal,
+    makeP41OptionalTestServices(Layer.merge(infra, journal)),
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),

@@ -68,6 +68,7 @@ import {
   NoPendingExecutableApprovalStoreLive,
 } from "../packages/testkit/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
+import { makeP41OptionalTestServices } from "./support/p41-optional-test-services.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -121,6 +122,7 @@ const makeApp = () => {
     RuntimeClockLive,
     IdGeneratorLive,
   );
+  const journal = Layer.provide(DomainEventJournalLive, infra);
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
   const provider = FakeProviderLive({ turns: [waitTurn] });
@@ -146,7 +148,8 @@ const makeApp = () => {
     Layer.provide(TransactionPortLive, infra),
     NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    journal,
+    makeP41OptionalTestServices(Layer.merge(infra, journal)),
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),

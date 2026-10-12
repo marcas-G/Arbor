@@ -26,6 +26,7 @@ const EXPECTED_EVENTS = [
   "WorkspaceLineageRecorded",
   "PrimarySessionReplaced",
   "AssignWorkTargetBindingEscalated",
+  "SubmittedDecisionBindingEscalated",
   "ToolObservationReplayEvidenceEscalated",
   "WorkspaceResourceActivationChanged",
   "WorkAssigned",
