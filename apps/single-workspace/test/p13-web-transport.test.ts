@@ -139,6 +139,45 @@ afterAll(async () => {
 const base = () => `http://127.0.0.1:${handle.port}`;
 
 describe("P13 web transport server (TR-W1/W2 binding)", () => {
+  it("passes the credential-authenticated principal to view composition, never a body actor", async () => {
+    const principals: Array<string | undefined> = [];
+    const authenticatedCore = makeTransportCore({
+      views: {
+        query: (_view, _request, _barrier, principal) => {
+          principals.push(
+            principal === undefined ? undefined : String(principal),
+          );
+          return Effect.succeed({
+            value: { rows: [] },
+            watermark: 0,
+            lag: 0,
+          });
+        },
+      } as never,
+      authenticator: {
+        authenticate: (credential) =>
+          Effect.succeed(
+            credential?.token === "trusted-token"
+              ? ("user:local" as never)
+              : ("user:local" as never),
+          ),
+      } as never,
+      submission: fakeSubmission as never,
+    });
+    const authenticatedHttp = makeHttpShell(authenticatedCore);
+    const response = await Effect.runPromise(
+      authenticatedHttp.handle({
+        method: "POST",
+        path: "/views/attention",
+        authorization: "Bearer trusted-token",
+        body: { projectId: "prj_1", actor: "user:attacker" },
+      }),
+    );
+
+    expect(response.ok).toBe(true);
+    expect(principals).toEqual(["user:local"]);
+  });
+
   it("serves the SPA index same-origin at /", async () => {
     const response = await fetch(base());
     expect(response.status).toBe(200);

@@ -2,6 +2,10 @@ import type {
   AuthorityDecisionInput,
   CommandGatewayService,
 } from "@arbor/application";
+import {
+  FINGERPRINT_ALGORITHM_VERSION,
+  semanticRequestFingerprint,
+} from "@arbor/application";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { resolveCompositionGovernance } from "../src/composition.js";
@@ -244,6 +248,137 @@ describe("external command composition boundary", () => {
       problem: { code: "authority/denied" },
     });
     expect(calls).toEqual([]);
+  });
+
+  it("receipt-first replays only the exact RetryVerification envelope and denies tuple mismatches", async () => {
+    const commandId = "cmd_018f2b3c-4d5e-7abc-8def-0123456789d1";
+    const projectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789d2";
+    const payload = {
+      workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789d3",
+      verificationId: "ver_018f2b3c-4d5e-7abc-8def-0123456789d4",
+      expectedWorkRevision: 2,
+      summaryContent: "The prior verifier settled without concluding.",
+      successorVerificationId: "ver_018f2b3c-4d5e-7abc-8def-0123456789d5",
+      verifierExecutionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789d6",
+    };
+    const actor = "user:local";
+    const fingerprint = semanticRequestFingerprint({
+      commandType: "RetryVerification",
+      projectId,
+      actor,
+      schemaVersion: "1",
+      payload,
+    });
+    const stored = {
+      commandId,
+      projectId,
+      semanticRequestFingerprint: fingerprint,
+      schemaVersion: "1",
+      fingerprintAlgorithmVersion: FINGERPRINT_ALGORITHM_VERSION,
+      resolution: "Committed",
+      resultJson: "{}",
+      terminalErrorJson: null,
+      createdAt: "2026-10-12T00:00:00.000Z",
+      settledAt: "2026-10-12T00:00:01.000Z",
+    };
+    const gatewayAuthorities: unknown[] = [];
+    const submission = makeExternalSubmission({
+      resolver: {
+        resolve: () => {
+          throw new Error(
+            "receipt replay must not resolve mutable source facts",
+          );
+        },
+      } as never,
+      gateway: {
+        execute: (_envelope, _context, authority) => {
+          gatewayAuthorities.push(authority);
+          return Effect.succeed({
+            commandId,
+            resolution: { _tag: "Committed", result: { replayed: true } },
+          } as never);
+        },
+      } as never,
+      registry: { lookup: () => Option.some({ schemaVersion: "1" }) } as never,
+      loadInputs: () => {
+        throw new Error("receipt replay must not load mutable source facts");
+      },
+      findCommandResolution: () => Effect.succeed(Option.some(stored as never)),
+    });
+    const envelope = {
+      commandType: "RetryVerification",
+      commandId,
+      projectId,
+      actor,
+      issuedAt: "2026-10-12T00:00:00.000Z",
+      payload,
+    };
+    const replay = await Effect.runPromise(
+      submission.submit(
+        actor as never,
+        externalContext(actor as never),
+        envelope,
+      ),
+    );
+    expect(replay).toMatchObject({
+      ok: true,
+      body: { commandId, resolution: "Committed", result: { replayed: true } },
+    });
+    expect(gatewayAuthorities[0]).toMatchObject({
+      _tag: "RetryVerificationReceiptReplayAuthority",
+      commandId,
+      projectId,
+      semanticRequestFingerprint: fingerprint,
+    });
+
+    const mismatches = [
+      { ...envelope, actor: "user:other" },
+      {
+        ...envelope,
+        commandType: "SubmitHumanMessage",
+        payload: {
+          messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789d8",
+          targetWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789d9",
+          bodyRef: "body-ref",
+        },
+      },
+      { ...envelope, projectId: "prj_018f2b3c-4d5e-7abc-8def-0123456789d7" },
+      { ...envelope, payload: { ...payload, summaryContent: "changed" } },
+    ];
+    for (const mismatch of mismatches) {
+      const mismatchSubmission = makeExternalSubmission({
+        resolver: {
+          resolve: () => {
+            throw new Error("must not resolve");
+          },
+        } as never,
+        gateway: {
+          execute: () => {
+            throw new Error("mismatch must not reach Gateway");
+          },
+        } as never,
+        registry: {
+          lookup: () => Option.some({ schemaVersion: "1" }),
+        } as never,
+        loadInputs: () => {
+          throw new Error("mismatch must not load state");
+        },
+        findCommandResolution: () =>
+          Effect.succeed(Option.some(stored as never)),
+      });
+      const response = await Effect.runPromise(
+        mismatchSubmission.submit(
+          mismatch.actor as never,
+          externalContext(mismatch.actor as never),
+          mismatch,
+        ),
+      );
+      expect(response).toMatchObject({
+        ok: false,
+        status: 409,
+        problem: { code: "command/idempotency-conflict" },
+      });
+    }
   });
 
   it("keeps a configured-auth outsider from resolving an Executable approval", async () => {

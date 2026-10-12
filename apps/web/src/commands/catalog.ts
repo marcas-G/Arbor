@@ -20,6 +20,7 @@ export const HUMAN_ACTIONABLE_COMMANDS = [
   "SubmitHumanMessage",
   "ResumeConversationResponse",
   "CancelConversationResponse",
+  "RetryVerification",
 ] as const;
 
 export type HumanActionableCommand = (typeof HUMAN_ACTIONABLE_COMMANDS)[number];

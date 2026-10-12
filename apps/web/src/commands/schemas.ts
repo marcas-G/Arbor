@@ -104,6 +104,15 @@ export const acceptWorkOutcomeSchema = z.object({
   verificationId,
 });
 
+export const retryVerificationSchema = z.object({
+  workId,
+  verificationId,
+  expectedWorkRevision: z.number().int().min(0),
+  summaryContent: z.string().trim().min(1, "说明必填").max(8192),
+  successorVerificationId: verificationId,
+  verifierExecutionId: executionId,
+});
+
 export const stopExecutionSchema = z.object({
   executionId,
   confirmed: z.literal(true, { message: "必须显式确认停止" }),

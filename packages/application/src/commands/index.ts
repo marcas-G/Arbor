@@ -15,6 +15,7 @@ export * from "./register-project-tool.js";
 export * from "./registry.js";
 export * from "./resolve-control-approval.js";
 export * from "./resolve-executable-approval.js";
+export * from "./retry-verification.js";
 export * from "./revoke-permission.js";
 export * from "./satisfy-dependency.js";
 export * from "./select-current-work.js";

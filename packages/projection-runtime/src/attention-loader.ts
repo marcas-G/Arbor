@@ -636,6 +636,8 @@ export const loadAttentionFacts = (
       }
       openVerificationFacts.push({
         verificationId: verification.verificationId,
+        workId: verification.workId,
+        targetWorkRevision: verification.targetWorkRevision,
         ownerWorkspaceId: owner,
         executionIds: verification.verificationExecutionIds,
       });

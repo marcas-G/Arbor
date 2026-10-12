@@ -179,6 +179,42 @@ describe("W-06 关注事项页（只读）", () => {
     expect(window.location.pathname).toBe("/p/prj_1/workspace/ws_1");
   });
 
+  it("VerifierOrphan 检查展示精确 Work/Verification/revision 绑定但不暴露未经解析的重试动作", async () => {
+    const urls = installAttention();
+    renderAttention();
+    await waitFor(() =>
+      expect(screen.getByText("verifier-orphan#4")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /verifier-orphan#4/ }));
+    const inspection = screen.getByRole("complementary", {
+      name: "关注事项检查面板",
+    });
+    expect(within(inspection).getByText("wrk_4")).toBeTruthy();
+    expect(within(inspection).getByText("ver_4")).toBeTruthy();
+    expect(within(inspection).getByText("Target Work revision")).toBeTruthy();
+    expect(within(inspection).getByText("7")).toBeTruthy();
+    expect(
+      within(inspection).queryByRole("button", { name: /RetryVerification/ }),
+    ).toBeNull();
+    expect(urls.every((url) => url.startsWith("/views/"))).toBe(true);
+  });
+
+  it("只有服务端对当前 principal 精确解析通过后才显示 RetryVerification 表单", async () => {
+    const rows = attentionPageTypical.rows.map((row) =>
+      row.source === "VerifierOrphan"
+        ? { ...row, availableActions: ["RetryVerification"] as const }
+        : row,
+    );
+    installAttention({ dto: { rows } });
+    renderAttention();
+    await waitFor(() =>
+      expect(screen.getByText("verifier-orphan#4")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /verifier-orphan#4/ }));
+    expect(screen.getByRole("form", { name: "重新启动验证" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "提交重试" })).toBeTruthy();
+  });
+
   it("空态 Empty 无关注事项；全部 fetch 均为 /views/（无任何 command）", async () => {
     const urls = installAttention({ dto: attentionPageEmpty });
     renderAttention();

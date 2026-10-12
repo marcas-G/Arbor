@@ -45,6 +45,7 @@ export interface ViewQueryFace {
     view: V,
     request: ViewRequestMap[V],
     barrier?: FreshnessRequirement,
+    principal?: Principal,
   ) => Effect.Effect<QueryResult<ViewResponseMap[V]>, ProjectionQueryError>;
 }
 

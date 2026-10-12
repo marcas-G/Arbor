@@ -41,6 +41,7 @@ const toVerification = (row: VerificationRow): Verification =>
   ({
     verificationId: row.verification_id,
     workId: row.work_id,
+    ownerWorkspaceId: row.owner_workspace_id,
     targetWorkRevision: row.target_work_revision,
     missionSnapshot: JSON.parse(row.mission_snapshot),
     targetDeliverables: JSON.parse(row.target_deliverables),

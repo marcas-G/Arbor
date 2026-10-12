@@ -173,6 +173,14 @@ export interface AttentionRow {
   readonly summaryRef: string;
   readonly occurredAt: string;
   readonly failureCode?: string;
+  /** Present only for a verifier-orphan row; binds any recovery UI to the
+   * exact open Verification and Work snapshot that produced this Attention. */
+  readonly workId?: WorkId;
+  readonly verificationId?: VerificationId;
+  readonly targetWorkRevision?: number;
+  /** Server-resolved actions for this exact row/principal. Absent or empty
+   * means no action is currently exposed. */
+  readonly availableActions?: ReadonlyArray<"RetryVerification">;
 }
 
 export interface AttentionRes {

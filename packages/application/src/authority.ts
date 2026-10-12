@@ -247,6 +247,35 @@ export type VerifiedCommandAuthority =
       readonly verificationId: VerificationId;
     }
   | {
+      /** P8 RetryVerification: authenticated human authority is exact-bound
+       * to the stale Open source and the preallocated successor identities. */
+      readonly _tag: "RetryVerificationAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly currentOwnerId: WorkspaceId;
+      readonly workId: WorkId;
+      readonly expectedWorkRevision: number;
+      readonly verificationId: VerificationId;
+      readonly settledVerifierExecutionIds: ReadonlyArray<ExecutionId>;
+    }
+  | {
+      /** Process-local receipt-first handoff for an exact RetryVerification
+       * CommandId/fingerprint replay. It is minted only by the authenticated
+       * transport after matching a durable receipt and never admits a handler
+       * execution; Gateway's receipt lookup runs first. */
+      readonly _tag: "RetryVerificationReceiptReplayAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly workId: WorkId;
+      readonly verificationId: VerificationId;
+      readonly expectedWorkRevision: number;
+    }
+  | {
       /** P8 `01` §6: deterministic consumer (System origin, causationRef =
        * the WorkOutcomeAccepted event) or explicit submitter. */
       readonly _tag: "CompleteWorkAuthority";

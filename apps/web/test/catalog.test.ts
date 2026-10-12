@@ -1,6 +1,6 @@
 /**
  * P13 `02` §8 / `06` EC-6 (upgraded by P14 TR-B): the UI command catalog is
- * exactly the frozen eight-item Human-actionable set — mechanically verified,
+ * exactly the frozen Human-actionable set — mechanically verified,
  * order-independent; no System-internal / Agent-originated commandType may
  * appear. Also pins the `cmd_<uuid-v7>` generator shape (RFC 9562 §4: the
  * canonical 8-4-4-4-12 layout — the leading 48-bit unix-ms timestamp spans
@@ -14,7 +14,7 @@ import {
 } from "../src/commands/catalog.js";
 import { uuidv7 } from "../src/commands/uuid7.js";
 
-const EXPECTED_FOURTEEN = [
+const EXPECTED_FIFTEEN = [
   "CreateProject",
   "RenameProject",
   "CloseProject",
@@ -29,6 +29,7 @@ const EXPECTED_FOURTEEN = [
   "SubmitHumanMessage",
   "ResumeConversationResponse",
   "CancelConversationResponse",
+  "RetryVerification",
 ];
 
 const NEVER_EXPOSED = [
@@ -46,9 +47,9 @@ const UUIDV7_SHAPE =
 describe("EC-6 human-actionable catalog", () => {
   it("is exactly the human-actionable set (order-independent)", () => {
     expect([...HUMAN_ACTIONABLE_COMMANDS].sort()).toEqual(
-      [...EXPECTED_FOURTEEN].sort(),
+      [...EXPECTED_FIFTEEN].sort(),
     );
-    expect(HUMAN_ACTIONABLE_COMMANDS.length).toBe(14);
+    expect(HUMAN_ACTIONABLE_COMMANDS.length).toBe(15);
   });
 
   it("contains no system-internal / agent-originated commandType", () => {
@@ -56,7 +57,7 @@ describe("EC-6 human-actionable catalog", () => {
       expect(HUMAN_ACTIONABLE_COMMANDS).not.toContain(commandType);
       expect(isHumanActionableCommand(commandType)).toBe(false);
     }
-    for (const commandType of EXPECTED_FOURTEEN) {
+    for (const commandType of EXPECTED_FIFTEEN) {
       expect(isHumanActionableCommand(commandType)).toBe(true);
     }
   });

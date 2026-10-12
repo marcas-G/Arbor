@@ -16,6 +16,7 @@ import {
   makeResolveControlApprovalHandler,
   makeResolveExecutableApprovalHandler,
   makeResumeConversationResponseHandler,
+  makeRetryVerificationHandler,
   makeRevokePermissionHandler,
   makeSatisfyDependencyHandler,
   makeSelectCurrentWorkHandler,
@@ -23,6 +24,7 @@ import {
   makeStartVerificationHandler,
   makeSteerWorkHandler,
   makeSubmitHumanMessageHandler,
+  type ParentUserGovernanceFacts,
 } from "@arbor/application";
 import type { ProjectId } from "@arbor/domain";
 import { makeP2CommandHandlers } from "@arbor/execution-runtime";
@@ -32,6 +34,7 @@ import {
   type AcceptanceRepositoryService,
   AssignWorkTargetBindingRepository,
   type AssignWorkTargetBindingRepositoryService,
+  BlobStorePort,
   Clock,
   ControlApprovalStore,
   type ControlApprovalStoreService,
@@ -94,7 +97,12 @@ const executableApprovalStoreUnavailable: ExecutableApprovalStoreService = {
  * frozen P6/P8/P12 implementations; only the composition wiring is new).
  * No new command semantics (P5 `01` / P13 `01`).
  */
-export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
+export const makeSingleWorkspaceCommandHandlerRegistryLive = (
+  governance: ParentUserGovernanceFacts = {
+    authenticatedHumans: [],
+    directParentOf: [],
+  },
+): Layer.Layer<
   CommandHandlerRegistry,
   never,
   | ProjectRepository
@@ -117,265 +125,304 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
   | HumanMessageStore
   | ConversationResponseJobStore
   | SqlClient
-> = Layer.effect(
-  CommandHandlerRegistry,
-  Effect.gen(function* () {
-    const projects = yield* ProjectRepository;
-    const workspaces = yield* WorkspaceRepository;
-    const resourceOwnership = yield* ResourceOwnershipRepository;
-    const sessions = yield* SessionRepository;
-    const activations = yield* Effect.serviceOption(
-      WorkspaceResourceActivationStore,
-    );
-    const projectResourceProfiles = yield* Effect.serviceOption(
-      ProjectResourceProfilePort,
-    );
-    const works = yield* WorkRepository;
-    const clock = yield* Effect.serviceOption(Clock);
-    const executions = yield* ExecutionRepository;
-    const executableApprovalsService = yield* Effect.serviceOption(
-      ExecutableApprovalStore,
-    );
-    const executableApprovals = Option.getOrElse(
-      executableApprovalsService,
-      () => executableApprovalStoreUnavailable,
-    );
-    const workWaits = yield* WorkWaitStore;
-    const readmissionGate = yield* Effect.serviceOption(
-      WorkReadmissionGateStore,
-    );
-    const proposals = yield* FormationProposalStore;
-    const fulfillments = yield* Effect.serviceOption(FormationFulfillmentStore);
-    const inbox = yield* InboxProjectionStore;
-    const messages = yield* MessageStore;
-    const verifications = yield* VerificationRepository;
-    const acceptances = yield* AcceptanceRepository;
-    const grants = yield* PermissionGrantRepository;
-    const assignWorkBindings = yield* Effect.serviceOption(
-      AssignWorkTargetBindingRepository,
-    );
-    const humanMessages = yield* HumanMessageStore;
-    const responseJobs = yield* ConversationResponseJobStore;
-    const controlApprovals = yield* Effect.serviceOption(ControlApprovalStore);
-    const dependencyStore = yield* DependencyRepository;
-    const deliverables = yield* DeliverableRepository;
-    const environmentRevisions = yield* EnvironmentRevisionStore;
-    const evidence = yield* EvidenceRepository;
-    const sql = yield* SqlClient;
-    const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
-      ...makeP1CommandHandlers({
-        ...(Option.isSome(clock) ? { clock: clock.value } : {}),
-        projects,
-        workspaces,
-        sessions,
-        ...(Option.isSome(activations)
-          ? { activations: activations.value }
-          : {}),
-        works,
-        resourceOwnership,
-        ...(Option.isSome(projectResourceProfiles)
-          ? { projectResourceProfiles: projectResourceProfiles.value }
-          : {}),
-        executions,
-        ...(Option.isSome(assignWorkBindings)
-          ? {
-              bindings: assignWorkBindings.value as Pick<
-                AssignWorkTargetBindingRepositoryService,
-                "insert"
-              >,
-            }
-          : {}),
-        grants,
-        ...(Option.isSome(controlApprovals)
-          ? { approvals: controlApprovals.value }
-          : {}),
-      }),
-      ...makeP15CommandHandlers({
-        projects,
-        executions,
-        responseJobs,
-        inbox,
-        executableApprovals,
-      }),
-      makeSelectCurrentWorkHandler({
-        workspaces,
-        works,
-        executions,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      ...makeP2CommandHandlers({
-        projects,
-        workspaces,
-        sessions,
-        executions,
-        workWaits,
-        ...(Option.isSome(readmissionGate)
-          ? { readmissionGate: readmissionGate.value }
-          : {}),
-        executableApprovals,
-      }),
-      makeSendMessageHandler({
-        workspaces,
-        messages: messages as Pick<
-          MessageStoreService,
-          "append" | "closeCorrelation" | "isCorrelationClosed"
-        >,
-        inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeDeliverMessageHandler({
-        deliverables,
-        works,
-        workspaces,
-        messages: messages as Pick<
-          MessageStoreService,
-          "append" | "closeCorrelation" | "isCorrelationClosed"
-        >,
-        inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeDeclareDependencyHandler({
-        works,
-        workspaces,
-        dependencies: dependencyStore as Pick<
-          DependencyRepositoryService,
-          "insert"
-        >,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeProduceDeliverableHandler({
-        works,
-        deliverables,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeSatisfyDependencyHandler({
-        dependencies: dependencyStore,
-        deliverables,
-        works,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeRecordDecisionHandler({
-        proposals: proposals as Pick<
-          FormationProposalStoreService,
-          "findById" | "decideIfPendingRevision"
-        >,
-        inbox: inbox as Pick<
-          InboxProjectionStoreService,
-          "admitUpsert" | "markConsumed"
-        >,
-        ...(Option.isSome(fulfillments)
-          ? { fulfillments: fulfillments.value }
-          : {}),
-        originatingWorkspaceOf: (record) => record.parentWorkspaceId,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      ...(Option.isSome(controlApprovals)
-        ? [
-            makeResolveControlApprovalHandler({
-              approvals: controlApprovals.value as Pick<
-                ControlApprovalStoreService,
-                "findById" | "decide"
-              >,
-              inbox: inbox as Pick<InboxProjectionStoreService, "markConsumed">,
-            }) as unknown as CommandHandler<unknown, unknown>,
-          ]
-        : []),
-      makeResolveExecutableApprovalHandler({
-        approvals: executableApprovals,
-        executions,
-        now: Option.isSome(clock)
-          ? clock.value.now
-          : () => Effect.sync(() => new Date().toISOString()),
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeSteerWorkHandler({
-        works,
-        inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeAcceptWorkOutcomeHandler({
-        works,
-        verifications: verifications as Pick<
-          VerificationRepositoryService,
-          "findById"
-        >,
-        acceptances: acceptances as Pick<
-          AcceptanceRepositoryService,
-          "insert" | "findByWorkRevision"
-        >,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeCompleteWorkHandler({
-        works,
-        workspaces,
-        verifications,
-        acceptances,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeStartVerificationHandler({
+> =>
+  Layer.effect(
+    CommandHandlerRegistry,
+    Effect.gen(function* () {
+      const projects = yield* ProjectRepository;
+      const workspaces = yield* WorkspaceRepository;
+      const resourceOwnership = yield* ResourceOwnershipRepository;
+      const sessions = yield* SessionRepository;
+      const activations = yield* Effect.serviceOption(
+        WorkspaceResourceActivationStore,
+      );
+      const projectResourceProfiles = yield* Effect.serviceOption(
+        ProjectResourceProfilePort,
+      );
+      const works = yield* WorkRepository;
+      const clock = yield* Effect.serviceOption(Clock);
+      const executions = yield* ExecutionRepository;
+      const executableApprovalsService = yield* Effect.serviceOption(
+        ExecutableApprovalStore,
+      );
+      const executableApprovals = Option.getOrElse(
+        executableApprovalsService,
+        () => executableApprovalStoreUnavailable,
+      );
+      const workWaits = yield* WorkWaitStore;
+      const readmissionGate = yield* Effect.serviceOption(
+        WorkReadmissionGateStore,
+      );
+      const proposals = yield* FormationProposalStore;
+      const fulfillments = yield* Effect.serviceOption(
+        FormationFulfillmentStore,
+      );
+      const inbox = yield* InboxProjectionStore;
+      const messages = yield* MessageStore;
+      const verifications = yield* VerificationRepository;
+      const acceptances = yield* AcceptanceRepository;
+      const grants = yield* PermissionGrantRepository;
+      const assignWorkBindings = yield* Effect.serviceOption(
+        AssignWorkTargetBindingRepository,
+      );
+      const humanMessages = yield* HumanMessageStore;
+      const responseJobs = yield* ConversationResponseJobStore;
+      const controlApprovals =
+        yield* Effect.serviceOption(ControlApprovalStore);
+      const dependencyStore = yield* DependencyRepository;
+      const deliverables = yield* DeliverableRepository;
+      const environmentRevisions = yield* EnvironmentRevisionStore;
+      const evidence = yield* EvidenceRepository;
+      const sql = yield* SqlClient;
+      const blobStoreOption = yield* Effect.serviceOption(BlobStorePort);
+      const blobs = Option.getOrElse(blobStoreOption, () => ({
+        put: () =>
+          Effect.fail({
+            _tag: "BlobStoreError" as const,
+            cause: "BlobStorePortUnavailable",
+          }),
+        get: () =>
+          Effect.fail({
+            _tag: "BlobStoreError" as const,
+            cause: "BlobStorePortUnavailable",
+          }),
+      }));
+      const verifierDeliverables = {
+        ...deliverables,
+        listArtifacts: (deliverableId: import("@arbor/domain").DeliverableId) =>
+          sql
+            .unsafe<{ readonly role: string; readonly artifact_id: string }>(
+              "SELECT role, artifact_id FROM deliverable_artifacts WHERE deliverable_id = ?",
+              [deliverableId],
+            )
+            .pipe(
+              Effect.map((rows) =>
+                rows.map((row) => ({
+                  role: row.role,
+                  artifactId: row.artifact_id as never,
+                })),
+              ),
+              Effect.mapError(
+                repositoryFailure("DeliverableRepository", "list-artifacts"),
+              ),
+            ),
+      };
+      const verifierStart = {
         works,
         verifications,
         environmentRevisions,
-        deliverables: {
-          ...deliverables,
-          listArtifacts: (deliverableId) =>
-            sql
-              .unsafe<{ readonly role: string; readonly artifact_id: string }>(
-                "SELECT role, artifact_id FROM deliverable_artifacts WHERE deliverable_id = ?",
-                [deliverableId],
-              )
+        deliverables: verifierDeliverables,
+      };
+      const verifierConclude = { verifications, evidence, works };
+      const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
+        ...makeP1CommandHandlers({
+          ...(Option.isSome(clock) ? { clock: clock.value } : {}),
+          projects,
+          workspaces,
+          sessions,
+          ...(Option.isSome(activations)
+            ? { activations: activations.value }
+            : {}),
+          works,
+          resourceOwnership,
+          ...(Option.isSome(projectResourceProfiles)
+            ? { projectResourceProfiles: projectResourceProfiles.value }
+            : {}),
+          executions,
+          ...(Option.isSome(assignWorkBindings)
+            ? {
+                bindings: assignWorkBindings.value as Pick<
+                  AssignWorkTargetBindingRepositoryService,
+                  "insert"
+                >,
+              }
+            : {}),
+          grants,
+          ...(Option.isSome(controlApprovals)
+            ? { approvals: controlApprovals.value }
+            : {}),
+        }),
+        ...makeP15CommandHandlers({
+          projects,
+          executions,
+          responseJobs,
+          inbox,
+          executableApprovals,
+        }),
+        makeSelectCurrentWorkHandler({
+          workspaces,
+          works,
+          executions,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        ...makeP2CommandHandlers({
+          projects,
+          workspaces,
+          sessions,
+          executions,
+          workWaits,
+          ...(Option.isSome(readmissionGate)
+            ? { readmissionGate: readmissionGate.value }
+            : {}),
+          executableApprovals,
+        }),
+        makeSendMessageHandler({
+          workspaces,
+          messages: messages as Pick<
+            MessageStoreService,
+            "append" | "closeCorrelation" | "isCorrelationClosed"
+          >,
+          inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeDeliverMessageHandler({
+          deliverables,
+          works,
+          workspaces,
+          messages: messages as Pick<
+            MessageStoreService,
+            "append" | "closeCorrelation" | "isCorrelationClosed"
+          >,
+          inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeDeclareDependencyHandler({
+          works,
+          workspaces,
+          dependencies: dependencyStore as Pick<
+            DependencyRepositoryService,
+            "insert"
+          >,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeProduceDeliverableHandler({
+          works,
+          deliverables,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeSatisfyDependencyHandler({
+          dependencies: dependencyStore,
+          deliverables,
+          works,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeRecordDecisionHandler({
+          proposals: proposals as Pick<
+            FormationProposalStoreService,
+            "findById" | "decideIfPendingRevision"
+          >,
+          inbox: inbox as Pick<
+            InboxProjectionStoreService,
+            "admitUpsert" | "markConsumed"
+          >,
+          ...(Option.isSome(fulfillments)
+            ? { fulfillments: fulfillments.value }
+            : {}),
+          originatingWorkspaceOf: (record) => record.parentWorkspaceId,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        ...(Option.isSome(controlApprovals)
+          ? [
+              makeResolveControlApprovalHandler({
+                approvals: controlApprovals.value as Pick<
+                  ControlApprovalStoreService,
+                  "findById" | "decide"
+                >,
+                inbox: inbox as Pick<
+                  InboxProjectionStoreService,
+                  "markConsumed"
+                >,
+              }) as unknown as CommandHandler<unknown, unknown>,
+            ]
+          : []),
+        makeResolveExecutableApprovalHandler({
+          approvals: executableApprovals,
+          executions,
+          now: Option.isSome(clock)
+            ? clock.value.now
+            : () => Effect.sync(() => new Date().toISOString()),
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeSteerWorkHandler({
+          works,
+          inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeAcceptWorkOutcomeHandler({
+          works,
+          verifications: verifications as Pick<
+            VerificationRepositoryService,
+            "findById"
+          >,
+          acceptances: acceptances as Pick<
+            AcceptanceRepositoryService,
+            "insert" | "findByWorkRevision"
+          >,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeCompleteWorkHandler({
+          works,
+          workspaces,
+          verifications,
+          acceptances,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeStartVerificationHandler(
+          verifierStart,
+        ) as unknown as CommandHandler<unknown, unknown>,
+        makeRecordVerificationEvidenceHandler({
+          verifications,
+          evidence,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeConcludeVerificationHandler(
+          verifierConclude,
+        ) as unknown as CommandHandler<unknown, unknown>,
+        makeRetryVerificationHandler({
+          works,
+          verifications,
+          executions,
+          projects,
+          workspaces,
+          blobs,
+          governance,
+          start: verifierStart,
+          conclude: verifierConclude,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeGrantPermissionHandler({
+          grants: grants as PermissionGrantRepositoryService,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeRevokePermissionHandler({
+          grants: grants as PermissionGrantRepositoryService,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeSubmitHumanMessageHandler({
+          messages: humanMessages as Pick<
+            HumanMessageStoreService,
+            "insertPending" | "findById"
+          >,
+          responseJobs: responseJobs as Pick<
+            ConversationResponseJobStoreService,
+            "insert"
+          >,
+          inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+          rootWorkspaceOf: (projectId: ProjectId) =>
+            projects
+              .findById(projectId)
               .pipe(
-                Effect.map((rows) =>
-                  rows.map((row) => ({
-                    role: row.role,
-                    artifactId: row.artifact_id as never,
-                  })),
-                ),
-                Effect.mapError(
-                  repositoryFailure("DeliverableRepository", "list-artifacts"),
+                Effect.map((found) =>
+                  Option.isSome(found)
+                    ? found.value.rootWorkspaceId
+                    : (projectId as unknown as never),
                 ),
               ),
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeResumeConversationResponseHandler({
+          jobs: responseJobs,
+        }) as unknown as CommandHandler<unknown, unknown>,
+        makeCancelConversationResponseHandler({
+          jobs: responseJobs,
+        }) as unknown as CommandHandler<unknown, unknown>,
+      ];
+      return CommandHandlerRegistry.of({
+        lookup: (commandType) => {
+          const handler = handlers.find(
+            (candidate) => candidate.commandType === commandType,
+          );
+          return handler === undefined ? Option.none() : Option.some(handler);
         },
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeRecordVerificationEvidenceHandler({
-        verifications,
-        evidence,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeConcludeVerificationHandler({
-        verifications,
-        evidence,
-        works,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeGrantPermissionHandler({
-        grants: grants as PermissionGrantRepositoryService,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeRevokePermissionHandler({
-        grants: grants as PermissionGrantRepositoryService,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeSubmitHumanMessageHandler({
-        messages: humanMessages as Pick<
-          HumanMessageStoreService,
-          "insertPending" | "findById"
-        >,
-        responseJobs: responseJobs as Pick<
-          ConversationResponseJobStoreService,
-          "insert"
-        >,
-        inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
-        rootWorkspaceOf: (projectId: ProjectId) =>
-          projects
-            .findById(projectId)
-            .pipe(
-              Effect.map((found) =>
-                Option.isSome(found)
-                  ? found.value.rootWorkspaceId
-                  : (projectId as unknown as never),
-              ),
-            ),
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeResumeConversationResponseHandler({
-        jobs: responseJobs,
-      }) as unknown as CommandHandler<unknown, unknown>,
-      makeCancelConversationResponseHandler({
-        jobs: responseJobs,
-      }) as unknown as CommandHandler<unknown, unknown>,
-    ];
-    return CommandHandlerRegistry.of({
-      lookup: (commandType) => {
-        const handler = handlers.find(
-          (candidate) => candidate.commandType === commandType,
-        );
-        return handler === undefined ? Option.none() : Option.some(handler);
-      },
-    });
-  }),
-);
+      });
+    }),
+  );
+
+/** Default test/composition fixture; production supplies its authenticated
+ * Parent User governance snapshot through the parameterized factory. */
+export const SingleWorkspaceCommandHandlerRegistryLive =
+  makeSingleWorkspaceCommandHandlerRegistryLive();

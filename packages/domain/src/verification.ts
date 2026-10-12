@@ -7,6 +7,7 @@ import type {
   ExecutionId,
   VerificationId,
   WorkId,
+  WorkspaceId,
 } from "./ids.js";
 import type { WorkRevision } from "./ordinals.js";
 import type { DomainResult } from "./result.js";
@@ -71,6 +72,8 @@ export type VerificationState =
 export interface Verification {
   readonly verificationId: VerificationId;
   readonly workId: WorkId;
+  /** Persisted G4 owner snapshot; absent only in legacy/in-memory fixtures. */
+  readonly ownerWorkspaceId?: WorkspaceId;
   readonly targetWorkRevision: WorkRevision;
   readonly missionSnapshot: VerificationMission;
   readonly targetDeliverables: ReadonlyArray<DeliverableId>;
