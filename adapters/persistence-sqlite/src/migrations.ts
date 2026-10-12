@@ -2122,6 +2122,6 @@ export const P39_MAINTENANCE_MIGRATION_MANIFEST: Readonly<
   }),
   39: Object.freeze({
     name: "ah7_reconciliation_attempts",
-    sha256: "b363ee081d18536b1c606a6432b171fbed1a7fc48ef935388111b490a56fab20",
+    sha256: "6e791168987f23f5c282ce7d6bd2c5b5ad8361942dab968adbcca64aab753aec",
   }),
 });

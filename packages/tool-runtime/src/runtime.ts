@@ -6,9 +6,12 @@ import type {
 import { ArtifactId, parse } from "@arbor/domain";
 import {
   ArtifactService,
+  approvalTargetDigestV1,
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
+  canonicalArgumentsDigestV1,
+  canonicalizeRecoveryBindingV1,
   EnvironmentRevisionStore,
   type ExecutableApprovalConsumptionReceipt,
   type ExecutableApprovalRecord,
@@ -16,15 +19,11 @@ import {
   executableApprovalBindingMatches,
   type LeaseFencingRejected,
   type NoEffectDenialCode,
-  canonicalArgumentsDigestV1,
-  approvalTargetDigestV1,
-  targetResourceIdentityDigestV1,
-  ProjectEnvironmentPort,
   P39RecoveryEvidenceStore,
+  ProjectEnvironmentPort,
   type RecoveryBindingV1,
-  canonicalizeRecoveryBindingV1,
-  recoveryBindingV1Digest,
   ResourceAdmission,
+  recoveryBindingV1Digest,
   type SandboxHandle,
   SandboxPort,
   ToolAuthorityResolver,
@@ -37,6 +36,7 @@ import {
   type ToolRuntimeError,
   ToolRuntimePort,
   TransactionPort,
+  targetResourceIdentityDigestV1,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -368,9 +368,7 @@ const makeRecoveryBindingV1 = (input: {
     toolDefinitionHash: input.definition.hash,
     sideEffectSemantics: input.definition.sideEffectSemantics,
     canonicalArgumentsDigest: canonicalArgumentsDigestV1(argumentsValue),
-    targetResourceIdentityDigest: targetResourceIdentityDigestV1(
-      input.regions,
-    ),
+    targetResourceIdentityDigest: targetResourceIdentityDigestV1(input.regions),
     resourceBoundaryRevision: input.resourceBoundaryRevision,
     environmentRevision: input.environmentRevision,
     authoritySourceRevision: input.authority.sourceRevision ?? null,
@@ -552,6 +550,9 @@ export const ToolRuntimeLive = (
               executionId: context.executionId,
               invocationId: intent.invocationId,
               callRef: intent.callRef,
+              ...(context.executableApproval === undefined
+                ? {}
+                : { approvalBinding: context.executableApproval.binding }),
             }) ||
               context.recoveryBindingPolicyRevisions === undefined ||
               !Number.isSafeInteger(
@@ -595,6 +596,53 @@ export const ToolRuntimeLive = (
               _tag: "ExpectedFailure" as const,
               observation: bounded(validation.reason),
             };
+          }
+
+          if (p39BindingEnabled && Option.isSome(p39Recovery)) {
+            const priorDenial = yield* tx
+              .transact(store.findById(intent.invocationId))
+              .pipe(
+                Effect.mapError(
+                  operationalFailure(
+                    "IntentJournal",
+                    String(intent.invocationId),
+                  ),
+                ),
+              );
+            if (
+              Option.isSome(priorDenial) &&
+              priorDenial.value.settlement?._tag === "Denied" &&
+              priorDenial.value.settledAt !== null &&
+              priorDenial.value.effectAdmissionState === "NotAdmitted" &&
+              priorDenial.value.resultRef === null &&
+              priorDenial.value.executionId === context.executionId &&
+              priorDenial.value.workspaceId === context.workspaceId &&
+              priorDenial.value.toolName === intent.toolName &&
+              priorDenial.value.toolVersion === intent.toolVersion &&
+              priorDenial.value.sideEffectSemantics ===
+                definition.sideEffectSemantics &&
+              priorDenial.value.argumentsJson === intent.argumentsJson &&
+              priorDenial.value.approvalId ===
+                (context.executableApproval?.approvalId ?? intent.approvalId)
+            ) {
+              const unboundDenial = yield* tx
+                .transact(
+                  p39Recovery.value.findTerminalUnboundDenial(
+                    intent.invocationId,
+                  ),
+                )
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "RecoveryBinding",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              if (Option.isSome(unboundDenial)) {
+                return denied(priorDenial.value.settlement.reasonCode);
+              }
+            }
           }
 
           const now = options.now ?? (yield* clock.now());
@@ -1315,8 +1363,7 @@ export const ToolRuntimeLive = (
                   regions,
                   resourceBoundaryRevision:
                     capturedWorkspace.resourceBoundaryRevision,
-                  environmentRevision:
-                    resolved.observedEnvironmentRevision,
+                  environmentRevision: resolved.observedEnvironmentRevision,
                   approval: approvalSnapshot,
                 });
               } catch (cause) {
@@ -1328,9 +1375,7 @@ export const ToolRuntimeLive = (
                 );
               }
               const bound = yield* tx
-                .transact(
-                  p39Recovery.value.findBinding(intent.invocationId),
-                )
+                .transact(p39Recovery.value.findBinding(intent.invocationId))
                 .pipe(
                   Effect.mapError(
                     operationalFailure(
@@ -1502,16 +1547,17 @@ export const ToolRuntimeLive = (
             const claim = yield* Effect.match(
               tx.transact(
                 Effect.gen(function* () {
-                  const snapshotAdmission = yield* validateCapturedSnapshotAndAdmit().pipe(
-                    Effect.mapError((cause) =>
-                      isP39ResourceResolutionStale(cause)
-                        ? cause
-                        : operationalFailure(
-                            "ResourceAdmission",
-                            String(intent.invocationId),
-                          )(cause),
-                    ),
-                  );
+                  const snapshotAdmission =
+                    yield* validateCapturedSnapshotAndAdmit().pipe(
+                      Effect.mapError((cause) =>
+                        isP39ResourceResolutionStale(cause)
+                          ? cause
+                          : operationalFailure(
+                              "ResourceAdmission",
+                              String(intent.invocationId),
+                            )(cause),
+                      ),
+                    );
                   if (snapshotAdmission._tag === "Denied") {
                     return "AdmissionDenied" as const;
                   }

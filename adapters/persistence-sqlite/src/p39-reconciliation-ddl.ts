@@ -19,7 +19,7 @@ CREATE TABLE tool_invocations (
   effect_admission_state TEXT NOT NULL CHECK (effect_admission_state IN
     ('NotAdmitted','MayHaveStarted','LegacyUnknown')),
   recovery_binding_state TEXT NOT NULL CHECK (recovery_binding_state IN
-    ('Bound','LegacyBindingUnproven','HistoricalSettled')),
+    ('Bound','LegacyBindingUnproven','HistoricalSettled','DeniedUnbound')),
   recovery_binding_sha256 TEXT,
   settlement_provenance TEXT CHECK (settlement_provenance IN
     ('Ordinary','Reconciliation','LegacyHistorical')),
@@ -50,6 +50,12 @@ CREATE TABLE tool_invocations (
   CHECK (recovery_binding_state <> 'HistoricalSettled' OR
          (settled_at IS NOT NULL AND settlement_provenance = 'LegacyHistorical')),
   CHECK (recovery_binding_state <> 'LegacyBindingUnproven' OR settled_at IS NULL),
+  CHECK (recovery_binding_state <> 'DeniedUnbound' OR
+    (settled_at IS NOT NULL AND settlement_kind = 'Denied'
+     AND settlement_provenance = 'Ordinary'
+     AND effect_admission_state = 'NotAdmitted'
+     AND result_ref IS NULL AND recovery_binding_sha256 IS NULL
+     AND selected_attempt_no IS NULL AND selected_fact_id IS NULL)),
   CHECK ((recovery_binding_state = 'Bound') =
          (recovery_binding_sha256 IS NOT NULL)),
   CHECK (settlement_kind <> 'Denied' OR
@@ -225,6 +231,24 @@ BEGIN SELECT RAISE(ABORT, 'recovery binding is immutable'); END;
 CREATE TRIGGER recovery_binding_no_delete
 BEFORE DELETE ON tool_invocation_recovery_bindings
 BEGIN SELECT RAISE(ABORT, 'recovery binding is retained'); END;
+CREATE TRIGGER recovery_binding_reject_denied_unbound
+BEFORE INSERT ON tool_invocation_recovery_bindings
+WHEN EXISTS (
+  SELECT 1 FROM tool_invocations AS i
+   WHERE i.invocation_id = NEW.invocation_id
+     AND i.recovery_binding_state = 'DeniedUnbound')
+BEGIN
+  SELECT RAISE(ABORT, 'DeniedUnbound cannot acquire a RecoveryBinding');
+END;
+CREATE TRIGGER effect_attempt_reject_denied_unbound
+BEFORE INSERT ON tool_invocation_effect_attempts
+WHEN EXISTS (
+  SELECT 1 FROM tool_invocations AS i
+   WHERE i.invocation_id = NEW.invocation_id
+     AND i.recovery_binding_state = 'DeniedUnbound')
+BEGIN
+  SELECT RAISE(ABORT, 'DeniedUnbound cannot acquire a new effect attempt');
+END;
 CREATE TRIGGER effect_attempt_identity_immutable
 BEFORE UPDATE OF invocation_id, attempt_no, tool_definition_hash,
   side_effect_semantics, profile_id, profile_version, profile_hash,
@@ -283,8 +307,42 @@ WHEN NOT (OLD.effect_admission_state = NEW.effect_admission_state OR
 BEGIN SELECT RAISE(ABORT, 'tool invocation admission is monotone'); END;
 CREATE TRIGGER tool_invocation_binding_immutable
 BEFORE UPDATE OF recovery_binding_state, recovery_binding_sha256 ON tool_invocations
-WHEN OLD.recovery_binding_state <> NEW.recovery_binding_state OR
-     OLD.recovery_binding_sha256 IS NOT NEW.recovery_binding_sha256
+WHEN NOT (
+  (OLD.recovery_binding_state = NEW.recovery_binding_state
+   AND OLD.recovery_binding_sha256 IS NEW.recovery_binding_sha256)
+  OR
+  (OLD.recovery_binding_state = 'LegacyBindingUnproven'
+   AND OLD.recovery_binding_sha256 IS NULL
+   AND OLD.effect_admission_state = 'NotAdmitted'
+   AND OLD.settled_at IS NULL
+   AND NEW.recovery_binding_state = 'Bound'
+   AND NEW.recovery_binding_sha256 IS NOT NULL
+   AND NEW.effect_admission_state = 'NotAdmitted'
+   AND NEW.settled_at IS NULL
+   AND NEW.settlement_provenance IS NULL
+   AND EXISTS (
+     SELECT 1 FROM tool_invocation_recovery_bindings AS b
+      WHERE b.invocation_id = NEW.invocation_id
+        AND b.binding_sha256 = NEW.recovery_binding_sha256))
+  OR
+  (OLD.recovery_binding_state = 'LegacyBindingUnproven'
+   AND OLD.recovery_binding_sha256 IS NULL
+   AND OLD.effect_admission_state = 'NotAdmitted'
+   AND OLD.settled_at IS NULL
+   AND NEW.recovery_binding_state = 'DeniedUnbound'
+   AND NEW.recovery_binding_sha256 IS NULL
+   AND NEW.effect_admission_state = 'NotAdmitted'
+   AND NEW.settled_at IS NOT NULL
+   AND NEW.settlement_kind = 'Denied'
+   AND NEW.settlement_provenance = 'Ordinary'
+   AND NEW.result_ref IS NULL
+   AND NEW.selected_attempt_no IS NULL
+   AND NEW.selected_fact_id IS NULL
+   AND NOT EXISTS (
+     SELECT 1 FROM tool_invocation_effect_attempts AS a
+      WHERE a.invocation_id = NEW.invocation_id
+        AND a.admission_state <> 'NotAdmitted'))
+)
 BEGIN SELECT RAISE(ABORT, 'recovery binding is immutable'); END;
 
 CREATE TRIGGER tool_invocation_reconciliation_fact_required_insert

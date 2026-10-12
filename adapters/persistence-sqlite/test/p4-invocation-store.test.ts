@@ -11,7 +11,9 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   layer,
+  P4_MIGRATIONS,
   P36_MIGRATIONS,
+  P39_RECONCILIATION_MIGRATION,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
@@ -190,5 +192,199 @@ describe("P4 tool invocation store", () => {
         .canonical.value.settlement._tag,
     ).toBe("Success");
     expect((r as { kind: string | null }).kind).toBe("Success");
+  });
+
+  it("records DeniedUnbound for fresh/provisional denial, preserves Bound denial, and rolls back both denied claim edges", async () => {
+    const app = makeApp();
+    const freshDeniedId = parse(ToolInvocationId)(
+      "tin_018f2b3c-4d5e-7abc-8def-0123456789a2",
+    );
+    const provisionalId = parse(ToolInvocationId)(
+      "tin_018f2b3c-4d5e-7abc-8def-0123456789a3",
+    );
+    const boundId = parse(ToolInvocationId)(
+      "tin_018f2b3c-4d5e-7abc-8def-0123456789a4",
+    );
+    const rollbackInsertId = parse(ToolInvocationId)(
+      "tin_018f2b3c-4d5e-7abc-8def-0123456789a5",
+    );
+    const bindingSha = "a".repeat(64);
+    const denial = (id: typeof freshDeniedId) => ({
+      invocationId: id,
+      executionId,
+      workspaceId,
+      toolName: "shell",
+      toolVersion: "1",
+      sideEffectSemantics: "ReadOnly" as const,
+      argumentsJson: "{}",
+      resolvedRegions: [] as const,
+      approvalId: null,
+      intentAt: "t1",
+    });
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P36_MIGRATIONS);
+      yield* runMigrations([...P36_MIGRATIONS, P39_RECONCILIATION_MIGRATION]);
+      const tx = yield* TransactionPort;
+      const store = yield* ToolInvocationStore;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+
+      const freshDenied = yield* tx.transact(
+        store.recordNoEffectDenial(
+          denial(freshDeniedId),
+          "ResourceAdmissionDenied",
+          "t2",
+        ),
+      );
+
+      yield* tx.transact(store.recordIntent(denial(provisionalId)));
+      const provisionalRollback = yield* Effect.flip(
+        tx.transact(
+          Effect.gen(function* () {
+            yield* store.recordNoEffectDenial(
+              denial(provisionalId),
+              "ResourceAdmissionDenied",
+              "t2",
+            );
+            return yield* Effect.fail("simulated-precommit-crash");
+          }),
+        ),
+      );
+      const provisionalAfterRollback = yield* tx.transact(
+        store.findById(provisionalId),
+      );
+      const provisionalDenied = yield* tx.transact(
+        store.recordNoEffectDenial(
+          denial(provisionalId),
+          "ResourceAdmissionDenied",
+          "t3",
+        ),
+      );
+
+      yield* tx.transact(store.recordIntent(denial(boundId)));
+      yield* sql.unsafe(
+        `INSERT INTO tool_invocation_recovery_bindings (
+           invocation_id,binding_version,canonical_binding_json,binding_sha256,created_at
+         ) VALUES (?,1,'{}',?,'t1')`,
+        [boundId, bindingSha],
+      );
+      yield* sql.unsafe(
+        `UPDATE tool_invocations SET recovery_binding_state='Bound',
+           recovery_binding_sha256=? WHERE invocation_id=?`,
+        [bindingSha, boundId],
+      );
+      yield* sql.unsafe(
+        `INSERT INTO tool_invocation_effect_attempts (
+           invocation_id,attempt_no,admission_state,tool_definition_hash,
+           side_effect_semantics,profile_id,profile_version,profile_hash,
+           profile_protocol,effect_key,binding_sha256,admitted_at,
+           admission_source,admission_time_precision
+         ) VALUES (?,0,'NotAdmitted',NULL,'ReadOnly',NULL,NULL,NULL,NULL,NULL,
+                   ?,NULL,'P39Claim','NotAdmitted')`,
+        [boundId, bindingSha],
+      );
+      const boundDenied = yield* tx.transact(
+        store.recordNoEffectDenial(
+          denial(boundId),
+          "ResourceAdmissionDenied",
+          "t3",
+        ),
+      );
+
+      const insertRollback = yield* Effect.flip(
+        tx.transact(
+          Effect.gen(function* () {
+            yield* store.recordNoEffectDenial(
+              denial(rollbackInsertId),
+              "ResourceAdmissionDenied",
+              "t2",
+            );
+            return yield* Effect.fail("simulated-precommit-crash");
+          }),
+        ),
+      );
+      const rolledBackInsert = yield* tx.transact(
+        store.findById(rollbackInsertId),
+      );
+      const rows = yield* sql.unsafe<{
+        readonly invocation_id: string;
+        readonly recovery_binding_state: string;
+        readonly recovery_binding_sha256: string | null;
+        readonly settlement_kind: string | null;
+        readonly settlement_provenance: string | null;
+        readonly result_ref: string | null;
+      }>(
+        `SELECT invocation_id,recovery_binding_state,recovery_binding_sha256,
+                settlement_kind,settlement_provenance,result_ref
+           FROM tool_invocations
+          WHERE invocation_id IN (?,?,?) ORDER BY invocation_id`,
+        [freshDeniedId, provisionalId, boundId],
+      );
+      return {
+        freshDenied,
+        provisionalRollback,
+        provisionalAfterRollback,
+        provisionalDenied,
+        boundDenied,
+        insertRollback,
+        rolledBackInsert,
+        rows,
+      };
+    });
+    const result = await Effect.runPromise(
+      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
+    );
+    const value = result as {
+      freshDenied: { readonly settlement: { readonly _tag: string } };
+      provisionalRollback: string;
+      provisionalAfterRollback: {
+        readonly value: { readonly settlement: unknown };
+      };
+      provisionalDenied: { readonly settlement: { readonly _tag: string } };
+      boundDenied: { readonly settlement: { readonly _tag: string } };
+      insertRollback: string;
+      rolledBackInsert: { readonly _tag: string };
+      rows: ReadonlyArray<{
+        readonly invocation_id: string;
+        readonly recovery_binding_state: string;
+        readonly recovery_binding_sha256: string | null;
+        readonly settlement_kind: string | null;
+        readonly settlement_provenance: string | null;
+        readonly result_ref: string | null;
+      }>;
+    };
+    expect(value.freshDenied.settlement._tag).toBe("Denied");
+    expect(value.provisionalRollback).toBe("simulated-precommit-crash");
+    expect(value.provisionalAfterRollback.value.settlement).toBeNull();
+    expect(value.provisionalDenied.settlement._tag).toBe("Denied");
+    expect(value.boundDenied.settlement._tag).toBe("Denied");
+    expect(value.insertRollback).toBe("simulated-precommit-crash");
+    expect(value.rolledBackInsert._tag).toBe("None");
+    expect(value.rows).toEqual([
+      {
+        invocation_id: "tin_018f2b3c-4d5e-7abc-8def-0123456789a2",
+        recovery_binding_state: "DeniedUnbound",
+        recovery_binding_sha256: null,
+        settlement_kind: "Denied",
+        settlement_provenance: "Ordinary",
+        result_ref: null,
+      },
+      {
+        invocation_id: "tin_018f2b3c-4d5e-7abc-8def-0123456789a3",
+        recovery_binding_state: "DeniedUnbound",
+        recovery_binding_sha256: null,
+        settlement_kind: "Denied",
+        settlement_provenance: "Ordinary",
+        result_ref: null,
+      },
+      {
+        invocation_id: "tin_018f2b3c-4d5e-7abc-8def-0123456789a4",
+        recovery_binding_state: "Bound",
+        recovery_binding_sha256: bindingSha,
+        settlement_kind: "Denied",
+        settlement_provenance: "Ordinary",
+        result_ref: null,
+      },
+    ]);
   });
 });

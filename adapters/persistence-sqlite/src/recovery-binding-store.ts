@@ -1,16 +1,19 @@
 import type { ToolInvocationId } from "@arbor/domain";
 import {
   canonicalizeRecoveryBindingV1,
-  recoveryBindingV1Digest,
   P39RecoveryEvidenceStore,
+  type RecoveryBindingV1,
+  recoveryBindingV1Digest,
   TransactionScope,
   verifyRecoveryBindingV1,
-  type RecoveryBindingV1,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
-import { persistenceCorruption, repositoryFailure } from "./repository-error.js";
+import {
+  persistenceCorruption,
+  repositoryFailure,
+} from "./repository-error.js";
 
 interface SelectedRecoveryRow {
   readonly recovery_binding_state: string;
@@ -54,9 +57,7 @@ interface SelectedRecoveryRow {
 const isAdmissionSource = (
   value: string | null,
 ): value is "P36Backfill" | "P39Claim" | "P39Admission" =>
-  value === "P36Backfill" ||
-  value === "P39Claim" ||
-  value === "P39Admission";
+  value === "P36Backfill" || value === "P39Claim" || value === "P39Admission";
 
 const isAdmissionTimePrecision = (
   value: string | null,
@@ -76,9 +77,7 @@ const isSideEffectSemantics = (
 const isOutcome = (
   value: string | null,
 ): value is "NotOccurred" | "Occurred" | "StillUnknown" =>
-  value === "NotOccurred" ||
-  value === "Occurred" ||
-  value === "StillUnknown";
+  value === "NotOccurred" || value === "Occurred" || value === "StillUnknown";
 
 interface BindingRow {
   readonly recovery_binding_state: string;
@@ -88,6 +87,19 @@ interface BindingRow {
   readonly binding_version: number | null;
   readonly canonical_binding_json: string | null;
   readonly binding_sha256: string | null;
+}
+
+interface DeniedUnboundRow {
+  readonly recovery_binding_state: string;
+  readonly recovery_binding_sha256: string | null;
+  readonly effect_admission_state: string;
+  readonly settlement_provenance: string | null;
+  readonly settled_at: string | null;
+  readonly settlement_kind: string | null;
+  readonly result_ref: string | null;
+  readonly selected_attempt_no: number | null;
+  readonly selected_fact_id: string | null;
+  readonly binding_invocation_id: string | null;
 }
 
 export const P39RecoveryEvidenceStoreLive: Layer.Layer<
@@ -151,6 +163,17 @@ export const P39RecoveryEvidenceStoreLive: Layer.Layer<
           ) {
             return Option.none();
           }
+          if (
+            row.recovery_binding_state === "DeniedUnbound" &&
+            row.recovery_binding_sha256 === null &&
+            row.effect_admission_state === "NotAdmitted" &&
+            row.settled_at !== null &&
+            row.binding_version === null &&
+            row.canonical_binding_json === null &&
+            row.binding_sha256 === null
+          ) {
+            return Option.none();
+          }
           return yield* corrupt(
             "invocation recovery-binding state does not match its immutable V1 row",
           );
@@ -166,6 +189,67 @@ export const P39RecoveryEvidenceStoreLive: Layer.Layer<
           );
         }
         return Option.some(verified);
+      });
+
+    const findTerminalUnboundDenial = (invocationId: ToolInvocationId) =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        const rows = yield* sql
+          .unsafe<DeniedUnboundRow>(
+            `SELECT i.recovery_binding_state,
+                    i.recovery_binding_sha256,
+                    i.effect_admission_state,
+                    i.settlement_provenance,
+                    i.settled_at,
+                    i.settlement_kind,
+                    i.result_ref,
+                    i.selected_attempt_no,
+                    i.selected_fact_id,
+                    b.invocation_id AS binding_invocation_id
+               FROM tool_invocations AS i
+               LEFT JOIN tool_invocation_recovery_bindings AS b
+                 ON b.invocation_id = i.invocation_id
+              WHERE i.invocation_id = ?`,
+            [invocationId],
+          )
+          .pipe(
+            Effect.mapError(
+              repositoryFailure(
+                "P39RecoveryEvidenceStore",
+                "find-terminal-unbound-denial",
+              ),
+            ),
+          );
+        const row = rows[0];
+        if (
+          row === undefined ||
+          row.recovery_binding_state !== "DeniedUnbound"
+        ) {
+          return Option.none();
+        }
+        if (
+          row.recovery_binding_sha256 !== null ||
+          row.effect_admission_state !== "NotAdmitted" ||
+          row.settlement_provenance !== "Ordinary" ||
+          row.settled_at === null ||
+          row.settlement_kind !== "Denied" ||
+          row.result_ref !== null ||
+          row.selected_attempt_no !== null ||
+          row.selected_fact_id !== null ||
+          row.binding_invocation_id !== null
+        ) {
+          return yield* Effect.fail(
+            persistenceCorruption(
+              "P39RecoveryEvidenceStore",
+              "find-terminal-unbound-denial",
+              "DeniedUnbound row has binding, reconciliation, or settlement fields outside its closed shape",
+            ),
+          );
+        }
+        return Option.some({
+          invocationId,
+          recoveryBindingState: "DeniedUnbound" as const,
+        });
       });
 
     return P39RecoveryEvidenceStore.of({
@@ -340,6 +424,7 @@ export const P39RecoveryEvidenceStoreLive: Layer.Layer<
           return "Bound" as const;
         }),
       findBinding,
+      findTerminalUnboundDenial,
       findSelected: (invocationId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
@@ -399,7 +484,10 @@ export const P39RecoveryEvidenceStoreLive: Layer.Layer<
           );
           const row = rows[0];
           if (row === undefined) return Option.none();
-          if (row.selected_attempt_no === null && row.selected_fact_id === null) {
+          if (
+            row.selected_attempt_no === null &&
+            row.selected_fact_id === null
+          ) {
             return Option.none();
           }
           if (

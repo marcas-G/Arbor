@@ -327,6 +327,7 @@ export const ToolInvocationStoreLive: Layer.Layer<
             fenceNow ?? settledAt,
           );
           if (gate === "ExecutionStopping") return gate;
+          const p39RecoveryColumns = yield* hasP39RecoveryColumns();
 
           const existingRows = yield* run(
             sql.unsafe<InvocationRow>(
@@ -371,25 +372,90 @@ export const ToolInvocationStoreLive: Layer.Layer<
                 ),
               );
             }
-            const updated = yield* run(
-              sql.unsafe(
-                `UPDATE tool_invocations
-                    SET settled_at = ?, settlement_kind = 'Denied',
-                        settlement_json = ?, result_ref = NULL
-                  WHERE invocation_id = ? AND settled_at IS NULL
-                    AND effect_admission_state = 'NotAdmitted'
-                  RETURNING invocation_id`,
-                [
-                  settledAt,
-                  JSON.stringify({
-                    _tag: "Denied",
-                    reasonCode,
-                    projectionVersion: 1,
-                  }),
-                  invocation.invocationId,
-                ],
-              ),
-            );
+            const denialJson = JSON.stringify({
+              _tag: "Denied",
+              reasonCode,
+              projectionVersion: 1,
+            });
+            let updated: ReadonlyArray<{ readonly invocation_id: string }>;
+            if (p39RecoveryColumns) {
+              const stateRows = yield* run(
+                sql.unsafe<{
+                  readonly recovery_binding_state: string;
+                  readonly recovery_binding_sha256: string | null;
+                }>(
+                  `SELECT recovery_binding_state, recovery_binding_sha256
+                     FROM tool_invocations WHERE invocation_id = ?`,
+                  [invocation.invocationId],
+                ),
+              );
+              const state = stateRows[0];
+              if (
+                state?.recovery_binding_state !== "LegacyBindingUnproven" &&
+                state?.recovery_binding_state !== "Bound"
+              ) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "ToolInvocationStore",
+                    "record-no-effect-denial",
+                    "only an unbound provisional or exact Bound P39 invocation may be denied",
+                  ),
+                );
+              }
+              if (
+                (state.recovery_binding_state === "LegacyBindingUnproven" &&
+                  state.recovery_binding_sha256 !== null) ||
+                (state.recovery_binding_state === "Bound" &&
+                  state.recovery_binding_sha256 === null)
+              ) {
+                return yield* Effect.fail(
+                  persistenceCorruption(
+                    "ToolInvocationStore",
+                    "record-no-effect-denial",
+                    "P39 binding state and digest disagree",
+                  ),
+                );
+              }
+              updated = yield* run(
+                sql.unsafe<{ readonly invocation_id: string }>(
+                  `UPDATE tool_invocations
+                      SET settled_at = ?, settlement_kind = 'Denied',
+                          settlement_json = ?, result_ref = NULL,
+                          settlement_provenance = 'Ordinary',
+                          recovery_binding_state = CASE recovery_binding_state
+                            WHEN 'LegacyBindingUnproven' THEN 'DeniedUnbound'
+                            ELSE recovery_binding_state END
+                    WHERE invocation_id = ? AND settled_at IS NULL
+                      AND effect_admission_state = 'NotAdmitted'
+                      AND recovery_binding_state = ?
+                      AND recovery_binding_sha256 IS ?
+                      AND NOT EXISTS (
+                        SELECT 1 FROM tool_invocation_effect_attempts AS a
+                         WHERE a.invocation_id = tool_invocations.invocation_id
+                           AND a.admission_state <> 'NotAdmitted')
+                    RETURNING invocation_id`,
+                  [
+                    settledAt,
+                    denialJson,
+                    invocation.invocationId,
+                    state.recovery_binding_state,
+                    state.recovery_binding_sha256,
+                  ],
+                ),
+              );
+            } else {
+              updated = yield* run(
+                sql.unsafe<{ readonly invocation_id: string }>(
+                  `UPDATE tool_invocations
+                      SET settled_at = ?, settlement_kind = 'Denied',
+                          settlement_json = ?, result_ref = NULL
+                    WHERE invocation_id = ? AND settled_at IS NULL
+                      AND effect_admission_state = 'NotAdmitted'
+                    RETURNING invocation_id`,
+                  [settledAt, denialJson, invocation.invocationId],
+                ),
+              );
+            }
             if (updated.length === 0) {
               return yield* Effect.fail(
                 persistenceCorruption(
@@ -400,35 +466,67 @@ export const ToolInvocationStoreLive: Layer.Layer<
               );
             }
           } else {
-            yield* run(
-              sql.unsafe(
-                `INSERT INTO tool_invocations (
-                   invocation_id, execution_id, workspace_id, tool_name,
-                   tool_version, side_effect_semantics, arguments_json,
-                   resolved_regions_json, approval_id, effect_admission_state,
-                   intent_at, settled_at, settlement_kind, settlement_json,
-                   result_ref
-                 ) VALUES (?,?,?,?,?,?,?,?,?,'NotAdmitted',?,?,'Denied',?,NULL)`,
-                [
-                  invocation.invocationId,
-                  invocation.executionId,
-                  invocation.workspaceId,
-                  invocation.toolName,
-                  invocation.toolVersion,
-                  invocation.sideEffectSemantics,
-                  invocation.argumentsJson,
-                  JSON.stringify(invocation.resolvedRegions),
-                  invocation.approvalId,
-                  invocation.intentAt,
-                  settledAt,
-                  JSON.stringify({
-                    _tag: "Denied",
-                    reasonCode,
-                    projectionVersion: 1,
-                  }),
-                ],
-              ),
-            );
+            const denialJson = JSON.stringify({
+              _tag: "Denied",
+              reasonCode,
+              projectionVersion: 1,
+            });
+            if (p39RecoveryColumns) {
+              yield* run(
+                sql.unsafe(
+                  `INSERT INTO tool_invocations (
+                     invocation_id, execution_id, workspace_id, tool_name,
+                     tool_version, side_effect_semantics, arguments_json,
+                     resolved_regions_json, approval_id, effect_admission_state,
+                     recovery_binding_state, recovery_binding_sha256,
+                     settlement_provenance, selected_attempt_no, selected_fact_id,
+                     intent_at, settled_at, settlement_kind, settlement_json,
+                     result_ref
+                   ) VALUES (?,?,?,?,?,?,?,?,?,'NotAdmitted','DeniedUnbound',
+                     NULL,'Ordinary',NULL,NULL,?,?,'Denied',?,NULL)`,
+                  [
+                    invocation.invocationId,
+                    invocation.executionId,
+                    invocation.workspaceId,
+                    invocation.toolName,
+                    invocation.toolVersion,
+                    invocation.sideEffectSemantics,
+                    invocation.argumentsJson,
+                    JSON.stringify(invocation.resolvedRegions),
+                    invocation.approvalId,
+                    invocation.intentAt,
+                    settledAt,
+                    denialJson,
+                  ],
+                ),
+              );
+            } else {
+              yield* run(
+                sql.unsafe(
+                  `INSERT INTO tool_invocations (
+                     invocation_id, execution_id, workspace_id, tool_name,
+                     tool_version, side_effect_semantics, arguments_json,
+                     resolved_regions_json, approval_id, effect_admission_state,
+                     intent_at, settled_at, settlement_kind, settlement_json,
+                     result_ref
+                   ) VALUES (?,?,?,?,?,?,?,?,?,'NotAdmitted',?,?,'Denied',?,NULL)`,
+                  [
+                    invocation.invocationId,
+                    invocation.executionId,
+                    invocation.workspaceId,
+                    invocation.toolName,
+                    invocation.toolVersion,
+                    invocation.sideEffectSemantics,
+                    invocation.argumentsJson,
+                    JSON.stringify(invocation.resolvedRegions),
+                    invocation.approvalId,
+                    invocation.intentAt,
+                    settledAt,
+                    denialJson,
+                  ],
+                ),
+              );
+            }
           }
           const rows = yield* run(
             sql.unsafe<InvocationRow>(
