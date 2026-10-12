@@ -1,12 +1,6 @@
 # P4 — Contract Index
 
-**RAI-DG-01 amendment (DID v1.37 §8.18A.1):** P4 `06` retains exact
-`OutcomeUnknown(ReconciliationRequired(nonempty invocationRefs))` truth and
-no-blind-replay semantics; a Work-bound settlement is a readmission source
-through the validated EGP binding. Tool invocation settlement behavior is
-unchanged.
-
-**Authority:** DID v1.18, with P4 phase contracts frozen under DID v1.8 except
+**Authority:** DID v1.40, with P4 phase contracts frozen under DID v1.8 except
 where this index records the v1.18 source-of-truth supersession. These
 documents are **not** a fifth design layer; they are the P4-owned
 implementation contracts authorized by DID §13.
@@ -28,6 +22,53 @@ Worker-fencing surfaces. Control `ActionApproval` / AssignWork consumption is
 unchanged. No DID version was changed; each owner clause cites this accepted
 amendment and its source digest.
 
+## Accepted owner amendment — EA-DG-01 (2026-10-11)
+
+Decision `ACCEPT_EXECUTABLE_APPROVAL_ISSUANCE_DECISION_RESUME`, fixed proposal
+SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+acceptance and landing audit:
+`planning/results/EA-DG-01-governance-acceptance.md` and
+`planning/results/EA-DG-01-contract-landing.result.md`.
+
+The P4 `01`/`02`/`03`/`06` amendment adds a nonterminal Executable
+`ApprovalRequired` handoff, exact Runtime-owned action binding, exact Approved
+revision in the fenced P4 claim, `ApprovalRejected`, legacy-only replay of
+`Denied(ApprovalRequired)`, and the P4 side of forward migration 0038. MAC
+owns the shared ActionApproval lifecycle; the Control route and CAPA
+AssignWork consume path are unchanged. Migration 0038 depends on integrated
+AH7/P36 0036 and AH10 Deliver 0037; no earlier migration is edited. Its
+table rebuild preserves 0033's `action_approvals_id_project` composite UNIQUE
+key required by the existing AssignWork target-binding foreign key.
+
+## Accepted owner amendment — AH7-DG-02 Reconcilable reality proof / P39
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P4 `01` owns the `ReconciledNoEffect` canonical observation/settlement and
+closed proof/reason unions; `02` owns effect/reconcile/replay/Stop ordering;
+`03` owns trusted approval revision/subject binding; `06` owns P39 binding,
+attempt/fact/selected-fact DDL and transaction/fence rules; `08` owns
+shell@3 classification and the constrained-profile gate. P39 is
+`0039_ah7_reconciliation_attempts`, after accepted P36/P37/P38 owner contracts;
+their migration implementations remain unintegrated and separately gated.
+
+## Accepted AH7-DG-01 / P39-P40 terminal Observation compatibility (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+P39/P40 compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+P4 `01` owns the six-tag v1 canonical envelope (including P39
+`ReconciledNoEffect`); `02` owns first-write canonicalization and terminal
+re-entry; `06` owns the P40 row/JSON/P39 selected-fact checks, hash, fence,
+CAS and DDL; `07` retains Artifact identity and does not reconstruct an absent
+Observation. P1 `04`/`06` own cumulative prefix/startup; P3 `08`, P9 `07` and
+P10 `02`/`04`/`05`/`07` own their existing source/fact/query/read-model
+contracts. P39-only Runtime startup and all migration/sidecar qualification
+remain blocked until accepted P40 is present and the gates pass.
+
 ```text
 Detailed Implementation Design v1.18 (frozen)
         ↓ delegates phase-scoped closure
@@ -46,7 +87,7 @@ existing P4 `ToolIntent` / `ToolRuntimePort` path.
 | Doc | Owns |
 |---|---|
 | `01-tool-contracts.md` | `ToolDefinition`, `ToolIntent`, `ToolExecutionContext`, `CanonicalToolObservation`, `SideEffectSemantics`, `ToolInvocationSettlement` |
-| `02-tool-runtime-pipeline.md` | the SD §6.5 pipeline; `ToolRuntimePort.invoke`; `ToolInvocationDenied`; bounded observation |
+| `02-tool-runtime-pipeline.md` | the SD §6.5 pipeline; `ToolRuntimePort.invoke`; exact approval matching; nonterminal `ApprovalRequired`; terminal no-effect Denied; bounded observation |
 | `03-authority-permission-approval.md` | trusted `InvocationAuthority` fact, capability-ceiling exact-match, `InvocationApproval` + atomic consumption |
 | `04-sandbox.md` | `SandboxPort` contract + minimal local executor |
 | `05-resource-admission.md` | validate-only `ResourceOwnership ⊆ ResourceBoundary`; canonical region resolution |
@@ -117,3 +158,33 @@ implementation reconciliation applied. **FORMALLY CLOSED.**
 handoff without changing P4's executable ToolRuntime pipeline. Agent Runtime
 owns Session append; ToolRuntime remains the authority/effect/settlement owner.
 This additive design successor is not SCRC implementation evidence.
+
+## Accepted owner amendment — P38/P39 RecoveryBindingV1 projection and freshness (2026-10-12)
+
+Decision: accept the exact P38/P39 fixed landing package at
+`planning/proposals/P38-P39-projection-fixed-landing-package-v3-draft.md`,
+SHA-256
+`7483A49AF7E6528D81895199CF8A15BB83FB2F7DFD4DE3797BAAB7D2A77D4600`.
+The original question/answer and decision scope are recorded in
+`planning/results/P38-P39-projection-v3-governance-acceptance.record.md`.
+The independent exact-SHA review returned Blocking = 0 in
+`planning/results/P38-P39-projection-v3-independent-review.result.md`.
+
+The package fixes the RecoveryBindingV1 digest projections and trusted receipt
+mapping without adding keys or changing P38 exact-target approval matching.
+P4 `03` preserves target array order and duplicates; `05`/`06` distinguish
+invocation and boundary resource snapshots, validate the captured Workspace in
+the fenced claim, and allow exactly one full refresh after the first stale
+result. P12 `09` supplies the existing `canonicalRegionString` element
+encoding. No DID/System Design revision, RecoveryBindingV2, release, or
+preserved-user-database upgrade is included. Production implementation under
+the existing exact P39 V1 authorization requires an independent
+post-landing consistency review with Blocking = 0.
+
+## RAI-DG-01 Work-revision readmission source
+
+P4 `06` retains exact `OutcomeUnknown(ReconciliationRequired(nonempty
+invocationRefs))` truth and the no-blind-replay rule. When its owning Execution
+is bound to an EGP Work Episode, that settled source holds the exact
+`(WorkId, WorkRevision)` through P2's canonical readmission gate. It does not
+change ToolInvocation settlement, reconciliation, or retry semantics.

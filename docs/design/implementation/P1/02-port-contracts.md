@@ -1,8 +1,18 @@
 # P1 — 02 Port Contracts
 
-**Authority:** DID v1.6 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10; DID v1.36 §4.1C FT-DG-01 ProjectResourceProfilePort
+**Authority:** DID v1.6 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10; DID v1.38 §4.1C FT-DG-01 ProjectResourceProfilePort and Project source
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Implements:** P1 port contracts; P1-DG-08 persistence access; P1-DG-10 port ownership.
+
+**Accepted FT-DG-01 OPEN-1/OPEN-2 owner amendment (DID v1.38):** The existing
+`ProjectRepository.create(project)` and `findById(projectId)` carry the
+Project's `resourceSource: ProjectResourceSource` field. This does not add a
+Profile catalog lookup or change `ProjectResourceProfilePort` timing, effects,
+or filesystem boundary. The persisted source is decoded as the exact closed
+P1 ADT; malformed JSON, unknown tags, missing/extra fields, or wrong field
+types fail the Project read as persistence corruption and are never converted
+to `LegacyUnknown`. `ProjectDirectory`'s non-path read projection is owned by
+P15 `02-directory-read.md`.
 
 Ports are Effect services (DID §7.1/§7.7); adapters are Layers. All P1
 repositories **require `TransactionScope`** and never open their own

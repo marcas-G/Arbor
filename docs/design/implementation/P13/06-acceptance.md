@@ -36,7 +36,7 @@ not reconstruct lifecycle from `workspace-detail.currentWork/pendingWorks`.
 | EC-3 | 10 个 frozen view 均有 fixture/render coverage（硬要求 2） | render tests：10 view × (typical / minimal / unknown-enum) |
 | EC-4 | Problem DTO 主要 typed failures 明确 UI rendering（硬要求 3） | render tests：六 category（unauthenticated/forbidden/not-found/invalid-request/stale/其他503）+ `TerminalRejected` 内联态 |
 | EC-5 | WS invalidation → server refetch，不自行 replay（硬要求 4） | 单测：帧处理只触发 refetch、cache 无事件性写入；e2e：invalidation 后数据来自 server 响应 |
-| EC-6 | 命令一律经 `/commands`，暴露集合 == `02` Human-actionable 七项（硬要求 5） | UI command catalog 常量 + 机械测试：表单可达命令集合相等；architecture test：写路径白名单（`01` I3） |
+| EC-6 | 命令一律经 `/commands`，暴露集合 == `02` Human-actionable 十五项（硬要求 5） | UI command catalog 常量 + 机械测试：表单可达命令集合相等；architecture test：写路径白名单（`01` I3） |
 | EC-7 | `SelectCurrentWork` 无人工选择控件（`02` §4） | 测试：runnable/current 呈现组件不含 command 发起；catalog 不含该 type |
 | EC-8 | `SendMessage` 无 chat 控件（`02` §5） | 测试：transcript/detail 视图无消息输入；catalog 不含该 type |
 | EC-9 | Search 保持 out-of-v1（硬要求 6） | 测试：无 search 端点调用/输入；architecture test：无 `/search` 类路径 |

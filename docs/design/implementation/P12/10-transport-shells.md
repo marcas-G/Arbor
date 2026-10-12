@@ -1,6 +1,6 @@
 # P12 — 10 Transport Shells (v1.13 G6)
 
-**Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.36 §4.1C, v1.13 G6; SD v1.13 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
+**Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.36 §4.1C, v1.39 EA-DG-01, v1.13 G6; SD v1.14 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
 **Status:** DRAFT.
 
 **敏感读取边界修订（2026-10-10，P12-SRA-01）：** accepted governance
@@ -45,6 +45,13 @@ daemons : recovery pass driver (`P9/00`), verification/completion consumer loops
 
 - `api-contracts` is the transport-neutral surface P12 binds to (P10 `05` §3).
 - Error presentation uses the frozen `Problem` DTO (DID §10.5).
+- EA-DG-01 `ResolveExecutableApproval` is forwarded through the same
+  authenticated strict external command path. The shell supplies no authority
+  facts and cannot construct a P4 approval binding; P12 authenticates first,
+  invokes the pure resolver, then forwards the typed decision to P1/Gateway.
+  Missing/foreign targets use the same safe not-found response. P10's typed
+  Executable Inbox target is rendered as view data and is never accepted back
+  as an authority payload. `eap:`/`cap:` routing remains strict and distinct.
 - **Search (F9) is an explicit out-of-v1 deferral, not an implemented surface.**
   The view semantics are owned upstream of P12 (P10) and are **unfrozen**; P12
   does not implement, wire, or expose a Search surface. If/when P10 freezes a
@@ -55,6 +62,14 @@ daemons : recovery pass driver (`P9/00`), verification/completion consumer loops
 ## 3. Authentication → Authority Resolver
 
 - External human/parent requests are authenticated at the transport boundary.
+
+P8 `RetryVerification` uses only the existing authenticated `/commands`
+external envelope. The shell supplies authenticated actor and stable
+CommandId; strict payload fields include exact Work, Verification, expected
+Work revision and bounded summary content, never a BlobRef or authority.
+Resolver visibility alone does not authorize submission: P8 revalidates the
+exact human role and canonical facts at commit. The action is unavailable to
+Agent/model, RecoveryController, scheduler, or Attention-consumer paths.
 - For sensitive read surfaces, transport authentication and the existing
   supported local-principal check (`user:local`) MUST complete before any
   projection, directory, progress-stream source, or invalidation broadcast is
@@ -302,3 +317,18 @@ missing claim; its existing exact-v2 post-commit replay behavior remains the
 only retry path, and continuing failure remains outside this automatic
 Attention guarantee. Historical v1 rows remain preserve-only and are never
 replayed or backfilled under this contract.
+
+## Accepted P37 DeliverReplay deployment profile wiring (DID v1.43)
+
+The v5+v6 fixed package hashes, B0 independent review and acceptance are in
+`planning/results/AH10-deliver-event-pruning-v6-governance-acceptance-and-landing.md`.
+The P12 host pins the accepted `DeliverReplayCapacityProfile` identity and
+runtime values—poll interval/lease TTL, outbox/event batch sizes, and deterministic
+base/max/exponent retry backoff—as deployment configuration consumed by the
+P10 dispatcher. The profile ID/revision in measured evidence must match this
+active configuration. Metrics do not feed back into dispatcher or authority
+decisions. The global SQLite lease and due-Project attempt ordering remain
+P1/P10 contracts; this transport/deployment document adds no HTTP, WebSocket,
+CLI, auth, readiness or transport route semantics. A lease TTL does not
+preempt a process holding SQLite's writer lock; deployment qualification uses
+the measured lock-hold/writer-wait limits from P12 `05`/`13`.

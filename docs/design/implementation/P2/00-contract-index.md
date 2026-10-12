@@ -1,9 +1,14 @@
 # P2 — Contract Index
 
 **RAI-DG-01 amendment (DID v1.37 §8.18A.1):** P2 `02`/`05` own the
-durable WorkReadmissionGateStore port, Work-bound admission recheck and
-no-admission result. It leaves the EGP Work Episode as the identity source and
-adds no schema/table/migration.
+transaction-scoped exact-Work-revision readmission source query and
+authoritative Work-bound admission recheck. It adds no gate table, migration,
+WorkWait state or runnable port signature.
+
+**Accepted Blocked WorkEpisode amendment:** P2 `01`/`02`/`04`/`05` own
+atomic Blocked settlement, current WorkBlocker ledger writes, exact
+Manual+InboxAdvanced Wait registration, and the transaction-scoped blocker
+store. It does not infer blockers from legacy rows or add a Work lifecycle.
 
 > **MAC successor (DID v1.31):** generic durable Execution, Lease/Fencing,
 > Wait and recovery contracts remain. Active new-write temporary parallel Agent
@@ -35,8 +40,36 @@ Detailed Implementation Design v1.7 (frozen)
 docs/design/implementation/P2/**   (these contracts)
 ```
 
+## Accepted owner amendment — EA-DG-01 (2026-10-11)
+
+Decision `ACCEPT_EXECUTABLE_APPROVAL_ISSUANCE_DECISION_RESUME`, fixed proposal
+SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`.
+P2 `03` §4.1 freezes the full Worker-fenced issuance transaction and
+Stop/issuance commit ordering; `05` uses the existing `HumanIntervention` wake
+and `06` recovers a durable ApprovalRequired pause to the same active
+Execution after resolution. External Stop retains authenticated P2 command
+authority without a Worker-lease requirement. Control/CAPA behavior is
+unchanged. Acceptance:
+`planning/results/EA-DG-01-governance-acceptance.md`;
+landing audit: `planning/results/EA-DG-01-contract-landing.result.md`.
+
 DID §13 points at `docs/design/implementation/P2/**`; a conflict resolves in
 favor of the DID.
+
+## Accepted owner amendment — AH10 Submitted DecisionEpisode binding failure (DID v1.42)
+
+Fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance and landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+P2 `06` forbids ordinary recovery settlement of the exact fact-blocked
+DecisionEpisode. After existing authorized StopExecution, it requires a
+current full lease, P3/P9 stop-only quiescence, a persisted
+`SettlementProposed(Interrupted(StopRequested))`, and the existing unresolved
+P4 side-effect gate to be clear before RecoveryController uses the existing
+SettleExecution. This frees the active slot without clearing public P9/P10
+Attention or replaying the old selection. Migration 0041 remains conditional
+on integrated/qualified 0036–0040; this landing authorizes no implementation.
 
 **DID v1.28 EGP supersession:** every P2 statement that admits, persists,
 schedules or settles `ExecutionFocus=Coordination` is historical. New writes
@@ -48,13 +81,17 @@ Implementation migrations 0025/0026 subsequently remove the focus columns from
 the current `executions` and `agent_execution_state` schemas; legacy decoding
 is compatibility-only and cannot admit or drive a new execution.
 
+P41 does not change the accepted EGP binding, formation, or settlement
+semantics; it adds only P2 RecoveryController handling for the exact
+fact-blocked Submitted DecisionEpisode case described above.
+
 ## Documents
 
 | Doc | Owns |
 |---|---|
 | `01-command-contracts.md` | P2 command set, runtime authority facts, mutation classes, payload/result/rejection/events |
 | `02-port-contracts.md` | P2 ports (ExecutionRepository, Session append/idempotent source write, AgentLoopStepStore, WorkerDispatch, ExecutionDriver, RuntimeSafetyGate, ExecutionScheduler, WorkWaitStore, timers), Effect A/E/R |
-| `03-lease-fencing-model.md` | lease lifecycle, generation, fence/stop predicates, quiescence-control admission, recovery authority |
+| `03-lease-fencing-model.md` | lease lifecycle, generation, fence/stop predicates, quiescence-control admission, recovery authority; AH10 DeliverMessage inherits the existing NormalExecutionMutation fence |
 | `04-sqlite-schema.md` | P2 DDL (`executions`, `execution_leases`, `agent_execution_state`, `session_entries`, `work_waits`, `scheduler_timers`) + DID v1.20 `agent_loop_steps`/`agent_loop_step_actions` successor migration, indexes, CAS SQL |
 | `05-scheduler-wait.md` | ExecutionScheduler, deterministic re-evaluation trigger, durable WorkWait, wake/timer, lost-wake-up protection |
 | `06-recovery-skeleton.md` | recovery order, expired-lease invalidation, unsettled detection, RecoveryController settlement, DurabilityEnvelope |
@@ -75,7 +112,7 @@ facts only.
 | G2 `RecordEnvironmentChange` → P11 | `01` §1 |
 | G3 P2 scheduler/WorkWait/wake vs P7 runnability | `02` §6–§8, `05` |
 | G4 ExecutionDriverPort + Fake Driver + P2 Runtime Safety gate | `02` §5, `05` §7 |
-| G5 WorkspaceMain/ExecutionBound admission + atomic session + IDs | `01` §5, `02` §2, `04` §3.1 |
+| G5 exact ExecutionEpisodeBinding admission + binding/session/ID checks | `01` §5, `02` §2, `04` §3.1; EGP v1.28 supersedes WorkspaceMain/ExecutionBound focus-era new writes |
 
 ## Phase-scoped closures owned here
 

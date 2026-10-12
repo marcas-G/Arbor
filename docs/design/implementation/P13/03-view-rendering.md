@@ -25,7 +25,7 @@ transport, or canonical lifecycle semantics.
 | `responsibility-tree` | 缩进树（root 顶部；depth 参数控件）；节点卡 = name + `WorkspaceStatusLabel` 徽章 + `subtreeAttention`（attention/actionRequired 计数，>0 高亮）+ `currentWork.objective` 摘要 + `usageSummary`（tokens/cost；cost=`Unknown` 原样呈现 "unknown"，≠0） | 节点点击 → `workspace-detail` 下钻（本文件 §4 导航） |
 | `attention` | 按 severity 分组列表（ActionRequired 在前）；行 = source 徽章 + summaryRef + occurredAt + target 链接 | 行点击 → 目标 workspace 下钻；`AttentionSeverity`/`AttentionSource` 未知值原样（I5） |
 | `workspace-detail` | 单 workspace 全景：responsibility 摘要、boundary、currentWork、pendingWorks 列表、executionSummary、dependencies 表（state 徽章 + satisfiedBy 链接）、inboxUnconsumed 计数列表、verification（criteriaResults 表：required 标记 + verdict 徽章 + evidenceRefs；acceptance 块）、auditTimeline（sequence + eventType + at，mono） | 各 ID 链接跳转对应下钻；`pendingWorks` 行**不是**选择控件（`02` §4）；activeExecution 卡带"停止该执行"紧急控件（`02` §2 StopExecution，显式确认） |
-| `work-detail` | 精确 `{projectId, workspaceId, workId}` 的只读 Work 页面：objective/why/completionExpectation、revision、canonical lifecycle；有精确绑定时呈现 Acceptance 与 PASS Verification 摘要 | `Open + acceptedResult` 呈现“已验收、待完成”；`Completed` 呈现“已完成”；`Cancelled` 呈现已取消；证据明细仍由 Verification view 提供；不从 Workspace/Session 推断生命周期 |
+| `work-detail` | 精确 `{projectId, workspaceId, workId}` 的只读 Work 页面：objective/why/completionExpectation、revision、canonical lifecycle；有精确绑定时呈现 Acceptance 与 PASS Verification 摘要；有当前 Blocked WorkEpisode 时显示每个 safe denial category、bounded request/observation refs 与恢复指导 | `Open + acceptedResult` 呈现“已验收、待完成”；`Completed` 呈现“已完成”；`Cancelled` 呈现已取消；Blocked explanation 仅来自精确 WorkBlocker/settlement facts；证据明细仍由 Verification view 提供；不从 Workspace/Session 推断生命周期 |
 | `current-work` | 单卡：objective + status + activeExecution（executionId + admittedAt）；`null` → 空态"无当前工作" | 空态不得提供"去选择"动作（`02` §4） |
 | `verification` | criteriaResults 全表 + evidenceRefs + acceptance 状态块 | verdict 徽章三态 + 未知值原样 |
 | `dependency-view` | 依赖行表：consumer → binding → state → satisfiedBy；project 范围与 workspace 范围两个查询形态（DTO req 二选一） | state 徽章；行内无任何变更动作（变更走 `02` 矩阵，v1 无 dependency 类 Human-actionable） |
@@ -57,8 +57,13 @@ transport, or canonical lifecycle semantics.
       → work-detail / verification / transcript / dependency-view / inbox-view
 命令区：detail/attention 上下文中的 governance 动作
       （RecordDecision / SteerWork / AcceptWorkOutcome / StopExecution /
-       Grant|RevokePermission；`02` §2）
+       Grant|RevokePermission / RetryVerification；`02` §2）
 ```
+
+Blocked Work Detail itself does not provide an Agent retry or projection-clear
+button. Recovery guidance points to the existing human/Parent `SteerWork`
+boundary or later WorkEpisode; `resolve_work_blocker` is a WorkEpisode-only
+control and requires exact later successful-action evidence.
 
 路由为纯 UI 状态（URL path/query），不属于任何 server 语义。
 

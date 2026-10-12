@@ -1,6 +1,6 @@
 # P1 — 01 Command Contracts
 
-**Authority:** DID v1.6 §4.1, §4.1A, §4.2, §0A.1, §6A.15, §12.3, §12.5, §12.6, §12.10, §12.11; DID v1.36 §4.1C FT-DG-01 CreateProject v2
+**Authority:** DID v1.6 §4.1, §4.1A, §4.2, §0A.1, §6A.15, §12.3, §12.5, §12.6, §12.10, §12.11; DID v1.38 §4.1C FT-DG-01 CreateProject v2 and source attribution; DID v1.39 EA-DG-01 ResolveExecutableApproval
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Implements:** P1 command contracts; P1-DG-02/05 (DID-resolved); P1-DG-10 sub-items (ID generation, `AssignWork` rejections, child-workspace phase); fingerprint algorithm (P1-DG-03).
 
@@ -95,7 +95,16 @@ type VerifiedCommandAuthority =
       readonly commandId: CommandId;
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
       readonly projectId: ProjectId;
-      readonly targetWorkspaceId: WorkspaceId };
+      readonly targetWorkspaceId: WorkspaceId }
+  | { readonly _tag: "ExecutableApprovalDecisionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly approvalId: string;
+      readonly workspaceId: WorkspaceId;
+      readonly executionId: ExecutionId;
+      readonly expectedRevision: number };
 ```
 
 Exact-match rule (all conjuncts required; any mismatch → `AuthorityDenied`
@@ -110,6 +119,10 @@ common(authority, envelope, context, fingerprint):
   ∧ authority.projectId                  == envelope.projectId
 CreateChildWorkspace additionally: authority.parentWorkspaceId == payload.parentWorkspaceId
 AssignWork           additionally: authority.targetWorkspaceId == payload.workspaceId
+ExecutableApproval additionally: authority.approvalId == payload.approvalId
+  ∧ authority.workspaceId == approval.workspaceId
+  ∧ authority.executionId == approval.executionId
+  ∧ authority.expectedRevision == payload.expectedRevision
 ```
 
 - The fact is a **trusted input** produced outside the command pipeline. P1
@@ -183,9 +196,15 @@ decoders validate JSON syntax, object/union shape, owned fields, branded IDs,
 primitive/range/enum values and nested result values; unexpected members and
 missing required members fail closed.
 
-The current 26 registered command handlers all use schema version `"1"`.
-That current registration set must have a corresponding result decoder plus
-the shared rejection decoder. A missing descriptor, unsupported schema
+The current production registry has 28 required command handlers. When the
+optional `ResolveControlApproval` handler is composed, it adds one descriptor
+(29 total); these counts align with the current P13 `02` matrix. Handler
+`schemaVersion` is command-specific: `CreateProject` uses schema version `2`,
+while the other current handlers use their owning contract's registered
+version (currently `"1"`). This does not widen P1's own three-command phase
+set or the ordinary `SendMessage/1` receipt DTO. Every exact registered
+`(commandType, schemaVersion)` pair, including the optional one when composed,
+must have a corresponding result decoder plus the shared rejection decoder. A missing descriptor, unsupported schema
 version, invalid JSON, wrong shape, missing required resolution JSON, or
 unknown rejection tag is a non-command stored-state corruption, never a
 `TerminalRejected` or model-correctable rejection. Use the existing
@@ -267,6 +286,27 @@ host identifiers, not Domain entity IDs or authority capabilities.
 ```ts
 type ResourceProfileRef = string;
 type ResourceProfileVersion = string;
+
+/** Project-owned historical source of its initial root resource boundary. */
+type ProjectResourceSource =
+  | { readonly _tag: "Profile";
+      readonly resourceProfileRef: ResourceProfileRef;
+      readonly version: ResourceProfileVersion }
+  | { readonly _tag: "ConversationOnly" }
+  | { readonly _tag: "LegacyUnknown" };
+
+interface Project {
+  readonly resourceSource: ProjectResourceSource;
+}
+
+type NewProjectResourceSource = Exclude<
+  ProjectResourceSource,
+  { readonly _tag: "LegacyUnknown" }
+>;
+
+interface CreateProjectInput {
+  readonly resourceSource: NewProjectResourceSource;
+}
 ```
 
 ```ts
@@ -329,8 +369,25 @@ boundary only, the command additionally writes the P1-owned
 `WorkspaceResourceActivationChanged(Pending)` after WorkspaceCreated in this
 same transaction. ConversationOnly has no intent and no activation event. The
 canonical Workspace ResourceBoundary persisted by this command is the resource
-truth. Durable Profile source attribution is OPEN-1 in the FT-DG-01 v3
-proposal and is not claimed here.
+truth. The Project persists the selected `resourceSource` in the same existing
+transaction as its other state. The handler derives it directly from the v2
+selector: `Profile` copies the exact ref/version and `ConversationOnly` stays
+tagged; `LegacyUnknown` is migration/read compatibility state and cannot be
+created by a new CreateProject command. This source records the historical
+choice only: it is not authority, does not retarget the Workspace boundary,
+and contains no filesystem path. Existing Projects receive
+`LegacyUnknown` in migration 0042 without inference from Workspace state,
+events, receipts, host catalog, or filesystem. ProjectCreated and
+WorkspaceCreated EventVersion-1 payloads and their relative order remain
+unchanged.
+
+Historical CreateProject v1 requests/receipts remain preserve-only. A raw v1
+address payload is rejected by the strict current codec before Resolver or
+receipt lookup. A valid v2 request reusing a v1 CommandId reaches the normal
+Gateway tuple comparison after authentication, Actor binding, and Resolver
+visibility; schema mismatch returns non-disclosing `IdempotencyConflict` and
+leaves the old receipt unchanged. No old-schema decoder, receipt pre-read,
+fingerprint recomputation, or v1 receipt migration is added.
 
 ### Events (same transaction, ordered)
 
@@ -447,6 +504,46 @@ deterministic preconditions above.
 ```text
 WorkAssigned
 ```
+
+## 7A. Cross-phase `ResolveExecutableApproval` Command (EA-DG-01)
+
+The approval decision uses the existing P1 CommandGateway/receipt boundary;
+P1's original three phase-owned creation commands remain unchanged.
+
+```ts
+type ResolveExecutableApprovalPayload = {
+  readonly approvalId: string;
+  readonly expectedRevision: number;
+  readonly decision: "Approve" | "Reject";
+  readonly reason: string | null;
+};
+
+Command type: `ResolveExecutableApproval`; Handler `schemaVersion = "1"`.
+
+type ResolveExecutableApprovalResult = {
+  readonly approvalId: string;
+  readonly executionId: ExecutionId;
+  readonly state: "Approved" | "Rejected" | "Expired";
+  readonly revision: number;
+};
+```
+
+P12 resolves `ExecutableApprovalDecisionAuthority` from the authenticated
+human, exact project/workspace/Execution/approval and decision policy before
+Gateway entry. Missing and foreign approval targets return the same safe
+not-found response before receipt lookup; the user-visible route does not
+reveal target existence. For an authorized target, Gateway/Handler validates
+`route_kind='Executable'`, active Execution, Pending state and exact
+`expectedRevision`. If the request is still Pending but `expiresAt <= now`,
+the command commits Expired rather than the requested human decision and
+returns that committed state/revision. Otherwise it CASes Approved or Rejected.
+
+State change, exact Inbox revision consumption, `ExecutableApprovalResolved`
+event and Committed Command receipt share one transaction. At-least-once
+receipt replay returns the committed decision without another revision change,
+Inbox consumption or wake. A stale revision is the existing typed
+`RevisionConflict`. This command cannot read/decide `route_kind='Control'` or
+consume an approval; CAPA `ResolveControlApproval` remains unchanged.
 
 ## 8. Idempotency summary
 

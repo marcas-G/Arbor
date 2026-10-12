@@ -1,6 +1,6 @@
 # P10 — 05 Query Surface, User Actions, Transport Boundary (GQ4/GQ6)
 
-**Authority:** DID v1.13 G4/G6, §7.2 (ProjectionQueryPort), §10.4.1 (projection-runtime deps domain+ports; api-contracts deps domain), §10.5 (Problem DTO); SD v1.3 §12.5, §13.10; P8 `05` (P14 consume-only); P6 `04` (Steer), P2 `01` (Stop).
+**Authority:** DID v1.13 G4/G6, v1.39 EA-DG-01, §7.2 (ProjectionQueryPort), §10.4.1 (projection-runtime deps domain+ports; api-contracts deps domain), §10.5 (Problem DTO); SD v1.14 §12.5, §13.10; P8 `05` (P14 consume-only); P6 `04` (Steer), P2 `01` (Stop).
 **Status:** FROZEN — DID v1.17 D-1 additive read-model successor (TR-WPU-B/C/D).
 
 **FT-DG-02 additive contract amendment (2026-10-08):** `work-detail` is added
@@ -34,9 +34,55 @@ VerificationReq    = { workId }                                → { verificatio
 DependencyReq      = { projectId | workspaceId }               → rows[{dependencyId, consumerWorkId, binding, state, satisfiedBy?}]
 TranscriptReq      = { workspaceId, sessionId?, cursor?, limit } → { entries[{kind, summaryRef, at}], nextCursor? }   // first production read path over session_entries
 UsageReq           = { projectId, groupBy: "workspace"|"subtree"|"project" } → rows[{workspaceId, tokens, cost, turns }]
-InboxViewReq       = { workspaceId }                           → { unconsumed[{entryKey, kind, summary, watermark}] }
-WorkDetailReq      = { projectId, workspaceId, workId }        → { workId, projectId, workspaceId, objective, why, completionExpectation, lifecycle, revision, acceptedResult? }
+InboxViewReq       = { workspaceId }                           → { unconsumed[InboxEntryView] }
+WorkDetailReq      = { projectId, workspaceId, workId }        → { workId, projectId, workspaceId, objective, why, completionExpectation, lifecycle, revision, acceptedResult?, blockedEpisode? }
 ```
+
+`blockedEpisode` is an optional read-only current Work-revision summary with
+the source Episode ID and one item per current blocker: blockerId, disposition,
+denied action kind/status, typed safe denial category, latest bounded request,
+inspectable bounded observation refs and recovery guidance. It is derived
+from the canonical WorkBlocker ledger and exact settlement evidence; it never
+reconstructs from Plan, Session prose, an old Manual wait or a bare receipt.
+
+For an Executable approval entry, `InboxEntryView` includes a typed
+`ExecutableApprovalInboxTarget` projection:
+
+```ts
+type InboxEntryView = {
+  readonly entryKey: string;
+  readonly kind: string;
+  readonly summary: string;
+  readonly watermark: number;
+  readonly target?: ExecutableApprovalInboxTarget;
+};
+
+type ExecutableApprovalInboxTarget = {
+  readonly kind: "ExecutableApproval";
+  readonly approvalId: string;
+  readonly revision: number;
+  readonly executionId: string;
+  readonly toolName: string;
+  readonly toolVersion: string;
+  readonly validatedArgumentsPreview: string; // bounded, schema-redacted
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
+  readonly capabilities: ReadonlyArray<string>;
+  readonly sideEffectSemantics: "ReadOnly" | "Idempotent" | "Reconcilable" | "NonIdempotent";
+  readonly expiresAt: string;
+  readonly actionDigest: string;
+};
+```
+
+P10 reads the exact `eap:<approvalId>:<revision>` Inbox key and its proven
+`route_kind='Executable'` ActionApproval binding from read-only ports. It
+returns no approval target for `cap:` Control entries. `validatedArgumentsPreview`
+is derived from validated stored arguments and the versioned tool schema; it
+is bounded and redacts schema-designated secrets. The projection must show
+enough validated action/target detail to support a human decision; if exact
+review cannot be produced, it fails closed and does not present Approve.
+This DTO is display data only: it is not authority and cannot be posted back
+as an approval binding. P10 writes nothing and does not decide or consume the
+Inbox entry.
 
 The additive `AttentionSource` literal `WorkspaceResourceActivationPending`
 is owned by P10 `02` and is the only new wire-vocabulary member in this
@@ -47,6 +93,32 @@ deterministic key
 `summaryRef` is the fixed path-free text “Project resource activation is
 pending; file actions are unavailable.” `occurredAt` is the source intent's
 `createdAt`, stable across event redelivery and rebuild.
+
+The accepted AH7-DG-02 contract also surfaces the existing
+`ReconciliationEscalated` Attention source through this same `rows[{source,
+severity,targetWorkspaceId,dedupKey,summaryRef,occurredAt}]` DTO; it adds no
+request/response field, ViewId or endpoint. Its exact mapping is owned by
+`02`: `ActionRequired`, `executions.workspace_id`, dedup key
+`reconciliation-escalated:<executionId>:<invocationRefsFingerprint>`, and the
+fixed path-free summary “An external tool effect could not be verified;
+recovery is paused.” Its source remains P9's existing event, not a P10-owned
+reconciliation fact.
+
+Accepted AH7-DG-01/P39-P40 compatibility adds exactly one member to the
+transport-neutral closed `AttentionSource` union and `ATTENTION_SOURCES`:
+`ToolObservationReplayEvidenceFailure`. `AttentionReq`/`rows` gains no field,
+ViewId, endpoint or action. Its `summaryRef` is the fixed P10 `02` safe summary;
+the P9 `failureCode` remains internal projection detail and is not returned in
+the public API/read-model enum or DTO. P10/P12 continue to use the same frozen
+transport boundary.
+
+Accepted P41 adds exactly one literal,
+`SubmittedDecisionBindingFailure`, to the same closed `AttentionSource` union
+and `ATTENTION_SOURCES`. It adds no Attention request/response field, endpoint,
+ViewId or action. The source maps to the safe fixed summary in `02`; the P9
+failure code and DecisionEpisode/provider binding identifiers remain internal.
+The exact accepted proposal SHA-256 is
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`.
 
 P10's source-specific activation Attention projection store atomically
 reconciles this key set from the current P1 intent table, lists/replaces the
@@ -98,6 +170,16 @@ Every response carries `{ watermark, lag }` (§1 signature). Shapes are the cont
 - projection-runtime package deps stay `domain, ports` (DID §10.4.1); it never participates in authority (§10.4 hard rule).
 
 ## 2. User-action surfaces (SD §12.5 four verbs; UI only issues Commands)
+
+For the derived `VerifierOrphan` Attention, P8 `RetryVerification` is the only
+new action. The UI exposes it only after exact authenticated-human authority
+resolution for Root-local human governance or the Work's direct Parent
+Workspace human. It submits the exact Work, Verification and expected Work
+revision through the existing `/commands` envelope; it never posts a
+client-authored authority or BlobRef. The action is not a projection write or
+Attention dismissal. The UI reports the old row cleared only after the
+existing freshness barrier confirms catch-up; the `Unknown(Orphaned)` verdict
+remains visible.
 
 | Verb | Surface | Backing command (existing, unchanged) |
 |---|---|---|

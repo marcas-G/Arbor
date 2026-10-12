@@ -6,8 +6,82 @@ Attention sources, active-query/rebuild behavior and its typed projection
 integrity failure. Projection state and queue ACK are never readmission
 authority.
 
+**Accepted Blocked WorkEpisode amendment:** P10 `01`/`02`/`04`/`05`/`07` own
+the read-only `WorkEpisodeBlocked` source, current `WorkBlocker`-ledger
+projection/rebuild, active-vs-attention severity, Work Detail DTO, and
+qualification. P10 cannot clear blockers, invoke recovery or change canonical
+Work/Inbox state.
+
 **Authority:** DID v1.13 §11 P10 (G1–G8), §5.4, §6.1/§6.2 (L6), §10.4/§10.4.1 (projection-runtime; api-contracts), §7.2 (ProjectionQueryPort); SD v1.3 §7.4/§7.5, §10.1 D, §12 全章, §13.9/§13.10, §14 No.37/38/40/45/56; S1/S2/S4; P1 `05`/`06`, P2 `01`/`06`, P3 `04`, P4 `07`, P6 `00`/`04`/`05`, P7 `00`/`05`, P8 `00`/`05`, P9 `00`/`05`; `planning/gaps/P7-GAP-01.md`; GQ1–GQ7 裁决（2026-09-22，本轮会话）.
 **Status:** FROZEN — DID v1.17 D-1 additive read-model successor adopted (TR-WPU-B/C/D; no P10 phase reopen).
+
+## AH10 Deliver P10 storage addendum (DID v1.38)
+
+Accepted addendum SHA-256:
+`040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
+Deliver replay Attention uses the source-specific marker/FK and P9-fact query
+union in `02`, with atomic fact-snapshot/marker-seed/P1-offset rebuild in `04`
+and qualification in `07`. Existing AssignWork projection storage and rows,
+F21 rebuild-refusal semantics, and accepted AH7/P36 rules are unchanged.
+Proposed migration 0037 requires P36 integration; it is not independently
+implementable/releasable.
+
+## Accepted owner amendment — EA-DG-01 (DID v1.39)
+
+Fixed proposal SHA-256:
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+acceptance record `planning/results/EA-DG-01-governance-acceptance.md`.
+P10 `01`/`05` add the read-only Inbox Executable approval target projection
+from P6 `eap:` admission and the proven P4 ActionApproval row. It returns the
+exact review fields with bounded schema-redacted argument preview, filters by
+Workspace and fails closed if exact human review data cannot be constructed.
+P10 never decides/consumes approval or writes the Inbox. Control `cap:` and
+CAPA remain unchanged. Qualification requirements are in
+`planning/results/EA-DG-01-contract-landing.result.md`.
+
+## Accepted owner amendment — AH7-DG-02 Attention projection (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted P39 physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P10 `02` owns the projection of the existing P9
+`ReconciliationEscalated{executionId,invocationRefsFingerprint,refs}` event as
+`ActionRequired`, targeted to `executions.workspace_id`, deduplicated by
+`reconciliation-escalated:<executionId>:<invocationRefsFingerprint>`, with
+the accepted fixed path-free summary. `04` owns atomic marker/offset rebuild
+within P1's retained event horizon; `05` only reflects the existing source in
+the frozen DTO when necessary. P10 does not create or mutate P9 facts, infer
+external reality, or promise indefinite Attention after journal pruning.
+P39 implementation and source migration remain separately gated.
+
+## Accepted AH7-DG-01 / P39-P40 replay-evidence Attention source (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+RNO compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+P10 `02` owns the `ToolObservationReplayEvidenceFailure` source mapping and
+source-specific marker relation; `04` owns its shared Attention offset,
+retention-horizon reset/rebuild; `05` owns the closed AttentionSource/API query
+union; `07` owns the future crash/rebuild acceptance matrix. P9 emits only
+missing/corrupt-evidence facts; P10 never projects ordinary valid RNO outcomes
+or mutates P39/P4/P3 canonical state. Failure code is internal-only; the fixed
+path-free summary is the only public detail.
+
+## Accepted AH10 Submitted DecisionEpisode binding Attention (DID v1.42)
+
+Fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance/landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+P10 `02`/`05` add the `SubmittedDecisionBindingFailure` source without DTO
+field or route changes; `04` owns the source marker reset, P9 fact snapshot and
+P1 offset rewind in one transaction (including reconstruction after event
+pruning); `07` Story P owns retention, duplicate-delivery, crash and concurrent
+fact/rebuild qualification. P9 fact/event remains immutable; P10 does not
+clear it. Migration 0041 is conditional on integrated/qualified 0036–0040 and
+is not authorized for implementation by this design landing.
 
 ## FT-DG-02 additive contract amendment (2026-10-08)
 
@@ -51,12 +125,12 @@ ordered/list consumers remain compatible by ignoring additive fields.
 | Doc | Owns |
 |---|---|
 | `01-view-inventory.md` | Authoritative view list (SD full inventory), per-view derive inputs & query shapes, WorkspaceStatus exhaustive label map |
-| `02-attention-readmodel.md` | Attention source→severity→target→bubbling→dedup→read-model contract; canonical/event fact sources including FT-DG-01 OPEN-3; GAP-01 view |
+| `02-attention-readmodel.md` | Attention source→severity→target→bubbling→dedup→read-model contract; accepted Deliver-specific marker/FK/query union, FT-DG-01 OPEN-3, and GAP-01 view |
 | `03-effectivefacts-freshness.md` | EffectiveFacts shared projection (def/materialization/query); freshness watermark/lag/barrier contract |
-| `04-rebuild-atscale.md` | Business-projection at-scale rebuild (GQ2 handover from P9): checkpoints, projection-side retention (P1 `04` horizon untouched), orchestration, query correctness |
+| `04-rebuild-atscale.md` | Business-projection at-scale rebuild (GQ2 handover from P9): checkpoints, projection-side retention (P1 `04` horizon untouched), orchestration, Deliver fact-snapshot/marker/offset atomicity and query correctness |
 | `05-surface-actions-transport.md` | ProjectionQueryPort/api-contracts DTOs; Query(P14 consume)/Steer/Stop/Governance-Change surfaces; P12 transport boundary |
 | `06-humanintervention-fact.md` | HumanInterventionApplied payload, emission points, WorkSteered back-fill (inherited evolution) |
-| `07-acceptance.md` | Stories + mechanical assertions |
+| `07-acceptance.md` | Stories + mechanical assertions, including DeliverReplayFailure source-specific projection, migration ordering, rebuild and restart |
 
 ## Implementation baseline (from scope extraction)
 
@@ -69,6 +143,16 @@ Generic projection/offset/rebuild infra (P1, P9-hardened) ready; all canonical d
 - Journal retention horizon — P1 `04` (projection-side retention only, `04` here).
 - Canonical mutations from Attention — never (GQ3).
 - Memory/Decisions store (SD §12.4 ⑥) — later phase; Workspace Detail shows audit timeline from domain_events instead.
+
+## Accepted AH10 DeliverReplay outbox amendment (DID v1.43)
+
+The fixed v5+v6 hashes, B0 review and delegated decision are in
+`planning/results/AH10-deliver-event-pruning-v6-governance-acceptance-and-landing.md`.
+P10 `02` owns fact-marker/outbox projection and typed failure behavior; `04`
+owns rebuild seed plus queue ACK; `07` owns added deterministic acceptance
+cases. P1 `05` owns the raw-event predecode and atomic poll contract; P9 `07`
+owns the durable fact/outbox. P37 remains ordered after P36/0036 and no
+migration/runtime implementation is authorized by this design amendment.
 
 ## Contract review (four-way)
 

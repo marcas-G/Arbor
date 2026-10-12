@@ -1,6 +1,6 @@
 # P1 — 04 SQLite Schema
 
-**Authority:** DID v1.6 §9.1–§9.9, §9.13, §12.11, §3.1–§3.3
+**Authority:** DID v1.6 §9.1–§9.9, §9.13, §12.11, §3.1–§3.3; accepted P41/0041 storage and FT-DG-01 OPEN-1/OPEN-2 owner amendments
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Closes:** P1-DG-07 (cyclic FKs, mapping, root uniqueness), P1-DG-08
 (`resource_ownership` lifecycle), P1-DG-09 (retention/delete + migration),
@@ -58,6 +58,9 @@ CREATE TABLE projects (
   project_policy_revision INTEGER NOT NULL,
   default_configuration   TEXT NOT NULL,              -- JSON
   environment_ref         TEXT NOT NULL,
+  resource_source_json    TEXT NOT NULL
+                            DEFAULT '{"_tag":"LegacyUnknown"}'
+                            CHECK (json_valid(resource_source_json)),
   lifecycle               TEXT NOT NULL CHECK (lifecycle IN ('Open','Closed')),
   revision                INTEGER NOT NULL,
   created_at              TEXT NOT NULL,
@@ -396,6 +399,206 @@ inert and tested with a stub.
 - Additive migrations run in a single transaction; table-rebuild migrations
   require PRAGMA foreign_keys=OFF outside the transaction (documented exception).
 ```
+
+### EA-DG-01 migration contract — 0038
+
+The ordered accepted/planned suffix is `0036` AH7/P36,
+`0037` AH10 Deliver P9/P10, then `0038` Executable approval handoff.
+Migration 0037 is conditional on integrated 0036; 0038 is conditional on both
+0036 and 0037. Supported suffix paths are v35→36→37→38,
+v36→37→38, and v37→38. A v35 database must not skip either prerequisite.
+
+Migration `0038_executable_approval_handoff` is a forward-only rebuild of the
+0032 unified `action_approvals` table. It adds exact Executable Step/action/
+call/invocation identity fields and cancellation provenance, permits the
+shared MAC `Cancelled` terminal state with provenance checks, and replaces
+only 0032's route-blind digest uniqueness with separate Control and
+Executable-logical-action partial indexes. Existing 0032 rows retain route,
+`binding_proven`, source state, terminal Expired/Consumed disposition and
+consumer identity; no binding is inferred and no prior migration or 0037
+Deliver source row is rewritten. The rebuild also recreates the existing
+`action_approvals_id_project UNIQUE(approval_id, project_id)` key from 0033;
+`assign_work_target_bindings(action_approval_id, project_id)` depends on that
+exact composite parent key. This is preservation of the existing AssignWork
+foreign-key contract, not a new approval identity or Control behavior. The
+exact DDL delta and legacy constraints are owned by DID §9.3 and P4 `03`/`06`.
+
+The decision/Inbox/wake facts for request, Resolve, Expire and Stop remain in
+their owning P1/P4/P6/P2 transactions as specified in the EA-DG-01 owner
+contracts. This migration slot contract does not authorize executing the
+migration or changing the preserved dogfood database.
+
+### Accepted AH7-DG-02 P39 migration and operator-report contract (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted P39 physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P4 `06` owns the P39 tool-invocation DDL; this section owns the global
+`user_version`/startup boundary and the operator sidecar database contract.
+
+The accepted/planned suffix is `0036` P36 → `0037` P37 → `0038` P38 →
+`0039_ah7_reconciliation_attempts` P39. P39 depends on P36/P38 schema facts;
+the global version prefix also requires P37. P36–P38 owner contracts are
+integrated in this tree, but the real migration implementation/registration
+for those versions is not. P39 is conditional and cannot be implemented,
+installed or released alone. The actual P39 runner must gate before any
+pending 0037/0038/0039 DDL when the primary DB is at `user_version` 36–38.
+
+Before constructing either SQLite client, the P39-targeting maintenance entry
+requires `--migration-block-report-db <absolute-local-path>`. There is no
+default. The path must be local, non-temporary, distinct from the primary DB
+and all of its sidecars/configured storage, and pass filesystem identity,
+link/reparse/alias and supported-volume checks. Validate an existing sidecar
+read-only first; only the exact reserved application id, schema version,
+object set and schema digest are accepted. Never migrate/overwrite an unknown
+or unrelated file. A new or empty identity-zero database may be initialized
+exclusively with the accepted report table:
+
+```sql
+CREATE TABLE p39_migration_block_reports (
+  report_key        TEXT PRIMARY KEY CHECK
+                      (length(report_key) = 64 AND report_key NOT GLOB '*[^0-9a-f]*'),
+  content_hash      TEXT NOT NULL UNIQUE CHECK
+                      (length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+  report_json       TEXT NOT NULL
+);
+CREATE TRIGGER p39_report_no_update BEFORE UPDATE ON p39_migration_block_reports
+BEGIN SELECT RAISE(ABORT, 'P39 audit report is immutable'); END;
+CREATE TRIGGER p39_report_no_delete BEFORE DELETE ON p39_migration_block_reports
+BEGIN SELECT RAISE(ABORT, 'P39 audit report is retained'); END;
+```
+
+Set and read back sidecar `application_id=0x41523739`, `user_version=1`,
+`journal_mode=WAL`, `synchronous=FULL`, foreign keys and bounded busy timeout.
+`report_key` is SHA-256 of canonical `{schema,targetUserVersion,
+databaseFingerprint}`; `content_hash` hashes exact canonical UTF-8 report JSON
+excluding that hash field. The immutable report contains stable schema/kind,
+observed/target version, blocker-state fingerprint and sorted invocation IDs;
+it contains no DB path, command/argument/resource path, principal or secret.
+Same key and same bytes is idempotent; same key with different bytes is typed
+`P39_REPORT_KEY_CONFLICT` and is never overwritten. On uncertain sidecar
+commit, reopen and query exact key/hash before any continuation; unresolved
+uncertainty fails closed.
+
+The closed maintenance error set is `P39_REPORT_DB_REQUIRED`,
+`P39_REPORT_DB_PATH_INVALID`, `P39_REPORT_DB_SCHEMA_UNSUPPORTED`,
+`P39_REPORT_DB_PRAGMA_MISMATCH`, `P39_REPORT_DB_IO_FAILURE`,
+`P39_REPORT_KEY_CONFLICT`, `P39_REPORT_COMMIT_UNRESOLVED`,
+`P39_PRIMARY_JOURNAL_MODE_UNSUPPORTED`, `P39_REPORT_DURABILITY_UNSUPPORTED`,
+and `P39_LEGACY_DB_ISOLATED`.
+Diagnostics contain stable typed codes only, never the path or row contents.
+
+Deployment maintenance mode stops every primary DB writer across preflight and
+the ordered migration chain. Validate the sidecar first and close its
+validation handle. For a v36–v38 primary, use the P1 adapter's preflight-only
+`disableWAL=true`, require existing `journal_mode=wal` by readback, then take a
+primary `BEGIN IMMEDIATE` consistent snapshot of `user_version` and active P36
+unsettled `NotAdmitted` invocation IDs/fingerprint. This snapshot is read-only
+at the committed application-state/schema/version level; transient SQLite
+WAL/SHM lock metadata may be managed. If blockers exist, while retaining the
+primary reservation acquire sidecar `BEGIN IMMEDIATE`, insert or verify the
+immutable report, read it back, then rollback/close primary and exit
+`P39_LEGACY_DB_ISOLATED` / 78 before pending P37/P38/P39 DDL or service start.
+The primary DB's committed rows, approvals, P3 state and `user_version` remain
+unchanged. That DB cohort stays isolated until future governance; do not
+fabricate binding, refund/transfer approval, delete rows, or retry invocations.
+If no blocker exists, rollback/close the snapshot and apply the ordered
+0037→0038→0039 transactions while maintenance mode continues to exclude other
+writers. The P39 rebuild/backfill/DDL/FK check and `user_version=39` update
+share one forward-only transaction; there is no down migration.
+
+The sidecar and primary use one lock order—primary then sidecar—and must be
+distinct file identities. Retain sidecar DB and SQLite `-wal`/`-shm` together;
+the named operator is responsible for backup and retention using SQLite's
+consistent backup mechanism. Windows deployment is blocked until the actual
+`@effect/sql-sqlite-node`/Node VFS, each supported local filesystem, and
+hardware pass process-kill, injected I/O failure, VM hard-power-off, reopen and
+integrity qualification. `FULL` durability is conditional on VFS/OS/device
+flush behavior. Network and unknown filesystems fail closed before primary DB
+open. No Windows deployment qualification is asserted here.
+
+### Accepted AH7-DG-01 / P39-P40 migration and startup boundary (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+
+The ordered suffix is `0036` P36 → `0037` P37 → `0038` P38 → `0039` P39 →
+`0040_tool_observation_evidence` P40. P40 may enter only at
+`PRAGMA user_version=39`, cannot be registered in phase-local
+`P4_MIGRATIONS`, cannot ship as a standalone v35 upgrade, and may not skip a
+predecessor. These are owner contracts, not migration implementation.
+
+P39 can be landed/applied only inside the ordered cumulative maintenance chain;
+a P39-only database at `user_version=39` MUST NOT start Agent/P4 Runtime or be
+released. Service start is permitted only after P40 commits version 40 and the
+binary includes the accepted RNO branch in its closed v1 Observation decoder.
+P40 adds only P4 `06` observation columns/triggers, the P9 replay-evidence
+fact/event and P10 source-specific marker. It does not edit earlier migration
+bodies/checksums, backfill historical terminal rows, change P39 selected facts,
+or reuse/change the P39 sidecar/preflight.
+
+P39's preflight/report rules remain unchanged. Cross-process serialization of
+the cumulative startup migration runner is required before P40 can be
+registered/executed; it is not qualified here. P36–P40 prefix integration and
+P39 Windows/local-filesystem sidecar durability remain explicit gates. P40 is
+forward-only and commits its DDL plus `user_version=40` atomically.
+
+### Accepted P41 migration 0041 physical-storage gate
+
+The accepted P41 storage package adds migration descriptor
+`{ id: 41, name: "p41_submitted_decision_binding_attention" }`. Its fact
+relation is owned by P9 `07`; its rebuildable Attention marker is owned by P10
+`02`/`04`. The exact DDL, composite keys, closed failure-code set and
+immutability constraints are specified in those owner contracts. Migration
+0041 is additive, creates both relations empty, and performs no historical
+backfill or canonical-row rewrite.
+
+Migration 0041 is conditional on the complete 0036→0037→0038→0039→0040 prefix
+being integrated and qualified. A migration-runner registration-presence
+check for IDs 37–40 is not qualification evidence. Until the prefix gate
+passes, 0041 must not enter a runnable/current migration list. The runner
+executes its DDL and `PRAGMA user_version = 41` in one transaction; failure
+preserves the previous schema and version. A schema at `user_version <= 40`
+does not support P41 storage and must not activate P41 recovery or Attention
+projection. No down migration or new qualification marker is defined. The
+existing refusal of a database whose `user_version` exceeds the latest known
+migration remains in force.
+
+#### Project resource source attribution (FT-DG-01 OPEN-1)
+
+`resource_source_json` stores the exact P1 `ProjectResourceSource` tagged
+union: `Profile` requires non-empty string `resourceProfileRef` and `version`;
+`ConversationOnly` and `LegacyUnknown` have no additional fields. The
+ProjectRepository decoder is strict over JSON syntax, tag, exact owned fields,
+and primitive values. Invalid stored values fail as persistence corruption;
+they are not repaired or coerced to `LegacyUnknown`. Application Project
+inserts always set the column explicitly. The SQL default is retained only as
+SQLite's additive-migration requirement, not as a new-command semantic
+fallback.
+
+The forward-only migration owner reserves ID 0042,
+`project_resource_source_attribution`, in the production sequence only after
+the integrated cumulative prefix includes P38/0038 and the already-owned
+migrations 0039, 0040, and 0041. Its exact DDL is:
+
+```sql
+ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL
+  DEFAULT '{"_tag":"LegacyUnknown"}'
+  CHECK (json_valid(resource_source_json));
+UPDATE projects
+   SET resource_source_json = '{"_tag":"LegacyUnknown"}';
+```
+
+The uniform backfill assigns every pre-existing Project `LegacyUnknown`; it
+does not read Workspace ResourceBoundary/path, resource ownership, Events,
+Commands/receipts, the Profile catalog, or the host filesystem. Migration
+0042 must not be registered or executed ahead of 0039–0041, and must not be
+run against the preserved user database under this authorization. When the
+required prefix is integrated and qualified, 0042 is appended to
+`CURRENT_MIGRATIONS` and the high-water mark advances to 42.
 
 ## 6. Retention / delete (P1-DG-09)
 

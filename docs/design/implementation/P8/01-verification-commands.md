@@ -86,6 +86,54 @@ Handler 内解析：`targetArtifactVersions`（从 targetDeliverables 的 artifa
 - 域转移：concludeVerification（P0 冻结）；verdict 此后 immutable。
 - Events: `VerificationConcluded { verificationId, workId, targetWorkRevision, verdict, evidenceRefs, summaryRef }`；同事务产 wake（`03` §3）。模型控制动作在 committed Receipt 与 wake 交付后产生 `Completed(VerificationConcluded { verificationId, verdict })`；该 Execution result 不进入 CompletionClaim consumer。
 
+## 3A. `RetryVerification`（authenticated human orphan governance）
+
+`RetryVerification` is the sole explicit governance surface for the frozen P8
+G8 orphan path. It is available only to authenticated local-human governance
+for Root-owned Work or authenticated human governance of the exact direct
+Parent Workspace for child Work. It is never Agent-originated, grantable,
+scheduler-driven, or an Attention write.
+
+Payload:
+
+```ts
+{
+  readonly workId: WorkId;
+  readonly verificationId: VerificationId;
+  readonly expectedWorkRevision: WorkRevision;
+  readonly summaryContent: string;
+  readonly successorVerificationId: VerificationId; // Runtime-preallocated
+  readonly verifierExecutionId: ExecutionId;         // Runtime-preallocated
+}
+```
+
+The external envelope supplies the authenticated actor and stable CommandId;
+the client supplies neither authority nor a BlobRef. Runtime stores and
+byte-verifies `summaryContent` and binds the content-addressed ref to this
+command. The exact `OrphanConclusionAuthority` binds Project, actor, current
+governing owner, Work, open Verification, expected Work revision, and the
+complete set of exact bound Verifier ExecutionIds.
+
+In one canonical command transaction the handler revalidates that the Work is
+Open at `expectedWorkRevision`, the exact Verification is Open for that Work
+and revision, and the non-empty set of its exact bound Verifier Executions is
+fully settled. Old execution ownership is checked against the Verification's
+captured owner snapshot; human authority is resolved against the Work's
+current governing owner. It atomically writes the old immutable
+`Unknown(Orphaned)` conclusion/event, one successor Verification with the
+existing frozen mission and current owner snapshot, durable verifier-spawn
+intent, and the Command receipt. A failure commits none of these facts. Exact
+CommandId replay returns the same successor IDs and receipt; changed payload
+is an idempotency conflict. No evidence or PASS is fabricated.
+
+After commit, the existing P8 VerificationRuntime performs admission and
+binding backfill with the same preallocated successor IDs. Restart/replay
+retries only that spawn. If the successor later orphans, it remains Open with
+derived Attention until a separate authenticated human invocation; no loop or
+automatic retry is permitted. P10 may remain stale until its existing
+freshness barrier catches up; only then may the UI report the old orphan row
+absent, while the old `Unknown(Orphaned)` conclusion remains visible.
+
 ## 4. `AcceptWorkOutcome`
 
 - Payload: `{ acceptanceId, workId, targetWorkRevision, verificationId, actor }`。
@@ -108,6 +156,9 @@ StartVerificationAuthority  { targetWorkspaceId, workId }
 VerifierExecutionAuthority { verificationId, executionId }   // exact-bound, verifier-only 两命令
 AcceptanceAuthority         { targetWorkspaceId, workId, verificationId }  // Parent 治理链 / milestone human
 CompleteWorkAuthority       { targetWorkspaceId, workId }    // consumer System 或显式
+OrphanConclusionAuthority   { projectId, workId, verificationId, expectedWorkRevision,
+                              exactSettledVerifierExecutionIds, currentOwnerId,
+                              authenticatedHumanPrincipal } // Root local human or exact Parent Workspace human
 ```
 
 ## 7. Must Not Decide

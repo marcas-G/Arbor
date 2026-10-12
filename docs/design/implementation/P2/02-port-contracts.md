@@ -32,15 +32,15 @@ AgentLoopStepStoreError, AgentLoopStepInvariantConflict
 
 ```ts
 interface ExecutionRepositoryService {
-  tryAdmitMainExecution(execution: Execution):
+  tryAdmitExecution(execution: Execution):
     Effect<Option<Execution>, ExecutionRepositoryError, TransactionScope>;
-    // None = another active main exists (partial unique) -> ActiveExecutionConflict
+    // None = active admission conflicts with the exact bound Execution policy
   admitExecution(execution: Execution):
     Effect<void, ExecutionRepositoryError, TransactionScope>;
-    // ExecutionBound; no one-active-main constraint
+    // persists one exact ExecutionEpisodeBinding
   findById(executionId):
     Effect<Option<Execution>, ExecutionRepositoryError, TransactionScope>;
-  findActiveMainByWorkspace(workspaceId):
+  findActiveByWorkspace(workspaceId):
     Effect<Option<Execution>, ExecutionRepositoryError, TransactionScope>;
   requestStop(executionId, stopRequestedAt):
     Effect<void, ExecutionRepositoryError, TransactionScope>;
@@ -340,11 +340,18 @@ interface ExecutionSchedulerService {
 }
 
 type SchedulerDecision =
-  | { readonly _tag: "Noop"; readonly reason: "ActiveMainExecution" | "WorkReadmissionHeld" }
-  | { readonly _tag: "Admit"; readonly focus: ExecutionFocus }
-  | { readonly _tag: "SelectCurrentWork"; readonly workId: WorkId }
+  | { readonly _tag: "Noop"; readonly reason: "ActiveExecution" | "WorkReadmissionHeld" }
+  | { readonly _tag: "Admit"; readonly binding: ExecutionEpisodeBinding }
+  | { readonly _tag: "RequestWorkSelection" }
   | { readonly _tag: "Idle" };
 ```
+
+An ambiguous runnable-Work set produces `RequestWorkSelection`; its consumer
+persists the exact candidate set as a `WorkSelectionDecisionRequest` and
+admits a `DecisionEpisode`. It never admits a Coordination-focused Execution.
+Single runnable Work is admitted as its exact Work episode. Other eligible
+ConversationResponse and Inbox inputs use their exact bindings and owning
+admission paths.
 
 Runnability classification is **P7-owned**; P2 consumes it through:
 
@@ -358,10 +365,12 @@ interface RunnableWorkSourceService {
 ```
 
 P2 implements the DID §8.18A decision table over this port and ships a
-deterministic stub; P7 ships the real dependency-aware source. RAI-DG-01 adds
-the exact-revision readmission source to P7's classifier inputs; it does not
-change the `classify(workspaceId)` signature or the meanings of WorkWait and
-Dependency.
+deterministic stub; P7 ships the real dependency-aware source. P2 does not add
+runnable semantics.
+
+RAI-DG-01 extends the classifier inputs with an exact Work-revision source
+gate; it does not change `classify(workspaceId)` or WorkWait/Dependency
+semantics.
 
 ### 7.1 WorkReadmissionGateStore (RAI-DG-01)
 
@@ -394,24 +403,23 @@ interface WorkReadmissionGateStoreService {
 `None` means no exact-revision source; `Some` returns only bounded source
 identity. The SQLite query reads canonical Work, source Execution rows, P9
 fact/event witnesses and `agent_execution_state.episode_json` in one
-`TransactionScope`. It joins by `execution_id`, validates the EGP decoder and
-exact Project/owning Workspace/Work/revision, and never reads a P10 projection
-table. It adds no gate table or migration. Existing one-active-main and
-`BEGIN IMMEDIATE` admission discipline remain in force.
+`TransactionScope`. It joins by `execution_id`, validates EGP binding and exact
+Project/owning Workspace/Work/revision, and never reads P10 projection tables.
+It adds no gate table or migration. Existing active-Execution admission and
+`BEGIN IMMEDIATE` discipline remain in force.
 
 The requested canonical Work must exist and match all four request fields;
-absence/scope/revision mismatch returns `ReadmissionTargetMismatch`. For each
+absence/scope/revision mismatch is `ReadmissionTargetMismatch`. For each
 candidate source in the requested Project and owning Workspace, require one
-Execution row and one episode-state row. Fact/event `projectId`,
-`executionId`, and present `targetWorkspaceId` must match that Execution;
-`ReconciliationEscalated.aggregate_ref` and payload execution IDs must both
+Execution row and one episode-state row. Fact/event Project and Execution
+identities and any present target Workspace must match that Execution;
+`ReconciliationEscalated.aggregate_ref` and payload Execution IDs must both
 equal it. A valid non-Work Episode is outside this gate. A Work Episode must
-resolve to a canonical Work in the same Project/owning Workspace and match the
-requested Work and revision exactly. A stale lower source revision is ignored;
-a source revision newer than canonical Work is integrity failure. Missing,
-duplicate, malformed, unknown-version or conflicting source evidence returns
-the closed integrity union below; it is never treated as `None` or attached to
-a guessed Work.
+resolve to canonical Work in the same Project/owning Workspace and match the
+requested Work/revision exactly. A stale lower source revision is ignored; a
+source revision newer than canonical Work is integrity failure. Missing,
+duplicate, malformed, unsupported-version or conflicting evidence is never
+treated as `None` or attached to a guessed Work.
 
 ```ts
 type ReadmissionGateIntegrityFailure = {
@@ -451,13 +459,12 @@ type WorkAdmissionBlock =
   | ReadmissionGateIntegrityFailure;
 ```
 
-Errors expose no raw `episode_json`, receipt/provider payload, invocation refs,
-SQLite text or parser text. A valid non-Work Episode is outside this gate.
-P7 propagates integrity failure through `RunnableWorkSourceError`; the
-authoritative Work-bound admission rechecks this query in its commit
-transaction, returns `WorkReadmissionHeld` for a valid hold and commits no
-Execution. Never attach a source to a guessed Work from Session,
-`currentWorkId`, Message, Attention target or Parent Workspace.
+Errors expose no raw episode JSON, receipt/provider payload, invocation refs,
+SQLite or parser text. P7 propagates integrity errors through
+`RunnableWorkSourceError`; the authoritative Work-bound admission rechecks
+the query in its commit transaction and commits no Execution on a hold or
+integrity failure. Never infer Work identity from Session, `currentWorkId`,
+Message, Attention target, or Parent Workspace.
 
 ## 8. WorkWaitStore and SchedulerTimerStore
 
@@ -468,6 +475,30 @@ interface WorkWaitStoreService {
   clear(workId): Effect<void, WorkWaitStoreError, TransactionScope>;
   listActive(): Effect<ReadonlyArray<WorkWait>, WorkWaitStoreError, TransactionScope>;
 }
+
+interface WorkBlockerStoreService {
+  readonly findById: (blockerId: Sha256) =>
+    Effect<Option.Option<WorkBlocker>, WorkBlockerStoreError, TransactionScope>;
+  readonly listByWorkRevision: (workId: WorkId, revision: WorkRevision) =>
+    Effect<ReadonlyArray<WorkBlocker>, WorkBlockerStoreError, TransactionScope>;
+  readonly openOrUpdate: (blocker: WorkBlocker) =>
+    Effect<WorkBlocker, WorkBlockerStoreError, TransactionScope>;
+  readonly resolve: (resolution: {
+    readonly blockerId: Sha256;
+    readonly workId: WorkId;
+    readonly targetWorkRevision: WorkRevision;
+    readonly successfulActionRefs: NonEmptyArray<string>;
+  }) =>
+    Effect<void, WorkBlockerStoreError, TransactionScope>;
+  readonly supersede: (workId: WorkId, revision: WorkRevision) =>
+    Effect<void, WorkBlockerStoreError, TransactionScope>;
+}
+
+`WorkBlockerStore` is an Application-owned current-state ledger used by P2
+settlement and P6 Work revision/terminal commands. Every write above shares the
+owning canonical command's `TransactionScope`; P10 reads it only. The exact
+row identity, transitions, and event pairing are specified in the accepted
+Blocked WorkEpisode package and P2 `04`/`05`; it is not a P2 scheduler state.
 
 interface SchedulerTimerStoreService {
   schedule(timer: SchedulerTimer): Effect<void, SchedulerTimerStoreError, TransactionScope>;

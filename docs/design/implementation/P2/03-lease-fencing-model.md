@@ -6,6 +6,12 @@
 consistency review pending.
 **Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
 SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
+Accepted EA-DG-01 approval-issuance/Stop-ordering amendment (DID v1.39),
+proposal SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`.
+
+**Accepted cross-phase application (DID v1.37 AH10):** P7 DeliverMessage is an
+Execution-originated NormalExecutionMutation covered by this existing fence
+contract. This note adds no lease predicate, mutation class, or P2 command.
 
 This document freezes the P2 lease/fencing mechanism. DID §9.7 freezes the
 *guarantees* (expiry + generation + authoritative same-transaction check); P2
@@ -22,7 +28,8 @@ Worker identity    = replaceable
   lease with an expiry and a monotonic generation/fencing token.
 - An expired or superseded Worker must not commit any durable mutation, even
   if it resumes.
-- At most one active main Execution per Workspace (partial unique index).
+- At most one active Execution per Workspace under the existing partial unique
+  admission constraint; this is independent of the exact episode binding.
 - Worker crash / lease expiry alone never transitions `Active → Settled`.
 
 ## 2. Lease record
@@ -72,6 +79,7 @@ Session append
 ProviderTurn settlement
 ToolInvocation intent / approval consumption / effect admission / settlement
 ToolInvocation no-effect Denied / Interrupted settlement
+Executable ActionApproval Pending issuance / Inbox admission / request fact
 Agent-produced canonical command
 ```
 
@@ -116,6 +124,16 @@ WHERE e.execution_id = ?
 - `executions.settled_at IS NULL` means a fence can never authorize a write on
   a settled Execution.
 
+P7 `DeliverMessage` is an Execution-originated Application command for the
+durable Message handover. The stale-Worker fence applies to its durable write;
+admission of this normal execution action follows the existing
+`NormalExecutionMutation` rule. This adds no fence exception or mutation
+class, and does not reclassify Message as a canonical Work/Deliverable entity.
+Its Message, MessageSent, Inbox admission and Command receipt use this same
+authoritative fence inside the CommandGateway transaction. The MessageSent
+consumer derives ChildDelivered after commit; no wake row is part of the
+fenced transaction.
+
 ## 4. Stop / quiescence admission
 
 Two **independent** checks (DID §9.7):
@@ -146,6 +164,27 @@ Two **independent** checks (DID §9.7):
   the Execution is Active.
 - Admission (`AdmitExecution`) is not classified.
 
+### 4.1 Executable approval issuance and Stop ordering (EA-DG-01)
+
+Executable approval issuance is a Worker-originated durable mutation. Its
+single transaction verifies the full live lease tuple and expiry, active
+Execution, `stop_requested_at IS NULL`, and the exact still-Pending
+AgentLoopStep action before it commits the Executable Pending row, P6 Inbox
+admission, `ExecutableApprovalRequested` fact and P2 wake source. If Stop
+commits first, issuance returns `ExecutionStopping` with no row/Inbox/fact. If
+issuance commits first, the authorized StopExecution composition closes that
+unclaimed Pending or Approved Executable row as Cancelled, consumes its exact
+unconsumed Inbox entry and appends the resolution/wake fact in the same Stop
+command transaction. These writes leave `route_kind='Control'` approvals and
+CAPA stop behavior unchanged.
+
+The human StopExecution command uses P2's authenticated command authority and
+does not require a Worker lease. Any later Worker-originated cancellation,
+action result, ToolResult or Observation still uses the complete current lease
+tuple and expiry in the transaction. A Stop that races after P4 claim follows
+§4 and AH7/P4; a Stop after `MayHaveStarted` uses the existing reconciliation
+fence and cannot admit a new effect.
+
 ## 5. Quiescence-control admission and settlement validity
 
 ### 5.1 QuiescenceControlMutation
@@ -167,7 +206,9 @@ typed rejection:
 ```text
 Completed(Yielded)             requires a non-empty WaitSpec
 Completed(CompletionClaimed)   requires claimRef + target Work revision
-Completed(CoordinationCompleted | QueryCompleted)  no extra fields
+Legacy `Completed(CoordinationCompleted | QueryCompleted)` rows are
+decoder/audit-only; new settlements must match the exact
+`ExecutionEpisodeBinding` result and cannot emit either legacy result.
 Interrupted(StopRequested)     requires stop_requested_at != null
 Interrupted(ControlledInterruption)  requires reason
 Failed(ExecutionFailure)       requires reason
@@ -215,6 +256,23 @@ FencingRejected = authoritative persistence rejection
   a late old-Worker settlement is fenced and P2/P9 recover from the durable
   `MayHaveStarted` state without assuming the effect was absent.
 - Neither automatically fails or cancels the Work (DID §6A.5).
+
+### Accepted AH7-DG-01 terminal evidence read fence (DID v1.41)
+
+Every P4 read of settled ToolInvocation evidence—including same-invocation
+re-entry and a zero-row settlement-CAS loser—must prove the complete current
+Worker lease tuple
+`(executionId, workerId, workerIncarnationId, fencingGeneration)` and
+`expires_at > now` in the same Control-DB `TransactionScope`, before any
+ToolInvocation row/evidence read. P3 independently checks the current fence
+before it reads/projects a P3 Session/action winner.
+
+An expired, mismatched, missing or superseded fence returns ownership-lost
+`LeaseFencingRejected` only: no P4 Observation read, no Artifact/projection,
+no P3 ToolResult/Action/cursor, and no replay-evidence Attention. Only a valid
+generation may validate the exact P39/P40 winner. Valid-fence missing or
+conflicting evidence follows RecoveryBlocked/P9/P10; this does not alter
+effect-admission or P39 selected-fact settlement rules.
 
 ## 8. Out of scope
 
