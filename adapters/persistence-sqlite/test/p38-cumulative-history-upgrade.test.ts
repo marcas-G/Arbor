@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { layer } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { P37_MIGRATIONS, P38_MIGRATIONS } from "../src/migrations.js";
+import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "../src/p38-executable-approval-migration.js";
 
 describe("P38 cumulative historical database upgrade", () => {
   it("preserves legacy approval identity and the 0033 composite FK through 0038", async () => {
@@ -13,6 +14,12 @@ describe("P38 cumulative historical database upgrade", () => {
         Effect.gen(function* () {
           yield* runMigrations(P37_MIGRATIONS);
           const sql = yield* SqlClient;
+          const sourceVersion = yield* sql.unsafe<{ user_version: number }>(
+            "PRAGMA user_version",
+          );
+          const sourceColumns = yield* sql.unsafe<{ name: string }>(
+            "PRAGMA table_xinfo(action_approvals)",
+          );
 
           // This is a disposable 0037 fixture. These rows model legacy values
           // which 0038 may retain without inventing an executable binding.
@@ -71,6 +78,9 @@ describe("P38 cumulative historical database upgrade", () => {
                     consumed_by, binding_proven, source_state
                FROM action_approvals ORDER BY approval_id`,
           );
+          const targetColumns = yield* sql.unsafe<{ name: string }>(
+            "PRAGMA table_xinfo(action_approvals)",
+          );
           const violations = yield* sql.unsafe<Record<string, unknown>>(
             "PRAGMA foreign_key_check",
           );
@@ -88,9 +98,21 @@ describe("P38 cumulative historical database upgrade", () => {
           );
 
           return {
+            sourceVersion: Number(sourceVersion[0]?.user_version),
+            sourceMigrationHighWater: Math.max(
+              ...P37_MIGRATIONS.map(({ id }) => id),
+            ),
+            sourceColumns: sourceColumns.map(({ name }) => name),
+            p38DescriptorVersion:
+              P38_EXECUTABLE_APPROVAL_MIGRATION.migrationVersion,
+            p38DescriptorSelectsOldTable:
+              P38_EXECUTABLE_APPROVAL_MIGRATION.sql.includes(
+                "FROM action_approvals",
+              ),
             applied,
             repeated,
             version: Number(version[0]?.user_version),
+            targetColumns: targetColumns.map(({ name }) => name),
             approvals,
             foreignKeys,
             violations,
@@ -102,9 +124,19 @@ describe("P38 cumulative historical database upgrade", () => {
       ),
     );
 
+    expect(result.sourceVersion).toBe(37);
+    expect(result.sourceMigrationHighWater).toBe(37);
+    expect(result.sourceColumns).not.toContain("cancelled_at");
+    expect(result.sourceColumns).not.toContain("cancelled_by");
+    expect(result.sourceColumns).not.toContain("cancellation_reason");
+    expect(result.p38DescriptorVersion).toBe(38);
+    expect(result.p38DescriptorSelectsOldTable).toBe(true);
     expect(result.applied).toBe(1);
     expect(result.repeated).toBe(0);
     expect(result.version).toBe(38);
+    expect(result.targetColumns).toContain("cancelled_at");
+    expect(result.targetColumns).toContain("cancelled_by");
+    expect(result.targetColumns).toContain("cancellation_reason");
     expect(result.approvals).toEqual([
       {
         approval_id: "apr_legacy_consumed",
