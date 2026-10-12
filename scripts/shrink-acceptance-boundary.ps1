@@ -78,8 +78,18 @@ if ($recordedProcess) {
   if ($recordedInstance -is [System.Management.Automation.PSCustomObject]) {
     try {
       $liveProcess = Get-Process -Id $recordedPid -ErrorAction Stop
-      $savedStart = [DateTime]::Parse([string]$recordedInstance.processStartTimeUtc).ToUniversalTime()
-      if ($liveProcess.StartTime.ToUniversalTime() -ne $savedStart) {
+      $liveStartUtc = $liveProcess.StartTime.ToUniversalTime()
+      $savedStartTicks = 0L
+      $hasSavedStartTicks = [long]::TryParse([string]$recordedInstance.processStartTimeTicks, [ref]$savedStartTicks)
+      $startMatches = if ($hasSavedStartTicks) {
+        $liveStartUtc.Ticks -eq $savedStartTicks
+      } else {
+        # Legacy JSON timestamps may have been auto-converted by PowerShell 5.
+        $liveStartSecond = $liveStartUtc.ToString("yyyy-MM-ddTHH:mm:ss")
+        $storedStartSecond = ([DateTime]$recordedInstance.processStartTimeUtc).ToString("yyyy-MM-ddTHH:mm:ss")
+        [string]::Equals($liveStartSecond, $storedStartSecond, [System.StringComparison]::Ordinal)
+      }
+      if (!$startMatches) {
         throw "Recorded PID start time does not match the live process."
       }
     } catch {

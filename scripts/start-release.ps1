@@ -59,8 +59,20 @@ if (Test-Path -LiteralPath $pidFile) {
         [int]$instance.port -eq $Port
       try {
         $liveProcess = Get-Process -Id $recordedPid -ErrorAction Stop
-        $savedStart = [DateTime]::Parse([string]$instance.processStartTimeUtc).ToUniversalTime()
-        $sameConfiguredInstance = $sameConfiguredInstance -and ($liveProcess.StartTime.ToUniversalTime() -eq $savedStart)
+        $liveStartUtc = $liveProcess.StartTime.ToUniversalTime()
+        $savedStartTicks = 0L
+        $hasSavedStartTicks = [long]::TryParse([string]$instance.processStartTimeTicks, [ref]$savedStartTicks)
+        $startMatches = if ($hasSavedStartTicks) {
+          $liveStartUtc.Ticks -eq $savedStartTicks
+        } else {
+          # PowerShell 5 may convert the ISO JSON string to DateTime and drop
+          # its fractional seconds. The legacy fallback therefore compares
+          # the UTC clock to the stored whole second only.
+          $liveStartSecond = $liveStartUtc.ToString("yyyy-MM-ddTHH:mm:ss")
+          $storedStartSecond = ([DateTime]$instance.processStartTimeUtc).ToString("yyyy-MM-ddTHH:mm:ss")
+          [string]::Equals($liveStartSecond, $storedStartSecond, [System.StringComparison]::Ordinal)
+        }
+        $sameConfiguredInstance = $sameConfiguredInstance -and $startMatches
       } catch {
         $sameConfiguredInstance = $false
       }
@@ -108,10 +120,12 @@ $process = Start-Process `
   -RedirectStandardOutput $stdoutPath `
   -RedirectStandardError $stderrPath `
   -PassThru
-$processStartTimeUtc = (Get-Process -Id $process.Id).StartTime.ToUniversalTime().ToString("o")
+$processStartUtc = (Get-Process -Id $process.Id).StartTime.ToUniversalTime()
+$processStartTimeUtc = $processStartUtc.ToString("o")
 [ordered]@{
   processId = $process.Id
   processStartTimeUtc = $processStartTimeUtc
+  processStartTimeTicks = [long]$processStartUtc.Ticks
   appRoot = $root
   entryPath = $entryPath
   port = $Port

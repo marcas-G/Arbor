@@ -33,8 +33,18 @@ if ($process) {
       [string]::Equals([string]$instance.workspaceRoot, (Join-Path $dataRoot "workspace"), [System.StringComparison]::OrdinalIgnoreCase)
     try {
       $liveProcess = Get-Process -Id $daemonPid -ErrorAction Stop
-      $savedStart = [DateTime]::Parse([string]$instance.processStartTimeUtc).ToUniversalTime()
-      $instanceMatches = $instanceMatches -and ($liveProcess.StartTime.ToUniversalTime() -eq $savedStart)
+      $liveStartUtc = $liveProcess.StartTime.ToUniversalTime()
+      $savedStartTicks = 0L
+      $hasSavedStartTicks = [long]::TryParse([string]$instance.processStartTimeTicks, [ref]$savedStartTicks)
+      $startMatches = if ($hasSavedStartTicks) {
+        $liveStartUtc.Ticks -eq $savedStartTicks
+      } else {
+        # Legacy JSON timestamps may have been auto-converted by PowerShell 5.
+        $liveStartSecond = $liveStartUtc.ToString("yyyy-MM-ddTHH:mm:ss")
+        $storedStartSecond = ([DateTime]$instance.processStartTimeUtc).ToString("yyyy-MM-ddTHH:mm:ss")
+        [string]::Equals($liveStartSecond, $storedStartSecond, [System.StringComparison]::Ordinal)
+      }
+      $instanceMatches = $instanceMatches -and $startMatches
     } catch {
       $instanceMatches = $false
     }
