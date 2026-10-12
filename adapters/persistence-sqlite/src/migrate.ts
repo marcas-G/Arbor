@@ -8,6 +8,7 @@ export interface MigrationFile {
   readonly name: string;
   readonly sql: string;
   readonly foreignKeysOff?: boolean;
+  readonly requiresUserVersion?: number;
 }
 
 export const splitStatements = (sql: string): ReadonlyArray<string> => {
@@ -53,6 +54,16 @@ export const runMigrations = (
       "PRAGMA user_version",
     );
     const current = Number(versionRows[0]?.user_version ?? 0);
+    const requiredVersion = migrations.find(
+      (migration) => migration.requiresUserVersion !== undefined,
+    )?.requiresUserVersion;
+    if (requiredVersion !== undefined && current !== requiredVersion) {
+      return yield* Effect.fail(
+        sqliteAdapterError(
+          `migration requires database user_version ${requiredVersion}, found ${current}`,
+        ),
+      );
+    }
     const latest = migrations.reduce(
       (max, migration) => Math.max(max, migration.id),
       0,

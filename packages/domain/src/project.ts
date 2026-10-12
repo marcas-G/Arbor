@@ -16,6 +16,60 @@ export const makeProjectPolicy = (
 
 export type ProjectLifecycle = "Open" | "Closed";
 
+/** Historical source selected for a Project's initial root resource boundary.
+ * This records provenance only; Workspace.resourceBoundary remains the
+ * authority for the resource currently in use. */
+export type ProjectResourceSource =
+  | {
+      readonly _tag: "Profile";
+      readonly resourceProfileRef: string;
+      readonly version: string;
+    }
+  | { readonly _tag: "ConversationOnly" }
+  | { readonly _tag: "LegacyUnknown" };
+
+export type NewProjectResourceSource = Exclude<
+  ProjectResourceSource,
+  { readonly _tag: "LegacyUnknown" }
+>;
+
+const hasExactKeys = (
+  value: Readonly<Record<string, unknown>>,
+  keys: ReadonlyArray<string>,
+): boolean => {
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  );
+};
+
+/** Strict decoder for the persisted ProjectResourceSource ADT. */
+export const isProjectResourceSource = (
+  value: unknown,
+): value is ProjectResourceSource => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  switch (record._tag) {
+    case "Profile":
+      return (
+        hasExactKeys(record, ["_tag", "resourceProfileRef", "version"]) &&
+        typeof record.resourceProfileRef === "string" &&
+        record.resourceProfileRef.length > 0 &&
+        typeof record.version === "string" &&
+        record.version.length > 0
+      );
+    case "ConversationOnly":
+    case "LegacyUnknown":
+      return hasExactKeys(record, ["_tag"]);
+    default:
+      return false;
+  }
+};
+
 const PROJECT_NAME_MAX_SCALARS = 120;
 const UNSAFE_PROJECT_NAME = /[\p{Cc}\p{Cf}\p{Cs}]/u;
 
@@ -50,6 +104,7 @@ export interface Project {
   readonly projectPolicyRevision: Revision;
   readonly defaultConfiguration: Readonly<Record<string, unknown>>;
   readonly environmentRef: string;
+  readonly resourceSource: ProjectResourceSource;
   readonly lifecycle: ProjectLifecycle;
   readonly revision: Revision;
 }
@@ -63,6 +118,7 @@ export interface CreateProjectInput {
   readonly revision: Revision;
   readonly defaultConfiguration?: Readonly<Record<string, unknown>>;
   readonly environmentRef?: string;
+  readonly resourceSource: NewProjectResourceSource;
 }
 
 export const createProject = (input: CreateProjectInput): Project => ({
@@ -73,6 +129,7 @@ export const createProject = (input: CreateProjectInput): Project => ({
   projectPolicyRevision: input.projectPolicyRevision,
   defaultConfiguration: input.defaultConfiguration ?? {},
   environmentRef: input.environmentRef ?? "",
+  resourceSource: input.resourceSource,
   lifecycle: "Open",
   revision: input.revision,
 });

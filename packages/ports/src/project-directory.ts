@@ -1,6 +1,7 @@
 import type {
   ProjectId,
   ProjectLifecycle,
+  ProjectResourceSource,
   Revision,
   WorkspaceId,
 } from "@arbor/domain";
@@ -13,6 +14,7 @@ export interface ProjectDirectoryRow {
   readonly rootWorkspaceId: WorkspaceId;
   readonly revision: Revision;
   readonly updatedAt: string;
+  readonly resourceSource: ProjectResourceSource;
 }
 
 export interface ProjectDirectoryReadError {

@@ -1,9 +1,10 @@
-import type {
-  Project,
-  ProjectId,
-  ProjectPolicy,
-  Revision,
-  WorkspaceId,
+import {
+  isProjectResourceSource,
+  type Project,
+  type ProjectId,
+  type ProjectPolicy,
+  type Revision,
+  type WorkspaceId,
 } from "@arbor/domain";
 import {
   Clock,
@@ -14,7 +15,10 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
-import { repositoryFailure } from "./repository-error.js";
+import {
+  persistenceCorruption,
+  repositoryFailure,
+} from "./repository-error.js";
 
 const json = (value: unknown): string => JSON.stringify(value);
 
@@ -28,24 +32,35 @@ interface ProjectRow {
   readonly project_policy_revision: number;
   readonly default_configuration: string;
   readonly environment_ref: string;
+  readonly resource_source_json: string;
   readonly lifecycle: "Open" | "Closed";
   readonly revision: number;
 }
 
-const toProject = (row: ProjectRow): Project => ({
-  projectId: row.project_id as ProjectId,
-  name: row.name,
-  rootWorkspaceId: row.root_workspace_id as WorkspaceId,
-  projectPolicy: JSON.parse(row.project_policy) as ProjectPolicy,
-  projectPolicyRevision: Number(row.project_policy_revision) as Revision,
-  defaultConfiguration: JSON.parse(row.default_configuration) as Record<
-    string,
-    unknown
-  >,
-  environmentRef: row.environment_ref,
-  lifecycle: row.lifecycle,
-  revision: Number(row.revision) as Revision,
-});
+const toProject = (row: ProjectRow): Project | undefined => {
+  let resourceSource: unknown;
+  try {
+    resourceSource = JSON.parse(row.resource_source_json);
+  } catch {
+    return undefined;
+  }
+  if (!isProjectResourceSource(resourceSource)) return undefined;
+  return {
+    projectId: row.project_id as ProjectId,
+    name: row.name,
+    rootWorkspaceId: row.root_workspace_id as WorkspaceId,
+    projectPolicy: JSON.parse(row.project_policy) as ProjectPolicy,
+    projectPolicyRevision: Number(row.project_policy_revision) as Revision,
+    defaultConfiguration: JSON.parse(row.default_configuration) as Record<
+      string,
+      unknown
+    >,
+    environmentRef: row.environment_ref,
+    resourceSource,
+    lifecycle: row.lifecycle,
+    revision: Number(row.revision) as Revision,
+  };
+};
 
 export const ProjectRepositoryLive: Layer.Layer<
   ProjectRepository,
@@ -73,9 +88,18 @@ export const ProjectRepositoryLive: Layer.Layer<
             ),
           );
           const row = rows[0];
-          return row === undefined
-            ? Option.none()
-            : Option.some(toProject(row));
+          if (row === undefined) return Option.none();
+          const project = toProject(row);
+          if (project === undefined) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "ProjectRepository",
+                "decodeResourceSource",
+                "Stored ProjectResourceSource is invalid",
+              ),
+            );
+          }
+          return Option.some(project);
         }),
       create: (project) =>
         Effect.gen(function* () {
@@ -83,7 +107,7 @@ export const ProjectRepositoryLive: Layer.Layer<
           const now = yield* clock.now();
           yield* run(
             sql.unsafe(
-              "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+              "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, resource_source_json, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
               [
                 project.projectId,
                 project.name,
@@ -92,6 +116,7 @@ export const ProjectRepositoryLive: Layer.Layer<
                 project.projectPolicyRevision,
                 json(project.defaultConfiguration),
                 project.environmentRef,
+                json(project.resourceSource),
                 project.lifecycle,
                 project.revision,
                 now,

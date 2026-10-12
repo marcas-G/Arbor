@@ -305,6 +305,7 @@ const readLocalProjectDirectory = async (
         rootWorkspaceId: row.rootWorkspaceId,
         revision: row.revision,
         updatedAt: row.updatedAt,
+        resourceSource: row.resourceSource,
       })),
     },
   });

@@ -197,6 +197,10 @@ const boundary = {
 };
 
 const seed = Effect.gen(function* () {
+  const sql = yield* SqlClient;
+  yield* sql.unsafe(
+    `ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL DEFAULT '{"_tag":"LegacyUnknown"}' CHECK (json_valid(resource_source_json))`,
+  );
   const tx = yield* TransactionPort;
   const projects = yield* ProjectRepository;
   const workspaces = yield* WorkspaceRepository;
@@ -211,6 +215,7 @@ const seed = Effect.gen(function* () {
         projectPolicyRevision: parse(Revision)(0),
         defaultConfiguration: {},
         environmentRef: "local",
+        resourceSource: { _tag: "ConversationOnly" },
         lifecycle: "Open",
         revision: parse(Revision)(0),
       });

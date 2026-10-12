@@ -6,6 +6,7 @@ import {
   createProject,
   isProjectClosed,
   isProjectOpen,
+  isProjectResourceSource,
   makeProjectPolicy,
   normalizeProjectName,
   ProjectId,
@@ -30,9 +31,41 @@ const makeProject = (value = 0, policyValue = 0): Project =>
     projectPolicy: makeProjectPolicy(),
     projectPolicyRevision: revision(policyValue),
     revision: revision(value),
+    resourceSource: { _tag: "ConversationOnly" },
   });
 
 describe("project aggregate", () => {
+  it("strictly recognizes only the closed ProjectResourceSource shapes", () => {
+    expect(
+      isProjectResourceSource({
+        _tag: "Profile",
+        resourceProfileRef: "repo-default",
+        version: "7",
+      }),
+    ).toBe(true);
+    expect(isProjectResourceSource({ _tag: "ConversationOnly" })).toBe(true);
+    expect(isProjectResourceSource({ _tag: "LegacyUnknown" })).toBe(true);
+    expect(
+      isProjectResourceSource({
+        _tag: "Profile",
+        resourceProfileRef: "repo-default",
+        version: "7",
+        path: "C:/private",
+      }),
+    ).toBe(false);
+    expect(
+      isProjectResourceSource({
+        _tag: "Profile",
+        resourceProfileRef: "",
+        version: "7",
+      }),
+    ).toBe(false);
+    expect(
+      isProjectResourceSource({ _tag: "ConversationOnly", path: "x" }),
+    ).toBe(false);
+    expect(isProjectResourceSource({ _tag: "Unknown" })).toBe(false);
+  });
+
   it("creates an Open project with exactly one root workspace", () => {
     const project = makeProject();
     expect(project.lifecycle).toBe("Open");

@@ -21,9 +21,12 @@ describe("P15 local ProjectDirectory", () => {
         Effect.gen(function* () {
           yield* runMigrations(P18_MIGRATIONS);
           const sql = yield* SqlClient;
+          yield* sql.unsafe(
+            `ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL DEFAULT '{"_tag":"LegacyUnknown"}' CHECK (json_valid(resource_source_json))`,
+          );
           yield* sql.unsafe("PRAGMA foreign_keys = OFF");
           yield* sql.unsafe(
-            "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES ('prj_1', 'One', 'ws_1', '{}', 0, '{}', 'local', 'Open', 2, 't1', 't2')",
+            "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, resource_source_json, lifecycle, revision, created_at, updated_at) VALUES ('prj_1', 'One', 'ws_1', '{}', 0, '{}', 'local', '{\"_tag\":\"Profile\",\"resourceProfileRef\":\"repo-default\",\"version\":\"7\"}', 'Open', 2, 't1', 't2')",
           );
           return yield* (yield* ProjectDirectory).list();
         }),
@@ -36,6 +39,11 @@ describe("P15 local ProjectDirectory", () => {
         name: "One",
         lifecycle: "Open",
         revision: 2,
+        resourceSource: {
+          _tag: "Profile",
+          resourceProfileRef: "repo-default",
+          version: "7",
+        },
       }),
     ]);
   });
