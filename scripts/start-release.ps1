@@ -27,6 +27,7 @@ $dataDir = Join-Path $dataRoot "data"
 $logDir = Join-Path $dataRoot "logs"
 $pidFile = Join-Path $dataRoot "daemon.pid"
 $dbPath = Join-Path $dataDir "arbor-slice.db"
+$entryPath = [System.IO.Path]::GetFullPath((Join-Path $root "apps\single-workspace\dist\main.js"))
 $runId = Get-Date -Format "yyyyMMdd-HHmmss"
 $stdoutPath = Join-Path $logDir "daemon-$runId.stdout.log"
 $stderrPath = Join-Path $logDir "daemon-$runId.stderr.log"
@@ -34,10 +35,55 @@ $stderrPath = Join-Path $logDir "daemon-$runId.stderr.log"
 New-Item -ItemType Directory -Force -Path $workspaceRoot, $dataDir, $logDir | Out-Null
 
 if (Test-Path -LiteralPath $pidFile) {
+  $pidContent = (Get-Content -LiteralPath $pidFile -Raw).Trim()
+  $instance = $null
+  try { $instance = ConvertFrom-Json -InputObject $pidContent } catch { }
   $recordedPid = 0
-  [void][int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$recordedPid)
-  if ($recordedPid -gt 0 -and (Get-Process -Id $recordedPid -ErrorAction SilentlyContinue)) {
-    throw "A release daemon is already recorded with PID $recordedPid. Use scripts/stop-release.ps1 first."
+  if ($instance -is [System.Management.Automation.PSCustomObject]) {
+    $recordedPid = [int]$instance.processId
+  } else {
+    [void][int]::TryParse($pidContent, [ref]$recordedPid)
+  }
+  $existingProcess = if ($recordedPid -gt 0) { Get-CimInstance Win32_Process -Filter "ProcessId = $recordedPid" -ErrorAction SilentlyContinue } else { $null }
+  if ($existingProcess) {
+    $expectedEntryInCommand = $existingProcess.CommandLine.IndexOf($entryPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    $existingListener = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue | Where-Object { $_.OwningProcess -eq $recordedPid } | Select-Object -First 1
+    $sameConfiguredInstance = $false
+    if ($instance -is [System.Management.Automation.PSCustomObject]) {
+      $sameConfiguredInstance =
+        [string]::Equals([string]$instance.appRoot, $root, [System.StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals([string]$instance.entryPath, $entryPath, [System.StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals([string]$instance.databasePath, $dbPath, [System.StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals([string]$instance.workspaceRoot, $workspaceRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals([string]$instance.providerConfigPath, $providerConfigPath, [System.StringComparison]::OrdinalIgnoreCase) -and
+        [int]$instance.port -eq $Port
+      try {
+        $liveProcess = Get-Process -Id $recordedPid -ErrorAction Stop
+        $savedStart = [DateTime]::Parse([string]$instance.processStartTimeUtc).ToUniversalTime()
+        $sameConfiguredInstance = $sameConfiguredInstance -and ($liveProcess.StartTime.ToUniversalTime() -eq $savedStart)
+      } catch {
+        $sameConfiguredInstance = $false
+      }
+    }
+    if (
+      $existingProcess.Name -in @("node.exe", "node") -and
+      $expectedEntryInCommand -and
+      $existingListener -and
+      (($instance -is [System.Management.Automation.PSCustomObject] -and $sameConfiguredInstance) -or $instance -isnot [System.Management.Automation.PSCustomObject])
+    ) {
+      try {
+        $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/project-resources" -TimeoutSec 3 -UseBasicParsing
+        if ($response.StatusCode -eq 200) {
+          Write-Output "Arbor is already ready at http://127.0.0.1:$Port"
+          Write-Output "Database: $dbPath"
+          Write-Output "Workspace files: $workspaceRoot"
+          Write-Output "Daemon PID: $recordedPid"
+          Write-Output "Logs: $logDir"
+          exit 0
+        }
+      } catch { }
+    }
+    throw "PID $recordedPid is still running, but it does not match this Arbor release instance. It was left untouched."
   }
   Remove-Item -LiteralPath $pidFile -Force
 }
@@ -56,13 +102,23 @@ $env:ARBOR_WEB_DIST = Join-Path $root "apps/web/dist"
 
 $process = Start-Process `
   -FilePath $nodeCommand.Source `
-  -ArgumentList (Join-Path $root "apps\single-workspace\dist\main.js") `
+  -ArgumentList $entryPath `
   -WorkingDirectory $root `
   -WindowStyle Hidden `
   -RedirectStandardOutput $stdoutPath `
   -RedirectStandardError $stderrPath `
   -PassThru
-Set-Content -LiteralPath $pidFile -Value $process.Id -NoNewline
+$processStartTimeUtc = (Get-Process -Id $process.Id).StartTime.ToUniversalTime().ToString("o")
+[ordered]@{
+  processId = $process.Id
+  processStartTimeUtc = $processStartTimeUtc
+  appRoot = $root
+  entryPath = $entryPath
+  port = $Port
+  databasePath = $dbPath
+  workspaceRoot = $workspaceRoot
+  providerConfigPath = $providerConfigPath
+} | ConvertTo-Json | Set-Content -LiteralPath $pidFile -Encoding UTF8
 
 $ready = $false
 $deadline = [DateTime]::UtcNow.AddSeconds(60)
