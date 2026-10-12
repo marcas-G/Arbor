@@ -1,7 +1,7 @@
 # P41 / 0041 fact-key nullability amendment — acceptance and owner landing
 
 Date: 2026-10-12
-Status: **accepted exact physical amendment landed; independent post-landing review pending**
+Status: **accepted exact physical amendment landed; independent post-landing review B0 / formally closed**
 
 ## Decision and authority
 
@@ -69,6 +69,9 @@ narrow v1.45 postimage manifest is
 
 ## Verification boundary
 
-An independent post-landing consistency review must verify the exact owner
-postimages, DID version/history, SQL and descriptor digests, and unchanged
-registration/activation boundary before this landing is closed.
+The independent post-landing consistency review is recorded at
+`planning/results/P41-0041-nullable-primary-key-amendment-postreview.md`:
+**B0 / Blocking = 0**. The review verified the exact owner postimages, DID
+version/history, proposal identity, unchanged P10 owners, SQL and descriptor
+digests, and unchanged registration/activation boundary. No tests, builds,
+migrations, or database operations were run.
