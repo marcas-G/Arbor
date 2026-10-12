@@ -157,6 +157,9 @@ const submittedDecisionBindingRowFromDb = (
   row: SubmittedDecisionBindingAttentionDbRow,
 ): SubmittedDecisionBindingAttentionProjectionRow => ({
   projectId: row.project_id as ProjectId,
+  attentionFactId: row.dedup_key,
+  workspaceId: row.target_workspace_id as never,
+  firstDetectedAt: row.occurred_at,
   dedupKey: row.dedup_key,
   source: "SubmittedDecisionBindingFailure",
   severity: "ActionRequired",
@@ -907,12 +910,17 @@ export const makeProjectAttentionProjectionStore = (
     | "listDeliverReplayFailures"
     | "listPendingDeliverReplayAttention"
     | "acknowledgePendingDeliverReplayAttention"
+    | "isSubmittedDecisionBindingAvailable"
+    | "findSubmittedDecisionBindingFailure"
+    | "listSubmittedDecisionBindingFailures"
   >,
   attentionRows: Pick<
     AttentionProjectionStoreService,
     | "putAssignWorkBindingFailure"
     | "putDeliverReplayFailure"
     | "putToolObservationReplayFailure"
+    | "isSubmittedDecisionBindingAvailable"
+    | "putSubmittedDecisionBindingFailure"
     | "resetProject"
     | "reconcileWorkspaceResourceActivation"
     | "reconcileStaleWorkRevisionRows"
@@ -1129,6 +1137,90 @@ export const makeProjectAttentionProjectionStore = (
             .pipe(Effect.mapError(projectionFailure));
           continue;
         }
+        if (event.eventType === "SubmittedDecisionBindingEscalated") {
+          if (event.projectId !== projectId) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "P10 Attention consumer received a Submitted Decision event for another project",
+            });
+          }
+          const payload = payloadRecord(event.payload);
+          const payloadKeys = Object.keys(payload).sort();
+          const expectedPayloadKeys = [
+            "attentionFactId",
+            "executionId",
+            "failureCode",
+            "logicalActionId",
+            "logicalStepNo",
+            "providerTurnId",
+            "repairAttempt",
+            "workspaceId",
+          ].sort();
+          const attentionFactId = payload.attentionFactId;
+          const findSubmitted = sourceFacts.findSubmittedDecisionBindingFailure;
+          const putSubmitted = attentionRows.putSubmittedDecisionBindingFailure;
+          if (
+            typeof attentionFactId !== "string" ||
+            attentionFactId.length === 0 ||
+            findSubmitted === undefined ||
+            putSubmitted === undefined
+          ) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "Submitted Decision event has no available immutable P9 fact and P10 marker route",
+            });
+          }
+          const source = yield* findSubmitted(attentionFactId).pipe(
+            Effect.mapError(projectionFailure),
+          );
+          if (Option.isNone(source)) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "Submitted Decision event has no matching immutable P9 fact",
+            });
+          }
+          const fact = source.value;
+          if (
+            event.eventVersion !== 1 ||
+            event.actor !== "system:recovery" ||
+            event.aggregateRef !== fact.workspaceId ||
+            event.correlationRef !== fact.logicalActionId ||
+            event.causedByCommandId !== undefined ||
+            event.causedByEventId !== undefined ||
+            event.occurredAt !== fact.firstDetectedAt ||
+            fact.eventId !== event.eventId ||
+            fact.projectId !== projectId ||
+            fact.attentionFactId !== attentionFactId ||
+            fact.executionId !== payload.executionId ||
+            fact.workspaceId !== payload.workspaceId ||
+            fact.logicalStepNo !== payload.logicalStepNo ||
+            fact.repairAttempt !== payload.repairAttempt ||
+            fact.providerTurnId !== payload.providerTurnId ||
+            fact.logicalActionId !== payload.logicalActionId ||
+            fact.failureCode !== payload.failureCode ||
+            payloadKeys.length !== expectedPayloadKeys.length ||
+            payloadKeys.some((key, index) => key !== expectedPayloadKeys[index])
+          ) {
+            return yield* Effect.fail<ConsumerOffsetStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "ConsumerOffsetStore",
+              operation: "p10-attention-apply",
+              reason:
+                "Submitted Decision event does not exactly match its immutable P9 fact",
+            });
+          }
+          yield* putSubmitted(fact).pipe(Effect.mapError(projectionFailure));
+          continue;
+        }
         if (event.eventType !== "AssignWorkTargetBindingEscalated") continue;
         if (event.projectId !== projectId) {
           return yield* Effect.fail<ConsumerOffsetStoreError>({
@@ -1216,6 +1308,49 @@ export const makeProjectAttentionProjectionStore = (
         yield* attentionRows
           .putDeliverReplayFailure(fact)
           .pipe(Effect.mapError(projectionFailure));
+      }
+      const submittedFactsAvailable =
+        sourceFacts.isSubmittedDecisionBindingAvailable === undefined
+          ? false
+          : yield* sourceFacts
+              .isSubmittedDecisionBindingAvailable()
+              .pipe(Effect.mapError(projectionFailure));
+      const submittedMarkersAvailable =
+        attentionRows.isSubmittedDecisionBindingAvailable === undefined
+          ? false
+          : yield* attentionRows
+              .isSubmittedDecisionBindingAvailable()
+              .pipe(Effect.mapError(projectionFailure));
+      if (submittedFactsAvailable !== submittedMarkersAvailable) {
+        return yield* Effect.fail<ConsumerOffsetStoreError>({
+          _tag: "PersistenceCorruption",
+          repository: "ConsumerOffsetStore",
+          operation: "p10-attention-rebuild",
+          reason:
+            "Submitted Decision fact and Attention marker availability do not converge",
+        });
+      }
+      if (submittedFactsAvailable) {
+        if (
+          sourceFacts.listSubmittedDecisionBindingFailures === undefined ||
+          attentionRows.putSubmittedDecisionBindingFailure === undefined
+        ) {
+          return yield* Effect.fail<ConsumerOffsetStoreError>({
+            _tag: "PersistenceCorruption",
+            repository: "ConsumerOffsetStore",
+            operation: "p10-attention-rebuild",
+            reason:
+              "Submitted Decision fact snapshot has no P10 marker write route",
+          });
+        }
+        const submittedFacts = yield* sourceFacts
+          .listSubmittedDecisionBindingFailures(projectId)
+          .pipe(Effect.mapError(projectionFailure));
+        for (const fact of submittedFacts) {
+          yield* attentionRows
+            .putSubmittedDecisionBindingFailure(fact)
+            .pipe(Effect.mapError(projectionFailure));
+        }
       }
       const pending = yield* sourceFacts
         .listPendingDeliverReplayAttention(projectId, Number.MAX_SAFE_INTEGER)

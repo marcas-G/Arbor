@@ -12,15 +12,15 @@
 
 Runtime now owns deterministic Submitted Decision failure identity and appends the exact `SubmittedDecisionBindingEscalated` event before storing its complete immutable P9 fact in the caller's transaction. Repeated observations find and validate the existing fact, preserving its original event and timestamp. Recovery closes only the exact matching pending `select_current_work` action; source-table absence remains fail-closed. Ordinary Work Stop and exact matching Decision Stop keep their generic settlement behavior.
 
-P10 Attention now validates the event against the stored P9 fact and derives one `ActionRequired` row keyed by the immutable fact ID. The P9 fact store port remains optional so implementations without 0041 fail closed. Migration 0041 is represented by the separately committed storage descriptor only; `CURRENT_MIGRATIONS` remains P38 and the migration is not registered.
+P10 Attention now validates the complete event envelope against the stored P9 fact and reports typed projection corruption for a missing or mismatched pair. The Attention consumer inserts one FK-bound marker in the same transaction as offset advance. Full reset checks P9/P10 store availability, clears markers, and seeds them from the durable P9 fact snapshot before retained-event replay, so journal pruning does not erase the Attention row. The P9 fact store port remains optional so implementations without 0041 fail closed. Migration 0041 is represented by the separately committed storage descriptor only; `CURRENT_MIGRATIONS` remains P38 and the migration is not registered.
 
 ## Qualification
 
 - `pnpm typecheck`: PASS.
 - `pnpm build`: PASS.
 - Full-repository Biome: PASS (1120 files); `git diff --check`: PASS.
-- Focused Vitest: 8 files, 36 tests PASS. Coverage includes P41 fact codec/store behavior, unavailable-source and Stop negatives, submitted event retry identity, P10 Attention derivation, P10 SQLite close/reopen rebuild, and pinned replay.
-- `tests/p41-p10-attention-rebuild-restart.test.ts` uses a temporary SQLite database, applies P38 through the existing migration runner, applies the standalone 0041 DDL directly without changing `user_version`, writes the P9 fact and journal event through production adapters, closes and reopens the SQLite scope, and rebuilds the same single P10 Attention row from the production fact/event read paths.
+- Focused Vitest: 8 files, 36 tests PASS. Coverage includes P41 fact codec/store behavior, unavailable-source and Stop negatives, submitted event retry identity, strict P10 event/fact integrity, P10 marker rebuild after event pruning, and pinned replay.
+- `tests/p41-p10-attention-rebuild-restart.test.ts` uses a temporary SQLite database, applies P38 through the existing migration runner, applies the standalone 0041 DDL directly without changing `user_version`, writes the P9 fact and journal event through production adapters, materializes the P10 marker, then corrupts the event to verify typed failure. It prunes the event, closes and reopens the SQLite scope, resets P10 Attention, seeds the marker from the production P9 fact snapshot, and verifies the single row remains.
 
 ## Process qualification limitation
 
@@ -28,4 +28,4 @@ The imported AH10 real-daemon scenario was attempted but did not complete. The e
 
 ## Review
 
-Independent exact-SHA review: pending.
+Independent exact-SHA review: pending for the final convergence commit.
