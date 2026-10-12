@@ -89,6 +89,7 @@ const runStoppedRecovery = async (input: {
     state: { status: "Active" as const, settlement: null },
   };
   const settlements: unknown[] = [];
+  const p41StoreTouches = { reads: 0, writes: 0 };
   const tx = {
     transact: (body: Effect.Effect<unknown, unknown, TransactionScope>) =>
       Effect.provideService(body, TransactionScope, {
@@ -108,6 +109,18 @@ const runStoppedRecovery = async (input: {
     } as never),
     Layer.succeed(RecoveryAttentionFactStore, {
       isSubmittedDecisionBindingAvailable: () => Effect.succeed(false),
+      listSubmittedDecisionBindingFailures: () => {
+        p41StoreTouches.reads += 1;
+        return Effect.die(
+          new Error("P41 facts must not be read when unavailable"),
+        );
+      },
+      recordSubmittedDecisionBindingFailure: () => {
+        p41StoreTouches.writes += 1;
+        return Effect.die(
+          new Error("P41 facts must not be written when unavailable"),
+        );
+      },
     } as never),
     Layer.succeed(AgentLoopStepStore, {
       findCurrent: () =>
@@ -159,7 +172,7 @@ const runStoppedRecovery = async (input: {
   const result = await Effect.runPromise(
     Effect.provide(runRecovery(principal), app),
   );
-  return { result, settlements };
+  return { result, settlements, p41StoreTouches, execution };
 };
 
 describe("P41 Stop recovery when the fact source is unavailable", () => {
@@ -210,23 +223,26 @@ describe("P41 Stop recovery when the fact source is unavailable", () => {
       providerManifestId: "manifest_foreign",
     },
   ])(
-    "does not settle a mismatching Decision Stop without fact storage: $reason",
+    "keeps a mismatching stopped DecisionEpisode active without 0041 storage: $reason",
     async (input) => {
-      const { result, settlements } = await runStoppedRecovery({
-        episode: {
-          _tag: "DecisionEpisode",
-          decisionId,
-          decisionKind: "SelectCurrentWork",
-          requestRevision: 0,
-        },
-        includePendingSelection: true,
-        requestWorkspaceId: input.requestWorkspaceId,
-        providerManifestId: input.providerManifestId,
-      });
+      const { result, settlements, p41StoreTouches, execution } =
+        await runStoppedRecovery({
+          episode: {
+            _tag: "DecisionEpisode",
+            decisionId,
+            decisionKind: "SelectCurrentWork",
+            requestRevision: 0,
+          },
+          includePendingSelection: true,
+          requestWorkspaceId: input.requestWorkspaceId,
+          providerManifestId: input.providerManifestId,
+        });
 
       expect(settlements).toHaveLength(0);
       expect(result.settled).toEqual([]);
       expect(result.escalated).toEqual([executionId]);
+      expect(execution.state).toEqual({ status: "Active", settlement: null });
+      expect(p41StoreTouches).toEqual({ reads: 0, writes: 0 });
     },
   );
 });

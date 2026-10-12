@@ -35,6 +35,10 @@ RecoveryAttentionFactStore service are composed.
   fail-closed behavior while 0041 is absent.
 - `tests/p2-driver.test.ts`: 6/6 passed with no 0041 table, confirming ordinary
   execution no longer probes an unregistered P41 table.
+- Stopped DecisionEpisode with a mismatching submitted binding and P41
+  readiness=false leaves the Execution Active, settles nothing, escalates the
+  Execution, and performs zero P41 fact reads/writes; this direct negative
+  regression passed as part of the P41 stop-source suite.
 - `pnpm typecheck` — passed.
 - `pnpm build` — passed.
 - Biome on the P41 integration TS/TSX delta (32 files) — passed.
