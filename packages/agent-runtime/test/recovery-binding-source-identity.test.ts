@@ -8,7 +8,10 @@ import type {
   AgentLoopStepRecord,
 } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
-import { recoveryBindingIdentityFor } from "../src/agent-loop-actions.js";
+import {
+  recoveryBindingIdentityFor,
+  recoveryBindingPolicyRevisionsFor,
+} from "../src/agent-loop-actions.js";
 
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
@@ -94,5 +97,31 @@ describe("P3 RecoveryBinding source identity", () => {
       identity: { executionId, logicalStepNo: 8, repairAttempt: 1 },
     } satisfies AgentLoopStepActionRecord;
     expect(sourceIdentity({ action: mismatchedAction })).toBeUndefined();
+  });
+});
+
+describe("P3 RecoveryBinding policy revision source", () => {
+  it("carries the exact prepared ControlBasis policy revisions", () => {
+    const controlBasis = {
+      workspacePolicyRevision: 17,
+      projectPolicyRevision: 29,
+      responsibilityRevision: 1,
+      resourceBoundaryRevision: 2,
+      authorizationDigest: "digest",
+      environmentRevision: "0",
+    };
+    expect(recoveryBindingPolicyRevisionsFor(controlBasis)).toEqual({
+      workspacePolicyRevision: 17,
+      projectPolicyRevision: 29,
+    });
+  });
+
+  it("does not substitute defaults for an invalid source revision", () => {
+    expect(
+      recoveryBindingPolicyRevisionsFor({
+        workspacePolicyRevision: Number.NaN,
+        projectPolicyRevision: 29,
+      }),
+    ).toBeUndefined();
   });
 });

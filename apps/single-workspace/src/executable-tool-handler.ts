@@ -149,6 +149,8 @@ export const makeExecutableToolHandler = (
     context,
     controlBasis,
     action,
+    recoveryBindingIdentity,
+    recoveryBindingPolicyRevisions,
     executionFence: actionFence,
   }) =>
     Effect.gen(function* () {
@@ -259,7 +261,13 @@ export const makeExecutableToolHandler = (
         actor: context.principal as never,
         authenticatedPrincipal: context.principal,
         controlBasisDigest,
-        executionFence,
+        ...(recoveryBindingIdentity === undefined
+          ? {}
+          : { recoveryBindingIdentity }),
+        ...(recoveryBindingPolicyRevisions === undefined
+          ? {}
+          : { recoveryBindingPolicyRevisions }),
+        ...(executionFence === undefined ? {} : { executionFence }),
         delegationDepth:
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,

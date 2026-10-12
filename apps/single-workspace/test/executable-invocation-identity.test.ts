@@ -145,6 +145,97 @@ describe("executable tool invocation identity scope", () => {
     expect(ids[1]).not.toBe(legacyId);
   });
 
+  it("passes only the exact trusted P3 tuple and policy revisions into ToolRuntime", async () => {
+    let observedContext:
+      | import("@arbor/ports").ToolExecutionContext
+      | undefined;
+    const handler = makeExecutableToolHandler(
+      {
+        invoke: (_toolIntent, toolContext) => {
+          observedContext = toolContext;
+          return Effect.succeed({
+            _tag: "Success" as const,
+            observation: { text: "ok", truncated: false },
+            resultRef: null,
+          });
+        },
+      },
+      { now: () => Effect.succeed("2026-10-05T00:00:00.000Z") },
+      {
+        visibleRefs: () =>
+          Effect.succeed([{ name: "read", version: "1", hash: "read-v1" }]),
+        resolveForModel: () => Effect.die("unused"),
+      },
+    );
+    const trustedIdentity = {
+      executionId: "exe_identity_a" as ExecutionId,
+      providerTurnId: "ptn_persisted_turn" as never,
+      logicalStepNo: 4,
+      repairAttempt: 1,
+      logicalActionId: "action-persisted",
+      actionIndex: 3,
+      callRef: invocation.callRef,
+    };
+    const policyRevisions = {
+      workspacePolicyRevision: 17,
+      projectPolicyRevision: 29,
+    };
+    await Effect.runPromise(
+      handler.handle({
+        invocation,
+        execution: executionFor("exe_identity_a"),
+        context: contextFor("exe_identity_a"),
+        controlBasis: {
+          workspacePolicyRevision: 17,
+          projectPolicyRevision: 29,
+        } as never,
+        recoveryBindingIdentity: trustedIdentity,
+        recoveryBindingPolicyRevisions: policyRevisions,
+      } as never),
+    );
+    expect(observedContext?.recoveryBindingIdentity).toBe(trustedIdentity);
+    expect(observedContext?.recoveryBindingPolicyRevisions).toBe(
+      policyRevisions,
+    );
+  });
+
+  it("does not reconstruct absent RecoveryBinding inputs from execution or model data", async () => {
+    let observedContext:
+      | import("@arbor/ports").ToolExecutionContext
+      | undefined;
+    const handler = makeExecutableToolHandler(
+      {
+        invoke: (_toolIntent, toolContext) => {
+          observedContext = toolContext;
+          return Effect.succeed({
+            _tag: "Success" as const,
+            observation: { text: "ok", truncated: false },
+            resultRef: null,
+          });
+        },
+      },
+      { now: () => Effect.succeed("2026-10-05T00:00:00.000Z") },
+      {
+        visibleRefs: () =>
+          Effect.succeed([{ name: "read", version: "1", hash: "read-v1" }]),
+        resolveForModel: () => Effect.die("unused"),
+      },
+    );
+    await Effect.runPromise(
+      handler.handle({
+        invocation,
+        execution: executionFor("exe_identity_a"),
+        context: contextFor("exe_identity_a"),
+        controlBasis: {
+          workspacePolicyRevision: 17,
+          projectPolicyRevision: 29,
+        } as never,
+      }),
+    );
+    expect(observedContext?.recoveryBindingIdentity).toBeUndefined();
+    expect(observedContext?.recoveryBindingPolicyRevisions).toBeUndefined();
+  });
+
   it("fails closed before ToolRuntime when an active ExecutionOrigin lacks the lease holder triple", async () => {
     let invocationCalls = 0;
     const handler = makeExecutableToolHandler(
