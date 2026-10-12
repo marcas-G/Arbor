@@ -22,4 +22,5 @@ export * from "./send-message.js";
 export * from "./start-verification.js";
 export * from "./steer-work.js";
 export * from "./submit-human-message.js";
+export * from "./update-resource-boundary.js";
 export * from "./worktree-lifecycle.js";

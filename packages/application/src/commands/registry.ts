@@ -13,6 +13,7 @@ import {
   ProjectResourceProfilePort,
   type ProjectResourceProfilePortService,
   type ProjectToolRegistryService,
+  type ResourceOwnershipRepositoryService,
   SessionRepository,
   type SessionRepositoryService,
   WorkRepository,
@@ -34,6 +35,7 @@ import {
 } from "./project-management.js";
 import { makeRegisterProjectToolHandler } from "./register-project-tool.js";
 import { makeRevokePermissionHandler } from "./revoke-permission.js";
+import { makeUpdateResourceBoundaryHandler } from "./update-resource-boundary.js";
 
 export interface P1CommandDependencies {
   readonly clock?: Pick<ClockService, "now">;
@@ -43,6 +45,10 @@ export interface P1CommandDependencies {
   readonly activations?: WorkspaceResourceActivationStoreService;
   readonly projectResourceProfiles?: ProjectResourceProfilePortService;
   readonly works: WorkRepositoryService;
+  readonly resourceOwnership?: Pick<
+    ResourceOwnershipRepositoryService,
+    "listActiveByWorkspace" | "releaseClaim"
+  >;
   readonly executions?: Pick<ExecutionRepositoryService, "findById">;
   readonly bindings?: Pick<AssignWorkTargetBindingRepositoryService, "insert">;
   readonly grants?: Pick<PermissionGrantRepositoryService, "findById">;
@@ -67,6 +73,14 @@ export const makeP1CommandHandlers = (
     unknown,
     unknown
   >,
+  ...(dependencies.resourceOwnership === undefined
+    ? []
+    : [
+        makeUpdateResourceBoundaryHandler({
+          workspaces: dependencies.workspaces,
+          ownership: dependencies.resourceOwnership,
+        }) as unknown as CommandHandler<unknown, unknown>,
+      ]),
 ];
 
 export interface P15CommandDependencies {
