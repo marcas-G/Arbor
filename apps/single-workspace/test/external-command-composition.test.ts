@@ -128,6 +128,78 @@ describe("external command composition boundary", () => {
     expect(calls).toEqual(["load-inputs", "resolver", "gateway"]);
   });
 
+  it("routes exact authenticated-human RenameProject and CloseProject through resolver then Gateway", async () => {
+    const calls: string[] = [];
+    const submission = makeExternalSubmission({
+      resolver: {
+        resolve: (input: AuthorityDecisionInput) => {
+          calls.push(`resolver:${input.envelope.commandType}`);
+          return Effect.succeed({} as never);
+        },
+      } as never,
+      gateway: {
+        execute: (
+          envelope: Parameters<CommandGatewayService["execute"]>[0],
+        ) => {
+          calls.push(`gateway:${envelope.commandType}`);
+          return Effect.succeed({
+            commandId: envelope.commandId,
+            resolution: { _tag: "Committed", result: {} },
+          } as never);
+        },
+      } as never,
+      registry: {
+        lookup: () => Option.some({ schemaVersion: 1 }),
+      } as never,
+      loadInputs: () => {
+        calls.push("load-inputs");
+        return Effect.succeed({} as AuthorityInputs);
+      },
+    });
+
+    const cases = [
+      [
+        "RenameProject",
+        "cmd_018ee90a-5b83-7def-8c2d-7ef1a3c5a031",
+        { name: "Arbor Next", expectedRevision: 0 },
+      ],
+      [
+        "CloseProject",
+        "cmd_018ee90a-5b83-7def-8c2d-7ef1a3c5a032",
+        { expectedRevision: 0, confirmed: true },
+      ],
+    ] as const;
+    const responses = [];
+    for (const [commandType, commandId, payload] of cases) {
+      responses.push(
+        await Effect.runPromise(
+          submission.submit(
+            "user:local" as never,
+            externalContext("user:local" as never),
+            {
+              commandType,
+              commandId,
+              projectId: "prj_018ee90a-5b83-7def-8c2d-7ef1a3c5a033",
+              actor: "user:local",
+              issuedAt: "2026-10-10T00:00:00.000Z",
+              payload,
+            },
+          ),
+        ),
+      );
+    }
+
+    expect(responses.map((response) => response.ok)).toEqual([true, true]);
+    expect(calls).toEqual([
+      "load-inputs",
+      "resolver:RenameProject",
+      "gateway:RenameProject",
+      "load-inputs",
+      "resolver:CloseProject",
+      "gateway:CloseProject",
+    ]);
+  });
+
   it("rejects a well-formed envelope with another Actor before loading authority facts", async () => {
     const calls: string[] = [];
     const submission = makeExternalSubmission({
@@ -156,14 +228,12 @@ describe("external command composition boundary", () => {
         "user:local" as never,
         externalContext("user:local" as never),
         {
-          commandType: "StopExecution",
+          commandType: "RenameProject",
           commandId: "cmd_018ee90a-5b83-7def-8c2d-7ef1a3c5a021",
           projectId: "prj_018ee90a-5b83-7def-8c2d-7ef1a3c5a022",
           actor: "user:someone-else",
           issuedAt: "2026-10-10T00:00:00.000Z",
-          payload: {
-            executionId: "exe_018ee90a-5b83-7def-8c2d-7ef1a3c5a023",
-          },
+          payload: { name: "must not apply", expectedRevision: 0 },
         },
       ),
     );

@@ -267,6 +267,12 @@ describe("external command codec registry parity", () => {
       "reject external; agent-originated",
     );
     expect(registry.lookup("CreateProject")?.externalOriginAllowed).toBe(true);
+    for (const projectCommand of ["RenameProject", "CloseProject"] as const) {
+      expect(registry.lookup(projectCommand)?.externalOriginAllowed).toBe(true);
+      expect(registry.lookup(projectCommand)?.externalOriginPolicy).toBe(
+        "authenticated local human external governance; exact actor/principal and ProjectGovernanceAuthority; no Agent origin",
+      );
+    }
     expect(registry.lookup("SubmitHumanMessage")?.externalOriginAllowed).toBe(
       true,
     );
