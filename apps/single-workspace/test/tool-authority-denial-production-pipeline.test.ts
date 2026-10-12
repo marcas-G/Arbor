@@ -5,12 +5,12 @@ import {
 import {
   ExecutionId,
   makeWorkspacePolicy,
-  parse,
   Principal,
   ProjectId,
+  parse,
   SessionId,
-  WorkspaceId,
   WorkId,
+  WorkspaceId,
 } from "@arbor/domain";
 import {
   Clock,
@@ -21,8 +21,8 @@ import {
   ResourceAdmission,
   SandboxPort,
   ToolCatalogPort,
-  ToolInvocationStore,
   type ToolInvocationIntent,
+  ToolInvocationStore,
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
@@ -39,18 +39,14 @@ import { describe, expect, it } from "vitest";
 import { makeExecutableToolHandler } from "../src/executable-tool-handler.js";
 import { ToolAuthorityResolverLive } from "../src/tool-authority-resolver.js";
 
-const projectId = parse(ProjectId)(
-  "prj_018f2b3c-4d5e-7abc-8def-0123456789a1",
-);
+const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
-const sessionId = parse(SessionId)(
-  "ses_018f2b3c-4d5e-7abc-8def-0123456789a1",
-);
+const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const principal = parse(Principal)("worker:authority-denial-test");
 const governance: ParentUserGovernanceFacts = {
@@ -184,8 +180,7 @@ const makeProductionPipeline = (projectLookupOperationalFailure: boolean) => {
           hash: PATCH_DEFINITION.hash,
         },
       ]),
-    resolveForModel: () =>
-      Effect.die("unused in executable observation test"),
+    resolveForModel: () => Effect.die("unused in executable observation test"),
   };
 
   return {
