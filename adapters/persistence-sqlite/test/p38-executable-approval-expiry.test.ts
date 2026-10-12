@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ExecutionId, Principal, parse } from "@arbor/domain";
 import {
   type DomainEventJournal,
@@ -31,8 +34,8 @@ const toolInvocationId = "tin_expiry_test";
 const expiredAt = "2026-10-11T00:15:00.000Z";
 const expiryObservedAt = "2026-10-11T00:15:00.001Z";
 
-const makeApp = () => {
-  const db = layer({ filename: ":memory:" });
+const makeApp = (filename = ":memory:") => {
+  const db = layer({ filename });
   let sequence = 0;
   const ids = Layer.succeed(IdGenerator, {
     generate: <T>(_kind: string) =>
@@ -163,7 +166,20 @@ const runDb = <A>(
     | InboxProjectionStore
     | TransactionPort
   >,
-) => Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp())));
+  filename?: string,
+) =>
+  Effect.runPromise(
+    Effect.scoped(Effect.provide(program, makeApp(filename ?? ":memory:"))),
+  );
+
+const makeRetainedDatabaseFile = (label: string) => {
+  const directory = mkdtempSync(join(tmpdir(), `arbor-p38-${label}-`));
+  const databaseFile = join(directory, "approval.sqlite");
+  console.info(
+    `P38 retained SQLite fixture: label=${label} database=${databaseFile}`,
+  );
+  return databaseFile;
+};
 
 describe("EA-DG-01 executable approval expiration", () => {
   it("treats pre-0038 schema as an empty approval ledger", () =>
@@ -401,6 +417,7 @@ describe("EA-DG-01 executable approval expiration", () => {
         expect(row).toEqual([{ state: "Expired", revision: 1 }]);
         expect(events).toHaveLength(1);
       }),
+      makeRetainedDatabaseFile("ttl-wins-stop-race"),
     ));
 
   it("makes Stop cancellation the only resolver when Stop commits before TTL expiry", () =>
@@ -466,5 +483,6 @@ describe("EA-DG-01 executable approval expiration", () => {
         ]);
         expect(inbox).toEqual([{ consumed_at: "2026-10-11T00:01:00.000Z" }]);
       }),
+      makeRetainedDatabaseFile("stop-wins-ttl-race"),
     ));
 });
