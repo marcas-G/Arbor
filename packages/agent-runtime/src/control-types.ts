@@ -3,9 +3,11 @@ import type {
   CommandSubmissionContext,
   EvidenceId,
   Execution,
+  ExecutionId,
   ExecutionSettlement,
   MessageId,
   MessageKind,
+  ProviderTurnId,
   VerificationVerdict,
   WaitSpec,
   WorkId,
@@ -296,6 +298,16 @@ export interface ExecutableInvocationInput {
     readonly repairAttempt: number;
     readonly actionIndex: number;
     readonly logicalActionId: string;
+  };
+  /** Exact trusted P3 source identity for the durable AgentLoopStep action. */
+  readonly recoveryBindingIdentity?: {
+    readonly executionId: ExecutionId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly logicalActionId: string;
+    readonly actionIndex: number;
+    readonly callRef: string;
   };
   readonly executionFence?: import("@arbor/ports").AgentLoopStepFence;
 }
