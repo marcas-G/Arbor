@@ -5,16 +5,6 @@
   color: var(--arbor-ink);
 }
 
-.resourceActivationNotice {
-  margin-bottom: var(--arbor-space-3);
-  padding: var(--arbor-space-3) var(--arbor-space-4);
-  border: 1px solid color-mix(in srgb, var(--arbor-attention) 34%, transparent);
-  border-radius: var(--arbor-radius);
-  background: color-mix(in srgb, var(--arbor-attention) 8%, transparent);
-  color: var(--arbor-ink);
-  line-height: 1.5;
-}
-
 .rail {
   position: sticky;
   top: 0;
