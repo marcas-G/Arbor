@@ -82,7 +82,7 @@ const context = {
   authenticatedPrincipal: principal,
   executionFence: {
     executionId,
-    workerId: principal,
+    workerId: "worker:ah7-cross-connection",
     workerIncarnationId: "incarnation:ah7-cross-connection",
     fencingGeneration: 0,
   },
@@ -208,7 +208,6 @@ const app = Layer.mergeAll(
     dependencies,
   ),
 );
-
 try {
   const result = await Effect.runPromise(
     Effect.scoped(
@@ -232,9 +231,16 @@ try {
       ),
     ),
   );
-  process.send({ type: "result", worker: workerName, result }, () => {
+  process.send(
+    {
+      type: "result",
+      worker: workerName,
+      result,
+    },
+    () => {
     process.disconnect();
-  });
+    },
+  );
 } catch (error) {
   process.send(
     {
