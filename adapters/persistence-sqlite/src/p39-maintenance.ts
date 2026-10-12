@@ -473,9 +473,10 @@ export const requireP39RuntimeSchema = (
     : Effect.void;
 
 /** The process-independent SQLite writer lock and reserved primary snapshot
- * enclose the entire migration chain. A blocker is reported/read back while
- * both primary lock and snapshot remain open, then the unchanged primary is
- * rolled back and a typed isolation failure returned. */
+ * enclose the entire 0036→0039 migration chain. A 39 database is outside this
+ * one-way maintenance entrypoint and is refused before any sidecar report or
+ * migration attempt. A blocker is reported/read back while both primary lock
+ * and snapshot remain open, then the unchanged primary is rolled back. */
 export const runP39MaintenanceGate = (
   port: P39MaintenancePort,
 ): Effect.Effect<void, P39MaintenanceFailure | SqlError | SqliteAdapterError> =>
@@ -489,7 +490,10 @@ export const runP39MaintenanceGate = (
             Effect.gen(function* () {
               const snapshot = reservation.snapshot;
               if (snapshot.userVersion === 39) {
-                return { blocked: false as const };
+                return yield* Effect.fail<P39MaintenanceFailure>({
+                  _tag: "P39MaintenanceFailure",
+                  code: "P39_MIGRATION_PREFIX_INVALID",
+                });
               }
               if (snapshot.activeNotAdmittedInvocations.length === 0) {
                 yield* port.applyOrderedMigrations(lease, reservation);

@@ -117,7 +117,11 @@ export interface VerifiedRecoveryBindingV1 {
 }
 
 const canonicalJsonV1 = (value: unknown): string => {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "string"
+  ) {
     return JSON.stringify(value);
   }
   if (typeof value === "number") {
@@ -395,6 +399,19 @@ export interface P39RecoveryEvidenceStoreService {
     readonly createdAt: string;
   }) => Effect.Effect<
     "Bound" | "AlreadyBound",
+    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    TransactionScope
+  >;
+  /** Read-only terminal storage projection for a P4 no-effect Denied that
+   * committed before any P39 binding claim. This marker is never recovery
+   * evidence and carries no authority or denial reason. */
+  readonly findTerminalUnboundDenial: (
+    invocationId: ToolInvocationId,
+  ) => Effect.Effect<
+    Option.Option<{
+      readonly invocationId: ToolInvocationId;
+      readonly recoveryBindingState: "DeniedUnbound";
+    }>,
     RepositoryFailure<"P39RecoveryEvidenceStore">,
     TransactionScope
   >;

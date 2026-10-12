@@ -3,6 +3,7 @@ import {
   ExecutionId,
   Principal,
   ProjectId,
+  ProviderTurnId,
   parse,
   SessionId,
   ToolInvocationId,
@@ -10,10 +11,12 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
-  ExecutableApprovalStore,
+  EnvironmentRevisionStore,
   type ExecutableApprovalRecord,
   type InvocationApproval,
+  ExecutableApprovalStore,
   type NoEffectDenialCode,
+  P39RecoveryEvidenceStore,
   ProjectEnvironmentPort,
   ResourceAdmission,
   SandboxPort,
@@ -122,6 +125,8 @@ interface PipelineTrace {
   approvalConsumes: number;
   effectAdmissionDenial?: NoEffectDenialCode;
   afterAuthorityResolved?: () => Promise<void>;
+  environmentResolutions?: number;
+  resourceAdmissionCalls?: number;
 }
 
 const app = (
@@ -130,8 +135,18 @@ const app = (
   faults: PipelineFaults = {},
   trace?: PipelineTrace,
   initialApprovalOrExecutableApproval?: InvocationApproval | ExecutableApprovalRecord,
-  authorityDenied = false,
+  authorityDeniedOrDeniedReplay: boolean | ToolInvocationRecord = false,
+  suppliedP39DeniedReplay?: ToolInvocationRecord,
 ) => {
+  const authorityDenied =
+    typeof authorityDeniedOrDeniedReplay === "boolean"
+      ? authorityDeniedOrDeniedReplay
+      : false;
+  const p39DeniedReplay =
+    suppliedP39DeniedReplay ??
+    (typeof authorityDeniedOrDeniedReplay === "object"
+      ? authorityDeniedOrDeniedReplay
+      : undefined);
   let approval =
     initialApprovalOrExecutableApproval !== undefined &&
     !("routeKind" in initialApprovalOrExecutableApproval)
@@ -170,8 +185,12 @@ const app = (
           : Effect.succeed(true),
     }),
     Layer.succeed(ResourceAdmission, {
-      admit: () =>
-        faults.resourceAdmission === true
+      admit: () => {
+        if (p39DeniedReplay !== undefined && trace !== undefined) {
+          trace.resourceAdmissionCalls =
+            (trace.resourceAdmissionCalls ?? 0) + 1;
+        }
+        return faults.resourceAdmission === true
           ? Effect.fail({
               _tag: "ResourceAdmissionError" as const,
               cause: "admission-failure",
@@ -180,7 +199,8 @@ const app = (
               admissionDeny
                 ? { _tag: "Denied" as const, reason: "no" }
                 : { _tag: "Admitted" as const },
-            ),
+            );
+      },
     } as never),
     Layer.succeed(ToolInvocationStore, {
       recordIntent: () => {
@@ -283,6 +303,9 @@ const app = (
         };
         return () => {
           calls += 1;
+          if (p39DeniedReplay !== undefined) {
+            return Effect.succeed(Option.some(p39DeniedReplay));
+          }
           return Effect.succeed(
             faults.settlementUnapplied === true && calls > 1
               ? Option.some(canonicalUnknown)
@@ -293,8 +316,12 @@ const app = (
       findUnsettled: () => Effect.succeed([]),
     } as never),
     Layer.succeed(ProjectEnvironmentPort, {
-      resolve: (_p, addresses) =>
-        faults.environmentResolution === true
+      resolve: (_p, addresses) => {
+        if (p39DeniedReplay !== undefined && trace !== undefined) {
+          trace.environmentResolutions =
+            (trace.environmentResolutions ?? 0) + 1;
+        }
+        return faults.environmentResolution === true
           ? Effect.fail({
               _tag: "EnvironmentError" as const,
               cause: "environment-resolution-failure",
@@ -305,7 +332,8 @@ const app = (
                 normalizedRegion: a,
               })),
               observedEnvironmentRevision: "rev",
-            }),
+            });
+      },
     }),
     Layer.succeed(WorkspaceRepository, {
       findById: () =>
@@ -401,10 +429,32 @@ const app = (
           },
         },
   );
-  return Layer.mergeAll(
-    executableApprovalDeps,
-    Layer.provide(toolRuntime, executableApprovalDeps),
-  );
+  const p39Deps =
+    p39DeniedReplay === undefined
+      ? executableApprovalDeps
+      : Layer.mergeAll(
+          executableApprovalDeps,
+          Layer.succeed(EnvironmentRevisionStore, {
+            current: () => Effect.succeed(Option.none()),
+            record: () => Effect.void,
+            lazyInitAnchor: () => Effect.void,
+          }),
+          Layer.succeed(P39RecoveryEvidenceStore, {
+            bindClaim: () => Effect.succeed("Bound" as const),
+            findBinding: () => Effect.succeed(Option.none()),
+            findSelected: () => Effect.succeed(Option.none()),
+            findTerminalUnboundDenial: (id: typeof invocationId) =>
+              Effect.succeed(
+                id === p39DeniedReplay.invocationId
+                  ? Option.some({
+                      invocationId: id,
+                      recoveryBindingState: "DeniedUnbound" as const,
+                    })
+                  : Option.none(),
+              ),
+          } as never),
+        );
+  return Layer.mergeAll(p39Deps, Layer.provide(toolRuntime, p39Deps));
 };
 
 const run = (
@@ -584,6 +634,83 @@ describe("P4 tool runtime pipeline", () => {
       reconciliationRefs: [String(invocationId)],
     });
     expect(externalEffects).toBe(1);
+  });
+
+  it("replays exact DeniedUnbound before resource resolution, admission, or effect work", async () => {
+    const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
+    const deniedRecord: ToolInvocationRecord = {
+      invocationId,
+      executionId,
+      workspaceId,
+      toolName: "read",
+      toolVersion: "2",
+      sideEffectSemantics: "ReadOnly",
+      argumentsJson,
+      resolvedRegions: [
+        {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { _tag: "GitWorktree", path: "/repo/a" },
+        },
+      ],
+      approvalId: null,
+      effectAdmissionState: "NotAdmitted",
+      intentAt: "2026-01-01T00:00:00.000Z",
+      settledAt: "2026-01-01T00:00:01.000Z",
+      settlement: {
+        _tag: "Denied",
+        reasonCode: "ResourceAdmissionDenied",
+      },
+      resultRef: null,
+    };
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      environmentResolutions: 0,
+      resourceAdmissionCalls: 0,
+    };
+    const p39Context = {
+      ...context,
+      recoveryBindingIdentity: {
+        executionId,
+        providerTurnId: parse(ProviderTurnId)(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789a7",
+        ),
+        logicalStepNo: 8,
+        repairAttempt: 0,
+        logicalActionId: "action-denied-replay",
+        actionIndex: 0,
+        callRef: "c",
+      },
+      recoveryBindingPolicyRevisions: {
+        workspacePolicyRevision: 0,
+        projectPolicyRevision: 0,
+      },
+    } as import("@arbor/ports").ToolExecutionContext;
+    const executor: ToolExecutor = {
+      ...okExecutor,
+      execute: () => {
+        throw new Error("DeniedUnbound replay must not execute");
+      },
+    };
+    const result = await run(
+      app(false, executor, {}, trace, undefined, deniedRecord),
+      argumentsJson,
+      null,
+      p39Context,
+    );
+    expect(result).toMatchObject({
+      _tag: "Denied",
+      reasonCode: "ResourceAdmissionDenied",
+    });
+    expect(trace.environmentResolutions).toBe(0);
+    expect(trace.resourceAdmissionCalls).toBe(0);
+    expect(trace.intentWrites).toBe(0);
+    expect(trace.approvalConsumes).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
   });
 
   it("returns ExpectedFailure on invalid input", async () => {

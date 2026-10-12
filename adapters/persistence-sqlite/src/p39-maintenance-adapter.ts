@@ -404,24 +404,16 @@ const makeP39SqliteMaintenancePort = (
             "PRAGMA user_version",
           );
           const userVersion = Number(versions[0]?.user_version);
-          if (
-            userVersion !== 36 &&
-            userVersion !== 37 &&
-            userVersion !== 38 &&
-            userVersion !== 39
-          ) {
+          if (userVersion !== 36 && userVersion !== 37 && userVersion !== 38) {
             return yield* Effect.fail(failure("P39_MIGRATION_PREFIX_INVALID"));
           }
-          const blockedRows =
-            userVersion === 39
-              ? []
-              : yield* sql.unsafe<LegacyBlockedInvocationRow>(
-                  `SELECT invocation_id, execution_id, side_effect_semantics,
-                    effect_admission_state, settled_at, approval_id
-               FROM tool_invocations
-              WHERE settled_at IS NULL AND effect_admission_state = 'NotAdmitted'
-              ORDER BY invocation_id`,
-                );
+          const blockedRows = yield* sql.unsafe<LegacyBlockedInvocationRow>(
+            `SELECT invocation_id, execution_id, side_effect_semantics,
+              effect_admission_state, settled_at, approval_id
+         FROM tool_invocations
+        WHERE settled_at IS NULL AND effect_admission_state = 'NotAdmitted'
+        ORDER BY invocation_id`,
+          );
           const snapshot: P39PreflightSnapshot = {
             userVersion,
             databaseFingerprint: sha256Hex(resolve(options.primaryFilename)),

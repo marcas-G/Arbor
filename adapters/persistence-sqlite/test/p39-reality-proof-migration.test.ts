@@ -442,6 +442,204 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     );
   });
 
+  it("enforces the DeniedUnbound row shape and only the two allowed projection exits", async () => {
+    const migration = getP39Migration();
+    expect(migration, "P39 migration module is missing").toBeDefined();
+    if (!migration) return;
+
+    const result = await withClient(
+      Effect.gen(function* () {
+        yield* runMigrations(migrations.P36_MIGRATIONS);
+        yield* runMigrations([...migrations.P36_MIGRATIONS, migration]);
+        const sql = yield* SqlClient;
+        yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+
+        const insertLegacy = (invocationId: string) =>
+          sql.unsafe(
+            `INSERT INTO tool_invocations (
+               invocation_id, execution_id, workspace_id, tool_name, tool_version,
+               side_effect_semantics, arguments_json, resolved_regions_json,
+               approval_id, effect_admission_state, recovery_binding_state,
+               recovery_binding_sha256, settlement_provenance,
+               selected_attempt_no, selected_fact_id, intent_at, settled_at,
+               settlement_kind, settlement_json, result_ref
+             ) VALUES (?, 'exe_test', 'ws_test', 'read', '1', 'ReadOnly',
+                       '{}', '[]', NULL, 'NotAdmitted', 'LegacyBindingUnproven',
+                       NULL, NULL, NULL, NULL, 't1', NULL, NULL, NULL, NULL)`,
+            [invocationId],
+          );
+        const deniedJson = JSON.stringify({
+          _tag: "Denied",
+          reasonCode: "ResourceAdmissionDenied",
+          projectionVersion: 1,
+        });
+        const insertDeniedUnbound = (invocationId: string) =>
+          sql.unsafe(
+            `INSERT INTO tool_invocations (
+               invocation_id, execution_id, workspace_id, tool_name, tool_version,
+               side_effect_semantics, arguments_json, resolved_regions_json,
+               approval_id, effect_admission_state, recovery_binding_state,
+               recovery_binding_sha256, settlement_provenance,
+               selected_attempt_no, selected_fact_id, intent_at, settled_at,
+               settlement_kind, settlement_json, result_ref
+             ) VALUES (?, 'exe_test', 'ws_test', 'read', '1', 'ReadOnly',
+                       '{}', '[]', NULL, 'NotAdmitted', 'DeniedUnbound',
+                       NULL, 'Ordinary', NULL, NULL, 't1', 't2', 'Denied', ?, NULL)`,
+            [invocationId, deniedJson],
+          );
+
+        yield* insertDeniedUnbound("tin_denied_unbound_valid");
+        yield* insertLegacy("tin_denied_unbound_transition");
+        const legacyTransition = yield* sql.withTransaction(
+          sql.unsafe(
+            `UPDATE tool_invocations
+                SET recovery_binding_state='DeniedUnbound', settled_at='t2',
+                    settlement_kind='Denied', settlement_json=?,
+                    settlement_provenance='Ordinary'
+              WHERE invocation_id='tin_denied_unbound_transition'
+              RETURNING invocation_id`,
+            [deniedJson],
+          ),
+        );
+
+        yield* insertLegacy("tin_bound_transition");
+        const bindingSha = "a".repeat(64);
+        yield* sql.unsafe(
+          `INSERT INTO tool_invocation_recovery_bindings (
+             invocation_id, binding_version, canonical_binding_json,
+             binding_sha256, created_at
+           ) VALUES ('tin_bound_transition',1,'{}',?,'t1')`,
+          [bindingSha],
+        );
+        const claimTransition = yield* sql.withTransaction(
+          sql.unsafe(
+            `UPDATE tool_invocations
+                SET recovery_binding_state='Bound', recovery_binding_sha256=?
+              WHERE invocation_id='tin_bound_transition'
+              RETURNING invocation_id`,
+            [bindingSha],
+          ),
+        );
+
+        const invalidMayHaveStarted = yield* Effect.exit(
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* insertDeniedUnbound(
+                "tin_denied_unbound_invalid_admission",
+              );
+              yield* sql.unsafe(
+                `UPDATE tool_invocations SET effect_admission_state='MayHaveStarted'
+                  WHERE invocation_id='tin_denied_unbound_invalid_admission'`,
+              );
+              return true;
+            }),
+          ),
+        );
+        const invalidResultRef = yield* Effect.exit(
+          sql.withTransaction(
+            sql.unsafe(
+              `INSERT INTO tool_invocations (
+                 invocation_id, execution_id, workspace_id, tool_name, tool_version,
+                 side_effect_semantics, arguments_json, resolved_regions_json,
+                 approval_id, effect_admission_state, recovery_binding_state,
+                 recovery_binding_sha256, settlement_provenance,
+                 selected_attempt_no, selected_fact_id, intent_at, settled_at,
+                 settlement_kind, settlement_json, result_ref
+               ) VALUES ('tin_denied_unbound_invalid_result','exe_test','ws_test','read','1',
+                         'ReadOnly','{}','[]',NULL,'NotAdmitted','DeniedUnbound',NULL,
+                         'Ordinary',NULL,NULL,'t1','t2','Denied',?,'art_missing')`,
+              [deniedJson],
+            ),
+          ),
+        );
+        const deniedCannotAcquireBinding = yield* Effect.exit(
+          sql.withTransaction(
+            sql.unsafe(
+              `INSERT INTO tool_invocation_recovery_bindings (
+                 invocation_id,binding_version,canonical_binding_json,binding_sha256,created_at
+               ) VALUES ('tin_denied_unbound_valid',1,'{}',?,'t3')`,
+              ["b".repeat(64)],
+            ),
+          ),
+        );
+        const deniedCannotAcquireAttempt = yield* Effect.exit(
+          sql.withTransaction(
+            sql.unsafe(
+              `INSERT INTO tool_invocation_effect_attempts (
+                 invocation_id,attempt_no,admission_state,tool_definition_hash,
+                 side_effect_semantics,profile_id,profile_version,profile_hash,
+                 profile_protocol,effect_key,binding_sha256,admitted_at,
+                 admission_source,admission_time_precision
+               ) VALUES ('tin_denied_unbound_valid',0,'NotAdmitted',NULL,'ReadOnly',
+                         NULL,NULL,NULL,NULL,NULL,NULL,NULL,'P39Claim','NotAdmitted')`,
+            ),
+          ),
+        );
+        const deniedCannotBecomeBound = yield* Effect.exit(
+          sql.withTransaction(
+            sql.unsafe(
+              `UPDATE tool_invocations
+                  SET recovery_binding_state='Bound', recovery_binding_sha256=?
+                WHERE invocation_id='tin_denied_unbound_valid'`,
+              ["c".repeat(64)],
+            ),
+          ),
+        );
+        const rows = yield* sql.unsafe<{
+          readonly invocation_id: string;
+          readonly recovery_binding_state: string;
+          readonly settlement_kind: string | null;
+          readonly settlement_provenance: string | null;
+        }>(
+          `SELECT invocation_id, recovery_binding_state, settlement_kind,
+                  settlement_provenance
+             FROM tool_invocations
+            WHERE invocation_id IN ('tin_denied_unbound_valid',
+                                     'tin_denied_unbound_transition',
+                                     'tin_bound_transition')
+            ORDER BY invocation_id`,
+        );
+        return {
+          legacyTransition: legacyTransition.length,
+          claimTransition: claimTransition.length,
+          invalidMayHaveStarted,
+          invalidResultRef,
+          deniedCannotAcquireBinding,
+          deniedCannotAcquireAttempt,
+          deniedCannotBecomeBound,
+          rows,
+        };
+      }),
+    );
+    expect(result.legacyTransition).toBe(1);
+    expect(result.claimTransition).toBe(1);
+    expect(result.invalidMayHaveStarted._tag).toBe("Failure");
+    expect(result.invalidResultRef._tag).toBe("Failure");
+    expect(result.deniedCannotAcquireBinding._tag).toBe("Failure");
+    expect(result.deniedCannotAcquireAttempt._tag).toBe("Failure");
+    expect(result.deniedCannotBecomeBound._tag).toBe("Failure");
+    expect(result.rows).toEqual([
+      {
+        invocation_id: "tin_bound_transition",
+        recovery_binding_state: "Bound",
+        settlement_kind: null,
+        settlement_provenance: null,
+      },
+      {
+        invocation_id: "tin_denied_unbound_transition",
+        recovery_binding_state: "DeniedUnbound",
+        settlement_kind: "Denied",
+        settlement_provenance: "Ordinary",
+      },
+      {
+        invocation_id: "tin_denied_unbound_valid",
+        recovery_binding_state: "DeniedUnbound",
+        settlement_kind: "Denied",
+        settlement_provenance: "Ordinary",
+      },
+    ]);
+  });
+
   it("rejects Success from NotOccurred, allows ExpectedFailure with a distinct external result Artifact, and rejects cross-attempt selection", async () => {
     const migration = getP39Migration();
     expect(migration, "P39 migration module is missing").toBeDefined();
@@ -669,41 +867,56 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     expect(writerLockHeld).toBe(false);
   });
 
-  it("treats a repeated P39 maintenance invocation at user_version 39 as a no-op", async () => {
+  it("fails closed at user_version 39 before any sidecar write or migration", async () => {
     const order: string[] = [];
     const result = await withClient(
-      runP39MaintenanceGate({
-        acquireWriterExclusion: () =>
-          Effect.sync(() => {
-            order.push("acquire-lock");
-            return { token: "repeat-lease" };
-          }),
-        releaseWriterExclusion: () =>
-          Effect.sync(() => {
-            order.push("release-lock");
-          }),
-        reservePrimarySnapshot: () =>
-          Effect.sync(() => ({
-            reservation: "already-p39",
-            snapshot: {
-              userVersion: 39,
-              databaseFingerprint: "f".repeat(64),
-              activeNotAdmittedInvocations: [],
-            },
-          })),
-        releasePrimarySnapshot: () =>
-          Effect.sync(() => {
-            order.push("release-primary");
-          }),
-        writeAndReadBackSidecarReport: () =>
-          Effect.die(new Error("P39 no-op must not write a blocker report")),
-        applyOrderedMigrations: () =>
-          Effect.die(new Error("P39 no-op must not rerun migration SQL")),
-      }),
+      Effect.flip(
+        runP39MaintenanceGate({
+          acquireWriterExclusion: () =>
+            Effect.sync(() => {
+              order.push("acquire-lock");
+              return { token: "version-39-lease" };
+            }),
+          releaseWriterExclusion: () =>
+            Effect.sync(() => {
+              order.push("release-lock");
+            }),
+          reservePrimarySnapshot: () =>
+            Effect.sync(() => {
+              order.push("reserve-primary");
+              return {
+                reservation: "old-version-39",
+                snapshot: {
+                  userVersion: 39,
+                  databaseFingerprint: "f".repeat(64),
+                  activeNotAdmittedInvocations: [],
+                },
+              };
+            }),
+          releasePrimarySnapshot: () =>
+            Effect.sync(() => {
+              order.push("release-primary");
+            }),
+          writeAndReadBackSidecarReport: () =>
+            Effect.sync(() => {
+              order.push("sidecar-write");
+              return { reportKey: "unexpected", contentHash: "unexpected" };
+            }),
+          applyOrderedMigrations: () =>
+            Effect.sync(() => {
+              order.push("migration");
+            }),
+        }),
+      ),
     );
 
-    expect(result).toBeUndefined();
-    expect(order).toEqual(["acquire-lock", "release-primary", "release-lock"]);
+    expect(result.code).toBe("P39_MIGRATION_PREFIX_INVALID");
+    expect(order).toEqual([
+      "acquire-lock",
+      "reserve-primary",
+      "release-primary",
+      "release-lock",
+    ]);
   });
 
   it("retains writer exclusion through migration failure and then releases both reservations", async () => {
