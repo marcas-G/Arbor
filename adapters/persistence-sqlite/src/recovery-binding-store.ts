@@ -1,14 +1,13 @@
 import type { ToolInvocationId } from "@arbor/domain";
 import {
   canonicalizeRecoveryBindingV1,
-  Option,
   recoveryBindingV1Digest,
   P39RecoveryEvidenceStore,
   TransactionScope,
   verifyRecoveryBindingV1,
   type RecoveryBindingV1,
 } from "@arbor/ports";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import { persistenceCorruption, repositoryFailure } from "./repository-error.js";
@@ -298,6 +297,24 @@ export const P39RecoveryEvidenceStoreLive: Layer.Layer<
               [bindingSha256, input.binding.invocationId],
             ),
           );
+          const boundRows = yield* run(
+            sql.unsafe<{
+              readonly recovery_binding_state: string;
+              readonly recovery_binding_sha256: string | null;
+            }>(
+              `SELECT recovery_binding_state, recovery_binding_sha256
+                 FROM tool_invocations WHERE invocation_id = ?`,
+              [input.binding.invocationId],
+            ),
+          );
+          if (
+            boundRows[0]?.recovery_binding_state !== "Bound" ||
+            boundRows[0]?.recovery_binding_sha256 !== bindingSha256
+          ) {
+            return yield* corrupt(
+              "ToolInvocation did not transition to the exact Bound V1 digest",
+            );
+          }
           yield* run(
             sql.unsafe(
               `INSERT INTO tool_invocation_effect_attempts (

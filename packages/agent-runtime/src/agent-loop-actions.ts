@@ -2,6 +2,7 @@ import type {
   CommandSubmissionContext,
   Execution,
   ExecutionSettlement,
+  ProviderTurnId,
 } from "@arbor/domain";
 import type {
   ControlBasis,
@@ -19,6 +20,7 @@ import type {
   ExecutionDriverError,
   LeaseFencingRejected,
   RuntimeSafetyObservation,
+  RecoveryBindingSourceIdentity,
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
@@ -45,6 +47,40 @@ const actionRejectionObservation = (
   }),
   truncated: false,
 });
+
+export const recoveryBindingIdentityFor = (input: {
+  readonly step: AgentLoopStepRecord | undefined;
+  readonly action: AgentLoopStepActionRecord | undefined;
+  readonly executionId: Execution["executionId"];
+  readonly providerTurnId: ProviderTurnId;
+  readonly actionIndex: number;
+  readonly callRef: string;
+}): RecoveryBindingSourceIdentity | undefined => {
+  const { step, action } = input;
+  if (
+    step === undefined ||
+    action === undefined ||
+    step.identity.executionId !== input.executionId ||
+    step.providerTurnId !== input.providerTurnId ||
+    action.identity.executionId !== step.identity.executionId ||
+    action.identity.logicalStepNo !== step.identity.logicalStepNo ||
+    action.identity.repairAttempt !== step.identity.repairAttempt ||
+    action.actionIndex !== input.actionIndex ||
+    action.callRef !== input.callRef ||
+    action.logicalActionId.trim().length === 0
+  ) {
+    return undefined;
+  }
+  return {
+    executionId: step.identity.executionId,
+    providerTurnId: step.providerTurnId,
+    logicalStepNo: step.identity.logicalStepNo,
+    repairAttempt: step.identity.repairAttempt,
+    logicalActionId: action.logicalActionId,
+    actionIndex: action.actionIndex,
+    callRef: action.callRef,
+  };
+};
 
 const isLeaseFencingRejected = (
   cause: unknown,
@@ -711,29 +747,14 @@ export const executeAgentLoopActions = (
             settlement,
           };
         }
-        const recoveryBindingIdentity =
-          loopAction !== undefined &&
-          currentLoopStep !== undefined &&
-          loopAction.identity.executionId === input.execution.executionId &&
-          currentLoopStep.identity.executionId === input.execution.executionId &&
-          loopAction.identity.logicalStepNo ===
-            currentLoopStep.identity.logicalStepNo &&
-          loopAction.identity.repairAttempt ===
-            currentLoopStep.identity.repairAttempt &&
-          currentLoopStep.providerTurnId ===
-            preparedTurn.manifest.providerTurnId &&
-          loopAction.actionIndex === actionIndex &&
-          loopAction.callRef === invocation.callRef
-            ? {
-                executionId: currentLoopStep.identity.executionId,
-                providerTurnId: currentLoopStep.providerTurnId,
-                logicalStepNo: currentLoopStep.identity.logicalStepNo,
-                repairAttempt: currentLoopStep.identity.repairAttempt,
-                logicalActionId: loopAction.logicalActionId,
-                actionIndex: loopAction.actionIndex,
-                callRef: loopAction.callRef,
-              }
-            : undefined;
+        const recoveryBindingIdentity = recoveryBindingIdentityFor({
+          step: currentLoopStep,
+          action: loopAction,
+          executionId: input.execution.executionId,
+          providerTurnId: preparedTurn.manifest.providerTurnId,
+          actionIndex,
+          callRef: invocation.callRef,
+        });
         const executed = yield* Effect.match(
           executableInvocationHandler.handle({
             invocation,

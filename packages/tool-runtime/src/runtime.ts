@@ -1,16 +1,29 @@
-import type { CanonicalResourceRegion, ResourceAddress } from "@arbor/domain";
+import type {
+  CanonicalResourceRegion,
+  ResourceAddress,
+  Workspace,
+} from "@arbor/domain";
 import { ArtifactId, parse } from "@arbor/domain";
 import {
   ArtifactService,
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
+  EnvironmentRevisionStore,
+  type ExecutableApprovalConsumptionReceipt,
   type ExecutableApprovalRecord,
   ExecutableApprovalStore,
   executableApprovalBindingMatches,
   type LeaseFencingRejected,
   type NoEffectDenialCode,
+  canonicalArgumentsDigestV1,
+  approvalTargetDigestV1,
+  targetResourceIdentityDigestV1,
   ProjectEnvironmentPort,
+  P39RecoveryEvidenceStore,
+  type RecoveryBindingV1,
+  canonicalizeRecoveryBindingV1,
+  recoveryBindingV1Digest,
   ResourceAdmission,
   type SandboxHandle,
   SandboxPort,
@@ -167,6 +180,229 @@ export const executableApprovalTerminalDenial = (
   return null;
 };
 
+export const recoveryBindingIdentityMatches = (input: {
+  readonly identity: ToolExecutionContext["recoveryBindingIdentity"];
+  readonly executionId: ToolExecutionContext["executionId"];
+  readonly invocationId: ToolIntent["invocationId"];
+  readonly callRef: ToolIntent["callRef"];
+  readonly approvalBinding?: import("@arbor/ports").ExecutableApprovalBinding;
+}): boolean => {
+  const identity = input.identity;
+  if (
+    identity === undefined ||
+    identity.executionId !== input.executionId ||
+    identity.callRef !== input.callRef ||
+    !Number.isSafeInteger(identity.logicalStepNo) ||
+    identity.logicalStepNo < 0 ||
+    !Number.isSafeInteger(identity.repairAttempt) ||
+    identity.repairAttempt < 0 ||
+    !Number.isSafeInteger(identity.actionIndex) ||
+    identity.actionIndex < 0 ||
+    identity.logicalActionId.trim().length === 0 ||
+    String(identity.providerTurnId).trim().length === 0
+  ) {
+    return false;
+  }
+  const approval = input.approvalBinding;
+  return (
+    approval === undefined ||
+    (approval.executionId === identity.executionId &&
+      approval.logicalStepNo === identity.logicalStepNo &&
+      approval.repairAttempt === identity.repairAttempt &&
+      approval.logicalActionId === identity.logicalActionId &&
+      approval.actionIndex === identity.actionIndex &&
+      approval.callRef === identity.callRef &&
+      approval.toolInvocationId === input.invocationId)
+  );
+};
+
+const permissionGrantRevisionsFromSource = (
+  sourceRevision: string | undefined,
+): {
+  readonly workspacePolicyRevision: number | null;
+  readonly permissionGrantRevisions: ReadonlyArray<
+    readonly [string, number | null]
+  >;
+} | null => {
+  if (sourceRevision === undefined) {
+    return { workspacePolicyRevision: null, permissionGrantRevisions: [] };
+  }
+  try {
+    const value = JSON.parse(sourceRevision) as {
+      readonly workspacePolicyRevision?: unknown;
+      readonly activeGrants?: unknown;
+      readonly verifierId?: unknown;
+    };
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      !Number.isSafeInteger(value.workspacePolicyRevision) ||
+      (value.workspacePolicyRevision as number) < 0 ||
+      !Array.isArray(value.activeGrants) ||
+      !(value.verifierId === null || typeof value.verifierId === "string")
+    ) {
+      return null;
+    }
+    const revisions: Array<readonly [string, number | null]> = [];
+    const seen = new Set<string>();
+    for (const item of value.activeGrants) {
+      if (
+        !Array.isArray(item) ||
+        item.length !== 2 ||
+        typeof item[0] !== "string" ||
+        item[0].length === 0 ||
+        seen.has(item[0]) ||
+        (item[1] !== null &&
+          (!Number.isSafeInteger(item[1]) || (item[1] as number) < 0))
+      ) {
+        return null;
+      }
+      revisions.push([item[0], item[1] as number | null]);
+      seen.add(item[0]);
+    }
+    return {
+      workspacePolicyRevision: value.workspacePolicyRevision as number,
+      permissionGrantRevisions: revisions,
+    };
+  } catch {
+    return null;
+  }
+};
+
+interface RecoveryApprovalSnapshot {
+  readonly approvalId: string;
+  readonly subject: string;
+  readonly preConsumeRevision: number;
+  readonly consumedRevision: number;
+  readonly expiresAt: string;
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
+  readonly actionDigest: string;
+  readonly consumedBy: ToolIntent["invocationId"];
+}
+
+const recoveryApprovalSnapshotFromReceipt = (
+  receipt: ExecutableApprovalConsumptionReceipt,
+): RecoveryApprovalSnapshot => ({
+  approvalId: receipt.approvalId,
+  subject: receipt.binding.subject,
+  preConsumeRevision: receipt.preConsumeRevision,
+  consumedRevision: receipt.consumedRevision,
+  expiresAt: receipt.expiresAt,
+  targetResourceSpaceIds: receipt.binding.targetResourceSpaceIds,
+  actionDigest: receipt.binding.actionDigest,
+  consumedBy: receipt.consumedBy,
+});
+
+const recoveryApprovalSnapshotFromRecord = (
+  approval: ExecutableApprovalRecord | undefined,
+  invocationId: ToolIntent["invocationId"],
+): RecoveryApprovalSnapshot | null => {
+  if (
+    approval === undefined ||
+    approval.state !== "Consumed" ||
+    approval.consumedBy !== invocationId ||
+    approval.revision <= 0
+  ) {
+    return null;
+  }
+  return {
+    approvalId: approval.approvalId,
+    subject: approval.subject,
+    preConsumeRevision: approval.revision - 1,
+    consumedRevision: approval.revision,
+    expiresAt: approval.expiresAt,
+    targetResourceSpaceIds: approval.targetResourceSpaceIds,
+    actionDigest: approval.actionDigest,
+    consumedBy: invocationId,
+  };
+};
+
+const makeRecoveryBindingV1 = (input: {
+  readonly context: ToolExecutionContext;
+  readonly intent: ToolIntent;
+  readonly definition: ToolDefinition;
+  readonly authority: import("@arbor/ports").InvocationAuthority;
+  readonly regions: ReadonlyArray<CanonicalResourceRegion>;
+  readonly resourceBoundaryRevision: number;
+  readonly environmentRevision: string;
+  readonly approval: RecoveryApprovalSnapshot | null;
+}): RecoveryBindingV1 => {
+  const identity = input.context.recoveryBindingIdentity;
+  const policyRevisions = input.context.recoveryBindingPolicyRevisions;
+  if (identity === undefined || policyRevisions === undefined) {
+    throw new TypeError("trusted RecoveryBinding source identity is missing");
+  }
+  const authoritySource = permissionGrantRevisionsFromSource(
+    input.authority.sourceRevision,
+  );
+  if (
+    authoritySource === null ||
+    (authoritySource.workspacePolicyRevision !== null &&
+      authoritySource.workspacePolicyRevision !==
+        policyRevisions.workspacePolicyRevision)
+  ) {
+    throw new TypeError("trusted authority source revision is malformed");
+  }
+  let argumentsValue: unknown;
+  try {
+    argumentsValue = JSON.parse(input.intent.argumentsJson);
+  } catch (cause) {
+    throw new TypeError("ToolIntent arguments are not canonical JSON", {
+      cause,
+    });
+  }
+  const approval = input.approval;
+  return {
+    bindingVersion: 1,
+    digestAlgorithm: "SHA-256",
+    executionId: input.context.executionId,
+    invocationId: input.intent.invocationId,
+    providerTurnId: identity.providerTurnId,
+    logicalStepNo: identity.logicalStepNo,
+    repairAttempt: identity.repairAttempt,
+    logicalActionId: identity.logicalActionId,
+    actionIndex: identity.actionIndex,
+    callRef: input.intent.callRef,
+    toolName: input.intent.toolName,
+    toolVersion: input.intent.toolVersion,
+    toolDefinitionHash: input.definition.hash,
+    sideEffectSemantics: input.definition.sideEffectSemantics,
+    canonicalArgumentsDigest: canonicalArgumentsDigestV1(argumentsValue),
+    targetResourceIdentityDigest: targetResourceIdentityDigestV1(
+      input.regions,
+    ),
+    resourceBoundaryRevision: input.resourceBoundaryRevision,
+    environmentRevision: input.environmentRevision,
+    authoritySourceRevision: input.authority.sourceRevision ?? null,
+    principalId: String(input.context.authenticatedPrincipal),
+    capability: [...input.definition.capabilityMetadata],
+    permissionGrantRevisions: authoritySource.permissionGrantRevisions,
+    workspacePolicyRevision: policyRevisions.workspacePolicyRevision,
+    projectPolicyRevision: policyRevisions.projectPolicyRevision,
+    controlBasisDigest: input.context.controlBasisDigest,
+    approvalId: approval?.approvalId ?? null,
+    approvalSubject: approval?.subject ?? null,
+    approvalPreConsumeRevision: approval?.preConsumeRevision ?? null,
+    approvalConsumedRevision: approval?.consumedRevision ?? null,
+    approvalExpiresAt: approval?.expiresAt ?? null,
+    approvalTargetDigest:
+      approval === null
+        ? null
+        : approvalTargetDigestV1(approval.targetResourceSpaceIds),
+    approvalActionDigest: approval?.actionDigest ?? null,
+    approvalConsumedBy: approval?.consumedBy ?? null,
+    profileId: null,
+    profileVersion: null,
+    profileHash: null,
+    profileProtocol: null,
+    effectKey: null,
+  };
+};
+
+const P39_RESOURCE_RESOLUTION_STALE = {
+  _tag: "P39ResourceResolutionStale",
+} as const;
+
 const denied = (reasonCode: NoEffectDenialCode): CanonicalToolObservation => ({
   _tag: "Denied",
   reasonCode,
@@ -205,6 +441,14 @@ const hasCompleteExecutionFence = (fence: unknown): boolean => {
   );
 };
 
+const isP39ResourceResolutionStale = (
+  cause: unknown,
+): cause is typeof P39_RESOURCE_RESOLUTION_STALE =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "_tag" in cause &&
+  cause._tag === P39_RESOURCE_RESOLUTION_STALE._tag;
+
 export const ToolRuntimeLive = (
   executors: ReadonlyArray<ToolExecutor>,
   options: {
@@ -237,6 +481,10 @@ export const ToolRuntimeLive = (
       const clock = yield* Clock;
       const environment = yield* ProjectEnvironmentPort;
       const workspaces = yield* Effect.serviceOption(WorkspaceRepository);
+      const environmentRevisions = yield* Effect.serviceOption(
+        EnvironmentRevisionStore,
+      );
+      const p39Recovery = yield* Effect.serviceOption(P39RecoveryEvidenceStore);
       const authorityResolver = yield* Effect.serviceOption(
         ToolAuthorityResolver,
       );
@@ -258,7 +506,11 @@ export const ToolRuntimeLive = (
           cause,
         });
 
-      const invoke = (intent: ToolIntent, context: ToolExecutionContext) =>
+      const invoke = (
+        intent: ToolIntent,
+        context: ToolExecutionContext,
+        staleRefreshCount = 0,
+      ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
         Effect.gen(function* () {
           const completeFence = hasCompleteExecutionFence(
             context.executionFence,
@@ -292,6 +544,47 @@ export const ToolRuntimeLive = (
           if (executor === undefined) {
             return denied("InvocationAuthorityDenied");
           }
+          const p39BindingEnabled = Option.isSome(p39Recovery);
+          if (
+            p39BindingEnabled &&
+            (!recoveryBindingIdentityMatches({
+              identity: context.recoveryBindingIdentity,
+              executionId: context.executionId,
+              invocationId: intent.invocationId,
+              callRef: intent.callRef,
+            }) ||
+              context.recoveryBindingPolicyRevisions === undefined ||
+              !Number.isSafeInteger(
+                context.recoveryBindingPolicyRevisions.workspacePolicyRevision,
+              ) ||
+              context.recoveryBindingPolicyRevisions.workspacePolicyRevision <
+                0 ||
+              !Number.isSafeInteger(
+                context.recoveryBindingPolicyRevisions.projectPolicyRevision,
+              ) ||
+              context.recoveryBindingPolicyRevisions.projectPolicyRevision <
+                0 ||
+              Option.isNone(environmentRevisions) ||
+              Option.isNone(workspaces))
+          ) {
+            return yield* Effect.fail<ToolRuntimeError>(
+              operationalFailure(
+                "RecoveryBinding",
+                String(intent.invocationId),
+              )({ _tag: "RecoveryBindingSourceUnavailable" }),
+            );
+          }
+          const refreshAfterStale = (
+            cause: unknown,
+          ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
+            staleRefreshCount === 0
+              ? invoke(intent, context, staleRefreshCount + 1)
+              : Effect.fail<ToolRuntimeError>(
+                  operationalFailure(
+                    "ResourceResolutionStale",
+                    String(intent.invocationId),
+                  )(cause),
+                );
 
           const validation = validateToolInput(
             definition.inputSchemaJson,
@@ -453,6 +746,7 @@ export const ToolRuntimeLive = (
           const mountRefs = requestedMountRefs(intent.argumentsJson);
           let address: FilesystemAddress | undefined;
           let addresses: ReadonlyArray<ResourceAddress>;
+          let boundaryWorkspace: Workspace | undefined;
           if (mountRefs.length > 0) {
             if (
               mountRefs.length !== 1 ||
@@ -488,6 +782,7 @@ export const ToolRuntimeLive = (
                 "ResourceResolutionDenied",
               );
             }
+            boundaryWorkspace = workspace.value;
             address = primaryFilesystemAddress(
               workspace.value.resourceBoundary.addresses,
             );
@@ -502,6 +797,44 @@ export const ToolRuntimeLive = (
           } else {
             addresses = legacyResourceArguments(intent.argumentsJson);
           }
+          if (boundaryWorkspace === undefined) {
+            if (Option.isNone(workspaces)) {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                [],
+                "ResourceResolutionDenied",
+              );
+            }
+            const workspace = yield* tx
+              .transact(workspaces.value.findById(context.workspaceId))
+              .pipe(
+                Effect.mapError(
+                  operationalFailure(
+                    "WorkspaceLookup",
+                    String(intent.invocationId),
+                  ),
+                ),
+              );
+            if (
+              Option.isNone(workspace) ||
+              workspace.value.projectId !== context.projectId
+            ) {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                [],
+                "ResourceResolutionDenied",
+              );
+            }
+            boundaryWorkspace = workspace.value;
+          }
+          const capturedWorkspace = boundaryWorkspace;
+          if (capturedWorkspace.projectId !== context.projectId) {
+            return yield* recordNoEffectDenial(
+              definition.sideEffectSemantics,
+              [],
+              "ResourceResolutionDenied",
+            );
+          }
           const resolved = yield* environment
             .resolve(context.projectId, addresses)
             .pipe(
@@ -512,7 +845,100 @@ export const ToolRuntimeLive = (
                 ),
               ),
             );
+          const resolvedBoundary = yield* environment
+            .resolve(
+              context.projectId,
+              capturedWorkspace.resourceBoundary.addresses,
+            )
+            .pipe(
+              Effect.mapError(
+                operationalFailure(
+                  "EnvironmentResolution",
+                  String(intent.invocationId),
+                ),
+              ),
+            );
+          if (
+            resolved.observedEnvironmentRevision !==
+            resolvedBoundary.observedEnvironmentRevision
+          ) {
+            return yield* refreshAfterStale({
+              _tag: "ResourceResolutionStale",
+              observed: resolved.observedEnvironmentRevision,
+              boundaryObserved: resolvedBoundary.observedEnvironmentRevision,
+            });
+          }
           const regions = resolved.regions;
+          const boundaryRegions = resolvedBoundary.regions;
+          const validateCapturedSnapshotAndAdmit = () =>
+            Effect.gen(function* () {
+              if (Option.isNone(workspaces)) {
+                return yield* Effect.fail(P39_RESOURCE_RESOLUTION_STALE);
+              }
+              const currentWorkspace = yield* workspaces.value.findById(
+                context.workspaceId,
+              );
+              if (
+                Option.isNone(currentWorkspace) ||
+                currentWorkspace.value.projectId !== context.projectId ||
+                currentWorkspace.value.resourceBoundaryRevision !==
+                  capturedWorkspace.resourceBoundaryRevision ||
+                JSON.stringify(
+                  currentWorkspace.value.resourceBoundary.addresses,
+                ) !==
+                  JSON.stringify(capturedWorkspace.resourceBoundary.addresses)
+              ) {
+                return yield* Effect.fail(P39_RESOURCE_RESOLUTION_STALE);
+              }
+              if (p39BindingEnabled) {
+                if (Option.isNone(environmentRevisions)) {
+                  return yield* Effect.fail<ToolRuntimeError>(
+                    operationalFailure(
+                      "RecoveryBinding",
+                      String(intent.invocationId),
+                    )({ _tag: "EnvironmentRevisionStoreUnavailable" }),
+                  );
+                }
+                const currentEnvironment = yield* environmentRevisions.value
+                  .current(context.projectId)
+                  .pipe(
+                    Effect.mapError(
+                      operationalFailure(
+                        "RecoveryBinding",
+                        String(intent.invocationId),
+                      ),
+                    ),
+                  );
+                if (
+                  (Option.isSome(currentEnvironment) &&
+                    currentEnvironment.value !==
+                      resolved.observedEnvironmentRevision) ||
+                  (Option.isNone(currentEnvironment) &&
+                    resolved.observedEnvironmentRevision !== "0")
+                ) {
+                  return yield* Effect.fail(P39_RESOURCE_RESOLUTION_STALE);
+                }
+              }
+              return yield* admission.admit({
+                workspaceId: context.workspaceId,
+                regions,
+                resolvedBoundaryRegions: boundaryRegions,
+                write: executor.write,
+              });
+            });
+          const checkCapturedSnapshotAndAdmit = () =>
+            tx
+              .transact(validateCapturedSnapshotAndAdmit())
+              .pipe(
+                Effect.mapError((cause) =>
+                  isP39ResourceResolutionStale(cause)
+                    ? cause
+                    : operationalFailure(
+                        "ResourceAdmission",
+                        String(intent.invocationId),
+                      )(cause),
+                ),
+              );
           const region = regions[0];
           if (
             address !== undefined &&
@@ -572,6 +998,7 @@ export const ToolRuntimeLive = (
 
           const needsApproval = executor.requiresApproval(intent);
           let approvalAlreadyConsumedBySelf = false;
+          let currentApprovalRecord: ExecutableApprovalRecord | undefined;
           if (!needsApproval && context.executableApproval !== undefined) {
             return yield* recordNoEffectDenial(
               definition.sideEffectSemantics,
@@ -582,6 +1009,13 @@ export const ToolRuntimeLive = (
           if (needsApproval) {
             if (context.executableApproval === undefined) {
               const legacyApprovalId = intent.approvalId;
+              if (p39BindingEnabled && legacyApprovalId !== null) {
+                return yield* recordNoEffectDenial(
+                  definition.sideEffectSemantics,
+                  regions,
+                  "ApprovalMismatch",
+                );
+              }
               if (legacyApprovalId === null) {
                 return {
                   _tag: "ApprovalRequired" as const,
@@ -682,6 +1116,7 @@ export const ToolRuntimeLive = (
                 );
               if (Option.isSome(exactExecutableApproval)) {
                 const currentApproval = exactExecutableApproval.value;
+              currentApprovalRecord = currentApproval;
                 if (currentApproval.state === "Pending") {
                   if (
                     context.executableApproval.state !== "Pending" ||
@@ -782,28 +1217,22 @@ export const ToolRuntimeLive = (
               }
             }
           }
-
-          const admitted = yield* tx
-            .transact(
-              admission.admit({
-                workspaceId: context.workspaceId,
-                regions,
-                write: executor.write,
-              }),
-            )
-            .pipe(
-              Effect.mapError(
-                operationalFailure(
-                  "ResourceAdmission",
-                  String(intent.invocationId),
-                ),
-              ),
-            );
-          if (admitted._tag === "Denied") {
-            return yield* recordNoEffectDenial(
-              definition.sideEffectSemantics,
-              regions,
-              "ResourceAdmissionDenied",
+          if (
+            p39BindingEnabled &&
+            context.executableApproval !== undefined &&
+            !recoveryBindingIdentityMatches({
+              identity: context.recoveryBindingIdentity,
+              executionId: context.executionId,
+              invocationId: intent.invocationId,
+              callRef: intent.callRef,
+              approvalBinding: context.executableApproval.binding,
+            })
+          ) {
+            return yield* Effect.fail<ToolRuntimeError>(
+              operationalFailure(
+                "RecoveryBinding",
+                String(intent.invocationId),
+              )({ _tag: "RecoveryBindingApprovalSourceMismatch" }),
             );
           }
 
@@ -838,6 +1267,92 @@ export const ToolRuntimeLive = (
                   _tag: "ToolInvocationIdentityConflict",
                 }),
               );
+            }
+            const replayAdmission = yield* Effect.match(
+              checkCapturedSnapshotAndAdmit(),
+              {
+                onFailure: (cause) => ({ ok: false as const, cause }),
+                onSuccess: (value) => ({ ok: true as const, value }),
+              },
+            );
+            if (!replayAdmission.ok) {
+              if (isP39ResourceResolutionStale(replayAdmission.cause)) {
+                return yield* refreshAfterStale(replayAdmission.cause);
+              }
+              return yield* Effect.fail<ToolRuntimeError>(
+                replayAdmission.cause as ToolRuntimeError,
+              );
+            }
+            if (replayAdmission.value._tag === "Denied") {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                "ResourceAdmissionDenied",
+              );
+            }
+            if (p39BindingEnabled && Option.isSome(p39Recovery)) {
+              const approvalSnapshot = needsApproval
+                ? recoveryApprovalSnapshotFromRecord(
+                    currentApprovalRecord,
+                    intent.invocationId,
+                  )
+                : null;
+              if (needsApproval && approvalSnapshot === null) {
+                return yield* Effect.fail<ToolRuntimeError>(
+                  operationalFailure(
+                    "RecoveryBinding",
+                    String(intent.invocationId),
+                  )({ _tag: "ConsumedApprovalSourceUnavailable" }),
+                );
+              }
+              let expectedBinding: RecoveryBindingV1;
+              try {
+                expectedBinding = makeRecoveryBindingV1({
+                  context,
+                  intent,
+                  definition,
+                  authority: resolvedAuthority,
+                  regions,
+                  resourceBoundaryRevision:
+                    capturedWorkspace.resourceBoundaryRevision,
+                  environmentRevision:
+                    resolved.observedEnvironmentRevision,
+                  approval: approvalSnapshot,
+                });
+              } catch (cause) {
+                return yield* Effect.fail<ToolRuntimeError>(
+                  operationalFailure(
+                    "RecoveryBinding",
+                    String(intent.invocationId),
+                  )(cause),
+                );
+              }
+              const bound = yield* tx
+                .transact(
+                  p39Recovery.value.findBinding(intent.invocationId),
+                )
+                .pipe(
+                  Effect.mapError(
+                    operationalFailure(
+                      "RecoveryBinding",
+                      String(intent.invocationId),
+                    ),
+                  ),
+                );
+              if (
+                Option.isNone(bound) ||
+                bound.value.canonicalJson !==
+                  canonicalizeRecoveryBindingV1(expectedBinding) ||
+                bound.value.bindingSha256 !==
+                  recoveryBindingV1Digest(expectedBinding)
+              ) {
+                return yield* Effect.fail<ToolRuntimeError>(
+                  operationalFailure(
+                    "RecoveryBinding",
+                    String(intent.invocationId),
+                  )({ _tag: "RecoveryBindingReplayMismatch" }),
+                );
+              }
             }
             if (recorded.settlement !== null) {
               if (recorded.settlement._tag === "Denied") {
@@ -982,9 +1497,24 @@ export const ToolRuntimeLive = (
             } as const;
             const claimStopped = { _tag: "AH7ClaimStopped" as const };
             const approvalClaimLost = { _tag: "AH7ApprovalClaimLost" as const };
+            let approvalReceipt: ExecutableApprovalConsumptionReceipt | null =
+              null;
             const claim = yield* Effect.match(
               tx.transact(
                 Effect.gen(function* () {
+                  const snapshotAdmission = yield* validateCapturedSnapshotAndAdmit().pipe(
+                    Effect.mapError((cause) =>
+                      isP39ResourceResolutionStale(cause)
+                        ? cause
+                        : operationalFailure(
+                            "ResourceAdmission",
+                            String(intent.invocationId),
+                          )(cause),
+                    ),
+                  );
+                  if (snapshotAdmission._tag === "Denied") {
+                    return "AdmissionDenied" as const;
+                  }
                   const recordedIntent = yield* store.recordIntent(
                     invocation,
                     context.executionFence,
@@ -999,6 +1529,14 @@ export const ToolRuntimeLive = (
                     Option.isSome(executableApprovals)
                   ) {
                     if (approvalAlreadyConsumedBySelf) {
+                      if (p39BindingEnabled) {
+                        return yield* Effect.fail<ToolRuntimeError>(
+                          operationalFailure(
+                            "RecoveryBinding",
+                            String(intent.invocationId),
+                          )({ _tag: "ConsumedApprovalHasNoPriorBinding" }),
+                        );
+                      }
                       return "Claimed" as const;
                     }
                     const consumed =
@@ -1014,12 +1552,23 @@ export const ToolRuntimeLive = (
                     if (consumed === "ExecutionStopping") {
                       return yield* Effect.fail(claimStopped);
                     }
-                    if (!consumed) return yield* Effect.fail(approvalClaimLost);
+                    if (consumed === false) {
+                      return yield* Effect.fail(approvalClaimLost);
+                    }
+                    if (p39BindingEnabled) approvalReceipt = consumed;
                   } else if (
                     needsApproval &&
                     intent.approvalId !== null &&
                     !approvalAlreadyConsumedBySelf
                   ) {
+                    if (p39BindingEnabled) {
+                      return yield* Effect.fail<ToolRuntimeError>(
+                        operationalFailure(
+                          "RecoveryBinding",
+                          String(intent.invocationId),
+                        )({ _tag: "P38ConsumptionReceiptUnavailable" }),
+                      );
+                    }
                     const consumed = yield* store.consumeApproval(
                       intent.approvalId,
                       intent.invocationId,
@@ -1033,6 +1582,80 @@ export const ToolRuntimeLive = (
                       return yield* Effect.fail(approvalClaimLost);
                     }
                   }
+                  if (p39BindingEnabled) {
+                    if (Option.isNone(p39Recovery)) {
+                      return yield* Effect.fail<ToolRuntimeError>(
+                        operationalFailure(
+                          "RecoveryBinding",
+                          String(intent.invocationId),
+                        )({ _tag: "P39RecoveryEvidenceStoreUnavailable" }),
+                      );
+                    }
+                    let approvalSnapshot: RecoveryApprovalSnapshot | null =
+                      null;
+                    if (needsApproval) {
+                      const receipt = approvalReceipt;
+                      const expected = context.executableApproval;
+                      if (
+                        receipt === null ||
+                        expected === undefined ||
+                        receipt.approvalId !== expected.approvalId ||
+                        receipt.consumedBy !== intent.invocationId ||
+                        receipt.preConsumeRevision !==
+                          expected.expectedRevision ||
+                        receipt.consumedRevision !==
+                          expected.expectedRevision + 1 ||
+                        !executableApprovalBindingMatches(
+                          receipt.binding,
+                          expected.binding,
+                        )
+                      ) {
+                        return yield* Effect.fail<ToolRuntimeError>(
+                          operationalFailure(
+                            "RecoveryBinding",
+                            String(intent.invocationId),
+                          )({ _tag: "P38ReceiptBindingMismatch" }),
+                        );
+                      }
+                      approvalSnapshot =
+                        recoveryApprovalSnapshotFromReceipt(receipt);
+                    }
+                    let recoveryBinding: RecoveryBindingV1;
+                    try {
+                      recoveryBinding = makeRecoveryBindingV1({
+                        context,
+                        intent,
+                        definition,
+                        authority: resolvedAuthority,
+                        regions,
+                        resourceBoundaryRevision:
+                          capturedWorkspace.resourceBoundaryRevision,
+                        environmentRevision:
+                          resolved.observedEnvironmentRevision,
+                        approval: approvalSnapshot,
+                      });
+                    } catch (cause) {
+                      return yield* Effect.fail<ToolRuntimeError>(
+                        operationalFailure(
+                          "RecoveryBinding",
+                          String(intent.invocationId),
+                        )(cause),
+                      );
+                    }
+                    yield* p39Recovery.value
+                      .bindClaim({
+                        binding: recoveryBinding,
+                        createdAt: now,
+                      })
+                      .pipe(
+                        Effect.mapError(
+                          operationalFailure(
+                            "RecoveryBinding",
+                            String(intent.invocationId),
+                          ),
+                        ),
+                      );
+                  }
                   return "Claimed" as const;
                 }),
               ),
@@ -1042,6 +1665,9 @@ export const ToolRuntimeLive = (
               },
             );
             if (claim._tag === "Failed") {
+              if (isP39ResourceResolutionStale(claim.cause)) {
+                return yield* refreshAfterStale(claim.cause);
+              }
               if (
                 typeof claim.cause === "object" &&
                 claim.cause !== null &&
@@ -1063,7 +1689,11 @@ export const ToolRuntimeLive = (
                 return { _tag: "Interrupted" as const };
               }
               return yield* Effect.fail<ToolRuntimeError>(
-                isLeaseFencingRejected(claim.cause)
+                isLeaseFencingRejected(claim.cause) ||
+                  (typeof claim.cause === "object" &&
+                    claim.cause !== null &&
+                    "_tag" in claim.cause &&
+                    claim.cause._tag === "ToolRuntimeOperationalFailure")
                   ? claim.cause
                   : operationalFailure(
                       "IntentJournal",
@@ -1073,6 +1703,13 @@ export const ToolRuntimeLive = (
             }
             if (claim.value === "ExecutionStopping") {
               return { _tag: "Interrupted" as const };
+            }
+            if (claim.value === "AdmissionDenied") {
+              return yield* recordNoEffectDenial(
+                definition.sideEffectSemantics,
+                regions,
+                "ResourceAdmissionDenied",
+              );
             }
             if (needsApproval) approvalAlreadyConsumedBySelf = true;
             if (options.qualificationProbe !== undefined) {

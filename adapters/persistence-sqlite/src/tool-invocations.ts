@@ -168,6 +168,18 @@ export const ToolInvocationStoreLive: Layer.Layer<
       );
       return Number(rows[0]?.n ?? 0) === 1;
     });
+    const hasP39RecoveryColumns = () =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        const columns = yield* run(
+          sql.unsafe<{ readonly name: string }>(
+            "PRAGMA table_info(tool_invocations)",
+          ),
+        );
+        return columns.some(
+          (column) => column.name === "recovery_binding_state",
+        );
+      });
     const checkFenceAndStop = (
       executionId: ExecutionId,
       executionFence: ToolExecutionFence,
@@ -252,23 +264,52 @@ export const ToolInvocationStoreLive: Layer.Layer<
               ),
             );
           }
-          yield* run(
-            sql.unsafe(
-              "INSERT INTO tool_invocations (invocation_id, execution_id, workspace_id, tool_name, tool_version, side_effect_semantics, arguments_json, resolved_regions_json, approval_id, effect_admission_state, intent_at, settled_at, settlement_kind, settlement_json, result_ref) VALUES (?,?,?,?,?,?,?,?,?,'NotAdmitted',?,NULL,NULL,NULL,NULL)",
-              [
-                invocation.invocationId,
-                invocation.executionId,
-                invocation.workspaceId,
-                invocation.toolName,
-                invocation.toolVersion,
-                invocation.sideEffectSemantics,
-                invocation.argumentsJson,
-                JSON.stringify(invocation.resolvedRegions),
-                invocation.approvalId,
-                invocation.intentAt,
-              ],
-            ),
-          );
+          if (yield* hasP39RecoveryColumns()) {
+            yield* run(
+              sql.unsafe(
+                `INSERT INTO tool_invocations (
+                   invocation_id, execution_id, workspace_id, tool_name,
+                   tool_version, side_effect_semantics, arguments_json,
+                   resolved_regions_json, approval_id, effect_admission_state,
+                   recovery_binding_state, recovery_binding_sha256,
+                   settlement_provenance, selected_attempt_no, selected_fact_id,
+                   intent_at, settled_at, settlement_kind, settlement_json,
+                   result_ref
+                 ) VALUES (?,?,?,?,?,?,?,?,?,'NotAdmitted',
+                   'LegacyBindingUnproven',NULL,NULL,NULL,NULL,?,NULL,NULL,NULL,NULL)`,
+                [
+                  invocation.invocationId,
+                  invocation.executionId,
+                  invocation.workspaceId,
+                  invocation.toolName,
+                  invocation.toolVersion,
+                  invocation.sideEffectSemantics,
+                  invocation.argumentsJson,
+                  JSON.stringify(invocation.resolvedRegions),
+                  invocation.approvalId,
+                  invocation.intentAt,
+                ],
+              ),
+            );
+          } else {
+            yield* run(
+              sql.unsafe(
+                "INSERT INTO tool_invocations (invocation_id, execution_id, workspace_id, tool_name, tool_version, side_effect_semantics, arguments_json, resolved_regions_json, approval_id, effect_admission_state, intent_at, settled_at, settlement_kind, settlement_json, result_ref) VALUES (?,?,?,?,?,?,?,?,?,'NotAdmitted',?,NULL,NULL,NULL,NULL)",
+                [
+                  invocation.invocationId,
+                  invocation.executionId,
+                  invocation.workspaceId,
+                  invocation.toolName,
+                  invocation.toolVersion,
+                  invocation.sideEffectSemantics,
+                  invocation.argumentsJson,
+                  JSON.stringify(invocation.resolvedRegions),
+                  invocation.approvalId,
+                  invocation.intentAt,
+                ],
+              ),
+            );
+          }
           return "Recorded" as const;
         }),
       recordNoEffectDenial: (

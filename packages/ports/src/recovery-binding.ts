@@ -161,22 +161,23 @@ const hasExactKeys = (value: Record<string, unknown>): boolean => {
     actual.length === expected.length &&
     actual.every((key, index) => key === expected[index])
   );
+};
 
 const isPermissionGrantRevisions = (value: unknown): boolean => {
   if (!Array.isArray(value)) return false;
-  let prior = "";
+  const seen = new Set<string>();
   for (const entry of value) {
     if (
       !Array.isArray(entry) ||
       entry.length !== 2 ||
       typeof entry[0] !== "string" ||
       entry[0].length === 0 ||
-      (prior !== "" && entry[0] <= prior) ||
+      seen.has(entry[0]) ||
       (entry[1] !== null && !isNonNegativeInteger(entry[1]))
     ) {
       return false;
     }
-    prior = entry[0];
+    seen.add(entry[0]);
   }
   return true;
 };
