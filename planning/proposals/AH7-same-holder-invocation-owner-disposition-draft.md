@@ -36,10 +36,16 @@ The test does not call P2 `LeaseService.acquire`, production `runExecution`, or
 the production Scheduler/AgentLoop. It blocks both independent ToolRuntime
 instances in `ToolDefinitionStore.definition`, releases them against the same
 exact `ToolInvocationId` and callRef, and asserts one external effect, one
-successful caller, and final durable P4 `Success`. The case has failed in two
-central full-gate attempts at the strict success-count assertion with
-`Success filtered=[]`; Provider tests were green. A prior complete P36 run had
-reported a green suite, so the earlier pass does not erase the later reds.
+successful caller, and final durable P4 `Success`. Keep two failure records
+distinct:
+
+| Evidence | Fixture and observed failure | What it establishes |
+|---|---|---|
+| Earlier reproduction at `6073ed9ad53816b8bca7444ca070f0ee924478d5`; `planning/results/AH7-P4-concurrent-settlement-owner-gap.result.md` | A deterministic **unleased** direct P4 re-entry held caller A after its effect and before settlement, then let caller B re-enter the same invocation. Runtime returned `A=Success`, `B=OutcomeUnknown`; one effect marker existed; durable settlement was `OutcomeUnknown`, not the expected owner `Success`. | An unleased P4 re-entry can terminalize Unknown before the effect owner commits its known Success. The accompanying production-path review did not establish P2 dispatch reachability. |
+| Two central full-gate attempts on v19 baseline `0f277366f15ef7f10e36dee6b6c536c5785d4c13` | The current full-fence/two-process case failed at the strict success-count assertion with `Success filtered=[]`; Provider group was green. The full-gate output did not capture raw child results or the final invocation row. | The same-holder test is intermittently red under the full loaded gate. This does not establish durable `OutcomeUnknown` or identify either child's exact result. |
+
+A prior complete P36 run reported a green suite; that pass does not erase the
+later full-gate failures.
 
 The production runtime's early re-entry branch sees an existing
 `MayHaveStarted` NonIdempotent invocation and can write `OutcomeUnknown` using
@@ -53,8 +59,8 @@ diagnostic that reports both worker outcomes/error tags/stages, the canonical
 invocation and lease tuple from one joined SQLite query, and effect markers
 before the unchanged assertions. Prerequisite `pnpm build`, test TypeScript
 check and Biome passed. Five serial focused no-retry runs then passed 5/5; the
-diagnostic did not fire. These five focused passes do not explain or cancel
-the two full-gate reds.
+diagnostic did not fire. These focused passes do not explain or cancel the
+two v19 full-gate reds.
 
 The older deterministic test
 `it.skip("pending diagnostic: direct unleased P4 reentry …")` uses a different
@@ -79,68 +85,98 @@ Keep it distinct from the current full-fence, same-holder case.
   before its write and cannot prove that an already admitted effect did not
   occur. P9 also says SQLite concurrency alone is not process-crash evidence.
 
-The exact clone-holder fixture does not model two independently acquired P2
-leases: it gives two OS processes one copied holder identity. P2 therefore does
-not establish it as a valid two-worker case. However, the APIs do not separately
-specify same-process overlapping P4 calls with that same holder either. If that
-is intended capability, P4 needs an explicit invocation-level ownership rule;
-the current schema/runtime cannot distinguish the effect owner from a
-same-fence reentrant caller. This is the decision point, not a conclusion that
-the full-gate red is harmless.
+The exact clone-holder fixture does not acquire two P2 leases; it copies one
+lease tuple into two OS processes. That makes it unsuitable as evidence for
+two independently authorized workers. It does **not**, by itself, decide
+whether the P4 port supports concurrent calls with a same-generation context
+inside one Worker process or through multiple ToolRuntime clients. The P4/P2
+owners must explicitly decide that supported-call boundary before changing
+the default test or implementation.
 
-## Proposed fixed disposition — supported P2 path plus explicit boundary
+## Fixed owner decisions requested
 
-Adopt Option C with Option B as the default recovery qualification:
+### 1. Same-holder concurrent `invoke` support
 
-1. **P2 remains the owner of cross-worker eligibility.** A real same-Execution
-   second worker must obtain a fresh LeaseService acquisition after generation
-   0 expires. Do not construct a second worker by copying generation 0's
-   holder tuple.
-2. **Qualify a genuine generation takeover.** In the public production daemon
-   path, generation 0 persists intent and `MayHaveStarted`, performs exactly
-   one non-idempotent marker effect, then pauses before settlement. Prevent its
-   renewal through the test-only process probe; let the real lease expire and
-   let generation 1 acquire through LeaseService. Generation 1 must not call
-   the Executor again. It follows existing P4/P9 non-idempotent ambiguity
-   disposition (`OutcomeUnknown` or the already specified active/reconciling
-   gate). Releasing generation 0 after takeover must yield
-   `LeaseFencingRejected`, with no stale settlement overwrite. Assert the
-   single effect, both exact generation tuples, terminal/reconciling durable
-   state, action/ToolResult/Observation consequences, and one Provider
-   decision. No direct SQL writes to lease, intent, or settlement rows.
-3. **Preserve the cloned-holder race evidence verbatim.** Keep its strict
-   `one Success + one effect + durable Success` oracle and historical red
-   results. If the owner confirms that a duplicated WorkerIncarnationId across
-   OS processes is outside supported P2, move this case out of default
-   qualification into a clearly named pending/unsupported diagnostic and
-   replace default core coverage with an exact store-level intent/effect-
-   admission CAS race plus the real P2 takeover above. Do not count the
-   unsupported diagnostic as a pass.
-4. **Do not add durable P4 owner fields in this disposition.** The runtime
-   keeps the current fail-closed behavior for a new-generation recovery of an
-   unsettled `MayHaveStarted` NonIdempotent invocation; a new generation may
-   establish uncertainty but may not replay the effect or accept an old
-   generation's result.
+Choose one:
 
-This disposition does not claim overall AH7 closure; it qualifies only P4
-same-invocation concurrency ownership and AH7 stale-settlement behavior.
+- **Supported.** P4 guarantees one invocation-level executor owner for an
+  exact `(executionId, invocationId)` even when same-holder calls overlap.
+  A loser must wait or return a specified nonterminal result; it cannot write
+  terminal `OutcomeUnknown` while an authorized owner can still commit its
+  known result. Specify durable owner identity, cancellation, owner failure,
+  and transfer after P2 lease expiry. With the current table fields, the same
+  full fence does not distinguish two P4 callers. If persistent owner/attempt
+  evidence is required, land the contract and obtain implementation
+  authorization before migration or runtime code.
+- **Unsupported.** Only the single P2-authorized Worker/serial AgentLoop path
+  may invoke an exact pinned action at a time. Define same-process overlapping
+  direct P4 calls and cross-process cloned-holder calls as outside the
+  supported route. This boundary must be accepted by the P4/P2 owners; it is
+  not inferred from the fact that the current test bypasses `runExecution`.
+
+### 2. Keep three evidence claims separate
+
+Option C is a **component-test scope only**:
+
+1. `recordIntent` competition proves there is one exact `ToolInvocationId`
+   row with matching intent.
+2. `NotAdmitted → MayHaveStarted` CAS competition proves only that one
+   admission transition is committed. `admitEffect` returns `Admitted`; that
+   marker is not a durable invocation-owner token. This store-level case
+   cannot prove how many callers invoke `Executor` and cannot be reported as a
+   single-Executor result.
+3. Exactly one Executor call can be claimed only in a single authorized
+   production ToolRuntime invocation path, with the AgentLoop's serial action
+   dispatch. This does not prove same-holder concurrent-call support.
+4. A real two-worker qualification must use P2 `LeaseService` acquisition.
+   It covers generation fencing and recovery, not same-holder arbitration.
+
+### 3. Real P2 generation-takeover qualification
+
+When a valid two-generation process case is scheduled, use the public
+production daemon path and test-only process-local probes; do not write lease,
+intent or settlement rows directly. Generation 0 persists intent and
+`MayHaveStarted`, performs exactly one NonIdempotent marker effect, then
+pauses before settlement. Prevent its lease renewal with the existing test
+seam, allow real expiry, and let generation 1 acquire through `LeaseService`.
+Generation 1 must not invoke the Executor again; it follows the existing
+P4/P9 disposition for ambiguous NonIdempotent reality (durable `OutcomeUnknown`
+or the already specified Active/reconciling path). After takeover, release
+generation 0 and require its terminal write to fail `LeaseFencingRejected`
+without overwriting generation 1's state. Assert one effect, exact holder
+tuples, P4 settlement/reconciliation, and the existing ToolResult/Observation
+consequences. This qualifies stale-generation fencing only.
+
+### 4. Default-suite disposition remains pending
+
+Keep the current same-holder test in its default location with the strict
+`one Success + one effect + durable Success` oracle until the owners decide
+whether that supported behavior is required. If they choose Unsupported, the
+test may then move to a clearly labeled pending/unsupported diagnostic; retain
+the complete strict oracle and full-gate RED history, and count it as zero
+passing cases. If they choose Supported, keep it default and implement/qualify
+Option A. Do not skip, demote, or weaken it in advance of this owner decision.
+
+This proposal does not claim overall AH7 closure.
 
 ## Alternatives the owner must explicitly accept or reject
 
 | Option | Result | Required owner decision |
 |---|---|---|
-| A. Support concurrent same-holder invokes as a P4 capability | Add invocation-level single-owner/wait so a competing call cannot terminalize `OutcomeUnknown` ahead of a still-active effect owner. A process-local mutex is insufficient for multiple ToolRuntime processes/connections. | Specify owner identity, when contenders wait versus return, how a crashed owner relinquishes ownership, how takeover is bounded by P2 lease expiry, and how recovery settles after owner death. If this adds persisted owner/attempt evidence or changes P4/P9 crash disposition, land the owning contract and authorization before migration/production code. Keep the strict cloned-holder Success oracle in the default suite. |
-| B. Treat the two calls as real P2 generations | Old generation is fenced; current generation follows existing NonIdempotent ambiguity disposition and never replays. | Accept as the only supported cross-worker race; old generation's `Success` is not authoritative after takeover unless reconciliation proves it. |
-| C. Keep P4 store atomicity and P2 ownership as separate qualification layers (**proposed**) | Store-level exact-intent/effect-admission CAS remains a focused component test; real worker takeover covers before/after generation fence and recovery. Cloned-holder execution remains pending/unsupported while strict oracle/history are retained. | Confirm that two OS processes may not share one WorkerIncarnationId as concurrent holders and that production same-holder AgentLoop dispatch remains serial. Then authorize only the scoped test promotion/demotion and real P2 process qualification. |
+| A. Support concurrent same-holder invokes | Define an invocation-level owner/wait protocol; a contending same-holder call cannot persist terminal `OutcomeUnknown` before the active owner settles. | Decide owner identity, contender behavior, owner death, lease-expiry takeover and NonIdempotent recovery. If durable owner evidence is needed, land the contract and implementation authorization first. Keep the exact Success oracle default. |
+| B. Exercise valid P2 generations | Generation 0's stale settlement is rejected; generation 1 does not replay and follows P4/P9 ambiguity disposition. | Uses actual LeaseService/production runtime. This is separate evidence and does not decide same-holder support. |
+| C. Separate component store CAS from Executor ownership | The store test asserts exact intent uniqueness and one `NotAdmitted → MayHaveStarted` transition only. A separate single authorized production path asserts one Executor call. | No Executor-count claim from the CAS test. P4/P2 still must decide same-holder support; C alone neither supports nor rejects it. |
 
-## Acceptance criteria if Option C is accepted
+## Acceptance criteria if the owners accept Option C as a component-test boundary
 
-- The exact cloned-holder test remains stored with its unmodified strict oracle
-  and both full-gate red references; its classification as unsupported is
-  visible and it contributes zero passing cases.
-- Default P4 component qualification proves one exact intent, one successful
-  `NotAdmitted → MayHaveStarted` admission, and one executor call; contenders
-  cannot mint another admission or terminalize the record as no-effect.
+- The exact cloned-holder test and strict Success oracle remain unchanged until
+  the same-holder support decision. If Unsupported is accepted, its pending
+  classification is explicit and it contributes zero passing cases; if
+  Supported is accepted, it remains default and needs Option A.
+- Default P4 component qualification proves one exact intent and one
+  `NotAdmitted → MayHaveStarted` transition. It asserts no Executor count.
+- A separate single authorized production ToolRuntime call path proves one
+  Executor call for one admitted invocation.
 - Real daemon takeover obtains generations through P2 LeaseService, not test
   SQL. Generation 0's external effect occurs once; generation 1 does not
   re-execute; stale generation 0 settlement returns `LeaseFencingRejected`;
@@ -154,9 +190,10 @@ same-invocation concurrency ownership and AH7 stale-settlement behavior.
 
 ## Authority and status
 
-This proposal selects the test/qualification boundary above for owner review;
-it is **not accepted** and authorizes no production change, schema change, test
-promotion/removal, or claim that AH7 is closed. If P4 owner rejects Option C
-and selects Option A, stop and land the fixed ownership/recovery contract
-through manual governance before implementation.
+This proposal does **not** decide whether same-holder overlap is supported. It
+is **not accepted** and authorizes no production change, schema change, test
+promotion/removal, or claim that AH7 is closed. Keep the current default case
+and its strict oracle unchanged pending P4/P2 owner decision. If same-holder
+support is required, land the invocation-owner/recovery contract through
+manual governance before implementation.
 
