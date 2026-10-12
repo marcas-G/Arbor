@@ -1,5 +1,4 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Effect } from "effect";
@@ -10,6 +9,14 @@ import {
   p39WriterLockLayer,
   releaseP39WriterPermit,
 } from "../../../adapters/persistence-sqlite/src/index.js";
+import {
+  makeP39PrivateTestDirectory,
+  p39WindowsAclQualificationAvailable,
+  p39WindowsTestEnvironment,
+  removeP39PrivateTestDirectory,
+} from "../../support/p39-windows-deployment-test.js";
+
+const windowsAclQualificationAvailable = p39WindowsAclQualificationAvailable();
 
 const childModule = resolve(
   "tests/functional/support/p39-writer-lock-child.mjs",
@@ -22,6 +29,7 @@ const startHolder = async (
   const child = spawn(process.execPath, [childModule, lockFilename, mode], {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"],
+    env: p39WindowsTestEnvironment(),
   });
   let output = "";
   const ready = new Promise<void>((resolveReady, rejectReady) => {
@@ -56,23 +64,58 @@ const startHolder = async (
   return child;
 };
 
-const stopHolder = async (
-  child: ChildProcessWithoutNullStreams,
-): Promise<void> => {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolveExit) => {
-    child.once("exit", () => resolveExit());
-  });
-  child.stdin.write("release\n");
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<void>((resolveExit) => {
-    timer = setTimeout(() => {
-      child.kill();
-      resolveExit();
-    }, 5000);
-  });
-  await Promise.race([exited, timeout]);
-  if (timer !== undefined) clearTimeout(timer);
+const stopHolderPromises = new WeakMap<
+  ChildProcessWithoutNullStreams,
+  Promise<void>
+>();
+
+const stopHolder = (child: ChildProcessWithoutNullStreams): Promise<void> => {
+  const existing = stopHolderPromises.get(child);
+  if (existing !== undefined) return existing;
+  const stopping = (async () => {
+    if (
+      child.exitCode !== null ||
+      child.signalCode !== null ||
+      child.stdin.destroyed ||
+      child.stdin.writableEnded ||
+      !child.stdin.writable
+    ) {
+      return;
+    }
+    const exited = new Promise<void>((resolveExit) => {
+      child.once("exit", () => resolveExit());
+    });
+    const brokenPipe = new Promise<void>((resolvePipe, rejectPipe) => {
+      child.stdin.once("error", (error: NodeJS.ErrnoException) => {
+        if (error.code === "EPIPE") resolvePipe();
+        else rejectPipe(error);
+      });
+    });
+    try {
+      child.stdin.write("release\n");
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "EPIPE"
+      ) {
+        return;
+      }
+      throw error;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolveExit) => {
+      timer = setTimeout(() => {
+        child.kill();
+        resolveExit();
+      }, 5000);
+    });
+    await Promise.race([exited, brokenPipe.then(() => exited), timeout]);
+    if (timer !== undefined) clearTimeout(timer);
+  })();
+  stopHolderPromises.set(child, stopping);
+  return stopping;
 };
 
 const killHolder = async (
@@ -90,7 +133,10 @@ const competeAcrossProcess = async (input: {
   readonly heldMode: "shared" | "exclusive";
   readonly competingMode: "shared" | "exclusive";
 }) => {
-  const directory = mkdtempSync(join(tmpdir(), "arbor-p39-writer-lock-"));
+  const directory = makeP39PrivateTestDirectory(
+    tmpdir(),
+    "arbor-p39-writer-lock-",
+  );
   const lockFilename = join(directory, "maintenance.sqlite");
   let child: ChildProcessWithoutNullStreams | undefined;
   try {
@@ -124,54 +170,60 @@ const competeAcrossProcess = async (input: {
     );
   } finally {
     if (child !== undefined) await stopHolder(child);
-    rmSync(directory, { recursive: true, force: true });
+    removeP39PrivateTestDirectory(directory);
   }
 };
 
-describe("P39 cross-process SQLite writer exclusion", () => {
-  it("blocks maintenance while another OS process holds a daemon shared permit", async () => {
-    await competeAcrossProcess({
-      heldMode: "shared",
-      competingMode: "exclusive",
+describe.skipIf(!windowsAclQualificationAvailable)(
+  "P39 cross-process SQLite writer exclusion",
+  () => {
+    it("blocks maintenance while another OS process holds a daemon shared permit", async () => {
+      await competeAcrossProcess({
+        heldMode: "shared",
+        competingMode: "exclusive",
+      });
     });
-  });
 
-  it("blocks a new daemon while another OS process holds maintenance exclusion", async () => {
-    await competeAcrossProcess({
-      heldMode: "exclusive",
-      competingMode: "shared",
+    it("blocks a new daemon while another OS process holds maintenance exclusion", async () => {
+      await competeAcrossProcess({
+        heldMode: "exclusive",
+        competingMode: "shared",
+      });
     });
-  });
 
-  it("releases a crashed daemon's shared permit through the SQLite VFS handle", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "arbor-p39-lock-crash-"));
-    const lockFilename = join(directory, "maintenance.sqlite");
-    let child: ChildProcessWithoutNullStreams | undefined;
-    try {
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.provide(
-            Effect.gen(function* () {
-              child = yield* Effect.promise(() =>
-                startHolder(lockFilename, "shared"),
-              );
-              const holder = child;
-              if (holder === undefined) {
-                return yield* Effect.fail(
-                  new Error("lock holder was not started"),
-                );
-              }
-              yield* Effect.promise(() => killHolder(holder));
-              const permit = yield* acquireP39MaintenanceWriterExclusion();
-              yield* releaseP39WriterPermit(permit);
-            }),
-            p39WriterLockLayer(lockFilename, 1000),
-          ),
-        ),
+    it("releases a crashed daemon's shared permit through the SQLite VFS handle", async () => {
+      const directory = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-p39-lock-crash-",
       );
-    } finally {
-      if (child !== undefined) await stopHolder(child);
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-});
+      const lockFilename = join(directory, "maintenance.sqlite");
+      let child: ChildProcessWithoutNullStreams | undefined;
+      try {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.provide(
+              Effect.gen(function* () {
+                child = yield* Effect.promise(() =>
+                  startHolder(lockFilename, "shared"),
+                );
+                const holder = child;
+                if (holder === undefined) {
+                  return yield* Effect.fail(
+                    new Error("lock holder was not started"),
+                  );
+                }
+                yield* Effect.promise(() => killHolder(holder));
+                const permit = yield* acquireP39MaintenanceWriterExclusion();
+                yield* releaseP39WriterPermit(permit);
+              }),
+              p39WriterLockLayer(lockFilename, 1000),
+            ),
+          ),
+        );
+      } finally {
+        if (child !== undefined) await stopHolder(child);
+        removeP39PrivateTestDirectory(directory);
+      }
+    });
+  },
+);

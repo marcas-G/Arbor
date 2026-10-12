@@ -6,7 +6,6 @@ import {
   rmSync,
   statSync,
   symlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +13,12 @@ import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import {
+  createP39PrivateTestFile,
+  makeP39PrivateTestDirectory,
+  p39WindowsAclQualificationAvailable,
+  removeP39PrivateTestDirectory,
+} from "../../../tests/support/p39-windows-deployment-test.js";
 import { layer } from "../src/client.js";
 import { runMigrations, splitStatements } from "../src/migrate.js";
 import * as migrations from "../src/migrations.js";
@@ -35,6 +40,8 @@ import {
   prepareP39PrimaryDatabasePath,
   validateP39ProtectedDirectory,
 } from "../src/p39-writer-lock.js";
+
+const windowsAclQualificationAvailable = p39WindowsAclQualificationAvailable();
 
 const withClient = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
   Effect.runPromise(Effect.provide(program, layer({ filename: ":memory:" })));
@@ -192,120 +199,148 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     expect(result[0]?.contentHash).toBe(sha256Hex(result[0]?.reportJson ?? ""));
   });
 
-  it("initializes and revalidates only the exact reserved sidecar schema", async () => {
-    const directory = mkdtempSync(join(process.cwd(), ".p39-sidecar-test-"));
-    const primary = join(directory, "primary.sqlite");
-    const sidecar = join(directory, "reports.sqlite");
-    try {
-      writeFileSync(primary, "");
-      const normalized = await Effect.runPromise(
-        validateP39ReportSidecarPath(primary, sidecar),
+  it.skipIf(!windowsAclQualificationAvailable)(
+    "initializes and revalidates only the exact reserved sidecar schema",
+    async () => {
+      const directory = makeP39PrivateTestDirectory(
+        process.cwd(),
+        ".p39-sidecar-test-",
       );
-      expect(normalized.endsWith("reports.sqlite")).toBe(true);
-      await Effect.runPromise(
-        validateP39ReportSidecarDatabase(primary, sidecar),
-      );
-      const sidecarIdentityBefore = statSync(sidecar, { bigint: true });
-      await Effect.runPromise(
-        validateP39ReportSidecarDatabase(primary, sidecar),
-      );
-      const sidecarIdentityAfter = statSync(sidecar, { bigint: true });
-      expect(sidecarIdentityAfter.dev).toBe(sidecarIdentityBefore.dev);
-      expect(sidecarIdentityAfter.ino).toBe(sidecarIdentityBefore.ino);
-      const samePath = await Effect.runPromise(
-        Effect.flip(validateP39ReportSidecarPath(primary, primary)),
-      );
-      expect(samePath.code).toBe("P39_REPORT_DB_PATH_INVALID");
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
+      const primary = join(directory, "primary.sqlite");
+      const sidecar = join(directory, "reports.sqlite");
+      try {
+        createP39PrivateTestFile(primary);
+        const normalized = await Effect.runPromise(
+          validateP39ReportSidecarPath(primary, sidecar),
+        );
+        expect(normalized.endsWith("reports.sqlite")).toBe(true);
+        await Effect.runPromise(
+          validateP39ReportSidecarDatabase(primary, sidecar),
+        );
+        const sidecarIdentityBefore = statSync(sidecar, { bigint: true });
+        await Effect.runPromise(
+          validateP39ReportSidecarDatabase(primary, sidecar),
+        );
+        const sidecarIdentityAfter = statSync(sidecar, { bigint: true });
+        expect(sidecarIdentityAfter.dev).toBe(sidecarIdentityBefore.dev);
+        expect(sidecarIdentityAfter.ino).toBe(sidecarIdentityBefore.ino);
+        const samePath = await Effect.runPromise(
+          Effect.flip(validateP39ReportSidecarPath(primary, primary)),
+        );
+        expect(samePath.code).toBe("P39_REPORT_DB_PATH_INVALID");
+      } finally {
+        removeP39PrivateTestDirectory(directory);
+      }
+    },
+    120_000,
+  );
 
-  it("rejects temporary sidecars and hard-linked database identities", async () => {
-    const directory = mkdtempSync(join(process.cwd(), ".p39-alias-test-"));
-    const primary = join(directory, "primary.sqlite");
-    const localReport = join(directory, "reports.sqlite");
-    const hardLink = join(directory, "primary-hardlink.sqlite");
-    try {
-      writeFileSync(primary, "");
-      linkSync(primary, hardLink);
-      const hardLinkDenied = await Effect.runPromise(
-        Effect.flip(validateP39ReportSidecarPath(primary, localReport)),
+  it.skipIf(!windowsAclQualificationAvailable)(
+    "rejects temporary sidecars and hard-linked database identities",
+    async () => {
+      const directory = makeP39PrivateTestDirectory(
+        process.cwd(),
+        ".p39-alias-test-",
       );
-      const tempDenied = await Effect.runPromise(
-        Effect.flip(
-          validateP39ReportSidecarPath(
-            primary,
-            join(tmpdir(), "p39-report-sidecar.sqlite"),
+      const primary = join(directory, "primary.sqlite");
+      const localReport = join(directory, "reports.sqlite");
+      const hardLink = join(directory, "primary-hardlink.sqlite");
+      try {
+        createP39PrivateTestFile(primary);
+        const tempDenied = await Effect.runPromise(
+          Effect.flip(
+            validateP39ReportSidecarPath(
+              primary,
+              join(tmpdir(), "p39-report-sidecar.sqlite"),
+            ),
           ),
-        ),
+        );
+        const otherStore = join(directory, "other-store.sqlite");
+        createP39PrivateTestFile(otherStore);
+        const otherStoreAliasDenied = await Effect.runPromise(
+          Effect.flip(
+            validateP39ReportSidecarPath(primary, otherStore, [otherStore]),
+          ),
+        );
+        linkSync(primary, hardLink);
+        const hardLinkDenied = await Effect.runPromise(
+          Effect.flip(validateP39ReportSidecarPath(primary, localReport)),
+        );
+
+        expect(hardLinkDenied.code).toBe("P39_UNSUPPORTED_DEPLOYMENT");
+        expect(tempDenied.code).toBe("P39_REPORT_DB_PATH_INVALID");
+        expect(otherStoreAliasDenied.code).toBe("P39_REPORT_DB_PATH_INVALID");
+      } finally {
+        removeP39PrivateTestDirectory(directory);
+      }
+    },
+    120_000,
+  );
+
+  it.skipIf(!windowsAclQualificationAvailable)(
+    "derives one shared writer-lock identity and rejects primary hard links",
+    () => {
+      const directory = makeP39PrivateTestDirectory(
+        process.cwd(),
+        ".p39-writer-lock-test-",
       );
-      const otherStore = join(directory, "other-store.sqlite");
-      writeFileSync(otherStore, "");
-      const otherStoreAliasDenied = await Effect.runPromise(
-        Effect.flip(
-          validateP39ReportSidecarPath(primary, otherStore, [otherStore]),
-        ),
+      const primary = join(directory, "primary.sqlite");
+      const hardLink = join(directory, "primary-hardlink.sqlite");
+      try {
+        const prepared = prepareP39PrimaryDatabasePath(primary);
+        expect("databaseFilename" in prepared).toBe(true);
+        if (!("databaseFilename" in prepared)) return;
+        expect(p39WriterLockFilename(primary)).toBe(
+          prepared.writerLockFilename,
+        );
+        linkSync(primary, hardLink);
+        expect(p39WriterLockFilename(hardLink)).toMatchObject({
+          code: "P39_WRITER_LOCK_PATH_INVALID",
+        });
+      } finally {
+        removeP39PrivateTestDirectory(directory);
+      }
+    },
+    120_000,
+  );
+
+  it.skipIf(!windowsAclQualificationAvailable)(
+    "uses a primary-shared lock path across user-root settings and rejects symlink aliases",
+    () => {
+      const directory = makeP39PrivateTestDirectory(
+        process.cwd(),
+        ".p39-writer-alias-test-",
       );
+      const primary = join(directory, "primary.sqlite");
+      const alias = join(directory, "primary-alias.sqlite");
+      const savedLocalAppData = process.env.LOCALAPPDATA;
+      const savedXdgStateHome = process.env.XDG_STATE_HOME;
+      try {
+        const prepared = prepareP39PrimaryDatabasePath(primary);
+        expect("databaseFilename" in prepared).toBe(true);
+        if (!("databaseFilename" in prepared)) return;
+        process.env.LOCALAPPDATA = join(directory, "account-a-state");
+        process.env.XDG_STATE_HOME = join(directory, "account-a-state");
+        const accountAPath = p39WriterLockFilename(primary);
+        process.env.LOCALAPPDATA = join(directory, "account-b-state");
+        process.env.XDG_STATE_HOME = join(directory, "account-b-state");
+        const accountBPath = p39WriterLockFilename(primary);
+        expect(accountBPath).toBe(accountAPath);
+        expect(accountAPath).toBe(prepared.writerLockFilename);
 
-      expect(hardLinkDenied.code).toBe("P39_REPORT_DB_PATH_INVALID");
-      expect(tempDenied.code).toBe("P39_REPORT_DB_PATH_INVALID");
-      expect(otherStoreAliasDenied.code).toBe("P39_REPORT_DB_PATH_INVALID");
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("derives one shared writer-lock identity and rejects primary hard links", () => {
-    const directory = mkdtempSync(
-      join(process.cwd(), ".p39-writer-lock-test-"),
-    );
-    const primary = join(directory, "primary.sqlite");
-    const hardLink = join(directory, "primary-hardlink.sqlite");
-    try {
-      const prepared = prepareP39PrimaryDatabasePath(primary);
-      expect("databaseFilename" in prepared).toBe(true);
-      if (!("databaseFilename" in prepared)) return;
-      expect(p39WriterLockFilename(primary)).toBe(prepared.writerLockFilename);
-      linkSync(primary, hardLink);
-      expect(typeof p39WriterLockFilename(hardLink)).not.toBe("string");
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("uses a primary-shared lock path across user-root settings and rejects symlink aliases", () => {
-    const directory = mkdtempSync(
-      join(process.cwd(), ".p39-writer-alias-test-"),
-    );
-    const primary = join(directory, "primary.sqlite");
-    const alias = join(directory, "primary-alias.sqlite");
-    const savedLocalAppData = process.env.LOCALAPPDATA;
-    const savedXdgStateHome = process.env.XDG_STATE_HOME;
-    try {
-      const prepared = prepareP39PrimaryDatabasePath(primary);
-      expect("databaseFilename" in prepared).toBe(true);
-      if (!("databaseFilename" in prepared)) return;
-      process.env.LOCALAPPDATA = join(directory, "account-a-state");
-      process.env.XDG_STATE_HOME = join(directory, "account-a-state");
-      const accountAPath = p39WriterLockFilename(primary);
-      process.env.LOCALAPPDATA = join(directory, "account-b-state");
-      process.env.XDG_STATE_HOME = join(directory, "account-b-state");
-      const accountBPath = p39WriterLockFilename(primary);
-      expect(accountBPath).toBe(accountAPath);
-      expect(accountAPath).toBe(prepared.writerLockFilename);
-
-      if (process.platform === "win32") linkSync(primary, alias);
-      else symlinkSync(primary, alias);
-      expect(typeof p39WriterLockFilename(alias)).not.toBe("string");
-    } finally {
-      if (savedLocalAppData === undefined) delete process.env.LOCALAPPDATA;
-      else process.env.LOCALAPPDATA = savedLocalAppData;
-      if (savedXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
-      else process.env.XDG_STATE_HOME = savedXdgStateHome;
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
+        if (process.platform === "win32") linkSync(primary, alias);
+        else symlinkSync(primary, alias);
+        expect(typeof p39WriterLockFilename(alias)).not.toBe("string");
+      } finally {
+        if (savedLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+        else process.env.LOCALAPPDATA = savedLocalAppData;
+        if (savedXdgStateHome === undefined) delete process.env.XDG_STATE_HOME;
+        else process.env.XDG_STATE_HOME = savedXdgStateHome;
+        removeP39PrivateTestDirectory(directory);
+      }
+    },
+    120_000,
+  );
 
   it("fails closed when a lock or sidecar parent is world-writable", () => {
     if (process.platform === "win32") return;
