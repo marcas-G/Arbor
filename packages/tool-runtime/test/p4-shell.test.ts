@@ -76,6 +76,63 @@ describe("P4 shell tool + policy", () => {
     expect(shellPolicy("sudo rm -rf /")).toBe("Deny");
   });
 
+  it("allows only reviewed simple read-only commands and the exact date query", () => {
+    for (const command of [
+      "pwd",
+      "cat proof.txt",
+      "head -n 3 proof.txt",
+      "Get-ChildItem .",
+      "Get-Content proof.txt",
+      "echo hi",
+      "Write-Output 'rm -rf /'",
+      "git status --short",
+    ]) {
+      expect(shellPolicy(command), command).toBe("Allow");
+    }
+    expect(
+      shellPolicy(
+        "Get-ChildItem | ForEach-Object { $_.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss.fff') }",
+      ),
+    ).toBe("Allow");
+    expect(shellPolicy("Write-Output 'yyyy-MM-dd'")).toBe("Allow");
+  });
+
+  it.each([
+    "dd if=input.bin of=output.bin",
+    "python -c 'print(1)'",
+    "ls -la; rm file.txt",
+    "ls\nrm file.txt",
+    "ls\r\nshutdown now",
+    "2>/dev/null dd if=input.bin of=output.bin",
+    "FOO=bar dd if=input.bin of=output.bin",
+    "bash -c 'sudo rm -rf /'",
+    "s'u'do rm -rf /",
+    "r'm' -rf /",
+    "& 'sudo' rm -rf /",
+    "setsid 'bash' /tmp/payload.sh",
+    "Get-ChildItem . | ForEach-Object { Invoke-Expression 'sudo rm -rf /' }",
+    "Get-Content ../outside.txt",
+  ])("requires P38 approval for unallowlisted command %s", (command) => {
+    expect(shellPolicy(command), command).toBe("RequireApproval");
+    expect(diagnosticShellExecutor.requiresApproval(intent(command))).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    "sudo 'echo hi'",
+    "'sudo' rm -rf /",
+    "/bin/rm -rf /",
+    "rm -rf -- /",
+    "rm --recursive --force /",
+    "mkfs.ext4 /dev/sda",
+    "shutdown now",
+    "reboot",
+    "rm -rf /tmp",
+  ])("denies a direct hard-danger simple command %s", (command) => {
+    expect(shellPolicy(command), command).toBe("Deny");
+  });
+
   it("requires approval for a destructive command", () => {
     expect(diagnosticShellExecutor.requiresApproval(intent("rm x"))).toBe(true);
     expect(diagnosticShellExecutor.requiresApproval(intent("ls"))).toBe(false);

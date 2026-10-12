@@ -33,6 +33,7 @@ import {
   type ToolExecutor,
   ToolRuntimeLive,
 } from "../src/index.js";
+import { createShellExecutor } from "../src/tools/shell.js";
 
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
@@ -365,6 +366,39 @@ const run = (
     ) as Effect.Effect<{ _tag: string }, unknown, never>,
   );
 
+const shellAuthority = {
+  ...authority,
+  toolName: "shell",
+  toolVersion: "2",
+  allowedCapabilities: ["shell:exec"],
+};
+const runShell = (
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases the app layer type
+  appLayer: Layer.Layer<any, any, any>,
+  command: string,
+) =>
+  Effect.runPromise(
+    Effect.provide(
+      Effect.gen(function* () {
+        const runtime = yield* ToolRuntimePort;
+        return yield* runtime.invoke(
+          {
+            ...intent(
+              JSON.stringify({
+                command,
+                cwd: { mount: "workspace", path: "." },
+              }),
+            ),
+            toolName: "shell",
+            toolVersion: "2",
+          } as never,
+          { ...context, authority: shellAuthority } as never,
+        );
+      }),
+      appLayer,
+    ) as Effect.Effect<{ _tag: string }, unknown, never>,
+  );
+
 const runFailure = (
   // biome-ignore lint/suspicious/noExplicitAny: test helper erases the app layer type
   appLayer: Layer.Layer<any, any, any>,
@@ -383,6 +417,40 @@ const runFailure = (
   );
 
 describe("P4 tool runtime pipeline", () => {
+  it("keeps unknown and compound shell commands in the nonterminal P38 approval handoff", async () => {
+    for (const command of [
+      "python -c 'print(1)'",
+      "ls -la; rm file.txt",
+      "s'u'do rm -rf /",
+      "r'm' -rf /",
+      "& 'sudo' rm -rf /",
+    ]) {
+      const trace: PipelineTrace = {
+        noEffectDenials: [],
+        events: [],
+        approvalConsumer: null,
+        intentWrites: 0,
+        effectAdmissions: 0,
+        approvalConsumes: 0,
+      };
+      let executorCalls = 0;
+      const shell = createShellExecutor(() => {
+        executorCalls += 1;
+        throw new Error("approved effect must not execute before approval");
+      });
+      const result = await runShell(app(false, shell, {}, trace), command);
+
+      expect(result._tag, command).toBe("ApprovalRequired");
+      expect(executorCalls).toBe(0);
+      expect(trace).toMatchObject({
+        noEffectDenials: [],
+        intentWrites: 0,
+        effectAdmissions: 0,
+        approvalConsumes: 0,
+      });
+    }
+  });
+
   it("projects a typed authority policy rejection as Denied without execution", async () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],
