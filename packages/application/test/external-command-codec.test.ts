@@ -21,6 +21,65 @@ describe("external wire-v1 command payload codec", () => {
     });
   });
 
+  it.each(["target", "expiresAt"] as const)(
+    "rejects a null GrantPermission %s with a stable field path",
+    (field) => {
+      const payload: Record<string, unknown> = {
+        permissionGrantId: `pgr_${UUID_V7}`,
+        issuer: "user:alice",
+        subject: { _tag: "WorkspaceAgent", workspaceId: `ws_${UUID_V7}` },
+        capability: "fs:write",
+        target: `ws_${UUID_V7}`,
+        expiresAt: "2026-10-12T08:30:00.000Z",
+      };
+      payload[field] = null;
+
+      expect(decodeCommandPayload("GrantPermission", payload)).toEqual({
+        ok: false,
+        issues: [{ path: [field], rule: "type" }],
+      });
+    },
+  );
+
+  it("accepts a WorkspaceAgent GrantPermission with an exact target and expiry", () => {
+    const result = decodeCommandPayload("GrantPermission", {
+      permissionGrantId: `pgr_${UUID_V7}`,
+      issuer: "user:alice",
+      subject: { _tag: "WorkspaceAgent", workspaceId: `ws_${UUID_V7}` },
+      capability: "fs:write",
+      target: `ws_${UUID_V7}`,
+      expiresAt: "2099-10-12T08:30:00.000Z",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toMatchObject({
+      subject: { _tag: "WorkspaceAgent", workspaceId: `ws_${UUID_V7}` },
+      capability: "fs:write",
+      target: `ws_${UUID_V7}`,
+      expiresAt: "2099-10-12T08:30:00.000Z",
+    });
+  });
+
+  it("rejects empty GrantPermission target and expiry strings", () => {
+    expect(
+      decodeCommandPayload("GrantPermission", {
+        permissionGrantId: `pgr_${UUID_V7}`,
+        issuer: "user:alice",
+        subject: { _tag: "WorkspaceAgent", workspaceId: `ws_${UUID_V7}` },
+        capability: "fs:write",
+        target: "",
+        expiresAt: "",
+      }),
+    ).toEqual({
+      ok: false,
+      issues: [
+        { path: ["expiresAt"], rule: "format" },
+        { path: ["target"], rule: "format" },
+      ],
+    });
+  });
+
   it("rejects an AcceptanceId with the wrong frozen prefix", () => {
     const result = decodeCommandPayload("AcceptWorkOutcome", {
       acceptanceId: `acp_${UUID_V7}`,

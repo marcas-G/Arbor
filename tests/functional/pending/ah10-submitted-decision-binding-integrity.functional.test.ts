@@ -415,7 +415,7 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
         },
         capability: "core.control.assign-work",
         target: project.rootWorkspaceId,
-        expiresAt: null,
+        expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
       });
       const currentWorkId = functionalId("wrk");
       await client.command(project.projectId, "AssignWork", {

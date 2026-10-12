@@ -272,7 +272,7 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
       subject: { _tag: "WorkspaceAgent", workspaceId: project.rootWorkspaceId },
       capability: "shell:exec",
       target: project.rootWorkspaceId,
-      expiresAt: null,
+      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
     });
     await submitHumanMessage(
       client,

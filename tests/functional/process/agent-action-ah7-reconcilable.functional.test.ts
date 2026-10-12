@@ -220,7 +220,7 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         },
         capability: "shell:exec",
         target: project.rootWorkspaceId,
-        expiresAt: null,
+        expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
       });
       await submitHumanMessage(
         client,

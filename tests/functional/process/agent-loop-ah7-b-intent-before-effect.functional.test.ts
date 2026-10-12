@@ -302,7 +302,7 @@ describe("AH7 action B intent before effect", () => {
       },
       capability: "fs:write",
       target: project.rootWorkspaceId,
-      expiresAt: null,
+      expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
     });
     await client.command(project.projectId, "ResolveControlApproval", {
       approvalId: approval.approvalId,
