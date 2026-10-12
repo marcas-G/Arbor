@@ -11,6 +11,7 @@ import {
   InboxProjectionStoreLive,
   layer,
   MessageStoreLive,
+  makeRecoveryAttentionFactStoreLive,
   P8_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
@@ -92,9 +93,19 @@ export const p10Flagged = parse(WorkspaceId)(
 
 /** sqlite infra + the P7 classification source; no command gateway (fixtures
  * seed canonical rows directly via SQL — the p8-ddl precedent). */
-export const makeP10App = (filename = ":memory:") => {
+export const makeP10App = (
+  filename = ":memory:",
+  options: { readonly includeSubmittedDecisionFactStore?: boolean } = {},
+) => {
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const journal = Layer.provide(DomainEventJournalLive, infra);
+  const submittedDecisionFacts = options.includeSubmittedDecisionFactStore
+    ? Layer.provide(
+        makeRecoveryAttentionFactStoreLive(),
+        Layer.mergeAll(infra, journal),
+      )
+    : undefined;
   const stores = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
@@ -106,9 +117,10 @@ export const makeP10App = (filename = ":memory:") => {
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(EvidenceRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    journal,
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
+    ...(submittedDecisionFacts === undefined ? [] : [submittedDecisionFacts]),
   );
   return Layer.mergeAll(
     infra,
