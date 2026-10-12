@@ -43,6 +43,18 @@ StartVerification payload 携带 caller-preallocated verifierExecutionId
 - 长时未结论：不设 P8 定时器（durable timer 归 P2/P12）；契约只冻结"Open Verification 不阻塞其他任何链路"。
 - **Verifier 长调查的连续性（round-1 补）**：Verifier Execution 可用 P2 通用 `Yield(waitSpec)` 暂停恢复（ExecutionScoped Session admission 时固定 + P5 slice-continuity 同机制免费支撑跨执行调查）；Yield 不结论、不产生 verdict 语义。孤儿 Open Verification（settle-without-conclude 后无人再驱动）→ Attention 记录；**再驱动（v1.11 G5 已裁决）**：显式治理动作先以 Unknown(conclusionReason `Orphaned`) 结论（`01` §3 Orphaned 路径），再以新 VerificationId re-Start；禁止 silent automatic restart 与 identity reuse。
 
+### Explicit orphan retry handoff (accepted P8 governance amendment)
+
+`RetryVerification` is a human command, not a verifier/scheduler/recovery
+policy. Its canonical transaction concludes the exact old Open Verification as
+`Unknown(Orphaned)` and creates one successor Verification plus durable spawn
+intent atomically. The old verifier binding continues to be checked against
+the old Verification's captured owner snapshot; the successor binds the Work's
+current owning Workspace. The command Runtime preallocates successor IDs and
+reuses those IDs for post-commit `AdmitExecution` and binding backfill after
+restart. A successor that itself settles without conclusion is a new orphan
+requiring a new human decision; it is never restarted automatically.
+
 ## 4. Verification Program family（DID §8.4 P9）v1 + 版本模型
 
 - 正文骨架必备条款（P8 契约冻结，§13 表授权）：调查计划制定、证据优先（工具观察 > 文档 > 假设）、criterion 级如实三值（禁"没发现问题=PASS"）、边界案例与反例构造职责、UNKNOWN 的证据不足表述义务、禁止修改 Producer 结果的自我指令。

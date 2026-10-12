@@ -123,6 +123,12 @@ P2 `04` §3.7 owns the exact `agent_loop_steps` / `agent_loop_step_actions` DDL.
 owns their state semantics. This document does not define a second schema.
 Migration 0017 is authorized by DID v1.21 ALS-I1.
 
+For the accepted Blocked WorkEpisode amendment, the P3 action ledger retains
+the closed `TerminalActionDenial` in its existing disposition/evidence JSON,
+paired with the exact action/result refs; the exact table remains P2 `04`'s
+ownership. `settlement_json` carries the full `Completed(Blocked)` payload.
+No inference/backfill from historical Session or Plan text is allowed.
+
 ### 3.6 SCRC typed Session/Provider evolution (v1.22)
 
 Migration 0019 evolves the physical Session carrier with `item_type`,

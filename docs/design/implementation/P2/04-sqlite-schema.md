@@ -25,6 +25,13 @@ Additive migration in a single transaction; startup refuses when
 
 ## 3. DDL
 
+> The focus-era `WorkspaceMain` / `ExecutionBound` DDL below records the
+> original v1.7 schema, not the current write schema. Accepted EGP migration
+> 0024 adds exact episode binding and migrations 0025/0026 remove the legacy
+> focus columns; those old values remain migration/decoder evidence only.
+> New writes use `ExecutionEpisodeBinding` as specified by DID v1.28 and P2
+> `01`/`02`/`05`.
+
 ### 3.1 executions
 
 ```sql
@@ -109,15 +116,6 @@ CREATE TABLE agent_execution_state (
 Fields mirror DID §3.7. High-frequency `turn_no` updates are runtime
 operational writes; they never enter the Project Domain Event journal.
 
-**Final EGP schema used by RAI-DG-01:** the DDL above is the historical P2
-`0002` shape. Migration `0026` rebuilt `agent_execution_state` around the
-durable exact `episode_json` binding; subsequent contracts must join that
-canonical column to `executions.execution_id` and decode the frozen
-`ExecutionEpisodeBinding`. The readmission query uses the resulting Work
-`(workId, workRevision)` binding and existing settlement/fact/event rows in a
-single `TransactionScope`. This governance amendment adds no column, table,
-index, or migration.
-
 ### 3.4 session_entries
 
 ```sql
@@ -199,6 +197,40 @@ CREATE TABLE work_waits (
 `conditions_json` is a non-empty `WakeCondition[]` (`05` §2); empty is rejected
 before write.
 
+### 3.5A accepted WorkBlocker current-state ledger
+
+The accepted Blocked WorkEpisode contract adds a forward-only schema
+extension; it does not backfill historical Plan, Session, Manual-wait or
+bare-receipt data. Migration identity/registration is a later implementation
+decision and this design landing does not register or run it.
+
+```sql
+CREATE TABLE work_blockers (
+  blocker_id          TEXT PRIMARY KEY,
+  project_id          TEXT NOT NULL REFERENCES projects(project_id),
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  work_id             TEXT NOT NULL REFERENCES works(work_id),
+  target_work_revision INTEGER NOT NULL,
+  failure_fingerprint  TEXT NOT NULL,
+  state                TEXT NOT NULL CHECK (state IN ('Open','Resolved','Superseded')),
+  open_cycle_id        TEXT NOT NULL REFERENCES executions(execution_id),
+  latest_request_ref   TEXT NOT NULL,
+  failed_action_refs_json TEXT NOT NULL,
+  revision             INTEGER NOT NULL CHECK (revision >= 0)
+);
+
+CREATE INDEX idx_work_blockers_work_revision
+  ON work_blockers(work_id, target_work_revision, state);
+```
+
+`blocker_id` is the deterministic SHA-256 identity of project, Work, target
+revision and failure fingerprint. P2 settlement opens/updates the row in the
+same transaction as `Completed(Blocked)`, `ExecutionSettled`, and the
+`InboxAdvanced` WorkWait. Resolution, Work revision advance, and terminal Work
+transition update the row with their owning canonical command/event in one
+transaction. P10 consumes the current row; the ledger prevents a journal
+rebuild from resurrecting a resolved blocker.
+
 ### 3.6 scheduler_timers
 
 ```sql
@@ -277,6 +309,14 @@ CREATE TABLE agent_loop_step_actions (
     REFERENCES agent_loop_steps(execution_id, logical_step_no, repair_attempt)
 );
 ```
+
+The accepted Blocked WorkEpisode contract uses the existing
+`agent_loop_step_actions.disposition_json` for the closed P3/P9
+`TerminalActionDenial` evidence paired with its exact result/Observation
+refs; no free-form runtime cause is persisted. `agent_loop_steps.settlement_json`
+stores the exact `Completed(Blocked)` payload under the existing
+`SettlementProposed` state relation. Historical settled rows are never
+backfilled into Blocked.
 
 `provider_turn_id` is preallocated before the ProviderTurn row exists, so it is
 unique but deliberately not an immediate FK. Binding is validated by the P3

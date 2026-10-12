@@ -1,8 +1,8 @@
 # Arbor 核心场景定义（S1–S4）
 
-**Version:** 1.3
+**Version:** 1.4
 **Status:** FROZEN — minimal architecture convergence scenario clarification
-**Date:** 2026-10-03
+**Date:** 2026-10-12
 **Depends on:** `Arbor Problem Definition & Goals v1.3`
 **Owns:** S1–S4 的参与者、端到端行为、分支、异常与恢复的用户可感知语义  
 **Does not own:** Domain Entity、Runtime/module、数据库、Command/Event、状态机、接口、技术实现
@@ -25,6 +25,28 @@
 
 Accepted proposal SHA-256:
 `44B549EA81E21B3D4BE5D545EA446B544D50CCA0061C83E6FC40CDC2ADCCA932`.
+
+**Governance amendment (v1.3 → v1.4; accepted Blocked WorkEpisode and P8
+orphan-governance packages):**
+
+- In S1/S3, when a terminal action failure cannot be recovered locally, the
+  responsible Agent may explicitly report Blocked with the failed action
+  category, bounded request and exact missing human/Parent input. Work remains
+  Open; Plan status and ordinary Manual waiting do not imply a blocker. The
+  owning Workspace exposes Action Required and an inspectable Work Detail;
+  child Work routes the typed request to its direct Parent. No automatic
+  retry, PASS, Acceptance, or Work completion is implied.
+- A human/Parent response or authorized Work revision lets the same Work
+  continue under existing authority; merely viewing or clearing a projection
+  never resumes it.
+- For S1/S3 verifier orphan recovery, only an authenticated local human for
+  Root Work or the exact Parent Workspace human for child Work may explicitly
+  conclude the old Verification as `Unknown(Orphaned)` and start one new
+  identity. A further orphan requires another human decision; there is no
+  automatic restart or Attention dismissal.
+
+The detailed state, evidence, persistence and transport contracts remain in
+the System Design and DID owner documents.
 
 ---
 

@@ -55,6 +55,13 @@ WorkSteered { workId, fromRevision, toRevision, severity }
 ```
 
 - semantic steer 递增 `WorkRevision`（DID §2.3）；下游 `Deliverable/Verification/Acceptance` 的 revision 绑定语义由 P7/P8 使用，P6 只保证 revision 单调事实。
+- For an accepted Blocked WorkEpisode, the same authorized SteerWork
+  transaction that advances the Work revision changes Open blockers bound to
+  the old revision to `Resolved` and writes their resolution facts. It does
+  not clear the WorkWait directly; P2 clears that wait only while consuming
+  the corresponding `InboxAdvanced` wake. A terminal Work transition instead
+  supersedes its Open blockers atomically. Revisions and typed events remain
+  auditable; no historical Blocked evidence is deleted.
 
 ## 3. HumanInput 通道
 

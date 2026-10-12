@@ -1,17 +1,42 @@
 # Arbor System Design Specification
 
-**Version:** 1.14
+**Version:** 1.17
 
 **Status:** FROZEN — Minimal Architecture Convergence
 
-**Supersedes:** v1.13
+**Supersedes:** v1.16
 
 **Date:** 2026-10-12
 
-**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.3`
-**Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量  
-**Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型  
+**Depends on:** `Arbor Problem Definition & Goals v1.3` + `Arbor Scenarios S1–S4 v1.4`
+**Owns:** 领域模型、组织/执行语义、权限治理、Verification、恢复语义、Environment/UI Projection、Runtime 组件边界与系统不变量
+
+**Does not own:** P1–P8/G1–G8 的定义、S1–S4 行为正文、最终 TypeScript/Effect API、数据库表结构、包目录或具体基础设施选型
 **Scope:** 把上游问题、目标和场景落实为稳定的系统语义与组件责任；只保留必要的上游追踪，不重复上游正文。
+
+**Governance changes (v1.16 → v1.17): Blocked WorkEpisode and explicit verifier-orphan governance**
+
+- `Blocked` is an explicit stable result of a WorkEpisode, not a Work lifecycle
+  status. It requires exact denied-action evidence and an explicit bounded
+  request for human/Parent help; the Work remains Open and cannot be treated
+  as verified, accepted, or complete. Ordinary Manual waiting and Plan state
+  do not imply Blocked.
+- An active blocker is tied to the exact Work revision. The owning Workspace
+  sees Action Required; Work Detail explains the safe failure category and
+  requested resolution; child Work is delivered as actionable input only to
+  its direct Parent. Exact successful action evidence or an authorized Work
+  revision/terminal transition resolves/supersedes it. Viewing Attention does
+  not mutate or resume Work.
+- P8 G8 orphan recovery is reachable only through an explicit authenticated
+  human `RetryVerification`: Root-local human governance for Root Work, or
+  authenticated human governance of the exact Parent Workspace for child
+  Work. The command concludes the old exact Open Verification as
+  `Unknown(Orphaned)` and creates one successor atomically. A later orphan is
+  a new human decision; no scheduler, Agent grant, recovery policy, or
+  Attention projection may retry or dismiss it.
+- These changes preserve the existing Work lifecycle and Verification truth;
+  accepted owner contract and decision provenance are recorded in
+  `planning/results/2026-10-12-combined-governance-acceptance-and-implementation-authorization.record.md`.
 
 **Governance changes (v1.9 → v1.10): FT-DG-02 — Completed Work public view**
 
@@ -82,6 +107,87 @@
 - Functional-scope candidate SHA-256:
   `274885C110E3B277753B49F6BAD023619ADFCF52D866CC86F01F27F7FDA85DD0`.
   This landing does not claim full FT-DG-01 closure or qualification.
+
+**Governance changes (v1.13 → v1.14): EA-DG-01 — Executable approval handoff**
+
+- Approval-required Executable calls resolve through the shared MAC
+  ActionApproval lifecycle and a route-specific `Executable` human decision
+  path. Pending approval pauses the same active Execution/AgentLoopStep and
+  exact action; it is not a PermissionGrant or a widening of Sandbox or
+  ResourceBoundary.
+- The approval binds the Runtime-owned Step/LogicalAction/callRef/
+  ToolInvocation identity, tool/version, normalized arguments, canonical
+  resources, ControlBasis and first-commit expiry. Approval/rejection/expiry/
+  cancellation never changes current authorization or consumes a Control
+  ActionApproval.
+- Accepted proposal SHA-256:
+  `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+  acceptance record: `planning/results/EA-DG-01-governance-acceptance.md`.
+- This is a design-contract landing only. Production implementation and
+  qualification remain separately gated.
+
+**Governance changes (v1.14 → v1.15): AH7-DG-02 — Reconcilable reality proof**
+
+- Unrestricted `shell@3` is `NonIdempotent`; historical `shell@2` retains its
+  exact stored definition and is never reclassified by a new catalog. Only a
+  version/hash-bound constrained tool with stable effect identity, an
+  authoritative reality source, and proof that stale effects cannot complete
+  late may be `Reconcilable`.
+- Recovery of `MayHaveStarted` first records one of `NotOccurred`, `Occurred`,
+  or `StillUnknown` from the P4-owned reconciliation port. Unknown is not
+  successful reconciliation and never permits replay. `Occurred` settles only
+  with reconstructable canonical result/observation evidence; only a definitive
+  `NotOccurred` can permit one exact-invocation replay after fresh authority,
+  approval, resource, stop and lease checks.
+- P4 owns immutable recovery binding, per-attempt admission, append-only
+  reconciliation facts, selected-fact terminal provenance and P4/P38 approval
+  verification. P3 owns ProviderTurn/Step/Action/callRef identity and sourced
+  ToolResult/Action/cursor convergence. Stop blocks new attempt admission but
+  does not discard known in-flight facts or prevent their settlement under the
+  current full Worker fence.
+- P9 owns the existing `ReconciliationEscalated` fact/event; P10 owns its
+  ActionRequired Attention projection, deduplication, offset and rebuild. The
+  visible Attention guarantee ends at the existing journal retention horizon.
+- P39 (`0039_ah7_reconciliation_attempts`) is ordered after accepted P36,
+  P37 and P38 owner contracts. Those owner contracts are integrated here; their
+  real migration wiring is not. P39 preflight/sidecar durability and affected
+  legacy-database isolation remain release gates, not a blanket readiness
+  claim.
+- Accepted logical proposal SHA-256:
+  `D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+  accepted P39 physical supplement SHA-256:
+  `D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+  Decision, review and landing hashes are recorded in
+  `planning/results/AH7-DG-02-P39-design-landing.result.md`.
+
+**Governance changes (v1.15 → v1.16): AH7-DG-01 — terminal ToolObservation replay**
+
+- A terminal P4 invocation and its exact first-returned bounded
+  `CanonicalToolObservation` form one durable immutable outcome. Same-action
+  re-entry under the same trusted invocation replays that outcome; it never
+  re-runs Executor to reconstruct text or downgrades known Success,
+  ExpectedFailure, RuntimeFailure or P39 `ReconciledNoEffect` to
+  `OutcomeUnknown` because P40 observation evidence is absent.
+- A valid current Worker fence is checked before terminal evidence reads.
+  Missing/conflicting evidence under a valid fence blocks that Action and
+  escalates a source-specific P9 fact/event to P10 Action Required. An
+  expired/superseded fence is ownership loss only: it reads/projects no winner
+  Observation and creates no replay-evidence Attention.
+- DG03 no-effect `Denied/NotAdmitted` keeps its closed reason code and existing
+  deterministic projection, has no DG01/P40 observation envelope or Artifact
+  result ref, and is never translated to ExpectedFailure. Approval consumption
+  and the four `SideEffectSemantics` recovery rules are unchanged.
+- Accepted logical SHA-256 `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+  accepted P40 physical SHA-256
+  `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+  accepted P39/P40 compatibility addendum SHA-256
+  `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830` and
+  matrix SHA-256
+  `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+  Acceptance: `planning/results/AH7-DG-01-P39-P40-compatibility-addendum-acceptance.record.md`.
+- This design landing authorizes no production implementation or migration
+  execution. P36–P40 prefix, serialized migration runner, P39 Windows/sidecar
+  durability and AH7 phase closure remain unqualified.
 
 **Governance changes (v1.8 → v1.9): Minimal Architecture Convergence
 (`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`)**
@@ -524,15 +630,16 @@ Open | Completed | Cancelled
 Waiting、Blocked、Verifying、Running 等尽量由 Execution、Dependency、Inbox、Verification 等事实推导，不作为复杂 canonical status。
 
 Work-bound `Interrupted(RuntimeSafetyStop)`、本设计冻结的 P9 恢复阻断事实，或
-`OutcomeUnknown(ReconciliationRequired(refs))` 会对其精确绑定的 `(WorkId,
-WorkRevision)` 建立持久 readmission hold。该 Work 仍保持 Open；同一 revision
-不会仅因重启、队列确认或 Attention 投影进度而自动重新运行。只有获授权的
-`SteerWork` 提交并推进 Work revision，才使旧 revision 的 hold 不再匹配；源事实
-继续保留供审计。本合同没有 same-revision dismiss/repair；该门不取消 Work，也不改变其他 Work 或 Deliverable 的去重语义。
+`OutcomeUnknown(ReconciliationRequired(nonempty refs))` 对其精确绑定的
+`(WorkId, WorkRevision)` 建立持久 readmission hold。Work 仍保持 Open；同一
+revision 不因重启、队列确认或 Attention 投影进度而重新运行。只有获授权的
+`SteerWork` 推进 Work revision 才使旧 revision 的 hold 不再匹配；源事实继续保留
+供审计。该 gate 不取消 Work、不设 same-revision dismiss，也不改变其他 Work 或
+Deliverable 语义（DID §8.18A.1）。
 
 ## 3.5 Execution
 
-Execution 是推进 Work 或完成一次 Coordination mission 的临时执行 episode，可以包含多个 Provider Turn、Tool Call 和短暂停顿。
+Execution 是绑定一个精确 `ExecutionEpisodeBinding` 的临时执行 episode，可以包含多个 Provider Turn、Tool Call 和短暂停顿。Work Episode 推进一个 Work；ConversationResponse、Inbox 与 Decision Episodes 分别处理其 exact durable input。历史 Coordination mission 不再是 new-write execution 类别（DID v1.28）。
 
 ```text
 Turn End != Execution End
@@ -550,6 +657,12 @@ semantic terminal result
 例如 `Yield`、`Completion Claim` 与 `Coordination completed` 即使都属于技术上的正常结束，也不能在 durable state 中被压成不可区分的同一结果；恢复和后续自动动作必须能够从 settlement 本身判断下一步。
 
 一个 Workspace 同时最多拥有一个有效主 Execution。Execution admission 时固定其所使用的 Session；Workspace 后续替换 Primary Session 只影响未来 Execution，不改变已经 admission 的 episode。
+
+**EGP new-write supersession (DID v1.28):** the Work/Coordination focus
+dichotomy and `CoordinationCompleted`/generic `QueryCompleted` are historical
+only. Every new Execution is bound to one exact `ExecutionEpisodeBinding`:
+Work, ConversationResponse, Inbox or Decision. All use the common Agent Loop;
+binding-derived context/tools/results replace a Coordination mode.
 
 ## 3.6 Session
 
@@ -1068,6 +1181,8 @@ Bounded Model Observation
 
 - Success；
 - Expected Tool Failure；
+- ApprovalRequired（durable pause of the same Execution/action, not a terminal Denied）；
+- Denied（actual terminal no-effect authorization/decision result）；
 - Interrupted；
 - Outcome Unknown；
 - Runtime Defect。
@@ -1076,9 +1191,31 @@ Bounded Model Observation
 No result != No effect
 ```
 
+For `MayHaveStarted`, P4 does not infer reality from the absence of an
+invocation result: it queries the exact versioned reconciliation profile and
+persists an immutable proof fact. `StillUnknown` preserves the unresolved
+effect gate and escalates; it is not a success-shaped stop. P4 may admit at
+most one exact-invocation replay only after authoritative `NotOccurred`,
+external attempt finality, unchanged authority/approval/resource binding, no
+Stop request, and a current lease. `Occurred` is settled only when its
+canonical bounded result can be reconstructed. Generic shell v3 has no such
+profile and is `NonIdempotent`; historical shell v2 remains exact-version
+replay evidence and is not reinterpreted.
+
+For a terminal invocation, its first-returned bounded observation is P4
+durable outcome evidence paired atomically with settlement. The valid current
+Worker fence is checked before reading it. A same-action invocation replays
+the exact saved observation without invoking Executor; missing/corrupt evidence
+under a valid fence blocks that action and produces replay-evidence Attention,
+while a stale fence produces ownership loss only. P39 `ReconciledNoEffect` is
+the accepted sixth compatibility branch of the same P40 version-1 envelope:
+its bound is the exact selected same-attempt `NotOccurred` P39 fact and its P4
+Artifact/result ref, not an inferred result. DG03 `Denied/NotAdmitted` remains
+the no-envelope exception using its closed reason code and fixed projection.
+
 ## 6.6 Tool Result 与 Observation
 
-完整 Tool Result / Raw Artifact 与模型实际看到的 Bounded Observation 分离。大输出保留 Artifact Reference，模型只看到完成当前推理需要的信息。
+完整 Tool Result / Raw Artifact 与模型实际看到的 Bounded Observation 分离。大输出保留 Artifact Reference，模型只看到完成当前推理需要的信息。所有 P40 envelope 内联且独立于 `result_ref` / Blob / Artifact；P39 `ReconciledNoEffect` 的 P4 ArtifactRef、P39 NotOccurred fact refs 与 P3 bounded-output hash 是不同身份。后来的 Artifact 内容不得替代历史 Observation/truncated 证据。
 
 ## 6.7 Organizational actions
 
@@ -1177,9 +1314,13 @@ Scheduler 是确定性 Runtime，不是 LLM Planner。
 - fairness；
 - resource-aware scheduling。
 
-Open Work 如果暂时无法推进，必须有 durable `WaitSpec` 描述等待的 Dependency / Decision / Approval / Inbox / Environment / Time / Manual 条件；系统不得通过重复模型调用轮询。注册 Wait 与检查“被观察事实是否已经变化”必须处于同一一致性边界，避免 lost wake-up。时间条件必须由持久调度恢复，不能依赖某个 Worker 的内存 timer。除认知等待外，Runtime 还必须在唯一 runnability classifier 与 authoritative Work admission 中检查精确 revision 的 readmission hold；该 hold 来自 canonical settlement/P9 源事实，不是 WorkWait，也不改变 Work 的 Open 状态。
+Open Work 如果暂时无法推进，必须有 durable `WaitSpec` 描述等待的 Dependency / Decision / Approval / Inbox / Environment / Time / Manual 条件；系统不得通过重复模型调用轮询。注册 Wait 与检查“被观察事实是否已经变化”必须处于同一一致性边界，避免 lost wake-up。时间条件必须由持久调度恢复，不能依赖某个 Worker 的内存 timer。
 
-当无 Active Main Execution 时，Scheduler 重新计算 Workspace：未被 hold 的 Current Work 可运行则继续；Current Work 正在等待或其当前 revision 被 readmission hold 且没有其他 runnable Work 时保持静止；只有一个其他 runnable Work 时 Runtime 确定性切换；有多个候选时才按当前 Execution Episode 合同处理选择。Work readmission hold 会同时从 `current` 与 `runnable` 排除精确被 hold 的 revision；无 hold 时现有 decision table 不变。获授权的 revision-advancing Steer 使新 revision 回到普通 runnability 规则。历史 `ExecutionFocus=Coordination` 仅为迁移/兼容材料，按 DID EGP 合同不得作为新写语义恢复。
+除认知等待外，唯一 runnability classifier 与 authoritative Work admission 还必须
+检查 exact-revision readmission hold。该 hold来自 canonical settlement/P9 source
+facts，不是 WorkWait，不改变 Work 的 Open 状态（DID §8.18A.1）。
+
+当无 Active Main Execution 时，Scheduler 重新计算 Workspace：Current Work 可运行则继续；Current Work 正在等待且没有其他 runnable Work 则保持静止；只有一个其他 runnable Work 时 Runtime 确定性切换；有多个候选且需要模型语义判断时，持久化 exact `WorkSelectionDecisionRequest` 并 admission 一个 `DecisionEpisode`，由其 `select_current_work` 选择。对话响应和 Inbox 输入分别按自己的 exact durable input 建立 `ConversationResponseEpisode` / `InboxEpisode`；不再 admission Coordination-focused Execution。此处历史 focus 表述仅适用于迁移/decoder 证据，new write 以 DID v1.28 EGP 与 §8.18A 为准。
 
 Workspace 数量与实时 Execution concurrency 分离：
 
@@ -1267,7 +1408,9 @@ Project Policy 定义最高约束；Workspace / Work / Execution 只能进一步
 
 临时 Permission Grant 必须有 Scope：Execution / Work / Workspace / Project；临时 Grant 默认不可继续递归委托，避免 privilege amplification。
 
-高风险“一次性批准”不使用模糊的 `once tool permission`，而使用 **Exact-Intent Approval**：批准必须绑定具体 Tool definition/version、规范化后的动作/参数摘要、目标 canonical resources、当时有效的 control basis 与 expiry。实际 Invocation 与批准内容不一致、关键控制 revision 已变化或批准已过期时，必须重新审批。批准只能被一个匹配的 ToolInvocation 原子消费。
+高风险“一次性批准”不使用模糊的 `once tool permission`，而使用 **Exact-Intent Approval**：批准必须绑定具体 Tool definition/version、规范化后的动作/参数摘要、目标 canonical resources、当时有效的 control basis、Runtime-owned AgentLoopStep/LogicalAction/callRef/ToolInvocationId 与首写 expiry。实际 Invocation 与批准内容不一致、关键控制 revision 已变化或批准已过期时，必须重新审批。批准只能被它绑定的一个 ToolInvocation 原子消费。
+
+当当前授权成立但该精确 Executable intent 需要人类批准时，Runtime 持久化 Pending ActionApproval 和对应 Governance Inbox 项，并暂停同一 Execution/AgentLoopStep；Action 保持 Pending，Provider 决策不重采样。人类 Approve、Reject，或 Runtime Expire/Stop 后都恢复同一 Action 身份。批准只表示对该 intent 的一次性同意，恢复时仍重新检查 PermissionGrant、资源、ControlBasis、stop 与 lease fence。Reject/Expire/撤权形成类型化无副作用结果；Stop 形成 Interrupted。审批不授予 standing capability，不扩大 Sandbox/ResourceBoundary。
 
 ```text
 Delegation must not amplify authority.
@@ -1544,6 +1687,14 @@ Side-effect semantics：
 - reconcilable → query external reality；
 - non-idempotent / unreconcilable → UNKNOWN + escalation。
 
+`Reconcilable` is a proof-capability, not a tool-name label. The proof is bound
+to the exact ToolInvocation, effect attempt, tool/profile versions, effect
+identity, authority/approval revisions, and resource version. A query that
+cannot prove that a prior attempt is final and cannot act later is
+`StillUnknown`; it must not be treated as `NotOccurred`. Stop prevents a new
+effect admission but does not erase a known in-flight outcome or forbid
+fenced accounting of it.
+
 ## 10.5 Lease / Fencing
 
 Execution identity 与 Worker identity 分离。
@@ -1690,11 +1841,11 @@ UI 可根据事实投影：正在执行、等待、可执行但未 admission、�
 深层 Attention 向上冒泡为 subtree summary，但不复制底层上下文。
 
 Work-bound Runtime Safety Envelope、ReconciliationEscalated、AssignWork binding
-failure 与 Deliver replay failure 的 active Attention 只适用于其来源 Execution
-绑定的 Work revision 仍等于 canonical Work revision 的情况。查询在同一 read
-snapshot 校验来源 Execution、Work Episode 和当前 Work；Steer 推进 revision 后，旧
-revision 的 Attention 离开 active set 与 subtree summary，但 settlement、P9
-fact/event 仍在审计时间线中。Attention 投影及其消费 ACK 不是 readmission gate。
+failure 与 Deliver replay failure 的 active Attention 仅适用于来源 Execution
+绑定的 Work revision 仍等于 canonical Work revision。查询在同一 read snapshot
+校验来源 Execution、Work Episode 与当前 Work；Steer 推进 revision 后，旧 revision
+的 Attention 离开 active set 和 subtree summary，但 settlement 与 P9 fact/event
+仍留在审计时间线。Attention 投影及其 ACK 不是 readmission gate（DID §8.18A.1）。
 
 典型 Action Required：
 
@@ -1931,7 +2082,7 @@ Domain Core + Persistence/Event Journal
 54. Stop/Critical Steer 提交后禁止该 Execution 开始新的 effectful action；未解决副作用必须 Reconcile 或使 Execution 进入 OutcomeUnknown。
 55. Dependency 除 Satisfied 外还可终结为 Withdrawn 或 Unfulfillable；不能让已知不可能满足的依赖静默永久等待。
 56. Effectful Model decision 必须绑定 ControlBasis；关键控制 revision 已变化时旧决策不得执行。
-57. 一次性高风险 Approval 必须绑定 exact normalized intent，并原子消费；参数/资源/控制基准变化后必须重新审批。
+57. 一次性高风险 Approval 必须绑定 exact normalized intent 与 Runtime-owned action/invocation identity，并在 fenced claim 中原子消费；参数/资源/控制基准变化后不得复用旧批准。
 58. Runtime Safety Envelope 与用户 Cost Budget 分离；前者始终存在但不得自行 Cancel Work。
 59. CompleteWork/CancelWork 若结束 Current Work，必须在同一事务清除 currentWorkId。
 60. Durability guarantee 以声明的 failure envelope、backup 与 RPO/RTO 为准，不由具体数据库名称隐式推出。
@@ -1951,7 +2102,11 @@ Domain Core + Persistence/Event Journal
 74. Approval、reconciliation、compaction 与可恢复 interruption 属于同一 run 的 pause/resume，不得伪装成新 HumanMessage 或新 Conversation attempt。
 75. Model-visible tool surface 必须由 Execution purpose、exact registration readiness、capability 与当前 control facts 解析；静态 catalog 或布尔开关不是最终资格判定。
 76. 同一确定性 failure fingerprint 或 deployment systemic failure 达到 policy 阈值后必须停止 Provider bytes 并形成 durable Attention/circuit state。
-77. Work-bound RuntimeSafetyStop settlement、冻结的 P9 recovery-blocking source，或 `OutcomeUnknown(ReconciliationRequired(nonempty refs))` 必须阻止同一 `(WorkId, WorkRevision)` 的新 Work Execution admission；只有获授权的 revision-advancing Steer 解除旧 revision 的 hold，且不得通过 Attention 投影/ACK 解析。
+77. ApprovalRequired 是同一 run 的 durable pause，不是 P4 terminal Denied；首写 TTL 不因重放延长，批准后只允许绑定的 ToolInvocation 通过 fenced claim 消费。
+78. `MayHaveStarted` 的外部 reality 只能由绑定确切 attempt/profile/effect identity 的证据建立；`StillUnknown` 不授权重放，`Occurred` 必须可重建 canonical 结果，且 terminal reconciliation settlement 必须指向同 invocation/attempt 的不可变 fact。
+79. Stop 禁止新的 effect-attempt admission，但当前完整且未过期 Worker lease 下的已知事实、settlement 与 escalation 必须能够落账；旧 generation 不得提交。
+80. P4 evidence-bearing terminal settlement 与首次返回的 bounded `CanonicalToolObservation` 必须原子、不可变配对；有效 lease 下重入只回放该事实或 fail closed，不重做 Executor、不降级已知结果。P39 `ReconciledNoEffect` 必须与同 invocation/attempt 的 selected `NotOccurred` fact、P4 ArtifactRef 和精确 Observation 配对。无效 lease 不读/投影赢家证据或写 replay-evidence Attention；DG03 `Denied/NotAdmitted` 保持封闭原因码投影且豁免 P40 evidence fields。
+81. Work-bound RuntimeSafetyStop settlement、封闭 P9 recovery-blocking source，或 `OutcomeUnknown(ReconciliationRequired(nonempty refs))` 必须阻止同一 `(WorkId, WorkRevision)` 的新 Work Execution admission；只有获授权的 revision-advancing Steer 解除旧 revision 的 hold，且不得通过 Attention 投影/ACK 解析。
 
 ---
 

@@ -43,7 +43,7 @@ type VerifiedRuntimeCommandAuthority =
       readonly projectId: ProjectId;
       readonly commandKind: "AdmitExecution";
       readonly workspaceId: WorkspaceId;
-      readonly bindingKind: "WorkspaceMain" | "ExecutionBound" }
+      readonly episodeBinding: ExecutionEpisodeBinding }
   | { readonly _tag: "StopExecutionAuthority";
       readonly submissionOrigin: "System" | "ExecutionOrigin" | "External";   // External: P12 TR-8
       readonly principal: Principal;
@@ -203,7 +203,7 @@ common(authority, envelope, context, fingerprint):
   ∧ authority.projectId                  == envelope.projectId
   ∧ authority.submissionOrigin           == context._tag
 AdmitExecution : authority.workspaceId == payload.workspaceId
-               ∧ authority.bindingKind == payload binding kind
+               ∧ authority.episodeBinding == payload.episodeBinding
 StopExecution  : authority.executionId == payload.executionId
 SettleExecution: authority.executionId == payload.executionId
 ```
@@ -217,42 +217,31 @@ SettleExecution: authority.executionId == payload.executionId
 
 ```ts
 type AdmitExecutionPayload =
-  | { readonly _tag: "WorkspaceMain";
-      readonly executionId: ExecutionId;        // caller-preallocated
-      readonly workspaceId: WorkspaceId;
-      readonly focus: ExecutionFocus }          // Work(workId) | Coordination
-  | { readonly _tag: "ExecutionBound";
-      readonly executionId: ExecutionId;        // caller-preallocated
-      readonly workspaceId: WorkspaceId;
-      readonly parentExecutionId: ExecutionId;
-      readonly mission: string;
-      readonly sessionId: SessionId };          // caller-preallocated
+  { readonly executionId: ExecutionId;          // caller-preallocated
+    readonly workspaceId: WorkspaceId;
+    readonly episodeBinding: ExecutionEpisodeBinding };
 ```
 
 `envelope.projectId` is the owning Project. All IDs are caller-preallocated;
 handlers never generate IDs.
 
-The `focus` payload above is historical migration/decoder material under EGP;
-new Execution writes use exact `ExecutionEpisodeBinding` as defined by DID
-§3.4 and §8.18A.1. RAI-DG-01 checks only a validated Work Episode binding and
-never reconstructs it from `focus`, Session text or a Workspace current pointer.
-
 ### Result
 
 ```ts
-{ executionId, workspaceId, sessionId, bindingKind }
+{ executionId, workspaceId, sessionId, episodeBinding }
 ```
 
 ### Behaviour
 
-- `WorkspaceMain`: snapshot `workspace.primarySessionId` as
-  `execution.sessionId`; admission enforces the one-active-main invariant.
-- `ExecutionBound`: admission **atomically** creates the durable Execution and
-  its `ExecutionScoped` Session in the same transaction; no one-active-main
-  constraint and no new specialist concurrency limit.
+- Resolve the exact binding-specific Session and enforce the
+  binding's identity/revision contract; an episode is not selected by a
+  Work/Coordination focus flag.
+- Admission **atomically** creates the durable Execution and its bound Session
+  in the same transaction; it does not introduce a first-class Specialist or
+  Coordination execution category.
 - `execution.sessionId` is immutable after admission.
-- The durable `Execution` record carries `workspaceId` for **both** binding
-  kinds (`04` §3.1); it is the owning Workspace, not the parent Execution (R6).
+- The durable `Execution` record carries the owning `workspaceId` (`04` §3.1);
+  its exact episode identity is carried by `ExecutionEpisodeBinding`.
 
 ### Preconditions / rejections
 
@@ -262,21 +251,20 @@ never reconstructs it from `focus`, Session text or a Workspace current pointer.
 | `workspace.projectId != envelope.projectId` | `DomainError.AuthorityDenied` |
 | workspace lifecycle != Active | `DomainError.TerminalLifecycleMutation` (Workspace) |
 | project lifecycle != Open | `DomainError.TerminalLifecycleMutation` (Project) |
-| another active main exists (`WorkspaceMain`) | `DomainError.ActiveExecutionConflict` |
+| exact episode binding conflicts with an already active exact binding | `DomainError.ActiveExecutionConflict` |
 | `executionId` already used | defect (invariant violation), not a typed rejection |
 | authority mismatch | `DomainError.AuthorityDenied` |
 
-RAI-DG-01 admission overlay: when the candidate Execution is bound to an exact
-Work Episode, the handler revalidates canonical Work identity/revision and
+RAI-DG-01 admission overlay: for a candidate bound to an exact Work Episode,
+the handler revalidates canonical Work identity/revision and
 `WorkReadmissionGateStore.hasBlockingSource` inside the same authoritative
-`BEGIN IMMEDIATE` transaction that checks the one-active-main constraint and
-commits `ExecutionAdmitted`. A matching durable source returns the typed
-runtime admission result `WorkReadmissionHeld`; a canonical Work
-identity/scope/revision mismatch returns `ReadmissionTargetMismatch`;
-malformed, missing, duplicate or scope-conflicting source evidence returns the
-typed `ReadmissionGateIntegrityFailure`. Each branch commits no Execution. They do
-not introduce a Domain Event, Work lifecycle transition, or `CommandRejection`
-variant. Non-Work Episode admission is unchanged.
+`BEGIN IMMEDIATE` transaction that commits `ExecutionAdmitted`. A matching
+durable source yields typed `WorkReadmissionHeld`; canonical target identity,
+scope or revision mismatch yields `ReadmissionTargetMismatch`; malformed,
+missing, duplicate or conflicting source evidence yields
+`ReadmissionGateIntegrityFailure`. Each branch commits no Execution. These
+are runtime admission results, not new Domain Events, Work lifecycle changes
+or `CommandRejection` variants. Non-Work Episode admission is unchanged.
 
 ### Events
 
@@ -356,6 +344,48 @@ absent on the `RecoveryController` path.
 transaction** and re-reads observed facts; if any observed fact already
 changed, the Work must not be permanently parked (`05` §5).
 
+The accepted `Completed(Blocked)` result carries the exact shape:
+
+```ts
+type BlockedWorkEpisode = {
+  readonly workId: WorkId;                 // Runtime-bound from episodeBinding
+  readonly targetWorkRevision: WorkRevision;
+  readonly waitFor: {
+    readonly mode: "Any";
+    readonly conditions: readonly [
+      { readonly _tag: "Manual" },
+      { readonly _tag: "InboxAdvanced"; readonly workspaceId: WorkspaceId;
+        readonly observedSequence: number }
+    ];
+  };
+  readonly failedActionRefs: NonEmptyArray<{
+    readonly executionId: ExecutionId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly actionIndex: number;
+    readonly logicalActionId: LogicalActionId;
+    readonly callRef: string;
+    readonly resultRef: string;
+    readonly settlementRef: string;
+    readonly observationSourceRef: string;
+    readonly toolInvocationId?: ToolInvocationId;
+    readonly terminalDenial: TerminalActionDenial;
+  }>;
+  readonly request: BoundedText;           // descriptive only
+  readonly blockerId: Sha256;              // Runtime-computed
+};
+```
+
+`Completed(Blocked)` is valid only for an exact WorkEpisode and its typed
+terminal denied-action evidence. The same canonical transaction writes the
+settlement/event, opens or updates each deterministic `WorkBlocker`, stores
+the latest bounded request, and registers `Manual + InboxAdvanced` for the
+Runtime-bound Workspace Inbox sequence. It re-reads exact Work revision and
+Inbox sequence before commit; if either changed it commits the stable outcome
+but queues immediate reevaluation rather than parking. Missing or mismatched
+denial evidence rejects the settlement. P2 does not consult Plan status.
+
 `Completed(CompletionClaimed)` persists the claim/reference + target Work
 revision so the durable `ExecutionSettled` event deterministically drives
 `StartVerification` (P8); the consumer never bypasses the Command handler.
@@ -389,7 +419,7 @@ resolution, retry with the same `commandId`.
   operation (`03`).
 - No `RecordEnvironmentChange` (P11).
 - No specialist spawn/delegation semantics (P6 delegation, P8 Execution-bound
-  Verifier); P2 owns only generic `ExecutionBound` admission.
+  Verifier); P2 owns only generic exact `ExecutionEpisodeBinding` admission.
 - No full Work runnability/dependency reevaluation (P7).
 - No new Domain Event types; no Session Domain Event.
 - No PermissionGrant / Parent / User authority resolution (later Authority

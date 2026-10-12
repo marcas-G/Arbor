@@ -189,6 +189,22 @@ CI-7  region encoding at every producer matches the frozen object encoding
       narrow invalidation path is reachable and tested end-to-end
 ```
 
+### RecoveryBindingV1 consumer adoption (2026-10-12)
+
+The accepted P38/P39 fixed package
+`planning/proposals/P38-P39-projection-fixed-landing-package-v3-draft.md`
+(SHA-256
+`7483A49AF7E6528D81895199CF8A15BB83FB2F7DFD4DE3797BAAB7D2A77D4600`)
+adopts the existing production `canonicalRegionString` behavior above as the
+element encoding for RecoveryBindingV1 `targetResourceIdentityDigest`. P4
+`06` owns the digest projection. It hashes the exact P4 invocation resolver
+output array in emitted order and multiplicity; P39 adds no sort or dedup
+pass. The resolver's existing canonicalization performs alias/duplicate
+collapse and lexical key ordering before emitting that array. This is a
+consumer adoption of the existing encoding; it does not change region
+encoding, resolver behavior, or this child document's DRAFT status, and does
+not reopen P12 phase closure.
+
 ## 9. Must Not Decide
 
 - No change to the frozen encoding; no region revision algebra (P11 fence).

@@ -11,6 +11,12 @@ P10 view 语义。
 
 ## 1. 开发态（frozen）
 
+The P8 `RetryVerification` human action uses the existing `/commands`
+transport and the strict registered external codec. It does not add an
+endpoint or action-specific transport family; actor and CommandId come from
+the authenticated envelope, while authority remains resolver- and
+handler-validated.
+
 ```text
 apps/web (Vite dev server, 默认 5173)
   /views/*  /commands  → proxy → single-workspace daemon (HTTP)

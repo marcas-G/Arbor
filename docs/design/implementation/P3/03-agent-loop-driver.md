@@ -25,6 +25,38 @@ interface ExecutionDriverPortService {
   fenced). The driver itself does not call the gateway.
 - The driver runs as the `ExecutionOrigin` worker for the leased generation.
 
+### WorkEpisode blocked disposition
+
+Only a Work-bound `ExecutionEpisodeBinding` may use the accepted `wait`
+control with explicit `Blocked` disposition or the Work-only
+`resolve_work_blocker` control. Before settlement, every same-Episode
+executable `TerminalRejected` action paired with `ToolResult.status=Denied`
+must be explicitly linked either to a later successful recovery action or to
+the Blocked evidence set. Missing disposition returns the typed
+`UndispositionedActionFailure` correction in the same loop. A Blocked result
+requires the exact P9 action evidence and typed terminal-denial category; a
+Plan status or arbitrary interruption text is not evidence. No automatic
+retry follows a terminal denial.
+
+The Runtime resolves each `failedActionRef` through the pinned ProviderTurn
+manifest and computes `failureFingerprint` from the exact action-definition
+stableId/version/hash, route/action kind, input hash, `ToolResult.status=Denied`
+and closed `TerminalActionDenial`. It computes each
+`blockerId = SHA256(projectId, workId, targetWorkRevision,
+failureFingerprint)`, sorts refs by step/repair/index, and rejects foreign,
+non-Denied or identity-mismatched evidence. For every same-Episode Denied
+executable call the Agent must supply either a later exact successful result
+as its recovery disposition or include the failure ref; missing disposition
+returns `UndispositionedActionFailure` in the same loop.
+
+The only Agent-side blocker-clear control is
+`resolve_work_blocker({ resolutions })`, where each resolution names one exact
+`blockerId` and non-empty later `successfulActionRefs`. The Runtime binds the
+current Work, revision and Execution; the Application clears each still-Open
+matching blocker and appends `WorkBlockerResolved` plus the sourced action
+result atomically. It is WorkEpisode-only and cannot mutate Work or any
+Verification/Acceptance state.
+
 ## 2. Control loop
 
 ```text
@@ -116,8 +148,11 @@ one of the DID `ExecutionSettlement` forms:
 
 - `Completed(CompletionClaimed(...))` on a `CompletionClaim` directive;
 - `Completed(Yielded(reason, waitSpec))` on a `Yield` directive;
-- `Completed(CoordinationCompleted | QueryCompleted)` for coordination/query
-  executions;
+- exact binding-specific episode result for the bound Work,
+  ConversationResponse, Inbox, or Decision Episode; legacy
+  `CoordinationCompleted` / `QueryCompleted` are not emitted on new writes;
+- `Completed(Blocked(...))` only for an exact WorkEpisode with validated
+  denied-action evidence and its explicit WorkWait request;
 - `Interrupted(...)` on stop / safety stop / controlled interruption;
 - `Failed(...)` when the recovery strategy is exhausted;
 - `OutcomeUnknown(ReconciliationRequired(...))` when an external side effect is

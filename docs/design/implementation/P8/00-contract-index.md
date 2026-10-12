@@ -33,6 +33,9 @@ Producer/Verifier/Acceptance 三层分离（L2+L4+L5 强制）
 Verification Program family 正文与 eval（§13 表：PHASE CONTRACT P8）
 VerificationChanged/VerificationReturned wake 生产（source phase = P8）
 P7 交接：Verification.targetDeliverables 消费不可变 deliverables；satisfaction ⟂ quality
+Explicit `RetryVerification` is the authenticated-human-only surface for the
+existing G8 `Unknown(Orphaned)` then new-identity restart; no automatic retry,
+second orphan state, or Attention mutation is introduced.
 ```
 
 明确不在 P8：Work 生命周期语义修改（CompleteWork 是既有 Work 命令的接线）、Environment change 生产（P11）、Attention 呈现（P10）、生产 daemon（P12）。

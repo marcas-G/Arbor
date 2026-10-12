@@ -58,16 +58,16 @@ runnable   = { w ∈ Open(workspace) | ¬waiting(w) ∧ ¬held(w, w.revision) } 
 - 读取集（同一快照事务，沿 runnable-source.ts 既有 TransactionScope 模式）：
   `WorkspaceRepository.currentWorkId`、`WorkRepository` Open 集、`WorkWaitStore`
   active 集、`DependencyRepository` Unsatisfied 集，以及 P2
-  `WorkReadmissionGateStore` 对候选 Work 当前 revision 的读取。Gate 依赖规范的
-  Project/Workspace/Work 身份、来源 Execution、P9 fact/event 与 EGP
-  `episode_json` binding；不读 Attention projection。Gate 完整数据集与
-  classifier 结果处于同一 SQLite read snapshot。
+  `WorkReadmissionGateStore` 对候选 Work 当前 revision 的读取。Gate 使用
+  规范 Project/Workspace/Work 身份、来源 Execution、P9 fact/event 与 EGP
+  `episode_json` binding；不读 Attention projection。Gate 输入与 classifier
+  结果处于同一 SQLite read snapshot。
 
 `ReadmissionTargetMismatch` / `ReadmissionGateIntegrityFailure` 必须沿现有
-`RunnableWorkSourceError` 返回；绝不将缺失/重复/无法解码/身份冲突的来源当作
-`held=false`、普通 waiting 或 runnable。有效的非-Work Episode 不参与。由 gate 排除的 Work 保持 Open，且
-不创建 WorkWait、wake 或 Domain Event。精确门语义及 closed source/error union
-由 DID §8.18A.1、P2 `02` §7.1 与 P9 `07` 拥有。
+`RunnableWorkSourceError` 返回；绝不将缺失、重复、无法解码或身份冲突的
+来源当作 `held=false`、普通 waiting 或 runnable。有效非-Work Episode 不参与。
+被 gate 排除的 Work 保持 Open，不创建 WorkWait、wake 或 Domain Event。精确门
+语义及 closed source/error union 由 DID §8.18A.1、P2 `02` §7.1 与 P9 `07` 拥有。
 
 ### 2.1 与 §8.18A 决策表的关系（呈现输入）
 
@@ -76,10 +76,11 @@ runnable   = { w ∈ Open(workspace) | ¬waiting(w) ∧ ¬held(w, w.revision) } 
 
 - `current = Some(w)` ⇔ 冻结表行 "Current Work Open 且无 active WorkWait"；
   `current = None` 覆盖其余表行。
-- 决策等价性：表行 2–4（current 有 active WorkWait）与表行 5–7（currentWorkId
-  =None）在相同 runnable 计数下产生相同决策（Idle / SelectCurrentWork /
-  Admit Coordination）——classify 吸收 wait/blocking 后 decide() 无需独立
-  WorkWait 输入即可复现整表。
+- 决策按当前 DID v1.28 EGP 合同：无 eligible input → `Idle`；一个 exact
+  runnable Work → admit its Work Episode；多个候选且需要语义判断 →
+  `RequestWorkSelection` 并持久化 exact `WorkSelectionDecisionRequest`，再 admit
+  DecisionEpisode。`classify` 已排除 active WorkWait 与 exact readmission hold；
+  Scheduler 不引入 Coordination mode 或第二套 WorkWait 判定。
 - runnable 集合本身已排除一切 waiting Work（G3 禁令的直接落点）。
 
 ## 3. blocking Dependency 判定式（冻结）

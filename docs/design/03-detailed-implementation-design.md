@@ -1,10 +1,55 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.37\
+**Version:** 1.44\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.36\
+**Supersedes:** v1.43\
 **Date:** 2026-10-12\
-**Depends on:** `Arbor System Design Specification v1.14`
+**Depends on:** `Arbor System Design Specification v1.17`
+
+**Governance changes (v1.43 → v1.44): combined accepted owner landing**
+
+- RAI-DG-01 holds the exact EGP Work `(WorkId, WorkRevision)` after a
+  Work-bound `Interrupted(RuntimeSafetyStop)`, a closed P9 recovery-blocking
+  source, or `OutcomeUnknown(ReconciliationRequired(nonempty refs))`. Only
+  authorized revision-advancing Steer makes the old revision stale. P2 owns
+  the canonical gate/query and commit-time admission recheck; P7 excludes the
+  exact revision in its single classifier; P9 owns immutable source identity;
+  P10 filters active Attention by the canonical current revision. No gate
+  table, WorkWait, lifecycle state, or projection-ACK authority is added.
+  Accepted package SHA-256:
+  `0CEB2DAA2E6128F86CBD1CAA185B9847EAAB240360011F94425E0856F39AA106`;
+  record `planning/results/RAI-DG-01-governance-acceptance-and-landing.md`.
+- P15 `RenameProject` and `CloseProject` accept only the exact authenticated
+  local-human External route with exact P15 `ProjectGovernanceAuthority`;
+  model/Agent origin is denied even if a grant exists. Creation, selected
+  project resource provenance, lifecycle and closure semantics are unchanged.
+- A WorkEpisode may settle `Completed(Blocked)` only with exact terminal
+  denied-action evidence and an explicit bounded help request. The Work stays
+  Open; the current `WorkBlocker` ledger drives Action Required, Work Detail
+  and (for child Work) one direct-Parent Inbox entry. Exact successful-action
+  resolution or authorized Work revision/terminal transition closes the
+  blocker; ordinary Manual wait and Plan status do not. No automatic retry or
+  Verification/Acceptance implication is introduced.
+- P39 adds only schema-39 `DeniedUnbound` recovery-binding provenance for a
+  terminal no-effect Denied invocation with no proven invocation binding; it
+  cannot gain a binding/effect/replay path or P40 observation. Existing P40
+  evidence-bearing branches remain unchanged.
+- P8 exposes one authenticated-human `RetryVerification` command. It
+  atomically concludes the exact old Open Verification as `Unknown(Orphaned)`
+  and creates one successor plus durable spawn intent; exact replay reuses
+  preallocated IDs. Root Work requires authenticated local-human governance;
+  child Work requires its exact Parent Workspace human. Attention remains
+  derived and only clears after the existing freshness barrier. No automatic
+  retry loop or verifier authority expansion is introduced.
+- The reconciled P13 catalog has 28 required production command descriptors
+  plus the optional `ResolveControlApproval` descriptor (29 total when
+  available), Human-actionable count 15 and Agent-originated count 12.
+  Proposal-specific postimage hashes are not asserted for the combined tree;
+  the combined owner hashes, source package digests, technical rebase proof,
+  and separate postreview are recorded in
+  `planning/results/2026-10-12-combined-governance-landing-manifest.md`.
+- This is a design landing only. It does not register or activate migrations,
+  upgrade an existing database, publish, or claim implementation evidence.
 
 **Integration reconciliation (2026-10-10):** This version combines two separately
 accepted owner amendments that each landed from DID v1.34 as v1.35 in isolated
@@ -15,8 +60,9 @@ or recovery rule. The isolated landing digests describe their original owner
 blobs, not this integrated blob; the combined digest is recorded in
 `planning/results/F21-F23-isolated-integration.result.md`.
 
-**Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线  
-**Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订  
+**Owns:** 可编码 ADT/API 语义、Effect A/E/R、Command/Event、Failure、Invariant enforcement、Ports、transaction/fencing、Model Context、Persistence、Package DAG、phase-scoped closure 与技术基线
+
+**Does not own:** P1–P8/G1–G8、S1–S4 行为正文、顶层领域/Runtime 语义；若实现发现这些语义需要改变，必须回到上游文档修订
 **Scope:** 将已冻结的系统级设计落实为可实现且可测试的契约。v1.4 是 governance patch：闭合 P0 planning 审阅发现的 DG-01…DG-06，不改变 C1–C10 / X1–X11 的语义结论；v1.5 闭合 P1 pre-implementation 审阅发现的 P1-DG-01…05 与 P1-DG-10，P1+ 的 exact DDL、逐 Command payload/signature、Prompt 正文与经验参数仍按 phase-scoped closure 管理。
 
 **Accepted owner amendment (source DID v1.34 → v1.35): FT-DG-01 functional resource admission**
@@ -123,8 +169,10 @@ receipt-first prior-consumer decode**
   operational failure and does not create an AssignWork binding fact. P9's
   existing fact identity, atomic write, deduplication and crash recovery are
   unchanged.
-- No generic P10 Attention source or observable diagnostic/logging port is
-  added. Existing AH10 P9→P10 `Action Required` projection is unchanged.
+- This F23 amendment adds no generic P10 Attention source or observable
+  diagnostic/logging port. The existing AssignWork-binding P9→P10
+  `Action Required` projection is unchanged; the separately accepted P7
+  Deliver route is defined by the DID v1.37 amendment below.
 - Landing basis: fixed candidate proposal SHA-256
   `70D55E2AD117D28522297B7BF55EC8AD479CA1BFEEF4025AEA7F1901793DD1A7`;
   independent proposal review Blocking = 0; user standing authorization for
@@ -135,47 +183,248 @@ receipt-first prior-consumer decode**
   an operator-visible diagnostic sink, and cross-schema-version prior replay
   remain explicit OPEN qualifications.
 
-**Governance changes (v1.36 → v1.37): RAI-DG-01 Work-revision readmission hold**
+**Accepted owner amendment (source DID v1.36 → v1.37): AH10 DeliverMessage
+generation fence and legacy replay**
 
-- System Design §3.4/§7.6 and invariant 77 freeze a durable hold for a Work's
-  exact `(WorkId, WorkRevision)` after a Work-bound
-  `Interrupted(RuntimeSafetyStop)`, one of the closed P9 recovery-blocking
-  sources, or `OutcomeUnknown(ReconciliationRequired(nonempty refs))`.
-  Work remains Open; an authorized revision-advancing `SteerWork` makes only
-  the old revision's hold stale. This is not Work cancellation or Deliverable
-  deduplication.
-- The closed P9 sources are the `deliver_replay_attention_facts` row plus its
-  `DeliverReplayEscalated` witness, the
-  `assign_work_binding_attention_facts` row plus its
-  `AssignWorkTargetBindingEscalated` witness, and `ReconciliationEscalated`
-  journal events. P9 `07` owns exact failure-code unions, source identity,
-  immutability and atomic fact/event commit. Ephemeral `RecoveryBlocked` and
-  `ReconciliationSourceError` are not independent sources while the Execution
-  remains Active.
-- P2 `02`/`05` own `WorkReadmissionGateStore`; P7 `03` incorporates the
-  same-snapshot exact-revision result into its sole classifier. P2's
-  Work-bound `AdmitExecution` rechecks it inside the existing
-  `BEGIN IMMEDIATE` transaction. A hold returns typed `WorkReadmissionHeld`;
-  malformed or conflicting identities fail closed with the closed
-  `ReadmissionGateIntegrityFailure` union. No gate table or migration is added.
-- The query validates canonical Project/Workspace/Work/revision, unique source
-  Execution and EGP episode state, exact journal/fact witnesses, and exact
-  `ExecutionEpisodeBinding`. It never infers Work identity from Session,
-  `currentWorkId`, Message, Attention target, or Parent Workspace and never
-  exposes receipts, provider payload, raw episode JSON, invocation refs, or
-  parser/SQLite text.
-- P4 `06` retains exact unresolved invocation truth and the no-blind-replay
-  rule. P10 `02` uses a same-snapshot canonical Work revision filter for all
-  four Work-bound Attention sources; old-revision rows leave active detail and
-  subtree summaries, while immutable source facts remain auditable. Projection
-  rows and queue ACKs never govern admission.
-- EGP Work bindings `(WorkId, WorkRevision)` are the durable attribution and
-  release scope. Other Episode variants are outside this rule. Classification
-  and admission are restart-safe and source commits/Steer cannot race a held
-  revision into admission.
+- The exact accepted route is AgentAction.Deliver → `DeliverMessage` CommandType,
+  Handler `schemaVersion="1"`, through the existing CommandGateway/P1
+  generation-scoped CommandId and receipt-first contract. Ordinary SendMessage
+  v1 remains unchanged; no External-origin route is added.
+- P7 `02` owns the DeliverMessage request/result, canonical Deliverable
+  ownership/direct-parent checks, MessageSent(v1) Deliver payload, Inbox
+  summary, same-transaction Message/Event/Inbox/receipt, and MessageSent-only
+  ChildDelivered wake source. P2 `03` confirms this is an existing
+  NormalExecutionMutation fenced in the Gateway transaction; no fence class
+  changes.
+- P1 `07` owns the trusted action route and the narrow pre-Gateway
+  DeliverMessage receipt-absent exact-proof exception. P9 `07` owns the
+  immutable `DeliverReplayEscalated` fact/event, exact legacy/receipt mismatch
+  priority, and RecoveryBlocked behavior. P10 `02`/`07` own the
+  ActionRequired projection and qualification. The v1.37 migration statement
+  is superseded by the accepted v1.38 storage correction below: Deliver fact
+  and source-specific Attention marker are assigned to proposed migration
+  0037 after P36 integration. MessageSent EventVersion remains 1 and the
+  generic SendMessage receipt schema remains unchanged.
 - Accepted proposal SHA-256:
-  `0CEB2DAA2E6128F86CBD1CAA185B9847EAAB240360011F94425E0856F39AA106`.
-  Decision record: `planning/results/RAI-DG-01-governance-acceptance-and-landing.md`.
+  `75EAF29FC8FC90C5E098DA3758EFAD8C69074F478C82F2399619F522AE596565`.
+  The user delegated governance authority; independent proposal review
+  Blocking = 0. Acceptance record:
+  `planning/results/AH10-deliver-generation-fence-governance.decision.md`.
+  Owner landing hashes and self-consistency audit:
+  `planning/results/AH10-deliver-generation-fence-design-landing.md`.
+- Design acceptance/landing does not authorize runtime implementation. The
+  strict Command/receipt unit seam, P9/P10 failure/rebuild behavior, and real
+  two-daemon crash/restart matrix remain implementation qualifications before
+  AH10 can close.
+
+**Accepted owner addendum (DID v1.37 → v1.38): AH10 Deliver P10 source storage and migration order**
+
+- Deliver replay failure remains a P9 immutable fact/event projected by P10 as
+  `DeliverReplayFailure`; its visible fields, summary, target and
+  `attentionFactId` identity are unchanged. P10 now owns a separate
+  `deliver_replay_attention_rows` marker relation FK-bound to the P9 fact;
+  AssignWork's existing source/failure/FK projection table and rows remain
+  unchanged.
+- The accepted/planned migration prefix is 0034 P10 Attention, 0035 F21,
+  0036 AH7/P36, then proposed 0037 Deliver P9 fact + P10 marker. The integrated
+  tree at the time of this v1.38 addendum ended at P35/user_version 35. In the
+  current governance baseline, P36/P37/P38 owner contracts are integrated;
+  real migration implementation/registration remains unintegrated. P37 is
+  ordered after P36 and MUST NOT be implemented, installed or released
+  independently; v35 upgrades must apply P36 before P37.
+- P10's project/event consumer inserts the Deliver marker with its own P1
+  event offset in one transaction. Its full rebuild atomically resets P10
+  source rows, snapshots and seeds current P9 Deliver facts, and rewinds the
+  P1 offset, then replays retained events. No MessageSent/Event v1, ordinary
+  SendMessage, P1/P2/P7 behavior, F21 refusal semantics, or P36 contract
+  changes.
+- Accepted addendum SHA-256:
+  `040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`;
+  separate acceptance record:
+  `planning/results/AH10-deliver-p10-storage-addendum-governance-decision.md`.
+  This is a design landing only; runtime implementation remains separately
+  gated. Owner hashes are recorded in
+  `planning/results/AH10-deliver-p10-storage-addendum-design-landing.md`.
+
+**Accepted owner amendment (DID v1.38 → v1.39): EA-DG-01 Executable approval issuance/decision/resume**
+
+- P4's new-write outcome for an approval-required Executable intent is the
+  nonterminal `ApprovalRequired` handoff. Historical P4
+  `Denied(ApprovalRequired)` rows remain terminal read/replay evidence and are
+  never promoted into Pending approvals.
+- P1/P6/P10/P12/P17 bind issuance, exact human decision, Inbox and same-
+  Execution wake; P3 keeps the same Provider result, AgentLoopStep,
+  LogicalActionId and ToolInvocationId. MAC `02`/index owns the shared
+  ActionApproval lifecycle including `Cancelled`, while Control and
+  Executable routes remain distinct.
+- Migration 0038 is forward-only after unchanged 0032, integrated P36
+  migration 0036 and AH10 Deliver migration 0037. It leaves all earlier
+  migration bodies and checksums unchanged and preserves route-specific
+  uniqueness and legacy binding provenance.
+- Fixed proposal SHA-256:
+  `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+  accepted by `planning/results/EA-DG-01-governance-acceptance.md`.
+  Owner hashes are recorded in
+  `planning/results/EA-DG-01-contract-landing.result.md`.
+- This acceptance and landing authorize design contracts only. Runtime,
+  database migration execution, tests and release qualification remain gated.
+
+**Accepted owner amendment (DID v1.39 → v1.40): AH7-DG-02 Reconcilable reality proof and P39 physical contract**
+
+- Exact unrestricted `shell@3` is `NonIdempotent`; exact historical `shell@2`
+  is preserved and is never reclassified. Only a constrained, version/hash-
+  bound tool with stable effect identity, authoritative proof source, and
+  stale-attempt finality may be `Reconcilable`.
+- P4 owns the P39 immutable RecoveryBinding, effect-attempt ledger, append-only
+  reconciliation facts and selected-fact terminal settlement. P3 owns trusted
+  ProviderTurn/Step/LogicalAction/callRef identity and exact ToolResult,
+  Observation/Action/cursor convergence. P9 owns the existing
+  `ReconciliationEscalated` source; P10 owns its ActionRequired projection and
+  rebuild within the accepted event-retention horizon.
+- P39 is the forward-only `0039_ah7_reconciliation_attempts` schema contract.
+  It follows owner contracts P36→P37→P38; those owner contracts are integrated
+  in this design baseline, but their migration implementation/registration is
+  not. P39 must not be implemented or released alone.
+- A mandatory P39 migration preflight refuses affected active P36
+  `NotAdmitted` databases before pending P37/P38/P39 DDL and writes an immutable
+  operator report to an explicitly selected SQLite sidecar. The primary DB
+  remains unchanged and that DB cohort remains isolated pending future
+  governance. Windows/local-FS durability, actual Node SQLite VFS/OS/hardware
+  qualification, network/unknown-filesystem refusal, and report recovery are
+  release gates; design acceptance is not deployment qualification.
+- Accepted logical proposal SHA-256:
+  `D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+  accepted physical supplement SHA-256:
+  `D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+  Acceptance/review and final owner hashes:
+  `planning/results/AH7-DG-02-P39-design-landing.result.md`.
+- This is an owner-contract landing only; it authorizes no production code,
+  migration implementation, tests, real reconciliation claim, or Windows
+  release.
+
+**Accepted owner amendment (DID v1.40 → v1.41): AH7-DG-01 terminal Observation replay and P39 compatibility**
+
+- P4 persists each new terminal Success/ExpectedFailure/Interrupted/
+  OutcomeUnknown/RuntimeFailure settlement with the exact first-returned
+  bounded `CanonicalToolObservation`, version, inline UTF-8 JSON bytes and
+  SHA-256. The shared v1 envelope has a 16,384-byte cap and preserves first-
+  write `text`/`truncated`, cause, ordered refs and Artifact identity. P4
+  Artifact/raw result refs are not Observation storage.
+- The accepted P39 compatibility addendum makes `ReconciledNoEffect` the sixth
+  v1 evidence-bearing branch. Its P39 row remains `MayHaveStarted`,
+  `settlement_provenance='Reconciliation'`, `recovery_binding_state='Bound'`,
+  and retains the exact immutable same-invocation/same-attempt selected
+  `NotOccurred` fact. P40 atomically adds the same versioned bounded
+  Observation; it also verifies the settlement/reason/fact refs and separates
+  the NULL P39 proof-fact `result_ref` from the non-NULL P4 ArtifactRef and P3
+  payload hash. P39 proof/fact, selected fact and Artifact semantics are not
+  mutated or aliased.
+- DG03 `Denied/NotAdmitted` remains the no-effect exception with its closed
+  `NoEffectDenialCode` and version-1 deterministic projection; all P40
+  evidence fields and `result_ref` are NULL. It is not mapped to
+  ExpectedFailure. CAPA approval consume and all `SideEffectSemantics` rules
+  are unchanged.
+- Before any P4 terminal evidence read, including a same-invocation CAS loser,
+  P4 proves the full current unexpired Worker lease. A valid fence returns
+  only the canonical P4 winner or blocks on missing/conflicting evidence;
+  stale generation is ownership loss with no winner read/projection or
+  replay-evidence Attention. P3 keeps the existing exact source formula and
+  atomic ToolResult/Observation/Action/cursor projection.
+- A P39-only database at `user_version=39` is maintenance-only: no Agent/P4
+  Runtime startup or release until cumulative P40 migration reaches 40. P40
+  follows the complete P36→P37→P38→P39→P40 prefix; the serialized cross-process
+  migration runner, prefix integration, P39 sidecar/Windows durability and
+  runtime/migration implementation remain qualification gates.
+- Accepted hashes: DG01 logical
+  `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`, P40
+  physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`,
+  P39/P40 compatibility addendum
+  `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`, and
+  matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+  Acceptance is recorded in
+  `planning/results/AH7-DG-01-P39-P40-compatibility-addendum-acceptance.record.md`.
+- Owner-contract landing only: no production code, migration execution,
+  qualification, release or AH7 phase closure is authorized.
+
+**Accepted owner amendment (DID v1.41 → v1.42): AH10 Submitted DecisionEpisode binding failure / P41**
+
+- For an exact non-legacy DecisionEpisode whose Submitted DecisionRequest
+  Workspace or settled Provider result Manifest does not match the authoritative
+  Execution/AgentLoopStep binding, P3 fails closed before new Provider/action/
+  Command/Observation or ordinary settlement. P9 records one immutable
+  `SubmittedDecisionBindingEscalated(v1)` fact/event and recovery returns
+  `RecoveryBlocked`; P10 exposes one `ActionRequired` row at
+  `executions.workspace_id`. No `Failed` settlement, source repair, replay,
+  dismissal or new permission/Command is introduced.
+- The existing authorized StopExecution is the sole v1 release path for the
+  blocked active slot. Under the full current unexpired lease and only when the
+  unresolved P4 side-effect gate is clear, Recovery/Application composition
+  coordinates the P9 fact store and P3 StepStore in one TransactionScope.
+  Stop-first atomically writes the fact/event and P3 early settlement using
+  `TerminalRejected(StopRequestedAfterSubmittedBindingFailure)`,
+  `SkippedEarlySettlement`, and
+  `SettlementProposed(Interrupted(StopRequested))`. Fact-first remains blocked
+  until Stop. P2 RecoveryController settles only the persisted proposal;
+  Attention remains. P3 has no P9 implementation dependency.
+- P9 recovery also audits already-settled `Failed` DecisionEpisode rows whose
+  exact Step remains `ActionsInProgress` with a Pending
+  `select_current_work` Action. It records audit-only Attention, using the
+  specific still-provable binding mismatch or
+  `SettledExecutionWithPendingDecisionAction`; it never resurrects or rewrites
+  old Execution/Step/Action/Command/Work/receipt facts. Same-tuple duplicate
+  fact writers serialize to one immutable fact/event.
+- P10's source is included in `02`/`05`/`07`. P10 `04` owns full rebuild:
+  source-marker reset, one consistent P9 fact snapshot/marker seed, and P1
+  offset rewind to `floor - 1` commit in one `BEGIN IMMEDIATE`/
+  `TransactionScope`. The P9 fact's event id and P10 marker have no FK to
+  prunable `domain_events`; the marker is FK-bound to its P9 fact. Pruned-event
+  rebuild, duplicate consumption, both crash boundaries and fact/rebuild
+  concurrency are required qualifications.
+- P41 / migration `0041` is strictly conditional on integration and required
+  qualification of P36/0036 → P37/0037 → P38/0038 → P39/0039 → P40/0040 as one
+  cumulative prefix. It cannot be registered, implemented, run or released
+  independently, and cannot rewrite any 0036–0040 body/checksum/number. The
+  target is DID v1.42 after the unified DID v1.41 P36–P40 landing. Only the
+  accepted binding, Stop/fact, orphan-audit and P10 rebuild semantics change.
+- Accepted fixed-proposal SHA-256 over LF bytes:
+  `10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`.
+  Governance acceptance/landing audit:
+  `planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+  This is design-only; it does not authorize migration implementation,
+  production changes, tests or runtime qualification.
+
+**Accepted owner addendum (DID v1.42 → v1.43): AH10 DeliverReplay durable outbox and attempt-fair Attention poll**
+
+- Accepted fixed package is v5 base SHA-256
+  `5AAA2CD1FC00DFA729730E36FF13BAD7038496985D57500FD841B210E76F8B2F` plus
+  v6 addendum SHA-256
+  `8E6F47EF5933B6241B5E02E43821B6B816F705A9840AAA62FDFD318283004AF4`.
+  Its independent review is Blocking=0 (Nonblocking=2); decision, review and
+  owner hashes are recorded in
+  `planning/results/AH10-deliver-event-pruning-v6-governance-acceptance-and-landing.md`.
+- P9 `DeliverReplayEscalated(v1)` facts keep a unique durable event-ID audit
+  identity without a permanent FK to prunable `domain_events`; P9 writes the
+  fact/event/pending-outbox row atomically. P10 marker creation precedes
+  queue ACK; P1 raw EventId looks up P9 before type/version/payload decode.
+  Deliver source-integrity errors are typed fail-closed, with no ordinary
+  poison DLQ or offset advancement. Ordinary non-Deliver poison behavior is
+  unchanged.
+- One P1/P9/P10 poll `BEGIN IMMEDIATE` owns current offset, raw event batch,
+  P9 witnesses, classification, projection, outbox marker/ACK and offset
+  update; pruning, P9 insertion and P10 rebuild serialize on the same SQLite
+  writer boundary. A valid global dispatcher lease yields non-mutating
+  `NoClaim`; persisted attempt-fair ordering and bounded retry backoff keep
+  healthy due Projects progressing without promising completion for a
+  repeatedly crashing Project.
+- P12 adds a deployment-pinned DeliverReplay capacity artifact/assessor for
+  same-window queue INSERT/ACK rates, backoff/fairness, preflight/full lock
+  duration, SQLite/P9 writer waits and rebuild. Existing four-dimension
+  `assessStorage`, Postgres trigger mapping and HealthPort readiness are
+  unchanged. The two review Nonblockings are preserved in the decision record
+  and are not expanded into new semantics by this landing.
+- This is a design landing only. Migration 0037 implementation/registration,
+  tests, deployment and P37/AH10 qualification remain separately gated after
+  P36; no 0034–0036 migration body or checksum changes.
 
 ### FT-DG-02 current P10/P13 view contract
 
@@ -448,7 +697,9 @@ VDC-1…VDC-8）
 - Normal Verifier conclusions carry model-authored summary content. Runtime
   persists the bytes through BlobStore and produces `summaryRef`; the
   concluded Verification and `VerificationConcluded` event durably retain that
-  ref. `Unknown(Orphaned)` summary content is authored by the authorized Parent.
+  ref. `Unknown(Orphaned)` summary content is authored by the authorized human:
+  Root-local governance for Root Work or the exact Parent Workspace human for
+  child Work, under the accepted P8 `RetryVerification` contract.
 - A child `initialWork`, when present, carries a complete explicit
   VerificationMission in its Parent-approved proposal. Runtime does not
   synthesize a placeholder mission from objective text. A proposal without an
@@ -2055,9 +2306,8 @@ ExecutionSettlement
 ├── Completed(CompletedResult)
 │   ├── Yielded(reason, waitSpec)
 │   ├── CompletionClaimed
-│   ├── CoordinationCompleted
-│   ├── QueryCompleted
-│   └── VerificationConcluded(verificationId, verdict)
+│   ├── VerificationConcluded(verificationId, verdict)
+│   └── Blocked(BlockedWorkEpisode)  // exact Work Episode only
 ├── Interrupted(InterruptedResult)
 │   └── StopRequested / other controlled interruption
 ├── Failed(ExecutionFailure)
@@ -2068,6 +2318,8 @@ ExecutionSettlement
 
 - `CompletionClaimed` 必须持久携带足够的 claim/reference 与 target Work revision，使 event replay 可以可靠触发后续 Verification；
 - `VerificationConcluded` 只表示该 Verifier Execution 已提交 canonical conclusion；它不得表达 Parent Acceptance 或 Work Completed，也不得进入 CompletionClaim consumer；
+- `Blocked` 只表示精确 Work Episode 已到达稳定的人类/Parent 输入边界，不改变 Work lifecycle；其 exact denial evidence、wait request 和 WorkBlocker 同事务合同由 P2 `01` 拥有，不蕴含 Verification、Acceptance 或 Work completion；
+- 新写 settlement 必须匹配 exact `ExecutionEpisodeBinding`；历史 `CoordinationCompleted` / `QueryCompleted` 仅供 migration/decoder audit；
 - Worker crash、lease expiry 或旧 Worker resurrection **本身不直接 settle Execution**；Recovery 可以继续同一 durable Execution；
 - `OutcomeUnknown` 表示存在未解决的现实副作用歧义，reconciliation 前禁止盲目 replay；
 - `Completed != Work Completed`，`Failed != Work Cancelled`。
@@ -2437,10 +2689,17 @@ The Application owns `ExternalCommandDecoder` and
 `CommandInputContractRegistry`: the decoder accepts bounded raw JSON plus a
 `commandType` and returns a typed semantic envelope or safe codec issues; the
 registry contains exactly one closed input descriptor and origin policy per
-command in the current 26-command production registry. Shells retain raw
+command in the current 28-required-command production registry, plus the
+optional `ResolveControlApproval` descriptor when its store is composed.
+`RetryVerification` is external only through its exact authenticated-human
+governance route; it carries no client authority or BlobRef. Shells retain raw
 `unknown` only until decoding and do not cast to a trusted envelope or use Web
-form schemas as a server guarantee. Codec validity grants no authority; P13's
-UI exposure classification remains separate. Handler factories for
+form schemas as a server guarantee. The new DeliverMessage descriptor is the
+closed P7 payload at wire codec v1, with External origin denied; typed
+ExecutionOrigin submissions use the same semantic validator. Its registered
+Handler/result `schemaVersion="1"` is independent from the wire version.
+Codec validity grants no authority; P13's UI exposure classification remains
+separate. Handler factories for
 `ReviseDependencyContract`, `WithdrawDependency`,
 `MarkDependencyUnfulfillable`, `RegisterProjectTool`, `CreateWorktree`, and
 `RetireWorktree` are factory-only and are not current `RegisteredCommandType`
@@ -2448,6 +2707,11 @@ members or codec descriptors. A future composition registration requires an
 accepted registry/codec scope update before reachability. A descriptor cannot
 construct or accept AH10 `AssignWorkCommandEvidence` or
 `AssignWorkControlAuthorizationEvidence`.
+
+The accepted AH10 Deliver P10 storage amendment adds only the source-specific
+P10 projection relation described in §9.3. It does not alter the
+CommandGateway receipt tuple/order, external wire codec, DeliverMessage
+Handler schema, `MessageSent(v1)`, or ordinary `SendMessage` receipt semantics.
 
 All codecs reject unknown fields at every object depth and enforce the owning
 payload's primitive, finite/integer/range, enum/tag, array-member, and branded
@@ -2496,7 +2760,7 @@ fingerprint algorithm mismatch uses the existing exact P1 tuple rule and
 returns `IdempotencyConflict`; no historical comparator or row rewrite is
 added. Only an exact tuple is decoded through the Application-owned strict
 receipt decoder registered for the exact current `(commandType,
-Handler.schemaVersion)`. Every current one of the 26 registered command
+Handler.schemaVersion)`. Every current one of the 28 required registered command
 handlers must have a Committed-result decoder; TerminalRejected uses the
 exhaustive Application `CommandRejection` decoder. Missing version/descriptor,
 invalid JSON, wrong shape or unknown rejection member fails as the existing
@@ -2654,6 +2918,7 @@ WithdrawDependency
 MarkDependencyUnfulfillable
 ReviseDependencyContract
 SendMessage
+DeliverMessage
 ```
 
 ### Verification / Acceptance
@@ -2809,11 +3074,80 @@ ExecutionSettled
 
 PermissionChanged
 DecisionRecorded
+ExecutableApprovalRequested
+ExecutableApprovalResolved
 ReconciliationEscalated
 AssignWorkTargetBindingEscalated
+DeliverReplayEscalated
+ToolObservationReplayEvidenceEscalated
+SubmittedDecisionBindingEscalated
 EnvironmentChanged
 HumanInterventionApplied        # v1.13 G7: {actor, targetWorkspaceId, summaryRef, occurredAt, kind}
 ```
+
+`MessageSent` remains EventVersion 1. Its `Deliver` payload is the P7 v1
+shape `{messageId, kind:"Deliver", sender, recipient, deliverableId,
+correlationId, causationId}`; non-Deliver payloads are unchanged. The AH10
+`DeliverMessage` route adds no MessageSent version or wake event. It adds the
+P9-owned `DeliverReplayEscalated(v1)` fact event for an unprovable legacy or
+receipt-bound handover; P10 consumes it as `DeliverReplayFailure` Attention.
+
+AH7-DG-01 adds `ToolObservationReplayEvidenceEscalated(v1)` for a valid-fence
+terminal Observation evidence failure. Payload is exactly
+`{attentionFactId, executionId, targetWorkspaceId, logicalActionId,
+providerTurnId, callRef, invocationId, failureCode}`; its envelope uses the
+Execution project, target Workspace aggregate, `logicalActionId` correlation,
+`system:recovery` actor and no Command cause. It contains no Observation,
+tool arguments/output, Artifact body, path or raw exception. P9 commits the
+immutable fact+event atomically; P10 owns the marker/read-model projection.
+This event is distinct from `ReconciliationEscalated`: absent replay evidence
+does not claim an unresolved external effect.
+
+P41 adds `SubmittedDecisionBindingEscalated(v1)` for the exact immutable P9
+fact keyed by `(executionId, logicalStepNo, repairAttempt, logicalActionId)`.
+Its payload is exactly `{attentionFactId, executionId, workspaceId,
+logicalStepNo, repairAttempt, providerTurnId, logicalActionId, failureCode}`;
+the authoritative Execution Workspace is the aggregate/Attention target and
+the LogicalActionId is the correlation. `caused_by_command_id` is the unique
+original Committed `SelectCurrentWork` CommandId when present, otherwise null.
+The closed failure codes are `DecisionRequestWorkspaceMismatch`,
+`StepManifestMismatch`, and `SettledExecutionWithPendingDecisionAction`. It
+contains no candidate Work list,
+model text, corrupt opaque value, or parser/database details. The event id is
+stored as an audit identifier on the P9 fact, not as a foreign key to the
+prunable event journal.
+
+EA-DG-01 adds `ExecutableApprovalRequested(v1)` and
+`ExecutableApprovalResolved(v1)` as durable wake facts. Requested carries the
+approval/route/Workspace/Execution/LogicalAction/ToolInvocation identity,
+request revision, expiry and action digest; it does not copy tool arguments or
+make the approval contents instructions. Resolved carries approval/route/
+Workspace/Execution identity, resulting revision and one of
+`Approved | Rejected | Expired | Cancelled`; the event envelope carries the
+authenticated decision actor when present. The approval row, exact P6 Inbox
+admission/consumption and corresponding event are written in the same
+transaction. P17 resumes only the bound Execution from the durable resolved
+fact/list and never starts a new ProviderTurn.
+
+The EventVersion-1 payloads are:
+
+```ts
+ExecutableApprovalRequested = {
+  approvalId, routeKind: "Executable", workspaceId, executionId,
+  logicalActionId, toolInvocationId, revision, expiresAt, actionDigest
+}
+
+ExecutableApprovalResolved = {
+  approvalId, routeKind: "Executable", workspaceId, executionId,
+  logicalActionId, toolInvocationId, revision,
+  resolution: "Approved" | "Rejected" | "Expired" | "Cancelled",
+  reasonCode?
+}
+```
+
+Raw arguments, secret values and model-written summaries are not copied into
+the event. The exact binding remains in the route-specific ActionApproval row;
+`Resolved` is the durable P2/P17 wake fact.
 
 高频 Provider Turn、Tool Invocation、Lease Renew、stream delta 不进入 Project Domain Event Journal，而进入 Execution Trace / Runtime Records。
 
@@ -3074,6 +3408,10 @@ Execution 不再只保存四值 outcome，而保存合法 sum type：
 ```text
 ExecutionSettlement
 ├── Completed(CompletedResult)
+│   ├── Yielded
+│   ├── CompletionClaimed
+│   ├── VerificationConcluded
+│   └── Blocked (exact Work Episode only)
 ├── Interrupted(InterruptedResult)
 ├── Failed(ExecutionFailure)
 └── OutcomeUnknown(ReconciliationRequired)
@@ -3081,7 +3419,7 @@ ExecutionSettlement
 
 精确定义：
 
-- `Completed(...)`：episode 正常到达稳定边界；result 必须说明是 `Yielded`、`CompletionClaimed`、`CoordinationCompleted`、`QueryCompleted`、`VerificationConcluded` 等哪一种语义；
+- `Completed(...)`：episode 正常到达稳定边界；new-write result 必须符合 exact EGP `ExecutionEpisodeBinding`。Work Episode may report `Blocked` only with the exact denial/request contract in P2 `01`; historical `CoordinationCompleted` / `QueryCompleted` are decoder/audit-only；
 - `Interrupted(...)`：外部控制明确提前结束，并且不存在 unresolved ambiguous side effect；
 - `Failed(...)`：当前 episode 无法继续，正常恢复策略已耗尽或错误不可恢复；
 - `OutcomeUnknown(...)`：存在外部副作用可能已经发生但系统无法确定，必须先 reconciliation。
@@ -3114,10 +3452,36 @@ consumer 不直接绕过 Command Handler 创建 Verification。
 ToolInvocationSettlement
 ├── Success
 ├── ExpectedFailure
+├── Denied(reasonCode: NoEffectDenialCode; P36 only with NotAdmitted)
 ├── Interrupted
 ├── OutcomeUnknown
+├── ReconciledNoEffect(reconciliationFactRef, reasonCode)
 └── RuntimeFailure
 ```
+
+P36 `Denied/NotAdmitted` remains the durable no-effect result with closed
+`NoEffectDenialCode` and its version-1 deterministic projection. P40 preserves
+it with `result_ref` and all three P40 evidence columns NULL; it is not an
+Observation-envelope tag and must not be mapped to ExpectedFailure.
+
+P4 replay evidence corruption is a typed operational failure, not a new
+settlement or side-effect tag:
+
+```ts
+type ToolObservationReplayEvidenceFailureCode =
+  | "Missing" | "UnsupportedVersion" | "Malformed" | "HashMismatch"
+  | "SettlementMismatch" | "IntentMismatch" | "ResultRefMismatch"
+  | "UnexpectedResultRef";
+
+type ToolObservationReplayEvidenceFailure = {
+  readonly _tag: "ToolObservationReplayEvidenceFailure";
+  readonly failureCode: ToolObservationReplayEvidenceFailureCode;
+};
+```
+
+The failure carries no raw JSON, Observation, output, Artifact body, parser/OS
+text or arbitrary cause. A valid current fence maps it to the existing
+RecoveryBlocked/P9/P10 path; stale fencing remains ownership loss only.
 
 `pytest failed`、`git conflict`、shell exit 1 等通常是模型需要认知的 `ExpectedFailure Observation`，不应导致 Agent fiber 失败。
 
@@ -3140,7 +3504,32 @@ Reconcilable  → unknown 时先 reconcile 再决定 replay
 NonIdempotent → ambiguity 时禁止自动 replay
 ```
 
+For recovery of `MayHaveStarted`, a P4-owned versioned profile binds the exact
+tool definition, effect attempt/key, RecoveryBinding and authoritative reality
+source. Its closed outcomes are `NotOccurred`, `Occurred`, and `StillUnknown`;
+absence of a local result or an eventually-consistent negative query is not
+proof. `StillUnknown` never admits a replay. `Occurred` settles only with a
+reconstructable canonical result. Only authoritative, final `NotOccurred` may
+permit at most one exact-invocation replay after fresh authority, approval,
+resource, stop and full lease-fence revalidation. Stop blocks new admission but
+does not block accounting for known in-flight facts under the current fence.
+Terminal reconciliation-produced Success/ExpectedFailure/ReconciledNoEffect
+selects exactly one immutable fact for the same invocation and attempt; late
+contradictory evidence is append-only and does not rewrite terminal P4/P3 state.
+
 Authority/Permission denial 在 ToolRuntime 内是 rejection，但应投影成模型可理解的 `ToolInvocationDenied` Observation，而不是崩溃 Execution。
+
+Approval-required Executable invocation has a separate nonterminal
+`ApprovalRequired` ActionResult/Execution handoff. It is not a
+`CanonicalToolObservation`, a `ToolInvocationSettlement`, or a P4 no-effect
+Denied result. New writes MUST keep the same AgentLoopStep action Pending and
+the cursor fixed until an exact approval decision/expiry/cancellation is
+resolved. The old P4 `Denied(ApprovalRequired)` reason remains accepted only
+by persisted-row decoding and terminal replay; migration MUST NOT reinterpret
+or backfill it as a human approval request. On Approve the same invocation
+re-enters P4; Reject/Expire produce a terminal no-effect Denied result, while
+Stop produces Interrupted. Current authority, resource, ControlBasis, stop,
+and lease checks still apply after any approval.
 
 > **P4（DID v1.8 G1/G4）：** tool authority 是 trusted `InvocationAuthority`
 > fact，不由 ToolRuntime 解析 PermissionGrant / Parent / User；Resource
@@ -3424,7 +3813,31 @@ Parent and Work revisions at that boundary.
 provides `recordAssignWorkBindingFailure(fact)` and
 `findAssignWorkBindingFailure(attentionFactId)` under the same scope; record
 atomically appends the dedicated event and immutable P9 fact, and returns an
-existing row only for the exact same identity tuple.
+existing row only for the exact same identity tuple. The same P9-owned port
+also provides `recordDeliverReplayFailure(fact)`,
+`findDeliverReplayFailure(attentionFactId)`, and
+`findDeliverReplayFailureByEventId(eventId)`,
+`listDeliverReplayFailures(projectId)`, `listPendingDeliverReplayAttention(projectId,limit)`,
+and `acknowledgePendingDeliverReplayAttention(attentionFactId)` for the
+accepted AH10 Deliver route;
+these methods use the separate `deliver_replay_attention_facts` relation,
+and `deliver_replay_attention_pending` outbox. They retain the same
+transaction-scoped append/dedup/error guarantees, and do not
+alter the existing AssignWork fact identity or schema. They return the existing
+`RecoveryAttentionFactStore` repository/journal errors and typed
+`RecoveryAttentionFactInvariantConflict`; no generic Attention port or new
+store error union is introduced.
+The same P9-owned port provides
+`recordSubmittedDecisionBindingFailure(fact)`,
+`findSubmittedDecisionBindingFailure(attentionFactId)`, and
+`listSubmittedDecisionBindingFailures(projectId)` by exact
+`(executionId, logicalStepNo, repairAttempt, logicalActionId)` identity. Fact
+and event share the caller's `TransactionScope`; same-tuple retry returns the
+immutable winner and a conflicting payload fails closed. P3 returns only a
+typed mismatch classification and pure Stop-close plan through
+provider-neutral ports; it has no P9 implementation dependency. The P9
+Recovery/Application coordinator owns a cross-store transaction when it also
+applies that plan through `AgentLoopStepStore`.
 
 ---
 
@@ -3489,6 +3902,10 @@ HealthPort
 Clock
 IdGenerator
 ```
+
+The accepted AH10 Deliver P10 marker is a source-specific P10 projection
+relation over P9-owned facts, not a new generic port. Existing transaction,
+event-consumer, projection-query and rebuild boundaries remain in force.
 
 `InputPromotionService` 是 Application/Runtime orchestration service，不是
 infrastructure Port。它使用 `TransactionPort + SessionRepository +
@@ -3695,8 +4112,24 @@ AgentRuntime 只看：
 
 ```text
 invoke(ToolIntent, ToolExecutionContext)
-→ CanonicalToolObservation
+→ CanonicalToolObservation | ApprovalRequired(ResolvedExecutableIntent)
 ```
+
+The `E` side also includes the closed
+`ToolObservationReplayEvidenceFailureCode` above. It is not encoded as a
+`CanonicalToolObservation`, `ExpectedFailure`, `Denied` or `OutcomeUnknown`
+settlement.
+
+For a new approval-required Executable action with no approved exact record,
+P4 returns `ApprovalRequired` with the P4-resolved, trusted tool/version,
+normalized intent, target resource IDs, current ControlBasis and
+ToolInvocationId. It does not persist a ToolInvocation intent/settlement,
+write a terminal `Denied(ApprovalRequired)`, or call Sandbox/Executor. The
+Application combines this handoff with the P3 AgentLoopStep/LogicalAction
+identity, calls the pure P12 resolver and atomically issues the Pending
+Executable ActionApproval plus Inbox entry. An existing matching Pending
+record returns the same pause; an exact Approved record resumes P4 with its
+stored expiry/revision. Control ActionApproval remains a separate route.
 
 ToolRuntime 内部负责：
 
@@ -4545,89 +4978,57 @@ Ownership（P2 冻结）：P2 提供 ExecutionScheduler 与 durable wake/timer �
 可在无 Active Main Execution 时被确定性触发；**P7** 拥有完整的 runnable/dependency reevaluation
 与 Wait-for graph。P2 不新增 runnable 语义。
 
+**EGP new-write supersession:** the preceding focus/Coordination table is
+historical. New writes use exact `ExecutionEpisodeBinding`; scheduler
+ambiguity requiring model judgment persists `WorkSelectionDecisionRequest`
+and admits a `DecisionEpisode`. `CoordinationCompleted` / `QueryCompleted` are
+decoder/audit-only and cannot be new settlement results. The accepted RAI gate
+below applies only to Work Episodes; other EGP episode variants are unaffected.
+
 ### 8.18A.1 Exact Work-revision readmission hold (RAI-DG-01)
 
-For a canonical Work `(projectId, workspaceId, workId, revision)`, the
-readmission gate is held when a durable source is bound by the exact EGP Work
-Episode `(workId, workRevision)` to that Work revision and is one of:
+For canonical Work `(projectId, workspaceId, workId, revision)`, hold admission
+when a durable source is bound by exact EGP Work Episode `(workId, workRevision)`
+and is one of:
 
 1. settled `Interrupted(ControlledInterruption(RuntimeSafetyStop))`;
 2. a P9 recovery-blocking source in the closed P9 `07` inventory; or
 3. settled `OutcomeUnknown(ReconciliationRequired(invocationRefs))` with
    non-empty refs.
 
-The P9 set is closed to `DeliverReplayEscalated` with its matching
+The closed P9 sources are `DeliverReplayEscalated` with its matching
 `deliver_replay_attention_facts` row, `AssignWorkTargetBindingEscalated` with
 its matching `assign_work_binding_attention_facts` row, and
-`ReconciliationEscalated`. Each source binds an exact `executionId`; the
-Execution and `agent_execution_state.episode_json` are joined by that ID, then
-Project, owning Workspace, Work and revision are validated. A valid non-Work
-Episode does not participate. No identity is reconstructed from Session text,
-`currentWorkId`, Message, projection target, or Parent Workspace.
+`ReconciliationEscalated`. P9 `07` owns exact failure-code unions, source
+identity, immutability and atomic fact/event commit. Ephemeral
+`RecoveryBlocked` and `ReconciliationSourceError` are not independent sources
+while the Execution remains Active. The settlement source applies even with
+no separate Attention row when its exact `OutcomeUnknown` refs are durable.
 
-The gate is a read-only derivation from canonical Work, Execution settlement,
-P9 source rows/events and the durable EGP binding. P2 `02` defines its typed
-port/errors; P7 `03` excludes held revisions from both `current` and
-`runnable`. Work-bound `AdmitExecution` rechecks the same predicate and exact
-scope under the existing `BEGIN IMMEDIATE` transaction. A valid source returns
-`WorkReadmissionHeld`; a canonical Work target identity/scope/revision mismatch
-returns `ReadmissionTargetMismatch`; missing, duplicate, malformed,
-unsupported-version or scope-conflicting source data returns typed
-`ReadmissionGateIntegrityFailure` and commits no Execution. Classification
-and admission share a snapshot/commit boundary so a concurrent source commit
-or Steer cannot admit a held revision.
+P2 `02` owns `WorkReadmissionGateStore`; P7 `03` incorporates its exact-revision
+result into the sole classifier. Work-bound admission rechecks the same gate
+inside the existing `BEGIN IMMEDIATE` transaction. A valid hold returns typed
+`WorkReadmissionHeld`; a missing/scope/revision-mismatched canonical target
+returns `ReadmissionTargetMismatch`; malformed, absent, duplicate,
+unsupported-version or conflicting source evidence returns the closed
+`ReadmissionGateIntegrityFailure` union. Every rejection commits no Execution.
+The query validates canonical Project/Workspace/Work/revision, unique source
+Execution and episode state, exact source/fact/event witnesses, and the exact
+`ExecutionEpisodeBinding`. It never infers identity from Session text,
+`currentWorkId`, Message, Attention target, or Parent Workspace. A valid
+non-Work Episode is outside this rule.
 
-The hold does not change Work lifecycle, WorkWait, Dependency, approval,
-Workspace current pointer, or Deliverable semantics. Same-revision polling,
-restart, P10 queue ingestion/ACK, or projection rebuild cannot release it.
-Only an authorized `SteerWork` that atomically advances the canonical Work
-revision makes the old source stale; the source remains audit evidence and the
-new revision follows the ordinary P7/P2 rules. Other Execution Episode
-variants are unaffected. See P2 `02`/`05`, P7 `03`, P9 `07`, P10 `02`, and
-System Design §3.4/§7.6/§12.3.
-
-### 8.18A.2 Required qualification (no implementation authorization)
-
-All scenarios use fresh isolated databases and real SQLite. Process cases use
-two independent daemon processes and actual kill/restart boundaries, with no
-test retry. The qualification package must demonstrate:
-
-1. A P9 Deliver replay fact continues to hold the Work after P10 writes its
-   marker and ACKs/removes the queue row; no second Execution, LogicalAction,
-   Provider request or Deliver receipt occurs.
-2. Each of the eight Deliver replay codes, fourteen AssignWork binding codes,
-   `ReconciliationEscalated`, and `OutcomeUnknown(ReconciliationRequired)`
-   holds only its exact Work/revision. Excluded ephemeral/ordinary outcomes do
-   not create an independent hold while the Active Main gate is effective.
-3. RuntimeSafetyStop without any P9 fact holds the same Work revision and
-   admits no new Execution.
-4. After source commit, kill both daemons and restart against the same SQLite
-   file; the same revision remains held without another Provider/Deliver
-   effect.
-5. Kill before and after each P9 fact/event and RuntimeSafetyStop settlement
-   boundary; recovery converges the hold from committed durable sources only.
-6. Inject missing/duplicate/malformed/unknown-version episode state, absent
-   source Execution and Project/Workspace/Work/revision mismatches. Assert
-   typed bounded integrity failure and zero new Execution/Provider/Action/
-   Command; include Parent/Child, sibling and cross-Project negatives.
-7. Advance a held revision with authorized Steer; old P10 Attention becomes
-   inactive, immutable audit sources remain, and the new revision follows
-   ordinary admission. Kill/restart immediately before and after the commit.
-8. Delay WorkSteered ingestion, rebuild/reset the projection, and restart;
-   canonical revision snapshots never expose or rebuild an old active row.
-9. Prove a child hold affects only that exact child revision, and symmetrically
-   that Parent, sibling and other-revision Work remain independently eligible.
-10. Prove no Work cancellation/status/current-pointer mutation, global
-    Deliverable deduplication, duplicate suppression or changed Dependency
-    semantics.
-11. Retain P2 scheduler/admission, P7 runnability/wake, P9 recovery fact/replay
-    and P10 projection/rebuild/restart regressions, including original P37 L6
-    assertions.
-
-P2/P7 own admission/classification qualification, P9 owns source/settlement
-crash qualification, and P10 owns projection freshness/rebuild qualification.
-Passing this matrix is a future implementation requirement, not evidence that
-implementation is authorized or complete.
+The gate is derived from canonical settlement/P9 source records, adds no gate
+table or migration, changes no Work lifecycle/WorkWait/Dependency/approval,
+and does not read P10 projections. Restart, queue ACK or same-revision
+polling cannot release it. Only authorized `SteerWork` that atomically
+advances canonical Work revision makes the old source stale; immutable source
+facts remain audit evidence. P10 removes old-revision active Attention using a
+same-snapshot canonical Work revision check, independent of consumer lag or
+rebuild state. Accepted proposal SHA-256
+`0CEB2DAA2E6128F86CBD1CAA185B9847EAAB240360011F94425E0856F39AA106`;
+acceptance and prior landing review evidence are in
+`planning/results/RAI-DG-01-governance-acceptance-and-landing.md`.
 
 ## 8.19 ModelContext Manifest
 
@@ -4760,6 +5161,10 @@ provider_turns
 provider_attempts
 model_context_manifests
 tool_invocations
+deliver_replay_attention_facts
+deliver_replay_attention_rows
+tool_observation_replay_attention_facts
+tool_observation_replay_attention_rows
 ```
 
 Migration `0033_assign_work_target_bindings` (`PRAGMA user_version = 33`) is
@@ -4875,6 +5280,333 @@ The fact id is `att_` plus lowercase hex of the versioned SHA-256 tuple
 the first detected failure code is retained. Event and row are atomic. No
 resolution command, dismissal state, automatic deletion, legacy backfill, or
 schema downgrade is added. Older binaries refuse `user_version > 32`.
+
+The accepted/planned migration prefix is append-only: `0034` is the accepted
+P10 Attention materialization, `0035` is the accepted F21 resource activation
+Attention source, `0036` is the accepted AH7/P36 schema, `0037` is the
+accepted/planned AH10 Deliver P9 fact plus P10 projection marker, `0038` is
+the EA-DG-01 Executable approval handoff schema, and `0039` is the accepted
+AH7-DG-02 P39 reconciliation attempt/fact schema. The accepted P36 owner
+contract is integrated in this governance baseline; migration `0036`
+implementation/registration is not integrated in this tree. Migration `0037` is conditional on
+integrating migration `0036` and MUST NOT be implemented, installed, or
+released independently.
+Migration `0038` depends on integrated `0036` and `0037` and likewise may not
+be released as a standalone v35 upgrade. Migration `0039` depends on P36 and
+P38 source contracts and, by the global `user_version` prefix, must follow
+P37; its preflight runs before any pending P37/P38/P39 DDL on a v36–v38 DB.
+The target path after qualification is v33→…→39, v35→…→39, v36→…→39,
+v37→…→39, or v38→39, but none may skip a pending predecessor. The integrated
+owner contracts do not imply migration implementation/registration. The P39
+amendment above changes no body, checksum, numbering, or contract of migrations
+0032–0038; the later P37 v1.43 amendment below changes only the proposed
+0037 contract. No installed migration body or checksum is changed.
+
+Migration `0037_ah10_deliver_replay_attention_rows` (`PRAGMA user_version = 37`)
+is additive and forward-only. It creates no fact rows for historical
+Deliver/Message events; P9 creates a source fact only when the accepted exact-
+proof boundary detects incomplete/conflicting effect evidence. It adds the
+P10 source-specific marker relation after the P9 fact relation:
+
+```sql
+CREATE TABLE deliver_replay_attention_facts (
+  attention_fact_id       TEXT PRIMARY KEY,
+  event_id                TEXT NOT NULL UNIQUE,
+  project_id              TEXT NOT NULL,
+  execution_id            TEXT NOT NULL,
+  target_workspace_id     TEXT NOT NULL,
+  logical_action_id       TEXT NOT NULL,
+  message_id              TEXT NOT NULL,
+  failure_code            TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyMessageMissingEvent','LegacyEventMissingMessage',
+    'LegacyMessageBindingMismatch','LegacyInboxConflict',
+    'PriorReceiptDecodeMismatch','PriorReceiptResultMismatch',
+    'RejectedReceiptEffectConflict','PriorReceiptEffectConflict'
+  )),
+  first_detected_at       TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id, message_id),
+  UNIQUE (attention_fact_id, project_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id)
+);
+
+CREATE INDEX deliver_replay_attention_target
+  ON deliver_replay_attention_facts(project_id, target_workspace_id, first_detected_at);
+CREATE INDEX deliver_replay_attention_project_fact
+  ON deliver_replay_attention_facts(project_id, attention_fact_id);
+
+CREATE TABLE deliver_replay_attention_pending (
+  queue_sequence     INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id         TEXT NOT NULL,
+  attention_fact_id  TEXT NOT NULL UNIQUE,
+  enqueued_at        TEXT NOT NULL,
+  FOREIGN KEY (attention_fact_id, project_id)
+    REFERENCES deliver_replay_attention_facts(attention_fact_id, project_id)
+);
+CREATE INDEX deliver_replay_attention_pending_project_order
+  ON deliver_replay_attention_pending(project_id, queue_sequence);
+
+CREATE TABLE deliver_replay_attention_rows (
+  attention_fact_id TEXT PRIMARY KEY
+    REFERENCES deliver_replay_attention_facts(attention_fact_id)
+);
+
+CREATE TRIGGER deliver_replay_pending_delete_requires_marker
+BEFORE DELETE ON deliver_replay_attention_pending
+FOR EACH ROW
+WHEN NOT EXISTS (
+  SELECT 1 FROM deliver_replay_attention_rows
+   WHERE attention_fact_id = OLD.attention_fact_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'DeliverReplay pending item requires a P10 marker');
+END;
+
+CREATE TABLE p10_attention_project_poll_state (
+  project_id                    TEXT PRIMARY KEY,
+  last_attempt_sequence          INTEGER NOT NULL DEFAULT 0 CHECK (last_attempt_sequence >= 0),
+  consecutive_failed_attempts   INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failed_attempts >= 0),
+  next_eligible_at               TEXT NOT NULL,
+  last_failure_code              TEXT CHECK (last_failure_code IS NULL OR last_failure_code IN (
+    'PollLeaseExpired','JournalIdentityUnprovable','MissingP9Fact',
+    'FactTupleMismatch','FactProjectMismatch','EventBindingMismatch',
+    'QueueFactMismatch','MarkerBindingMismatch','QueueDeleteWithoutMarker'
+  )),
+  last_failure_at                 TEXT
+);
+CREATE INDEX p10_attention_project_due
+  ON p10_attention_project_poll_state(next_eligible_at,last_attempt_sequence,project_id);
+CREATE TABLE p10_attention_dispatch_state (
+  singleton                INTEGER PRIMARY KEY CHECK (singleton = 1),
+  next_attempt_sequence    INTEGER NOT NULL CHECK (next_attempt_sequence >= 1),
+  active_project_id        TEXT,
+  lease_owner              TEXT,
+  lease_generation         INTEGER NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
+  claim_started_at         TEXT,
+  lease_expires_at         TEXT,
+  CHECK ((active_project_id IS NULL) = (lease_owner IS NULL)),
+  CHECK ((lease_owner IS NULL) = (claim_started_at IS NULL)),
+  CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL))
+);
+INSERT INTO p10_attention_dispatch_state(singleton,next_attempt_sequence)
+VALUES (1,1);
+```
+
+`event_id` is a unique P9 audit identity and intentionally has no permanent
+FK to prunable `domain_events`. The `deliver_replay_attention_pending` row
+has no event FK or expiration/drop path; its exact fact/project FK ensures
+queue provenance. P9 inserts the fact/event/queue in one transaction; P10
+creates/verifies the marker before deleting/ACKing the queue row. P10 full
+rebuild seeds markers from all durable P9 facts and ACKs seeded pending rows
+inside its same reset/snapshot/offset-rewind transaction.
+
+There is deliberately no Message/Event/Command FK from `message_id` or
+`logical_action_id`: the fact must represent proof failures where those
+canonical rows are missing. Its ID is `att_` plus lowercase SHA-256 hex of
+UTF-8 `JSON.stringify({version:1,executionId,logicalActionId,messageId})`.
+No canonical message repair, receipt synthesis, clear/dismiss state, or
+legacy backfill is performed by the migration. The marker primary key is the
+projection dedup identity and its FK requires a P9-owned fact. The marker does
+not duplicate target, failure code, timestamp, or summary; P10 joins the fact
+for display and can seed the marker after journal pruning. Ordinary
+`MessageSent(v1)` and `SendMessage` remain unchanged. Binaries whose schema
+ceiling is v33 refuse `user_version > 33`; P37 must follow the ordered P36
+upgrade and no P37-only v35 release is valid.
+
+### P37 v1.43 raw-event classification, poll and dispatcher contract
+
+P1 `05` supplies the raw journal-candidate read. Within one poll
+`BEGIN IMMEDIATE`, P1 reads the current Attention offset, reads the raw event
+batch, and for each usable raw EventId queries the P9 fact before decoding
+event type, version or payload. A matching fact requires strict
+`DeliverReplayEscalated(v1)` decoding and exact witness comparison. Exact
+Deliver type without a fact, or a fact with malformed/mismatched event, is a
+typed source-integrity failure: roll back poll projections, marker, queue ACK,
+dead letter and offset. It is never ordinary poison. Ordinary non-Deliver
+decode poison and pure event-local projection defects retain P1's existing
+dead-letter-and-advance behavior. P1 prune, P9 fact/outbox writes, P10 poll
+and rebuild/reset serialize on the same SQLite writer transaction boundary.
+
+A valid singleton global Attention lease returns `NoClaim` without mutating
+owner, generation, expiry, Project or schedule state. Claims use
+`BEGIN IMMEDIATE` plus compare-and-swap against the observed generation and
+empty/expired lease predicate. Due eligible Projects are selected by
+`(last_attempt_sequence, project_id)`; claim increments that sequence exactly
+once. Success commits projection, offset and claim release together. Typed
+integrity failure rolls back poll data then persists failure/backoff and
+rotation. An expired claim finalizes the already-sequenced attempt once as
+`PollLeaseExpired`; it does not receive immediate retry priority. Backoff is
+the P12-pinned saturating rule
+`min(baseBackoffMs * 2^(min(n-1, backoffExponentCap)), maxBackoffMs)`.
+Repeated-crash Projects remain pending and are not promised completion; the
+fairness guarantee is bounded selection among continuously due healthy
+Projects, not wall-clock progress during unbounded writer lock or repeated
+crash conditions. P12 `05` owns profile/evidence and measured lock-capacity
+gates.
+
+Migration `0038_executable_approval_handoff` (`PRAGMA user_version = 38`)
+is forward-only after 0037. It rebuilds the 0032 `action_approvals` table
+without editing migration 0032, retaining every existing column and row while
+adding these nullable route-specific fields:
+
+```text
+logical_step_no, repair_attempt, action_index, logical_action_id,
+call_ref, tool_invocation_id, cancelled_at, cancelled_by,
+cancellation_reason
+```
+
+For new `Executable` rows, project/workspace/execution, Step identity,
+LogicalActionId, callRef and ToolInvocationId are required and
+`binding_proven=1`. Historical Executable rows remain `binding_proven=0` and
+in their 0032 terminal state (`Expired` if unconsumed, `Consumed` if already
+consumed), with `source_state` and `consumed_by` preserved. The migration does
+not infer the missing invocation/Step identity, make a legacy row reusable, or
+reinterpret historical `Denied(ApprovalRequired)` ToolInvocation rows.
+Control rows keep their Control-owned shape and status semantics.
+
+The rebuilt `state` checks add `Cancelled`. `Pending` carries no decision,
+consumption or cancellation facts. `Approved`, `Rejected` and `Consumed`
+require both human decision time and actor. `Expired` and `Cancelled` permit
+both decision fields when preserving an earlier Approve, or neither when
+closing a Pending row; half-populated provenance is invalid. `Cancelled`
+requires its cancellation time, actor and reason. Only `Consumed` carries
+both `consumed_by` and `consumed_at`; those two fields are either both present
+or both absent. An Executable row with `binding_proven=0` is allowed only in
+its preserved legacy terminal `Expired`/`Consumed` state; a proven Executable
+row requires the full binding tuple above.
+
+Migration 0038 drops the old digest-only unique index and installs
+route-specific uniqueness:
+
+```sql
+DROP INDEX action_approvals_exact_action;
+CREATE UNIQUE INDEX action_approvals_control_exact_action
+  ON action_approvals(execution_id, action_digest, control_basis_digest)
+  WHERE route_kind = 'Control' AND execution_id IS NOT NULL;
+CREATE UNIQUE INDEX action_approvals_executable_logical_action
+  ON action_approvals(execution_id, logical_step_no, repair_attempt,
+                      action_index, logical_action_id)
+  WHERE route_kind = 'Executable' AND binding_proven = 1;
+CREATE UNIQUE INDEX action_approvals_id_project
+  ON action_approvals(approval_id, project_id);
+```
+
+This keeps the existing Control exact-action uniqueness and permits different
+LogicalActions in one Execution to request identical action/target/ControlBasis
+semantics. The Executable key deduplicates one logical action; after a unique
+conflict, Application compares route and every stable binding field but
+excludes candidate `expiresAt`, mutable revision, state and decision. The
+loser reads the committed winner's ApprovalId, first-commit expiry and current
+revision. A different candidate `now` therefore never causes a binding
+conflict or TTL refresh. Any other binding mismatch fails closed.
+
+`action_approvals_id_project` is the unchanged composite UNIQUE key introduced
+by migration 0033; 0038 must recreate it on the rebuilt table. The
+`assign_work_target_bindings(action_approval_id, project_id)` foreign key
+references this exact pair. Rebuilding `action_approvals` without this key
+would invalidate the existing FK contract; 0038 changes neither that
+AssignWork binding nor its Control approval semantics.
+
+The P38 amendment's migration-order statement remains history for that
+amendment. The current accepted/planned suffix is `0034 → 0035 → 0036 → 0037
+→ 0038 → 0039`. P39 does not permit skipping a pending predecessor; its
+preflight runs before pending P37/P38/P39 DDL. No earlier migration body,
+checksum, Control row or Deliver projection is modified. The existing v37
+binary's refusal at `user_version >= 38` remains unchanged; P39's schema
+ceiling is a separate implementation gate and is not established by this
+design-only amendment.
+
+Migration `0039_ah7_reconciliation_attempts` (`PRAGMA user_version = 39`) is
+the accepted forward-only P39 contract in P4 `06` and P1 `04`. Before any
+pending 0037/0038/0039 transaction, maintenance-mode startup validates
+`--migration-block-report-db <absolute-local-path>` and its dedicated
+sidecar schema/WAL/FULL settings before opening the primary DB. On a v36–v38
+primary, a read-only `BEGIN IMMEDIATE` snapshot detects active P36
+`NotAdmitted` rows whose source binding is unprovable. If found, it commits and
+reads back the stable immutable report under primary→sidecar lock order, rolls
+back the primary snapshot, exits typed `P39_LEGACY_DB_ISOLATED` (78), and does
+not start service runtime. The primary committed rows/schema/approval/P3
+state/user_version remain unchanged. That DB is permanently isolated until
+future governance; no binding is fabricated, approval refunded/transferred,
+row deleted, or invocation retried. A clear snapshot proceeds through
+0037→0038→0039 only while all other primary writers remain stopped.
+
+P39 rebuilds P36 `tool_invocations` with monotone admission and binding state,
+settlement provenance plus `selected_attempt_no/selected_fact_id`, and a
+deferred composite FK to the same invocation/attempt immutable fact. It adds
+`tool_invocation_recovery_bindings`, `tool_invocation_effect_attempts` (only
+attempt 0/1, explicit legacy admission provenance and time precision) and
+append-only `tool_reconciliation_facts`. New terminal reconciliation
+Success/ExpectedFailure/ReconciledNoEffect requires exactly one selected fact;
+ordinary terminal and preserved P36 terminal rows have no selected fact.
+Historical MayHaveStarted gets unknown admission time (never `intent_at`), and
+unprofiled history keeps null profile/effectKey/binding with physical
+`LegacyProfileUnavailable` provenance while its canonical reason remains
+`ProfileUnavailable`. P39 has no down migration; FK check and all DDL/backfill
+share the forward migration transaction.
+
+The operator sidecar uses a unique stable report key and content hash,
+immutable report rows, readback verification and same-key conflict refusal.
+Sidecar and primary DB are distinct SQLite files; lock order is primary then
+sidecar, and uncertain sidecar commit is resolved by key/hash before primary
+rollback or continuation. WAL/SHM are retained together; the named operator
+owns backup/retention. Windows deployment is blocked until the actual Node VFS
+and each supported local filesystem pass process-kill, I/O-fault, VM
+hard-power-off, reopen and integrity qualification. `synchronous=FULL` is
+conditional on VFS, OS and hardware flush behavior; network and unknown
+filesystems fail closed. Exact table/column/check/FK/index/trigger contract is
+owned by P4 `06`; CLI/preflight and migration boundary by P1 `04`/`06` and P14
+`02`/`05`.
+
+Migration `0040_tool_observation_evidence` (`PRAGMA user_version = 40`) is the
+next forward-only suffix after P36→P37→P38→P39. It is cumulative-only and may
+enter only at version 39; it cannot be registered in phase-local
+`P4_MIGRATIONS`, released as a standalone v35 upgrade, or skip a predecessor.
+P1 `04` owns this global prefix/version/startup boundary; P4 `06` owns the
+`tool_invocations` evidence columns/checks/triggers; P9 `07` owns the immutable
+replay-evidence fact/event; P10 `02` owns its source-specific marker relation.
+The accepted P39 sidecar/preflight, RecoveryBinding, selected-fact and attempt
+contracts are unchanged.
+
+P40 adds nullable `observation_format_version TEXT`,
+`observation_json BLOB`, and `observation_sha256 TEXT`; five DG01 evidence tags
+and the accepted P39 `ReconciledNoEffect` branch use the same v1 UTF-8
+canonical envelope with 16,384-byte cap and hash
+`SHA-256(UTF8(version + LF + body))`. RNO's P4 Observation/result Artifact is
+strictly separate from P39's `NotOccurred` proof `evidence_ref` and NULL fact
+`result_ref`; P39 `selected_fact_id` remains bound to the exact invocation and
+attempt. DG03 `Denied/NotAdmitted` is evidence-null and keeps its closed
+reason-code projection. P40 performs no backfill, selected-fact update or P39
+sidecar mutation.
+
+P39 migration may be installed only as part of the cumulative maintenance
+chain; **a database at `user_version=39` must not start Agent/P4 Runtime or be
+released until P40 commits version 40**. The runtime binary must reject schema
+40 unless its v1 Observation decoder includes the RNO branch. The migration
+runner must serialize cross-process startup; this prerequisite, P36–P40 prefix
+integration and P39 sidecar/Windows durability remain unqualified. P40 has no
+down migration; DDL and `user_version=40` commit atomically.
+
+Migration `0041_submitted_decision_binding_attention`
+(`PRAGMA user_version=41`) is the forward-only P41 suffix after the complete
+0036→0037→0038→0039→0040 prefix. It is cumulative-only: integration and
+qualification of every predecessor are prerequisites; 0041 cannot be run from
+v35, registered/skipped/released independently, or used to rewrite any prior
+migration body, number, or checksum. It creates P9's immutable
+`submitted_decision_binding_attention_facts`, unique on
+`(execution_id, logical_step_no, repair_attempt, logical_action_id)`, with an
+audit-only `event_id` that has no FK to `domain_events`; the row references the
+exact Execution/Step/Action and records the first typed failure. It creates
+P10's source-specific `submitted_decision_binding_attention_rows`, keyed by
+`attention_fact_id` and FK-bound to the P9 fact and owning Workspace, with no
+FK to the source event. It backfills no historical canonical/receipt rows and
+does not infer from Session text. The P9 startup audit classifies exact
+settled-Failed/AIP/Pending-select-current-work orphans as the specific mismatch
+when still provable, otherwise
+`SettledExecutionWithPendingDecisionAction`; it adds Attention only and never
+resurrects/repairs the orphan. DID v1.42 describes the target contract; the
+serialized cumulative runner, migration implementation and qualification
+remain separate gates.
 
 ## 9.4 Relational vs JSON Rule
 
@@ -5098,6 +5830,20 @@ PRIMARY KEY(command_id, attempt_no)
 - `TerminalRejected` 是 durable command truth，但不产生 Domain Event；
 - semantic stale precondition 改 payload 后必须新 CommandId；
 - `FencingRejected` / `ExecutionStopping` 对 Execution-originated Command terminal。
+
+EA-DG-01 `ResolveExecutableApproval` is an External human command through this
+same Gateway/receipt boundary. P12 resolves the authenticated decision
+authority before receipt lookup; missing/foreign approvals return the same
+safe not-found outcome without target-existence disclosure. For an authorized
+target, one `BEGIN IMMEDIATE` transaction compares route/project/workspace/
+Execution/state/revision, CASes Approve/Reject or commits Expired when the
+deadline wins, consumes the exact P6 Inbox key, appends
+`ExecutableApprovalResolved(v1)` and commits the result receipt. A stale
+authorized revision is `RevisionConflict`. Decision/replay never writes a P4
+ToolInvocation effect or consumes a Control ActionApproval. StopExecution
+atomically closes unclaimed Executable Pending/Approved rows as Cancelled in
+its existing P2-authorized command transaction; all Control route semantics
+remain unchanged.
 
 `domain_events` 同时承担 durable outbox；多 Consumer 通过 `consumer_offsets` 分别推进，不额外维护单一 outbox delivery flag。
 
@@ -5858,7 +6604,7 @@ Failed(ExecutionFailure)
 OutcomeUnknown(ReconciliationRequired)
 ```
 
-`CompletedResult` 至少区分 `Yielded / CompletionClaimed / CoordinationCompleted / QueryCompleted / VerificationConcluded`。Crash recovery 不能从一个裸 `Completed` 猜测下一步。`VerificationConcluded { verificationId, verdict }` 仅由 exact-bound Verifier 在结论命令提交、wake 幂等交付后产生；它不触发 CompletionClaim consumer，且不蕴含 Acceptance 或 Work Completed。
+`CompletedResult` new writes 区分 `Yielded / CompletionClaimed / VerificationConcluded / Blocked`；历史 `CoordinationCompleted` / `QueryCompleted` 仅供 migration/decoder audit。`Blocked` 绑定精确 Work Episode 且不得改 Work 生命周期；完整拒绝证据与原子持久化由 P2 `01` / P3 `03` 拥有。Crash recovery 不能从裸 `Completed` 猜下一步。`VerificationConcluded { verificationId, verdict }` 仅由 exact-bound Verifier 在结论命令提交、wake 幂等交付后产生；它不触发 CompletionClaim consumer，且不蕴含 Acceptance 或 Work Completed。
 
 `CompletionClaimed` 的 durable settlement + `ExecutionSettled` event 足以在 daemon crash 后通过 deterministic `StartVerification` Command replay 恢复后续动作。
 
@@ -6069,7 +6815,9 @@ normalizedRegion
 | Dependency (contract revision) | ReviseDependencyContract | DependencyContractRevised | DependencyRepository | application | v1.10 G1; revision++, never reinterprets prior satisfaction |
 | Deadlock attention | — (derived fact) | DeadlockAttentionRequested | — (projection-consumed) | coordination consumer | v1.10 G4; deterministic detection; no automatic lifecycle mutation |
 | Deliverable | ProduceDeliverable | DeliverableProduced | DeliverableRepository | application | source Work revision fixed |
-| Message | SendMessage | MessageSent | MessageStore | application / communication | durable communication ≠ canonical mutation envelope |
+| Message | SendMessage | MessageSent(v1) | MessageStore | application / communication | Message is durable communication, not a canonical Work/Deliverable mutation; External denied |
+| Deliver handover | DeliverMessage/1 | MessageSent(v1) | MessageStore + InboxProjection | Application/communication | existing Deliverable only; Gateway envelope supplies P1 generation fence/receipt; MessageSent is sole ChildDelivered wake source |
+| Deliver replay Attention | — (projection) | DeliverReplayEscalated(v1) | P9 `deliver_replay_attention_facts` + P10 `deliver_replay_attention_rows` | P10 projection consumer | one marker per P9 fact; P9 fact remains source; no canonical mutation |
 | Verification | Start / RecordEvidence / Conclude | VerificationStarted / VerificationConcluded | VerificationRepository | verification + application | verdict immutable; version-bound |
 | Acceptance | AcceptWorkOutcome | WorkOutcomeAccepted | AcceptanceRepository | application | target revision + Verification fixed |
 | Permission | Grant / Revoke | PermissionChanged | PermissionGrantRepository | application | cannot exceed policy/ownership ceiling |
