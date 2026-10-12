@@ -3,7 +3,7 @@
 Date: 2026-10-12 (Asia/Shanghai)
 Baseline: `ed5fba00ee60e169cadf0df12395179862abd1e8`
 Worktree: `C:\Users\ThinkPad\.codex\worktrees\p37-delivermessage-closure`
-Status: **First run 0/11; first fixture-repair rerun 7/11; P37 L6 remains unqualified**
+Status: **First run 0/11; rerun 1 7/11; rerun 2 9/11; P37 L6 remains unqualified**
 
 ## Run
 
@@ -174,3 +174,42 @@ while retaining the no-marker, queue-still-pending, restart, unique public-row
 and commit-after assertions. Matrix cases and timeout values remain unchanged.
 This correction has only received static verification; no post-correction
 Vitest or daemon qualification has run yet.
+
+## Fixture-repair rerun 2
+
+Date: 2026-10-12 (Asia/Shanghai)
+Baseline/patch: `ad30b1c897dd346d7270d558a833881b5cf16380`
+Run command: the same original single-file command, serial and with
+`--retry=0`.
+Start: 10:45:59 local. Duration: 745.24 s. Result: **9/11 PASS; 2 fail**.
+Raw output is `planning/results/P37-L6-process-crash-matrix-rerun-2.raw.log`;
+per-case databases/WAL/SHM and fixture metadata are at
+`planning/results/P37-L6-process-crash-artifacts-rerun-2/`.
+
+| Case | Rerun 2 |
+|---|---|
+| Gen0 FencingRejected before | Failed waiting for the Gateway pre-commit probe; releasing the gen0 lease-renewal gate after gen1 takeover produced an uncaught `LeaseLost` in the old daemon. |
+| Gen0 FencingRejected after | PASS |
+| Committed receipt, Action/Observation pending | PASS |
+| Present but mismatched Inbox | PASS; P9 fact and P10 pre/post boundaries reached. |
+| Inbox absent after cleanup | PASS |
+| P9 transaction before commit | PASS |
+| P9 transaction after commit | Failed waiting for P10 because the P9 after-commit release was mistakenly placed after that wait in rerun 2. |
+| Legacy gen0 direct-write Observation | PASS; P9 fact/outbox and P10 pre/post boundaries reached. |
+| P10 transaction before commit | PASS with boundary-relative offset rollback baseline. |
+| P10 transaction after commit | PASS |
+| Existing P9 fact after Inbox evidence drift | PASS |
+
+The two remaining failures are test gate placement only. The gen0 renewal gate
+must stay parked through the old Gateway before/after receipt observation and
+the old-process kill; releasing it immediately after gen1 takes over lets the
+renewal fiber throw `LeaseLost` before the intended pre-commit oracle settles.
+For the P9-after matrix branch, the P9 fact identity must be asserted, then its
+after-commit gate released **before** awaiting the P10 poll row hook so the
+sequential scheduler loop can advance into `pollConsumers`.
+
+Those two exact gate-order fixes have now been applied in the worktree without
+changing the matrix or timeout values. The P9-after branch additionally checks
+fact/event/outbox durability before releasing the gate. This latest source has
+only passed static checks; the two local cases and the full 11-case matrix have
+not been rerun yet. No P37 closure claim is made.

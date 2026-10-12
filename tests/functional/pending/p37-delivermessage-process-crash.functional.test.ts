@@ -145,7 +145,6 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       expect(newAction?.logicalActionId).toBe(oldAction.logicalActionId);
 
       releaseP37Gate(fixture, "old", "boundary-AH7AfterActionIntentCommit");
-      releaseP37Gate(fixture, "old", "boundary-AH10BeforeLeaseRenewal");
       let oldPrecommitCommandId: string | undefined;
       if (crashSide === "before") {
         const oldPrecommit = await awaitP37Probe(
@@ -652,6 +651,15 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         expect(atBoundary.pendingFacts).toHaveLength(0);
       } else {
         expect(attentionFactId).toBeDefined();
+        expect(atBoundary.facts).toHaveLength(1);
+        expect(atBoundary.replayEvents).toHaveLength(1);
+        expect(atBoundary.pendingFacts).toHaveLength(1);
+        expect(atBoundary.markers).toHaveLength(0);
+        releaseP37Gate(
+          prepared.fixture,
+          "new",
+          "boundary-AfterDeliverReplayAttentionCommit",
+        );
         await awaitP37Probe(
           prepared.probes,
           (probe) =>
@@ -665,11 +673,6 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         expect(atBoundary.replayEvents).toHaveLength(1);
         expect(atBoundary.pendingFacts).toHaveLength(1);
         expect(atBoundary.markers).toHaveLength(0);
-        releaseP37Gate(
-          prepared.fixture,
-          "new",
-          "boundary-AfterDeliverReplayAttentionCommit",
-        );
       }
       await recovery.crash();
       if (p9Probe?.executionId !== undefined) {
