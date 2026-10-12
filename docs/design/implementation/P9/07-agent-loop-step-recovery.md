@@ -622,7 +622,7 @@ migration backfill.
 
 ```sql
 CREATE TABLE submitted_decision_binding_attention_facts (
-  attention_fact_id TEXT PRIMARY KEY,
+  attention_fact_id TEXT NOT NULL PRIMARY KEY,
   event_id TEXT NOT NULL UNIQUE,
   project_id TEXT NOT NULL,
   execution_id TEXT NOT NULL,

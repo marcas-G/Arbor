@@ -549,7 +549,7 @@ forward-only and commits its DDL plus `user_version=40` atomically.
 ### Accepted P41 migration 0041 physical-storage gate
 
 The accepted P41 storage package adds migration descriptor
-`{ id: 41, name: "p41_submitted_decision_binding_attention" }`. Its fact
+`{ id: 41, name: "p41_submitted_decision_binding_attention" }`. The P9 fact key must be declared `TEXT NOT NULL PRIMARY KEY`; ordinary SQLite rowid tables permit NULL in non-INTEGER text primary-key columns unless explicitly `NOT NULL`. Its fact
 relation is owned by P9 `07`; its rebuildable Attention marker is owned by P10
 `02`/`04`. The exact DDL, composite keys, closed failure-code set and
 immutability constraints are specified in those owner contracts. Migration

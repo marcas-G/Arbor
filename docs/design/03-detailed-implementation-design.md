@@ -1,10 +1,25 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.44\
+**Version:** 1.45\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.43\
+**Supersedes:** v1.44\
 **Date:** 2026-10-12\
 **Depends on:** `Arbor System Design Specification v1.17`
+
+**Governance changes (v1.44 → v1.45): P41/0041 fact-key nullability amendment**
+
+- P41's accepted physical amendment declares the immutable P9 fact identifier
+  `attention_fact_id` as `TEXT NOT NULL PRIMARY KEY`. This makes SQLite enforce
+  the already-defined fact identity on ordinary rowid tables; P41 logical
+  behavior, keys, event/recovery semantics, and P10 projection remain
+  unchanged. Migration 0041 remains gated on the qualified 0036→0040 prefix,
+  creates empty tables without backfill, and is not registered or activated.
+  Accepted amendment proposal SHA-256:
+  `BE7E9CC9F3528ADBA90EF67615FE1C24E92B5FE751782151882ACAA4531E2BC9`;
+  acceptance record:
+  `planning/results/P41-0041-nullable-primary-key-amendment-acceptance-and-landing.md`;
+  independent post-landing review:
+  `planning/results/P41-0041-nullable-primary-key-amendment-postreview.md`.
 
 **Governance changes (v1.43 → v1.44): combined accepted owner landing**
 
