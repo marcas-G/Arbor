@@ -746,6 +746,8 @@ const cRecordToolIntent = (executionFence: ReturnType<typeof cToolFence>) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const tools = yield* ToolInvocationStore;
+    const clock = yield* Clock;
+    const now = yield* clock.now();
     yield* tx.transact(
       tools.recordIntent(
         {
@@ -758,10 +760,10 @@ const cRecordToolIntent = (executionFence: ReturnType<typeof cToolFence>) =>
           argumentsJson: "{}",
           resolvedRegions: [],
           approvalId: null,
-          intentAt: "t",
+          intentAt: now,
         },
         executionFence,
-        "t",
+        now,
       ),
     );
   });
