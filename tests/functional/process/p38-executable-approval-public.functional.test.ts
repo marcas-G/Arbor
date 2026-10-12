@@ -52,6 +52,7 @@ interface ApprovalSnapshot {
     | undefined;
   readonly effectCount: number;
   readonly matchingInvocationCount: number;
+  readonly executionApprovalCount: number;
 }
 
 const fixtures: ProductionFixture[] = [];
@@ -79,8 +80,8 @@ const startExecutableApproval = async (
   const effectLog = `p38-effects-${marker}.log`;
   const command =
     process.platform === "win32"
-      ? `Add-Content -LiteralPath '${effectLog}' -Value '${marker}'; if (Test-Path -LiteralPath 'proof.txt') { mv -LiteralPath 'proof.txt' -Destination '${destination}' }`
-      : `printf '%s\\n' '${marker}' >> '${effectLog}'; if [ -f proof.txt ]; then mv proof.txt '${destination}'; fi`;
+      ? `Add-Content -LiteralPath '${effectLog}' -Value '${marker}'; if (Test-Path -LiteralPath 'proof.txt') { mv -LiteralPath 'proof.txt' -Destination '${destination}' }; Write-Output '${marker}'`
+      : `printf '%s\\n' '${marker}' >> '${effectLog}'; if [ -f proof.txt ]; then mv proof.txt '${destination}'; fi; printf '%s\\n' '${marker}'`;
 
   const fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
@@ -337,6 +338,20 @@ const readApprovalSnapshot = (
               }
             ).count,
           );
+    const executionApprovalCount =
+      approval === undefined
+        ? 0
+        : Number(
+            (
+              db
+                .prepare(
+                  `SELECT COUNT(*) AS count FROM action_approvals
+                    WHERE execution_id = ? AND route_kind = 'Executable'
+                      AND binding_proven = 1`,
+                )
+                .get(approval.execution_id) as { readonly count: number }
+            ).count,
+          );
     return {
       approval,
       step,
@@ -344,6 +359,7 @@ const readApprovalSnapshot = (
       invocation,
       effectCount,
       matchingInvocationCount,
+      executionApprovalCount,
     };
   } finally {
     db.close();
@@ -579,6 +595,7 @@ describe("pending P38 public Executable approval qualification", () => {
     expect(claimed.action?.state).toBe("Pending");
     expect(claimed.effectCount).toBe(0);
     expect(claimed.matchingInvocationCount).toBe(1);
+    expect(claimed.executionApprovalCount).toBe(1);
 
     const peer = await run.fixture.startAdditionalDaemon({
       entry: p4FenceChild,
@@ -608,6 +625,7 @@ describe("pending P38 public Executable approval qualification", () => {
       );
       expect(recovered.effectCount).toBe(1);
       expect(recovered.matchingInvocationCount).toBe(1);
+      expect(recovered.executionApprovalCount).toBe(1);
       expect(run.fixture.daemonErrors).toEqual([]);
       expect(peer.daemonErrors).toEqual([]);
     } finally {
@@ -680,6 +698,7 @@ describe("pending P38 public Executable approval qualification", () => {
     });
     expect(afterEffect.effectCount).toBe(1);
     expect(afterEffect.matchingInvocationCount).toBe(1);
+    expect(afterEffect.executionApprovalCount).toBe(1);
 
     const peer = await run.fixture.startAdditionalDaemon({
       entry: p4FenceChild,
@@ -703,7 +722,8 @@ describe("pending P38 public Executable approval qualification", () => {
           snapshot.approval?.state === "Consumed" &&
           snapshot.invocation?.settlement_kind === "OutcomeUnknown" &&
           snapshot.effectCount === 1 &&
-          snapshot.matchingInvocationCount === 1,
+          snapshot.matchingInvocationCount === 1 &&
+          snapshot.executionApprovalCount === 1,
         60_000,
       );
       expect(recovered.approval).toMatchObject({
