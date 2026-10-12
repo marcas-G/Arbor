@@ -78,6 +78,12 @@ v19-derived integration candidate, see
 [`full-delivery-integration-ledger.md`](../results/full-delivery-integration-ledger.md).
 The candidate includes the accepted AH7 owner-boundary landing and independent
 review; this is governance evidence, not closure of AH7's process qualification.
+The accepted test-classification commit `68c9605` is also integrated: its
+accepted-baseline G0/G1 and live-lease process cases passed 2/2, and its default
+Store suite passed 3/3. The copied-holder diagnostic run had one strict RED and
+was not a pass; the remaining diagnostics were not rerun after removing the
+duplicated Store case. This focused AH7 evidence does not close the broader AH7
+matrix.
 P38 now has integrated source and targeted evidence for two crash boundaries,
 Stop/TTL transaction order, and the cumulative 0037→0038 adapter fixture. P38
 remains OPEN because those focused cases do not qualify the full process/browser
