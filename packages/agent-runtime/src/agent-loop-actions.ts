@@ -21,6 +21,7 @@ import type {
   LeaseFencingRejected,
   RuntimeSafetyObservation,
   RecoveryBindingSourceIdentity,
+  RecoveryBindingPolicyRevisions,
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
@@ -80,6 +81,25 @@ export const recoveryBindingIdentityFor = (input: {
     actionIndex: action.actionIndex,
     callRef: action.callRef,
   };
+};
+
+export const recoveryBindingPolicyRevisionsFor = (
+  controlBasis: Pick<
+    ControlBasis,
+    "workspacePolicyRevision" | "projectPolicyRevision"
+  >,
+): RecoveryBindingPolicyRevisions | undefined => {
+  const workspacePolicyRevision = controlBasis.workspacePolicyRevision;
+  const projectPolicyRevision = controlBasis.projectPolicyRevision;
+  if (
+    !Number.isSafeInteger(workspacePolicyRevision) ||
+    workspacePolicyRevision < 0 ||
+    !Number.isSafeInteger(projectPolicyRevision) ||
+    projectPolicyRevision < 0
+  ) {
+    return undefined;
+  }
+  return { workspacePolicyRevision, projectPolicyRevision };
 };
 
 const isLeaseFencingRejected = (
@@ -755,6 +775,10 @@ export const executeAgentLoopActions = (
           actionIndex,
           callRef: invocation.callRef,
         });
+        const recoveryBindingPolicyRevisions =
+          recoveryBindingPolicyRevisionsFor(
+            preparedTurn.manifest.controlBasis,
+          );
         const executed = yield* Effect.match(
           executableInvocationHandler.handle({
             invocation,
@@ -774,6 +798,9 @@ export const executeAgentLoopActions = (
             ...(recoveryBindingIdentity === undefined
               ? {}
               : { recoveryBindingIdentity }),
+            ...(recoveryBindingPolicyRevisions === undefined
+              ? {}
+              : { recoveryBindingPolicyRevisions }),
             ...(loopStepFence === undefined
               ? {}
               : { executionFence: loopStepFence }),
