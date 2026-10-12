@@ -177,3 +177,9 @@ full default functional suite remains unrun on this candidate. F23 test source
 is present, but its Vitest invocation was interrupted and is not a pass. No
 full gate or model evaluation was run on the integration candidate, so the
 historical `PB@24598` and `Model eval missing` labels are unchanged.
+
+AH7's accepted classification adds focused accepted-baseline evidence (G0/G1
+and live-lease process 2/2; Store 3/3). The copied-holder diagnostic run had a
+strict RED, and its remaining Runtime diagnostics were not rerun after removing
+a duplicate Store case. This does not change the matrix's broad scenario
+coverage grades or close AH7.
