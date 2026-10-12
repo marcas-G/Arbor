@@ -129,6 +129,11 @@ beforeAll(async () => {
             rootWorkspaceId: "ws_1" as never,
             revision: 2 as never,
             updatedAt: "t",
+            resourceSource: {
+              _tag: "Profile",
+              resourceProfileRef: "repo-default",
+              version: "7",
+            },
           },
         ]),
     },
@@ -233,10 +238,32 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     });
     expect(response.status).toBe(200);
     const payload = (await response.json()) as {
-      body: { projects: ReadonlyArray<{ name: string; revision: number }> };
+      body: {
+        projects: ReadonlyArray<{
+          projectId: string;
+          name: string;
+          lifecycle: string;
+          rootWorkspaceId: string;
+          revision: number;
+          updatedAt: string;
+          resourceSource: Readonly<Record<string, unknown>>;
+        }>;
+      };
     };
     expect(payload.body.projects).toEqual([
-      expect.objectContaining({ name: "Project One", revision: 2 }),
+      {
+        projectId: "prj_1",
+        name: "Project One",
+        lifecycle: "Open",
+        rootWorkspaceId: "ws_1",
+        revision: 2,
+        updatedAt: "t",
+        resourceSource: {
+          _tag: "Profile",
+          resourceProfileRef: "repo-default",
+          version: "7",
+        },
+      },
     ]);
   });
 

@@ -56,6 +56,14 @@ export interface ProjectDirectoryEntry {
   readonly rootWorkspaceId: string;
   readonly revision: number;
   readonly updatedAt: string;
+  readonly resourceSource:
+    | {
+        readonly _tag: "Profile";
+        readonly resourceProfileRef: string;
+        readonly version: string;
+      }
+    | { readonly _tag: "ConversationOnly" }
+    | { readonly _tag: "LegacyUnknown" };
 }
 
 export interface ProjectResourceProfileEntry {

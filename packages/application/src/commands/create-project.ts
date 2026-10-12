@@ -115,6 +115,15 @@ export const makeCreateProjectHandler = (
         addresses: trustedAddresses,
       };
       const resourceBoundaryRevision = parse(ResourceBoundaryRevision)(0);
+      const resourceSource =
+        payload.rootWorkspace.resourceSelection._tag === "Profile"
+          ? {
+              _tag: "Profile" as const,
+              resourceProfileRef:
+                payload.rootWorkspace.resourceSelection.resourceProfileRef,
+              version: payload.rootWorkspace.resourceSelection.version,
+            }
+          : { _tag: "ConversationOnly" as const };
 
       yield* dependencies.projects.create(
         createProject({
@@ -126,6 +135,7 @@ export const makeCreateProjectHandler = (
           revision: payload.revision,
           defaultConfiguration: payload.defaultConfiguration,
           environmentRef: payload.environmentRef,
+          resourceSource,
         }),
       );
       yield* dependencies.workspaces.create(

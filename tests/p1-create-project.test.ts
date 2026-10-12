@@ -225,11 +225,25 @@ const countRows = (table: string) =>
     return Number(rows[0]?.count ?? 0);
   });
 
+const ensureTestProjectResourceSourceColumn = () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const columns = yield* sql.unsafe<{ name: string }>(
+      "PRAGMA table_info(projects)",
+    );
+    if (!columns.some((column) => column.name === "resource_source_json")) {
+      yield* sql.unsafe(
+        `ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL DEFAULT '{"_tag":"LegacyUnknown"}' CHECK (json_valid(resource_source_json))`,
+      );
+    }
+  });
+
 describe("P1-010 CreateProject", () => {
   it("creates Project + Root Workspace + Session atomically and emits ordered events", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
+      yield* ensureTestProjectResourceSourceColumn();
       const gw = yield* CommandGateway;
       const payload = payloadWith();
       const receipt = yield* gw.execute(
@@ -245,12 +259,22 @@ describe("P1-010 CreateProject", () => {
       const projects = yield* countRows("projects");
       const workspaces = yield* countRows("workspaces");
       const sessions = yield* countRows("sessions");
-      return { receipt, events, projects, workspaces, sessions };
+      const sourceRows = yield* sql.unsafe<{ resource_source_json: string }>(
+        "SELECT resource_source_json FROM projects",
+      );
+      return {
+        receipt,
+        events,
+        projects,
+        workspaces,
+        sessions,
+        resourceSource: JSON.parse(
+          sourceRows[0]?.resource_source_json ?? "null",
+        ),
+      };
     });
-    const { receipt, events, projects, workspaces, sessions } = await run(
-      program,
-      app,
-    );
+    const { receipt, events, projects, workspaces, sessions, resourceSource } =
+      await run(program, app);
     expect(receipt.resolution._tag).toBe("Committed");
     if (receipt.resolution._tag === "Committed") {
       expect(receipt.resolution.result).toEqual({
@@ -267,12 +291,14 @@ describe("P1-010 CreateProject", () => {
     expect(projects).toBe(1);
     expect(workspaces).toBe(1);
     expect(sessions).toBe(1);
+    expect(resourceSource).toEqual({ _tag: "ConversationOnly" });
   });
 
   it("replays the existing receipt for the same logical request", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
+      yield* ensureTestProjectResourceSourceColumn();
       const gw = yield* CommandGateway;
       const payload = payloadWith();
       const first = yield* gw.execute(
@@ -293,10 +319,51 @@ describe("P1-010 CreateProject", () => {
     expect(projects).toBe(1);
   });
 
+  it("persists the exact selected Profile ref and version on the Project", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P35_MIGRATIONS);
+      yield* ensureTestProjectResourceSourceColumn();
+      const gw = yield* CommandGateway;
+      const payload: CreateProjectPayload = {
+        ...payloadWith(),
+        rootWorkspace: {
+          ...payloadWith().rootWorkspace,
+          resourceSelection: {
+            _tag: "Profile",
+            resourceProfileRef: "test-profile",
+            version: "v1",
+          },
+        },
+      };
+      const receipt = yield* gw.execute(
+        envelope(payload),
+        { _tag: "External", principal },
+        authority(payload),
+      );
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<{ resource_source_json: string }>(
+        "SELECT resource_source_json FROM projects",
+      );
+      return {
+        receipt,
+        resourceSource: JSON.parse(rows[0]?.resource_source_json ?? "null"),
+      };
+    });
+    const result = await run(program, app);
+    expect(result.receipt.resolution._tag).toBe("Committed");
+    expect(result.resourceSource).toEqual({
+      _tag: "Profile",
+      resourceProfileRef: "test-profile",
+      version: "v1",
+    });
+  });
+
   it("rolls back Project, Workspace, Session, receipt, events, and Pending intent together", async () => {
     const app = makeApp(rollbackAfterFirstBody());
     const program = Effect.gen(function* () {
       yield* runMigrations(P35_MIGRATIONS);
+      yield* ensureTestProjectResourceSourceColumn();
       const gw = yield* CommandGateway;
       const payload: CreateProjectPayload = {
         ...payloadWith(),
