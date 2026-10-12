@@ -120,10 +120,21 @@ export interface ToolExecutionContext {
   readonly requestedAt: string;
 }
 
-export interface ToolAuthorityResolutionError {
+/** A trusted authority resolver may reject a request for policy reasons.
+ * P4 projects this as a normal Denied observation; infrastructure failures
+ * remain ToolAuthorityResolutionError and are surfaced as operational errors. */
+export interface ToolAuthorityDenied {
+  readonly _tag: "ToolAuthorityDenied";
+}
+
+export interface ToolAuthorityResolutionFailure {
   readonly _tag: "ToolAuthorityResolutionError";
   readonly cause: unknown;
 }
+
+export type ToolAuthorityResolutionError =
+  | ToolAuthorityDenied
+  | ToolAuthorityResolutionFailure;
 
 export interface ToolAuthorityResolverService {
   readonly resolve: (input: {

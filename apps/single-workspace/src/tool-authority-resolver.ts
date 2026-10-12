@@ -33,6 +33,19 @@ export const ToolAuthorityResolverLive = (
       const workspaces = yield* WorkspaceRepository;
       const grants = yield* PermissionGrantRepository;
       const verifications = yield* VerificationRepository;
+      const isPolicyDenial = (cause: unknown): boolean =>
+        typeof cause === "object" &&
+        cause !== null &&
+        "_tag" in cause &&
+        typeof cause._tag === "string" &&
+        [
+          "NoApplicableGrant",
+          "GrantScopeInsufficient",
+          "CapabilityCeilingExceeded",
+          "DelegationCeilingExceeded",
+          "GovernanceOverrideDenied",
+          "ApprovalIntentMismatch",
+        ].includes(cause._tag);
       return ToolAuthorityResolver.of({
         resolve: (input) =>
           Effect.gen(function* () {
@@ -94,10 +107,14 @@ export const ToolAuthorityResolverLive = (
                 now: input.now,
               })
               .pipe(
-                Effect.mapError((cause) => ({
-                  _tag: "ToolAuthorityResolutionError" as const,
-                  cause,
-                })),
+                Effect.mapError((cause) =>
+                  isPolicyDenial(cause)
+                    ? { _tag: "ToolAuthorityDenied" as const }
+                    : {
+                        _tag: "ToolAuthorityResolutionError" as const,
+                        cause,
+                      },
+                ),
               );
             return {
               ...authority,
@@ -116,7 +133,8 @@ export const ToolAuthorityResolverLive = (
             };
           }).pipe(
             Effect.mapError((cause) =>
-              cause._tag === "ToolAuthorityResolutionError"
+              cause._tag === "ToolAuthorityResolutionError" ||
+              cause._tag === "ToolAuthorityDenied"
                 ? cause
                 : {
                     _tag: "ToolAuthorityResolutionError" as const,
