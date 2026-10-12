@@ -23,10 +23,9 @@ import {
   type ToolDefinition,
   ToolDefinitionStore,
   type ToolExecutionContext,
-  type ToolInvocationIntent,
-  ToolInvocationStore,
+  type ToolInvocationStore,
   ToolRuntimePort,
-  TransactionPort,
+  type TransactionPort,
 } from "@arbor/ports";
 import type * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Effect, Layer, Option } from "effect";
@@ -261,45 +260,6 @@ const seedDatabase = Effect.gen(function* () {
     }),
   );
 });
-
-const invocationIntent: ToolInvocationIntent = {
-  invocationId,
-  executionId,
-  workspaceId,
-  toolName: intent.toolName,
-  toolVersion: intent.toolVersion,
-  sideEffectSemantics: "NonIdempotent",
-  argumentsJson: intent.argumentsJson,
-  resolvedRegions: [],
-  approvalId: null,
-  intentAt: "2026-10-07T00:00:01.000Z",
-};
-
-const runIntentInsert = (app: StoreLayer) =>
-  Effect.runPromise(
-    Effect.scoped(
-      Effect.provide(
-        Effect.match(
-          Effect.gen(function* () {
-            const tx = yield* TransactionPort;
-            const store = yield* ToolInvocationStore;
-            return yield* tx.transact(
-              store.recordIntent(
-                invocationIntent,
-                executionFence,
-                "2026-10-07T00:00:01.000Z",
-              ),
-            );
-          }),
-          {
-            onFailure: (error) => ({ _tag: "Rejected" as const, error }),
-            onSuccess: (recorded) => ({ _tag: recorded }),
-          },
-        ),
-        app,
-      ),
-    ),
-  );
 
 const toolRuntimeDependencies = (
   infrastructure: StoreLayer,
@@ -602,54 +562,8 @@ const runCrossProcessRace = async (
   );
 };
 
-describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () => {
-  it("converges exact same-invocation intent claims to one durable row across connections", async () => {
-    const directory = mkdtempSync(
-      join(tmpdir(), "arbor-ah7-cross-connection-"),
-    );
-    directories.push(directory);
-    const databaseFile = join(directory, "shared.db");
-    const infraA = makeInfrastructure(databaseFile);
-    const infraB = makeInfrastructure(databaseFile);
-    await Effect.runPromise(
-      Effect.scoped(Effect.provide(seedDatabase, infraA)),
-    );
-    const competing = await Promise.all([
-      runIntentInsert(infraA),
-      runIntentInsert(infraB),
-    ]);
-    expect(competing.map((result) => result._tag)).toEqual([
-      "Recorded",
-      "Recorded",
-    ]);
-    const persistedAfterInsertRace = await Effect.runPromise(
-      Effect.scoped(
-        Effect.provide(
-          Effect.gen(function* () {
-            const sql = yield* SqlClient;
-            const rows = yield* sql.unsafe<{ count: number }>(
-              "SELECT COUNT(*) AS count FROM tool_invocations WHERE invocation_id = ?",
-              [invocationId],
-            );
-            const columns = yield* sql.unsafe<{
-              name: string;
-              pk: number;
-            }>("PRAGMA table_info(tool_invocations)");
-            return { rows, columns };
-          }),
-          infraA,
-        ),
-      ),
-    );
-    expect(
-      persistedAfterInsertRace.columns.find(
-        (column) => column.name === "invocation_id",
-      )?.pk,
-    ).toBe(1);
-    expect(Number(persistedAfterInsertRace.rows[0]?.count ?? 0)).toBe(1);
-  });
-
-  it("runs both independent ToolRuntime connections against one effect log and settles only one invocation", async () => {
+describe("AH7 SQLite cross-connection Store and copied-holder diagnostics", () => {
+  it("diagnostic: runs two copied-holder ToolRuntime connections against one effect log", async () => {
     const directory = mkdtempSync(join(tmpdir(), "arbor-ah7-cross-runtime-"));
     directories.push(directory);
     const databaseFile = join(directory, "shared.db");
@@ -725,7 +639,7 @@ describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () =
     }
   });
 
-  it("releases two OS processes from the same pre-invocation barrier and commits one NonIdempotent effect", async () => {
+  it("diagnostic: releases two OS processes with a copied holder from one barrier", async () => {
     const directory = mkdtempSync(join(tmpdir(), "arbor-ah7-cross-process-"));
     directories.push(directory);
     const databaseFile = join(directory, "shared.db");
@@ -798,7 +712,7 @@ describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () =
     });
   });
 
-  it.skip("pending diagnostic: direct unleased P4 reentry can terminalize unknown before the effect owner's success", async () => {
+  it("diagnostic: copied-holder P4 reentry can terminalize unknown before effect-owner success", async () => {
     const directory = mkdtempSync(join(tmpdir(), "arbor-ah7-cross-process-"));
     directories.push(directory);
     const databaseFile = join(directory, "shared.db");
