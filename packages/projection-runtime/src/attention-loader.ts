@@ -74,6 +74,10 @@ type AttentionWorkBoundSourceKind =
   | "AssignWorkTargetBindingFailure"
   | "DeliverReplayFailure";
 
+type AttentionSourceIntegrityKind =
+  | AttentionWorkBoundSourceKind
+  | "SubmittedDecisionBindingFailure";
+
 type AttentionSourceIntegrityReason =
   | "SourceExecutionMissing"
   | "SourceExecutionNonUnique"
@@ -97,7 +101,7 @@ export interface AttentionProjectionIntegrityFailure
   readonly workspaceId: WorkspaceId;
   readonly workId?: WorkId;
   readonly executionId: string;
-  readonly sourceKind: AttentionWorkBoundSourceKind;
+  readonly sourceKind: AttentionSourceIntegrityKind;
   readonly reasonCode: AttentionSourceIntegrityReason;
 }
 
@@ -218,7 +222,7 @@ const integrityFailure = (input: {
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
   readonly executionId: string;
-  readonly sourceKind: AttentionWorkBoundSourceKind;
+  readonly sourceKind: AttentionSourceIntegrityKind;
   readonly reasonCode: AttentionSourceIntegrityReason;
   readonly workId?: WorkId;
 }): AttentionProjectionIntegrityFailure => {
@@ -638,27 +642,78 @@ export const loadAttentionFacts = (
           occurredAt: event.occurredAt,
         });
       } else if (event.eventType === "SubmittedDecisionBindingEscalated") {
-        if (deps.findSubmittedDecisionBindingFailure === undefined) continue;
         const payload = asRecord(event.payload);
         const attentionFactId = String(payload.attentionFactId ?? "");
-        if (attentionFactId.length === 0) continue;
+        const eventExecutionId = String(payload.executionId ?? "");
+        const eventWorkspaceId = String(
+          payload.workspaceId ?? "",
+        ) as WorkspaceId;
+        if (deps.findSubmittedDecisionBindingFailure === undefined) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: eventWorkspaceId,
+              executionId: eventExecutionId,
+              sourceKind: "SubmittedDecisionBindingFailure",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
+        }
         const source =
           yield* deps.findSubmittedDecisionBindingFailure(attentionFactId);
-        if (Option.isNone(source)) continue;
+        if (Option.isNone(source)) {
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: eventWorkspaceId,
+              executionId: eventExecutionId,
+              sourceKind: "SubmittedDecisionBindingFailure",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
+        }
         const fact = source.value;
+        const expectedPayloadKeys = [
+          "attentionFactId",
+          "executionId",
+          "workspaceId",
+          "logicalStepNo",
+          "repairAttempt",
+          "providerTurnId",
+          "logicalActionId",
+          "failureCode",
+        ].sort();
+        const payloadKeys = Object.keys(payload).sort();
         if (
+          event.eventVersion !== 1 ||
+          event.actor !== "system:recovery" ||
+          event.aggregateRef !== fact.workspaceId ||
+          event.correlationRef !== fact.logicalActionId ||
+          event.causedByCommandId !== undefined ||
+          event.causedByEventId !== undefined ||
+          event.occurredAt !== fact.firstDetectedAt ||
           fact.eventId !== event.eventId ||
           fact.projectId !== projectId ||
           fact.attentionFactId !== attentionFactId ||
-          fact.executionId !== String(payload.executionId ?? "") ||
-          fact.workspaceId !== String(payload.workspaceId ?? "") ||
-          fact.logicalStepNo !== Number(payload.logicalStepNo) ||
-          fact.repairAttempt !== Number(payload.repairAttempt) ||
-          fact.providerTurnId !== String(payload.providerTurnId ?? "") ||
-          fact.logicalActionId !== String(payload.logicalActionId ?? "") ||
-          fact.failureCode !== String(payload.failureCode ?? "")
+          fact.executionId !== payload.executionId ||
+          fact.workspaceId !== payload.workspaceId ||
+          fact.logicalStepNo !== payload.logicalStepNo ||
+          fact.repairAttempt !== payload.repairAttempt ||
+          fact.providerTurnId !== payload.providerTurnId ||
+          fact.logicalActionId !== payload.logicalActionId ||
+          fact.failureCode !== payload.failureCode ||
+          payloadKeys.length !== expectedPayloadKeys.length ||
+          payloadKeys.some((key, index) => key !== expectedPayloadKeys[index])
         ) {
-          continue;
+          return yield* Effect.fail(
+            integrityFailure({
+              projectId,
+              workspaceId: fact.workspaceId,
+              executionId: fact.executionId,
+              sourceKind: "SubmittedDecisionBindingFailure",
+              reasonCode: "SourceFactEventMismatch",
+            }),
+          );
         }
         submittedDecisionBindingFailureEvents.push({
           attentionFactId: fact.attentionFactId,
