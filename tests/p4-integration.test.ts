@@ -29,6 +29,7 @@ import {
 } from "../packages/domain/dist/index.js";
 import {
   Clock,
+  invocationAuthoritySourceRevisionOf,
   ProjectEnvironmentPort,
   ResourceAdmission,
   SandboxPort,
@@ -37,7 +38,6 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
-  invocationAuthoritySourceRevisionOf,
 } from "../packages/ports/src/index.js";
 import {
   ArtifactServiceLive,
@@ -155,12 +155,7 @@ const seed = Effect.gen(function* () {
       );
       yield* sql.unsafe(
         "INSERT OR IGNORE INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
-        [
-          executionId,
-          projectId,
-          workspaceId,
-          sessionId,
-        ],
+        [executionId, projectId, workspaceId, sessionId],
       );
       yield* sql.unsafe(
         "INSERT OR IGNORE INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",

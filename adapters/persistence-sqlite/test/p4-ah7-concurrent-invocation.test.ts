@@ -11,6 +11,7 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  invocationAuthoritySourceRevisionOf,
   ProjectEnvironmentPort,
   ResourceAdmission,
   SandboxPort,
@@ -18,7 +19,6 @@ import {
   ToolDefinitionStore,
   type ToolExecutionContext,
   ToolRuntimePort,
-  invocationAuthoritySourceRevisionOf,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";

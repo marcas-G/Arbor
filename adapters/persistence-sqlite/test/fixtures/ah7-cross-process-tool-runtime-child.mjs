@@ -11,12 +11,12 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  invocationAuthoritySourceRevisionOf,
   ProjectEnvironmentPort,
   ResourceAdmission,
   SandboxPort,
   ToolDefinitionStore,
   ToolRuntimePort,
-  invocationAuthoritySourceRevisionOf,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { ToolRuntimeLive } from "../../../../packages/tool-runtime/dist/index.js";
@@ -238,7 +238,7 @@ try {
       result,
     },
     () => {
-    process.disconnect();
+      process.disconnect();
     },
   );
 } catch (error) {

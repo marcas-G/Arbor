@@ -16,6 +16,7 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  invocationAuthoritySourceRevisionOf,
   ProjectEnvironmentPort,
   ResourceAdmission,
   SandboxPort,
@@ -26,7 +27,6 @@ import {
   ToolInvocationStore,
   ToolRuntimePort,
   TransactionPort,
-  invocationAuthoritySourceRevisionOf,
 } from "@arbor/ports";
 import type * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Effect, Layer, Option } from "effect";
