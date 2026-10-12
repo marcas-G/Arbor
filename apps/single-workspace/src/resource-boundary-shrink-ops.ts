@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 import {
   CommandGateway,
   executeShrinkWorkspaceResourceBoundary,
+  semanticRequestFingerprint,
 } from "@arbor/application";
 import {
   Actor,
@@ -13,6 +14,7 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  ConversationResponseJobStore,
   ExecutionRepository,
   IdGenerator,
   ProjectRepository,
@@ -104,40 +106,50 @@ const run = (options: Options) =>
     const workspaces = yield* WorkspaceRepository;
     const works = yield* WorkRepository;
     const executions = yield* ExecutionRepository;
+    const responseJobs = yield* ConversationResponseJobStore;
     const ownership = yield* ResourceOwnershipRepository;
     const gateway = yield* CommandGateway;
     const clock = yield* Clock;
     const ids = yield* IdGenerator;
 
-    const { project, workspace, activeExecution, openWorks, activeClaims } =
-      yield* tx.transact(
-        Effect.gen(function* () {
-          const foundProject = yield* projects.findById(TARGET_PROJECT_ID);
-          const foundWorkspace =
-            yield* workspaces.findById(TARGET_WORKSPACE_ID);
-          if (Option.isNone(foundProject) || Option.isNone(foundWorkspace)) {
-            return yield* Effect.fail(
-              new Error("exact acceptance target not found"),
-            );
-          }
-          return {
-            project: foundProject.value,
-            workspace: foundWorkspace.value,
-            activeExecution:
-              yield* executions.findActiveMainByWorkspace(TARGET_WORKSPACE_ID),
-            openWorks: yield* works.listByWorkspace(
-              TARGET_WORKSPACE_ID,
-              "Open",
+    const {
+      project,
+      workspace,
+      projectUnsettledExecutions,
+      openWorks,
+      rootResponseJobs,
+      activeClaims,
+    } = yield* tx.transact(
+      Effect.gen(function* () {
+        const foundProject = yield* projects.findById(TARGET_PROJECT_ID);
+        const foundWorkspace = yield* workspaces.findById(TARGET_WORKSPACE_ID);
+        if (Option.isNone(foundProject) || Option.isNone(foundWorkspace)) {
+          return yield* Effect.fail(
+            new Error("exact acceptance target not found"),
+          );
+        }
+        return {
+          project: foundProject.value,
+          workspace: foundWorkspace.value,
+          projectUnsettledExecutions:
+            (yield* executions.findUnsettledExecutions()).filter(
+              (execution) => execution.projectId === TARGET_PROJECT_ID,
             ),
-            activeClaims:
-              yield* ownership.listActiveByWorkspace(TARGET_WORKSPACE_ID),
-          };
-        }),
-      );
+          openWorks: yield* works.listByWorkspace(TARGET_WORKSPACE_ID, "Open"),
+          rootResponseJobs:
+            yield* responseJobs.listForWorkspace(TARGET_WORKSPACE_ID),
+          activeClaims:
+            yield* ownership.listActiveByWorkspace(TARGET_WORKSPACE_ID),
+        };
+      }),
+    );
 
+    const hasBoundaryResources =
+      workspace.resourceBoundary.addresses.length > 0 ||
+      activeClaims.length > 0;
     const blockers = [
-      ...(project.lifecycle !== "Open"
-        ? [`project lifecycle=${project.lifecycle}`]
+      ...(project.lifecycle === "Closed" && hasBoundaryResources
+        ? ["project is Closed while boundary resources remain"]
         : []),
       ...(workspace.projectId !== TARGET_PROJECT_ID
         ? ["workspace/project mismatch"]
@@ -145,14 +157,18 @@ const run = (options: Options) =>
       ...(workspace.lifecycle !== "Active"
         ? [`workspace lifecycle=${workspace.lifecycle}`]
         : []),
-      ...(workspace.currentWorkId !== null
-        ? [`current Work=${workspace.currentWorkId}`]
-        : []),
-      ...(openWorks.length > 0 ? [`open Work count=${openWorks.length}`] : []),
-      ...(Option.isSome(activeExecution)
-        ? [`active Execution=${activeExecution.value.executionId}`]
+      ...(projectUnsettledExecutions.length > 0
+        ? [
+            `project unsettled Execution count=${projectUnsettledExecutions.length}`,
+          ]
         : []),
     ];
+    const responseJobsClosedByCommand = rootResponseJobs.filter(
+      (job) =>
+        job.state._tag !== "Answered" &&
+        job.state._tag !== "Cancelled" &&
+        job.state._tag !== "Running",
+    );
     const summary = {
       mode: options.mode,
       projectId: TARGET_PROJECT_ID,
@@ -161,11 +177,12 @@ const run = (options: Options) =>
       resourceBoundaryRevision: workspace.resourceBoundaryRevision,
       resourceBoundaryAddressCount: workspace.resourceBoundary.addresses.length,
       activeClaimCount: activeClaims.length,
-      activeExecution: Option.isSome(activeExecution)
-        ? activeExecution.value.executionId
-        : null,
+      projectUnsettledExecutionCount: projectUnsettledExecutions.length,
+      responseJobCountCancelledByCloseProject:
+        responseJobsClosedByCommand.length,
       currentWorkId: workspace.currentWorkId,
       openWorkCount: openWorks.length,
+      followUp: "shrink boundary, then CloseProject to block future admission",
       blockers,
     };
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
@@ -183,33 +200,98 @@ const run = (options: Options) =>
       );
     }
 
-    const commandId = yield* ids.generate<CommandId>("CommandId");
-    const receipt = yield* executeShrinkWorkspaceResourceBoundary({
-      gateway,
-      commandId,
-      projectId: TARGET_PROJECT_ID,
-      workspaceId: TARGET_WORKSPACE_ID,
-      expectedWorkspaceRevision: options.expectedRevision as never,
-      actor: LOCAL_ACTOR,
-      principal: LOCAL_ADMIN,
-      issuedAt: yield* clock.now(),
-    });
-    if (receipt.resolution._tag !== "Committed") {
-      return yield* Effect.fail(
-        new Error(`command rejected: ${receipt.resolution.error._tag}`),
+    if (hasBoundaryResources) {
+      const commandId = yield* ids.generate<CommandId>("CommandId");
+      const receipt = yield* executeShrinkWorkspaceResourceBoundary({
+        gateway,
+        commandId,
+        projectId: TARGET_PROJECT_ID,
+        workspaceId: TARGET_WORKSPACE_ID,
+        expectedWorkspaceRevision: options.expectedRevision as never,
+        actor: LOCAL_ACTOR,
+        principal: LOCAL_ADMIN,
+        issuedAt: yield* clock.now(),
+      });
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            commandId: receipt.commandId,
+            commandType: "UpdateResourceBoundary",
+            resolution: receipt.resolution._tag,
+            ...(receipt.resolution._tag === "Committed"
+              ? { result: receipt.resolution.result }
+              : { rejection: receipt.resolution.error }),
+          },
+          null,
+          2,
+        )}\n`,
       );
+      if (receipt.resolution._tag !== "Committed") {
+        return yield* Effect.fail(
+          new Error(
+            `UpdateResourceBoundary ${receipt.commandId} rejected: ${receipt.resolution.error._tag}; keep the daemon stopped`,
+          ),
+        );
+      }
     }
+
+    if (project.lifecycle === "Closed") return;
+    const closePayload = {
+      expectedRevision: project.revision,
+      confirmed: true as const,
+    };
+    const closeCommandId = yield* ids.generate<CommandId>("CommandId");
+    const closeFingerprint = semanticRequestFingerprint({
+      commandType: "CloseProject",
+      projectId: TARGET_PROJECT_ID,
+      actor: LOCAL_ACTOR,
+      schemaVersion: "1",
+      payload: closePayload,
+    });
+    const closeReceipt = yield* gateway.execute(
+      {
+        commandType: "CloseProject",
+        commandId: closeCommandId,
+        projectId: TARGET_PROJECT_ID,
+        actor: LOCAL_ACTOR,
+        issuedAt: yield* clock.now(),
+        payload: closePayload,
+      },
+      {
+        _tag: "System",
+        principal: LOCAL_ADMIN,
+        causationRef: "trusted-local-acceptance-project-retirement",
+      },
+      {
+        _tag: "ProjectGovernanceAuthority",
+        principal: LOCAL_ADMIN,
+        commandId: closeCommandId,
+        semanticRequestFingerprint: closeFingerprint,
+        projectId: TARGET_PROJECT_ID,
+        commandType: "CloseProject",
+      },
+    );
     process.stdout.write(
       `${JSON.stringify(
         {
-          commandId: receipt.commandId,
-          resolution: receipt.resolution._tag,
-          result: receipt.resolution.result,
+          commandId: closeReceipt.commandId,
+          commandType: "CloseProject",
+          resolution: closeReceipt.resolution._tag,
+          ...(closeReceipt.resolution._tag === "Committed"
+            ? { result: closeReceipt.resolution.result }
+            : { rejection: closeReceipt.resolution.error }),
         },
         null,
         2,
       )}\n`,
     );
+    if (closeReceipt.resolution._tag !== "Committed") {
+      return yield* Effect.fail(
+        new Error(
+          `CloseProject ${closeReceipt.commandId} rejected: ${closeReceipt.resolution.error._tag}; keep the daemon stopped`,
+        ),
+      );
+    }
   });
 
 const entrypoint = process.argv[1];
