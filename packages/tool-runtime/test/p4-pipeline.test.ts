@@ -10,6 +10,8 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
+  ExecutableApprovalStore,
+  type ExecutableApprovalRecord,
   type InvocationApproval,
   type NoEffectDenialCode,
   ProjectEnvironmentPort,
@@ -127,10 +129,19 @@ const app = (
   executor: ToolExecutor = okExecutor,
   faults: PipelineFaults = {},
   trace?: PipelineTrace,
-  initialApproval?: InvocationApproval,
+  initialApprovalOrExecutableApproval?: InvocationApproval | ExecutableApprovalRecord,
   authorityDenied = false,
 ) => {
-  let approval = initialApproval;
+  let approval =
+    initialApprovalOrExecutableApproval !== undefined &&
+    !("routeKind" in initialApprovalOrExecutableApproval)
+      ? initialApprovalOrExecutableApproval
+      : undefined;
+  let executableApproval =
+    initialApprovalOrExecutableApproval !== undefined &&
+    "routeKind" in initialApprovalOrExecutableApproval
+      ? initialApprovalOrExecutableApproval
+      : undefined;
   const tx = Layer.succeed(TransactionPort, {
     transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
       Effect.provideService(body, TransactionScope, { session: { id: "t" } }),
@@ -328,6 +339,53 @@ const app = (
         }),
       )
     : baseDeps;
+  const executableApprovalDeps =
+    executableApproval === undefined
+      ? deps
+      : Layer.mergeAll(
+          deps,
+          Layer.succeed(ExecutableApprovalStore, {
+            findById: () =>
+              Effect.succeed(
+                executableApproval === undefined
+                  ? Option.none()
+                  : Option.some(executableApproval),
+              ),
+            consumeApproved: (input) => {
+              if (
+                executableApproval === undefined ||
+                executableApproval.state !== "Approved" ||
+                executableApproval.revision !== input.expectedRevision ||
+                input.consumedBy !== invocationId
+              ) {
+                return Effect.succeed(false);
+              }
+              const before = executableApproval;
+              const consumedRevision = before.revision + 1;
+              executableApproval = {
+                ...before,
+                state: "Consumed",
+                revision: consumedRevision,
+                consumedAt: input.consumedAt,
+                consumedBy: input.consumedBy,
+              };
+              if (trace !== undefined) {
+                trace.approvalConsumes += 1;
+                trace.events.push("consume");
+                trace.approvalConsumer = String(input.consumedBy);
+              }
+              return Effect.succeed({
+                approvalId: before.approvalId,
+                preConsumeRevision: before.revision,
+                consumedRevision,
+                approvalDigest: "p38-exact-test-digest",
+                binding: input.binding,
+                expiresAt: before.expiresAt,
+                consumedBy: input.consumedBy,
+              });
+            },
+          } as never),
+        );
   const toolRuntime = ToolRuntimeLive(
     [executor],
     trace?.afterAuthorityResolved === undefined
@@ -343,7 +401,10 @@ const app = (
           },
         },
   );
-  return Layer.mergeAll(deps, Layer.provide(toolRuntime, deps));
+  return Layer.mergeAll(
+    executableApprovalDeps,
+    Layer.provide(toolRuntime, executableApprovalDeps),
+  );
 };
 
 const run = (
@@ -351,15 +412,24 @@ const run = (
   appLayer: Layer.Layer<any, any, any>,
   argumentsJson: string,
   approvalId: string | null = null,
-  invocationId: ToolInvocationId = intent(argumentsJson).invocationId,
+  invocationOrContext:
+    | ToolInvocationId
+    | import("@arbor/ports").ToolExecutionContext =
+    intent(argumentsJson).invocationId,
 ) =>
   Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
         const runtime = yield* ToolRuntimePort;
+        const invocationId =
+          typeof invocationOrContext === "string"
+            ? invocationOrContext
+            : intent(argumentsJson).invocationId;
+        const executionContext =
+          typeof invocationOrContext === "string" ? context : invocationOrContext;
         return yield* runtime.invoke(
           { ...intent(argumentsJson), approvalId, invocationId } as never,
-          context,
+          executionContext,
         );
       }),
       appLayer,
@@ -735,15 +805,54 @@ describe("P4 tool runtime pipeline", () => {
     };
     const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
     const approvalId = "iap_018f2b3c-4d5e-7abc-8def-0123456789a1";
-    const approval: InvocationApproval = {
-      approvalId,
+    const approval: ExecutableApprovalRecord = {
+      executionId,
+      logicalStepNo: 0,
+      repairAttempt: 0,
+      actionIndex: 0,
+      logicalActionId: "action-post-claim-denial",
+      projectId,
+      workspaceId,
+      subject: principal,
+      callRef: intent(argumentsJson).callRef,
+      toolInvocationId: invocationId,
       toolName: "read",
       toolVersion: "2",
-      actionDigest: actionDigestOf(intent(argumentsJson)),
+      sideEffectSemantics: "ReadOnly",
+      argumentsJson,
+      actionDigest: actionDigestOf({ ...intent(argumentsJson), approvalId }),
       targetResourceSpaceIds: ["filesystem"],
       controlBasisDigest: "d",
+      approvalId,
+      routeKind: "Executable",
+      revision: 4,
+      requestedAt: "2026-01-01T00:00:00.000Z",
       expiresAt: "2999-01-01T00:00:00.000Z",
+      state: "Approved",
+      decidedAt: "2026-01-01T00:00:01.000Z",
+      decidedBy: principal,
+      decisionReason: null,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancellationReason: null,
+      consumedAt: null,
       consumedBy: null,
+    };
+    const approvedContext: import("@arbor/ports").ToolExecutionContext = {
+      ...context,
+      authority: { ...authority, sourceRevision: "source-revision-1" },
+      executionFence: {
+        executionId,
+        workerId: "worker-a",
+        workerIncarnationId: "incarnation-a",
+        fencingGeneration: 0 as never,
+      },
+      executableApproval: {
+        approvalId,
+        expectedRevision: approval.revision,
+        state: approval.state,
+        binding: approval,
+      },
     };
     let signalAuthorityResolved!: () => void;
     let resumeEffectGate!: () => void;
@@ -770,6 +879,7 @@ describe("P4 tool runtime pipeline", () => {
       app(false, approvalExecutor, {}, trace, approval),
       argumentsJson,
       approvalId,
+      approvedContext,
     );
     await authorityResolved;
     // Simulate the authoritative source changing after resolution but before
