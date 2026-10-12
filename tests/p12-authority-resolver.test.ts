@@ -675,7 +675,9 @@ describe("P12-002 authority resolver production plane", () => {
 
   it.each([
     ["null target", { target: null }],
+    ["whitespace target", { target: "   " }],
     ["null expiry", { expiresAt: null }],
+    ["invalid expiry", { expiresAt: "tomorrow" }],
     ["expired expiry", { expiresAt: "2026-09-21T23:59:59.999Z" }],
   ] as const)(
     "rejects %s before writing a PermissionGrant",

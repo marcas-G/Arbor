@@ -9,7 +9,12 @@ import type {
   ProjectId,
   ReconciliationRequired,
 } from "@arbor/domain";
-import { Actor, ID_SCHEMAS, type IdTypeName } from "@arbor/domain";
+import {
+  Actor,
+  ID_SCHEMAS,
+  type IdTypeName,
+  isIsoTimestamp,
+} from "@arbor/domain";
 import { Schema } from "effect";
 import type {
   AcceptWorkOutcomePayload,
@@ -193,6 +198,8 @@ export type SemanticExternalCommand = {
 type Rule =
   | { readonly kind: "string" }
   | { readonly kind: "non-empty-string" }
+  | { readonly kind: "trimmed-non-empty-string" }
+  | { readonly kind: "iso-timestamp" }
   | {
       readonly kind: "bounded-string";
       readonly minLength: number;
@@ -217,6 +224,8 @@ type Rule =
 
 const string: Rule = { kind: "string" };
 const nonEmptyString: Rule = { kind: "non-empty-string" };
+const trimmedNonEmptyString: Rule = { kind: "trimmed-non-empty-string" };
+const isoTimestamp: Rule = { kind: "iso-timestamp" };
 const boundedString = (minLength: number, maxLength: number): Rule => ({
   kind: "bounded-string",
   minLength,
@@ -711,9 +720,9 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
         executionId: id("ExecutionId"),
       }),
     }),
-    capability: nonEmptyString,
-    target: nonEmptyString,
-    expiresAt: nonEmptyString,
+    capability: trimmedNonEmptyString,
+    target: trimmedNonEmptyString,
+    expiresAt: isoTimestamp,
   }),
   RevokePermission: object({ permissionGrantId: id("PermissionGrantId") }),
   SubmitHumanMessage: object({
@@ -945,6 +954,20 @@ const decodeValue = (
       return INVALID;
     case "non-empty-string":
       if (typeof input === "string" && input.length > 0) return input;
+      addIssue(issues, path, typeof input === "string" ? "format" : "type");
+      return INVALID;
+    case "trimmed-non-empty-string":
+      if (
+        typeof input === "string" &&
+        input.length > 0 &&
+        input === input.trim()
+      ) {
+        return input;
+      }
+      addIssue(issues, path, typeof input === "string" ? "format" : "type");
+      return INVALID;
+    case "iso-timestamp":
+      if (typeof input === "string" && isIsoTimestamp(input)) return input;
       addIssue(issues, path, typeof input === "string" ? "format" : "type");
       return INVALID;
     case "bounded-string":
