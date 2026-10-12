@@ -2,11 +2,16 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RecoveryAttentionFactStore, TransactionPort } from "@arbor/ports";
+import {
+  AttentionProjectionStore,
+  RecoveryAttentionFactStore,
+  TransactionPort,
+} from "@arbor/ports";
 import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
+  AttentionProjectionStoreLive,
   CURRENT_MIGRATIONS,
   DomainEventJournalLive,
   IdGeneratorLive,
@@ -56,6 +61,17 @@ const applyEquivalentP41Schema = Effect.gen(function* () {
   )) {
     yield* sql.unsafe(statement);
   }
+  // Existing project reset owns these P10 source relations too; the fixture
+  // supplies their minimal equivalent shapes without running a migration.
+  yield* sql.unsafe(
+    "CREATE TABLE attention_projection_rows (project_id TEXT NOT NULL)",
+  );
+  yield* sql.unsafe(
+    "CREATE TABLE deliver_replay_attention_facts (attention_fact_id TEXT NOT NULL, project_id TEXT NOT NULL)",
+  );
+  yield* sql.unsafe(
+    "CREATE TABLE deliver_replay_attention_rows (attention_fact_id TEXT NOT NULL)",
+  );
   return sql;
 });
 
@@ -97,10 +113,12 @@ const makeStoreApp = (filename: string) => {
     makeRecoveryAttentionFactStoreLive(),
     Layer.mergeAll(infra, journal),
   );
+  const attention = Layer.provide(AttentionProjectionStoreLive, sqlite);
   return Layer.mergeAll(
     infra,
     journal,
     facts,
+    attention,
     Layer.provide(TransactionPortLive, sqlite),
   );
 };
@@ -115,7 +133,10 @@ const runStoreDb = <A>(
   program: Effect.Effect<
     A,
     unknown,
-    SqlClient | RecoveryAttentionFactStore | TransactionPort
+    | SqlClient
+    | AttentionProjectionStore
+    | RecoveryAttentionFactStore
+    | TransactionPort
   >,
 ) =>
   Effect.runPromise(
@@ -308,6 +329,7 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
         Effect.gen(function* () {
           const tx = yield* TransactionPort;
           const facts = yield* RecoveryAttentionFactStore;
+          const attention = yield* AttentionProjectionStore;
           const sql = yield* SqlClient;
           yield* tx.transact(applyEquivalentP41Schema.pipe(Effect.asVoid));
           const stored = yield* tx.transact(
@@ -338,6 +360,52 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
               projectId as never,
             ),
           );
+          yield* tx.transact(
+            requireStoreMethod(attention.putSubmittedDecisionBindingFailure)(
+              fact,
+            ),
+          );
+          const markerMismatch = yield* tx.transact(
+            Effect.exit(
+              requireStoreMethod(attention.putSubmittedDecisionBindingFailure)({
+                ...fact,
+                eventId: "evt_wrong_binding",
+              }),
+            ),
+          );
+          yield* tx.transact(
+            requireStoreMethod(attention.putSubmittedDecisionBindingFailure)(
+              fact,
+            ),
+          );
+          const markers = yield* tx.transact(
+            requireStoreMethod(attention.listSubmittedDecisionBindingFailures)(
+              projectId as never,
+            ),
+          );
+          yield* tx.transact(attention.resetProject(projectId as never));
+          const afterReset = yield* tx.transact(
+            requireStoreMethod(attention.listSubmittedDecisionBindingFailures)(
+              projectId as never,
+            ),
+          );
+          const p9FactsAfterReset = yield* tx.transact(
+            requireStoreMethod(facts.listSubmittedDecisionBindingFailures)(
+              projectId as never,
+            ),
+          );
+          for (const seed of p9FactsAfterReset) {
+            yield* tx.transact(
+              requireStoreMethod(attention.putSubmittedDecisionBindingFailure)(
+                seed,
+              ),
+            );
+          }
+          const rebuilt = yield* tx.transact(
+            requireStoreMethod(attention.listSubmittedDecisionBindingFailures)(
+              projectId as never,
+            ),
+          );
           const foreignKeyViolations = yield* sql.unsafe(
             "PRAGMA foreign_key_check",
           );
@@ -347,6 +415,11 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
             conflict,
             read: Option.getOrUndefined(read),
             listed,
+            markers,
+            markerMismatch,
+            afterReset,
+            p9FactsAfterReset,
+            rebuilt,
             foreignKeyViolations,
           };
         }),
@@ -357,6 +430,7 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
         Effect.gen(function* () {
           const tx = yield* TransactionPort;
           const facts = yield* RecoveryAttentionFactStore;
+          const attention = yield* AttentionProjectionStore;
           const read = yield* tx.transact(
             requireStoreMethod(facts.findSubmittedDecisionBindingFailure)(
               fact.attentionFactId,
@@ -367,9 +441,15 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
               projectId as never,
             ),
           );
+          const markers = yield* tx.transact(
+            requireStoreMethod(attention.listSubmittedDecisionBindingFailures)(
+              projectId as never,
+            ),
+          );
           return {
             read: Option.getOrUndefined(read),
             listed,
+            markers,
           };
         }),
       );
@@ -378,9 +458,25 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
       expect(Exit.isFailure(first.conflict)).toBe(true);
       expect(first.read).toEqual(fact);
       expect(first.listed).toEqual([fact]);
+      expect(first.markers).toHaveLength(1);
+      expect(Exit.isFailure(first.markerMismatch)).toBe(true);
+      expect(first.markers[0]).toMatchObject({
+        projectId,
+        dedupKey: fact.attentionFactId,
+        source: "SubmittedDecisionBindingFailure",
+        severity: "ActionRequired",
+        targetWorkspaceId: workspaceId,
+        sourceEventId: fact.eventId,
+        sourceFactId: fact.attentionFactId,
+        sourceExecutionId: executionId,
+      });
+      expect(first.afterReset).toEqual([]);
+      expect(first.p9FactsAfterReset).toEqual([fact]);
+      expect(first.rebuilt).toEqual(first.markers);
       expect(first.foreignKeyViolations).toEqual([]);
       expect(reopened.read).toEqual(fact);
       expect(reopened.listed).toEqual([fact]);
+      expect(reopened.markers).toEqual(first.markers);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -392,6 +488,7 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
       Effect.gen(function* () {
         const tx = yield* TransactionPort;
         const facts = yield* RecoveryAttentionFactStore;
+        const attention = yield* AttentionProjectionStore;
         const available = yield* tx.transact(
           requireStoreMethod(facts.isSubmittedDecisionBindingAvailable)(),
         );
@@ -402,21 +499,34 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
             ),
           ),
         );
+        const markerAvailable = yield* tx.transact(
+          requireStoreMethod(attention.isSubmittedDecisionBindingAvailable)(),
+        );
+        const markerList = yield* tx.transact(
+          Effect.exit(
+            requireStoreMethod(attention.listSubmittedDecisionBindingFailures)(
+              projectId as never,
+            ),
+          ),
+        );
+        const absentFact = {
+          attentionFactId,
+          eventId,
+          projectId: projectId as never,
+          executionId: executionId as never,
+          workspaceId: workspaceId as never,
+          logicalStepNo: 0,
+          repairAttempt: 0,
+          providerTurnId: "ptn_p41_absent" as never,
+          logicalActionId: "lac_p41_absent",
+          failureCode: "StepManifestMismatch" as const,
+          firstDetectedAt: "2026-10-12T00:00:00.000Z",
+        };
         const absentRecord = yield* tx.transact(
           Effect.exit(
-            requireStoreMethod(facts.recordSubmittedDecisionBindingFailure)({
-              attentionFactId,
-              eventId,
-              projectId: projectId as never,
-              executionId: executionId as never,
-              workspaceId: workspaceId as never,
-              logicalStepNo: 1,
-              repairAttempt: 0,
-              providerTurnId: "ptn_p41_absent" as never,
-              logicalActionId: "lac_p41_absent",
-              failureCode: "DecisionRequestWorkspaceMismatch" as const,
-              firstDetectedAt: "2026-10-12T00:00:00.000Z",
-            }),
+            requireStoreMethod(facts.recordSubmittedDecisionBindingFailure)(
+              absentFact,
+            ),
           ),
         );
         const absentList = yield* tx.transact(
@@ -426,12 +536,30 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
             ),
           ),
         );
-        return { available, absent, absentRecord, absentList };
+        const markerWrite = yield* tx.transact(
+          Effect.exit(
+            requireStoreMethod(attention.putSubmittedDecisionBindingFailure)(
+              absentFact,
+            ),
+          ),
+        );
+        return {
+          available,
+          absent,
+          absentRecord,
+          absentList,
+          markerAvailable,
+          markerList,
+          markerWrite,
+        };
       }),
     );
     expect(result.available).toBe(false);
+    expect(result.markerAvailable).toBe(false);
     expectP41Unavailable(result.absent);
     expectP41Unavailable(result.absentRecord);
     expectP41Unavailable(result.absentList);
+    expectP41Unavailable(result.markerList);
+    expectP41Unavailable(result.markerWrite);
   });
 });

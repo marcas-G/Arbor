@@ -15,11 +15,15 @@ descriptor fingerprint is
 
 The persistence adapter accepts a complete caller-bound fact, persists it,
 reads by fact ID, and lists by project. Exact replay of an existing identity
-tuple is idempotent; changed content for that tuple fails closed. The adapter
-does not append the business event, create Attention, or decide recovery or
-Stop eligibility. Its methods remain optional, report readiness false when
-0041 is absent, and return typed `PersistenceUnavailable` on absent-table
-read/write attempts.
+tuple is idempotent; changed content for that tuple fails closed. The P10
+projection adapter also validates marker input against the exact P9 fact and
+authoritative Execution Workspace, idempotently upserts the composite
+project/fact/workspace marker, lists materialized rows, and includes the marker
+in project reset. The rebuild test resets markers without deleting P9 facts,
+then reseeds from the durable fact snapshot. Neither adapter appends a business
+event or decides recovery or Stop eligibility. P41 methods remain optional,
+report readiness false when 0041 is absent, and return typed
+`PersistenceUnavailable` on absent-table read/write attempts.
 
 The 0041 descriptor remains absent from `P36_MIGRATIONS`,
 `CURRENT_MIGRATIONS`, and all runnable migration lists. No migration was run;
@@ -33,8 +37,8 @@ functional suite, or `docs/design/**` file was touched.
   rejection with SQLite `SQLITE_CONSTRAINT_NOTNULL` (`errcode` 1299), positive
   insertion, closed failure-code set, exact tuple/event uniqueness, execution
   and marker composite FKs, immutability, idempotent storage, conflict
-  rejection, read/list after file-backed database reopen, and fail-closed
-  behavior when the standalone table is absent.
+  rejection, marker upsert/list/reset/reseed and file-backed reopen, and
+  fail-closed behavior when the standalone tables are absent.
 - `pnpm build`: passed.
 - `pnpm typecheck`: passed.
 - Targeted Biome check: passed, 7 files checked.

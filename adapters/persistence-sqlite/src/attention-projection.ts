@@ -11,6 +11,7 @@ import {
   type RecoveryAttentionFactStoreService,
   type ToolObservationReplayAttentionFactStoreService,
   type ToolObservationReplayAttentionProjectionRow,
+  type SubmittedDecisionBindingAttentionProjectionRow,
   TransactionScope,
   type WorkspaceResourceActivationAttentionProjectionRow,
   type WorkspaceResourceActivationIntent,
@@ -64,6 +65,16 @@ interface ToolObservationReplayAttentionDbRow {
   readonly occurred_at: string;
   readonly source_event_id: string;
   readonly source_fact_id: string;
+}
+interface SubmittedDecisionBindingAttentionDbRow {
+  readonly project_id: string;
+  readonly dedup_key: string;
+  readonly target_workspace_id: string;
+  readonly failure_code: SubmittedDecisionBindingAttentionProjectionRow["failureCode"];
+  readonly occurred_at: string;
+  readonly source_event_id: string;
+  readonly source_fact_id: string;
+  readonly source_execution_id: string;
 }
 
 export type AttentionProjectionQualificationEvent =
@@ -142,6 +153,23 @@ const toolObservationRowFromDb = (
   sourceFactId: row.source_fact_id,
 });
 
+const submittedDecisionBindingRowFromDb = (
+  row: SubmittedDecisionBindingAttentionDbRow,
+): SubmittedDecisionBindingAttentionProjectionRow => ({
+  projectId: row.project_id as ProjectId,
+  dedupKey: row.dedup_key,
+  source: "SubmittedDecisionBindingFailure",
+  severity: "ActionRequired",
+  targetWorkspaceId: row.target_workspace_id as never,
+  summary:
+    "A submitted DecisionEpisode binding could not be proven against its exact Execution, Step, and Action; recovery is paused.",
+  failureCode: row.failure_code,
+  occurredAt: row.occurred_at,
+  sourceEventId: row.source_event_id as never,
+  sourceFactId: row.source_fact_id,
+  sourceExecutionId: row.source_execution_id,
+});
+
 const sameRow = (
   left: AssignWorkBindingAttentionProjectionRow,
   right: AssignWorkBindingAttentionProjectionRow,
@@ -167,7 +195,35 @@ export const makeAttentionProjectionStoreLive = (
       const failure = repositoryFailure("AttentionProjectionStore", "rows");
       const run = <A>(effect: Effect.Effect<A, SqlError>) =>
         effect.pipe(Effect.mapError(failure));
+      const submittedDecisionBindingMarkerAvailable = () =>
+        run(
+          sql.unsafe<{ readonly name: string }>(
+            `SELECT name FROM sqlite_master
+              WHERE type = 'table'
+                AND name = 'submitted_decision_binding_attention_rows'`,
+          ),
+        );
+      const requireSubmittedDecisionBindingMarker = () =>
+        Effect.gen(function* () {
+          const tables = yield* submittedDecisionBindingMarkerAvailable();
+          if (tables.length === 0) {
+            return yield* Effect.fail<AttentionProjectionStoreError>({
+              _tag: "PersistenceUnavailable",
+              repository: "AttentionProjectionStore",
+              operation: "submitted-decision-binding-marker",
+              retryDisposition: "non-retryable",
+              sourceTag: "P41MigrationNotRegistered",
+              cause: { _tag: "P41MigrationNotRegistered" },
+            });
+          }
+        });
       return AttentionProjectionStore.of({
+        isSubmittedDecisionBindingAvailable: () =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const tables = yield* submittedDecisionBindingMarkerAvailable();
+            return tables.length > 0;
+          }),
         putAssignWorkBindingFailure: (fact, occurredAt) =>
           Effect.gen(function* () {
             yield* TransactionScope;
@@ -312,6 +368,125 @@ export const makeAttentionProjectionStoreLive = (
                 }),
               );
             }
+          }),
+        putSubmittedDecisionBindingFailure: (fact) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            yield* requireSubmittedDecisionBindingMarker();
+            const sourceFacts = yield* run(
+              sql.unsafe<{
+                readonly attention_fact_id: string;
+                readonly event_id: string;
+                readonly project_id: string;
+                readonly execution_id: string;
+                readonly workspace_id: string;
+                readonly logical_step_no: number;
+                readonly repair_attempt: number;
+                readonly provider_turn_id: string;
+                readonly logical_action_id: string;
+                readonly failure_code: string;
+                readonly first_detected_at: string;
+              }>(
+                `SELECT attention_fact_id, event_id, project_id, execution_id,
+                        workspace_id, logical_step_no, repair_attempt,
+                        provider_turn_id, logical_action_id, failure_code,
+                        first_detected_at
+                   FROM submitted_decision_binding_attention_facts
+                  WHERE attention_fact_id = ?`,
+                [fact.attentionFactId],
+              ),
+            );
+            const source = sourceFacts[0];
+            if (
+              source === undefined ||
+              source.attention_fact_id !== fact.attentionFactId ||
+              source.event_id !== fact.eventId ||
+              source.project_id !== fact.projectId ||
+              source.execution_id !== fact.executionId ||
+              source.workspace_id !== fact.workspaceId ||
+              Number(source.logical_step_no) !== fact.logicalStepNo ||
+              Number(source.repair_attempt) !== fact.repairAttempt ||
+              source.provider_turn_id !== fact.providerTurnId ||
+              source.logical_action_id !== fact.logicalActionId ||
+              source.failure_code !== fact.failureCode ||
+              source.first_detected_at !== fact.firstDetectedAt
+            ) {
+              return yield* Effect.fail<AttentionProjectionStoreError>({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "submitted-decision-binding-marker",
+                reason:
+                  "Submitted DecisionEpisode marker input does not match its exact immutable P9 fact",
+              });
+            }
+            const executions = yield* run(
+              sql.unsafe<{ readonly workspace_id: string }>(
+                `SELECT workspace_id FROM executions
+                  WHERE execution_id = ? AND project_id = ?`,
+                [fact.executionId, fact.projectId],
+              ),
+            );
+            if (executions[0]?.workspace_id !== fact.workspaceId) {
+              return yield* Effect.fail<AttentionProjectionStoreError>({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "submitted-decision-binding-marker",
+                reason:
+                  "Submitted DecisionEpisode fact Workspace does not match its authoritative Execution",
+              });
+            }
+            yield* run(
+              sql.unsafe(
+                `INSERT INTO submitted_decision_binding_attention_rows (
+                   project_id, attention_fact_id, workspace_id
+                 ) VALUES (?, ?, ?)
+                 ON CONFLICT(project_id, attention_fact_id) DO NOTHING`,
+                [fact.projectId, fact.attentionFactId, fact.workspaceId],
+              ),
+            );
+            const markers = yield* run(
+              sql.unsafe<{ readonly workspace_id: string }>(
+                `SELECT workspace_id
+                   FROM submitted_decision_binding_attention_rows
+                  WHERE project_id = ? AND attention_fact_id = ?`,
+                [fact.projectId, fact.attentionFactId],
+              ),
+            );
+            if (markers[0]?.workspace_id !== fact.workspaceId) {
+              return yield* Effect.fail<AttentionProjectionStoreError>({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "submitted-decision-binding-marker",
+                reason:
+                  "Submitted DecisionEpisode marker identity is bound to another Workspace",
+              });
+            }
+          }),
+        listSubmittedDecisionBindingFailures: (projectId) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            yield* requireSubmittedDecisionBindingMarker();
+            const rows = yield* run(
+              sql.unsafe<SubmittedDecisionBindingAttentionDbRow>(
+                `SELECT marker.project_id AS project_id,
+                        marker.attention_fact_id AS dedup_key,
+                        marker.workspace_id AS target_workspace_id,
+                        fact.failure_code AS failure_code,
+                        fact.first_detected_at AS occurred_at,
+                        fact.event_id AS source_event_id,
+                        fact.attention_fact_id AS source_fact_id,
+                        fact.execution_id AS source_execution_id
+                   FROM submitted_decision_binding_attention_rows AS marker
+                   JOIN submitted_decision_binding_attention_facts AS fact
+                     ON fact.attention_fact_id = marker.attention_fact_id
+                    AND fact.project_id = marker.project_id
+                    AND fact.workspace_id = marker.workspace_id
+                  WHERE marker.project_id = ?
+                  ORDER BY fact.first_detected_at, fact.attention_fact_id`,
+                [projectId],
+              ),
+            );
+            return rows.map(submittedDecisionBindingRowFromDb);
           }),
         listDeliverReplayFailures: (projectId) =>
           Effect.gen(function* () {
@@ -621,6 +796,17 @@ export const makeAttentionProjectionStoreLive = (
           ),
         resetProject: (projectId) =>
           Effect.gen(function* () {
+            const submittedMarkers =
+              yield* submittedDecisionBindingMarkerAvailable();
+            if (submittedMarkers.length > 0) {
+              yield* run(
+                sql.unsafe(
+                  `DELETE FROM submitted_decision_binding_attention_rows
+                    WHERE project_id = ?`,
+                  [projectId],
+                ),
+              );
+            }
             yield* run(
               sql.unsafe(
                 `DELETE FROM deliver_replay_attention_rows
