@@ -44,20 +44,33 @@ describe("MAC-P4 final active-runtime convergence", () => {
     expect(migrations).toContain(
       "export const CURRENT_MIGRATIONS = P38_MIGRATIONS;",
     );
+    expect(migrations).toContain("export const P39_MAINTENANCE_MIGRATIONS:");
+    const currentRegistryStart = migrations.indexOf(
+      "export const CURRENT_MIGRATIONS = P38_MIGRATIONS;",
+    );
+    const maintenanceRegistryStart = migrations.indexOf(
+      "export const P39_MAINTENANCE_MIGRATIONS:",
+    );
+    expect(currentRegistryStart).toBeGreaterThanOrEqual(0);
+    expect(maintenanceRegistryStart).toBeGreaterThan(currentRegistryStart);
+    const currentRegistry = migrations.slice(
+      currentRegistryStart,
+      maintenanceRegistryStart,
+    );
+    expect(currentRegistry).not.toContain("P39_MAINTENANCE_MIGRATIONS");
+    expect(currentRegistry).not.toContain("P43_BLOCKED_WORKEPISODE_MIGRATION");
+    expect(migrations).not.toContain("P43_BLOCKED_WORKEPISODE_MIGRATION");
     expect(migrations).toContain(
       "export const CURRENT_MIGRATION_BASELINE = Math.max(",
     );
-    expect(migrations).not.toContain("P39_MAINTENANCE_MIGRATIONS");
     expect(composition).toContain(
       "const latestSupportedSchema = CURRENT_MIGRATION_BASELINE;",
     );
     expect(composition).toContain("if (current > latestSupportedSchema)");
+    expect(composition).toContain("if (current >= 39)");
+    expect(composition).toContain('code: "P39_RUNTIME_START_REFUSED"');
     expect(composition).toContain("sqliteAdapterError(");
-    expect(composition).not.toMatch(/P39|p39WriterLock/);
     expect(production).toContain("runMigrations(CURRENT_MIGRATIONS)");
     expect(production).not.toMatch(/P39|p39WriterLock/);
-    expect(source("apps/single-workspace/src/main.ts")).not.toMatch(
-      /P39|p39WriterLock/,
-    );
   });
 });
