@@ -1,6 +1,7 @@
 export * from "./attention-poll-loop.js";
 export * from "./authority.js";
 export * from "./authority-resolver.js";
+export * from "./blocked-action-evidence.js";
 export * from "./capability-ceiling.js";
 export * from "./command-result.js";
 export * from "./command-result-codec.js";

@@ -2,7 +2,9 @@ import type { CommandReceipt } from "@arbor/domain";
 import {
   ID_SCHEMAS,
   type IdTypeName,
+  NO_EFFECT_DENIAL_CODES,
   ORDINAL_SCHEMAS,
+  Sha256,
   VerificationVerdict,
 } from "@arbor/domain";
 import type { CommandStoreError, StoredCommandResolution } from "@arbor/ports";
@@ -90,6 +92,35 @@ const revision = ordinal("Revision");
 const workRevision = ordinal("WorkRevision");
 const dependencyRevision = ordinal("DependencyRevision");
 const verificationVerdict = schemaValue(VerificationVerdict);
+const terminalDenial = (value: unknown): boolean =>
+  taggedUnionMember(value, {
+    P4NoEffectDenied: tagged("P4NoEffectDenied", {
+      reasonCode: oneOf(
+        ...NO_EFFECT_DENIAL_CODES.filter((code) => code !== "ApprovalRequired"),
+      ),
+    }),
+    HandlerRejected: tagged("HandlerRejected", {
+      routeKind: literal("Executable"),
+    }),
+  });
+const blockedActionRef: Validator = (value) =>
+  objectWith(
+    value,
+    {
+      executionId: id("ExecutionId"),
+      providerTurnId: id("ProviderTurnId"),
+      logicalStepNo: nonNegativeInteger,
+      repairAttempt: nonNegativeInteger,
+      actionIndex: nonNegativeInteger,
+      logicalActionId: stringValue,
+      callRef: stringValue,
+      resultRef: stringValue,
+      settlementRef: stringValue,
+      observationSourceRef: stringValue,
+      terminalDenial,
+    },
+    { toolInvocationId: id("ToolInvocationId") },
+  );
 
 const tagged =
   (tag: string, fields: Readonly<Record<string, Validator>> = {}): Validator =>
@@ -153,6 +184,14 @@ const waitSpec: Validator = (value) =>
 
 const completedResult = (value: unknown): boolean =>
   taggedUnionMember(value, {
+    Blocked: tagged("Blocked", {
+      workId: id("WorkId"),
+      targetWorkRevision: workRevision,
+      blockerId: schemaValue(Sha256),
+      waitFor: waitSpec,
+      request: stringValue,
+      failedActionRefs: arrayOf(blockedActionRef, true),
+    }),
     Yielded: tagged("Yielded", {
       reason: stringValue,
       waitSpec,

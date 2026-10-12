@@ -13,6 +13,8 @@ import type {
   ResourceBoundary,
   ResponsibilityDefinition,
   SessionId,
+  Sha256,
+  TerminalActionDenial,
   UsageCost,
   VerificationId,
   VerificationVerdict,
@@ -228,6 +230,31 @@ export interface WorkDetailRes {
   readonly lifecycle: WorkLifecycle;
   readonly revision: WorkRevision;
   readonly acceptedResult?: AcceptedWorkResult | undefined;
+  readonly blockedEpisode?: BlockedWorkEpisode | undefined;
+}
+
+export type BlockedActionDenialCategory =
+  | Extract<
+      TerminalActionDenial,
+      { readonly _tag: "P4NoEffectDenied" }
+    >["reasonCode"]
+  | "HandlerRejected";
+
+export interface BlockedWorkEpisode {
+  readonly sourceExecutionId: ExecutionId;
+  readonly blockers: ReadonlyArray<{
+    readonly blockerId: Sha256;
+    readonly disposition: "Blocked";
+    readonly failedActions: ReadonlyArray<{
+      readonly actionId: string;
+      readonly actionKind: "Executable" | "P4NoEffectDenied";
+      readonly status: "Denied";
+      readonly denialCategory: BlockedActionDenialCategory;
+      readonly request: string;
+      readonly observationRef: string;
+    }>;
+    readonly recoveryGuidance: string;
+  }>;
 }
 
 export interface CurrentWorkReq {

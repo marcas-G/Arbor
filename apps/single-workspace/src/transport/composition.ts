@@ -22,6 +22,7 @@ import {
   CommandHandlerRegistry,
   CommandInputContractRegistry,
   decodeExternalCommand,
+  deliverWakeSignal,
   FINGERPRINT_ALGORITHM_VERSION,
   semanticRequestFingerprint,
 } from "@arbor/application";
@@ -54,6 +55,7 @@ import {
   ExecutionRepository,
   ExecutionScheduler,
   IdGenerator,
+  InboxProjectionStore,
   OwnershipWriteService,
   PermissionGrantRepository,
   ProjectEnvironmentPort,
@@ -61,9 +63,11 @@ import {
   ResourceOwnershipRepository,
   TransactionPort,
   VerificationRepository,
+  WorkBlockerStore,
   WorkRepository,
   WorkspaceRepository,
   WorkspaceResourceActivationStore,
+  WorkWaitStore,
 } from "@arbor/ports";
 import { reconcileProjectActivationAttention } from "@arbor/projection-runtime";
 import { Effect, Option } from "effect";
@@ -699,6 +703,7 @@ export const makeExternalSubmissionFromServices = (
     const findCommandResolution = (commandId: CommandId) =>
       tx.transact(commandStore.findResolution(commandId)).pipe(Effect.orDie);
     const workspaces = yield* WorkspaceRepository;
+    const works = yield* WorkRepository;
     const activationIntentsOption = yield* Effect.serviceOption(
       WorkspaceResourceActivationStore,
     );
@@ -717,6 +722,10 @@ export const makeExternalSubmissionFromServices = (
     const clockOption = yield* Effect.serviceOption(Clock);
     const idsOption = yield* Effect.serviceOption(IdGenerator);
     const schedulerOption = yield* Effect.serviceOption(ExecutionScheduler);
+    const blockerStoreOption = yield* Effect.serviceOption(WorkBlockerStore);
+    const inboxProjectionOption =
+      yield* Effect.serviceOption(InboxProjectionStore);
+    const workWaitStoreOption = yield* Effect.serviceOption(WorkWaitStore);
     if (
       Option.isNone(ownershipOption) ||
       Option.isNone(environmentOption) ||
@@ -866,9 +875,38 @@ export const makeExternalSubmissionFromServices = (
       }
       if (envelope.commandType === "SteerWork") {
         const workId = payloadString(payload, "workId") as WorkId | null;
-        return workId === null
-          ? Effect.void
-          : tx.transact(scheduler.clearWorkWait(workId));
+        if (workId === null) return Effect.void;
+        if (
+          Option.isSome(blockerStoreOption) &&
+          Option.isSome(inboxProjectionOption) &&
+          Option.isSome(workWaitStoreOption)
+        ) {
+          return Effect.gen(function* () {
+            const work = yield* tx.transact(works.findById(workId));
+            if (Option.isNone(work)) return;
+            const sequence = yield* tx.transact(
+              inboxProjectionOption.value.currentSequence(
+                work.value.workspaceId,
+              ),
+            );
+            yield* deliverWakeSignal(
+              {
+                workspaceId: work.value.workspaceId,
+                reason: "InputArrived",
+                detail: { inboxSequence: sequence },
+              },
+              {
+                tx,
+                waits: workWaitStoreOption.value,
+                works,
+                scheduler,
+              },
+            );
+          });
+        }
+        // Legacy schema before P43 has no durable Inbox high-water mark; keep
+        // its preserve-only behavior until the accepted migration is active.
+        return tx.transact(scheduler.clearWorkWait(workId));
       }
       return Effect.void;
     };

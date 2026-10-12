@@ -13,7 +13,15 @@ const WAIT_SCHEMA = JSON.stringify({
   type: "object",
   additionalProperties: false,
   properties: {
+    disposition: { enum: ["Yielded", "Blocked"] },
     reason: { type: "string", minLength: 1 },
+    request: {
+      type: "string",
+      minLength: 1,
+      maxLength: 2000,
+      description:
+        "For Blocked, explain the specific change or evidence needed; the Runtime binds the exact denied actions and wake conditions.",
+    },
     waitSpec: {
       type: "object",
       additionalProperties: false,
@@ -96,7 +104,42 @@ const WAIT_SCHEMA = JSON.stringify({
       },
     },
   },
-  required: ["reason", "waitSpec"],
+  required: ["disposition"],
+  oneOf: [
+    {
+      properties: { disposition: { const: "Yielded" } },
+      required: ["disposition", "reason", "waitSpec"],
+    },
+    {
+      properties: { disposition: { const: "Blocked" } },
+      required: ["disposition", "request"],
+    },
+  ],
+});
+
+const RESOLVE_WORK_BLOCKER_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  required: ["resolutions"],
+  properties: {
+    resolutions: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["blockerId", "successfulActionRefs"],
+        properties: {
+          blockerId: { type: "string", pattern: "^[0-9a-f]{64}$" },
+          successfulActionRefs: {
+            type: "array",
+            minItems: 1,
+            items: { type: "string", minLength: 1, maxLength: 256 },
+          },
+        },
+      },
+    },
+  },
 });
 
 const SEND_MESSAGE_SCHEMA = JSON.stringify({
@@ -508,9 +551,22 @@ export const controlToolDefinitions =
         description:
           "Register a durable wait condition and settle this execution.",
         schemaJson: WAIT_SCHEMA,
-        version: "2",
+        version: "3",
         requiredCapability: "agent:wait",
-        legacyNames: [{ name: "arbor_wait", version: "1", hash: "3c84373e" }],
+        legacyNames: [
+          { name: "wait", version: "2", hash: "6ab3a3c2" },
+          { name: "arbor_wait", version: "1", hash: "3c84373e" },
+        ],
+      },
+      {
+        stableId: "core.control.resolve-work-blocker",
+        name: "resolve_work_blocker",
+        description:
+          "Resolve exact open Work blockers only after later successful executable actions have repaired each denied action; Runtime verifies all action refs and manifest bindings.",
+        schemaJson: RESOLVE_WORK_BLOCKER_SCHEMA,
+        version: "1",
+        requiredCapability: "agent:wait",
+        legacyNames: [],
       },
       {
         stableId: "core.control.send-message",

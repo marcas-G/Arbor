@@ -7,6 +7,7 @@ import type {
 } from "@arbor/domain";
 import type {
   AcceptanceRepositoryError,
+  AgentLoopStepStoreError,
   AssignWorkApprovalCommandEvidence,
   AssignWorkCommandEvidence,
   AssignWorkTargetBindingStoreError,
@@ -30,6 +31,7 @@ import type {
   PermissionGrantRepositoryError,
   ProjectRepositoryError,
   ProjectToolRegistryError,
+  ProviderFailure,
   ReadmissionGateIntegrityFailure,
   ReadmissionGateStoreError,
   ReadmissionTargetMismatch,
@@ -40,6 +42,7 @@ import type {
   TransactionOperationalFailure,
   TransactionScope,
   VerificationRepositoryError,
+  WorkBlockerStoreError,
   WorkReadmissionHeld,
   WorkRepositoryError,
   WorkspaceRepositoryError,
@@ -94,6 +97,7 @@ export type CommandHandlerError =
   | ProjectRepositoryError
   | WorkspaceRepositoryError
   | WorkRepositoryError
+  | WorkBlockerStoreError
   | SessionRepositoryError
   | ExecutionRepositoryError
   | WorkWaitStoreError
@@ -122,6 +126,8 @@ export type CommandHandlerError =
   | EvidenceRepositoryError
   | BlobStoreError
   | AssignWorkTargetBindingStoreError
+  | AgentLoopStepStoreError
+  | ProviderFailure
   | ReadmissionTargetMismatch
   | ReadmissionGateIntegrityFailure
   | ReadmissionGateStoreError

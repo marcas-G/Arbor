@@ -5,6 +5,7 @@ import type {
   ProjectId,
   Verification,
   Work,
+  WorkBlocker,
   WorkId,
   Workspace,
   WorkspaceId,
@@ -158,6 +159,17 @@ export interface AttentionReadDeps {
     ReadonlyArray<WorkspaceResourceActivationAttentionProjectionRow>,
     ProjectionReadError
   >;
+  /** Current-state Blocked source; implementations must read the canonical
+   * WorkBlocker ledger rather than reconstructing it from retained events. */
+  readonly listWorkBlockersByWorkRevision?: (
+    workId: WorkId,
+    workRevision: number,
+  ) => Effect.Effect<ReadonlyArray<WorkBlocker>, ProjectionReadError>;
+  /** True only for an active exact WorkEpisode at this Work revision. */
+  readonly hasActiveWorkEpisode?: (
+    workId: WorkId,
+    workRevision: number,
+  ) => Effect.Effect<boolean, ProjectionReadError>;
 }
 
 const asRecord = (payload: unknown): Record<string, unknown> =>
@@ -348,6 +360,8 @@ export const loadAttentionFacts = (
 
     const workOwners: Array<WorkOwnerFact> = [];
     const workspaceVacancies: Array<WorkspaceVacancyFact> = [];
+    const workBlockers: Array<WorkBlocker> = [];
+    const activeWorkEpisodeIds: Array<WorkId> = [];
     for (const workspace of workspaces) {
       const works = yield* deps.listWorksByWorkspace(workspace.workspaceId);
       for (const work of works) {
@@ -355,6 +369,31 @@ export const loadAttentionFacts = (
           workId: work.workId,
           workspaceId: workspace.workspaceId,
         });
+        if (
+          work.lifecycle === "Open" &&
+          deps.listWorkBlockersByWorkRevision !== undefined
+        ) {
+          const currentBlockers = yield* deps.listWorkBlockersByWorkRevision(
+            work.workId,
+            work.revision,
+          );
+          workBlockers.push(
+            ...currentBlockers.filter(
+              (blocker) =>
+                blocker.projectId === projectId &&
+                blocker.workspaceId === workspace.workspaceId &&
+                blocker.workId === work.workId &&
+                blocker.targetWorkRevision === work.revision &&
+                blocker.state === "Open",
+            ),
+          );
+          if (
+            deps.hasActiveWorkEpisode !== undefined &&
+            (yield* deps.hasActiveWorkEpisode(work.workId, work.revision))
+          ) {
+            activeWorkEpisodeIds.push(work.workId);
+          }
+        }
       }
       workspaceVacancies.push({
         workspaceId: workspace.workspaceId,
@@ -675,6 +714,8 @@ export const loadAttentionFacts = (
       vacantProducerCandidates,
       workspaceVacancies,
       workOwners,
+      workBlockers,
+      activeWorkEpisodeIds,
     };
   });
 

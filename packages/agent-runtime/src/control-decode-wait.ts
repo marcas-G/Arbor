@@ -245,8 +245,31 @@ export const decodeWaitControl = (
   object: Record<string, unknown>,
 ): Effect.Effect<ControlToolInvocation, ControlToolDecodeError> =>
   Effect.gen(function* () {
+    const disposition = object.disposition;
+    if (disposition === "Blocked") {
+      if (
+        !hasOnlyControlFields(object, ["disposition", "request"]) ||
+        typeof object.request !== "string" ||
+        object.request.trim().length === 0 ||
+        object.request.length > 2000
+      ) {
+        return yield* invalidControlArguments(
+          invocation.toolName,
+          "Blocked Wait requires a bounded non-empty request and no model-authored wake condition",
+        );
+      }
+      return {
+        invocation,
+        action: {
+          _tag: "Wait",
+          disposition: "Blocked",
+          request: object.request,
+        },
+      };
+    }
     if (
-      !hasOnlyControlFields(object, ["reason", "waitSpec"]) ||
+      (disposition !== undefined && disposition !== "Yielded") ||
+      !hasOnlyControlFields(object, ["disposition", "reason", "waitSpec"]) ||
       typeof object.reason !== "string" ||
       object.reason.length === 0 ||
       typeof object.waitSpec !== "object" ||
@@ -263,6 +286,7 @@ export const decodeWaitControl = (
       invocation,
       action: {
         _tag: "Wait",
+        disposition: "Yielded",
         reason: object.reason,
         waitSpec,
       },

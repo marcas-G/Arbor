@@ -22,6 +22,7 @@ import {
   decodeDeclareDependencyControl,
   decodeDeliverControl,
   decodeProduceDeliverableControl,
+  decodeResolveWorkBlockerControl,
   decodeSelectCurrentWorkControl,
   decodeUpdatePlanControl,
 } from "./control-decode-work.js";
@@ -32,6 +33,7 @@ import type {
 
 const CONTROL_TOOL_NAMES = new Map<string, string>([
   ["wait", "wait"],
+  ["resolve_work_blocker", "resolve_work_blocker"],
   ["assign_work", "assign_work"],
   ["list_workspaces", "list_workspaces"],
   ["read_workspace", "read_workspace"],
@@ -75,6 +77,8 @@ export const decodeControlInvocation = (
     switch (modelName) {
       case "wait":
         return yield* decodeWaitControl(invocation, object);
+      case "resolve_work_blocker":
+        return yield* decodeResolveWorkBlockerControl(invocation, object);
       case "assign_work":
         return yield* decodeAssignWorkControl(invocation, object);
       case "list_workspaces":

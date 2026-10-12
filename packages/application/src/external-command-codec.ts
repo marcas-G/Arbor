@@ -14,6 +14,7 @@ import {
   ID_SCHEMAS,
   type IdTypeName,
   isIsoTimestamp,
+  NO_EFFECT_DENIAL_CODES,
 } from "@arbor/domain";
 import { Schema } from "effect";
 import type {
@@ -447,6 +448,43 @@ const executionEpisode = union("_tag", {
   }),
 });
 const completedResult = union("_tag", {
+  Blocked: object({
+    _tag: literal("Blocked"),
+    workId: id("WorkId"),
+    targetWorkRevision: workRevision,
+    blockerId: string,
+    waitFor: waitSpec,
+    request: boundedString(1, 2000),
+    failedActionRefs: array(
+      object({
+        executionId: id("ExecutionId"),
+        providerTurnId: id("ProviderTurnId"),
+        logicalStepNo: integer,
+        repairAttempt: integer,
+        actionIndex: integer,
+        logicalActionId: string,
+        callRef: string,
+        resultRef: string,
+        settlementRef: string,
+        observationSourceRef: string,
+        toolInvocationId: optional(id("ToolInvocationId")),
+        terminalDenial: union("_tag", {
+          P4NoEffectDenied: object({
+            _tag: literal("P4NoEffectDenied"),
+            reasonCode: enumRule(
+              ...NO_EFFECT_DENIAL_CODES.filter(
+                (code) => code !== "ApprovalRequired",
+              ),
+            ),
+          }),
+          HandlerRejected: object({
+            _tag: literal("HandlerRejected"),
+            routeKind: literal("Executable"),
+          }),
+        }),
+      }),
+    ),
+  }),
   Yielded: object({ _tag: literal("Yielded"), reason: string, waitSpec }),
   CompletionClaimed: object({
     _tag: literal("CompletionClaimed"),

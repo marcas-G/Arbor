@@ -9,6 +9,7 @@ import type {
   ProjectionStoreService,
   TransactionOperationalFailure,
   TransactionPortService,
+  TransactionScope,
 } from "@arbor/ports";
 import { Cause, Effect, Exit } from "effect";
 import type { CompletionConsumerDependencies } from "./completion-consumer.js";
@@ -46,6 +47,22 @@ export interface ConsumerLoopStores {
   readonly offsets: ConsumerOffsetStoreService;
   readonly deadLetters: ConsumerDeadLetterStoreService;
   readonly projection: ProjectionStoreService;
+}
+
+export interface AtomicConsumerApplyResult {
+  readonly record?: string;
+  readonly quarantineReason?: string;
+  readonly afterCommit?: Effect.Effect<void, unknown>;
+}
+
+/** Narrow exception for consumers whose canonical apply must share the
+ * consumer-offset transaction. Ordinary event handlers keep their current
+ * receipt-first boundary. */
+export interface AtomicConsumerHandler {
+  readonly matches: (event: DomainEvent<unknown>) => boolean;
+  readonly apply: (
+    event: DomainEvent<unknown>,
+  ) => Effect.Effect<AtomicConsumerApplyResult, unknown, TransactionScope>;
 }
 
 export interface ConsumerLoopResult {
@@ -126,6 +143,7 @@ export const pollOnce = <R>(
     readonly handlers: (
       events: ReadonlyArray<DomainEvent<unknown>>,
     ) => Effect.Effect<ReadonlyArray<string>, unknown, R>;
+    readonly atomicHandler?: AtomicConsumerHandler;
   },
 ): Effect.Effect<ConsumerLoopResult, ConsumerLoopError, R> =>
   Effect.gen(function* () {
@@ -145,6 +163,10 @@ export const pollOnce = <R>(
     const applied: DomainEvent<unknown>[] = [];
     const records: string[] = [];
     let lastSequence = fromSequence;
+    let committedSequence = fromSequence;
+    let appliedCount = 0;
+    let quarantinedCount = 0;
+    const afterCommit: Array<Effect.Effect<void, unknown>> = [];
     for (const event of events) {
       lastSequence = event.sequence;
       if (event.eventVersion > READER_EVENT_VERSION_CEILING) {
@@ -152,6 +174,61 @@ export const pollOnce = <R>(
           sequence: event.sequence,
           reason: `unsupported eventVersion ${event.eventVersion}`,
         });
+        continue;
+      }
+      const atomicHandler = deps.atomicHandler;
+      if (atomicHandler?.matches(event) === true) {
+        yield* deps.tx
+          .transact(
+            Effect.gen(function* () {
+              for (const entry of quarantined.splice(0)) {
+                yield* deps.deadLetters.quarantine(
+                  consumerId,
+                  projectId,
+                  entry.sequence,
+                  entry.reason,
+                );
+                quarantinedCount += 1;
+              }
+              const priorApplied = applied.splice(0);
+              if (priorApplied.length > 0) {
+                yield* deps.projection.apply(priorApplied);
+                appliedCount += priorApplied.length;
+              }
+              const result = yield* atomicHandler.apply(event);
+              if (result.quarantineReason !== undefined) {
+                yield* deps.deadLetters.quarantine(
+                  consumerId,
+                  projectId,
+                  event.sequence,
+                  result.quarantineReason,
+                );
+                quarantinedCount += 1;
+              } else {
+                yield* deps.projection.apply([event]);
+                appliedCount += 1;
+                if (result.record !== undefined) records.push(result.record);
+                if (result.afterCommit !== undefined) {
+                  afterCommit.push(result.afterCommit);
+                }
+              }
+              yield* deps.offsets.advance(
+                consumerId,
+                projectId,
+                event.sequence,
+              );
+              return result;
+            }),
+          )
+          .pipe(
+            Effect.mapError(
+              (cause): TransactionOperationalFailure => ({
+                _tag: "TransactionOperationalFailure",
+                cause,
+              }),
+            ),
+          );
+        committedSequence = event.sequence;
         continue;
       }
       const exit = yield* Effect.exit(deps.handlers([event]));
@@ -174,29 +251,43 @@ export const pollOnce = <R>(
       });
     }
 
-    yield* deps.tx.transact(
-      Effect.gen(function* () {
-        for (const entry of quarantined) {
-          yield* deps.deadLetters.quarantine(
-            consumerId,
-            projectId,
-            entry.sequence,
-            entry.reason,
-          );
-        }
-        if (applied.length > 0) {
-          yield* deps.projection.apply(applied);
-        }
-        if (lastSequence !== fromSequence) {
-          yield* deps.offsets.advance(consumerId, projectId, lastSequence);
-        }
-      }),
-    );
+    if (
+      quarantined.length > 0 ||
+      applied.length > 0 ||
+      lastSequence !== committedSequence
+    ) {
+      yield* deps.tx.transact(
+        Effect.gen(function* () {
+          for (const entry of quarantined) {
+            yield* deps.deadLetters.quarantine(
+              consumerId,
+              projectId,
+              entry.sequence,
+              entry.reason,
+            );
+          }
+          quarantinedCount += quarantined.length;
+          if (applied.length > 0) {
+            yield* deps.projection.apply(applied);
+            appliedCount += applied.length;
+          }
+          if (lastSequence !== committedSequence) {
+            yield* deps.offsets.advance(consumerId, projectId, lastSequence);
+            committedSequence = lastSequence;
+          }
+        }),
+      );
+    }
+    for (const effect of afterCommit) {
+      // Canonical apply + offset are already committed; a scheduler wake is
+      // best-effort and durable Inbox/WorkWait facts remain authoritative.
+      yield* Effect.exit(effect);
+    }
     return {
       fromSequence,
       lastSequence,
-      applied: applied.length,
-      quarantined: quarantined.length,
+      applied: appliedCount,
+      quarantined: quarantinedCount,
       records,
     };
   });
@@ -285,3 +376,31 @@ export const workflowSignalConsumerLoop =
             : `Ignored:${outcome.eventId}`,
         ),
     );
+
+export const workflowSignalAtomicConsumerHandler = (
+  consumer: Pick<
+    WorkflowSignalConsumerService,
+    "applyBlockedWorkEpisodeAtomically"
+  >,
+): AtomicConsumerHandler => ({
+  matches: (event) => {
+    if (event.eventType !== "ExecutionSettled") return false;
+    const envelope = event.payload as Record<string, unknown> | null;
+    const settlement = envelope?.settlement as
+      | {
+          readonly _tag?: unknown;
+          readonly result?: { readonly _tag?: unknown };
+        }
+      | undefined;
+    return (
+      settlement?._tag === "Completed" && settlement.result?._tag === "Blocked"
+    );
+  },
+  apply: (event) =>
+    consumer.applyBlockedWorkEpisodeAtomically({
+      eventId: String(event.eventId),
+      eventType: String(event.eventType),
+      occurredAt: event.occurredAt,
+      payload: event.payload,
+    }),
+});

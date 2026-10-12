@@ -9,6 +9,7 @@ const invocation = (condition: unknown): ToolInvocation => ({
   callRef: "wait-call",
   toolName: "wait",
   argumentsJson: JSON.stringify({
+    disposition: "Yielded",
     reason: "await exact state change",
     waitSpec: { mode: "Any", conditions: [condition] },
   }),
@@ -54,5 +55,87 @@ describe("wait control revision decoding", () => {
       ),
     );
     expect(failure).toMatchObject({ _tag: "InvalidControlArguments" });
+  });
+
+  it("decodes an explicit Blocked disposition without model-authored wake conditions", async () => {
+    const decoded = await Effect.runPromise(
+      decodeControlInvocation({
+        ...invocation(null),
+        argumentsJson: JSON.stringify({
+          disposition: "Blocked",
+          request: "Please approve access to the required resource.",
+        }),
+      }),
+    );
+    expect(decoded.action).toEqual({
+      _tag: "Wait",
+      disposition: "Blocked",
+      request: "Please approve access to the required resource.",
+    });
+  });
+
+  it("rejects Blocked with empty, overlong, or model-authored waitSpec", async () => {
+    for (const args of [
+      { disposition: "Blocked", request: " " },
+      { disposition: "Blocked", request: "x".repeat(2001) },
+      {
+        disposition: "Blocked",
+        request: "need help",
+        waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+      },
+    ]) {
+      const failure = await Effect.runPromise(
+        Effect.flip(
+          decodeControlInvocation({
+            ...invocation(null),
+            argumentsJson: JSON.stringify(args),
+          }),
+        ),
+      );
+      expect(failure).toMatchObject({ _tag: "InvalidControlArguments" });
+    }
+  });
+
+  it("decodes only bounded exact refs for resolve_work_blocker", async () => {
+    const decoded = await Effect.runPromise(
+      decodeControlInvocation({
+        providerTurnId: "ptn_wait" as never,
+        outputPosition: 0,
+        callRef: "resolve-call",
+        toolName: "resolve_work_blocker",
+        argumentsJson: JSON.stringify({
+          resolutions: [
+            {
+              blockerId: "a".repeat(64),
+              successfulActionRefs: ["lac_exact_success"],
+            },
+          ],
+        }),
+      }),
+    );
+    expect(decoded.action).toMatchObject({
+      _tag: "ResolveWorkBlocker",
+      resolutions: [
+        {
+          blockerId: "a".repeat(64),
+          successfulActionRefs: ["lac_exact_success"],
+        },
+      ],
+    });
+
+    const invalid = await Effect.runPromise(
+      Effect.flip(
+        decodeControlInvocation({
+          providerTurnId: "ptn_wait" as never,
+          outputPosition: 0,
+          callRef: "resolve-call-invalid",
+          toolName: "resolve_work_blocker",
+          argumentsJson: JSON.stringify({
+            resolutions: [{ blockerId: "bad", successfulActionRefs: [] }],
+          }),
+        }),
+      ),
+    );
+    expect(invalid).toMatchObject({ _tag: "InvalidControlArguments" });
   });
 });

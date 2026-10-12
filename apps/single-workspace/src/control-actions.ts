@@ -127,6 +127,10 @@ import {
   type WorkWaitStoreService,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
+import {
+  type ResolveWorkBlockerActionDependencies,
+  resolveWorkBlockerHandler,
+} from "./resolve-work-blocker-action.js";
 
 export interface AssignWorkBindingAttentionQualificationEvent {
   readonly boundary: "AH10AfterAssignWorkBindingAttentionCommit";
@@ -3855,6 +3859,12 @@ export const makeSingleWorkspaceControlActionHandlers = (
         VerificationActionDependencies,
         "verifications" | "sessions" | "toolInvocations"
       >
+    > &
+    Partial<
+      Pick<
+        ResolveWorkBlockerActionDependencies,
+        "blockers" | "loopSteps" | "providerTurns" | "ids" | "sessionWrites"
+      >
     >,
 ): ReadonlyArray<AgentActionHandler> => {
   const handlers: AgentActionHandler[] = [
@@ -3865,6 +3875,29 @@ export const makeSingleWorkspaceControlActionHandlers = (
     declareDependencyHandler(dependencies),
     produceDeliverableHandler(dependencies),
   ];
+  if (
+    dependencies.blockers !== undefined &&
+    dependencies.loopSteps !== undefined &&
+    dependencies.providerTurns !== undefined &&
+    dependencies.sessions !== undefined &&
+    dependencies.journal !== undefined &&
+    dependencies.ids !== undefined &&
+    dependencies.sessionWrites !== undefined
+  ) {
+    handlers.push(
+      resolveWorkBlockerHandler({
+        tx: dependencies.tx,
+        blockers: dependencies.blockers,
+        works: dependencies.works,
+        loopSteps: dependencies.loopSteps,
+        providerTurns: dependencies.providerTurns,
+        sessionWrites: dependencies.sessionWrites,
+        journal: dependencies.journal,
+        clock: dependencies.clock,
+        ids: dependencies.ids,
+      }),
+    );
+  }
   const {
     plans,
     decisions,

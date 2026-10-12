@@ -6,8 +6,11 @@ import type {
   Workspace,
 } from "@arbor/domain";
 import {
+  executionEpisode,
   type ProjectId,
   settlementFingerprint,
+  type WorkId,
+  type WorkRevision,
   type WorkspaceId,
 } from "@arbor/domain";
 import {
@@ -29,6 +32,7 @@ import {
   TransactionPort,
   type TransactionScope,
   VerificationRepository,
+  WorkBlockerStore,
   WorkRepository,
   WorkspaceRepository,
   WorkWaitStore,
@@ -136,6 +140,7 @@ export type ProjectionQueryWiringServices =
   | WorkRepository
   | ExecutionRepository
   | WorkWaitStore
+  | WorkBlockerStore
   | DependencyRepository
   | VerificationRepository
   | EvidenceRepository
@@ -214,6 +219,8 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
     const works = yield* WorkRepository;
     const executions = yield* ExecutionRepository;
     const waits = yield* WorkWaitStore;
+    const blockersOption = yield* Effect.serviceOption(WorkBlockerStore);
+    const blockers = Option.getOrUndefined(blockersOption);
     const dependencies = yield* DependencyRepository;
     const verifications = yield* VerificationRepository;
     const evidence = yield* EvidenceRepository;
@@ -491,6 +498,35 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
         inTx(
           attentionProjection.listWorkspaceResourceActivationPending(projectId),
         ),
+      ...(blockers === undefined
+        ? {}
+        : {
+            listWorkBlockersByWorkRevision: (
+              workId: WorkId,
+              revision: number,
+            ) =>
+              inTx(
+                blockers.listByWorkRevision(workId, revision as WorkRevision),
+              ),
+          }),
+      hasActiveWorkEpisode: (workId, revision) =>
+        inTx(
+          Effect.gen(function* () {
+            const work = yield* works.findById(workId);
+            if (Option.isNone(work) || work.value.revision !== revision)
+              return false;
+            const active = yield* executions.findActiveMainByWorkspace(
+              work.value.workspaceId,
+            );
+            if (Option.isNone(active)) return false;
+            const episode = executionEpisode(active.value);
+            return (
+              episode?._tag === "WorkEpisode" &&
+              episode.workId === workId &&
+              episode.targetWorkRevision === revision
+            );
+          }),
+        ),
     };
 
     const tree: TreeViewDeps = {
@@ -592,6 +628,27 @@ const projectionQueryService = (catalogProjectId?: ProjectId) =>
         inTx(acceptances.findByWorkRevision(workId, revision)),
       findVerification: (verificationId) =>
         inTx(verifications.findById(verificationId)),
+      ...(blockers === undefined
+        ? {}
+        : {
+            listWorkBlockersByWorkRevision: (
+              workId: WorkId,
+              revision: number,
+            ) =>
+              inTx(
+                blockers.listByWorkRevision(workId, revision as WorkRevision),
+              ),
+          }),
+      findExecutionSettlement: (executionId) =>
+        inTx(
+          Effect.map(executions.findById(executionId), (found) =>
+            Option.flatMap(found, (execution) =>
+              execution.state.status === "Settled"
+                ? Option.some(execution.state.settlement)
+                : Option.none(),
+            ),
+          ),
+        ),
     };
 
     const dependencyView: DependencyViewDeps = {

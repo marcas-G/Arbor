@@ -2,6 +2,7 @@ import type {
   Actor,
   ArtifactId,
   CanonicalResourceRegion,
+  NoEffectDenialCode as DomainNoEffectDenialCode,
   ExecutionId,
   LeaseGeneration,
   Principal,
@@ -182,17 +183,7 @@ export interface BoundedObservation {
   readonly truncated: boolean;
 }
 
-export type NoEffectDenialCode =
-  | "InvocationAuthorityDenied"
-  | "ApprovalRequired"
-  | "ApprovalRejected"
-  | "ApprovalNotFound"
-  | "ApprovalMismatch"
-  | "ApprovalExpired"
-  | "ApprovalConsumedByOtherInvocation"
-  | "ResourceResolutionDenied"
-  | "ResourceAdmissionDenied"
-  | "ApprovalNoLongerAuthorized";
+export type NoEffectDenialCode = DomainNoEffectDenialCode;
 
 export type ToolEffectAdmissionResult =
   | { readonly _tag: "Admitted" }

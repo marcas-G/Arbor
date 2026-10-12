@@ -1,4 +1,9 @@
-import type { WorkId, WorkspaceId, WorkspaceLifecycle } from "@arbor/domain";
+import type {
+  WorkBlocker,
+  WorkId,
+  WorkspaceId,
+  WorkspaceLifecycle,
+} from "@arbor/domain";
 
 // --- P10 `02` §1 frozen vocabulary ---
 
@@ -17,6 +22,7 @@ export type AttentionSource =
   | "AssignWorkTargetBindingFailure"
   | "DeliverReplayFailure"
   | "WorkspaceResourceActivationPending"
+  | "WorkEpisodeBlocked"
   | "VerifierOrphan"
   | "WaitingOnVacantProducer";
 
@@ -132,6 +138,8 @@ export interface AttentionFacts {
   readonly vacantProducerCandidates: ReadonlyArray<VacantProducerCandidateFact>;
   readonly workspaceVacancies: ReadonlyArray<WorkspaceVacancyFact>;
   readonly workOwners: ReadonlyArray<WorkOwnerFact>;
+  readonly workBlockers?: ReadonlyArray<WorkBlocker>;
+  readonly activeWorkEpisodeIds?: ReadonlyArray<WorkId>;
 }
 
 // --- frozen dedup identities (P10 `02` §2) ---
@@ -228,6 +236,21 @@ export const deriveAttentionRows = (
       dedupKey: unfulfillableDedupKey(fact),
       summary: `dependency ${fact.dependencyId} marked unfulfillable (revision ${fact.dependencyRevision})`,
       occurredAt: fact.occurredAt,
+    });
+  }
+
+  const activeWorkIds = new Set(facts.activeWorkEpisodeIds ?? []);
+  for (const blocker of facts.workBlockers ?? []) {
+    if (blocker.state !== "Open") continue;
+    rows.push({
+      source: "WorkEpisodeBlocked",
+      severity: activeWorkIds.has(blocker.workId)
+        ? "Attention"
+        : "ActionRequired",
+      targetWorkspaceId: blocker.workspaceId,
+      dedupKey: blocker.blockerId,
+      summary: "Work is blocked by a terminal no-effect action denial.",
+      occurredAt: null,
     });
   }
 

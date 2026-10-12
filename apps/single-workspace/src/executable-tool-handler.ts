@@ -72,6 +72,14 @@ export const toExecutableOutcome = (
         observation: bounded(`tool denied: ${result.reason}`),
         status: "Denied",
         disposition: "AuthorizationDenied",
+        ...(result.reasonCode === "ApprovalRequired"
+          ? {}
+          : {
+              terminalDenial: {
+                _tag: "P4NoEffectDenied" as const,
+                reasonCode: result.reasonCode,
+              },
+            }),
       };
     case "Interrupted":
       return {

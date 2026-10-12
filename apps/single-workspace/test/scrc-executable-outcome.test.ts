@@ -35,6 +35,14 @@ describe("SCRC executable outcome taxonomy", () => {
   ])("maps %s to typed status %s", (input, status) => {
     const outcome = toExecutableOutcome(input);
     expect(outcome).toMatchObject({ _tag: "Observation", status });
+    if (input._tag === "Denied") {
+      expect(outcome).toMatchObject({
+        terminalDenial: {
+          _tag: "P4NoEffectDenied",
+          reasonCode: input.reasonCode,
+        },
+      });
+    }
   });
 
   it("keeps a ToolRuntime OutcomeUnknown as reconciliation settlement, not an applied observation", () => {

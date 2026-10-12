@@ -1,5 +1,6 @@
 export * from "./actor.js";
 export * from "./authority.js";
+export * from "./blocker.js";
 export * from "./command.js";
 export * from "./communication.js";
 export * from "./decision-request.js";

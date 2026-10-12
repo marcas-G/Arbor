@@ -569,6 +569,29 @@ export const workDetailMinimal: WorkDetailRes = {
   revision: workRevision(0),
   acceptedResult: undefined,
 };
+export const workDetailBlocked: WorkDetailRes = {
+  ...workDetailMinimal,
+  blockedEpisode: {
+    sourceExecutionId: id("exe_018f6a2e-0000-7000-8000-0000000000e2"),
+    blockers: [
+      {
+        blockerId: id("a".repeat(64)),
+        disposition: "Blocked",
+        failedActions: [
+          {
+            actionId: "lac_blocked_patch",
+            actionKind: "Executable",
+            status: "Denied",
+            denialCategory: "HandlerRejected",
+            request: "需要管理员批准工作区写入边界。",
+            observationRef: "observation_blocked_action",
+          },
+        ],
+        recoveryGuidance: "检查所需权限后，提供新指导以继续本工作。",
+      },
+    ],
+  },
+};
 export const workDetailUnknownEnum: WorkDetailRes = {
   ...workDetailTypical,
   lifecycle: "Paused" as never,
