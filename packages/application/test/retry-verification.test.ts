@@ -1,3 +1,4 @@
+import { TransactionScope } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import { makeRetryVerificationHandler } from "../src/commands/retry-verification.js";
@@ -180,7 +181,11 @@ describe("RetryVerification P8 handoff", () => {
   it("concludes the exact orphan and creates the preallocated successor under one handler outcome", async () => {
     const test = setup();
     const response = await Effect.runPromise(
-      test.handler.execute(test.envelope as never, test.context as never),
+      Effect.provideService(
+        test.handler.execute(test.envelope as never, test.context as never),
+        TransactionScope,
+        { session: { id: "retry-verification-test" } },
+      ),
     );
     expect(response.ok).toBe(true);
     if (!response.ok) return;
@@ -205,9 +210,13 @@ describe("RetryVerification P8 handoff", () => {
   it("does not let an Agent or an agent PermissionGrant invoke the human retry face", async () => {
     const test = setup();
     const response = await Effect.runPromise(
-      test.handler.execute(
-        test.envelope as never,
-        { _tag: "External", principal: "agent:worker" } as never,
+      Effect.provideService(
+        test.handler.execute(
+          test.envelope as never,
+          { _tag: "External", principal: "agent:worker" } as never,
+        ),
+        TransactionScope,
+        { session: { id: "retry-verification-test" } },
       ),
     );
     expect(response).toMatchObject({

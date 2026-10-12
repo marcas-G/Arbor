@@ -14,6 +14,7 @@ import {
   EnvironmentRevisionStore,
   type ExecutableApprovalRecord,
   ExecutableApprovalStore,
+  type ExecutableApprovalStoreService,
   type InvocationApproval,
   type NoEffectDenialCode,
   P39RecoveryEvidenceStore,
@@ -386,7 +387,11 @@ const app = (
                   ? Option.none()
                   : Option.some(executableApproval),
               ),
-            consumeApproved: (input) => {
+            consumeApproved: (
+              input: Parameters<
+                ExecutableApprovalStoreService["consumeApproved"]
+              >[0],
+            ) => {
               if (
                 executableApproval === undefined ||
                 executableApproval.state !== "Approved" ||

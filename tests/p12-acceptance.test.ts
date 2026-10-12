@@ -242,6 +242,7 @@ import {
   ToolRuntimePort,
   TransactionPort,
   TransactionScope,
+  type VerificationRepository,
   type WorkRepository,
   WorkspaceRepository,
   type WorkWaitStore,
@@ -2110,6 +2111,7 @@ type TransportDbServices =
   | DomainEventJournal
   | SessionRepository
   | WorkWaitStore
+  | VerificationRepository
   | Clock
   | ConversationResponseJobStore
   | IdGenerator;

@@ -142,6 +142,13 @@ const resultByCommand = {
     state: "Open",
     verifierExecutionId: id("exe_"),
   },
+  RetryVerification: {
+    workId: id("wrk_"),
+    orphanedVerificationId: id("ver_"),
+    successorVerificationId: id("ver_"),
+    verifierExecutionId: id("exe_"),
+    state: "OrphanedAndRetried",
+  },
   RecordVerificationEvidence: {
     verificationId: id("ver_"),
     evidenceId: id("evd_"),

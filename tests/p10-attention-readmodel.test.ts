@@ -86,6 +86,8 @@ const sixSourceFacts: AttentionFacts = {
       verificationId: "ver_o1",
       ownerWorkspaceId: p10Leaf,
       executionIds: ["exe_v1"],
+      workId: W_CONS,
+      targetWorkRevision: 1,
     },
   ],
   executionSettlements: [
@@ -297,6 +299,8 @@ describe("P10-004 Attention read-model — six sources / severity / target / ded
           verificationId: "ver_o2",
           ownerWorkspaceId: p10Leaf,
           executionIds: [],
+          workId: W_CONS,
+          targetWorkRevision: 1,
         },
       ],
     });

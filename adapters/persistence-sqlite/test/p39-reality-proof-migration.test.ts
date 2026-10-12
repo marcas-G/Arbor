@@ -910,7 +910,10 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       ),
     );
 
-    expect(result.code).toBe("P39_MIGRATION_PREFIX_INVALID");
+    expect(result._tag).toBe("P39MaintenanceFailure");
+    if (result._tag === "P39MaintenanceFailure") {
+      expect(result.code).toBe("P39_MIGRATION_PREFIX_INVALID");
+    }
     expect(order).toEqual([
       "acquire-lock",
       "reserve-primary",
