@@ -2,9 +2,9 @@ import {
   ExecutionId,
   ProjectId,
   ProviderTurnId,
+  parse,
   ToolInvocationId,
   WorkspaceId,
-  parse,
 } from "@arbor/domain";
 import type {
   ExecutableApprovalBinding,
@@ -25,9 +25,7 @@ const providerTurnId = parse(ProviderTurnId)(
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a4",
 );
-const projectId = parse(ProjectId)(
-  "prj_018f2b3c-4d5e-7abc-8def-0123456789a5",
-);
+const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a5");
 
 const identity: RecoveryBindingSourceIdentity = {
   executionId,

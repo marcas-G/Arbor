@@ -267,7 +267,7 @@ export const makeExecutableToolHandler = (
         ...(recoveryBindingPolicyRevisions === undefined
           ? {}
           : { recoveryBindingPolicyRevisions }),
-        ...(executionFence === undefined ? {} : { executionFence }),
+        executionFence,
         delegationDepth:
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,

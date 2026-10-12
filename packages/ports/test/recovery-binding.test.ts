@@ -7,10 +7,10 @@ import { describe, expect, it } from "vitest";
 import {
   approvalTargetDigestV1,
   canonicalizeRecoveryBindingV1,
+  type RecoveryBindingV1,
   recoveryBindingV1Digest,
   targetResourceIdentityDigestV1,
   verifyRecoveryBindingV1,
-  type RecoveryBindingV1,
 } from "../src/recovery-binding.js";
 
 const binding = (): RecoveryBindingV1 => ({
@@ -58,9 +58,9 @@ describe("RecoveryBindingV1 canonical bytes and target projections", () => {
   it("uses a closed, key-sorted canonical JSON object and verifies its digest", () => {
     const value = binding();
     const canonical = canonicalizeRecoveryBindingV1(value);
-    expect(canonical.startsWith('{"actionIndex":0,"approvalActionDigest":null')).toBe(
-      true,
-    );
+    expect(
+      canonical.startsWith('{"actionIndex":0,"approvalActionDigest":null'),
+    ).toBe(true);
     const verified = verifyRecoveryBindingV1({
       invocationId: value.invocationId,
       canonicalJson: canonical,
@@ -83,7 +83,10 @@ describe("RecoveryBindingV1 canonical bytes and target projections", () => {
     expect(
       verifyRecoveryBindingV1({
         invocationId: value.invocationId,
-        canonicalJson: canonical.replace('"effectKey":null', '"unexpected":null'),
+        canonicalJson: canonical.replace(
+          '"effectKey":null',
+          '"unexpected":null',
+        ),
         bindingSha256: digest,
       }),
     ).toBeNull();

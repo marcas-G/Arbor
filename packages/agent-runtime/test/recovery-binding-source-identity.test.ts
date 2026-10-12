@@ -1,8 +1,4 @@
-import {
-  ExecutionId,
-  ProviderTurnId,
-  parse,
-} from "@arbor/domain";
+import { ExecutionId, ProviderTurnId, parse } from "@arbor/domain";
 import type {
   AgentLoopStepActionRecord,
   AgentLoopStepRecord,
@@ -42,14 +38,16 @@ const action = (): AgentLoopStepActionRecord => ({
   updatedAt: "2026-10-12T00:00:00.000Z",
 });
 
-const sourceIdentity = (overrides: {
-  readonly step?: AgentLoopStepRecord;
-  readonly action?: AgentLoopStepActionRecord;
-  readonly expectedExecutionId?: typeof executionId;
-  readonly expectedProviderTurnId?: typeof providerTurnId;
-  readonly actionIndex?: number;
-  readonly callRef?: string;
-} = {}) =>
+const sourceIdentity = (
+  overrides: {
+    readonly step?: AgentLoopStepRecord;
+    readonly action?: AgentLoopStepActionRecord;
+    readonly expectedExecutionId?: typeof executionId;
+    readonly expectedProviderTurnId?: typeof providerTurnId;
+    readonly actionIndex?: number;
+    readonly callRef?: string;
+  } = {},
+) =>
   recoveryBindingIdentityFor({
     step: overrides.step ?? step(),
     action: overrides.action ?? action(),

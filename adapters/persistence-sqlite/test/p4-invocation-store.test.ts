@@ -11,7 +11,6 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   layer,
-  P4_MIGRATIONS,
   P36_MIGRATIONS,
   P39_RECONCILIATION_MIGRATION,
   runMigrations,
@@ -224,27 +223,50 @@ describe("P4 tool invocation store", () => {
     const program = Effect.gen(function* () {
       yield* runMigrations(P36_MIGRATIONS);
       yield* runMigrations([...P36_MIGRATIONS, P39_RECONCILIATION_MIGRATION]);
+      yield* seed;
       const tx = yield* TransactionPort;
       const store = yield* ToolInvocationStore;
       const sql = yield* SqlClient;
       yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+      const activeFence = yield* sql.unsafe<{ readonly execution_id: string }>(
+        `SELECT e.execution_id
+           FROM executions e
+           JOIN execution_leases l ON l.execution_id = e.execution_id
+          WHERE e.execution_id = ? AND e.settled_at IS NULL
+            AND l.worker_id = ? AND l.worker_incarnation_id = ?
+            AND l.generation = ? AND l.expires_at > ?`,
+        [
+          executionId,
+          executionFence.workerId,
+          executionFence.workerIncarnationId,
+          executionFence.fencingGeneration,
+          fenceNow,
+        ],
+      );
+      expect(activeFence).toHaveLength(1);
 
       const freshDenied = yield* tx.transact(
         store.recordNoEffectDenial(
           denial(freshDeniedId),
           "ResourceAdmissionDenied",
-          "t2",
+          fenceNow,
+          executionFence,
+          fenceNow,
         ),
       );
 
-      yield* tx.transact(store.recordIntent(denial(provisionalId)));
+      yield* tx.transact(
+        store.recordIntent(denial(provisionalId), executionFence, fenceNow),
+      );
       const provisionalRollback = yield* Effect.flip(
         tx.transact(
           Effect.gen(function* () {
             yield* store.recordNoEffectDenial(
               denial(provisionalId),
               "ResourceAdmissionDenied",
-              "t2",
+              fenceNow,
+              executionFence,
+              fenceNow,
             );
             return yield* Effect.fail("simulated-precommit-crash");
           }),
@@ -257,11 +279,15 @@ describe("P4 tool invocation store", () => {
         store.recordNoEffectDenial(
           denial(provisionalId),
           "ResourceAdmissionDenied",
-          "t3",
+          fenceNow,
+          executionFence,
+          fenceNow,
         ),
       );
 
-      yield* tx.transact(store.recordIntent(denial(boundId)));
+      yield* tx.transact(
+        store.recordIntent(denial(boundId), executionFence, fenceNow),
+      );
       yield* sql.unsafe(
         `INSERT INTO tool_invocation_recovery_bindings (
            invocation_id,binding_version,canonical_binding_json,binding_sha256,created_at
@@ -287,7 +313,9 @@ describe("P4 tool invocation store", () => {
         store.recordNoEffectDenial(
           denial(boundId),
           "ResourceAdmissionDenied",
-          "t3",
+          fenceNow,
+          executionFence,
+          fenceNow,
         ),
       );
 
@@ -297,7 +325,9 @@ describe("P4 tool invocation store", () => {
             yield* store.recordNoEffectDenial(
               denial(rollbackInsertId),
               "ResourceAdmissionDenied",
-              "t2",
+              fenceNow,
+              executionFence,
+              fenceNow,
             );
             return yield* Effect.fail("simulated-precommit-crash");
           }),
