@@ -109,6 +109,7 @@ import {
   decideProviderRetry,
   ExecutionRepository,
   ExecutionScheduler,
+  invocationAuthoritySourceRevisionOf,
   LeaseService,
   ProjectEnvironmentPort,
   ProjectionStore,
@@ -135,7 +136,6 @@ import {
   WorkRepository,
   WorkspaceRepository,
   WorkWaitStore,
-  invocationAuthoritySourceRevisionOf,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";

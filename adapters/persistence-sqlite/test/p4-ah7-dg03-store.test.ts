@@ -399,7 +399,11 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
           const tx = yield* TransactionPort;
           const store = yield* ToolInvocationStore;
           yield* tx.transact(
-            store.recordIntent(intent(invocationA, true, approvalId), fence, fenceNow),
+            store.recordIntent(
+              intent(invocationA, true, approvalId),
+              fence,
+              fenceNow,
+            ),
           );
           yield* tx.transact(
             store.recordIntent(

@@ -44,6 +44,7 @@ import {
 import {
   Clock,
   ExecutionRepository,
+  invocationAuthoritySourceRevisionOf,
   ProjectEnvironmentPort,
   ProjectRepository,
   ReconciliationSource,
@@ -58,7 +59,6 @@ import {
   TransactionPort,
   WorkspaceRepository,
   WorkWaitStore,
-  invocationAuthoritySourceRevisionOf,
 } from "../packages/ports/src/index.js";
 import {
   type ToolExecutor,
@@ -299,7 +299,14 @@ const seed = Effect.gen(function* () {
       );
       yield* sql.unsafe(
         "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
-        [executionId, String(principal), "incarnation:p9-tool-outcome", 0, "2999-01-01T00:00:00.000Z", "t"],
+        [
+          executionId,
+          String(principal),
+          "incarnation:p9-tool-outcome",
+          0,
+          "2999-01-01T00:00:00.000Z",
+          "t",
+        ],
       );
     }),
   );
