@@ -103,6 +103,15 @@ const executionRows = (databaseFile: string, executionId: string) => {
           "SELECT settled_at, settlement_kind FROM executions WHERE execution_id = ?",
         )
         .get(executionId) as ExecutionRow | undefined,
+      providerTurnCount: Number(
+        (
+          db
+            .prepare(
+              "SELECT COUNT(*) AS turn_count FROM provider_turns WHERE execution_id = ?",
+            )
+            .get(executionId) as { readonly turn_count: number } | undefined
+        )?.turn_count ?? 0,
+      ),
       providerAttempts: db
         .prepare(
           `SELECT pt.provider_turn_id, pa.attempt_no, pa.outcome
@@ -429,6 +438,11 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     });
     expect(rejectedAttempt?.pid).not.toBe(oldAcquired.pid);
     expect(
+      fixture.providerCalls.filter((call) =>
+        JSON.stringify(call.messages).includes(steerMarker),
+      ),
+    ).toHaveLength(1);
+    expect(
       events.some(
         (event) =>
           event.role === "new" &&
@@ -495,7 +509,8 @@ describe("P4 lease acquisition while another daemon owns a live lease", () => {
     });
     expect(settled.execution?.settled_at).not.toBeNull();
     expect(settled.lease?.generation).toBe(oldAcquired.fencingGeneration);
-    expect(settled.providerAttempts.length).toBeGreaterThan(0);
+    expect(settled.providerTurnCount).toBe(2);
+    expect(settled.providerAttempts).toHaveLength(2);
     expect(
       new Set(
         settled.providerAttempts.map((attempt) => attempt.provider_turn_id),
