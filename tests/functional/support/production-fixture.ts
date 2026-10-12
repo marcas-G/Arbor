@@ -45,6 +45,18 @@ export interface ProductionFixture {
   readonly workspaceDirectory: string;
   readonly providerCalls: ReadonlyArray<CapturedProviderCall>;
   readonly daemonErrors: ReadonlyArray<string>;
+  /** Sanitized state of the last primary daemon launcher (never env values). */
+  readonly daemonProcessSnapshot: () => {
+    readonly pid: number | undefined;
+    readonly exitCode: number | null;
+    readonly signalCode: NodeJS.Signals | null;
+    readonly killed: boolean;
+    readonly executable: string | undefined;
+    readonly args: ReadonlyArray<string>;
+    readonly requestedPort: number;
+    readonly environmentKeys: ReadonlyArray<string>;
+    readonly alive: boolean;
+  } | null;
   readonly crash: () => Promise<void>;
   readonly restart: (options?: {
     readonly entry?: string;
@@ -452,6 +464,13 @@ export const startProductionFixture = async (input: {
   const daemonErrors: string[] = [];
   const additionalDaemons: ChildProcess[] = [];
   let daemon: ChildProcess | undefined;
+  let lastDaemonLaunch:
+    | {
+        readonly child: ChildProcess;
+        readonly requestedPort: number;
+        readonly environmentKeys: ReadonlyArray<string>;
+      }
+    | undefined;
   let stopped = false;
   let daemonStarts = 0;
 
@@ -506,6 +525,11 @@ export const startProductionFixture = async (input: {
         "pipe",
       ],
     });
+    lastDaemonLaunch = {
+      child: daemon,
+      requestedPort,
+      environmentKeys: Object.keys(daemonEnv).sort(),
+    };
     if (input.isolatedPortHandshake !== true) {
       let stdoutBuffer = "";
       daemon.stdout?.on("data", (chunk: Buffer) => {
@@ -553,6 +577,31 @@ export const startProductionFixture = async (input: {
     workspaceDirectory,
     providerCalls: provider.calls,
     daemonErrors,
+    daemonProcessSnapshot: () => {
+      const launch = lastDaemonLaunch;
+      if (launch === undefined) return null;
+      const child = launch.child;
+      let alive = false;
+      if (child.pid !== undefined && child.exitCode === null) {
+        try {
+          process.kill(child.pid, 0);
+          alive = true;
+        } catch {
+          alive = false;
+        }
+      }
+      return {
+        pid: child.pid,
+        exitCode: child.exitCode,
+        signalCode: child.signalCode,
+        killed: child.killed,
+        executable: child.spawnfile,
+        args: [...child.spawnargs],
+        requestedPort: launch.requestedPort,
+        environmentKeys: launch.environmentKeys,
+        alive,
+      };
+    },
     crash: () => stopChild(daemon),
     restart: async (override) => {
       await stopChild(daemon);
