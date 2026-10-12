@@ -1,9 +1,9 @@
-# P37 L6 DeliverMessage Process-Crash Matrix — First Full Run
+# P37 L6 DeliverMessage Process-Crash Matrix — Qualification Progress
 
 Date: 2026-10-12 (Asia/Shanghai)
 Baseline: `ed5fba00ee60e169cadf0df12395179862abd1e8`
 Worktree: `C:\Users\ThinkPad\.codex\worktrees\p37-delivermessage-closure`
-Status: **First run 0/11; rerun 1 7/11; rerun 2 9/11; P37 L6 remains unqualified**
+Status: **First run 0/11; rerun 1 7/11; rerun 2 9/11; two final local cases 2/2; full P37 L6 unqualified**
 
 ## Run
 
@@ -210,6 +210,22 @@ sequential scheduler loop can advance into `pollConsumers`.
 
 Those two exact gate-order fixes have now been applied in the worktree without
 changing the matrix or timeout values. The P9-after branch additionally checks
-fact/event/outbox durability before releasing the gate. This latest source has
-only passed static checks; the two local cases and the full 11-case matrix have
-not been rerun yet. No P37 closure claim is made.
+fact/event/outbox durability before releasing the gate. No P37 closure claim is
+made pending the full 11-case run.
+
+## Final gate-fix local qualification
+
+After the two gate-order corrections, only the original FencingRejected-before
+case and P9-after-commit case were run, serially and with retry disabled. The
+filtered Vitest result was **2 passed / 9 skipped**, duration 119.06 s, exit 0.
+The raw output is `planning/results/P37-L6-local-targeted-boundaries.raw.log`;
+both DB/WAL/SHM captures and fixture metadata are in
+`planning/results/P37-L6-local-targeted-artifacts/`.
+
+- Fencing-before reached gen1 generation 1, then gen0 `AH10BeforeFencedReceiptCommit` while its lease-renewal fiber remained parked; the committed-receipt/new-generation assertions passed.
+- P9-after asserted the committed fact/event/outbox before releasing the P9 gate, then reached P10 row-write pre-commit and poll post-commit boundaries and passed the public Attention/restart assertions.
+
+This local pass validates the corrected boundaries but does not qualify the
+other nine cases after the final edits. Root has reserved the next P37 window
+for one full unfiltered 11-case run. Until that run passes, P37 L6, F19 and
+default `pnpm test:functional` remain open.

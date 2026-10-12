@@ -56,5 +56,9 @@ prove a P10 production-liveness failure.
 The second fixture-only correction releases the P9 after-commit test gate after
 asserting its durable identity, then waits at the P10 pre-commit row boundary.
 It does not change P9/P10 production code, contracts, cases or timeout. The
-correction has not yet been process-qualified; after the next full matrix,
-revisit this note from its evidence rather than treating P10 as closed.
+focused P9-after-boundary case has since passed 1/1 with this gate order,
+including P10 pre-commit and post-commit probes. That adjacent case exercises
+`PriorReceiptDecodeMismatch`, not this legacy-direct-write
+`PriorReceiptEffectConflict` branch. The direct-write case itself remains open
+until the full matrix requalifies it; P10 is not closed by the focused adjacent
+case.
