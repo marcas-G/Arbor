@@ -124,22 +124,55 @@ Both tests are under `vitest.functional.config.ts`'s default process include;
 their scoped successful results are already recorded. This package does not
 expand those results into AH7 closure.
 
-The exact strict cloned-holder test is currently the third case in
-`adapters/persistence-sqlite/test/p4-ah7-cross-connection-concurrency.test.ts`.
-It remains unchanged/default until this exact owner-document package is
-accepted and the existing G0/G1 evidence is accepted as satisfying its
-qualification prerequisite. Then, in a separate implementation commit, move
-only that third case to
-`adapters/persistence-sqlite/test/p4-ah7-same-holder.diagnostic.ts`; leave the
-exact intent-CAS and separate-connection runtime cases in the existing default
-file. Add root config `vitest.ah7-same-holder-diagnostic.config.ts` with the
-single include for the diagnostic file, and record the explicit command
-`pnpm exec vitest run --config vitest.ah7-same-holder-diagnostic.config.ts`
-for reproducing it. Because the diagnostic filename does not match the root
-`**/test/**/*.test.ts` include, it contributes zero passing tests to default
-core while remaining executable. Preserve the full strict
-`one Success + one effect + durable Success` oracle. Do not use `it.skip`,
-weaken the Success oracle, or delete its two v19 full-gate failure references.
+The static census found four same-holder concurrent P4 Runtime oracle groups
+in the default root Vitest include:
+
+| Current source | Concurrent shape / oracle | Accepted classification after landing |
+|---|---|---|
+| `packages/tool-runtime/test/p4-ah7-concurrent-invocation.test.ts` | Two overlapping `ToolRuntimePort.invoke` calls share the same `ToolExecutionContext`/fence; mock store; asserts one Executor effect, one durable Success, and one `IntentJournal` error. | Move unchanged strict assertions to `.diagnostic.ts`; exclude from default core. |
+| `adapters/persistence-sqlite/test/p4-ah7-concurrent-invocation.test.ts` | Two overlapping `invoke` calls share one Execution/invocation/fence and SQLite `:memory:` state; asserts one effect and durable Success. | Move unchanged strict assertions to `.diagnostic.ts`; exclude from default core. |
+| `adapters/persistence-sqlite/test/p4-ah7-cross-connection-concurrency.test.ts`, case `runs both independent ToolRuntime connections…` | Two Runtime layers/connections invoke concurrently with the same context and seeded holder tuple; asserts one effect/Success. | Move unchanged runtime case to `.diagnostic.ts`; exclude from default core. |
+| `adapters/persistence-sqlite/test/p4-ah7-cross-connection-concurrency.test.ts`, cases `releases two OS processes…` and currently `it.skip` `pending diagnostic: direct unleased P4 reentry…` | Two OS processes receive the same seeded holder tuple and invoke/re-enter the same P4 call. The skipped case also receives the full `executionFence` in the current test child despite its historical “unleased” title; it asserts A=Success/B=OutcomeUnknown and final durable Success. | Move both cases unchanged to `.diagnostic.ts`; make the historical strict case runnable only in the diagnostic config. Neither is a valid G0/G1 qualification. |
+
+The first case in `adapters/persistence-sqlite/test/p4-ah7-cross-connection-concurrency.test.ts`, `converges exact same-invocation intent claims to one durable row across connections`, is Store-only and makes no ToolRuntime/Executor claim; preserve it in default core as `adapters/persistence-sqlite/test/p4-ah7-intent-claim-concurrency.test.ts`.
+
+Before moving any Runtime case, add a default Store-level effect-admission CAS
+case at `adapters/persistence-sqlite/test/p4-ah7-effect-admission-cas-concurrency.test.ts`:
+two independent SQLite connections compete to admit the same exact, already
+persisted invocation. Assert one successful `NotAdmitted → MayHaveStarted`
+update, one canonical row and the losing store call's existing typed
+`PersistenceCorruption<"ToolInvocationStore">` compare-and-set no-apply result.
+The case has **no Executor** and must not claim a single-Executor guarantee. The
+existing single authorized production invocation path and the real P2 G0/G1
+process tests remain the evidence for actual Executor count and lease takeover.
+
+After the owner-document package is accepted and the recorded P4 G0/G1 evidence
+is accepted as satisfying the qualification prerequisite, the proposed
+separate implementation change is:
+
+- preserve the Store-only intent-claim case in default core;
+- add/run the Store-only effect-admission CAS case in default core;
+- keep `tests/functional/process/p4-ah7-live-lease-acquisition.functional.test.ts`
+  and `p4-ah7-tool-settlement-lease-fencing.functional.test.ts` in the default
+  functional process suite;
+- move the four same-holder Runtime groups above into runnable diagnostic
+  files, preserving every strict oracle and retaining the v19 full-gate reds.
+
+Use these exact diagnostic paths and root config:
+
+```text
+packages/tool-runtime/test/p4-ah7-concurrent-invocation.diagnostic.ts
+adapters/persistence-sqlite/test/p4-ah7-concurrent-invocation.diagnostic.ts
+adapters/persistence-sqlite/test/p4-ah7-same-holder-runtime-concurrency.diagnostic.ts
+vitest.ah7-same-holder-diagnostic.config.ts
+```
+
+The diagnostic config explicitly includes only those three `.diagnostic.ts`
+files and runs them with `pnpm exec vitest run --config
+vitest.ah7-same-holder-diagnostic.config.ts`. Their filenames do not match the
+root `**/test/**/*.test.ts` include, so they contribute zero pass/fail cases to
+default core and remain manually runnable. No `it.skip` is used for the moved
+strict same-holder diagnostics. No oracle is weakened or deleted.
 
 ## Cross-owner consistency review checklist
 
@@ -158,10 +191,15 @@ this package:
 5. The two P4 process qualifications satisfy the selected replacement oracle;
    the SQL expiry fast-forward caveat is explicit and does not overclaim
    natural TTL qualification.
-6. The gate classification change occurs only after package acceptance and
-   is implemented separately; the original strict diagnostic remains
-   runnable and its full-gate reds remain in audit history.
-7. No SD/DID top-level change, SQL/port/failure-tag change, CAPA/P38 approval
+6. The default test classification change occurs only after package acceptance
+   and the existing real takeover qualification is revalidated on the accepted
+   base. All five same-holder Runtime test functions listed in this package
+   move to runnable diagnostics with their oracles unchanged; the store-only
+   intent CAS, effect-admission CAS, live-lease rejection and G0/G1 post-effect
+   takeover remain default qualification.
+7. The full-gate reds remain in audit history and strict same-holder diagnostics
+   remain runnable, but neither is counted as a default pass.
+8. No SD/DID top-level change, SQL/port/failure-tag change, CAPA/P38 approval
    scope change, or AH7-DG-01/DG-02/InvocationApproval closure is introduced.
 
 ## User confirmation required
