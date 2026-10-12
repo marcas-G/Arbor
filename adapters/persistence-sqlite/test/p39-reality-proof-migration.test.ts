@@ -423,21 +423,21 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     );
     expect(result.selectedFactForeignKey).toEqual(
       expect.arrayContaining([
-        {
+        expect.objectContaining({
           table: "tool_reconciliation_facts",
           from: "invocation_id",
           to: "invocation_id",
-        },
-        {
+        }),
+        expect.objectContaining({
           table: "tool_reconciliation_facts",
           from: "selected_attempt_no",
           to: "attempt_no",
-        },
-        {
+        }),
+        expect.objectContaining({
           table: "tool_reconciliation_facts",
           from: "selected_fact_id",
           to: "fact_id",
-        },
+        }),
       ]),
     );
   });
@@ -761,7 +761,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
           ) VALUES (?,?,0,?,?,?,'ProfileReconciliation',NULL,'RecoveryInput',
                     'Occurred',NULL,'art_p39_evidence',?, 'art_p39_result','t4')`,
           [
-            "g".repeat(64),
+            "9".repeat(64),
             invocationId,
             bindingSha256,
             profileHash,
@@ -776,7 +776,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
                  settlement_json='{}', result_ref=NULL,
                  settlement_provenance='Reconciliation', selected_attempt_no=0,
                  selected_fact_id=? WHERE invocation_id=?`,
-              ["g".repeat(64), invocationId],
+              ["9".repeat(64), invocationId],
             ),
           ),
         );

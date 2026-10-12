@@ -1164,7 +1164,7 @@ export const ToolRuntimeLive = (
                 );
               if (Option.isSome(exactExecutableApproval)) {
                 const currentApproval = exactExecutableApproval.value;
-              currentApprovalRecord = currentApproval;
+                currentApprovalRecord = currentApproval;
                 if (currentApproval.state === "Pending") {
                   if (
                     context.executableApproval.state !== "Pending" ||

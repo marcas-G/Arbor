@@ -19,9 +19,9 @@ import type {
   ExecutionActivity,
   ExecutionDriverError,
   LeaseFencingRejected,
-  RuntimeSafetyObservation,
-  RecoveryBindingSourceIdentity,
   RecoveryBindingPolicyRevisions,
+  RecoveryBindingSourceIdentity,
+  RuntimeSafetyObservation,
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
@@ -776,9 +776,7 @@ export const executeAgentLoopActions = (
           callRef: invocation.callRef,
         });
         const recoveryBindingPolicyRevisions =
-          recoveryBindingPolicyRevisionsFor(
-            preparedTurn.manifest.controlBasis,
-          );
+          recoveryBindingPolicyRevisionsFor(preparedTurn.manifest.controlBasis);
         const executed = yield* Effect.match(
           executableInvocationHandler.handle({
             invocation,

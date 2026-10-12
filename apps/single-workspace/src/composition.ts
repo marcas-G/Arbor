@@ -1004,7 +1004,9 @@ export const buildSingleWorkspaceLayer = (
     Layer.effectDiscard(
       Effect.gen(function* () {
         if (preparedDatabase !== undefined) {
-          const currentLockPath = p39WriterLockFilename(primaryDatabaseFilename);
+          const currentLockPath = p39WriterLockFilename(
+            primaryDatabaseFilename,
+          );
           if (
             typeof currentLockPath !== "string" ||
             currentLockPath !== preparedDatabase.writerLockFilename
@@ -1039,7 +1041,10 @@ export const buildSingleWorkspaceLayer = (
   );
 
   if (preparedDatabase === undefined) {
-    return Layer.provide(all, currentSchemaGate) as Layer.Layer<SingleWorkspaceServices>;
+    return Layer.provide(
+      all,
+      currentSchemaGate,
+    ) as Layer.Layer<SingleWorkspaceServices>;
   }
   const p39WriterPermit = Layer.provide(
     Layer.effectDiscard(

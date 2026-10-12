@@ -106,7 +106,9 @@ export interface RecoveryBindingV1 {
   readonly effectKey: string | null;
 }
 
-declare const verifiedRecoveryBindingBrand: unique symbol;
+const verifiedRecoveryBindingBrand: unique symbol = Symbol(
+  "verifiedRecoveryBindingV1",
+);
 
 /** Only the P39 verifier constructs this proof-carrying binding value. */
 export interface VerifiedRecoveryBindingV1 {

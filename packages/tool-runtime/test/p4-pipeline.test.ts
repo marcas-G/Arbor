@@ -13,8 +13,8 @@ import {
   Clock,
   EnvironmentRevisionStore,
   type ExecutableApprovalRecord,
-  type InvocationApproval,
   ExecutableApprovalStore,
+  type InvocationApproval,
   type NoEffectDenialCode,
   P39RecoveryEvidenceStore,
   ProjectEnvironmentPort,
@@ -127,6 +127,7 @@ interface PipelineTrace {
   afterAuthorityResolved?: () => Promise<void>;
   environmentResolutions?: number;
   resourceAdmissionCalls?: number;
+  p39BindingCalls?: number;
 }
 
 const app = (
@@ -134,9 +135,12 @@ const app = (
   executor: ToolExecutor = okExecutor,
   faults: PipelineFaults = {},
   trace?: PipelineTrace,
-  initialApprovalOrExecutableApproval?: InvocationApproval | ExecutableApprovalRecord,
+  initialApprovalOrExecutableApproval?:
+    | InvocationApproval
+    | ExecutableApprovalRecord,
   authorityDeniedOrDeniedReplay: boolean | ToolInvocationRecord = false,
   suppliedP39DeniedReplay?: ToolInvocationRecord,
+  p39CurrentEnvironmentRevision?: string,
 ) => {
   const authorityDenied =
     typeof authorityDeniedOrDeniedReplay === "boolean"
@@ -147,6 +151,9 @@ const app = (
     (typeof authorityDeniedOrDeniedReplay === "object"
       ? authorityDeniedOrDeniedReplay
       : undefined);
+  const p39BindingEnabled =
+    p39DeniedReplay !== undefined ||
+    p39CurrentEnvironmentRevision !== undefined;
   let approval =
     initialApprovalOrExecutableApproval !== undefined &&
     !("routeKind" in initialApprovalOrExecutableApproval)
@@ -186,7 +193,7 @@ const app = (
     }),
     Layer.succeed(ResourceAdmission, {
       admit: () => {
-        if (p39DeniedReplay !== undefined && trace !== undefined) {
+        if (p39BindingEnabled && trace !== undefined) {
           trace.resourceAdmissionCalls =
             (trace.resourceAdmissionCalls ?? 0) + 1;
         }
@@ -317,7 +324,7 @@ const app = (
     } as never),
     Layer.succeed(ProjectEnvironmentPort, {
       resolve: (_p, addresses) => {
-        if (p39DeniedReplay !== undefined && trace !== undefined) {
+        if (p39BindingEnabled && trace !== undefined) {
           trace.environmentResolutions =
             (trace.environmentResolutions ?? 0) + 1;
         }
@@ -429,31 +436,41 @@ const app = (
           },
         },
   );
-  const p39Deps =
-    p39DeniedReplay === undefined
-      ? executableApprovalDeps
-      : Layer.mergeAll(
-          executableApprovalDeps,
-          Layer.succeed(EnvironmentRevisionStore, {
-            current: () => Effect.succeed(Option.none()),
-            record: () => Effect.void,
-            lazyInitAnchor: () => Effect.void,
-          }),
-          Layer.succeed(P39RecoveryEvidenceStore, {
-            bindClaim: () => Effect.succeed("Bound" as const),
-            findBinding: () => Effect.succeed(Option.none()),
-            findSelected: () => Effect.succeed(Option.none()),
-            findTerminalUnboundDenial: (id: typeof invocationId) =>
-              Effect.succeed(
+  const p39Deps = !p39BindingEnabled
+    ? executableApprovalDeps
+    : Layer.mergeAll(
+        executableApprovalDeps,
+        Layer.succeed(EnvironmentRevisionStore, {
+          current: () =>
+            Effect.succeed(
+              p39CurrentEnvironmentRevision === undefined
+                ? Option.none()
+                : Option.some(p39CurrentEnvironmentRevision as never),
+            ),
+          record: () => Effect.void,
+          lazyInitAnchor: () => Effect.void,
+        }),
+        Layer.succeed(P39RecoveryEvidenceStore, {
+          bindClaim: () => {
+            if (trace !== undefined) {
+              trace.p39BindingCalls = (trace.p39BindingCalls ?? 0) + 1;
+            }
+            return Effect.succeed("Bound" as const);
+          },
+          findBinding: () => Effect.succeed(Option.none()),
+          findSelected: () => Effect.succeed(Option.none()),
+          findTerminalUnboundDenial: (id: typeof invocationId) =>
+            Effect.succeed(
+              p39DeniedReplay !== undefined &&
                 id === p39DeniedReplay.invocationId
-                  ? Option.some({
-                      invocationId: id,
-                      recoveryBindingState: "DeniedUnbound" as const,
-                    })
-                  : Option.none(),
-              ),
-          } as never),
-        );
+                ? Option.some({
+                    invocationId: id,
+                    recoveryBindingState: "DeniedUnbound" as const,
+                  })
+                : Option.none(),
+            ),
+        } as never),
+      );
   return Layer.mergeAll(p39Deps, Layer.provide(toolRuntime, p39Deps));
 };
 
@@ -464,8 +481,9 @@ const run = (
   approvalId: string | null = null,
   invocationOrContext:
     | ToolInvocationId
-    | import("@arbor/ports").ToolExecutionContext =
-    intent(argumentsJson).invocationId,
+    | import("@arbor/ports").ToolExecutionContext = intent(
+    argumentsJson,
+  ).invocationId,
 ) =>
   Effect.runPromise(
     Effect.provide(
@@ -476,7 +494,9 @@ const run = (
             ? invocationOrContext
             : intent(argumentsJson).invocationId;
         const executionContext =
-          typeof invocationOrContext === "string" ? context : invocationOrContext;
+          typeof invocationOrContext === "string"
+            ? context
+            : invocationOrContext;
         return yield* runtime.invoke(
           { ...intent(argumentsJson), approvalId, invocationId } as never,
           executionContext,
@@ -711,6 +731,84 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.intentWrites).toBe(0);
     expect(trace.approvalConsumes).toBe(0);
     expect(trace.effectAdmissions).toBe(0);
+  });
+
+  it("fails a stale P39 environment snapshot before intent, approval, admission, or effect writes", async () => {
+    let executorCalls = 0;
+    const executor: ToolExecutor = {
+      ...okExecutor,
+      execute: (input) => {
+        executorCalls += 1;
+        return okExecutor.execute(input);
+      },
+    };
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      environmentResolutions: 0,
+      resourceAdmissionCalls: 0,
+      p39BindingCalls: 0,
+    };
+    const p39Context = {
+      ...context,
+      recoveryBindingIdentity: {
+        executionId,
+        providerTurnId: parse(ProviderTurnId)(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789b8",
+        ),
+        logicalStepNo: 9,
+        repairAttempt: 0,
+        logicalActionId: "action-p39-freshness",
+        actionIndex: 0,
+        callRef: "c",
+      },
+      recoveryBindingPolicyRevisions: {
+        workspacePolicyRevision: 0,
+        projectPolicyRevision: 0,
+      },
+    } as import("@arbor/ports").ToolExecutionContext;
+    const appLayer = app(
+      false,
+      executor,
+      {},
+      trace,
+      undefined,
+      false,
+      undefined,
+      "newer-environment-revision",
+    );
+    const outcome = await Effect.runPromise(
+      Effect.provide(
+        Effect.match(
+          Effect.gen(function* () {
+            const runtime = yield* ToolRuntimePort;
+            return yield* runtime.invoke(
+              intent('{"target":{"mount":"workspace","path":"."}}') as never,
+              p39Context,
+            );
+          }),
+          {
+            onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
+            onSuccess: (value) => ({ _tag: "Success" as const, value }),
+          },
+        ),
+        appLayer,
+      ),
+    );
+
+    expect(outcome._tag).toBe("Failure");
+    expect(trace.environmentResolutions).toBeGreaterThan(0);
+    expect(trace.resourceAdmissionCalls).toBe(0);
+    expect(trace.intentWrites).toBe(0);
+    expect(trace.approvalConsumes).toBe(0);
+    expect(trace.p39BindingCalls).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(trace.noEffectDenials).toEqual([]);
+    expect(executorCalls).toBe(0);
   });
 
   it("returns ExpectedFailure on invalid input", async () => {
