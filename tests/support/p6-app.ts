@@ -60,6 +60,7 @@ import {
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
 import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
 
 export const p6TestActor = parse(Actor)("user:gov");
 export const p6TestPrincipal = parse(Principal)("user:gov");
@@ -227,17 +228,7 @@ export const runP6 = <A, R>(
   );
 
 export const p6SeedProject = Effect.gen(function* () {
-  const sql = yield* SqlClient;
-  const projectColumns = yield* sql.unsafe<{ name: string }>(
-    "PRAGMA table_info(projects)",
-  );
-  if (
-    !projectColumns.some((column) => column.name === "resource_source_json")
-  ) {
-    yield* sql.unsafe(
-      `ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL DEFAULT '{"_tag":"LegacyUnknown"}' CHECK (json_valid(resource_source_json))`,
-    );
-  }
+  yield* ensureLegacyProjectResourceSourceFixture();
   const gateway = yield* CommandGateway;
   const payload: CreateProjectPayload = {
     name: "p6",

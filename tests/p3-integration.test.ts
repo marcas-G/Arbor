@@ -67,6 +67,7 @@ import {
   NoPendingControlApprovalStoreLive,
   NoPendingExecutableApprovalStoreLive,
 } from "../packages/testkit/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -210,6 +211,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* ensureLegacyProjectResourceSourceFixture();
       yield* sql.unsafe(
         "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,?,NULL,?,?)",
         [sessionId, "WorkspacePrimary", workspaceId, 0, "t"],

@@ -72,6 +72,7 @@ import {
   projectionReadError,
 } from "../../packages/projection-runtime/src/index.js";
 import { NoHoldWorkReadmissionGateStoreLive } from "../../packages/testkit/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
 
 export const p10Project = parse(ProjectId)(
   "prj_00000000-0000-7000-8000-000000000010",
@@ -735,6 +736,7 @@ export const insertProjectRootRow = (
         "t0",
       ],
     );
+    yield* ensureLegacyProjectResourceSourceFixture();
   });
 
 export const insertSessionRow = (

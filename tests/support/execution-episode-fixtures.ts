@@ -9,6 +9,7 @@ import {
   WorkRevision,
   type WorkspaceId,
 } from "../../packages/domain/dist/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
 
 export const workEpisode = (workId: WorkId): ExecutionEpisodeBinding => ({
   _tag: "WorkEpisode",
@@ -32,6 +33,7 @@ export const seedCurrentOpenWork = (
 ): Effect.Effect<void, unknown, SqlClient> =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
+    yield* ensureLegacyProjectResourceSourceFixture();
     const existing = yield* sql.unsafe<{ work_id: string }>(
       "SELECT work_id FROM works WHERE work_id = ?",
       [workId],

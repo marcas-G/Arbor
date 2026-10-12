@@ -49,6 +49,7 @@ import {
   type TransactionPortService,
   TransactionScope,
 } from "../packages/ports/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
 const workspaceId = parse(WorkspaceId)(
@@ -225,25 +226,12 @@ const countRows = (table: string) =>
     return Number(rows[0]?.count ?? 0);
   });
 
-const ensureTestProjectResourceSourceColumn = () =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient;
-    const columns = yield* sql.unsafe<{ name: string }>(
-      "PRAGMA table_info(projects)",
-    );
-    if (!columns.some((column) => column.name === "resource_source_json")) {
-      yield* sql.unsafe(
-        `ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL DEFAULT '{"_tag":"LegacyUnknown"}' CHECK (json_valid(resource_source_json))`,
-      );
-    }
-  });
-
 describe("P1-010 CreateProject", () => {
   it("creates Project + Root Workspace + Session atomically and emits ordered events", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
-      yield* ensureTestProjectResourceSourceColumn();
+      yield* ensureLegacyProjectResourceSourceFixture();
       const gw = yield* CommandGateway;
       const payload = payloadWith();
       const receipt = yield* gw.execute(
@@ -298,7 +286,7 @@ describe("P1-010 CreateProject", () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
       yield* runMigrations(P1_MIGRATIONS);
-      yield* ensureTestProjectResourceSourceColumn();
+      yield* ensureLegacyProjectResourceSourceFixture();
       const gw = yield* CommandGateway;
       const payload = payloadWith();
       const first = yield* gw.execute(
@@ -323,7 +311,7 @@ describe("P1-010 CreateProject", () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
       yield* runMigrations(P35_MIGRATIONS);
-      yield* ensureTestProjectResourceSourceColumn();
+      yield* ensureLegacyProjectResourceSourceFixture();
       const gw = yield* CommandGateway;
       const payload: CreateProjectPayload = {
         ...payloadWith(),
@@ -363,7 +351,7 @@ describe("P1-010 CreateProject", () => {
     const app = makeApp(rollbackAfterFirstBody());
     const program = Effect.gen(function* () {
       yield* runMigrations(P35_MIGRATIONS);
-      yield* ensureTestProjectResourceSourceColumn();
+      yield* ensureLegacyProjectResourceSourceFixture();
       const gw = yield* CommandGateway;
       const payload: CreateProjectPayload = {
         ...payloadWith(),
