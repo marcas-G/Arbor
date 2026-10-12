@@ -100,6 +100,7 @@ import type {
   ResourceOwnershipRepository,
   SessionRepository,
   TransactionPort,
+  VerificationRepository,
   WorkRepository,
   WorkspaceRepository,
   WorkWaitStore,
@@ -298,6 +299,7 @@ type DbServices =
   | DomainEventJournal
   | SessionRepository
   | WorkWaitStore
+  | VerificationRepository
   | Clock
   | IdGenerator;
 

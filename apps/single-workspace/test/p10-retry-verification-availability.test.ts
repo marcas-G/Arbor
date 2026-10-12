@@ -1,5 +1,8 @@
 import type { AttentionRes } from "@arbor/api-contracts";
-import type { AuthorityResolverPortService } from "@arbor/application";
+import type {
+  AuthorityDecisionInput,
+  AuthorityResolverPortService,
+} from "@arbor/application";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { viewQueryFaceWithRetryAvailability } from "../src/transport/composition.js";
@@ -22,18 +25,38 @@ const attention: AttentionRes = {
 
 describe("P10 RetryVerification availability projection", () => {
   it("exposes a row action only when the same resolver authorizes the exact server-authenticated principal and target", async () => {
-    const seen: Array<Record<string, unknown>> = [];
+    const seen: AuthorityDecisionInput[] = [];
     const port = {
       query: () => Effect.succeed({ value: attention, watermark: 8, lag: 0 }),
     };
-    const resolver = {
-      resolve: (input: unknown) => {
-        seen.push(input as Record<string, unknown>);
+    const resolver: AuthorityResolverPortService = {
+      resolve: (input) => {
+        seen.push(input);
+        const row = attention.rows[0];
+        if (
+          row?.workId === undefined ||
+          row.verificationId === undefined ||
+          row.targetWorkRevision === undefined
+        ) {
+          return Effect.never;
+        }
         return Effect.succeed({
           _tag: "RetryVerificationAuthority",
-        } as never);
+          principal: input.principal,
+          commandId: input.envelope.commandId,
+          semanticRequestFingerprint: input.semanticRequestFingerprint,
+          projectId: input.envelope.projectId,
+          targetWorkspaceId: row.targetWorkspaceId,
+          currentOwnerId: row.targetWorkspaceId,
+          workId: row.workId,
+          expectedWorkRevision: row.targetWorkRevision,
+          verificationId: row.verificationId,
+          settledVerifierExecutionIds: [],
+        });
       },
-    } as AuthorityResolverPortService;
+      resolveInvocation: () => Effect.never,
+      resolveApproval: () => Effect.never,
+    };
     const loadInputs = (envelope: unknown) => {
       expect(envelope).toMatchObject({
         commandType: "RetryVerification",

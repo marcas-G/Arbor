@@ -291,7 +291,11 @@ describe("external command composition boundary", () => {
         },
       } as never,
       gateway: {
-        execute: (_envelope, _context, authority) => {
+        execute: (
+          _envelope: Parameters<CommandGatewayService["execute"]>[0],
+          _context: Parameters<CommandGatewayService["execute"]>[1],
+          authority: Parameters<CommandGatewayService["execute"]>[2],
+        ) => {
           gatewayAuthorities.push(authority);
           return Effect.succeed({
             commandId,

@@ -1,7 +1,13 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Principal, parse } from "@arbor/domain";
+import type { ViewRequestMap } from "@arbor/api-contracts";
+import {
+  type FreshnessRequirement,
+  Principal,
+  parse,
+  type ViewId,
+} from "@arbor/domain";
 import { Effect } from "effect";
 import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -143,7 +149,12 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
     const principals: Array<string | undefined> = [];
     const authenticatedCore = makeTransportCore({
       views: {
-        query: (_view, _request, _barrier, principal) => {
+        query: <V extends ViewId>(
+          _view: V,
+          _request: ViewRequestMap[V],
+          _barrier?: FreshnessRequirement,
+          principal?: Principal,
+        ) => {
           principals.push(
             principal === undefined ? undefined : String(principal),
           );
@@ -155,12 +166,7 @@ describe("P13 web transport server (TR-W1/W2 binding)", () => {
         },
       } as never,
       authenticator: {
-        authenticate: (credential) =>
-          Effect.succeed(
-            credential?.token === "trusted-token"
-              ? ("user:local" as never)
-              : ("user:local" as never),
-          ),
+        authenticate: () => Effect.succeed(parse(Principal)("user:local")),
       } as never,
       submission: fakeSubmission as never,
     });
