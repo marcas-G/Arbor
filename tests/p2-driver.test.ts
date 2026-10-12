@@ -10,7 +10,6 @@ import {
   IdGeneratorLive,
   LeaseServiceLive,
   layer,
-  makeRecoveryAttentionFactStoreLive,
   P12_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
@@ -60,6 +59,7 @@ import {
   workEpisode,
   yieldedSettlement,
 } from "./support/execution-episode-fixtures.js";
+import { makeP41OptionalTestServices } from "./support/p41-optional-test-services.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -86,8 +86,7 @@ const makeApp = (
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const journal = Layer.provide(DomainEventJournalLive, infra);
-  const recoveryAttentionFacts = Layer.provide(
-    makeRecoveryAttentionFactStoreLive(),
+  const p41OptionalServices = makeP41OptionalTestServices(
     Layer.merge(infra, journal),
   );
   const repo = Layer.provide(ExecutionRepositoryLive, infra);
@@ -97,7 +96,7 @@ const makeApp = (
     NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(CommandStoreLive, infra),
     journal,
-    recoveryAttentionFacts,
+    p41OptionalServices,
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
