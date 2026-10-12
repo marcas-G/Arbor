@@ -1,5 +1,6 @@
 import {
   grantPermission,
+  isIsoTimestamp,
   type PermissionGrantId,
   type PermissionGrantLifecycle,
   type PermissionSubject,
@@ -54,14 +55,17 @@ export const makeGrantPermissionHandler = (
   execute: (envelope, context) =>
     Effect.gen(function* () {
       const payload = envelope.payload;
-      const target =
-        typeof payload.target === "string" ? payload.target.trim() : "";
+      const target = typeof payload.target === "string" ? payload.target : "";
       const capability =
-        typeof payload.capability === "string" ? payload.capability.trim() : "";
+        typeof payload.capability === "string" ? payload.capability : "";
       const expiresAtText =
         typeof payload.expiresAt === "string" ? payload.expiresAt : "";
-      const expiresAt = Date.parse(expiresAtText);
-      const issuedAt = Date.parse(envelope.issuedAt);
+      const expiresAt = isIsoTimestamp(expiresAtText)
+        ? Date.parse(expiresAtText)
+        : Number.NaN;
+      const issuedAt = isIsoTimestamp(envelope.issuedAt)
+        ? Date.parse(envelope.issuedAt)
+        : Number.NaN;
       const subjectValid =
         (payload.subject._tag === "HumanPrincipal" &&
           payload.subject.principal.startsWith("user:")) ||
@@ -72,7 +76,9 @@ export const makeGrantPermissionHandler = (
       if (
         !subjectValid ||
         capability.length === 0 ||
+        capability !== capability.trim() ||
         target.length === 0 ||
+        target !== target.trim() ||
         payload.issuer !== context.principal ||
         !Number.isFinite(expiresAt) ||
         !Number.isFinite(issuedAt) ||
@@ -84,7 +90,7 @@ export const makeGrantPermissionHandler = (
             "GrantPermission requires an exact subject, capability, target, issuer=current principal, and future expiry",
         });
       }
-      const grant = grantPermission({
+      const created = grantPermission({
         permissionGrantId: payload.permissionGrantId,
         scope: `${capability}@${target}`,
         issuer: payload.issuer,
@@ -96,6 +102,8 @@ export const makeGrantPermissionHandler = (
         expiresAt: payload.expiresAt,
         revision: 0,
       });
+      if (!created.ok) return commandErr(created.error);
+      const grant = created.value;
       yield* dependencies.grants.put(grant, envelope.projectId);
 
       const events: PendingDomainEvent[] = [

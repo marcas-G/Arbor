@@ -80,6 +80,36 @@ describe("external wire-v1 command payload codec", () => {
     });
   });
 
+  it.each([
+    ["whitespace target", { target: "   " }, "target"],
+    ["whitespace expiry", { expiresAt: "   " }, "expiresAt"],
+    ["invalid expiry", { expiresAt: "tomorrow" }, "expiresAt"],
+    [
+      "calendar-invalid expiry",
+      { expiresAt: "2026-02-30T00:00:00Z" },
+      "expiresAt",
+    ],
+    ["timezone-free expiry", { expiresAt: "2099-10-12T08:30:00" }, "expiresAt"],
+  ] as const)(
+    "rejects a GrantPermission with %s as an InvalidCommandPayload field issue",
+    (_name, patch, field) => {
+      const result = decodeCommandPayload("GrantPermission", {
+        permissionGrantId: `pgr_${UUID_V7}`,
+        issuer: "user:alice",
+        subject: { _tag: "WorkspaceAgent", workspaceId: `ws_${UUID_V7}` },
+        capability: "fs:write",
+        target: `ws_${UUID_V7}`,
+        expiresAt: "2099-10-12T08:30:00.000Z",
+        ...patch,
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        issues: [{ path: [field], rule: "format" }],
+      });
+    },
+  );
+
   it("rejects an AcceptanceId with the wrong frozen prefix", () => {
     const result = decodeCommandPayload("AcceptWorkOutcome", {
       acceptanceId: `acp_${UUID_V7}`,
