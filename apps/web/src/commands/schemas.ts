@@ -20,6 +20,52 @@ const verificationId = z
   .regex(/^ver_[A-Za-z0-9_-]+$/, "ver_ 前缀的验证 ID");
 const grantId = z.string().regex(/^pgr_[A-Za-z0-9_-]+$/, "pgr_ 前缀的授权 ID");
 
+const isStrictIsoTimestamp = (value: string): boolean => {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/u.exec(
+      value,
+    );
+  if (match === null) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[7] === undefined ? 0 : Number(match[7]);
+  const offsetMinute = match[8] === undefined ? 0 : Number(match[8]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+
+  return (
+    year > 0 &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= (daysInMonth[month - 1] ?? 0) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    offsetHour <= 23 &&
+    offsetMinute <= 59 &&
+    Number.isFinite(Date.parse(value))
+  );
+};
+
 export const createProjectSchema = z.object({
   name: z.string().trim().min(1, "项目名称必填"),
 });
@@ -67,15 +113,14 @@ export const grantPermissionSchema = z.object({
   subjectKind: z.enum(["HumanPrincipal", "WorkspaceAgent", "Execution"]),
   subjectRef: z.string().trim().min(1, "授权主体必填"),
   capability: z.string().trim().min(1, "capability 必填"),
-  target: z.string().trim().min(1, "授权目标必填；请填写精确的资源 ID"),
+  target: z
+    .string()
+    .min(1, "授权目标必填；请填写精确的资源 ID")
+    .refine((value) => value === value.trim(), "授权目标不能包含首尾空格"),
   expiresAt: z
     .string()
-    .trim()
     .min(1, "过期时间必填；GrantPermission 必须有有效期")
-    .refine(
-      (value) => Number.isFinite(Date.parse(value)),
-      "请输入有效的 ISO 时间",
-    )
+    .refine(isStrictIsoTimestamp, "请输入有效的 ISO 时间，并明确包含时区")
     .refine(
       (value) => Date.parse(value) > Date.now(),
       "过期时间必须晚于当前时间",
