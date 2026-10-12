@@ -274,6 +274,17 @@ const receiptToView = (
         rejection: receipt.resolution.error._tag,
       };
 
+const isActiveResourceOverlapFailure = (error: unknown): boolean => {
+  if (typeof error !== "object" || error === null) return false;
+  const record = error as Record<string, unknown>;
+  return (
+    record._tag === "PersistenceConstraintViolation" &&
+    record.repository === "ResourceOwnershipRepository" &&
+    record.operation === "insert-active-claim" &&
+    record.constraint === "active-resource-overlap"
+  );
+};
+
 export const makeExternalSubmission = (
   deps: ExternalSubmissionDeps,
 ): ExternalSubmissionPort => ({
@@ -396,6 +407,17 @@ export const makeExternalSubmission = (
           onSuccess: () => ({ _tag: "success" as const }),
         });
         if (converged._tag === "failure") {
+          if (
+            envelope.commandType === "CreateProject" &&
+            executed.receipt.resolution._tag === "Committed" &&
+            isActiveResourceOverlapFailure(converged.error)
+          ) {
+            return {
+              ok: true as const,
+              status: 200,
+              body: receiptToView(executed.receipt),
+            };
+          }
           return failureResponse(
             problemFromUnknownFailure(
               "command/post-commit-convergence-failure",

@@ -61,6 +61,7 @@ export type AttentionSource =
   | "RecoveryEscalation"
   | "AssignWorkTargetBindingFailure"
   | "DeliverReplayFailure"
+  | "WorkspaceResourceActivationPending"
   | "VerifierOrphan"
   | "VacantProducer";
 
