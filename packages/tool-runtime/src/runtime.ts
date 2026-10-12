@@ -535,6 +535,9 @@ export const ToolRuntimeLive = (
                   now,
                 })
                 .pipe(
+                  Effect.catchTag("ToolAuthorityDenied", () =>
+                    Effect.succeed(undefined),
+                  ),
                   Effect.mapError(
                     operationalFailure(
                       "AuthorityResolution",
@@ -1096,6 +1099,9 @@ export const ToolRuntimeLive = (
                   now: effectGateNow,
                 })
                 .pipe(
+                  Effect.catchTag("ToolAuthorityDenied", () =>
+                    Effect.succeed(undefined),
+                  ),
                   Effect.mapError(
                     operationalFailure(
                       "AuthorityResolution",

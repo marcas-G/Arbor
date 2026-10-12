@@ -15,6 +15,7 @@ import {
   ProjectEnvironmentPort,
   ResourceAdmission,
   SandboxPort,
+  ToolAuthorityResolver,
   ToolDefinitionStore,
   type ToolInvocationRecord,
   ToolInvocationStore,
@@ -126,13 +127,14 @@ const app = (
   faults: PipelineFaults = {},
   trace?: PipelineTrace,
   initialApproval?: InvocationApproval,
+  authorityDenied = false,
 ) => {
   let approval = initialApproval;
   const tx = Layer.succeed(TransactionPort, {
     transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
       Effect.provideService(body, TransactionScope, { session: { id: "t" } }),
   });
-  const deps = Layer.mergeAll(
+  const baseDeps = Layer.mergeAll(
     tx,
     ToolDefinitionStoreLive,
     Layer.succeed(SandboxPort, {
@@ -317,6 +319,14 @@ const app = (
       now: () => Effect.succeed("2026-01-01T00:00:00.000Z"),
     }),
   );
+  const deps = authorityDenied
+    ? Layer.mergeAll(
+        baseDeps,
+        Layer.succeed(ToolAuthorityResolver, {
+          resolve: () => Effect.fail({ _tag: "ToolAuthorityDenied" as const }),
+        }),
+      )
+    : baseDeps;
   const toolRuntime = ToolRuntimeLive(
     [executor],
     trace?.afterAuthorityResolved === undefined
@@ -373,6 +383,38 @@ const runFailure = (
   );
 
 describe("P4 tool runtime pipeline", () => {
+  it("projects a typed authority policy rejection as Denied without execution", async () => {
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+    };
+    let executorCalls = 0;
+    const executor: ToolExecutor = {
+      ...okExecutor,
+      execute: (input) => {
+        executorCalls += 1;
+        return okExecutor.execute(input);
+      },
+    };
+    const result = await run(
+      app(false, executor, {}, trace, undefined, true),
+      '{"target":{"mount":"workspace","path":"."}}',
+    );
+
+    expect(result).toMatchObject({
+      _tag: "Denied",
+      reasonCode: "InvocationAuthorityDenied",
+    });
+    expect(trace.noEffectDenials).toEqual(["InvocationAuthorityDenied"]);
+    expect(trace.intentWrites).toBe(0);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(executorCalls).toBe(0);
+  });
+
   it("runs the pipeline and returns Success", async () => {
     const result = await run(
       app(),
