@@ -6,7 +6,9 @@ import type {
   DeliverReplayFailureCode,
   RecordAssignWorkBindingFailureInput,
   RecordDeliverReplayFailureInput,
+  RecordSubmittedDecisionBindingFailureInput,
   RecoveryAttentionFactStoreError,
+  SubmittedDecisionBindingAttentionFact,
 } from "@arbor/ports";
 import {
   DomainEventJournal,
@@ -18,7 +20,14 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
-import { repositoryFailure } from "./repository-error.js";
+import {
+  persistenceCorruption,
+  repositoryFailure,
+} from "./repository-error.js";
+import {
+  decodeSubmittedDecisionBindingAttentionFactRow,
+  type SubmittedDecisionBindingAttentionDbRow,
+} from "./submitted-decision-binding-attention-codec.js";
 
 interface Row {
   readonly attention_fact_id: string;
@@ -43,6 +52,44 @@ interface DeliverReplayRow {
   readonly failure_code: string;
   readonly first_detected_at: string;
 }
+
+const submittedDecisionBindingColumns = `attention_fact_id, event_id, project_id,
+  execution_id, workspace_id, logical_step_no, repair_attempt,
+  provider_turn_id, logical_action_id, failure_code, first_detected_at`;
+
+const decodeSubmittedDecisionBindingFact = (
+  row: SubmittedDecisionBindingAttentionDbRow,
+): Effect.Effect<
+  SubmittedDecisionBindingAttentionFact,
+  RecoveryAttentionFactStoreError
+> => {
+  const fact = decodeSubmittedDecisionBindingAttentionFactRow(row);
+  return fact === undefined
+    ? Effect.fail(
+        persistenceCorruption(
+          "RecoveryAttentionFactStore",
+          "submitted-decision-binding-read",
+          "stored Submitted DecisionEpisode binding fact violates its closed physical codec",
+        ),
+      )
+    : Effect.succeed(fact);
+};
+
+const factsAreEqual = (
+  left: SubmittedDecisionBindingAttentionFact,
+  right: SubmittedDecisionBindingAttentionFact,
+): boolean =>
+  left.attentionFactId === right.attentionFactId &&
+  left.eventId === right.eventId &&
+  left.projectId === right.projectId &&
+  left.executionId === right.executionId &&
+  left.workspaceId === right.workspaceId &&
+  left.logicalStepNo === right.logicalStepNo &&
+  left.repairAttempt === right.repairAttempt &&
+  left.providerTurnId === right.providerTurnId &&
+  left.logicalActionId === right.logicalActionId &&
+  left.failureCode === right.failureCode &&
+  left.firstDetectedAt === right.firstDetectedAt;
 
 export interface RecoveryAttentionFactQualificationEvent {
   readonly boundary:
@@ -147,6 +194,43 @@ export const makeRecoveryAttentionFactStoreLive = (
             [attentionFactId],
           ),
         );
+      const ensureSubmittedDecisionBindingAvailable = () =>
+        Effect.gen(function* () {
+          const tables = yield* run(
+            sql.unsafe<{ readonly name: string }>(
+              `SELECT name FROM sqlite_master
+                WHERE type = 'table'
+                  AND name = 'submitted_decision_binding_attention_facts'`,
+            ),
+          );
+          if (tables.length === 0) {
+            return yield* Effect.fail<RecoveryAttentionFactStoreError>({
+              _tag: "PersistenceUnavailable",
+              repository: "RecoveryAttentionFactStore",
+              operation: "submitted-decision-binding",
+              retryDisposition: "non-retryable",
+              sourceTag: "P41MigrationNotRegistered",
+              cause: { _tag: "P41MigrationNotRegistered" },
+            });
+          }
+        });
+      const readSubmittedDecisionBindingByTuple = (
+        input: RecordSubmittedDecisionBindingFailureInput,
+      ) =>
+        run(
+          sql.unsafe<SubmittedDecisionBindingAttentionDbRow>(
+            `SELECT ${submittedDecisionBindingColumns}
+               FROM submitted_decision_binding_attention_facts
+              WHERE execution_id = ? AND logical_step_no = ?
+                AND repair_attempt = ? AND logical_action_id = ?`,
+            [
+              input.executionId,
+              input.logicalStepNo,
+              input.repairAttempt,
+              input.logicalActionId,
+            ],
+          ),
+        );
       const insertPending = (fact: DeliverReplayAttentionFact) =>
         runDeliver(
           sql.unsafe(
@@ -158,6 +242,18 @@ export const makeRecoveryAttentionFactStoreLive = (
           ),
         );
       return RecoveryAttentionFactStore.of({
+        isSubmittedDecisionBindingAvailable: () =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const tables = yield* run(
+              sql.unsafe<{ readonly name: string }>(
+                `SELECT name FROM sqlite_master
+                  WHERE type = 'table'
+                    AND name = 'submitted_decision_binding_attention_facts'`,
+              ),
+            );
+            return tables.length > 0;
+          }),
         recordAssignWorkBindingFailure: (input) =>
           Effect.gen(function* () {
             yield* TransactionScope;
@@ -483,6 +579,102 @@ export const makeRecoveryAttentionFactStoreLive = (
                 [attentionFactId],
               ),
             );
+          }),
+        recordSubmittedDecisionBindingFailure: (input) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            yield* ensureSubmittedDecisionBindingAvailable();
+            const validInput = decodeSubmittedDecisionBindingAttentionFactRow({
+              attention_fact_id: input.attentionFactId,
+              event_id: input.eventId,
+              project_id: input.projectId,
+              execution_id: input.executionId,
+              workspace_id: input.workspaceId,
+              logical_step_no: input.logicalStepNo,
+              repair_attempt: input.repairAttempt,
+              provider_turn_id: input.providerTurnId,
+              logical_action_id: input.logicalActionId,
+              failure_code: input.failureCode,
+              first_detected_at: input.firstDetectedAt,
+            });
+            if (validInput === undefined) {
+              return yield* Effect.fail<RecoveryAttentionFactStoreError>({
+                _tag: "RecoveryAttentionFactInvariantConflict",
+                reason:
+                  "submitted DecisionEpisode fact input violates its closed physical codec",
+              });
+            }
+            const prior = yield* readSubmittedDecisionBindingByTuple(input);
+            if (prior[0] !== undefined) {
+              const fact = yield* decodeSubmittedDecisionBindingFact(prior[0]);
+              if (!factsAreEqual(fact, validInput)) {
+                return yield* Effect.fail<RecoveryAttentionFactStoreError>({
+                  _tag: "RecoveryAttentionFactInvariantConflict",
+                  reason:
+                    "existing Submitted DecisionEpisode binding fact conflicts with its immutable tuple",
+                });
+              }
+              return fact;
+            }
+            yield* run(
+              sql.unsafe(
+                `INSERT INTO submitted_decision_binding_attention_facts (
+                   attention_fact_id, event_id, project_id, execution_id,
+                   workspace_id, logical_step_no, repair_attempt,
+                   provider_turn_id, logical_action_id, failure_code,
+                   first_detected_at
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  validInput.attentionFactId,
+                  validInput.eventId,
+                  validInput.projectId,
+                  validInput.executionId,
+                  validInput.workspaceId,
+                  validInput.logicalStepNo,
+                  validInput.repairAttempt,
+                  validInput.providerTurnId,
+                  validInput.logicalActionId,
+                  validInput.failureCode,
+                  validInput.firstDetectedAt,
+                ],
+              ),
+            );
+            return validInput;
+          }),
+        findSubmittedDecisionBindingFailure: (attentionFactId) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            yield* ensureSubmittedDecisionBindingAvailable();
+            const rows = yield* run(
+              sql.unsafe<SubmittedDecisionBindingAttentionDbRow>(
+                `SELECT ${submittedDecisionBindingColumns}
+                   FROM submitted_decision_binding_attention_facts
+                  WHERE attention_fact_id = ?`,
+                [attentionFactId],
+              ),
+            );
+            return rows[0] === undefined
+              ? Option.none()
+              : Option.some(yield* decodeSubmittedDecisionBindingFact(rows[0]));
+          }),
+        listSubmittedDecisionBindingFailures: (projectId) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            yield* ensureSubmittedDecisionBindingAvailable();
+            const rows = yield* run(
+              sql.unsafe<SubmittedDecisionBindingAttentionDbRow>(
+                `SELECT ${submittedDecisionBindingColumns}
+                   FROM submitted_decision_binding_attention_facts
+                  WHERE project_id = ?
+                  ORDER BY first_detected_at, attention_fact_id`,
+                [projectId],
+              ),
+            );
+            const facts: SubmittedDecisionBindingAttentionFact[] = [];
+            for (const row of rows) {
+              facts.push(yield* decodeSubmittedDecisionBindingFact(row));
+            }
+            return facts;
           }),
       });
     }),
