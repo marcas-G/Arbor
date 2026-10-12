@@ -1,7 +1,7 @@
 # P8 RetryVerification implementation checkpoint
 
-Status: implementation checkpoint submitted for independent review; not a
-release or phase-closure claim.
+Status: implementation checkpoint reviewed at B0; not a release or phase-
+closure claim.
 
 ## Scope
 
@@ -62,16 +62,17 @@ release-tree mutation, or publication was performed.
 
 ## Review focus / known limits
 
-Independent review follow-up is pending. In particular, it must confirm that direct
-reuse of the existing Start/Conclude handlers remains inside the single outer
-transaction with no inner receipts, and that an unexpected successor-admission
-rejection defects (rolling back the outer transaction) rather than committing
-a half-handoff. The focused handler test proves the successful two-event
-outcome and human-only denial, but is not a SQLite crash/restart qualification.
-The first read-only review identified one Blocking replay gap; the exact
-receipt-first fix and focused positive/negative cases are now in this
-checkpoint and await reviewer confirmation. Post-commit spawn recovery still
-requires focused follow-up qualification before claiming closure.
+Independent review of implementation commit
+`b15855c7eff71875ff711f8a9d080e2e309399c5` completed at **B0 (Blocking = 0)**.
+The first review's same-CommandId replay finding was closed by the exact
+receipt-first matcher and focused positive/negative cases. The reviewer
+confirmed the direct P8 Start/Conclude handler reuse stays within the one
+outer transaction with no inner receipts; unexpected successor-admission
+rejection defects to roll back the outer SQLite transaction; and owner
+snapshot, existing spawn recovery, and UI availability freshness/TOCTOU had no
+Blocking issue. The focused handler test is not a SQLite crash/restart
+qualification; this checkpoint does not claim phase closure. Full review
+record: `planning/results/P8-retry-verification-review.result.md`.
 
 ## Workspace hygiene
 
