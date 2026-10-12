@@ -33,6 +33,7 @@ export * from "./project-directory.js";
 export * from "./project-tool-registry.js";
 export * from "./provider-turns.js";
 export * from "./recovery-attention-fact-store.js";
+export * from "./recovery-binding-store.js";
 export * from "./repositories.js";
 export * from "./repository-error.js";
 export * from "./runtime.js";
