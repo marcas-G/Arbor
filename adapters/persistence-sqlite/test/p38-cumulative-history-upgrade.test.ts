@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
@@ -19,6 +20,18 @@ describe("P38 cumulative historical database upgrade", () => {
           );
           const sourceColumns = yield* sql.unsafe<{ name: string }>(
             "PRAGMA table_xinfo(action_approvals)",
+          );
+          const sourceApprovalStates = yield* sql.unsafe<{
+            readonly route_kind: string;
+            readonly state: string;
+            readonly binding_proven: number;
+            readonly row_count: number;
+          }>(
+            `SELECT route_kind, state, binding_proven,
+                    COUNT(*) AS row_count
+               FROM action_approvals
+              GROUP BY route_kind, state, binding_proven
+              ORDER BY route_kind, state, binding_proven`,
           );
 
           // This is a disposable 0037 fixture. These rows model legacy values
@@ -97,14 +110,59 @@ describe("P38 cumulative historical database upgrade", () => {
                ) ORDER BY name`,
           );
 
+          console.info(
+            "P38_HISTORICAL_UPGRADE_OBSERVATION",
+            JSON.stringify({
+              sourceVersion: Number(sourceVersion[0]?.user_version),
+              sourceMigrationHighWater: Math.max(
+                ...P37_MIGRATIONS.map(({ id }) => id),
+              ),
+              sourceColumns: sourceColumns.map(({ name }) => name),
+              p38DescriptorVersion:
+                P38_EXECUTABLE_APPROVAL_MIGRATION.migrationVersion,
+              p38DescriptorSqlSha256: createHash("sha256")
+                .update(P38_EXECUTABLE_APPROVAL_MIGRATION.sql)
+                .digest("hex"),
+              currentCommit: process.env.ARBOR_HISTORICAL_FIXTURE_HEAD ?? null,
+              p38DescriptorSelectsOldTable:
+                P38_EXECUTABLE_APPROVAL_MIGRATION.sql.includes(
+                  "FROM action_approvals",
+                ),
+              applied,
+              repeated,
+              version: Number(version[0]?.user_version),
+              targetColumns: targetColumns.map(({ name }) => name),
+              sourceApprovalStates,
+              targetApprovalStates: approvals.map(
+                ({ route_kind, state, binding_proven }) => ({
+                  route_kind,
+                  state,
+                  binding_proven,
+                }),
+              ),
+              foreignKeys: foreignKeys.map(({ table, from, to }) => ({
+                table,
+                from,
+                to,
+              })),
+              foreignKeyViolationCount: violations.length,
+              foreignKeysEnabled: Number(foreignKeysEnabled[0]?.foreign_keys),
+              indexes: indexes.map(({ name }) => name),
+            }),
+          );
           return {
             sourceVersion: Number(sourceVersion[0]?.user_version),
             sourceMigrationHighWater: Math.max(
               ...P37_MIGRATIONS.map(({ id }) => id),
             ),
             sourceColumns: sourceColumns.map(({ name }) => name),
+            sourceApprovalStates,
             p38DescriptorVersion:
               P38_EXECUTABLE_APPROVAL_MIGRATION.migrationVersion,
+            p38DescriptorSqlSha256: createHash("sha256")
+              .update(P38_EXECUTABLE_APPROVAL_MIGRATION.sql)
+              .digest("hex"),
+            currentCommit: process.env.ARBOR_HISTORICAL_FIXTURE_HEAD ?? null,
             p38DescriptorSelectsOldTable:
               P38_EXECUTABLE_APPROVAL_MIGRATION.sql.includes(
                 "FROM action_approvals",
