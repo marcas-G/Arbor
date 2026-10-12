@@ -221,6 +221,30 @@ export type RecordAssignWorkBindingFailureInput = Omit<
   "attentionFactId" | "eventId"
 >;
 
+export type SubmittedDecisionBindingFailureCode =
+  | "DecisionRequestWorkspaceMismatch"
+  | "StepManifestMismatch"
+  | "SettledExecutionWithPendingDecisionAction";
+
+export interface SubmittedDecisionBindingAttentionFact {
+  readonly attentionFactId: string;
+  readonly eventId: string;
+  readonly projectId: ProjectId;
+  readonly executionId: ExecutionId;
+  readonly workspaceId: WorkspaceId;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly providerTurnId: ProviderTurnId;
+  readonly logicalActionId: string;
+  readonly failureCode: SubmittedDecisionBindingFailureCode;
+  readonly firstDetectedAt: string;
+}
+
+/** Fully identified, already event-bound immutable fact to persist. This
+ * storage port does not create the business event or derive the fact identity. */
+export type RecordSubmittedDecisionBindingFailureInput =
+  SubmittedDecisionBindingAttentionFact;
+
 export type RecoveryAttentionFactStoreError =
   | RepositoryFailure<"RecoveryAttentionFactStore">
   | DomainEventJournalError
@@ -230,6 +254,11 @@ export type RecoveryAttentionFactStoreError =
     };
 
 export interface RecoveryAttentionFactStoreService {
+  readonly isSubmittedDecisionBindingAvailable?: () => Effect.Effect<
+    boolean,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
   readonly recordAssignWorkBindingFailure: (
     fact: RecordAssignWorkBindingFailureInput,
   ) => Effect.Effect<
@@ -283,6 +312,27 @@ export interface RecoveryAttentionFactStoreService {
   readonly acknowledgePendingDeliverReplayAttention: (
     attentionFactId: string,
   ) => Effect.Effect<void, RecoveryAttentionFactStoreError, TransactionScope>;
+  readonly recordSubmittedDecisionBindingFailure?: (
+    fact: RecordSubmittedDecisionBindingFailureInput,
+  ) => Effect.Effect<
+    SubmittedDecisionBindingAttentionFact,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly findSubmittedDecisionBindingFailure?: (
+    attentionFactId: string,
+  ) => Effect.Effect<
+    Option.Option<SubmittedDecisionBindingAttentionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
+  readonly listSubmittedDecisionBindingFailures?: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<SubmittedDecisionBindingAttentionFact>,
+    RecoveryAttentionFactStoreError,
+    TransactionScope
+  >;
 }
 
 export class RecoveryAttentionFactStore extends Context.Service<

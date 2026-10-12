@@ -2089,6 +2089,69 @@ export const P38_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   },
 ];
 
+/** P41 / 0041 physical storage descriptor. Keep this standalone until the
+ * complete 0036→0040 prefix has independently passed qualification. */
+export const P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL = `
+CREATE TABLE submitted_decision_binding_attention_facts (
+  attention_fact_id TEXT NOT NULL PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE,
+  project_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  logical_step_no INTEGER NOT NULL CHECK (logical_step_no >= 0),
+  repair_attempt INTEGER NOT NULL CHECK (repair_attempt >= 0),
+  provider_turn_id TEXT NOT NULL,
+  logical_action_id TEXT NOT NULL,
+  failure_code TEXT NOT NULL CHECK (failure_code IN (
+    'DecisionRequestWorkspaceMismatch',
+    'StepManifestMismatch',
+    'SettledExecutionWithPendingDecisionAction'
+  )),
+  first_detected_at TEXT NOT NULL,
+  UNIQUE (execution_id, logical_step_no, repair_attempt, logical_action_id),
+  UNIQUE (attention_fact_id, project_id, workspace_id),
+  FOREIGN KEY (execution_id, project_id, workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id)
+);
+
+CREATE INDEX submitted_decision_binding_fact_project_time
+  ON submitted_decision_binding_attention_facts
+    (project_id, first_detected_at, attention_fact_id);
+
+CREATE TRIGGER submitted_decision_binding_fact_no_update
+BEFORE UPDATE ON submitted_decision_binding_attention_facts
+BEGIN
+  SELECT RAISE(ABORT, 'submitted decision binding facts are immutable');
+END;
+
+CREATE TRIGGER submitted_decision_binding_fact_no_delete
+BEFORE DELETE ON submitted_decision_binding_attention_facts
+BEGIN
+  SELECT RAISE(ABORT, 'submitted decision binding facts are retained');
+END;
+
+CREATE TABLE submitted_decision_binding_attention_rows (
+  project_id TEXT NOT NULL,
+  attention_fact_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  PRIMARY KEY (project_id, attention_fact_id),
+  FOREIGN KEY (attention_fact_id, project_id, workspace_id)
+    REFERENCES submitted_decision_binding_attention_facts
+      (attention_fact_id, project_id, workspace_id)
+);
+`;
+
+/** Fingerprint of LF UTF-8 descriptor lines: 41, migration name, DDL SHA-256. */
+export const P41_SUBMITTED_DECISION_BINDING_ATTENTION_FINGERPRINT =
+  "1c4b30b9fc08569c8b50a9333ea115562a2ac93ee81cc869cda97d5fe75149a1";
+
+export const P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION: MigrationFile =
+  {
+    id: 41,
+    name: "p41_submitted_decision_binding_attention",
+    sql: P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL,
+  };
+
 /** Current production schema registry and its exact readiness high-water mark. */
 export const CURRENT_MIGRATIONS = P38_MIGRATIONS;
 export const CURRENT_MIGRATION_BASELINE = Math.max(

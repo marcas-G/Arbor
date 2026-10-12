@@ -39,6 +39,7 @@ export * from "./recovery-binding-store.js";
 export * from "./repositories.js";
 export * from "./repository-error.js";
 export * from "./runtime.js";
+export * from "./submitted-decision-binding-attention-codec.js";
 export * from "./tool-invocations.js";
 export * from "./tool-observation-evidence.js";
 export * from "./tool-observation-replay-attention-facts.js";
