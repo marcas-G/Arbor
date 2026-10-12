@@ -41,7 +41,12 @@ describe("FT-DG-01 ProjectResourceSource migration descriptor", () => {
             "INSERT INTO projects VALUES ('prj_a', 'A', 'boundary-a'), ('prj_b', 'B', 'boundary-b')",
           );
           yield* sql.unsafe("PRAGMA user_version = 41");
-          yield* runMigrations([P42_PROJECT_RESOURCE_SOURCE_MIGRATION]);
+          const applied = yield* runMigrations([
+            P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
+          ]);
+          const replayed = yield* runMigrations([
+            P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
+          ]);
           const rows = yield* sql.unsafe<{
             project_id: string;
             name: string;
@@ -53,12 +58,19 @@ describe("FT-DG-01 ProjectResourceSource migration descriptor", () => {
           const version = yield* sql.unsafe<{ user_version: number }>(
             "PRAGMA user_version",
           );
-          return { rows, version: Number(version[0]?.user_version ?? 0) };
+          return {
+            rows,
+            version: Number(version[0]?.user_version ?? 0),
+            applied,
+            replayed,
+          };
         }),
         services,
       ),
     );
     expect(result.version).toBe(42);
+    expect(result.applied).toBe(1);
+    expect(result.replayed).toBe(0);
     expect(
       result.rows.map((row) => ({
         projectId: row.project_id,
