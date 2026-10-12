@@ -143,6 +143,9 @@ export function AttentionPage({
     projectId: route.projectId as never,
   });
   const rows = query.data?.rows ?? [];
+  const resourceActivationPending = rows.some(
+    (row) => row.source === "WorkspaceResourceActivationPending",
+  );
   const unknownSources = [
     ...new Set(
       rows
@@ -178,6 +181,15 @@ export function AttentionPage({
         </div>
         <span className={styles.caption}>诊断面 · 只读</span>
       </header>
+      {query.isError ? (
+        <div className={styles.staleProblem} role="status">
+          无法确认此项目的资源激活状态。请勿重复创建；刷新关注事项后再确认。
+        </div>
+      ) : resourceActivationPending ? (
+        <div className={styles.staleProblem} role="status">
+          项目已创建，但资源尚未激活，文件操作暂不可用。该创建命令已经提交，请勿重复创建；此状态会随资源激活更新。
+        </div>
+      ) : null}
       {query.isPending ? (
         <Empty>正在加载关注事项</Empty>
       ) : query.isError && query.data === undefined ? (

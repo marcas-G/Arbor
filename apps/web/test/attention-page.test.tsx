@@ -53,6 +53,24 @@ const installAttention = (
   return urls;
 };
 
+const installAttentionSequence = (outcomes: ReadonlyArray<MockOutcome>) => {
+  const urls: string[] = [];
+  let index = 0;
+  const fetchMock = vi.fn(async (input: unknown): Promise<Response> => {
+    const url = String(input);
+    urls.push(url);
+    const outcome = outcomes[Math.min(index, outcomes.length - 1)];
+    index += 1;
+    if (outcome === undefined) throw new Error("attention fixture is empty");
+    return new Response(
+      "problem" in outcome ? problemBody(outcome.problem) : okBody(outcome.dto),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { fetchMock, urls };
+};
+
 const sessionValue: SessionContextValue = {
   token: "tok",
   actor: "user:test",
@@ -74,13 +92,14 @@ const renderAttention = () => {
       queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
     },
   });
-  return render(
+  const rendered = render(
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={sessionValue}>
         <AttentionPage route={route} />
       </SessionContext.Provider>
     </QueryClientProvider>,
   );
+  return { client, ...rendered };
 };
 
 beforeEach(() => {
@@ -166,6 +185,71 @@ describe("W-06 关注事项页（只读）", () => {
     await waitFor(() => expect(screen.getByText("无关注事项")).toBeTruthy());
     expect(urls.every((url) => url.startsWith("/views/"))).toBe(true);
     expect(urls.every((url) => url.startsWith("/views/attention"))).toBe(true);
+  });
+
+  it("activation Attention clears the Pending notice when a later read has no pending source", async () => {
+    const pendingActivation = {
+      source: "WorkspaceResourceActivationPending" as const,
+      severity: "ActionRequired" as const,
+      targetWorkspaceId: "ws_1" as never,
+      dedupKey: "resource-activation:prj_1:ws_1:0",
+      summaryRef: "resource-activation-pending",
+      occurredAt: "2026-10-12T00:00:00.000Z",
+    };
+    const { fetchMock } = installAttentionSequence([
+      { dto: { rows: [pendingActivation] } },
+      { dto: attentionPageEmpty },
+    ]);
+    const { client } = renderAttention();
+    const pendingNotice =
+      "项目已创建，但资源尚未激活，文件操作暂不可用。该创建命令已经提交，请勿重复创建；此状态会随资源激活更新。";
+    await waitFor(() => expect(screen.getByText(pendingNotice)).toBeTruthy());
+
+    await client.invalidateQueries({ queryKey: ["view", "attention"] });
+
+    await waitFor(() => expect(screen.queryByText(pendingNotice)).toBeNull());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("an Attention read error shows Unknown and never claims resource activation", async () => {
+    const pendingNotice =
+      "项目已创建，但资源尚未激活，文件操作暂不可用。该创建命令已经提交，请勿重复创建；此状态会随资源激活更新。";
+    const pendingActivation = {
+      source: "WorkspaceResourceActivationPending" as const,
+      severity: "ActionRequired" as const,
+      targetWorkspaceId: "ws_1" as never,
+      dedupKey: "resource-activation:prj_1:ws_1:0",
+      summaryRef: "resource-activation-pending",
+      occurredAt: "2026-10-12T00:00:00.000Z",
+    };
+    const { fetchMock } = installAttentionSequence([
+      { dto: { rows: [pendingActivation] } },
+      {
+        problem: {
+          code: "view/attention-unavailable",
+          category: "unavailable",
+          message: "attention view failed",
+          correlationId: null,
+          retryDisposition: "retryable",
+          safeDetails: {},
+        },
+      },
+    ]);
+    const { client } = renderAttention();
+    await waitFor(() => expect(screen.getByText(pendingNotice)).toBeTruthy());
+
+    await client.invalidateQueries({ queryKey: ["view", "attention"] });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "无法确认此项目的资源激活状态。请勿重复创建；刷新关注事项后再确认。",
+        ),
+      ).toBeTruthy(),
+    );
+    expect(screen.queryByText(pendingNotice)).toBeNull();
+    expect(screen.queryByText(/资源已经激活/u)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("行交互后仍全部 fetch 均为 /views/", async () => {

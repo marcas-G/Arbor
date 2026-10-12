@@ -41,10 +41,6 @@ export function AppShell({
   const queryClient = useQueryClient();
   const connected = session.token !== null;
   const [projectPanelOpen, setProjectPanelOpen] = useState(false);
-  const [resourceActivationNotice, setResourceActivationNotice] = useState<{
-    readonly projectId: string;
-    readonly state: "Pending" | "Unknown";
-  } | null>(null);
   const projectCreated = (receipt: CommandReceiptView): void => {
     if (receipt.resolution !== "Committed") return;
     const result = receipt.result as
@@ -75,13 +71,6 @@ export function AppShell({
         );
       const statusUnknown =
         rootWorkspaceId === undefined || attention?.ok !== true;
-      setResourceActivationNotice(
-        pending
-          ? { projectId, state: "Pending" }
-          : statusUnknown
-            ? { projectId, state: "Unknown" }
-            : null,
-      );
       navigate({
         name: pending || statusUnknown ? "attention" : "workbench",
         projectId,
@@ -115,14 +104,6 @@ export function AppShell({
           onOpenProjects={() => setProjectPanelOpen(true)}
         />
         <main className={styles.content}>
-          {resourceActivationNotice !== null &&
-          route?.projectId === resourceActivationNotice.projectId ? (
-            <div className={styles.resourceActivationNotice} role="status">
-              {resourceActivationNotice.state === "Pending"
-                ? "项目已创建，但资源尚未激活，文件操作暂不可用。该创建命令已经提交，请勿重复创建；可在关注事项中查看待处理状态。"
-                : "项目已创建，但当前无法确认资源激活状态。该创建命令已经提交，请勿重复创建；请刷新关注事项确认状态。"}
-            </div>
-          ) : null}
           {!connected ? null : route === null ? (
             connected && (path === "/" || path === "") ? (
               <BootstrapPage onSubmitted={projectCreated} />
