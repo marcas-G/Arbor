@@ -3,11 +3,9 @@ import type {
   CommandSubmissionContext,
   EvidenceId,
   Execution,
-  ExecutionId,
   ExecutionSettlement,
   MessageId,
   MessageKind,
-  ProviderTurnId,
   VerificationVerdict,
   WaitSpec,
   WorkId,
@@ -18,6 +16,8 @@ import type {
   BoundedObservation,
   ControlToolCatalogPortService,
   ModelFacingControlToolDefinition,
+  RecoveryBindingPolicyRevisions,
+  RecoveryBindingSourceIdentity,
 } from "@arbor/ports";
 import { Context, type Effect } from "effect";
 
@@ -300,15 +300,8 @@ export interface ExecutableInvocationInput {
     readonly logicalActionId: string;
   };
   /** Exact trusted P3 source identity for the durable AgentLoopStep action. */
-  readonly recoveryBindingIdentity?: {
-    readonly executionId: ExecutionId;
-    readonly providerTurnId: ProviderTurnId;
-    readonly logicalStepNo: number;
-    readonly repairAttempt: number;
-    readonly logicalActionId: string;
-    readonly actionIndex: number;
-    readonly callRef: string;
-  };
+  readonly recoveryBindingIdentity?: RecoveryBindingSourceIdentity;
+  readonly recoveryBindingPolicyRevisions?: RecoveryBindingPolicyRevisions;
   readonly executionFence?: import("@arbor/ports").AgentLoopStepFence;
 }
 

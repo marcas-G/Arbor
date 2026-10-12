@@ -279,6 +279,9 @@ export const canonicalizeRecoveryBindingV1 = (
 export const recoveryBindingV1Digest = (value: RecoveryBindingV1): string =>
   sha256Hex(canonicalizeRecoveryBindingV1(value));
 
+export const canonicalArgumentsDigestV1 = (value: unknown): string =>
+  sha256Hex(canonicalJsonV1(value));
+
 export const approvalTargetDigestV1 = (
   targetResourceSpaceIds: ReadonlyArray<string>,
 ): string => {
@@ -383,6 +386,26 @@ export interface SelectedP39RecoveryEvidence {
 }
 
 export interface P39RecoveryEvidenceStoreService {
+  /** Inserts the immutable V1 binding and attempt-0 NotAdmitted row, then
+   * changes the same invocation to Bound. The caller provides the surrounding
+   * fenced TransactionScope that also records intent and consumes approval. */
+  readonly bindClaim: (input: {
+    readonly binding: RecoveryBindingV1;
+    readonly createdAt: string;
+  }) => Effect.Effect<
+    "Bound" | "AlreadyBound",
+    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    TransactionScope
+  >;
+  /** Read-only replay lookup. Persisted canonical bytes and digest are checked
+   * before any binding is exposed to a caller. */
+  readonly findBinding: (
+    invocationId: ToolInvocationId,
+  ) => Effect.Effect<
+    Option.Option<VerifiedRecoveryBindingV1>,
+    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    TransactionScope
+  >;
   /** Returns only the exact terminal selected tuple after V1 bytes/hash and
    * invocation/attempt/fact provenance have been validated by P39. */
   readonly findSelected: (

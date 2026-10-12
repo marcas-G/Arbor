@@ -5,15 +5,13 @@ import {
 } from "@arbor/domain";
 import {
   type AdmissionResult,
-  ProjectEnvironmentPort,
   ResourceAdmission,
   type ResourceAdmissionError,
   ResourceOwnershipRepository,
   resourceRegionComparator,
   type TransactionScope,
-  WorkspaceRepository,
 } from "@arbor/ports";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer } from "effect";
 
 /** P4 `05` §3; DID v1.8 G4; SD v1.3 §4.4. Validate-only: never mutates
  * `resource_ownership`. */
@@ -29,17 +27,16 @@ const contains = (
 export const ResourceAdmissionLive: Layer.Layer<
   ResourceAdmission,
   never,
-  WorkspaceRepository | ResourceOwnershipRepository | ProjectEnvironmentPort
+  ResourceOwnershipRepository
 > = Layer.effect(
   ResourceAdmission,
   Effect.gen(function* () {
-    const workspaces = yield* WorkspaceRepository;
     const ownership = yield* ResourceOwnershipRepository;
-    const environment = yield* ProjectEnvironmentPort;
 
     const admit = (input: {
       readonly workspaceId: WorkspaceId;
       readonly regions: ReadonlyArray<CanonicalResourceRegion>;
+      readonly resolvedBoundaryRegions: ReadonlyArray<CanonicalResourceRegion>;
       readonly write: boolean;
     }): Effect.Effect<
       AdmissionResult,
@@ -47,17 +44,11 @@ export const ResourceAdmissionLive: Layer.Layer<
       TransactionScope
     > =>
       Effect.gen(function* () {
-        const workspace = yield* workspaces.findById(input.workspaceId);
-        if (Option.isNone(workspace)) {
-          return deny("workspace not found");
-        }
-        const resolved = yield* environment.resolve(
-          workspace.value.projectId,
-          workspace.value.resourceBoundary.addresses,
-        );
         for (const region of input.regions) {
           if (
-            !resolved.regions.some((boundary) => contains(boundary, region))
+            !input.resolvedBoundaryRegions.some((boundary) =>
+              contains(boundary, region),
+            )
           ) {
             return deny("region outside ResourceBoundary");
           }

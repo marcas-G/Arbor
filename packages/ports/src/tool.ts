@@ -108,6 +108,11 @@ export interface RecoveryBindingSourceIdentity {
   readonly callRef: string;
 }
 
+export interface RecoveryBindingPolicyRevisions {
+  readonly workspacePolicyRevision: number;
+  readonly projectPolicyRevision: number;
+}
+
 export interface ToolExecutionContext {
   readonly executionId: ExecutionId;
   readonly workspaceId: WorkspaceId;
@@ -123,6 +128,9 @@ export interface ToolExecutionContext {
    * claims fail closed when this tuple is absent or conflicts with the
    * invocation/context identity. */
   readonly recoveryBindingIdentity?: RecoveryBindingSourceIdentity;
+  /** Policy revisions from the same P3-prepared ControlBasis whose digest is
+   * `controlBasisDigest`; required when P39 V1 binding is enabled. */
+  readonly recoveryBindingPolicyRevisions?: RecoveryBindingPolicyRevisions;
   readonly delegationDepth?: number;
   /** P2 authoritative Worker holder used only for P4 durable settlement.
    * Production ExecutionOrigin callers always provide the complete triple. */
@@ -315,6 +323,7 @@ export interface ResourceAdmissionService {
   readonly admit: (input: {
     readonly workspaceId: WorkspaceId;
     readonly regions: ReadonlyArray<CanonicalResourceRegion>;
+    readonly resolvedBoundaryRegions: ReadonlyArray<CanonicalResourceRegion>;
     readonly write: boolean;
   }) => Effect.Effect<
     AdmissionResult,
