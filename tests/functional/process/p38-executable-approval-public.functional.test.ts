@@ -26,8 +26,11 @@ interface ExecutableApprovalRow {
   readonly logical_action_id: string;
   readonly call_ref: string;
   readonly tool_invocation_id: string;
+  readonly side_effect_semantics: string;
   readonly state: string;
   readonly revision: number;
+  readonly consumed_at: string | null;
+  readonly consumed_by: string | null;
 }
 
 interface ApprovalSnapshot {
@@ -43,6 +46,7 @@ interface ApprovalSnapshot {
     | {
         readonly invocation_id: string;
         readonly approval_id: string | null;
+        readonly effect_admission_state: string;
         readonly settlement_kind: string | null;
       }
     | undefined;
@@ -51,21 +55,42 @@ interface ApprovalSnapshot {
 
 const fixtures: ProductionFixture[] = [];
 const EXECUTABLE_APPROVAL_ENTRY_KEY = /^eap:(.+):(\d+)$/u;
+const p4FenceChild = resolve(
+  "tests/functional/support/p4-tool-lease-fencing-child.mjs",
+);
+
+interface ApprovalFixtureQualificationOptions {
+  readonly firstDaemonEntry?: string;
+  readonly daemonEnvironment?: Readonly<Record<string, string>>;
+  readonly onDaemonStdout?: (line: string) => void;
+}
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
 
-const startExecutableApproval = async (marker: string) => {
+const startExecutableApproval = async (
+  marker: string,
+  qualification: ApprovalFixtureQualificationOptions = {},
+) => {
   const destination = `p38-moved-${marker}.txt`;
   const effectLog = `p38-effects-${marker}.log`;
   const command =
     process.platform === "win32"
-      ? `if (Test-Path -LiteralPath 'proof.txt') { Add-Content -LiteralPath '${effectLog}' -Value '${marker}'; mv -LiteralPath 'proof.txt' -Destination '${destination}' }`
-      : `if [ -f proof.txt ]; then printf '%s\\n' '${marker}' >> '${effectLog}' && mv proof.txt '${destination}'; fi`;
+      ? `Add-Content -LiteralPath '${effectLog}' -Value '${marker}'; if (Test-Path -LiteralPath 'proof.txt') { mv -LiteralPath 'proof.txt' -Destination '${destination}' }`
+      : `printf '%s\\n' '${marker}' >> '${effectLog}'; if [ -f proof.txt ]; then mv proof.txt '${destination}'; fi`;
 
   const fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
+    ...(qualification.firstDaemonEntry === undefined
+      ? {}
+      : { firstDaemonEntry: qualification.firstDaemonEntry }),
+    ...(qualification.daemonEnvironment === undefined
+      ? {}
+      : { daemonEnvironment: qualification.daemonEnvironment }),
+    ...(qualification.onDaemonStdout === undefined
+      ? {}
+      : { onDaemonStdout: qualification.onDaemonStdout }),
     reply: (call) => {
       const names = new Set(
         call.tools
@@ -232,7 +257,9 @@ const readApprovalSnapshot = (
       .prepare(
         `SELECT approval_id, execution_id, project_id, workspace_id,
                 logical_step_no, repair_attempt, action_index, logical_action_id,
-                call_ref, tool_invocation_id, state, revision
+                call_ref, tool_invocation_id, side_effect_semantics, state,
+                revision, consumed_at,
+                consumed_by
            FROM action_approvals
           WHERE approval_id = ? AND route_kind = 'Executable' AND binding_proven = 1`,
       )
@@ -271,7 +298,8 @@ const readApprovalSnapshot = (
         ? undefined
         : (db
             .prepare(
-              `SELECT invocation_id, approval_id, settlement_kind FROM tool_invocations
+              `SELECT invocation_id, approval_id, effect_admission_state,
+                      settlement_kind FROM tool_invocations
                 WHERE execution_id = ? AND invocation_id = ?`,
             )
             .get(approval.execution_id, approval.tool_invocation_id) as
@@ -447,6 +475,209 @@ describe("pending P38 public Executable approval qualification", () => {
         settlement_kind: "Success",
       });
       expect(recovered.effectCount).toBe(1);
+      expect(run.fixture.daemonErrors).toEqual([]);
+      expect(peer.daemonErrors).toEqual([]);
+    } finally {
+      await peer.crash();
+    }
+  });
+
+  it("reuses a committed same-Step approval claim after a process crash before effect admission", async () => {
+    const marker = `P38-CLAIM-CRASH-${crypto.randomUUID().slice(0, 8)}`;
+    const probes: Array<{
+      readonly tag?: string;
+      readonly role?: string;
+      readonly boundary?: string;
+      readonly executionId?: string;
+      readonly invocationId?: string;
+    }> = [];
+    const run = await startExecutableApproval(marker, {
+      firstDaemonEntry: p4FenceChild,
+      daemonEnvironment: {
+        ARBOR_P4_FENCE_ROLE: "old",
+        ARBOR_P4_FENCE_ADMISSION_BOUNDARY: "AH7AfterToolIntentCommit",
+      },
+      onDaemonStdout: (line) => {
+        try {
+          const event = JSON.parse(line) as (typeof probes)[number];
+          if (event.tag === "P4_FENCE_PROBE") probes.push(event);
+        } catch {
+          // Ordinary daemon output is diagnostic data, not a probe.
+        }
+      },
+    });
+
+    await resolveApproval(
+      run.client,
+      run.project.projectId,
+      run.approvalId,
+      run.revision,
+      "Approve",
+    );
+
+    const probe = await waitForPublic(
+      async () =>
+        probes.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH7AfterToolIntentCommit",
+        ),
+      (event) => event !== undefined,
+      60_000,
+    );
+    expect(probe.executionId).toBe(run.before.approval?.execution_id);
+    expect(probe.invocationId).toBe(run.before.approval?.tool_invocation_id);
+
+    const claimed = run.snapshot();
+    expect(claimed.approval).toMatchObject({
+      state: "Consumed",
+      revision: run.revision + 2,
+      consumed_by: run.before.approval?.tool_invocation_id,
+    });
+    expect(claimed.invocation).toMatchObject({
+      invocation_id: run.before.approval?.tool_invocation_id,
+      approval_id: run.approvalId,
+      effect_admission_state: "NotAdmitted",
+      settlement_kind: null,
+    });
+    expect(claimed.action?.state).toBe("Pending");
+    expect(claimed.effectCount).toBe(0);
+
+    const peer = await run.fixture.startAdditionalDaemon({
+      entry: p4FenceChild,
+      daemonEnvironment: { ARBOR_P4_FENCE_ROLE: "new" },
+    });
+    try {
+      await run.fixture.crash();
+      await run.fixture.restart({
+        entry: p4FenceChild,
+        daemonEnvironment: { ARBOR_P4_FENCE_ROLE: "new" },
+      });
+
+      const recovered = await waitForResumedAction(run.snapshot, "Consumed");
+      expect(recovered.approval).toMatchObject({
+        state: "Consumed",
+        revision: run.revision + 2,
+        consumed_by: run.before.approval?.tool_invocation_id,
+      });
+      expect(recovered.invocation).toMatchObject({
+        invocation_id: run.before.approval?.tool_invocation_id,
+        approval_id: run.approvalId,
+        effect_admission_state: "MayHaveStarted",
+        settlement_kind: "Success",
+      });
+      expect(recovered.step?.provider_turn_id).toBe(
+        run.before.step?.provider_turn_id,
+      );
+      expect(recovered.effectCount).toBe(1);
+      expect(run.fixture.daemonErrors).toEqual([]);
+      expect(peer.daemonErrors).toEqual([]);
+    } finally {
+      await peer.crash();
+    }
+  });
+
+  it("keeps the consumed approval bound after a crash following a non-idempotent effect", async () => {
+    const marker = `P38-EFFECT-CRASH-${crypto.randomUUID().slice(0, 8)}`;
+    const probes: Array<{
+      readonly tag?: string;
+      readonly role?: string;
+      readonly boundary?: string;
+      readonly executionId?: string;
+      readonly invocationId?: string;
+    }> = [];
+    const run = await startExecutableApproval(marker, {
+      firstDaemonEntry: p4FenceChild,
+      daemonEnvironment: {
+        ARBOR_P4_FENCE_ROLE: "old",
+        ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
+        ARBOR_P4_FENCE_ADMISSION_BOUNDARY: "AH7AfterToolEffectBeforeSettlement",
+      },
+      onDaemonStdout: (line) => {
+        try {
+          const event = JSON.parse(line) as (typeof probes)[number];
+          if (event.tag === "P4_FENCE_PROBE") probes.push(event);
+        } catch {
+          // Ordinary daemon output is diagnostic data, not a probe.
+        }
+      },
+    });
+
+    await resolveApproval(
+      run.client,
+      run.project.projectId,
+      run.approvalId,
+      run.revision,
+      "Approve",
+    );
+    const probe = await waitForPublic(
+      async () =>
+        probes.find(
+          (event) =>
+            event.role === "old" &&
+            event.boundary === "AH7AfterToolEffectBeforeSettlement",
+        ),
+      (event) => event !== undefined,
+      60_000,
+    );
+    expect(probe.executionId).toBe(run.before.approval?.execution_id);
+    expect(probe.invocationId).toBe(run.before.approval?.tool_invocation_id);
+
+    const afterEffect = run.snapshot();
+    expect(afterEffect.approval).toMatchObject({
+      state: "Consumed",
+      side_effect_semantics: "NonIdempotent",
+      revision: run.revision + 2,
+      consumed_by: run.before.approval?.tool_invocation_id,
+    });
+    expect(afterEffect.invocation).toMatchObject({
+      invocation_id: run.before.approval?.tool_invocation_id,
+      approval_id: run.approvalId,
+      effect_admission_state: "MayHaveStarted",
+      settlement_kind: null,
+    });
+    expect(afterEffect.effectCount).toBe(1);
+
+    const peer = await run.fixture.startAdditionalDaemon({
+      entry: p4FenceChild,
+      daemonEnvironment: {
+        ARBOR_P4_FENCE_ROLE: "new",
+        ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
+      },
+    });
+    try {
+      await run.fixture.crash();
+      await run.fixture.restart({
+        entry: p4FenceChild,
+        daemonEnvironment: {
+          ARBOR_P4_FENCE_ROLE: "new",
+          ARBOR_P4_FENCE_NON_IDEMPOTENT: "1",
+        },
+      });
+      const recovered = await waitForPublic(
+        async () => run.snapshot(),
+        (snapshot) =>
+          snapshot.approval?.state === "Consumed" &&
+          snapshot.invocation?.settlement_kind === "OutcomeUnknown" &&
+          snapshot.effectCount === 1,
+        60_000,
+      );
+      expect(recovered.approval).toMatchObject({
+        state: "Consumed",
+        revision: run.revision + 2,
+        consumed_by: run.before.approval?.tool_invocation_id,
+      });
+      expect(recovered.invocation).toMatchObject({
+        invocation_id: run.before.approval?.tool_invocation_id,
+        approval_id: run.approvalId,
+        effect_admission_state: "MayHaveStarted",
+        settlement_kind: "OutcomeUnknown",
+      });
+      expect(
+        probes.filter(
+          (event) => event.boundary === "AH7AfterToolEffectBeforeSettlement",
+        ),
+      ).toHaveLength(1);
       expect(run.fixture.daemonErrors).toEqual([]);
       expect(peer.daemonErrors).toEqual([]);
     } finally {
