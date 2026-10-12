@@ -26,6 +26,13 @@ const workspaceId = "ws_p41_storage";
 const eventId = "evt_p41_storage_valid";
 const attentionFactId = `att_${"a".repeat(64)}`;
 
+const expectP41Unavailable = <A, E>(exit: Exit.Exit<A, E>) => {
+  expect(Exit.isFailure(exit)).toBe(true);
+  if (Exit.isFailure(exit)) {
+    expect(JSON.stringify(exit.cause)).toContain("P41MigrationNotRegistered");
+  }
+};
+
 const applyEquivalentP41Schema = Effect.gen(function* () {
   const sql = yield* SqlClient;
   yield* sql.unsafe(`
@@ -395,15 +402,36 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
             ),
           ),
         );
-        return { available, absent };
+        const absentRecord = yield* tx.transact(
+          Effect.exit(
+            requireStoreMethod(facts.recordSubmittedDecisionBindingFailure)({
+              attentionFactId,
+              eventId,
+              projectId: projectId as never,
+              executionId: executionId as never,
+              workspaceId: workspaceId as never,
+              logicalStepNo: 1,
+              repairAttempt: 0,
+              providerTurnId: "ptn_p41_absent" as never,
+              logicalActionId: "lac_p41_absent",
+              failureCode: "DecisionRequestWorkspaceMismatch" as const,
+              firstDetectedAt: "2026-10-12T00:00:00.000Z",
+            }),
+          ),
+        );
+        const absentList = yield* tx.transact(
+          Effect.exit(
+            requireStoreMethod(facts.listSubmittedDecisionBindingFailures)(
+              projectId as never,
+            ),
+          ),
+        );
+        return { available, absent, absentRecord, absentList };
       }),
     );
     expect(result.available).toBe(false);
-    expect(Exit.isFailure(result.absent)).toBe(true);
-    if (Exit.isFailure(result.absent)) {
-      expect(JSON.stringify(result.absent.cause)).toContain(
-        "P41MigrationNotRegistered",
-      );
-    }
+    expectP41Unavailable(result.absent);
+    expectP41Unavailable(result.absentRecord);
+    expectP41Unavailable(result.absentList);
   });
 });
