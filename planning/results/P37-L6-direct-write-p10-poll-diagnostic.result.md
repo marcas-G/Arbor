@@ -2,7 +2,7 @@
 
 Date: 2026-10-12
 Source run: first complete P37 L6 single-pass matrix; case 8/11
-Status: **P9 fact/outbox observed; P10 projection not reached; cause unresolved**
+Status: **P9 fact/outbox observed; initial P10 timeout traced to a test gate ordering defect; post-correction run pending**
 
 ## Evidence
 
@@ -33,18 +33,28 @@ A read-only query after daemon shutdown returned:
 | P9 fact time | `2026-10-12T01:42:54.111Z` |
 
 The max journal sequence was 20, so the Attention offset remained before the
-P9 event. No P10 poll error was persisted. The primary daemon error array was
-empty. The first-run capture did not retain stderr from the additional recovery
-daemon, so the diagnostic cannot establish whether that daemon stayed healthy
-and polled after P9 fact commit. No P10 or production defect is concluded.
+P9 event. No P10 poll error was persisted. The first-run capture did not retain
+stderr from the additional recovery daemon.
+
+The fixture-repair rerun reproduced the same branch in its legacy-direct-write
+case. Its archived database is
+`planning/results/P37-L6-process-crash-artifacts-rerun-1/08-does-not-accept-a-gen0-direct-write-observation-in-gen1-an-existing-fact-still-b/arbor-functional.db`.
+The P9 event is sequence 20, offset 15, the queue still contains the exact
+fact, no P10 marker/projection row exists, and the global claim is clear with
+no poll failure. This rerun also captures the test-code ordering: the process
+is held at `AfterDeliverReplayAttentionCommit` while awaiting the P10 row-write
+boundary.
+
+The bounded cause is in the qualification fixture. Recovery runs inside
+`schedulerTick`, while `main.ts` runs `pollConsumers` only after that Effect
+returns (`apps/single-workspace/src/main.ts:417-418`). The held P9 callback
+therefore prevents that same daemon from reaching its P10 poll. This does not
+prove a P10 production-liveness failure.
 
 ## Follow-up boundary
 
-Keep this branch separate from the approved receipt-seed and gen0-renewal-gate
-repairs. On the next centrally allocated P37 process window, inspect both
-daemons' process-local logs and P10 dispatch/poll attempts through the P9 event
-sequence, then exercise the exact P10 row-write and post-commit boundaries.
-Do not alter the frozen P9 fact/event or P10 marker/ACK/offset contract. If a
-repeatable P10 poll/rebuild behavior contradicts that contract after the
-fixtures prove a live, healthy consumer, capture the failure and source row as
-implementation evidence before classifying it.
+The second fixture-only correction releases the P9 after-commit test gate after
+asserting its durable identity, then waits at the P10 pre-commit row boundary.
+It does not change P9/P10 production code, contracts, cases or timeout. The
+correction has not yet been process-qualified; after the next full matrix,
+revisit this note from its evidence rather than treating P10 as closed.

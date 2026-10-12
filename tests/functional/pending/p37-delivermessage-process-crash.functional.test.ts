@@ -473,6 +473,11 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         "P37 Inbox mismatch fact is absent after its commit probe",
       );
     }
+    releaseP37Gate(
+      prepared.fixture,
+      "new",
+      "boundary-AfterDeliverReplayAttentionCommit",
+    );
     await awaitP37Probe(
       prepared.probes,
       (probe) =>
@@ -660,6 +665,11 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         expect(atBoundary.replayEvents).toHaveLength(1);
         expect(atBoundary.pendingFacts).toHaveLength(1);
         expect(atBoundary.markers).toHaveLength(0);
+        releaseP37Gate(
+          prepared.fixture,
+          "new",
+          "boundary-AfterDeliverReplayAttentionCommit",
+        );
       }
       await recovery.crash();
       if (p9Probe?.executionId !== undefined) {
@@ -802,6 +812,11 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     if (p9Fact === undefined) {
       throw new Error("P37 P9 post-commit probe has no committed fact row");
     }
+    releaseP37Gate(
+      seed.fixture,
+      "new",
+      "boundary-AfterDeliverReplayAttentionCommit",
+    );
     await awaitP37Probe(
       seed.probes,
       (probe) =>
@@ -905,6 +920,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
           (row as { project_id: string }).project_id ===
           prepared.project.projectId,
       ) as { last_sequence?: number } | undefined;
+      const offsetAtPreCommit = Number(projectOffset?.last_sequence ?? 0);
+      expect(offsetAtPreCommit).toBeGreaterThanOrEqual(initialOffset);
       if (crashSide === "before") {
         expect(
           atBoundary.markers.filter(
@@ -920,7 +937,6 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
               projectionProbe?.attentionFactId,
           ),
         ).toHaveLength(1);
-        expect(Number(projectOffset?.last_sequence ?? 0)).toBe(initialOffset);
       } else {
         expect(
           atBoundary.markers.filter(
@@ -941,6 +957,33 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         );
       }
       await recovery.crash();
+      if (crashSide === "before") {
+        const afterPreCommitCrash = readP37Snapshot(
+          prepared.fixture.databaseFile,
+        );
+        const offsetAfterCrash = afterPreCommitCrash.attentionOffsets.find(
+          (row) =>
+            (row as { project_id: string }).project_id ===
+            prepared.project.projectId,
+        ) as { last_sequence?: number } | undefined;
+        expect(
+          afterPreCommitCrash.markers.filter(
+            (row) =>
+              (row as { attention_fact_id: string }).attention_fact_id ===
+              projectionProbe?.attentionFactId,
+          ),
+        ).toHaveLength(0);
+        expect(
+          afterPreCommitCrash.pendingFacts.filter(
+            (row) =>
+              (row as { attention_fact_id: string }).attention_fact_id ===
+              projectionProbe?.attentionFactId,
+          ),
+        ).toHaveLength(1);
+        expect(Number(offsetAfterCrash?.last_sequence ?? 0)).toBe(
+          offsetAtPreCommit,
+        );
+      }
       if (projectionProbe?.executionId !== undefined) {
         await waitForLeaseExpiry(
           prepared.fixture.databaseFile,

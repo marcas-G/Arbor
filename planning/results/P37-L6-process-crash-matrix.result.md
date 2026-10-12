@@ -3,7 +3,7 @@
 Date: 2026-10-12 (Asia/Shanghai)
 Baseline: `ed5fba00ee60e169cadf0df12395179862abd1e8`
 Worktree: `C:\Users\ThinkPad\.codex\worktrees\p37-delivermessage-closure`
-Status: **First full run 0/11 PASS; test-only fixture repairs applied; post-repair qualification not run**
+Status: **First run 0/11; first fixture-repair rerun 7/11; P37 L6 remains unqualified**
 
 ## Run
 
@@ -119,3 +119,58 @@ remain at the result path above. Copies were validated before attempted temp
 directory cleanup, but the local tool policy rejected recursive deletion of
 those exact `%LOCALAPPDATA%\\Temp\\arbor-functional-*` folders; the original
 temp copies therefore remain recoverable alongside the archived copies.
+
+## Fixture-repair rerun 1
+
+Date: 2026-10-12 (Asia/Shanghai)
+Base/patch: `800d71c8cd58905842becb76731655a57d503580`
+Run command: the same single-file command above, with the recreated temporary
+L6-only Vitest config and `--retry=0`.
+Start: 10:09:13 local. Duration: 626.88 s. Result: **7/11 PASS; 4 fail**.
+Raw output is `planning/results/P37-L6-process-crash-matrix-rerun-1.raw.log`;
+11 DB/WAL/SHM sets and per-case metadata are at
+`planning/results/P37-L6-process-crash-artifacts-rerun-1/`.
+
+| Case | Rerun 1 |
+|---|---|
+| Gen0 FencingRejected before | PASS |
+| Gen0 FencingRejected after | PASS |
+| Committed receipt, Action/Observation pending | PASS |
+| Present but mismatched Inbox | Timed out waiting for P10/public Attention; P9 fact/event/outbox had committed. |
+| Inbox absent after cleanup | PASS |
+| P9 transaction before commit | PASS, including restart and one public Attention. |
+| P9 transaction after commit | Timed out waiting for P10/public Attention. |
+| Legacy gen0 direct-write Observation | Timed out waiting for P10/public Attention after P9 fact/outbox commit. |
+| P10 transaction before commit | Reached the pre-commit row probe and verified marker absent/queue pending, then failed because the offset was already 21 rather than the scenario-start 15. |
+| P10 transaction after commit | PASS, including one public row. |
+| Existing P9 fact after Inbox evidence drift | PASS |
+
+### Rerun 1 common-cause classification
+
+The three P10 wait failures share a qualification-fixture gate-order defect.
+The test child holds `AfterDeliverReplayAttentionCommit` while awaiting the
+P10 row-write boundary. Recovery runs as part of `schedulerTick`; the production
+daemon main loop invokes `pollConsumers` only after `schedulerTick` returns
+(`apps/single-workspace/src/main.ts:417-418`). Thus the held Action blocks the
+same daemon from reaching the P10 poll. The retained case DBs show durable P9
+fact/event/outbox, the P10 offset still just before the P9 event, an empty poll
+claim and no stored poll failure. This is test orchestration evidence, not a
+P10 production liveness failure.
+
+The P10-before assertion compared the offset at the row-write probe with a
+snapshot taken before the recovery daemon started. The P10 consumer had already
+committed earlier journal records: the exact failing DB had P9 event sequence
+22 and offset sequence 21 at the pre-commit hook, while the test's original
+baseline was 15. The marker was absent and pending outbox row remained. The
+frozen atomicity oracle is that the marker/ACK/offset changes in the *current*
+P10 transaction all roll back together; it does not require unrelated prior
+events to remain unconsumed from the scenario's initial snapshot.
+
+The test-only correction now releases the P9 post-commit gate after the P9 fact
+identity/durable-row assertions, then waits at the P10 pre-commit gate. The
+P10-before oracle captures the independently visible committed offset at that
+hook and asserts that offset remains unchanged after killing the transaction,
+while retaining the no-marker, queue-still-pending, restart, unique public-row
+and commit-after assertions. Matrix cases and timeout values remain unchanged.
+This correction has only received static verification; no post-correction
+Vitest or daemon qualification has run yet.
