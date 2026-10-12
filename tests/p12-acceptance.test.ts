@@ -38,6 +38,7 @@ import {
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
+  ResourceOwnershipRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -2099,6 +2100,7 @@ type TransportDbServices =
   | CommandHandlerRegistry
   | TransactionPort
   | ProjectRepository
+  | ResourceOwnershipRepository
   | WorkspaceRepository
   | ExecutionRepository
   | WorkRepository
@@ -2120,6 +2122,7 @@ const transportApp = (): Layer.Layer<TransportDbServices> => {
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),
+    Layer.provide(ResourceOwnershipRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
