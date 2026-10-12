@@ -209,6 +209,15 @@ Kill before and after every commit boundary, restart on the same durable DB:
 | AH18 | Provider overflow first recovery ↔ second terminal overflow |
 | AH19 | ProviderNative binding match ↔ mismatch portable rebuild |
 
+**AH7 lease-owner qualification.** A P9 AH7 cross-generation process case uses
+the production P2 execution path: G0 obtains generation 0, commits P4 effect
+admission, and the external effect occurs before settlement; G1 obtains its
+own later generation through `LeaseService`, does not re-execute the
+NonIdempotent effect, and follows the existing P4/P9 unknown/reconciliation
+disposition; any late G0 terminal write is rejected by the existing full
+fence. Two processes that were merely given the same copied holder tuple are
+not two P2 lease generations and do not qualify as the real takeover case.
+
 AH18 uses the DID v1.23 ordinal-0 ProviderTurn chain. Recovery ensures links
 idempotently and never rewrites the failed inference Manifest. A replacement
 overflow creates no second ordinal.

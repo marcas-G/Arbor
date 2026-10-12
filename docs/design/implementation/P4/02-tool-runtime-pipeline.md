@@ -41,6 +41,15 @@ interface ToolRuntimePortService {
 }
 ```
 
+**Caller concurrency boundary.** `ToolRuntimePort.invoke` is called by the
+single current P3 AgentLoop action under its current `ExecutionOrigin`. P4 does
+not provide invocation-level arbitration or a wait/owner protocol for
+overlapping calls carrying a copied same-holder tuple; such calls are outside
+the supported production path. This boundary does not change sequential
+recovery: after `MayHaveStarted`, a NonIdempotent ambiguity follows §5 and P4
+`06`—no automatic replay, and the existing `OutcomeUnknown`/reconciliation
+disposition remains authoritative.
+
 Steps:
 
 1. **Input validation** — `argumentsJson` must validate against the definition's

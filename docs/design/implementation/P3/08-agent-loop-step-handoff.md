@@ -211,6 +211,12 @@ stores the process-local `AgentAction` object.
 
 - `nextActionIndex` advances atomically with the action disposition, or after
   reading a stable existing result.
+- **Serial action dispatch.** For one `AgentLoopStep`, the production AgentLoop
+  invokes only the action at `nextActionIndex`. It waits for that P4 invocation
+  to return, then commits the action disposition, sourced Observation and cursor
+  advance before it invokes the next action. It does not issue overlapping P4
+  invocations for one pinned action. Recovery resumes the same pinned action
+  sequentially under the currently acquired `ExecutionOrigin`.
 - Each successful action appends its Observation immediately with stable source
   `(providerTurnId, callRef, resultRef)`; observations do not wait for the whole
   action batch.
