@@ -6,6 +6,7 @@ import type {
   LeaseGeneration,
   Principal,
   ProjectId,
+  ProviderTurnId,
   ResourceAddress,
   SessionId,
   ToolInvocationId,
@@ -94,6 +95,19 @@ export interface ToolExecutionFence {
   readonly fencingGeneration: LeaseGeneration;
 }
 
+/** Trusted source tuple captured from the persisted P3 AgentLoopStep and its
+ * exact ProviderTurn/LogicalAction dispatch. P4 must not reconstruct it from
+ * model output, Session text, or current Work state. */
+export interface RecoveryBindingSourceIdentity {
+  readonly executionId: ExecutionId;
+  readonly providerTurnId: ProviderTurnId;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly logicalActionId: string;
+  readonly actionIndex: number;
+  readonly callRef: string;
+}
+
 export interface ToolExecutionContext {
   readonly executionId: ExecutionId;
   readonly workspaceId: WorkspaceId;
@@ -105,6 +119,10 @@ export interface ToolExecutionContext {
    * resource resolution through ToolAuthorityResolver. */
   readonly authority?: InvocationAuthority;
   readonly controlBasisDigest: string;
+  /** Present only for a source-verified P3 ActionCall. RecoveryBindingV1
+   * claims fail closed when this tuple is absent or conflicts with the
+   * invocation/context identity. */
+  readonly recoveryBindingIdentity?: RecoveryBindingSourceIdentity;
   readonly delegationDepth?: number;
   /** P2 authoritative Worker holder used only for P4 durable settlement.
    * Production ExecutionOrigin callers always provide the complete triple. */

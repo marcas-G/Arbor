@@ -711,6 +711,29 @@ export const executeAgentLoopActions = (
             settlement,
           };
         }
+        const recoveryBindingIdentity =
+          loopAction !== undefined &&
+          currentLoopStep !== undefined &&
+          loopAction.identity.executionId === input.execution.executionId &&
+          currentLoopStep.identity.executionId === input.execution.executionId &&
+          loopAction.identity.logicalStepNo ===
+            currentLoopStep.identity.logicalStepNo &&
+          loopAction.identity.repairAttempt ===
+            currentLoopStep.identity.repairAttempt &&
+          currentLoopStep.providerTurnId ===
+            preparedTurn.manifest.providerTurnId &&
+          loopAction.actionIndex === actionIndex &&
+          loopAction.callRef === invocation.callRef
+            ? {
+                executionId: currentLoopStep.identity.executionId,
+                providerTurnId: currentLoopStep.providerTurnId,
+                logicalStepNo: currentLoopStep.identity.logicalStepNo,
+                repairAttempt: currentLoopStep.identity.repairAttempt,
+                logicalActionId: loopAction.logicalActionId,
+                actionIndex: loopAction.actionIndex,
+                callRef: loopAction.callRef,
+              }
+            : undefined;
         const executed = yield* Effect.match(
           executableInvocationHandler.handle({
             invocation,
@@ -727,6 +750,9 @@ export const executeAgentLoopActions = (
                     logicalActionId: loopAction.logicalActionId,
                   },
                 }),
+            ...(recoveryBindingIdentity === undefined
+              ? {}
+              : { recoveryBindingIdentity }),
             ...(loopStepFence === undefined
               ? {}
               : { executionFence: loopStepFence }),
