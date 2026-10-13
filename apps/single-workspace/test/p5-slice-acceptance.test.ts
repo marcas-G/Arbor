@@ -229,6 +229,9 @@ const summarizeToolRuntimeValue = (value: unknown) => {
   const safeConstraintMessages = new Set([
     "invalid P40 tool observation evidence",
     "invalid or immutable P40 tool observation evidence",
+    "terminal settlement and selected fact are immutable",
+    "recovery binding is immutable",
+    "reconciliation settlement requires matching authoritative fact",
     "FOREIGN KEY constraint failed",
     "UNIQUE constraint failed: tool_invocations.invocation_id",
     "CHECK constraint failed: tool_invocations",
