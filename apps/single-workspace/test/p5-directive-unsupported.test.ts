@@ -17,12 +17,31 @@ import {
 } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import {
+  createSchema42TestDatabaseFactory,
+  type Schema42TestDatabaseFactory,
+} from "../../../tests/support/schema42-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
+let schema42Factory: Schema42TestDatabaseFactory | undefined;
 const schema42Cleanups: Array<() => void> = [];
+
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: ".p5-directive-unsupported-template-",
+  });
+});
+
+afterAll(() => schema42Factory?.cleanup());
+
+const createSchema42Case = () => {
+  if (schema42Factory === undefined) {
+    throw new Error("Schema-42 test database factory was not prepared.");
+  }
+  return schema42Factory.create();
+};
 
 afterEach(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
@@ -142,9 +161,7 @@ const context: CommandSubmissionContext = {
 
 describe("OBSOLETE_CONTRACT_TEST — DirectiveUnsupported universal envelope", () => {
   it("fails closed on an unregistered legacy control envelope", async () => {
-    const fixture = await createSchema42TestDatabase({
-      prefix: ".p5-directive-unsupported-",
-    });
+    const fixture = createSchema42Case();
     schema42Cleanups.push(fixture.cleanup);
     const app = buildSingleWorkspaceLayer({
       databaseFile: fixture.databaseFilename,

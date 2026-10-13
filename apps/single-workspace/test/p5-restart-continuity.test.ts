@@ -23,9 +23,12 @@ import {
 import { SessionRepository, TransactionPort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import {
+  createSchema42TestDatabaseFactory,
+  type Schema42TestDatabaseFactory,
+} from "../../../tests/support/schema42-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
@@ -45,7 +48,23 @@ const exe3 = parse(ExecutionId)(
 const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const principal = parse(Principal)("worker:a");
 const actor = parse(Actor)("user:test");
+let schema42Factory: Schema42TestDatabaseFactory | undefined;
 const schema42Cleanups: Array<() => void> = [];
+
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: ".p5-restart-continuity-template-",
+  });
+});
+
+afterAll(() => schema42Factory?.cleanup());
+
+const createSchema42Case = () => {
+  if (schema42Factory === undefined) {
+    throw new Error("Schema-42 test database factory was not prepared.");
+  }
+  return schema42Factory.create();
+};
 
 afterEach(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
@@ -204,9 +223,7 @@ const readState = Effect.gen(function* () {
 
 describe("P5 restart continuity", () => {
   it("a fresh layer on the same database recovers and continues the session", async () => {
-    const fixture = await createSchema42TestDatabase({
-      prefix: ".p5-restart-continuity-",
-    });
+    const fixture = createSchema42Case();
     schema42Cleanups.push(fixture.cleanup);
     const databaseFile = fixture.databaseFilename;
     const turns = [yieldTurn];
