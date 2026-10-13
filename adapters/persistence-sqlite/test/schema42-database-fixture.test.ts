@@ -7,11 +7,13 @@ import { describe, expect, it } from "vitest";
 import {
   createSchema42PrivateTestDirectory,
   createSchema42TestDatabase,
+  createSchema42TestDatabaseFactory,
+  type Schema42TestDatabase,
 } from "../../../tests/support/schema42-database.js";
 import {
   layer,
-  runMigrations,
   P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
+  runMigrations,
 } from "../src/index.js";
 
 const projectId = "prj_schema42_fixture";
@@ -217,4 +219,63 @@ describe("central schema-42 test database fixture", () => {
       database.cleanup();
     }
   }, 120_000);
+
+  it("clones a closed schema-42 template into isolated files and cleans up every clone", async () => {
+    const factory = await createSchema42TestDatabaseFactory();
+    let first: Schema42TestDatabase | undefined;
+    let second: Schema42TestDatabase | undefined;
+    try {
+      first = factory.create();
+      second = factory.create();
+      expect(first.databaseFilename).not.toBe(second.databaseFilename);
+      expect(first.p39ReportFilename).not.toBe(second.p39ReportFilename);
+      expect(existsSync(first.p39ReportFilename)).toBe(true);
+      expect(existsSync(second.p39ReportFilename)).toBe(true);
+
+      await runDatabase(
+        first.databaseFilename,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          yield* sql.unsafe(
+            "CREATE TABLE schema42_clone_probe (value TEXT NOT NULL)",
+          );
+          yield* sql.unsafe(
+            "INSERT INTO schema42_clone_probe (value) VALUES ('first')",
+          );
+        }),
+      );
+
+      const secondProbe = await runDatabase(
+        second.databaseFilename,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          return yield* sql.unsafe<{ name: string }>(
+            "SELECT name FROM sqlite_schema WHERE name = 'schema42_clone_probe'",
+          );
+        }),
+      );
+      const secondVersion = await runDatabase(
+        second.databaseFilename,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{ user_version: number }>(
+            "PRAGMA user_version",
+          );
+          return Number(rows[0]?.user_version ?? 0);
+        }),
+      );
+      expect(secondProbe).toEqual([]);
+      expect(secondVersion).toBe(42);
+    } finally {
+      const directories = [first?.directory, second?.directory].filter(
+        (directory): directory is string => directory !== undefined,
+      );
+      first?.cleanup();
+      second?.cleanup();
+      factory.cleanup();
+      for (const directory of directories) {
+        expect(existsSync(directory)).toBe(false);
+      }
+    }
+  });
 });
