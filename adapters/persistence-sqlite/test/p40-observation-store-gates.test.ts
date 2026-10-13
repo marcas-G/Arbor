@@ -23,13 +23,15 @@ import {
 } from "@arbor/ports";
 import { Effect, Exit, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  createSchema42TestDatabase,
+  type Schema42TestDatabase,
+} from "../../../tests/support/schema42-database.js";
 import {
   DomainEventJournalLive,
   layer,
   P36_MIGRATIONS,
-  P39_MAINTENANCE_MIGRATIONS,
-  P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
   runMigrations,
   ToolInvocationStoreLive,
   ToolObservationEvidenceStoreLive,
@@ -53,6 +55,7 @@ const artifactId = "art_018f2b3c-4d5e-7abc-8def-0123456789a2";
 const workerId = "worker:p40";
 const incarnationId = "incarnation:p40";
 const now = "2026-10-11T00:00:01.000Z";
+const databases: Schema42TestDatabase[] = [];
 const fence = {
   executionId,
   workerId,
@@ -160,8 +163,8 @@ const authenticatedRnoEvidence = (factId: string) => {
   };
 };
 
-const makeApp = () => {
-  const sqlite = layer({ filename: ":memory:" });
+const makeApp = (filename = ":memory:") => {
+  const sqlite = layer({ filename });
   return Layer.mergeAll(
     sqlite,
     Layer.provide(TransactionPortLive, sqlite),
@@ -169,11 +172,6 @@ const makeApp = () => {
     Layer.provide(ToolObservationEvidenceStoreLive, sqlite),
   );
 };
-
-const seedP39PrefixFixture = Effect.gen(function* () {
-  yield* runMigrations(P39_MAINTENANCE_MIGRATIONS);
-  yield* runMigrations([P40_TOOL_OBSERVATION_REPLAY_MIGRATION]);
-});
 
 const bindP39Intent = (evidence = authenticatedRnoEvidence("f".repeat(64))) =>
   Effect.gen(function* () {
@@ -249,7 +247,13 @@ const seedWorkspaceExecution = Effect.gen(function* () {
 });
 
 describe("P40 P4 persistent observation admission gates", () => {
+  afterEach(() => {
+    for (const database of databases.splice(0)) database.cleanup();
+  });
+
   it("keeps a P39-only user_version out of the P36 runtime migration path", async () => {
+    // This is a version-boundary regression, not a post-activation fixture:
+    // the P36 runner must refuse a maintenance-only version-39 marker.
     const sqlite = layer({ filename: ":memory:" });
     const program = Effect.gen(function* () {
       const sql = yield* SqlClient;
@@ -267,10 +271,10 @@ describe("P40 P4 persistent observation admission gates", () => {
   });
 
   it("rejects a NotAdmitted Success before artifact materialization or settlement writes", async () => {
-    const app = makeApp();
+    const database = await createSchema42TestDatabase();
+    databases.push(database);
+    const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      yield* seedP39PrefixFixture;
       yield* seedWorkspaceExecution;
       const tx = yield* TransactionPort;
       const invocations = yield* ToolInvocationStore;
@@ -367,13 +371,13 @@ describe("P40 P4 persistent observation admission gates", () => {
       result_ref: null,
       observation_json: null,
     });
-  });
+  }, 120_000);
 
   it("rejects a 2,001-unit P4 candidate before materializing its Artifact", async () => {
-    const app = makeApp();
+    const database = await createSchema42TestDatabase();
+    databases.push(database);
+    const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      yield* seedP39PrefixFixture;
       yield* seedWorkspaceExecution;
       const tx = yield* TransactionPort;
       const invocations = yield* ToolInvocationStore;
@@ -422,13 +426,13 @@ describe("P40 P4 persistent observation admission gates", () => {
     expect(Exit.isFailure(result.rejected)).toBe(true);
     expect(result.materializeCalls).toBe(0);
     expect(result.state).toEqual({ settled_at: null, result_artifacts: 0 });
-  });
+  }, 120_000);
 
   it("returns only the committed winner to a fenced loser and rejects that same fence after takeover", async () => {
-    const app = makeApp();
+    const database = await createSchema42TestDatabase();
+    databases.push(database);
+    const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      yield* seedP39PrefixFixture;
       yield* seedWorkspaceExecution;
       const tx = yield* TransactionPort;
       const invocations = yield* ToolInvocationStore;
@@ -502,13 +506,13 @@ describe("P40 P4 persistent observation admission gates", () => {
     });
     expect(result.loserMaterializeCalls).toBe(0);
     expect(Exit.isFailure(result.staleRead)).toBe(true);
-  });
+  }, 120_000);
 
   it("rolls back Artifact metadata and terminal evidence together", async () => {
-    const app = makeApp();
+    const database = await createSchema42TestDatabase();
+    databases.push(database);
+    const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      yield* seedP39PrefixFixture;
       yield* seedWorkspaceExecution;
       const tx = yield* TransactionPort;
       const invocations = yield* ToolInvocationStore;
@@ -588,13 +592,13 @@ describe("P40 P4 persistent observation admission gates", () => {
       observation_json: null,
       artifacts: 0,
     });
-  });
+  }, 120_000);
 
   it("keeps a P9 replay-failure fact immutable in SQLite", async () => {
-    const app = makeApp();
+    const database = await createSchema42TestDatabase();
+    databases.push(database);
+    const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      yield* seedP39PrefixFixture;
       yield* seedWorkspaceExecution;
       const tx = yield* TransactionPort;
       const invocations = yield* ToolInvocationStore;
@@ -645,10 +649,12 @@ describe("P40 P4 persistent observation admission gates", () => {
     const result = await Effect.runPromise(Effect.provide(program, app));
     expect(Exit.isFailure(result.update)).toBe(true);
     expect(Exit.isFailure(result.deletion)).toBe(true);
-  });
+  }, 120_000);
 
   it("rechecks the lease at the P9 fact write boundary using trusted time, not firstDetectedAt", async () => {
-    const sqlite = layer({ filename: ":memory:" });
+    const database = await createSchema42TestDatabase();
+    databases.push(database);
+    const sqlite = layer({ filename: database.databaseFilename });
     const ticks = ["2026-10-11T00:00:01.999Z", "2026-10-11T00:00:02.001Z"];
     const clock = Layer.succeed(Clock, {
       now: () => Effect.sync(() => ticks.shift() ?? "2026-10-11T00:00:02.001Z"),
@@ -672,8 +678,6 @@ describe("P40 P4 persistent observation admission gates", () => {
       factStoreLayer,
     );
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      yield* seedP39PrefixFixture;
       yield* seedWorkspaceExecution;
       const tx = yield* TransactionPort;
       const sql = yield* SqlClient;
@@ -716,17 +720,17 @@ describe("P40 P4 persistent observation admission gates", () => {
     const result = await Effect.runPromise(Effect.provide(program, app));
     expect(Exit.isFailure(result.rejected)).toBe(true);
     expect(result.persisted).toEqual({ facts: 0, events: 0 });
-  });
+  }, 120_000);
 
   it("commits a final NotOccurred selection with its exact P40 RNO Observation and never rewrites the selection", async () => {
-    const app = makeApp();
+    const database = await createSchema42TestDatabase();
+    databases.push(database);
+    const app = makeApp(database.databaseFilename);
     const factId = "f".repeat(64);
     const evidenceRef = "art_018f2b3c-4d5e-7abc-8def-0123456789a3";
     const evidenceSha256 = "c".repeat(64);
     const selectedP39Evidence = authenticatedRnoEvidence(factId);
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      yield* seedP39PrefixFixture;
       yield* seedWorkspaceExecution;
       const tx = yield* TransactionPort;
       const invocations = yield* ToolInvocationStore;
@@ -850,5 +854,5 @@ describe("P40 P4 persistent observation admission gates", () => {
       p39_result_ref: null,
       p4_result_ref: artifactId,
     });
-  });
+  }, 120_000);
 });
