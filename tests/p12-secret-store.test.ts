@@ -14,9 +14,7 @@ import { SecretFileLive } from "../adapters/secret-file/dist/index.js";
 import {
   admitExecution,
   buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
   evaluateAndSelect,
-  runMigrations,
 } from "../apps/single-workspace/src/index.js";
 import {
   type AssignWorkPayload,
@@ -55,7 +53,7 @@ import {
   secretRef,
   TransactionPort,
 } from "../packages/ports/dist/index.js";
-import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
+import { createSchema42TestDatabase } from "./support/schema42-database.js";
 
 const repoRoot = join(import.meta.dirname, "..");
 
@@ -310,9 +308,11 @@ describe("P12-003 sentinel no-leak", () => {
     const sentinelValue = `sentinel-value-${randomUUID()}`;
     process.env[sentinelEnv] = sentinelValue;
 
-    const dir = mkdtempSync(join(tmpdir(), "p12-secret-"));
+    const database = await createSchema42TestDatabase({
+      prefix: "p12-secret-",
+    });
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(dir, "slice.db"),
+      databaseFile: database.databaseFilename,
       providerTurns: turns,
       secretRef: secretRef(sentinelEnv),
     });
@@ -338,8 +338,6 @@ describe("P12-003 sentinel no-leak", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(CURRENT_MIGRATIONS);
-            yield* ensureLegacyProjectResourceSourceFixture();
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               envelope("CreateProject", projectPayload, commandId("1")),
@@ -416,6 +414,7 @@ describe("P12-003 sentinel no-leak", () => {
       process.stdout.write = origOut as typeof process.stdout.write;
       process.stderr.write = origErr as typeof process.stderr.write;
       delete process.env[sentinelEnv];
+      database.cleanup();
     }
 
     // the turn completed: the sentinel SecretRef WAS resolved through the adapter.

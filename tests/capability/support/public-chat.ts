@@ -1,15 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { type Context, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
+import { afterAll } from "vitest";
 import type {
   OpenAISdkChunk,
   OpenAISdkClient,
 } from "../../../adapters/provider-openai/src/index.js";
-import {
-  buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../../../apps/single-workspace/src/composition.js";
+import { buildSingleWorkspaceLayer } from "../../../apps/single-workspace/src/composition.js";
 import {
   ProductionDaemonService,
   TransportBoundary,
@@ -30,6 +27,19 @@ import {
   portableInputItems,
   type SecretRef,
 } from "../../../packages/ports/dist/provider.js";
+import {
+  createSchema42TestDatabase,
+  type Schema42TestDatabase,
+} from "../../support/schema42-database.js";
+
+const publicConversationDatabases = new Map<string, Schema42TestDatabase>();
+
+afterAll(() => {
+  for (const database of publicConversationDatabases.values()) {
+    database.cleanup();
+  }
+  publicConversationDatabases.clear();
+});
 
 export const capabilityHuman = parse(Principal)("user:capability-test");
 export const capabilityToken = "tok_arbor_capability_harness";
@@ -340,6 +350,13 @@ export const withPublicConversationApp = async (
   },
   body: (handle: PublicAppHandle) => Promise<void>,
 ): Promise<void> => {
+  let database = publicConversationDatabases.get(input.databaseFile);
+  if (database === undefined) {
+    database = await createSchema42TestDatabase({
+      prefix: "public-conversation-",
+    });
+    publicConversationDatabases.set(input.databaseFile, database);
+  }
   const projectId = parse(ProjectId)(input.project.projectId);
   const hostProfileDirectory = hostProfileDirectoryForFixture(input.project);
   const projectResourceProfiles = makeProjectResourceProfilePort(
@@ -354,7 +371,7 @@ export const withPublicConversationApp = async (
     [profileCatalogToken]: profileCatalogPrincipal,
   });
   const app = buildSingleWorkspaceLayer({
-    databaseFile: input.databaseFile,
+    databaseFile: database.databaseFilename,
     projectId,
     modelCatalog: makeModelCatalog(input.modelRef, input.modelCapability),
     modelRef: input.modelRef,
@@ -391,7 +408,6 @@ export const withPublicConversationApp = async (
               effect as Effect.Effect<A, E, never>,
               context,
             );
-          yield* runMigrations(CURRENT_MIGRATIONS);
           const boundary = yield* TransportBoundary;
           const sql = yield* SqlClient;
           const daemon = yield* ProductionDaemonService;

@@ -4,11 +4,7 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect } from "vitest";
-import {
-  buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
-} from "../../../apps/single-workspace/src/composition.js";
+import { buildSingleWorkspaceLayer } from "../../../apps/single-workspace/src/composition.js";
 import {
   ProductionDaemonService,
   TransportBoundary,
@@ -21,6 +17,7 @@ import {
   parse,
 } from "../../../packages/domain/src/index.js";
 import type { ModelCatalog } from "../../../packages/model-context/src/index.js";
+import { createSchema42TestDatabase } from "../../support/schema42-database.js";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
 import {
   makePublicProject,
@@ -53,8 +50,10 @@ const modelCatalog: ModelCatalog = {
 };
 
 const directories: string[] = [];
+const schema42Cleanups: Array<() => void> = [];
 
 afterEach(() => {
+  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
   for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -67,7 +66,11 @@ describe("B01 L2 — public Human Input to durable transcript", () => {
     async () => {
       const directory = mkdtempSync(join(tmpdir(), "arbor-b01-public-"));
       directories.push(directory);
-      const databaseFile = join(directory, "slice.db");
+      const database = await createSchema42TestDatabase({
+        prefix: "b01-public-conversation-",
+      });
+      schema42Cleanups.push(database.cleanup);
+      const databaseFile = database.databaseFilename;
       const project = makePublicProject(
         `capability-b01-${crypto.randomUUID()}`,
       );
@@ -88,7 +91,6 @@ describe("B01 L2 — public Human Input to durable transcript", () => {
         Effect.scoped(
           Effect.provide(
             Effect.gen(function* () {
-              yield* runMigrations(CURRENT_MIGRATIONS);
               const boundary = yield* TransportBoundary;
               const sql = yield* SqlClient;
               const daemon = yield* ProductionDaemonService;

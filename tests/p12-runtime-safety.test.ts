@@ -7,9 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   admitExecution,
   buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
   evaluateAndSelect,
-  runMigrations,
 } from "../apps/single-workspace/src/index.js";
 import {
   makeProjectResourceProfilePort,
@@ -63,7 +61,7 @@ import {
   type AttentionReadDeps,
   loadAttentionFacts,
 } from "../packages/projection-runtime/src/index.js";
-import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
+import { createSchema42TestDatabase } from "./support/schema42-database.js";
 
 const exe = parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const g1 = parse(LeaseGeneration)(1);
@@ -636,18 +634,19 @@ const runScenario = async (
     resourceProfileRef: profile.resourceProfileRef,
     version: profile.version,
   });
+  const database = await createSchema42TestDatabase({
+    prefix: "p12-runtime-safety-",
+  });
   const app = buildSingleWorkspaceLayer({
-    databaseFile: join(dir, "slice.db"),
+    databaseFile: database.databaseFilename,
     providerTurns,
     ...(providerFailures !== undefined ? { providerFailures } : {}),
     runtimeSafetyPolicy: safetyPolicy,
     projectResourceProfiles,
   });
-  return Effect.runPromise(
+  const result = await Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
-        yield* ensureLegacyProjectResourceSourceFixture();
         const gateway = yield* CommandGateway;
         yield* gateway.execute(
           envelope("CreateProject", selectedProjectPayload, commandId("1")),
@@ -796,6 +795,8 @@ const runScenario = async (
       app,
     ) as unknown as Effect.Effect<ScenarioResult, unknown, never>,
   );
+  database.cleanup();
+  return result;
 };
 
 describe("P12-008 end-to-end violation -> Interrupted(RuntimeSafetyStop), Work Open", () => {

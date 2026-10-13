@@ -34,7 +34,6 @@ import {
   MessageStoreLive,
   P11_MIGRATIONS,
   P12_MIGRATIONS,
-  P38_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
@@ -47,7 +46,6 @@ import {
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { CURRENT_MIGRATIONS } from "../adapters/persistence-sqlite/src/migrations.js";
 import {
   type OpenAISdkChunk,
   type OpenAISdkClient,
@@ -265,6 +263,7 @@ import {
   ToolRuntimeLive,
 } from "../packages/tool-runtime/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
+import { createSchema42TestDatabase } from "./support/schema42-database.js";
 
 // P12-013 acceptance: the `14` §1 end-to-end story across contracts `01`–`10`,
 // `12`, `13`. Mechanical evidence only; the per-contract suites carry the
@@ -733,9 +732,11 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
     const sentinelEnv = `SENTINEL_SECRET_${randomUUID().replace(/-/g, "")}`;
     const sentinelValue = `sentinel-value-${randomUUID()}`;
     process.env[sentinelEnv] = sentinelValue;
-    const dir = mkdtempSync(join(tmpdir(), "p12-acceptance-secret-"));
+    const database = await createSchema42TestDatabase({
+      prefix: "p12-acceptance-secret-",
+    });
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(dir, "slice.db"),
+      databaseFile: database.databaseFilename,
       providerTurns: [
         [
           {
@@ -774,10 +775,6 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            // The production slice now wires the unified P32+ approval ledger;
-            // run the current schema before exercising its approval store.
-            yield* runMigrations(P38_MIGRATIONS);
-            yield* ensureLegacyProjectResourceSourceFixture();
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               secretEnvelope("CreateProject", secretProjectPayload(), "1"),
@@ -851,6 +848,7 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
       process.stdout.write = origOut as typeof process.stdout.write;
       process.stderr.write = origErr as typeof process.stderr.write;
       delete process.env[sentinelEnv];
+      database.cleanup();
     }
 
     expect(settlement).toBe("Completed");
@@ -1703,17 +1701,18 @@ const runSafetyScenario = async (
     resourceProfileRef: profile.resourceProfileRef,
     version: profile.version,
   });
+  const database = await createSchema42TestDatabase({
+    prefix: "p12-acceptance-safety-",
+  });
   const app = buildSingleWorkspaceLayer({
-    databaseFile: join(dir, "slice.db"),
+    databaseFile: database.databaseFilename,
     providerTurns,
     runtimeSafetyPolicy: safetyPolicyConfig,
     projectResourceProfiles,
   });
-  return Effect.runPromise(
+  const result = await Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
-        yield* ensureLegacyProjectResourceSourceFixture();
         const gateway = yield* CommandGateway;
         const created = yield* gateway.execute(
           safetyEnvelope("CreateProject", selectedSafetyProjectPayload, "1"),
@@ -1790,6 +1789,8 @@ const runSafetyScenario = async (
       app,
     ) as unknown as Effect.Effect<SafetyScenario, unknown, never>,
   );
+  database.cleanup();
+  return result;
 };
 
 describe("p12-acceptance story 9 — §8.16A six dimensions", () => {
