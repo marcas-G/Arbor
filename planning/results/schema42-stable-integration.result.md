@@ -129,3 +129,19 @@ After the first `pnpm check` at the P5-integrated HEAD, lint reported one
 schema-42 fixture import to its sorted position; the diff contains import
 ordering only. Biome recheck of that file and `git diff --check` pass. No
 heavy tests or full gates were rerun.
+
+## Architecture boundary filename correction
+
+The first full check at the P5-integrated HEAD found one architecture failure:
+the P12 path-segment guard classified the operator test's former filename as
+transport-related because it contained the segment `cli`. Renamed it to
+`schema-upgrade-operator.test.ts`; Git confirms a 100% content-preserving
+rename. A repository search found no other references to the former filename,
+so no command or result references needed adjustment. The offline
+schema-upgrade operator implementation remains in its existing
+non-transport location, and the architecture rule was not changed.
+
+Focused verification: `pnpm exec vitest run
+tests/architecture/p10-boundaries.test.ts -t "P12 boundary"` — 1 passed, 3
+skipped; Biome on the renamed test — PASS; staged `git diff --check` — PASS.
+No additional tests or full gates were run.
