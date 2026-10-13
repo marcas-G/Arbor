@@ -105,6 +105,7 @@ import type {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 /**
  * P12-010 (`10` §1–§5; EC-11). Mechanical evidence:
@@ -495,6 +496,7 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
     const outcome = await run(
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const submission = yield* makeExternalSubmissionFromServices({
           authenticatedHumans: [],
           directParentOf: [],
@@ -615,6 +617,7 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
     const outcome = await run(
       Effect.gen(function* () {
         yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const submission = yield* makeExternalSubmissionFromServices({
           authenticatedHumans: [HUMAN],
           directParentOf: [],
@@ -730,6 +733,7 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
     const outcome = await run(
       Effect.gen(function* () {
         yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const submission = yield* makeExternalSubmissionFromServices({
           authenticatedHumans: [],
           directParentOf: [],

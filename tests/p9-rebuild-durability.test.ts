@@ -189,17 +189,18 @@ describe("p9-rebuild (RB-1..RB-5 / PR1–PR4 — generic face, GQ2)", () => {
             yield* runConsumerBatch("rb1", projectA, 10);
             expect(yield* offsetOf("rb1")).toBe(3);
             expect((yield* projectionRows).length).toBe(3);
-            // Prune below sequence 2 and regress the offset under it.
+            // Prune below sequence 2 and move the test offset strictly below
+            // the legal floor-1 replay point (sequence 1).
             yield* pruneTo(2);
-            yield* regressOffset("rb1", 1);
+            yield* regressOffset("rb1", 0);
             const refused = yield* rebuildProjection("rb1", projectA).pipe(
               Effect.flip,
             );
             expect(refused._tag).toBe("ConsumerRebuildRefused");
-            expect(refused).toMatchObject({ offset: 1, floor: 2 });
+            expect(refused).toMatchObject({ offset: 0, floor: 2 });
             // No partial reset: rows and offset untouched by the refusal.
             expect((yield* projectionRows).length).toBe(3);
-            expect(yield* offsetOf("rb1")).toBe(1);
+            expect(yield* offsetOf("rb1")).toBe(0);
           }),
           makeConsumerInfra(),
         ),

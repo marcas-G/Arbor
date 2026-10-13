@@ -54,6 +54,7 @@ import {
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import { UsageService } from "../packages/projection-runtime/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 import { p7Project, p7RootWorkspace, p7SeedProject } from "./support/p7-app.js";
 
 /**
@@ -131,17 +132,10 @@ const runWith = <A>(
   ) as Promise<A>;
 
 describe("p12 production composition (B-6 / B-7 / B-8)", () => {
-  it("P39: refuses an in-memory production database before runtime assembly", () => {
-    let failure: unknown;
-    try {
-      buildSingleWorkspaceLayer({ databaseFile: ":memory:" });
-    } catch (cause) {
-      failure = cause;
-    }
-    expect(failure).toMatchObject({
-      _tag: "P39MaintenanceFailure",
-      code: "P39_UNSUPPORTED_DEPLOYMENT",
-    });
+  it("does not require a P39 primary writer lock for an in-memory composition", () => {
+    expect(() =>
+      buildSingleWorkspaceLayer({ databaseFile: ":memory:" }),
+    ).not.toThrow();
   });
 
   it("B-6: production wires the P7 dependency-aware RunnableWorkSource (a waiting Open work is not runnable)", async () => {
@@ -233,6 +227,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
         const beforeMigration = yield* health.readiness();
 
         yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const afterMigration = yield* health.readiness();
 
         const resolver = yield* AuthorityResolverPort;

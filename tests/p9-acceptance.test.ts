@@ -167,6 +167,7 @@ import {
   type DurabilityEvidence,
 } from "./support/p9-durability-evidence.js";
 import { labeled } from "./support/p9-harness-api.js";
+import { fileTreeBoundaryJson } from "./support/resource-boundary-fixture.js";
 
 /** P9-013 — the seven deterministic acceptance stories (P9 `06` §A–§G)
  * + the mechanical assertion checklist. Every story reuses the
@@ -1489,8 +1490,8 @@ const seedStoryE = Effect.gen(function* () {
         [E_SESSION, E_EXECUTION],
       );
       yield* sql.unsafe(
-        "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'w','{}',0,'{}',0,'{}',?,NULL,'{}',0,0,'Active','t','t')",
-        [E_WORKSPACE, E_PROJECT, E_SESSION],
+        "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'w','{}',0,?,0,'{}',?,NULL,'{}',0,0,'Active','t','t')",
+        [E_WORKSPACE, E_PROJECT, fileTreeBoundaryJson(), E_SESSION],
       );
       yield* sql.unsafe(
         "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",

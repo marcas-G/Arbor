@@ -2250,6 +2250,7 @@ describe("p12-acceptance story 11 — transport shells + daemons", () => {
     const outcome = await transportRun(
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const submission = yield* makeExternalSubmissionFromServices({
           authenticatedHumans: [],
           directParentOf: [],

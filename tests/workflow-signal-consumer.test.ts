@@ -311,6 +311,9 @@ describe("WorkflowSignalConsumer", () => {
       string,
       { readonly kind: string; readonly correlationId: string }
     >();
+    const inboxSequences = new Map<WorkspaceId, number>([
+      [parentWorkspaceId, 2],
+    ]);
     const blockerId =
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     const blockedExecution = parse(ExecutionId)(
@@ -406,7 +409,8 @@ describe("WorkflowSignalConsumer", () => {
       },
       inbox: {
         countByKey: () => Effect.succeed(1),
-        currentSequence: () => Effect.succeed(3),
+        currentSequence: (id: WorkspaceId) =>
+          Effect.succeed(inboxSequences.get(id) ?? 3),
         admitUpsert: (entry: {
           readonly entryKey: string;
           readonly kind: string;
@@ -419,6 +423,24 @@ describe("WorkflowSignalConsumer", () => {
                 correlationId: entry.correlationId ?? "",
               }),
           ),
+        admitUpsertSequenced: (entry: {
+          readonly recipientWorkspaceId: WorkspaceId;
+          readonly entryKey: string;
+          readonly kind: string;
+          readonly correlationId?: string;
+        }) =>
+          Effect.sync(() => {
+            if (!inboxRows.has(entry.entryKey)) {
+              inboxSequences.set(
+                entry.recipientWorkspaceId,
+                (inboxSequences.get(entry.recipientWorkspaceId) ?? 0) + 1,
+              );
+            }
+            inboxRows.set(entry.entryKey, {
+              kind: entry.kind,
+              correlationId: entry.correlationId ?? "",
+            });
+          }),
         listUnconsumed: () =>
           Effect.succeed(
             [...inboxRows].map(([entryKey, value]) => ({ entryKey, ...value })),
@@ -454,6 +476,7 @@ describe("WorkflowSignalConsumer", () => {
       kind: "WorkBlocked",
       correlationId: blockerId,
     });
+    expect(inboxSequences.get(parentWorkspaceId)).toBe(3);
     expect(wakes).toContain(`${parentWorkspaceId}:InputArrived`);
     expect(wakes).toContain(`${workspaceId}:InputArrived`);
 
