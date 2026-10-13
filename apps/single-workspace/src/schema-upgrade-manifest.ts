@@ -35,7 +35,8 @@ export type SchemaUpgradeMaintenancePhase =
   | "writer-lock-acquisition"
   | "manifest-validation"
   | "p39-reservation-and-gate"
-  | "p40-p42-continuation";
+  | "p40-p42-continuation"
+  | "version42-closed-readonly-no-op";
 
 export interface SchemaUpgradeFileIdentity {
   readonly device: string;

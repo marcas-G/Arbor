@@ -73,8 +73,8 @@ const safeSchemaRefusalMessage = (message: string): string =>
       /\b(secret|token|password|api[_-]?key|authorization)\b\s*[:=]\s*[^\s,;]+/giu,
       "$1=<redacted>",
     )
-    .replace(/(?:[A-Za-z]:[\\/]|\\\\)[^\s"'<>|]+/gu, "<path>")
-    .replace(/\/(?:[^/\s]+\/)*[^/\s]+/gu, "<path>")
+    .replace(/(?:[A-Za-z]:[\\/]|\\\\)[\s\S]*$/u, "<path>")
+    .replace(/(^|[^A-Za-z0-9._-])\/[\s\S]*$/u, "$1<path>")
     .slice(0, 180);
 
 export const formatSchemaUpgradeCliFailure = (
@@ -187,6 +187,8 @@ export interface SchemaUpgradeArguments {
 export interface SchemaUpgradeTestHooks {
   readonly beforeDatabaseTransaction?: (version: 39 | 40 | 41 | 42) => void;
   readonly afterDatabaseCommit?: (version: 39 | 40 | 41 | 42) => void;
+  readonly afterVersion42NoOpVerification?: () => void;
+  readonly beforeMaintenancePermitAcquire?: () => void;
   readonly onMaintenanceFailure?: (
     phase: SchemaUpgradeMaintenancePhase,
     cause: unknown,
@@ -1568,7 +1570,121 @@ const runP39AndSuffix = async (
           reportMustAlreadyExist,
           onPhase: (phase) => {
             failurePhase = phase;
+            if (phase === "writer-lock-acquisition") {
+              hooks.beforeMaintenancePermitAcquire?.();
+            }
           },
+          afterPrimaryClosedNoOp: () =>
+            Effect.promise(async () => {
+              if (prepared === undefined) {
+                throw new SchemaUpgradeRefusal(
+                  "version 42 no-op has no validated provenance manifest",
+                );
+              }
+              const expectedIdentity = prepared.header.target;
+              if (
+                !sameIdentity(
+                  existingPathIdentity(targetPath),
+                  expectedIdentity,
+                )
+              ) {
+                throw new SchemaUpgradeRefusal(
+                  "version 42 target identity changed after its primary connection closed",
+                );
+              }
+              const expectedReportIdentity = prepared.header.report;
+              if (
+                !sameIdentity(
+                  existingPathIdentity(reportPath),
+                  expectedReportIdentity,
+                )
+              ) {
+                throw new SchemaUpgradeRefusal(
+                  "version 42 report identity differs from the manifest",
+                );
+              }
+              verifyP39ReportEvidence(reportPath, expectedReportIdentity);
+              if (source !== undefined) assertSourceUnchanged(source);
+              const state = manifestStepState(prepared);
+              const readOnly = new DatabaseSync(targetPath, {
+                readOnly: true,
+                enableForeignKeyConstraints: false,
+              });
+              let version: number;
+              try {
+                readOnly.exec("PRAGMA query_only = ON");
+                version = Number(
+                  (
+                    readOnly.prepare("PRAGMA user_version").get() as {
+                      user_version: number;
+                    }
+                  ).user_version,
+                );
+                const violations = readOnly
+                  .prepare("PRAGMA foreign_key_check")
+                  .all();
+                if (violations.length > 0) {
+                  throw new SchemaUpgradeRefusal(
+                    "version 42 no-op target failed foreign_key_check",
+                  );
+                }
+                const projectColumns = readOnly
+                  .prepare("PRAGMA table_info(projects)")
+                  .all() as Array<{ name: string; notnull: number }>;
+                if (
+                  !projectColumns.some(
+                    ({ name, notnull }) =>
+                      name === "resource_source_json" && Number(notnull) === 1,
+                  )
+                ) {
+                  throw new SchemaUpgradeRefusal(
+                    "version 42 no-op target lacks required resource provenance",
+                  );
+                }
+                const legacyUnknown = Number(
+                  (
+                    readOnly
+                      .prepare(
+                        `SELECT COUNT(*) AS count FROM projects WHERE resource_source_json = '{"_tag":"LegacyUnknown"}'`,
+                      )
+                      .get() as { count: number }
+                  ).count,
+                );
+                const projects = Number(
+                  (
+                    readOnly
+                      .prepare("SELECT COUNT(*) AS count FROM projects")
+                      .get() as { count: number }
+                  ).count,
+                );
+                if (legacyUnknown !== projects) {
+                  throw new SchemaUpgradeRefusal(
+                    "version 42 no-op target lacks complete legacy provenance attribution",
+                  );
+                }
+              } finally {
+                readOnly.close();
+              }
+              const digest = logicalSqliteDigest(targetPath);
+              const signature = prefixSignatureForDigest(
+                42,
+                descriptorHashesThrough(42),
+                digest,
+              );
+              if (
+                version !== 42 ||
+                state.version !== 42 ||
+                state.pending !== undefined ||
+                state.isolated ||
+                digest !== state.lastDigest ||
+                signature !== state.lastPrefixSignature
+              ) {
+                throw new SchemaUpgradeRefusal(
+                  "read-only reopened target is not the exact committed version 42 manifest head",
+                );
+              }
+              hooks.afterVersion42NoOpVerification?.();
+            }),
           beforeMaintenance: () =>
             Effect.promise(async () => {
               failurePhase = "manifest-validation";
