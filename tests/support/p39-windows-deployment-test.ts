@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const windowsPowerShellModules = (): string =>
@@ -24,6 +25,59 @@ export const p39WindowsTestEnvironment = (): NodeJS.ProcessEnv => {
 };
 
 let windowsAclModuleAvailable: boolean | undefined;
+
+export interface P39PrivateTestTempRoot {
+  readonly path: string;
+  readonly currentSid: string;
+}
+
+/** Create a per-test temp root without relying on Microsoft.PowerShell.Security.
+ * Its protected DACL grants FullControl only to the current SID, SYSTEM, and
+ * Administrators, and descendants inherit exactly those grants. */
+export const createP39PrivateTestTempRoot =
+  (): P39PrivateTestTempRoot | null => {
+    if (process.platform !== "win32") return null;
+    const parent = tmpdir();
+    const path = mkdtempSync(join(parent, "arbor-vitest-p39-"));
+    const identity = execFileSync(
+      "whoami.exe",
+      ["/user", "/fo", "csv", "/nh"],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+      },
+    );
+    const currentSid = identity.match(/S-\d-\d+(?:-\d+)+/u)?.[0];
+    if (currentSid === undefined) {
+      throw new Error("Could not resolve the current Windows test SID");
+    }
+
+    execFileSync("icacls.exe", [path, "/inheritance:r", "/C", "/Q"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    for (const sid of [currentSid, "S-1-5-18", "S-1-5-32-544"]) {
+      execFileSync(
+        "icacls.exe",
+        [path, "/grant:r", `*${sid}:(OI)(CI)F`, "/C", "/Q"],
+        { encoding: "utf8", windowsHide: true },
+      );
+    }
+    return { path, currentSid };
+  };
+
+/** Restore current-user cleanup access to one private per-test temp root and
+ * remove it after the owning test file has finished. */
+export const removeP39PrivateTestTempRoot = (
+  root: P39PrivateTestTempRoot,
+): void => {
+  execFileSync(
+    "icacls.exe",
+    [root.path, "/grant:r", `*${root.currentSid}:(OI)(CI)F`, "/T", "/C", "/Q"],
+    { encoding: "utf8", timeout: 30_000, windowsHide: true },
+  );
+  rmSync(root.path, { recursive: true, force: true });
+};
 
 /** Missing PowerShell ACL support means Windows deployment qualification
  * cannot run. Keep ordinary SQL and non-deployment tests enabled. */

@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect } from "effect";
+import { Duration, Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import * as PersistenceSqlite from "../../../adapters/persistence-sqlite/src/index.js";
+import { removeP39PrivateTestDirectory } from "../../../tests/support/p39-windows-deployment-test.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { runDaemonOnce } from "../src/main.js";
 import { ProductionDaemonService } from "../src/production.js";
@@ -19,7 +20,7 @@ const databaseFile = () => {
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true });
+    removeP39PrivateTestDirectory(directory);
   }
 });
 
@@ -36,15 +37,26 @@ const runWithRawDatabase = <A>(
 describe("P38 current-schema startup boundary", () => {
   it("starts a normal P38 daemon and migrates a new database to version 38", async () => {
     const filename = databaseFile();
+    const phase = "runDaemonOnce";
+    const startedAt = Date.now();
 
-    await Effect.runPromise(
-      Effect.scoped(
-        Effect.provide(
-          runDaemonOnce(),
-          buildSingleWorkspaceLayer({ databaseFile: filename }),
+    try {
+      await Effect.runPromise(
+        Effect.scoped(
+          Effect.provide(
+            Effect.timeout(Duration.seconds(20))(
+              runDaemonOnce({ databaseFile: filename }),
+            ),
+            buildSingleWorkspaceLayer({ databaseFile: filename }),
+          ),
         ),
-      ),
-    );
+      );
+    } catch (cause) {
+      throw new Error(
+        `P38 startup failed during ${phase} after ${Date.now() - startedAt}ms for ${filename}: ${String(cause)}`,
+        { cause },
+      );
+    }
 
     const version = await runWithRawDatabase(
       filename,
@@ -86,15 +98,18 @@ describe("P38 current-schema startup boundary", () => {
     }
 
     expect(failure).toMatchObject({
-      _tag: "SqliteAdapterError",
-      message: "database user_version 39 is newer than latest migration 38",
+      _tag: "P39MaintenanceFailure",
+      code: "P39_RUNTIME_START_REFUSED",
     });
   });
 
-  it("exports only the P38 migration/runtime surface, with no P39 maintenance entry", () => {
+  it("keeps the P39 maintenance suffix separate from the P38 current registry", () => {
     expect(PersistenceSqlite.P38_MIGRATIONS.at(-1)?.id).toBe(38);
+    expect(PersistenceSqlite.CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual(
+      PersistenceSqlite.P38_MIGRATIONS.map(({ id }) => id),
+    );
     expect(
-      Object.keys(PersistenceSqlite).filter((name) => /p39/i.test(name)),
-    ).toEqual([]);
+      PersistenceSqlite.P39_MAINTENANCE_MIGRATIONS.map(({ id }) => id),
+    ).toEqual([37, 38, 39]);
   });
 });
