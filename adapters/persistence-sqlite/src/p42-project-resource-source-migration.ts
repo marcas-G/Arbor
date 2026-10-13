@@ -1,8 +1,7 @@
 import type { MigrationFile } from "./migrate.js";
 
-/** FT-DG-01 OPEN-1 forward migration. This descriptor is intentionally not
- * wired into CURRENT_MIGRATIONS until the integrated cumulative prefix through
- * the already-owned 0039–0041 migrations is present and qualified. */
+/** FT-DG-01 OPEN-1 forward migration. Runtime registration follows the
+ * accepted P38→P39 maintenance→P40→P41 prefix and requires version 41. */
 export const P42_PROJECT_RESOURCE_SOURCE_MIGRATION = {
   id: 42,
   name: "project_resource_source_attribution",

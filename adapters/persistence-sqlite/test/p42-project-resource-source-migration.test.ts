@@ -9,19 +9,17 @@ import {
 } from "../src/index.js";
 
 describe("FT-DG-01 ProjectResourceSource migration descriptor", () => {
-  it("pins migration 0042 without registering it before the 0039–0041 prefix", () => {
+  it("pins migration 0042 as the final descriptor after the 0039–0041 prefix", () => {
     expect(P42_PROJECT_RESOURCE_SOURCE_MIGRATION).toMatchObject({
       id: 42,
       name: "project_resource_source_attribution",
       requiresUserVersion: 41,
     });
-    expect(
-      CURRENT_MIGRATIONS.some(
-        (migration) =>
-          migration.id === P42_PROJECT_RESOURCE_SOURCE_MIGRATION.id,
-      ),
-    ).toBe(false);
-    expect(CURRENT_MIGRATIONS.at(-1)?.id ?? 0).toBeLessThan(42);
+    expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(42);
+    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-3)).toEqual([
+      40, 41, 42,
+    ]);
+    expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
   });
 
   it("backfills only LegacyUnknown and preserves all prior Project columns", async () => {

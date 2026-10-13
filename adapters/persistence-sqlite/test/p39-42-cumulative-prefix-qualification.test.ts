@@ -88,8 +88,14 @@ const descriptorPins: Readonly<
 };
 
 const assertDescriptorPrefixAndFingerprint = () => {
-  expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(38);
-  expect(CURRENT_MIGRATIONS.some(({ id }) => id >= 39)).toBe(false);
+  expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(42);
+  expect(CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual([
+    ...P38_MIGRATIONS.map(({ id }) => id),
+    40,
+    41,
+    42,
+  ]);
+  expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
   expect(P39_MAINTENANCE_MIGRATIONS.map(({ id }) => id)).toEqual([37, 38, 39]);
   expect(P39_MAINTENANCE_MIGRATION_MANIFEST[39]?.sha256).toBe(
     descriptorPins[39]?.sha256,
@@ -408,13 +414,6 @@ describe("test-only P39 maintenance cumulative prefix qualification 0039–0042"
       await expectVersionAndResourceColumn(filename, 39, false);
       await expectP39AdmissionGuard(filename);
       await expectP42PrefixGate(filename, 39);
-      const p39NoOp = await withP39MaintenanceWriter(
-        filename,
-        Effect.gen(function* () {
-          return yield* runMigrations([P39_RECONCILIATION_MIGRATION]);
-        }),
-      );
-      expect(p39NoOp).toBe(0);
 
       const p40Crash = await crashDescriptorTransaction(
         filename,

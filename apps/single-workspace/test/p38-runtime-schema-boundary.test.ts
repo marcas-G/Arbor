@@ -1,27 +1,39 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Duration, Effect } from "effect";
+import { Duration, Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import * as PersistenceSqlite from "../../../adapters/persistence-sqlite/src/index.js";
-import { removeP39PrivateTestDirectory } from "../../../tests/support/p39-windows-deployment-test.js";
+import { PersistenceHealthProbe } from "../../../packages/ports/src/health.js";
+import {
+  createP39PrivateTestFile,
+  makeP39PrivateTestDirectory,
+  removeP39PrivateTestDirectory,
+} from "../../../tests/support/p39-windows-deployment-test.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
+import {
+  PersistenceHealthProbeSqliteLive,
+  T1RecoveryStateLive,
+} from "../src/health.js";
 import { runDaemonOnce } from "../src/main.js";
 import { ProductionDaemonService } from "../src/production.js";
 
-const temporaryDirectories: string[] = [];
+let temporaryDirectory: string | undefined;
+let databaseSequence = 0;
 
 const databaseFile = () => {
-  const directory = mkdtempSync(join(tmpdir(), "p38-schema-boundary-"));
-  temporaryDirectories.push(directory);
-  return join(directory, "slice.db");
+  temporaryDirectory ??= makeP39PrivateTestDirectory(
+    process.cwd(),
+    ".schema-42-boundary-",
+  );
+  databaseSequence += 1;
+  const filename = join(temporaryDirectory, `slice-${databaseSequence}.db`);
+  createP39PrivateTestFile(filename);
+  return filename;
 };
 
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) {
-    removeP39PrivateTestDirectory(directory);
-  }
+afterAll(() => {
+  if (temporaryDirectory !== undefined)
+    removeP39PrivateTestDirectory(temporaryDirectory);
 });
 
 const runWithRawDatabase = <A>(
@@ -34,52 +46,143 @@ const runWithRawDatabase = <A>(
     ),
   );
 
-describe("P38 current-schema startup boundary", () => {
-  it("starts a normal P38 daemon and migrates a new database to version 38", async () => {
-    const filename = databaseFile();
-    const phase = "runDaemonOnce";
-    const startedAt = Date.now();
+const seedVersion = (filename: string, version: number) =>
+  runWithRawDatabase(
+    filename,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(`PRAGMA user_version = ${version}`);
+    }),
+  );
 
-    try {
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.provide(
-            Effect.timeout(Duration.seconds(20))(
-              runDaemonOnce({ databaseFile: filename }),
+const readVersion = (filename: string) =>
+  runWithRawDatabase(
+    filename,
+    Effect.gen(function* () {
+      const sql = yield* SqlClient;
+      const rows = yield* sql.unsafe<{ user_version: number }>(
+        "PRAGMA user_version",
+      );
+      return Number(rows[0]?.user_version ?? 0);
+    }),
+  );
+
+const readReadiness = (filename: string) => {
+  const infrastructure = Layer.merge(
+    PersistenceSqlite.layer({ filename }),
+    T1RecoveryStateLive,
+  );
+  const services = Layer.provideMerge(
+    PersistenceHealthProbeSqliteLive,
+    infrastructure,
+  );
+  return Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        Effect.gen(function* () {
+          const probe = yield* PersistenceHealthProbe;
+          return yield* probe.probe();
+        }),
+        services,
+      ),
+    ),
+  );
+};
+
+describe("schema 42 runtime startup boundary", () => {
+  it.each([38, 39, 40, 41])(
+    "refuses schema %i during composition before exposing runtime services",
+    async (version) => {
+      const filename = databaseFile();
+      await seedVersion(filename, version);
+
+      let failure: unknown;
+      try {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.provide(
+              Effect.gen(function* () {
+                yield* ProductionDaemonService;
+              }),
+              buildSingleWorkspaceLayer({ databaseFile: filename }),
             ),
-            buildSingleWorkspaceLayer({ databaseFile: filename }),
           ),
-        ),
-      );
-    } catch (cause) {
-      throw new Error(
-        `P38 startup failed during ${phase} after ${Date.now() - startedAt}ms for ${filename}: ${String(cause)}`,
-        { cause },
-      );
-    }
-
-    const version = await runWithRawDatabase(
-      filename,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient;
-        const rows = yield* sql.unsafe<{ user_version: number }>(
-          "PRAGMA user_version",
         );
-        return Number(rows[0]?.user_version ?? 0);
-      }),
+      } catch (cause) {
+        failure = cause;
+      }
+
+      expect(JSON.stringify(failure)).toContain(
+        `database user_version ${version} requires an offline upgrade to schema 42`,
+      );
+      expect(await readVersion(filename)).toBe(version);
+    },
+    60_000,
+  );
+
+  it.each([38, 39, 40, 41])(
+    "refuses schema %i on the direct --once path before migration or Web bind",
+    async (version) => {
+      const filename = databaseFile();
+      await seedVersion(filename, version);
+      let webListening = false;
+
+      let failure: unknown;
+      try {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.provide(
+              Effect.timeout(Duration.seconds(20))(
+                runDaemonOnce({
+                  databaseFile: filename,
+                  webTransport: { port: 0 },
+                  onWebTransportListening: () => {
+                    webListening = true;
+                  },
+                }),
+              ),
+              buildSingleWorkspaceLayer({ databaseFile: filename }),
+            ),
+          ),
+        );
+      } catch (cause) {
+        failure = cause;
+      }
+
+      expect(JSON.stringify(failure)).toContain(
+        `database user_version ${version} requires an offline upgrade to schema 42`,
+      );
+      expect(webListening).toBe(false);
+      expect(await readVersion(filename)).toBe(version);
+    },
+    60_000,
+  );
+
+  it("admits exactly schema 42 and makes the production migration hook a no-op", async () => {
+    const filename = databaseFile();
+    await seedVersion(filename, 42);
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* ProductionDaemonService;
+            return yield* PersistenceSqlite.runMigrations(
+              PersistenceSqlite.CURRENT_MIGRATIONS,
+            );
+          }),
+          buildSingleWorkspaceLayer({ databaseFile: filename }),
+        ),
+      ),
     );
-    expect(version).toBe(38);
+
+    expect(result).toBe(0);
+    expect(await readVersion(filename)).toBe(42);
   });
 
-  it("refuses schema 39 before exposing the production daemon services", async () => {
+  it("rejects schemas newer than the explicit runtime target", async () => {
     const filename = databaseFile();
-    await runWithRawDatabase(
-      filename,
-      Effect.gen(function* () {
-        const sql = yield* SqlClient;
-        yield* sql.unsafe("PRAGMA user_version = 39");
-      }),
-    );
+    await seedVersion(filename, 43);
 
     let failure: unknown;
     try {
@@ -97,19 +200,56 @@ describe("P38 current-schema startup boundary", () => {
       failure = cause;
     }
 
-    expect(failure).toMatchObject({
-      _tag: "P39MaintenanceFailure",
-      code: "P39_RUNTIME_START_REFUSED",
+    expect(JSON.stringify(failure)).toContain(
+      "database user_version 43 is newer than latest migration 42",
+    );
+    expect(await readVersion(filename)).toBe(43);
+  });
+
+  it("marks readiness only when user_version exactly matches schema 42", async () => {
+    const filename = databaseFile();
+    await seedVersion(filename, 41);
+    expect(await readReadiness(filename)).toEqual({
+      dbOpen: true,
+      migrationBaseline: false,
+      t1RecoveryComplete: false,
+    });
+
+    await seedVersion(filename, 42);
+    expect(await readReadiness(filename)).toEqual({
+      dbOpen: true,
+      migrationBaseline: true,
+      t1RecoveryComplete: false,
     });
   });
 
-  it("keeps the P39 maintenance suffix separate from the P38 current registry", () => {
+  it("keeps P39 maintenance outside the ordinary 40–42 schema suffix", () => {
+    expect(PersistenceSqlite.CURRENT_SCHEMA_VERSION).toBe(42);
+    expect(PersistenceSqlite.CURRENT_MIGRATION_BASELINE).toBe(42);
     expect(PersistenceSqlite.P38_MIGRATIONS.at(-1)?.id).toBe(38);
-    expect(PersistenceSqlite.CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual(
-      PersistenceSqlite.P38_MIGRATIONS.map(({ id }) => id),
-    );
+    expect(PersistenceSqlite.CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual([
+      ...PersistenceSqlite.P38_MIGRATIONS.map(({ id }) => id),
+      40,
+      41,
+      42,
+    ]);
+    expect(
+      PersistenceSqlite.CURRENT_MIGRATIONS.some(({ id }) => id === 39),
+    ).toBe(false);
     expect(
       PersistenceSqlite.P39_MAINTENANCE_MIGRATIONS.map(({ id }) => id),
     ).toEqual([37, 38, 39]);
+    expect(
+      PersistenceSqlite.CURRENT_MIGRATIONS.find(({ id }) => id === 40)
+        ?.requiresUserVersion,
+    ).toBe(39);
+    expect(
+      PersistenceSqlite.CURRENT_MIGRATIONS.find(({ id }) => id === 41)
+        ?.requiresUserVersion,
+    ).toBe(40);
+    expect(
+      PersistenceSqlite.CURRENT_MIGRATIONS.find(({ id }) => id === 42)
+        ?.requiresUserVersion,
+    ).toBe(41);
   });
 });

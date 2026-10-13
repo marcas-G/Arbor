@@ -42,33 +42,43 @@ describe("MAC-P4 final active-runtime convergence", () => {
       ),
     ).toContain("migrationVersion: 38");
     expect(migrations).toContain(
-      "export const CURRENT_MIGRATIONS = P38_MIGRATIONS;",
+      "export const CURRENT_SCHEMA_VERSION = 42 as const;",
+    );
+    expect(migrations).toMatch(
+      /export const CURRENT_MIGRATIONS:[\s\S]*?\.\.\.P38_MIGRATIONS,[\s\S]*?P40_TOOL_OBSERVATION_REPLAY_MIGRATION,[\s\S]*?P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,[\s\S]*?P42_PROJECT_RESOURCE_SOURCE_MIGRATION/,
     );
     expect(migrations).toContain("export const P39_MAINTENANCE_MIGRATIONS:");
     const currentRegistryStart = migrations.indexOf(
-      "export const CURRENT_MIGRATIONS = P38_MIGRATIONS;",
-    );
-    const maintenanceRegistryStart = migrations.indexOf(
-      "export const P39_MAINTENANCE_MIGRATIONS:",
+      "export const CURRENT_MIGRATIONS:",
     );
     expect(currentRegistryStart).toBeGreaterThanOrEqual(0);
-    expect(maintenanceRegistryStart).toBeGreaterThan(currentRegistryStart);
+    const currentRegistryEnd = migrations.indexOf(
+      "export const CURRENT_MIGRATION_BASELINE",
+      currentRegistryStart,
+    );
     const currentRegistry = migrations.slice(
       currentRegistryStart,
-      maintenanceRegistryStart,
+      currentRegistryEnd,
     );
+    expect(currentRegistry).toContain("...P38_MIGRATIONS");
+    expect(currentRegistry).toContain("P40_TOOL_OBSERVATION_REPLAY_MIGRATION");
+    expect(currentRegistry).toContain(
+      "P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION",
+    );
+    expect(currentRegistry).toContain("P42_PROJECT_RESOURCE_SOURCE_MIGRATION");
+    expect(currentRegistry).not.toContain("P39_RECONCILIATION_MIGRATION");
     expect(currentRegistry).not.toContain("P39_MAINTENANCE_MIGRATIONS");
     expect(currentRegistry).not.toContain("P43_BLOCKED_WORKEPISODE_MIGRATION");
     expect(migrations).not.toContain("P43_BLOCKED_WORKEPISODE_MIGRATION");
     expect(migrations).toContain(
-      "export const CURRENT_MIGRATION_BASELINE = Math.max(",
+      "export const CURRENT_MIGRATION_BASELINE = CURRENT_SCHEMA_VERSION;",
     );
     expect(composition).toContain(
       "const latestSupportedSchema = CURRENT_MIGRATION_BASELINE;",
     );
     expect(composition).toContain("if (current > latestSupportedSchema)");
-    expect(composition).toContain("if (current >= 39)");
-    expect(composition).toContain('code: "P39_RUNTIME_START_REFUSED"');
+    expect(composition).toContain("if (current !== CURRENT_SCHEMA_VERSION)");
+    expect(composition).toContain("requires an offline upgrade to schema");
     expect(composition).toContain("sqliteAdapterError(");
     expect(production).toContain("runMigrations(CURRENT_MIGRATIONS)");
     expect(production).not.toMatch(/P39|p39WriterLock/);
