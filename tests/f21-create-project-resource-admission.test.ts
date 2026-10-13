@@ -6,8 +6,6 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
-  runMigrations,
   type SingleWorkspaceServices,
 } from "../apps/single-workspace/src/composition.js";
 import {
@@ -41,9 +39,12 @@ import {
   TransactionPort,
   WorkspaceRepository,
 } from "../packages/ports/src/index.js";
+import { createSchema42TestDatabase } from "./support/schema42-database.js";
 
 const roots: string[] = [];
+const schema42Cleanups: Array<() => void> = [];
 afterEach(() => {
+  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
   for (const root of roots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
   }
@@ -53,6 +54,14 @@ const tempRoot = (): string => {
   const root = mkdtempSync(join(tmpdir(), "arbor-f21-create-project-"));
   roots.push(root);
   return root;
+};
+
+const currentSchemaDatabase = async (): Promise<string> => {
+  const fixture = await createSchema42TestDatabase({
+    prefix: "f21-create-project-resource-",
+  });
+  schema42Cleanups.push(fixture.cleanup);
+  return fixture.databaseFilename;
 };
 
 const HUMAN = parse(Principal)("user:test");
@@ -191,7 +200,7 @@ const readCounts = Effect.gen(function* () {
 describe("F21 CreateProject v2 host resource admission", () => {
   it("rejects raw or mixed caller boundaries before receipt or aggregate writes", async () => {
     const root = tempRoot();
-    const databaseFile = join(root, "slice.db");
+    const databaseFile = await currentSchemaDatabase();
     const outsidePath = join(root, "unregistered-host-path");
     mkdirSync(outsidePath);
     const request = ids("a1");
@@ -221,7 +230,6 @@ describe("F21 CreateProject v2 host resource admission", () => {
       databaseFile,
       makeProjectResourceProfilePort([]),
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         const raw = yield* submit(request, rawV1Payload);
         const mixed = yield* submit(
           {
@@ -251,7 +259,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
     const root = tempRoot();
     const directory = join(root, "registered-workspace");
     mkdirSync(directory);
-    const databaseFile = join(root, "slice.db");
+    const databaseFile = await currentSchemaDatabase();
     const requestProfile = ids("b1");
     const requestConversation = ids("b2");
     const profiles = makeProjectResourceProfilePort([
@@ -261,7 +269,6 @@ describe("F21 CreateProject v2 host resource admission", () => {
       databaseFile,
       profiles,
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         const selected = yield* submit(
           requestProfile,
           payload(requestProfile, {
@@ -435,7 +442,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
     const available = join(root, "available");
     mkdirSync(available);
     const missing = join(root, "missing");
-    const databaseFile = join(root, "slice.db");
+    const databaseFile = await currentSchemaDatabase();
     const forgedRequest = ids("c1");
     const staleRequest = ids("c2");
     const unavailableRequest = ids("c3");
@@ -460,7 +467,6 @@ describe("F21 CreateProject v2 host resource admission", () => {
       databaseFile,
       profiles,
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         const forged = yield* submit(
           forgedRequest,
           payload(forgedRequest, {
@@ -551,7 +557,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
     const replacementDirectory = join(root, "replacement");
     mkdirSync(originalDirectory);
     mkdirSync(replacementDirectory);
-    const databaseFile = join(root, "slice.db");
+    const databaseFile = await currentSchemaDatabase();
     const request = ids("c4");
     const originalPayload = payload(request, {
       _tag: "Profile",
@@ -565,7 +571,6 @@ describe("F21 CreateProject v2 host resource admission", () => {
       databaseFile,
       originalPort,
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         const response = yield* submit(request, originalPayload);
         const ownership = yield* ResourceOwnershipRepository;
         const tx = yield* TransactionPort;
@@ -587,7 +592,6 @@ describe("F21 CreateProject v2 host resource admission", () => {
       databaseFile,
       makeProjectResourceProfilePort([hostProfile(originalDirectory, "v1")]),
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         const response = yield* submit(request, originalPayload);
         const ownership = yield* ResourceOwnershipRepository;
         const tx = yield* TransactionPort;
@@ -625,7 +629,6 @@ describe("F21 CreateProject v2 host resource admission", () => {
       databaseFile,
       changedProfilePort,
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         const replay = yield* submit(request, originalPayload);
         const staleNewRequest = ids("c5");
         const stale = yield* submit(
@@ -694,7 +697,7 @@ describe("F21 CreateProject v2 host resource admission", () => {
         resourceBoundaryRevision: 0,
       },
     };
-    const databaseFile = join(root, "slice.db");
+    const databaseFile = await currentSchemaDatabase();
     const profileSnapshot = makeProjectResourceProfilePort([
       hostProfile(directory, "v1"),
     ]);
@@ -710,7 +713,6 @@ describe("F21 CreateProject v2 host resource admission", () => {
       databaseFile,
       profiles,
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         const store = yield* CommandStore;
         const tx = yield* TransactionPort;
         const oldFingerprint = semanticRequestFingerprint({

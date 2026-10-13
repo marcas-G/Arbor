@@ -8,7 +8,6 @@ import {
   ClockLive,
   CommandStoreLive,
   ConversationResponseJobStoreLive,
-  CURRENT_MIGRATIONS,
   DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
@@ -21,7 +20,7 @@ import {
   InboxProjectionStoreLive,
   layer,
   MessageStoreLive,
-  P12_MIGRATIONS,
+  P38_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
   ResourceOwnershipRepositoryLive,
@@ -105,7 +104,7 @@ import type {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
-import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
+import { createSchema42TestDatabase } from "./support/schema42-database.js";
 
 /**
  * P12-010 (`10` §1–§5; EC-11). Mechanical evidence:
@@ -304,8 +303,8 @@ type DbServices =
   | Clock
   | IdGenerator;
 
-const makeApp = (): Layer.Layer<DbServices> => {
-  const base = layer({ filename: ":memory:" });
+const makeApp = (databaseFile = ":memory:"): Layer.Layer<DbServices> => {
+  const base = layer({ filename: databaseFile });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const deps = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
@@ -350,8 +349,14 @@ const makeApp = (): Layer.Layer<DbServices> => {
   ) as Layer.Layer<DbServices>;
 };
 
-const run = <A>(program: Effect.Effect<A, unknown, DbServices>): Promise<A> =>
-  Effect.runPromise(Effect.provide(program, makeApp()));
+const run = <A>(
+  program: Effect.Effect<A, unknown, DbServices>,
+  databaseFile?: string,
+): Promise<A> =>
+  Effect.runPromise(Effect.provide(program, makeApp(databaseFile)));
+
+const prepareSchema42Database = () =>
+  createSchema42TestDatabase({ prefix: "p12-transport-" });
 
 const countRows = (table: string) =>
   Effect.gen(function* () {
@@ -493,10 +498,9 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
   });
 
   it("forwards a Command; resolver runs at the composition root; no transport write", async () => {
+    const database = await prepareSchema42Database();
     const outcome = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
-        yield* ensureLegacyProjectResourceSourceFixture();
         const submission = yield* makeExternalSubmissionFromServices({
           authenticatedHumans: [],
           directParentOf: [],
@@ -512,7 +516,9 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
         );
         return { response, projects: yield* countRows("projects") };
       }),
+      database.databaseFilename,
     );
+    database.cleanup();
     expect(outcome.response.ok).toBe(true);
     if (outcome.response.ok) {
       expect(outcome.response.body.resolution).toBe("Committed");
@@ -559,7 +565,9 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
   it("transport never asserts authority: external Stop without a grant is denied", async () => {
     const outcome = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
+        // Adapter-only resolver boundary qualification intentionally uses the
+        // explicit P38 prefix; no current production composition is built.
+        yield* runMigrations(P38_MIGRATIONS);
         const submission = yield* makeExternalSubmissionFromServices({
           authenticatedHumans: [],
           directParentOf: [],
@@ -588,7 +596,9 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
   it("external Stop from an authenticated human follows the resolver path", async () => {
     const outcome = await run(
       Effect.gen(function* () {
-        yield* runMigrations(P12_MIGRATIONS);
+        // Adapter-only resolver boundary qualification intentionally uses the
+        // explicit P38 prefix; no current production composition is built.
+        yield* runMigrations(P38_MIGRATIONS);
         const submission = yield* makeExternalSubmissionFromServices({
           authenticatedHumans: [HUMAN],
           directParentOf: [],
@@ -614,10 +624,9 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
   });
 
   it("P15 authenticated human can rename and archive over the real external command composition", async () => {
+    const database = await prepareSchema42Database();
     const outcome = await run(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
-        yield* ensureLegacyProjectResourceSourceFixture();
         const submission = yield* makeExternalSubmissionFromServices({
           authenticatedHumans: [HUMAN],
           directParentOf: [],
@@ -701,7 +710,9 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
           missingProjectCount: Number(missingProject[0]?.count),
         };
       }),
+      database.databaseFilename,
     );
+    database.cleanup();
     expect(outcome.created.ok).toBe(true);
     expect(outcome.missingTarget.ok).toBe(true);
     if (outcome.missingTarget.ok)
@@ -730,10 +741,9 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
   });
 
   it("P15 exact WorkspaceAgent grants cannot turn static Agent credentials into project governance", async () => {
+    const database = await prepareSchema42Database();
     const outcome = await run(
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
-        yield* ensureLegacyProjectResourceSourceFixture();
         const submission = yield* makeExternalSubmissionFromServices({
           authenticatedHumans: [],
           directParentOf: [],
@@ -816,7 +826,9 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
           receipts: Number(receipts[0]?.count),
         };
       }),
+      database.databaseFilename,
     );
+    database.cleanup();
     expect(outcome.created.ok).toBe(true);
     for (const denied of [outcome.rename, outcome.close]) {
       expect(denied.ok).toBe(false);

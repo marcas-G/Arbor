@@ -3,12 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { afterAll, describe, expect, it } from "vitest";
-import {
-  CURRENT_MIGRATIONS,
-  P10_ATTENTION_CONSUMER_ID,
-  P35_MIGRATIONS,
-  runMigrations,
-} from "../adapters/persistence-sqlite/src/index.js";
+import { P10_ATTENTION_CONSUMER_ID } from "../adapters/persistence-sqlite/src/index.js";
 import {
   buildSingleWorkspaceLayer,
   type SingleWorkspaceServices,
@@ -54,8 +49,8 @@ import {
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import { UsageService } from "../packages/projection-runtime/src/index.js";
-import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 import { p7Project, p7RootWorkspace, p7SeedProject } from "./support/p7-app.js";
+import { createSchema42TestDatabase } from "./support/schema42-database.js";
 
 /**
  * B-6 / B-7 / B-8 — the production composition root is the single runtime:
@@ -69,9 +64,19 @@ import { p7Project, p7RootWorkspace, p7SeedProject } from "./support/p7-app.js";
  */
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "p12-production-"));
+const schema42Cleanups: Array<() => void> = [];
 afterAll(() => {
+  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
   rmSync(suiteTmp, { recursive: true, force: true });
 });
+
+const prepareSchema42Database = async () => {
+  const fixture = await createSchema42TestDatabase({
+    prefix: "p12-production-",
+  });
+  schema42Cleanups.push(fixture.cleanup);
+  return fixture;
+};
 
 const HUMAN = parse(Principal)("user:governance");
 const PROJECT = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789f1");
@@ -139,11 +144,10 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
   });
 
   it("B-6: production wires the P7 dependency-aware RunnableWorkSource (a waiting Open work is not runnable)", async () => {
-    const dir = mkdtempSync(join(suiteTmp, "b6-"));
+    const database = await prepareSchema42Database();
     const outcome = await runWith(
-      join(dir, "slice.db"),
+      database.databaseFilename,
       Effect.gen(function* () {
-        yield* runMigrations(CURRENT_MIGRATIONS);
         yield* p7SeedProject;
         // one Open work on the seeded root workspace
         const gateway = yield* CommandGateway;
@@ -219,15 +223,13 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
   });
 
   it("B-7/B-8: the composition assembles resolver, transport, worker mediation, daemons, observability, health and catalog", async () => {
-    const dir = mkdtempSync(join(suiteTmp, "b7-"));
+    const database = await prepareSchema42Database();
     const outcome = await runWith(
-      join(dir, "slice.db"),
+      database.databaseFilename,
       Effect.gen(function* () {
         const health = yield* HealthPort;
         const beforeMigration = yield* health.readiness();
 
-        yield* runMigrations(CURRENT_MIGRATIONS);
-        yield* ensureLegacyProjectResourceSourceFixture();
         const afterMigration = yield* health.readiness();
 
         const resolver = yield* AuthorityResolverPort;
@@ -288,7 +290,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
 
     // B-8 readiness transitions
     expect(outcome.beforeMigration.dbOpen).toBe(true);
-    expect(outcome.beforeMigration.migrationBaseline).toBe(false);
+    expect(outcome.beforeMigration.migrationBaseline).toBe(true);
     expect(outcome.afterMigration.migrationBaseline).toBe(true);
     expect(outcome.afterMigration.t1RecoveryComplete).toBe(false);
     expect(outcome.afterRecovery.t1RecoveryComplete).toBe(true);
@@ -332,17 +334,16 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
   });
 
   it("B-7: the production daemon entrypoint smoke-runs (migrate -> T1 -> scheduler/loop -> consumers -> sweep)", async () => {
-    const dir = mkdtempSync(join(suiteTmp, "daemon-"));
+    const database = await prepareSchema42Database();
     const outcome = await runWith(
-      join(dir, "slice.db"),
+      database.databaseFilename,
       Effect.gen(function* () {
-        yield* runMigrations(P35_MIGRATIONS);
         yield* p7SeedProject;
         const deployment = yield* ProductionDaemonService;
         // the runnable entrypoint: start (migrations + T1 recovery), scheduler
         // loop, consumer polls, recovery sweep.
         yield* runDaemonOnce({
-          databaseFile: join(dir, "slice.db"),
+          databaseFile: database.databaseFilename,
           workspaceId: p7RootWorkspace,
           principalRef: "runtime:system",
         });

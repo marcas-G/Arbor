@@ -4,10 +4,8 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
-import { runMigrations } from "../../../adapters/persistence-sqlite/src/index.js";
 import {
   buildSingleWorkspaceLayer,
-  CURRENT_MIGRATIONS,
   TransportBoundary,
 } from "../../../apps/single-workspace/src/index.js";
 import { makeProjectResourceProfilePort } from "../../../apps/single-workspace/src/project-resource-profiles.js";
@@ -47,6 +45,7 @@ import {
   p7RootWorkspace,
   p7SeedProject,
 } from "../../support/p7-app.js";
+import { createSchema42TestDatabase } from "../../support/schema42-database.js";
 
 interface ViewObservation {
   readonly status: number;
@@ -76,6 +75,7 @@ interface WebSocketOpenObservation {
 
 const handles: WebTransportHandle[] = [];
 const directories: string[] = [];
+const schema42Cleanups: Array<() => void> = [];
 
 const openWebSocket = (port: number): Promise<WebSocketOpenObservation> =>
   new Promise((resolve) => {
@@ -160,6 +160,7 @@ const containsValue = (value: unknown, expected: string): boolean => {
 };
 
 afterEach(async () => {
+  for (const cleanup of schema42Cleanups.splice(0)) cleanup();
   for (const handle of handles.splice(0)) await handle.close();
   for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -182,8 +183,12 @@ describe("pending P12 view read authentication boundary", () => {
       "valid-local-token": localPrincipal,
       "foreign-user-token": foreignPrincipal,
     });
+    const database = await createSchema42TestDatabase({
+      prefix: "p12-view-auth-boundary-",
+    });
+    schema42Cleanups.push(database.cleanup);
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(directory, "arbor.db"),
+      databaseFile: database.databaseFilename,
       blobRoot: join(directory, "blobs"),
       authenticator,
       projectResourceProfiles: makeProjectResourceProfilePort([]),
@@ -193,7 +198,6 @@ describe("pending P12 view read authentication boundary", () => {
       Effect.scoped(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(CURRENT_MIGRATIONS);
             yield* p7SeedProject;
             const sql = yield* SqlClient;
             const tx = yield* TransactionPort;
@@ -850,8 +854,12 @@ describe("pending P12 view read authentication boundary", () => {
   it("uses explicit local-single-user configuration, not Composition's fallback object, for wildcard reads", async () => {
     const directory = mkdtempSync(join(tmpdir(), "p12-composition-auth-mode-"));
     directories.push(directory);
+    const database = await createSchema42TestDatabase({
+      prefix: "p12-view-auth-mode-",
+    });
+    schema42Cleanups.push(database.cleanup);
     const app = buildSingleWorkspaceLayer({
-      databaseFile: join(directory, "arbor.db"),
+      databaseFile: database.databaseFilename,
       blobRoot: join(directory, "blobs"),
       projectResourceProfiles: makeProjectResourceProfilePort([]),
     });
@@ -864,7 +872,6 @@ describe("pending P12 view read authentication boundary", () => {
       Effect.scoped(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(CURRENT_MIGRATIONS);
             yield* p7SeedProject;
             const sql = yield* SqlClient;
             const boundary = yield* TransportBoundary;
