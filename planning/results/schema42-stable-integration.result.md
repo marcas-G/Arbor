@@ -169,8 +169,29 @@ complete P39 reality-proof file was not rerun after its schema-39 fixture
 correction (the corrected case passed, with 18 other cases filtered out). P5 yield/wake
 is 1 test PASS at 51.25 seconds. The source records these as focused results,
 not full-suite qualification. No test suites were rerun during this
-integration. The incomplete CLI qualification branch was not included.
+integration.
 
 Validation after these three commits: `pnpm typecheck` PASS; Biome on the 18
 changed TypeScript/JavaScript/JSON files PASS; `git diff --check` PASS. No
 Vitest or full check was run during this integration update.
+
+## Offline operator preview-template optimization
+
+Imported `9f9ac34a` on top of the integration branch. The exact-prefix test now
+reuses one immutable `SchemaUpgradePreviewTemplate` across its recovery
+attempts. Runtime test hooks accept that template only after checking the live
+target's source version and logical digest; a version 39–42 target also needs
+the exact prepared prefix signature. The maintenance-lock check compares
+against the appropriate source/prefix digest. The ordinary CLI path still
+builds its own preview. The operator child-process timeout remains bounded at
+30 minutes, and the existing operator test filename is preserved.
+
+The branch's qualification report records focused `resumes exact prefixes`
+PASS (1/1, 804.77 seconds) and the complete operator file PASS (10/10,
+1,250.75 seconds), plus typecheck, build and Biome PASS. These expensive
+qualifications were not rerun on this integration branch. The cherry-pick
+applied without conflicts.
+
+Integration validation after this update: `pnpm typecheck` PASS; Biome on the
+changed operator source/test files PASS; `git diff --check` PASS. No heavy
+tests or full repository gates were run.
