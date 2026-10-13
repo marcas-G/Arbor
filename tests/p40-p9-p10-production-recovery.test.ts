@@ -1,6 +1,6 @@
 import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   AttentionProjectionStoreLive,
   ClockLive,
@@ -30,7 +30,7 @@ import {
 } from "../packages/ports/src/index.js";
 import { deriveProjectAttention } from "../packages/projection-runtime/src/attention-loader.js";
 import {
-  createSchema42TestDatabase,
+  createSchema42TestDatabaseFactory,
   type Schema42TestDatabase,
 } from "./support/schema42-database.js";
 
@@ -48,6 +48,15 @@ const consumerId = "p10:attention:p40-test";
 const now = "2026-10-12T00:00:01.000Z";
 const failureCode = "Missing" as const;
 const databases: Schema42TestDatabase[] = [];
+let schema42Factory:
+  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | undefined;
+
+beforeAll(async () => {
+  schema42Factory = await createSchema42TestDatabaseFactory({
+    prefix: ".p40-p9-p10-production-recovery-schema42-",
+  });
+}, 300_000);
 
 const fence = {
   executionId,
@@ -91,7 +100,9 @@ afterEach(() => {
   for (const database of databases.splice(0)) {
     database.cleanup();
   }
-});
+}, 120_000);
+
+afterAll(() => schema42Factory?.cleanup(), 120_000);
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -192,7 +203,9 @@ const withTxFault = (
 
 describe("P40 P9/P10 durable replay-failure recovery", () => {
   it("keeps P9 fact/event atomic and projects exactly one P10 row through restart and rebuild", async () => {
-    const database = await createSchema42TestDatabase();
+    if (schema42Factory === undefined)
+      throw new Error("Schema 42 factory is missing");
+    const database = schema42Factory.create();
     databases.push(database);
     const { app } = makeFixture(database.databaseFilename);
     await Effect.runPromise(

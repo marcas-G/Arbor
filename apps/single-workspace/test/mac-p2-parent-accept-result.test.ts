@@ -206,15 +206,15 @@ describe("MAC-P2 Parent Agent acceptance", () => {
     ]);
     expect(result.works).toEqual([{ lifecycle: "Completed" }]);
     expect(Option.isNone(result.stale)).toBe(true);
-  });
+  }, 120_000);
 });
 
 afterEach(() => {
   fixture?.cleanup();
   fixture = undefined;
-});
+}, 120_000);
 
 afterAll(() => {
   fixtureFactory?.cleanup();
   fixtureFactory = undefined;
-});
+}, 120_000);

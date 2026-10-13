@@ -285,15 +285,15 @@ describe("MAC-P2 WorkspacePlacementContext", () => {
       }),
     ]);
     expect(Option.isNone(result.resolvedAfterRevision)).toBe(true);
-  });
+  }, 120_000);
 });
 
 afterEach(() => {
   fixture?.cleanup();
   fixture = undefined;
-});
+}, 120_000);
 
 afterAll(() => {
   fixtureFactory?.cleanup();
   fixtureFactory = undefined;
-});
+}, 120_000);

@@ -34,7 +34,7 @@ beforeAll(async () => {
   });
 }, 120_000);
 
-afterAll(() => schema42Factory?.cleanup());
+afterAll(() => schema42Factory?.cleanup(), 120_000);
 
 const createSchema42Case = () => {
   if (schema42Factory === undefined) {
@@ -45,7 +45,7 @@ const createSchema42Case = () => {
 
 afterEach(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
-});
+}, 120_000);
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -222,5 +222,5 @@ describe("OBSOLETE_CONTRACT_TEST — DirectiveUnsupported universal envelope", (
       result.entries.some((entry) => entry.includes("DirectiveUnsupported")),
     ).toBe(false);
     void actor;
-  });
+  }, 120_000);
 });

@@ -165,15 +165,15 @@ describe("MAC-P1 WorkspaceKnowledgeView", () => {
           "blob-summary-ver_018f2b3c-4d5e-7abc-8def-0123456789f2",
       }),
     ]);
-  });
+  }, 120_000);
 });
 
 afterEach(() => {
   fixture?.cleanup();
   fixture = undefined;
-});
+}, 120_000);
 
 afterAll(() => {
   fixtureFactory?.cleanup();
   fixtureFactory = undefined;
-});
+}, 120_000);

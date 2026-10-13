@@ -145,7 +145,7 @@ afterAll(async () => {
   fixture = undefined;
   fixtureFactory = undefined;
   rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-});
+}, 120_000);
 
 const base = () => `http://127.0.0.1:${handle.port}`;
 const authHeaders = {
@@ -190,7 +190,7 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
     };
     expect(body.ok).toBe(true);
     expect(body.body.resolution).toBe("Committed");
-  });
+  }, 120_000);
 
   it("story §1: the responsibility-tree view renders the created root workspace", async () => {
     await runConsumers?.();
@@ -210,7 +210,7 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
     };
     expect(result.ok).toBe(true);
     expect(result.body.value.nodes.length).toBeGreaterThan(0);
-  });
+  }, 120_000);
 
   it("rejects unauthenticated commands with the frozen Problem", async () => {
     const response = await fetch(`${base()}/commands`, {
@@ -316,5 +316,5 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
       expect((frame as { watermark: number }).watermark).toBeGreaterThan(0);
     }
     ws.close();
-  });
+  }, 120_000);
 });

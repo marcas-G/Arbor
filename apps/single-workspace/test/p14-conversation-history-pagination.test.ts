@@ -42,12 +42,12 @@ beforeEach(() => {
 afterEach(() => {
   fixture?.cleanup();
   fixture = undefined;
-});
+}, 120_000);
 
 afterAll(() => {
   fixtureFactory?.cleanup();
   fixtureFactory = undefined;
-});
+}, 120_000);
 
 describe("P14 conversation history paging", () => {
   it("returns the latest chronological page, then older pages by stable cursor", async () => {

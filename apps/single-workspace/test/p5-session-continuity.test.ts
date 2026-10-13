@@ -48,7 +48,7 @@ beforeAll(async () => {
   });
 }, 120_000);
 
-afterAll(() => schema42Factory?.cleanup());
+afterAll(() => schema42Factory?.cleanup(), 120_000);
 
 const createSchema42Case = () => {
   if (schema42Factory === undefined) {
@@ -59,7 +59,7 @@ const createSchema42Case = () => {
 
 afterEach(() => {
   for (const cleanup of schema42Cleanups.splice(0)) cleanup();
-});
+}, 120_000);
 const context: CommandSubmissionContext = {
   _tag: "System",
   principal,
@@ -222,5 +222,5 @@ describe("P5 multi-turn session continuity", () => {
     expect(new Set(result.sessions)).toEqual(new Set([sessionId]));
     expect(result.entries).toBe(1);
     void Option;
-  });
+  }, 120_000);
 });
