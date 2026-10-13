@@ -33,6 +33,7 @@ import { runExecution } from "@arbor/execution-runtime";
 import {
   ExecutionScheduler,
   ResourceOwnershipRepository,
+  ToolRuntimePort,
   TransactionPort,
   WorkWaitStore,
 } from "@arbor/ports";
@@ -191,6 +192,48 @@ const wait = (reason: string) => [
   { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
 ];
 
+const summarizeToolRuntimeFailure = (cause: unknown) => {
+  if (typeof cause !== "object" || cause === null) {
+    return { causeType: typeof cause };
+  }
+  const value = cause as {
+    readonly _tag?: unknown;
+    readonly stage?: unknown;
+    readonly effectDisposition?: unknown;
+    readonly invocationRef?: unknown;
+    readonly cause?: unknown;
+  };
+  const nested = value.cause;
+  const nestedRecord =
+    typeof nested === "object" && nested !== null
+      ? (nested as { readonly _tag?: unknown; readonly message?: unknown })
+      : undefined;
+  return {
+    tag: typeof value._tag === "string" ? value._tag : null,
+    stage: typeof value.stage === "string" ? value.stage : null,
+    effectDisposition:
+      typeof value.effectDisposition === "string"
+        ? value.effectDisposition
+        : null,
+    invocationRef:
+      typeof value.invocationRef === "string" ? value.invocationRef : null,
+    causeTag: typeof nestedRecord?._tag === "string" ? nestedRecord._tag : null,
+    causeMessage:
+      nested instanceof Error
+        ? nested.message.slice(0, 160)
+        : typeof nested === "string"
+          ? nested.slice(0, 160)
+          : typeof nestedRecord?.message === "string"
+            ? nestedRecord.message.slice(0, 160)
+            : null,
+  };
+};
+
+const toolRuntimeFailures: Array<
+  ReturnType<typeof summarizeToolRuntimeFailure>
+> = [];
+const toolRuntimeBoundaries: Array<string> = [];
+
 const turns = [
   [
     {
@@ -240,6 +283,9 @@ describe("I0 executable/control vertical slice", () => {
       databaseFile: fixture.databaseFilename,
       providerTurns: turns,
       projectResourceProfiles,
+      toolQualificationProbe: async ({ boundary }) => {
+        toolRuntimeBoundaries.push(boundary);
+      },
     });
 
     const result = await Effect.runPromise(
@@ -249,6 +295,21 @@ describe("I0 executable/control vertical slice", () => {
           const gateway = yield* CommandGateway;
           const scheduler = yield* ExecutionScheduler;
           const sql = yield* SqlClient;
+          const toolRuntime = yield* ToolRuntimePort;
+          const observedToolRuntime = ToolRuntimePort.of({
+            invoke: (intent, toolContext) =>
+              toolRuntime
+                .invoke(intent, toolContext)
+                .pipe(
+                  Effect.tapError((cause) =>
+                    Effect.sync(() =>
+                      toolRuntimeFailures.push(
+                        summarizeToolRuntimeFailure(cause),
+                      ),
+                    ),
+                  ),
+                ),
+          });
 
           const created = yield* gateway.execute(
             envelope("CreateProject", selectedProjectPayload, commandId("1")),
@@ -310,10 +371,10 @@ describe("I0 executable/control vertical slice", () => {
             principal,
           );
 
-          const firstSettlement = yield* runExecution(
-            exe1,
-            { _tag: "WorkSelected" },
-            principal,
+          const firstSettlement = yield* Effect.provideService(
+            runExecution(exe1, { _tag: "WorkSelected" }, principal),
+            ToolRuntimePort,
+            observedToolRuntime,
           );
 
           const settlementRows = yield* sql.unsafe<{
@@ -384,6 +445,8 @@ describe("I0 executable/control vertical slice", () => {
             [sessionId],
           );
           const readmissionDiagnostic = {
+            toolRuntimeFailures: toolRuntimeFailures.slice(0, 8),
+            toolRuntimeBoundaries: toolRuntimeBoundaries.slice(0, 16),
             firstSettlement: {
               tag: firstSettlement._tag,
               resultTag:
