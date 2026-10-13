@@ -482,50 +482,60 @@ export const runP39MaintenanceGate = (
 ): Effect.Effect<void, P39MaintenanceFailure | SqlError | SqliteAdapterError> =>
   Effect.acquireUseRelease(
     port.acquireWriterExclusion(),
-    (lease) =>
-      Effect.gen(function* () {
-        const preflight = yield* Effect.acquireUseRelease(
-          port.reservePrimarySnapshot(lease),
-          (reservation) =>
-            Effect.gen(function* () {
-              const snapshot = reservation.snapshot;
-              if (snapshot.userVersion === 39) {
-                return yield* Effect.fail<P39MaintenanceFailure>({
-                  _tag: "P39MaintenanceFailure",
-                  code: "P39_MIGRATION_PREFIX_INVALID",
-                });
-              }
-              if (snapshot.activeNotAdmittedInvocations.length === 0) {
-                yield* port.applyOrderedMigrations(lease, reservation);
-                return { blocked: false as const };
-              }
-              const report = makeReport(snapshot);
-              const saved = yield* port.writeAndReadBackSidecarReport(
-                lease,
-                reservation,
-                report,
-              );
-              if (
-                saved.reportKey !== report.reportKey ||
-                saved.contentHash !== report.contentHash
-              ) {
-                return yield* Effect.fail<P39MaintenanceFailure>({
-                  _tag: "P39MaintenanceFailure" as const,
-                  code: "P39_REPORT_COMMIT_UNRESOLVED" as const,
-                });
-              }
-              return { blocked: true as const };
-            }),
-          (reservation) =>
-            port.releasePrimarySnapshot(lease, reservation).pipe(Effect.orDie),
-        );
-
-        if (preflight.blocked) {
-          return yield* Effect.fail<P39MaintenanceFailure>({
-            _tag: "P39MaintenanceFailure",
-            code: "P39_LEGACY_DB_ISOLATED",
-          });
-        }
-      }),
+    (lease) => runP39MaintenanceGateWithLease(port, lease),
     (lease) => port.releaseWriterExclusion(lease).pipe(Effect.orDie),
   );
+
+/** Runs the unchanged P39 preflight and migration chain using a maintenance
+ * permit already acquired by the caller. This lets the offline schema
+ * activation CLI retain one cross-process exclusive permit while it continues
+ * from the privileged 0039 chain through 0042. Ownership and release of the
+ * permit stay with that caller. */
+export const runP39MaintenanceGateWithLease = (
+  port: P39MaintenancePort,
+  lease: P39WriterExclusionLease,
+): Effect.Effect<void, P39MaintenanceFailure | SqlError | SqliteAdapterError> =>
+  Effect.gen(function* () {
+    const preflight = yield* Effect.acquireUseRelease(
+      port.reservePrimarySnapshot(lease),
+      (reservation) =>
+        Effect.gen(function* () {
+          const snapshot = reservation.snapshot;
+          if (snapshot.userVersion === 39) {
+            return yield* Effect.fail<P39MaintenanceFailure>({
+              _tag: "P39MaintenanceFailure",
+              code: "P39_MIGRATION_PREFIX_INVALID",
+            });
+          }
+          if (snapshot.activeNotAdmittedInvocations.length === 0) {
+            yield* port.applyOrderedMigrations(lease, reservation);
+            return { blocked: false as const };
+          }
+          const report = makeReport(snapshot);
+          const saved = yield* port.writeAndReadBackSidecarReport(
+            lease,
+            reservation,
+            report,
+          );
+          if (
+            saved.reportKey !== report.reportKey ||
+            saved.contentHash !== report.contentHash
+          ) {
+            return yield* Effect.fail<P39MaintenanceFailure>({
+              _tag: "P39MaintenanceFailure" as const,
+              code: "P39_REPORT_COMMIT_UNRESOLVED" as const,
+            });
+          }
+          return { blocked: true as const };
+        }),
+      (reservation) =>
+        port.releasePrimarySnapshot(lease, reservation).pipe(Effect.orDie),
+    );
+
+    if (preflight.blocked) {
+      return yield* Effect.fail<P39MaintenanceFailure>({
+        _tag: "P39MaintenanceFailure",
+        code: "P39_LEGACY_DB_ISOLATED",
+      });
+    }
+  });
