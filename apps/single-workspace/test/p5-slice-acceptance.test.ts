@@ -204,6 +204,19 @@ const summarizeToolRuntimeValue = (value: unknown) => {
     }
     return null;
   };
+  const nestedCause = record.cause;
+  const nestedCauseRecord =
+    typeof nestedCause === "object" && nestedCause !== null
+      ? (nestedCause as Record<string, unknown>)
+      : undefined;
+  const nestedTextField = (...keys: ReadonlyArray<string>): string | null => {
+    if (nestedCauseRecord === undefined) return null;
+    for (const key of keys) {
+      const field = nestedCauseRecord[key];
+      if (typeof field === "string") return field.slice(0, 160);
+    }
+    return null;
+  };
   return {
     tag: textField("_tag"),
     code: textField("code", "reasonCode"),
@@ -211,6 +224,17 @@ const summarizeToolRuntimeValue = (value: unknown) => {
     effectDisposition: textField("effectDisposition"),
     invocationRef: textField("invocationRef"),
     message: textField("message"),
+    cause:
+      nestedCauseRecord === undefined
+        ? typeof nestedCause === "string"
+          ? nestedCause.slice(0, 160)
+          : null
+        : {
+            tag: nestedTextField("_tag"),
+            code: nestedTextField("code"),
+            reasonCode: nestedTextField("reasonCode"),
+            message: nestedTextField("message"),
+          },
   };
 };
 
@@ -231,6 +255,13 @@ const summarizeToolRuntimeCause = (cause: Cause.Cause<unknown>) => ({
     return { kind: "Interrupt", fiberId: String(reason.fiberId) };
   }),
 });
+
+const boundedDiagnosticJson = (value: unknown): string => {
+  const json = JSON.stringify(value);
+  return json.length <= 6_000
+    ? json
+    : JSON.stringify({ truncated: true, jsonPrefix: json.slice(0, 5_800) });
+};
 
 const toolRuntimeFailures: Array<ReturnType<typeof summarizeToolRuntimeCause>> =
   [];
@@ -463,14 +494,13 @@ describe("I0 executable/control vertical slice", () => {
             actionResults: actionResultRows,
             timelineObservations: timelineObservationRows,
           };
-
           if (
             firstSettlement._tag !== "Completed" ||
             firstSettlement.result?._tag !== "Yielded"
           ) {
             return yield* Effect.die({
               _tag: "P5ExpectedYieldedBeforeReadmission",
-              ...readmissionDiagnostic,
+              diagnosticJson: boundedDiagnosticJson(readmissionDiagnostic),
             });
           }
 
@@ -520,8 +550,10 @@ describe("I0 executable/control vertical slice", () => {
                 : String(readmission.failure).slice(0, 200);
             return yield* Effect.die({
               _tag: "P5ReadmissionBlockedAfterYield",
-              failure,
-              ...readmissionDiagnostic,
+              diagnosticJson: boundedDiagnosticJson({
+                failure,
+                ...readmissionDiagnostic,
+              }),
             });
           }
           const secondSettlement = yield* runExecution(
