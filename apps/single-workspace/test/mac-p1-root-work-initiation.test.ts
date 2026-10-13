@@ -11,9 +11,17 @@ import {
 import type { CanonicalProviderEvent } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
@@ -28,13 +36,24 @@ const messageId = "msg_018f2b3c-4d5e-7abc-8def-0123456789e1";
 const human = parse(Principal)("user:mac-p1-approver");
 const humanActor = parse(Actor)("user:mac-p1-approver");
 
-let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
 
-beforeEach(async () => {
-  fixture = await createSchema42TestDatabase({
+beforeAll(async () => {
+  fixtureFactory = await createSchema42TestDatabaseFactory({
     prefix: ".mac-p1-root-schema42-",
   });
 }, 120_000);
+
+beforeEach(() => {
+  if (fixtureFactory === undefined)
+    throw new Error("Schema 42 factory is missing");
+  fixture = fixtureFactory.create();
+});
 
 const assignTurn: ReadonlyArray<CanonicalProviderEvent> = [
   {
@@ -317,4 +336,9 @@ describe("MAC-P1 Root Conversation Work initiation", () => {
 afterEach(() => {
   fixture?.cleanup();
   fixture = undefined;
+});
+
+afterAll(() => {
+  fixtureFactory?.cleanup();
+  fixtureFactory = undefined;
 });

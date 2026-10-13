@@ -5,7 +5,7 @@ import { Principal, parse } from "@arbor/domain";
 import { Effect, Fiber } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   ProductionDaemonService,
@@ -36,16 +36,25 @@ let dist: string;
 let runConsumers: (() => Promise<void>) | undefined;
 let startupError: unknown;
 let programFiber: ReturnType<typeof Effect.runFork> | undefined;
-let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
-let schema42DatabaseFilename: string;
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
 
 const shutdown: Array<() => Promise<void>> = [];
 
+const schema42DatabaseFile = () => {
+  if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
+  return fixture.databaseFilename;
+};
+
 beforeAll(async () => {
-  fixture = await createSchema42TestDatabase({
+  fixtureFactory = await createSchema42TestDatabaseFactory({
     prefix: ".p13-web-e2e-schema42-",
   });
-  schema42DatabaseFilename = fixture.databaseFilename;
+  fixture = fixtureFactory.create();
   dir = mkdtempSync(join(tmpdir(), "arbor-p13-e2e-"));
   dist = join(dir, "dist");
   mkdirSync(join(dist, "assets"), { recursive: true });
@@ -69,7 +78,7 @@ beforeAll(async () => {
                 yield* deployment.daemon.pollConsumers;
               }),
               buildSingleWorkspaceLayer({
-                databaseFile: schema42DatabaseFilename,
+                databaseFile: schema42DatabaseFile(),
                 authenticator: makeStaticAuthenticator({
                   [TOKEN]: HUMAN,
                   [READ_TOKEN]: parse(Principal)("user:local"),
@@ -98,7 +107,7 @@ beforeAll(async () => {
         yield* Effect.promise(() => new Promise<never>(() => undefined));
       }),
       buildSingleWorkspaceLayer({
-        databaseFile: schema42DatabaseFilename,
+        databaseFile: schema42DatabaseFile(),
         authenticator: makeStaticAuthenticator({
           [TOKEN]: HUMAN,
           [READ_TOKEN]: parse(Principal)("user:local"),
@@ -132,6 +141,9 @@ afterAll(async () => {
     await Effect.runPromise(Fiber.interrupt(programFiber));
   }
   fixture?.cleanup();
+  fixtureFactory?.cleanup();
+  fixture = undefined;
+  fixtureFactory = undefined;
   rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
 

@@ -17,9 +17,17 @@ import {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import { acceptResultHandler } from "../src/control-actions.js";
 import {
   buildSingleWorkspaceLayer,
@@ -40,13 +48,24 @@ const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-012345678a12");
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-012345678a11",
 );
-let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
 
-beforeEach(async () => {
-  fixture = await createSchema42TestDatabase({
+beforeAll(async () => {
+  fixtureFactory = await createSchema42TestDatabaseFactory({
     prefix: ".mac-p2-parent-accept-schema42-",
   });
 }, 120_000);
+
+beforeEach(() => {
+  if (fixtureFactory === undefined)
+    throw new Error("Schema 42 factory is missing");
+  fixture = fixtureFactory.create();
+});
 
 describe("MAC-P2 Parent Agent acceptance", () => {
   it("accepts one exact direct-child PASS result through an opaque result ref", async () => {
@@ -193,4 +212,9 @@ describe("MAC-P2 Parent Agent acceptance", () => {
 afterEach(() => {
   fixture?.cleanup();
   fixture = undefined;
+});
+
+afterAll(() => {
+  fixtureFactory?.cleanup();
+  fixtureFactory = undefined;
 });

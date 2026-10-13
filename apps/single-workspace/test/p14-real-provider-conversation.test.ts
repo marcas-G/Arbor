@@ -23,9 +23,17 @@ import {
 } from "@arbor/provider-openai";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import {
   buildSingleWorkspaceLayer,
   ProductionDaemonService,
@@ -43,14 +51,25 @@ const assistantAnswer =
   "根目录包含 apps、packages 和 adapters。建议先运行 pnpm check，再针对目标包运行 focused tests。";
 const liveHumanInputSentinelEnabled =
   process.env.ARBOR_WAVE1_LIVE_HUMAN_INPUT === "1";
-let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
 const scratchDirectories: string[] = [];
 
-beforeEach(async () => {
-  fixture = await createSchema42TestDatabase({
+beforeAll(async () => {
+  fixtureFactory = await createSchema42TestDatabaseFactory({
     prefix: ".p14-conversation-schema42-",
   });
 }, 120_000);
+
+beforeEach(() => {
+  if (fixtureFactory === undefined)
+    throw new Error("Schema 42 factory is missing");
+  fixture = fixtureFactory.create();
+});
 
 afterEach(() => {
   fixture?.cleanup();
@@ -58,6 +77,11 @@ afterEach(() => {
   for (const directory of scratchDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+afterAll(() => {
+  fixtureFactory?.cleanup();
+  fixtureFactory = undefined;
 });
 
 describe("P14 production conversation model context", () => {

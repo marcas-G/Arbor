@@ -27,9 +27,17 @@ import {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import {
   deliverHandler,
   produceDeliverableHandler,
@@ -60,13 +68,24 @@ const executionId = parse(ExecutionId)(
 );
 const principal = parse(Principal)("runtime:producer-agent");
 const actor = parse(Actor)("runtime:producer-agent");
-let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
 
-beforeEach(async () => {
-  fixture = await createSchema42TestDatabase({
+beforeAll(async () => {
+  fixtureFactory = await createSchema42TestDatabaseFactory({
     prefix: ".mac-p3-delivery-schema42-",
   });
 }, 120_000);
+
+beforeEach(() => {
+  if (fixtureFactory === undefined)
+    throw new Error("Schema 42 factory is missing");
+  fixture = fixtureFactory.create();
+});
 
 describe("MAC-P3 cross-Work deliverable closure", () => {
   it("declares, produces, delivers, deterministically satisfies and wakes without a model satisfy action", async () => {
@@ -334,4 +353,9 @@ describe("MAC-P3 cross-Work deliverable closure", () => {
 afterEach(() => {
   fixture?.cleanup();
   fixture = undefined;
+});
+
+afterAll(() => {
+  fixtureFactory?.cleanup();
+  fixtureFactory = undefined;
 });

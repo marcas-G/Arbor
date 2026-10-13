@@ -22,9 +22,17 @@ import {
 import { Clock, TransactionPort, WorkspaceRepository } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
-import { createSchema42TestDatabase } from "../../../tests/support/schema42-database.js";
+import { createSchema42TestDatabaseFactory } from "../../../tests/support/schema42-database.js";
 import { assignWorkHandler } from "../src/control-actions.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
@@ -50,11 +58,24 @@ const context: CommandSubmissionContext = {
   causationRef: "c",
 };
 
-let fixture: Awaited<ReturnType<typeof createSchema42TestDatabase>> | undefined;
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createSchema42TestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
 
-beforeEach(async () => {
-  fixture = await createSchema42TestDatabase({ prefix: ".wave2-schema42-" });
+beforeAll(async () => {
+  fixtureFactory = await createSchema42TestDatabaseFactory({
+    prefix: ".wave2-schema42-",
+  });
 }, 120_000);
+
+beforeEach(() => {
+  if (fixtureFactory === undefined)
+    throw new Error("Schema 42 factory is missing");
+  fixture = fixtureFactory.create();
+});
 
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -862,4 +883,9 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
 afterEach(() => {
   fixture?.cleanup();
   fixture = undefined;
+});
+
+afterAll(() => {
+  fixtureFactory?.cleanup();
+  fixtureFactory = undefined;
 });
