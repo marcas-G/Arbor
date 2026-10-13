@@ -239,6 +239,7 @@ const safeConstraintMessages = new Set([
   "reconciliation settlement requires matching authoritative fact",
   "FOREIGN KEY constraint failed",
   "UNIQUE constraint failed: tool_invocations.invocation_id",
+  "unknown",
   "CHECK constraint failed: tool_invocations",
   "CHECK constraint failed: observation_format_version",
   "CHECK constraint failed: observation_json",
