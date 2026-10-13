@@ -23,6 +23,7 @@
     "architecture": "vitest run tests/architecture",
     "drill:restore": "pnpm build && node apps/single-workspace/dist/restore-drill.js",
     "assess:storage": "pnpm build && node apps/single-workspace/dist/storage-assessment-harness.js",
+    "schema:upgrade": "pnpm build && node apps/single-workspace/dist/schema-upgrade.js",
     "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test && pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test"
   },
   "devDependencies": {

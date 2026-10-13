@@ -19,7 +19,7 @@ import {
   type P39WriterExclusionLease,
   p39UnsupportedDeployment,
   readP39BlockReports,
-  runP39MaintenanceGate,
+  runP39MaintenanceGateWithLease,
   validateP39MigrationPrefix,
   writeP39BlockReportAndReadBack,
 } from "./p39-maintenance.js";
@@ -56,6 +56,7 @@ interface P39SqliteMaintenanceAdapterOptions {
   readonly writerLock: P39WriterLockClientService;
   readonly primaryFilename: string;
   readonly writerLockFilename: string;
+  readonly maintenancePermit?: P39DatabaseWriterPermit;
   readonly writeAndReadBackSidecarReport: (
     report: P39MigrationBlockReport,
   ) => Effect.Effect<
@@ -85,6 +86,34 @@ export interface P39SqliteMaintenanceCommandOptions {
  * 39 and never constructs Agent/P4 Runtime services. */
 export const runP39SqliteMaintenance = (
   options: P39SqliteMaintenanceCommandOptions,
+): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError | SqlError> =>
+  runP39SqliteMaintenanceWithPermit(options, () => Effect.void);
+
+/** Executes P39 and then the supplied continuation while retaining the exact
+ * P39 MaintenanceExclusive permit. The continuation runs only after P39 has
+ * committed; the P39 primary reservation has already been released, but its
+ * cross-process writer exclusion remains held until the continuation finishes.
+ * Release failure is returned as a typed failure and cannot be reported as
+ * successful maintenance. */
+export const runP39SqliteMaintenanceWithPermit = (
+  options: P39SqliteMaintenanceCommandOptions,
+  continuation: (
+    primary: P39MaintenanceSqlClient,
+    permit: P39DatabaseWriterPermit,
+  ) => Effect.Effect<
+    void,
+    P39MaintenanceFailure | SqliteAdapterError | SqlError
+  >,
+  settings: {
+    readonly p39AlreadyCommitted?: boolean;
+    readonly beforeP39?: (
+      primary: P39MaintenanceSqlClient,
+      permit: P39DatabaseWriterPermit,
+    ) => Effect.Effect<
+      void,
+      P39MaintenanceFailure | SqliteAdapterError | SqlError
+    >;
+  } = {},
 ): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError | SqlError> =>
   Effect.gen(function* () {
     if (options.primaryFilename === ":memory:") {
@@ -166,11 +195,19 @@ export const runP39SqliteMaintenance = (
         Effect.scoped(
           Effect.provide(readP39BlockReports(), reportSidecarLayer),
         );
+      const permit = yield* writerLock
+        .acquire("MaintenanceExclusive")
+        .pipe(
+          Effect.mapError((cause) =>
+            failure("P39_WRITER_LOCK_ACQUIRE_FAILED", cause),
+          ),
+        );
       const port = makeP39SqliteMaintenancePort({
         primary,
         writerLock,
         primaryFilename: primaryPath,
         writerLockFilename: lockPath,
+        maintenancePermit: permit,
         writeAndReadBackSidecarReport: (report) =>
           Effect.gen(function* () {
             const attempted = yield* Effect.result(writeReport(report));
@@ -227,7 +264,38 @@ export const runP39SqliteMaintenance = (
             ),
           ),
       });
-      yield* runP39MaintenanceGate(port);
+      const operation = yield* Effect.exit(
+        Effect.gen(function* () {
+          if (settings.p39AlreadyCommitted === true) {
+            const version = yield* primary.unsafe<UserVersionRow>(
+              "PRAGMA user_version",
+            );
+            const userVersion = Number(version[0]?.user_version);
+            if (userVersion < 39 || userVersion > 42) {
+              return yield* Effect.fail(
+                failure("P39_MIGRATION_PREFIX_INVALID"),
+              );
+            }
+          } else {
+            if (settings.beforeP39 !== undefined) {
+              yield* settings.beforeP39(primary, permit);
+            }
+            yield* runP39MaintenanceGateWithLease(port, {
+              token: permit.token,
+            });
+          }
+          yield* continuation(primary, permit);
+        }),
+      );
+      const released = yield* Effect.exit(writerLock.release(permit));
+      if (released._tag === "Failure") {
+        return yield* Effect.fail(
+          failure("P39_WRITER_LOCK_RELEASE_FAILED", released.cause),
+        );
+      }
+      if (operation._tag === "Failure") {
+        return yield* Effect.failCause(operation.cause);
+      }
     });
     yield* Effect.scoped(
       Effect.provide(
@@ -347,7 +415,8 @@ const makeP39SqliteMaintenancePort = (
   options: P39SqliteMaintenanceAdapterOptions,
 ): P39MaintenancePort => {
   let snapshotState: SnapshotState | undefined;
-  let writerLockPermit: P39DatabaseWriterPermit | undefined;
+  let writerLockPermit: P39DatabaseWriterPermit | undefined =
+    options.maintenancePermit;
   const sql = options.primary;
   return {
     acquireWriterExclusion: () =>

@@ -36,7 +36,8 @@
     "ws": "8.21.3"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "schema:upgrade": "node dist/schema-upgrade.js"
   },
   "devDependencies": {
     "@types/ws": "8.18.1"
