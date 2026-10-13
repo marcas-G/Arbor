@@ -39,6 +39,7 @@ import {
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   admitExecution,
   buildSingleWorkspaceLayer,
@@ -220,6 +221,7 @@ describe("I0 executable/control vertical slice", () => {
       Effect.provide(
         Effect.gen(function* () {
           yield* runMigrations(CURRENT_MIGRATIONS);
+          yield* ensureLegacyProjectResourceSourceFixture();
           const gateway = yield* CommandGateway;
           const scheduler = yield* ExecutionScheduler;
           const sql = yield* SqlClient;

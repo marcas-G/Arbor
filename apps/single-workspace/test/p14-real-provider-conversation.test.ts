@@ -24,6 +24,7 @@ import {
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
@@ -298,6 +299,7 @@ describe("P14 production conversation model context", () => {
               }),
             );
 
+            yield* ensureLegacyProjectResourceSourceFixture();
             const daemon = yield* ProductionDaemonService;
             yield* daemon.daemon.conversationTick;
             yield* daemon.daemon.conversationTick;
@@ -607,6 +609,7 @@ describe("P14 production conversation model context", () => {
             }),
           );
 
+          yield* ensureLegacyProjectResourceSourceFixture();
           const daemon = yield* ProductionDaemonService;
           yield* HumanMessageStore;
           yield* daemon.daemon.conversationTick;

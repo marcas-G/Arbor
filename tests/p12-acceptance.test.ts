@@ -353,6 +353,7 @@ describe("p12-acceptance story 1-2 — plugin SDK + explicit project-tool regist
     await runPlugin(
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const tx = yield* TransactionPort;
         const registry = yield* ProjectToolRegistry;
         const catalog = yield* ToolCatalogPort;
@@ -492,6 +493,7 @@ describe("p12-acceptance story 3 — Authority Resolver production plane", () =>
     const outcome = await runAuthority(
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const sql = yield* SqlClient;
         const tx = yield* TransactionPort;
         const grants = yield* PermissionGrantRepository;
@@ -775,6 +777,7 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
             // The production slice now wires the unified P32+ approval ledger;
             // run the current schema before exercising its approval store.
             yield* runMigrations(P38_MIGRATIONS);
+            yield* ensureLegacyProjectResourceSourceFixture();
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               secretEnvelope("CreateProject", secretProjectPayload(), "1"),
@@ -949,6 +952,7 @@ describe("p12-acceptance story 5 — observability / health / usage plane", () =
             const before: ReadinessState = yield* health.readiness();
             expect(isReady(before)).toBe(false);
             yield* runMigrations(P12_MIGRATIONS);
+            yield* ensureLegacyProjectResourceSourceFixture();
             const after: ReadinessState = yield* health.readiness();
             expect(isReady(after)).toBe(true);
           }),
@@ -1251,6 +1255,7 @@ const rwRun = <A>(
     Effect.provide(
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         yield* rwSeed;
         const tx = yield* TransactionPort;
         const repo = yield* ExecutionRepository;
@@ -1452,6 +1457,7 @@ describe("p12-acceptance story 8 — model-facing tool catalog in the compiled r
       Effect.provide(
         Effect.gen(function* () {
           yield* runMigrations(P12_MIGRATIONS);
+          yield* ensureLegacyProjectResourceSourceFixture();
           const txPort = yield* TransactionPort;
           const reg = yield* ProjectToolRegistry;
           yield* txPort.transact(
@@ -1707,6 +1713,7 @@ const runSafetyScenario = async (
     Effect.provide(
       Effect.gen(function* () {
         yield* runMigrations(CURRENT_MIGRATIONS);
+        yield* ensureLegacyProjectResourceSourceFixture();
         const gateway = yield* CommandGateway;
         const created = yield* gateway.execute(
           safetyEnvelope("CreateProject", selectedSafetyProjectPayload, "1"),

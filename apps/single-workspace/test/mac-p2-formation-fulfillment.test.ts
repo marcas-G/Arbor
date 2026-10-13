@@ -14,6 +14,7 @@ import {
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
@@ -122,6 +123,7 @@ describe("MAC-P2 formation fulfillment", () => {
               );
             }),
           );
+          yield* ensureLegacyProjectResourceSourceFixture();
           const gateway = yield* CommandGateway;
           const commandId = parse(CommandId)(
             "cmd_018f2b3c-4d5e-7abc-8def-012345678a22",

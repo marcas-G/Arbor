@@ -15,6 +15,7 @@ import type { CanonicalProviderEvent } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
@@ -164,6 +165,7 @@ const scenario = (decision: "Approve" | "Reject") => {
       Effect.gen(function* () {
         yield* runMigrations(CURRENT_MIGRATIONS);
         yield* seed;
+        yield* ensureLegacyProjectResourceSourceFixture();
         const daemon = yield* ProductionDaemonService;
         const sql = yield* SqlClient;
 

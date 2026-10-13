@@ -31,6 +31,7 @@ import {
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   deliverHandler,
   produceDeliverableHandler,
@@ -119,6 +120,7 @@ describe("MAC-P3 cross-Work deliverable closure", () => {
               }
             }),
           );
+          yield* ensureLegacyProjectResourceSourceFixture();
           const gateway = yield* CommandGateway;
           const dependencyId = parse(DependencyId)(
             "dep_018f2b3c-4d5e-7abc-8def-012345678a31",

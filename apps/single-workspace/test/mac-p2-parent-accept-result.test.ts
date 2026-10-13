@@ -21,6 +21,7 @@ import {
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterEach, describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import { acceptResultHandler } from "../src/control-actions.js";
 import {
   buildSingleWorkspaceLayer,
@@ -103,6 +104,7 @@ describe("MAC-P2 Parent Agent acceptance", () => {
               );
             }),
           );
+          yield* ensureLegacyProjectResourceSourceFixture();
           const placement = yield* WorkspacePlacementPort;
           const snapshot = yield* placement.list({
             rootWorkspaceId: parentWorkspaceId,

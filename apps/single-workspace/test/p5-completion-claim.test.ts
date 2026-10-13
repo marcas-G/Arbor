@@ -25,6 +25,7 @@ import {
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   buildSingleWorkspaceLayer,
   CURRENT_MIGRATIONS,
@@ -184,6 +185,7 @@ describe("STILL_VALID_INVARIANT — superseded CompletionClaim representation", 
         Effect.gen(function* () {
           yield* runMigrations(CURRENT_MIGRATIONS);
           yield* seed;
+          yield* ensureLegacyProjectResourceSourceFixture();
           yield* admit(
             parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
           );

@@ -18,6 +18,7 @@ import { BlobStorePort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   admitExecution,
   buildSingleWorkspaceLayer,
@@ -266,6 +267,7 @@ describe("I0 SendMessage durable integration", () => {
               );
             }),
           );
+          yield* ensureLegacyProjectResourceSourceFixture();
 
           yield* admitExecution(
             childWorkspaceId,
